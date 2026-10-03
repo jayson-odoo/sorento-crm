@@ -28,6 +28,7 @@ from app.services.chatbot import contracts
 from app.services.chatbot import copy as reply_copy
 from app.services.chatbot import jsc
 from app.services.chatbot.lanes.business import fetch as fetch_mod
+from app.services.chatbot.lanes.business import low_stock_ask
 from app.services.chatbot.lanes.business import resolve_gate
 from app.services.chatbot.lanes.business import services as business_services
 from app.services.chatbot.turn import policy_rows
@@ -213,7 +214,7 @@ def _low_stock_not_enabled() -> dict[str, Any]:
     }
 
 
-def _low_stock_unavailable() -> dict[str, Any]:
+def _low_stock_unavailable(header: str | None = None) -> dict[str, Any]:
     """Console round 3, defect A: the low stock CALL failed - say so in this tool's own
     words, never the lane's generic "I ran into a problem understanding that".
 
@@ -225,8 +226,12 @@ def _low_stock_unavailable() -> dict[str, Any]:
     inventory" line, which says the wrong thing about a report that failed to build.
     `escalate` still rides on the fragment for any consumer that offers the team picker.
     """
+    # LOWSTOCK-FILTER-ASK (owner hand test, 3 Oct 2026): every low stock reply names the
+    # filters it was asked with, the failure line included.
+    text = f"{header}\n{LOW_STOCK_UNAVAILABLE_MESSAGE}" if header else LOW_STOCK_UNAVAILABLE_MESSAGE
     structured: dict[str, Any] = {
-        "response": LOW_STOCK_UNAVAILABLE_MESSAGE,
+        "response": text,
+        "low_stock_report": True,
         "response_intro": None,
         "answers": [],
         "attachments": [],
@@ -247,7 +252,7 @@ def _low_stock_unavailable() -> dict[str, Any]:
         "delegate_payload": {"fetch": item},
         "fetch": item,
         "escalate": True,
-        "response": LOW_STOCK_UNAVAILABLE_MESSAGE,
+        "response": text,
     }
 
 
@@ -569,7 +574,9 @@ def _top_selling_ask_category(codes: list[str]) -> str:
     return f"Which category do you mean? Reply with one code: {', '.join(codes)}"
 
 
-def _fixed_reply(text: str, *, top_selling_asked: str | None = None) -> dict[str, Any]:
+def _fixed_reply(
+    text: str, *, top_selling_asked: str | None = None, required_ask: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """One fixed line and nothing else, before any fetch: the refusal and the top
     selling questions. `has_result: True` and no `outstanding_ask` keep it OFF the miss
     lane (no escalate offer) and arm nothing; the carried `focus.status` is what makes
@@ -591,6 +598,8 @@ def _fixed_reply(text: str, *, top_selling_asked: str | None = None) -> dict[str
         # The top selling question this line asks, if any (`_top_selling_question`'s
         # axis); `engine.py` records it on the slot for the next turn to read.
         "top_selling_asked": top_selling_asked,
+        # LOWSTOCK-FILTER-ASK: the `required_fields` slot this line leaves open, if any.
+        "required_ask": required_ask,
     }
     item = fetch_mod.fetch_result(structured, tool=None, tier_probe=None)
     return {
@@ -1321,7 +1330,9 @@ def run_fetch(
     `services.resolve_warehouse_token`. `None` is a no-op there too (a direct `run_fetch`
     call, this module's own tests), same as no location word at all.
     """
-    _ = dry_run
+    # One exception to the paragraph above: `crm_low_stock_report` WRITES (a run, a file,
+    # a push to WhatsApp), so a dry run is told to the tool, which then never pushes
+    # (LOWSTOCK-FILTER-ASK tester finding: a console turn sent the real workbook).
     raw_gate = payload.get("gate")
     gate: dict[str, Any] = raw_gate if isinstance(raw_gate, dict) else {}
     raw_tier_gate = payload.get("tier_gate")
@@ -1609,6 +1620,43 @@ def run_fetch(
         )
         if _LOW_STOCK_GRANT not in granted:
             return _low_stock_not_enabled()
+
+        # LOWSTOCK-FILTER-ASK (owner ruling, 2 Oct 2026): nothing runs until the product
+        # category is settled - taken from the message, else asked (`low_stock_ask`, the
+        # shared `required_fields` helper). A product-code ask names its own scope and
+        # is not asked. The answering turn carries the first message's grouping,
+        # supplier word and location on the slot.
+        answering = isinstance(parse_output.get("required_ask"), dict)
+        named_product = any(
+            isinstance(e, dict)
+            and e.get("current_message") is True
+            and jsc.js_string(e.get("hint") or "") == "product"
+            for e in jsc.array(parse_output.get("entities"))
+        )
+        if answering or not named_product:
+            settled = low_stock_ask.settle(
+                db, parse_output, include_supplier=low_stock_ask.SUPPLIER_GRANT in granted
+            )
+            if trace is not None:
+                trace.add("required_ask", {"ask": "low_stock_report", "done": settled.done,
+                                           "values": settled.values})
+            if not settled.done:
+                if settled.slot is not None and not answering:
+                    settled.slot.setdefault("extras", {})["warehouse_entities"] = [
+                        e for e in jsc.array(parse_output.get("entities"))
+                        if isinstance(e, dict) and e.get("current_message") is True
+                        and jsc.js_string(e.get("hint") or "") == "warehouse"
+                    ]
+                return _fixed_reply(settled.reply or "", required_ask=settled.slot)
+            semantic_input["low_stock_filters"] = low_stock_ask.route_filters(settled)
+            if answering:
+                # The first message's location word rides the slot (a date window
+                # already rides the focus); re-read here as if typed this turn.
+                parse_output = {
+                    **parse_output,
+                    "entities": [*jsc.array(parse_output.get("entities")),
+                                 *jsc.array(settled.extras.get("warehouse_entities"))],
+                }
 
         # ── B (console round 3): a report ask is a FRESH SCOPE ────────────────
         # `entity_op = replace_combine` merges the PREVIOUS turn's session entities into
@@ -1958,6 +2006,8 @@ def run_fetch(
         return _error_fragment("the described set qualifies nothing", outcome="not_found")
     try:
         args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id)
+        if dry_run and tool_name == _LOW_STOCK_TOOL:
+            args["dry_run"] = True
     except fetch_mod.ScopeViolation as violation:
         # D4: the defence behind the engine's gate. No tool is called.
         if trace is not None:
@@ -2020,7 +2070,8 @@ def run_fetch(
             # `httpx.ReadTimeout` here and the customer read "I ran into a problem
             # understanding that" - about a report the worker was still building and would
             # push. This tool says its own line instead.
-            return _low_stock_unavailable()
+            filters = semantic_input.get("low_stock_filters")
+            return _low_stock_unavailable(filters.get("header") if isinstance(filters, dict) else None)
         return _error_fragment(
             f"MCP tool {tool_name} failed: {exc}", outcome=_fetch_failure_outcome(tool_name, exc)
         )
@@ -2045,6 +2096,18 @@ def run_fetch(
         return _error_fragment(envelope["error"])
 
     structured = fetch_mod.output_structurer(envelope, trigger)
+    # LOWSTOCK-FILTER-ASK (owner hand test, 3 Oct 2026): EVERY low stock reply - ready,
+    # pending, busy, empty, error - opens with the filters it was built with, "Low stock
+    # report (water closet, supplier X, by supplier)", so a narrowed file never reads as
+    # the whole book. The ready line's own "Low stock report - as of" takes the header in
+    # place; any other line gets it above.
+    filters = semantic_input.get("low_stock_filters") if tool_name == _LOW_STOCK_TOOL else None
+    if isinstance(filters, dict) and filters.get("header") and isinstance(structured, dict):
+        response = jsc.js_string(structured.get("response") or "")
+        if response.startswith("Low stock report - as of"):
+            structured["response"] = filters["header"] + response[len("Low stock report"):]
+        else:
+            structured["response"] = f"{filters['header']}\n{response}" if response else filters["header"]
     if trace is not None:
         restricted = envelope.get("restricted_fields") if isinstance(envelope, dict) else None
         if isinstance(restricted, dict) and restricted:
