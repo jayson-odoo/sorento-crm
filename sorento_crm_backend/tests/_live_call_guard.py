@@ -3,7 +3,7 @@
 The backend `.env` a developer runs pytest against carries real provider keys, and a test
 that forgets its own stub would otherwise reach the provider and spend them. `install()`
 wraps every HTTP client the venv can import (httpx and its `httpx2` fork, which the
-openai and anthropic SDKs ship on, sync and async; urllib; requests; aiohttp) plus a
+openai and anthropic SDKs ship on, sync and async; urllib) plus a
 `socket.getaddrinfo` backstop for anything else, so a request to a blocked host raises
 `LiveExternalCallBlocked` before any connection opens. Every attempt is also appended to `BLOCKED_CALLS`, which `tests/conftest.py` turns
 into a teardown failure, so app code that swallows the exception cannot pass silently.
@@ -55,6 +55,22 @@ def check(method: str, url: str, host: str | None) -> None:
     )
 
 
+def fail_if_blocked() -> None:
+    """Teardown half: fail the test if it attempted any blocked call, swallowed or not."""
+    import pytest
+
+    blocked = list(BLOCKED_CALLS)
+    BLOCKED_CALLS.clear()
+    if blocked:
+        pytest.fail(
+            "This test attempted live external call(s), blocked by tests/_live_call_guard.py: "
+            + "; ".join(blocked)
+            + f". Stub the provider, or mark the test @pytest.mark.live_external "
+            f"(runs only with {LIVE_OPT_IN_ENV}=1).",
+            pytrace=False,
+        )
+
+
 def _wrap(owner, attr: str, make) -> None:
     original = getattr(owner, attr)
     setattr(owner, attr, make(original))
@@ -95,30 +111,6 @@ def _urllib() -> None:
     _wrap(urllib.request.OpenerDirector, "open", wrapper)
 
 
-def _requests(adapters) -> None:
-    def wrapper(original):
-        def send(self, request, *args, **kwargs):
-            url = request.url or ""
-            check(request.method or "GET", url, urllib.parse.urlsplit(url).hostname)
-            return original(self, request, *args, **kwargs)
-
-        return send
-
-    _wrap(adapters.HTTPAdapter, "send", wrapper)
-
-
-def _aiohttp(aiohttp) -> None:
-    def wrapper(original):
-        async def _request(self, method, str_or_url, *args, **kwargs):
-            url = str(str_or_url)
-            check(str(method).upper(), url, urllib.parse.urlsplit(url).hostname)
-            return await original(self, method, str_or_url, *args, **kwargs)
-
-        return _request
-
-    _wrap(aiohttp.ClientSession, "_request", wrapper)
-
-
 def _socket_backstop() -> None:
     """Any other client, connecting directly: refuse to resolve a blocked host.
 
@@ -149,16 +141,6 @@ def install() -> None:
         except ImportError:
             pass
     _urllib()
-    try:
-        import requests.adapters
-
-        _requests(requests.adapters)
-    except ImportError:
-        pass
-    try:
-        import aiohttp
-
-        _aiohttp(aiohttp)
-    except ImportError:
-        pass
+    # requests / aiohttp are not used by app/; a direct connection from either is still
+    # caught by the getaddrinfo backstop (no proxy). Wrap them here once app/ imports one.
     _socket_backstop()

@@ -447,16 +447,7 @@ def _no_live_external_calls(request, monkeypatch):
     guard.ENABLED = True
     guard.BLOCKED_CALLS.clear()
     yield
-    blocked = list(guard.BLOCKED_CALLS)
-    guard.BLOCKED_CALLS.clear()
-    if blocked:
-        pytest.fail(
-            "This test attempted live external call(s), blocked by tests/_live_call_guard.py: "
-            + "; ".join(blocked)
-            + ". Stub the provider, or mark the test @pytest.mark.live_external "
-            "(runs only with CHATBOT_LIVE_LLM=1).",
-            pytrace=False,
-        )
+    guard.fail_if_blocked()
 
 
 def pytest_configure(config):
@@ -470,8 +461,8 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
-        "allow_live_llm: opt this test out of the no_live_llm get_provider() guard "
-        "(a test that genuinely means to exercise a real provider call).",
+        "allow_live_llm: opt this test out of the no_live_llm get_provider() seam guard "
+        "only; the suite-wide transport guard still blocks the call (see live_external).",
     )
     config.addinivalue_line(
         "markers",
@@ -499,8 +490,10 @@ def no_live_llm(monkeypatch, request):
     already does, e.g. `test_translation_service.py`'s `_stub_provider`) simply
     overwrites this raising stub with its own fake - same `monkeypatch`
     instance, so pytest still restores the true original at teardown either
-    way. Opt out with `@pytest.mark.allow_live_llm` for a test that means to
-    reach a real provider.
+    way. `@pytest.mark.allow_live_llm` lifts only this seam guard; the
+    suite-wide transport guard (`_no_live_external_calls`) still blocks the
+    request, so a test that really means to reach a provider is marked
+    `@pytest.mark.live_external` instead.
     """
     if request.node.get_closest_marker("allow_live_llm"):
         yield

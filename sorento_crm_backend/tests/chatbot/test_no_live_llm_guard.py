@@ -18,6 +18,7 @@ import socket
 import urllib.request
 
 import httpx
+import httpx2
 import pytest
 
 PLACEHOLDER_KEY = "sk-placeholder-not-a-real-key"
@@ -98,24 +99,30 @@ def test_unstubbed_parser_call_fails_fast_on_the_guard(tripwire):
     _forget_blocked_calls()
 
 
+# `httpx2` is the fork the openai / anthropic SDKs send through; `httpx` is the app's own.
+_HTTPX_MODULES = pytest.mark.parametrize("lib", [httpx, httpx2], ids=["httpx", "httpx2"])
+
+
+@_HTTPX_MODULES
 @pytest.mark.parametrize("host", _PROVIDER_HOSTS)
-def test_sync_httpx_request_to_a_provider_is_blocked(tripwire, host):
-    with httpx.Client() as client, pytest.raises(Exception) as info:
+def test_sync_httpx_request_to_a_provider_is_blocked(tripwire, lib, host):
+    with lib.Client() as client, pytest.raises(Exception) as info:
         client.get(f"https://{host}/v1/placeholder")
     _assert_guard_fired(info.value, host)
     _forget_blocked_calls()
 
 
-async def _async_get(url: str) -> None:
-    async with httpx.AsyncClient() as client:
+async def _async_get(lib, url: str) -> None:
+    async with lib.AsyncClient() as client:
         await client.get(url)
 
 
-def test_async_httpx_request_to_a_provider_is_blocked(tripwire):
+@_HTTPX_MODULES
+def test_async_httpx_request_to_a_provider_is_blocked(tripwire, lib):
     import asyncio
 
     with pytest.raises(Exception) as info:
-        asyncio.run(_async_get("https://api.anthropic.com/v1/messages"))
+        asyncio.run(_async_get(lib, "https://api.anthropic.com/v1/messages"))
     _assert_guard_fired(info.value, "api.anthropic.com")
     _forget_blocked_calls()
 
@@ -144,13 +151,41 @@ def test_a_swallowed_blocked_call_is_still_recorded_for_teardown(tripwire):
     except Exception:  # noqa: BLE001 - the swallow is the point
         pass
     assert any("api.openai.com" in call for call in _live_call_guard.BLOCKED_CALLS)
-    _forget_blocked_calls()
+    with pytest.raises(pytest.fail.Exception) as info:
+        _live_call_guard.fail_if_blocked()
+    assert "api.openai.com" in str(info.value)
+    assert not _live_call_guard.BLOCKED_CALLS
 
 
-def test_provider_keys_from_dotenv_are_blank_during_tests():
+def test_teardown_check_is_silent_when_nothing_was_blocked():
+    from tests import _live_call_guard
+
+    _live_call_guard.fail_if_blocked()
+
+
+_KEY_SETTINGS = ("openai_api_key", "anthropic_api_key", "gemini_api_key", "respond_api_key")
+
+
+@pytest.fixture(scope="module")
+def placeholder_keys_loaded():
+    """Stand in for a developer `.env` that carries keys, whatever this machine's holds.
+
+    Module scope, so it is in place BEFORE the function-scoped autouse guard runs; the
+    test then proves the guard blanks them rather than finding them blank already.
+    """
     from app.config import settings
 
-    for name in ("openai_api_key", "anthropic_api_key", "gemini_api_key", "respond_api_key"):
+    with pytest.MonkeyPatch.context() as mp:
+        for name in _KEY_SETTINGS:
+            mp.setattr(settings, name, "placeholder-key")
+            mp.setenv(name.upper(), "placeholder-key")
+        yield
+
+
+def test_provider_keys_from_dotenv_are_blank_during_tests(placeholder_keys_loaded):
+    from app.config import settings
+
+    for name in _KEY_SETTINGS:
         assert not getattr(settings, name), f"settings.{name} is set during a test run"
     for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "RESPOND_API_KEY"):
         assert not os.environ.get(name), f"os.environ[{name!r}] is set during a test run"
