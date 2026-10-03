@@ -62,6 +62,9 @@ class WarehouseResponse(WarehouseBase):
     stock_count: Optional[int] = 0
     # Resolved for display: the UI must never show a bare UUID.
     pool_warehouse_code: Optional[str] = None
+    # Set only on a `company_scope=grants` read, so a picker can tag each row.
+    company_id: Optional[str] = None
+    company_name: Optional[str] = None
     
     class Config:
         from_attributes = True

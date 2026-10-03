@@ -2770,6 +2770,16 @@ def make_tool_runner(
         answered = spec.filters.get("outstanding")
         if isinstance(answered, dict):
             lane_out = outstanding_carry(lane_out, focus, answered)
+            if _offer_picks_the_so_list(answered, lane_out):
+                # Owner hand test, 3 Oct 2026: "1" / the "Sales order list" button under a
+                # customer-subject outstanding summary is the SO list over that summary's
+                # customers and window, not the same report again. A product-subject
+                # report keeps its own SO detail rows (AC-1138): the SO list has no product.
+                lane_out = {**lane_out, "so_list": True, "outstanding_detail_pick": None}
+                # The conversation is on the SO list now: a period typed next continues
+                # it (`_asks_for_so_list` reads the carried document), not the summary.
+                focus.status = None
+                focus.document = ["SO"]
         brand_names: list[str] = []
         ranking = jsc.js_string(lane_out.get("order_status") or "").strip() == "top_selling"
         if domain == "order" and not ranking:
@@ -2819,6 +2829,24 @@ def make_tool_runner(
         # (line ~906 above), so the miss header can name each ledger rather than
         # falling back to the option's own rollup code.
         fill_customer_names(db, entities)
+        # SO-NUMBER-ASK: SO numbers this message typed that nothing placed are answered
+        # by the lane from `sales_orders` (`lanes/business/run_fetch`'s `so_numbers` arm),
+        # and so are not "could not find" words for compose to name a second time.
+        so_numbers = _so_numbers_asked(domain, verdict, unplaced)
+        envelope_unplaced = unplaced
+        if so_numbers:
+            lane_out = {**lane_out, "so_numbers": so_numbers}
+            envelope_unplaced = {k: v for k, v in unplaced.items() if v not in so_numbers}
+            # Answered here, so never carried: a word left on `focus.extra["order"]` without a
+            # uuid is handed to the resolver again on the next order turn and named as a miss
+            # there (owner hand test: "okay how about all my sales order?" replied
+            # `Couldn't find: "SO422056"` over the `self_reference` answer).
+            _drop_focus_entities(focus, [{"entity_type": "order", "raw": w} for w in so_numbers])
+        elif _asks_for_so_list(domain, verdict, focus, lane_out):
+            # "all my sales orders" / "my SOs": the SO list over the customers in scope
+            # (`lanes/business/run_fetch`'s `so_list` arm). The document is read off the
+            # focus too, so a typed period answering "Which period?" runs the same ask.
+            lane_out = {**lane_out, "so_list": True}
         # Ported from PR #1118 (not merged), D13/D20: the dealer's own quantity per
         # product, resolved to uuids here - `lanes/business/fetch.py` reads it
         # straight off the lane input.
@@ -3085,7 +3113,7 @@ def make_tool_runner(
                 else None
             ),
             ran_with=lane_out,
-            unplaced=unplaced,
+            unplaced=envelope_unplaced,
             raw_fragment=fragment,
             brand_names=brand_names,
             attachment_types=(
@@ -3801,6 +3829,55 @@ def _code_of(entity: dict[str, Any]) -> str:
     return jsc.js_string(entity.get("code") or entity.get("canonical_code") or entity.get("raw")).strip().lower()
 
 
+def _so_numbers_asked(domain: str, verdict: dict[str, Any], unplaced: dict[str, str]) -> list[str]:
+    """The SO numbers an order ask typed that the resolver could not place - the lane's
+    `so_numbers` (SO-NUMBER-ASK). Only when EVERY word this message typed went unplaced:
+    a message that also placed a subject of its own keeps today's answer for it."""
+    if domain != "order" or not unplaced:
+        return []
+    from app.services.chatbot import so_status
+
+    typed = [
+        jsc.nullish_str(jsc.get(e, "raw")).strip()
+        for e in jsc.array(jsc.get(verdict, "entities"))
+        if isinstance(e, dict) and e.get("current_message") is not False
+    ]
+    typed = [t for t in typed if t]
+    if not typed or any(_token_key(t) not in unplaced for t in typed):
+        return []
+    return [unplaced[_token_key(t)] for t in typed if so_status.is_so_number(t)]
+
+
+def _offer_picks_the_so_list(answered: dict[str, Any], lane_out: dict[str, Any]) -> bool:
+    """Did this turn pick the outstanding detail offer's "Sales order list" on a report
+    about customers only? A product, brand or location narrows the report in a way the SO
+    list cannot, so those keep the report's own SO detail rows (AC-1138)."""
+    if answered.get("kind") != "outstanding_detail" or answered.get("detail") != "so":
+        return False
+    return not (
+        jsc.truthy(lane_out.get("outstanding_carried_product_code"))
+        or jsc.array(lane_out.get("outstanding_carried_product_codes"))
+        or jsc.array(lane_out.get("outstanding_carried_brand_ids"))
+        or jsc.array(lane_out.get("outstanding_carried_warehouse_codes"))
+        or jsc.truthy(lane_out.get("outstanding_carried_location_token"))
+    )
+
+
+def _asks_for_so_list(domain: str, verdict: dict[str, Any], focus: Focus, lane_out: dict[str, Any]) -> bool:
+    """An order ask about sales orders with no SO number and no status word: the SO list
+    (owner option (2) on PR #1435). "outstanding" keeps the outstanding report; a message
+    that typed a subject of its own (a product, an order number) keeps today's answer."""
+    if domain != "order" or jsc.js_string(lane_out.get("order_status") or "").strip():
+        return False
+    document = [str(d).upper() for d in (verdict.get("document") or focus.document or [])]
+    if document != ["SO"]:
+        return False
+    return not any(
+        isinstance(e, dict) and e.get("current_message") is not False and e.get("hint") != "customer"
+        for e in jsc.array(verdict.get("entities"))
+    )
+
+
 def _answered_unfiltered(
     fragment: dict[str, Any], entities: list[dict[str, Any]], unplaced: dict[str, str]
 ) -> bool:
@@ -3820,10 +3897,19 @@ def _answered_unfiltered(
     `unplaced` still names. `entities and not all(...)` is what actually gates the
     non-empty case below - an empty `entities` is falsy and skips that check rather than
     returning False for it, so this one guard clause covers both shapes.
+
+    A linked contact's customer-scope rows (`engine._scoped_compatible`, `scope: True`)
+    are not subjects either: the message did not type them, they only bound who the
+    answer may be about. SO-NUMBER-ASK (PR #1433 tester note): "status of SO422056"
+    left the SO token unplaced, the orders list ran on the dealer's twelve linked
+    customers alone, and the reply was a 20-row DO dump closed by "I could not find
+    SO422056." A dealer's own customer word never reaches this as unplaced - it is
+    answered from the links and never sent to the resolver (AC-CS-12).
     """
     if not unplaced:
         return False
-    if entities and not all(_entity_is_unplaced(e, unplaced) for e in entities):
+    subjects = [e for e in entities if not e.get("scope")]
+    if subjects and not all(_entity_is_unplaced(e, unplaced) for e in subjects):
         return False
     fetched = fragment.get("fetch") if isinstance(fragment.get("fetch"), dict) else {}
     if fetched.get("outstanding_report"):

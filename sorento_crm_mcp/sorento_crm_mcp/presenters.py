@@ -1477,7 +1477,9 @@ STOCK_BLOCKED = "\U0001F6AB"
 _AVAILABILITY_TAILS = {
     "too_big": f"{STOCK_BLOCKED} the quantity is more than what I can confirm here. {REFER_TO_SALESMAN}",
     "in_stock": f"{STOCK_YES} {REFER_TO_SALESMAN}",
-    "no_incoming": f"{STOCK_NO} No incoming. {REFER_TO_SALESMAN}",
+    # REFER-ONLY-FIXES (owner, 3 Oct 2026): `no_incoming` is reached only with no stock
+    # (`stock_ask_branch.branch`: some stock is `in_stock`), so the line says both.
+    "no_incoming": f"{STOCK_NO} No stock and no incoming. {REFER_TO_SALESMAN}",
 }
 
 
