@@ -104,7 +104,8 @@ def test_an_existing_contact_ends_with_every_do_field_switched_on(db):
 
 
 def test_a_contact_created_after_the_migration_has_no_do_field(db):
-    """The new-contact default stays as built: no row, so every DO field is hidden."""
+    """The migration writes no row for a later contact. (That contact still sees every DO field:
+    the default is ON in `granted_keys`, not in the table.)"""
     _migration_module().seed_do_reveals(db.connection())
     later = _contact(db)
     assert _rows(db, later) == {}
