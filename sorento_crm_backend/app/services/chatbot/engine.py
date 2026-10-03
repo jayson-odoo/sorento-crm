@@ -2463,6 +2463,10 @@ def _top_selling_verdict(
     the ranking whatever the parser's status; an echoed word from an earlier turn is
     dropped; basis words switch the basis; a period alone re-runs the ranking for it.
     """
+    if jsc.js_string(verdict.get("order_status") or "").strip() == "sales_ranking":
+        # A new ask the parser named (owner held-state rule: a new intent always wins): never
+        # captured by an open top selling question.
+        return verdict, state, None
     focus = state.focus
     slot = focus.top_selling if isinstance(focus.top_selling, dict) else None
     ranking = focus.status == "top_selling" or bool(slot and slot.get("hop"))
