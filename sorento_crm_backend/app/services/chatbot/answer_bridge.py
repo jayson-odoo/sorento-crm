@@ -1560,7 +1560,8 @@ def _fold_blocks(primary: str, xd_text: str) -> tuple[str, str]:
     one list. A code that has a primary block AND a cross-domain block prints once, merged
     (`_merge_block`) in the cross-domain position; the incoming opener goes; when more than
     one block remains they number on from 1 across both. A primary with no block left loses
-    its footer, a set header stays. Returns `(primary, cross-domain text)`."""
+    its footer, a set header stays; a kept footer moves to the end of the cross-domain
+    text. Returns `(primary, cross-domain text)`."""
     paras = [p for p in primary.split("\n\n") if p != _INCOMING_OPENER]
     xd_paras = xd_text.split("\n\n")
     for i, x in enumerate(xd_paras):
@@ -1579,8 +1580,10 @@ def _fold_blocks(primary: str, xd_text: str) -> tuple[str, str]:
         )
         if hit is not None:
             xd_paras[i] = _merge_block(paras.pop(hit), x)
-    if not any(_BLOCK_START_RE.match(p) for p in paras):
-        paras = [p for p in paras if not p.startswith("_Updated ")]
+    footers = [p for p in paras if p.startswith("_Updated ")]
+    paras = [p for p in paras if p not in footers]
+    if any(_BLOCK_START_RE.match(p) for p in paras):
+        xd_paras += footers  # the footer closes the whole body, after the last block
     paras, xd_paras = _renumber([paras, xd_paras])
     return "\n\n".join(paras), "\n\n".join(xd_paras)
 

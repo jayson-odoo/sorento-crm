@@ -1138,9 +1138,9 @@ def crossdomain_render(
         # "Missing" means the PRIMARY render did not ECHO the code, which is only the same
         # statement as "this code has nothing" when the render is product-keyed or empty. A
         # warehouse breakdown answers about the code without ever printing it, so an ungated
-        # list let the ladder append a PO line underneath the stock it had just shown - the exact defect `can_state_absence`
-        # exists to prevent, reintroduced one rung further along. Empty here means the
-        # rung never runs, which is the right answer: there is nothing we can honestly
+        # list let the ladder append a PO line underneath the stock it had just shown - the
+        # exact defect `can_state_absence` exists to prevent, reintroduced one rung further
+        # along. Empty here means the rung never runs, which is the right answer: there is nothing we can honestly
         # say is absent.
         "nothing_codes": list(nothing) if can_state_absence else [],
         # Same gate, same reason: the rung reads this to build its probe entities, so
