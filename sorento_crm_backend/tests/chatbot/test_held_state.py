@@ -385,3 +385,40 @@ def test_a_lane_question_is_never_turned_into_a_not_found():
     assert answer_bridge.answers_a_miss({"_exit_kind": "not_found"}, envelope) is False
     plain = {"raw_fragment": {"kind": "result", "fetch": {}}}
     assert answer_bridge.answers_a_miss({"_exit_kind": "not_found"}, plain) is True
+
+
+# --------------------------------------------------------------------------- #
+# Answers read by the engine's own readers, or declared by the parser, are kept
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("reader", ["set_clarify", "set_page", "required_ask", "top_selling"])
+def test_an_answer_an_engine_reader_took_is_kept_under_another_intent(reader):
+    """LOWSTOCK-FILTER-ASK's live finding: a short reply to the category question can come
+    back with another intent and is still its answer (`required_fields.reply_verdict`)."""
+    out, why = held.consume(_state(_all_held_focus()), verdict(intent_hint="check_product"), answered=[reader])
+    assert why is None
+    assert held.held_slots(out)
+
+
+@pytest.mark.parametrize("kind", sorted(pending_mod.ESCALATION_OFFER_KINDS))
+@pytest.mark.parametrize(
+    "escalation",
+    [
+        {"is_escalation_confirmation": True},
+        {"escalation_declined": True},
+        {"company_pick": "Mocha"},
+    ],
+)
+def test_an_escalation_offer_answered_by_the_parser_is_kept(kind, escalation):
+    state = _state(Focus(intent="check_stock"), pending=_pending(kind))
+    out, why = held.consume(state, verdict(intent_hint="escalate", escalation=escalation))
+    assert why is None
+    assert out.pending is not None
+
+
+def test_the_parsers_declared_answer_is_kept():
+    state = _state(Focus(intent="check_order"), pending=_pending("customer_pick"))
+    v = verdict(intent_hint="check_stock", answers_open_question={"resolved": True, "picks": [1], "answer": None})
+    out, why = held.consume(state, v)
+    assert why is None and out.pending is not None

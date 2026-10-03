@@ -30,7 +30,7 @@ from typing import Any, Callable, Mapping
 
 from app.services.chatbot.turn import task as task_mod
 from app.services.chatbot.turn.decide import NEW_INTENT, decide
-from app.services.chatbot.turn.pending import from_wire, to_wire
+from app.services.chatbot.turn.pending import ESCALATION_OFFER_KINDS, from_wire, to_wire
 from app.services.chatbot.turn.state import Focus, State, focus_from_wire
 
 __all__ = ["NEW_INTENT", "HELD_TTL_TURNS", "SLOTS", "consume", "expire", "held_slots", "stamp"]
@@ -112,10 +112,21 @@ def expire(state: State) -> tuple[State, str | None]:
 def _answers(state: State, verdict: dict[str, Any]) -> bool:
     """Does this message answer a held question, by the parser's own fields?
 
-    A position or an offered label picked off the open question (`decide`'s ANSWER), a
-    quantity the stock task claims, or the parser's declared `open_question_answer`."""
+    The parser's declared answer (`open_question_answer`, `answers_open_question`), an
+    escalation offer accepted, declined or picked from, a position or an offered label
+    picked off the open question (`decide`'s ANSWER), or a quantity the stock task claims."""
     answer = verdict.get("open_question_answer")
     if isinstance(answer, dict) and answer.get("mode"):
+        return True
+    declared = verdict.get("answers_open_question")
+    if isinstance(declared, dict) and (declared.get("resolved") is True or declared.get("picks")):
+        return True
+    escalation = verdict.get("escalation") if isinstance(verdict.get("escalation"), dict) else {}
+    if state.pending is not None and state.pending.kind in ESCALATION_OFFER_KINDS and (
+        escalation.get("is_escalation_confirmation") is True
+        or escalation.get("escalation_declined") is True
+        or escalation.get("company_pick")
+    ):
         return True
     if state.pending is not None and decide(verdict, state.focus, state.pending).answers:
         return True
@@ -131,9 +142,13 @@ def _answers(state: State, verdict: dict[str, Any]) -> bool:
     return False
 
 
-def consume(state: State, verdict: dict[str, Any]) -> tuple[State, str | None]:
+def consume(
+    state: State, verdict: dict[str, Any], *, answered: list[str] | tuple[str, ...] = ()
+) -> tuple[State, str | None]:
     """Once the verdict is read: a reset clears every held question, and so does a message
-    of a different intent that answers none of them.
+    of a different intent that answers none of them. `answered` names the held slots an
+    engine reader answered from their own offered options this turn (the clarify pick, the
+    set count, the required ask's reply, a top selling answer): an answer, never dropped.
 
     Records this message's intent on the focus (the last one named is kept through a
     message that names none), and marks the verdict `NEW_INTENT` when the intent changed,
@@ -151,7 +166,7 @@ def consume(state: State, verdict: dict[str, Any]) -> tuple[State, str | None]:
         return state, None
     if verdict.get("topic_reset") is True:
         return _cleared(state), "topic_reset"
-    if changed and not _answers(state, verdict):
+    if changed and not answered and not _answers(state, verdict):
         return _cleared(state), "new_intent"
     return state, None
 

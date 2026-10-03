@@ -4053,13 +4053,6 @@ def _run_stages_body(  # noqa: PLR0915
     turn_trace.add("context", context_report)
     if held_expired:
         turn_trace.add("held_dropped", {"why": held_expired})
-    # STUCK-QTY-LOOP (owner, 4 Oct 2026): the ONE rule for every held question, before
-    # any reader of one runs. A reset clears them all; a message of a different intent
-    # that answers none of them is a new question, and they all go (`turn/held.py`).
-    held_before = turn_held.held_slots(state_in)
-    state_in, held_why = turn_held.consume(state_in, verdict)
-    if held_why:
-        turn_trace.add("held_dropped", {"why": held_why, "slots": held_before})
 
     # The routing default lands ONCE, here, after the last parse and before the access
     # read (finding 2b): every reader downstream - access, the lanes, the trace - sees
@@ -4082,10 +4075,18 @@ def _run_stages_body(  # noqa: PLR0915
     # the parser filling `top_n` for a bare "10" - its prompt has no example of one, and
     # its positional rule pulls a bare number toward `reference_positions`.
     # Round 4 R5 on PR #833: the answer to an open clarify re-runs the ask it was about.
+    # STUCK-QTY-LOOP: the readers below that answer a held question from its own offered
+    # options each return a new verdict when they do; `turn_held.consume` is told which
+    # did, so an answer is never dropped as a "new question".
+    held_answered: list[str] = []
+    read = verdict
     verdict = turn_runtime.with_clarify_answer(
         verdict, latest_user_message, carried=state_in.focus.set_clarify
     )
     verdict = _with_account_answer(verdict, state_in.focus.set_clarify)
+    if verdict is not read:
+        held_answered.append("set_clarify")
+    read = verdict
     verdict = turn_runtime.with_set_count_from_text(
         verdict, latest_user_message, carried=state_in.focus.set_page
     )
@@ -4094,6 +4095,8 @@ def _run_stages_body(  # noqa: PLR0915
     verdict = turn_runtime.with_brand_from_offer(
         verdict, latest_user_message, carried=state_in.focus.set_page
     )
+    if verdict is not read:
+        held_answered.append("set_page")
     # Round 3 W3 on PR #833: a class word of this message's own starts a new set.
     verdict = turn_runtime.with_new_set_words(verdict)
     # Fix round 8 on PR #833 (owner retest of round 7): every descriptor the parser
@@ -4182,6 +4185,7 @@ def _run_stages_body(  # noqa: PLR0915
             turn_trace.add("required_ask", {"verdict_rule": required_rule, "ask": (open_ask or {}).get("ask")})
         if required_rule == "required_ask_answer":
             state_in = dataclasses_replace(state_in, pending=None)
+            held_answered.append("required_ask")
         verdict = low_stock_ask.take_words(verdict, _message_text)
 
         # Owner retest of top selling round 4 (27 Sep 2026): inside a ranking, the message
@@ -4195,6 +4199,7 @@ def _run_stages_body(  # noqa: PLR0915
             in_ranking_conversation = False
         if top_selling_rule:
             turn_trace.add("top_selling", {"verdict_rule": top_selling_rule})
+            held_answered.append("top_selling")
         if state_in.focus.status == "top_selling" or state_in.focus.top_selling or (
             jsc.js_string(verdict.get("order_status") or "").strip() == "top_selling"
         ):
@@ -4330,6 +4335,15 @@ def _run_stages_body(  # noqa: PLR0915
                     },
                 )
                 verdict = picked_verdict
+
+        # STUCK-QTY-LOOP (owner, 4 Oct 2026): the ONE rule for every held question, on
+        # the verdict as every reader above left it. A reset clears them all; a message of
+        # a different intent that answers none of them is a new question, and they all go
+        # (`turn/held.py`). Before APPLY, so no arm of it can replay a dropped question.
+        held_before = turn_held.held_slots(state_in)
+        state_in, held_why = turn_held.consume(state_in, verdict, answered=held_answered)
+        if held_why:
+            turn_trace.add("held_dropped", {"why": held_why, "slots": held_before})
 
         # C APPLY, first pass: state and plan from the verdict alone.
         state_out, plan = turn_apply(state_in, verdict, policy)
