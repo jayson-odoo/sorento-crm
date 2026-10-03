@@ -50,7 +50,6 @@ from app.services.document_ingest_service import CANCELLED, DOCUMENT_SPECS
 from app.services.finance.billing_document_ingest_service import BILLING_DOCUMENTS_ENTITY
 from app.services.integration_reference_service import (
     IntegrationReferenceService,
-    is_unclaimed_or_same_source,
 )
 from app.services.master_ingest_service import (
     INTERNAL_ERROR_MESSAGE,
@@ -80,13 +79,9 @@ class DeletionRecordResult:
     entity_id: Optional[str] = None
     # field -> reason, so the ESB can quarantine per record without parsing prose.
     errors: dict[str, str] = field(default_factory=dict)
-    # Ingest-products-code-wins, SR0: fixed-vocabulary notices, same rule as
-    # `RecordResult.warnings` - omitted from `as_dict()` when empty. The only
-    # producer today is the code rung (`_resolve_product_by_code`), which
-    # always sets `["ref_mismatch"]` when it matches - the reference the ESB
-    # sent did not resolve, so whatever it names is not what is actually
-    # stored (nothing at all, or a different reference under this same
-    # source).
+    # Fixed-vocabulary notices, same rule as `RecordResult.warnings` - omitted
+    # from `as_dict()` when empty. No producer today: product deletions resolve
+    # by code alone (PRODUCT-REF-COLLISION) and raise no ref_mismatch.
     warnings: list[str] = field(default_factory=list)
 
 
@@ -465,24 +460,14 @@ class DeletionService:
             )
 
     def _resolve_product_by_code(self, code: str) -> Optional[str]:
-        """A product this deletion's own reference miss can still find, by
-        item code (ingest-products-code-wins, SR0) - the deletion mirror of
-        `MasterIngestService._apply_scoped`'s adopt-by-code branch.
+        """The product this deletion names, by item code alone.
 
-        Company-scoped the same way `resolve_master_by_code` scopes the
-        master ingest's own adopt lookup. A match is used only when it is
-        unlinked, or its own reference is under the SAME source system this
-        deletion resolves under (`is_unclaimed_or_same_source`) - a code that
-        happens to match a row another source system, or another company,
-        claims is reported exactly like no match at all (AC-DL-6, AC-DL-7).
+        PRODUCT-REF-COLLISION (owner ruling 3 Oct): products are never
+        resolved or guarded by a reference. Company-scoped the same way
+        `resolve_master_by_code` scopes the master ingest's own lookup, so a
+        code another company owns reads exactly like no match.
         """
-        candidate = resolve_master_by_code(self.db, Product, code, self.company_id)
-        if candidate is None:
-            return None
-        origin = self.refs.origin_of(entity_type="products", entity_id=candidate)
-        if not is_unclaimed_or_same_source(origin):
-            return None
-        return candidate
+        return resolve_master_by_code(self.db, Product, code, self.company_id)
 
     def _in_anchor_company(self, entity_type: str, entity_id: str) -> bool:
         """Whether the resolved row belongs to the company this call anchored to.
