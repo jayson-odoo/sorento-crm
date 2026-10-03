@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 import os
+import sys
 # Load .env with override=True so file values beat any stale shell env
 # (e.g. a STORAGE_DEFAULT_PROVIDER exported earlier in the session).
 # SORENTO_ENV_FILE overrides which dotenv gets loaded, so tests can point at
@@ -70,11 +71,18 @@ logging.basicConfig(
 if settings.debug:
     logging.getLogger('app.dependencies').setLevel(logging.DEBUG)
 
-# DEV-LOGIN-BYPASS: crash at import (never just warn) when DEV_AUTO_LOGIN is on outside a
-# dev ENVIRONMENT, and log a loud banner when it is legitimately active.
+# DEV-LOGIN-BYPASS: crash at import (never just warn) when DEV_AUTO_LOGIN is on anywhere but
+# a local uvicorn run, and log a loud banner when it is legitimately active.
 from app.services.dev_login import assert_safe_startup as _assert_dev_login_safe
 
-_assert_dev_login_safe(enabled=settings.dev_auto_login, environment=settings.environment)
+_assert_dev_login_safe(
+    enabled=settings.dev_auto_login,
+    environment=settings.environment,
+    environment_explicit="environment" in settings.model_fields_set,
+    secret=settings.dev_auto_login_secret,
+    under_gunicorn="gunicorn" in sys.modules,
+    in_container=os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv"),
+)
 
 # Create FastAPI app
 app = FastAPI(

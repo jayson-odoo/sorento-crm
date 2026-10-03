@@ -3,7 +3,12 @@ import { JWT } from 'next-auth/jwt';
 import CredentialsProvider from 'next-auth/providers/credentials';
 
 import { sessionTokenCookieName } from '@/lib/auth-cookie';
-import { devLoginAllowed, devLoginConfigured, hostFromHeaders } from '@/lib/dev-login';
+import {
+  devLoginAllowed,
+  devLoginBackendHeaders,
+  devLoginConfigured,
+  hostFromHeaders,
+} from '@/lib/dev-login';
 
 /**
  * NextAuth is a thin shell over FastAPI-owned auth.
@@ -86,7 +91,7 @@ export function devLoginProvider() {
       try {
         res = await fetch(`${backendBaseUrl()}/api/v1/auth/dev-login`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...devLoginBackendHeaders() },
           body: JSON.stringify({ email: credentials.email }),
         });
       } catch {
@@ -116,6 +121,14 @@ export function devLoginProvider() {
       } as User;
     },
   });
+}
+
+const devLoginOn = devLoginConfigured();
+if (devLoginOn) {
+  console.warn(
+    '!!! DEV_AUTO_LOGIN is ACTIVE: passwordless dev sign-in is registered. It only answers on a ' +
+      'dev server bound to 127.0.0.1 for localhost hosts. Never run this in production. !!!',
+  );
 }
 
 const authOptions: NextAuthOptions = {
@@ -233,7 +246,7 @@ const authOptions: NextAuthOptions = {
         } as User;
       },
     }),
-    ...(devLoginConfigured() ? [devLoginProvider()] : []),
+    ...(devLoginOn ? [devLoginProvider()] : []),
   ],
   session: {
     strategy: 'jwt',

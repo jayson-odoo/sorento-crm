@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { backendBaseUrl } from '../../[...nextauth]/auth-options';
-import { devLoginAllowed } from '@/lib/dev-login';
+import { devLoginAllowed, devLoginBackendHeaders } from '@/lib/dev-login';
 
 /**
  * DEV-LOGIN-BYPASS: the "Sign in as" picker's user list (PLAN-dev-login-bypass-03oct.md).
@@ -15,6 +15,7 @@ export async function GET(request: NextRequest) {
   try {
     const res = await fetch(`${backendBaseUrl()}/api/v1/auth/dev-login/users`, {
       cache: 'no-store',
+      headers: devLoginBackendHeaders(),
     });
     if (!res.ok) {
       return NextResponse.json({ detail: 'Not Found' }, { status: 404 });

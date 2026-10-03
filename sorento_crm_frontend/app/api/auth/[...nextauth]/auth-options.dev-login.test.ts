@@ -30,7 +30,11 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const BASE = { FASTAPI_INTERNAL_URL: 'http://localhost:8101' };
+const BASE = {
+  FASTAPI_INTERNAL_URL: 'http://localhost:8101',
+  DEV_AUTO_LOGIN_SECRET: 'fe-server-secret-0123456789',
+  __NEXT_PRIVATE_ORIGIN: 'http://127.0.0.1:3101',
+};
 
 describe('dev-login provider registration', () => {
   it('is absent by default', async () => {
@@ -39,6 +43,10 @@ describe('dev-login provider registration', () => {
   });
   it('kill: absent in a production build even with the flag on', async () => {
     const options = await loadOptions({ ...BASE, DEV_AUTO_LOGIN: 'true', NODE_ENV: 'production' });
+    expect(devProvider(options)).toBeUndefined();
+  });
+  it('kill: absent without the shared secret', async () => {
+    const options = await loadOptions({ ...BASE, DEV_AUTO_LOGIN: 'true', NODE_ENV: 'development', DEV_AUTO_LOGIN_SECRET: undefined });
     expect(devProvider(options)).toBeUndefined();
   });
   it('is present with the flag on in dev', async () => {
@@ -62,6 +70,7 @@ describe('dev-login authorize', () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('http://localhost:8101/api/v1/auth/dev-login');
     expect(JSON.parse(init.body)).toEqual({ email: 'a@example.com' });
+    expect(init.headers['X-Dev-Login-Secret']).toBe(BASE.DEV_AUTO_LOGIN_SECRET);
     expect(user.apiToken).toBe('opaque-token');
     expect(user.email).toBe('a@example.com');
   });
@@ -74,6 +83,13 @@ describe('dev-login authorize', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     },
   );
+
+  it('kill: a dev server bound to every interface refuses a spoofed localhost Host', async () => {
+    const options = await loadOptions({ ...BASE, DEV_AUTO_LOGIN: 'true', NODE_ENV: 'development', __NEXT_PRIVATE_ORIGIN: 'http://localhost:3101' });
+    const fn = devProvider(options)!.options!.authorize!;
+    await expect(fn({ email: 'a@example.com' }, { headers: { host: 'localhost:3101' } })).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 
   it('a backend refusal becomes a sign-in error, never a user', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ detail: 'Not Found' }), { status: 404 }));

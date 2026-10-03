@@ -31,6 +31,7 @@ REPO_ROOT = BACKEND_ROOT.parent
 
 LOCAL_BASE = "http://localhost:8123"
 LOOPBACK_PEER = ("127.0.0.1", 50123)
+SECRET = "s3cret-shared-with-the-fe-server"
 
 
 @pytest.fixture()
@@ -48,8 +49,12 @@ def db_bind():
             app.dependency_overrides.pop(get_db, None)
 
 
-def _client(*, base_url: str = LOCAL_BASE, peer=LOOPBACK_PEER) -> TestClient:
-    return TestClient(app, base_url=base_url, client=peer)
+def _client(*, base_url: str = LOCAL_BASE, peer=LOOPBACK_PEER, secret: str | None = SECRET) -> TestClient:
+    """What the frontend SERVER sends: the shared secret header, from loopback, Host localhost."""
+    c = TestClient(app, base_url=base_url, client=peer)
+    if secret is not None:
+        c.headers["X-Dev-Login-Secret"] = secret
+    return c
 
 
 def _make_user(bind, *, email: str, status: str = "ACTIVE", trashed: bool = False) -> str:
@@ -76,6 +81,7 @@ def enabled(monkeypatch, db_bind):
     monkeypatch.setattr(settings, "dev_auto_login", True)
     monkeypatch.setattr(settings, "environment", "development")
     monkeypatch.setattr(settings, "dev_auto_login_users", f"{admin}, {viewer.upper()}")
+    monkeypatch.setattr(settings, "dev_auto_login_secret", SECRET)
     return {"admin": admin, "viewer": viewer, "bind": bind}
 
 
@@ -144,8 +150,10 @@ def test_kill_flag_off(enabled, monkeypatch):
         _assert_404_both(c, enabled["admin"])
 
 
-def test_flag_defaults_off():
+def test_flag_defaults_off(monkeypatch):
     from app.config import Settings
+
+    monkeypatch.delenv("DEV_AUTO_LOGIN", raising=False)
 
     fresh = Settings(database_url="postgresql://x:x@localhost/x", jwt_secret="x", _env_file=None)
     assert fresh.dev_auto_login is False
@@ -188,6 +196,33 @@ def test_kill_forwarded_for_does_not_fake_loopback(enabled):
             headers={"X-Forwarded-For": "127.0.0.1", "X-Real-IP": "127.0.0.1"},
         )
     assert res.status_code == 404
+
+
+@pytest.mark.parametrize("presented", [None, "", "wrong-secret-but-long-enough", SECRET + "x", SECRET[:-1]])
+def test_kill_secret_header_missing_or_wrong(enabled, presented):
+    with _client(secret=presented) as c:
+        _assert_404_both(c, enabled["admin"])
+
+
+@pytest.mark.parametrize("configured", ["", "   ", "short-secret"])
+def test_kill_secret_not_configured_on_the_backend(enabled, monkeypatch, configured):
+    """An unset or short backend secret refuses even a request presenting that same value."""
+    monkeypatch.setattr(settings, "dev_auto_login_secret", configured)
+    with _client(secret=configured) as c:
+        _assert_404_both(c, enabled["admin"])
+
+
+def test_kill_browser_request_relayed_by_the_next_dev_rewrite(enabled):
+    """Security review B1: `next dev` relays a browser's /api/v1 call with Host rewritten to the
+    backend's localhost address, from a 127.0.0.1 peer, adding X-Forwarded-Host. The browser has
+    no secret, so it fails; and even with the secret, X-Forwarded-Host alone refuses."""
+    relayed = {"X-Forwarded-Host": "tehs-mac-mini.tailnet.ts.net:3101"}
+    with _client(secret=None) as c:
+        assert c.post("/api/v1/auth/dev-login", json={"email": enabled["admin"]}, headers=relayed).status_code == 404
+        assert c.get("/api/v1/auth/dev-login/users", headers=relayed).status_code == 404
+    with _client() as c:
+        assert c.post("/api/v1/auth/dev-login", json={"email": enabled["admin"]}, headers=relayed).status_code == 404
+        assert c.get("/api/v1/auth/dev-login/users", headers=relayed).status_code == 404
 
 
 def test_kill_email_not_allowlisted(enabled):
@@ -250,26 +285,73 @@ def test_is_loopback_peer(ip, ok):
 
 # --------------------------------------------------------------------------- startup assertion
 
+SAFE_START = dict(
+    enabled=True,
+    environment="development",
+    environment_explicit=True,
+    secret=SECRET,
+    under_gunicorn=False,
+    in_container=False,
+)
+
 
 @pytest.mark.parametrize("env", ["production", "prod", "staging", "", "qa"])
 def test_startup_assertion_refuses_non_dev_environment(env):
     with pytest.raises(RuntimeError, match="DEV_AUTO_LOGIN"):
-        dev_login.assert_safe_startup(enabled=True, environment=env)
+        dev_login.assert_safe_startup(**{**SAFE_START, "environment": env})
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"environment_explicit": False},
+        {"secret": ""},
+        {"secret": "short"},
+        {"under_gunicorn": True},
+        {"in_container": True},
+    ],
+    ids=["environment_defaulted", "no_secret", "short_secret", "gunicorn", "container"],
+)
+def test_kill_startup_assertion_refuses_each_unsafe_run(override):
+    """Security review S1: the default ENVIRONMENT ('development') must not count, and the
+    production entrypoint (gunicorn, a container) can never run the bypass."""
+    with pytest.raises(RuntimeError, match="DEV_AUTO_LOGIN"):
+        dev_login.assert_safe_startup(**{**SAFE_START, **override})
 
 
 def test_startup_assertion_passes_when_off_in_production():
-    dev_login.assert_safe_startup(enabled=False, environment="production")
+    dev_login.assert_safe_startup(
+        enabled=False, environment="production", environment_explicit=True,
+        secret="", under_gunicorn=True, in_container=True,
+    )
 
 
 def test_startup_assertion_warns_loudly_when_active(caplog):
     with caplog.at_level("WARNING"):
-        dev_login.assert_safe_startup(enabled=True, environment="development")
+        dev_login.assert_safe_startup(**SAFE_START)
     assert any("DEV_AUTO_LOGIN" in r.getMessage() and r.levelname == "WARNING" for r in caplog.records)
 
 
-def test_kill_app_import_crashes_with_flag_in_production():
+def _hermetic_env(tmp_path, **extra: str) -> dict[str, str]:
+    """A child env that ignores the developer's own .env: SORENTO_ENV_FILE points Settings and
+    app.main at a file holding only the required connection settings, and no ENVIRONMENT or
+    DEV_AUTO_LOGIN* value is inherited from this process."""
+    env_file = tmp_path / ".env.dev-login-test"
+    env_file.write_text(
+        f"DATABASE_URL={settings.database_url}\nJWT_SECRET=dev-login-test\n", encoding="utf-8"
+    )
+    env = {
+        k: v for k, v in os.environ.items()
+        if k.upper() != "ENVIRONMENT" and not k.upper().startswith("DEV_AUTO_LOGIN")
+    }
+    env.update({"SORENTO_ENV_FILE": str(env_file), "DEV_AUTO_LOGIN": "true", "DEV_AUTO_LOGIN_SECRET": SECRET})
+    env.update(extra)
+    return env
+
+
+def test_kill_app_import_crashes_with_flag_in_production(tmp_path):
     """The real process, not the helper: importing app.main must die."""
-    env = {**os.environ, "DEV_AUTO_LOGIN": "true", "ENVIRONMENT": "production"}
+    env = _hermetic_env(tmp_path, ENVIRONMENT="production")
     proc = subprocess.run(
         [sys.executable, "-c", "import app.main"],
         cwd=BACKEND_ROOT,
@@ -282,6 +364,20 @@ def test_kill_app_import_crashes_with_flag_in_production():
     assert "DEV_AUTO_LOGIN" in (proc.stderr + proc.stdout)
 
 
+def test_kill_app_import_crashes_with_flag_and_defaulted_environment(tmp_path):
+    env = _hermetic_env(tmp_path)
+    proc = subprocess.run(
+        [sys.executable, "-c", "import app.main"],
+        cwd=BACKEND_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert proc.returncode != 0
+    assert "ENVIRONMENT is not set explicitly" in (proc.stderr + proc.stdout)
+
+
 # --------------------------------------------------------------------------- deploy guard
 
 
@@ -292,7 +388,17 @@ def _deploy_files() -> list[Path]:
     files += sorted(REPO_ROOT.glob("**/Dockerfile*"))
     for pattern in ("**/.env.production*", "**/.env.prod*", "**/.env.staging*"):
         files += sorted(REPO_ROOT.glob(pattern))
-    files += [REPO_ROOT / "sorento_crm" / "deploy.sh"]
+    files += sorted((REPO_ROOT / "scripts").glob("*deploy*"))
+    files += sorted((REPO_ROOT / "sorento_crm").glob("*.sh"))
+    files += [
+        BACKEND_ROOT / "start.sh",
+        BACKEND_ROOT / "run.sh",
+        BACKEND_ROOT / "gunicorn.conf.py",
+    ]
+    # Every committed env file: none of them is a crew test copy's (crew sets the flag only
+    # through its own env_overrides, outside the repo).
+    tracked = subprocess.run(["git", "ls-files"], cwd=REPO_ROOT, capture_output=True, text=True).stdout.split()
+    files += [REPO_ROOT / t for t in tracked if Path(t).name.startswith(".env")]
     skip = ("node_modules", "/venv/", "/.next/")
     return [f for f in dict.fromkeys(files) if f.is_file() and not any(s in str(f) for s in skip)]
 
@@ -301,5 +407,7 @@ def test_deploy_files_never_mention_the_flag():
     files = _deploy_files()
     assert any(f.name == "docker-compose.yml" for f in files)
     assert any(f.parent.name == "workflows" for f in files)
+    names = {f.name for f in files}
+    assert {"blue_green_deploy.sh", "start.sh", "gunicorn.conf.py", ".env.browse"} <= names, names
     offenders = [str(f.relative_to(REPO_ROOT)) for f in files if re.search(r"DEV_AUTO_LOGIN", f.read_text(errors="ignore"))]
     assert offenders == [], f"DEV_AUTO_LOGIN must never be set by a deploy/CI file: {offenders}"

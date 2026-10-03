@@ -45,6 +45,9 @@ def require_dev_login(request: Request) -> None:
     if not dev_login.request_allowed(
         enabled=settings.dev_auto_login,
         environment=settings.environment,
+        secret=settings.dev_auto_login_secret,
+        presented_secret=request.headers.get(dev_login.SECRET_HEADER),
+        forwarded_host=request.headers.get("x-forwarded-host"),
         host_header=request.headers.get("host"),
         peer_ip=peer,
     ):

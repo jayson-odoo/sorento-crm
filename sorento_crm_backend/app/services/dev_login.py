@@ -6,16 +6,21 @@ Every guard must hold or the dev-login routes answer a plain 404 (fail closed):
 
 1. ``DEV_AUTO_LOGIN`` is on (default off).
 2. ``ENVIRONMENT`` is in ``ALLOWED_ENVIRONMENTS``. Anything else, an empty value included,
-   refuses; and the process refuses to START with the flag on outside that list.
-3. The request ``Host`` hostname is ``localhost``, ``*.localhost`` or ``127.0.0.1``.
-4. The TCP peer is loopback. The frontend's server calls the backend on localhost; a deployed
-   backend sits behind Docker / a reverse proxy and never sees a loopback peer. Uvicorn only
-   rewrites the peer from ``X-Forwarded-For`` when the real peer is itself 127.0.0.1, so the
-   header cannot fake this from outside.
-5. The email is in ``DEV_AUTO_LOGIN_USERS`` and that user is ACTIVE and not trashed.
+   refuses; and the process refuses to START with the flag on outside that list, without an
+   explicitly set ``ENVIRONMENT``, under gunicorn (the production entrypoint), or in a container.
+3. The request carries ``X-Dev-Login-Secret`` equal to ``DEV_AUTO_LOGIN_SECRET``. Only the
+   frontend's SERVER sends it; the browser never has it. This is what stops a browser request
+   relayed by the ``next dev`` rewrite of ``/api/v1``: that proxy rewrites Host to the backend's
+   own localhost address and connects from 127.0.0.1, so guards 4 and 5 alone pass for it.
+4. No ``X-Forwarded-Host`` (the rewrite proxy always adds one; the server-side fetch never does).
+5. The request ``Host`` hostname is ``localhost``, ``*.localhost`` or ``127.0.0.1``.
+6. The TCP peer is loopback. Uvicorn only rewrites the peer from ``X-Forwarded-For`` when the
+   real peer is itself 127.0.0.1, so the header cannot fake this from outside.
+7. The email is in ``DEV_AUTO_LOGIN_USERS`` and that user is ACTIVE and not trashed.
 """
 from __future__ import annotations
 
+import hmac
 import ipaddress
 import logging
 from typing import Optional
@@ -23,25 +28,49 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 ALLOWED_ENVIRONMENTS = frozenset({"development", "dev", "local", "test"})
+MIN_SECRET_LENGTH = 16
+SECRET_HEADER = "x-dev-login-secret"
 
 
 def environment_allowed(environment: Optional[str]) -> bool:
     return (environment or "").strip().lower() in ALLOWED_ENVIRONMENTS
 
 
-def assert_safe_startup(*, enabled: bool, environment: Optional[str]) -> None:
-    """Crash the process when the flag is on outside a dev environment; warn when active."""
+def secret_configured(secret: Optional[str]) -> bool:
+    return len((secret or "").strip()) >= MIN_SECRET_LENGTH
+
+
+def assert_safe_startup(
+    *,
+    enabled: bool,
+    environment: Optional[str],
+    environment_explicit: bool,
+    secret: Optional[str],
+    under_gunicorn: bool,
+    in_container: bool,
+) -> None:
+    """Crash the process when the flag is on anywhere but a local dev run; warn when active."""
     if not enabled:
         return
+    problems = []
+    if not environment_explicit:
+        problems.append("ENVIRONMENT is not set explicitly")
     if not environment_allowed(environment):
+        problems.append(f"ENVIRONMENT={environment!r} is not one of {sorted(ALLOWED_ENVIRONMENTS)}")
+    if not secret_configured(secret):
+        problems.append(f"DEV_AUTO_LOGIN_SECRET is missing or shorter than {MIN_SECRET_LENGTH} characters")
+    if under_gunicorn:
+        problems.append("the process runs under gunicorn (the production entrypoint)")
+    if in_container:
+        problems.append("the process runs inside a container")
+    if problems:
         raise RuntimeError(
-            f"DEV_AUTO_LOGIN is on while ENVIRONMENT={environment!r}. Passwordless dev sign-in "
-            f"is only allowed when ENVIRONMENT is one of {sorted(ALLOWED_ENVIRONMENTS)}. "
-            "Refusing to start."
+            "DEV_AUTO_LOGIN is on but " + "; ".join(problems) + ". Passwordless dev sign-in is "
+            "only for a local uvicorn run. Refusing to start."
         )
     logger.warning(
-        "!!! DEV_AUTO_LOGIN is ACTIVE (ENVIRONMENT=%s): passwordless sign-in is open to "
-        "localhost requests for the DEV_AUTO_LOGIN_USERS allowlist. Never run this in production. !!!",
+        "!!! DEV_AUTO_LOGIN is ACTIVE (ENVIRONMENT=%s): passwordless sign-in is open to the "
+        "local frontend server for the DEV_AUTO_LOGIN_USERS allowlist. Never run this in production. !!!",
         environment,
     )
 
@@ -75,6 +104,12 @@ def is_loopback_peer(ip: Optional[str]) -> bool:
         return False
 
 
+def secret_matches(expected: Optional[str], presented: Optional[str]) -> bool:
+    if not secret_configured(expected) or not presented:
+        return False
+    return hmac.compare_digest(expected.strip().encode("utf-8"), presented.strip().encode("utf-8"))
+
+
 def allowed_emails(raw: Optional[str]) -> list[str]:
     """The allowlist in order (first = default), lowercased, de-duplicated."""
     seen: list[str] = []
@@ -85,11 +120,21 @@ def allowed_emails(raw: Optional[str]) -> list[str]:
     return seen
 
 
-def request_allowed(*, enabled: bool, environment: Optional[str], host_header: Optional[str],
-                    peer_ip: Optional[str]) -> bool:
+def request_allowed(
+    *,
+    enabled: bool,
+    environment: Optional[str],
+    secret: Optional[str],
+    presented_secret: Optional[str],
+    forwarded_host: Optional[str],
+    host_header: Optional[str],
+    peer_ip: Optional[str],
+) -> bool:
     return (
         bool(enabled)
         and environment_allowed(environment)
+        and secret_matches(secret, presented_secret)
+        and not forwarded_host
         and is_local_host(host_header)
         and is_loopback_peer(peer_ip)
     )
