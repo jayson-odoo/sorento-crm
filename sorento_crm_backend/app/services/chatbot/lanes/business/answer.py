@@ -3542,8 +3542,20 @@ def not_found_error_message(
             if entity_type == "attachment_type":
                 # ATTACHMENT-MULTI R1: every document type in scope is one the customer asked
                 # for ("photo" resolved to Product Photos), never resolver expansion, so each
-                # is named rather than "(+1 more)".
-                named_codes = order
+                # is named rather than "(+1 more)", in the order the customer named them
+                # (the resolver's own token order).
+                asked_order: list[str] = []
+                for res in jsc.array(jsc.get(r, "resolutions")):
+                    for m in jsc.array(jsc.get(res, "matches")):
+                        if jsc.get(m, "entity_type") != "attachment_type":
+                            continue
+                        for spelling in (jsc.get(jsc.get(m, "display"), "type_name"), jsc.get(m, "canonical_code")):
+                            if jsc.truthy(spelling) and _type_norm(spelling) not in asked_order:
+                                asked_order.append(_type_norm(spelling))
+                named_codes = sorted(
+                    order,
+                    key=lambda b: asked_order.index(_type_norm(b)) if _type_norm(b) in asked_order else len(asked_order),
+                )
             extra = (
                 f" (+{len(order) - len(named_codes)} more)"
                 if len(order) > len(named_codes)
@@ -3986,8 +3998,10 @@ def not_found_error_message(
                 # keeps the escalate offer.
                 product_keys = {_nf_norm_raw(x) for x in product_raws}
                 unfound_products = [t for t in not_found_raw if _nf_norm_raw(t) in product_keys]
+                # A product row with no uuid is the unplaced token the engine carries on
+                # the gate (cloud browser pass 3 Oct), never a resolved product.
                 product_resolved = any(
-                    jsc.get(c, "entity_type") == "product"
+                    jsc.get(c, "entity_type") == "product" and jsc.truthy(jsc.get(c, "uuid"))
                     for c in jsc.array(jsc.get(g, "compatible_entities"))
                 )
                 if unfound_products and not product_resolved:

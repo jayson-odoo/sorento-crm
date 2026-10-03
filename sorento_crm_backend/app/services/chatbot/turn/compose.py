@@ -504,8 +504,13 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             gaps = _types_without_files(product_codes, env.get("attachment_types") or [], figures)
             if gaps:
                 lines = "\n".join(f"{code} has no {_join_words(missing)}." for code, missing in gaps)
+                # Its own paragraph, and the lane's footer keeps the blank line above it.
                 body, sep, footer = block.rpartition("\n_Data last updated")
-                block = (body + "\n" + lines + sep + footer) if sep else (block + "\n" + lines)
+                block = (
+                    body.rstrip("\n") + "\n\n" + lines + "\n" + sep + footer
+                    if sep
+                    else block.rstrip("\n") + "\n\n" + lines
+                )
         # The window the fetch ran with, stated under the header it belongs to (browser
         # pass 6 item 4). Never on a section that states its own scope - the outstanding
         # report and the refusal both do, and the report's own four-line block already
