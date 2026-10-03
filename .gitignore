@@ -28,6 +28,12 @@ sorento_crm_backend/.next/*
 # Playwright MCP scratch (console logs, page snapshots)
 .playwright-mcp/
 
+# Raw captures carry auth headers, prod-copy pages or queue payloads; the repo
+# is public (scripts/pii_guard.py fails CI on them too).
+*.har
+*.rdb
+.cursor/debug.log
+
 # Claude-managed dev server logs
 .devlogs/
 
