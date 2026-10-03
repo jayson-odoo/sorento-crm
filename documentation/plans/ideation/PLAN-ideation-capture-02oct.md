@@ -369,6 +369,13 @@ the ss `id` validated as a UUID; no ss-supplied URL is relayed for the CRM link.
 C2 (after C1 green): remove the dead draft path (`handle_turn`, media lookback, the composer's
 draft statuses) and the tests that only covered it; the idle sweep stays until old pointers drain.
 
+## 4b. Lane process (owner rule 3 Oct, LEAD PATTERN)
+
+From 3 Oct the lane runs on the lead pattern: the lead (this session) edits plans, docs and merge
+conflicts only; a TESTER subagent writes red tests, a CODER subagent implements, a separate REVIEWER
+subagent reviews. Each subagent run is capped at 60 minutes, with progress every 20. Work finished
+before the rule is not redone. Remaining slice under it: H1 (#1445 `required_fields` wiring).
+
 ## 5. Slices
 
 | # | Slice | Depends on | State |
