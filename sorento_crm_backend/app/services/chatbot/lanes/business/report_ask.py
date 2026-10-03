@@ -16,7 +16,6 @@ parser's reading into the route's params, and asks for the two fields the route 
 """
 from __future__ import annotations
 
-import re
 from datetime import date
 from typing import Any
 
@@ -30,6 +29,9 @@ TOOL = "crm_report_ask"
 
 PERIOD_QUESTION = "Which period? For example this month, September, 2026, or 1 to 15 Sep."
 TOP_N_QUESTION = "How many? For example top 5."
+#: Said above the ranking that ran with the default count after two unreadable replies.
+DEFAULT_TOP_N = 10
+DEFAULT_TOP_N_NOTE = "I couldn't read how many, so here is the top 10."
 CANCELLED = "Sales ranking cancelled."
 GIVE_UP = (
     "I still can't read '{word}'. Ask again with the period and how many, "
@@ -125,10 +127,10 @@ def top_n_from(value: Any) -> rf.Resolved:
     return rf.Resolved("unknown")
 
 
-def _resolve_top_n(_db: Any, word: str, _extras: dict[str, Any]) -> rf.Resolved:
-    """A reply word with one integer 1 to the ceiling ("5", "top 5"); anything else is a miss."""
-    numbers = re.findall(r"\d+", word or "")
-    return top_n_from(int(numbers[0])) if len(numbers) == 1 else rf.Resolved("unknown")
+def _resolve_top_n(_db: Any, _word: str, extras: dict[str, Any]) -> rf.Resolved:
+    """An answering turn's count: the PARSER's own `top_n` for the reply (`settle` hands it in
+    as `reply_top_n`, as it does `reply_dates`); the reply's words are not looked at."""
+    return top_n_from(extras.get("reply_top_n"))
 
 
 PERIOD = rf.FieldSpec(name="period", noun="period", question=PERIOD_QUESTION, resolve=_resolve_period, allow_all=False)
@@ -387,13 +389,24 @@ def settle(
         extras = _dict(slot.get("extras"))
         args = _dict(extras.get("args"))
         reply_dates = {"start": parse_output.get("date_filter_start"), "end": parse_output.get("date_filter_end")}
+        reply_text = jsc.js_string(parse_output.get("required_ask_reply") or "")
+        if (
+            slot.get("asking") == "top_n"
+            and int(slot.get("misses") or 0) + 1 >= rf.MAX_MISSES
+            and rf._norm(reply_text) not in rf.CANCEL_WORDS
+            and top_n_from(parse_output.get("top_n")).status != "ok"
+        ):
+            # The second unreadable count runs the default top 10 and says so (crew ruling);
+            # the period field keeps the helper's own give-up.
+            values = {**_dict(slot.get("values")), "top_n": {"value": DEFAULT_TOP_N, "label": str(DEFAULT_TOP_N)}}
+            return rf.Outcome(values=values, extras={**_dict(slot.get("extras")), "note": DEFAULT_TOP_N_NOTE}), None
         outcome = rf.collect(
             db,
             SALES_RANKING_ASK,
             slot=slot,
             reply=jsc.js_string(parse_output.get("required_ask_reply") or ""),
             given=_given_top_n(args, extras.get("top_n")),
-            extras={"reply_dates": reply_dates},
+            extras={"reply_dates": reply_dates, "reply_top_n": parse_output.get("top_n")},
         )
         return outcome, None
 

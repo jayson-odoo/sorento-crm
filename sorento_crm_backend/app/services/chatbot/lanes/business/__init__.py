@@ -1988,6 +1988,8 @@ def run_fetch(
         if not settled.done:
             return _fixed_reply(settled.reply or "", required_ask=settled.slot)
         semantic_input["report_ask_args"] = report_ask.route_args(settled)
+        if settled.extras.get("note"):
+            semantic_input["report_ask_note"] = settled.extras["note"]
         # The args carry every id the ask settled (an answering turn's came off the slot);
         # nothing the session carried rides beside them.
         entities = []

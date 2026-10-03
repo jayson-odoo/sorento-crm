@@ -2640,6 +2640,9 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
     # The args a ranking that ran was asked with, held for a refine (`Focus.sales_ranking_frame`).
     semantic_input = (ctx or {}).get("semantic_input")
     args = semantic_input.get("report_ask_args") if isinstance(semantic_input, dict) else None
+    note = semantic_input.get("report_ask_note") if isinstance(semantic_input, dict) else None
+    if note and text:
+        text = f"{note}\n\n{text}"
     return {
         "sales_ranking_frame": dict(args) if text and isinstance(args, dict) else None,
         "response": text or _REPORT_ASK_ERROR_TEXT,

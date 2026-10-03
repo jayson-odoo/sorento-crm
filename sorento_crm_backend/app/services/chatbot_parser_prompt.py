@@ -200,6 +200,8 @@ period of the previous ranking is never this ask's period.
   - after that ranking, "top 3 salesman for sorento" -> ranking_refine false, top_n 3,
     date_filter_start null, date_filter_end null
   - "top salesman for sorento" -> ranking_refine false, top_n null
+  - answering "How many? For example top 5." with "5", "top 5" or "five" -> order_status
+    "sales_ranking", top_n 5
 NOT a sales ranking:
   - company totals by month, year or channel with nothing named and no ranking word
     ("sales by month this year", "dealer sales this year") stay "sales_analysis";
