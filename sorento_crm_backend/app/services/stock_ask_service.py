@@ -545,20 +545,25 @@ def _family_names_by_contact(db: Session, contact_ids: set[str]) -> dict[str, st
         return {}
     from app.models.access import RespondContactCustomer
     from app.models.order import Customer
-    from app.services.ledger_family import ledger_family_key, ledger_family_label
+    from app.services.customer_group_service import family_overrides
+    from app.services.ledger_family import customer_groups, ledger_family_key, ledger_family_label
 
     keys: dict[str, set[str]] = {}
     labels: dict[str, str] = {}
-    for contact_id, name in (
+    rows = (
         db.query(RespondContactCustomer.contact_id, Customer.customer_name)
         .join(Customer, Customer.id == RespondContactCustomer.customer_id)
         .filter(RespondContactCustomer.contact_id.in_(contact_ids))
-    ):
-        key = ledger_family_key(name or "")
-        if not key:
-            continue
-        keys.setdefault(contact_id, set()).add(key)
-        labels.setdefault(contact_id, ledger_family_label(name))
+        .all()
+    )
+    # The office's customer groups win over the name rule (CUSTOMER-GROUP).
+    with customer_groups(family_overrides(db)):
+        for contact_id, name in rows:
+            key = ledger_family_key(name or "")
+            if not key:
+                continue
+            keys.setdefault(contact_id, set()).add(key)
+            labels.setdefault(contact_id, ledger_family_label(name))
     return {cid: labels[cid] for cid, found in keys.items() if len(found) == 1}
 
 

@@ -27,6 +27,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useImportJobDrawer } from '@/components/upload-activity';
 import { useCustomers } from '../hooks/useCustomers';
+import { searchCustomerGroupsSelect } from '../../customer-groups/services/customerGroupService';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import type { Customer } from '../types/customer.types';
 import { CustomerRowActions } from '../actions';
@@ -54,6 +55,7 @@ export default function CustomersList() {
     reset: resetSearch,
   } = useDebouncedSearch();
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [groupFilter, setGroupFilter] = useState<{ id: string; name: string } | null>(null);
 
   // Back hands the list its own query string back, and the pager keeps
   // rewriting it, so the list reads it (S3-01). One hook, every list.
@@ -62,6 +64,12 @@ export default function CustomersList() {
     setSorting(state.sorting);
     resetSearch(state.searchQuery);
     setStatusFilter(state.filters.status ?? 'all');
+    // The URL carries the id only; the name is re-read once the filter popover opens.
+    setGroupFilter((prev) =>
+      state.filters.customer_group_id
+        ? { id: state.filters.customer_group_id, name: prev?.name ?? 'Selected group' }
+        : null,
+    );
   });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
@@ -71,12 +79,13 @@ export default function CustomersList() {
     sorting,
     searchQuery,
     status: statusFilter === 'all' ? undefined : statusFilter,
+    customer_group_id: groupFilter?.id,
   });
 
   // Reset selection whenever the result set changes.
   useEffect(() => {
     setRowSelection({});
-  }, [searchQuery, statusFilter, pagination.pageIndex, pagination.pageSize, sorting]);
+  }, [searchQuery, statusFilter, groupFilter, pagination.pageIndex, pagination.pageSize, sorting]);
 
   // Page one when a filter CHANGES, never on mount - the mount run used to stamp
   // page 1 over the page `useListStateFromUrl` had just restored from the URL.
@@ -93,7 +102,10 @@ export default function CustomersList() {
         sorting,
         searchQuery,
       },
-      { status: statusFilter === 'all' ? undefined : statusFilter },
+      {
+        status: statusFilter === 'all' ? undefined : statusFilter,
+        customer_group_id: groupFilter?.id,
+      },
     );
     const qs = search ? `?${search}` : '';
     return `/order-management/customers/${row.id}${qs}`;
@@ -149,6 +161,22 @@ export default function CustomersList() {
         },
         size: 180,
         meta: { headerTitle: 'Sales Agent', skeleton: <Skeleton className="h-4 w-28" /> },
+      },
+      {
+        accessorKey: 'customer_group_name',
+        header: ({ column }) => <DataGridColumnHeader title="Group" column={column} />,
+        // A joined column: not in the backend sort map, so not sortable.
+        enableSorting: false,
+        cell: ({ row }) =>
+          row.original.customer_group_name ? (
+            <span className="block truncate" title={row.original.customer_group_name}>
+              {row.original.customer_group_name}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 200,
+        meta: { headerTitle: 'Group', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
         accessorKey: 'is_active',
@@ -232,8 +260,8 @@ export default function CustomersList() {
             }
             filters={{
               kind: 'custom',
-              active: statusFilter !== 'all',
-              activeCount: statusFilter !== 'all' ? 1 : 0,
+              active: statusFilter !== 'all' || groupFilter !== null,
+              activeCount: (statusFilter !== 'all' ? 1 : 0) + (groupFilter ? 1 : 0),
               content: (
                 <div className="space-y-4">
                   <div>
@@ -253,13 +281,42 @@ export default function CustomersList() {
                       triggerClassName="mt-1"
                     />
                   </div>
-                  {statusFilter !== 'all' && (
+                  <div>
+                    <Label>Group</Label>
+                    <SearchableSelect
+                      aria-label="Group"
+                      value={groupFilter?.id ?? ''}
+                      onChange={(v) => {
+                        if (!v) setGroupFilter(null);
+                        setPagination((p) => ({ ...p, pageIndex: 0 }));
+                      }}
+                      onOptionChange={(opt) =>
+                        setGroupFilter(opt ? { id: opt.value, name: opt.label } : null)
+                      }
+                      fetchOptions={async (query) =>
+                        (await searchCustomerGroupsSelect(query)).map((g) => ({
+                          value: g.id,
+                          label: g.name,
+                          description: `${g.ledger_count} ${g.ledger_count === 1 ? 'ledger' : 'ledgers'}`,
+                        }))
+                      }
+                      selectedOption={
+                        groupFilter ? { value: groupFilter.id, label: groupFilter.name } : undefined
+                      }
+                      placeholder="All groups"
+                      emptyMessage="No groups match."
+                      triggerClassName="mt-1"
+                      clearable
+                    />
+                  </div>
+                  {(statusFilter !== 'all' || groupFilter) && (
                     <div className="flex justify-end">
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={() => {
                           setStatusFilter('all');
+                          setGroupFilter(null);
                           setPagination((p) => ({ ...p, pageIndex: 0 }));
                         }}
                       >
