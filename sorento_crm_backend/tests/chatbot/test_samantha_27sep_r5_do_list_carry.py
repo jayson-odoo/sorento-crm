@@ -33,6 +33,7 @@ from app.services.chatbot.turn.apply import apply
 from app.services.chatbot.turn.state import Focus, Profile, State
 from tests.chatbot._turn_helpers import build_policy, entity, verdict
 from tests.chatbot.conftest import validating_resolve_entity
+from tests.chatbot._turn_helpers import do_window
 from tests.chatbot.test_engine import _parser_output
 from tests.chatbot.test_outstanding_lane import REPORT_HIT, _present_response, _report_route_body
 from tests.chatbot.test_samantha_26sep_r3_brand_carry import CHENG_HUAT_UUID, _Chat
@@ -109,7 +110,8 @@ def _check_stock() -> dict[str, Any]:
 
 
 def _do_list(customer: str, brand: str = "sorento") -> dict[str, Any]:
-    return _order_ask(entities=[_brand(brand), _customer(customer)], document=["DO"], status=None)
+    # Dated: a dateless DO list ask asks which period first (DO-ASK-SIMPLIFY, owner 4 Oct 2026).
+    return _order_ask(entities=[_brand(brand), _customer(customer)], document=["DO"], status=None, **do_window())
 
 
 #: The owner's messages, verbatim and in order, with the parser's reading of each and

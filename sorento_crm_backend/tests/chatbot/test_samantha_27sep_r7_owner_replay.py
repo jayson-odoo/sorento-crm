@@ -62,6 +62,7 @@ from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.services.company_scope_resolver import apply_company_scope
 from tests._mc_lookup_seed import MOCHA_ID, customer, product, seed_mocha, warehouse
 from tests.chatbot.conftest import validating_resolve_entity
+from tests.chatbot._turn_helpers import DO_WINDOW_DATE, do_window
 from tests.chatbot.test_engine import CONTACT_ID, _parser_output
 from tests.chatbot.test_samantha_27sep_r5_do_list_carry import ORDERS_LIST, REPORT, _order_ask, _Replay
 from tests.test_orders_brand_filter import _seed_superadmin
@@ -99,7 +100,8 @@ def _customer(raw: str = "cheng huat sentul") -> dict[str, Any]:
 
 def _do_ask(brand: dict[str, Any] | None) -> dict[str, Any]:
     entities = ([brand] if brand else []) + [_customer()]
-    return _order_ask(entities=entities, document=["DO"], status=None)
+    # Dated: a dateless DO list ask asks which period first (DO-ASK-SIMPLIFY, owner 4 Oct 2026).
+    return _order_ask(entities=entities, document=["DO"], status=None, **do_window())
 
 
 def _help_request(entities: list[dict[str, Any]]) -> dict[str, Any]:
@@ -114,7 +116,7 @@ def _broaden(**extra: Any) -> dict[str, Any]:
     """"all brand" / "clear the brand": an order read with nothing of its own."""
     return _parser_output(
         domain_hint="order", intent_hint="check_order", entities=[], domain_in_message=False,
-        scope_intent="broaden", **extra,
+        scope_intent="broaden", **{**do_window(), **extra},
     )
 
 
@@ -212,6 +214,7 @@ class _OwnerChat(_Replay):
             order = Order(
                 id=str(uuid.uuid4()), order_number=number, customer_id=cust.id, debtor_name=cust.customer_name,
                 is_cancelled=False, company_id=company_id,
+                actual_delivery_date=DO_WINDOW_DATE,
             )
             db.add(order)
             db.flush()
@@ -442,9 +445,11 @@ def test_a_bare_continuation_keeps_the_brand(owner_chat) -> None:
 
 
 def _year(year: int) -> dict[str, Any]:
+    # January of `year`: a whole year is over the 31-day cap and would be refused, not listed
+    # (DO-ASK-SIMPLIFY, owner 4 Oct 2026); the test needs a range with no documents in it.
     return _parser_output(
         domain_hint="order", intent_hint="check_order", entities=[], domain_in_message=False,
-        date_mode="range", date_filter_start=f"{year}-01-01", date_filter_end=f"{year}-12-31",
+        date_mode="range", date_filter_start=f"{year}-01-01", date_filter_end=f"{year}-01-31",
     )
 
 

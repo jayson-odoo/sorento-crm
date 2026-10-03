@@ -108,6 +108,7 @@ from app.services.chatbot.lanes.business.fetch import ORDER_TOOLS as ORDER_TOOLS
 from app.services.chatbot.lanes.business.services import AnswerServices
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests._pg_fixture import unique_code
+from tests.chatbot._turn_helpers import do_window
 from tests.chatbot.test_engine import CONTACT_ID, _parser_output
 from tests.chatbot.test_engine_company_scope import _seed_product
 from tests.chatbot.test_rearch_r5_production_decides import _mcp_double, _seed_contact_and_get
@@ -555,6 +556,8 @@ class TestGroupARememberedOrderFacetsNotUsedOutsideOrderDomain:
             document=["DO"],
             status="delivered",
             order_status=None,
+            # Dated: a dateless DO list ask asks which period first (DO-ASK-SIMPLIFY, owner 4 Oct 2026).
+            **do_window(),
             routing={
                 "suggested_team": "customer_service",
                 "suggested_agent": "order_enquiries",
@@ -614,6 +617,8 @@ class TestGroupARememberedOrderFacetsNotUsedOutsideOrderDomain:
             document=[],
             status=None,
             order_status=None,
+            # Dated: a dateless DO list ask asks which period first (DO-ASK-SIMPLIFY, owner 4 Oct 2026).
+            **do_window(),
             routing={
                 "suggested_team": "customer_service",
                 "suggested_agent": "order_enquiries",
@@ -1476,6 +1481,8 @@ class TestGroupFCustomerPickHeaderNamesEveryLedgerNotACode:
             document=[],
             status=None,
             order_status=None,
+            # Dated: a dateless DO list ask asks which period first (DO-ASK-SIMPLIFY, owner 4 Oct 2026).
+            **do_window(),
         )
 
         def _call(name: str, args: dict[str, Any]) -> str:
