@@ -539,3 +539,30 @@ class TestWithoutTheSupplierKey:
         assert args.get("split") == "category", args
         assert "JINBAICHUAN" not in text
         assert _filter_line(text) == "water tap, by category"
+
+
+# --------------------------------------------------------------------------- #
+# Live parser, 3 Oct 2026: a word carried from recent exchanges
+# --------------------------------------------------------------------------- #
+
+
+class TestLiveParserCarriedWord:
+    """Behaviour card "Ruled behaviour": a category or brand word counts only when the
+    CURRENT MESSAGE TEXT contains it (case-insensitive, whole words). The live parser, on a
+    bare "low stock report" after a "water closet" turn, emitted the carried word with
+    current_message: true even though the text does not contain it."""
+
+    def test_a_carried_category_word_not_in_the_text_is_asked_not_run(self, console) -> None:
+        text, calls = console.say(_ask(_e("water closet", "category")), "low stock report")
+        assert text == QUESTION
+        assert calls == [], "the word is not in the message; no run before the category is settled"
+
+    def test_a_carried_brand_word_not_in_the_text_is_asked_not_run(self, console) -> None:
+        text, calls = console.say(_ask(_e("Sorento", "brand")), "low stock report")
+        assert text == QUESTION
+        assert calls == [], "the brand is not in the message; no run before the category is settled"
+
+    def test_a_word_in_the_text_with_other_case_and_spacing_still_counts(self, console) -> None:
+        _text, calls = console.say(_ask(_e("Water Closet", "category")), "low stock report water  closet")
+        (args,) = calls
+        assert args.get("categories") == ["SRT-WC"], args
