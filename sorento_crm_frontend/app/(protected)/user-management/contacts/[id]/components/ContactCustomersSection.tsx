@@ -183,7 +183,7 @@ export default function ContactCustomersSection({ contactId }: { contactId: stri
                           <Button
                             variant="ghost"
                             size="sm"
-                            disabled={unlink.isPending}
+                            disabled={unlink.isPending || (!!bulkUnlink.countdown && selected.has(row.id))}
                             onClick={() =>
                               unlink.run({ id: row.id, subject: row.customer_name })
                             }

@@ -122,9 +122,16 @@ class ContactService:
         if no_customers_only:
             from app.models.access import RespondContactCustomer
 
-            q = q.filter(
-                ~exists().where(RespondContactCustomer.contact_id == RespondContact.id)
-            )
+            from app.models.base import get_company_scope
+            from app.services.company_scope import build_company_predicate
+
+            link_exists = exists().where(RespondContactCustomer.contact_id == RespondContact.id)
+            # Only links the caller can see count; None (all companies) adds nothing,
+            # an empty scope resolves to a false predicate (fail closed).
+            predicate = build_company_predicate(RespondContactCustomer, get_company_scope(self.db))
+            if predicate is not None:
+                link_exists = link_exists.where(predicate)
+            q = q.filter(~link_exists)
 
         if query:
             like = f"%{query}%"

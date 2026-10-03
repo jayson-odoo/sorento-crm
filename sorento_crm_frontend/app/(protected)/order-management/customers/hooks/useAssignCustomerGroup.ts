@@ -13,13 +13,24 @@ export type AssignCustomerGroupInput = {
   newName?: string;
 };
 
+class GroupCreatedError extends Error {}
+
 /** Put the picked customers into one group, creating the group first when given a new name. */
 export function useAssignCustomerGroup() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ customerIds, group, newName }: AssignCustomerGroupInput) => {
       const target = group ?? (await createCustomerGroup({ name: newName ?? '' }));
-      await addCustomerGroupCustomers(target.id, customerIds);
+      try {
+        await addCustomerGroupCustomers(target.id, customerIds);
+      } catch (error) {
+        // The group exists by now; say so, or the user retries and hits a duplicate name.
+        if (!group) {
+          const message = error instanceof Error ? error.message : 'Failed to set customer group';
+          throw new GroupCreatedError(`Group ${target.name} created; ${message}`);
+        }
+        throw error;
+      }
       return { name: target.name, count: customerIds.length };
     },
     onSuccess: ({ name, count }) => {
@@ -28,6 +39,9 @@ export function useAssignCustomerGroup() {
       toast.success(`${count} customer${count === 1 ? '' : 's'} set to group ${name}`);
     },
     onError: (error: Error) => {
+      if (error instanceof GroupCreatedError) {
+        void queryClient.invalidateQueries({ queryKey: ['customer-groups'] });
+      }
       toast.error(error.message || 'Failed to set customer group');
     },
   });

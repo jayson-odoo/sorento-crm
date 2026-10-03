@@ -423,6 +423,18 @@ export default function ContactsList() {
 
   const clearSelection = () => setRowSelection({});
 
+  // Reset selection whenever the result set changes.
+  useEffect(() => {
+    setRowSelection({});
+  }, [
+    searchQuery,
+    chatbotMemoryLevel,
+    customersNone,
+    pagination.pageIndex,
+    pagination.pageSize,
+    sorting,
+  ]);
+
   const runOutboundBulk = (enabled: boolean) =>
     setOutboundBulk.mutate(
       { enabled, contactIds: selectedContactIds },

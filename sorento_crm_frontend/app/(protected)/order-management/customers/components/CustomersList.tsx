@@ -244,6 +244,11 @@ export default function CustomersList() {
     columnResizeMode: 'onChange',
   });
 
+  // Remove only touches the selected customers that sit in a group, so that is its N.
+  const groupedCount = table
+    .getSelectedRowModel()
+    .rows.filter((r) => r.original.customer_group_id).length;
+
   // The one offer this listing makes, in both places it belongs: the
   // toolbar, and the empty state's next step (S5-06).
   const listPrimaryAction = (
@@ -379,9 +384,9 @@ export default function CustomersList() {
                     },
                     {
                       key: 'remove-from-group',
-                      label: `Remove from group (${selectedRowIds(table).length})`,
+                      label: `Remove from group (${groupedCount})`,
                       icon: FolderMinus,
-                      disabled: removeFromGroup.isStarting,
+                      disabled: removeFromGroup.isStarting || groupedCount === 0,
                       onClick: () =>
                         removeFromGroup.run(
                           table
