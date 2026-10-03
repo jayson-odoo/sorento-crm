@@ -130,20 +130,20 @@ def test_S12_not_found_and_nothing_near(console):
 
 def test_S14_eta_ask_one_code_one_line(console):
     c = console(SRTW2000=Stock(eta=ETA))
-    assert c.say("ETA SRTW2000?", _eta_ask("SRTW2000")) == f"SRTW2000: ETA 19/10/2026\n\n{R}"
+    assert c.say("ETA SRTW2000?", _eta_ask("SRTW2000")) == f"SRTW2000: {TICK} ETA 19/10/2026\n\n{R}"
 
 
 def test_S15_eta_ask_several_codes_one_line_each(console):
     c = console(SRTW2000=Stock(eta=ETA))
     assert c.say("ETA SRTW2000 and MWT5727SS-CR", _eta_ask("SRTW2000", "MWT5727SS-CR")) == (
-        f"SRTW2000: ETA 19/10/2026\n\nMWT5727SS-CR: ETA not confirmed yet\n\n{R}"
+        f"SRTW2000: {TICK} ETA 19/10/2026\n\nMWT5727SS-CR: No ETA\n\n{R}"
     )
 
 
 def test_S16_eta_ask_with_a_code_not_found(console):
     c = console(SRTW2000=Stock(eta=ETA))
     assert c.say("ETA SRTW2000 and FOO99", _eta_ask("SRTW2000", "FOO99")) == (
-        f"SRTW2000: ETA 19/10/2026\n\nCouldn't find: FOO99.\n\n{R}"
+        f"SRTW2000: {TICK} ETA 19/10/2026\n\nCouldn't find: FOO99.\n\n{R}"
     )
 
 
@@ -457,7 +457,7 @@ def test_S45_eta_ask_for_a_code_with_no_shipment_and_a_code_not_found(console):
     with no ETA, so the reply is the catalogue's S15/S16 shape, not "Related products"."""
     c = console()
     assert c.say("ETA SRTW2000 and FOO99", _eta_ask("SRTW2000", "FOO99")) == (
-        f"SRTW2000: ETA not confirmed yet\n\nCouldn't find: FOO99.\n\n{R}"
+        f"SRTW2000: No ETA\n\nCouldn't find: FOO99.\n\n{R}"
     )
 
 
@@ -488,4 +488,108 @@ def test_S46b_misread_through_asks_too(console):
 @pytest.mark.parametrize("typed", ["SRTW2000 x 10 when arrive?", "ETA SRTW2000 x 10", "SRTW2000 x 10 bila sampai"])
 def test_S46c_a_quantity_ask_with_an_eta_word_stays_an_eta_ask(console, typed):
     c = console(SRTW2000=Stock(eta=ETA))
-    assert c.say(typed, _misread_as_eta(product("SRTW2000", 10))) == f"SRTW2000: ETA 19/10/2026\n\n{R}"
+    assert c.say(typed, _misread_as_eta(product("SRTW2000", 10))) == f"SRTW2000: {TICK} ETA 19/10/2026\n\n{R}"
+
+
+# ================================================================== owner hand test, 3 Oct 2026
+# The owner's own messages (copy :3109 at 186f4f9ff). Availability access only.
+
+DYM5764 = "Couldn't find SRT5764. Did you mean:\n1. SRT57-CR\n2. SRT5713\n3. SRT5732"
+
+
+@pytest.mark.parametrize(
+    "parsed",
+    [
+        stock(product("srt5764 xx", 10)),
+        stock(product("srt5764"), product("xx", 10)),
+        stock(product("srt5764"), product("10")),
+    ],
+    ids=["one_token", "xx_token", "ten_token"],
+)
+def test_S47_unknown_code_never_dumps_the_catalogue(console, parsed, monkeypatch):
+    """Fine-tune 1: 'srt5764 xx 10' listed what looked like every product. An unknown
+    code goes to the did-you-mean; a word or a bare number is never a product.
+
+    The live resolver's describe / semantic tiers matched the stray "xx" / "10" to a
+    page of catalogue rows (2001, 2002, 2120H, 1/2" ULTRA CIRCULAR, 32MM TAIL PIECE
+    COUPLING, ...); this sandbox has no embedding provider, so those matches are
+    added to the resolver's answer here, as the copy returned them."""
+    from app.services.chatbot import turn_runtime
+
+    c = console()
+    junk = ["2001", "2002", "2120H", "1/2 ULTRA CIRCULAR", "32MM TAIL PIECE COUPLING"]
+    real = turn_runtime.resolve_kinds
+
+    def broad(*args, **kwargs):
+        out = real(*args, **kwargs)
+        extra = [
+            {"raw": code, "canonical_code": code, "uuid": c.uuid_of[code], "hint": "product"}
+            for code in junk
+        ]
+        out.resolved_candidates.setdefault("product", []).extend(extra)
+        out.compatible_entities.extend(
+            {"uuid": e["uuid"], "entity_type": "product", "code": e["raw"]} for e in extra
+        )
+        return out
+
+    monkeypatch.setattr(turn_runtime, "resolve_kinds", broad)
+    out = c.say("srt5764 xx 10", parsed)
+    assert out == DYM5764
+    assert "How many units" not in out
+
+
+@pytest.mark.parametrize(
+    "picked",
+    [
+        reply(entities=[product("2")]),
+        reply(entities=[product("2")], demand_qty=2),
+        reply(reference_positions=[2], demand_qty=2, open_question_answer=answer("pick", picked=[2])),
+        reply(demand_qty=2),
+    ],
+    ids=["as_a_product", "as_a_product_and_qty", "as_a_pick_and_qty", "as_a_qty"],
+)
+def test_S48_a_number_over_a_did_you_mean_is_that_option(console, picked):
+    """Fine-tune 2: 'srt5764 10' -> did-you-mean -> '2' must answer SRT5713 x 10, the
+    same position reading every other picker uses (whatever the parser made of the 2)."""
+    c = console(SRT5713=Stock(on_hand=50))
+    assert c.say("srt5764 10", stock(product("srt5764", 10))) == DYM5764
+    assert c.say("2", picked) == f"SRT5713 x 10: {TICK} {R}"
+
+
+def test_S48b_a_number_past_the_list_is_still_a_quantity(console):
+    c = console()
+    c.say("srtwc286", stock(product("srtwc286")))
+    out = c.say("88", reply(demand_qty=88))
+    assert out.startswith("SRTWC286 x 88: which one?"), out
+
+
+def test_S49_eta_with_a_date_is_a_tick_and_none_is_no_eta(console):
+    """Fine-tune 3: an ETA reads '✅ ETA dd/mm/yyyy'; no ETA reads 'No ETA'."""
+    c = console(SRTW2000=Stock(eta=ETA))
+    assert c.say("ETA SRTW2000 and MWT5727SS-CR", _eta_ask("SRTW2000", "MWT5727SS-CR")) == (
+        f"SRTW2000: {TICK} ETA 19/10/2026\n\nMWT5727SS-CR: No ETA\n\n{R}"
+    )
+
+
+def test_S50_a_bare_eta_after_an_exact_code_asks_only_that_code(console):
+    """Fine-tune 4: 'srtw2000 20' then 'eta' listed SRTW2000-SS-CR, -A, -NL as well."""
+    c = console(SRTW2000=Stock(x=200, eta=ETA))
+    c.say("srtw2000 20", stock(product("srtw2000", 20)))
+    out = c.say("eta", reply(entities=[], domain_hint="incoming", intent_hint="check_incoming"))
+    assert out == f"SRTW2000: {TICK} ETA 19/10/2026\n\n{R}"
+    (last,) = [a for name, a in c.tool_calls if name == "crm_incoming_stock_list"][-1:]
+    assert [c.codes[p] for p in last["product_ids"]] == ["SRTW2000"]
+
+
+def test_S50b_an_exact_code_eta_ask_and_its_bare_follow_up_stay_exact(console):
+    c = console()
+    first = c.say("eta SRTWC286-SH", _eta_ask("SRTWC286-SH"))
+    assert first == f"SRTWC286-SH: No ETA\n\n{R}"
+    assert c.say("eta", reply(entities=[], domain_hint="incoming", intent_hint="check_incoming")) == first
+
+
+def test_S50c_an_exact_code_stock_ask_carries_only_that_code(console):
+    c = console(SRTW2000=Stock(x=200, eta=ETA))
+    c.say("srtw2000 20", stock(product("srtw2000", 20)))
+    carried = [p.get("canonical_code") for p in (c.state or {}).get("focus", {}).get("products", [])]
+    assert carried == ["SRTW2000"]

@@ -98,8 +98,9 @@ def test_dealer_eta_is_one_line_per_code():
         ]
     )
     assert [i["title"] for i in out["items"]] == [
-        "SRTW2000: ETA 19/10/2026, 02/11/2026",
-        "MWT5727SS-CR: ETA not confirmed yet",
+        # Owner hand test, 3 Oct 2026: an ETA is a tick, none is "No ETA".
+        "SRTW2000: \u2705 ETA 19/10/2026, 02/11/2026",
+        "MWT5727SS-CR: No ETA",
     ]
     for item in out["items"]:
         assert "\n" not in item["title"]

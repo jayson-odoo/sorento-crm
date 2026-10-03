@@ -36,6 +36,19 @@ CODES = [
     # A second family ("check stock srtwc6022" placed both, answer_bridge hand pass 11).
     "SRTWC6022-SH-UF",
     "SRTWC6022-SH-UF-NEW",
+    # Owner hand test, 3 Oct 2026: the did-you-mean for "srt5764", the SRTW2000 family
+    # the bare "eta" follow-up expanded to, and catalogue rows a stray "2" matches.
+    "SRT57-CR",
+    "SRT5713",
+    "SRT5732",
+    "SRTW2000-SS-CR",
+    "SRTW2000-A",
+    "SRTW2000-NL",
+    "2001",
+    "2002",
+    "2120H",
+    "1/2 ULTRA CIRCULAR",
+    "32MM TAIL PIECE COUPLING",
 ]
 
 

@@ -1814,7 +1814,7 @@ def test_dealer_view_is_one_line_per_product_and_the_refer_line():
         })
         assert out["result_type"] == "incoming_dealer"
         assert out["intro"] == ""
-        assert [i["title"] for i in out["items"]] == ["SRTWC286-SH-NEW: ETA 2026-09-08, 2026-09-20"]
+        assert [i["title"] for i in out["items"]] == ["SRTWC286-SH-NEW: \u2705 ETA 2026-09-08, 2026-09-20"]
         assert out["items"][0]["fields"] == []
         assert out["closing"] == "Please refer to your salesman."
         assert out["has_result"] is True

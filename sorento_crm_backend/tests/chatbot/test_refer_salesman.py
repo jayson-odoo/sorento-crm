@@ -88,7 +88,8 @@ def test_ac_rs03_backend_and_presenter_carry_the_same_words():
 
 def _eta_item(code: str, etas: list[str]) -> dict:
     # AVAIL-MODE-REPLIES rule 3: the presenter's one-line form, "<code>: ETA <dates>".
-    when = f"ETA {', '.join(etas)}" if etas else "ETA not confirmed yet"
+    # AVAIL-MODE-REPLIES (owner hand test, 3 Oct 2026): "<code>: ✅ ETA <dates>" / "<code>: No ETA".
+    when = f"\u2705 ETA {', '.join(etas)}" if etas else "No ETA"
     return {"title": f"{code}: {when}" if code else when, "fields": [], "flags": {"dealer_view": True}}
 
 
@@ -135,11 +136,11 @@ def _build(
 def test_a_turn_that_did_not_refer_builds_nothing():
     """CUSTOMER-ASKS-REFER-ONLY: the reply text is not read for the sentence any more."""
     env = _envelope("incoming", figures=[_eta_item("SRT1", ["2026-09-08"])], entities=["SRT1"])
-    assert _build(f"SRT1: ETA 2026-09-08\n\n{REFER_TO_SALESMAN}", [env], _plan("SRT1"), referred=False) == []
+    assert _build(f"SRT1: \u2705 ETA 2026-09-08\n\n{REFER_TO_SALESMAN}", [env], _plan("SRT1"), referred=False) == []
 
 
 def test_ac_rs10_a_dealer_eta_reply_is_one_incoming_eta_entry_per_product_line():
-    reply = f"SRT1: ETA 2026-09-08\n\nSRT2: ETA 2026-09-08, 2026-09-20\n\n{REFER_TO_SALESMAN}"
+    reply = f"SRT1: \u2705 ETA 2026-09-08\n\nSRT2: \u2705 ETA 2026-09-08, 2026-09-20\n\n{REFER_TO_SALESMAN}"
     env = _envelope(
         "incoming",
         figures=[_eta_item("SRT1", ["2026-09-08"]), _eta_item("SRT2", ["2026-09-08", "2026-09-20"])],
@@ -152,7 +153,7 @@ def test_ac_rs10_a_dealer_eta_reply_is_one_incoming_eta_entry_per_product_line()
             "product_id": "u1",
             "requested_qty": None,
             "branch": "incoming_eta",
-            "answer_summary": "ETA 2026-09-08. Please refer to your salesman.",
+            "answer_summary": "\u2705 ETA 2026-09-08. Please refer to your salesman.",
             "refers_to_salesman": True,
         },
         {
@@ -160,7 +161,7 @@ def test_ac_rs10_a_dealer_eta_reply_is_one_incoming_eta_entry_per_product_line()
             "product_id": None,
             "requested_qty": None,
             "branch": "incoming_eta",
-            "answer_summary": "ETA 2026-09-08, 2026-09-20. Please refer to your salesman.",
+            "answer_summary": "\u2705 ETA 2026-09-08, 2026-09-20. Please refer to your salesman.",
             "refers_to_salesman": True,
         },
     ]
@@ -168,8 +169,8 @@ def test_ac_rs10_a_dealer_eta_reply_is_one_incoming_eta_entry_per_product_line()
 
 def test_ac_rs10_an_eta_line_with_no_date_says_so():
     env = _envelope("incoming", figures=[_eta_item("SRT1", [])], entities=["SRT1"])
-    out = _build(f"SRT1: ETA not confirmed yet\n\n{REFER_TO_SALESMAN}", [env], _plan("SRT1"))
-    assert [e["answer_summary"] for e in out] == ["ETA not confirmed yet. Please refer to your salesman."]
+    out = _build(f"SRT1: No ETA\n\n{REFER_TO_SALESMAN}", [env], _plan("SRT1"))
+    assert [e["answer_summary"] for e in out] == ["No ETA. Please refer to your salesman."]
 
 
 def test_ac_rs11_an_incoming_miss_is_one_referred_entry_per_missed_code():
@@ -237,7 +238,7 @@ def test_a_yes_to_a_did_you_mean_writes_no_row_for_the_typed_code():
 
 def test_an_eta_reply_that_also_could_not_place_a_token_records_both():
     """Review round 1, finding 2: "incoming SRT1 XYZ9" is two asks."""
-    reply = f"SRT1: ETA 2026-09-08\n\nI could not find XYZ9.\n\n{REFER_TO_SALESMAN}"
+    reply = f"SRT1: \u2705 ETA 2026-09-08\n\nI could not find XYZ9.\n\n{REFER_TO_SALESMAN}"
     env = _envelope("incoming", figures=[_eta_item("SRT1", ["2026-09-08"])], unresolved=["XYZ9"], entities=["SRT1"])
     out = _build(reply, [env], _plan("SRT1"))
     assert [(e["product_code"], e["branch"]) for e in out] == [("SRT1", "incoming_eta"), ("XYZ9", "referred")]
@@ -317,7 +318,7 @@ def live(session_factory, monkeypatch, stub_access):
 def test_ac_rs04_ac_rs10_a_dealer_incoming_eta_turn_writes_an_incoming_eta_row(live, session_factory):
     c = live(dealer=True, salesperson=True)
     reply = c.say(f"incoming {CODE}", INCOMING)
-    assert reply == f"{CODE}: ETA {dealer_date(TOLD_ETA)}\n\n{REFER_TO_SALESMAN}"
+    assert reply == f"{CODE}: \u2705 ETA {dealer_date(TOLD_ETA)}\n\n{REFER_TO_SALESMAN}"
     assert SALESPERSON not in reply
 
     rows = _rows(session_factory)
@@ -325,7 +326,7 @@ def test_ac_rs04_ac_rs10_a_dealer_incoming_eta_turn_writes_an_incoming_eta_row(l
         (CODE, "incoming_eta", None, "open", "live")
     ]
     row = rows[0]
-    assert row.answer_summary == f"ETA {dealer_date(TOLD_ETA)}. {REFER_TO_SALESMAN}"
+    assert row.answer_summary == f"\u2705 ETA {dealer_date(TOLD_ETA)}. {REFER_TO_SALESMAN}"
     assert row.product_id is not None, "resolved by code within the ask's company"
     assert row.customer_id is not None and row.contact_id is not None
     assert row.company_id == SORENTO
@@ -338,13 +339,13 @@ def test_ac_rs11_a_dealer_incoming_ask_with_no_shipment_writes_an_incoming_eta_r
     longer a miss, so its row is the ETA reply's own `incoming_eta`."""
     c = live(dealer=True, salesperson=True, shipments=False)
     reply = c.say(f"incoming {CODE}", INCOMING)
-    assert reply.startswith(f"{CODE}: ETA not confirmed yet"), reply
+    assert reply.startswith(f"{CODE}: No ETA"), reply
     assert reply.endswith(REFER_TO_SALESMAN), reply
     assert "escalate" not in reply.lower() and "purchasing" not in reply.lower()
 
     rows = _rows(session_factory)
     assert [(r.product_code, r.branch, r.quantity) for r in rows] == [(CODE, "incoming_eta", None)]
-    assert rows[0].answer_summary == f"ETA not confirmed yet. {REFER_TO_SALESMAN}"
+    assert rows[0].answer_summary == f"No ETA. {REFER_TO_SALESMAN}"
     assert rows[0].product_id is not None
 
 
@@ -397,6 +398,8 @@ def test_avail_mode_replies_the_older_two_line_eta_title_still_reads():
     the two-line form an older MCP build printed reads to the same code and dates."""
     from app.services.chatbot.refer_asks import _dealer_line
 
+    assert _dealer_line("SRTW2000: \u2705 ETA 19/10/2026, 02/11/2026") == ("SRTW2000", "\u2705 ETA 19/10/2026, 02/11/2026")
+    assert _dealer_line("SRTW2000: No ETA") == ("SRTW2000", "No ETA")
     assert _dealer_line("SRTW2000: ETA 19/10/2026, 02/11/2026") == ("SRTW2000", "ETA 19/10/2026, 02/11/2026")
     assert _dealer_line("SRTW2000\nETA: 19/10/2026") == ("SRTW2000", "ETA: 19/10/2026")
     assert _dealer_line("ETA not confirmed yet") == ("", "ETA not confirmed yet")

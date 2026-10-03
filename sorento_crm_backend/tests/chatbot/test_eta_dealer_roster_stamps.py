@@ -53,7 +53,7 @@ def dealer_item(code: str, etas: list[str]) -> dict[str, Any]:
     """One line of the MCP presenter's dealer envelope, byte for byte
     (`sorento_crm_mcp/presenters.py::_incoming_dealer`, pinned by
     `sorento_crm_mcp/tests/test_presenters.py::test_dealer_view_is_one_line_per_product_and_the_salesperson`)."""
-    return {"title": f"{code}: ETA {', '.join(etas)}", "fields": [], "flags": {"dealer_view": True}}
+    return {"title": f"{code}: \u2705 ETA {', '.join(etas)}", "fields": [], "flags": {"dealer_view": True}}
 
 
 def dealer_envelope(etas: dict[str, list[str]]) -> dict[str, Any]:
