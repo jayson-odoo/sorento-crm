@@ -3737,9 +3737,10 @@ def not_found_error_message(
             if nf:
                 parts.append(f"Couldn't find: {', '.join(nf)}.")
             # A WINDOWED MISS NAMES ITS DATES THE WAY THE HEADER DOES, AND OFFERS THE WIDEN.
-            # The invite names 'all dates' because that exact phrase is what the parser's
-            # deterministic widen arm detects; the frozen escalate contract is preserved by
-            # landing the invite BEFORE the would-clause.
+            # A DO list needs a range of at most 31 days for every contact (owner, 4 Oct 2026,
+            # `do_ask.range_reply`), so the invite asks for another month or dates rather
+            # than 'all dates'; the frozen escalate contract is preserved by landing the
+            # invite BEFORE the would-clause.
             miss_window = (
                 f" from {_fmt_date(date_start)} to {_fmt_date(date_end)}"
                 if (is_order_scope and jsc.truthy(date_start) and jsc.truthy(date_end))
@@ -3754,15 +3755,13 @@ def not_found_error_message(
             # trailing sentence - `_esc_offer`'s own phrasing covers every OTHER site.
             windowed = is_order_scope and (jsc.truthy(date_start) or jsc.truthy(date_end))
             if windowed:
+                widen = "Reply with another month or dates (e.g. August, or 15 Sep to 10 Oct)."
                 esc_ask = (
-                    refer.after("Reply 'all dates' to search without the date filter.", sep=" ")
+                    refer.after(widen, sep=" ")
                     if barred
-                    else "Reply 'all dates' to search without the date filter."
+                    else widen
                     if is_staff
-                    else (
-                        f"Reply 'all dates' to search without the date filter, or would you like me "
-                        f"to escalate to {team} team?"
-                    )
+                    else f"{widen[:-1]}, or would you like me to escalate to {team} team?"
                 )
             else:
                 esc_ask = _esc_offer()
