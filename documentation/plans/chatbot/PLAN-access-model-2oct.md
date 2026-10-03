@@ -165,8 +165,7 @@ path) and stop being read by the chat path; dropping them is a later lane.
 Idempotent SQL for crew at `crew/state/migrations/ACCESS-MODEL.sql` (CREATE ... IF NOT EXISTS, INSERT
 ... ON CONFLICT DO NOTHING; the `reveal_key` UPDATE on two rows is held for the owner as destructive).
 Before the hand test: apply on a private clone of the prod copy, run mapping SQL part A/B + the loss
-check, record counts in the PR. Hand-test script `laneboard/scripts/<PR>.md`: owner opens Sorento -
-Jereen Access tab, unticks Last purchase cost, asks the bot "last cost <product>" -> refused, prompt
+check, record counts in the PR. Hand-test script `laneboard/scripts/<PR>.md`: owner opens CONTACT O Access tab, unticks Last purchase cost, asks the bot "last cost <product>" -> refused, prompt
 preview lacks LAST PURCHASE COST; creates role "Project sales", ticks Orders, assigns a test contact.
 
 ## Review

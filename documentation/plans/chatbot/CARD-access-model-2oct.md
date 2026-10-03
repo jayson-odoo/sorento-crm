@@ -6,7 +6,7 @@ mock v3 tabs "Chatbot roles" + "Role: Purchasing" in `documentation/mockups/ACCE
 seed rows only. Q2 not answered yet: build on rec (a), crew confirms. Q3 (a) "sees all customers" is a
 flag on the role. Q4 (a) agents kept for escalation / routing / SLA / n8n only, not the chat gate.
 Q5 (a) stock visibility mode stays as is, shown inside the Stock domain. Mock v2 escalation linkage
-seen, no change. Q2 (2 Oct, later): yes, Kay and Darren -> Sales office, Mr Loo gains Ideas. N1 (2 Oct):
+seen, no change. Q2 (2 Oct, later): yes, CONTACT K and CONTACT E -> Sales office, CONTACT M gains Ideas. N1 (2 Oct):
 neither nested nor top-level domains: a separate REPORTS section holds Low stock report, Outstanding SO
 report and every other report-type grant (Sales report), parser domain list unchanged (mock v4).
 
@@ -141,13 +141,13 @@ Today's effective sets (query in `access-model-2oct-mapping.sql`, part A):
 | Today | Contacts | New |
 |---|---|---|
 | 5 standard agents (`general_enquiries`, `incoming_stock_enquiries`, `lead_time_enquiries`, `marketing_form`, `order_enquiries`) + `sellable,placed` | 81 | Sales office |
-| same + `conversation_analysis` | 1 (Li Hua Lam) | Sales office |
-| only `general_enquiries` + `sellable,placed` | 2 (Kay, Darren) | Sales office (Q2) |
-| 5 agents + `sellable,placed,outstanding` | 1 (Eling Koh) | Sales office + override `+outstanding` |
-| 5 agents, no reveal keys | 2 (~ Zilin, Alysa Sorento) | Sales office + overrides `-stock.sellable -stock.on_order -purchase_order` (exact) |
-| 5 agents + `sellable,cost,placed,supplier` (+/- conversation_analysis) | 5 (Vixx Loo, Sorento - Jereen, CK@Sorento, Jayden Loo, CK Lee) | Purchasing; Sorento - Jereen also `+incoming` all 20 overridden fields (today's `agent_field_access` contact rows) |
-| all 7 keys | 2 (Mr Loo, Jayson) | Management (all incoming fields already in the role; Mr Loo gains `ideate`, Q2) |
-| reveal keys but NO agent (refused every turn today) | 3 (Rayza, Kau Ada!!!, Jianming) | no role (still refused) |
+| same + `conversation_analysis` | 1 (CONTACT L) | Sales office |
+| only `general_enquiries` + `sellable,placed` | 2 (CONTACT K, CONTACT E) | Sales office (Q2) |
+| 5 agents + `sellable,placed,outstanding` | 1 (CONTACT F) | Sales office + override `+outstanding` |
+| 5 agents, no reveal keys | 2 (CONTACT Q, CONTACT A) | Sales office + overrides `-stock.sellable -stock.on_order -purchase_order` (exact) |
+| 5 agents + `sellable,cost,placed,supplier` (+/- conversation_analysis) | 5 (CONTACT P, CONTACT O, CONTACT D, CONTACT G, CONTACT C) | Purchasing; CONTACT O also `+incoming` all 20 overridden fields (today's `agent_field_access` contact rows) |
+| all 7 keys | 2 (CONTACT M, CONTACT H) | Management (all incoming fields already in the role; CONTACT M gains `ideate`, Q2) |
+| reveal keys but NO agent (refused every turn today) | 3 (CONTACT N, CONTACT J, CONTACT I) | no role (still refused) |
 | nothing | 3 | no role |
 
 Totals from part B of the SQL on the copy: Sales office 87, Purchasing 5, Management 2, none 6 = 100.
@@ -184,8 +184,8 @@ Q1. Role list and ticks as in section 2 (Dealer, Sales office, Purchasing, Wareh
 (a) yes as listed, (b) edit. **Recommend (a)**: covers all 100 contacts with 4 contacts needing overrides; Warehouse and
 Dealer have no holders yet but are the dealer-safety presets.
 
-Q2. Kay and Darren hold only `general_enquiries`; Mr Loo lacks `ideation`. (a) Sales office for Kay/Darren,
-Management incl. ideate for Mr Loo (small gain), (b) exact-equivalent overrides. **Recommend (a)**: which
+Q2. CONTACT K and CONTACT E hold only `general_enquiries`; CONTACT M lacks `ideation`. (a) Sales office for CONTACT K/CONTACT E,
+Management incl. ideate for CONTACT M (small gain), (b) exact-equivalent overrides. **Recommend (a)**: which
 asks `general_enquiries` alone allowed depended on the parser's agent guess (no agent->domain map,
 `contracts.py:172-188`), so "exact" is not computable.
 

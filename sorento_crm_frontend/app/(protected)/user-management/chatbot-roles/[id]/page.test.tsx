@@ -34,7 +34,7 @@ vi.mock('@/hooks/useChatbotAccess', () => ({
     isLoading: false,
     isError: false,
   }),
-  useChatbotRoleContacts: () => ({ data: [{ id: 'c1', name: 'Sorento - Jereen' }], isLoading: false, isError: false }),
+  useChatbotRoleContacts: () => ({ data: [{ id: 'c1', name: 'CONTACT O' }], isLoading: false, isError: false }),
   useSetRoleGrants: () => ({ mutate, isPending: false }),
   useUpdateChatbotRole: () => ({ mutate: vi.fn(), isPending: false }),
   useDeleteChatbotRole: () => ({ mutate: vi.fn(), isPending: false }),
@@ -73,7 +73,7 @@ describe('Chatbot role page (v8)', () => {
 
   it('AC-AM-4 lists the contacts with this role and has a Delete button', () => {
     renderPage();
-    expect(screen.getByText('Sorento - Jereen')).toBeTruthy();
+    expect(screen.getByText('CONTACT O')).toBeTruthy();
     expect(screen.getByRole('button', { name: /^Delete/ })).toBeTruthy();
   });
 

@@ -164,7 +164,7 @@ class TestRoleContacts:
     def test_lists_holders_sorted_by_name(self, client, db):
         role = _create(client)["id"]
         other = make_role(db, rid("other"))
-        for n in ("Zed Contact", "Amy Contact", "Mid Contact"):
+        for n in ("Zed Contact", "CONTACT B Contact", "Mid Contact"):
             pk, _ = make_contact(db, name=n)
             give_role(db, pk, role)
         stray, _ = make_contact(db, name="Stray Holder")
@@ -172,7 +172,7 @@ class TestRoleContacts:
         resp = client.get(f"{BASE}/roles/{role}/contacts")
         assert resp.status_code == 200, resp.text
         body = resp.json()
-        assert [c["name"] for c in body] == ["Amy Contact", "Mid Contact", "Zed Contact"]
+        assert [c["name"] for c in body] == ["CONTACT B Contact", "Mid Contact", "Zed Contact"]
         assert all(set(c) >= {"id", "name"} for c in body)
 
     def test_empty_role_is_an_empty_list(self, client, db):

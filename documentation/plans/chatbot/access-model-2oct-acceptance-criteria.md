@@ -101,8 +101,8 @@ Mock: `documentation/mockups/ACCESS-MODEL/index.html` (v3). IDs AC-AM-n.
 
 - AC-AM-19 The migration creates the 5 roles with the card section 2 ticks and assigns every contact per
   the mapping SQL: on the 25 Sep prod copy Sales office 87, Purchasing 5, Management 2, none 6, with
-  overrides for ~ Zilin, Alysa Sorento (-sellable -on order -purchase orders), Eling Koh (+outstanding),
-  Sorento - Jereen (+20 incoming fields).
+  overrides for CONTACT Q, CONTACT A (-sellable -on order -purchase orders), CONTACT F (+outstanding),
+  CONTACT O (+20 incoming fields).
 - AC-AM-20 Loss check: for every contact, every reveal key and agent-reachable domain it had before is
   still granted after (test on a seeded chain + a read-only script run on the dev copy, zero lost rows).
 - AC-AM-21 Migration applied and checked on a dev copy before the hand test; idempotent SQL handed to crew.

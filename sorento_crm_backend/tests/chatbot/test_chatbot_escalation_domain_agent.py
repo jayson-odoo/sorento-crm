@@ -44,7 +44,7 @@ def _routed(policy, domain, parser_agent):
 def _ctx(out):
     return {
         "parse": {"output": out},
-        "contact": {"phone": "+60123456789"},
+        "contact": {"phone": "+60100000001"},
         "text": {"message": {"messageId": "42", "message": {"text": "hello"}}},
     }
 

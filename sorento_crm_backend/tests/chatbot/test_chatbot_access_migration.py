@@ -304,7 +304,7 @@ class TestMapLegacyContacts:
 
         db, wid = _seeded(session_factory)
         agents = _agents(db)
-        pk = _legacy_contact(db, wid, agents, agents=("general_enquiries",), keys=(K_SELLABLE, K_PLACED), name="Kay")
+        pk = _legacy_contact(db, wid, agents, agents=("general_enquiries",), keys=(K_SELLABLE, K_PLACED), name="CONTACT K")
         map_legacy_contacts(db)
         db.commit()
         assert _role_codes(db, pk) == ["sales_office"]
@@ -315,7 +315,7 @@ class TestMapLegacyContacts:
 
         db, wid = _seeded(session_factory)
         agents = _agents(db)
-        pk = _legacy_contact(db, wid, agents, agents=FIVE_AGENTS, keys=(), name="Zilin")
+        pk = _legacy_contact(db, wid, agents, agents=FIVE_AGENTS, keys=(), name="CONTACT Q")
         map_legacy_contacts(db)
         db.commit()
         assert _role_codes(db, pk) == ["sales_office"]
@@ -332,7 +332,7 @@ class TestMapLegacyContacts:
 
         db, wid = _seeded(session_factory)
         agents = _agents(db)
-        a = _legacy_contact(db, wid, agents, agents=FIVE_AGENTS, keys=(), name="Alysa Sorento")
+        a = _legacy_contact(db, wid, agents, agents=FIVE_AGENTS, keys=(), name="CONTACT A")
         b = _legacy_contact(db, wid, agents, agents=FIVE_AGENTS, keys=(), name=rid("someone-else"))
         map_legacy_contacts(db)
         db.commit()
@@ -347,7 +347,7 @@ class TestMapLegacyContacts:
         db, wid = _seeded(session_factory)
         agents = _agents(db)
         pk = _legacy_contact(
-            db, wid, agents, agents=FIVE_AGENTS, keys=(K_SELLABLE, K_PLACED, K_OUTSTANDING), name="Eling Koh"
+            db, wid, agents, agents=FIVE_AGENTS, keys=(K_SELLABLE, K_PLACED, K_OUTSTANDING), name="CONTACT F"
         )
         map_legacy_contacts(db)
         db.commit()
@@ -366,7 +366,7 @@ class TestMapLegacyContacts:
         agents = _agents(db)
         pk = _legacy_contact(
             db, wid, agents, agents=FIVE_AGENTS + ("conversation_analysis",),
-            keys=(K_SELLABLE, K_COST, K_PLACED, K_SUPPLIER), name="Vixx Loo",
+            keys=(K_SELLABLE, K_COST, K_PLACED, K_SUPPLIER), name="CONTACT P",
         )
         map_legacy_contacts(db)
         db.commit()
@@ -385,7 +385,7 @@ class TestMapLegacyContacts:
         assert len(extra) == 20
         pk = _legacy_contact(
             db, wid, agents, agents=FIVE_AGENTS,
-            keys=(K_SELLABLE, K_COST, K_PLACED, K_SUPPLIER), incoming_overrides=extra, name="Sorento - Jereen",
+            keys=(K_SELLABLE, K_COST, K_PLACED, K_SUPPLIER), incoming_overrides=extra, name="CONTACT O",
         )
         map_legacy_contacts(db)
         db.commit()
@@ -399,7 +399,7 @@ class TestMapLegacyContacts:
 
         db, wid = _seeded(session_factory)
         agents = _agents(db)
-        pk = _legacy_contact(db, wid, agents, agents=ALL_AGENTS, keys=ALL_SEVEN, name="Mr Loo")
+        pk = _legacy_contact(db, wid, agents, agents=ALL_AGENTS, keys=ALL_SEVEN, name="CONTACT M")
         map_legacy_contacts(db)
         db.commit()
         assert _role_codes(db, pk) == ["management"]
@@ -414,7 +414,7 @@ class TestMapLegacyContacts:
 
         db, wid = _seeded(session_factory)
         agents = _agents(db)
-        pk = _legacy_contact(db, wid, agents, agents=(), keys=(K_SELLABLE, K_PLACED), name="Rayza")
+        pk = _legacy_contact(db, wid, agents, agents=(), keys=(K_SELLABLE, K_PLACED), name="CONTACT N")
         map_legacy_contacts(db)
         db.commit()
         assert _role_codes(db, pk) == []
@@ -439,7 +439,7 @@ class TestMapLegacyContacts:
 
         db, wid = _seeded(session_factory)
         agents = _agents(db)
-        _legacy_contact(db, wid, agents, agents=FIVE_AGENTS, keys=(), name="Zilin")
+        _legacy_contact(db, wid, agents, agents=FIVE_AGENTS, keys=(), name="CONTACT Q")
         _legacy_contact(db, wid, agents, agents=FIVE_AGENTS, keys=(K_SELLABLE, K_PLACED, K_OUTSTANDING))
         map_legacy_contacts(db)
         db.commit()
@@ -481,8 +481,8 @@ class TestAccessLossReport:
         agents = _agents(db)
         contacts = {
             "plain": _legacy_contact(db, wid, agents, agents=FIVE_AGENTS, keys=(K_SELLABLE, K_PLACED)),
-            "zilin": _legacy_contact(db, wid, agents, agents=FIVE_AGENTS, keys=()),
-            "eling": _legacy_contact(db, wid, agents, agents=FIVE_AGENTS, keys=(K_SELLABLE, K_PLACED, K_OUTSTANDING)),
+            "CONTACT Q": _legacy_contact(db, wid, agents, agents=FIVE_AGENTS, keys=()),
+            "CONTACT F": _legacy_contact(db, wid, agents, agents=FIVE_AGENTS, keys=(K_SELLABLE, K_PLACED, K_OUTSTANDING)),
             "purchasing": _legacy_contact(
                 db, wid, agents, agents=FIVE_AGENTS, keys=(K_SELLABLE, K_COST, K_PLACED, K_SUPPLIER),
                 incoming_overrides=[f for f in INCOMING_FIELDS if f not in DEFAULT_ALLOWED],
@@ -516,7 +516,7 @@ class TestAccessLossReport:
         assert rows, "losing the role must be reported"
         reported_keys = {v for row in rows for v in row.values() if isinstance(v, str)}
         assert {K_SELLABLE, K_PLACED} <= reported_keys
-        assert not [r for r in report if contacts["zilin"] in set(map(str, r.values()))]
+        assert not [r for r in report if contacts["CONTACT Q"] in set(map(str, r.values()))]
 
     def test_a_contact_that_was_refused_before_is_not_reported(self, session_factory):
         """Reveal keys but no agent: refused every turn today, no role after, nothing lost."""
