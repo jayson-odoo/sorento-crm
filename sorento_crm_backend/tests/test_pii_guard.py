@@ -208,3 +208,46 @@ def test_more_plate_labels_are_read():
         "Truck No. " + plate,
     ):
         assert _kinds(mod.scan_text(text)) == ["plate"], text
+
+
+def test_zero_run_only_counts_straight_after_the_prefix():
+    # AC-11: a 0000 run in the middle of the subscriber number is not fake,
+    # and the classic prefix with a different ending is not fake.
+    mod = _load_module()
+    assert mod.is_fake_phone("+60 17-000 0501")
+    assert mod.is_fake_phone("+60123456789")
+    assert not mod.is_fake_phone("6017" + "12" + "0000" + "3")
+    rng = random.Random(9)
+    ending = "".join(rng.choice("13579") for _ in range(4))
+    assert not mod.is_fake_phone("012-3456 " + ending)
+    assert not mod.is_fake_phone("+60123456" + ending)
+
+
+def test_phone_keys_and_yaml_values_are_read():
+    # AC-12: more key spellings and YAML-style values, value is not mobile-shaped.
+    mod = _load_module()
+    rng = random.Random(10)
+    sub = _random_subscriber(rng)
+    value = "+604" + sub + "1"
+    for key in ("phoneNumber", "phone_no", "whatsapp", "msisdn"):
+        text = '{"' + key + '": "' + value + '"}'
+        assert _kinds(mod.scan_text(text)) == ["phone"], text
+    for text in (
+        "phone: '" + value + "'",
+        'phone: "' + value + '"',
+        "phone: " + value,
+    ):
+        assert _kinds(mod.scan_text(text)) == ["phone"], text
+    assert mod.scan_text("phone: +60" + "9000000" + "08") == []
+
+
+def test_utf16_text_with_bom_is_scanned():
+    # AC-13
+    mod = _load_module()
+    rng = random.Random(11)
+    sub = _random_subscriber(rng)
+    text = f"call 017{sub} now"
+    for enc in ("utf-16-le", "utf-16-be"):
+        bom = b"\xff\xfe" if enc.endswith("le") else b"\xfe\xff"
+        data = bom + text.encode(enc)
+        assert _kinds(mod.scan_bytes("notes.txt", data)) == ["phone"], enc
