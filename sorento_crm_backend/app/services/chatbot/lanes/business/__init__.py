@@ -29,6 +29,7 @@ from app.services.chatbot import copy as reply_copy
 from app.services.chatbot import jsc
 from app.services.chatbot import do_ask
 from app.services.chatbot.lanes.business import fetch as fetch_mod
+from app.services.chatbot.lanes.business import low_stock_ask
 from app.services.chatbot.lanes.business import resolve_gate
 from app.services.chatbot.lanes.business import services as business_services
 from app.services.chatbot.turn import policy_rows
@@ -214,7 +215,7 @@ def _low_stock_not_enabled() -> dict[str, Any]:
     }
 
 
-def _low_stock_unavailable() -> dict[str, Any]:
+def _low_stock_unavailable(header: str | None = None) -> dict[str, Any]:
     """Console round 3, defect A: the low stock CALL failed - say so in this tool's own
     words, never the lane's generic "I ran into a problem understanding that".
 
@@ -226,8 +227,12 @@ def _low_stock_unavailable() -> dict[str, Any]:
     inventory" line, which says the wrong thing about a report that failed to build.
     `escalate` still rides on the fragment for any consumer that offers the team picker.
     """
+    # LOWSTOCK-FILTER-ASK (owner hand test, 3 Oct 2026): every low stock reply names the
+    # filters it was asked with, the failure line included.
+    text = f"{header}\n{LOW_STOCK_UNAVAILABLE_MESSAGE}" if header else LOW_STOCK_UNAVAILABLE_MESSAGE
     structured: dict[str, Any] = {
-        "response": LOW_STOCK_UNAVAILABLE_MESSAGE,
+        "response": text,
+        "low_stock_report": True,
         "response_intro": None,
         "answers": [],
         "attachments": [],
@@ -248,7 +253,7 @@ def _low_stock_unavailable() -> dict[str, Any]:
         "delegate_payload": {"fetch": item},
         "fetch": item,
         "escalate": True,
-        "response": LOW_STOCK_UNAVAILABLE_MESSAGE,
+        "response": text,
     }
 
 
@@ -570,7 +575,9 @@ def _top_selling_ask_category(codes: list[str]) -> str:
     return f"Which category do you mean? Reply with one code: {', '.join(codes)}"
 
 
-def _fixed_reply(text: str, *, top_selling_asked: str | None = None) -> dict[str, Any]:
+def _fixed_reply(
+    text: str, *, top_selling_asked: str | None = None, required_ask: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """One fixed line and nothing else, before any fetch: the refusal and the top
     selling questions. `has_result: True` and no `outstanding_ask` keep it OFF the miss
     lane (no escalate offer) and arm nothing; the carried `focus.status` is what makes
@@ -592,6 +599,8 @@ def _fixed_reply(text: str, *, top_selling_asked: str | None = None) -> dict[str
         # The top selling question this line asks, if any (`_top_selling_question`'s
         # axis); `engine.py` records it on the slot for the next turn to read.
         "top_selling_asked": top_selling_asked,
+        # LOWSTOCK-FILTER-ASK: the `required_fields` slot this line leaves open, if any.
+        "required_ask": required_ask,
     }
     item = fetch_mod.fetch_result(structured, tool=None, tier_probe=None)
     return {
@@ -601,6 +610,15 @@ def _fixed_reply(text: str, *, top_selling_asked: str | None = None) -> dict[str
         "delegate_payload": {"fetch": item},
         "fetch": item,
     }
+
+
+def _so_list_reply(text: str) -> dict[str, Any]:
+    """`_fixed_reply`, marked as the SO list's answer (`fetch.so_list`): the engine closes an
+    open outstanding offer on it, so the period the customer types next answers the list
+    rather than narrowing that report (crew-tester re-run on PR #1435, 3 Oct 2026)."""
+    fragment = _fixed_reply(text)
+    fragment["fetch"]["so_list"] = True
+    return fragment
 
 
 def _sales_report_not_enabled() -> dict[str, Any]:
@@ -1313,7 +1331,9 @@ def run_fetch(
     `services.resolve_warehouse_token`. `None` is a no-op there too (a direct `run_fetch`
     call, this module's own tests), same as no location word at all.
     """
-    _ = dry_run
+    # One exception to the paragraph above: `crm_low_stock_report` WRITES (a run, a file,
+    # a push to WhatsApp), so a dry run is told to the tool, which then never pushes
+    # (LOWSTOCK-FILTER-ASK tester finding: a console turn sent the real workbook).
     raw_gate = payload.get("gate")
     gate: dict[str, Any] = raw_gate if isinstance(raw_gate, dict) else {}
     raw_tier_gate = payload.get("tier_gate")
@@ -1340,6 +1360,85 @@ def run_fetch(
     # sales figures for your own account" to the very person whose own accounts exist.
     # Links win: the customer sales report over them. Staff without links keep the analysis.
     has_own_accounts = bool(customer_scope.get("ids"))
+    # SO-NUMBER-ASK (PLAN-so-number-ask.md): SO numbers the resolver could not place
+    # (`turn_runtime` hands them over as `so_numbers`) are answered from `sales_orders`
+    # here, before any tool pick: the orders list reads the DO book and answered an SO ask
+    # with the links' DOs. Gated by the SO reveal key (owner ruling Q5), refused outside
+    # the links (Q2), one card per SO (Q4).
+    so_numbers = [w for w in jsc.array(parse_output.get("so_numbers")) if isinstance(w, str) and w]
+    if so_numbers and parse_output.get("domain_hint") == "order":
+        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
+        granted_raw = access_ctx.get("attributes")
+        granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
+        if _OUTSTANDING_SO_GRANT not in granted:
+            if trace is not None:
+                trace.add("so_status", {"refused": "not_granted", "needs": _OUTSTANDING_SO_GRANT})
+            return _fixed_reply(fetch_mod.SO_NOT_ENABLED_MESSAGE)
+        if db is not None:
+            from app.services.chatbot import so_status
+
+            linked = list(customer_scope.get("linked") or []) if customer_scope.get("enforced") else None
+            looked = so_status.lookup(db, so_numbers, linked=linked)
+            if trace is not None:
+                trace.add(
+                    "so_status",
+                    {
+                        "asked": so_numbers,
+                        "cards": len(looked.cards),
+                        "refused": looked.refused,
+                        "missing": looked.missing,
+                    },
+                )
+            fragment = _fixed_reply(
+                so_status.reply_text(looked, refusal=str(customer_scope.get("refusal") or ""))
+            )
+            # The reply names its own missing numbers, so the resolver's own `not_found`
+            # exit (nothing placed the SO words) is not a second miss to compose
+            # (`answer_bridge._miss_triggers`).
+            fragment["fetch"]["so_status"] = True
+            return fragment
+    # SO-NUMBER-ASK, the SO list ("all my sales orders"): the customers in scope (the
+    # links on a scoped or "my" turn, a resolved customer otherwise), behind the same SO
+    # reveal key (Q4), over a period of at most 31 days asked like the DO list's (Q1).
+    customer_ids = [
+        str(e.get("uuid"))
+        for e in jsc.array(entities)
+        if isinstance(e, dict) and e.get("entity_type") == "customer" and fetch_mod.is_uuid(e.get("uuid"))
+    ]
+    if parse_output.get("so_list") is True and not customer_ids:
+        # The "Sales order list" pick off an outstanding summary: its customers ride on the
+        # answered offer's carry (`turn_runtime.outstanding_carry`), never re-typed. A
+        # scoped contact's carry is held to its links all the same.
+        customer_ids = [
+            u for u in jsc.array(parse_output.get("outstanding_carried_customer_ids")) if fetch_mod.is_uuid(u)
+        ]
+        if scoped_to_links:
+            own = {str(i) for i in customer_scope["ids"]}
+            customer_ids = [u for u in customer_ids if str(u) in own] or list(customer_scope["ids"])
+    if parse_output.get("so_list") is True and parse_output.get("domain_hint") == "order" and customer_ids and db is not None:
+        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
+        granted_raw = access_ctx.get("attributes")
+        granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
+        if _OUTSTANDING_SO_GRANT not in granted:
+            if trace is not None:
+                trace.add("so_list", {"refused": "not_granted", "needs": _OUTSTANDING_SO_GRANT})
+            return _fixed_reply(fetch_mod.SO_NOT_ENABLED_MESSAGE)
+        from app.services.chatbot import so_status
+        from app.services.ledger_family import family_words
+
+        names_by_id = so_status.customer_names(db, customer_ids)
+        start = do_ask._parse(parse_output.get("date_filter_start"))
+        end = do_ask._parse(parse_output.get("date_filter_end"))
+        asked = so_status.period_reply(start, end, family_words(list(names_by_id.values())))
+        if asked is not None:
+            if trace is not None:
+                trace.add("so_list", {"period_asked": True, "customers": len(names_by_id)})
+            return _so_list_reply(asked)
+        end = end or do_ask.today_myt()
+        start, end = (start, end) if start <= end else (end, start)
+        if trace is not None:
+            trace.add("so_list", {"from": start.isoformat(), "to": end.isoformat(), "customers": len(names_by_id)})
+        return _so_list_reply(so_status.list_text(db, names_by_id, start, end))
     # #1262 fix lane round 3, B1-r2: an order turn's brand ids are resolved ONCE, by
     # `turn_runtime.order_brand_filter` in the tool runner (typed words first, else the
     # brand the conversation carries), and the header names the same ids. Taken as is,
@@ -1522,6 +1621,43 @@ def run_fetch(
         )
         if _LOW_STOCK_GRANT not in granted:
             return _low_stock_not_enabled()
+
+        # LOWSTOCK-FILTER-ASK (owner ruling, 2 Oct 2026): nothing runs until the product
+        # category is settled - taken from the message, else asked (`low_stock_ask`, the
+        # shared `required_fields` helper). A product-code ask names its own scope and
+        # is not asked. The answering turn carries the first message's grouping,
+        # supplier word and location on the slot.
+        answering = isinstance(parse_output.get("required_ask"), dict)
+        named_product = any(
+            isinstance(e, dict)
+            and e.get("current_message") is True
+            and jsc.js_string(e.get("hint") or "") == "product"
+            for e in jsc.array(parse_output.get("entities"))
+        )
+        if answering or not named_product:
+            settled = low_stock_ask.settle(
+                db, parse_output, include_supplier=low_stock_ask.SUPPLIER_GRANT in granted
+            )
+            if trace is not None:
+                trace.add("required_ask", {"ask": "low_stock_report", "done": settled.done,
+                                           "values": settled.values})
+            if not settled.done:
+                if settled.slot is not None and not answering:
+                    settled.slot.setdefault("extras", {})["warehouse_entities"] = [
+                        e for e in jsc.array(parse_output.get("entities"))
+                        if isinstance(e, dict) and e.get("current_message") is True
+                        and jsc.js_string(e.get("hint") or "") == "warehouse"
+                    ]
+                return _fixed_reply(settled.reply or "", required_ask=settled.slot)
+            semantic_input["low_stock_filters"] = low_stock_ask.route_filters(settled)
+            if answering:
+                # The first message's location word rides the slot (a date window
+                # already rides the focus); re-read here as if typed this turn.
+                parse_output = {
+                    **parse_output,
+                    "entities": [*jsc.array(parse_output.get("entities")),
+                                 *jsc.array(settled.extras.get("warehouse_entities"))],
+                }
 
         # ── B (console round 3): a report ask is a FRESH SCOPE ────────────────
         # `entity_op = replace_combine` merges the PREVIOUS turn's session entities into
@@ -1881,6 +2017,8 @@ def run_fetch(
         return _error_fragment("the described set qualifies nothing", outcome="not_found")
     try:
         args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id)
+        if dry_run and tool_name == _LOW_STOCK_TOOL:
+            args["dry_run"] = True
     except fetch_mod.ScopeViolation as violation:
         # D4: the defence behind the engine's gate. No tool is called.
         if trace is not None:
@@ -1958,7 +2096,8 @@ def run_fetch(
             # `httpx.ReadTimeout` here and the customer read "I ran into a problem
             # understanding that" - about a report the worker was still building and would
             # push. This tool says its own line instead.
-            return _low_stock_unavailable()
+            filters = semantic_input.get("low_stock_filters")
+            return _low_stock_unavailable(filters.get("header") if isinstance(filters, dict) else None)
         return _error_fragment(
             f"MCP tool {tool_name} failed: {exc}", outcome=_fetch_failure_outcome(tool_name, exc)
         )
@@ -1983,6 +2122,18 @@ def run_fetch(
         return _error_fragment(envelope["error"])
 
     structured = fetch_mod.output_structurer(envelope, trigger)
+    # LOWSTOCK-FILTER-ASK (owner hand test, 3 Oct 2026): EVERY low stock reply - ready,
+    # pending, busy, empty, error - opens with the filters it was built with, "Low stock
+    # report (water closet, supplier X, by supplier)", so a narrowed file never reads as
+    # the whole book. The ready line's own "Low stock report - as of" takes the header in
+    # place; any other line gets it above.
+    filters = semantic_input.get("low_stock_filters") if tool_name == _LOW_STOCK_TOOL else None
+    if isinstance(filters, dict) and filters.get("header") and isinstance(structured, dict):
+        response = jsc.js_string(structured.get("response") or "")
+        if response.startswith("Low stock report - as of"):
+            structured["response"] = filters["header"] + response[len("Low stock report"):]
+        else:
+            structured["response"] = f"{filters['header']}\n{response}" if response else filters["header"]
     if trace is not None:
         restricted = envelope.get("restricted_fields") if isinstance(envelope, dict) else None
         if isinstance(restricted, dict) and restricted:

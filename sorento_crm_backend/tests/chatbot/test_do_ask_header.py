@@ -114,7 +114,9 @@ def test_an_empty_do_list_names_the_group_once_too() -> None:
 
 def test_the_not_your_account_line_names_groups_once() -> None:
     """The customer-scope refusal ("Sorry, that isn't under your account. I can only check
-    on ...") names the contact's linked groups once each, an ungrouped ledger by its name."""
+    on ...") names the contact's linked companies once each, by group name only. Since
+    SO-NUMBER-ASK (#1435) this line groups by `ledger_family.group_names` (the name rule),
+    so an ungrouped ledger loses its account marker here, unlike the DO header."""
     from app.services import contact_customer_scope as scope_mod
 
     scope = scope_mod.ContactCustomerScope(
@@ -124,5 +126,5 @@ def test_the_not_your_account_line_names_groups_once() -> None:
     with customer_groups(_GROUPS):
         line = scope_mod.refusal_line(scope)
     assert line == (
-        "Sorry, that isn't under your account. I can only check on HANLIM TRADING SDN BHD and ZZT OTHER SDN BHD [A/C I]."
+        "Sorry, that isn't under your account. I can only check on HANLIM TRADING SDN BHD and ZZT OTHER SDN BHD."
     )

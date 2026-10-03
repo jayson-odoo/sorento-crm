@@ -536,6 +536,11 @@ CATALOG: tuple[ToolSpec, ...] = (
             "this tool does no suffix matching. `product_codes` - exact product codes. `date_from` / "
             "`date_to` (YYYY-MM-DD) narrow which sales orders the plan counts as demand. Omit any of "
             "them to plan everything.\n\n"
+            "WORKBOOK FILTERS (the plan still covers the whole scope above; these narrow the file): "
+            "`categories` - exact category codes; `suppliers` - exact supplier names, one per value; "
+            "`split` - none | supplier | category | supplier_category, one Low/All sheet pair per "
+            "group. Settle them with the user BEFORE calling. `dry_run` (a test turn): the file "
+            "is built but never sent to the contact.\n\n"
             "REQUIRED: pass BOTH `contact_id` (Respond.io contact id) and `space_id` - the report is "
             "per-contact, and the call is refused without them.\n\n"
             "COMPANY SCOPE: the plan is built for the contact's own company, resolved from the "
@@ -546,6 +551,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "warehouse_codes", "product_codes", "date_from", "date_to",
             "contact_id", "space_id",
+            "categories", "suppliers", "split", "dry_run",
         ),
         # GET, and therefore `read_only` stays at its default False - "every GET tool is
         # read-only by definition and does NOT set this" (see `ToolSpec.read_only`). The
