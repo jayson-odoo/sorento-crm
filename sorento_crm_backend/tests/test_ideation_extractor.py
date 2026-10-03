@@ -564,8 +564,8 @@ def test_extractor_prompt_cleans_every_value_and_never_keeps_typed_punctuation()
     assert "the manufactuirng?" in lower and "'manufacturing'" in lower
     assert "question mark" in lower
     assert "title case" in lower
-    # W1: problem is emitted from the first message, and a raw captured value is re-cleaned.
-    assert "first message" in lower and "always" in lower
+    # W1: a stated idea gets the need behind it as its problem; a raw captured value is re-cleaned.
+    assert "the need behind it" in lower and "did not state" in lower
     assert "re-emit" in lower
     # W3: only a plain yes submits.
     for word in ("yes", "ok", "ya", "boleh", "好", "可以"):
