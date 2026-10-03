@@ -991,6 +991,20 @@ def _unassign_customer_sales_agent(db: Session, payload: dict):
     )
 
 
+def _delete_customer_group(db: Session, payload: dict):
+    from app.services.customer_group_service import CustomerGroupService
+
+    return CustomerGroupService(db).delete_group(_entity_id(payload))
+
+
+def _remove_customer_from_group(db: Session, payload: dict):
+    from app.services.customer_group_service import CustomerGroupService
+
+    return CustomerGroupService(db).remove_customer(
+        _entity_id(payload), payload.get("customer_group_id")
+    )
+
+
 def _remove_spec_visibility_policy(db: Session, payload: dict):
     from app.services.error_handler import handle_not_found, handle_validation_error
     from app.services.field_access import resolve_contact_id
@@ -1296,6 +1310,30 @@ register(
         window=WINDOW_REVERSIBLE,
         permission="master_data.sales_agents.edit",
         label="Unassign customer",
+    )
+)
+
+register(
+    FormAction(
+        key="customer_group.delete",
+        entity_types=("customer_group",),
+        execute=_delete_customer_group,
+        # Hard delete: the ledgers keep existing with no group (FK ON DELETE SET NULL).
+        window=WINDOW_DESTRUCTIVE,
+        permission="order_management.customers.delete",
+        label="Delete customer group",
+    )
+)
+
+register(
+    FormAction(
+        key="customer.remove_from_group",
+        entity_types=("customer",),
+        execute=_remove_customer_from_group,
+        # Reversible: the ledger can be added back from the group page.
+        window=WINDOW_REVERSIBLE,
+        permission="order_management.customers.edit",
+        label="Remove from group",
     )
 )
 
