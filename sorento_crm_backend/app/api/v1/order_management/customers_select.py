@@ -58,7 +58,7 @@ async def get_customers_select(
     """
     try:
         with widen_if_requested(db, request, current_user, company_scope):
-            return _customers_select(db, query, limit, offset, tag=grants_requested(request, company_scope))
+            return _customers_select(db, query, limit, offset, tag=grants_requested(request, current_user, company_scope))
     except Exception as e:
         raise handle_internal_error(str(e))
 

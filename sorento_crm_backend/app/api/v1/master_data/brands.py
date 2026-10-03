@@ -118,7 +118,7 @@ async def get_brands(
                 brand_ids=parse_uuid_list(brand_ids, param_name="brand_ids"),
                 product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
             )
-            if grants_requested(request, company_scope):
+            if grants_requested(request, current_user, company_scope):
                 tag_company(result["data"], company_name_map(db))
         return result
     except Exception as e:

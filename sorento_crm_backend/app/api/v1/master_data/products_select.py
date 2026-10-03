@@ -66,7 +66,7 @@ async def get_products_select(
                 q = q.filter(Product.category_id == category_id)
 
             products = q.order_by(Product.product_code).offset(offset).limit(limit).all()
-            names = company_name_map(db) if grants_requested(request, company_scope) else None
+            names = company_name_map(db) if grants_requested(request, current_user, company_scope) else None
 
             # Category, brand, list price and the discontinued flag are what a
             # product dropdown actually shows. `is_discontinued` in particular was

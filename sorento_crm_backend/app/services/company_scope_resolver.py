@@ -377,17 +377,21 @@ def grants_scope(db: Session, user_id: str):
         yield db
 
 
-def grants_requested(request: Request, flag: Optional[str]) -> bool:
+def grants_requested(request: Request, current_user: dict, flag: Optional[str]) -> bool:
     """True for a staff session that sent ``?company_scope=grants``.
 
-    An X-API-Key caller ignores the flag and keeps the scope it was resolved with.
+    An integration / X-API-Key caller ignores the flag and keeps the scope it was resolved
+    with. ``current_user`` is the EFFECTIVE user (the impersonated one during view-as), so
+    the widening follows the grants of whoever the request acts as.
     """
-    return flag == "grants" and not request.headers.get("X-API-Key")
+    if flag != "grants" or request.headers.get("X-API-Key"):
+        return False
+    return current_user.get("auth_method") not in {"api_key", "integration_api_key"}
 
 
 def widen_if_requested(db: Session, request: Request, current_user: dict, flag: Optional[str]):
     """``grants_scope`` when ``grants_requested``, else a no-op context."""
-    if grants_requested(request, flag):
+    if grants_requested(request, current_user, flag):
         return grants_scope(db, current_user["id"])
     return nullcontext(db)
 

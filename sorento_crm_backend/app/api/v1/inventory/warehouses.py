@@ -73,7 +73,7 @@ async def get_warehouses(
                 sort_field=sort,
                 sort_dir=dir,
             )
-            if grants_requested(request, company_scope):
+            if grants_requested(request, current_user, company_scope):
                 tag_company(result["data"], company_name_map(db))
         return result
     except Exception as e:
