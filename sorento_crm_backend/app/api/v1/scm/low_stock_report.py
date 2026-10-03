@@ -578,6 +578,7 @@ async def low_stock_report(
     categories: Optional[list[str]] = Query(None),
     suppliers: Optional[list[str]] = Query(None),
     split: str = Query("none"),
+    dry_run: bool = Query(False),
     db: Session = Depends(get_db),
     current_user: dict = Depends(_RUN),
 ):
@@ -660,5 +661,12 @@ async def low_stock_report(
     )
     if ready is not None:
         return ready
+
+    if dry_run:
+        # A test turn (the Chatbot Console, `is_test`): the run and the file are real and
+        # land in My Downloads, but delivery is NEVER handed to the worker, so nothing
+        # reaches the contact's WhatsApp (LOWSTOCK-FILTER-ASK tester finding).
+        return {"status": "pending", "run_id": prepared.run_id,
+                "download_id": prepared.download_id, "dry_run": True}
 
     return await asyncio.to_thread(_claim_delivery, db, prepared)

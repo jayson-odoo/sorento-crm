@@ -1317,7 +1317,9 @@ def run_fetch(
     `services.resolve_warehouse_token`. `None` is a no-op there too (a direct `run_fetch`
     call, this module's own tests), same as no location word at all.
     """
-    _ = dry_run
+    # One exception to the paragraph above: `crm_low_stock_report` WRITES (a run, a file,
+    # a push to WhatsApp), so a dry run is told to the tool, which then never pushes
+    # (LOWSTOCK-FILTER-ASK tester finding: a console turn sent the real workbook).
     raw_gate = payload.get("gate")
     gate: dict[str, Any] = raw_gate if isinstance(raw_gate, dict) else {}
     raw_tier_gate = payload.get("tier_gate")
@@ -1912,6 +1914,8 @@ def run_fetch(
         return _error_fragment("the described set qualifies nothing", outcome="not_found")
     try:
         args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id)
+        if dry_run and tool_name == _LOW_STOCK_TOOL:
+            args["dry_run"] = True
     except fetch_mod.ScopeViolation as violation:
         # D4: the defence behind the engine's gate. No tool is called.
         if trace is not None:
