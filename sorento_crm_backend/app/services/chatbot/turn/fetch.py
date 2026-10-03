@@ -222,15 +222,18 @@ def _climb(
         trace.add("crossdomain", event)
 
 
-BLOCK_START_RE = re.compile(r"^(?:\d+\. )?\*(?:Company|Product Code):\*")
+BLOCK_START_RE = re.compile(r"^(?:\d+\. )?\*(?:Company|Product Code|Order Number):\*")
 
 
 def renumber(groups: list[list[str]]) -> list[list[str]]:
-    """Number the block paragraphs `1. `, `2. ` ... across all `groups` when there is more
-    than one; a lone block, and every non-block paragraph, is left as it is."""
+    """Number the block paragraphs across all `groups` when there is more than one, on
+    from the first block's own number (a counted set's continuation page keeps its offset,
+    else 1); a lone block, and every non-block paragraph, is left as it is."""
+    first = next((p for g in groups for p in g if BLOCK_START_RE.match(p)), None)
     if sum(1 for g in groups for p in g if BLOCK_START_RE.match(p)) < 2:
         return groups
-    n = 0
+    start = re.match(r"^(\d+)\. ", first)
+    n = int(start.group(1)) - 1 if start else 0
     out: list[list[str]] = []
     for g in groups:
         done: list[str] = []
