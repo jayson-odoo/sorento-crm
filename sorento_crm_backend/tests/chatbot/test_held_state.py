@@ -448,3 +448,24 @@ def test_an_intent_outside_the_routing_table_is_not_a_new_question():
 def test_a_reset_keeps_the_conversations_intent():
     state, _plan = apply(_state(Focus(intent="check_stock")), verdict(topic_reset=True), build_policy())
     assert state.focus.intent == "check_stock"
+
+
+@pytest.mark.parametrize("kind", PICK_ONLY)
+def test_a_surviving_pick_only_question_never_becomes_the_reply_to_a_new_intent(kind):
+    """Crew ruling on (a), 4 Oct: a roster or offer that survives a new intent may stay
+    pickable, but it never speaks unless the reply IS a pick. The new question is what the
+    turn plans: its own domain is fetched, and the kept question is not the turn's ask."""
+    kept = pending_mod.ask(kind, _options(), asked_at_turn=4, payload={"domain": "order", "domains": ["order"]})
+    state = _state(Focus(intent="check_order", domains=["order"]), pending=kept)
+    v = verdict(
+        intent_hint="check_stock",
+        domain_hint="inventory",
+        domain_in_message=True,
+        entities=[entity("SRT5674")],
+    )
+    state, why = held.consume(state, v)
+    assert why == "new_intent" and state.pending is kept
+    _out, plan = apply(state, v, build_policy())
+    assert plan.ask is not kept and getattr(plan.ask, "asked_at_turn", None) != 4
+    assert [spec.domain for spec in plan.fetch] == ["inventory"]
+    assert plan.trace.task_question is None
