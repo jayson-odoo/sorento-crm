@@ -117,6 +117,27 @@ def test_list_search_matches_source_or_target(client):
     assert body["data"][0]["source_text"] == "座厕"
 
 
+def test_list_filters_by_target_language(client):
+    """CHAT-LANGUAGE cloud pass (3 Oct): the page mixes the supplier zh->en rows with the
+    chatbot en->ms and en->zh rows, so it filters by the language a row translates into."""
+    c, db, _actor = client
+    _row(db, source_text="座厕", target_text="Toilet bowl")
+    _row(db, source_text="Product Code", source_lang="en", target_lang="ms", target_text="Kod Produk")
+    _row(db, source_text="Product Code", source_lang="en", target_lang="zh", target_text="产品代码")
+    db.commit()
+
+    for lang, expected in (("ms", "Kod Produk"), ("zh", "产品代码"), ("en", "Toilet bowl")):
+        resp = c.get(BASE, params={"target_lang": lang})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["pagination"]["total"] == 1, lang
+        assert body["data"][0]["target_text"] == expected
+        assert body["data"][0]["target_lang"] == lang
+
+    assert c.get(BASE).json()["pagination"]["total"] == 3
+    assert c.get(BASE, params={"target_lang": "fr"}).status_code == 422
+
+
 def test_list_sorts_by_source_text(client):
     c, db, _actor = client
     _row(db, source_text="纸箱")

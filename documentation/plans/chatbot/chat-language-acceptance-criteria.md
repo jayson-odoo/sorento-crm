@@ -598,3 +598,19 @@ Finding 2 ("ya" after the Malay offer) is the parser model's verdict (#1323, no 
 matcher). It waits on the crew's English control run. Finding 3 (ranking) needs a contact with
 the sales report grant and sales in the period. Finding 4 was a wrong Expected in the hand-test
 script, corrected on the PR.
+
+# Cloud browser pass fix (3 Oct): the Translations page tells the languages apart
+
+The cloud pass found the page listing the chatbot's en->ms and en->zh rows beside the supplier
+zh->en rows, all under a column headed "English", with no way to tell a Malay row from a
+Chinese one for the same source. That is plan slice 4's "Translations admin page filter by
+language pair", which had not been built.
+
+- **AC-CLT1:** each row shows its language pair (`Chinese to English`, `English to Malay`,
+  `English to Chinese`), and the editable column is headed "Translation" (input label
+  `Translation for <source>`).
+- **AC-CLT2:** a clearable filter narrows the list to the language a row translates into
+  (`target_lang` = en / ms / zh on `GET /api/v1/system/translations`; anything else is a 422).
+
+Tests: `tests/test_translations_routes.py::test_list_filters_by_target_language` and
+`TranslationsList.test.tsx`.

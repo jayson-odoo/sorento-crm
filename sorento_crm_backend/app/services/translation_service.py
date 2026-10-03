@@ -439,12 +439,14 @@ _SORT_COLUMNS: dict[str, Any] = {
 
 def list_memory(
     db: Session, *, page: int = 1, limit: int = 50, query: Optional[str] = None,
-    sort: Optional[str] = None, dir: Optional[str] = None,
+    sort: Optional[str] = None, dir: Optional[str] = None, target_lang: Optional[str] = None,
 ) -> tuple[list[dict], int]:
     """Rows plus total, joined onto the writing user's name (never a bare id in the UI).
     Sorted by `sort`/`dir` when `sort` names a whitelisted column, else newest-touched
     first - the same default this list always had."""
     q = db.query(TranslationMemory)
+    if target_lang:
+        q = q.filter(TranslationMemory.target_lang == target_lang)
     if query:
         like = f"%{query.strip()}%"
         q = q.filter(
