@@ -307,3 +307,47 @@ def test_envelope_carries_each_unplaced_tokens_suggestions_under_the_typed_word(
 
     assert env["unresolved"] == ["srt5764", "zzq123"]
     assert env["unresolved_suggestions"] == {"srt5764": SUGGEST}
+
+
+# --------------------------------------------------------------------------- #
+# End to end: the real engine and the real resolver
+# --------------------------------------------------------------------------- #
+
+
+class TestRealResolverPartialMiss:
+    """The seam chain `resolve_kinds` -> `engine._unplaced_suggestions` ->
+    `make_tool_runner` -> `envelope_of` -> `compose`, on seeded codes: one placed code is
+    answered, one typo gets its trigram neighbours as a numbered did-you-mean."""
+
+    def test_typo_beside_a_found_code_gets_its_own_did_you_mean(self, session_factory, monkeypatch):
+        from app.services.company_scope import DEFAULT_COMPANY_ID
+        from tests._mc_lookup_seed import product as seed_product
+        from tests.chatbot.test_outstanding_lane import REPORT_HIT, _qf, _run_turn, _seed_contact
+
+        placed, near_a, near_b, typo = "ZZTMCDPLACED", "ZZTMCDNEAR12", "ZZTMCDNEAR13", "ZZTMCDNEAR1Q"
+        db = session_factory()
+        for code in (placed, near_a, near_b):
+            seed_product(db, company_id=DEFAULT_COMPANY_ID, code=code)
+        db.commit()
+        _seed_contact(session_factory, variables={})
+
+        def entity(raw: str) -> dict[str, Any]:
+            return {"raw": raw, "hint": "product", "canonical_code": None, "current_message": True, "confident": True}
+
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_qf(order_status="so_outstanding", entities=[entity(placed), entity(typo)]),
+            text_body=f"{placed} {typo} sales order outstanding",
+            msg_id="ZZT-mcd-1",
+            attributes=["sales_orders.outstanding"],
+            mcp_response={**REPORT_HIT, "product_code": placed},
+            real_resolver=True,
+        )
+
+        reply = (result.reply or {}).get("text") or ""
+        assert captured, "the placed code must still be fetched"
+        assert f"Product: {placed}" in reply, reply
+        assert f'Couldn\'t find "{typo}" (product). Did you mean:' in reply, reply
+        assert near_a in reply and near_b in reply, reply
+        assert f"I could not find {typo}" not in reply, reply

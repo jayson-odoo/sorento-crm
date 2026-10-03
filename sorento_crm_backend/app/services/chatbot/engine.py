@@ -5183,6 +5183,9 @@ def _run_stages_body(  # noqa: PLR0915
                     # what this message's token is, not the parser's hint.
                     resolved_kinds=resolved_kinds,
                     customer_scope=customer_scope,
+                    # MULTI-CODE-DYM: each unplaced token's did-you-mean, the same
+                    # candidates a lone miss of that token offers.
+                    unplaced_suggestions=_unplaced_suggestions(resolver_payload, unplaced_tokens),
                     # R6 (fix round 2): so a null `routing.suggested_team` inside the
                     # per-domain fetch context gets the same domain-aware fill this
                     # turn's own `ctx.parse.output` already got above.
@@ -6228,6 +6231,25 @@ def _stock_answer_lines(envelopes: list[dict[str, Any]]) -> list[str]:
             if isinstance(flags, dict) and flags.get("branch") and not flags.get("needs_quantity") and title:
                 lines.append(str(title))
     return lines
+
+
+def _unplaced_suggestions(
+    resolver_payload: Any, unplaced: dict[str, str] | None
+) -> dict[str, list[dict[str, Any]]]:
+    """MULTI-CODE-DYM (owner, 4 Oct 2026, "treat each product code individually"): the
+    did-you-mean of every token this turn could not place, off the resolver's own answer
+    (`answer.did_you_mean_by_token`, the candidates `build_suggest_offer` shows for that
+    token asked alone). Empty when nothing is unplaced or no resolver ran; best effort, a
+    suggestion nobody could read leaves the plain "I could not find" line."""
+    if not unplaced or not isinstance(resolver_payload, dict):
+        return {}
+    from app.services.chatbot.lanes.business.answer import did_you_mean_by_token
+
+    try:
+        return did_you_mean_by_token(resolver_payload.get("resolved"), resolver_payload.get("gate"))
+    except Exception:  # noqa: BLE001 - a did-you-mean is never worth a failed turn
+        logger.warning("chatbot: the per-code did-you-mean did not read", exc_info=True)
+        return {}
 
 
 def _unplaced_tokens(envelopes: list[dict[str, Any]]) -> list[str]:

@@ -7,6 +7,7 @@
 # composer (kept, unchanged per the plan) has somewhere familiar to write into.
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -27,6 +28,7 @@ from app.services.chatbot.turn.state import (
     focus_row_label,
     fold_token,
     escalation_barred,
+    token_key,
     offers_escalation,
 )
 from app.services.chatbot.turn import refer
@@ -357,6 +359,116 @@ def _routing_brand(ctx: Any) -> Any:
     return thunk() if callable(thunk) else None
 
 
+_NUMBERED_BLOCK = re.compile(r"^(\d+)\. \*")
+
+
+def _did_you_mean_per_code(
+    text: str,
+    unplaced: list[str],
+    envelopes: list[dict[str, Any]],
+    state: State,
+    policy: Policy,
+    ctx: Any,
+    *,
+    lane_asked: bool,
+) -> tuple[str, Any]:
+    """MULTI-CODE-DYM: the reply's unplaced tokens, each as it would be answered alone.
+
+    A token with suggestions (`envelope["unresolved_suggestions"]`, the single-code
+    did-you-mean's own candidates) gets 'Couldn't find "X" (product). Did you mean:' and
+    its numbered codes; one closing line follows the last of them, with the escalation
+    offer the single-code reply makes (none for staff, the salesman line for a barred
+    contact). Numbers run on from the reply's own numbered blocks, so no number is
+    printed twice, and a code the reply already answered or already offered is not
+    offered again. A token with no suggestion keeps "I could not find X.".
+
+    Returns the text and the question to store: one `product_pick` over every offered
+    code (AC-1691: two or more), a team offer when one code was offered with the
+    escalation, None when a lane already asked this turn's question.
+    """
+    suggestions: dict[str, list[Any]] = {}
+    for env in envelopes:
+        carried = env.get("unresolved_suggestions")
+        for raw, rows in (carried.items() if isinstance(carried, dict) else []):
+            if isinstance(rows, list):
+                suggestions.setdefault(raw, rows)
+    used = {
+        token_key(code)
+        for env in envelopes
+        for code in (env.get("product_codes") or [])
+        if isinstance(code, str)
+    }
+    numbers = [int(m.group(1)) for m in (_NUMBERED_BLOCK.match(p) for p in text.split("\n\n")) if m]
+    n = max(numbers, default=0)
+    options: list[dict[str, Any]] = []
+    paragraphs: list[str] = []
+    plain: list[str] = []
+    for token in unplaced:
+        lines: list[str] = []
+        for row in suggestions.get(token) or []:
+            code = row.get("code") if isinstance(row, dict) else None
+            uuid = row.get("uuid") if isinstance(row, dict) else None
+            if not code or not uuid or token_key(code) in used:
+                continue
+            used.add(token_key(code))
+            n += 1
+            lines.append(f"{n}. {code}")
+            options.append(
+                {
+                    "position": n,
+                    "label": code,
+                    "code": code,
+                    "entity_type": "product",
+                    "uuid": uuid,
+                    "uuids": [uuid],
+                    "payload": {},
+                }
+            )
+        if lines:
+            paragraphs.append(f'Couldn\'t find "{token}" (product). Did you mean:\n' + "\n".join(lines))
+        else:
+            plain.append(token)
+    if plain:
+        text += "\n" + f"I could not find {_join_words(plain)}."
+    if not paragraphs:
+        return text, None
+
+    domain, team = None, None
+    for env in envelopes:
+        row = policy.domain(env.get("domain")) if policy else None
+        if domain is None:
+            domain = env.get("domain")
+        if row is not None and row.escalation_team_code:
+            domain, team = env.get("domain"), row.escalation_team_code
+            break
+    profile = getattr(state, "profile", None)
+    offered = bool(team) and offers_escalation(profile)
+    lead_in = "Reply with a code to continue"
+    if offered:
+        closing = f"{lead_in}, or would you like me to escalate to {_pretty_team(team)} team?"
+    elif escalation_barred(profile):
+        closing = refer.after(f"{lead_in}.", sep=" ")
+    else:
+        closing = f"{lead_in}."
+    text += "\n\n" + "\n\n".join(paragraphs) + "\n" + closing
+
+    if lane_asked:
+        return text, None
+    agent = getattr(ctx, "suggested_agent", None) if offered else None
+    brand = _routing_brand(ctx) if offered else None
+    if len(options) >= 2:
+        return text, pending_ask(
+            "product_pick",
+            options,
+            team=team if offered else None,
+            asked_at_turn=getattr(state, "turn_no", None),
+            payload={"domain": domain, "escalate_offered": offered, "agent": agent, "brand_code": brand},
+        )
+    if offered:
+        return text, _team_pick_question([domain], policy, agent=agent, brand=brand)
+    return text, None
+
+
 def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: Any) -> Answer:
     sections: list[Section] = []
     seen_rows: set[tuple] = set()
@@ -572,8 +684,15 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         for token in env.get("unresolved") or []:
             if isinstance(token, str) and token and token not in unplaced:
                 unplaced.append(token)
+    lane_question = _lane_question(envelopes, getattr(state, "turn_no", None))
+    dym_question = None
     if unplaced and text.strip():
-        text += "\n" + f"I could not find {_join_words(unplaced)}."
+        # MULTI-CODE-DYM (owner, 4 Oct 2026, "treat each product code individually"): a
+        # token with a did-you-mean gets the one it gets when asked alone; the rest keep
+        # this sentence.
+        text, dym_question = _did_you_mean_per_code(
+            text, unplaced, envelopes, state, policy, ctx, lane_asked=lane_question is not None
+        )
 
     offer = None
     # ONE open question per turn, and when a lane asked one it is the lane's: a domain
@@ -581,7 +700,9 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
     # THAT answer, and an escalate offer over the top of it would leave the customer
     # looking at two numbered lists for one reply - and store the wrong roster for the
     # number they send back.
-    question = _lane_question(envelopes, getattr(state, "turn_no", None))
+    # The per-code did-you-mean is this turn's question when no lane asked one, and its
+    # closing line already offers the escalation, so the arm below adds no second one.
+    question = lane_question or dym_question
     if question is None and envelopes and missed_domains and len(missed_domains) == len(envelopes):
         teams: list[str] = []
         for domain in missed_domains:
