@@ -364,7 +364,9 @@ async def get_contact_chatbot_memory(
         current_user["id"], _CHATBOT_EPISODES_VIEW
     )
     try:
-        return ContactService(db).get_chatbot_memory(contact_id, include_episodes=can_view_episodes)
+        # Same grants as the facts PUT, so a CRM fact reads the same on every company.
+        with grants_scope(db, current_user["id"]):
+            return ContactService(db).get_chatbot_memory(contact_id, include_episodes=can_view_episodes)
     except HTTPException:
         raise
     except Exception as e:
