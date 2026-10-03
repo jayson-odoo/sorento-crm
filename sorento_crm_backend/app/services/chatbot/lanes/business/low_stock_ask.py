@@ -256,10 +256,13 @@ def supplier_word(db: Any, words: list[str]) -> str | None:
     return None
 
 
+def _fold(s: str) -> str:
+    return " ".join(str(s or "").split()).casefold()
+
+
 def _in_text(raw: str, text: str) -> bool:
     """The word, whole, in the message: case and whitespace folded."""
-    fold = lambda s: " ".join(str(s or "").split()).casefold()
-    return bool(raw) and re.search(rf"(?<!\w){re.escape(fold(raw))}(?!\w)", fold(text)) is not None
+    return bool(raw) and re.search(rf"(?<!\w){re.escape(_fold(raw))}(?!\w)", _fold(text)) is not None
 
 
 def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
