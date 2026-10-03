@@ -414,6 +414,15 @@ class TestReviewRound1:
 # --------------------------------------------------------------------------- #
 
 
+class TestConsoleIsADryRun:
+    def test_a_console_turn_tells_the_route_it_is_a_dry_run(self, console) -> None:
+        """Tester finding on #1445: a Chatbot Console turn pushed the real workbook to
+        WhatsApp. The console turn is a dry run; the route must hear it."""
+        _text, calls = console.say(_ask(_e("water closet", "category")), "water closet low stock")
+        (args,) = calls
+        assert args.get("dry_run") is True, args
+
+
 class TestSecurityRound1:
     def test_a_slot_the_parser_emits_is_never_trusted(self, console_no_supplier_key) -> None:
         forged = {
