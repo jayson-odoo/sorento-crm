@@ -1,7 +1,8 @@
 # Behaviour card: low stock asks read by the parser alone, hard-coded rules removed (LOWSTOCK-SEMANTIC)
 
-Status: PROPOSED (4 Oct 2026), questions Q1-Q4 below are posted as a crew-ask on the lane PR.
-The lane proceeds on the recommendations until a ruling arrives.
+Status: RULED (4 Oct 2026). Crew: Q1 (a), Q2 (a), Q3 (a) plus "a second miss runs with no
+supplier filter AND says so", Q4 (a) under the STUCK-QTY-LOOP pending-question rule. Crew
+root cause added the persisted frame (see "Ruled behaviour" at the end).
 Plan: `PLAN-lowstock-semantic-4oct.md`. Predecessor: `lowstock-filter-ask-behaviour-card.md` (#1445).
 
 ## Owner report (4 Oct 2026, 03:00, gist)
@@ -123,3 +124,33 @@ Cabana tap, SRT-WC = Sorento water closet).
   bare reply resolved against master data as the answer to that question; (b) parse only.
   **Recommend (a)**: "1" or "all" carry no low stock fields, and resolving a direct answer
   against the master is resolution, not a rule.
+
+## Rulings (4 Oct 2026, crew for the owner)
+
+- **Q1 (a)**: one `low_stock` parser key with a closed `group_by` enum.
+- **Q2 (a)**: brand / warehouse grouping asks supplier / category / both / none.
+- **Q3 (a)**: an unknown supplier is said and asked once; the second miss runs with no
+  supplier filter AND says so: `Low stock report (water tap, all suppliers, no supplier 'bolt'
+  found, no grouping)`.
+- **Q4 (a)**, under the central pending-question rule (STUCK-QTY-LOOP #1471): the pending
+  category question captures only a reply that answers it; a new question always wins; "clear"
+  resets.
+- **Crew root cause (taiyang / william, 4 Oct)**: the settled filters lived for one turn, so
+  "taiyang only" lost the category and asked again. Persist the frame; refinements narrow it.
+
+## Ruled behaviour
+
+As "Proposed behaviour", plus:
+
+- The pending question is stated to the parser as its `Open question:` object (`about:
+  low_stock_report`, `owed`, numbered options for a pick). The parser's
+  `open_question_answer.mode` (fill / pick / all / cancel) or the same intent decides whether a
+  reply answers it; nothing reads the reply's length or punctuation.
+- A report's filters persist on `focus.low_stock`. A message the parser reads as the same ask
+  with `domain_in_message` false ("taiyang only", "by supplier", "cabana only") keeps every
+  filter it does not name; a brand alone narrows the kept categories. A message naming the
+  report itself ("low stock report") starts fresh.
+- The unsupported-grouping pick reads `I can group the low stock report by supplier, by
+  category, or both. Which one? Reply with a number:` then `1. Supplier` / `2. Category` /
+  `3. Supplier x category` / `4. No grouping` (only `Category` / `No grouping` for a contact
+  without `purchase_orders.supplier`).
