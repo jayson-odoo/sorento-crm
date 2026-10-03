@@ -435,3 +435,37 @@ class TestAllMySalesOrdersAfterAnSoCard:
         # report): with no period it asks which one (`tests/chatbot/test_so_list.py`).
         assert reply.startswith("Which period for ZZT HANLIM TRADING SDN BHD?"), reply
         assert captured == [], captured
+
+
+class TestCloudPassParserCopiesThePreviousSo:
+    """Cloud pass on PR #1435, 3 Oct 2026, live parser: "status of SO422056" (card), then
+    "status of SO421624" replied with SO422056's card again in 2 of 4 runs. The parser read
+    the second message as `{"raw": "SO422056", "current_message": true}`, copying the number
+    off "Previous response". The numbers the message TYPES decide the cards, whatever the
+    parser copied from the conversation."""
+
+    def _seeded(self, session_factory) -> None:
+        _seed_contact(session_factory, variables={})
+        own, _other = _link_customers(session_factory, "ZZT OWN A", "ZZT OWN B")
+        _seed_so(session_factory, "SO422056", customer_id=own, status="closed", lines=[(3, 3)], order_date="2026-09-21")
+        _seed_so(session_factory, "SO421624", customer_id=own, lines=[(10, 10), (10, 1)])
+
+    @pytest.mark.parametrize(
+        "parsed",
+        [["SO422056"], ["SO422056", "SO421624"], ["SO421624", "SO422056"]],
+        ids=["copied-only", "copied-first", "copied-last"],
+    )
+    def test_typed_number_wins_over_a_copied_one(self, session_factory, monkeypatch, parsed) -> None:
+        self._seeded(session_factory)
+        qf = _parser_output(
+            domain_hint="order",
+            intent_hint="check_order",
+            order_status=None,
+            entities=[
+                {"raw": n, "hint": "order", "canonical_code": None, "current_message": True, "confident": True}
+                for n in parsed
+            ],
+        )
+        reply, captured = _turn(session_factory, monkeypatch, qf, "status of SO421624")
+        assert reply.strip() == _card("SO421624", "Open", "partly delivered"), reply
+        assert _calls(captured, ORDERS) == [], captured
