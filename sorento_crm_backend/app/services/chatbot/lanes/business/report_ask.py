@@ -399,7 +399,7 @@ def settle(
 
     frame = parse_output.get("sales_ranking_frame")
     if parse_output.get("ranking_refine") is True and isinstance(frame, dict) and frame:
-        return _refine(db, parse_output, frame), None
+        return _refine(db, parse_output, frame, dealer=dealer)
 
     args, line = _fresh_args(db, parse_output, entities, dealer=dealer)
     if args is None:
@@ -414,10 +414,22 @@ def settle(
     return rf.collect(db, SALES_RANKING_ASK, given=given, extras={"args": args, "top_n": top_n}), None
 
 
-def _refine(db: Any, parse_output: dict[str, Any], frame: dict[str, Any]) -> rf.Outcome:
+def _refine(
+    db: Any, parse_output: dict[str, Any], frame: dict[str, Any], *, dealer: bool = False
+) -> tuple[rf.Outcome | None, str | None]:
     """The parser said this message only refines the sales ranking that ran (`ranking_refine`):
     the held route args re-run with ONLY the keys the verdict changed (count, period, basis,
-    measure)."""
+    measure). A dealer's refine passes the same check a fresh ask does, over the HELD args."""
+    if dealer:
+        from app.services.reports.ask import DEALER_KEYS
+
+        if (
+            frame.get("group_by") not in (None, *DEALER_KEYS)
+            or frame.get("sales_agent_ids")
+            or frame.get("warehouse_codes")
+            or frame.get("channel")
+        ):
+            return None, DEALER_REFUSAL
     args = {k: v for k, v in frame.items() if k not in ("date_from", "date_to", "top_n")}
     if parse_output.get("basis") in ("ordered", "delivered"):
         args["basis"] = parse_output["basis"]
@@ -432,7 +444,7 @@ def _refine(db: Any, parse_output: dict[str, Any], frame: dict[str, Any]) -> rf.
     given = _given_top_n(args, top_n)
     if period is not None:
         given["period"] = period
-    return rf.collect(db, SALES_RANKING_ASK, given=given, extras={"args": args, "top_n": top_n})
+    return rf.collect(db, SALES_RANKING_ASK, given=given, extras={"args": args, "top_n": top_n}), None
 
 
 def route_args(outcome: rf.Outcome) -> dict[str, Any]:

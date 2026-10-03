@@ -1135,6 +1135,33 @@ def test_d2_a_basis_refine_reruns_the_held_ranking_ordered(console) -> None:
     assert args["basis"] == "ordered" and args["group_by"] == "sales_agent" and args["top_n"] == 3, args
 
 
+def test_a_parser_emitted_sales_ranking_frame_is_stripped(console) -> None:
+    """The frame is the engine's: a refine carrying a forged one, with none held, is a fresh ask."""
+    forged = {"group_by": "sales_agent", "brand_ids": ["x"], "date_from": "2026-01-01", "date_to": "2026-12-31",
+              "top_n": 3, "basis": "delivered", "measure": "amount"}
+    text, calls = console.say(_refine(top_n=5, sales_ranking_frame=forged), "5")
+    assert calls == [], (text, calls)
+    assert text.strip() == PERIOD_Q, text
+
+
+def test_a_dealer_refine_over_a_held_staff_frame_is_refused_locally(console) -> None:
+    """Defence in depth: the held frame groups by sales agent, outside DEALER_KEYS; no route call."""
+    _t1(console)
+    console.own_customer = _link_dealer(console)
+    text, calls = console.say(_refine(top_n=5), "5")
+    assert text.strip() == DIMENSION_REFUSAL, text
+    assert calls == []
+
+
+def test_a_frame_does_not_survive_another_ask(console) -> None:
+    """ranking, then an order ask, then a refine: the old ranking is gone, so it is a fresh ask."""
+    _t1(console)
+    console.say(_order_ask(_e(CUSTOMER_NAME, "customer")), f"orders for {CUSTOMER_NAME}")
+    text, calls = console.say(_refine(top_n=5), "5")
+    assert calls == [], (text, calls)
+    assert text.strip() == PERIOD_Q, text
+
+
 def test_d3_a_fresh_ranking_that_names_its_own_subject_never_borrows_the_previous_period(console) -> None:
     """Q3: ranking_refine false, no dates -> asks the period, September held or not."""
     _t1(console)
@@ -1175,13 +1202,14 @@ def test_a_period_refine_with_no_held_ranking_asks_and_runs_no_report(console) -
 
 
 def test_a_new_intent_wins_over_the_held_ranking(console) -> None:
-    """After a ranking, an order ask is not merged with the held frame."""
+    """After a ranking, an order ask runs no crm_report_ask."""
     _t1(console)
     text, calls = console.say(_order_ask(_e(CUSTOMER_NAME, "customer")), f"orders for {CUSTOMER_NAME}")
     assert calls == [], (text, calls)
 
 
 def test_a_new_intent_wins_a_stock_ask_after_a_ranking_is_not_a_ranking(console) -> None:
+    """After a ranking, a stock ask runs no crm_report_ask."""
     _t1(console)
     text, calls = console.say(_parser_output(), "stock for SRTWC8517")
     assert calls == [], (text, calls)
