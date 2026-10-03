@@ -245,6 +245,7 @@ PERMISSION_REGISTRY.extend(_crud("procurement", "spo_allocations", "SPO Allocati
 PERMISSION_REGISTRY.append({"slug": "procurement.spo_allocations.import", "name": "Import SPO Allocations", "description": "Permission to import SPO allocations."})
 PERMISSION_REGISTRY.extend(_crud("procurement", "grn", "GRN"))
 PERMISSION_REGISTRY.append({"slug": "procurement.grn.import", "name": "Import GRN", "description": "Permission to import GRN."})
+PERMISSION_REGISTRY.append({"slug": "procurement.grn.autocount_pull", "name": "Pull Goods Receive Notes from AutoCount", "description": "Permission to pull a goods receive notes snapshot from AutoCount and review/confirm it."})
 PERMISSION_REGISTRY.extend(_crud("procurement", "picking_lines", "Picking Lines"))
 PERMISSION_REGISTRY.extend(_crud("procurement", "stock_inquiries", "Stock Inquiries"))
 PERMISSION_REGISTRY.extend([
