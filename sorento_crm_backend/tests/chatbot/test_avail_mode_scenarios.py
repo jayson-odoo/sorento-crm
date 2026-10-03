@@ -494,7 +494,22 @@ def test_S46c_a_quantity_ask_with_an_eta_word_stays_an_eta_ask(console, typed):
 # ================================================================== owner hand test, 3 Oct 2026
 # The owner's own messages (copy :3109 at 186f4f9ff). Availability access only.
 
-DYM5764 = "Couldn't find SRT5764. Did you mean:\n1. SRT57-CR\n2. SRT5713\n3. SRT5732"
+DYM5764_HEAD = "Couldn't find SRT5764. Did you mean:"
+#: The three suggestions tie on score, so their order is the database's collation (C
+#: puts SRT57-CR first, en_US last; CI run 37096129151). The reply is pinned line by line
+#: in whichever order it came.
+DYM5764_CODES = {"SRT57-CR", "SRT5713", "SRT5732"}
+
+
+def _dym5764_positions(out: str) -> dict[str, int]:
+    """The did-you-mean for srt5764, asserted whole: its header, then exactly the three
+    suggestions numbered 1-3. Returns code -> its position."""
+    head, *lines = out.split("\n")
+    assert head == DYM5764_HEAD, out
+    assert [line.split(". ", 1)[0] for line in lines] == ["1", "2", "3"], out
+    positions = {line.split(". ", 1)[1]: int(line.split(". ", 1)[0]) for line in lines}
+    assert set(positions) == DYM5764_CODES, out
+    return positions
 
 
 @pytest.mark.parametrize(
@@ -534,26 +549,27 @@ def test_S47_unknown_code_never_dumps_the_catalogue(console, parsed, monkeypatch
 
     monkeypatch.setattr(turn_runtime, "resolve_kinds", broad)
     out = c.say("srt5764 xx 10", parsed)
-    assert out == DYM5764
+    _dym5764_positions(out)
     assert "How many units" not in out
 
 
 @pytest.mark.parametrize(
     "picked",
     [
-        reply(entities=[product("2")]),
-        reply(entities=[product("2")], demand_qty=2),
-        reply(reference_positions=[2], demand_qty=2, open_question_answer=answer("pick", picked=[2])),
-        reply(demand_qty=2),
+        lambda n: reply(entities=[product(str(n))]),
+        lambda n: reply(entities=[product(str(n))], demand_qty=n),
+        lambda n: reply(reference_positions=[n], demand_qty=n, open_question_answer=answer("pick", picked=[n])),
+        lambda n: reply(demand_qty=n),
     ],
     ids=["as_a_product", "as_a_product_and_qty", "as_a_pick_and_qty", "as_a_qty"],
 )
 def test_S48_a_number_over_a_did_you_mean_is_that_option(console, picked):
-    """Fine-tune 2: 'srt5764 10' -> did-you-mean -> '2' must answer SRT5713 x 10, the
-    same position reading every other picker uses (whatever the parser made of the 2)."""
+    """Fine-tune 2: 'srt5764 10' -> did-you-mean -> '2' (SRT5713's number) must answer
+    SRT5713 x 10, the same position reading every other picker uses (whatever the parser
+    made of the number)."""
     c = console(SRT5713=Stock(on_hand=50))
-    assert c.say("srt5764 10", stock(product("srt5764", 10))) == DYM5764
-    assert c.say("2", picked) == f"SRT5713 x 10: {TICK} {R}"
+    n = _dym5764_positions(c.say("srt5764 10", stock(product("srt5764", 10))))["SRT5713"]
+    assert c.say(str(n), picked(n)) == f"SRT5713 x 10: {TICK} {R}"
 
 
 def test_S48b_a_number_past_the_list_is_still_a_quantity(console):

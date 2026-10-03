@@ -99,8 +99,8 @@ tells dates as dd/mm/yyyy (`eta_policy.dealer_view`, `tests/test_avail_mode_deal
 
 | Id | Dealer | Bot |
 | --- | --- | --- |
-| S47 | srt5764 xx 10 (the resolver also matched catalogue rows for "xx" / "10") | `Couldn't find SRT5764. Did you mean:` 1. SRT57-CR 2. SRT5713 3. SRT5732; never a quantity list of the catalogue |
-| S48 | srt5764 10 / 2 (parsed as a product "2", a pick, or a quantity) | did-you-mean / `SRT5713 x 10: ✅ R` |
+| S47 | srt5764 xx 10 (the resolver also matched catalogue rows for "xx" / "10") | `Couldn't find SRT5764. Did you mean:` SRT57-CR, SRT5713, SRT5732 numbered 1-3 (tied scores, so their order is the database's collation); never a quantity list of the catalogue |
+| S48 | srt5764 10 / 2 (parsed as a product "2", a pick, or a quantity) | did-you-mean / SRT5713's number gives `SRT5713 x 10: ✅ R` |
 | S48b | srtwc286 / 88 | `SRTWC286 x 88: which one?` (a number past the list is the quantity) |
 | S49 | ETA SRTW2000 and MWT5727SS-CR | `SRTW2000: ✅ ETA 19/10/2026`, `MWT5727SS-CR: No ETA`, R |
 | S50, S50c | srtw2000 20 / eta | the stock line / `SRTW2000: ✅ ETA 19/10/2026` + R: SRTW2000 only, never -SS-CR / -A / -NL |
