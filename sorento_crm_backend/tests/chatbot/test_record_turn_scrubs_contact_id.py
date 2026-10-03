@@ -173,7 +173,7 @@ _CDN = "https://cdn.example.invalid/"
 def _attachment_urls(node, under=False):
     if isinstance(node, dict):
         for k, v in node.items():
-            hit = under or k.startswith("attachment") or k == "media"
+            hit = under or k in ("attachment", "media")
             if hit and k in ("url", "source_url") and isinstance(v, str) and v:
                 yield v
             yield from _attachment_urls(v, hit)
