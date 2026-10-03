@@ -102,6 +102,44 @@ def test_text_already_carrying_the_edits_refuses():
         _script().apply_owner_edits(once)
 
 
+def _with_edits(monkeypatch, edits):
+    """The script module with OWNER_EDITS swapped; every anchor must hit the real file once."""
+    module = _script()
+    src = _source()
+    for _label, old, _new in edits:
+        assert src.count(old) == 1, old
+    monkeypatch.setattr(module, "OWNER_EDITS", tuple(edits))
+    return module
+
+
+def _approved(module):
+    return list(module.OWNER_EDITS)
+
+
+def test_an_edit_that_inserts_an_extra_line_refuses(monkeypatch):
+    first, second, third = _approved(_script())
+    widened = (first[0], first[1], first[2] + "an unapproved extra line\n")
+    module = _with_edits(monkeypatch, [widened, second, third])
+    with pytest.raises(ValueError, match="more than the 3 approved lines"):
+        module.apply_owner_edits(_source())
+
+
+def test_an_edit_that_also_changes_a_neighbouring_line_refuses(monkeypatch):
+    first, second, third = _approved(_script())
+    # Line 82 is followed by a blank line; rewriting that blank line too touches a 4th line.
+    spread = (first[0], first[1] + "\n", first[2] + "an unapproved neighbour line\n")
+    module = _with_edits(monkeypatch, [spread, second, third])
+    with pytest.raises(ValueError, match="more than the 3 approved lines"):
+        module.apply_owner_edits(_source())
+
+
+def test_only_two_of_the_three_edits_refuses(monkeypatch):
+    first, second, _third = _approved(_script())
+    module = _with_edits(monkeypatch, [first, second])
+    with pytest.raises(ValueError, match="more than the 3 approved lines"):
+        module.apply_owner_edits(_source())
+
+
 def test_save_writes_one_unlabelled_plain_text_version_and_is_idempotent():
     script = _script()
     with pg_session() as db:
