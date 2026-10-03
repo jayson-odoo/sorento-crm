@@ -18,6 +18,14 @@ first differing line when they part. `--against M` compares with version M rende
 same way instead (owner Q-A = (a): the rebuild of his edited plain-text version is checked
 against that version, so his edits are not differences). Read-only.
 
+    venv/bin/python -m scripts.prompt_dynamic_identical_version --owner-edits-from 54 --save
+
+`--owner-edits-from N` (owner, 3 Oct 2026: Q-A (b)) applies the owner's 3 approved text edits
+(PR #1405 crew-ask of 2 Oct) to version N and, with `--save`, inserts the result as ONE new
+UNLABELLED plain-text version. Each edit is a literal old -> new pair that must occur exactly
+once; the line diff against version N is proven to be exactly those 3 lines before anything
+is saved. Rebuild from the saved version with `--from-version`, then `--verify ... --against`.
+
 Omit --from-version to start from the `production` version.
 
 Every rebuilt version also carries ACCOUNT_LEDGER_ADDENDUM (#1432, the `account` entity
@@ -98,6 +106,96 @@ def build(db, *, from_version: int | None = None, save: bool = False) -> dict:
     return result
 
 
+#: The owner's 3 approved edits (PR #1405 crew-ask of 2 Oct 2026, comment 5944690012):
+#: (label, old, new), each `old` found exactly once in the source.
+_SALES_LINE = (
+    'Domain sales ("sales"): intents check_sales. Switch words: sales, sales report, top selling, sales analysis, '
+    "best selling. customer narrows must_narrow_one; order narrows narrow_to_code; product narrows list_all. "
+    "Takes a date window. Escalates to customer_service."
+)
+_PURCHASE_COST_LINE = (
+    'Domain purchase_cost ("last purchase cost"): intents check_po_cost. Switch words: (none). '
+    "product narrows narrow_by_type. Escalates to purchasing."
+)
+OWNER_EDITS: tuple[tuple[str, str, str], ...] = (
+    (
+        "line 82 domain_hint",
+        "| ideate | purchase_cost | null\n",
+        "| ideate | purchase_order | purchase_cost | sales | null\n",
+    ),
+    (
+        "line 401 entity hint",
+        '|category|brand|attachment_type", "canonical_code"',
+        '|category|brand|attachment_type|specification", "canonical_code"',
+    ),
+    ("policy block sales line", f"\n{_PURCHASE_COST_LINE}\n", f"\n{_PURCHASE_COST_LINE}\n{_SALES_LINE}\n"),
+)
+
+
+def apply_owner_edits(source: str) -> tuple[str, list[dict]]:
+    """`source` with the owner's 3 approved edits, and what changed. Raises ValueError when an
+    edit's text is not found exactly once, or when the result differs from the source in
+    anything but those 3 lines (never a guess)."""
+    text, changes = source, []
+    for label, old, new in OWNER_EDITS:
+        if text.count(old) != 1:
+            raise ValueError(f"{label}: the text to edit was not found exactly once ({text.count(old)} times)")
+        line = text[: text.index(old)].count("\n") + 1 + (1 if old.startswith("\n") else 0)
+        text = text.replace(old, new, 1)
+        # An insert names the line it follows; a replacement names its own line.
+        where = f"after line {line}" if new.count("\n") > old.count("\n") else f"line {line}"
+        changes.append({"edit": label, "line": line, "where": where})
+    a, b = source.split("\n"), text.split("\n")
+    ops = [o for o in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes() if o[0] != "equal"]
+    shape = [(t, i2 - i1, j2 - j1) for t, i1, i2, j1, j2 in ops]
+    if shape != [("replace", 1, 1), ("replace", 1, 1), ("insert", 0, 1)]:
+        raise ValueError(f"the edited text differs from the source in more than the 3 approved lines: {shape}")
+    return text, changes
+
+
+def owner_edits(db, *, from_version: int, save: bool = False) -> dict:
+    """The owner's current version `from_version` with his 3 approved edits; `save` inserts it
+    as one new unlabelled plain-text version (idempotent: an identical template is reused)."""
+    from app.models.ai_prompt import AIPromptVersion
+
+    query = db.query(AIPromptVersion).filter(AIPromptVersion.name == PROMPT_NAME)
+    source = query.filter(AIPromptVersion.version == from_version).one()
+    template, changes = apply_owner_edits(source.template)
+    result = {
+        "from_version": source.version,
+        "changes": changes,
+        "diff_lines": len(changes),
+        "diff": "".join(
+            difflib.unified_diff(source.template.splitlines(True), template.splitlines(True), n=0)
+        ),
+        "saved_version": None,
+    }
+    if not save:
+        return result
+    existing = query.filter(AIPromptVersion.template == template).order_by(AIPromptVersion.version.desc()).first()
+    if existing is not None:
+        result["saved_version"] = existing.version
+        return result
+    top = max((v.version for v in query.all()), default=0)
+    row = AIPromptVersion(
+        name=PROMPT_NAME,
+        version=top + 1,
+        type="text",
+        template=template,
+        variables=list(source.variables or []),
+        config_json={"owner_edits_from_version": source.version, "owner_edits": changes},
+        commit_message=(
+            f"Owner's 3 approved text edits on v{source.version} (Q-A b, 3 Oct): domain_hint adds "
+            "purchase_order and sales, the entity hint adds specification, the policy block adds the "
+            "sales line. Unlabelled."
+        ),
+    )
+    db.add(row)
+    db.flush()
+    result["saved_version"] = row.version
+    return result
+
+
 def verify(db, version: int, snapshot=None, *, against_version: int | None = None) -> dict:
     """Render version `version` (a fixed date for `{{current_date}}`) and compare it with the
     owner's file, or with version `against_version`, rendered with the same date."""
@@ -142,6 +240,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--save", action="store_true")
     parser.add_argument("--verify", type=int, default=None, metavar="N")
     parser.add_argument("--against", type=int, default=None, metavar="M")
+    parser.add_argument("--owner-edits-from", type=int, default=None, metavar="N")
     return parser.parse_args(argv)
 
 
@@ -155,6 +254,21 @@ def main() -> int:
 
     db = SessionLocal()
     try:
+        if args.owner_edits_from is not None:
+            try:
+                r = owner_edits(db, from_version=args.owner_edits_from, save=args.save)
+            except ValueError as exc:
+                print(f"# refused, nothing written: {exc}")
+                return 1
+            if args.save:
+                db.commit()
+            print(f"# source v{r['from_version']}; changed lines: {r['diff_lines']} (the 3 approved edits, nothing else)")
+            for c in r["changes"]:
+                print(f"- {c['edit']} ({c['where']})")
+            print(r["diff"])
+            if args.save:
+                print(f"# saved as v{r['saved_version']} (unlabelled, plain text)")
+            return 0
         if args.verify is not None:
             snapshot = pathlib.Path(__file__).resolve().parents[1] / "alembic" / "data" / "chatbot_semantic_parser.prod-20261001.txt"
             v = verify(db, args.verify, snapshot, against_version=args.against)
