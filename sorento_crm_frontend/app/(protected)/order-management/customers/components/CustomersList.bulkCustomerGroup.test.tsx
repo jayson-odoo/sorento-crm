@@ -209,7 +209,7 @@ describe('CustomersList - bulk Set customer group (U6.1 to U6.5)', () => {
     tickRow('C-001');
     tickRow('C-002');
     expect(await screen.findByRole('button', { name: 'Set customer group (2)' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Remove from group (2)' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove from group (1)' })).toBeInTheDocument();
     cleanup();
 
     // Same list, sales agent perm on but customers.edit off: the strip exists, the group actions do not.
@@ -301,7 +301,7 @@ describe('CustomersList - bulk Remove from group (U6.6)', () => {
     renderList();
     tickRow('C-001'); // cust-a, in g-1
     tickRow('C-002'); // cust-b, no group
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove from group (2)' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove from group (1)' }));
 
     await waitFor(() => expect(pending.createPendingAction).toHaveBeenCalledTimes(1));
     const call = pending.createPendingAction.mock.calls[0][0];
