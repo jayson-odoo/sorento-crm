@@ -230,6 +230,7 @@ PO_ROWS = {
     "answers": [
         {
             "fields": [
+                {"key": "po_number", "label": "PO Number", "value": "PO-9"},
                 {"key": "product_code", "label": "Product Code", "value": CODE},
                 {"key": "outstanding_qty", "label": "Outstanding Qty", "value": 1000},
                 {"key": "expected_date", "label": "Expected Date", "value": "2026-06-01"},
@@ -306,7 +307,7 @@ class TestBlocker2TheLadderRespectsCanStateAbsence:
         assert PO_TOOL not in calls, "the ladder probed a turn that cannot state absence"
         assert block["nothing_codes"] == []
         assert block["nothing_missing"] == []
-        assert "*PO:* placed" not in (block["block"] or "")
+        assert "*PO:* PO-9" not in (block["block"] or "")
         assert "No stock" not in (block["block"] or "")
 
     def test_a_total_miss_still_reaches_the_rung(self) -> None:
@@ -315,7 +316,7 @@ class TestBlocker2TheLadderRespectsCanStateAbsence:
             validator=TOTAL_MISS, ladder=DEFAULT_LADDER, po_response=PO_ROWS
         )
         assert PO_TOOL in calls
-        assert "*PO:* placed" in result["render"]["_xdBlock"]["block"]
+        assert "*PO:* PO-9" in result["render"]["_xdBlock"]["block"]
 
 
 class TestShouldFix89TheRungSentenceAndTeam:
@@ -336,7 +337,7 @@ class TestShouldFix89TheRungSentenceAndTeam:
             validator=TOTAL_MISS, ladder=DEFAULT_LADDER, po_response=PO_ROWS, parser=parser
         )
         block = result["render"]["_xdBlock"]
-        assert "*PO:* placed" in block["block"]
+        assert "*PO:* PO-9" in block["block"]
         # the offer itself is compose's (8 Sep 2026); the TEAM it will name is the block's
         assert "escalate" not in block["block"].lower()
         assert block["team"] == "warehouse"
