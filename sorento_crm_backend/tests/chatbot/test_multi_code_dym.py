@@ -149,14 +149,17 @@ def test_numbering_continues_after_numbered_found_blocks():
 
 
 def test_a_missing_code_with_no_suggestion_keeps_its_own_sentence():
+    """Named after the lists, above the closing line (the all-miss reply's order)."""
     answer = _answer(
         _envelope({"SRTWC286": 12}, ["srt5764", "zzq123"], {"srt5764": SUGGEST})
     )
     text = answer.text
 
-    assert "I could not find zzq123." in text, text
-    assert 'Couldn\'t find "srt5764" (product). Did you mean:' in text, text
-    assert "srt5764." not in text.split("I could not find", 1)[1].split("\n", 1)[0], text
+    assert (
+        'Couldn\'t find "srt5764" (product). Did you mean:\n1. SRT57-CR\n2. SRT5713\n3. SRT5732'
+        "\n\nI could not find zzq123.\n" + CLOSING
+    ) in text, text
+    assert text.count("I could not find") == 1, text
 
 
 def test_no_suggestion_anywhere_names_the_code_and_offers_the_escalation():

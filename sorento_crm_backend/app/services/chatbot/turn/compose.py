@@ -438,9 +438,9 @@ def _did_you_mean_per_code(
             paragraphs.append(str(entry["head"]) + "\n" + "\n".join(lines))
         else:
             plain.append(token)
-    if plain:
-        text += "\n" + f"I could not find {_join_words(plain)}."
     if not paragraphs:
+        if plain:
+            text += "\n" + f"I could not find {_join_words(plain)}."
         return text, None, False
 
     domain, team = None, None
@@ -460,7 +460,10 @@ def _did_you_mean_per_code(
         closing = refer.after(f"{lead_in}.", sep=" ")
     else:
         closing = f"{lead_in}."
-    text += "\n\n" + "\n\n".join(paragraphs) + "\n" + closing
+    # The codes with no suggestion follow the lists, above the one closing line - the
+    # all-miss reply's own order (`answer._unsuggested_line`).
+    unsuggested = f"\n\nI could not find {_join_words(plain)}." if plain else ""
+    text += "\n\n" + "\n\n".join(paragraphs) + unsuggested + "\n" + closing
 
     if lane_asked:
         return text, None, True
