@@ -1,8 +1,8 @@
 # PLAN: simplify chatbot DO asks (DO-ASK-SIMPLIFY)
 
 Status: built on PR #1433 (FULL track), all rules red-first then green, the 4 Oct rulings included; reviewer APPROVE (4 Oct); awaiting CI and the owner's hand test.
-Track: FULL (a data-seed migration, and a field-reveal (access) change, so the security
-reviewer joins).
+Track: FULL (a field-reveal (access) change, so the security reviewer joins; the data-seed
+migration was removed in the 4 Oct crew review).
 
 ## Owner answers (2 Oct 2026)
 
@@ -40,6 +40,11 @@ reviewer joins).
   `Reply 'all dates' to search without the date filter`, since a dateless DO ask now asks which
   period. The escalation clause is unchanged: every no-answer still ends with the escalation
   offer for contacts allowed to escalate.
+- **No migration** (crew review, 4 Oct): migration `do_ask_0001_reveals` seeded every DO key
+  `ON CONFLICT ... DO UPDATE SET granted = true`, which on prod would turn back ON every DO
+  switch the owner had turned OFF, and its downgrade deleted owner-set rows. With
+  `DEFAULT_ON_KEYS` a missing DO row already reads ON, so the migration is deleted; a test pins
+  that an owner-OFF DO switch survives `alembic upgrade head`.
 - **Refusal line after the main merge (#1435)**: "Sorry, that isn't under your account. I can
   only check on ..." groups by `ledger_family.group_names` (the name rule, #1435's code), so an
   ungrouped ledger loses its account marker there; the DO header and period question keep
@@ -50,7 +55,7 @@ reviewer joins).
 | Rule | Where |
 |---|---|
 | 1 header | `tail/scope_block.py::family_words`, used by `_axis_words` (gate rows) and `_focus_words` (carried rows) for the Customer axis only |
-| 2 reveals | default ON per `contact_field_reveal_service.DEFAULT_ON_KEYS` (4 Oct); `sorento_crm_mcp/presenters.py::_orders_list` (keys + `b.restrict` per field), `catalog.py` orders_list `restricted_fields`, `contact_field_reveal_service.FIELD_REVEAL_KEYS`, migration `do_ask_0001_reveals` |
+| 2 reveals | default ON per `contact_field_reveal_service.DEFAULT_ON_KEYS` (4 Oct); `sorento_crm_mcp/presenters.py::_orders_list` (keys + `b.restrict` per field), `catalog.py` orders_list `restricted_fields`, `contact_field_reveal_service.FIELD_REVEAL_KEYS` (no migration since the 4 Oct crew review) |
 | 3-4 range | `app/services/chatbot/do_ask.py::range_reply` (every contact since 4 Oct), called in `lanes/business/__init__.py::run_fetch` right before the trigger is built; answered with `_fixed_reply` (no fetch, no header, no escalate offer) |
 
 The ask-back names its suggestions as words to type (no numbered pick), so no pending kind was
