@@ -256,6 +256,12 @@ def supplier_word(db: Any, words: list[str]) -> str | None:
     return None
 
 
+def _in_text(raw: str, text: str) -> bool:
+    """The word, whole, in the message: case and whitespace folded."""
+    fold = lambda s: " ".join(str(s or "").split()).casefold()
+    return bool(raw) and re.search(rf"(?<!\w){re.escape(fold(raw))}(?!\w)", fold(text)) is not None
+
+
 def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
     """Engine seam, a FRESH low stock ask: the category and brand words come off the
     entity list (the shared resolver would read them as promotions and end the turn in a
@@ -277,7 +283,10 @@ def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
             # carries digits; a word without any is a product TYPE.
             hint = "category"
         if hint in ("category", "brand") and raw:
-            words[hint].append(raw)
+            # Live parser finding (3 Oct 2026): it carries an earlier turn's word as
+            # current_message; only what THIS message names is taken, else dropped.
+            if _in_text(raw, text):
+                words[hint].append(raw)
         elif hint in ("warehouse", "product"):
             # The only entities the run is scoped by. Every other word (a supplier name,
             # "supplier" itself) stays in the message text, where `settle` reads it; as an
