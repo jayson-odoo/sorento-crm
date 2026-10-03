@@ -3866,9 +3866,14 @@ def _run_stages(  # noqa: PLR0915
         # runs): the words decide the document, as they decide the order list's brand above.
         from app.services.chatbot import so_status as so_status_mod
 
-        verdict, so_list_rule = so_status_mod.so_list_verdict(
-            verdict, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
-        )
+        # Never inside a top selling ranking: there "by sales order" / "SO basis" switch the
+        # ranking's basis (`_top_selling_verdict` above, round 7 R3), and the list must not
+        # take the ranking's question or its status away.
+        so_list_rule = None
+        if not (in_ranking_conversation or top_selling_rule or state_in.focus.status == "top_selling"):
+            verdict, so_list_rule = so_status_mod.so_list_verdict(
+                verdict, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
+            )
         if so_list_rule:
             turn_trace.add("so_list", {"verdict_rule": so_list_rule})
             # Owner hand test, 3 Oct 2026: over an open outstanding summary, "find all my
