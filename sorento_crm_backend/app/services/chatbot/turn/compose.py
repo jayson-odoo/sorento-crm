@@ -376,7 +376,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         # grammar WITH its flags (PRODUCT DISCONTINUED, PENDING ALLOCATION) and its
         # date/bool formatting (`_fmt_value`, which this module's own `_render_row`
         # below never applied - measured as the "2026-09-14T00:00:00" defect), and
-        # the "_Data last updated: ..._" footer, into ONE string - reusing it
+        # the "_Updated ..._" footer, into ONE string - reusing it
         # verbatim is the one change that keeps every domain's copy production-
         # identical without a second, parallel string table here. A fan-out over
         # several domains still says one thing per section (contract 122) because
@@ -445,10 +445,10 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         ):
             absent = _codes_without_rows(product_codes, figures)
             if absent:
-                # Above the lane's "_Data last updated: ..._" footer, which closes the
+                # Above the lane's "_Updated ..._" footer, which closes the
                 # section, rather than under it.
                 line = f"No stock found for {_join_words(absent)}."
-                body, sep, footer = block.rpartition("\n_Data last updated")
+                body, sep, footer = block.rpartition("\n_Updated ")
                 if sep:
                     block = body + "\n" + line + sep + footer
                 else:

@@ -1538,6 +1538,15 @@ def _fmt_ts(iso: Any) -> str | None:
     return f"{date} {hour}:{minute}:{second}"
 
 
+def _footer_line(iso: Any) -> str:
+    """`_Updated dd/mm/yyyy HH:MM_` (WA-CONCISE AC-6): `_fmt_ts` less its seconds, the only
+    reformatting this lane allows. "" when there is no stamp."""
+    ts = _fmt_ts(iso)
+    if not ts:
+        return ""
+    return f"_Updated {ts[:-3] if len(ts) > 10 else ts}_"
+
+
 # The JS renders an empty value and an object joiner with an EM DASH, and the access note
 # with one too. Written as escapes, not as the character: the repo forbids an em dash in
 # anything WE write, and these are neither ours nor prose - they are three literals from a
@@ -2601,6 +2610,83 @@ def _dmy(value: Any) -> str:
     return f"{parts[2]}/{parts[1]}/{parts[0]}" if len(parts) == 3 else text
 
 
+# WA-CONCISE card v4: list replies of these result types print one fact per line, one block per
+# row, and a single block carries no number. Every other tool's rows are unchanged.
+_BLOCK_RESULT_TYPES = ("stock", "stock_compact", "incoming_stock", "orders", "products")
+_DROPPED_OPENERS = (
+    "Stock details found for the requested products.",
+    "Stock summary for the requested products.",
+    "Here are the orders I found.",
+    "Here are the delivered orders I found.",
+    "Here are the matching products.",
+)
+
+
+def _compact_stock_block(it: Any) -> Any:
+    """A compact entry with exactly one location line drops its Total (it repeats the
+    location); none or several keep it."""
+    if not isinstance(it, dict) or not isinstance(it.get("fields"), list):
+        return it
+    locs = [f for f in it["fields"] if jsc.get(f, "label") not in ("Product Code", "Total")]
+    if len(locs) != 1:
+        return it
+    return {**it, "fields": [f for f in it["fields"] if jsc.get(f, "label") != "Total"]}
+
+
+def _merge_stock_rows(items: list[Any]) -> list[Any]:
+    """Detailed stock rows merged to one block per (company, product code), first-seen order:
+    Company (only when the rows span more than one), Product Code, Product Name, then one
+    `System Location: quantity` line per row (Warehouse dropped), with a Total ahead of them
+    when the block has more than one location."""
+
+    def fv(it: Any, key: str) -> Any:
+        for f in it.get("fields") or []:
+            if isinstance(f, dict) and f.get("key") == key:
+                return f.get("value")
+        return None
+
+    def num(v: Any) -> int | None:
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
+    rows = [it for it in items if isinstance(it, dict) and isinstance(it.get("fields"), list)]
+    if len(rows) != len(items) or any(fv(it, "system_location") is None for it in rows):
+        return items
+    multi_company = len({fv(it, "company_name") for it in rows if fv(it, "company_name") is not None}) > 1
+    groups: dict[tuple[Any, Any], list[dict[str, Any]]] = {}
+    for it in rows:
+        groups.setdefault((fv(it, "company_name"), fv(it, "product_code")), []).append(it)
+    merged: list[Any] = []
+    for grp in groups.values():
+        keep = ("product_code", "product_name") + (("company_name",) if multi_company else ())
+        fields = [f for f in grp[0]["fields"] if f.get("key") in keep]
+        lines = []
+        for r in grp:
+            qty, os_qty = fv(r, "quantity_on_hand"), fv(r, "open_so_qty")
+            lines.append(
+                {
+                    "label": jsc.js_string(fv(r, "system_location")),
+                    "value": f"{_fmt_value(qty)} (O/S: {_fmt_value(os_qty)})"
+                    if os_qty is not None
+                    else _fmt_value(qty),
+                }
+            )
+        if len(grp) > 1:
+            qtys = [num(fv(r, "quantity_on_hand")) for r in grp]
+            total = f"{sum(q or 0 for q in qtys)}"
+            osq = [num(fv(r, "open_so_qty")) for r in grp]
+            if all(q is not None for q in osq):
+                total += f" (O/S: {sum(q or 0 for q in osq)})"
+            fields.append({"label": "Total", "value": total})
+        flags: dict[str, Any] = {}
+        for r in grp:
+            flags.update({k: v for k, v in (r.get("flags") or {}).items() if v})
+        merged.append({**grp[0], "fields": fields + lines, "flags": flags})
+    return merged
+
+
 def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]:
     """The MCP render envelope becomes a WhatsApp message. Deterministic, no LLM (H7).
 
@@ -2963,6 +3049,8 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         if plain_lines
         else jsc.js_string(e.get("intro") or "Here are the results.").strip() + "\n\n"
     )
+    # WA-CONCISE AC-5: five openers go when at least one block prints (cut at the row loop).
+    opener = msg
     if isinstance(ctx.get("predicate"), dict):
         # Round 3 W1 (owner hand test on PR #833, "the message too long already"): a
         # counted set's header says what the list is; the tool's own intro under it
@@ -3095,10 +3183,25 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         question = jsc.js_string(e.get("intro") or "").strip()
         if question:
             msg += question + "\n\n"
-    for i, it in enumerate(
+    rtype = jsc.js_string(e.get("result_type") or "")
+    flat_items: list[Any] = (
         [] if (qs_render or groups_render or stock_ask_render) else (e.get("items") or [])
-    ):
-        msg += _item_line(i + 1 + set_row_offset, it, numbered=not plain_lines) + "\n\n"
+    )
+    block_form = rtype in _BLOCK_RESULT_TYPES
+    if block_form and flat_items:
+        if rtype == "stock":
+            flat_items = _merge_stock_rows(flat_items)
+        elif rtype == "stock_compact":
+            flat_items = [_compact_stock_block(it) for it in flat_items]
+        if opener.strip() in _DROPPED_OPENERS and msg.startswith(opener):
+            msg = msg[len(opener):]
+    # One block is unnumbered, but only on the first page of a counted set.
+    single_block = block_form and len(flat_items) == 1 and not set_row_offset
+    for i, it in enumerate(flat_items):
+        msg += (
+            _item_line(i + 1 + set_row_offset, it, numbered=not (plain_lines or single_block))
+            + "\n\n"
+        )
     if dealer_incoming and jsc.truthy(e.get("closing")):
         # The presenter's dealer closing is the refer line (`presenters.py`, `closing`);
         # printed through `turn/refer.py` so the turn is marked for Customer asks
@@ -3178,9 +3281,9 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # quantity question ("How many units do you need?") is an availability reply too,
     # and it printed the timestamp on T1, T3, T8, T13 and T16.
     stock_availability_reply = jsc.js_string(e.get("result_type") or "") == "stock_availability"
-    ts = None if stock_availability_reply else _fmt_ts(e.get("last_updated_at"))
-    if ts:
-        msg += f"_Data last updated: {ts}_"
+    footer = "" if stock_availability_reply else _footer_line(e.get("last_updated_at"))
+    if footer:
+        msg += footer
 
     # E2 (attribute-first asks, AC-1316): a HAS turn's set-answer header, PREPENDED
     # as its own line ahead of everything above - the block itself (intro, items,
@@ -3275,7 +3378,6 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             msg = header
         else:
             body = msg.strip()
-            footer = f"_Data last updated: {ts}_" if ts else ""
             if other_brands:
                 if footer and body.endswith(footer):
                     body = f"{body[: -len(footer)].strip()}\n\n{other_brands}\n\n{footer}"

@@ -1561,7 +1561,7 @@ def run_crossdomain(
 # --------------------------------------------------------------------------- #
 
 _PROMO_ISO_DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}")
-_DATA_LAST_UPDATED_RE = re.compile(r"_Data last updated:[^\n]*_")
+_DATA_LAST_UPDATED_RE = re.compile(r"_Updated [0-9]{2}/[0-9]{2}/[0-9]{4}[^\n]*_")
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]")
 _LEADING_NEWLINES_RE = re.compile(r"^\n+")
 
