@@ -614,3 +614,26 @@ language pair", which had not been built.
 
 Tests: `tests/test_translations_routes.py::test_list_filters_by_target_language` and
 `TranslationsList.test.tsx`.
+
+# Slice 5 (3 Oct): the required-fields helper (#1445) and the attachment gap line (#1437)
+
+#1445 landed `app/services/chatbot/required_fields.py` (LOWSTOCK-FILTER-ASK) with fixed English
+replies, and #1437 added the composer line `"<code> has no <type>."`. In an ms / zh turn these
+printed English. Each reply leaves through the turn's single final pass (`engine._localize_result`),
+so the field question is a catalog key: the English sentence is the key, and the reply reads in the
+turn's language through the same pass every other composer sentence uses.
+
+- **AC-CL51:** every sentence `required_fields` and `low_stock_ask` print reads in ms / zh in an
+  ms / zh turn. That covers the field questions (`QUESTION`, "Which supplier?"), the miss line
+  `"I don't know '<word>' as a <noun>."`, the pick head (`"Which <noun> do you mean? Reply with a
+  number"` with and without `or "all"`), `CANCELLED` and `GIVE_UP`. The typed word, the numbered
+  option labels and `"all"` stay as printed (values).
+- **AC-CL52:** an English turn is byte-identical to main.
+- **AC-CL53:** the next turn still reads the answer. `reply_verdict` and the open slot never
+  depend on the English text of the question (pinned with an ms turn whose answer settles the field).
+- **AC-CL54:** `"<code> has no <type>."` (#1437) reads in ms / zh; the code and the type names stay
+  as printed.
+- **AC-CL55:** a catalog pin fails if any of these English literals changes in the source.
+
+Known gap, unchanged: the words a contact may TYPE (`ALL_WORDS`, `CANCEL_WORDS`) are input
+matching, not reply wording, and are not part of this slice.

@@ -1,6 +1,6 @@
 # PLAN: chatbot replies follow the user's language (CHAT-LANGUAGE)
 
-Status: Build complete, slices 1-4 reviewed (reviewer + security-reviewer, kill tests) and in hand test; slice 5 (required-fields helper) waits on #1445. Track: full (size L, cloud lane; touches the turn engine and the translation module). The direction was approved by the owner on 2 Oct 2026. Behaviour card Q1-Q5 all answered (a) on 2 Oct (owner Q1-Q3, crew Q4-Q5).
+Status: Build complete, slices 1-4 reviewed (reviewer + security-reviewer, kill tests) and in hand test; slice 5 (required-fields helper, #1445 landed 3 Oct) in progress under the lead pattern (tester, coder, reviewer subagents). Track: full (size L, cloud lane; touches the turn engine and the translation module). The direction was approved by the owner on 2 Oct 2026. Behaviour card Q1-Q5 all answered (a) on 2 Oct (owner Q1-Q3, crew Q4-Q5).
 
 ## Owner ask
 
