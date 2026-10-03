@@ -285,6 +285,11 @@ def _build_json_schema() -> dict[str, Any]:
                 ],
             },
             "sort_dir": {"type": ["string", "null"], "enum": ["asc", "desc", None]},
+            # REPORT-ENGINE (owner rule 4 Oct 2026, semantic only): the parser's own reading
+            # that this message only refines the sales ranking on screen, and the ranking's
+            # measure. Same shape and exemption as `rank_direction`.
+            "ranking_refine": {"type": ["boolean", "null"]},
+            "measure": {"type": ["string", "null"], "enum": ["qty", "amount", None]},
             # PLAN-retail-sales-reports-26sep S1: the sales analysis's basis and the
             # company named. Required for strict mode and tolerated absent, exactly as
             # `sales_channel` above (no recorded emission carries them).
@@ -511,6 +516,8 @@ def _build_json_schema() -> dict[str, Any]:
             "rank_direction",
             "sort_by",
             "sort_dir",
+            "ranking_refine",
+            "measure",
             "sales_basis",
             "sales_company",
             "correction",
@@ -570,6 +577,8 @@ TOLERATED_ABSENT: frozenset[str] = frozenset(
         "rank_direction",
         "sort_by",
         "sort_dir",
+        "ranking_refine",
+        "measure",
         "sales_basis",
         "sales_company",
         "proceed_anyway",

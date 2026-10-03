@@ -2630,14 +2630,18 @@ def _top_selling_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
 _REPORT_ASK_ERROR_TEXT = "Could not run the sales report right now."
 
 
-def _report_ask_output(result: Any) -> dict[str, Any]:
+def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     """REPORT-ENGINE slice 1b: the presenter's text (`presenters._report_ask`) is the reply,
     verbatim. It names its own scope (basis, filters, period), so the generic search-scope
     header is skipped (`outstanding_report`), and a ranking with no sales ("No sales found
     for ...") is an answer, never the miss lane (the top selling ruling, 27 Sep 2026)."""
     envelope = result if isinstance(result, dict) else {}
     text = jsc.js_string(envelope.get("response") or "").strip() if "response" in envelope else ""
+    # The args a ranking that ran was asked with, held for a refine (`Focus.sales_ranking_frame`).
+    semantic_input = (ctx or {}).get("semantic_input")
+    args = semantic_input.get("report_ask_args") if isinstance(semantic_input, dict) else None
     return {
+        "sales_ranking_frame": dict(args) if text and isinstance(args, dict) else None,
         "response": text or _REPORT_ASK_ERROR_TEXT,
         "response_intro": None,
         "answers": [],
@@ -2677,7 +2681,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     if jsc.js_string(ctx.get("tool") or "") == "crm_top_selling_report":
         return _top_selling_output(result, ctx)
     if jsc.js_string(ctx.get("tool") or "") == "crm_report_ask":
-        return _report_ask_output(result)
+        return _report_ask_output(result, ctx)
     if jsc.js_string(ctx.get("tool") or "") == "crm_sales_analysis":
         # The same envelope: the presenter's text and, when there is one, the Excel. It
         # states its own scope (company, channel, basis, period), so the order domain's

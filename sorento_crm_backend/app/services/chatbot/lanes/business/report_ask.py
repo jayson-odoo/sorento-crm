@@ -170,28 +170,13 @@ def hold_words(verdict: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, 
     return {**verdict, "entities": [e for e in entities if not any(e is h for h in held)]}, held
 
 
-#: A quantity word in the message: the only thing that makes a sales ranking sort by qty.
-_QUANTITY_WORD_RE = re.compile(r"\b(?:quantity|qty|units?|pcs|pieces)\b", re.IGNORECASE)
-
-
-def _is_axis_noun(raw: str) -> bool:
-    """Is `raw` a person noun of the ranked axis ("salesman", "sales agents", "SA", "customers")?
-    The nouns are `engine`'s own, the ones `_ranked_who` reads; a lazy import, `engine` imports us."""
-    from app.services.chatbot.engine import _RANKED_AGENT_NOUNS, _RANKED_AGENT_SECOND, _RANKED_CUSTOMER_NOUNS
-
-    words = raw.lower().split()
-    if len(words) == 1:
-        return words[0] in _RANKED_AGENT_NOUNS or words[0] in _RANKED_CUSTOMER_NOUNS
-    return len(words) == 2 and words[0] == "sales" and words[1] in _RANKED_AGENT_SECOND
-
-
 def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
     """Engine seam, a FRESH `sales_ranking` ask: this message's brand, sales agent and
     category words move off the entity list onto `report_ask_words` (raw words per hint).
     A carried row of those hints is dropped too: it is not this ask's filter, and the
-    generic resolver would read it as a customer. An entity that is only the ranked noun
-    ("salesman", "customers") is the axis, never a filter, and is dropped. `rank_by`
-    quantity stands only when `text` names a quantity word."""
+    generic resolver would read it as a customer. `text` is taken for the seam's shape: the
+    parser, never the words, decides what the message meant."""
+    _ = text
     if jsc.js_string(verdict.get("order_status") or "").strip() != ASK_NAME or verdict.get("required_ask"):
         return verdict
     kept: list[Any] = []
@@ -201,17 +186,12 @@ def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
             continue
         hint = jsc.js_string(e.get("hint") or "").strip().lower()
         raw = " ".join(jsc.js_string(e.get("raw") or "").split())
-        if hint in ("sales_agent", "customer") and raw and _is_axis_noun(raw):
-            continue
         if hint not in WORD_HINTS:
             kept.append(e)
             continue
         if raw and e.get("current_message") is not False and raw not in words[hint]:
             words[hint].append(raw)
-    out = {**verdict, "entities": kept, "report_ask_words": words}
-    if out.get("rank_by") == "quantity" and not _QUANTITY_WORD_RE.search(text or ""):
-        out["rank_by"] = None
-    return out
+    return {**verdict, "entities": kept, "report_ask_words": words}
 
 
 def dealer_location_words(parse_output: dict[str, Any]) -> dict[str, Any]:
@@ -322,7 +302,7 @@ def _fresh_args(
 
     args: dict[str, Any] = {
         "basis": "ordered" if parse_output.get("basis") == "ordered" else "delivered",
-        "measure": "qty" if parse_output.get("rank_by") == "quantity" else "amount",
+        "measure": "qty" if parse_output.get("measure") == "qty" else "amount",
         "sort": "asc" if parse_output.get("rank_direction") == "bottom" else "desc",
     }
     if group_by:
@@ -417,15 +397,42 @@ def settle(
         )
         return outcome, None
 
+    frame = parse_output.get("sales_ranking_frame")
+    if parse_output.get("ranking_refine") is True and isinstance(frame, dict) and frame:
+        return _refine(db, parse_output, frame), None
+
     args, line = _fresh_args(db, parse_output, entities, dealer=dealer)
     if args is None:
         return None, line
     top_n = parse_output.get("top_n")
     given = _given_top_n(args, top_n)
     period = period_from(parse_output.get("date_filter_start"), parse_output.get("date_filter_end"))
-    if period is not None:
+    if period is not None and parse_output.get("ranking_refine") is not True:
+        # A refine with no ranking held has nothing to refine: it is a fresh ask, and a
+        # period alone never runs a total (it asks).
         given["period"] = period
     return rf.collect(db, SALES_RANKING_ASK, given=given, extras={"args": args, "top_n": top_n}), None
+
+
+def _refine(db: Any, parse_output: dict[str, Any], frame: dict[str, Any]) -> rf.Outcome:
+    """The parser said this message only refines the sales ranking that ran (`ranking_refine`):
+    the held route args re-run with ONLY the keys the verdict changed (count, period, basis,
+    measure)."""
+    args = {k: v for k, v in frame.items() if k not in ("date_from", "date_to", "top_n")}
+    if parse_output.get("basis") in ("ordered", "delivered"):
+        args["basis"] = parse_output["basis"]
+    if parse_output.get("measure") in ("qty", "amount"):
+        args["measure"] = parse_output["measure"]
+    top_n = parse_output.get("top_n")
+    if top_n is None:
+        top_n = frame.get("top_n")
+    period = period_from(parse_output.get("date_filter_start"), parse_output.get("date_filter_end")) or period_from(
+        frame.get("date_from"), frame.get("date_to")
+    )
+    given = _given_top_n(args, top_n)
+    if period is not None:
+        given["period"] = period
+    return rf.collect(db, SALES_RANKING_ASK, given=given, extras={"args": args, "top_n": top_n})
 
 
 def route_args(outcome: rf.Outcome) -> dict[str, Any]:

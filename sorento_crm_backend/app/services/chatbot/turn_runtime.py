@@ -1551,6 +1551,15 @@ def lane_parse_output(
         and focus.top_selling
     ):
         out["top_selling"] = dict(focus.top_selling)
+    # REPORT-ENGINE: the held sales ranking frame rides only on a verdict the parser says
+    # refines it; any other verdict never sees it (a new intent wins).
+    if (
+        jsc.js_string(out.get("order_status") or "").strip() == "sales_ranking"
+        and out.get("ranking_refine") is True
+        and focus is not None
+        and focus.sales_ranking_frame
+    ):
+        out["sales_ranking_frame"] = dict(focus.sales_ranking_frame)
     # Fix lane round 8 (owner hand test, 28 Sep 2026): an outstanding ask after a ranking
     # is the ORDINARY outstanding ask with the ranked codes as its products
     # (`apply._hop_to_report` wrote them on the hop). The same carried keys an answering
@@ -2342,7 +2351,8 @@ def _spec_window(out: dict[str, Any], spec: FetchSpec) -> dict[str, Any]:
     stays (N2, the same rule `outstanding_carry` keeps for the answering turn).
     """
     window = spec.date_window if isinstance(spec.date_window, dict) else None
-    if not window:
+    if not window or jsc.js_string(out.get("order_status") or "").strip() == "sales_ranking":
+        # A sales ranking never borrows the carried window (owner Q3).
         return out
     if out.get("date_filter_start") or out.get("date_filter_end"):
         return out
@@ -4248,6 +4258,8 @@ def envelope_of(
         # LOWSTOCK-FILTER-ASK: the `required_fields` slot a lane left open, recorded on
         # `focus.required_ask` by `engine.py` for the next message only.
         "required_ask": fetched.get("required_ask"),
+        # REPORT-ENGINE: the route args of a sales ranking that ran, held on the focus by `engine.py`.
+        "sales_ranking_frame": fetched.get("sales_ranking_frame"),
     }
     if raw_fragment is not None:
         # R4 (PLAN-chatbot-answer-half-reattach.md): the UNTOUCHED `business.run_fetch`

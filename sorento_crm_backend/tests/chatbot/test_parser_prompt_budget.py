@@ -100,7 +100,13 @@ POLICY_BLOCKS_SEED_FILE = FIXTURES_DIR / "prompt_blocks_seed.txt"
 # CEILING is 44,601 - 512 = 44,089.
 # Seventh re-pin, 3 Oct 2026: restoring "SA" and "(dealer / project)" in REPORT_ASK_ADDENDUM
 # (review round 2) takes the whole prompt to 44,603 (+2); CEILING is 44,603 - 512 = 44,091.
-CEILING = 44_091
+# Eighth re-pin, 4 Oct 2026 (owner rule: SEMANTIC ONLY, the parser decides, code reads no text):
+# REPORT_ASK_ADDENDUM now teaches ranking_refine (a follow-up that only changes the count,
+# period, basis or measure of the ranking on screen), the measure key, the new-ask rule and the
+# product-ranking carve-outs, in place of the removed regex rules; prompt without
+# MEMORY_ADDENDUM 44,427 est. tokens and the whole prompt 44,943 (+340); CEILING is
+# 44,943 - 512 = 44,431.
+CEILING = 44_431
 # The memory addendum on its own, bounded separately so this PR's growth stays bounded.
 # 26 Sep baseline (lane d89110c0): 339 est. tokens. Round 4 (baf4c813, 28 Sep: the history
 # question in any wording, the number re-run, commercial_request) took it to 512, which is
