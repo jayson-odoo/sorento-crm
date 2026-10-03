@@ -14,7 +14,7 @@ package, which imports it, may not call `re` (AC-1520), and the rule was born th
 """
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 
@@ -158,59 +158,6 @@ def ledger_family_label(text: str) -> str:
         # An ungrouped row sharing a group's key is its own customer: its full name.
         return text.strip()
     return _label_without_marker(text)
-
-
-def _bracket_runs(text: str) -> list[str]:
-    """The top-level bracketed or parenthesised runs of `text`, each whole, upper-cased."""
-    runs: list[str] = []
-    depth = 0
-    cur: list[str] = []
-    for ch in text:
-        if ch in "[(":
-            if depth == 0:
-                cur = []
-            depth += 1
-        if depth:
-            cur.append(ch)
-        if ch in "])" and depth:
-            depth -= 1
-            if depth == 0:
-                runs.append(" ".join("".join(cur).upper().split()))
-    return runs
-
-
-def shared_bracket_label(names: Sequence[str]) -> str:
-    """The name several ledgers of one family share: the first name with every bracketed run
-    dropped EXCEPT those every name carries (`(SENTUL)`, `(M)`); a run only some carry
-    (`(CERAMIC & ELLECI)`) or an `[A/C n]` account marker is a ledger's, not the company's name."""
-    names = [n for n in names if n]
-    if not names:
-        return ""
-    shared = set(_bracket_runs(names[0]))
-    for name in names[1:]:
-        shared &= set(_bracket_runs(name))
-    # An account marker is the ledger's, never the company's name, even when all share it.
-    shared = {r for r in shared if _marker_level(r[1:-1].strip()) is None}
-    out: list[str] = []
-    depth = 0
-    run: list[str] = []
-    for ch in names[0]:
-        if ch in "[(":
-            if depth == 0:
-                run = []
-            depth += 1
-        if depth:
-            run.append(ch)
-            if ch in "])":
-                depth -= 1
-                if depth == 0:
-                    text = "".join(run)
-                    if " ".join(text.upper().split()) in shared:
-                        out.append(text)
-            continue
-        out.append(ch)
-    cleaned = " ".join("".join(out).split()).strip().strip("-").strip()
-    return cleaned or names[0]
 
 
 def customer_header_words(entries: Iterable[tuple[str, str | None]]) -> str:

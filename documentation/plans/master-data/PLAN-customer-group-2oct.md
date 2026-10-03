@@ -9,7 +9,8 @@ Ledgers are grouped into one company only by the name rule `ledger_family_key`
 (`app/services/ledger_family.py:42`). It merges different legal entities (KEDAI PAPAN HENG
 CHOON (M) / (UTARA); JUBIN BMS (NS) / (KLANG) / (1990)) and cannot join one owner's two names
 (CHIN CHUN HARDWARE / HOMEMART share code 300-C043). Owner rulings 2 Oct 2026: a group table
-per company, seeded from numbered families, no auto-assign on import, a Customer Groups page,
+per company, seeded from numbered families (superseded 3 Oct 2026: no seed; groups set by
+hand via bulk "Set customer group", CUSTOMER-BULK-OPS), no auto-assign on import, a Customer Groups page,
 the name rule as fallback.
 
 ## Data
@@ -29,6 +30,11 @@ the name rule as fallback.
   that company, reuse the existing group); set members' `customer_group_id` where null.
   Measured on dev: 796 groups, 2,804 rows, none of CASH / SHOPEE / LAZADA (they hold no
   numbered account, so no skip list is needed).
+  **Superseded 3 Oct 2026 (owner ruling, option b: no automatic name-matching joins, explicit
+  links only).** `cust_group_0001` is DDL only and assigns no customer on upgrade (lane
+  CUST-GROUP-SEED-REVIEW, PR #1451). No seed follows (owner option (c)): groups are set by hand via bulk
+  "Set customer group" (CUSTOMER-BULK-OPS). Lane plan:
+  `documentation/plans/master-data/PLAN-customer-group-seed-review-3oct.md`.
 - Crew SQL for the shared dev DB: `crew/state/migrations/CUSTOMER-GROUP.sql`, the DDL only
   (idempotent); the seed UPDATE is held for the owner per the crew contract, or run via
   `alembic upgrade` on the test copy.

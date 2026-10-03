@@ -28,11 +28,15 @@ export type ContactsListParams = ListPagerParams;
  */
 export function contactsListFilters({
   chatbotMemoryLevel,
+  customersNone = false,
 }: {
   chatbotMemoryLevel: string | null;
+  customersNone?: boolean;
 }): Record<string, string> {
   const filters: Record<string, string> = {};
   if (chatbotMemoryLevel) filters.chatbot_memory_level = chatbotMemoryLevel;
+  // `customers=none`: the contacts with no linked customer (bulk Link customers worklist).
+  if (customersNone) filters.customers = 'none';
   return filters;
 }
 
