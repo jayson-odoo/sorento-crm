@@ -374,7 +374,7 @@ def test_ac11_po_placed_lines_sit_in_the_code_block(
     _no_old_phrases(said)
     assert "but PO is placed" not in said, said
     assert said == (
-        "*Product Code:* SRTPO0001\n*Incoming:* none\n*Stock:* none\n*PO:* placed\n"
+        "*Product Code:* SRTPO0001\n*Incoming:* none\n*Stock:* none\n*PO:* PO-0001\n"
         "*Ordered:* 10\n*Outstanding:* 10\n*PO date:* 2026-09-11\n*Location:* BRW"
         f"\n\n{OFFER}"
     ), said

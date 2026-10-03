@@ -319,7 +319,7 @@ class TestAC921ThePORungReachesTheCustomer:
         assert PO_TOOL in probes, "the PO rung never ran on a real turn"
         reply_text = (result.reply or {}).get("text") or ""
         assert (
-            f"*Product Code:* {CODE}\n*Stock:* none\n*Incoming:* none\n*PO:* placed\n"
+            f"*Product Code:* {CODE}\n*Stock:* none\n*Incoming:* none\n"
             f"*Ordered:* 1000\n*Outstanding:* 1000\n"
             "*Location:* KL-WH"
         ) in reply_text, reply_text
@@ -437,7 +437,7 @@ class TestTheSuffixedCodeShapeReachesTheRung:
         # `_climb`'s retired numbered-section shape.
         reply_text = (result.reply or {}).get("text") or ""
         assert (
-            f"*Product Code:* {code}\n*Stock:* none\n*Incoming:* none\n*PO:* placed\n"
+            f"*Product Code:* {code}\n*Stock:* none\n*Incoming:* none\n"
             f"*Ordered:* 1000\n*Outstanding:* 1000\n"
             "*Location:* KL-WH"
         ) in reply_text, reply_text
@@ -563,17 +563,15 @@ class TestOwner8SepTheRungIsPerContactAndOffersOnce:
         assert PO_TOOL in probes
         # 20 Sep 2026 (AC-1706 reattach, re-pinned hand pass 9 round, 21 Sep 2026):
         # `_crossdomain_rung_text` (`lanes/business/answer.py`) is the LIVE composer now,
-        # and it never renders a PO Number line at all (no per-document heading, owner
-        # ruling 11 Sep 2026, second ruling) - measured directly, not the generic
+        # and it opens each document with its number (`*PO:* <number>`, owner ruling
+        # 4 Oct 2026, superseding the 11 Sep no-heading ruling) - measured directly, not the generic
         # composer's own "every field the envelope carries" shape this test used to pin.
-        # The old FLAG about `po_number` reaching the customer no longer applies.
         text = (result.reply or {}).get("text") or ""
         assert (
-            f"*Product Code:* {CODE}\n*Stock:* none\n*Incoming:* none\n*PO:* placed\n"
-            f"*Ordered:* 27\n*Outstanding:* 27\n"
+            f"*Product Code:* {CODE}\n*Stock:* none\n*Incoming:* none\n"
+            f"*PO:* 202607-S0031\n*Ordered:* 27\n*Outstanding:* 27\n"
             "*PO date:* 2026-06-30"
         ) in text, text
-        assert "PO Number" not in text
         assert "Location" not in text  # po_row carries no location field
         # The offer follows every miss now, even a rung-answered one (module docstring) -
         # exactly once, which is the "offers once" half of this class's own name.
@@ -640,7 +638,7 @@ class TestD7AnIncomingAskReachesThePORung:
         # the bridge ladder - module docstring's "AC-1706 re-pin" section.
         text = (result.reply or {}).get("text") or ""
         assert (
-            f"*Product Code:* {CODE}\n*Incoming:* none\n*Stock:* none\n*PO:* placed\n"
+            f"*Product Code:* {CODE}\n*Incoming:* none\n*Stock:* none\n"
             f"*Ordered:* 1000\n*Outstanding:* 1000\n"
             "*Location:* KL-WH"
         ) in text, text

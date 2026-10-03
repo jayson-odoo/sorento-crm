@@ -91,7 +91,7 @@ def test_b1_two_companies_one_block_each_po_lines_once_in_the_first(
 
     assert said == (
         "1. *Company:* Sorento\n*Product Code:* SRTX2\n*Incoming:* none\n*Stock:* 0\n"
-        "*PO:* placed\n*Ordered:* 30\n*Outstanding:* 30\n*PO date:* 2026-09-11\n*Location:* BRW\n\n"
+        "*PO:* PO-0002\n*Ordered:* 30\n*Outstanding:* 30\n*PO date:* 2026-09-11\n*Location:* BRW\n\n"
         "2. *Company:* Mocha\n*Product Code:* SRTX2\n*Incoming:* none\n*MOCHA-WH:* 0 (O/S: 7)\n\n"
         f"{OFFER}"
     ), said
@@ -125,7 +125,7 @@ def test_b1_guard_one_company_prints_po_lines_as_today(
     )
 
     assert said == (
-        "*Product Code:* SRTX2\n*Incoming:* none\n*Stock:* 0\n*PO:* placed\n*Ordered:* 30\n"
+        "*Product Code:* SRTX2\n*Incoming:* none\n*Stock:* 0\n*PO:* PO-0002\n*Ordered:* 30\n"
         f"*Outstanding:* 30\n*PO date:* 2026-09-11\n*Location:* BRW\n\n{OFFER}"
     ), said
 

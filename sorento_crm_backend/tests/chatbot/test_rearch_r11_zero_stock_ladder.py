@@ -60,7 +60,7 @@ LIVE_UUID = "60220000-0000-0000-0000-000000000002"
 #: Card v4: a zero-stock code is ONE block, `*Stock:* 0` under its code, then its rung's lines.
 INCOMING_LEAD = f"*Product Code:* {ZERO_CODE}\n*Stock:* 0"
 NO_STOCK_FOR = "*Stock:* 0"
-PO_HEADER = "*PO:* placed"
+PO_HEADER = "*PO:* PO-0003"
 WAREHOUSE_OFFER = "escalate to warehouse team"
 PURCHASING_OFFER = "escalate to purchasing team"
 
@@ -159,6 +159,7 @@ def _po_rows(code: str) -> dict[str, Any]:
         "items": [
             {
                 "fields": [
+                    {"key": "po_number", "label": "PO Number", "value": "PO-0003"},
                     {"key": "product_code", "label": "Product Code", "value": code},
                     {"key": "ordered_qty", "label": "Ordered Qty", "value": 10},
                     {"key": "outstanding_qty", "label": "Outstanding Qty", "value": 10},
