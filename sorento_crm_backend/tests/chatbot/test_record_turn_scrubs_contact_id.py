@@ -163,3 +163,70 @@ def test_fake_id_space_has_no_collisions_and_phones_pass_the_guard():
             fakes.add(str(contact["id"]))
             assert guard.is_fake_phone(contact["phone"])
         assert len(fakes) == count, f"{count - len(fakes)} merged contacts in {count}"
+
+
+# AC-23 ---------------------------------------------------------------------
+
+_CDN = "https://cdn.example.invalid/"
+
+
+def _attachment_urls(node, under=False):
+    if isinstance(node, dict):
+        for k, v in node.items():
+            hit = under or k.startswith("attachment") or k == "media"
+            if hit and k in ("url", "source_url") and isinstance(v, str) and v:
+                yield v
+            yield from _attachment_urls(v, hit)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _attachment_urls(item, under)
+
+
+def test_recorded_turn_has_no_real_id_in_any_string_and_placeholder_media_urls():
+    rng = random.Random(51)
+    real = _real_id(rng)
+    cdn_url = f"https://cdn.chatapi.net/whatsapp_business/{real}/img-1.jpg?x=1"
+    envelope = {
+        "contact": {"id": int(real), "firstName": "Real", "lastName": "P"},
+        "message": {
+            "message": {
+                "message": {
+                    "attachment": {"type": "image", "url": cdn_url, "source_url": cdn_url},
+                    "text": f"my account is {real} thanks",
+                }
+            }
+        },
+        "media": {"message": {"attachment": {"url": cdn_url, "source_url": cdn_url}}},
+    }
+    row = {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "created_at": None,
+        "envelope": envelope,
+        "trace": [
+            {"stage": "received", "raw": {"session_vars": {"respond_io_id": real, "note": f"id={real};"}}}
+        ],
+        "response": {},
+    }
+    turn = recorder._record_row(row, db_label="ac23", switches={})
+    blob = json.dumps(turn)
+    fake = recorder._fake_contact_id(real)
+    assert real not in blob
+    assert str(turn["received_session_vars"]["respond_io_id"]) == fake
+    assert f"id={fake};" in blob
+    assert f"my account is {fake} thanks" in blob
+    urls = list(_attachment_urls(turn))
+    assert urls
+    assert all(u.startswith(_CDN) for u in urls), urls
+
+
+def test_committed_recordings_use_placeholder_media_urls():
+    roots = [
+        _BACKEND / "tests" / "chatbot" / "replay_turns",
+        _BACKEND / "tests" / "fixtures" / "chatbot",
+    ]
+    bad = []
+    for root in roots:
+        for path in sorted(root.rglob("*.json")):
+            data = json.loads(path.read_text(encoding="utf-8"))
+            bad += [str(path.name) for u in _attachment_urls(data) if not u.startswith(_CDN)]
+    assert not bad, f"{len(bad)} media urls off the placeholder host, e.g. {sorted(set(bad))[:3]}"
