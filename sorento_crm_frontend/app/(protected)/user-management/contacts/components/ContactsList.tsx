@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { extractApiError } from '@/lib/api-client';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -13,8 +13,10 @@ import {
   useReactTable,
   getCoreRowModel,
 } from '@tanstack/react-table';
-import { Copy, MessageCircle, MessageCircleOff, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { Copy, Link2, MessageCircle, MessageCircleOff, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -31,6 +33,7 @@ import { apiFetch } from '@/lib/api';
 import type { RespondContact } from '../types/contact.types';
 import { formatDate } from '@/lib/helpers';
 import { toast } from '@/lib/toast';
+import BulkLinkCustomersDialog from './BulkLinkCustomersDialog';
 import ContactCreateDialog from './ContactCreateDialog';
 import ContactDeleteDialog from './ContactDeleteDialog';
 import ContactBulkDeleteDialog from './ContactBulkDeleteDialog';
@@ -56,6 +59,7 @@ export default function ContactsList() {
   const queryClient = useQueryClient();
   const canViewUsers = useHasPermission('user_management.users.view');
   const canAddUsers = useHasPermission('user_management.users.add');
+  const canEditContacts = useHasPermission('user_management.contacts.edit');
   const [createUserContact, setCreateUserContact] = useState<RespondContact | null>(null);
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
@@ -70,6 +74,7 @@ export default function ContactsList() {
   // review finding S13 / AC-MEM028) - the only filter this list reads from the URL
   // today, no filter UI of its own beyond the deep link that sets it.
   const [chatbotMemoryLevel, setChatbotMemoryLevel] = useState<string | null>(null);
+  const [customersNone, setCustomersNone] = useState(false);
 
   // Back hands the list its own query string back, and the pager keeps
   // rewriting it, so the list reads it (S3-01). One hook, every list.
@@ -78,17 +83,19 @@ export default function ContactsList() {
     setSorting(state.sorting);
     resetSearch(state.searchQuery);
     setChatbotMemoryLevel(state.filters.chatbot_memory_level ?? null);
+    setCustomersNone(state.filters.customers === 'none');
   });
 
   // Page one when a filter CHANGES, never on mount - the mount run used to stamp
   // page 1 over the page `useListStateFromUrl` had just restored from the URL.
-  useResetPageOnFilterChange(setPagination, [searchQuery, chatbotMemoryLevel]);
+  useResetPageOnFilterChange(setPagination, [searchQuery, chatbotMemoryLevel, customersNone]);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [contactToDelete, setContactToDelete] = useState<RespondContact | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [bulkCopyDialogOpen, setBulkCopyDialogOpen] = useState(false);
+  const [bulkLinkOpen, setBulkLinkOpen] = useState(false);
   const [impersonateTarget, setImpersonateTarget] = useState<RespondContact | null>(null);
   const [bulkDisableOutboundOpen, setBulkDisableOutboundOpen] = useState(false);
 
@@ -100,9 +107,9 @@ export default function ContactsList() {
       pageSize: pagination.pageSize,
       sorting,
       searchQuery,
-      filters: contactsListFilters({ chatbotMemoryLevel }),
+      filters: contactsListFilters({ chatbotMemoryLevel, customersNone }),
     }),
-    [pagination, sorting, searchQuery, chatbotMemoryLevel],
+    [pagination, sorting, searchQuery, chatbotMemoryLevel, customersNone],
   );
 
   const { data, isLoading, isPlaceholderData, refetch, isFetching, error } = useQuery({
@@ -123,8 +130,14 @@ export default function ContactsList() {
 
   // One row here is one contact, so the outbound switch is 1:1 with the row and
   // the selection needs no de-duplication (unlike the contact x agent grants grid).
+  // Read through a ref so the column defs (and the row cells they mount) do not rebuild
+  // whenever the mutation wrapper's identity changes.
   const { setOne: setOutboundOne, setBulk: setOutboundBulk } =
     useRespondContactOutboundMutations();
+  const setOutboundOneRef = useRef(setOutboundOne);
+  useEffect(() => {
+    setOutboundOneRef.current = setOutboundOne;
+  });
   // Only the BULK write blocks the switches. The per-row one is optimistic
   // (S7-01), so it has already moved the switch and can be flipped straight back.
   const outboundBusy = setOutboundBulk.isPending;
@@ -248,6 +261,24 @@ export default function ContactsList() {
         meta: { headerTitle: 'Last name', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
+        id: 'customers',
+        accessorFn: (row) => row.customer_codes?.join(', ') ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Customers" column={column} />,
+        size: 200,
+        enableSorting: false,
+        cell: ({ row }) => {
+          const label = (row.original.customer_codes ?? []).join(', ');
+          return label ? (
+            <span className="block truncate" title={label}>
+              {label}
+            </span>
+          ) : (
+            <span className="text-muted-foreground"> - </span>
+          );
+        },
+        meta: { headerTitle: 'Customers', skeleton: <Skeleton className="h-4 w-28" /> },
+      },
+      {
         id: 'access_types',
         accessorFn: (row) => row.access_type_codes?.join(',') ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Access types" column={column} />,
@@ -308,7 +339,7 @@ export default function ContactsList() {
             contactLabel={row.original.name || row.original.phone_number}
             disabled={outboundBusy}
             onChange={(enabled) =>
-              setOutboundOne.mutate({ contactId: row.original.id, enabled })
+              setOutboundOneRef.current.mutate({ contactId: row.original.id, enabled })
             }
           />
         ),
@@ -369,7 +400,6 @@ export default function ContactsList() {
       syncContactMutation.variables,
       bulkSyncMutation.isPending,
       outboundBusy,
-      setOutboundOne,
       canViewUsers,
       canAddUsers,
     ],
@@ -392,6 +422,18 @@ export default function ContactsList() {
   });
 
   const clearSelection = () => setRowSelection({});
+
+  // Reset selection whenever the result set changes.
+  useEffect(() => {
+    setRowSelection({});
+  }, [
+    searchQuery,
+    chatbotMemoryLevel,
+    customersNone,
+    pagination.pageIndex,
+    pagination.pageSize,
+    sorting,
+  ]);
 
   const runOutboundBulk = (enabled: boolean) =>
     setOutboundBulk.mutate(
@@ -442,7 +484,29 @@ export default function ContactsList() {
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
             primaryAction={listPrimaryAction}
+            leftActions={
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="contacts-no-customers"
+                  checked={customersNone}
+                  onCheckedChange={(v) => setCustomersNone(v === true)}
+                />
+                <Label htmlFor="contacts-no-customers" className="text-sm font-normal">
+                  No customers linked
+                </Label>
+              </div>
+            }
             bulkActions={[
+              ...(canEditContacts
+                ? [
+                    {
+                      key: 'link-customers',
+                      label: `Link customers (${selectedContactIds.length})`,
+                      icon: Link2,
+                      onClick: () => setBulkLinkOpen(true),
+                    },
+                  ]
+                : []),
               {
                 key: 'outbound-enable',
                 label: `Enable messaging (${selectedContactIds.length})`,
@@ -488,6 +552,19 @@ export default function ContactsList() {
           <DataGridPagination />
         </CardFooter>
       </Card>
+
+      <BulkLinkCustomersDialog
+        open={bulkLinkOpen}
+        onOpenChange={setBulkLinkOpen}
+        contacts={selectedContacts}
+        onLinked={(okIds) =>
+          setRowSelection((prev) => {
+            const next = { ...prev };
+            okIds.forEach((id) => delete next[id]);
+            return next;
+          })
+        }
+      />
 
       <ContactCreateDialog
         open={createDialogOpen}
