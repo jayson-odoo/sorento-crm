@@ -612,7 +612,7 @@ class TestFetchedEmptyIsAMiss:
             f"sentence, the CS member picker) - never the bare generic miss: {reply!r}"
         )
         assert "Here's what you want:" in reply, reply
-        assert "Reply 'all dates' to search without the date filter" in reply, reply
+        assert "Reply with another month or dates (e.g. August, or 15 Sep to 10 Oct)" in reply, reply
 
     def test_attachment_fetch_with_zero_rows_is_the_rich_miss(self, session_factory, monkeypatch) -> None:
         _seed_contact_and_get(session_factory)
