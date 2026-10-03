@@ -2955,13 +2955,14 @@ class TestDateNarrowingUnderAnOpenOffer:
             attributes=["sales_orders.outstanding"],
             mcp_response=REPORT_HIT,
         )
-        assert captured2, "the pick after the narrowing must still resolve"
-        _name, args2 = captured2[0]
-        assert args2.get("detail") == "so", f"'1' must give the SO detail: {args2}"
-        assert args2.get("order_date_from") == "2026-09-01", (
-            f"the pick must run over the NARROWED window, not the original one: {args2}"
+        # Owner hand test, 3 Oct 2026 (PR #1435): on a CUSTOMER-subject offer (no product,
+        # as here) "1" is the SO list (`so_status.list_text`), no longer the report's own
+        # SO detail. The point of this test stands: the pick runs over the NARROWED window.
+        reply2 = (_result2.reply or {}).get("text") or ""
+        assert "crm_outstanding_report" not in [name for name, _ in captured2], captured2
+        assert "1 Sep 2026 to 30 Sep 2026" in reply2, (
+            f"the pick must run over the NARROWED window, not the original one: {reply2!r}"
         )
-        assert args2.get("order_date_to") == "2026-09-30", args2
 
     def test_a_date_only_turn_under_the_detail_offer_keeps_a_product_subject(
         self, session_factory, monkeypatch

@@ -4,14 +4,14 @@ Adds `respond_contacts.brand_ids uuid[] NULL`. NULL (or empty) means every brand
 every existing contact stays unscoped. No backfill.
 
 Revision ID: cbs_0001_contact_brand_ids
-Revises: merge_03oct_join6
+Revises: dev_login_0001
 """
 from __future__ import annotations
 
 from alembic import op
 
 revision = "cbs_0001_contact_brand_ids"
-down_revision = "merge_03oct_join6"
+down_revision = "dev_login_0001"
 branch_labels = None
 depends_on = None
 
