@@ -135,14 +135,14 @@ def test_a_missing_code_costs_one_embedding_round_trip_not_two(db, counted):
     """The timing face of the same fix: the embedding round trip is the expensive
     step a repeat pays again (an OpenAI call in production)."""
     _, _, delay = counted
-    delay["s"] = 1.5
+    delay["s"] = 2.0
 
     started = time.perf_counter()
     _resolve(db)
     elapsed = time.perf_counter() - started
 
-    # Before: two round trips, so never under 3.0s. After: one, plus the SQL.
-    assert elapsed < 2.9, f"{elapsed:.2f}s"
+    # Before: two round trips, so never under 4.0s. After: one, plus the SQL.
+    assert elapsed < 3.9, f"{elapsed:.2f}s"
 
 
 def test_two_spellings_of_one_code_both_resolve(db, monkeypatch):

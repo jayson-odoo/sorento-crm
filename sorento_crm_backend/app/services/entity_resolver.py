@@ -19,6 +19,7 @@ Design notes
 """
 from __future__ import annotations
 
+import collections
 import copy
 import functools
 import logging
@@ -4783,28 +4784,43 @@ def _with_resolve_memo(fn):
     return wrapper
 
 
+def _memo_key(probe, token: str, regions) -> tuple:
+    return (probe, token, None if regions is None else frozenset(regions))
+
+
 def _memo_tier1(probe, db: Session, tokens: list[str], regions) -> dict[str, list[ResolvedEntity]]:
     """`probe(db, tokens)` (Tier-1, batched), asking the database only for tokens it
     has not already answered for in this request."""
     memo = _RESOLVE_MEMO.get()
     if memo is None:
-        memo = {}
-    todo = [t for t in tokens if (probe, t, regions) not in memo]
+        return _call_tier1(probe, db, tokens, regions)
+    todo = [t for t in tokens if _memo_key(probe, t, regions) not in memo]
     if todo:
-        fresh = (
-            probe(db, todo, regions=regions)
-            if probe is _probe_inbound_shipment
-            else probe(db, todo)
-        )
+        fresh = _call_tier1(probe, db, todo, regions)
+        # A batch maps its rows back by NORMALISED code, so of two spellings of one code
+        # ("SRT-5764", "srt5764") only one gets the row. Asked alone, each would find it:
+        # such a token's batched answer is not its answer, so it is not remembered.
+        folded = collections.Counter(_alnum_casefold(t) for t in todo)
         for t in todo:
-            memo[(probe, t, regions)] = copy.deepcopy(fresh.get(t, []))
-    return {t: copy.deepcopy(memo[(probe, t, regions)]) for t in tokens}
+            if folded[_alnum_casefold(t)] == 1:
+                memo[_memo_key(probe, t, regions)] = copy.deepcopy(fresh.get(t, []))
+    out: dict[str, list[ResolvedEntity]] = {}
+    for t in tokens:
+        key = _memo_key(probe, t, regions)
+        out[t] = copy.deepcopy(memo[key]) if key in memo else fresh.get(t, [])
+    return out
+
+
+def _call_tier1(probe, db: Session, tokens: list[str], regions) -> dict[str, list[ResolvedEntity]]:
+    if probe is _probe_inbound_shipment:
+        return probe(db, tokens, regions=regions)
+    return probe(db, tokens)
 
 
 def _memo_tier2(probe, db: Session, token: str, regions) -> list[ResolvedEntity]:
     """`probe(db, token)` (Tier-2, one token), once per request."""
     memo = _RESOLVE_MEMO.get()
-    key = (probe, token, regions)
+    key = _memo_key(probe, token, regions)
     if memo is None or key not in memo:
         hits = (
             probe(db, token, regions=regions)

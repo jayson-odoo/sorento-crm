@@ -330,13 +330,28 @@ def _create_chat_completion(client, kwargs: dict) -> Any:
             param = getattr(exc, "param", None) or _unsupported_param(str(exc))
             if not param or param not in attempt:
                 raise
-            rejected.add(param)
+            # Only a refusal of the parameter itself is a fact about the model. A 400
+            # that merely NAMES a parameter (context length on `messages`, a bad
+            # schema on `response_format`) fails this call alone, as it always did.
+            if _is_unsupported(exc, param):
+                rejected.add(param)
             _adapt(attempt, param)
             logger.info("openai: model rejected %r, retrying without it", param)
     return client.chat.completions.create(**attempt)
 
 
 _UNSUPPORTED_PARAM_RE = re.compile(r"[Uu]nsupported parameter: '([a-z_]+)'|'([a-z_]+)' is not supported")
+_UNSUPPORTED_CODES = frozenset({"unsupported_parameter", "unsupported_value"})
+
+
+def _is_unsupported(exc: Exception, param: str) -> bool:
+    """True when the 400 says the model does not take `param` at all."""
+    message = str(exc)
+    return (
+        getattr(exc, "code", None) in _UNSUPPORTED_CODES
+        or _unsupported_param(message) == param
+        or f"nsupported value: '{param}'" in message
+    )
 
 
 def _unsupported_param(message: str) -> str | None:
