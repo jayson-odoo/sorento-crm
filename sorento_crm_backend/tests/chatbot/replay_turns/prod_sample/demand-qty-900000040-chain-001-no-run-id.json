@@ -224,9 +224,9 @@
                     "mimeType": "audio/ogg; codecs=opus",
                     "size": 12659,
                     "source_type": "audio",
-                    "source_url": "https://cdn.chatapi.net/whatsapp_business/453209/900000040/05876b5ae2beb69098f80292d656824baudio1789110749463.opus",
+                    "source_url": "https://cdn.example.invalid/05876b5ae2beb69098f80292d656824baudio1789110749463.opus",
                     "type": "text",
-                    "url": "https://cdn.chatapi.net/whatsapp_business/453209/900000040/05876b5ae2beb69098f80292d656824baudio1789110749463.opus"
+                    "url": "https://cdn.example.invalid/05876b5ae2beb69098f80292d656824baudio1789110749463.opus"
                   },
                   "text": "\u53ef\u5514\u53ef\u4ee5\u5e6b\u6211\u96bbM80115BL\u6709\u5187\u585e?",
                   "type": "text"
@@ -287,9 +287,9 @@
                 "mimeType": "audio/ogg; codecs=opus",
                 "size": 12659,
                 "source_type": "audio",
-                "source_url": "https://cdn.chatapi.net/whatsapp_business/453209/900000040/05876b5ae2beb69098f80292d656824baudio1789110749463.opus",
+                "source_url": "https://cdn.example.invalid/05876b5ae2beb69098f80292d656824baudio1789110749463.opus",
                 "type": "text",
-                "url": "https://cdn.chatapi.net/whatsapp_business/453209/900000040/05876b5ae2beb69098f80292d656824baudio1789110749463.opus"
+                "url": "https://cdn.example.invalid/05876b5ae2beb69098f80292d656824baudio1789110749463.opus"
               },
               "text": "\u53ef\u5514\u53ef\u4ee5\u5e6b\u6211\u96bbM80115BL\u6709\u5187\u585e?",
               "type": "text"
@@ -980,9 +980,9 @@
                     "mimeType": "audio/ogg; codecs=opus",
                     "size": 7829,
                     "source_type": "audio",
-                    "source_url": "https://cdn.chatapi.net/whatsapp_business/453209/900000040/b17288ec6e61860050fc1ebcba0af839audio1789110858062.opus",
+                    "source_url": "https://cdn.example.invalid/b17288ec6e61860050fc1ebcba0af839audio1789110858062.opus",
                     "type": "text",
-                    "url": "https://cdn.chatapi.net/whatsapp_business/453209/900000040/b17288ec6e61860050fc1ebcba0af839audio1789110858062.opus"
+                    "url": "https://cdn.example.invalid/b17288ec6e61860050fc1ebcba0af839audio1789110858062.opus"
                   },
                   "text": "MWC8157RL\u6709\u5187\u6536?",
                   "type": "text"
@@ -1043,9 +1043,9 @@
                 "mimeType": "audio/ogg; codecs=opus",
                 "size": 7829,
                 "source_type": "audio",
-                "source_url": "https://cdn.chatapi.net/whatsapp_business/453209/900000040/b17288ec6e61860050fc1ebcba0af839audio1789110858062.opus",
+                "source_url": "https://cdn.example.invalid/b17288ec6e61860050fc1ebcba0af839audio1789110858062.opus",
                 "type": "text",
-                "url": "https://cdn.chatapi.net/whatsapp_business/453209/900000040/b17288ec6e61860050fc1ebcba0af839audio1789110858062.opus"
+                "url": "https://cdn.example.invalid/b17288ec6e61860050fc1ebcba0af839audio1789110858062.opus"
               },
               "text": "MWC8157RL\u6709\u5187\u6536?",
               "type": "text"
@@ -1413,9 +1413,9 @@
                     "mimeType": "audio/ogg; codecs=opus",
                     "size": 8228,
                     "source_type": "audio",
-                    "source_url": "https://cdn.chatapi.net/whatsapp_business/453209/900000040/731c906a0a31eda5af912e86f104d566audio1789110908602.opus",
+                    "source_url": "https://cdn.example.invalid/731c906a0a31eda5af912e86f104d566audio1789110908602.opus",
                     "type": "text",
-                    "url": "https://cdn.chatapi.net/whatsapp_business/453209/900000040/731c906a0a31eda5af912e86f104d566audio1789110908602.opus"
+                    "url": "https://cdn.example.invalid/731c906a0a31eda5af912e86f104d566audio1789110908602.opus"
                   },
                   "text": "MWC8154RL\u6709\u5187stock?",
                   "type": "text"
@@ -1476,9 +1476,9 @@
                 "mimeType": "audio/ogg; codecs=opus",
                 "size": 8228,
                 "source_type": "audio",
-                "source_url": "https://cdn.chatapi.net/whatsapp_business/453209/900000040/731c906a0a31eda5af912e86f104d566audio1789110908602.opus",
+                "source_url": "https://cdn.example.invalid/731c906a0a31eda5af912e86f104d566audio1789110908602.opus",
                 "type": "text",
-                "url": "https://cdn.chatapi.net/whatsapp_business/453209/900000040/731c906a0a31eda5af912e86f104d566audio1789110908602.opus"
+                "url": "https://cdn.example.invalid/731c906a0a31eda5af912e86f104d566audio1789110908602.opus"
               },
               "text": "MWC8154RL\u6709\u5187stock?",
               "type": "text"
@@ -2154,9 +2154,9 @@
                     "mimeType": "audio/ogg; codecs=opus",
                     "size": 11192,
                     "source_type": "audio",
-                    "source_url": "https://cdn.chatapi.net/whatsapp_business/453209/900000040/19a1a3eb45c6b000b0bab9b3b02ea599audio1789110939461.opus",
+                    "source_url": "https://cdn.example.invalid/19a1a3eb45c6b000b0bab9b3b02ea599audio1789110939461.opus",
                     "type": "text",
-                    "url": "https://cdn.chatapi.net/whatsapp_business/453209/900000040/19a1a3eb45c6b000b0bab9b3b02ea599audio1789110939461.opus"
+                    "url": "https://cdn.example.invalid/19a1a3eb45c6b000b0bab9b3b02ea599audio1789110939461.opus"
                   },
                   "text": "Boleh tolong cek MWC8154RL ada stok tak?",
                   "type": "text"
@@ -2217,9 +2217,9 @@
                 "mimeType": "audio/ogg; codecs=opus",
                 "size": 11192,
                 "source_type": "audio",
-                "source_url": "https://cdn.chatapi.net/whatsapp_business/453209/900000040/19a1a3eb45c6b000b0bab9b3b02ea599audio1789110939461.opus",
+                "source_url": "https://cdn.example.invalid/19a1a3eb45c6b000b0bab9b3b02ea599audio1789110939461.opus",
                 "type": "text",
-                "url": "https://cdn.chatapi.net/whatsapp_business/453209/900000040/19a1a3eb45c6b000b0bab9b3b02ea599audio1789110939461.opus"
+                "url": "https://cdn.example.invalid/19a1a3eb45c6b000b0bab9b3b02ea599audio1789110939461.opus"
               },
               "text": "Boleh tolong cek MWC8154RL ada stok tak?",
               "type": "text"

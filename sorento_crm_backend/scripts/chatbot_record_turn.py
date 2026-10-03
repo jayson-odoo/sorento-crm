@@ -343,7 +343,7 @@ def _scrub_assignee(assignee: dict[str, Any] | None) -> None:
 
 
 _FAKE_ID_PREFIX = "900000"
-_CONTACT_ID_KEYS = ("contactId", "contact_id")
+_CONTACT_ID_KEYS = ("contactId", "contact_id", "respond_io_id", "respond_id", "contact_respond_id")
 
 
 def _fake_contact_id(real_id: Any) -> str:
@@ -359,6 +359,57 @@ def _fake_contact_id(real_id: Any) -> str:
         return text
     digest = hashlib.sha256(text.encode()).hexdigest()
     return _FAKE_ID_PREFIX + f"{int(digest, 16) % 1000000:06d}"
+
+
+_MEDIA_HOST = "https://cdn.example.invalid/"
+_MEDIA_PARENT_KEYS = ("attachment", "media")
+_MEDIA_URL_KEYS = ("url", "source_url")
+
+
+def _collect_real_ids(node: Any, found: set[str], *, key: str | None = None) -> None:
+    """Every real contact id text inside a raw row: id-named keys, plus `id` of a
+    contact-shaped dict. Digit strings of six or more only (so `id: 3` never counts)."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if isinstance(v, (str, int)) and not isinstance(v, bool):
+                is_id = k in _CONTACT_ID_KEYS or (k == "id" and key in ("contact", None) and "firstName" in node)
+                if is_id and str(v).isdigit() and len(str(v)) >= 6:
+                    found.add(str(v))
+            _collect_real_ids(v, found, key=k)
+    elif isinstance(node, list):
+        for item in node:
+            _collect_real_ids(item, found, key=key)
+
+
+def _final_scrub(node: Any, real_ids: set[str], media_map: dict[str, str], *, under: bool = False) -> Any:
+    """Last pass over a whole recorded turn: inbound media links (`url` / `source_url`
+    under an `attachment` or `media` key) become a placeholder-host link, and every
+    remaining occurrence of a real id inside any string becomes its fake."""
+    if isinstance(node, dict):
+        for k, v in list(node.items()):
+            child_under = under or k in _MEDIA_PARENT_KEYS
+            node[k] = _final_scrub(v, real_ids, media_map, under=child_under)
+        return node
+    if isinstance(node, list):
+        return [_final_scrub(i, real_ids, media_map, under=under) for i in node]
+    if isinstance(node, str):
+        for url in sorted(media_map, key=len, reverse=True):
+            node = node.replace(url, media_map[url])
+        for real in real_ids:
+            node = re.sub(rf"(?<!\d){re.escape(real)}(?!\d)", _fake_contact_id(real), node)
+    return node
+
+
+def _collect_media_urls(node: Any, out: dict[str, str], under: bool = False) -> None:
+    if isinstance(node, dict):
+        for k, v in node.items():
+            child_under = under or k in _MEDIA_PARENT_KEYS
+            if child_under and k in _MEDIA_URL_KEYS and isinstance(v, str) and v:
+                out.setdefault(v, "")
+            _collect_media_urls(v, out, child_under)
+    elif isinstance(node, list):
+        for i in node:
+            _collect_media_urls(i, out, under)
 
 
 def _scrub_contact(contact: dict[str, Any] | None) -> None:
@@ -503,6 +554,16 @@ def _scrub_pii(envelope: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 def _record_row(row: dict[str, Any], *, db_label: str, switches: dict[str, Any]) -> dict[str, Any]:
+    real_ids: set[str] = set()
+    _collect_real_ids(row, real_ids)
+    turn = _record_row_raw(row, db_label=db_label, switches=switches)
+    urls: dict[str, str] = {}
+    _collect_media_urls(turn, urls)
+    media_map = {u: _MEDIA_HOST + (u.split("?")[0].rstrip("/").rsplit("/", 1)[-1] or "media") for u in urls}
+    return _final_scrub(turn, real_ids, media_map)
+
+
+def _record_row_raw(row: dict[str, Any], *, db_label: str, switches: dict[str, Any]) -> dict[str, Any]:
     trace = row.get("trace") or []
     tool_events = _tool_events(trace)
     verdict = _verdict_of(trace)

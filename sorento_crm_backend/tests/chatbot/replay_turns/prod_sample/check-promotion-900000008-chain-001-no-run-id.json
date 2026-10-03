@@ -3796,9 +3796,9 @@
                     "mimeType": "image/jpeg",
                     "size": 56577,
                     "source_type": "image",
-                    "source_url": "https://cdn.chatapi.net/whatsapp_business/453209/900000008/48346938ff92391282fc095005945997image1788884685817.jpg",
+                    "source_url": "https://cdn.example.invalid/48346938ff92391282fc095005945997image1788884685817.jpg",
                     "type": "text",
-                    "url": "https://cdn.chatapi.net/whatsapp_business/453209/900000008/48346938ff92391282fc095005945997image1788884685817.jpg"
+                    "url": "https://cdn.example.invalid/48346938ff92391282fc095005945997image1788884685817.jpg"
                   },
                   "text": "check stock: SRTTB06-GM, SRTSS5650-GM, SRTSH3307-GM-DIY, SRTSS8803-GM-DIY, SRTSS8790-GM, SRTSS8807-GM-DIY, SRTSH22914-GM, SRTSH3302-GM-DIY, SRTSH2626-GM, SRTSA892-GM-DIY",
                   "type": "text"
@@ -3860,9 +3860,9 @@
                 "mimeType": "image/jpeg",
                 "size": 56577,
                 "source_type": "image",
-                "source_url": "https://cdn.chatapi.net/whatsapp_business/453209/900000008/48346938ff92391282fc095005945997image1788884685817.jpg",
+                "source_url": "https://cdn.example.invalid/48346938ff92391282fc095005945997image1788884685817.jpg",
                 "type": "text",
-                "url": "https://cdn.chatapi.net/whatsapp_business/453209/900000008/48346938ff92391282fc095005945997image1788884685817.jpg"
+                "url": "https://cdn.example.invalid/48346938ff92391282fc095005945997image1788884685817.jpg"
               },
               "text": "check stock: SRTTB06-GM, SRTSS5650-GM, SRTSH3307-GM-DIY, SRTSS8803-GM-DIY, SRTSS8790-GM, SRTSS8807-GM-DIY, SRTSH22914-GM, SRTSH3302-GM-DIY, SRTSH2626-GM, SRTSA892-GM-DIY",
               "type": "text"
@@ -4960,9 +4960,9 @@
                     "mimeType": "audio/ogg; codecs=opus",
                     "size": 12803,
                     "source_type": "audio",
-                    "source_url": "https://cdn.chatapi.net/whatsapp_business/453209/900000008/fdff75152f099e2dcdf61f1974e8e497audio1788884725028.opus",
+                    "source_url": "https://cdn.example.invalid/fdff75152f099e2dcdf61f1974e8e497audio1788884725028.opus",
                     "type": "text",
-                    "url": "https://cdn.chatapi.net/whatsapp_business/453209/900000008/fdff75152f099e2dcdf61f1974e8e497audio1788884725028.opus"
+                    "url": "https://cdn.example.invalid/fdff75152f099e2dcdf61f1974e8e497audio1788884725028.opus"
                   },
                   "text": "Check stock 7445",
                   "type": "text"
@@ -5023,9 +5023,9 @@
                 "mimeType": "audio/ogg; codecs=opus",
                 "size": 12803,
                 "source_type": "audio",
-                "source_url": "https://cdn.chatapi.net/whatsapp_business/453209/900000008/fdff75152f099e2dcdf61f1974e8e497audio1788884725028.opus",
+                "source_url": "https://cdn.example.invalid/fdff75152f099e2dcdf61f1974e8e497audio1788884725028.opus",
                 "type": "text",
-                "url": "https://cdn.chatapi.net/whatsapp_business/453209/900000008/fdff75152f099e2dcdf61f1974e8e497audio1788884725028.opus"
+                "url": "https://cdn.example.invalid/fdff75152f099e2dcdf61f1974e8e497audio1788884725028.opus"
               },
               "text": "Check stock 7445",
               "type": "text"

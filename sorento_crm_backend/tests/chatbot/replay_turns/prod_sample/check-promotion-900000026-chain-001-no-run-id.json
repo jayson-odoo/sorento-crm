@@ -1817,9 +1817,9 @@
                     "mimeType": "image/jpeg",
                     "size": 107939,
                     "source_type": "image",
-                    "source_url": "https://cdn.chatapi.net/whatsapp_business/453209/900000026/a661f484857ba5a6b50b443b5addc1cbimage1789110385177.jpg",
+                    "source_url": "https://cdn.example.invalid/a661f484857ba5a6b50b443b5addc1cbimage1789110385177.jpg",
                     "type": "text",
-                    "url": "https://cdn.chatapi.net/whatsapp_business/453209/900000026/a661f484857ba5a6b50b443b5addc1cbimage1789110385177.jpg"
+                    "url": "https://cdn.example.invalid/a661f484857ba5a6b50b443b5addc1cbimage1789110385177.jpg"
                   },
                   "text": "check stock: Sorento, SRT79-SS-GM",
                   "type": "text"
@@ -1881,9 +1881,9 @@
                 "mimeType": "image/jpeg",
                 "size": 107939,
                 "source_type": "image",
-                "source_url": "https://cdn.chatapi.net/whatsapp_business/453209/900000026/a661f484857ba5a6b50b443b5addc1cbimage1789110385177.jpg",
+                "source_url": "https://cdn.example.invalid/a661f484857ba5a6b50b443b5addc1cbimage1789110385177.jpg",
                 "type": "text",
-                "url": "https://cdn.chatapi.net/whatsapp_business/453209/900000026/a661f484857ba5a6b50b443b5addc1cbimage1789110385177.jpg"
+                "url": "https://cdn.example.invalid/a661f484857ba5a6b50b443b5addc1cbimage1789110385177.jpg"
               },
               "text": "check stock: Sorento, SRT79-SS-GM",
               "type": "text"
@@ -2344,9 +2344,9 @@
                     "mimeType": "audio/ogg; codecs=opus",
                     "size": 7603,
                     "source_type": "audio",
-                    "source_url": "https://cdn.chatapi.net/whatsapp_business/453209/900000026/a8082e9700c5a4cde634dcebac5a3555audio1789110512898.opus",
+                    "source_url": "https://cdn.example.invalid/a8082e9700c5a4cde634dcebac5a3555audio1789110512898.opus",
                     "type": "text",
-                    "url": "https://cdn.chatapi.net/whatsapp_business/453209/900000026/a8082e9700c5a4cde634dcebac5a3555audio1789110512898.opus"
+                    "url": "https://cdn.example.invalid/a8082e9700c5a4cde634dcebac5a3555audio1789110512898.opus"
                   },
                   "text": "SRT72SS\u6709\u8ca8\u55ce?",
                   "type": "text"
@@ -2407,9 +2407,9 @@
                 "mimeType": "audio/ogg; codecs=opus",
                 "size": 7603,
                 "source_type": "audio",
-                "source_url": "https://cdn.chatapi.net/whatsapp_business/453209/900000026/a8082e9700c5a4cde634dcebac5a3555audio1789110512898.opus",
+                "source_url": "https://cdn.example.invalid/a8082e9700c5a4cde634dcebac5a3555audio1789110512898.opus",
                 "type": "text",
-                "url": "https://cdn.chatapi.net/whatsapp_business/453209/900000026/a8082e9700c5a4cde634dcebac5a3555audio1789110512898.opus"
+                "url": "https://cdn.example.invalid/a8082e9700c5a4cde634dcebac5a3555audio1789110512898.opus"
               },
               "text": "SRT72SS\u6709\u8ca8\u55ce?",
               "type": "text"
@@ -3575,9 +3575,9 @@
                     "mimeType": "image/jpeg",
                     "size": 18348,
                     "source_type": "image",
-                    "source_url": "https://cdn.chatapi.net/whatsapp_business/453209/900000026/315e74b862fe42d746ac92da8fd902ffimage1789110725524.jpg",
+                    "source_url": "https://cdn.example.invalid/315e74b862fe42d746ac92da8fd902ffimage1789110725524.jpg",
                     "type": "text",
-                    "url": "https://cdn.chatapi.net/whatsapp_business/453209/900000026/315e74b862fe42d746ac92da8fd902ffimage1789110725524.jpg"
+                    "url": "https://cdn.example.invalid/315e74b862fe42d746ac92da8fd902ffimage1789110725524.jpg"
                   },
                   "text": "check stock: Sorento, SRTWB1455",
                   "type": "text"
@@ -3639,9 +3639,9 @@
                 "mimeType": "image/jpeg",
                 "size": 18348,
                 "source_type": "image",
-                "source_url": "https://cdn.chatapi.net/whatsapp_business/453209/900000026/315e74b862fe42d746ac92da8fd902ffimage1789110725524.jpg",
+                "source_url": "https://cdn.example.invalid/315e74b862fe42d746ac92da8fd902ffimage1789110725524.jpg",
                 "type": "text",
-                "url": "https://cdn.chatapi.net/whatsapp_business/453209/900000026/315e74b862fe42d746ac92da8fd902ffimage1789110725524.jpg"
+                "url": "https://cdn.example.invalid/315e74b862fe42d746ac92da8fd902ffimage1789110725524.jpg"
               },
               "text": "check stock: Sorento, SRTWB1455",
               "type": "text"
@@ -8769,9 +8769,9 @@
                     "mimeType": "audio/ogg; codecs=opus",
                     "size": 13820,
                     "source_type": "audio",
-                    "source_url": "https://cdn.chatapi.net/whatsapp_business/453209/900000026/feb6fc05d0599f65ddfc7eaf19c02ee3audio1789112597599.opus",
+                    "source_url": "https://cdn.example.invalid/feb6fc05d0599f65ddfc7eaf19c02ee3audio1789112597599.opus",
                     "type": "text",
-                    "url": "https://cdn.chatapi.net/whatsapp_business/453209/900000026/feb6fc05d0599f65ddfc7eaf19c02ee3audio1789112597599.opus"
+                    "url": "https://cdn.example.invalid/feb6fc05d0599f65ddfc7eaf19c02ee3audio1789112597599.opus"
                   },
                   "text": "check stock WC286289",
                   "type": "text"
@@ -8832,9 +8832,9 @@
                 "mimeType": "audio/ogg; codecs=opus",
                 "size": 13820,
                 "source_type": "audio",
-                "source_url": "https://cdn.chatapi.net/whatsapp_business/453209/900000026/feb6fc05d0599f65ddfc7eaf19c02ee3audio1789112597599.opus",
+                "source_url": "https://cdn.example.invalid/feb6fc05d0599f65ddfc7eaf19c02ee3audio1789112597599.opus",
                 "type": "text",
-                "url": "https://cdn.chatapi.net/whatsapp_business/453209/900000026/feb6fc05d0599f65ddfc7eaf19c02ee3audio1789112597599.opus"
+                "url": "https://cdn.example.invalid/feb6fc05d0599f65ddfc7eaf19c02ee3audio1789112597599.opus"
               },
               "text": "check stock WC286289",
               "type": "text"
@@ -9163,9 +9163,9 @@
                     "mimeType": "audio/ogg; codecs=opus",
                     "size": 13151,
                     "source_type": "audio",
-                    "source_url": "https://cdn.chatapi.net/whatsapp_business/453209/900000026/b0f3c44a54191ec48a5a155273ad4ad6audio1789112643189.opus",
+                    "source_url": "https://cdn.example.invalid/b0f3c44a54191ec48a5a155273ad4ad6audio1789112643189.opus",
                     "type": "text",
-                    "url": "https://cdn.chatapi.net/whatsapp_business/453209/900000026/b0f3c44a54191ec48a5a155273ad4ad6audio1789112643189.opus"
+                    "url": "https://cdn.example.invalid/b0f3c44a54191ec48a5a155273ad4ad6audio1789112643189.opus"
                   },
                   "text": "Check Stock WTA634BL",
                   "type": "text"
@@ -9226,9 +9226,9 @@
                 "mimeType": "audio/ogg; codecs=opus",
                 "size": 13151,
                 "source_type": "audio",
-                "source_url": "https://cdn.chatapi.net/whatsapp_business/453209/900000026/b0f3c44a54191ec48a5a155273ad4ad6audio1789112643189.opus",
+                "source_url": "https://cdn.example.invalid/b0f3c44a54191ec48a5a155273ad4ad6audio1789112643189.opus",
                 "type": "text",
-                "url": "https://cdn.chatapi.net/whatsapp_business/453209/900000026/b0f3c44a54191ec48a5a155273ad4ad6audio1789112643189.opus"
+                "url": "https://cdn.example.invalid/b0f3c44a54191ec48a5a155273ad4ad6audio1789112643189.opus"
               },
               "text": "Check Stock WTA634BL",
               "type": "text"

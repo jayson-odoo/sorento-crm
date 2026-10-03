@@ -171,7 +171,7 @@ def test_the_first_one_answers_the_top_selling_who_question(session_factory, mon
         session_factory, monkeypatch, _position(1, open_question_answer=dict(PHANTOM_PICK)), "the first one"
     )
     (args,) = _calls(captured)
-    assert args["customer_ids"] == [cat.customers["SAMPLE - CONTACT Z"]], (text, args)
+    assert args["customer_ids"] == [cat.customers["SAMPLE - CONTACTZ X"]], (text, args)
     assert "sales_agent_ids" not in args, args
 
 
