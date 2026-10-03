@@ -37,3 +37,15 @@
   `respond_contact_customers` row; count/pagination match.
 - U5.3 Filter value lives in the URL like `chatbot_memory_level`; a filter change resets to page 1; after a bulk
   Link the linked contacts drop out of the filtered list on refetch.
+
+## U6 Customers list bulk Set customer group / Remove from group (owner 3 Oct; replaces CUST-GROUP-SEED-REVIEW PR 2 name seeding)
+- U6.1 Select 1+ customers: bulk strip shows "Set customer group (n)" and "Remove from group (n)" (only with `order_management.customers.edit`).
+- U6.2 Set opens a dialog with a searchable group select (server search `searchCustomerGroupsSelect`, caller's company)
+  offering "Create group <typed name>" (SearchableSelect `createOption`); Apply disabled until a group is chosen or typed.
+- U6.3 Apply with an existing group: one `addCustomerGroupCustomers(groupId, customerIds)` (`POST /customer-groups/{id}/customers`, all or nothing).
+  With a new name: `createCustomerGroup({name})` first, then the same assign with the new id.
+- U6.4 Success: toast "n customers set to group <name>"; selection clears; list refetches; page/search/sort unchanged.
+- U6.5 Failure (e.g. 422 customer of another company, 409 name taken): error toast with server message; nothing assigned; selection kept.
+- U6.6 Remove from group: one deferred `customer.remove_from_group` action per selected customer that has a group
+  (payload `customer_group_id`), ONE countdown + Cancel, no confirm; customers with no group are skipped.
+- U6.7 No name matching anywhere: only the group the user picked or typed.

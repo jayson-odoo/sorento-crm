@@ -31,4 +31,8 @@ Behaviour card: `CARD-customer-bulk-ops.md`. UAC: `customer-bulk-ops-acceptance-
    beside `chatbot_memory_level` (`contacts.py:96`, `contact_service.py:120`) + linked codes in the list payload;
    FE `lib/listQuery.ts` `contactsListFilters`.
 - Access agents: reuse existing "Copy settings to n users" (`BulkCopySettingsFromContactDialog.tsx`). No change.
-- Pending owner: bulk "Set customer group (n)" on Customers list.
+- Bulk customer group: approved 3 Oct, slice 7.
+7. Customers list bulk "Set customer group (n)" + "Remove from group (n)" (U6, owner 3 Oct). FE only, all existing:
+   `customer-groups/services/customerGroupService.ts:46,86,103` (create, assign, select), SearchableSelect
+   `createOption` (`components/common/SearchableSelect.tsx:156`), deferred `customer.remove_from_group`
+   (`services/record_actions.py:1330`) via `hooks/useDeferredBulkAction.tsx`.
