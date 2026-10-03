@@ -34,3 +34,22 @@ Round 3 (review findings, 3 Oct):
   use one stable fake id per real id (a fake 9-digit id with a `0000` run, so the derived phone is
   a guard-approved fake).
 - **AC-15** The module docstring of `scripts/pii_guard.py` describes the rules as they are.
+
+Round 4 (owner, 3 Oct: no secrets in compose files, and stop it happening again):
+
+- **AC-16** `sorento_crm/docker-compose.yml`: `POSTGRES_USER`, `POSTGRES_PASSWORD` and `JWT_SECRET`
+  are required (`${VAR:?message}`) everywhere they are used (service env, healthcheck, URLs); the
+  commented sample `.env` block holds no sample secret values (names only, or `<set me>`).
+- **AC-17** `sorento_crm_backend/docker-compose.yml`: `POSTGRES_PASSWORD` and `JWT_SECRET` are
+  required; `DATABASE_URL` / `DIRECT_URL` are built from `${POSTGRES_USER}` / `${POSTGRES_PASSWORD}`
+  (no inline `user:password@`). No tracked compose file has a `${VAR:-default}` with a non-empty
+  default for a name matching `PASSWORD|SECRET|TOKEN|ACCESS_KEY` (AWS key ids included).
+- **AC-18** Local stacks still start: a tracked `.env.example` beside each compose file lists every
+  required variable with a placeholder, and the compose header comment says to copy it to `.env`.
+- **AC-19** `.gitignore` ignores `docker-compose.override*`, `compose.override*`, `*.key` and
+  `.env.*`, while `.env.example` files stay tracked (`!.env.example`, `!**/.env.example`).
+- **AC-20** CI runs gitleaks on the PR diff in the label-gated workflow (`deploy.yml`, beside the
+  PII guard), with a pinned action version and a repo `.gitleaks.toml` that extends the default
+  rules and allowlists only the fake placeholders (`ci-dummy-secret`, `cloud-lane-test-key`,
+  `<set me>`-style placeholders, example.com/example.invalid). The job fails on a new secret.
+  The prod compose file lives on the server outside git and is out of scope.

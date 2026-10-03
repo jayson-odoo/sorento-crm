@@ -354,9 +354,9 @@ def test_breached_only_ignores_unresolved_rows(db):
 # Contact display - no opaque ids in the UI                                   #
 # --------------------------------------------------------------------------- #
 def test_display_name_prefers_stored_name(db):
-    _msg(db, sent_at=NOW, first_name="Johnson", last_name=None, phone="+60160000517")
+    _msg(db, sent_at=NOW, first_name="CONTACT AA", last_name=None, phone="+60160000517")
     rows, _ = _list(db, now=NOW)
-    assert rows[0].contact_display == "Johnson (+60160000517)"
+    assert rows[0].contact_display == "CONTACT AA (+60160000517)"
 
 
 def test_display_name_falls_back_to_phone_not_respond_id(db):

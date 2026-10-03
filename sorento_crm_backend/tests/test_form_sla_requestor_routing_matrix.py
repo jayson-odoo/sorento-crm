@@ -108,7 +108,7 @@ def test_e1_requestor_with_pin_is_assigned_to_that_pin(orch):
 # ---------------------------------------------------------------------------
 # E2 (the actual bug): requestor has NO pin -> round robin, and the resolver
 # is called with the REQUESTOR's id, never retried with the submitter's id --
-# even though the submitter (Darren) DOES have a pin that must be ignored.
+# even though the submitter (CONTACT X) DOES have a pin that must be ignored.
 # ---------------------------------------------------------------------------
 
 

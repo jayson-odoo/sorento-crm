@@ -45,7 +45,7 @@ Status: BUILT - all three slices green 30 Aug 2026 (pytest + vitest + browser ru
 ## Verification
 
 - A/B: vitest (`respondIoChatRender.test.ts`, `RespondChatList.comments.test.tsx`), pytest
-  `test_ticket_ai_draft.py`, agent-browser run on CONTACT O +60180000507 and Eric Ng
+  `test_ticket_ai_draft.py`, agent-browser run on CONTACT O +60180000507 and CONTACT Y
   +60160000508 threads (screenshots in the session scratchpad).
 - C: pytest `test_ticket_comment_mention_email.py` (email delivery + outbox row when on,
   none when off, API round trip); vitest on the matrix; browser: toggle in My Account,

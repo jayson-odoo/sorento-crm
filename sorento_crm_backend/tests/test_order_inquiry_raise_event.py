@@ -96,7 +96,7 @@ def test_the_row_matches_the_reconfirm_event_written_a_beat_after_it():
 def test_a_row_with_no_matching_event_carries_none_on_all_three():
     with blank_session() as db:
         company_id = _sorento(db)
-        johnson = _user(db, f"{MARKER} Johnson", f"johnson.{_uid()[:8]}@zzt.test")
+        johnson = _user(db, f"{MARKER} CONTACT AA", f"CONTACT AA.{_uid()[:8]}@zzt.test")
         order = _adopted_order(db, company_id, f"ZZTSO{_uid()[:8]}")
         product = _product(db, f"ZZT-{_uid()[:6]}")
         line = _line(db, company_id, order, product)

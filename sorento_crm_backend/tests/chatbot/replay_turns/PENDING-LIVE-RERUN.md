@@ -109,10 +109,10 @@ tester's to route around:
    pass 2/3 recordings (tester 14/15) were all captured against contact `900000008`
    (tester 15's own handoff: "Source DB clone... contact 900000008"). Pass 6's own
    chain 4 (item 6, PO roster stamps) hit this directly: `Purchase cost for wc286` ->
-   `Sorry, you are not allowed to access purchase cost (Justin lacks this grant,
+   `Sorry, you are not allowed to access purchase cost (CONTACT N lacks this grant,
    unlike the owner who recorded this chain)` - forcing a "supplementary check"
    workaround with a DIFFERENT typed message for that one item. A splice that mixes
-   Justin's turns into a 900000008 chain crosses `respond_contacts` rows entirely -
+   CONTACT N's turns into a 900000008 chain crosses `respond_contacts` rows entirely -
    different session thread, different access grants, no shared `session_patch`
    history - not a like-for-like field swap.
 2. **The replay harness seeds each chain's SOURCE contact's REAL prior session

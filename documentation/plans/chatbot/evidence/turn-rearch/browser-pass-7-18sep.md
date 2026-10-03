@@ -175,7 +175,7 @@ ReadTimeout`/empty-envelope behaviour against old code), not a real code defect.
 ### Run 2 (after the coordinator's MCP restart, counts)
 
 Full chain re-driven from a fresh Reset (a prior tab navigation had dropped the browser's login
-session, so the console was reopened via sidebar clicks and Justin re-selected before resending).
+session, so the console was reopened via sidebar clicks and CONTACT N re-selected before resending).
 
 | # | Sent | Result | Turn id |
 |---|------|--------|---------|

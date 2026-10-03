@@ -14,8 +14,8 @@ Navigation: sidebar clicks from `/` throughout (System > Messaging > Chatbot Con
 expanded via `@ref`, then Messaging subgroup, then the Chatbot Console link) - no deep URL used.
 `scrollintoview @ref` before every click. `get url` checked at the start and the end of the run:
 both reads matched `http://localhost:3081/system-management/chatbot-console` - no cross-session
-hijack. Reset clicked before the first turn; contact combobox set to Justin via the searchable
-combobox (type "Justin", click the single filtered option) - a plain listbox/combobox, not a Radix
+hijack. Reset clicked before the first turn; contact combobox set to CONTACT N via the searchable
+combobox (type "CONTACT N", click the single filtered option) - a plain listbox/combobox, not a Radix
 Select, so no batching trap. Reply text read via `document.querySelector('main').innerText`
 (the message bubbles are not exposed as distinct accessibility-tree nodes under `snapshot -i`, so
 this eval was the reliable read path all 15 turns); each turn's id was read from the `trace` link's

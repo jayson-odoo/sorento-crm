@@ -299,7 +299,7 @@ symptom instead of assuming the daemon itself is broken.
 - On `marketing_product`: clicked `Add tier` (scrolled into view first) -> new row appended
   (Tier `-`, Team `Complaint` default, Brand `All brands`, clearable). Opened the Brand dropdown
   (screenshot `14-brand-click2.png`): options are `All brands` (checked), then the active
-  company's brands - `MOCHA`, `BRAVAT`, `CABANA`, `ELLECI`, `IBORN`, `INFINITY`, `JOHNSON
+  company's brands - `MOCHA`, `BRAVAT`, `CABANA`, `ELLECI`, `IBORN`, `INFINITY`, `CONTACT AA
   SUISSE`, `NO LOGO`, ... - confirming AC-F1's "brands of the active company + All brands".
   Selected `MOCHA` (`15-mocha-selected.png`).
 - Opened the Tier dropdown while Brand was still `All brands`: options `1`/`2`/`3` were all

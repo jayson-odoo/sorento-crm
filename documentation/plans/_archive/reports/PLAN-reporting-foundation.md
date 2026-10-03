@@ -223,7 +223,7 @@ reads.
   Expected-year group with no member columns. That is a fact about the data, not a bug.
 - **The summary pivot for 2025 has 15 agent rows, not the workbook's 17.** `CONTACT J`
   and `BASER` are zero rows on the client's SUMMARY sheet and appear on no monthly sheet;
-  `CINDY` and `CINDY LEE` both resolve to the one contact `Cindy Lee` and merge into a
+  `CINDY` and `CONTACT W` both resolve to the one contact `CONTACT W` and merge into a
   single row of 33 forms. Per-agent rows therefore differ from the client's sheet by
   design; the totals do not.
 - **`ACT`, `KH LIM` and `JAMYN` have no contact** (22 rows). They keep the typed name and

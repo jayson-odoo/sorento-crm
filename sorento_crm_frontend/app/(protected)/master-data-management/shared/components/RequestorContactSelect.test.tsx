@@ -33,12 +33,12 @@ describe('RequestorContactSelect', () => {
         onChange={vi.fn()}
         submitterContactId="contact-submitter"
         savedContactId="contact-darren"
-        savedContactName="Darren Lee"
+        savedContactName="CONTACT X Lee"
       />,
     );
 
     // Trigger label resolves to the saved contact's name, never a UUID.
-    expect(screen.getByText('Darren Lee')).toBeInTheDocument();
+    expect(screen.getByText('CONTACT X Lee')).toBeInTheDocument();
     expect(screen.queryByText('contact-darren')).toBeNull();
   });
 
@@ -62,7 +62,7 @@ describe('RequestorContactSelect', () => {
         onChange={vi.fn()}
         submitterContactId="contact-submitter"
         savedContactId="contact-darren"
-        savedContactName="Darren Lee"
+        savedContactName="CONTACT X Lee"
       />,
     );
     openMenu();
@@ -83,8 +83,8 @@ describe('RequestorContactSelect', () => {
     openMenu();
 
     expect(await screen.findByText(/searching/i)).toBeInTheDocument();
-    resolveFetch({ items: [{ id: 'c1', name: 'Eric Ng' }], has_more: false });
-    await waitFor(() => expect(screen.getByText('Eric Ng')).toBeInTheDocument());
+    resolveFetch({ items: [{ id: 'c1', name: 'CONTACT Y' }], has_more: false });
+    await waitFor(() => expect(screen.getByText('CONTACT Y')).toBeInTheDocument());
   });
 
   it('shows the empty message on error / no eligible requestors', async () => {
@@ -100,7 +100,7 @@ describe('RequestorContactSelect', () => {
   it('renders eligible contacts from the endpoint (data state) and never renders raw UUIDs', async () => {
     getRequestorSelectOptionsMock.mockResolvedValue({
       items: [
-        { id: '11111111-1111-1111-1111-111111111111', name: 'Eric Ng' },
+        { id: '11111111-1111-1111-1111-111111111111', name: 'CONTACT Y' },
         { id: '22222222-2222-2222-2222-222222222222', name: 'Priya Sundar' },
       ],
       has_more: false,
@@ -108,21 +108,21 @@ describe('RequestorContactSelect', () => {
     render(<RequestorContactSelect value="" onChange={vi.fn()} />);
     openMenu();
 
-    await waitFor(() => expect(optionLabels()).toEqual(['Eric Ng', 'Priya Sundar']));
+    await waitFor(() => expect(optionLabels()).toEqual(['CONTACT Y', 'Priya Sundar']));
     expect(screen.queryByText(/^[0-9a-f]{8}-/)).toBeNull();
   });
 
   it('calls onChange with the picked contact id', async () => {
     getRequestorSelectOptionsMock.mockResolvedValue({
-      items: [{ id: 'contact-eric', name: 'Eric Ng' }],
+      items: [{ id: 'contact-eric', name: 'CONTACT Y' }],
       has_more: false,
     });
     const onChange = vi.fn();
     render(<RequestorContactSelect value="" onChange={onChange} />);
     openMenu();
 
-    await waitFor(() => screen.getByText('Eric Ng'));
-    fireEvent.click(screen.getByText('Eric Ng'));
+    await waitFor(() => screen.getByText('CONTACT Y'));
+    fireEvent.click(screen.getByText('CONTACT Y'));
     expect(onChange).toHaveBeenCalledWith('contact-eric');
   });
 });

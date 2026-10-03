@@ -103,7 +103,7 @@ beforeEach(() => {
   (fetchMeWithGrace as ReturnType<typeof vi.fn>).mockResolvedValue({
     contact_id: 'contact-1',
     space_id: 'space-1',
-    name: 'Darren Lee',
+    name: 'CONTACT X Lee',
     phone_number: '60123456789',
     expires_at: '2026-09-01T00:00:00Z',
     portal_slug: 'darren',

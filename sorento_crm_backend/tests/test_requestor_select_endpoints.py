@@ -72,7 +72,7 @@ def test_internal_requestor_select_happy_path(client):
 
     c, db = client
     _segment(db)
-    eric = _contact(db, name="Eric Ng", segments=["PROJECT"])
+    eric = _contact(db, name="CONTACT Y", segments=["PROJECT"])
 
     app.dependency_overrides[get_current_user_or_api_key] = lambda: {
         "id": str(uuid.uuid4()),
@@ -96,7 +96,7 @@ def test_internal_requestor_select_include_ids(client):
     from app.models.procurement import StockInquiry
 
     c, db = client
-    darren = _contact(db, name="Darren Submitter")  # no segments
+    darren = _contact(db, name="CONTACT X Submitter")  # no segments
     db.add(
         StockInquiry(
             id=str(uuid.uuid4()),
@@ -174,7 +174,7 @@ def test_portal_requestor_options_always_includes_the_submitter(client):
     """D3: the submitting contact is ALWAYS an option, even belonging to no
     flagged segment -- self-service can never be blocked."""
     c, db = client
-    darren = _contact(db, name="Darren Submitter")  # no segments
+    darren = _contact(db, name="CONTACT X Submitter")  # no segments
     token = _token(db, darren)
 
     res = c.get(
@@ -188,8 +188,8 @@ def test_portal_requestor_options_always_includes_the_submitter(client):
 def test_portal_requestor_options_names_only(client):
     c, db = client
     _segment(db)
-    eric = _contact(db, name="Eric Ng", segments=["PROJECT"])
-    darren = _contact(db, name="Darren Submitter")
+    eric = _contact(db, name="CONTACT Y", segments=["PROJECT"])
+    darren = _contact(db, name="CONTACT X Submitter")
     token = _token(db, darren)
 
     res = c.get(
