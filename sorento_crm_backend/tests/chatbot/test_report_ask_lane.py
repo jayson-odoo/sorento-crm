@@ -906,15 +906,51 @@ def test_c2_top_selling_items_by_an_agent_stays_top_selling_with_the_agent_filte
     assert sorted(args.get("sales_agent_ids") or []) == wt["agents"], args
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "which item has the most sales this month",
+        "top 10 sales items for sorento",
+        "best sales product for sorento this year",
+    ],
+)
+def test_c2_a_bare_sales_word_does_not_hijack_a_product_ranking(console, monkeypatch, body) -> None:
+    """B1: "sales" alone is not a sales agent word, so a product ranking stays top_selling."""
+    text, log = _say_all(console, monkeypatch, _old(_hit("sorento", "brand"), top_n=10), body)
+    assert "crm_top_selling_report" in _names(log), (body, _names(log), text)
+    assert TOOL not in _names(log), (body, _names(log), text)
+
+
+@pytest.mark.parametrize(
+    ("body", "group_by", "top_n"),
+    [
+        ("top 1000 customers for sorento this year", "customer", 1000),
+        ("top 1,000 customers for sorento this year", "customer", 1000),
+        ("top 3 sales agents for sorento this year", "sales_agent", 3),
+        ("top 3 sales reps for sorento this year", "sales_agent", 3),
+        ("top 3 SA for sorento this year", "sales_agent", 3),
+    ],
+)
+def test_c2_a_person_ranking_reroutes_with_the_full_count(console, monkeypatch, body, group_by, top_n) -> None:
+    """S3: the count may be 4+ digits or comma grouped; the person noun still reroutes."""
+    text, log = _say_all(console, monkeypatch, _old(_hit("sorento", "brand"), top_n=top_n), body)
+    assert "crm_top_selling_report" not in _names(log), (body, _names(log), text)
+    (args,) = [a for n, a in log if n == TOOL]
+    assert args["group_by"] == group_by and args["top_n"] == top_n, (body, args)
+    assert args["brand_ids"] == [console.ids["brand"]], (body, args)
+
+
 # C3: resolver hardening --------------------------------------------------- #
 
 
 def test_c3_a_category_wins_over_a_sales_agent_alias(console) -> None:
+    from app.models.base import set_company_scope
     from app.services.chatbot import engine as engine_mod_
 
     _seed_wt(console)
     db = console.session_factory()
     try:
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
         assert engine_mod_._classify_word_group(db, "water closet") == "category"
     finally:
         db.close()
