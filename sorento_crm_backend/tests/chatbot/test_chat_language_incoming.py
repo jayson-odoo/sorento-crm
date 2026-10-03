@@ -183,9 +183,13 @@ def test_a_dealer_eta_line_translates_its_verdict_and_keeps_the_mark():
     assert _loc("ms").tail("SRTW2000: No ETA") == "SRTW2000: Tiada ETA"
     assert _loc("zh").tail("SRTW2000: No ETA") == "SRTW2000: 暂无 ETA"
     assert _loc("ms").tail("SRTW2000: \u2705 ETA 19/10/2026") == "SRTW2000: \u2705 ETA 19/10/2026"
-    assert _loc("ms").tail("SRT5674 x 5: \u274c No incoming. Please refer to your salesman.") == (
-        "SRT5674 x 5: \u274c Tiada stok masuk. Sila rujuk jurujual anda."
+    # The no-incoming verdict, built from the presenter's own constant so it follows the wording.
+    no_incoming = f"SRT5674 x 5: {_presenters()._AVAILABILITY_TAILS['no_incoming']}"
+    assert no_incoming.startswith("SRT5674 x 5: \u274c No stock and no incoming.")
+    assert _loc("ms").tail(no_incoming) == (
+        "SRT5674 x 5: \u274c Tiada stok dan tiada stok masuk. Sila rujuk jurujual anda."
     )
+    assert _loc("zh").tail(no_incoming) == "SRT5674 x 5: \u274c 没有库存，也没有到货。请联系您的销售员。"
     assert _loc("zh").tail("SRT5674 x 50: \u2705 30 available. Please refer to your salesman.") == (
         "SRT5674 x 50: \u2705 有 30 件。请联系您的销售员。"
     )

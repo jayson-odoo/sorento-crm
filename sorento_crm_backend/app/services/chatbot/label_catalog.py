@@ -67,9 +67,9 @@ LABELS: dict[str, dict[str, str]] = {
     },
     # AVAIL-MODE-REPLIES (#1430) verdict wording; the leading status mark is not text and
     # stays as printed (`Localizer.tail`).
-    f"No incoming. {REFER_TO_SALESMAN}": {
-        "ms": "Tiada stok masuk. Sila rujuk jurujual anda.",
-        "zh": "没有到货。请联系您的销售员。",
+    f"No stock and no incoming. {REFER_TO_SALESMAN}": {
+        "ms": "Tiada stok dan tiada stok masuk. Sila rujuk jurujual anda.",
+        "zh": "没有库存，也没有到货。请联系您的销售员。",
     },
     f"{{available}} available. {REFER_TO_SALESMAN}": {
         "ms": "{available} ada. Sila rujuk jurujual anda.",
