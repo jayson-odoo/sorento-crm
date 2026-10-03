@@ -211,6 +211,12 @@ SPECIFIC product (a code like "SRTWT7408") {hint: "product"} and a location {hin
   - "低库存 马桶 per vendor" -> categories ["water closet"], group_by "supplier"
   - "low stock report water closet taiyang" -> categories ["water closet"], suppliers
     ["taiyang"]
+REFINING THE REPORT JUST SHOWN: when "Previous response" starts "Low stock report (", a
+message that only names a filter or a grouping ("taiyang only", "by supplier", "sorento
+only", "just water closet", "ikut kategori") is the same ask: intent_hint
+"low_stock_report", domain_hint "inventory", domain_in_message false, and only the
+low_stock fields it names. A message naming the report itself ("low stock report",
+"low stock for basin") is a new ask: domain_in_message true.
 ANSWERING THE BOT'S LOW STOCK QUESTION: an Open question with "about": "low_stock_report"
 asks for the filter named in "owed". A message that answers it: intent_hint
 "low_stock_report", domain_hint "inventory", message_type "business_query", the low_stock
