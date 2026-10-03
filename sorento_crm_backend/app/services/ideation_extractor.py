@@ -154,6 +154,15 @@ IDEATE_EXTRACTION_JSON_SCHEMA: dict[str, Any] = {
                 "not address the choice at all (e.g. it just adds a new detail)."
             ),
         },
+        "has_idea": {
+            "type": "boolean",
+            "description": (
+                "false when the message only says the user wants to submit or share an "
+                "idea without stating one (for example 'I have an idea', 'want to submit "
+                "idea', 'boleh saya hantar idea'); true when it states an idea, a need or "
+                "a change."
+            ),
+        },
         "language": {
             "type": ["string", "null"],
             "enum": ["en", "ms", "zh", None],
@@ -172,6 +181,7 @@ IDEATE_EXTRACTION_JSON_SCHEMA: dict[str, Any] = {
         "review_action",
         "change_text",
         "duplicate_choice",
+        "has_idea",
         "language",
     ],
 }
@@ -189,6 +199,8 @@ class IdeateExtraction:
     confirm: bool = False
     #: The language of the message: en / ms / zh, None when unknown (IDEATION-CAPTURE).
     language: str | None = None
+    #: False when the message only announces an idea without stating one; None when unknown.
+    has_idea: bool | None = None
 
 
 # #1279 round 2 (owner ruling, 26 Sep 2026): "only a yes creates the idea", in the
@@ -415,9 +427,14 @@ def extract_ideate_turn(
     if language not in _LANGUAGES:
         language = None
 
+    has_idea = data.get("has_idea")
+    if not isinstance(has_idea, bool):
+        has_idea = None
+
     return IdeateExtraction(
         fields=fields,
         language=language,
+        has_idea=has_idea,
         remove=remove,
         skip=skip,
         title=title,

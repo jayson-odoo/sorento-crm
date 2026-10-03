@@ -300,7 +300,14 @@ def handle_capture_turn(
             if (cleaned := normalise_field_value(key, value))
         }
         title = normalise_title(extraction.title)
-        if _missing_required(fields):
+        # An intent-only message ("I have an idea") carries no idea whatever the extractor
+        # wrote into problem, so problem is not counted when has_idea is False.
+        checked = (
+            {k: v for k, v in fields.items() if k != "problem"}
+            if extraction.has_idea is False
+            else fields
+        )
+        if _missing_required(checked):
             if ask_reply:
                 # The user answered the ask-back and still gave no idea: end the ask with a
                 # statement, never a second identical question.
