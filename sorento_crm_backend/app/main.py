@@ -70,6 +70,12 @@ logging.basicConfig(
 if settings.debug:
     logging.getLogger('app.dependencies').setLevel(logging.DEBUG)
 
+# DEV-LOGIN-BYPASS: crash at import (never just warn) when DEV_AUTO_LOGIN is on outside a
+# dev ENVIRONMENT, and log a loud banner when it is legitimately active.
+from app.services.dev_login import assert_safe_startup as _assert_dev_login_safe
+
+_assert_dev_login_safe(enabled=settings.dev_auto_login, environment=settings.environment)
+
 # Create FastAPI app
 app = FastAPI(
     title="Sorento CRM API",
