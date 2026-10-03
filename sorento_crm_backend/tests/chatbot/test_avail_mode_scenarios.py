@@ -17,6 +17,7 @@ import pytest
 
 from tests.chatbot._avail_mode_console import AvailConsole, Stock
 from tests.chatbot._r9_engine_console import OWNER_FAMILY, answer, numbered, product, reply, stock
+from tests.chatbot._turn_helpers import entity
 from tests.chatbot.test_engine import stub_access  # noqa: F401 - a pytest fixture
 
 pytestmark = pytest.mark.usefixtures("stub_access")
@@ -609,3 +610,76 @@ def test_S50c_an_exact_code_stock_ask_carries_only_that_code(console):
     c.say("srtw2000 20", stock(product("srtw2000", 20)))
     carried = [p.get("canonical_code") for p in (c.state or {}).get("focus", {}).get("products", [])]
     assert carried == ["SRTW2000"]
+
+
+# ================================================================== tester re-run on a5ba9dc9f (3 Oct)
+# The live parser's other readings of the owner's messages (crew-tester, 3 runs each).
+
+BARE_ETA = reply(entities=[], domain_hint="incoming", intent_hint="check_incoming")
+
+
+@pytest.mark.parametrize(
+    "parsed",
+    [
+        stock(entity("srt5764 xx 10", confident=False)),
+        stock(entity("srt5764 xx 10", None, confident=False)),
+        stock(entity("srt5764", confident=False), entity("xx", None, confident=False), demand_qty=10),
+        stock(entity("srt5764 xx", confident=False), demand_qty=10),
+    ],
+    ids=["unsure_product", "unsure_unlabeled", "unsure_split", "unsure_with_qty"],
+)
+def test_S51_an_unsure_capture_with_a_code_is_still_the_did_you_mean(console, parsed):
+    """Fix 1 runs 2-3: the parser read 'srt5764 xx 10' as an unsure capture and the reply
+    was 'I captured "srt5764 xx 10" but couldn't tell which part is which.' A code-like
+    token the catalogue does not carry is the did-you-mean, every run."""
+    c = console()
+    out = c.say("srt5764 xx 10", parsed)
+    _dym5764_positions(out)
+
+
+@pytest.mark.parametrize(
+    "first",
+    [
+        reply(entities=[product("srtw2000")], domain_hint="order", intent_hint="check_order"),
+        reply(entities=[product("srtw2000")], domain_hint="order", intent_hint="check_order", order_status="outstanding"),
+        stock(product("srtw2000")),
+    ],
+    ids=["routed_to_orders", "routed_to_outstanding", "stock_ask"],
+)
+def test_S52_a_bare_eta_after_a_bare_code_asks_only_that_code(console, first):
+    """Fix 4: 'srtw2000' then 'eta' (3/3) listed SRTW2000-SS-CR, SRTW2000-A and
+    SRTW2000-NL. Turn 1 routed to an order list or the outstanding report, so the carried
+    focus held the whole prefix family. Availability access: the exact code only."""
+    c = console(SRTW2000=Stock(x=200, eta=ETA))
+    c.say("srtw2000", first)
+    out = c.say("eta", BARE_ETA)
+    assert out == f"SRTW2000: {TICK} ETA 19/10/2026\n\n{R}"
+    (last,) = [a for name, a in c.tool_calls if name == "crm_incoming_stock_list"][-1:]
+    assert [c.codes[p] for p in last["product_ids"]] == ["SRTW2000"]
+
+
+@pytest.mark.parametrize(
+    "first",
+    [
+        reply(entities=[product("SRTWC286-SH")], domain_hint="order", intent_hint="check_order"),
+        reply(entities=[product("SRTWC286-SH")], domain_hint="order", intent_hint="check_order", order_status="outstanding"),
+    ],
+    ids=["routed_to_orders", "routed_to_outstanding"],
+)
+def test_S52b_a_bare_eta_after_an_exact_family_head_asks_only_that_code(console, first):
+    """'SRTWC286-SH' then 'eta' listed -NEW, -NEW-200, -150, -200, -P, -PP, -UF too."""
+    c = console()
+    c.say("SRTWC286-SH", first)
+    assert c.say("eta", BARE_ETA) == f"SRTWC286-SH: No ETA\n\n{R}"
+
+
+def test_S53_an_eta_ask_for_a_family_tells_nothing_until_picked(console):
+    """'eta SRTWC286' (not a full code) is a which-one picker; no variant's ETA or stock
+    is told until the dealer picks one, then only that one's."""
+    c = console(**{"SRTWC286-SH-150": Stock(eta=ETA)})
+    out = c.say("eta SRTWC286", _eta_ask("SRTWC286"))
+    assert "ETA" not in out and TICK not in out and CROSS not in out and "19/10" not in out, out
+    assert "1. SRTWC286-SH" in out and "2. SRTWC286-SH-150" in out, out
+    assert c.say("2", _pick(2)) == f"SRTWC286-SH-150: {TICK} ETA 19/10/2026\n\n{R}"
+    (last,) = [a for name, a in c.tool_calls if name == "crm_incoming_stock_list"][-1:]
+    assert [c.codes[p] for p in last["product_ids"]] == ["SRTWC286-SH-150"]
