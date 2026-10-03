@@ -1313,3 +1313,90 @@ def test_guard_a_genuine_answer_still_answers_the_open_top_selling_question(cons
     )
     assert "crm_top_selling_report" in _names(log), (_names(log), text)
     assert TOOL not in _names(log), (_names(log), text)
+
+
+# --------------------------------------------------------------------------- #
+# Live chain (browser pass on 36d5d47e), parser fields only.
+# R1: a sales_ranking verdict with group_by null and no filter entity is not a valid ask.
+# R2: an open required-field question is dropped by a NEW ask (not a refine) that names its own
+#     axis or subject.
+# --------------------------------------------------------------------------- #
+
+
+def _bare_number_verdict() -> dict[str, Any]:
+    """Live verdict for a bare "3" after a ranking: sales_ranking, nothing else, not a refine."""
+    return _rank(
+        group_by=None, top_n=None, ranking_refine=False, date_filter_start=None, date_filter_end=None
+    )
+
+
+def _t1_sorento_top1(console) -> None:
+    _text, calls = console.say(_rank(_e("Sorento", "brand"), top_n=1, **SEP_RANGE), "top salesman for Sorento last month")
+    assert calls, "setup: the first ranking did not run"
+
+
+def test_r1_a_bare_number_verdict_with_no_axis_and_no_filter_says_the_catalogue_and_opens_nothing(console) -> None:
+    _t1_sorento_top1(console)
+    text, calls = console.say(_bare_number_verdict(), "3")
+    assert calls == [], calls
+    assert text.strip() == CATALOGUE_LINE, text
+    # No question is pending: a period-only reply now answers nothing.
+    text, calls = console.say(_reply(**SEP), "last month")
+    assert calls == [], (text, calls)
+
+
+def test_r1_the_live_chain_t1_to_t4_asks_cabana_its_period_then_runs_cabana(console) -> None:
+    _t1_sorento_top1(console)
+    cabana = _seed_cabana(console)
+    text, calls = console.say(_bare_number_verdict(), "3")
+    assert calls == [] and text.strip() == CATALOGUE_LINE, (text, calls)
+    text, calls = console.say(
+        _rank(_e("Cabana", "brand"), top_n=3, date_filter_start=None, date_filter_end=None),
+        "top 3 salesman for cabana",
+    )
+    assert calls == [], calls
+    assert text.strip() == PERIOD_Q, text
+    assert "as a period" not in text, text
+    _text, calls = console.say(_rank(ranking_refine=True, top_n=3, **THIS_YEAR), "this year")
+    (args,) = calls
+    assert args["group_by"] == "sales_agent" and args["top_n"] == 3, args
+    assert args["brand_ids"] == [cabana], f"not Cabana (a brand-less total?): {args}"
+    assert args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
+
+
+def test_r2_a_new_ask_drops_the_open_period_question_and_runs_with_its_own_dates(console) -> None:
+    cabana = _seed_cabana(console)
+    text, calls = console.say(
+        _rank(_e("Sorento", "brand"), date_filter_start=None, date_filter_end=None), "top 3 salesman for sorento"
+    )
+    assert text.strip() == PERIOD_Q and calls == [], (text, calls)
+    text, calls = console.say(
+        _rank(_e("Cabana", "brand"), top_n=3, ranking_refine=False, **SEP_RANGE), "top 3 salesman for cabana last month"
+    )
+    assert "as a period" not in text, text
+    (args,) = calls
+    assert args["brand_ids"] == [cabana], args
+    assert args["group_by"] == "sales_agent" and args["top_n"] == 3, args
+    assert args["date_from"] == "2026-09-01" and args["date_to"] == "2026-09-30", args
+
+
+def test_r2_guard_an_open_period_question_is_still_answered_by_a_period_only_verdict(console) -> None:
+    console.say(_rank(_e("Sorento", "brand"), date_filter_start=None, date_filter_end=None), "top 3 salesman for sorento")
+    _text, calls = console.say(_reply(**SEP), "last month")
+    (args,) = calls
+    assert args["brand_ids"] == [console.ids["brand"]], args
+    assert args["group_by"] == "sales_agent" and args["top_n"] == 3, args
+    assert args["date_from"] == "2026-09-01" and args["date_to"] == "2026-09-30", args
+
+
+def test_r1_guard_a_total_with_a_filter_is_still_a_valid_ask(console) -> None:
+    cabana = _seed_cabana(console)
+    text, calls = console.say(
+        _rank(_e("Cabana", "brand"), group_by=None, top_n=None, ranking_refine=False,
+              date_filter_start="2026-08-01", date_filter_end="2026-08-31"),
+        "how much did we sell of Cabana in August",
+    )
+    (args,) = calls
+    assert not args.get("group_by") and args["brand_ids"] == [cabana], args
+    assert args["date_from"] == "2026-08-01" and args["date_to"] == "2026-08-31", args
+    assert CATALOGUE_LINE not in text, text
