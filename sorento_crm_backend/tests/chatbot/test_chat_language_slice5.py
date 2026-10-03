@@ -227,42 +227,116 @@ def test_cl55_the_source_literals_are_pinned():
 GAP_KEY = "{code} has no {types}."
 
 
-@pytest.mark.parametrize("lang", ["ms", "zh"])
-def test_cl54_the_gap_line_reads_in_the_turn_language_with_code_and_types_verbatim(lang):
-    english = "SRTWC286 has no datasheet."
-    out = _loc(lang).reply(english)
-    assert out == WORDING[lang]["has_no"].format(code="SRTWC286", types="datasheet")
-    assert "has no" not in out
+def _compose_gap_text(lang: str | None, rows: list[tuple[str, str]], codes: list[str], asked: list[str],
+                      lane_text: str = "I have attached the file(s) below.") -> str:
+    """The product_attachment section `compose()` builds, with the turn's localizer on ctx."""
+    from types import SimpleNamespace
+
+    from app.services.chatbot.turn.compose import compose
+    from app.services.chatbot.turn.policy import Policy
+    from app.services.chatbot.turn.state import Focus, Profile, State
+    from tests.chatbot._turn_helpers import TIER_ORDER_FIXTURE, _domain_row
+
+    env = {
+        "domain": "product_attachment",
+        "denied": False,
+        "entities": [*codes, *asked],
+        "product_codes": list(codes),
+        "attachment_types": [{"name": n, "keys": [n]} for n in asked],
+        "figures": [
+            {"fields": [
+                {"label": "Product Code", "value": c},
+                {"label": "Attachment Type", "value": t},
+                {"label": "File Name", "value": f"{c}.pdf"},
+            ]}
+            for c, t in rows
+        ],
+        "files": [{"url": f"https://example.test/{c}.pdf", "filename": f"{c}.pdf"} for c, _ in rows],
+        "miss": [],
+        "has_result": True,
+        "tool_has_result": True,
+        "unresolved": [],
+        "error": None,
+        "lane_text": lane_text,
+    }
+    row = {**_domain_row("product_attachment", narrowing={"product": "must_narrow_one"}),
+           "label": "product attachments"}
+    policy = Policy.from_rows(domains=[row], kinds=[], tier_order=TIER_ORDER_FIXTURE)
+    state = State(focus=Focus(), pending=None, profile=Profile(), turn_no=2)
+    ctx = SimpleNamespace(localizer=_loc(lang)) if lang else None
+    return compose([env], state, policy, ctx=ctx).text
 
 
 @pytest.mark.parametrize("lang", ["ms", "zh"])
-def test_cl54_two_gap_lines_in_one_reply_each_translate(lang):
-    english = "ZZT-1 has no datasheet.\nZZT-2 has no brochure."
-    out = _loc(lang).reply(english)
+def test_cl54_compose_builds_the_gap_line_in_the_turn_language(lang):
+    text = _compose_gap_text(lang, [("SRT1", "photo")], ["SRT1"], ["photo", "datasheet"])
+    assert WORDING[lang]["has_no"].format(code="SRT1", types="datasheet") in text.split("\n"), text
+    assert "has no" not in text, text
+
+
+@pytest.mark.parametrize("lang", ["ms", "zh"])
+def test_cl54_compose_two_products_each_get_their_own_localized_gap_line(lang):
+    text = _compose_gap_text(lang, [("SRT0", "photo")], ["SRT0", "SRT1"], ["photo", "datasheet"])
+    lines = text.split("\n")
     w = WORDING[lang]["has_no"]
-    assert out == w.format(code="ZZT-1", types="datasheet") + "\n" + w.format(code="ZZT-2", types="brochure")
+    assert w.format(code="SRT0", types="datasheet") in lines, text
+    joiner = label_catalog.defaults(lang)[" or "]
+    assert w.format(code="SRT1", types=f"photo{joiner}datasheet") in lines, text
+    assert "has no" not in text, text
 
 
 @pytest.mark.parametrize("lang", ["ms", "zh"])
-def test_cl54_the_gap_line_below_an_answer_block_translates(lang):
-    english = "*Product Code:* SRTWC286\n\nSRTWC286 has no datasheet.\n_Data last updated 01/10/2026_"
+def test_cl54_compose_the_gap_line_below_the_footer_paragraph_keeps_its_place(lang):
+    text = _compose_gap_text(lang, [("SRT1", "photo")], ["SRT1"], ["photo", "datasheet"],
+                             lane_text="I have attached the file(s) below.\n\n_Data last updated: 03/10/2026 16:24:40_")
+    gap = WORDING[lang]["has_no"].format(code="SRT1", types="datasheet")
+    assert f"\n\n{gap}\n\n" in text, repr(text)
+
+
+@pytest.mark.parametrize("lang", ["ms", "zh"])
+def test_cl54_compose_two_missing_types_keep_their_names_and_use_the_localized_joiner(lang):
+    """S1: SRT1 has no file of either asked type; the names print as typed, the joiner is the catalog's."""
+    text = _compose_gap_text(lang, [("SRT0", "datasheet"), ("SRT0", "brochure")],
+                             ["SRT0", "SRT1"], ["datasheet", "brochure"])
+    joiner = label_catalog.defaults(lang)[" or "]
+    types = f"datasheet{joiner}brochure"
+    assert WORDING[lang]["has_no"].format(code="SRT1", types=types) in text.split("\n"), text
+    assert " or " not in text and "has no" not in text, text
+
+
+def test_cl54_compose_an_english_turn_keeps_the_english_gap_line():
+    for lang in (None, "en"):
+        text = _compose_gap_text(lang, [("SRT1", "photo")], ["SRT1"], ["photo", "datasheet"])
+        assert "SRT1 has no datasheet." in text.split("\n"), text
+    both = _compose_gap_text("en", [("SRT0", "datasheet"), ("SRT0", "brochure")],
+                             ["SRT0", "SRT1"], ["datasheet", "brochure"])
+    assert "SRT1 has no datasheet or brochure." in both.split("\n"), both
+
+
+@pytest.mark.parametrize("lang", ["ms", "zh"])
+def test_cl54_a_product_name_that_reads_like_the_gap_sentence_is_not_translated(lang):
+    """Regression: inline matching turned `Basin that has no hole.` into `Basin that tiada hole.`."""
+    english = "*Product Name:* Basin that has no hole."
     out = _loc(lang).reply(english)
-    assert WORDING[lang]["has_no"].format(code="SRTWC286", types="datasheet") in out.split("\n")
+    assert out.endswith(" Basin that has no hole."), out
+    assert "has no hole" in out
+    assert out != english  # the label itself still translates
 
 
-def test_cl54_english_gap_line_is_byte_identical():
-    english = "SRTWC286 has no datasheet."
-    assert label_catalog.IDENTITY.reply(english) == english
+def test_cl54_the_gap_line_is_not_matched_in_running_text_for_en():
+    assert label_catalog.IDENTITY.reply("*Product Name:* Basin that has no hole.") == "*Product Name:* Basin that has no hole."
 
 
-def test_cl55_the_gap_line_is_a_catalog_key_and_inline():
+def test_cl55_the_gap_line_is_a_catalog_key_and_direct_only():
     assert GAP_KEY in LABELS and set(LABELS[GAP_KEY]) >= {"ms", "zh"}
-    assert GAP_KEY in INLINE
+    assert GAP_KEY in label_catalog.DIRECT_ONLY
+    assert GAP_KEY not in INLINE
 
 
-def test_cl55_compose_still_builds_the_gap_line_this_way():
+def test_cl55_compose_builds_the_gap_line_through_the_localizer():
     src = (APP / "services/chatbot/turn/compose.py").read_text(encoding="utf-8")
-    assert 'f"{code} has no {_join_words(missing)}."' in src
+    assert 'localizer.fill("{code} has no {types}."' in src
+    assert 'f"{code} has no {_join_words(missing)}."' not in src
 
 
 # --------------------------------------------------------------------------- #

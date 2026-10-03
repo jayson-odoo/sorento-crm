@@ -632,8 +632,21 @@ turn's language through the same pass every other composer sentence uses.
 - **AC-CL53:** the next turn still reads the answer. `reply_verdict` and the open slot never
   depend on the English text of the question (pinned with an ms turn whose answer settles the field).
 - **AC-CL54:** `"<code> has no <type>."` (#1437) reads in ms / zh; the code and the type names stay
-  as printed.
+  as printed, and the joiner between two types (" or ") is localized. The composer builds the line
+  with `Localizer.fill` (a `DIRECT_ONLY` key), so the final pass never matches it inside running
+  text: a product name such as `Basin that has no hole` stays as printed.
 - **AC-CL55:** a catalog pin fails if any of these English literals changes in the source.
 
 Known gap, unchanged: the words a contact may TYPE (`ALL_WORDS`, `CANCEL_WORDS`) are input
 matching, not reply wording, and are not part of this slice.
+
+Known gaps (slice 5 review):
+
+- The low stock filter header (`"Low stock report (<category>, all suppliers, by supplier / no
+  grouping)"`, built by `low_stock_ask.route_filters` and printed above every low stock reply)
+  stays English. It is assembled from phrase fragments around values, not fixed sentences, so it
+  needs its own pass; it is left for a follow-up rather than widening this slice.
+- Top selling's notes now translate `"I don't know '<word>' as a category."` (it shares the
+  catalog key), but its siblings `"I don't know '<word>' as a <kind>."` for other kinds and
+  `"I don't know '<word>'."` do not, so a notes line can come out mixed. That gap predates this
+  slice.
