@@ -566,3 +566,35 @@ class TestLiveParserCarriedWord:
         _text, calls = console.say(_ask(_e("Water Closet", "category")), "low stock report water  closet")
         (args,) = calls
         assert args.get("categories") == ["SRT-WC"], args
+
+
+# --------------------------------------------------------------------------- #
+# Live parser, 3 Oct 2026 (gpt-5.4-mini): the answer shape with is_affirmative false
+# --------------------------------------------------------------------------- #
+
+
+def _live_reply(*entities: dict[str, Any]) -> dict[str, Any]:
+    """The live parser's reading of a bare answer to the category question: a business_query
+    with no hints, is_affirmative FALSE (not null), no continuation, no document."""
+    return _reply(*entities, intent_hint=None, domain_hint=None, message_type="business_query",
+                  is_affirmative=False, continuation=False, document=[])
+
+
+class TestLiveParserAnswerShape:
+    def test_cancel_with_is_affirmative_false_still_cancels(self, console) -> None:
+        console.say(_ask(), "low stock report")
+        text, calls = console.say(_live_reply(), "cancel")
+        assert text == "Low stock report cancelled."
+        assert calls == []
+
+    def test_all_with_is_affirmative_false_still_runs_the_whole_book(self, console) -> None:
+        console.say(_ask(), "low stock report")
+        _text, calls = console.say(_live_reply(), "all")
+        (args,) = calls
+        assert not args.get("categories"), args
+
+    def test_a_category_with_is_affirmative_false_still_runs_it(self, console) -> None:
+        console.say(_ask(), "low stock report")
+        _text, calls = console.say(_live_reply(_e("water closet", "product")), "water closet")
+        (args,) = calls
+        assert args.get("categories") == ["SRT-WC"], args
