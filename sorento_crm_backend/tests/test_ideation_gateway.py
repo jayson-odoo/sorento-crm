@@ -919,3 +919,12 @@ def test_e05_a_non_json_2xx_from_ss_on_a_comment_write_is_a_502_unreachable(env,
     resp = env.req(method, path, json={"body": "hi"})
     assert resp.status_code == 502, resp.text
     assert UNREACHABLE in message_of(resp)
+
+
+def test_a10_promote_keeps_the_whole_idea_id_list_and_title(env):
+    """AC-K-05: a bulk Promote is ONE call carrying every selected id and the first idea's title."""
+    env.fake.route("POST", "/embed/ideas/promote", status=201, json_body={"id": "br-1", "title": "First"})
+    resp = env.req("POST", "/ideas/promote", json={"ideaIds": [IDEA, IDEA_B], "title": "First", "extra": 1})
+    assert resp.status_code == 201, resp.text
+    assert len(env.fake.calls) == 1
+    assert env.fake.calls[0]["json"] == {"ideaIds": [IDEA, IDEA_B], "title": "First"}

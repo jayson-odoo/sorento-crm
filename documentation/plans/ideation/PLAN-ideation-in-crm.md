@@ -487,6 +487,12 @@ only ship after it does.
   per-IP throttle: exempt the CRM caller, since the CRM no longer forwards `X-Forwarded-For` and
   enforces per-token + global limits itself.
 
+- **ss asks from the end-of-lane browser pass (2 Oct):** (7) `GET /embed/ideas/{id}` passes
+  `voter_id=None`, so `myVote` is always null on the idea page; (8) embed create passes `actor=None`,
+  so CRM captures show submitter "Unknown embed" (should use the principal's `name`); (9) embed list
+  `search` matches the title only, not idea number or submitter; (10) idea hard delete fails when the
+  idea has attachments (ss BL-SS-285).
+
 ## 14. Embed connection product scope (Q3)
 
 What: ss `embed_connections.product_id` for Sorento's connection = the CRM default workspace's

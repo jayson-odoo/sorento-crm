@@ -76,7 +76,8 @@ the new CRM permission `ideation.ideas.manage`; "view" = existing `ideation.boar
 - **AC-C-03** The vote box toggles the viewer's upvote via the gateway without opening the row; the
   count and filled state update; a merged child's box is disabled.
 - **AC-C-04** Status filter (SearchableSelect, clearable) includes Archived; default shows active
-  ideas; search filters by title, number, submitter.
+  ideas; search is passed to ss (`search`), which today matches the title only (number and submitter
+  search need ss; PLAN section 13 item 9).
 - **AC-C-05** Header CTA "Capture idea" opens a modal with Problem statement (required, inline
   "Problem statement is required"), Proposed solution, Impact, Department, Original message,
   Attachments; no Product picker. Save calls `POST /ideas` then uploads each dropped file to the new
@@ -96,7 +97,7 @@ the new CRM permission `ideation.ideas.manage`; "view" = existing `ideation.boar
   composer.
 - **AC-D-03** Edit swaps values for inputs in place (same layout); Save calls `PATCH /ideas/{id}`.
 - **AC-D-04** "..." menu: Promote to BR (one click: `POST /ideas/promote` with `{ideaIds:[id],
-  title:<idea title>}`, success toast naming the new BR number from the response; ss 403 message
+  title:<idea title>}`, success toast naming the new BR by its title (ss returns no BR number); ss 403 message
   shown as an error toast), Merge into another idea, Archive (5 s countdown), Delete (10 s countdown,
   then back to the list). No confirm dialog anywhere.
 - **AC-D-05** Attachments tab lists files (download goes through the gateway, buffered, and saves as a
@@ -162,6 +163,85 @@ the new CRM permission `ideation.ideas.manage`; "view" = existing `ideation.boar
   `X-Forwarded-For` is sent to ss: behind the CRM's nginx the left-most XFF is client-controlled
   (security review M2). Body limit 2000 characters, matching ss's public limit.
 - **AC-H-08** Usable at 375px and 1280px; not-found state at both.
+
+## J. Known ss-side gaps found by the end-of-lane browser pass (2 Oct, local ss on crew/ideation-comments)
+
+Not CRM defects; recorded so the hand test expects them. Each is a PLAN section 13 ask.
+- Deleting an idea that has an attachment fails in ss (pending action outcome "failed"; ss backlog
+  BL-SS-285, attachments FK). Ideas without attachments delete fine.
+- The idea page vote box does not show the viewer's own vote: ss `GET /embed/ideas/{id}` serialises
+  with `voter_id=None`. List and board show it correctly.
+- An idea captured from the CRM shows submitter "Unknown embed": ss embed create passes `actor=None`
+  and no submitter name. Same root as AC-E-05 (ss ignores the `name` claim).
+
+## K. Ideas list rework (owner hand test #1, 3 Oct 2026)
+
+Mirrors the ss Ideas list: ss `service_frontend/app/(protected)/ideation/ideas/{ideas-view.tsx,use-ideas-list-config.tsx,select-idea-rows.ts}`
+over `components/platform/resource-list/resource-list.tsx` (ss main `3b36e393`). Built on the CRM
+standard list pieces the Customers / Contacts lists use: `components/ui/data-grid-list-toolbar.tsx`
+(`DataGridListToolbar`), `components/ui/data-grid.tsx`, `components/ui/data-grid-select-column.tsx`
+(`buildSelectColumn`), `components/ui/data-grid-column-header.tsx` (`DataGridColumnHeader`),
+`components/ui/data-grid-column-visibility.tsx`, `components/common/ListSearchInput.tsx`,
+`components/common/SearchableSelect`, `app/(protected)/scm/components/BulkActionsMenu.tsx` ("Actions"
+dropdown). No new layout: no Lavish mock (owner ruling). This section supersedes AC-C-01..C-04 for
+the list.
+
+- **AC-K-01** Data: the list loads every idea once (`filter=all`) and filters, searches, sorts and
+  paginates client side, as ss does (10 / 25 / 50 / 100 per page). Search (debounced) matches idea
+  title and problem, submitter and product.
+- **AC-K-02** Toolbar left, in order: search ("Search ideas..."), info icon (hover card "You can
+  search by" Idea / Submitter / Product, aria-label "What can I search?"), Status picker ("All
+  statuses" plus every status label present in the data, clearable) directly next to search, then the
+  Active | Archived segmented toggle (`ToggleGroup`; Active = `statusIsArchived` false). Changing the
+  toggle clears the selection.
+- **AC-K-03** Toolbar right when nothing is selected: Filters (Submitter, Channel, Submitted date
+  range; count badge; Clear), Export (CRM standard export: "Download Excel" of the selected rows, or
+  of every row matching the current filters when the toolbar offers all-records export), Columns
+  (column visibility), Capture idea (primary, in the toolbar; no longer in the page header). The List
+  | Board switch stays.
+- **AC-K-04** Columns in order: select checkbox (header select-all of the page), Votes (vote box),
+  Idea (title clamped to 2 lines, link to the idea, "N merged" chip when `mergedCount > 0`, "Merged"
+  chip on a merged child), Submitter, Channel, Product, Status (badge), Submitted (dd/MM/yyyy), row
+  actions ("..." with the same actions as the bulk menu for that one row). Every data column is
+  sortable from its header (asc, desc, clear); default sort Votes descending, then newest first.
+  Column visibility and widths persist (list prefs key `ideation.board.view`). No "No." column (ss
+  has none).
+- **AC-K-05** Selecting rows replaces the right cluster with "N selected", an "Actions" dropdown,
+  Export (selected rows) and Clear. The Actions dropdown is shown only to manage holders and lists,
+  with ss's visibility rules:
+  - Promote to BR: one or more rows, none archived; disabled when rows span more than one product;
+    one call `POST /ideas/promote {ideaIds, title: first selected idea's title}`; success toast.
+  - Merge: two or more rows, none archived; opens the merge dialog to pick the survivor among the
+    selected ideas; `POST /ideas/merge {survivorId, ideaIds}`.
+  - Unmerge: every selected row has `mergedCount > 0`; one unmerge per row.
+  - "Move to <label>" when every row's next move has the same label, else "Advance to next stage":
+    no row archived; disabled when any row has no `advanceTransitionId`; one status call per row.
+  - Archive: no row archived; one deferred `idea.archive` per row (5 s, Cancel), no confirm.
+  - Restore: every row archived and each has an outgoing transition; one status call per row.
+  - Delete: always; one deferred `idea.delete` per row (10 s, Cancel), no confirm.
+  After a bulk action the selection clears and the list refetches; a partial failure toasts how many
+  failed.
+- **AC-K-06** A user without manage sees the select column and Export but no Actions dropdown and no
+  row "..." actions other than opening the idea.
+- **AC-K-07** "My ideas | All ideas" is out of scope here (crew, 3 Oct): it belongs to lane
+  IDEATION-CAPTURE (#1444), built on ss#111 (`mine=true` / `isMine`). This list keeps the List | Board
+  switch and leaves an empty slot (`toolbarScopeSlot` prop, renders nothing by default) right after
+  the Active | Archived toggle next to search, for that lane to fill.
+- **AC-K-08** Empty: "No ideas match these filters." when filters or search are active, else "No ideas
+  yet" + hint; load error: error state with Retry. Usable at 1280 and 375 (toolbar wraps, grid scrolls
+  inside its card), light and dark.
+
+### Captain's test list for section K (vitest, red first)
+- `components/ideas/IdeasListView.test.tsx`: K-02 toolbar order (search, info, status picker,
+  Active|Archived) and the hover-card text; K-02 status picker filters to one status and Active /
+  Archived split by `statusIsArchived`, toggle clears selection; K-01 search matches title, submitter,
+  product; K-03 Filters by channel and submitter; K-04 column headers in order, no "No." column,
+  "N merged" chip, sorting Votes / Idea / Submitted toggles row order, default votes desc then newest;
+  K-05 selecting rows shows "N selected", Actions, Export, Clear; each bulk action's visibility and
+  disabled rules; Promote posts all selected ids with the first title; Merge opens the dialog limited
+  to the selected ideas; Move to label vs "Advance to next stage"; Archive / Delete start one deferred
+  action per row and no confirm dialog; selection clears after an action; K-06 no Actions for a
+  view-only user; K-01 pagination 10/25/50/100.
 
 ## I. Removal and regression
 

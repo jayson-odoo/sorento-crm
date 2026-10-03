@@ -18,7 +18,7 @@
  *   reorderIdeas      PUT    /ideation/ideas/reorder  {orderedIds}                    manage
  *   mergeIdeas        POST   /ideation/ideas/merge  {survivorId, ideaIds}             manage
  *   unmergeIdea       POST   /ideation/ideas/{id}/unmerge                             manage
- *   promoteIdea       POST   /ideation/ideas/promote  {ideaIds: [id], title}          manage
+ *   promoteIdea(s)    POST   /ideation/ideas/promote  {ideaIds: [..], title}          manage
  *   uploadAttachment  POST   /ideation/ideas/{id}/attachments (multipart)             view
  *   fetchAttachment   GET    /ideation/ideas/{id}/attachments/{aid}/content           view
  *   listComments      GET    /ideation/ideas/{id}/comments    (ss `isDeleted` -> `deleted`)
@@ -226,14 +226,25 @@ export async function unmergeIdea(id: string): Promise<void> {
   await read(await apiFetch(`${BASE}/ideas/${id}/unmerge`, jsonInit('POST')), 'Failed to unmerge the idea');
 }
 
+/** One BR from one or more ideas (ss takes the list; the first idea's title is the caller's call). */
+export async function promoteIdeas(input: {
+  ideaIds: string[];
+  title: string;
+}): Promise<{ id: string; title?: string | null }> {
+  return read(
+    await apiFetch(
+      `${BASE}/ideas/promote`,
+      jsonInit('POST', { ideaIds: input.ideaIds, title: input.title }),
+    ),
+    'Failed to promote the ideas',
+  );
+}
+
 export async function promoteIdea(
   id: string,
   input: IdeaPromoteInput,
 ): Promise<{ id: string; title?: string | null }> {
-  return read(
-    await apiFetch(`${BASE}/ideas/promote`, jsonInit('POST', { ideaIds: [id], title: input.title })),
-    'Failed to promote the idea',
-  );
+  return promoteIdeas({ ideaIds: [id], title: input.title });
 }
 
 export async function listComments(ideaId: string): Promise<IdeaComment[]> {
