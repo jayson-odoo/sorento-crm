@@ -91,7 +91,23 @@ POLICY_BLOCKS_SEED_FILE = FIXTURES_DIR / "prompt_blocks_seed.txt"
 # owner-approved verbatim text) sits between PO_SPO_WAREHOUSE and MEMORY and takes the prompt
 # without MEMORY_ADDENDUM to 43,425 est. tokens and the whole prompt to 44,016; CEILING is
 # 44,016 - 512 = 43,504 so both assertions hold.
-CEILING = 43_504
+# Sixth re-pin, 2 Oct 2026 (REPORT-ENGINE slice 1b, PLAN-report-engine.md section 11):
+# REPORT_ASK_ADDENDUM (the `sales_ranking` vocabulary, 505 est. tokens on its own) sits between
+# ACCOUNT_LEDGER and MEMORY and takes the prompt without MEMORY_ADDENDUM to 44,005 est. tokens
+# and the whole prompt to 44,521; CEILING is 44,521 - 512 = 44,009 so both assertions hold.
+# 1b code review S1 (same lane): the addendum's "not a sales ranking" carve-out takes it to 585
+# est. tokens, the prompt without MEMORY_ADDENDUM to 44,086 and the whole prompt to 44,601 (+80);
+# CEILING is 44,601 - 512 = 44,089.
+# Seventh re-pin, 3 Oct 2026: restoring "SA" and "(dealer / project)" in REPORT_ASK_ADDENDUM
+# (review round 2) takes the whole prompt to 44,603 (+2); CEILING is 44,603 - 512 = 44,091.
+# Eighth re-pin, 4 Oct 2026 (owner rule: SEMANTIC ONLY, the parser decides, code reads no text):
+# REPORT_ASK_ADDENDUM now teaches ranking_refine (a follow-up that only changes the count,
+# period, basis or measure of the ranking on screen), the measure key, the new-ask rule and the
+# product-ranking carve-outs, in place of the removed regex rules, and the live refine fix; prompt without
+# MEMORY_ADDENDUM 44,848 est. tokens and the whole prompt 45,364 (+761, with the live refine fix, the
+# how-many answer bullet, the people-ranking-is-a-new-ask rule and the singular no-count rule);
+# CEILING is 45,364 - 512 = 44,852.
+CEILING = 44_852
 # The memory addendum on its own, bounded separately so this PR's growth stays bounded.
 # 26 Sep baseline (lane d89110c0): 339 est. tokens. Round 4 (baf4c813, 28 Sep: the history
 # question in any wording, the number re-run, commercial_request) took it to 512, which is

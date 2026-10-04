@@ -54,6 +54,7 @@ CHATBOT_TOOL_DOMAINS: dict[str, str] = {
     "crm_sales_report": "order",
     "crm_top_selling_report": "order",
     "crm_sales_analysis": "order",
+    "crm_report_ask": "order",
     "crm_master_customers_list": "order",
     "crm_incoming_stock_list": "incoming",
     "crm_incoming_stock_by_product": "incoming",

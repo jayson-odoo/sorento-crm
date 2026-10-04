@@ -34,6 +34,7 @@ from app.services.chatbot_parser_prompt import (
     LOW_STOCK_ADDENDUM,
     ACCOUNT_LEDGER_ADDENDUM,
     MEMORY_ADDENDUM,
+    REPORT_ASK_ADDENDUM,
     PO_SPO_WAREHOUSE_ADDENDUM,
     QUANTITY_ADDENDUM,
     SALES_ANALYSIS_ADDENDUM,
@@ -248,6 +249,9 @@ def _without_growth_r1_addendum(text: str) -> str:
     # chatbot-stock-ask-v2 S3).
     if text.endswith(MEMORY_ADDENDUM):
         text = text[: -len(MEMORY_ADDENDUM)]
+    # REPORT-ENGINE slice 1b: REPORT_ASK_ADDENDUM sits between ACCOUNT_LEDGER_ADDENDUM and MEMORY_ADDENDUM.
+    if text.endswith(REPORT_ASK_ADDENDUM):
+        text = text[: -len(REPORT_ASK_ADDENDUM)]
     if text.endswith(ACCOUNT_LEDGER_ADDENDUM):
         text = text[: -len(ACCOUNT_LEDGER_ADDENDUM)]
     if text.endswith(PO_SPO_WAREHOUSE_ADDENDUM):

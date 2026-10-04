@@ -389,8 +389,9 @@ SALES_REPORT_GROUP_BYS: tuple[str, ...] = ("customer", "product", "delivery_orde
 # values that read sales figures under the `sales_orders.sales_report` reveal key (the
 # owner's access ruling, 26 Sep 2026: no new key). The engine's grant-before-roster
 # check reads this one tuple, so the asks cannot be gated differently. `sales_analysis`
-# (PLAN-retail-sales-reports-26sep S1, #1269) is gated by the same key.
-SALES_FIGURE_STATUSES: tuple[str, ...] = ("sales_report", "top_selling", "sales_analysis")
+# (PLAN-retail-sales-reports-26sep S1, #1269) is gated by the same key, and so is
+# `sales_ranking` (REPORT-ENGINE slice 1b, `crm_report_ask`).
+SALES_FIGURE_STATUSES: tuple[str, ...] = ("sales_report", "top_selling", "sales_analysis", "sales_ranking")
 
 # --------------------------------------------------------------------------- #
 # Session state (R2: every key compile-current-state writes, nothing dropped)
@@ -589,6 +590,8 @@ class Focus(BaseModel):
     # LOWSTOCK-FILTER-ASK: the question `required_fields` left open, one turn long
     # (`turn/state.py::Focus.required_ask`).
     required_ask: dict[str, Any] | None = None
+    # REPORT-ENGINE: the last sales ranking's route args (`turn/state.py::Focus.sales_ranking_frame`).
+    sales_ranking_frame: dict[str, Any] | None = None
     # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner ruling
     # 24 Sep 2026) for chatbot-stock-ask-v2 S3: the open tasks, carried INSIDE the
     # focus rather than on a session key of their own. Declared here because this

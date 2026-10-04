@@ -1325,9 +1325,12 @@ def _top_selling_rules(
     """
     order_status = verdict.get("order_status")
     asked = isinstance(order_status, str) and order_status.strip() == TOP_SELLING_STATUS
-    names_its_ask = decision.starts_fresh or domain_in_message(verdict) is True
+    # A verdict the parser itself named a sales ranking is a new ask (owner held-state rule:
+    # a new intent always wins), never an answer inside an open top selling question.
+    new_sales_ranking = isinstance(order_status, str) and order_status.strip() == "sales_ranking"
+    names_its_ask = decision.starts_fresh or domain_in_message(verdict) is True or new_sales_ranking
     hopped = isinstance(focus.top_selling, dict) and bool(focus.top_selling.get("hop"))
-    if was_ranking and not asked:
+    if was_ranking and not asked and not new_sales_ranking:
         # `_focus_rules` overwrote the status before this ran: the v3 `status` key
         # ("outstanding"), and #1262's rule that a message with a domain word of its own
         # states its own status or none ("can show me the DO" cleared it to None). The
@@ -1339,7 +1342,9 @@ def _top_selling_rules(
     elif (focus.status == TOP_SELLING_STATUS or hopped) and _is_report_hop(verdict):
         _hop_to_report(focus, verdict, trace)
         return
-    elif focus.status == TOP_SELLING_STATUS and names_its_ask and not _narrows_the_ranking(verdict):
+    elif focus.status == TOP_SELLING_STATUS and names_its_ask and (
+        new_sales_ranking or not _narrows_the_ranking(verdict)
+    ):
         focus.status = verdict.get("status") or None
         focus.top_selling = None
         trace.rules_fired.append("new_ask_leaves_top_selling")
