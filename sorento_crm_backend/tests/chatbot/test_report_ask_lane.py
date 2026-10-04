@@ -1400,3 +1400,57 @@ def test_r1_guard_a_total_with_a_filter_is_still_a_valid_ask(console) -> None:
     assert not args.get("group_by") and args["brand_ids"] == [cabana], args
     assert args["date_from"] == "2026-08-01" and args["date_to"] == "2026-08-31", args
     assert CATALOGUE_LINE not in text, text
+
+
+# --------------------------------------------------------------------------- #
+# Review round 8 should-fixes: S9 (an echoed axis answers the open question), S10 (a dealer's
+# plain total is a valid ask).
+# --------------------------------------------------------------------------- #
+
+
+def _open_period_for_sorento(console) -> None:
+    text, calls = console.say(
+        _rank(_e("Sorento", "brand"), top_n=3, date_filter_start=None, date_filter_end=None),
+        "top 3 salesman for sorento",
+    )
+    assert text.strip() == PERIOD_Q and calls == [], (text, calls)
+
+
+def test_s9_a_period_reply_that_echoes_the_axis_is_a_genuine_answer(console) -> None:
+    _open_period_for_sorento(console)
+    text, calls = console.say(
+        _rank(entities=[], group_by="sales_agent", top_n=None, ranking_refine=False, **SEP_RANGE), "last month"
+    )
+    assert TOPN_Q not in text, text
+    (args,) = calls
+    assert args["brand_ids"] == [console.ids["brand"]], args
+    assert args["group_by"] == "sales_agent" and args["top_n"] == 3, args
+    assert args["date_from"] == "2026-09-01" and args["date_to"] == "2026-09-30", args
+
+
+def test_s9_guard_a_reply_naming_a_different_axis_is_a_new_ask(console) -> None:
+    _open_period_for_sorento(console)
+    text, calls = console.say(
+        _rank(entities=[], group_by="customer", top_n=None, ranking_refine=False, **SEP_RANGE), "customers last month"
+    )
+    # A new ask: the open question is dropped, so the old Sorento ask never runs with the new dates.
+    for args in calls:
+        assert args.get("group_by") != "sales_agent" or args.get("brand_ids") != [console.ids["brand"]], args
+
+
+def _plain_total() -> dict[str, Any]:
+    return _rank(entities=[], group_by=None, top_n=None, ranking_refine=False, **SEP_RANGE)
+
+
+def test_s10_a_dealers_plain_total_runs_as_a_total(dealer) -> None:
+    text, calls = dealer.say(_plain_total(), "how much did I buy last month")
+    assert CATALOGUE_LINE not in text, text
+    (args,) = calls
+    assert not args.get("group_by"), args
+    assert args["date_from"] == "2026-09-01" and args["date_to"] == "2026-09-30", args
+
+
+def test_s10_guard_a_staff_contact_with_the_same_verdict_gets_the_catalogue_line(console) -> None:
+    text, calls = console.say(_plain_total(), "how much did we sell last month")
+    assert calls == [], calls
+    assert text.strip() == CATALOGUE_LINE, text
