@@ -196,6 +196,20 @@ def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
     return {**verdict, "entities": kept, "report_ask_words": words}
 
 
+def names_its_own_ask(verdict: dict[str, Any]) -> bool:
+    """Engine seam before `required_fields.reply_verdict`: a `sales_ranking` verdict that is not a
+    refine and names its own axis or subject (a `group_by`, or a filter entity) is a NEW ask, so an
+    open period / how many question is dropped, not answered by it. Parser fields only."""
+    if jsc.js_string(verdict.get("order_status") or "").strip() != ASK_NAME or verdict.get("ranking_refine") is True:
+        return False
+    if jsc.js_string(verdict.get("group_by") or "").strip():
+        return True
+    return any(
+        isinstance(e, dict) and e.get("current_message") is not False and jsc.js_string(e.get("hint") or "").strip()
+        for e in jsc.array(verdict.get("entities"))
+    )
+
+
 def dealer_location_words(parse_output: dict[str, Any]) -> dict[str, Any]:
     """Engine seam, a DEALER's (customer-scoped) fresh `sales_ranking` ask, 1b fix round F1:
     this message's location words come off the resolver's entity list onto
@@ -411,6 +425,12 @@ def settle(
     args, line = _fresh_args(db, parse_output, entities, dealer=dealer)
     if args is None:
         return None, line
+    if parse_output.get("ranking_refine") is not True and not args.get("group_by") and not any(
+        args.get(k) for k in ("brand_ids", "category_ids", "sales_agent_ids", "customer_ids", "product_code",
+                              "warehouse_codes", "channel")
+    ):
+        # Not a valid ask: no axis and nothing to total. Say what can be ranked and open nothing.
+        return None, CATALOGUE_LINE
     top_n = parse_output.get("top_n")
     given = _given_top_n(args, top_n)
     period = period_from(parse_output.get("date_filter_start"), parse_output.get("date_filter_end"))
