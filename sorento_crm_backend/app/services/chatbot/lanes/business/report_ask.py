@@ -196,18 +196,23 @@ def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
     return {**verdict, "entities": kept, "report_ask_words": words}
 
 
-def names_its_own_ask(verdict: dict[str, Any]) -> bool:
+def names_its_own_ask(verdict: dict[str, Any], open_slot: dict[str, Any] | None = None) -> bool:
     """Engine seam before `required_fields.reply_verdict`: a `sales_ranking` verdict that is not a
-    refine and names its own axis or subject (a `group_by`, or a filter entity) is a NEW ask, so an
-    open period / how many question is dropped, not answered by it. Parser fields only."""
+    refine is a NEW ask, so an open period / how many question is dropped, not answered by it, when
+    it names a current-message filter entity or a `group_by` DIFFERENT from the one the open slot
+    holds (the same axis echoed is an answer). Parser fields only."""
     if jsc.js_string(verdict.get("order_status") or "").strip() != ASK_NAME or verdict.get("ranking_refine") is True:
         return False
-    if jsc.js_string(verdict.get("group_by") or "").strip():
-        return True
-    return any(
+    if any(
         isinstance(e, dict) and e.get("current_message") is not False and jsc.js_string(e.get("hint") or "").strip()
         for e in jsc.array(verdict.get("entities"))
-    )
+    ):
+        return True
+    raw_group = jsc.js_string(verdict.get("group_by") or "").strip().lower()
+    if not raw_group:
+        return False
+    held = _dict(_dict(_dict(open_slot).get("extras")).get("args")).get("group_by")
+    return GROUP_BY.get(raw_group, raw_group) != held
 
 
 def dealer_location_words(parse_output: dict[str, Any]) -> dict[str, Any]:
@@ -376,6 +381,10 @@ def _fresh_args(
     return args, None
 
 
+#: The keys `_fresh_args` always sets (or an axis); any other key it sets is a filter.
+_NON_FILTER_ARGS = frozenset({"basis", "measure", "sort", "group_by"})
+
+
 def _given_top_n(args: dict[str, Any], top_n: Any) -> dict[str, Any]:
     """The number as the helper's `given`: a total needs none (settled as None, never
     asked); a number the first message named is taken, or read as a word (a miss)."""
@@ -425,9 +434,11 @@ def settle(
     args, line = _fresh_args(db, parse_output, entities, dealer=dealer)
     if args is None:
         return None, line
-    if parse_output.get("ranking_refine") is not True and not args.get("group_by") and not any(
-        args.get(k) for k in ("brand_ids", "category_ids", "sales_agent_ids", "customer_ids", "product_code",
-                              "warehouse_codes", "channel")
+    if (
+        parse_output.get("ranking_refine") is not True
+        and not dealer  # the route forces a dealer's links, so a plain total can never widen
+        and not args.get("group_by")
+        and not set(args) - _NON_FILTER_ARGS
     ):
         # Not a valid ask: no axis and nothing to total. Say what can be ranked and open nothing.
         return None, CATALOGUE_LINE
