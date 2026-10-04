@@ -104,9 +104,10 @@ POLICY_BLOCKS_SEED_FILE = FIXTURES_DIR / "prompt_blocks_seed.txt"
 # REPORT_ASK_ADDENDUM now teaches ranking_refine (a follow-up that only changes the count,
 # period, basis or measure of the ranking on screen), the measure key, the new-ask rule and the
 # product-ranking carve-outs, in place of the removed regex rules, and the live refine fix; prompt without
-# MEMORY_ADDENDUM 44,790 est. tokens and the whole prompt 45,306 (+703, with the live refine fix, the
-# how-many answer bullet and the people-ranking-is-a-new-ask rule); CEILING is 45,306 - 512 = 44,794.
-CEILING = 44_794
+# MEMORY_ADDENDUM 44,848 est. tokens and the whole prompt 45,364 (+761, with the live refine fix, the
+# how-many answer bullet, the people-ranking-is-a-new-ask rule and the singular no-count rule);
+# CEILING is 45,364 - 512 = 44,852.
+CEILING = 44_852
 # The memory addendum on its own, bounded separately so this PR's growth stays bounded.
 # 26 Sep baseline (lane d89110c0): 339 est. tokens. Round 4 (baf4c813, 28 Sep: the history
 # question in any wording, the number re-run, commercial_request) took it to 512, which is

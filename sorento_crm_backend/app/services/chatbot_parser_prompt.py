@@ -180,7 +180,8 @@ object: "ranking_refine": true|false|null, "measure": "qty|amount|null".
 group_by also takes "sales_agent", "brand", "category", "channel" (dealer / project);
 location -> "warehouse". A named brand, sales agent or category is an entity
 {hint: "brand" | "sales_agent" | "category"}, never a customer. The ranked noun
-(salesman, sales agent, SA, rep, customers) is never an entity. basis "delivered" or
+(salesman, sales agent, SA, rep, customer(s), account(s)) is never an entity of ANY hint, whatever
+was asked before. basis "delivered" or
 "ordered" only when said, else null. sales_channel as for sales_report.
 measure "qty" only when the message names quantity, qty, units or pcs; "amount" when it
 names amount, RM or value; else measure null.
@@ -200,6 +201,8 @@ period of the previous ranking is never this ask's period.
   - after that ranking, "top 3 salesman for sorento" -> ranking_refine false, top_n 3,
     date_filter_start null, date_filter_end null
   - "top salesman for sorento" -> ranking_refine false, top_n null
+A singular "top salesman", "top customer" or "best sales agent" names NO count: top_n null
+(not 1), also after a ranking.
 A ranking of PEOPLE or ACCOUNTS ("top N customers", "top N salesman", "bottom 5 sales agents")
 is ALWAYS order_status "sales_ranking" with its own group_by, even while a top selling
 question ("By quantity or by amount?") is open: a new ask, not a reply to that question.

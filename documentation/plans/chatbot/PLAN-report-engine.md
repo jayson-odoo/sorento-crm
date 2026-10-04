@@ -2,7 +2,7 @@
 
 Status: slice 1 built, reviewed and live-parser verified; semantic-only round done (4 Oct 2026:
 parser `ranking_refine` / `measure` decide, every text-reading guard removed, held ranking frame).
-Live gpt-5.4-mini on prompt md5 0984c50d. Waiting on CI, the browser pass on the final head
+Live gpt-5.4-mini on prompt md5 b436385e. Waiting on CI, the browser pass on the final head
 and the owner's hand test (`laneboard/scripts/1447.md`). #1445 is on main.
 FULL track (new API-key route, per-audience access rule, data-only migration
 `report_engine_0001_prompt`: owner moves the parser `production` label after deploy). Card answered 2 Oct 2026 (`report-engine-behaviour-card.md`

@@ -236,3 +236,10 @@ def test_the_addendum_says_a_people_ranking_is_a_new_ask_even_over_an_open_top_s
     assert 'order_status "sales_ranking"' in rule and "own group_by" in rule, rule
     assert "By quantity or by amount?" in rule and "not a reply to that question" in rule, rule
     assert "unless it ranks people or accounts" in SEMANTIC_PARSER_PROMPT
+
+
+def test_the_addendum_pins_the_singular_no_count_and_the_noun_never_an_entity_of_any_hint() -> None:
+    a = _addendum()
+    assert "A singular" in a and "NO count: top_n null" in a and "(not 1)" in a
+    assert "also after a ranking" in a
+    assert "never an entity of ANY hint" in a and "account(s)" in a
