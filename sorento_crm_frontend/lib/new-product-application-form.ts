@@ -83,7 +83,7 @@ export const blankLine = (): DraftLine => ({
   remark: '',
 });
 
-/** "SI-XX-0001 - SRTKS2433": the inquiry as the header picker and the detail page name it. */
+/** "SI26-0412 - XY-1234-MB": the inquiry as the header picker and the detail page name it. */
 export const stockInquiryLabel = (
   number?: string | null,
   productCode?: string | null,
