@@ -38,17 +38,23 @@ make sure the sort handler is at the leftmost, go"), Q1 drag yes, Q2-Q4 (a), Q5 
 - AC-A6 BALANCE of a split line: "0" with a tick when its splits add up; "N left" as a draggable chip
   when short; "N over" in red when over. A line that is not split shows only "+ Split".
 - AC-A7 AUTOCOUNT LINE (SearchableSelect) options: "Line <no> (this line)", every other line of the
-  same item and location ("Line <no> · <its date>"), "New line", "Cancel". Picking another line also
-  sets the split's date to that line's date (AutoCount's current date, else its base date). Cancel:
-  the date cell reads CANCEL. Leaving Cancel takes the line's base date.
+  same item and location ("Line <no> · <its planned date>"), "New line", "Cancel". Picking another
+  line does the same as a drop (AC-A9): the split takes that line's planned date, merges, and the same
+  "Moved N to <target>" toast with Undo shows. Cancel: the date cell reads CANCEL. Leaving Cancel takes
+  the line's base date.
+  A line's PLANNED date (one AutoCount line carries one date, crew audit 17 Oct): the date of its own
+  split that stays on it (not a cancel) when it is split; else the date of a split from another line
+  already sitting on it; else its AutoCount date (current, else base). A typed date stays as typed;
+  changing a line's own date later does not move other lines' splits already on it.
 - AC-A8 Drag (Q1): the grip of a split row, the grip of a REMAIN line (the whole line) and the "N left"
   chip drag (mouse after 5 px, touch long-press, keyboard). While dragging: lines of other items or
   locations fade and are not targets; the dragged line's own block is not a target; a "New date" and
   a "Cancel this qty" drop row open under the item's last line; the overlay shows the qty, item,
   "from line N" and the target ("→ 20/11/2026 · line 608", "→ New date", "→ Cancel this qty"); the
-  hovered line block is highlighted; the sheet autoscrolls slowly from a thin edge band.
+  hovered line block is highlighted; the sheet autoscrolls slowly from a thin edge band. At 375 with
+  the sheet scrolled sideways, the pinned item cell stays opaque on highlighted rows.
 - AC-A9 A drop moves ALL of it at once, with no "how many" box (Q5 a). A split row: sits on the target
-  line and takes that line's date (as AC-A7); if a split of the same own line already sits there on
+  line and takes that line's planned date (AC-A7); if a split of the same own line already sits there on
   that date the two merge (qty added, remarks joined). The "N left" chip: a new split of N at the
   target (merging the same way). A REMAIN line: the whole line moves. "New date": sits on "New line"
   with an empty date, focused, and Save waits until a date is typed. "Cancel this qty": a cancel
