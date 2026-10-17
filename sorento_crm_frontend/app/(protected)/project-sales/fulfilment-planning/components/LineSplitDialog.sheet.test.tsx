@@ -188,12 +188,40 @@ describe('AC-A3 merged cells and the extra notes', () => {
 });
 
 describe('AC-A4 REMAIN', () => {
-  it('an unsplit line reads REMAIN in CHANGE QUANTITY and CHANGE DATE', async () => {
+  it('an unsplit line shows its own QTY and DELIVERY DATE in CHANGE QUANTITY and CHANGE DATE, never the word REMAIN', async () => {
     await renderDialog();
     await sheet();
-    expect(remainQty(608)).toHaveTextContent('REMAIN');
-    expect(remainDate(608)).toHaveTextContent('REMAIN');
+    expect(remainQty(608)).toHaveTextContent('192');
+    expect(remainDate(608)).toHaveTextContent('20/11/2026');
     expect(queryQty(608, 1)).toBeNull();
+  });
+
+  it('inside Confirm the cells show the BASE values, not AutoCount now', async () => {
+    await renderDialog();
+    await sheet();
+    // line 752: base 504 @ 20/12/2026, AutoCount now 649 @ 02/01/2027
+    expect(remainQty(752)).toHaveTextContent('504');
+    expect(remainQty(752)).not.toHaveTextContent('649');
+    expect(remainDate(752)).toHaveTextContent('20/12/2026');
+    expect(remainDate(752)).not.toHaveTextContent('02/01/2027');
+  });
+
+  it('the sheet shows no REMAIN text outside a change pill while no line is split', async () => {
+    await renderDialog();
+    await sheet();
+    expect(within(await sheet()).queryByText(/REMAIN/)).toBeNull();
+    expect(remainQty(608).textContent).not.toMatch(/REMAIN/);
+    expect(remainDate(608).textContent).not.toMatch(/REMAIN/);
+  });
+
+  it('a line put back to its base reads its values again, not REMAIN', async () => {
+    await renderDialog();
+    await sheet();
+    await splitLine(480);
+    leaveSheet();
+    await waitFor(() => expect(remainQty(480)).toHaveTextContent('417'));
+    expect(remainDate(480)).toHaveTextContent('20/10/2026');
+    expect(within(block(480)).queryByText(/REMAIN/)).toBeNull();
   });
 
   it('clicking the REMAIN qty cell makes one split row (base qty, base date, this line) focused in qty', async () => {
@@ -205,7 +233,7 @@ describe('AC-A4 REMAIN', () => {
     expect(onSel(480, 1)).toHaveTextContent(/Line 480 \(this line\)/);
     expect(document.activeElement).toBe(q);
     expect(screen.queryByRole('button', { name: 'Split line 480 quantity' })).toBeNull();
-    // the other lines still read REMAIN
+    // the other lines still show their values
     expect(remainQty(608)).toBeInTheDocument();
   });
 
