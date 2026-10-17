@@ -317,15 +317,39 @@ export function removeSplit(
   });
 }
 
-/** The date a split takes when it lands on `line`: AutoCount's current one, else its base (UAC A7). */
+/** A line's AutoCount date: its current one, else its base. */
 export function targetDateOf(line: SplitLine): string | null {
   return line.nowDate ?? line.baseDate;
 }
 
 /**
+ * A line's PLANNED date, the one a split dropped or picked onto it takes (UAC A7: one
+ * AutoCount line carries one date): the date of its own split that stays on it (not a
+ * cancel) when it is split; else the date of another line's split already sitting on it;
+ * else its AutoCount date. `null` for a line not in `lines`.
+ */
+export function plannedDateOf(
+  lines: SplitLine[],
+  lineId: string,
+): string | null {
+  const line = lines.find((candidate) => candidate.lineId === lineId);
+  if (!line) return null;
+  const staysOn = (split: SplitDraft) =>
+    !split.isCancel && split.sitsOnLineId === lineId && !!split.deliveryDate;
+  const own = readsRemain(line) ? undefined : line.splits.find(staysOn);
+  if (own) return own.deliveryDate;
+  for (const other of lines) {
+    if (other.lineId === lineId) continue;
+    const onIt = other.splits.find(staysOn);
+    if (onIt) return onIt.deliveryDate;
+  }
+  return targetDateOf(line);
+}
+
+/**
  * Sits on another line, a new line (`null`) or `'cancel'` (UAC A7). Another line does what a
- * drop does: the split takes that line's date and merges into a split of its own line already
- * there (qty added, remarks joined). Leaving Cancel takes the base date; its own line or a new
+ * drop does: the split takes that line's planned date and merges into a split of its own line
+ * already there (qty added, remarks joined). Leaving Cancel takes the base date; its own line or a new
  * line keeps the date it has.
  */
 export function setSitsOn(
@@ -338,7 +362,7 @@ export function setSitsOn(
     on && on !== 'cancel' && on !== lineId
       ? lines.find((candidate) => candidate.lineId === on)
       : undefined;
-  const date = target ? targetDateOf(target) : null;
+  const date = target ? plannedDateOf(lines, target.lineId) : null;
   const origin = lines.find((candidate) => candidate.lineId === lineId);
   const moving = origin
     ? splitsOf(origin).find((candidate) => candidate.id === splitId)
@@ -361,7 +385,7 @@ export function setSitsOn(
       split.isCancel = false;
       split.deliveryDate = line.baseDate;
     }
-    if (target) split.deliveryDate = targetDateOf(target) ?? split.deliveryDate;
+    if (target) split.deliveryDate = date ?? split.deliveryDate;
     split.sitsOnLineId = on;
     return splits;
   });

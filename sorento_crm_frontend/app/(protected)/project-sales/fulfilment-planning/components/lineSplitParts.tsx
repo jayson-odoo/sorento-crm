@@ -10,7 +10,7 @@ import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { OrderInquiryVerbPill } from '../../_shared/components/OrderInquiryVerbPill';
 import {
   formatSplitDate,
-  targetDateOf,
+  plannedDateOf,
   type ChangeWord,
   type SplitDraft,
   type SplitLine,
@@ -47,7 +47,8 @@ export function sitsOnValue(split: SplitDraft): string {
 
 /**
  * AUTOCOUNT LINE options (UAC A7): this line, every other line of the same item and
- * location with the date a split takes there, a new line, Cancel.
+ * location with its planned date (the date a split takes there), a new line, Cancel. Only
+ * lines of the group can sit on one another, so the group is enough to plan a date.
  */
 export function sitsOnOptions(
   origin: SplitLine,
@@ -58,7 +59,7 @@ export function sitsOnOptions(
     ...groupLines
       .filter((line) => line.lineId !== origin.lineId)
       .map((line) => {
-        const date = formatSplitDate(targetDateOf(line));
+        const date = formatSplitDate(plannedDateOf(groupLines, line.lineId));
         return {
           value: line.lineId,
           label: date ? `${lineTitle(line)} · ${date}` : lineTitle(line),

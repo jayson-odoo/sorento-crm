@@ -53,7 +53,7 @@ import {
   setSitsOn,
   sortLines,
   splitsOf,
-  targetDateOf,
+  plannedDateOf,
   toPayload,
   type MoveTarget,
   type SplitLine,
@@ -197,7 +197,7 @@ function targetLabel(
   if (overId === DROP_CANCEL) return cancelWord;
   const to = lines.find((line) => lineDropId(line.lineId) === overId);
   if (!to) return null;
-  const date = formatSplitDate(targetDateOf(to));
+  const date = formatSplitDate(plannedDateOf(lines, to.lineId));
   return date ? `${date} · ${lineShort(to)}` : lineShort(to);
 }
 
@@ -380,6 +380,34 @@ export function LineSplitDialog({
     [commit],
   );
 
+  /** "Moved N to <target>" with an Undo that restores the lines as they were (UAC A9). */
+  const movedToast = React.useCallback(
+    (
+      qty: number,
+      where: string,
+      done: { before: SplitLine[]; after: SplitLine[] },
+    ) => {
+      toast(`Moved ${qty} to ${where}`, {
+        action: {
+          label: 'Undo',
+          onClick: () => {
+            const now = draftRef.current;
+            if (!now) return;
+            commit(
+              now.lines === done.after
+                ? { lines: done.before, history: now.history.slice(0, -1) }
+                : {
+                    lines: done.before,
+                    history: [...now.history, now.lines].slice(-HISTORY_LIMIT),
+                  },
+            );
+          },
+        },
+      });
+    },
+    [commit],
+  );
+
   /** Focus left a line: its empty splits go, and a line equal to its base reads REMAIN. */
   const focusedLineRef = React.useRef<string | null>(null);
   const leaveLine = React.useCallback(
@@ -462,18 +490,24 @@ export function LineSplitDialog({
         );
       },
       sitsOn: (line, splitId, value) => {
-        apply((all) =>
-          setSitsOn(
-            all,
-            line.lineId,
-            splitId,
-            value === SITS_ON_CANCEL
-              ? 'cancel'
-              : value === SITS_ON_NEW
-                ? null
-                : value,
-          ),
-        );
+        const on =
+          value === SITS_ON_CANCEL
+            ? 'cancel'
+            : value === SITS_ON_NEW
+              ? null
+              : value;
+        const qty =
+          splitsOf(liveLine(line.lineId) ?? line).find(
+            (split) => split.id === splitId,
+          )?.qty ?? 0;
+        const done = apply((all) => setSitsOn(all, line.lineId, splitId, on));
+        // Picking another line is a drop by other means: the same toast (UAC A7).
+        if (done && on && on !== 'cancel' && on !== line.lineId && qty > 0)
+          movedToast(
+            qty,
+            targetLabel(lineDropId(on), done.before) ?? lineShort(line),
+            done,
+          );
       },
       remark: (line, splitId, remark) => {
         apply(
@@ -498,7 +532,7 @@ export function LineSplitDialog({
         typingRef.current = null;
       },
     }),
-    [apply, liveLine, requestFocus],
+    [apply, liveLine, movedToast, requestFocus],
   );
 
   // ---- drag and drop (UAC A8, A9)
@@ -596,7 +630,9 @@ export function LineSplitDialog({
         groupKeyOf(to) !== groupKeyOf(line)
       )
         return;
-      target = { date: targetDateOf(to) ?? '', sitsOnLineId: to.lineId };
+      // The line's planned date: one AutoCount line carries one date (UAC A7, A9).
+      const date = plannedDateOf(current.lines, to.lineId);
+      target = { date: date ?? '', sitsOnLineId: to.lineId };
     }
     const qty = dragQty(source, line);
     if (qty <= 0) return;
@@ -606,24 +642,7 @@ export function LineSplitDialog({
         : moveSplit(all, line.lineId, source.splitId, qty, target),
     );
     if (!done) return;
-    const where = targetLabel(overId, current.lines, 'Cancel');
-    toast(`Moved ${qty} to ${where}`, {
-      action: {
-        label: 'Undo',
-        onClick: () => {
-          const now = draftRef.current;
-          if (!now) return;
-          commit(
-            now.lines === done.after
-              ? { lines: done.before, history: now.history.slice(0, -1) }
-              : {
-                  lines: done.before,
-                  history: [...now.history, now.lines].slice(-HISTORY_LIMIT),
-                },
-          );
-        },
-      },
-    });
+    movedToast(qty, targetLabel(overId, current.lines, 'Cancel') ?? '', done);
     const landed = landedSplitId(
       line,
       done.after.find((c) => c.lineId === line.lineId),
