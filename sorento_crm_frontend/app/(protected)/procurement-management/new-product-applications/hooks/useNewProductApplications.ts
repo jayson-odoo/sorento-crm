@@ -1,4 +1,5 @@
 import { useMemo, useRef } from 'react';
+import { usePermissions } from '@/hooks/usePermissions';
 import {
   useMutation,
   useQuery,
@@ -35,6 +36,25 @@ import {
 } from '../services/newProductApplicationService';
 
 /** The list's React Query key; the detail pager rebuilds the SAME key from the URL. */
+const NPA_SLUGS = [
+  'procurement.new_product_applications.view',
+  'procurement.new_product_applications.approve',
+  'procurement.new_product_applications.open_code',
+  'procurement.new_product_applications.create',
+] as const;
+
+/**
+ * Column preferences are authorised by the listing key's slug
+ * (list_query._can_view_listing_key), so each grid is keyed by a slug the reader
+ * actually holds; a create-only applicant keyed by `view` got a 403 and a grid
+ * stuck on its skeleton (browser pass, 18 Oct).
+ */
+export function useNewProductApplicationListingKey(suffix?: string): string {
+  const { permissionSet } = usePermissions();
+  const slug = NPA_SLUGS.find((s) => permissionSet.has(s)) ?? NPA_SLUGS[0];
+  return suffix ? `${slug}::${suffix}` : slug;
+}
+
 export function newProductApplicationsListQueryKey(
   params: NewProductApplicationListParams,
 ): QueryKey {

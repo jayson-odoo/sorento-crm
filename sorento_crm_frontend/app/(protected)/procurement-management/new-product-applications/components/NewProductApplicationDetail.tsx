@@ -43,6 +43,7 @@ import type {
 import {
   newProductApplicationsPagerQuery,
   useNewProductApplicationMutations,
+  useNewProductApplicationListingKey,
   useNewProductApplicationQuery,
 } from '../hooks/useNewProductApplications';
 import { searchNewProductApplicationProducts } from '../services/newProductApplicationService';
@@ -315,6 +316,7 @@ export default function NewProductApplicationDetail({
   const canViewRecord = useHasPermission(
     'procurement.new_product_applications.view',
   );
+  const linesListingKey = useNewProductApplicationListingKey('new-product-application-lines');
   const userId = useEffectiveUserId();
   const [asking, setAsking] = useState<Asking | null>(null);
 
@@ -711,7 +713,7 @@ export default function NewProductApplicationDetail({
               columns={columns}
               rows={r.lines}
               getRowId={(row) => row.id}
-              listingKey="procurement.new_product_applications.view::new-product-application-lines"
+              listingKey={linesListingKey}
               emptyTitle="No lines"
               paginate={false}
             />
