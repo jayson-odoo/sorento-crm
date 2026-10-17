@@ -82,7 +82,10 @@ const DESKTOP_ONLY = 'max-md:hidden';
 const GRIP_STICKY = 'max-md:sticky max-md:left-0';
 const ITEM_STICKY = 'max-md:sticky max-md:left-[28px]';
 
-/** Fixed widths except REMARK, which takes the rest (the sheet fits 1240px, the 1280 page). */
+/**
+ * Fixed widths except REMARK, which takes the rest: the sheet fills the 1240px page at 1280 with
+ * no sideways scroll, and scrolls sideways only below its 1180px minimum.
+ */
 const COLUMNS: Array<{
   key: string;
   label: string;
@@ -343,9 +346,12 @@ const LineBlock = React.memo(function LineBlock({
       <TableCell rowSpan={span} className={cn(baseCell, DESKTOP_ONLY)}>
         {soNumber}
       </TableCell>
+      {/* Pinned at 375: an opaque cell in every row state, so no flash on it (the
+          flash fades its background to transparent). */}
       <TableCell
         rowSpan={span}
-        className={cn(baseCell, ITEM_STICKY, 'max-md:z-[1]')}
+        data-pinned=""
+        className={cn(BASE_CELL, top, ITEM_STICKY, 'max-md:z-[1]')}
       >
         <span className="font-semibold">{line.itemCode}</span>
         <span className="block text-2xs text-muted-foreground md:hidden">
@@ -449,7 +455,7 @@ const LineBlock = React.memo(function LineBlock({
   if (added) {
     body = (
       <TableRow className="border-0 hover:bg-transparent">
-        <TableCell className={gripCell} />
+        <TableCell data-pinned="" className={gripCell} />
         {baseCells}
         <TableCell colSpan={2} className={changeCell}>
           <span className="text-2xs italic text-muted-foreground">
@@ -468,7 +474,7 @@ const LineBlock = React.memo(function LineBlock({
     const only = splits[0];
     body = (
       <TableRow className="border-0 hover:bg-transparent">
-        <TableCell className={gripCell}>
+        <TableCell data-pinned="" className={gripCell}>
           <DragHandle
             id={`drag-line:${line.lineId}`}
             source={{
@@ -530,7 +536,10 @@ const LineBlock = React.memo(function LineBlock({
           data-split-id={split.id}
           className="border-0 hover:bg-transparent"
         >
-          <TableCell className={cn(cell, GRIP_STICKY, 'max-md:z-[1] px-0')}>
+          <TableCell
+            data-pinned=""
+            className={cn(cell, GRIP_STICKY, 'max-md:z-[1] px-0')}
+          >
             <DragHandle
               id={`drag-split:${split.id}`}
               source={{ kind: 'split', lineId: line.lineId, splitId: split.id }}
@@ -624,10 +633,16 @@ const LineBlock = React.memo(function LineBlock({
       data-line-id={line.lineId}
       data-dimmed={dimmed ? 'true' : undefined}
       data-over={over ? 'true' : undefined}
+      // The pinned cells (grip, item) stay opaque at 375 while the sheet scrolls sideways
+      // under them: tints are opaque mixes over the background, and a faded line fades a
+      // pinned cell's content, never the cell itself.
       className={cn(
-        dimmed && 'opacity-40',
-        source && '[&>tr>td]:bg-muted/60',
-        over && '[&>tr>td]:bg-primary/10',
+        dimmed &&
+          '[&>tr>td:not([data-pinned])]:opacity-40 [&>tr>td[data-pinned]>*]:opacity-40',
+        source &&
+          '[&>tr>td]:bg-[color-mix(in_oklab,var(--muted)_60%,var(--background))]',
+        over &&
+          '[&>tr>td]:bg-[color-mix(in_oklab,var(--primary)_10%,var(--background))]',
       )}
     >
       {body}
