@@ -325,8 +325,9 @@ export function targetDateOf(line: SplitLine): string | null {
 /**
  * A line's PLANNED date, the one a split dropped or picked onto it takes (UAC A7: one
  * AutoCount line carries one date): the date of its own split that stays on it (not a
- * cancel) when it is split; else the date of another line's split already sitting on it;
- * else its AutoCount date. `null` for a line not in `lines`.
+ * cancel) when it is split; else the EARLIEST date among every other line's splits already
+ * sitting on it (so the answer never depends on the order of `lines`); else its AutoCount
+ * date. `null` for a line not in `lines`.
  */
 export function plannedDateOf(
   lines: SplitLine[],
@@ -338,12 +339,16 @@ export function plannedDateOf(
     !split.isCancel && split.sitsOnLineId === lineId && !!split.deliveryDate;
   const own = readsRemain(line) ? undefined : line.splits.find(staysOn);
   if (own) return own.deliveryDate;
+  let earliest: string | null = null;
   for (const other of lines) {
     if (other.lineId === lineId) continue;
-    const onIt = other.splits.find(staysOn);
-    if (onIt) return onIt.deliveryDate;
+    for (const split of other.splits) {
+      const date = split.deliveryDate;
+      if (staysOn(split) && date && (!earliest || date < earliest))
+        earliest = date;
+    }
   }
-  return targetDateOf(line);
+  return earliest ?? targetDateOf(line);
 }
 
 /**
