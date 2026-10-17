@@ -43,8 +43,9 @@ make sure the sort handler is at the leftmost, go"), Q1 drag yes, Q2-Q4 (a), Q5 
   "Moved N to <target>" toast with Undo shows. Cancel: the date cell reads CANCEL. Leaving Cancel takes
   the line's base date.
   A line's PLANNED date (one AutoCount line carries one date, crew audit 17 Oct): the date of its own
-  split that stays on it (not a cancel) when it is split; else the date of a split from another line
-  already sitting on it; else its AutoCount date (current, else base). A typed date stays as typed;
+  split that stays on it (not a cancel) when it is split; else the EARLIEST date of the splits from
+  other lines already sitting on it; else its AutoCount date (current, else base). The option label,
+  the drag overlay and the drop always show and use the same date. A typed date stays as typed;
   changing a line's own date later does not move other lines' splits already on it.
 - AC-A8 Drag (Q1): the grip of a split row, the grip of a REMAIN line (the whole line) and the "N left"
   chip drag (mouse after 5 px, touch long-press, keyboard). While dragging: lines of other items or
