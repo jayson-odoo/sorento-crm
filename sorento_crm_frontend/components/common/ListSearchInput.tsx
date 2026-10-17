@@ -13,11 +13,7 @@ export interface ListSearchInputProps {
   value: string;
   onChange: (next: string) => void;
   placeholder?: string;
-  /**
-   * From `useDebouncedSearch`. The leading icon spins while the box is ahead of the query,
-   * and a polite live region says so. A box that filters as it is typed (no wait to
-   * announce) leaves it unset and gets no live region.
-   */
+  /** From `useDebouncedSearch`. The leading icon spins while the box is ahead of the query. */
   isSettling?: boolean;
   /** Called on Enter, for a list that wants to skip the wait. */
   onSubmit?: () => void;
@@ -60,7 +56,7 @@ export function ListSearchInput({
   value,
   onChange,
   placeholder = 'Search...',
-  isSettling,
+  isSettling = false,
   onSubmit,
   className,
   inputClassName,
@@ -99,11 +95,9 @@ export function ListSearchInput({
         className={cn('ps-9 pe-9 w-full', inputClassName)}
       />
       {/* Announced politely so a screen reader is told the wait, not shown a spinner. */}
-      {isSettling !== undefined ? (
-        <span className="sr-only" role="status" aria-live="polite">
-          {isSettling ? 'Searching' : ''}
-        </span>
-      ) : null}
+      <span className="sr-only" role="status" aria-live="polite">
+        {isSettling ? 'Searching' : ''}
+      </span>
       {value && (
         <Button
           mode="icon"
