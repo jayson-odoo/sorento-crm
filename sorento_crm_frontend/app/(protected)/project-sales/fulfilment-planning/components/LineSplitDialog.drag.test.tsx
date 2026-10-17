@@ -285,7 +285,7 @@ describe('AC-A9 drops move ALL of it at once', () => {
     expect(onSel(480, 1)).toHaveTextContent(/New line/);
     await waitFor(() => expect(document.activeElement).toBe(d));
     expect(saveButton()).toBeDisabled();
-    expect(screen.getByRole('status').textContent).toMatch(/CSK14B line 480: date to fill/);
+    expect(screen.getByRole('status', { name: /split status/i }).textContent).toMatch(/CSK14B line 480: date to fill/);
     typeDate(480, 1, '20/11/2029');
     await waitFor(() => expect(saveButton()).toBeEnabled());
   });

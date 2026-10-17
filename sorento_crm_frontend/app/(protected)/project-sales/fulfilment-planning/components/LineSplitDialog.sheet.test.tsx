@@ -520,7 +520,7 @@ describe('AC-A12 header, search, split-only switch and the status line', () => {
     getLineSplits.mockResolvedValue(savedCase());
     await renderDialog();
     await sheet();
-    expect(screen.getByRole('status').textContent).toMatch(/5 lines · 2 products · 1 split/);
+    expect(screen.getByRole('status', { name: /split status/i }).textContent).toMatch(/5 lines · 2 products · 1 split/);
   });
 
   it('names each line that does not add up, with Show that clears the filters and focuses the line', async () => {
@@ -529,13 +529,13 @@ describe('AC-A12 header, search, split-only switch and the status line', () => {
     await splitLine(480);
     typeQty(480, 1, '14');
     leaveSheet();
-    const status = screen.getByRole('status');
+    const status = screen.getByRole('status', { name: /split status/i });
     expect(status.textContent).toMatch(/CSK14B line 480: 403 left/);
 
     // hide the line, then Show brings it back
     fireEvent.change(screen.getByPlaceholderText(/item code/i), { target: { value: 'CSK11A' } });
     await waitFor(() => expect(blockIds()).toEqual(['split-line-768']));
-    fireEvent.click(within(screen.getByRole('status')).getByText(/^Show$/));
+    fireEvent.click(within(screen.getByRole('status', { name: /split status/i })).getByText(/^Show$/));
     await waitFor(() => expect(blockIds()).toContain('split-line-480'));
     expect(screen.getByPlaceholderText(/item code/i)).toHaveValue('');
     await waitFor(() => expect(block(480).contains(document.activeElement)).toBe(true));
@@ -546,11 +546,11 @@ describe('AC-A12 header, search, split-only switch and the status line', () => {
     await sheet();
     await splitLine(480);
     typeQty(480, 1, '500');
-    expect(screen.getByRole('status').textContent).toMatch(/CSK14B line 480: 83 over/);
+    expect(screen.getByRole('status', { name: /split status/i }).textContent).toMatch(/CSK14B line 480: 83 over/);
     typeQty(480, 1, '417');
     typeDate(480, 1, '');
     await waitFor(() =>
-      expect(screen.getByRole('status').textContent).toMatch(/CSK14B line 480: date to fill/),
+      expect(screen.getByRole('status', { name: /split status/i }).textContent).toMatch(/CSK14B line 480: date to fill/),
     );
   });
 });
