@@ -38,10 +38,12 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { getUserLookup } from '@/services/userSelectService';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import type { NewProductApplicationSummary } from '@/types/newProductApplication';
-import { useNewProductApplicationsQuery } from '../hooks/useNewProductApplications';
+import {
+  useNewProductApplicationListingKey,
+  useNewProductApplicationsQuery,
+} from '../hooks/useNewProductApplications';
 
 const BASE_PATH = '/procurement-management/new-product-applications';
-const LISTING_KEY = 'procurement.new_product_applications.view';
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: '__all__', label: 'All statuses' },
@@ -67,6 +69,7 @@ export default function NewProductApplicationsList() {
   const canCreate = useHasPermission(
     'procurement.new_product_applications.create',
   );
+  const listingKey = useNewProductApplicationListingKey();
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 25,
@@ -298,7 +301,7 @@ export default function NewProductApplicationsList() {
       onRetry={() => void refetch()}
       isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
-      listingKey={LISTING_KEY}
+      listingKey={listingKey}
       emptyMessage="No applications yet"
       standardToolbar={false}
       tableLayout={{

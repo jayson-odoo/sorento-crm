@@ -78,6 +78,8 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 }));
 vi.mock('../hooks/useNewProductApplications', () => ({
   newProductApplicationsPagerQuery: {},
+  useNewProductApplicationListingKey: (suffix?: string) =>
+    suffix ? `procurement.new_product_applications.view::${suffix}` : 'procurement.new_product_applications.view',
   useNewProductApplicationQuery: () => ({
     data: state.data,
     isLoading: false,
