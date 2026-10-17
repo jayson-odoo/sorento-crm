@@ -26,11 +26,14 @@ make sure the sort handler is at the leftmost, go"), Q1 drag yes, Q2-Q4 (a), Q5 
   other lines' splits sit on shows "+N from line M" for each.
   A line whose saved splits no longer act (`split_state` stale) shows an "AutoCount changed" pill
   under its delivery date; an applied line shows none (as built).
-- AC-A4 A line that is not split reads REMAIN in CHANGE QUANTITY and CHANGE DATE, its remark editable.
-  Clicking a REMAIN cell, or typing a digit (either cell) or "/" (date cell) on it, turns the line
-  into one split row (base qty, base date, this line) with focus in that cell (the typed key in it).
-  When focus leaves a line whose only split equals its base on its own line and date, the line reads
-  REMAIN again, its remark kept. A zero-qty split is dropped when focus leaves its line and on Save.
+- AC-A4 A line that is not split ("REMAIN" in this document) shows its own QTY and DELIVERY DATE as
+  plain values in CHANGE QUANTITY and CHANGE DATE (DD/MM/YYYY; the base values, also inside Confirm),
+  never the word REMAIN (owner hand test, 17 Oct evening: "don't put remain, just put the value"); its
+  remark editable. Clicking one of those cells, or typing a digit (either cell) or "/" (date cell) on
+  it, turns the line into one split row (base qty, base date, this line) with focus in that cell (the typed key in it).
+  When focus leaves a line whose only split equals its base on its own line and date, the line is
+  unsplit again (its values shown plainly), its remark kept. The change pill of a split row (REMAIN /
+  DELAY / ADVANCE / CANCEL, AC-A11) is the email's change word and stays. A zero-qty split is dropped when focus leaves its line and on Save.
 - AC-A5 "+ Split" in BALANCE, or Ctrl/Cmd+Enter in a split row, adds a split row under the line:
   qty = what is left on the line (0 when nothing is), the line's base date, AutoCount line "New
   line"; its qty gets focus, selected. The x button, or Ctrl/Cmd+Backspace in the row, removes a
