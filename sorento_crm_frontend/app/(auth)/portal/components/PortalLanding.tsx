@@ -225,6 +225,13 @@ function pickCardMeta(row: PortalSubmissionSummary): {
   };
 }
 
+
+/** "New <label>", except a label that already starts with "New" (New Product Application). */
+function newKindLabel(kind: PortalLandingKind): string {
+  const label = LANDING_LABELS[kind];
+  return /^New\b/.test(label) ? label : `New ${label}`;
+}
+
 export function PortalLanding({ slug }: { slug?: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -784,8 +791,8 @@ function SubmissionList({
           asChild
           size="sm"
           className="shrink-0"
-          title={`New ${LANDING_LABELS[kind]}`}
-          aria-label={`New ${LANDING_LABELS[kind]}`}
+          title={newKindLabel(kind)}
+          aria-label={newKindLabel(kind)}
         >
           <Link href={portalNewPath(kind, slug)}>
             <Plus className="shrink-0" />
@@ -798,7 +805,7 @@ function SubmissionList({
                 to a submission card's own status badge of the same word
                 (`PortalLanding.priceTag.test.tsx`). */}
             <span className="block max-w-[31px] overflow-hidden whitespace-nowrap sm:max-w-none sm:inline">
-              New {LANDING_LABELS[kind]}
+              {newKindLabel(kind)}
             </span>
           </Link>
         </Button>

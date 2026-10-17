@@ -72,4 +72,11 @@ describe('PortalLanding - New Product Application kind', () => {
     ).toBeGreaterThan(0);
     expect(await screen.findByText('NPA-000001')).toBeInTheDocument();
   });
+
+  it('labels the add button "New Product Application", not "New New Product Application"', async () => {
+    render(<PortalLanding slug="contact-x" />);
+    const button = await screen.findByRole('link', { name: 'New Product Application' });
+    expect(button).toHaveTextContent(/^New Product Application$/);
+    expect(screen.queryByText(/New New/)).not.toBeInTheDocument();
+  });
 });
