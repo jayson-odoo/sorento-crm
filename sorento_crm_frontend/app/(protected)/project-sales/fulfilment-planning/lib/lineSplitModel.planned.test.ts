@@ -96,3 +96,42 @@ describe('setSitsOn takes the planned date', () => {
     expect(by(next, 'o').splits[0]).toMatchObject({ sitsOnLineId: 'a', deliveryDate: '2026-09-20' });
   });
 });
+
+describe('plannedDateOf rule (b) is order-free: the EARLIEST foreign date', () => {
+  const build = () => [
+    mk('p', 480, 100, '2026-10-20', { splits: [sp('x', 100, '2026-12-05', 'l')] }),
+    mk('q', 752, 100, '2026-10-20', { splits: [sp('y', 100, '2026-11-25', 'l')] }),
+    mk('l', 608, 192, '2026-11-20', { nowDate: '2027-02-02' }),
+  ];
+
+  it('takes 2026-11-25 although the 12-05 split comes first in the array', () => {
+    expect(m.plannedDateOf(build(), 'l')).toBe('2026-11-25');
+  });
+
+  it('gives the same answer with the array reversed', () => {
+    expect(m.plannedDateOf([...build()].reverse(), 'l')).toBe('2026-11-25');
+  });
+
+  it('considers every split of a foreign line, not just its first', () => {
+    const lines = [
+      mk('p', 480, 200, '2026-10-20', {
+        splits: [sp('x', 100, '2026-12-05', 'l'), sp('x2', 100, '2026-11-01', 'l')],
+      }),
+      mk('l', 608, 192, '2026-11-20'),
+    ];
+    expect(m.plannedDateOf(lines, 'l')).toBe('2026-11-01');
+  });
+});
+
+describe('plannedDateOf ignores a line that reads REMAIN for rule (a)', () => {
+  it('a remark-only line (one split equal to base, own line and date) uses its AutoCount date', () => {
+    const lines = [
+      mk('a', 752, 504, '2026-12-20', {
+        nowDate: '2027-01-02',
+        splits: [sp('x', 504, '2026-12-20', 'a', { remark: 'hold' })],
+      }),
+    ];
+    expect(m.readsRemain(lines[0])).toBe(true);
+    expect(m.plannedDateOf(lines, 'a')).toBe('2027-01-02');
+  });
+});

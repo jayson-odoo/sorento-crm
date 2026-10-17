@@ -195,3 +195,51 @@ describe('picking another line shows the drop toast', () => {
     void remainQty;
   });
 });
+
+describe('planned date is order-free (review round 2)', () => {
+  /** Server order puts 752 before 480; two foreign splits sit on 608 at 05/12 and 25/11. */
+  function twoForeign() {
+    const p = ownerCase();
+    p.lines.find((l) => l.line_id === 'L480')!.splits = [
+      wireSplit('a', 100, '2026-12-05', 'L608'),
+      wireSplit('b', 17, '2026-10-20', 'L480'),
+      wireSplit('c', 300, '2029-01-01', null),
+    ];
+    p.lines.find((l) => l.line_id === 'L752')!.splits = [
+      wireSplit('x', 100, '2026-11-25', 'L608'),
+      wireSplit('y', 404, '2026-12-20', 'L752'),
+    ];
+    const i480 = p.lines.findIndex((l) => l.line_id === 'L480');
+    const i752 = p.lines.findIndex((l) => l.line_id === 'L752');
+    const [a, b] = [p.lines[i480], p.lines[i752]];
+    p.lines[i480] = b;
+    p.lines[i752] = a;
+    return p;
+  }
+
+  it('the option label for 608 shows the earliest date and picking it lands on that same date', async () => {
+    getLineSplits.mockResolvedValue(twoForeign());
+    await renderDialog();
+    await sheet();
+    fireEvent.click(onSel(480, 3));
+    await options();
+    expect(screen.getAllByRole('option').map((o) => (o.textContent ?? '').trim())).toContain(
+      'Line 608 · 25/11/2026',
+    );
+    pick('Line 608 · 25/11/2026');
+    await waitFor(() => expect(dateIn(480, 3).value).toBe('25/11/2026'));
+  });
+
+  it('the drop overlay names the same date', async () => {
+    getLineSplits.mockResolvedValue(twoForeign());
+    await renderDialog();
+    await sheet();
+    await pickUp(screen.getByRole('button', { name: 'Drag split 3 of line 480' }));
+    press('ArrowDown');
+    await waitFor(() =>
+      expect(document.body.textContent).toMatch(/→\s*25\/11\/2026 · line 608/),
+    );
+    await dropIt();
+    expect(dateIn(480, 3).value).toBe('25/11/2026');
+  });
+});
