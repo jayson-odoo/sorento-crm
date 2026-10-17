@@ -7701,6 +7701,24 @@ def _without_escalation_offer(answer: Any) -> Any:
     return dataclasses_replace(answer, text=text, question=question, offer=None)
 
 
+def _only_shown(codes: list[str] | None, text: Any) -> list[str] | None:
+    """The codes this reply's own text shows (case-insensitive whole code token), de-duplicated, in order."""
+    shown = str(text or "")
+    kept = [
+        code
+        for code in dict.fromkeys(codes or [])
+        if re.search(rf"(?<![\w-]){re.escape(code)}(?![\w-])", shown, re.IGNORECASE)
+    ]
+    return kept or None
+
+
+def _replied_shown_codes(answer: Any) -> list[str] | None:
+    """CHAT-CODE-LOOKUP R2-7 (trace only): the question's listed codes plus the answer's own list, kept
+    only when this turn's reply text shows them (a re-armed carried roster lists more than the reply)."""
+    codes = [*(_shown_codes(answer.question) or []), *(getattr(answer, "shown_codes", None) or [])]
+    return _only_shown(codes, answer.text)
+
+
 def _shown_codes(question: Any) -> list[str] | None:
     """CHAT-CODE-LOOKUP R2-7 (trace only): the product codes a picker, did-you-mean or related list
     shows, in display order, read off the question built from that same list; None when none."""
@@ -7980,7 +7998,7 @@ def _run_answer(
             # any of them did not go as links (owner hand test, 9 Oct 2026).
             "file_mode": file_mode,
             "file_mode_fallback": file_fallback,
-            "shown_codes": _shown_codes(answer.question) or getattr(answer, "shown_codes", None),
+            "shown_codes": _replied_shown_codes(answer),
         },
         raw={"reply": reply},
     )
@@ -10416,7 +10434,7 @@ def run_tail(
             "file_mode": file_mode,
             "file_mode_fallback": file_fallback,
             "files": len(src_files) if isinstance(src_files, list) else 0,
-            "shown_codes": _shown_codes(question),
+            "shown_codes": _only_shown(_shown_codes(question), reply["text"]),
         },
         raw={"reply": reply},
     )
