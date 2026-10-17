@@ -65,7 +65,7 @@ export interface SheetDrag {
 }
 
 export interface SheetHandlers {
-  /** A REMAIN cell clicked or typed on (`typed` = the key, put into the cell). */
+  /** An unsplit line's value cell clicked or typed on (`typed` = the key, put into the cell). */
   open: (line: SplitLine, cell: 'qty' | 'date', typed?: string) => void;
   qty: (line: SplitLine, splitId: string, qty: number) => void;
   date: (line: SplitLine, splitId: string, iso: string | null) => void;
@@ -251,6 +251,10 @@ function DateCell({
   );
 }
 
+/**
+ * An unsplit line's CHANGE QUANTITY / CHANGE DATE cell (UAC A4): its own base qty or date as a
+ * plain value (base, also inside Confirm), a button that splits the line on click or a typed key.
+ */
 const RemainButton = ({
   label,
   cell,
@@ -278,12 +282,13 @@ const RemainButton = ({
       handlers.open(line, cell, event.key);
     }}
     className={cn(
-      'h-7 w-full cursor-text select-none rounded-md border border-dashed border-transparent text-2xs font-semibold tracking-wide text-muted-foreground hover:border-input hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary',
+      'h-7 w-full cursor-text select-none whitespace-nowrap rounded-md border border-dashed border-transparent text-xs text-foreground hover:border-input focus-visible:outline-2 focus-visible:outline-primary',
+      cell === 'qty' && 'tabular-nums',
       COARSE_HIT_TARGET_CLASS,
       PRESSED_CLASS,
     )}
   >
-    REMAIN
+    {cell === 'qty' ? line.baseQty : formatSplitDate(line.baseDate) || '-'}
   </button>
 );
 
@@ -801,7 +806,7 @@ export function LineSplitSheet({
     const up =
       (event.key === 'Enter' && event.shiftKey) || event.key === 'ArrowUp';
     if (!down && !up) return;
-    // Enter presses a button: a REMAIN cell opens, the AUTOCOUNT LINE list opens.
+    // Enter presses a button: an unsplit line's value cell opens, the AUTOCOUNT LINE list opens.
     if (event.key === 'Enter' && target.tagName === 'BUTTON') return;
     const table = event.currentTarget;
     const cells = Array.from(
