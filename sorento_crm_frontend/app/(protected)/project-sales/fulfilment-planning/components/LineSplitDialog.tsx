@@ -815,7 +815,9 @@ export function LineSplitDialog({
           </DialogHeader>
 
           <div
+            // Named: the search box and the loading skeleton carry live regions of their own.
             role="status"
+            aria-label="Split status"
             aria-live="polite"
             className="flex min-h-8 flex-wrap items-center gap-x-3.5 gap-y-1 border-b border-border px-4 py-1.5 text-xs"
           >
