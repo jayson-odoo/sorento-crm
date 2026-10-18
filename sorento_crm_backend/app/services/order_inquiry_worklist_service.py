@@ -94,6 +94,7 @@ from app.services.project_order_inquiry_service import (
     project_customer_label,
     project_title_with_note,
 )
+from app.services.project_line_split_service import remark_for_row  # noqa: F401 - AC-G5, the one REMARK function
 from app.services.project_supply_service import ProjectSupplyService
 from app.services.scm import order_link_service, priority, spo_supply
 from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
@@ -216,8 +217,12 @@ EXPORT_HEADINGS = (
     # only. APPENDED for the same reason ACKNOWLEDGED/TAKEN/REMAINING were: their own
     # filters are keyed on the columns before it being where they have always been.
     "SUGGESTED",
-    # OI-LINE-SPLIT (UAC D2): the split a row prints for, or the line's split plan when it
-    # cannot be printed split by split. APPENDED for the same reason as the four above.
+    # OI-LINE-SPLIT round 3 (UAC AC-G7, mock section 6): a split line's rows, the owner's
+    # own Excel: QTY / DELIVERY DATE the line's (first row only), CHANGE QUANTITY / CHANGE
+    # DATE each row's. APPENDED before REMARK; no existing column moves or is renamed.
+    "CHANGE QUANTITY",
+    "CHANGE DATE",
+    # OI-LINE-SPLIT (UAC D2, AC-G7): the sheet's remark for the row, else the generated one.
     "REMARK",
 )
 
@@ -3421,41 +3426,63 @@ class OrderInquiryWorklistService:
         )
 
     def _with_splits(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """OI-LINE-SPLIT (UAC D2): a row whose line has splits sitting on it becomes one row
-        per such split (QTY and DELIVERY DATE the split's, REMARK its change word, "from
-        line N" when it is another line's, and its remark) when they add up to the row's
-        QTY; otherwise the row prints as it is with the line's split plan in REMARK. A
-        line with no splits prints as today, REMARK empty."""
-        from app.services.project_line_split_service import SplitOutputs
+        """OI-LINE-SPLIT (UAC D2, AC-G7): a line splits touch (split itself, or other lines'
+        splits sit on it) prints its plan rows (`line_plans`), the same rows as the OI email:
+        one per split under its own line, its own row when it is not split, and the
+        AutoCount extra row. QTY / DELIVERY DATE are the line's on its first row (blank
+        under it), CHANGE QUANTITY / CHANGE DATE the row's, REMARK the sheet's remark else
+        the generated one. The line prints once, off its first OI row. Every other row
+        prints as today, REMARK empty."""
+        from app.services.project_line_split_service import LineSplitService, line_plans
 
-        splits = SplitOutputs(self.db, [row.get("so_line_id") for row in rows])
-        if not splits.by_origin and not splits.by_sits_on:
+        line_ids = sorted({str(row["so_line_id"]) for row in rows if row.get("so_line_id")})
+        if not line_ids:
             return rows
+        orders = sorted(
+            {
+                str(order_id)
+                for (order_id,) in self.db.query(ProjectSalesOrderLine.project_sales_order_id)
+                .filter(ProjectSalesOrderLine.id.in_(line_ids))
+                .distinct()
+                .all()
+            }
+        )
+        service = LineSplitService(self.db)
+        facts = service._facts_for(ProjectSalesOrderLine.project_sales_order_id.in_(orders))
+        stored = [split for f in facts.values() for split in f.splits]
+        if not stored:
+            return rows
+        sits = service.effective_sits_on(stored)
+        plans = line_plans(facts, sits, {target for target in sits.values() if target})
         out: List[Dict[str, Any]] = []
+        printed: set = set()
         for row in rows:
-            line_id = row.get("so_line_id")
-            sitting = splits.by_sits_on.get(line_id or "", [])
-            if sitting and sum((_dec(v.split.qty) for v in sitting), _ZERO) == _dec(row.get("qty")):
-                # The row's own TAKEN / REMAINING / SUGGESTED belong to the row, not to any
-                # one split: printed once, on its earliest split, blank on the others.
-                carrier = min(
-                    sitting, key=lambda v: (v.split.delivery_date is None, v.split.delivery_date or date.max)
-                )
-                # Worked off the row as it stands, before a split's qty replaces it.
-                figures = (_export_taken(row), _export_remaining(row), _export_suggested(row))
-                for view in sitting:
-                    first = view is carrier
-                    out.append(
-                        {
-                            **row,
-                            "qty": _qty_str(_dec(view.split.qty)),
-                            "delivery_date": view.split.delivery_date,
-                            "split_remark": splits.sitting_remark(view, line_id),
-                            "split_figures": figures if first else ("", "", ""),
-                        }
-                    )
+            line_id = str(row.get("so_line_id") or "")
+            plan = plans.get(line_id)
+            if plan is None or not plan.involved:
+                out.append({**row, "split_remark": ""})
                 continue
-            out.append({**row, "split_remark": splits.plan_text(line_id) if line_id else ""})
+            if line_id in printed:
+                continue
+            printed.add(line_id)
+            # The row's own TAKEN / REMAINING / SUGGESTED belong to the row, printed once on
+            # the line's first row; worked off the row as it stands.
+            figures = (_export_taken(row), _export_remaining(row), _export_suggested(row))
+            for index, plan_row in enumerate(plan.rows):
+                first = index == 0
+                out.append(
+                    {
+                        **row,
+                        "qty": _qty_str(plan.base_qty) if first else None,
+                        "delivery_date": plan.base_date if first else None,
+                        "change_qty": plan_row.new_qty,
+                        "change_date": plan_row.new_date,
+                        "split_remark": plan_row.remark,
+                        "split_figures": figures if first else ("", "", ""),
+                        # The line's rows stay together, in their own order.
+                        "plan_key": (plan.base_date or date.max, line_id, index),
+                    }
+                )
         return out
 
     def _write_sheet(
@@ -3476,7 +3503,9 @@ class OrderInquiryWorklistService:
             key=lambda row: (
                 (row.get("supplier") or "￿"),
                 (row.get("item_code") or "￿"),
-                row.get("delivery_date") or date.max,
+                # A split line's rows sort by the line's date and stay together (AC-G7).
+                row["plan_key"] if "plan_key" in row
+                else (row.get("delivery_date") or date.max, "", 0),
             ),
         )
         runs = groupby(
@@ -3494,7 +3523,7 @@ class OrderInquiryWorklistService:
                     row.get("so_date"),
                     row.get("so_number") or "",
                     code or "",
-                    float(_dec(row.get("qty"))),
+                    float(_dec(row.get("qty"))) if row.get("qty") not in (None, "") else None,
                     run_total,
                     row.get("delivery_date"),
                     row.get("project_customer") or "",
@@ -3509,6 +3538,8 @@ class OrderInquiryWorklistService:
                         if "split_figures" in row
                         else (_export_taken(row), _export_remaining(row), _export_suggested(row))
                     ),
+                    float(row["change_qty"]) if row.get("change_qty") is not None else None,
+                    row.get("change_date"),
                     row.get("split_remark") or "",
                 ]
                 # `columns` may be a PREFIX of `EXPORT_HEADINGS` (Lane C's worksheet, no
