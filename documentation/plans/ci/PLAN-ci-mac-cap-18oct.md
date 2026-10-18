@@ -35,7 +35,8 @@ worker into the same memory pressure (gw4..gw7 are respawns) instead of failing.
 2. `--max-worker-restart 0`: a crashed worker ends the session at once instead of respawning
    into the same pressure or hanging to the cap. Applies on both runner kinds: a worker crash is
    never a healthy run.
-3. `tests/_xdist_crash_guard.py` (loaded by `tests/conftest.py`), from review: with restarts off,
+3. `tests/_xdist_crash_guard.py`, loaded with `-p` on the same three calls (not from
+   `tests/conftest.py`: a conftest change makes `ci_select_tests.py` report `full=true`), from review: with restarts off,
    a worker killed before it reports its collection ends the session "no tests ran" with exit 0
    (xdist 3.8, reproduced 4/4), and the PR gate's `run()` also passes exit 5. The guard turns
    exit 0/5 into 1 whenever `pytest_testnodedown` reports an error. A worker killed mid-test

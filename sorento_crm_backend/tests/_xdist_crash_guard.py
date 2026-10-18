@@ -5,7 +5,8 @@ killer takes ends the run instead of being respawned into the same memory
 pressure. Killed mid-test, its test is reported failed. Killed before it reports
 its collection, xdist 3.8 ends the session "no tests ran" with exit 0, and the
 PR gate's `run()` also passes exit 5. A worker that went down with an error is
-never a green run. Loaded by tests/conftest.py; pinned by
+never a green run. Loaded with `-p` on exactly the xdist calls that set the flag
+(pinned by tests/test_ci_runner_routing.py); behaviour pinned by
 tests/test_xdist_crash_guard.py.
 """
 import pytest

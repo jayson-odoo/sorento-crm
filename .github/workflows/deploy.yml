@@ -1031,7 +1031,8 @@ jobs:
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
           echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus the serial_ddl tests; shard ${{ matrix.shard }} of 3"
-          python -m pytest -q -p no:cacheprovider -n "$XDIST_WORKERS" --dist loadfile --max-worker-restart 0 --durations=30 \
+          python -m pytest -q -p no:cacheprovider --durations=30 \
+            -n "$XDIST_WORKERS" --dist loadfile --max-worker-restart 0 -p tests._xdist_crash_guard \
             --splits 3 --group ${{ matrix.shard }} \
             --store-durations --durations-path .test_durations \
             -m "not serial_ddl" $IGNORES tests/scm/
@@ -1286,7 +1287,7 @@ jobs:
       # shard 5 to the OOM killer and shard 7 hung to the 90 min cap.
       # `--max-worker-restart 0` ends the session on the first crashed worker
       # instead of xdist's default 4 x workers respawns into the same
-      # pressure, and tests/_xdist_crash_guard.py makes that exit non-zero even
+      # pressure, and `-p tests._xdist_crash_guard` makes that exit non-zero even
       # when the worker died before running a test (xdist alone exits 0). The
       # SCM shards and the PR gate carry the same two settings; all pinned by
       # tests/test_ci_runner_routing.py.
@@ -1298,7 +1299,8 @@ jobs:
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
           echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus tests/scm, tests/test_migration_*.py and the serial_ddl tests; shard ${{ matrix.shard }} of 10"
-          python -m pytest -q -p no:cacheprovider -n "$XDIST_WORKERS" --dist loadfile --max-worker-restart 0 --durations=30 \
+          python -m pytest -q -p no:cacheprovider --durations=30 \
+            -n "$XDIST_WORKERS" --dist loadfile --max-worker-restart 0 -p tests._xdist_crash_guard \
             --splits 10 --group ${{ matrix.shard }} \
             --store-durations --durations-path .test_durations \
             --ignore-glob='tests/test_migration_*.py' \
@@ -1644,7 +1646,8 @@ jobs:
           run() { python -m pytest -q -p no:cacheprovider "$@" || { r=$?; [ "$r" -eq 5 ] || rc=$r; }; }
           for pool in "$main" "$scm"; do
             [ -n "$pool" ] || continue
-            run -n "$XDIST_WORKERS" --dist loadfile --max-worker-restart 0 --durations=20 -m "not serial_ddl" $pool
+            run -n "$XDIST_WORKERS" --dist loadfile --max-worker-restart 0 -p tests._xdist_crash_guard \
+              --durations=20 -m "not serial_ddl" $pool
             run -p no:xdist --durations=10 -m serial_ddl $pool
           done
           [ -z "$migrations" ] || run -p no:xdist --durations=10 $migrations
