@@ -1548,3 +1548,87 @@ def test_p2_the_next_autocount_change_keeps_the_new_line_rows_standing(api, emai
     told = [(l["qty"], (l.get("was") or {}).get("qty")) for l in sent]
     assert told == [("20", "14")], ("the email tells only 480's 14 -> 20", told,
                                    [l["remark"] for l in sent])
+
+
+# ---------------------------------------------------------------------------
+# Re-check on b3705f3fb3 (crew: CANCEL only where the user explicitly reduces qty; a re-plan
+# that drops kept rows IS that). After the New-line plan applied (480: 14 / 236 / 167), 480 is
+# re-planned as 10 own + 4 on New line (against the current 14): the 403 it drops is a CANCEL
+# BALANCE purchasing's worklist holds and the email prints, never a silent cancel.
+# ---------------------------------------------------------------------------
+
+
+def _replan_480(s, emails):
+    """Re-plan 480 as 10 own @ 20/09/2026 + 4 on New line @ 20/11/2026 and re-Confirm; returns
+    the email lines that Confirm sent."""
+    _edit_480(s, [(10, D_480_NEW, "own", ""), (4, D_608, "new", "")])
+    start = len(emails)
+    _reconfirm(s)
+    return _sent_since(emails, start)
+
+
+def _cancelled_403_in(sent):
+    return [
+        (ln["qty"], ln["remark"]) for ln in sent
+        if "CANCEL" in str(ln.get("remark")) and (ln.get("qty") == "403" or "403" in str(ln.get("remark")))
+    ]
+
+
+def _assert_dropped_403_is_told(s, sent):
+    from app.models.project_so import INQUIRY_CANCELLED
+
+    rows = _worklist(s, s.line[480])
+    assert _live(rows) == sorted([(_d("10"), D_480_NEW), (_d("4"), D_608)]), (
+        "480 asks for the new plan, 10 + 4", rows)
+    held = sum((q for state, q in _cancel_balances(rows) if state != INQUIRY_CANCELLED), Decimal(0))
+    assert held == _d("403"), ("the dropped 403 is a CANCEL BALANCE on the worklist", rows)
+    assert _cancelled_403_in(sent), ("the email prints the CANCEL 403", [
+        (ln["qty"], ln["remark"]) for ln in sent])
+
+
+def test_review_a_linked_re_plan_that_drops_kept_rows_cancels_them_and_gives_the_links_back(api, emails):
+    """Linked: each kept row was linked for its own qty (417 on one PO). After the re-plan the
+    10 and 4 rows are linked for their own qty only, the 403 of links is given back (it sat on
+    the 10 row: 413), and worklist / email / Excel agree on the CANCEL 403."""
+    from app.models.project_so import OrderInquiryLink
+
+    s, po_line = _new_line_plan_applied(api, emails)
+    sent = _replan_480(s, emails)
+    _assert_dropped_403_is_told(s, sent)
+    got = _rows_with_links(s, po_line)
+    assert got.get((_d("10"), D_480_NEW)) == _d("10") and got.get((_d("4"), D_608)) == _d("4"), (
+        "each plan row is linked for its own qty only", got)
+    still = sum((Decimal(str(l.qty)) for l in s.db.query(OrderInquiryLink)
+                 .filter(OrderInquiryLink.po_line_id == po_line.id).all()), Decimal(0))
+    assert still == _d("14"), ("the dropped 403 of links is released", still)
+    xl = _excel_rows(s)
+    assert [r for r in xl if "CANCEL" in str(r[4])
+            and (_d("403") in (r[0], r[2]) or "403" in str(r[4]))], ("the Excel prints the CANCEL 403", xl)
+
+
+def test_review_an_unlinked_re_plan_that_drops_kept_rows_cancels_them_out_loud(api, emails):
+    """Unlinked: the 236 and 167 rows are not cancelled silently; a CANCEL BALANCE for 403 is
+    written and emailed."""
+    s = _seed(api)
+    _save(s, _new_line_plan())
+    _confirm_batch(s, emails)
+    sent = _replan_480(s, emails)
+    _assert_dropped_403_is_told(s, sent)
+
+
+@pytest.mark.parametrize("received", [417, 100], ids=["received_in_full", "partly_received_guard"])
+def test_review_kept_rows_on_a_received_document_stand_through_re_confirms(api, emails, received):
+    """480's PO (417, linked across 14 / 236 / 167 by the applied New-line plan) is received in
+    full: two more Confirms with no change leave the rows as they are and send no email either
+    time (they re-emailed 14 / 236 / 167 each time). Partly received (100 of 417) is the guard:
+    it already stands."""
+    s, po_line = _new_line_plan_applied(api, emails)
+    po_line.qty_received = Decimal(received)
+    s.db.commit()
+    before = sorted(_worklist(s, s.line[480]), key=str)
+    for attempt in (1, 2):
+        start = len(emails)
+        _reconfirm(s)
+        assert sorted(_worklist(s, s.line[480]), key=str) == before, (attempt, _worklist(s, s.line[480]))
+        sent = [(ln["qty"], ln["remark"]) for ln in _sent_since(emails, start)]
+        assert sent == [], (f"re-Confirm {attempt} sends no email", sent)
