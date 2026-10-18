@@ -295,3 +295,13 @@ SO417636 CSK14B BRW-BB, with the owner's plan:
   Confirm. Then purchasing's live OI rows equal the card plan confirmed from scratch (AC-G6 / AC-G10: live OI
   total 1295, 608 totals 632, 752 extra 182 "ORDER 182", 608 REMARK "REMAIN"), the moved rows keep their
   links, nothing is bought twice, and no CANCEL appears in the worklist, email or Excel.
+  - This holds for every applied plan, stamped or not (lead sign-off 19 Oct under crew ruling P1 (a): a
+    changed landing line is an edit like a changed qty or date). A plan with no `split_plan` stamp counts as
+    re-planned once; a later re-Confirm with no edit has nothing to move and only stamps it.
+  - A re-Confirm right after that Confirm changes nothing: no new OI rows, no email (AC-G13).
+  - A partial re-plan moves only what moved: 236 onto 608 while 167 stays on New line leaves 480 with 14 and
+    167, gives 608 its own 192 plus 236 (extra 204, "ORDER 204"), and keeps 1295 in total.
+  - A move onto a target that cannot take the links (placed with no link, or its document received in full)
+    is declined as in AC-G12: the origin keeps its rows and links, the target's need excludes that qty.
+  - An origin whose document is received in full: nothing is bought twice, nothing is cancelled, the live OI
+    total equals AutoCount, and worklist, email and Excel agree.
