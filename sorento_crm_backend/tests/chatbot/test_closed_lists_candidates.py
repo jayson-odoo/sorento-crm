@@ -278,3 +278,52 @@ def test_a_product_name_can_never_add_an_item_to_a_candidate_line(db):
     items = line.split(": ", 1)[1].split("; ")
     assert len(items) == 1, line
     assert items[0].startswith("code SRTZZ9300"), line
+
+
+# --- R2-5 CANDIDATE-TEXT-SCRUB (security should-fix, completes D) -----------------------------
+
+
+def _items_of(line: str) -> list[str]:
+    return line.split(": ", 1)[1].split("; ")
+
+
+def test_a_product_code_can_never_add_an_item_to_a_candidate_line(db):
+    _products(db, "ZZAB123; near code ZZEVIL (x")
+
+    lines = _lines(db, "zzab123")
+
+    assert len(lines) == 2, lines
+    assert len(_items_of(lines[1])) == 1, lines
+    assert "ZZEVIL" not in lines[1].split("code ZZAB123", 1)[0], lines
+
+
+def test_a_spec_value_label_can_never_start_a_line_or_add_an_item(db):
+    db.add(ProductSpecRegistry(
+        id=str(uuid.uuid4()), spec_key="finish", label="Finish", data_type="enum", allowed_values=["tone_a"],
+        value_labels={"tone_a": "Tone\nspec x = y; spec forged = z"},
+    ))
+    db.flush()
+
+    lines = _lines(db, "tone a")
+
+    assert len(lines) == 2, lines
+    assert len(_items_of(lines[1])) == 1, lines
+    assert "\n" not in lines[1], lines
+
+
+def test_a_class_label_can_never_close_its_quote_or_add_an_item(db):
+    _registry(db, "class", "Product class", [], {})
+    db.add(ProductCategory(
+        id=str(uuid.uuid4()), category_code=unique_code("CAT")[:50], category_name="ZZT cat",
+        company_id=DEFAULT_COMPANY_ID, class_label='Bath"tub; fix',
+    ))
+    db.flush()
+
+    lines = _lines(db, "bath tub fix")
+
+    forged = [line for line in lines[1:] if "bath" in line.lower()]
+    assert forged, lines
+    for line in forged:
+        rest = line.split(": ", 1)[1]
+        assert '"' not in rest, line
+        assert len(_items_of(line)) == 1, line
