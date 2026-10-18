@@ -413,6 +413,15 @@ price tier before finding any product, five run results, now fail), attachment 6
   - The mark is cleared when the block exits.
   - The L1 replay runs the engine with `offload=False`, so a worker setting cannot move a turn outside the rollback.
 
+## The bench reads under the asker's scope (crew PRIORITY, 18 Oct)
+
+`replay.py` ran `engine.run_turn` in process but never called `register_company_scope_listeners()` (only
+`app/main.py` and `worker.py` do), so every bench run read candidates, resolver hits and set-summary counts with no
+company or brand scope; only the MCP fetch was scoped. Not a production leak. Now `run` and `live` register the
+listeners, the grounding tier opens its session under the row's contact scope, and the preflight, `replay_rows` and
+`live_rows` refuse when the listeners are missing or enforcement is off. Numbers from runs before this fix (CP0 and
+the 17 Oct combined run) are from the unscoped harness.
+
 ## The bench fails loudly (crew PRIORITY, 17 Oct)
 
 #1718's missing column made every replayed turn error the same way in both arms. The gate compared two equally
@@ -426,3 +435,33 @@ broken outputs and printed "unintended 0" for about 6 hours. The rules now (`scr
   (the DB is ahead, e.g. the base arm on a migration lane): pass with a warning. Known but not a head (behind), or
   unstamped: refused with exit 2 and the `alembic upgrade head` command.
 - Live runs on `sorento_cagent_stack` (at ctg_0001, behind head sr_0001) now refuse until crew upgrades that DB.
+
+## Round 35 (18 Oct, after the combined held-out run; TRAIN evidence only)
+
+Queued by crew from CHAT-CODE-LOOKUP, CHAT-STATE and EVAL-SETS; spec and card are crew-only. Red-first in
+`tests/chatbot_eval/test_round35.py`, kill-proof per rule, opus review twice (READY). Grader (`targets.py`):
+- (a) A staff stock ask about a family is list_all: every member's stock answers, and every member is named in the reply;
+  a dead end or a partial family fails. (c)/(h) A looked-up product set: its code resolves and the set is the new subject,
+  without pre-empting the held-order or lookup fallbacks and without counting set keys the gold does not want.
+- (d) A trace note "payload omitted: N bytes ..." is the omitted note. (e) A held family narrowed by product ids is applied.
+- (f) Crew ruling, option A: a refine on a held product whose family has no such variant passes on an honest none about
+  the held product (`none_on_record` gold, a lookup for the held product, no other product named); a catalogue list fails.
+- (i) A date never spans a newline and a day never starts right after a decimal point.
+- (j) Catalogue asks: with no catalogue type or alias in the registry, an honest "no catalogue on record" passes and
+  silence fails. (l) A refine with gold `filter_products` is judged by the looked-up ids; a word-only lookup is False,
+  only all-unmapped product ids are unknown. (n) spec_refine does not fail a turn whose quantity question is still open.
+- (m) G-HELD-BEFORE reviewed: no change (it would credit a filter that was read, not applied).
+Gold (crew files): (a) 4 TRAIN code lookups + 6 follow-ups + 8 held-out, (b) cp0-f61e0d4814, (c) cp0-9793ea25dc,
+(f) cp0-253d58ba8b and cp0-fcd44fe521, (g) cp0-aad2aaec55 (the pick wins), (l) cp0-75e516bd40, (j) 5 EVAL-SETS
+catalogue items; (k) 2 items where "square" is a customer name excluded (cp0 gold 646 to 644).
+
+## Round 36 (18 Oct, stacked on round 35; TRAIN evidence only)
+
+- G4 (CHAT-COMPOSER): `COULD_NOT_FIND_RE` reads a dead end with up to two qualifier words, underscores included, before
+  products/results/items ("But no master products matched these."), only from a word boundary, so `_spec` no longer
+  counts such a reply as shown. Fact lines ("no incoming matched", "no stock") stay out. One recorded reply flips (a real
+  dead end on an attachment item, no grade change).
+- G1 (CHAT-CODE-LOOKUP, crew gold): the bare-code rule's `DOMAIN_LABEL` gains `master_products -> product_info`, so a bare
+  code after a product-info answer is graded as product info, not stock.
+- G3 (CHAT-CODE-LOOKUP, crew gold): the eval-sets copy gets the round 35 (a) list_all rule (5 code lookups + 3 staff
+  follow-ups). Both gold rebuilds reproduce byte for byte. Opus review READY.
