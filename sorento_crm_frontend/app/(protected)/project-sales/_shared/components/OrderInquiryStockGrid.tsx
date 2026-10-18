@@ -86,7 +86,7 @@ export function OrderInquiryStockGrid({
 
   // STOCK-STATUS round 6 (UAC AC-35): AutoCount's figures in the same table; a failed read
   // leaves today's.
-  const autoCount = useStockStatus(productId);
+  const autoCount = useStockStatus(productId, Boolean(location));
   const warehouseId = isBarePoolCode ? resolvedWarehouseId : null;
   const detail = useStockDetail(
     productId,

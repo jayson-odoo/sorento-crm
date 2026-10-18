@@ -107,6 +107,11 @@ describe('CellStockTable: round 6', () => {
     expect(screen.getByTestId('stock-so-BRW-IB').textContent).toBe('2156');
   });
 
+  it("drops the 'Available for <line>' caption: AutoCount's figures are no one line's", () => {
+    renderTable({ autoCount: STATUS, forLine: 'SO422380 line 80' });
+    expect(screen.queryByTestId('cell-stock-for-line')).not.toBeInTheDocument();
+  });
+
   it("keeps PO qty in the stock-only view (the quotation's table)", () => {
     renderTable({ autoCount: STATUS, stockOnly: true });
     expect(headers()).toEqual(['Location', 'On hand', 'SO qty', 'SPO qty', 'Available', 'PO qty']);

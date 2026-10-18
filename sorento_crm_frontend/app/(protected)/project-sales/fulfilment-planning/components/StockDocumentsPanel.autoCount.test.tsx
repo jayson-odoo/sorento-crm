@@ -43,7 +43,11 @@ const DETAIL: StockDetail = {
 const STATUS = {
   product_id: 'prod-1',
   locations: [],
-  sales_orders: [{ line_id: 'line-1', sales_order_id: 'so-1', so_number: 'SO421741', qty: 442, warehouse_id: 'wh-BB' }],
+  sales_orders: [
+    { line_id: 'line-1', sales_order_id: 'so-1', so_number: 'SO421741', qty: 442, warehouse_id: 'wh-BB' },
+    // Another location's line: never listed under this one
+    { line_id: 'line-9', sales_order_id: 'so-9', so_number: 'SO422380', qty: 2, warehouse_id: 'wh-BRW' },
+  ],
   purchase_orders: [
     { line_id: 'pol-1', purchase_order_id: 'po-1', po_number: '202608-S0006', supplier_code: '400-C030', supplier_name: 'CHAOZHOU CHAOAN FENGTANG DAFUYUAN CERAMIC FACTORY', issue_date: '2026-08-01', expected_date: '2026-10-28', qty: 674, warehouse_id: 'wh-BB' },
     { line_id: 'pol-2', purchase_order_id: 'po-2', po_number: '202610-S0011', supplier_code: '400-C030', supplier_name: 'CHAOZHOU CHAOAN FENGTANG DAFUYUAN CERAMIC FACTORY', issue_date: '2026-10-01', expected_date: '2026-10-05', qty: 318, warehouse_id: 'wh-BRW' },
@@ -67,6 +71,34 @@ describe('StockDocumentsPanel with the AutoCount read', () => {
     const so = await screen.findByRole('link', { name: 'SO421741' });
     expect(within(so.closest('tr') as HTMLElement).getByText('442')).toBeInTheDocument();
     expect(screen.queryByText('SO421645')).not.toBeInTheDocument();
+    expect(screen.queryByText('SO422380')).not.toBeInTheDocument();
+  });
+
+  it('keeps the asking line listed at 0 when AutoCount no longer counts it (delivered)', async () => {
+    getStockDetail.mockResolvedValue({
+      ...DETAIL,
+      sales_orders: [
+        ...DETAIL.sales_orders,
+        { sales_order_id: 'so-3', so_number: 'SO400001', customer_name: 'DELIVERED SDN BHD', so_qty: '0', line_id: 'line-3', is_this_line: true, fulfilled_qty: '4' },
+      ],
+    });
+    renderPanel(STATUS);
+    const mine = await screen.findByRole('link', { name: 'SO400001' });
+    expect(within(mine.closest('tr') as HTMLElement).getByText('This line')).toBeInTheDocument();
+  });
+
+  it("lists AutoCount's SPO lines at the location, and no holds", async () => {
+    getStockDetail.mockResolvedValue(DETAIL);
+    renderPanel({
+      ...STATUS,
+      spos: [
+        { allocation_id: 'a-1', spo_number: 'SPO-2026/10-0099', spo_line_number: 1, supplier_code: null, supplier_name: 'ACME', issue_date: null, arrival_date: '2026-10-30', container_number: null, qty: 7, warehouse_id: 'wh-BB' },
+        { allocation_id: 'a-2', spo_number: 'SPO-2026/10-0100', spo_line_number: 1, supplier_code: null, supplier_name: 'ACME', issue_date: null, arrival_date: '2026-10-30', container_number: null, qty: 3, warehouse_id: 'wh-BRW' },
+      ],
+    } as unknown as StockStatus);
+    expect(await screen.findByText('SPO-2026/10-0099')).toBeInTheDocument();
+    expect(screen.queryByText('SPO-2026/10-0024')).not.toBeInTheDocument();
+    expect(screen.queryByText('SPO-2026/10-0100')).not.toBeInTheDocument();
   });
 
   it("adds the location's open POs, by name, linking to the purchase order", async () => {

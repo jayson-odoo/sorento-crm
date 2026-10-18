@@ -13,6 +13,7 @@ import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { useStockDetail } from '../../_shared/hooks/useFulfilmentPlanning';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 import { availableForProject, POOLS_SET } from '../../_shared/lib/poolShare';
+import { groupOfWarehouseCode } from '../../_shared/lib/supplyVocabulary';
 import type { StockStatus } from '@/components/stock-status/stockStatus.types';
 import type {
   StockDetail,
@@ -128,7 +129,7 @@ export function StockDocumentsPanel({
   const panelRef = React.useRef<HTMLDivElement | null>(null);
 
   const rows = React.useMemo<StockDetailRow[]>(() => {
-    const data = detail.data ? onAutoCount(detail.data, autoCount, warehouseId ?? null) : null;
+    const data = detail.data ? onAutoCount(detail.data, autoCount, warehouseId ?? null, group ?? null) : null;
     if (!data) return [];
     const documents: StockDetailRow[] = [
       // Keyed by POSITION as well as by id: one sales order can stand behind this location on
@@ -295,7 +296,7 @@ export function StockDocumentsPanel({
       running += row.delta;
       return { ...row, balance: fromMinor(running) };
     });
-  }, [detail.data, isGroup, donor, documentInfo, autoCount, warehouseId]);
+  }, [detail.data, isGroup, donor, documentInfo, autoCount, warehouseId, group]);
 
   /**
    * The rows the sticky toolbar's search leaves standing (AC-3.5): SO number, customer or
@@ -991,31 +992,46 @@ interface AutoCountPoRow {
 
 /**
  * The stock detail as AutoCount counts it (UAC AC-34), so the documents foot to the row above
- * them: the S/O lines AutoCount counts at this panel's bins (the one bin, or every bin of the
- * set), at AutoCount's outstanding qty, with the CRM's own fields kept where the line is in
- * the CRM's read; each bin's On hand from AutoCount; and AutoCount's open POs there. Without the
- * read, the detail is today's.
+ * them, and a set's running balance closes on its subtotal:
+ *
+ * - the S/O lines AutoCount counts at this panel's bins (the one bin, or every bin of the
+ *   set), at AutoCount's outstanding qty, with the CRM's own fields kept where the CRM's read
+ *   holds the line; the asking line stays listed at 0 when AutoCount no longer counts it (a
+ *   delivered line, #1362), so "This line" still has a row to land on;
+ * - each bin's On hand, AutoCount's SPO lines and AutoCount's open POs there;
+ * - no holds: AutoCount knows none, and the table above it carries none.
+ *
+ * Without the read, the detail is today's.
  */
 function onAutoCount(
   data: StockDetail,
   status: StockStatus | null,
   warehouseId: string | null,
+  group: string | null,
 ): StockDetail & { purchase_orders?: AutoCountPoRow[] } {
   if (!status) return data;
   const bins = new Set(warehouseId ? [warehouseId] : (data.bins ?? []).map((bin) => bin.warehouse_id));
+  if (!warehouseId && group && group !== POOLS_SET) {
+    // The set the table above folded AutoCount's own active members into (`withAutoCount`).
+    for (const loc of status.locations) {
+      if (loc.is_active !== false && groupOfWarehouseCode(loc.warehouse_code) === group) bins.add(loc.warehouse_id);
+    }
+  }
   const codeOf = new Map(status.locations.map((loc) => [loc.warehouse_id, loc.warehouse_code]));
   const crmLine = new Map(
     data.sales_orders.filter((order) => order.line_id).map((order) => [order.line_id as string, order]),
   );
-  const sales_orders = status.sales_orders
-    .filter((order) => bins.has(order.warehouse_id))
-    .map((order) => {
+  const counted = status.sales_orders.filter((order) => bins.has(order.warehouse_id));
+  const countedIds = new Set(counted.map((order) => order.line_id));
+  const sales_orders = [
+    ...counted.map((order) => {
       const crm = crmLine.get(order.line_id);
       return {
         ...(crm ?? {}),
         sales_order_id: order.sales_order_id,
         so_number: order.so_number,
         customer_name: crm?.customer_name ?? order.debtor_name ?? null,
+        agent_code: crm?.agent_code ?? order.salesperson ?? null,
         project_label: crm?.project_label ?? order.project_label ?? null,
         doc_date: crm?.doc_date ?? order.doc_date ?? null,
         delivery_date: crm?.delivery_date ?? order.due_date ?? null,
@@ -1023,11 +1039,26 @@ function onAutoCount(
         line_id: order.line_id,
         so_qty: fromMinor(toMinor(order.qty)),
       };
-    }) as StockDetail['sales_orders'];
+    }),
+    ...data.sales_orders
+      .filter((order) => order.is_this_line && !countedIds.has(order.line_id ?? ''))
+      .map((order) => ({ ...order, so_qty: '0' })),
+  ] as StockDetail['sales_orders'];
   const onHand = new Map(status.locations.map((loc) => [loc.warehouse_id, loc.on_hand]));
   return {
     ...data,
     sales_orders,
+    incoming: status.spos
+      .filter((spo) => bins.has(spo.warehouse_id))
+      .map((spo) => ({
+        spo_number: spo.spo_number,
+        supplier_name: spo.supplier_name,
+        location: codeOf.get(spo.warehouse_id) ?? null,
+        expected_date: spo.arrival_date,
+        spo_qty: fromMinor(toMinor(spo.qty)),
+        counted: true,
+      })),
+    holds: [],
     bins: (data.bins ?? []).map((bin) =>
       onHand.has(bin.warehouse_id)
         ? { ...bin, qty_on_hand: fromMinor(toMinor(onHand.get(bin.warehouse_id))) }

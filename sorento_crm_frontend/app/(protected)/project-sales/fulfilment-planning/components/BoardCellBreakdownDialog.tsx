@@ -308,10 +308,15 @@ export function BoardCellBreakdownDialog({
   const shownLocations = shownContribution?.locations ?? cell.locations;
   /**
    * STOCK-STATUS round 6 (UAC AC-35): AutoCount's read of the cell's one product, so the Stock
-   * tab reads AutoCount's figures. A cell whose rows name more than one product (a pivot) has
+   * tab reads AutoCount's figures. A cell whose lines name more than one product (a pivot) has
    * no single position and reads nothing; a failed read leaves today's table.
    */
-  const stockProductIds = new Set(shownLocations.map((entry) => entry.product_id).filter(Boolean));
+  const stockProductIds = new Set(
+    [
+      ...cell.contributions.map((entry) => entry.product_id),
+      ...shownLocations.map((entry) => entry.product_id),
+    ].filter(Boolean),
+  );
   const stockProductId = stockProductIds.size === 1 ? ([...stockProductIds][0] as string) : null;
   const autoCount = useStockStatus(stockProductId);
 

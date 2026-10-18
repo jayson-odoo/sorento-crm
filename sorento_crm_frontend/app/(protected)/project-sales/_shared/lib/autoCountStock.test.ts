@@ -114,6 +114,25 @@ describe('withAutoCount', () => {
     expect(rows.filter((r) => r.net_of === 'IB').map((r) => r.net)).toEqual(['-1983', '-1983', '-1983', '-1983']);
   });
 
+  it('adds a same-group location once, after the last row of a set that arrives in two runs', () => {
+    const split: BoardCellLocation[] = [
+      row('BRW-BB', { where: 'own', net_of: 'BB' }),
+      row('BRW-IB', { where: 'own', net_of: 'IB' }),
+      row('MWH-BB', { where: 'group', net_of: 'BB' }),
+    ];
+    const status = { product_id: 'prod-1', locations: [loc('DC1-BB', 100, 0, 0, 0), loc('MWH-BB', 11, 0, 0, 0)] } as unknown as StockStatus;
+    const rows = withAutoCount(split, status, 50);
+    expect(rows.map((r) => r.location)).toEqual(['BRW-BB', 'BRW-IB', 'MWH-BB', 'DC1-BB']);
+    expect(by(rows, 'BRW-BB').net).toBe('111');
+  });
+
+  it('keeps an inactive warehouse out of the set (the set lists active ones only)', () => {
+    const status = { ...STATUS, locations: [...STATUS.locations, { ...loc('DC1-IB', 5, 0, 0, 0), is_active: false }] } as StockStatus;
+    const rows = withAutoCount(TODAY, status, 50);
+    expect(by(rows, 'DC1-IB')).toMatchObject({ where: 'other_group' });
+    expect(by(rows, 'BRW-IB').net).toBe('-1988');
+  });
+
   it('leaves a row with no location as it is (the line whose sales order names none)', () => {
     const blank = row('', { location: null, qty_on_hand: null, so_qty: null });
     expect(withAutoCount([blank], STATUS, 50)[0]).toEqual(blank);

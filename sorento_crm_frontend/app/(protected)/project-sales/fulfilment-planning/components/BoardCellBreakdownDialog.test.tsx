@@ -4171,8 +4171,30 @@ describe('STOCK-STATUS round 6 (AC-35): the cell Stock tab shows AutoCount\'s fi
       isError: false,
     });
     renderDialog([demand()], { 'BRW-BB': '40' });
-    expect(useStockStatusMock).toHaveBeenCalled();
+    expect(useStockStatusMock).toHaveBeenCalledWith(`prod-${demand().item_code}`);
     expect(await screen.findByTestId('stock-incoming-pl')).toHaveTextContent('+5');
+  });
+
+  it('reads nothing for a cell of more than one product (a pivot has no single position)', () => {
+    const cell = cellOf([demand()]);
+    cell.contributions = [
+      ...cell.contributions,
+      { ...cell.contributions[0], key: 'second', product_id: 'prod-OTHER' },
+    ];
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <BoardCellBreakdownDialog
+          cell={cell}
+          bucketLabel="31 Aug 2026"
+          draft={{}}
+          onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    expect(useStockStatusMock).toHaveBeenCalled();
+    expect(useStockStatusMock.mock.calls.every((call) => call[0] === null)).toBe(true);
   });
 });
 

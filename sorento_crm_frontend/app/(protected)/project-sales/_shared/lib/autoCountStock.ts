@@ -40,11 +40,16 @@ export function withAutoCount(
   const unlisted = status.locations.filter((loc) => !listed.has(loc.warehouse_code));
 
   // A location of a group the table already nets (an IB warehouse the rows left out) belongs
-  // to that set: it joins after the set's last row, and the set's net counts it.
-  const groupSets = new Set(rows.map((row) => row.net_of).filter((set): set is string => Boolean(set) && set !== POOLS_SET));
+  // to that set: it joins once, after the set's LAST row (a set can arrive as two runs), and
+  // the set's net counts it. Inactive ones stay out: the server's own set lists active
+  // warehouses only, so its documents would not reach a folded-in inactive one.
+  const lastOfSet = new Map<string, number>();
+  rows.forEach((row, index) => {
+    if (row.net_of && row.net_of !== POOLS_SET) lastOfSet.set(row.net_of, index);
+  });
   const joinsSet = (loc: StockStatusLocation) => {
     const group = groupOfWarehouseCode(loc.warehouse_code);
-    return group && groupSets.has(group) ? group : null;
+    return loc.is_active !== false && group && lastOfSet.has(group) ? group : null;
   };
   const rowOf = (loc: StockStatusLocation, extra: Partial<BoardCellLocation>): BoardCellLocation => ({
     location: loc.warehouse_code,
@@ -60,7 +65,7 @@ export function withAutoCount(
   rows.forEach((row, index) => {
     overlaid.push(row.location ? { ...row, ...figuresOf(byCode.get(row.location) ?? null) } : row);
     const set = row.net_of;
-    if (!set || set === POOLS_SET || rows[index + 1]?.net_of === set) return;
+    if (!set || lastOfSet.get(set) !== index) return;
     for (const loc of unlisted) {
       if (joinsSet(loc) === set) overlaid.push(rowOf(loc, { where: 'group', net_of: set }));
     }

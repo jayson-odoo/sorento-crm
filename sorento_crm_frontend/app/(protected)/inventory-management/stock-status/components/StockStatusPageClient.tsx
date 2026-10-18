@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { Skeleton } from '@/components/ui/skeleton';
 import { CellStockTable } from '../../../project-sales/fulfilment-planning/components/CellStockTable';
 import { searchStockStatusProducts } from '@/components/stock-status/stockStatusService';
 import { useStockStatus } from '@/components/stock-status/useStockStatus';
@@ -52,7 +53,16 @@ export default function StockStatusPageClient() {
       {productId ? (
         picked.data ? (
           <CellStockTable locations={NO_ROWS} autoCount={picked.data} />
-        ) : null
+        ) : picked.isError ? (
+          <p
+            data-testid="stock-status-error"
+            className="rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive"
+          >
+            The stock status could not be loaded
+          </p>
+        ) : (
+          <Skeleton data-testid="stock-status-loading" className="h-24 w-full" />
+        )
       ) : (
         <div className="rounded-md border px-4 py-8 text-center">
           <p className="font-medium">Pick an item</p>

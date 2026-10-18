@@ -154,5 +154,10 @@ describe('STOCK-STATUS round 6 (AC-35): the OI line expand shows AutoCount\'s fi
     expect(useStockStatusMock.mock.calls[0][0]).toBe(PRODUCT_ID);
     expect(cellStockTableSpy.mock.calls.at(-1)?.[0]).toMatchObject({ autoCount: status });
   });
+
+  it('asks AutoCount nothing for a row with no location', () => {
+    render(<OrderInquiryStockGrid productId={PRODUCT_ID} location={null} />);
+    expect(useStockStatusMock.mock.calls.every((call) => call[1] === false)).toBe(true);
+  });
 });
 

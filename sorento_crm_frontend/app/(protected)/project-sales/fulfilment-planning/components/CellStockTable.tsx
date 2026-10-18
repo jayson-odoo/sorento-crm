@@ -231,7 +231,7 @@ export interface CellStockTableProps {
   showGroupSubtotal?: boolean;
   /**
    * The stock position alone, for a reader with no order in hand (the quotation's stock chip):
-   * On hand, SO qty, SPO qty and Available, with no document chevrons. PO qty, Taken and
+   * On hand, SO qty, SPO qty, Available and PO qty, with no document chevrons. Taken and
    * Available for Project only mean something for an order being planned, and outside one they
    * read 0 or repeat Available.
    */
@@ -505,7 +505,9 @@ export const CellStockTable = React.forwardRef<
 
   return (
     <div className="space-y-1">
-      {forLine ? (
+      {/* AutoCount's figures are gross of every line, the asker's own included, so they are not
+          one line's position and the caption would name the wrong reading. */}
+      {forLine && !autoCount ? (
         <p
           data-testid="cell-stock-for-line"
           className="text-xs text-muted-foreground"

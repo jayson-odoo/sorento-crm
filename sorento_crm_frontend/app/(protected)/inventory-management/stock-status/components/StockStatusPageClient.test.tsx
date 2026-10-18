@@ -38,6 +38,7 @@ import StockStatusPageClient from './StockStatusPageClient';
 beforeEach(() => {
   vi.clearAllMocks();
   search = 'product_id=prod-1';
+  useStockStatusMock.mockReturnValue({ data: STATUS, isLoading: false });
 });
 
 describe('Stock status page, round 6', () => {
@@ -46,6 +47,17 @@ describe('Stock status page, round 6', () => {
     const props = cellStockTableSpy.mock.calls.at(-1)?.[0] as Record<string, unknown>;
     expect(props.locations).toEqual([]);
     expect(props.autoCount).toBe(STATUS);
+  });
+
+  it('shows a skeleton while the read is out, and says so when it fails', () => {
+    useStockStatusMock.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+    const { unmount } = render(<StockStatusPageClient />);
+    expect(screen.getByTestId('stock-status-loading')).toBeInTheDocument();
+    unmount();
+    useStockStatusMock.mockReturnValue({ data: undefined, isLoading: false, isError: true });
+    render(<StockStatusPageClient />);
+    expect(screen.getByText('The stock status could not be loaded')).toBeInTheDocument();
+    expect(screen.queryByTestId('cell-stock-table')).not.toBeInTheDocument();
   });
 
   it('asks for an item before any table', () => {
