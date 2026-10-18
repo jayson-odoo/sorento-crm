@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>New product application v4</title>
+<!-- NEW-PRODUCT-APP mock v4 (18 Oct): the owner kept the flow ("the flow is ok already") and asked the application to LOOK LIKE the company's paper NPA form. Layout follows crew's masked layout spec (18 Oct). The case is the invented sandbox case (SI26-0412 / XY-1234); every name, number and code is invented (public repo). No value from the owner's uploaded form is used. D1-D4 are drawn with crew's recommended answers as defaults; each is tagged on the frames so the owner can correct them in one pass. Built only from existing components; every callout names its component and repo path. FE = sorento_crm_frontend/. -->
+<style>
+:root{--fg:#09090b;--muted:#71717a;--border:#e4e4e7;--muted-bg:#f4f4f5;--primary:#1b84ff;--destructive:#dc2626;--callout:#e11d74;--dec:#7c3aed;--decbg:#f5f3ff;
+  --font:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:var(--fg);font:14px/1.45 var(--font)}
+.doc{max-width:1760px;margin:0 auto;padding:24px 16px 64px}
+.doc>h1{font-size:22px;margin:0 0 4px}.sub{color:var(--muted);margin:0 0 8px;max-width:980px}
+h2.ft{font-size:15px;margin:32px 0 10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.layout{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
+.scroll{overflow-x:auto;max-width:100%}
+.frame{background:#fff;border:1px solid var(--border);border-radius:12px;position:relative;overflow:hidden}
+.w1280{width:1280px}.w375{width:375px;flex:none}
+.notes{flex:1 1 360px;min-width:300px;max-width:620px}
+.notes ol{margin:0;padding:0;list-style:none}
+.notes li{display:flex;gap:10px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px}
+.notes li b{display:block;margin-bottom:2px}
+.ref{display:block;color:var(--muted);font-size:12px;margin-top:4px;font-family:ui-monospace,Menlo,monospace;word-break:break-word}
+.co{display:inline-flex;align-items:center;justify-content:center;flex:none;min-width:22px;height:22px;padding:0 3px;border-radius:50%;background:var(--callout);color:#fff;font-size:12px;font-weight:700;box-shadow:0 0 0 2px #fff}
+.pin{position:absolute;z-index:5;right:-8px;top:-8px}.rel{position:relative}
+.dtag{display:inline-flex;align-items:center;gap:4px;border:1px dashed var(--dec);background:var(--decbg);color:var(--dec);border-radius:6px;padding:1px 7px;font-size:11px;font-weight:700;white-space:nowrap}
+.muted{color:var(--muted)}.xs{font-size:12px}.b{font-weight:600}
+.shell{display:flex}.side{width:232px;flex:none;border-right:1px solid var(--border);padding:16px 12px;background:#fcfcfd;font-size:13px}
+.side .brand{font-weight:700;font-size:16px;margin:0 8px 18px}.side .grp{color:var(--muted);font-size:11px;text-transform:uppercase;margin:14px 8px 6px}
+.side .it{padding:6px 8px;border-radius:6px}.side .it.on{background:#e9f3ff;color:var(--primary);font-weight:600}
+.main{flex:1;min-width:0}.topbar{height:52px;border-bottom:1px solid var(--border)}.content{padding:20px 28px 28px}
+.phdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:8px}.phdr h1{font-size:20px;font-weight:600;margin:0}
+.crumb{font-size:12px;color:var(--muted)}
+.banner{border:1px solid #bfdbfe;background:#eff6ff;color:#1e3a8a;border-radius:8px;padding:8px 12px;font-size:13px;margin-bottom:14px}
+.banner.ok{border-color:#bbf7d0;background:#f0fdf4;color:#14532d}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--primary);background:var(--primary);color:#fff;border-radius:6px;padding:7px 14px;font:500 13px var(--font);white-space:nowrap}
+.btn.out{background:#fff;color:var(--fg);border-color:var(--border)}.btn.sm{padding:4px 10px;font-size:12px}
+.pill{display:inline-flex;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:600;background:#f1f5f9;color:#334155}
+.pill.ok{background:#dcfce7;color:#166534}.pill.blue{background:#dbeafe;color:#1e40af}
+.badge2{display:inline-flex;border-radius:6px;background:var(--muted-bg);padding:1px 8px;font-size:12px;font-weight:500}
+.inp{border:1px solid var(--border);border-radius:6px;padding:6px 10px;min-height:34px;display:flex;justify-content:space-between;align-items:center;gap:6px;background:#fff;font-size:14px;width:100%}
+.inp.ph{color:var(--muted)}.inp.ta{min-height:56px;align-items:flex-start}
+.req{color:var(--destructive)}
+.dd{border:1px solid var(--border);border-radius:6px;margin-top:4px;box-shadow:0 2px 6px rgba(0,0,0,.08);font-size:13px;background:#fff}
+.dd div{padding:6px 10px}.dd div.hl{background:var(--muted-bg)}
+
+/* the paper form: a bordered 2-column label:value sheet */
+.paper{max-width:860px;margin:0 auto;border:1px solid var(--border);border-radius:12px;background:#fff;padding:22px 26px 26px}
+.paper .ttl{text-align:center;font-size:20px;font-weight:700;text-decoration:underline;text-underline-offset:4px;letter-spacing:.02em;margin:4px 0 18px}
+.paper .sec{text-align:center;font-size:16px;font-weight:700;letter-spacing:.02em;margin:22px 0 10px}
+table.sheet{border-collapse:collapse;width:100%;table-layout:fixed}
+table.sheet th{width:200px;text-align:right;font-weight:700;font-size:13px;letter-spacing:.02em;padding:8px 12px;border:1px solid #d4d4d8;background:#fafafa;vertical-align:top}
+table.sheet td{padding:6px 10px;border:1px solid #d4d4d8;vertical-align:top;font-size:14px}
+table.sheet td .inp{border-color:transparent;padding:4px 2px;min-height:28px}
+table.sheet td.edit .inp{border-color:var(--border);padding:5px 8px}
+table.sheet tr.app th{color:var(--muted);font-weight:600}
+.prodhdr{display:flex;justify-content:space-between;align-items:center;background:var(--muted-bg);border:1px solid #d4d4d8;border-bottom:none;padding:6px 10px;font-weight:600;font-size:13px;margin-top:14px}
+.img{display:flex;gap:10px;flex-wrap:wrap}
+.ph-img{width:150px;height:110px;border:1px dashed #a1a1aa;border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;text-align:center;background:repeating-linear-gradient(45deg,#fafafa,#fafafa 8px,#f4f4f5 8px,#f4f4f5 16px)}
+.ph-add{width:150px;height:110px;border:1px dashed var(--primary);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--primary);font-size:12px;text-align:center}
+.ro{color:var(--muted)}
+.opened{border:1px solid #bbf7d0;background:#f0fdf4;border-radius:6px;padding:6px 10px;font-size:13px}
+.audit{max-width:860px;margin:16px auto 0;border:1px solid var(--border);border-radius:12px;background:#fff;padding:12px 18px}
+
+/* phone */
+.w375 .content{padding:14px 12px}
+.w375 .paper{padding:14px 10px;border-radius:10px}
+.w375 table.sheet th,.w375 table.sheet td{display:block;width:auto;border:none;text-align:left;padding:2px 2px}
+.w375 table.sheet tr{display:block;border-bottom:1px solid #e4e4e7;padding:6px 0}
+.w375 table.sheet th{background:none;font-size:11px;color:var(--muted)}
+.w375 .ph-img,.w375 .ph-add{width:100px;height:80px}
+
+/* excel preview */
+.xl{background:#fff;border:1px solid #c7c7c7;width:640px;font:12px Calibri,Arial,sans-serif;margin:0 auto}
+.xl .bar{background:#217346;color:#fff;padding:6px 10px;font:12px var(--font)}
+.xl table{border-collapse:collapse;width:100%}
+.xl td{border:1px solid #9ca3af;padding:5px 8px;vertical-align:top}
+.xl td.l{width:150px;text-align:right;font-weight:700}
+.xl td.h{text-align:center;font-weight:700;font-size:16px}
+.dec{background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin:14px 0}
+.dec table{border-collapse:collapse;width:100%;font-size:13px}
+.dec th,.dec td{border-bottom:1px solid var(--border);padding:7px 8px;text-align:left;vertical-align:top}
+.dec th{color:var(--muted);font-weight:500}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>New Product Application, mock v4 (paper form layout)</h1>
+<p class="sub"><b>v4 = v3's flow, laid out like the company's paper NPA form.</b> The flow is unchanged (owner, 18 Oct: "the flow is ok already"): create from a responded stock inquiry or from the list, submit, approve, purchasing links the code AutoCount sends, Revise, cancel, the portal equivalent. Only the screen changes: a bordered two-column sheet, top to bottom in the paper's order, with a PURCHASING FEEDBACK section at the end. Case data is the invented sandbox case (SI26-0412, XY-1234); nothing from the uploaded form is used (public repo).</p>
+
+<div class="dec">
+<b>Owner decisions drawn with crew's recommended answer as the default.</b> <span class="muted">Each one is tagged <span class="dtag">D1</span> to <span class="dtag">D4</span> on the frames. Correct any of them in one pass; the build follows your answer.</span>
+<table>
+<tr><th style="width:52px"></th><th style="width:34%">Default drawn here</th><th>Alternative</th></tr>
+<tr><td><span class="dtag">D1</span></td><td><b>Keep several products per application</b>, each drawn as one paper-style product block. A one-product application looks exactly like the paper.</td><td>One product per application (as on paper). Needs a new application per product.</td></tr>
+<tr><td><span class="dtag">D2</span></td><td><b>Cost and Lead time move to PURCHASING FEEDBACK</b>, filled by purchasing on an Approved application, next to Link product. The applicant no longer types cost. Cost stays hidden on the portal; Lead time shows there.</td><td>Applicant keeps typing cost (today), no Lead time.</td></tr>
+<tr><td><span class="dtag">D3</span></td><td><b>The applicant fills the paper fields only.</b> Product type is required; Qty, Dimension, Material, Thickness, Packing, Brand and Image are optional. Item group, Base UOM, Selling price and Supplier leave the applicant form: purchasing sets them in AutoCount when opening the code, and they show here read-only from the linked product.</td><td>Purchasing types Item group / Base UOM / Selling / Supplier into PURCHASING FEEDBACK as well (double entry with AutoCount). Or the applicant keeps choosing Item group + Base UOM (today).</td></tr>
+<tr><td><span class="dtag">D4</span></td><td><b>"Download Excel" on the record</b>, in the paper template's layout (A4 portrait, fit to one page), file named <code>NPA_&lt;YYYYMMDD&gt;_&lt;initials&gt;_&lt;Customer&gt; (&lt;codes&gt;).xlsx</code>.</td><td>Also a PDF of the same sheet, if purchasing still prints. Or no download.</td></tr>
+</table>
+<p class="xs muted" style="margin:8px 0 0">Crew decided without the owner: title "NEW PRODUCT APPLICATION"; REFF shows the NPA number; both TARGET DELIVERY and REMARK kept; labels renamed to the paper's; image upload reuses the stock inquiry attachment section.</p>
+</div>
+
+<!-- ============================================================ FRAME 1 -->
+<h2 class="ft">1. Staff, create from SI26-0412 (Draft, 1280 wide)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280">
+ <div class="shell">
+  <div class="side"><div class="brand">Sorento</div><div class="grp">Supply chain</div><div class="it">Stock Inquiries</div><div class="it on">New Product Applications</div></div>
+  <div class="main"><div class="topbar"></div><div class="content">
+   <div class="phdr rel"><div><h1>New Product Application</h1><div class="crumb">Dashboards &rsaquo; Procurement &rsaquo; New Product Applications &rsaquo; New</div></div>
+     <div style="display:flex;gap:8px"><span class="btn out">Cancel</span><span class="btn out">Save as draft</span><span class="btn">Submit</span></div><span class="co pin">1</span></div>
+   <div class="paper">
+    <div class="ttl rel">NEW PRODUCT APPLICATION<span class="co pin" style="right:0">2</span></div>
+    <table class="sheet">
+     <tr><th>REFF:</th><td class="ro">Given on first save (NPA-000008)</td></tr>
+     <tr><th>DATE:</th><td>18/10/2026</td></tr>
+     <tr><th>SALES PERSON:</th><td>You</td></tr>
+     <tr class="app rel"><th>STOCK INQUIRY:</th><td class="edit"><div class="inp">SI26-0412 - XY-1234-MB &amp; XY-1234-BG<span>&times;</span></div><span class="co pin">3</span></td></tr>
+    </table>
+
+    <div class="prodhdr rel"><span>Product 1 of 2 <span class="dtag">D1</span></span><span class="muted xs">Remove</span><span class="co pin">4</span></div>
+    <table class="sheet">
+     <tr><th>PRODUCT CODE:</th><td class="edit"><div class="inp">XY-1234-MB &amp; XY-1234-BG<span>&times;</span></div><div class="xs muted" style="margin-top:3px">Copied from the inquiry as one text, never split. Purchasing assigns the final code.</div></td></tr>
+     <tr class="rel"><th>PRODUCT TYPE: <span class="req">*</span></th><td class="edit"><div class="inp">KITCHEN SINK, UNDERMOUNT, NANOGRAIN FINISH</div><span class="co pin">5</span></td></tr>
+     <tr><th>DIMENSION:</th><td class="edit"><div class="inp">540 x 440 x 230 MM</div></td></tr>
+     <tr><th>MATERIAL:</th><td class="edit"><div class="inp">STAINLESS STEEL</div></td></tr>
+     <tr><th>THICKNESS:</th><td class="edit"><div class="inp ph">-</div></td></tr>
+     <tr><th>PACKING</th><td class="edit"><div class="inp ph">-</div></td></tr>
+     <tr><th>BRAND:</th><td class="edit"><div class="inp">Sorento<span>&times;</span></div></td></tr>
+     <tr class="rel"><th>IMAGE:</th><td><div class="img"><div class="ph-img">photo from<br>SI26-0412</div><div class="ph-add">+ Add image<br>or copy from the inquiry</div></div><span class="co pin">6</span></td></tr>
+     <tr><th>QTY:</th><td class="edit"><div class="inp">55<span>&times;</span></div></td></tr>
+    </table>
+    <div class="prodhdr"><span>Product 2 of 2</span><span class="muted xs">Remove</span></div>
+    <table class="sheet">
+     <tr><th>PRODUCT CODE:</th><td class="edit"><div class="inp ph">Leave empty if purchasing assigns it</div></td></tr>
+     <tr><th>PRODUCT TYPE: <span class="req">*</span></th><td class="edit"><div class="inp ph">-</div></td></tr>
+     <tr><th class="muted">...</th><td class="muted xs">same rows as product 1</td></tr>
+    </table>
+    <div style="margin-top:8px"><span class="btn out sm">+ Add product</span></div>
+
+    <table class="sheet" style="margin-top:14px">
+     <tr class="rel"><th>CUSTOMER:</th><td class="edit"><div class="inp">EXAMPLE DEVELOPER SDN BHD<span>&times;</span></div><div style="margin-top:3px"><span class="badge2">No debtor code</span></div><span class="co pin">7</span></td></tr>
+     <tr><th>PROJECT:</th><td class="edit"><div class="inp">EXAMPLE RESIDENCE, TOWER B</div></td></tr>
+     <tr><th>TARGET DELIVERY:</th><td class="edit"><div class="inp">17/01/2028<span>&times;</span></div></td></tr>
+     <tr><th>REMARK:</th><td class="edit"><div class="inp ta">Purchasing (SI26-0412): supplier can make it, please apply for a new code.</div></td></tr>
+    </table>
+
+    <div class="sec rel">PURCHASING FEEDBACK <span class="dtag">D2</span><span class="co pin" style="right:0">8</span></div>
+    <table class="sheet">
+     <tr><th>COST:</th><td class="ro">Purchasing fills this after approval.</td></tr>
+     <tr><th>LEADTIME:</th><td class="ro">Purchasing fills this after approval.</td></tr>
+    </table>
+   </div>
+  </div></div>
+ </div>
+</div></div>
+<div class="notes"><ol>
+ <li><span class="co">1</span><div><b>PageHeader, actions in the header</b> (one CTA: Submit). Unchanged from v3.<span class="ref">components/common/PageHeader.tsx</span></div></li>
+ <li><span class="co">2</span><div><b>Paper sheet replaces the 2-column grid + 1600 px line table.</b> Labels right-aligned, bold caps with a colon (PACKING without, as on paper); values left. No sideways scroll any more.<span class="ref">new-product-applications/components/NewProductApplicationForm.tsx:198-314 (rewritten); components/common/NewProductApplicationLines.tsx:137-160 (replaced by product blocks)</span></div></li>
+ <li><span class="co">3</span><div><b>Stock inquiry stays</b> (app only, not on paper; optional, Q3). SearchableSelect, clearable. Greyed label marks app-only rows.<span class="ref">components/common/SearchableSelect.tsx</span></div></li>
+ <li><span class="co">4</span><div><b>D1 default: one block per product.</b> Each block is one existing line row (no migration of the line model). "+ Add product" adds a block.<span class="ref">models/new_product_application.py:133-153 (lines kept)</span></div></li>
+ <li><span class="co">5</span><div><b>D3 default: Product type is the one required field per product.</b> Submit refuses "Product 1: enter the product type." (replaces the item group / base UOM rule). Dimension, Material, Thickness, Packing: new nullable text columns (additive migration).<span class="ref">services/new_product_application_service.py:326-335 (validate_submit)</span></div></li>
+ <li><span class="co">6</span><div><b>Image:</b> upload, or copy a photo already attached to the stock inquiry. Optional.<span class="ref">stock-inquiries/components/StockInquiryAttachmentsSection.tsx (reused)</span></div></li>
+ <li><span class="co">7</span><div><b>Customer / Project / Target delivery / Remark</b> come after the products, as on paper. Same prefill as v3 (typed customer + "No debtor code").</div></li>
+ <li><span class="co">8</span><div><b>D2 default: PURCHASING FEEDBACK</b> is read-only for the applicant; purchasing fills it on an Approved application (frame 2).</div></li>
+</ol></div>
+</div>
+
+<!-- ============================================================ FRAME 2 -->
+<h2 class="ft">2. Purchasing, the Approved application (1280 wide)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280">
+ <div class="shell">
+  <div class="side"><div class="brand">Sorento</div><div class="grp">Supply chain</div><div class="it">Stock Inquiries</div><div class="it on">New Product Applications</div></div>
+  <div class="main"><div class="topbar"></div><div class="content">
+   <div class="phdr rel"><div><h1>New Product Application - NPA-000008</h1><div class="crumb">Submitted: 18/10/2026 &middot; <span class="pill blue">Approved</span> &middot; 1 of 2 products done</div></div>
+     <div style="display:flex;gap:8px"><span class="btn out">&#9881;</span></div><span class="co pin">9</span></div>
+   <div class="banner">Approved by Sales Manager (test) on 18/10/2026. Locked: Revise to change it; it goes back to Draft and needs approval again.</div>
+   <div class="paper">
+    <div class="ttl">NEW PRODUCT APPLICATION</div>
+    <table class="sheet">
+     <tr><th>REFF:</th><td><b>NPA-000008</b></td></tr>
+     <tr><th>DATE:</th><td>18/10/2026</td></tr>
+     <tr><th>SALES PERSON:</th><td>Sales User (test)</td></tr>
+     <tr class="app"><th>STOCK INQUIRY:</th><td><a style="color:var(--primary)">SI26-0412</a></td></tr>
+    </table>
+    <div class="prodhdr"><span>Product 1 of 2 <span class="pill ok">Opened</span></span></div>
+    <table class="sheet">
+     <tr><th>PRODUCT CODE:</th><td>XY-1234-MB &amp; XY-1234-BG</td></tr>
+     <tr><th>PRODUCT TYPE:</th><td>KITCHEN SINK, UNDERMOUNT, NANOGRAIN FINISH</td></tr>
+     <tr><th>DIMENSION:</th><td>540 x 440 x 230 MM</td></tr>
+     <tr><th>MATERIAL:</th><td>STAINLESS STEEL</td></tr>
+     <tr><th>THICKNESS:</th><td class="ro">-</td></tr>
+     <tr><th>PACKING</th><td class="ro">-</td></tr>
+     <tr><th>BRAND:</th><td>Sorento</td></tr>
+     <tr><th>IMAGE:</th><td><div class="ph-img">photo</div></td></tr>
+     <tr><th>QTY:</th><td>55</td></tr>
+     <tr class="app rel"><th>OPENED AS:</th><td><div class="opened"><b style="color:var(--primary)">XY-1234-MB</b> - Kitchen sink, nanograin finish &middot; Purchasing (test), 18/10/2026 &middot; <u>Undo</u><br><span class="xs muted">From AutoCount: Item group Kitchen Sink &middot; Base UOM UNIT &middot; Selling MYR 1,280.00 &middot; Supplier EXAMPLE SINK SUPPLIER</span> <span class="dtag">D3</span></div><span class="co pin">10</span></td></tr>
+    </table>
+    <div class="prodhdr"><span>Product 2 of 2 <span class="pill">Open</span></span></div>
+    <table class="sheet">
+     <tr><th>PRODUCT CODE:</th><td class="ro">-</td></tr>
+     <tr><th>PRODUCT TYPE:</th><td>KITCHEN SINK, STAINLESS STEEL, SINGLE BOWL</td></tr>
+     <tr><th class="muted">...</th><td class="muted xs">same rows as product 1</td></tr>
+     <tr class="app rel"><th>OPENED AS:</th><td><div style="display:flex;gap:6px"><span class="btn sm">Link product</span><span class="btn out sm">Not opening</span></div>
+       <div class="inp" style="margin-top:6px">zz9999</div><div class="dd"><div class="muted">zz9999 is not in the product list yet. It appears after AutoCount sends it.</div></div><span class="co pin">11</span></td></tr>
+    </table>
+    <table class="sheet" style="margin-top:14px">
+     <tr><th>CUSTOMER:</th><td>EXAMPLE DEVELOPER SDN BHD <span class="badge2">No debtor code</span></td></tr>
+     <tr><th>PROJECT:</th><td>EXAMPLE RESIDENCE, TOWER B</td></tr>
+     <tr><th>TARGET DELIVERY:</th><td>17/01/2028</td></tr>
+     <tr><th>REMARK:</th><td>Purchasing (SI26-0412): supplier can make it, please apply for a new code.</td></tr>
+    </table>
+    <div class="sec rel">PURCHASING FEEDBACK <span class="dtag">D2</span><span class="co pin" style="right:0">12</span></div>
+    <table class="sheet">
+     <tr><th>COST:</th><td class="edit"><div class="inp">MYR 640.00<span>&times;</span></div><div class="xs muted" style="margin-top:3px">Product 1. One cost per product when there are several.</div></td></tr>
+     <tr><th>LEADTIME:</th><td class="edit"><div class="inp">6 to 8 weeks after deposit</div></td></tr>
+    </table>
+    <div style="text-align:right;margin-top:10px"><span class="btn sm">Save feedback</span></div>
+   </div>
+   <div class="audit"><b>Audit trail</b> <span class="muted xs">Submitted, Approved, Product 1 linked to XY-1234-MB, Feedback saved</span></div>
+  </div></div>
+ </div>
+</div></div>
+<div class="notes"><ol>
+ <li><span class="co">9</span><div><b>Gear menu</b> keeps Copy link / Revise / Cancel application and adds <b>Download Excel</b> <span class="dtag">D4</span> (frame 5).<span class="ref">record_actions.py (gear items); proforma_invoice_service.py:2365 (openpyxl pattern)</span></div></li>
+ <li><span class="co">10</span><div><b>D3 default, where item group / base UOM / selling / supplier get filled:</b> purchasing sets them in AutoCount when opening the code; the NPA shows them read-only from the linked product. Today nothing in the NPA flow copies them anywhere: link_line only stores the product id, and the product row gets its item group, base UOM and price from AutoCount through master ingest (the columns are NOT NULL there). Supplier comes from the product's supplier links.<span class="ref">services/new_product_application_service.py:466-484 (link_line); services/master_ingest_service.py:547-616 (_product_columns); models/product.py:241,269,280 (NOT NULL); models/product.py:330 (product_suppliers)</span></div></li>
+ <li><span class="co">11</span><div><b>Link product / Not opening</b> unchanged from v3, now one row per product block.<span class="ref">NewProductApplicationDetail.tsx:420-443</span></div></li>
+ <li><span class="co">12</span><div><b>D2 default:</b> Cost (per product) and Lead time (free text, one per application, as on paper), editable by open_code holders while Approved; saved without reopening approval. Additive columns. Cost hidden on the portal (PQ1 build (b)); Lead time visible to the portal applicant.</div></li>
+</ol></div>
+</div>
+
+<!-- ============================================================ FRAME 3 + 4 -->
+<h2 class="ft">3. Staff record on a phone (375) &nbsp; 4. Portal new application on a phone (375)</h2>
+<div class="layout">
+<div class="frame w375">
+ <div class="content">
+  <div class="phdr"><div><h1 style="font-size:17px">NPA-000008</h1><div class="crumb"><span class="pill blue">Approved</span> &middot; 1 of 2 done</div></div><span class="btn out sm">&#9881;</span></div>
+  <div class="paper">
+   <div class="ttl" style="font-size:16px">NEW PRODUCT APPLICATION</div>
+   <table class="sheet">
+    <tr><th>REFF:</th><td><b>NPA-000008</b></td></tr>
+    <tr><th>DATE:</th><td>18/10/2026</td></tr>
+    <tr><th>SALES PERSON:</th><td>Sales User (test)</td></tr>
+   </table>
+   <div class="prodhdr"><span>Product 1 of 2 <span class="pill ok">Opened</span></span></div>
+   <table class="sheet">
+    <tr><th>PRODUCT CODE:</th><td>XY-1234-MB &amp; XY-1234-BG</td></tr>
+    <tr><th>PRODUCT TYPE:</th><td>KITCHEN SINK, UNDERMOUNT, NANOGRAIN FINISH</td></tr>
+    <tr><th>DIMENSION:</th><td>540 x 440 x 230 MM</td></tr>
+    <tr><th>IMAGE:</th><td><div class="ph-img">photo</div></td></tr>
+    <tr><th>QTY:</th><td>55</td></tr>
+    <tr><th>OPENED AS:</th><td><b style="color:var(--primary)">XY-1234-MB</b></td></tr>
+   </table>
+   <div class="sec" style="font-size:14px">PURCHASING FEEDBACK</div>
+   <table class="sheet"><tr><th>COST:</th><td>MYR 640.00</td></tr><tr><th>LEADTIME:</th><td>6 to 8 weeks after deposit</td></tr></table>
+  </div>
+  <p class="xs muted">Labels stack above values below 640 px; no sideways scroll.</p>
+ </div>
+</div>
+<div class="frame w375">
+ <div class="content">
+  <div class="phdr"><div><h1 style="font-size:17px">New Product Application</h1><div class="crumb">Portal</div></div></div>
+  <div class="paper">
+   <div class="ttl" style="font-size:16px">NEW PRODUCT APPLICATION</div>
+   <table class="sheet">
+    <tr><th>STOCK INQUIRY:</th><td class="edit"><div class="inp">SI26-0412<span>&times;</span></div><div class="xs muted">Only your responded inquiries</div></td></tr>
+   </table>
+   <div class="prodhdr"><span>Product 1 <span class="dtag">D1</span></span></div>
+   <table class="sheet">
+    <tr><th>PRODUCT CODE:</th><td class="edit"><div class="inp">XY-1234-MB &amp; XY-1234-BG</div></td></tr>
+    <tr><th>PRODUCT TYPE: <span class="req">*</span></th><td class="edit"><div class="inp ph">-</div></td></tr>
+    <tr><th>DIMENSION / MATERIAL / THICKNESS / PACKING / BRAND</th><td class="muted xs">same text fields as staff</td></tr>
+    <tr><th>IMAGE:</th><td><div class="ph-add">+ Add image</div></td></tr>
+    <tr><th>QTY:</th><td class="edit"><div class="inp">55<span>&times;</span></div></td></tr>
+   </table>
+   <table class="sheet" style="margin-top:10px">
+    <tr><th>CUSTOMER:</th><td class="edit"><div class="inp">EXAMPLE DEVELOPER SDN BHD</div></td></tr>
+    <tr><th>PROJECT:</th><td class="edit"><div class="inp">EXAMPLE RESIDENCE, TOWER B</div></td></tr>
+    <tr><th>TARGET DELIVERY:</th><td class="edit"><div class="inp">17/01/2028<span>&times;</span></div></td></tr>
+   </table>
+   <div class="sec" style="font-size:14px">PURCHASING FEEDBACK <span class="dtag">D2</span></div>
+   <table class="sheet"><tr><th>LEADTIME:</th><td class="ro">Purchasing fills this after approval.</td></tr></table>
+   <p class="xs muted">No Cost and no Supplier on the portal (PQ1 build (b)).</p>
+   <div style="display:flex;gap:8px;justify-content:flex-end"><span class="btn out sm">Save as draft</span><span class="btn sm">Submit</span></div>
+  </div>
+ </div>
+</div>
+<div class="notes"><ol>
+ <li><span class="co">13</span><div><b>Same sheet on staff and portal</b>, one component with a portal switch (today: NewProductApplicationLines with hideSupplierAndCost). Portal list, record and Revise keep v3's flow.<span class="ref">components/common/NewProductApplicationLines.tsx (becomes the product block); app/(auth)/portal/.../NewProductApplicationForm.tsx</span></div></li>
+</ol></div>
+</div>
+
+<!-- ============================================================ FRAME 5 -->
+<h2 class="ft">5. Download Excel <span class="dtag">D4</span> (the paper template, A4 portrait, fit to one page)</h2>
+<div class="layout">
+<div class="xl">
+ <div class="bar">NPA_20261018_&lt;initials&gt;_EXAMPLE DEVELOPER SDN BHD (XY-1234-MB kitchen sink).xlsx</div>
+ <table>
+  <tr><td class="h" colspan="2"><u>NEW PRODUCT APPLICATION</u></td></tr>
+  <tr><td class="l" style="font-weight:400">REFF:</td><td>NPA_20261018_&lt;initials&gt;_EXAMPLE DEVELOPER SDN BHD (XY-1234-MB kitchen sink)</td></tr>
+  <tr><td class="l">DATE:</td><td>18/10/2026</td></tr>
+  <tr><td class="l">SALES PERSON:</td><td>&lt;sales person&gt;</td></tr>
+  <tr><td class="l">PRODUCT CODE:</td><td><b>XY-1234-MB &amp; XY-1234-BG</b></td></tr>
+  <tr><td class="l">PRODUCT TYPE:</td><td>KITCHEN SINK, UNDERMOUNT, NANOGRAIN FINISH</td></tr>
+  <tr><td class="l">DIMENSION:</td><td>540 x 440 x 230 MM</td></tr>
+  <tr><td class="l">MATERIAL:</td><td>STAINLESS STEEL</td></tr>
+  <tr><td class="l">THICKNESS:</td><td></td></tr>
+  <tr><td class="l">PACKING</td><td></td></tr>
+  <tr><td class="l">BRAND:</td><td>Sorento</td></tr>
+  <tr><td class="l" style="height:90px">IMAGE:</td><td>(first image of the product)</td></tr>
+  <tr><td class="l">CUSTOMER:</td><td>EXAMPLE DEVELOPER SDN BHD</td></tr>
+  <tr><td class="l">PROJECT:</td><td>EXAMPLE RESIDENCE, TOWER B</td></tr>
+  <tr><td class="l">QTY:</td><td>55</td></tr>
+  <tr><td class="l">TARGET DELIVERY:</td><td>17/01/2028</td></tr>
+  <tr><td class="l">REMARK:</td><td>Purchasing (SI26-0412): supplier can make it, please apply for a new code.</td></tr>
+  <tr><td class="h" colspan="2">PURCHASING FEEDBACK</td></tr>
+  <tr><td class="l">COST:</td><td>640.00</td></tr>
+  <tr><td class="l">LEADTIME:</td><td>6 to 8 weeks after deposit</td></tr>
+ </table>
+</div>
+<div class="notes"><ol>
+ <li><span class="co">14</span><div><b>D4 default: one sheet per product</b> (a two-product application gives two sheets in one file, so each sheet stays the paper's one-product form). Built with openpyxl at download time from the record; the file name and REFF are filled from the applicant's own initials then, so no person data is stored or committed. Cost is left out when a portal user downloads.<span class="ref">services/scm/proforma_invoice_service.py:2365-2378 (per-record xlsx pattern)</span></div></li>
+ <li><span class="co">15</span><div><b>Not in v4:</b> a PDF of the sheet (D4 alternative; stock_inquiry_pdf_service.py:381 pattern if wanted), approval sign-off boxes (the paper has none; the approval stays the app's #1698 step).</div></li>
+</ol></div>
+</div>
+
+</div>
+</body>
+</html>
