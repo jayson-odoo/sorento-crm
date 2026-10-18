@@ -459,6 +459,21 @@ def test_g5_remark_generated_per_split_is_what_the_email_prints_for_that_row(api
     assert [r[4] for r in printed_752] == got_752 + [l752.get("extra_remark")], (printed_752, got_752)
 
 
+def test_g5_a_line_carries_the_generated_remark_of_its_own_row_608_remain(api, emails):
+    """Each LINE carries `remark_generated` (its own unsplit / remaining row, `remark_for_row`).
+    608 after the owner's Confirm: 192 -> 632, all of it moved in, date kept: "REMAIN" (crew
+    ruling: moved qty never reads ORDER), the same text the email prints on 608's row."""
+    s = _seed(api)
+    _save(s, _owner_plan())
+    sent = _confirm_batch(s, emails)
+    l608 = _line(_get(s), s, 608)
+    assert "remark_generated" in l608, "AC-G5: each line carries remark_generated"
+    assert l608["remark_generated"] == "REMAIN", l608["remark_generated"]
+    rows_608 = [r for r in _printed(sent) if r[0] == "192" and r[1] == "632"]
+    assert len(rows_608) == 1, ("608 prints one row 192 -> 632", _printed(sent))
+    assert rows_608[0][4] == l608["remark_generated"], (rows_608, l608["remark_generated"])
+
+
 def test_g5_a_typed_remark_is_stored_and_the_generated_text_still_travels(api):
     s = _seed(api)
     _save(s, _owner_plan(remark_14=TYPED))
