@@ -1,6 +1,6 @@
 # PLAN: CHAT-CLOSED-LISTS - chatbot step 2, closed candidate lists
 
-Status: Review (S1-S5, S4b-v2, S4c green; reviewer + security-reviewer running; S6 bench held by crew until the grader pin). Track: full (size L, LEAD pattern).
+Status: Build, fix round 18 Oct (local lane CHAT-CLOSED-LISTS-L on a3 took over from the cloud lane at fa9fd99a; main 0f5c6537 merged). Next classes: CHAT-CODE-LOOKUP did-you-mean (cp0-2ab2f7ccc9), the 4 SPAN `files` misses. Track: full (size L, LEAD pattern).
 Branch `claude/chat-closed-lists-x6ymb5` (the sandbox cannot push `crew/chat-closed-lists`), PR #1755.
 
 Design source: CHATBOT-SCALE-DESIGN-16oct section 8 step 2 + D2 (crew-only): code only SHORTLISTS
@@ -118,6 +118,9 @@ one entity hint value and no new top-level key.
 | S5 no word rewrites under the gate (c27) | (S5 red commit) | 811f22fb | `_category_word_under_documents` off; listed type binds; F4 kept |
 | T2 scheme pick indexes the product's certificates | c6c71e8b | c6c71e8b | explicit link product > attachment > revision > scheme; none held = the cert kind |
 | `{{specs}}` token in the lane version (SPEC-REGISTRY-UI #1765) | (this commit) | (this commit) | the publisher swaps the baked specification lines for `{{specs}}`; the existing `specs` variable renders them at read time |
+| scheme word is never a certificate record lookup | (in fix commit) | 7b7db72b | no separate `test(red):` commit; retro red-proof posted 18 Oct (new tests on the parent's code) |
+| FILTER-OVER-HELD-WIDENS (CHAT-STATE card R1) | (in fix commit) | f7412977 | numeric size / brand narrows the held family; none-match keeps the held subject; retro red-proof 18 Oct |
+| SIZE-AS-CODE | (in fix commit) | fa9fd99a | number + a registry unit = `spec K = N` candidate line, never a code word; retro red-proof 18 Oct |
 
 Held (crew Q4 (a)): deleting the gate-off rewrites waits for the owner to move the label; each is
 listed with the replay diff it would need. Gated off under the CLOSED LISTS path today:
