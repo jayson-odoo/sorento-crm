@@ -500,6 +500,9 @@ export const CellStockTable = React.forwardRef<
   function changeLevels(next: string[]) {
     setLevels(next);
     writeStockGroupLevels(next);
+    // Rows opened under the old levels (a drill-down, a set) must not reappear as groups.
+    setExpanded({});
+    setExpandedSets({});
   }
   const groupProps = {
     columns: numericColumns,
@@ -573,7 +576,7 @@ export const CellStockTable = React.forwardRef<
     [grouped, locationLed, groupsUnder, topGroups],
   );
 
-  const groupedLandedRef = React.useRef(false);
+  const readLandedRef = React.useRef(false);
   const ownSection = React.useCallback(
     () =>
       sections.find((section) =>
@@ -630,16 +633,16 @@ export const CellStockTable = React.forwardRef<
    */
   React.useEffect(() => {
     if (!landOnMount) return;
-    if (grouped) groupedLandedRef.current = true;
+    if (autoCount) readLandedRef.current = true;
     openSectionAndJump(ownSection(), 'this-line');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  // The read can arrive after mount: land once, the moment grouping first applies.
+  // The read can arrive after mount: land once, when it arrives. A level picked later is not a landing.
   React.useEffect(() => {
-    if (!landOnMount || !grouped || groupedLandedRef.current) return;
-    groupedLandedRef.current = true;
-    openSectionAndJump(ownSection(), 'this-line');
-  }, [landOnMount, grouped, openSectionAndJump, ownSection]);
+    if (!landOnMount || !autoCount || readLandedRef.current) return;
+    readLandedRef.current = true;
+    if (grouped) openSectionAndJump(ownSection(), 'this-line');
+  }, [landOnMount, autoCount, grouped, openSectionAndJump, ownSection]);
 
   if (locations.length === 0) {
     // Rendered rather than hidden, per the CRUD standard. A pivoted cell holds several products,
@@ -834,6 +837,9 @@ export const CellStockTable = React.forwardRef<
                               <ChevronRight className="size-3.5" aria-hidden />
                             )}
                           </Button>
+                        ) : locationLed && entry.product_id && entry.warehouse_id ? (
+                          // Listed, but the read holds no lines for it: nothing to open, nothing to explain.
+                          <span className="inline-block size-4" />
                         ) : (
                           // The sales order named no warehouse, so there is no position to open.
                           <span
