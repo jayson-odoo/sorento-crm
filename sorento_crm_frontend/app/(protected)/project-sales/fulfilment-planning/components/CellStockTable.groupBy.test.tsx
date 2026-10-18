@@ -889,3 +889,26 @@ describe('fix round 1', () => {
     });
   });
 });
+
+describe('fix round 2', () => {
+  it('N1 landing happens once with Location alone; picking a second level fires no extra landing', async () => {
+    const landing = { landOnMount: true, forLine: 'SO-0005 line 1', lineIds: ['sol-5'] };
+    renderTable(landing);
+    // today's landing, unchanged: the own location's set opens its documents drill-down
+    expect(has('stock-set-expansion-IB')).toBe(true);
+    await pick('customer');
+    expect(screen.getByTestId('group-by-chip')).toHaveTextContent('Location > Customer');
+    expect(rows(/^stock-group-/)).toHaveLength(0);
+    expect(lineRows()).toHaveLength(0);
+  });
+
+  it('N2 a listed location with no lines has a blank chevron cell with no title', () => {
+    levels(['location', 'customer']);
+    renderTable({ locations: [...TODAY, row('CRM-ONLY')] });
+    expect(has('stock-expand-CRM-ONLY')).toBe(false);
+    const cell = screen.getByTestId('cell-location-CRM-ONLY').querySelector('td') as HTMLElement;
+    expect(cell).not.toHaveAttribute('title');
+    expect(cell.querySelector('[title]')).toBeNull();
+    expect(cell.textContent).not.toContain('Not addressable');
+  });
+});
