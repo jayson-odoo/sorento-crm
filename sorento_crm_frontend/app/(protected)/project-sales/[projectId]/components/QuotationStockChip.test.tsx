@@ -4,6 +4,7 @@
  * group, the site pools and every other location, with AutoCount's figures and PO qty.
  */
 import React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -64,5 +65,45 @@ describe('QuotationStockChip popover, round 6', () => {
     const props = cellStockTableSpy.mock.calls.at(-1)?.[0] as Record<string, unknown>;
     expect(props.locations).toEqual([...GROUP_ROWS, ...POOL_ROWS]);
     expect(props.autoCount ?? null).toBeNull();
+  });
+});
+
+describe('STOCK-GROUPBY (AC-17, AC-20): the quotation popover carries the bar on the AutoCount mount only', () => {
+  async function drawActual() {
+    const props = cellStockTableSpy.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    const actual = await vi.importActual<
+      typeof import('../../fulfilment-planning/components/CellStockTable')
+    >('../../fulfilment-planning/components/CellStockTable');
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <actual.CellStockTable {...(props as React.ComponentProps<typeof actual.CellStockTable>)} />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('AC-20 with the read, the table shows the group-by-bar', async () => {
+    useStockStatusMock.mockReturnValue({
+      data: {
+  product_id: 'prod-1',
+  item_code: 'ITEM-1',
+  locations: [{ warehouse_id: 'wh-BRW-BB', warehouse_code: 'BRW-BB', warehouse_name: 'BRW-BB', is_active: true, on_hand: 5, so_qty: 0, po_qty: 0, spo_qty: 0, forecast: 5 }],
+  totals: { on_hand: 5, so_qty: 0, po_qty: 0, spo_qty: 0, forecast: 5, incoming_pl: 0, forecast_incl_pl: 5 },
+  incoming_pl: [],
+  sales_orders: [],
+  purchase_orders: [],
+  spos: [],
+},
+      isLoading: false,
+    });
+    openPopover();
+    await drawActual();
+    expect(screen.getByTestId('group-by-bar')).toBeInTheDocument();
+  });
+
+  it('AC-17 without the read (a failed read), the table has no bar', async () => {
+    useStockStatusMock.mockReturnValue({ data: undefined, isLoading: false });
+    openPopover();
+    await drawActual();
+    expect(screen.queryByTestId('group-by-bar')).not.toBeInTheDocument();
   });
 });
