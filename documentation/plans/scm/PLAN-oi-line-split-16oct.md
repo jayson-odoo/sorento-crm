@@ -1,6 +1,6 @@
 # PLAN: split one SO line into delivery tranches in Order Inquiries (OI-LINE-SPLIT)
 
-Status: Hand test v4 (head 569f23b1b: reviewer READY, kill-proofs posted, browser 1280/375 PASS + re-check PASS, ci labelled; hand test filed laneboard/scripts/1749.md; owner OK on mock v4 17 Oct 14:10, Q1 drag yes, Q2-Q4 (a), Q5 (a) no box; after the 17 Oct hand-test FAIL of the v2 grid). See "Build v4" at the bottom; UAC section A/F rewritten. Before that: PR #1749 head c3a4b4acd: CI green, reviewer READY, security ready. Track: full (L): migration, new
+Status: Build, owner round 18 Oct (hand test of 875e2ab53f: data right, PRESENTATION FAIL): email-style QTY | NEW QTY | DELIVERY DATE | NEW DATE off one backend function, AUTOCOUNT LINE column removed (owner answer (b)); main merged locally at 47cfc432a3 (ols_0001 on spec_hint_0001). See "Owner round 18 Oct" at the bottom of Build v4; UAC AC-A2/A2b/A3/A5/A7/F1. Before that: v4 hand test filed at 875e2ab53f (reviewer READY, CI green, browser 6/6). Track: full (L): migration, new
 endpoint with RBAC, engine change. Lead pattern: tester red tests, one coder (Opus: tangled engine in
 a 13k-line service), reviewer + security-reviewer, browser pass 1280/375. Stacked on #1748
 (OI Excel one sheet; merged into this branch at c1f8f57d8).
@@ -173,6 +173,31 @@ Slices (red-first each: `test(red):` commit of test files only, then the fix com
    toast Undo, keyboard drag (vitest, keyboard sensor as `LineSplitDialog.dnd.test.tsx`).
 Then reviewer, browser pass on crew's copy (1280 + 375, SO417636 owner case end to end), new
 hand-test script, `crew report --handtest`.
+
+### Owner round 18 Oct (hand test of 875e2ab53f)
+
+Owner: data right (301 delivered, 417/192/504 with dates), presentation FAIL: "present the change as
+in delivery date 20/10, new delivery date 20/9, qty 417, new qty 14, dont need autocount line column,
+we supposed to present the change just like how we present in email". Then (b): remove the AUTOCOUNT
+LINE column too, drag only.
+
+- ONE function for "what moved" (owner rule): `handover_moves(previous_qty, previous_date, new_qty,
+  new_date) -> dict` in `BE/app/services/project_order_inquiry_service.py`, module level beside
+  `_format_handover_was` (:691): `{"qty": previous_qty}` when the qty differs, `{"delivery_date":
+  previous_date}` when the new date is set and differs. The settled-line writer's own copy of that
+  rule (`_settle_row_in_place`, :2588-2591) calls it (behaviour unchanged; item_code stays beside
+  it). The email template's blank rule (`oihr_0006:67`: NEW QTY / NEW DATE print only when `was`
+  carries the key) is untouched.
+- API: `LineSplitLineOut` (`BE/app/schemas/project_line_split.py:27-48`) gains `new_qty` and
+  `new_date`, null = blank; `LineSplitService.read()` (`project_line_split_service.py:478-489`) sets
+  them from `handover_moves(base_qty, base_date, now_qty, now_date)` (now_qty when "qty" in it,
+  now_date when "delivery_date" in it). `now_qty` / `now_date` stay (the planned-date rule reads them).
+- FE: wire types + `fromPayload` (`FP/lib/lineSplitModel.ts:548-576`) carry `newQty` / `newDate`;
+  `LineSplitSheet.tsx` columns QTY, NEW QTY, DELIVERY DATE, NEW DATE (rowSpan like QTY), the inline
+  "AutoCount now" / "Added in AutoCount" text removed, the AUTOCOUNT LINE column (:108), its select
+  (:616) and its Enter path (:830) removed. Drag (mouse, touch, keyboard grip) unchanged.
+- Red tests first (tester), then one coder, reviewer + kill, browser 1280 + 375 on SO417636 incl. a
+  touch drag of 236 onto line 608 at 375, cleaned to 0 splits; one push with the main merge.
 
 ## Open
 

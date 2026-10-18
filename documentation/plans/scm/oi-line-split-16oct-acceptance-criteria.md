@@ -16,20 +16,30 @@ make sure the sort handler is at the leftmost, go"), Q1 drag yes, Q2-Q4 (a), Q5 
   line's SO, scrolled to that line, the line flashed.
 - AC-A2 One table with every open line of the SO, sorted by item code, location, then base delivery
   date (then line no). Columns in order: grip (LEFTMOST), LINE (AutoCount line no), SO DATE, S/O NO,
-  ITEM CODE, LOCATION, QTY (base), DELIVERY DATE (base) | CHANGE QUANTITY, CHANGE DATE, AUTOCOUNT
-  LINE, REMARK, BALANCE, remove. The first line of each item has a heavier top border.
+  ITEM CODE, LOCATION, QTY (base), NEW QTY, DELIVERY DATE (base), NEW DATE | CHANGE QUANTITY, CHANGE
+  DATE, REMARK, BALANCE, remove. The first line of each item has a heavier top border. There is NO
+  AUTOCOUNT LINE column (owner hand test 18 Oct, answer (b)): a split goes to another line by drag only.
+- AC-A2b QTY / NEW QTY / DELIVERY DATE / NEW DATE present a line's pending AutoCount change the way the
+  OI email does (owner hand test 18 Oct: "present the change just like how we present in email"):
+  QTY = base qty, DELIVERY DATE = base date, NEW QTY = AutoCount's qty only when the qty moved, NEW DATE
+  = AutoCount's date only when the date moved, each blank otherwise. "Moved" is decided by ONE backend
+  function, the same one the email's settled line uses for its Was (`handover_moves`); the API returns
+  `new_qty` / `new_date` (null = blank) and the sheet only renders them. No "AutoCount now" or "Added
+  in AutoCount" text anywhere. SO417636 CSK14B: line 480 417 | 14 | 20/10/2026 | 20/09/2026; line 608
+  192 | 632 | 20/11/2026 | (blank); line 752 504 | 649 | 20/12/2026 | 02/01/2027; line 32 301 | (blank)
+  | 20/09/2026 | (blank), "Delivered 301". A line AutoCount added prints QTY 0, NEW QTY its qty,
+  DELIVERY DATE "-", NEW DATE its date.
 - AC-A3 A split line shows one row per split, stacked downward; LINE to DELIVERY DATE and BALANCE are
-  merged across its split rows (rowSpan). A split row: grip, qty, date (typed DD/MM/YYYY or calendar)
-  with its change pill, AutoCount line, remark, remove (x). Inside Confirm, a line with a pending
-  change also shows "AutoCount now <qty> · <date>" under its delivery date; a line AutoCount added
-  (base 0) shows QTY 0 and "Added in AutoCount: <qty> · <date>" and cannot be split or dragged. A line
-  other lines' splits sit on shows "+N from line M" for each.
+  merged across its split rows (rowSpan; NEW QTY and NEW DATE too). A split row: grip, qty, date
+  (typed DD/MM/YYYY or calendar) with its change pill, remark, remove (x). A line AutoCount added
+  (base 0) cannot be split or dragged. A line other lines' splits sit on shows "+N from line M" for
+  each.
   A line whose saved splits no longer act (`split_state` stale) shows an "AutoCount changed" pill
   under its delivery date; an applied line shows none (as built).
   A line AutoCount has DELIVERED IN FULL (nothing open, no splits, nothing sitting on it) is still
   listed, read-only, so the sheet shows every line like the staff Excel: QTY = its ordered qty,
-  DELIVERY DATE, CHANGE QUANTITY "Delivered <qty>", no grip, not a drop target, not in the
-  AUTOCOUNT LINE options (SO417636 line 32: 301 @ 20/09/2026).
+  DELIVERY DATE, CHANGE QUANTITY "Delivered <qty>", no grip, not a drop target
+  (SO417636 line 32: 301 @ 20/09/2026).
 - AC-A4 A line that is not split ("REMAIN" in this document) shows its own QTY and DELIVERY DATE as
   plain values in CHANGE QUANTITY and CHANGE DATE (DD/MM/YYYY; the base values, also inside Confirm),
   never the word REMAIN (owner hand test, 17 Oct evening: "don't put remain, just put the value"); its
@@ -39,21 +49,19 @@ make sure the sort handler is at the leftmost, go"), Q1 drag yes, Q2-Q4 (a), Q5 
   unsplit again (its values shown plainly), its remark kept. The change pill of a split row (REMAIN /
   DELAY / ADVANCE / CANCEL, AC-A11) is the email's change word and stays. A zero-qty split is dropped when focus leaves its line and on Save.
 - AC-A5 "+ Split" in BALANCE, or Ctrl/Cmd+Enter in a split row, adds a split row under the line:
-  qty = what is left on the line (0 when nothing is), the line's base date, AutoCount line "New
-  line"; its qty gets focus, selected. The x button, or Ctrl/Cmd+Backspace in the row, removes a
+  qty = what is left on the line (0 when nothing is), the line's base date, sitting on "New line";
+  its qty gets focus, selected. The x button, or Ctrl/Cmd+Backspace in the row, removes a
   split row at once (staged until Save; no confirm).
 - AC-A6 BALANCE of a split line: "0" with a tick when its splits add up; "N left" as a draggable chip
   when short; "N over" in red when over. A line that is not split shows only "+ Split".
-- AC-A7 AUTOCOUNT LINE (SearchableSelect) options: "Line <no> (this line)", every other line of the
-  same item and location ("Line <no> · <its planned date>"), "New line", "Cancel". Picking another
-  line does the same as a drop (AC-A9): the split takes that line's planned date, merges, and the same
-  "Moved N to <target>" toast with Undo shows. Cancel: the date cell reads CANCEL. Leaving Cancel takes
-  the line's base date.
+- AC-A7 REMOVED 18 Oct (owner answer (b)): no AUTOCOUNT LINE select and no Enter path into one. A
+  split reaches another line, "New date" or "Cancel this qty" by drag (AC-A8, AC-A9) only: mouse,
+  touch long-press, or the grip's keyboard pick-up (AC-A10).
   A line's PLANNED date (one AutoCount line carries one date, crew audit 17 Oct): the date of its own
   split that stays on it (not a cancel) when it is split; else the EARLIEST date of the splits from
-  other lines already sitting on it; else its AutoCount date (current, else base). The option label,
-  the drag overlay and the drop always show and use the same date. A typed date stays as typed;
-  changing a line's own date later does not move other lines' splits already on it.
+  other lines already sitting on it; else its AutoCount date (current, else base). The drag overlay
+  and the drop always show and use the same date. A typed date stays as typed; changing a line's own
+  date later does not move other lines' splits already on it.
 - AC-A8 Drag (Q1): the grip of a split row, the grip of a REMAIN line (the whole line) and the "N left"
   chip drag (mouse after 5 px, touch long-press, keyboard). While dragging: lines of other items or
   locations fade and are not targets; the dragged line's own block is not a target; a "New date" and
@@ -107,7 +115,7 @@ make sure the sort handler is at the leftmost, go"), Q1 drag yes, Q2-Q4 (a), Q5 
 ## C. Links are explicit (Q3 a, Q4 b)
 
 - AC-C1 A split records its own (origin) line and the line it sits on. Sits-on is only ever set by
-  staff (a drop, the AUTOCOUNT LINE select). Nothing auto-links by qty, date or name.
+  staff (a drop). Nothing auto-links by qty, date or name.
 - AC-C2 If the line a split sits on is cancelled or deleted in AutoCount, the split falls back to
   "new line (not in AutoCount yet)"; nothing else changes.
 
@@ -141,6 +149,6 @@ make sure the sort handler is at the leftmost, go"), Q1 drag yes, Q2-Q4 (a), Q5 
 
 - AC-F1 At 375px the same sheet: LINE, SO DATE, S/O NO and LOCATION are hidden (the line no shows under
   the item code, the SO date and location in the title), ITEM CODE stays pinned left while the table
-  scrolls sideways. Grip and chip drag by touch long-press; the AUTOCOUNT LINE select does the same
-  as a drop.
+  scrolls sideways. Grip and chip drag by touch long-press, the only way at 375 to move a split to
+  another line (SO417636 CSK14B: touch-drag the 236 row onto line 608).
 - AC-F2 Usable and not clipped at 375px and 1280px.
