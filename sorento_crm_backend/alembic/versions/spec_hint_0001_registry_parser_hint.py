@@ -8,13 +8,13 @@ in any order.
 Plan: documentation/plans/chatbot/PLAN-spec-registry-ui-17oct.md.
 
 Revision ID: spec_hint_0001
-Revises: sr_0001_sample_requests
+Revises: fin_0003_billing_outstanding
 """
 from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "spec_hint_0001"
-down_revision = "sr_0001_sample_requests"
+down_revision = "fin_0003_billing_outstanding"
 branch_labels = None
 depends_on = None
 
