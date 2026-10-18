@@ -543,7 +543,7 @@ export default function NewProductApplicationDetail({
               {r.status_label}
             </span>
             {' · '}
-            {r.lines_done} of {r.lines_total} lines done
+            {r.lines_done} of {r.lines_total} {r.lines_total === 1 ? 'line' : 'lines'} done
           </p>
         </div>
         <DetailActions

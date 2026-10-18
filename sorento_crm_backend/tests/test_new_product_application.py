@@ -840,6 +840,27 @@ def test_review_moves_lock_the_application_row(world, monkeypatch):
     assert seen and all(seen)
 
 
+def test_review_a_move_really_emits_select_for_update(world):
+    """The spy above only proves the flag is passed; this proves the lock is taken."""
+    from sqlalchemy import event
+
+    d = _approved(world)
+    statements = []
+
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    bind = world.db.get_bind()
+    event.listen(bind, "before_cursor_execute", capture)
+    try:
+        assert _link(world, d["id"], d["lines"][0]["id"], world.product.id).status_code == 200
+    finally:
+        event.remove(bind, "before_cursor_execute", capture)
+    assert any(
+        "FROM" in st and "new_product_applications" in st and "FOR UPDATE" in st for st in statements
+    ), statements[:5]
+
+
 def test_review_withdrawn_is_not_sent_to_the_approver_who_revised(world):
     d = _submitted(world)
     world.sent.clear()

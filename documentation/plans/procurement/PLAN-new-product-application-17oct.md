@@ -28,7 +28,7 @@ Public schema (procurement domain, like `stock_inquiries`), additive, idempotent
 - `new_product_application_lines`: `id`, `application_id` CASCADE, `line_no`, `proposed_code`, `description`,
   `further_description`, `category_id` -> product_categories, `base_uom_id` -> units_of_measure, `brand_id`,
   `item_type_id`, `supplier_id` -> suppliers, `supplier_item_code`, `cost_price` / `selling_price` NUMERIC(12,2),
-  `expected_qty` NUMERIC(12,3) (all NULL-able), `remark`, `opened_product_id` -> products ON DELETE SET NULL,
+  `expected_qty` NUMERIC(12,3) (all NULL-able), `remark`, `opened_product_id` -> products ON DELETE RESTRICT (product delete answers a 409 naming the application),
   `closed_reason`, `resolved_by` -> users, `resolved_at`. CHECK: not both opened and closed.
 - Permissions `procurement.new_product_applications.view|create|approve|open_code` in
   `rbac/permission_registry.py` + migration grants: all four to superadmin/admin; `create` copied from holders of

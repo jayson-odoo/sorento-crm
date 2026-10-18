@@ -35,7 +35,6 @@ import {
   type NewProductApplicationListParams,
 } from '../services/newProductApplicationService';
 
-/** The list's React Query key; the detail pager rebuilds the SAME key from the URL. */
 const NPA_SLUGS = [
   'procurement.new_product_applications.view',
   'procurement.new_product_applications.approve',
@@ -59,6 +58,7 @@ export function useNewProductApplicationListingKey(suffix?: string): string | nu
   return suffix ? `${slug}::${suffix}` : slug;
 }
 
+/** The list's React Query key; the detail pager rebuilds the SAME key from the URL. */
 export function newProductApplicationsListQueryKey(
   params: NewProductApplicationListParams,
 ): QueryKey {
