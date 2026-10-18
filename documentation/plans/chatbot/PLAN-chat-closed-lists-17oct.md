@@ -1,6 +1,6 @@
 # PLAN: CHAT-CLOSED-LISTS - chatbot step 2, closed candidate lists
 
-Status: Build, fix round 18 Oct (local lane CHAT-CLOSED-LISTS-L on a3 took over from the cloud lane at fa9fd99a; main 0f5c6537 merged). Next classes: CHAT-CODE-LOOKUP did-you-mean (cp0-2ab2f7ccc9), the 4 SPAN `files` misses. Track: full (size L, LEAD pattern).
+Status: Review, fix round 18 Oct pushed (reviewer READY, security-reviewer PASS; hand test filed) (local lane CHAT-CLOSED-LISTS-L on a3 took over from the cloud lane at fa9fd99a; main 0f5c6537 merged). Round classes A-D, review rounds R2 and R3 built red-first (rows below); hand test filed as laneboard 1755.md. Track: full (size L, LEAD pattern).
 Branch `claude/chat-closed-lists-x6ymb5` (the sandbox cannot push `crew/chat-closed-lists`), PR #1755.
 
 Design source: CHATBOT-SCALE-DESIGN-16oct section 8 step 2 + D2 (crew-only): code only SHORTLISTS
@@ -121,11 +121,29 @@ one entity hint value and no new top-level key.
 | scheme word is never a certificate record lookup | (in fix commit) | 7b7db72b | no separate `test(red):` commit; retro red-proof posted 18 Oct (new tests on the parent's code) |
 | FILTER-OVER-HELD-WIDENS (CHAT-STATE card R1) | (in fix commit) | f7412977 | numeric size / brand narrows the held family; none-match keeps the held subject; retro red-proof 18 Oct |
 | SIZE-AS-CODE | (in fix commit) | fa9fd99a | number + a registry unit = `spec K = N` candidate line, never a code word; retro red-proof 18 Oct |
+| D CANDIDATE-LABEL-FORGE (CHAT-CODE-LOOKUP security nit) | acf5d713 | 8f3248bb | `;()` in a product name become spaces in `_code_label`, so a name never adds a candidate item |
+| A UNSURE-CODE-KEEPS-DYM (cp0-2ab2f7ccc9) | 4fa98da6 | 571e06be | an unsure (confident false) product token with resolver neighbours takes the did-you-mean; no neighbours keeps the vague clarify |
+| B HELD-WITHOUT-SCHEME (crew ruling (b) 18 Oct; cp0-9010f39a3d, 9f9e15dd0c, 7a655af8fa) | 5283ef89 | 0eb31d68 | held products stay the subject, the scheme's certificates filter the fetch, reply `<codes>: no <scheme> certificate on record.`; supersedes T2's "send the certificates they have" |
+| C SCHEME-NO-PRODUCT (cp0-fce51f2811) | d433a648 | 0eb31d68 | clarify policy is default here (`turn/policy_rows.py:91` narrow_by_tier, `turn/narrow.py:553`): the scheme's company-scoped certificates filter the fetch, at most 50 rows (endpoint default `api/v1/master_data/product_attachments.py:153`) |
+| R2-1 BRAND-SCOPE-ATTACH (security blocker) | a9cefbee | 36fa732b | `ProductAttachmentService.list_product_attachments` filters `product_in_scope_clauses`; ungated; unscoped sessions unchanged |
+| R2-2 MIXED-UNSURE (reviewer) | 6e174c98 | 23db525d | the did-you-mean only when every unsure token has neighbours; under the gate the vague clarify quotes each word on its own (accepted format) |
+| R2-3 SCHEME-NONE-IN-SCOPE (reviewer) | a64d26e3 | 957269b0 | nothing held, no certificate of the scheme in scope: `No <SCHEME> certificate on record.`, nothing fetched |
+| R2-4 KIND-NONE-HELD (reviewer) | 0d523a7a | a7c5bc48 | `scheme_without_product` leaves a verdict holding a product unchanged; the untested filter is gone |
+| R2-5 CANDIDATE-TEXT-SCRUB (security) | 41cea408 | ae92cec3 | `candidate_text` (`chatbot_prompt_vars.py`) for code, name, spec key, value, display, class label |
+| R2-6 ENGINE-KEYS-STRIPPED (security) | c92c8744 (wrong reason), a3be90b9 (corrected, after the fix) | 540bc7e6 | parser entities lose `listed` / `certificate_uuids` before grounding; ungated; red-proof by reverting the strip |
+| R2-7 CERT-ID-CAP (security) | 7afed4b4 | 957269b0 | scheme certificate ids capped at 200, id order |
+| R3-1 SCHEME-NAME-PUNCT (security) | 6987cb13 | e93d14c8 | a scheme name / option / keyword with `.:,;()"` never reaches the list or the enum (external ingest, like the over-long read error) |
+| R3-2 KIND-NONE-HELD-ENGINE (reviewer) | f57030bb | 0e467cc0 | the engine never calls `scheme_without_product` while a focus product carries a uuid; `index_scheme` no longer returns early with no certificate kind listed (it adds none) |
+| R3-3 SCRUBBED-LABEL-GROUNDS (guard) | 0aa38cc6 (guard, green) | - | a pick of a scrubbed rendered value grounds to the same registry value |
 
 Held (crew Q4 (a)): deleting the gate-off rewrites waits for the owner to move the label; each is
 listed with the replay diff it would need. Gated off under the CLOSED LISTS path today:
 `_category_word_under_documents`, the class split of a listed type pick, the cert regexes and
 the `user_goal` fallback in `derive_require`.
+
+Follow-up (security, staff-written text): attachment type names and description words in the closed lists get the same punctuation rule as schemes. Note: R3-1 drops a dotted scheme name ("S.I.R.I.M") rather than scrubbing it; none exists on the dev copy (11 register schemes, no `certificate_scheme` lookup rows).
+
+Residual (one item, reported, not fixed): cp0-7a655af8fa drops its held products for an unresolved category word ("tap fittings") before the scheme leg.
 
 Open: c06's
 "300mm" reads trap_length where the answer key says dim_length (a numeric key choice; no
