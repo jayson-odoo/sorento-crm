@@ -222,11 +222,12 @@ describe('BorrowAddDialog', () => {
 
     const table = screen.getByTestId('borrow-donor-table');
     for (const label of [
-      'Location', 'Where', 'On hand', 'SO qty', 'SPO qty', 'Available',
+      'Location', 'On hand', 'SO qty', 'SPO qty', 'Available',
       'Available for Project', 'PO qty', 'Taken',
     ]) {
       expect(within(table).getByText(label)).toBeInTheDocument();
     }
+    expect(within(table).queryByText('Where')).not.toBeInTheDocument();
     expect(within(table).queryByText('Free')).not.toBeInTheDocument();
     expect(within(table).queryByText('Committed')).not.toBeInTheDocument();
     expect(within(table).queryByText('After borrow')).not.toBeInTheDocument();
