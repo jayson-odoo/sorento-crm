@@ -113,9 +113,9 @@ def index_scheme(
         return verdict, None
     scheme = str(schemes[0]["canonical_code"]).strip()
     kind = _kind_item(db, scheme, closed_list_items(db).get("cert_kind", {}))
-    if kind is None:
-        return verdict, None
-    has_kind = any(e.get("listed") == "cert_kind" for e in said)
+    # With no certificate kind listed there is none to add beside the scheme; the held
+    # products still stay the subject.
+    has_kind = kind is None or any(e.get("listed") == "cert_kind" for e in said)
     kind_entity = {**schemes[0], "canonical_code": kind, "listed_item": kind, "listed": "cert_kind"}
     # Added beside a kept scheme, the kind is its own entity: reconciliation keys on `raw`,
     # so it must not share the scheme's word (or it is retyped with it).

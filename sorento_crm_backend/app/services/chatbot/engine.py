@@ -4909,7 +4909,11 @@ def _run_stages_body(  # noqa: PLR0915
         try:
             with _session(session_factory) as scheme_db:
                 verdict, scheme_note = scheme_index.index_scheme(scheme_db, verdict, list(state_in.focus.products))
-                if scheme_note is None:
+                # Held products are only added to the verdict later, so a held one (a uuid) is
+                # read here: the scheme path with no product never runs over a held subject.
+                if scheme_note is None and not any(
+                    isinstance(p, dict) and p.get("uuid") for p in state_in.focus.products
+                ):
                     verdict, scheme_note = scheme_index.scheme_without_product(scheme_db, verdict)
         except Exception:  # noqa: BLE001 - an advisory reading, never a failed turn
             logger.warning("chatbot: scheme index failed; the turn goes on without it", exc_info=True)
