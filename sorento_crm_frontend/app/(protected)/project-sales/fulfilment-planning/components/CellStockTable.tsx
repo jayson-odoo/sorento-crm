@@ -9,6 +9,20 @@ import { cn } from '@/lib/utils';
 import { PillOverflow, type PillItem } from '@/components/common/PillOverflow';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 import { withAutoCount } from '../../_shared/lib/autoCountStock';
+import { GroupByMenu } from '@/components/common/group-by/GroupByMenu';
+import { groupByLevels } from '@/components/common/group-by/groupByLevels';
+import {
+  DEFAULT_STOCK_GROUP_LEVELS,
+  groupKeysOf,
+  prefixGroupKeys,
+  readStockGroupLevels,
+  STOCK_GROUP_OPTIONS,
+  STOCK_LINE_MEASURES,
+  stockGroupDimensions,
+  stockLinesOf,
+  writeStockGroupLevels,
+  type StockLine,
+} from '../../_shared/lib/stockGroupLines';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import type { StockStatus } from '@/components/stock-status/stockStatus.types';
 import {
@@ -23,6 +37,7 @@ import {
   type SupplyKind,
 } from '../../_shared/lib/supplyVocabulary';
 import { StockDocumentsPanel } from './StockDocumentsPanel';
+import { GroupRows, LineRows } from './CellStockTableGroups';
 import type {
   BoardCellLocation,
   BoardLocationWhere,
@@ -283,10 +298,21 @@ export const CellStockTable = React.forwardRef<
     [serverLocations, autoCount, poolSharePct],
   );
   const [plOpen, setPlOpen] = React.useState(false);
+  /**
+   * STOCK-GROUPBY: the Group by levels, remembered per browser. Only a table with the AutoCount
+   * read groups; Location alone is today's table and takes none of the grouped branches below.
+   */
+  const [levels, setLevels] = React.useState<string[]>(readStockGroupLevels);
+  const grouped =
+    autoCount != null && !(levels.length === 1 && levels[0] === 'location');
+  /** Location first plus more levels: today's rows stay and open the next-level groups. */
+  const locationLed = grouped && levels[0] === 'location';
+  /** Groups carry a chevron column even where `stockOnly` drops it. */
+  const withChevron = !stockOnly || grouped;
   const numericColumns = stockOnly
     ? NUMERIC_COLUMNS.filter((column) => STOCK_ONLY_COLUMNS.has(column.key))
     : NUMERIC_COLUMNS;
-  const spanAll = (stockOnly ? 1 : 2) + numericColumns.length;
+  const spanAll = (withChevron ? 2 : 1) + numericColumns.length;
   const drawn = taken ?? EMPTY_TAKEN;
   const drawnKinds = takenKinds ?? EMPTY_TAKEN_KINDS;
   /**
@@ -370,6 +396,111 @@ export const CellStockTable = React.forwardRef<
    */
   const sections = React.useMemo(() => sectionsOf(locations), [locations]);
 
+  const [groupOpen, setGroupOpen] = React.useState<Record<string, boolean>>({});
+  const needle = (filterText ?? '').trim().toLowerCase();
+  const locationOrder = React.useMemo(
+    () => locations.map((row) => row.location).filter((code): code is string => Boolean(code)),
+    [locations],
+  );
+  const lines = React.useMemo(
+    () => (autoCount ? stockLinesOf(autoCount, locationOrder) : []),
+    [autoCount, locationOrder],
+  );
+  const dims = React.useMemo(() => {
+    const all = stockGroupDimensions(locationOrder);
+    return levels.map((id) => all[id]);
+  }, [levels, locationOrder]);
+  /** The body when Location is not first: the first level's groups (no levels: flat lines). */
+  const topGroups = React.useMemo(
+    () => (grouped && !locationLed ? groupByLevels(lines, dims, STOCK_LINE_MEASURES) : []),
+    [grouped, locationLed, lines, dims],
+  );
+  /** The next-level groups hanging under a location or set row, keys rooted at that row. */
+  const groupsUnder = React.useCallback(
+    (prefix: string, codes: readonly string[]) =>
+      prefixGroupKeys(
+        groupByLevels(
+          lines.filter((line) => codes.includes(line.location)),
+          dims.slice(1),
+          STOCK_LINE_MEASURES,
+        ),
+        `${prefix}/`,
+      ),
+    [lines, dims],
+  );
+  /** The dialog search: narrows the lines shown, never the counts or sums. */
+  const showLine = React.useCallback(
+    (line: StockLine) =>
+      !needle ||
+      [line.docNo, line.customer, line.supplier, line.agent].some((value) =>
+        value?.toLowerCase().includes(needle),
+      ),
+    [needle],
+  );
+  /** Groups (and location rows) holding a search match; open unless the reader chose otherwise. */
+  const searchOpen = React.useMemo(() => {
+    const open = new Set<string>();
+    if (!grouped || !needle) return open;
+    if (!locationLed) {
+      groupKeysOf(topGroups, showLine).forEach((key) => open.add(key));
+      return open;
+    }
+    for (const code of new Set(lines.filter(showLine).map((line) => line.location))) {
+      open.add(`location=${code}`);
+      groupKeysOf(groupsUnder(`location=${code}`, [code]), showLine).forEach((key) => open.add(key));
+    }
+    return open;
+  }, [grouped, needle, locationLed, topGroups, lines, showLine, groupsUnder]);
+  const isGroupOpen = (key: string) => groupOpen[key] ?? searchOpen.has(key);
+  const needleRef = React.useRef(needle);
+  React.useEffect(() => {
+    // A new search starts from what it finds, not from what the last one left open.
+    if (needleRef.current === needle) return;
+    needleRef.current = needle;
+    setGroupOpen({});
+  }, [needle]);
+
+  const openableRows = sections
+    .flatMap((section) => section.rows)
+    .filter((row) => row.location && row.product_id && row.warehouse_id);
+  const rowKeyOf = (row: DonorLocationRow) => row.rowKey ?? row.location ?? '__none__';
+  const allGroupKeys = () =>
+    locationLed
+      ? openableRows.flatMap((row) =>
+          groupKeysOf(groupsUnder(`location=${row.location}`, [row.location as string])),
+        )
+      : groupKeysOf(topGroups);
+  const setAll = (open: boolean) => Object.fromEntries(allGroupKeys().map((key) => [key, open]));
+  function expandAll() {
+    if (!stockOnly || locationLed) {
+      setExpanded((current) => ({
+        ...current,
+        ...Object.fromEntries(openableRows.map((row) => [rowKeyOf(row), true])),
+      }));
+    }
+    if (grouped) setGroupOpen((current) => ({ ...current, ...setAll(true) }));
+  }
+  function collapseAll() {
+    setExpanded(Object.fromEntries(openableRows.map((row) => [rowKeyOf(row), false])));
+    setExpandedSets({});
+    if (grouped) setGroupOpen(setAll(false));
+  }
+  function changeLevels(next: string[]) {
+    setLevels(next);
+    writeStockGroupLevels(next);
+  }
+  const groupProps = {
+    columns: numericColumns,
+    classes: GROUP_CELLS,
+    locationColClassName,
+    locationColStyle,
+    levels,
+    isOpen: isGroupOpen,
+    onToggle: (key: string) =>
+      setGroupOpen((current) => ({ ...current, [key]: !(current[key] ?? searchOpen.has(key)) })),
+    showLine,
+  };
+
   /**
    * Opens whichever section a jump names - the GROUP subtotal when the set nets one (the
    * mockup's "Balance after" reading), or ONE bin's own row when it does not (N2, fix round
@@ -389,7 +520,28 @@ export const CellStockTable = React.forwardRef<
       location?: string | null,
     ) => {
       if (!section) return;
-      if (section.netOf && sectionProductId(section)) {
+      if (grouped) {
+        // Groups replace the drill-down: open every group holding a line of the target location.
+        const addressable = (row: StockSection['rows'][number]) =>
+          Boolean(row.location && row.product_id && row.warehouse_id);
+        const target =
+          section.rows.find((row) => row.location === location && addressable(row)) ??
+          section.rows.find(addressable);
+        const code = target?.location;
+        if (code) {
+          const keys = locationLed
+            ? groupKeysOf(groupsUnder(`location=${code}`, [code]))
+            : groupKeysOf(topGroups, (line) => line.location === code);
+          if (locationLed) {
+            const rowKey = target?.rowKey ?? code;
+            setExpanded((current) => ({ ...current, [rowKey]: true }));
+          }
+          setGroupOpen((current) => ({
+            ...current,
+            ...Object.fromEntries(keys.map((key) => [key, true])),
+          }));
+        }
+      } else if (section.netOf && sectionProductId(section)) {
         setExpandedSets((current) => ({ ...current, [section.key]: true }));
       } else {
         const addressable = (row: StockSection['rows'][number]) =>
@@ -406,7 +558,7 @@ export const CellStockTable = React.forwardRef<
       jumpNonceRef.current += 1;
       setActiveJump({ kind, nonce: jumpNonceRef.current });
     },
-    [],
+    [grouped, locationLed, groupsUnder, topGroups],
   );
 
   const ownSection = React.useCallback(
@@ -515,6 +667,16 @@ export const CellStockTable = React.forwardRef<
           {`Available for ${forLine}`}
         </p>
       ) : null}
+      {autoCount ? (
+        <GroupByMenu
+          options={STOCK_GROUP_OPTIONS}
+          value={levels}
+          defaultValue={[...DEFAULT_STOCK_GROUP_LEVELS]}
+          onChange={changeLevels}
+          onExpandAll={expandAll}
+          onCollapseAll={collapseAll}
+        />
+      ) : null}
       {/* NO vertical bound, and the Stock tab has exactly ONE scroll region: the dialog body
         above this, which already owns a vertical viewport. This wrapper used to cap itself at
         half the window height and scroll, which made it one of FOUR nested vertical scrollports
@@ -542,14 +704,16 @@ export const CellStockTable = React.forwardRef<
         <table className="w-full border-separate border-spacing-0 text-xs">
           <thead>
             <tr>
-              {!stockOnly && <th scope="col" className={cn(CHEVRON_COL, HEAD_CELL)} />}
+              {withChevron && <th scope="col" className={cn(CHEVRON_COL, HEAD_CELL)} />}
               <th
                 ref={locationThRef}
                 scope="col"
                 className={cn(locationColClassName, HEAD_CELL, 'relative')}
                 style={locationColStyle}
               >
-                Location
+                {grouped && !locationLed
+                  ? (STOCK_GROUP_OPTIONS.find((option) => option.id === levels[0])?.label ?? 'Line')
+                  : 'Location'}
                 {/* AC-RS-71: mirrors `DataGridTableHeadRowCellResize`'s own affordance -
                     drag to set a width, remembered in `localStorage` on release. */}
                 <span
@@ -589,7 +753,14 @@ export const CellStockTable = React.forwardRef<
           </thead>
 
           <tbody>
-            {sections.flatMap((section) => [
+            {grouped && !locationLed ? (
+              levels.length > 0 ? (
+                <GroupRows {...groupProps} nodes={topGroups} baseDepth={0} />
+              ) : (
+                <LineRows {...groupProps} lines={lines} depth={0} />
+              )
+            ) : null}
+            {(grouped && !locationLed ? [] : sections).flatMap((section) => [
               ...section.rows.map((entry) => {
                 // S4/review B2: a donor picker's own `rowKey` wins when a row carries one,
                 // so two donors sharing one warehouse (a same-agent Borrow off two
@@ -607,11 +778,13 @@ export const CellStockTable = React.forwardRef<
                 const addressable = Boolean(
                   entry.product_id && entry.warehouse_id,
                 );
-                const isOpen = Boolean(expanded[key]);
+                const isOpen = locationLed
+                  ? (expanded[key] ?? searchOpen.has(`location=${testKey}`))
+                  : Boolean(expanded[key]);
                 return (
                   <React.Fragment key={key}>
                     <tr data-testid={`cell-location-${testKey}`}>
-                      {!stockOnly && (
+                      {withChevron && (
                       <td className={cn(CHEVRON_COL, BODY_CELL, 'px-1')}>
                         {addressable ? (
                           <Button
@@ -628,7 +801,7 @@ export const CellStockTable = React.forwardRef<
                             onClick={() =>
                               setExpanded((current) => ({
                                 ...current,
-                                [key]: !current[key],
+                                [key]: !isOpen,
                               }))
                             }
                           >
@@ -750,7 +923,15 @@ export const CellStockTable = React.forwardRef<
                       })}
                     </tr>
 
-                    {isOpen && addressable && !stockOnly && (
+                    {isOpen && addressable && locationLed && entry.location ? (
+                      <GroupRows
+                        {...groupProps}
+                        nodes={groupsUnder(`location=${entry.location}`, [entry.location])}
+                        baseDepth={1}
+                      />
+                    ) : null}
+
+                    {isOpen && addressable && !stockOnly && !locationLed && (
                       <tr data-testid={`stock-expansion-${testKey}`}>
                         {/* Under the row it belongs to, spanning the whole table: the documents are
                         this location's evidence, not a column of it. */}
@@ -786,7 +967,7 @@ export const CellStockTable = React.forwardRef<
                       key={`subtotal-${section.key}`}
                       data-testid={`stock-subtotal-${section.key}`}
                     >
-                      {!stockOnly && (
+                      {withChevron && (
                       <td className={cn(CHEVRON_COL, FOOT_CELL, 'px-1')}>
                         {section.netOf && sectionProductId(section) ? (
                           <Button
@@ -882,7 +1063,24 @@ export const CellStockTable = React.forwardRef<
                         );
                       })}
                     </tr>,
+                    ...(locationLed &&
+                    expandedSets[section.key] &&
+                    section.netOf &&
+                    sectionProductId(section)
+                      ? [
+                          <GroupRows
+                            key={`set-groups-${section.key}`}
+                            {...groupProps}
+                            nodes={groupsUnder(
+                              `set=${section.key}`,
+                              section.rows.flatMap((row) => (row.location ? [row.location] : [])),
+                            )}
+                            baseDepth={1}
+                          />,
+                        ]
+                      : []),
                     ...(!stockOnly &&
+                    !locationLed &&
                     expandedSets[section.key] &&
                     section.netOf &&
                     sectionProductId(section)
@@ -923,7 +1121,7 @@ export const CellStockTable = React.forwardRef<
             // row repeating it is a row that says nothing.
             <tfoot>
               <tr>
-                {!stockOnly && <td className={cn(CHEVRON_COL, FOOT_CELL)} />}
+                {withChevron && <td className={cn(CHEVRON_COL, FOOT_CELL)} />}
                 <td
                   className={cn(
                     locationColClassName,
@@ -994,7 +1192,7 @@ export const CellStockTable = React.forwardRef<
                 <IncomingPlRows
                   status={autoCount}
                   numericColumns={numericColumns}
-                  stockOnly={stockOnly}
+                  stockOnly={!withChevron}
                   spanAll={spanAll}
                   open={plOpen}
                   onToggle={() => setPlOpen((current) => !current)}
@@ -1009,7 +1207,7 @@ export const CellStockTable = React.forwardRef<
               <IncomingPlRows
                 status={autoCount}
                 numericColumns={numericColumns}
-                stockOnly={stockOnly}
+                stockOnly={!withChevron}
                 spanAll={spanAll}
                 open={plOpen}
                 onToggle={() => setPlOpen((current) => !current)}
@@ -1260,6 +1458,7 @@ const HEAD_CELL =
 const BODY_CELL = 'border-b border-e border-border px-2 py-1.5 align-middle';
 const FOOT_CELL =
   'border-b border-e border-border bg-muted/50 px-2 py-1.5 font-medium';
+const GROUP_CELLS = { chevron: CHEVRON_COL, body: BODY_CELL, foot: FOOT_CELL, number: NUMBER_COL };
 
 /**
  * The columns, in AutoCount's order, because this is the order the planner reads over there and
