@@ -1494,6 +1494,13 @@ class ProjectOrderInquiryService:
                 # AC-G13: the Confirm that applied this line's plan already wrote its rows;
                 # a Confirm with nothing new for it leaves them as they are.
                 continue
+            if (kept_splits.get(str(line.id)) or {}).get("own_rows"):
+                # P2 (a): AutoCount moved on from a plan with kept New-line rows; those rows
+                # stand and `_keep_split_rows` moves the line's own row, never the netting
+                # (which would restate every row of the line onto the new figures).
+                if str(line.id) in settle_in_place:
+                    settled_in_place.append(str(line.id))
+                continue
             need = split_needs.get(str(line.id), _dec(entry.get("buy_qty")))
             carried = bool(entry.get("carried"))
             # Is THIS line's Buy an order back (part 2 section 4b)? Only then does this
@@ -5811,7 +5818,17 @@ class ProjectOrderInquiryService:
                 continue
             cancels = sum((_dec(s.qty) for s in f.splits if s.is_cancel), _ZERO)
             if state == SPLIT_STALE:
-                continue
+                # P2 (a): AutoCount moved on. The kept New-line rows stand until staff change
+                # them; the line's own row follows AutoCount.
+                new_line = [
+                    (_dec(s.qty), s.delivery_date)
+                    for s in f.splits
+                    if not s.is_cancel and sits.get(str(s.id)) is None
+                ]
+                if not new_line:
+                    continue
+                rows = ([(f.now_qty, f.now_date)] if f.now_qty > _ZERO else []) + new_line
+                cancels = _ZERO
             else:
                 taken = (
                     (moved.get(line_id) or {}).get("splits") or {}
@@ -5869,6 +5886,7 @@ class ProjectOrderInquiryService:
                 "cancels": cancels,
                 "line": entries[line_id]["line"],
                 "entry": entries[line_id],
+                "own_rows": state == SPLIT_STALE,
             }
         for target, qty in declined_in.items():
             if target in needs or target in standing or target not in entries:
@@ -6009,9 +6027,14 @@ class ProjectOrderInquiryService:
                 if rest:
                     self._split_row(source, first_qty, rest, decision)
                 elif _dec(source.qty) != first_qty:
+                    # Only the qty moved (P2: the own row follows AutoCount, 14 -> 20).
                     self._trim_links(source, first_qty)
+                    source.previous_qty = source.qty
                     source.qty = first_qty
                     source.supply_decision_id = decision.id
+                    if source.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
+                        source.changed_at = datetime.utcnow()
+                        source.ack_state = ACK_CHANGED
                     self.refresh_link_state([source])
                 if placed:
                     # Purchasing placed it: a split never sends it back to raised.
