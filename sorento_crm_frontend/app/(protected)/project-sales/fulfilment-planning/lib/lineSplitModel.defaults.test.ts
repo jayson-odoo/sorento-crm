@@ -138,6 +138,29 @@ describe('addSplit guards (unchanged behaviour)', () => {
     expect(r.id).toBeTruthy();
   });
 
+  it('keeps the stored own split id and remark when the pending default rewrites its qty and date', () => {
+    const line = mk(480, 417, '2026-10-20', 14, '2026-09-20', {
+      splits: [
+        {
+          id: 's1',
+          qty: 417,
+          deliveryDate: '2026-10-20',
+          isCancel: false,
+          sitsOnLineId: 'l480',
+          remark: 'hold',
+        },
+      ],
+    });
+    const { r, splits } = rows([line], 'l480');
+    expect(splits).toHaveLength(2);
+    expect(splits[0].id).toBe('s1');
+    expect(splits[0].remark).toBe('hold');
+    expect(shape(splits[0])).toEqual([14, '2026-09-20', 'l480']);
+    expect(shape(splits[1])).toEqual([403, '2026-10-20', null]);
+    expect(splits[1].id).not.toBe('s1');
+    expect(r.id).toBe(splits[1].id);
+  });
+
   it('does not mutate the input lines', () => {
     const lines = [mk(480, 417, '2026-10-20', 14, '2026-09-20')];
     const before = structuredClone(lines);
