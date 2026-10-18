@@ -4900,11 +4900,15 @@ def _run_stages_body(  # noqa: PLR0915
         try:
             with _session(session_factory) as scheme_db:
                 verdict, scheme_note = scheme_index.index_scheme(scheme_db, verdict, list(state_in.focus.products))
+                if scheme_note is None:
+                    verdict, scheme_note = scheme_index.scheme_without_product(scheme_db, verdict)
         except Exception:  # noqa: BLE001 - an advisory reading, never a failed turn
             logger.warning("chatbot: scheme index failed; the turn goes on without it", exc_info=True)
             scheme_note = None
         if scheme_note:
             turn_trace.add("scheme_index", scheme_note)
+            if scheme_note.get("none_match") and scheme_note.get("products"):
+                held_none_match = {"held": list(scheme_note["products"]), "said": [], "scheme": scheme_note["scheme"]}
     if _ranking_words:
         verdict = {**verdict, "entities": [*(verdict.get("entities") or []), *_ranking_words]}
     if grounding_notes:
@@ -7361,7 +7365,11 @@ def _run_stages_body(  # noqa: PLR0915
             # the held products' own rows as if they matched, never the catalogue's set.
             held_codes = ", ".join(dict.fromkeys(held_none_match["held"]))
             said = " ".join(dict.fromkeys(held_none_match["said"])) or "that"
-            answer = turn_compose.Answer(text=f"{held_codes}: none on record with {said}.")
+            # HELD-WITHOUT-SCHEME: the filter was a certificate scheme the products hold none of.
+            scheme_none = held_none_match.get("scheme")
+            answer = turn_compose.Answer(
+                text=f"{held_codes}: no {scheme_none} certificate on record." if scheme_none else f"{held_codes}: none on record with {said}."
+            )
             turn_trace.add("held_none_match", {"held": held_none_match["held"], "said": held_none_match["said"]})
 
     if answer is not None and lane_error_text is None:

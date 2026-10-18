@@ -4955,6 +4955,9 @@ def with_carried_entities(
         if isinstance(rows, list)
     ]
     product_scoped = unsettled_only and _holds_a_resolved_product_outside_a_set(focus)
+    # CLOSED LISTS SCHEME-NO-PRODUCT: a listed scheme pick does not answer an open product
+    # pick, so a product token no pick settled is not carried beside it.
+    scheme_pick = bool(parse_output.get("closed_lists")) and any(e.get("listed") == "cert_scheme" for e in own)
     settled_products = False
     for kind, rows in by_kind:
         if domain_word_only and kind == "attachment_type":
@@ -4962,6 +4965,8 @@ def with_carried_entities(
             continue
         for row in rows:
             if not isinstance(row, dict):
+                continue
+            if scheme_pick and kind == "product" and not row.get("uuid"):
                 continue
             if unsettled_only and row.get("uuid"):
                 settled_products = settled_products or kind == "product"

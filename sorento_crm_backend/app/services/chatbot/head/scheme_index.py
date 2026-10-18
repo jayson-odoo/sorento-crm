@@ -51,6 +51,17 @@ def _held_certificates(db: "Session", product_ids: list[str], scheme: str) -> li
     return sorted(str(cid) for (cid,) in rows)
 
 
+def _scheme_certificates(db: "Session", scheme: str) -> list[str]:
+    """The scheme's active certificates in the session's company scope: the read goes
+    through the scoped session, so another company's certificate never appears."""
+    from sqlalchemy import func
+
+    from app.models.certificate import Certificate
+
+    rows = db.query(Certificate.id).filter(func.lower(Certificate.scheme) == scheme.casefold(), Certificate.status == "active").all()
+    return sorted(str(cid) for (cid,) in rows)
+
+
 def _kind_item(db: "Session", scheme: str, kinds: dict[str, str]) -> str | None:
     """The certificate kind the scheme's own certificates are filed under, else the only
     (or first) kind listed."""
@@ -114,8 +125,46 @@ def index_scheme(
         out = [*carried, *entities, *([] if has_kind else [added_kind])]
         note = {"scheme": scheme, "held_by_products": True, "carried": len(carried)}
     else:
-        out = [kind_entity if e is schemes[0] else e for e in entities if e not in schemes[1:]]
-        if has_kind:
-            out = [e for e in out if e is not kind_entity]
-        note = {"scheme": scheme, "held_by_products": False, "as": kind}
+        # HELD-WITHOUT-SCHEME (crew ruling (b)): the products stay the subject and the scheme's
+        # certificates the filter; the engine says plainly that none is on record.
+        certificates = _scheme_certificates(db, scheme)
+        if certificates:
+            entities = [{**e, "hint": "certificate", "certificate_uuids": certificates} if e is schemes[0] else e for e in entities]
+        carried = [] if named else [
+            {"raw": p.get("canonical_code") or p.get("raw"), "hint": "product", "canonical_code": p.get("canonical_code"),
+             "current_message": True, "confident": True}
+            for p in held_products
+            if isinstance(p, dict) and p.get("uuid") and p.get("canonical_code")
+        ]
+        out = [*carried, *entities, *([] if has_kind else [added_kind])]
+        codes = [str(e.get("canonical_code")).strip() for e in [*carried, *said] if str(e.get("hint") or "").strip().lower() == "product" and str(e.get("canonical_code") or "").strip()]
+        note = {"scheme": scheme, "held_by_products": False, "none_match": True, "products": list(dict.fromkeys(codes))}
     return {**verdict, "entities": out}, note
+
+
+def scheme_without_product(db: "Session", verdict: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """SCHEME-NO-PRODUCT: a listed scheme pick asked as a file ask with no product named or
+    held. The scheme's own active certificates in the contact's companies become the fetch's
+    filter (read through the scoped session, so another company's never appears); the tool's
+    own row limit bounds the reply. The verdict unchanged (and no note) otherwise."""
+    if verdict.get("domain_hint") != "product_attachment":
+        return verdict, None
+    entities = [e for e in verdict.get("entities") or [] if isinstance(e, dict)]
+    said = [e for e in entities if e.get("current_message") is not False]
+    schemes = [e for e in said if e.get("listed") == "cert_scheme" and str(e.get("canonical_code") or "").strip()]
+    if not schemes or any(str(e.get("hint") or "").strip().lower() == "product" for e in said):
+        return verdict, None
+    scheme = str(schemes[0]["canonical_code"]).strip()
+    certificates = _scheme_certificates(db, scheme)
+    if not certificates:
+        return verdict, None
+    # Left typed as the attachment-type pick it is, so the ask stays a file ask: typed
+    # `certificate` it would read as the set "which products have this certificate". A product
+    # carried from an open pick no product answered is no subject here: left in, its miss
+    # would empty the scheme's own answer.
+    out = [
+        {**e, "certificate_uuids": certificates} if e is schemes[0] else e
+        for e in entities
+        if e is schemes[0] or e.get("current_message") is not False or str(e.get("hint") or "").strip().lower() != "product"
+    ]
+    return {**verdict, "entities": out}, {"scheme": scheme, "held_by_products": False, "products": 0, "certificates": len(certificates)}
