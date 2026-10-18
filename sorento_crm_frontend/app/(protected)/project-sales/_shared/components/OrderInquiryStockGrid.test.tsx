@@ -52,6 +52,11 @@ vi.mock('@/app/(protected)/inventory-management/warehouses/services/warehouseSer
   getWarehouses: (...args: unknown[]) => getWarehousesMock(...args),
 }));
 
+const useStockStatusMock = vi.fn<(...args: unknown[]) => Record<string, unknown>>(() => ({ data: undefined as unknown, isLoading: false }));
+vi.mock('@/components/stock-status/useStockStatus', () => ({
+  useStockStatus: (...args: unknown[]) => useStockStatusMock(...args),
+}));
+
 import { OrderInquiryStockGrid } from './OrderInquiryStockGrid';
 
 // Deliberately NOT a UUID that resembles the item code (`B2155-NL-BLUE`) it stands in
@@ -139,3 +144,20 @@ describe('reviewer fix round: pool resolution must not lose the bare code behind
     expect(pageSize > 5 || hasExactCodeParam).toBe(true);
   });
 });
+
+describe('STOCK-STATUS round 6 (AC-35): the OI line expand shows AutoCount\'s figures', () => {
+  it('reads AutoCount for the line\'s product and hands it to the stock table', async () => {
+    const status = { product_id: PRODUCT_ID, locations: [], incoming_pl: [], totals: {} };
+    useStockStatusMock.mockReturnValue({ data: status, isLoading: false });
+    render(<OrderInquiryStockGrid productId={PRODUCT_ID} location="BRW-BB" />);
+    await waitFor(() => expect(cellStockTableSpy).toHaveBeenCalled());
+    expect(useStockStatusMock.mock.calls[0][0]).toBe(PRODUCT_ID);
+    expect(cellStockTableSpy.mock.calls.at(-1)?.[0]).toMatchObject({ autoCount: status });
+  });
+
+  it('asks AutoCount nothing for a row with no location', () => {
+    render(<OrderInquiryStockGrid productId={PRODUCT_ID} location={null} />);
+    expect(useStockStatusMock.mock.calls.every((call) => call[1] === false)).toBe(true);
+  });
+});
+
