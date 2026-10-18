@@ -19,6 +19,8 @@ export interface WireSplit {
   is_cancel: boolean;
   sits_on_line_id: string | null;
   remark: string;
+  /** Round 3: the text Confirm would write when `remark` is empty. */
+  remark_generated: string;
 }
 
 export interface WireLine {
@@ -36,6 +38,9 @@ export interface WireLine {
   delivered_qty: number;
   split_state: 'acting' | 'applied' | 'stale';
   acting: boolean;
+  /** Round 3: qty of the extra row AutoCount added beyond the base; null = none. */
+  extra_qty: number | null;
+  extra_remark: string | null;
   splits: WireSplit[];
 }
 
@@ -61,6 +66,8 @@ export function wireLine(
     delivered_qty: 0,
     split_state: 'acting',
     acting: true,
+    extra_qty: null,
+    extra_remark: null,
     splits: [],
     ...opts,
   };
@@ -80,6 +87,7 @@ export function wireSplit(
     is_cancel: false,
     sits_on_line_id: on,
     remark: '',
+    remark_generated: '',
     ...extra,
   };
 }
