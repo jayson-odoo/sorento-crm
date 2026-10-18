@@ -1,6 +1,6 @@
 # PLAN: CHAT-CLOSED-LISTS - chatbot step 2, closed candidate lists
 
-Status: Review, fix round 18 Oct pushed (reviewer READY, security-reviewer PASS; no hand test on its own: owner rule 16 Oct, the chatbot hand test runs on one combined held-out build; script kept at laneboard 1755.md) (local lane CHAT-CLOSED-LISTS-L on a3 took over from the cloud lane at fa9fd99a; main 0f5c6537 merged). Round classes A-D, review rounds R2 and R3 built red-first (rows below). Track: full (size L, LEAD pattern).
+Status: Build, ROUND 4 (owner 19 Oct): attachments only, measured on the 27 real TRAIN attachment conversations; $0 root cause per class first. Round 18 Oct merged into the PR at 0665fa0d (CI green, EVAL-BENCH gate #3: spec +30.4, attachment +7.4). Track: full (size L, LEAD pattern).
 Branch `claude/chat-closed-lists-x6ymb5` (the sandbox cannot push `crew/chat-closed-lists`), PR #1755.
 
 Design source: CHATBOT-SCALE-DESIGN-16oct section 8 step 2 + D2 (crew-only): code only SHORTLISTS
@@ -164,3 +164,16 @@ the gate from `listed_item` on the parse; a whole-turn replay pins the version t
 label and text can disagree only across a TTL expiry and a label move in the same instant), N4
 (the file-ask roster lists certificate types too: the customer is asking which file of THIS
 product, and its certificates are files of it).
+
+## Round 4 (19 Oct, owner): attachments only
+
+Held-out attachments (crew-only) sits at 63.5 against the 95 bar, flat across rounds; its first-failing classes are
+files 9, asked_type 6, no_picker 3. The lane measures on TRAIN only: the 27 real attachment conversations
+(`crew/state/eval/cp0/train_attachment`, the attachment slice of gate #3 `g1755c`, lane head 0665fa0d, 40.7 vs main 33.3).
+
+Steps:
+1. $0 root cause on every TRAIN attachment failure of gate #3: the stage that lost it (parser type pick, grounding,
+   scheme index, resolver, apply/narrowing, fetch args, scope, composer), file:line, class (>= 2 item-runs), and
+   MODEL LIMIT vs CODE per class (crew may try a stronger parser model separately).
+2. Red-first fixes per CODE class, reviewer (+ security-reviewer if scope/ingest is touched).
+3. Paired TRAIN x1 (lane vs main) under the owner's early-stop rule (checkpoints, stop on regression), cap 3 USD.
