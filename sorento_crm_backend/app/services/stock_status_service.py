@@ -208,47 +208,6 @@ def so_outstanding_clauses() -> tuple:
     )
 
 
-#: The most item ids one summary call answers; a page of a list is far below it.
-MAX_SUMMARY_IDS = 200
-
-
-def summaries(db: Session, product_ids: list[str]) -> list[dict[str, Any]]:
-    """On hand and SO per item, on the panel's own rules, for a list's item chips.
-
-    One read for a whole page of a list, where the full panel per row would be hundreds of
-    queries. Ids that are not uuids are skipped; an item the caller's company does not hold
-    is simply absent. `Stock` and `SalesOrderLine` rows are company-scoped themselves, so only
-    the caller's company is counted, as in the panel.
-    """
-    ids = [pid for pid in dict.fromkeys(product_ids) if is_uuid(pid)]
-    if not ids:
-        return []
-    known = [str(pid) for (pid,) in db.query(Product.id).filter(Product.id.in_(ids)).all()]
-    if not known:
-        return []
-    on_hand: dict[str, float] = defaultdict(float)
-    for pid, qty in (
-        db.query(Stock.product_id, Stock.quantity_on_hand)
-        .join(Warehouse, Warehouse.id == Stock.warehouse_id)
-        .filter(Stock.product_id.in_(known))
-        .all()
-    ):
-        on_hand[str(pid)] += _num(qty)
-    so_qty: dict[str, float] = defaultdict(float)
-    for pid, ordered, delivered in (
-        db.query(SalesOrderLine.product_id, SalesOrderLine.qty_ordered, SalesOrderLine.qty_delivered)
-        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
-        .join(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
-        .filter(SalesOrderLine.product_id.in_(known), *so_outstanding_clauses())
-        .all()
-    ):
-        so_qty[str(pid)] += _num(ordered) - _num(delivered)
-    return [
-        {"product_id": pid, "on_hand": on_hand.get(pid, 0.0), "so_qty": so_qty.get(pid, 0.0)}
-        for pid in ids if pid in known
-    ]
-
-
 def _sales_order_rows(db: Session, product_id: str, so_due_by: Optional[date]) -> list[dict]:
     """Counted SO lines (R4, R5): AutoCount's outstanding, Transferable F left out."""
     rows = (

@@ -1,6 +1,6 @@
 # PLAN: Available stock status, embedded in every process (STOCK-STATUS)
 
-Status: Mock round 6 (owner notes on v5, 18 Oct 05:36: no switch, no item strip, no UOM, no inactive tag, names instead of codes). Mock v6 = today's stock table with AutoCount's figures, every location, an Incoming PL row and PO rows in the drill-down; waiting on the owner; build only after the OK (lane STOCK-STATUS, size L, standard track)
+Status: Building v6 (owner OK 18 Oct 07:56: '1. Keep' the stand-alone page, '2. Ok, rmb to drop where column in the ui'; 06:00: the same table on the project quotation). Lane STOCK-STATUS, size L, standard track
 
 ## Owner request (17 Oct)
 
@@ -370,4 +370,26 @@ SO qty, PO qty and SPO qty read AutoCount's figures (`stock_status_service`), wi
 following as today; every location holding the item, the ones outside today's set in today's own "Other group" set; one
 Incoming PL row under the Total; PO rows and names in the documents drill-down. Mock: `mockups/stock-status-v6.html`.
 Open: the stand-alone page, keep or drop.
+
+## 8. Build of v6 (approved 18 Oct 07:56)
+
+Owner, verbatim: "1. Keep" (the stand-alone page) and "2. Ok, rmb to drop where column in the ui"; 06:00: "i think we put
+this at project quotation also". AutoCount stays the read-only source of truth.
+
+Slices:
+- S1 Removals. Restore main's own version (at the last merge, 63f1610f) of every file the rejected UI touched: the board
+  List view and its tests, the OI line expand (OrderInquiryStockGrid again) and the worklist, the loading plan row dialog
+  (its "Where the stock is" table), PanelDataGrid, the nested-grid census. Delete the chip, the panel and their tests, and
+  the list-chip summary endpoint (no caller is left).
+- S2 The table. `CellStockTable` loses the Where column everywhere. An optional `autoCount` input (the
+  `GET /api/v1/inventory/stock-status` read) fills On hand, SO qty, PO qty and SPO qty with AutoCount's figures; Available,
+  Available for Project and each set's net follow from them as today; every location AutoCount holds that the table does
+  not list joins as an "Other group" set; one Incoming PL row sits under the Total and opens its packing lists.
+  `StockDocumentsPanel`, given the same read, lists only the S/O lines AutoCount counts, at AutoCount's outstanding qty,
+  and adds the PO rows, so a location's documents foot to its row.
+- S3 The screens. The Fulfilment Planning cell dialog's Stock tab, the OI line expand (OrderInquiryStockGrid), the
+  project quotation's stock popover (one table: the chosen group, the site pools and every other location, plus PO qty)
+  and the stand-alone page each pass the read in. If the read fails, the table keeps today's figures.
+- S4 Review, cloud browser pass (FP cell dialog, OI line expand, quotation, stand-alone page; 1280 and 375), hand-test
+  script, then the ci label request to crew.
 

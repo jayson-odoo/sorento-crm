@@ -13,9 +13,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_any_permission_with_api_key
-from app.services.error_handler import AppException
 from app.services.field_access import CLEARANCE_PERMISSION
-from app.services.stock_status_service import MAX_SUMMARY_IDS, stock_status, summaries
+from app.services.stock_status_service import stock_status
 from app.services.user_service import UserPermissionService
 
 router = APIRouter()
@@ -41,19 +40,6 @@ def _may_see_eta_delay(db: Session, user: dict) -> bool:
         return bool(UserPermissionService(db).check_user_has_permission(str(user_id), CLEARANCE_PERMISSION))
     except Exception:  # noqa: BLE001 - fail closed, as field_access does
         return False
-
-
-@router.get("/summary")
-def get_stock_status_summary(
-    product_ids: str = Query(..., description="Comma-separated product uuids, at most 200."),
-    _user: dict = Depends(require_any_permission_with_api_key(READ_PERMISSIONS)),
-    db: Session = Depends(get_db),
-):
-    """On hand and SO per item, on the panel's rules: the item chips of one page of a list."""
-    ids = [part.strip() for part in product_ids.split(",") if part.strip()]
-    if len(ids) > MAX_SUMMARY_IDS:
-        raise AppException(422, f"Ask for at most {MAX_SUMMARY_IDS} items at a time.")
-    return summaries(db, ids)
 
 
 @router.get("")

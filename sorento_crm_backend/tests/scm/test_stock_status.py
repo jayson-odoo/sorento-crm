@@ -489,7 +489,7 @@ def test_another_companys_warehouse_never_appears(scm_app):
 
 def test_another_companys_documents_packing_lists_and_products_never_appear(scm_app):
     """Security re-review S-A / S-B: every read is pinned to the caller's company, the ones
-    no visible-warehouse filter sits behind (Incoming PL, the summary, the product) included."""
+    no visible-warehouse filter sits behind (Incoming PL, the product) included."""
     from app.models.company import Company
     from app.models.product import Product
 
@@ -539,18 +539,11 @@ def test_another_companys_documents_packing_lists_and_products_never_appear(scm_
     assert (body["sales_orders"], body["purchase_orders"], body["spos"]) == ([], [], [])
     assert {k: body["totals"][k] for k in ("on_hand", "so_qty", "po_qty", "spo_qty", "incoming_pl")} == {
         "on_hand": 3, "so_qty": 0, "po_qty": 0, "spo_qty": 0, "incoming_pl": 0}
-    summary = TestClient(app).get(SUMMARY_URL, params={"product_ids": f"{p.id},{their_product.id}"}).json()
-    assert summary == [{"product_id": str(p.id), "on_hand": 3, "so_qty": 0}]
     assert TestClient(app).get(URL, params={"product_id": str(their_product.id)}).status_code == 404
 
 
-# ---------------------------------------------------------------- summary (item chips in lists)
-SUMMARY_URL = "/api/v1/inventory/stock-status/summary"
-
-
-def test_summary_gives_each_item_its_on_hand_and_so_on_the_panels_rules_in_one_call(scm_app):
+def test_totals_count_inactive_locations_and_so_ordered_less_delivered(scm_app):
     app, db, w, p = _setup(scm_app)
-    q = w.product("B")
     bb = _wh(db, "BB")
     con = _wh(db, "CON", active=False)
     _on_hand(db, p, bb, 10)
@@ -559,35 +552,18 @@ def test_summary_gives_each_item_its_on_hand_and_so_on_the_panels_rules_in_one_c
     _so(db, p, bb, 7, transferable=False)         # F out
     _so(db, p, bb, 4, purchasing_status="covered")
     _so(db, p, bb, 12, delivered=5)               # outstanding 7, ordered less delivered
-    _on_hand(db, q, bb, 2)
 
-    r = TestClient(app).get(SUMMARY_URL, params={"product_ids": f"{p.id},{q.id}"})
+    totals = _get(app, p)["totals"]
 
-    assert r.status_code == 200, r.text
-    by_id = {s["product_id"]: s for s in r.json()}
-    assert by_id[str(p.id)] == {"product_id": str(p.id), "on_hand": 11, "so_qty": 41}
-    assert by_id[str(q.id)] == {"product_id": str(q.id), "on_hand": 2, "so_qty": 0}
-    # The same figures the panel prints for the item.
-    panel = _get(app, p)["totals"]
-    assert (panel["on_hand"], panel["so_qty"]) == (11, 41)
-
-
-def test_summary_refuses_more_than_200_ids_and_ignores_ids_that_are_not_uuids(scm_app):
-    app, db, w, p = _setup(scm_app)
-    too_many = ",".join(str(uuid.uuid4()) for _ in range(201))
-    assert TestClient(app).get(SUMMARY_URL, params={"product_ids": too_many}).status_code == 422
-    r = TestClient(app).get(SUMMARY_URL, params={"product_ids": f"nope,{p.id}"})
-    assert r.status_code == 200
-    assert [s["product_id"] for s in r.json()] == [str(p.id)]
+    assert (totals["on_hand"], totals["so_qty"]) == (11, 41)
 
 
 def test_stock_viewers_alone_are_refused_the_customer_and_supplier_documents(scm_app):
     """Security review S1: `inventory.stock.view` opened stock balances only, never SO
-    customers or PO suppliers, so it does not open this panel (nor its summary)."""
+    customers or PO suppliers, so it does not open this read."""
     app, db, gcu, gcuk = scm_app
     w = World(db)
     p = w.product("A")
     grant_permission(db, "guest", "inventory.stock.view")
     as_user(app, gcu, gcuk, seed_user(db, "guest"))
     assert TestClient(app).get(URL, params={"product_id": str(p.id)}).status_code == 403
-    assert TestClient(app).get(SUMMARY_URL, params={"product_ids": str(p.id)}).status_code == 403

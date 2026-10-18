@@ -90,10 +90,3 @@ export interface StockStatus {
   purchase_orders: StockStatusPurchaseOrder[];
   spos: StockStatusSpo[];
 }
-
-/** `GET /api/v1/inventory/stock-status/summary` - one entry per item, for list chips. */
-export interface StockStatusSummary {
-  product_id: string;
-  on_hand: number;
-  so_qty: number;
-}

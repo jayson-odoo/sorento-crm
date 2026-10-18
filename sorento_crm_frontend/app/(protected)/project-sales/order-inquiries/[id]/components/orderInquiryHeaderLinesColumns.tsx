@@ -28,7 +28,7 @@ import {
   OrderInquiryVerbPill,
   ReservePill,
 } from '../../../_shared/components/OrderInquiryVerbPill';
-import { StockStatusPanel } from '@/components/stock-status/StockStatusPanel';
+import { OrderInquiryStockGrid } from '../../../_shared/components/OrderInquiryStockGrid';
 import { formatInquiryQty, raisedKindLabel } from '../../../_shared/lib/orderInquiryWorklist';
 import {
   lineConfirmationOf,
@@ -470,12 +470,9 @@ export function useOrderInquiryHeaderLinesColumns({
           expandedContent: (line: OrderInquiryLineRow) => (
             <div className="px-3 py-2">
               {line.product_id ? (
-                // STOCK-STATUS (owner OK, mock round 4): AutoCount's Available Stock Status for
-                // the line's item, this line's own SO marked.
-                <StockStatusPanel
+                <OrderInquiryStockGrid
                   productId={line.product_id}
-                  lineIds={line.core_line_id ? [line.core_line_id] : []}
-                  showOpenFullPage
+                  location={line.location ?? null}
                 />
               ) : (
                 <p className="text-xs text-muted-foreground">

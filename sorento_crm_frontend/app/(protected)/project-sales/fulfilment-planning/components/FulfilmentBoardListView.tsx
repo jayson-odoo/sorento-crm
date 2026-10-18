@@ -2,7 +2,6 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { StockStatusChip } from '@/components/stock-status/StockStatusChip';
 import {
   ChevronDown,
   ChevronRight,
@@ -631,42 +630,31 @@ export function FulfilmentBoardListView({
           // Decided cell's gated `contributionInquiryDecision`.
           const word = boardOrderInquiryWord(row.original.order_inquiry);
           return (
-            <span className="flex min-w-0 flex-col items-start gap-1">
-              <span className="flex min-w-0 items-center gap-1.5">
-                <span
-                  className="block min-w-0 truncate tabular-nums"
-                  title={row.original.item_code}
-                >
-                  {row.original.item_code}
-                </span>
-                {word ? (
-                  <Badge
-                    size="sm"
-                    appearance="light"
-                    variant="secondary"
-                    className="shrink-0"
-                    // AC-A3 to AC-A5, R1: the chip is a WORD, and the document number(s) or
-                    // the inquiry's own number ride in the tooltip - there is no room for
-                    // either beside a product code at 375px.
-                    title={word.title}
-                  >
-                    {word.word}
-                  </Badge>
-                ) : null}
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span
+                className="block min-w-0 truncate tabular-nums"
+                title={row.original.item_code}
+              >
+                {row.original.item_code}
               </span>
-              {/* STOCK-STATUS: AutoCount's stock status for the item, opened in place. */}
-              {row.original.product_id ? (
-                <StockStatusChip
-                  productId={row.original.product_id}
-                  itemCode={row.original.item_code}
-                  lineIds={row.original.line_id ? [row.original.line_id] : []}
-                  openKey={row.original.key}
-                />
+              {word ? (
+                <Badge
+                  size="sm"
+                  appearance="light"
+                  variant="secondary"
+                  className="shrink-0"
+                  // AC-A3 to AC-A5, R1: the chip is a WORD, and the document number(s) or
+                  // the inquiry's own number ride in the tooltip - there is no room for
+                  // either beside a product code at 375px.
+                  title={word.title}
+                >
+                  {word.word}
+                </Badge>
               ) : null}
             </span>
           );
         },
-        size: 170,
+        size: 140,
         minSize: 110,
         enableSorting: true,
       },

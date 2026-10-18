@@ -62,3 +62,20 @@ round 4, owner OK 17 Oct 07:55. AutoCount is the truth; the panel only reads.
 - AC-22 SRTWB1515: On hand 495 at active warehouses (499 with AutoCount's inactive ones at the
   screenshot moment), SO 10,390, PO 2,438, SPO 459, Incoming PL 227; BRW-BB 0 / -7,312 / 1,734 / 50 =
   -5,528.
+
+## Round 6 build (v6, approved 18 Oct 07:56)
+
+- AC-30 The stock table (`CellStockTable`) has no Where column on any screen.
+- AC-31 Given the AutoCount read, On hand, SO qty, PO qty and SPO qty on every row are AutoCount's figures for that
+  location (0 where AutoCount holds nothing); Available = On hand - SO qty + SPO qty; a set's Available subtotal and the
+  Total are the sums of those rows; a site pool's Available for Project follows the pool share rule over its own sum.
+- AC-32 Every location AutoCount holds for the item and the table does not list appears, in an "Other group" set with its
+  own subtotal; the Total's On hand / SO qty / PO qty / SPO qty equal AutoCount's totals.
+- AC-33 One "Incoming PL" row under the Total carries the counted incoming PL (+N) and opens its packing lists.
+- AC-34 A location's documents, given the AutoCount read, list only the S/O lines AutoCount counts at AutoCount's qty, plus
+  the location's open POs; they foot to the row's SO qty and PO qty.
+- AC-35 The Fulfilment Planning cell dialog, the OI line expand, the project quotation's stock popover and the stand-alone
+  page each show the table with the AutoCount read; a failed read leaves today's figures and no Incoming PL row.
+- AC-36 Removed: the board List view chip, the OI worklist chip, the loading plan Stock status tab (its old table is back),
+  the OI line panel (OrderInquiryStockGrid is back), the list-chip summary endpoint.
+
