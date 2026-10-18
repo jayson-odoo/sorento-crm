@@ -405,7 +405,8 @@ export function addSplit(
   // the rest at the delivery date on a new line (AC-A5 "Pending change default").
   if (
     line &&
-    line.splits.length === 0 &&
+    line.baseQty > 0 &&
+    readsRemain(line) &&
     (line.newQty != null || line.newDate != null)
   ) {
     const kept = Math.min(line.newQty ?? line.baseQty, line.baseQty);
