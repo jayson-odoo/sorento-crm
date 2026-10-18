@@ -22,6 +22,9 @@ class LineSplitOut(BaseModel):
     #: split reads once the line it sat on is cancelled, UAC C2).
     sits_on_line_id: Optional[str] = None
     remark: str = ""
+    #: The REMARK the email and the Excel print for this split while `remark` is empty
+    #: (`remark_for_row`, UAC AC-G5).
+    remark_generated: str = ""
 
 
 class LineSplitLineOut(BaseModel):
@@ -49,6 +52,12 @@ class LineSplitLineOut(BaseModel):
     #: AutoCount delivered the whole line (nothing open, no splits, nothing sitting on it):
     #: listed read-only, never split and never a sits-on target (UAC A3).
     delivered_in_full: bool = False
+    #: AutoCount qty less the splits sitting on the line (UAC AC-G3), when positive: one
+    #: more row under the line, never stored. `None` = no extra.
+    extra_qty: Optional[float] = None
+    extra_remark: Optional[str] = None
+    #: The REMARK the email prints for the line's own row (`remark_for_row`, AC-G9).
+    remark_generated: str = ""
     splits: List[LineSplitOut] = []
 
 
@@ -59,6 +68,9 @@ class LineSplitsOut(BaseModel):
     so_date: Optional[date] = None
     customer: Optional[str] = None
     project: Optional[str] = None
+    #: The last Confirm's date while no AutoCount change is pending (UAC AC-G1); `None`
+    #: while one is pending or when the order was never confirmed.
+    confirmed_at: Optional[date] = None
     lines: List[LineSplitLineOut] = []
 
 

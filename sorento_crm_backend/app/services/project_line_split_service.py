@@ -32,7 +32,6 @@ from app.models.project_so import (
     SOLineSplit,
 )
 from app.services.error_handler import AppException
-from app.services.project_order_inquiry_service import handover_moves
 
 _ZERO = Decimal("0")
 
@@ -76,6 +75,43 @@ def change_word(*, is_cancel: bool, delivery_date: Optional[date], base_date: Op
     return WORD_DELAY if delivery_date > base_date else WORD_ADVANCE
 
 
+def remark_for_row(
+    *,
+    qty: Any = None,
+    delivery_date: Optional[date] = None,
+    base_qty: Any = None,
+    base_date: Optional[date] = None,
+    is_cancel: bool = False,
+    extra: bool = False,
+    tell_qty: bool = False,
+) -> str:
+    """The generated REMARK of one printed row: the split sheet's pre-fill, the OI email and
+    the OI Excel all print this when staff typed none (UAC AC-G5, owner rule "OI email one
+    function").
+
+    * an AutoCount extra row (AC-G3): ``ORDER <qty>``;
+    * a split row, or a line's own row: its change word against the line's base date
+      (REMAIN / DELAY / ADVANCE, CANCEL BALANCE for an explicit cancel). Qty that splits
+      moved never reads as ORDER or CANCEL (AC-G4, crew ruling 18 Oct: 608 reads REMAIN);
+    * `tell_qty` (a line no split touches): its qty move as well, the way the settled
+      handover line says it (``DELAY, ORDER 145``).
+    """
+    if extra:
+        return f"ORDER {qty_text(qty)}"
+    word = change_word(is_cancel=is_cancel, delivery_date=delivery_date, base_date=base_date)
+    if not tell_qty or is_cancel or qty is None or base_qty is None:
+        return word
+    diff = _dec(qty) - _dec(base_qty)
+    if diff == _ZERO:
+        return word
+    pieces = [] if word == WORD_REMAIN else [word]
+    pieces.append(f"{'ORDER' if diff > _ZERO else 'CANCEL'} {qty_text(abs(diff))}")
+    return ", ".join(pieces)
+
+
+# Imported after `remark_for_row`: `project_order_inquiry_service` imports it back at its end.
+from app.services.project_order_inquiry_service import handover_moves  # noqa: E402
+
 #: A split line's state (`LineFacts.split_state`).
 SPLIT_ACTING = "acting"
 SPLIT_APPLIED = "applied"
@@ -99,6 +135,9 @@ class LineFacts:
     now_date: Optional[date]
     delivered_qty: Decimal
     pending_from: Optional[Dict[str, Any]] = None
+    #: With nothing pending, the `from` of the last change a Confirm applied to the line
+    #: (UAC AC-G1, refer back): what it read before that change. `None` without one.
+    applied_from: Optional[Dict[str, Any]] = None
     splits: List[SOLineSplit] = field(default_factory=list)
 
     @property
@@ -120,6 +159,21 @@ class LineFacts:
     @property
     def pending(self) -> bool:
         return self.pending_from is not None
+
+    @property
+    def refers_back(self) -> bool:
+        """Nothing pending, and the last change a Confirm applied is on record (AC-G1): the
+        view keeps reading that change, base before it and NEW after it."""
+        return (
+            self.pending_from is None
+            and self.applied_from is not None
+            and self.applied_from.get("qty") is not None
+        )
+
+    @property
+    def shows_change(self) -> bool:
+        """NEW QTY / NEW DATE are read off a change: a pending one, else the last applied."""
+        return self.pending or self.refers_back
 
     def delivered_in_full(self, sitting_on: set) -> bool:
         """AutoCount delivered the whole line (UAC A3): nothing open, something delivered, no
@@ -156,6 +210,12 @@ class LineFacts:
                 return _ZERO, None
             qty = max(_dec(from_qty) - self.delivered_qty, _ZERO)
             when = _as_date(self.pending_from.get("required_date")) or self.now_date
+            return qty, when
+        if self.refers_back:
+            # AC-G1: the last applied change stays the line's base until AutoCount changes
+            # it again, so a plan made against that change keeps acting and reads it.
+            qty = max(_dec(self.applied_from.get("qty")) - self.delivered_qty, _ZERO)
+            when = _as_date(self.applied_from.get("required_date")) or self.now_date
             return qty, when
         return self.now_qty, self.now_date
 
@@ -201,6 +261,136 @@ class LineFacts:
         first = self.splits[0]
         qty, when = self.live_base()
         return _dec(first.base_qty) == qty and first.base_date == when
+
+
+@dataclass
+class PlanRow:
+    """One row a line prints under itself in the sheet, the OI email and the OI Excel (UAC
+    AC-G2 to AC-G7): a split of the line, its own row (not split), or the AutoCount extra.
+    `new_qty` / `new_date` are NEW QTY / NEW DATE (CHANGE QUANTITY / CHANGE DATE), `None` =
+    blank."""
+
+    new_qty: Optional[Decimal]
+    new_date: Optional[date]
+    #: What prints: the remark staff typed, else `generated`.
+    remark: str
+    generated: str
+    split: Optional[SOLineSplit] = None
+    is_cancel: bool = False
+    extra: bool = False
+
+
+@dataclass
+class LinePlan:
+    """A line as every output prints it: base (QTY / DELIVERY DATE), the change shown (NEW
+    QTY / NEW DATE), and its rows."""
+
+    facts: LineFacts
+    base_qty: Decimal
+    base_date: Optional[date]
+    new_qty: Optional[Decimal]
+    new_date: Optional[date]
+    #: Split itself, or other lines' splits sit on it: its rows are the plan's.
+    involved: bool
+    extra_qty: Optional[Decimal]
+    remark_generated: str
+    rows: List[PlanRow] = field(default_factory=list)
+
+
+def line_plans(
+    facts: Dict[str, LineFacts], sits: Dict[str, Optional[str]], sitting_on: set
+) -> Dict[str, LinePlan]:
+    """Every line's `LinePlan` off its facts and where each split sits (`effective_sits_on`):
+    the one place the rows, the AutoCount extra (AC-G3) and every generated REMARK
+    (`remark_for_row`) are worked out, for the sheet, the email and the Excel alike."""
+    incoming: Dict[str, Decimal] = {}
+    for f in facts.values():
+        if f.split_state == SPLIT_STALE:
+            continue
+        for split in f.splits:
+            target = sits.get(str(split.id))
+            if split.is_cancel or not target or target == f.line_id:
+                continue
+            incoming[target] = incoming.get(target, _ZERO) + _dec(split.qty)
+    out: Dict[str, LinePlan] = {}
+    for line_id, f in facts.items():
+        base_qty, base_date = f.base()
+        in_full = f.delivered_in_full(sitting_on)
+        moves = (
+            handover_moves(base_qty, base_date, f.now_qty, f.now_date)
+            if f.shows_change and not in_full
+            else {}
+        )
+        new_qty = f.now_qty if "qty" in moves else None
+        new_date = f.now_date if "delivery_date" in moves else None
+        own = [] if f.split_state == SPLIT_STALE else list(f.splits)
+        moved_in = incoming.get(line_id, _ZERO)
+        involved = bool(own) or moved_in > _ZERO
+        on_line = moved_in + (
+            sum(
+                (
+                    _dec(s.qty)
+                    for s in own
+                    if not s.is_cancel and sits.get(str(s.id)) == line_id
+                ),
+                _ZERO,
+            )
+            if own
+            else base_qty
+        )
+        extra = f.now_qty - on_line if involved and not in_full else _ZERO
+        generated = remark_for_row(
+            qty=f.now_qty,
+            delivery_date=new_date or base_date,
+            base_qty=base_qty,
+            base_date=base_date,
+            tell_qty=not involved and bool(moves),
+        )
+        plan = LinePlan(
+            facts=f,
+            base_qty=base_qty,
+            base_date=base_date,
+            new_qty=new_qty,
+            new_date=new_date,
+            involved=involved,
+            extra_qty=extra if extra > _ZERO else None,
+            remark_generated=generated,
+        )
+        if own:
+            for split in own:
+                text = remark_for_row(
+                    qty=split.qty,
+                    delivery_date=split.delivery_date,
+                    base_date=split.base_date,
+                    is_cancel=bool(split.is_cancel),
+                )
+                plan.rows.append(
+                    PlanRow(
+                        new_qty=_dec(split.qty),
+                        new_date=split.delivery_date,
+                        remark=(split.remark or "").strip() or text,
+                        generated=text,
+                        split=split,
+                        is_cancel=bool(split.is_cancel),
+                    )
+                )
+        else:
+            plan.rows.append(
+                PlanRow(new_qty=new_qty, new_date=new_date, remark=generated, generated=generated)
+            )
+        if plan.extra_qty is not None:
+            text = remark_for_row(qty=plan.extra_qty, extra=True)
+            plan.rows.append(
+                PlanRow(
+                    new_qty=plan.extra_qty,
+                    new_date=f.now_date,
+                    remark=text,
+                    generated=text,
+                    extra=True,
+                )
+            )
+        out[line_id] = plan
+    return out
 
 
 class LineSplitService:
@@ -333,6 +523,43 @@ class LineSplitService:
                 break
         return out
 
+    def applied_from_by_line(self, line_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
+        """The `from` of the newest APPLIED planning-change row per mirror line: the last
+        change a Confirm applied (newest applied batch, then its newest row, which carries
+        the batch's `from` like the pending read). The refer-back source (UAC AC-G1); a
+        line whose `from` is empty (AutoCount added it) is left out."""
+        wanted = sorted({str(i) for i in line_ids if i})
+        if not wanted:
+            return {}
+        from app.models.planning_change import (
+            PLANNING_CHANGE_STATE_APPLIED,
+            PlanningChangeBatch,
+            PlanningChangeRow,
+        )
+
+        found = (
+            self.db.query(PlanningChangeRow)
+            .join(PlanningChangeBatch, PlanningChangeBatch.id == PlanningChangeRow.batch_id)
+            .filter(
+                PlanningChangeRow.project_line_id.in_(wanted),
+                PlanningChangeBatch.applied_at.isnot(None),
+                PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_APPLIED,
+            )
+            .order_by(
+                PlanningChangeBatch.applied_at.desc(),
+                PlanningChangeRow.created_at.desc(),
+                PlanningChangeRow.id.desc(),
+            )
+            .all()
+        )
+        out: Dict[str, Dict[str, Any]] = {}
+        for row in found:
+            line_id = str(row.project_line_id)
+            if line_id in out:
+                continue
+            out[line_id] = dict(row.from_json or {})
+        return {line_id: got for line_id, got in out.items() if got.get("qty") is not None}
+
     def line_facts(self, order: ProjectSalesOrder) -> Dict[str, LineFacts]:
         """Every mirror line of the order, keyed by id, with its core line, codes and splits."""
         return self._facts_for(
@@ -426,6 +653,7 @@ class LineSplitService:
         )
         line_ids = [str(line.id) for line, _core in rows]
         pending = self.pending_from_by_line(line_ids)
+        applied = self.applied_from_by_line([i for i in line_ids if i not in pending])
         splits = self.splits_of_lines(line_ids)
         out: Dict[str, LineFacts] = {}
         for line, core in rows:
@@ -444,6 +672,7 @@ class LineSplitService:
                 now_date=line.delivery_date or (core.required_date if core is not None else None),
                 delivered_qty=delivered,
                 pending_from=pending.get(str(line.id)),
+                applied_from=applied.get(str(line.id)),
                 splits=splits.get(str(line.id), []),
             )
         return out
@@ -474,28 +703,28 @@ class LineSplitService:
             )
         ]
         listed.sort(key=lambda f: (f.item_code, f.location, f.line_no or 0))
+        plans = line_plans(lines, sits, sitting_on)
         out_lines = []
         for f in listed:
-            base_qty, base_date = f.base()
+            plan = plans[f.line_id]
             in_full = f.delivered_in_full(sitting_on)
-            # NEW cells only while a change is pending (an applied split reads blank).
-            moves = (
-                handover_moves(base_qty, base_date, f.now_qty, f.now_date)
-                if f.pending and not in_full
-                else {}
-            )
+            generated = {
+                str(row.split.id): row.generated for row in plan.rows if row.split is not None
+            }
             out_lines.append(
                 {
                     "line_id": f.line_id,
                     "line_no": f.line_no,
                     "item_code": f.item_code,
                     "location": f.location,
-                    "base_qty": float(base_qty),
-                    "base_date": base_date,
+                    "base_qty": float(plan.base_qty),
+                    "base_date": plan.base_date,
                     "now_qty": float(f.now_qty),
                     "now_date": f.now_date,
-                    "new_qty": float(f.now_qty) if "qty" in moves else None,
-                    "new_date": f.now_date if "delivery_date" in moves else None,
+                    # NEW cells read the change shown (AC-G1): the pending one, else the last
+                    # one a Confirm applied; blank where nothing moved (`handover_moves`).
+                    "new_qty": float(plan.new_qty) if plan.new_qty is not None else None,
+                    "new_date": plan.new_date,
                     "pending_change": f.pending,
                     # The saved splits still act on Confirm (`splits_act`); false once
                     # AutoCount moved on from the base they were made against.
@@ -503,6 +732,13 @@ class LineSplitService:
                     "split_state": f.split_state,
                     "delivered_qty": float(f.delivered_qty),
                     "delivered_in_full": in_full,
+                    "extra_qty": float(plan.extra_qty) if plan.extra_qty is not None else None,
+                    "extra_remark": (
+                        remark_for_row(qty=plan.extra_qty, extra=True)
+                        if plan.extra_qty is not None
+                        else None
+                    ),
+                    "remark_generated": plan.remark_generated,
                     "splits": [
                         {
                             "id": str(s.id),
@@ -511,6 +747,13 @@ class LineSplitService:
                             "is_cancel": bool(s.is_cancel),
                             "sits_on_line_id": sits.get(str(s.id)),
                             "remark": s.remark or "",
+                            "remark_generated": generated.get(str(s.id))
+                            or remark_for_row(
+                                qty=s.qty,
+                                delivery_date=s.delivery_date,
+                                base_date=s.base_date,
+                                is_cancel=bool(s.is_cancel),
+                            ),
                         }
                         for s in f.splits
                     ],
@@ -526,8 +769,25 @@ class LineSplitService:
             "so_date": self._core_order_date(order),
             "customer": facts.get("customer"),
             "project": facts.get("project"),
+            # AC-G1: shown once in the status line, only while nothing is pending.
+            "confirmed_at": (
+                None if any(f.pending for f in listed) else self._last_confirmed_on(order)
+            ),
             "lines": out_lines,
         }
+
+    def _last_confirmed_on(self, order: ProjectSalesOrder) -> Optional[date]:
+        """The day of the order's last Confirm (its newest supply decision), else `None`."""
+        from sqlalchemy import func
+
+        from app.models.project_so import SOSupplyDecision
+
+        when = (
+            self.db.query(func.max(SOSupplyDecision.confirmed_at))
+            .filter(SOSupplyDecision.project_sales_order_id == str(order.id))
+            .scalar()
+        )
+        return when.date() if when is not None else None
 
     def _core_order_date(self, order: ProjectSalesOrder) -> Optional[date]:
         if not order.so_id:
