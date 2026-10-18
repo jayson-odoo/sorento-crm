@@ -66,6 +66,7 @@ from tests.scm.test_line_splits_round3 import (
     _has_block,
     _line,
     _live_by_line,
+    _new_line_plan,
     _owner_plan,
     _owner_total,
     _printed,
@@ -718,9 +719,10 @@ def test_g19_a_board_reject_after_a_standing_re_confirm_retires_every_row(api, e
         {no: _worklist(s, s.line[no]) for no in OWNER_CASE})
 
 
-def _link_each_480_row(s):
-    """480's live ORDER rows (14 / 236 / 167 after the stored plan's Confirm), each linked to
-    a PO of its own for its own qty. Returns {qty: PO line}."""
+def _link_each_480_row(s, only=(14, 167, 236)):
+    """480's live ORDER rows (14 / 236 / 167 after the stored plan's Confirm), each of `only`
+    linked to a PO of its own for its own qty (the rest left unlinked). Returns {qty: PO
+    line}."""
     from app.models.project_so import INQUIRY_CANCELLED, IV_ORDER, OrderInquiryRow
 
     rows = (
@@ -734,6 +736,8 @@ def _link_each_480_row(s):
                                               _worklist(s, s.line[480]))
     out = {}
     for qty, row in by_qty.items():
+        if qty not in only:
+            continue
         _po, po_line = _po_line(s.world, _supplier(s.world), qty=qty,
                                 expected_date=date(2026, 10, 10))
         _link(s.world, row, po_line, qty=qty, document=f"ZZT-S0480-{qty}-{str(s.order.id)[:4]}")
@@ -851,13 +855,17 @@ def test_g19_a_re_confirm_after_a_declined_move_changes_nothing(api, emails, cas
     assert emails[start:] == [], ("AC-G13: a re-Confirm sends no email", case, told)
 
 
-def test_g19_a_kept_row_that_moves_whole_leaves_nothing_behind(api, emails):
+@pytest.mark.parametrize("linked_37", [False, True], ids=["37_row_unlinked", "37_row_on_its_own_po"])
+def test_g19_a_kept_row_that_moves_whole_leaves_nothing_behind(api, emails, linked_37):
     """Reviewer S2 / AC-G19: 752's 37 is a kept row of its own (the owner seed with 752 = 37
     own @ 20/11/2026 + 467 own @ 02/01/2027, 480 on the card plan, all confirmed, 752's PO
     for 504 linked across 37 + 467; the 467 is saved first so 752's AutoCount extra 145 joins
     its row, not the 37's). The 37 is then dragged whole onto 608 (the card plan)
-    and confirmed: no live 37 row is left on 752, 608 holds the 37 with its link, and nothing
-    is raised twice (608 632, 752 649, live total 1295)."""
+    and confirmed: no live 37 row is left on 752, and no live row of 752 at the 37's date of
+    any qty, 0 included (reviewer S4); 608 holds the 37 with its link, and nothing is raised
+    twice (608 632, 752 649, live total 1295). Run twice: as confirmed (752's PO sits on its
+    612 row, the 37 row unlinked) and with the 37 row on a PO of its own, whose 37 must
+    reach 608."""
     s = _seed(api)
     po = _link_owner_rows(s)
     _save(s, {**_owner_plan(), 752: [(467, D_752_NEW, 752, ""), (37, D_608, 752, "")]})
@@ -866,14 +874,248 @@ def test_g19_a_kept_row_that_moves_whole_leaves_nothing_behind(api, emails):
         "premise: 752's 37 is a row of its own", _worklist(s, s.line[752]))
     assert _linked(s, 752, po[752]) == _d("504"), ("premise: 752 holds its PO's 504",
                                                    _po_links(s, po))
+    po_37 = None
+    if linked_37:
+        from app.models.project_so import INQUIRY_CANCELLED as _CANCELLED, OrderInquiryRow
+
+        row_37 = (
+            s.db.query(OrderInquiryRow)
+            .filter(OrderInquiryRow.so_line_id == s.line[752].id,
+                    OrderInquiryRow.state != _CANCELLED, OrderInquiryRow.delivery_date == D_608)
+            .one()
+        )
+        _po, po_37 = _po_line(s.world, _supplier(s.world), qty=37,
+                              expected_date=date(2026, 11, 10))
+        _link(s.world, row_37, po_37, qty=37, document=f"ZZT-S0752-37-{str(s.order.id)[:4]}")
+        s.db.commit()
 
     _replan(s, emails, _card_replan())
     live = _live_by_line(s)
+    if po_37 is not None:
+        assert (_linked(s, 752, po_37), _linked(s, 608, po_37)) == (_d("0"), _d("37")), (
+            "the 37 row's own link moves with it to 608",
+            _linked(s, 752, po_37), _linked(s, 608, po_37))
     assert not [q for q, _when in live[752] if q == _d("37")], (
         "the whole 37 row leaves 752", _worklist(s, s.line[752]))
-    assert _linked(s, 608, po[752]) == _d("37"), ("608 holds the 37 with its link",
-                                                  _po_links(s, po))
-    assert _linked(s, 752, po[752]) == _d("467"), ("752 keeps 467 of its PO", _po_links(s, po))
+    from app.models.project_so import INQUIRY_CANCELLED
+
+    at_its_date = [r for r in _worklist(s, s.line[752])
+                   if r[1] != INQUIRY_CANCELLED and r[3] == D_608]
+    assert at_its_date == [], (
+        "reviewer S4: no live row of 752 at the 37's date 20/11/2026, of any qty (0 included)",
+        _worklist(s, s.line[752]))
+    if po_37 is None:
+        assert _linked(s, 608, po[752]) == _d("37"), ("608 holds the 37 with its link",
+                                                      _po_links(s, po))
+        assert _linked(s, 752, po[752]) == _d("467"), ("752 keeps 467 of its PO",
+                                                       _po_links(s, po))
+    else:
+        # 752's PO sits on the 467 split's row, which did not move: all 504 of it stays.
+        assert (_linked(s, 752, po[752]), _linked(s, 608, po[752])) == (_d("504"), _d("0")), (
+            "the staying row keeps 752's PO", _po_links(s, po))
     assert sum((q for q, _when in live[608]), Decimal(0)) == _d("632"), _worklist(s, s.line[608])
     assert sum((q for q, _when in live[752]), Decimal(0)) == _d("649"), _worklist(s, s.line[752])
     assert _owner_total(s) == _d("1295"), ("nothing raised twice", live)
+
+
+# ---------------------------------------------------------------------------
+# AC-G19 reviewer re-check of 450ef691d5 (B4, B5, S4 above, S5, N1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("ac_g16_confirm", [False, True],
+                         ids=["guard_without_the_ac_g16_confirm", "after_the_ac_g16_confirm"])
+def test_g19_a_board_reject_after_an_ac_g16_confirm_retires_the_kept_new_line_rows(
+    api, emails, ac_g16_confirm
+):
+    """Reviewer B4 / AC-G19: the New-line plan confirmed (480 = 14 own @ 20/09/2026, 236 @
+    20/11/2026 and 167 @ 20/11/2029 on New line). Then AutoCount moves 480 from 14 to 16 and
+    that Confirm runs (AC-G16: the own row follows, the kept New-line rows stand). Then the
+    board's Reject of 480, 608 and 752 retires every live row of the three lines, as it does
+    without the AC-G16 Confirm (the guard). The RAISED 236 and 167 stood live."""
+    s = _seed(api)
+    _save(s, _new_line_plan())
+    _confirm_batch(s, emails)
+    assert _live_by_line(s)[480] == sorted(
+        [(_d("14"), D_480_NEW), (_d("236"), D_608), (_d("167"), D_167)]), (
+        "premise: the New-line plan applied", _worklist(s, s.line[480]))
+    if ac_g16_confirm:
+        core = s.core[480]
+        core.qty_ordered, s.line[480].qty = Decimal("16"), Decimal("16")
+        s.db.commit()
+        batch = _build(s.world, [_change(QTY_CHANGED, core, so_number=s.core_so.so_number,
+                                         old_date=D_480_NEW, new_date=D_480_NEW, old_qty="14",
+                                         new_qty="16")], s.core_so, [str(core.id)])
+        assert batch is not None, "premise: the AutoCount change is pending"
+        r = _confirm(s.client, s.order.id, [
+            _line_payload(s.line[480].id, buy_qty="16"),
+            _line_payload(s.line[608].id, buy_qty="632"),
+            _line_payload(s.line[752].id, buy_qty="649"),
+        ], batch_id=str(batch.id))
+        assert r.status_code == 200, r.text
+        s.db.commit()
+        s.db.expire_all()
+        assert _live_by_line(s)[480] == sorted(
+            [(_d("16"), D_480_NEW), (_d("236"), D_608), (_d("167"), D_167)]), (
+            "premise AC-G16: the own row follows 14 -> 16, the New-line rows stand",
+            _worklist(s, s.line[480]))
+    _uncover(s, list(OWNER_CASE))
+    live = _live_by_line(s)
+    assert live == {480: [], 608: [], 752: []}, (
+        "the Reject retires every live OI row of 480 / 608 / 752", ac_g16_confirm,
+        {no: _worklist(s, s.line[no]) for no in OWNER_CASE})
+
+
+def _order_rows_of(s, no, qty):
+    """Line `no`'s live ORDER rows of `qty`, as (row id, qty linked to any PO)."""
+    from app.models.project_so import INQUIRY_CANCELLED, IV_ORDER, OrderInquiryRow
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    svc = ProjectOrderInquiryService(s.db)
+    return sorted(
+        (str(r.id), sum((Decimal(str(link.qty)) for link in svc._links_of(r.id)), Decimal(0)))
+        for r in s.db.query(OrderInquiryRow).filter(
+            OrderInquiryRow.so_line_id == s.line[no].id,
+            OrderInquiryRow.verb == IV_ORDER,
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+        )
+        if Decimal(str(r.qty)) == Decimal(str(qty))
+    )
+
+
+def test_g19_a_declined_row_keeps_its_links_and_the_live_total_stays_within_autocount(
+    api, emails
+):
+    """Reviewer B5 / AC-G19: from the confirmed stored plan, 480's rows are 14 on PO-A, 236 on
+    PO-B (received in full) and 167 unlinked. The card re-plan (236 and 167 onto 608, 752's
+    37 onto 608) is saved and confirmed. The 236's row cannot move, so the 236 is declined:
+    480 keeps the same 236 row with all of PO-B's 236, no PO-B link reaches 608, and no fresh
+    unlinked ORDER 236 appears on 480. The live ORDER total is exactly what AutoCount plus the
+    New-line deliveries need: the card plan leaves nothing on New line, so 1295 = 480 (14 own
+    + the declined 236 = 250) + 608 (632 less the declined 236 = 396: own 192 + 167 + 37) +
+    752 (467 own + extra 182 = 649). It read 1600."""
+    s, _po = _dev_db_case(api, emails)
+    pos = _link_each_480_row(s, only=(14, 236))
+    pos[236].qty_received = Decimal("236")
+    s.db.commit()
+    before_236 = _order_rows_of(s, 480, 236)
+    assert [linked for _id, linked in before_236] == [_d("236")], (
+        "premise: one 236 row on 480, linked for its 236", before_236)
+    _replan(s, emails, _card_replan())
+
+    assert _linked(s, 480, pos[236]) == _d("236"), (
+        "480 keeps its 236 with all of PO-B's links", _linked(s, 480, pos[236]))
+    assert _linked(s, 608, pos[236]) == _d("0"), ("no PO-B link reaches 608",
+                                                  _linked(s, 608, pos[236]))
+    assert _order_rows_of(s, 480, 236) == before_236, (
+        "the same 236 row stands; no fresh unlinked ORDER 236 on 480", before_236,
+        _order_rows_of(s, 480, 236), _worklist(s, s.line[480]))
+    assert _owner_total(s) == _d("1295"), (
+        "live ORDER total = AutoCount 1295 + 0 on New line (250 + 396 + 649)",
+        _owner_total(s), _live_by_line(s))
+
+
+D_S5 = date(2030, 1, 20)
+
+
+def _link_rows_of(s, no):
+    """Each live ORDER row of line `no` linked to a PO of its own for its own qty. Returns
+    {(qty, date): PO line}."""
+    from app.models.project_so import INQUIRY_CANCELLED, IV_ORDER, OrderInquiryRow
+
+    out = {}
+    for row in s.db.query(OrderInquiryRow).filter(
+        OrderInquiryRow.so_line_id == s.line[no].id, OrderInquiryRow.verb == IV_ORDER,
+        OrderInquiryRow.state != INQUIRY_CANCELLED,
+    ).all():
+        qty = Decimal(str(row.qty)).normalize()
+        _po, po_line = _po_line(s.world, _supplier(s.world), qty=qty,
+                                expected_date=date(2026, 10, 10))
+        _link(s.world, row, po_line, qty=qty,
+              document=f"ZZT-S{no}-{qty}-{row.delivery_date:%Y%m%d}-{str(s.order.id)[:4]}")
+        out[(qty, row.delivery_date)] = po_line
+    s.db.commit()
+    return out
+
+
+def test_g19_a_staying_splits_row_is_never_moved_for_a_moving_split_of_the_same_qty(
+    api, emails
+):
+    """Reviewer S5 / AC-G19 ("rows of splits that did not move never move"): 480 is planned as
+    14 own @ 20/09/2026 plus, on New line, 167 @ 20/11/2026, 167 @ 20/11/2029 and 69 @
+    20/01/2030, confirmed, and each of its four rows is then linked to a PO of its own. Only
+    the 167 @ 20/11/2029 is re-planned onto 608; the other 167 (same qty, so a pick by qty
+    alone would be wrong and visible) stays on New line. The staying 167 @ 20/11/2026 row,
+    the 14 and the 69 keep their rows and links on 480; only the moving 167's PO reaches 608."""
+    s = _seed(api)
+    _save(s, {480: [(14, D_480_NEW, 480, ""), (167, D_608, "new", ""), (167, D_167, "new", ""),
+                    (69, D_S5, "new", "")]})
+    _confirm_batch(s, emails)
+    assert _live_by_line(s)[480] == sorted([(_d("14"), D_480_NEW), (_d("167"), D_608),
+                                            (_d("167"), D_167), (_d("69"), D_S5)]), (
+        "premise: 480 holds one row per split", _worklist(s, s.line[480]))
+    pos = _link_rows_of(s, 480)
+    before = _rows_480(s)
+
+    _replan(s, emails, {
+        480: [(14, D_480_NEW, 480, ""), (167, D_608, "new", ""), (167, D_167, 608, ""),
+              (69, D_S5, "new", "")],
+        608: [],
+        752: [],
+    })
+    after = _rows_480(s)
+    for key in ((_d("14"), D_480_NEW), (_d("167"), D_608), (_d("69"), D_S5)):
+        assert after.get(key) == before[key], (
+            "a staying split keeps its row and links on 480", key, before[key], after.get(key))
+    assert _linked(s, 608, pos[(_d("167"), D_608)]) == _d("0"), (
+        "the staying 167's PO never reaches 608", _linked(s, 608, pos[(_d("167"), D_608)]))
+    assert _linked(s, 608, pos[(_d("167"), D_167)]) == _d("167"), (
+        "the moving 167 takes its own PO to 608", _linked(s, 608, pos[(_d("167"), D_167)]))
+
+
+def test_g19_a_split_re_landed_from_its_target_moves_links_its_origin_no_longer_holds(
+    api, emails
+):
+    """Reviewer N1 / AC-G19: the card plan confirmed from scratch (480's PO: 14 on 480, 403 on
+    608), then 480's own 14 row gives that PO's 14 back and is linked to PO-A instead, so
+    none of 480's own rows hold a link of 480's PO any more. The 167 is then re-landed from
+    608 onto 752 and confirmed: its 167 of links move from 608 to 752 (608 keeps 236), and the
+    14 row keeps PO-A. It moved nothing."""
+    from app.models.project_so import OrderInquiryLink
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    s = _seed(api)
+    po = _link_owner_rows(s)
+    _save(s, _owner_plan())
+    _confirm_batch(s, emails)
+    assert _po_links(s, po) == {
+        "480 on 480": _d("14"), "480 on 608": _d("403"),
+        "752 on 752": _d("467"), "752 on 608": _d("37"),
+    }, ("premise: the card plan's links", _po_links(s, po))
+    row_14 = _order_row(s.world, s.line[480])
+    s.db.query(OrderInquiryLink).filter(
+        OrderInquiryLink.row_id == row_14.id, OrderInquiryLink.po_line_id == po[480].id,
+    ).delete(synchronize_session=False)
+    s.db.flush()
+    ProjectOrderInquiryService(s.db).refresh_link_state([row_14])
+    _po_a, po_a = _po_line(s.world, _supplier(s.world), qty=14, expected_date=date(2026, 9, 10))
+    _link(s.world, row_14, po_a, qty=14, document=f"ZZT-S0480-A-{str(s.order.id)[:4]}")
+    s.db.commit()
+    assert (_linked(s, 480, po[480]), _linked(s, 608, po[480])) == (_d("0"), _d("403")), (
+        "premise: 480's own rows hold none of its PO; 608 holds 403", _po_links(s, po))
+
+    _replan(s, emails, {
+        480: [(14, D_480_NEW, 480, ""), (236, D_608, 608, ""), (167, D_167, 752, "")],
+        752: [(37, D_608, 608, ""), (467, D_752_NEW, 752, "")],
+        608: [],
+    })
+    got = {
+        "480's PO on 480": _linked(s, 480, po[480]),
+        "480's PO on 608": _linked(s, 608, po[480]),
+        "480's PO on 752": _linked(s, 752, po[480]),
+        "PO-A on 480": _linked(s, 480, po_a),
+    }
+    assert got == {
+        "480's PO on 480": _d("0"), "480's PO on 608": _d("236"),
+        "480's PO on 752": _d("167"), "PO-A on 480": _d("14"),
+    }, ("the 167's links move from 608 to 752", got)
