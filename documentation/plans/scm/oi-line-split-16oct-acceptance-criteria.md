@@ -321,6 +321,15 @@ SO417636 CSK14B BRW-BB, with the owner's plan:
     - the card plan confirmed, then 167 re-planned from 608 onto 752: only the 167's links move from 608 to 752,
       and 480's own 14 and its links stay on 480.
   - A line that stands at a re-Confirm (AC-G13) has its live rows filed under the new decision, so a later
-    board Reject (`uncover_lines`) retires them like any other line's rows.
-  - A kept row that moves whole leaves no live row behind on the origin (its qty is cancelled there, not
-    raised twice).
+    board Reject (`uncover_lines`) retires them like any other line's rows. The same holds for the kept
+    New-line rows of a line whose own row followed a later AutoCount change (AC-G16): after that Confirm, a
+    board Reject retires every row of the line (reviewer B4).
+  - Only links on rows that can move ever move. A declined split (its row received in full) keeps its row
+    and its links, and no other split's move takes links from it. Example: 480 = 14 on PO-A, 236 on PO-B
+    received in full, 167 unlinked; the card re-plan declines the 236, and 480 keeps the 236 with PO-B's
+    links, and the live ORDER total never exceeds what AutoCount plus the New-line deliveries need
+    (reviewer B5).
+  - A split re-landed from one target onto another (608 to 752) moves its links from the target that holds
+    them, even when none of the origin's own rows still hold a link of that PO (reviewer nit).
+  - A kept row that moves whole leaves no live row behind on the origin at its date, of any qty (its qty is
+    cancelled there, not raised twice).
