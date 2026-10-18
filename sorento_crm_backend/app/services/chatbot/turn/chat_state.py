@@ -828,8 +828,10 @@ def apply_changes(
         out[question_mod.POSITIONS_KEY] = list(roster_picks)
     if "close_question" in ops:
         if question_mod.is_the_stock_question(open_question):
-            # Only an owed quantities question is cancelled, and only by a lone close.
-            if open_question.get("kind") == question_mod.QUANTITIES and set(ops) == {"close_question"}:
+            # Only an owed quantities question is cancelled, and only by a lone close that
+            # names nothing of its own: a close with an entity this message states is a new ask.
+            names_own = any(e.get("current_message") is True for e in _entities(out))
+            if open_question.get("kind") == question_mod.QUANTITIES and set(ops) == {"close_question"} and not names_own:
                 out[question_mod.ANSWER_KEY] = {**question_mod.NO_ANSWER, "mode": "cancel"}
         elif open_question is not None:
             pending, focus.required_ask = None, None
