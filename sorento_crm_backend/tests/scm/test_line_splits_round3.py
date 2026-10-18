@@ -238,9 +238,10 @@ def _table_rows(html):
 COLS = ("QTY", "NEW QTY", "DELIVERY", "NEW DATE", "REMARK")
 
 
-def _printed(sent):
+def _printed(sent, cols=COLS):
     """Every item row of the sent handover email(s) as (QTY, NEW QTY, DELIVERY, NEW DATE,
-    REMARK), blank cells as "". The S/O header table and S/O group rows are skipped."""
+    REMARK) (or `cols`), blank cells as "". The S/O header table and S/O group rows are
+    skipped."""
     assert sent, "the batch Confirm sent no handover email"
     out = []
     for handover in sent:
@@ -251,7 +252,7 @@ def _printed(sent):
             if len(row) != len(head):
                 continue  # an S/O NO group row
             cell = dict(zip(head, row))
-            out.append(tuple(cell.get(col, "") for col in COLS))
+            out.append(tuple(cell.get(col, "") for col in cols))
     return out
 
 
@@ -408,6 +409,22 @@ def test_g6_the_email_prints_one_row_per_split_under_its_line_and_the_extra_row(
     assert rows_608[0][4] != "ORDER 440", ("the 440 moved, it is not bought", rows_608)
     assert rows_608[0] == ROW_608, ("crew ruling: 608 reads REMAIN", rows_608)
     assert len(rows) == 7, ("nothing else is told for these three lines", rows)
+
+
+def test_g6_continuation_rows_blank_location_and_item_code_too(api, emails):
+    """Mock section 5 (AC-G11): on a line's 2nd+ row LOCATION and ITEM CODE print blank, like
+    QTY and DELIVERY; the line's first row carries them. 608 (one row) carries them too."""
+    s = _seed(api)
+    _save(s, _owner_plan())
+    sent = _confirm_batch(s, emails)
+    rows = _printed(sent, ("LOCATION", "ITEM CODE") + COLS)
+    where = (s.world.own_wh.warehouse_code, s.world.product.product_code)
+    blank = ("", "")
+    block_480 = [where + BLOCK_480[0]] + [blank + r for r in BLOCK_480[1:]]
+    block_752 = [where + BLOCK_752[0]] + [blank + r for r in BLOCK_752[1:]]
+    assert _has_block(rows, block_480), ("480: 236 / 167 print no LOCATION / ITEM CODE", rows)
+    assert _has_block(rows, block_752), ("752: 467 / 182 print no LOCATION / ITEM CODE", rows)
+    assert where + ROW_608 in rows, ("608's one row carries LOCATION / ITEM CODE", rows)
 
 
 def test_g6_a_typed_split_remark_replaces_the_generated_one(api, emails):

@@ -14,6 +14,8 @@ import {
   balance,
   block,
   dateIn,
+  drawnUnder,
+  FROM_LINE_LABEL,
   ownerCase,
   qty,
   queryQty,
@@ -192,7 +194,9 @@ describe('AC-A9 drops move ALL of it at once', () => {
     await dropIt();
     expect(qty(480, 2).value).toBe('403');
     expect(dateIn(480, 2).value).toBe('20/11/2026');
-    expect(balance(608).closest('tbody')!.textContent).toMatch(/\+403 from line 480/);
+    // variant B (AC-G2): the 403 row is drawn under 608 with its LINE cell 480; no label
+    expect(drawnUnder(608, 480, 2)).toEqual({ inBlock: true, lineCell: true });
+    expect(balance(608).closest('tbody')!.textContent).not.toMatch(FROM_LINE_LABEL);
     const moved = toasts().find((t) => /^Moved 403 to 20\/11\/2026 · line 608/.test(t.msg));
     expect(moved, 'toast Moved 403 to 20/11/2026 · line 608').toBeDefined();
     expect(moved!.opts?.action?.label).toBe('Undo');
@@ -209,7 +213,8 @@ describe('AC-A9 drops move ALL of it at once', () => {
     expect(qty(480, 1).value).toBe('14');
     expect(qty(480, 2).value).toBe('403');
     expect(dateIn(480, 2).value).toBe('20/11/2026');
-    expect(block(608).textContent).toMatch(/\+403 from line 480/);
+    expect(drawnUnder(608, 480, 2)).toEqual({ inBlock: true, lineCell: true });
+    expect(block(608).textContent).not.toMatch(FROM_LINE_LABEL);
     expect(balance(480).textContent).not.toMatch(/left|over/);
     expect(toasts().some((t) => /^Moved 403 to /.test(t.msg))).toBe(true);
   });
@@ -258,7 +263,8 @@ describe('AC-A9 drops move ALL of it at once', () => {
     await dropIt();
     expect(qty(480, 1).value).toBe('417');
     expect(dateIn(480, 1).value).toBe('20/11/2026');
-    expect(block(608).textContent).toMatch(/\+417 from line 480/);
+    expect(drawnUnder(608, 480, 1)).toEqual({ inBlock: true, lineCell: true });
+    expect(block(608).textContent).not.toMatch(FROM_LINE_LABEL);
     expect(screen.queryByRole('button', { name: 'Split line 480 quantity' })).toBeNull();
     expect(toasts().some((t) => /^Moved 417 to 20\/11\/2026 · line 608/.test(t.msg))).toBe(true);
   });
@@ -345,7 +351,8 @@ describe('the owner case, SO417636 CSK14B line 480 end to end', () => {
     await dropIt();
     expect(qty(480, 2).value).toBe('403');
     expect(dateIn(480, 2).value).toBe('20/11/2026');
-    expect(block(608).textContent).toMatch(/\+403 from line 480/);
+    expect(drawnUnder(608, 480, 2)).toEqual({ inBlock: true, lineCell: true });
+    expect(block(608).textContent).not.toMatch(FROM_LINE_LABEL);
 
     // 4/5 type 236 over 403: "167 left" appears
     typeQty(480, 2, '236');

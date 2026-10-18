@@ -7,6 +7,8 @@ import {
   addBtn,
   block,
   dateIn,
+  drawnUnder,
+  FROM_LINE_LABEL,
   ownerCase,
   qty,
   queryQty,
@@ -72,7 +74,9 @@ describe('planned date of a line', () => {
     );
     await dropIt();
     expect(dateIn(480, 1).value).toBe('20/09/2026');
-    expect(block(752).textContent).toMatch(/from line 480/);
+    // variant B (AC-G2): 480's row is drawn under 752 with its LINE cell 480; no label
+    expect(drawnUnder(752, 480, 1)).toEqual({ inBlock: true, lineCell: true });
+    expect(block(752).textContent).not.toMatch(FROM_LINE_LABEL);
   });
 
   it('the "N left" chip dropped onto 752 lands on 20/09/2026 too', async () => {

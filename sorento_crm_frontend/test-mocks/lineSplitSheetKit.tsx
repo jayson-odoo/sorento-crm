@@ -250,6 +250,23 @@ export function blockOf(el: Element) {
   return el.closest('tbody') as HTMLElement;
 }
 
+/**
+ * Variant B (AC-G2): where split `n` of line `origin` is drawn. `inBlock` = it sits in line
+ * `target`'s block; `lineCell` = its own LINE cell reads `origin`.
+ */
+export function drawnUnder(target: number, origin: number, n: number) {
+  const row = qty(origin, n).closest('tr') as HTMLTableRowElement;
+  return {
+    inBlock: block(target).contains(row),
+    lineCell: Array.from(row.cells).some(
+      (td) => (td.textContent ?? '').trim() === String(origin),
+    ),
+  };
+}
+
+/** The retired destination label (owner "no labels", AC-G11): `+236 from line 480`. */
+export const FROM_LINE_LABEL = /\+\d+ from line/;
+
 export const within_ = within;
 
 /** Every message handed to a toast function, with its options. */

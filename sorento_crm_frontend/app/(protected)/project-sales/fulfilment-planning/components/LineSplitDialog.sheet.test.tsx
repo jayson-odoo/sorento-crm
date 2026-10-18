@@ -11,6 +11,8 @@ import {
   block,
   blockIds,
   dateIn,
+  drawnUnder,
+  FROM_LINE_LABEL,
   leaveSheet,
   ownerCase,
   qty,
@@ -160,21 +162,40 @@ describe('AC-A3 merged cells and the extra notes', () => {
     expect(screen.queryByRole('button', { name: 'Drag line 32' })).toBeNull();
   });
 
-  it('a line other lines splits sit on shows "+N from line M" for each', async () => {
+  it('another line\'s split sitting on a line is drawn in that line\'s block with its own LINE cell, no label', async () => {
     getLineSplits.mockResolvedValue(savedCase());
     await renderDialog();
     await sheet();
-    expect(block(608).textContent).toMatch(/\+236 from line 480/);
-    expect(block(480).textContent).not.toMatch(/from line 480/);
-    // the split with no sits-on line (a new line) is shown on no other line
+    // AC-G2 / AC-G11: s236 (480 split 2) sits on 608: drawn under 608, LINE cell 480
+    expect(drawnUnder(608, 480, 2)).toEqual({ inBlock: true, lineCell: true });
+    expect(block(608).textContent).not.toMatch(FROM_LINE_LABEL);
+    // the split with no sits-on line (a new line) stays in 480 and is drawn on no other line
+    expect(drawnUnder(480, 480, 3).inBlock).toBe(true);
+    expect(block(752).querySelector('tr[data-origin-line-id="L480"]')).toBeNull();
     expect(block(752).textContent).not.toMatch(/from line/);
   });
 
-  it('"+N from line M" also shows on an added line', async () => {
+  it('a split sitting on an added line is drawn in the added line\'s block too, no label', async () => {
     getLineSplits.mockResolvedValue(addedCase());
     await renderDialog({ focusLineId: 'L16' }, 'pso-424910');
     await sheet();
-    expect(block(32).textContent).toMatch(/\+4 from line 16/);
+    // line 16 split 2 (4 @ 16/10/2026) sits on added line 32
+    expect(drawnUnder(32, 16, 2)).toEqual({ inBlock: true, lineCell: true });
+    expect(block(32).textContent).not.toMatch(FROM_LINE_LABEL);
+  });
+
+  it('owner "no labels" (AC-G11): no "+N from line M" text anywhere in the sheet', async () => {
+    const p = savedCase();
+    // 752 also drops 37 on 608: two lines' splits sit on 608
+    p.lines.find((l) => l.line_id === 'L752')!.splits = [
+      { id: 's37', qty: 37, delivery_date: '2026-11-20', is_cancel: false, sits_on_line_id: 'L608', remark: '', remark_generated: '' },
+      { id: 's467', qty: 467, delivery_date: '2027-01-02', is_cancel: false, sits_on_line_id: 'L752', remark: '', remark_generated: '' },
+    ];
+    getLineSplits.mockResolvedValue(p);
+    await renderDialog();
+    const table = await sheet();
+    expect(table.textContent).not.toMatch(FROM_LINE_LABEL);
+    expect(table.textContent).not.toMatch(/from line \d+/);
   });
 
   it('a line whose saved splits are stale shows the "AutoCount changed" pill; a line that acts shows none', async () => {
