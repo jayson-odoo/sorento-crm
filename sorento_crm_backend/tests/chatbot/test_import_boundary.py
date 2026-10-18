@@ -67,10 +67,16 @@ ALLOWED = {
     # ideation offload; `/chat/turn` has no seam for those. Bench tooling, not core, not on a
     # request path. Listed by file, like `test_replay.py` above.
     "tests/chatbot_eval/test_replay_live.py",
+    # EVAL-SETS chained live turns (`replay.py live --chain`): same seams as test_replay_live.py, plus
+    # `console_service._next_state`, the console's own reading of a dry-run session_patch, which the
+    # chain must match. Bench tooling, not core, not on a request path. Listed by file.
+    "tests/chatbot_eval/test_replay_chain.py",
     # Bench tooling, not core, not on a request path: it patches the engine's run_turn to pin offload=False.
     "tests/chatbot_eval/test_replay_guard.py",
     # Bench tooling, not core, not on a request path: it stubs the engine's run_turn to return a failed-status turn.
     "tests/chatbot_eval/test_replay_failfast.py",
+    # Bench tooling, not core, not on a request path: it reads the engine's scope helpers to pin the grounding tier's scope.
+    "tests/chatbot_eval/test_replay_scope.py",
     # Chatbot memory lane A S2 (contract section 4/5): the contact's memory/facts
     # surface is a `user_management.contacts` route, so it cannot live under
     # `app/services/chatbot/`, yet its vocabulary, precedence and row-lock rules
