@@ -81,13 +81,18 @@ export function DatePicker({
     setInputValue(value ? formatDDMMYYYY(value) : '');
   }, [value]);
 
+  // A typed date commits when the person leaves the box (blur) or presses Enter, never per
+  // keystroke: deleting one digit of 20/11/2026 must not store 20/01/2026 mid-edit (OI-LINE-
+  // SPLIT AC-G8). A text that is no day commits nothing.
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const raw = e.target.value;
-    setInputValue(raw);
-    const parsed = parseDateInput(raw);
+    setInputValue(e.target.value);
+  };
+
+  const commitTyped = () => {
+    const parsed = parseDateInput(inputValue);
     if (parsed !== undefined) {
-      onChange?.(parsed);
-    } else if (raw.trim() === '' && !required) {
+      if (!value || formatDDMMYYYY(value) !== formatDDMMYYYY(parsed)) onChange?.(parsed);
+    } else if (inputValue.trim() === '' && !required && value) {
       onChange?.(undefined);
     }
   };
@@ -108,6 +113,10 @@ export function DatePicker({
         placeholder={placeholder}
         value={inputValue}
         onChange={handleInputChange}
+        onBlur={commitTyped}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') commitTyped();
+        }}
         disabled={disabled}
         aria-label={ariaLabel}
         className={cn('flex-1', inputClassName)}
