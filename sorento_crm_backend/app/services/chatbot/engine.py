@@ -4870,6 +4870,7 @@ def _run_stages_body(  # noqa: PLR0915
             closed_lists=parser_config.closed_lists,
         )
     verdict = closed_lists_verdict(verdict, gate=parser_config.closed_lists)
+    held_none_match: dict[str, Any] | None = None
     if parser_config.closed_lists and state_in.focus.products:
         # SPEC-OVER-HELD: a spec said about a held product narrows that product's family
         # (`head/held_family.py`). A read failure leaves the verdict as it was.
@@ -4881,6 +4882,18 @@ def _run_stages_body(  # noqa: PLR0915
             family_note = None
         if family_note:
             turn_trace.add("held_family", family_note)
+            if family_note.get("none_match"):
+                held_none_match = {
+                    "held": [p.get("canonical_code") for p in state_in.focus.products if isinstance(p, dict) and p.get("canonical_code")],
+                    "said": [
+                        str(e.get("raw") or "").strip()
+                        for e in verdict.get("entities") or []
+                        if isinstance(e, dict)
+                        and e.get("current_message") is not False
+                        and str(e.get("hint") or "").strip().lower() in ("specification", "spec", "brand")
+                        and str(e.get("raw") or "").strip()
+                    ],
+                }
     if parser_config.closed_lists:
         # SCHEME-INDEX: a listed scheme about products indexes their certificates, never
         # empties the answer (`head/scheme_index.py`). A read failure leaves the verdict.
@@ -7335,6 +7348,21 @@ def _run_stages_body(  # noqa: PLR0915
             answer = turn_compose.Answer(
                 text=account_question or str((customer_scope or {}).get("refusal") or "")
             )
+
+        if (
+            held_none_match
+            and answer is not None
+            and lane_error_text is None
+            and branch_kind == "business_query"
+            and not (customer_scope_refused or sales_report_grant_refused)
+        ):
+            # FILTER-OVER-HELD (crew ruling (a), 18 Oct 2026): no member of the held family
+            # carries what the message names. Said plainly, from that data check alone; never
+            # the held products' own rows as if they matched, never the catalogue's set.
+            held_codes = ", ".join(dict.fromkeys(held_none_match["held"]))
+            said = " ".join(dict.fromkeys(held_none_match["said"])) or "that"
+            answer = turn_compose.Answer(text=f"{held_codes}: none on record with {said}.")
+            turn_trace.add("held_none_match", {"held": held_none_match["held"], "said": held_none_match["said"]})
 
     if answer is not None and lane_error_text is None:
         if _dealer_stock_ask(state_out, plan) or _dealer_incoming_ask(state_out, plan):
