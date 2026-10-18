@@ -41,6 +41,7 @@ vi.mock('../lib/new-product-application-service', () => ({
   lookupNewProductApplication: vi.fn(async () => []),
   lookupNewProductApplicationCustomers: vi.fn(async () => []),
   uploadNewProductApplicationLineImage: vi.fn(),
+  deleteNewProductApplicationLineImage: vi.fn(),
   downloadNewProductApplicationExcel: vi.fn(),
   createNewProductApplication: vi.fn(),
   updateNewProductApplication: vi.fn(),
@@ -58,6 +59,8 @@ import {
   reviseNewProductApplication,
   submitNewProductApplication,
   uploadNewProductApplicationLineImage,
+  deleteNewProductApplicationLineImage,
+  updateNewProductApplication,
   downloadNewProductApplicationExcel,
 } from '../lib/new-product-application-service';
 import NewProductApplicationForm from './NewProductApplicationForm';
@@ -377,5 +380,44 @@ describe('purchasing feedback on the portal (PQ1)', () => {
     expect(asMock(downloadNewProductApplicationExcel).mock.calls[0][0]).toBe(
       'a-1',
     );
+  });
+});
+
+describe('image removal on a saved portal draft', () => {
+  it('stages the removal and applies it only after Save as draft', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      detail({
+        lines: [
+          line({
+            images: [
+              {
+                link_id: 'k-1',
+                attachment_id: 'at-1',
+                filename: 'sample-front.png',
+                url: '/files/1',
+                content_type: 'image/png',
+              },
+            ],
+          } as never),
+        ],
+      }),
+    );
+    asMock(updateNewProductApplication).mockResolvedValue(detail());
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    fireEvent.click(
+      await screen.findByRole('button', { name: /remove.*sample-front\.png/i }),
+    );
+    expect(screen.queryByText('sample-front.png')).toBeNull();
+    expect(deleteNewProductApplicationLineImage).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /save as draft/i }));
+    await waitFor(() =>
+      expect(deleteNewProductApplicationLineImage).toHaveBeenCalledWith(
+        'a-1',
+        'l-1',
+        'k-1',
+      ),
+    );
+    expect(deleteNewProductApplicationLineImage).toHaveBeenCalledTimes(1);
   });
 });

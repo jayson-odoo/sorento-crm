@@ -313,18 +313,51 @@ describe('images on a saved draft', () => {
     );
   });
 
-  it('removing an image calls delete with the link id; the control names the file', async () => {
+  it('removing an image only stages it: hidden at once, nothing sent until Save as draft', async () => {
     mock.existing = saved();
     mock.del.mockResolvedValue(undefined);
-    renderForm({ applicationId: 'npa-1' });
+    const { unmount } = renderForm({ applicationId: 'npa-1' });
 
     fireEvent.click(
       await screen.findByRole('button', {
         name: /remove.*sample-front\.png/i,
       }),
     );
+    expect(screen.queryByText('sample-front.png')).toBeNull();
+    expect(mock.del).not.toHaveBeenCalled();
+
+    saveDraft();
+    await waitFor(() => expect(mock.del).toHaveBeenCalledTimes(1));
+    expect(mock.del).toHaveBeenCalledWith('npa-1', 'l-1', 'k-1');
+    expect(mock.updateAsync.mock.invocationCallOrder[0]).toBeLessThan(
+      mock.del.mock.invocationCallOrder[0],
+    );
+    unmount();
+  });
+
+  it('applies a staged removal on Submit too', async () => {
+    mock.existing = saved();
+    mock.del.mockResolvedValue(undefined);
+    renderForm({ applicationId: 'npa-1' });
+    fireEvent.click(
+      await screen.findByRole('button', { name: /remove.*sample-front\.png/i }),
+    );
+    expect(mock.del).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
     await waitFor(() =>
       expect(mock.del).toHaveBeenCalledWith('npa-1', 'l-1', 'k-1'),
     );
+    expect(mock.del).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaving without saving removes nothing', async () => {
+    mock.existing = saved();
+    const { unmount } = renderForm({ applicationId: 'npa-1' });
+    fireEvent.click(
+      await screen.findByRole('button', { name: /remove.*sample-front\.png/i }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    unmount();
+    expect(mock.del).not.toHaveBeenCalled();
   });
 });
