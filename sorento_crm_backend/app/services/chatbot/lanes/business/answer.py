@@ -3939,14 +3939,19 @@ def not_found_error_message(
         if jsc.truthy(jsc.get(q, "closed_lists")):
             # CLOSED LISTS: an unsure token the resolver has real neighbours for is a
             # mistyped code, so it takes the did-you-mean below, not the vague clarify.
-            vague_unresolved = [t for t in vague_unresolved if not _unplaced_token_has_neighbours(r, g, t)]
+            # Only when EVERY unsure token has neighbours: otherwise the clarify names them all.
+            if all(_unplaced_token_has_neighbours(r, g, t) for t in vague_unresolved):
+                vague_unresolved = []
 
         if len(vague_unresolved) > 0:
             is_clarification = True  # so escalate-catalog's is_escalate_offer is false
             labels = _human_list(
                 [_prettify_type(t) for t in (allowed_types if isinstance(allowed_types, list) else [])]
             )
-            captured = ", ".join(jsc.js_string(t) for t in vague_unresolved)
+            # CLOSED LISTS: each unsure word is quoted on its own ("a", "b"), never one quoted run.
+            captured = (
+                '", "' if jsc.truthy(jsc.get(q, "closed_lists")) else ", "
+            ).join(jsc.js_string(t) for t in vague_unresolved)
             unresolved_set = {_nf_norm_raw(t) for t in unresolved}
             resolved_ents = [
                 e
