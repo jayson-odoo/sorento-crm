@@ -142,6 +142,17 @@ Main baseline for reuse: scratchpad evalrun3/s_main1.jsonl (crew-note on #1772).
   intermittent "grounded" rows (3 rows over 2 runs, none reproducible); the patched gate copy now prints each arm's
   row shape on the next one.
 
+### Round 3 live (train2 lane x1 on 3f473f6fb4, $0.614 / 116 calls; CI green on 3f473f6fb4)
+Same totals as the r2 lane run: real 49 (main 50), synthetic refine 10/28 (main 0), answer 19 + 3 unknown (main 21 + 1).
+R3-A fixed es-s5fbda6317 (and, with a spec the parser emitted this time, es-sdac84c3f5); the 3 refine flips P -> F
+(es-s5f0edf7fe, es-s75dca5aa6, es-sa6d8a507a) and the es-s8b3b40f95 gain are parser variance: identical user block,
+prompt hash, v168 and model on both lane runs, no r3 code on their path. One run per arm swings +-3 on refine.
+- **R3-C CANCEL-CLEARS-NAMED (this lane, 2: es-3e53ca255a real and_x, es-sa6d8a507a synthetic refine):** while a
+  question is owed the parser sends only `close_question` but the message names its own product / spec; a lone close
+  is a cancel (chat_state.py:782-786), the cancel clears every product incl. the named one (apply.py:3530-3538), the
+  empty subject is refused (apply.py:2470) and the reply is generic. Expected: a close that comes with an entity this
+  message names is not a cancel; a lone close that names nothing still cancels.
+
 ### R4 (crew via CHAT-CODE-LOOKUP, 18 Oct): no slice
 On main + v63 the parser never sees `Current subject:` (vocabulary line over the 350 L2 cap, context.py:29; only the
 subject shrinks, context.py:437-443; train2 s_main1 108/108, cp0 r2main 86/86). With the state section on, `_render_l2`
