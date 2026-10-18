@@ -51,11 +51,52 @@ def _family_ids(db: "Session", held_ids: list[str]) -> set[str]:
     }
 
 
+def _value_texts(value: Any) -> list[str]:
+    """The stored text forms of a registry value: an enum choice case aside, a number as
+    it is written in a JSON value (600 and 600.0 are the same size)."""
+    if isinstance(value, bool):
+        return [str(value).lower()]
+    if isinstance(value, (int, float)):
+        number = float(value)
+        return sorted({repr(number), str(int(number))} if number.is_integer() else {repr(number)})
+    return [str(value).lower()]
+
+
+def _brand_ids(db: "Session", brands: list[dict[str, Any]]) -> set[str] | None:
+    """The brands the message names, by the brand entity's id, code or name; None when it
+    names none."""
+    from sqlalchemy import func, or_
+
+    from app.models.product import Brand
+
+    words = {
+        str(v).strip().casefold()
+        for e in brands
+        for v in (e.get("canonical_code"), e.get("raw"))
+        if str(v or "").strip()
+    }
+    if not words:
+        return None
+    rows = db.query(Brand.id).filter(
+        or_(
+            Brand.id.in_([w for w in words if len(w) == 36]),
+            func.lower(Brand.brand_code).in_(words),
+            func.lower(Brand.brand_name).in_(words),
+        )
+    ).all()
+    return {str(bid) for (bid,) in rows}
+
+
 def narrow_held_family(
     db: "Session", verdict: dict[str, Any], held_products: list[dict[str, Any]]
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    """The verdict with the held family's spec-matching members as its products, and a
-    trace note; the verdict unchanged (and no note) when the rule does not apply."""
+    """The verdict with the held family's matching members as its products, and a trace
+    note; the verdict unchanged (and no note) when the rule does not apply.
+
+    FILTER-OVER-HELD (CHAT-STATE card R1, crew 18 Oct): a size is a number and a brand is a
+    filter too. When no member carries what the message names, the held products stay the
+    subject ("held, none match"), so the answer says plainly that they do not have it,
+    never the whole catalogue's set."""
     from sqlalchemy import func
 
     from app.models.product import Product
@@ -68,27 +109,40 @@ def narrow_held_family(
         for e in said
         if str(e.get("hint") or "").strip().lower() in _SPEC_HINTS
         and e.get("spec_key")
-        and isinstance(e.get("spec_value"), str)
-        and e.get("spec_value")
+        and e.get("spec_value") is not None
+        and str(e.get("spec_value")) != ""
     ]
+    brands = [e for e in said if str(e.get("hint") or "").strip().lower() == "brand"]
     names_a_product = any(str(e.get("hint") or "").strip().lower() == "product" for e in said)
     held_ids = [str(p["uuid"]) for p in held_products if isinstance(p, dict) and p.get("uuid")]
-    if not specs or names_a_product or not held_ids or verdict.get("family") is True:
+    if not (specs or brands) or names_a_product or not held_ids or verdict.get("family") is True:
         return verdict, None
     family = _family_ids(db, held_ids)
     if not family:
         return verdict, None
-    query = db.query(Product.id, Product.product_code).join(
-        ProductSpecifications, ProductSpecifications.product_id == Product.id
-    ).filter(Product.id.in_(list(family)))
+    query = db.query(Product.id, Product.product_code).filter(Product.id.in_(list(family)))
+    if specs:
+        query = query.join(ProductSpecifications, ProductSpecifications.product_id == Product.id)
     for key, value in specs:
-        query = query.filter(func.lower(ProductSpecifications.values[key]["value"].astext) == value.lower())
+        query = query.filter(func.lower(ProductSpecifications.values[key]["value"].astext).in_(_value_texts(value)))
+    brand_ids = _brand_ids(db, brands) if brands else None
+    if brand_ids is not None:
+        query = query.filter(Product.brand_id.in_(list(brand_ids) or [""]))
     matched = sorted(query.all(), key=lambda row: row[1])
+    note = {"held": len(held_ids), "family": len(family), "specs": specs, "brands": len(brands)}
     if not matched:
-        return verdict, None
+        # Held, none match: the subject is kept, and the filter beside it finds nothing.
+        held = [
+            {"raw": p.get("canonical_code"), "hint": "product", "canonical_code": p.get("canonical_code"),
+             "current_message": True, "confident": True}
+            for p in held_products
+            if isinstance(p, dict) and p.get("uuid") and p.get("canonical_code")
+        ]
+        if not held:
+            return verdict, None
+        return {**verdict, "entities": [*held, *entities]}, {**note, "matched": [], "none_match": True}
     products = [
         {"raw": code, "hint": "product", "canonical_code": code, "current_message": True, "confident": True}
         for _pid, code in matched
     ]
-    note = {"held": len(held_ids), "family": len(family), "matched": [code for _pid, code in matched], "specs": specs}
-    return {**verdict, "entities": [*products, *entities]}, note
+    return {**verdict, "entities": [*products, *entities]}, {**note, "matched": [code for _pid, code in matched]}
