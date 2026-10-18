@@ -209,24 +209,60 @@ def test_guard_a_held_product_holding_the_scheme_still_gets_only_that_schemes_fi
 # --- R2-4 KIND-NONE-HELD (reviewer nit, ruling (b) safety) -----------------------------------
 
 
-def test_guard_with_no_certificate_kind_listed_the_engine_keeps_the_held_product(session_factory, seeded, stub_access, monkeypatch):
-    """No attachment type is a certificate kind, so the scheme pick cannot become the kind. The
-    held product stays the subject: no fetch drops it, and the scheme's full list (another
-    product's files, here ZZSTRANGER1's) is never sent in its place."""
+def _no_kind_world(session_factory, code: str, *, scheme_out_of_scope: bool = False) -> dict[str, str]:
     from sqlalchemy import text
 
-    ids = _seed(session_factory, {"ZZTKN1": OTHERS})
+    from app.models.company import Company
+
+    ids = _seed(session_factory, {code: OTHERS})
     db = session_factory()
     db.execute(text("UPDATE attachment_types SET is_certificate = false"))
+    if scheme_out_of_scope:
+        other = "00000000-0000-0000-0000-000000000002"
+        db.add(Company(id=other, name="Other", code=unique_code("OTH")[:20]))
+        db.flush()
+        db.execute(text("UPDATE certificates SET company_id = :c WHERE scheme = :s"), {"c": other, "s": SCHEME})
     db.commit()
+    return ids
+
+
+def _spy_scheme_without_product(monkeypatch) -> list:
+    from app.services.chatbot.head import scheme_index
+
+    notes: list = []
+    real = scheme_index.scheme_without_product
+
+    def spy(*args, **kwargs):
+        out = real(*args, **kwargs)
+        notes.append(out[1])
+        return out
+
+    monkeypatch.setattr(scheme_index, "scheme_without_product", spy)
+    return notes
+
+
+@pytest.mark.parametrize("out_of_scope", [False, True], ids=["scheme in scope", "scheme out of scope"])
+def test_with_no_certificate_kind_listed_a_held_product_keeps_the_turn_off_scheme_without_product(
+    out_of_scope, session_factory, seeded, stub_access, monkeypatch
+):
+    """No attachment type is a certificate kind and a product is held (in the conversation
+    focus, not yet in the verdict). `scheme_without_product` must not run: the held product is
+    never dropped and the reply is never the bare `No <SCHEME> certificate on record.` without
+    the held code. What the turn does instead is asserted, not left to an empty fetch list."""
+    ids = _no_kind_world(session_factory, "ZZTKN1", scheme_out_of_scope=out_of_scope)
+    notes = _spy_scheme_without_product(monkeypatch)
 
     (_r1, _c1), (r2, c2) = _turns(
         session_factory, stub_access, monkeypatch,
         [("ZZTKN1", _stock(_product("ZZTKN1"))), ("Span certificate", _file_ask(_scheme()))],
     )
 
+    text = _text(r2)
+    assert not [n for n in notes if n], notes
+    assert text != f"No {SCHEME} certificate on record.", text
+    assert "ZZTKN1" in text, (text, c2)
     fetches = [args for name, args in c2 if name == "crm_master_product_attachments_list"]
-    assert all(args.get("product_ids") == [ids["ZZTKN1"]] for args in fetches), (_text(r2), c2)
+    assert all(args.get("product_ids") == [ids["ZZTKN1"]] for args in fetches), c2
     assert not [c for c in c2 if c[0] == "crm_resource_attachments_list"], c2
 
 
