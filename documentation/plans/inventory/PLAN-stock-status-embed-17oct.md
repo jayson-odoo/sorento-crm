@@ -1,6 +1,6 @@
 # PLAN: Available stock status, embedded in every process (STOCK-STATUS)
 
-Status: Building v6 (owner OK 18 Oct 07:56: '1. Keep' the stand-alone page, '2. Ok, rmb to drop where column in the ui'; 06:00: the same table on the project quotation). Lane STOCK-STATUS, size L, standard track
+Status: Building v6, S1 to S3 built at f4f5bd2ee6, S4 review and browser pass running (owner OK 18 Oct 07:56: '1. Keep' the stand-alone page, '2. Ok, rmb to drop where column in the ui'; 06:00: the same table on the project quotation). Lane STOCK-STATUS, size L, standard track
 
 ## Owner request (17 Oct)
 
