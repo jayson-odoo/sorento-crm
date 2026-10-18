@@ -124,7 +124,13 @@ def _turns(session_factory, stub_access, monkeypatch, turns, *, gate: bool = Tru
     def call_tool(self, name, args):
         calls.append((name, args))
         if name == "crm_master_product_attachments_list":
-            return json.dumps({"ok": True, "items": _rows(LINKED)})
+            # The real endpoint pages at `limit: int = Query(50, ...)`
+            # (app/api/v1/master_data/product_attachments.py:153): default and ceiling 50.
+            rows = _rows(LINKED)[: int(args.get("limit") or 50)]
+            return json.dumps({
+                "result_type": "product_attachments", "intro": "I have attached the file(s) below.", "ok": True,
+                "items": rows, "attachments": [], "action_links": [], "last_updated_at": None, "has_result": True,
+            })
         return json.dumps({"ok": True, "items": []})
 
     monkeypatch.setattr(MCPRuntimeClient, "call_tool", call_tool)

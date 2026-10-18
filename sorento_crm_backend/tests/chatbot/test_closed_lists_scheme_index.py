@@ -124,7 +124,8 @@ def _file_fetches(calls) -> list[dict]:
     return [args for name, args in calls if name == "crm_master_product_attachments_list"]
 
 
-def test_a_scheme_the_product_does_not_hold_asks_for_its_certificates(session_factory, seeded, stub_access, monkeypatch):
+def test_a_scheme_the_product_does_not_hold_keeps_the_product_and_filters_by_the_scheme(session_factory, seeded, stub_access, monkeypatch):
+    # Crew ruling (b), 18 Oct: held without the scheme -> said plainly, never other schemes' files.
     ids = _seed(session_factory)
 
     [(_r, calls)] = _turns(
@@ -134,7 +135,9 @@ def test_a_scheme_the_product_does_not_hold_asks_for_its_certificates(session_fa
     fetches = _file_fetches(calls)
     assert fetches, calls
     assert fetches[0].get("product_ids") == [ids["product"]], fetches
-    assert not fetches[0].get("certificate_ids"), fetches
+    assert fetches[0].get("certificate_ids") == [ids["ZZSPAN"]], fetches
+    assert ids["ZZPPS"] not in (fetches[0].get("certificate_ids") or []), fetches
+    assert all(name == "crm_master_product_attachments_list" for name, _args in calls if "attachments" in name), calls
 
 
 def test_a_scheme_the_product_holds_narrows_to_that_scheme(session_factory, seeded, stub_access, monkeypatch):
