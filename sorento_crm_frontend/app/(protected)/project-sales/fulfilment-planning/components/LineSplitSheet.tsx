@@ -344,7 +344,6 @@ function RemarkCell({
 
 interface LineBlockProps {
   line: SplitLine;
-  incoming: string;
   incomingRows: IncomingRow[];
   soNumber: string;
   soDate: string;
@@ -362,7 +361,6 @@ interface LineBlockProps {
 
 const LineBlock = React.memo(function LineBlock({
   line,
-  incoming,
   incomingRows,
   soNumber,
   soDate,
@@ -455,16 +453,6 @@ const LineBlock = React.memo(function LineBlock({
             AutoCount changed
           </Badge>
         ) : null}
-        {incoming
-          ? incoming.split('\n').map((text) => (
-              <span
-                key={text}
-                className="block text-2xs leading-tight text-info"
-              >
-                {text}
-              </span>
-            ))
-          : null}
       </TableCell>
       <TableCell
         rowSpan={span}
@@ -826,21 +814,6 @@ export function focusCell(cell: Element | null): boolean {
   return document.activeElement === el;
 }
 
-/** `+236 from line 480` for every other line's split sitting on each line. */
-function incomingByLine(lines: SplitLine[]): Map<string, string> {
-  const out = new Map<string, string[]>();
-  for (const origin of lines) {
-    for (const split of origin.splits) {
-      if (split.isCancel || !split.qty || !split.sitsOnLineId) continue;
-      if (split.sitsOnLineId === origin.lineId) continue;
-      const list = out.get(split.sitsOnLineId) ?? [];
-      list.push(`+${split.qty} from ${lineShort(origin)}`);
-      out.set(split.sitsOnLineId, list);
-    }
-  }
-  return new Map([...out].map(([key, list]) => [key, list.join('\n')]));
-}
-
 const NO_ROWS: IncomingRow[] = [];
 
 /** Every other line's split sitting on each line, in sheet order (variant B rows, AC-G2). */
@@ -937,7 +910,6 @@ export function LineSplitSheet({
     event.preventDefault();
     focusCell(next);
   };
-  const incoming = React.useMemo(() => incomingByLine(allLines), [allLines]);
   const incomingRows = React.useMemo(() => incomingRowsByLine(allLines), [allLines]);
   const multiLocation = React.useMemo(
     () => new Set(allLines.map((line) => line.location)).size > 1,
@@ -989,7 +961,6 @@ export function LineSplitSheet({
           <React.Fragment key={line.lineId}>
             <LineBlock
               line={line}
-              incoming={incoming.get(line.lineId) ?? ''}
               incomingRows={incomingRows.get(line.lineId) ?? NO_ROWS}
               soNumber={soNumber}
               soDate={soDate}
