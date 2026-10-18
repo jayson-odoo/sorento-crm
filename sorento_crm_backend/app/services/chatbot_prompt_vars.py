@@ -170,6 +170,13 @@ def _one_line(value: object) -> str:
             return text
 
 
+def candidate_text(value: object) -> str:
+    """Staff / import text printed inside a candidate line: one line (`_one_line`), and with
+    the line's own delimiters (`;`, `(`, `)`, `"`) turned into spaces, so no stored text can
+    close its label, add an item or start a line."""
+    return " ".join(_re_mod.sub(r'[;()"]', " ", _one_line(value)).split())
+
+
 def _quoted(value: object) -> str:
     """A word inside the prompt's own double quotes: a quote in it becomes an apostrophe."""
     return '"' + _one_line(value).replace('"', "'") + '"'

@@ -65,9 +65,12 @@ class _Value:
     display: str
 
     def text(self) -> str:
+        from app.services.chatbot_prompt_vars import candidate_text
+
+        key, value, display = candidate_text(self.spec_key), candidate_text(self.value), candidate_text(self.display)
         if self.kind == "product type":
-            return f"product type {self.display} ({self.spec_key} = {self.value})"
-        return f"spec {self.spec_key} = {self.value} ({self.display})"
+            return f"product type {display} ({key} = {value})"
+        return f"spec {key} = {value} ({display})"
 
 
 def trigrams(text: str) -> frozenset[str]:
@@ -233,14 +236,12 @@ def _value_candidates(db: "Session", tokens: list[str]) -> list[WordCandidates]:
 
 
 def _code_label(code: str, name: str | None, holds: bool) -> str:
-    from app.services.chatbot_prompt_vars import _one_line
+    from app.services.chatbot_prompt_vars import candidate_text
 
-    # Product rows are staff / import text: one line each, so a stored newline can never
-    # start a line of its own in the user turn (security review, 17 Oct 2026).
-    code, name = _one_line(code), _one_line(name or "")
-    # The label's own `;` and parentheses delimit candidate items: a name carrying them
-    # could close its label and forge a second item on the line.
-    name = " ".join(re.sub(r"[;()]", " ", name).split())
+    # Product rows are staff / import text: one line each and free of the line's own
+    # delimiters, so a stored newline can never start a line of its own in the user turn
+    # (security review, 17 Oct 2026) and a name or code can never add an item to the line.
+    code, name = candidate_text(code), candidate_text(name or "")
     label = f"code {code} ({name})" if name else f"code {code}"
     return label if holds else f"near {label}"
 
