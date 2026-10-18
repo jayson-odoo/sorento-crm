@@ -1,6 +1,6 @@
 # PLAN: Flexible multi-level Group by on the stock status table (STOCK-GROUPBY)
 
-Status: Build. Mock v1 approved by the owner 18 Oct ("Ok"); S1 to S3 red tests first (Phase 2). Lane STOCK-GROUPBY, size M, standard track
+Status: Review. Built: S1 to S3 (red 0bc39dda10, fix 5122eb0bd6), reviewer READY, fix round 1 (red a5461b0625, fix fb4fcc594f); four-screen browser pass running. #1752 merged; PR #1778 on main. Size M, standard track. Lane STOCK-GROUPBY, size M, standard track
 (new behaviour + UI on an existing screen; no migration expected). Base: #1752's branch
 `claude/stock-status-embed-sxgykp` at 67e87c24d; rebase onto main once #1752 merges.
 
@@ -296,3 +296,12 @@ export function writeStockGroupLevels(levels: readonly string[], storage?: Stora
   groups; the `StockDocumentsPanel` drill-down does not mount. Location alone: today's behaviour exactly.
 - Location not first: first-column heading = first level's label; no `cell-location-*` and no `stock-subtotal-*` rows;
   `stock-total-*` and `stock-incoming-pl` unchanged.
+
+## 6. As built (18 Oct)
+
+- Red 0bc39dda10 (46 failing) -> fix 5122eb0bd6; harness fix 4b81ee7f0d. Reviewer READY (2 should-fix + nits).
+- Fix round 1 (reviewer 1-5 + browser pass on :3115): red a5461b0625 (11 failing) -> fix fb4fcc594f. R1 late read lands once;
+  R2 no chevron on a location without lines; R3 stockOnly Location alone has no Expand / Collapse all; R4 a search re-opens a
+  closed location; R5 aria names; F1 long names: label cells `max-w-0` + truncate/title, count outside, meta wraps.
+  Skipped: reviewer nit 6 (group rows keep the subtotal style, per the mock's component map).
+- origin/main merged at b077675c31 (#1752 squash): conflicts were #1752's own files, resolved as main + this lane's diff.
