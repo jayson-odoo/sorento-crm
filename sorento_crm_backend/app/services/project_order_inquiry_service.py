@@ -5894,28 +5894,6 @@ class ProjectOrderInquiryService:
                 return facts[target].now_qty - facts[target].applied_base()[0]
             return None
 
-        def _held(line_id: str) -> Decimal:
-            return sum(
-                (_dec(row.qty) for row in self._split_line_rows(line_id, received=True)),
-                _ZERO,
-            )
-
-        def _received_surplus(target: str, qty: Decimal) -> Decimal:
-            """AC-G19 (reviewer S3): of a declined split onto a target whose rows are all on
-            documents received in full, what cutting the target's need would leave it holding
-            beyond that need. Purchasing cannot cancel received goods, so the origin, whose row
-            still holds the split on an open document, cancels it instead."""
-            if target not in entries or self._split_line_rows(target):
-                return _ZERO
-            grew = _grew(target)
-            if grew is None or grew <= _ZERO:
-                return _ZERO
-            need = max(
-                _dec(entries[target].get("buy_qty")) - min(declined_in[target] + qty, grew),
-                _ZERO,
-            )
-            return min(qty, max(_held(target) - need, _ZERO))
-
         for line_id in sorted(whole):
             f = facts[line_id]
             state = f.split_state
@@ -6017,12 +5995,7 @@ class ProjectOrderInquiryService:
                     kept = plain
                 for qty, _when, on in kept:
                     if on and on != line_id:
-                        surplus = (
-                            _received_surplus(on, qty) if state == SPLIT_APPLIED else _ZERO
-                        )
-                        cancels += surplus
-                        if qty > surplus:
-                            declined_in[on] += qty - surplus
+                        declined_in[on] += qty
                 rows = _laid(kept, extra)
             # A CANCEL BALANCE the line already tells counts too: its explicit cancel splits,
             # or what an earlier re-plan dropped (AC-G17), which a re-Confirm keeps as it is.
@@ -6062,14 +6035,12 @@ class ProjectOrderInquiryService:
             grew = _grew(target)
             if grew is None or grew <= _ZERO:
                 continue
-            # Crew ruling (a): AutoCount's growth already counts the qty the origin keeps.
-            need = max(_dec(entries[target].get("buy_qty")) - min(qty, grew), _ZERO)
-            told_cancel = self._live_cancel_qty(target)
-            if told_cancel > _ZERO and _held(target) - told_cancel == need:
-                # AC-G19 (B3): its CANCEL BALANCE already tells the cut; a re-Confirm keeps it.
-                standing.add(target)
-                continue
-            needs[target] = need
+            # Crew ruling (a): AutoCount's growth already counts the qty the origin keeps, but
+            # the cut never goes below what the target already holds (AC-G19: no CANCEL from
+            # splits, ever).
+            needs[target] = max(
+                _dec(entries[target].get("buy_qty")) - min(qty, grew), self._placed_qty(target)
+            )
         # AC-G13 / AC-G19: a line other lines' splits sit on, not split itself and with no
         # AutoCount change in this Confirm, whose rows already hold its Buy stands like a
         # split line whose rows are its plan (the netting would restate its linked row).
@@ -6314,6 +6285,25 @@ class ProjectOrderInquiryService:
             ),
             _ZERO,
         )
+
+    def _placed_qty(self, line_id: str) -> Decimal:
+        """What purchasing already holds for a line, as the netting counts it: its live
+        placed or actioned ORDER rows, and what a partly linked row has on a document."""
+        held = _ZERO
+        for row in self.db.query(OrderInquiryRow).filter(
+            OrderInquiryRow.so_line_id == line_id,
+            OrderInquiryRow.verb == IV_ORDER,
+            OrderInquiryRow.state.in_(
+                (INQUIRY_PLACED, INQUIRY_ACTIONED, INQUIRY_PARTLY_LINKED)
+            ),
+        ):
+            if row.redirected_to_pool:
+                continue
+            if row.state == INQUIRY_PARTLY_LINKED:
+                held += sum((_dec(link.qty) for link in self._links_of(row.id)), _ZERO)
+            else:
+                held += _dec(row.qty)
+        return held
 
     def _asked_qty(self, line_id: str, *, received: bool = False) -> Decimal:
         """What a line's live ORDER rows still ask purchasing for: not cancelled, not given
