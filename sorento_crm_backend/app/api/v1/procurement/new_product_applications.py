@@ -299,7 +299,7 @@ async def upload_image(
     user: dict = Depends(require_permission(svc.CREATE)),
     db: Session = Depends(get_db),
 ):
-    contents = await file.read()
+    contents = await file.read(svc.MAX_IMAGE_BYTES + 1)
     return _image_move(
         db, user, application_id, line_id, svc.add_image,
         contents=contents, filename=file.filename, content_type=file.content_type,

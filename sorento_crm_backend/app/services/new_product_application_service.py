@@ -640,7 +640,7 @@ def copy_image(
 
     line = _image_line(app, line_id, actor)
     on_inquiry = (
-        db.query(Attachment.id)
+        db.query(Attachment.id, Attachment.file_size_bytes)
         .join(EntityAttachmentLink, EntityAttachmentLink.attachment_id == Attachment.id)
         .filter(
             EntityAttachmentLink.entity_type == "stock_inquiry",
@@ -654,6 +654,8 @@ def copy_image(
     )
     if on_inquiry is None:
         raise _invalid("attachment_id", "Pick an image attached to the stock inquiry.")
+    if (on_inquiry[1] or 0) > MAX_IMAGE_BYTES:
+        raise _invalid("attachment_id", "The image is larger than 10 MB.")
     EntityAttachmentService(db).link_existing_attachment(
         LINE_ENTITY,
         str(line.id),

@@ -99,6 +99,10 @@ def _thumbnail_or_original(backend, row) -> bytes:
     try:
         return backend.download_file(thumbnail_key_for(row.file_path))
     except Exception:  # noqa: BLE001 - no thumbnail stored
+        from app.services.new_product_application_service import MAX_IMAGE_BYTES
+
+        if (row.file_size_bytes or 0) > MAX_IMAGE_BYTES:
+            raise ValueError("original too large to embed")  # caller shows the file name
         return backend.download_file(row.file_path)
 
 

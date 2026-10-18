@@ -324,7 +324,7 @@ async def portal_upload_image(
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    contents = await file.read()
+    contents = await file.read(svc.MAX_IMAGE_BYTES + 1)
     return _image_move(
         db, token, application_id, line_id, svc.add_image,
         contents=contents, filename=file.filename, content_type=file.content_type,
