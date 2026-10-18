@@ -20,7 +20,9 @@ import {
   approveNewProductApplication,
   cancelNewProductApplication,
   closeNewProductApplicationLine,
+  copyNewProductApplicationLineImage,
   createNewProductApplication,
+  deleteNewProductApplicationLineImage,
   getNewProductApplication,
   getNewProductApplicationPrefill,
   getNewProductApplications,
@@ -32,6 +34,7 @@ import {
   submitNewProductApplication,
   undoNewProductApplicationLine,
   updateNewProductApplication,
+  uploadNewProductApplicationLineImage,
   type NewProductApplicationListParams,
 } from '../services/newProductApplicationService';
 
@@ -48,12 +51,16 @@ const NPA_SLUGS = [
  * actually holds; a create-only applicant keyed by `view` got a 403 and a grid
  * stuck on its skeleton (browser pass, 18 Oct).
  */
-export function useNewProductApplicationListingKey(suffix?: string): string | null {
+export function useNewProductApplicationListingKey(
+  suffix?: string,
+): string | null {
   const { permissionSet, isLoading } = usePermissions();
   // null (no preference fetch at all, data-grid.tsx) until the permissions are known:
   // guessing `view` on the first render fired a 403 and a "Permission denied" toast at a
   // create-only applicant on every visit (browser pass, 18 Oct).
-  const slug = isLoading ? undefined : NPA_SLUGS.find((s) => permissionSet.has(s));
+  const slug = isLoading
+    ? undefined
+    : NPA_SLUGS.find((s) => permissionSet.has(s));
   if (!slug) return null;
   return suffix ? `${slug}::${suffix}` : slug;
 }
@@ -270,6 +277,51 @@ export function useNewProductApplicationMutations() {
     }) => saveNewProductApplicationFeedback(id, data),
     ...move('Failed to save the feedback', 'Feedback saved'),
   });
+  // Image writes refresh the one detail they changed once they resolve (a staged delete runs
+  // after the update, so the detail refetches after it too); the form shows the failure.
+  const imageDone = (id: string) =>
+    queryClient.invalidateQueries({
+      queryKey: ['new-product-application', id],
+    });
+  const uploadImage = useMutation({
+    mutationFn: ({
+      id,
+      lineId,
+      file,
+    }: {
+      id: string;
+      lineId: string;
+      file: File;
+    }) => uploadNewProductApplicationLineImage(id, lineId, file),
+    onSuccess: (_d, v) => imageDone(v.id),
+    onError: fail('Failed to upload the image'),
+  });
+  const copyImage = useMutation({
+    mutationFn: ({
+      id,
+      lineId,
+      attachmentId,
+    }: {
+      id: string;
+      lineId: string;
+      attachmentId: string;
+    }) => copyNewProductApplicationLineImage(id, lineId, attachmentId),
+    onSuccess: (_d, v) => imageDone(v.id),
+    onError: fail('Failed to copy the image'),
+  });
+  const deleteImage = useMutation({
+    mutationFn: ({
+      id,
+      lineId,
+      linkId,
+    }: {
+      id: string;
+      lineId: string;
+      linkId: string;
+    }) => deleteNewProductApplicationLineImage(id, lineId, linkId),
+    onSuccess: (_d, v) => imageDone(v.id),
+    onError: fail('Failed to remove the image'),
+  });
   const undo = useMutation({
     mutationFn: ({ id, lineId }: { id: string; lineId: string }) =>
       undoNewProductApplicationLine(id, lineId),
@@ -288,5 +340,8 @@ export function useNewProductApplicationMutations() {
     close,
     undo,
     feedback,
+    uploadImage,
+    copyImage,
+    deleteImage,
   };
 }

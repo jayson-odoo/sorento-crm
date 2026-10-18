@@ -40,11 +40,8 @@ import {
   useNewProductApplicationQuery,
 } from '../hooks/useNewProductApplications';
 import {
-  copyNewProductApplicationLineImage,
-  deleteNewProductApplicationLineImage,
   getStockInquiryAttachmentsForNpa,
   searchStockInquiryOptions,
-  uploadNewProductApplicationLineImage,
 } from '../services/newProductApplicationService';
 
 const BASE_PATH = '/procurement-management/new-product-applications';
@@ -59,7 +56,8 @@ export default function NewProductApplicationForm({
   stockInquiryId?: string;
 }) {
   const router = useRouter();
-  const { create, update, submit } = useNewProductApplicationMutations();
+  const { create, update, submit, uploadImage, copyImage, deleteImage } =
+    useNewProductApplicationMutations();
   const existing = useNewProductApplicationQuery(applicationId ?? null);
   const prefill = useNewProductApplicationPrefillQuery(
     applicationId ? null : (stockInquiryId ?? null),
@@ -73,6 +71,8 @@ export default function NewProductApplicationForm({
   const [errors, setErrors] = useState<Record<string, string>>({});
   // A Submit the server refuses leaves the draft saved; the next press updates it.
   const [savedId, setSavedId] = useState<string | null>(null);
+  // The inquiry the saved record points at; "Copy from the inquiry" reads this one only.
+  const [savedInquiry, setSavedInquiry] = useState('');
 
   useEffect(() => {
     if (hydrated) return;
@@ -106,20 +106,35 @@ export default function NewProductApplicationForm({
   const saving = create.isPending || update.isPending || submit.isPending;
 
   // The server answered with line ids and images: keep them on the draft so the next save
-  // updates the same products instead of replacing them.
-  const adopt = useCallback((saved?: Partial<NewProductApplicationDetail>) => {
-    const lines = saved?.lines;
-    if (!lines) return;
-    setState((prev) => ({
-      ...prev,
-      lines: prev.lines.map((l, i) => {
-        const match = l.id ? lines.find((x) => x.id === l.id) : lines[i];
-        return match
-          ? { ...l, id: match.id, images: match.images ?? l.images }
-          : l;
-      }),
-    }));
-  }, []);
+  // updates the same products instead of replacing them. A write's answer lists the products
+  // in the order sent, so unsaved ones are matched by position; an image action's answer is
+  // matched by id only. An image the user removed in this edit stays hidden until Save.
+  const adopt = useCallback(
+    (saved?: Partial<NewProductApplicationDetail>, written = false) => {
+      const lines = saved?.lines;
+      if (!lines) return;
+      setState((prev) => ({
+        ...prev,
+        lines: prev.lines.map((l, i) => {
+          const match = l.id
+            ? lines.find((x) => x.id === l.id)
+            : written && lines.length === prev.lines.length
+              ? lines[i]
+              : undefined;
+          return match
+            ? {
+                ...l,
+                id: match.id,
+                images: (match.images ?? l.images).filter(
+                  (img) => !l.removed_link_ids.includes(img.link_id),
+                ),
+              }
+            : l;
+        }),
+      }));
+    },
+    [],
+  );
 
   const save = async () => {
     const body = payloadFromState(state);
@@ -131,6 +146,7 @@ export default function NewProductApplicationForm({
     }
     const created = await create.mutateAsync(body);
     setSavedId(created.id);
+    setSavedInquiry(state.stock_inquiry_id);
     await uploadStaged(created.id, created);
     return created;
   };
@@ -146,11 +162,9 @@ export default function NewProductApplicationForm({
       if (!lineId) continue;
       for (const file of line.staged_images) {
         try {
-          await uploadNewProductApplicationLineImage(id, lineId, file);
-        } catch (e) {
-          toast.error(
-            e instanceof Error ? e.message : 'Failed to upload the image',
-          );
+          await uploadImage.mutateAsync({ id, lineId, file });
+        } catch {
+          // the mutation's own onError toast names the refusal
         }
       }
     }
@@ -159,15 +173,13 @@ export default function NewProductApplicationForm({
       if (!line.id) continue;
       for (const linkId of line.removed_link_ids) {
         try {
-          await deleteNewProductApplicationLineImage(id, line.id, linkId);
-        } catch (e) {
-          toast.error(
-            e instanceof Error ? e.message : 'Failed to remove the image',
-          );
+          await deleteImage.mutateAsync({ id, lineId: line.id, linkId });
+        } catch {
+          // the mutation's own onError toast names the refusal
         }
       }
     }
-    adopt(saved);
+    adopt(saved, true);
     setState((prev) => ({
       ...prev,
       lines: prev.lines.map((l) => ({
@@ -184,22 +196,48 @@ export default function NewProductApplicationForm({
     upload: async (line, file) => {
       if (!recordId || !line.id) return;
       try {
-        adopt(await uploadNewProductApplicationLineImage(recordId, line.id, file));
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : 'Failed to upload the image');
+        adopt(
+          await uploadImage.mutateAsync({
+            id: recordId,
+            lineId: line.id,
+            file,
+          }),
+        );
+      } catch {
+        // the mutation's own onError toast names the refusal
       }
     },
     copy: async (line, attachmentId) => {
       if (!recordId || !line.id) return;
       try {
         adopt(
-          await copyNewProductApplicationLineImage(recordId, line.id, attachmentId),
+          await copyImage.mutateAsync({
+            id: recordId,
+            lineId: line.id,
+            attachmentId,
+          }),
         );
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : 'Failed to copy the image');
+      } catch {
+        // the mutation's own onError toast names the refusal
       }
     },
-    listInquiry: () => getStockInquiryAttachmentsForNpa(state.stock_inquiry_id),
+    savedInquiryId: applicationId
+      ? (existing.data?.stock_inquiry_id ?? '')
+      : savedInquiry,
+    listInquiry: async () => {
+      try {
+        return await getStockInquiryAttachmentsForNpa(
+          applicationId
+            ? (existing.data?.stock_inquiry_id ?? '')
+            : savedInquiry,
+        );
+      } catch (e) {
+        toast.error(
+          e instanceof Error ? e.message : 'Failed to load the inquiry images',
+        );
+        return null;
+      }
+    },
   };
 
   const checkNumbers = () => {

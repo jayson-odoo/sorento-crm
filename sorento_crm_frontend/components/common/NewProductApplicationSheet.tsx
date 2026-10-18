@@ -41,7 +41,10 @@ export type LookupFetcher = (
 export interface SheetImageActions {
   upload: (line: DraftLine, file: File) => Promise<void> | void;
   copy: (line: DraftLine, attachmentId: string) => Promise<void> | void;
-  listInquiry: () => Promise<NewProductApplicationInquiryImage[]>;
+  /** The inquiry the SAVED application points at; "Copy from the inquiry" is hidden while another one is picked and unsaved. */
+  savedInquiryId: string;
+  /** Null when the list could not be read (the host has said why); never an empty list then. */
+  listInquiry: () => Promise<NewProductApplicationInquiryImage[] | null>;
 }
 
 export interface NewProductApplicationSheetProps {
@@ -94,14 +97,14 @@ function Row({
 
 function ImageCell({
   line,
-  inquiryId,
+  copyEnabled,
   readOnly,
   imageActions,
   onStage,
   onRemoveSaved,
 }: {
   line: DraftLine;
-  inquiryId: string;
+  copyEnabled: boolean;
   readOnly?: boolean;
   imageActions?: SheetImageActions;
   onStage: (files: File[]) => void;
@@ -122,8 +125,10 @@ function ImageCell({
 
   const togglePicker = async () => {
     if (picking) return setPicking(false);
+    const found = (await imageActions?.listInquiry()) ?? null;
+    if (found === null) return;
+    setOffers(found);
     setPicking(true);
-    setOffers((await imageActions?.listInquiry()) ?? []);
   };
 
   return (
@@ -158,7 +163,10 @@ function ImageCell({
         </div>
       ))}
       {line.staged_images.map((file, i) => (
-        <div key={`${file.name}-${i}`} className="flex min-w-0 items-center gap-2">
+        <div
+          key={`${file.name}-${i}`}
+          className="flex min-w-0 items-center gap-2"
+        >
           <span className="min-w-0 truncate" title={file.name}>
             {file.name}
           </span>
@@ -199,7 +207,7 @@ function ImageCell({
           >
             Add image
           </Button>
-          {live && inquiryId && (
+          {live && copyEnabled && (
             <Button
               type="button"
               variant="outline"
@@ -256,14 +264,17 @@ export function NewProductApplicationSheet({
       lines: value.lines.map((l) => (l.key === key ? { ...l, ...next } : l)),
     });
 
-  const text = (line: DraftLine, field: keyof DraftLine, label: string) => (
-    <Input
-      aria-label={label}
-      disabled={readOnly}
-      value={line[field] as string}
-      onChange={(e) => patchLine(line.key, { [field]: e.target.value })}
-    />
-  );
+  const dash = (v: string | null | undefined) => (v && v.trim() ? v : '-');
+  const text = (line: DraftLine, field: keyof DraftLine, label: string) =>
+    readOnly ? (
+      dash(line[field] as string)
+    ) : (
+      <Input
+        aria-label={label}
+        value={line[field] as string}
+        onChange={(e) => patchLine(line.key, { [field]: e.target.value })}
+      />
+    );
 
   const editable = Boolean(feedback?.editable);
   const hasFeedback =
@@ -299,14 +310,18 @@ export function NewProductApplicationSheet({
                 variant="ghost"
                 size="sm"
                 onClick={() =>
-                  patch({ lines: value.lines.filter((l) => l.key !== line.key) })
+                  patch({
+                    lines: value.lines.filter((l) => l.key !== line.key),
+                  })
                 }
               >
                 Remove
               </Button>
             )}
           </div>
-          <Row label="PRODUCT CODE:">{text(line, 'proposed_code', 'Product code')}</Row>
+          <Row label="PRODUCT CODE:">
+            {text(line, 'proposed_code', 'Product code')}
+          </Row>
           <Row label="PRODUCT TYPE:" required>
             {text(line, 'description', 'Product type')}
           </Row>
@@ -315,54 +330,71 @@ export function NewProductApplicationSheet({
           <Row label="THICKNESS:">{text(line, 'thickness', 'Thickness')}</Row>
           <Row label="PACKING">{text(line, 'packing', 'Packing')}</Row>
           <Row label="BRAND:">
-            <SearchableSelect
-              aria-label="Brand"
-              value={line.brand_id}
-              disabled={readOnly}
-              clearable
-              truncateTriggerLabel
-              wrapOptions
-              placeholder="Search brand"
-              fetchOptions={brands}
-              selectedOption={
-                line.brand_id
-                  ? { value: line.brand_id, label: line.brand_label }
-                  : undefined
-              }
-              onChange={(v) => {
-                if (!v) patchLine(line.key, { brand_id: '', brand_label: '' });
-              }}
-              onOptionChange={(opt) =>
-                opt &&
-                patchLine(line.key, { brand_id: opt.value, brand_label: opt.label })
-              }
-            />
+            {readOnly ? (
+              dash(line.brand_label)
+            ) : (
+              <SearchableSelect
+                aria-label="Brand"
+                value={line.brand_id}
+                clearable
+                truncateTriggerLabel
+                wrapOptions
+                placeholder="Search brand"
+                fetchOptions={brands}
+                selectedOption={
+                  line.brand_id
+                    ? { value: line.brand_id, label: line.brand_label }
+                    : undefined
+                }
+                onChange={(v) => {
+                  if (!v)
+                    patchLine(line.key, { brand_id: '', brand_label: '' });
+                }}
+                onOptionChange={(opt) =>
+                  opt &&
+                  patchLine(line.key, {
+                    brand_id: opt.value,
+                    brand_label: opt.label,
+                  })
+                }
+              />
+            )}
           </Row>
           <Row label="IMAGE:">
             <ImageCell
               line={line}
-              inquiryId={value.stock_inquiry_id}
+              copyEnabled={
+                Boolean(imageActions?.savedInquiryId) &&
+                imageActions?.savedInquiryId === value.stock_inquiry_id
+              }
               readOnly={readOnly}
               imageActions={imageActions}
               onStage={(files) => patchLine(line.key, { staged_images: files })}
               onRemoveSaved={(image) =>
                 patchLine(line.key, {
-                  images: line.images.filter((i) => i.link_id !== image.link_id),
+                  images: line.images.filter(
+                    (i) => i.link_id !== image.link_id,
+                  ),
                   removed_link_ids: [...line.removed_link_ids, image.link_id],
                 })
               }
             />
           </Row>
           <Row label="QTY:">
-            <NumberInput
-              inputMode="decimal"
-              step="any"
-              aria-label="Qty"
-              disabled={readOnly}
-              value={line.expected_qty}
-              error={errors[`expected_qty_${line.key}`]}
-              onChange={(e) => patchLine(line.key, { expected_qty: e.target.value })}
-            />
+            {readOnly ? (
+              dash(line.expected_qty)
+            ) : (
+              <NumberInput
+                inputMode="decimal"
+                step="any"
+                aria-label="Qty"
+                value={line.expected_qty}
+                error={errors[`expected_qty_${line.key}`]}
+                onChange={(e) =>
+                  patchLine(line.key, { expected_qty: e.target.value })
+                }
+              />
+            )}
           </Row>
           {lineFooter && <Row label="OPENED AS">{lineFooter(line, index)}</Row>}
         </div>
@@ -387,30 +419,39 @@ export function NewProductApplicationSheet({
       <div className="border">
         <Row label="CUSTOMER:">{customerField}</Row>
         <Row label="PROJECT:">
-          <Input
-            aria-label="Project"
-            disabled={readOnly}
-            value={value.project_name}
-            onChange={(e) => patch({ project_name: e.target.value })}
-          />
+          {readOnly ? (
+            dash(value.project_name)
+          ) : (
+            <Input
+              aria-label="Project"
+              value={value.project_name}
+              onChange={(e) => patch({ project_name: e.target.value })}
+            />
+          )}
         </Row>
         <Row label="TARGET DELIVERY:">
-          <Input
-            aria-label="Target delivery"
-            type="date"
-            disabled={readOnly}
-            value={value.needed_by}
-            onChange={(e) => patch({ needed_by: e.target.value })}
-          />
+          {readOnly ? (
+            dash(value.needed_by && formatDateInMalaysia(value.needed_by))
+          ) : (
+            <Input
+              aria-label="Target delivery"
+              type="date"
+              value={value.needed_by}
+              onChange={(e) => patch({ needed_by: e.target.value })}
+            />
+          )}
         </Row>
         <Row label="REMARK:">
-          <Textarea
-            aria-label="Remark"
-            rows={3}
-            disabled={readOnly}
-            value={value.remark}
-            onChange={(e) => patch({ remark: e.target.value })}
-          />
+          {readOnly ? (
+            <span className="whitespace-pre-wrap">{dash(value.remark)}</span>
+          ) : (
+            <Textarea
+              aria-label="Remark"
+              rows={3}
+              value={value.remark}
+              onChange={(e) => patch({ remark: e.target.value })}
+            />
+          )}
         </Row>
       </div>
 
@@ -433,9 +474,11 @@ export function NewProductApplicationSheet({
               <NumberInput
                 inputMode="decimal"
                 step="any"
-                aria-label="Cost"
+                aria-label={`Cost for product ${index + 1}`}
                 value={line.cost_price}
-                onChange={(e) => patchLine(line.key, { cost_price: e.target.value })}
+                onChange={(e) =>
+                  patchLine(line.key, { cost_price: e.target.value })
+                }
               />
             ) : (
               <span>

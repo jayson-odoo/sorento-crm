@@ -155,6 +155,8 @@ export default function NewProductApplicationForm({
   const [application, setApplication] =
     useState<NewProductApplicationDetail | null>(null);
   const [savedId, setSavedId] = useState<string | null>(null);
+  // The inquiry the saved record points at; "Copy from the inquiry" reads this one only.
+  const [savedInquiry, setSavedInquiry] = useState('');
   const [loading, setLoading] = useState(Boolean(applicationId));
   const [state, setState] = useState<FormState>({
     ...EMPTY_FORM,
@@ -213,20 +215,35 @@ export default function NewProductApplicationForm({
     Boolean(application) && !anyResolved && (locked || status === 'draft');
 
   // The server answered with line ids and images: keep them on the draft so the next save
-  // updates the same products instead of replacing them.
-  const adopt = useCallback((saved?: Partial<NewProductApplicationDetail>) => {
-    const lines = saved?.lines;
-    if (!lines) return;
-    setState((prev) => ({
-      ...prev,
-      lines: prev.lines.map((l, i) => {
-        const match = l.id ? lines.find((x) => x.id === l.id) : lines[i];
-        return match
-          ? { ...l, id: match.id, images: match.images ?? l.images }
-          : l;
-      }),
-    }));
-  }, []);
+  // updates the same products instead of replacing them. A write's answer lists the products
+  // in the order sent, so unsaved ones are matched by position; an image action's answer is
+  // matched by id only. An image the user removed in this edit stays hidden until Save.
+  const adopt = useCallback(
+    (saved?: Partial<NewProductApplicationDetail>, written = false) => {
+      const lines = saved?.lines;
+      if (!lines) return;
+      setState((prev) => ({
+        ...prev,
+        lines: prev.lines.map((l, i) => {
+          const match = l.id
+            ? lines.find((x) => x.id === l.id)
+            : written && lines.length === prev.lines.length
+              ? lines[i]
+              : undefined;
+          return match
+            ? {
+                ...l,
+                id: match.id,
+                images: (match.images ?? l.images).filter(
+                  (img) => !l.removed_link_ids.includes(img.link_id),
+                ),
+              }
+            : l;
+        }),
+      }));
+    },
+    [],
+  );
 
   const save = async (): Promise<{ id: string }> => {
     const body = payloadFromState(state);
@@ -235,6 +252,7 @@ export default function NewProductApplicationForm({
       ? await updateNewProductApplication(id, body)
       : await createNewProductApplication(body);
     setSavedId(saved.id);
+    setSavedInquiry(state.stock_inquiry_id);
     // Images picked before the application existed go up now, in product order.
     for (const [i, line] of state.lines.entries()) {
       const lineId = saved.lines?.[i]?.id;
@@ -262,7 +280,7 @@ export default function NewProductApplicationForm({
         }
       }
     }
-    adopt(saved);
+    adopt(saved, true);
     setState((prev) => ({
       ...prev,
       lines: prev.lines.map((l) => ({
@@ -276,6 +294,9 @@ export default function NewProductApplicationForm({
   };
 
   const recordId = application?.id ?? savedId;
+  const savedInquiryId = application
+    ? (application.stock_inquiry_id ?? '')
+    : savedInquiry;
   const attempt = async (run: () => Promise<unknown>, fallback: string) => {
     try {
       adopt((await run()) as Partial<NewProductApplicationDetail> | undefined);
@@ -287,7 +308,8 @@ export default function NewProductApplicationForm({
     upload: (line, file) =>
       recordId && line.id
         ? attempt(
-            () => uploadNewProductApplicationLineImage(recordId, line.id!, file),
+            () =>
+              uploadNewProductApplicationLineImage(recordId, line.id!, file),
             'Failed to upload the image',
           )
         : undefined,
@@ -295,12 +317,25 @@ export default function NewProductApplicationForm({
       recordId && line.id
         ? attempt(
             () =>
-              copyNewProductApplicationLineImage(recordId, line.id!, attachmentId),
+              copyNewProductApplicationLineImage(
+                recordId,
+                line.id!,
+                attachmentId,
+              ),
             'Failed to copy the image',
           )
         : undefined,
-    listInquiry: () =>
-      listInquiryImagesForNewProductApplication(state.stock_inquiry_id),
+    savedInquiryId: savedInquiryId,
+    listInquiry: async () => {
+      try {
+        return await listInquiryImagesForNewProductApplication(savedInquiryId);
+      } catch (e) {
+        toast.error(
+          e instanceof Error ? e.message : 'Failed to load the inquiry images',
+        );
+        return null;
+      }
+    },
   };
 
   const downloadExcel = async () => {
@@ -536,23 +571,28 @@ export default function NewProductApplicationForm({
             }
             customerField={
               <>
-                <AsyncCombobox<PortalCustomerHit>
-                  ariaLabel="Customer"
-                  disabled={readOnly}
-                  value={state.customer_name}
-                  onChange={(v, item) =>
-                    setState((prev) => ({
-                      ...prev,
-                      customer_id: item?.customer_id ?? '',
-                      customer_name: v,
-                    }))
-                  }
-                  fetchOptions={(q) => lookupNewProductApplicationCustomers(q)}
-                  optionValue={(o) => o.debtor_name}
-                  optionLabel={(o) => o.debtor_name}
-                  optionMeta={(o) => o.customer_code}
-                  placeholder="Customer name"
-                />
+                {readOnly ? (
+                  <span>{state.customer_name || '-'}</span>
+                ) : (
+                  <AsyncCombobox<PortalCustomerHit>
+                    ariaLabel="Customer"
+                    value={state.customer_name}
+                    onChange={(v, item) =>
+                      setState((prev) => ({
+                        ...prev,
+                        customer_id: item?.customer_id ?? '',
+                        customer_name: v,
+                      }))
+                    }
+                    fetchOptions={(q) =>
+                      lookupNewProductApplicationCustomers(q)
+                    }
+                    optionValue={(o) => o.debtor_name}
+                    optionLabel={(o) => o.debtor_name}
+                    optionMeta={(o) => o.customer_code}
+                    placeholder="Customer name"
+                  />
+                )}
                 {!state.customer_id && state.customer_name.trim() && (
                   <Badge variant="secondary" className="mt-1.5">
                     No debtor code
@@ -563,7 +603,9 @@ export default function NewProductApplicationForm({
             lineFooter={
               application
                 ? (draftLine) => {
-                    const l = application.lines.find((x) => x.id === draftLine.id);
+                    const l = application.lines.find(
+                      (x) => x.id === draftLine.id,
+                    );
                     if (!l) return null;
                     return (
                       <div className="min-w-0 space-y-1">
@@ -581,7 +623,9 @@ export default function NewProductApplicationForm({
                               <span>{l.closed_reason}</span>
                             </>
                           ) : (
-                            <span className="text-muted-foreground">Not yet</span>
+                            <span className="text-muted-foreground">
+                              Not yet
+                            </span>
                           )}
                         </div>
                         {l.opened_supplier_name && (
