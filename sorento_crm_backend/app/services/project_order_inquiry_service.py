@@ -234,6 +234,15 @@ def whole_buy_line_ids(
     return out
 
 
+def cancel_plan_row(qty: Decimal) -> Any:
+    """The one row the email and the Excel print for what a re-plan dropped (AC-G17): its
+    qty, no date, REMARK `remark_for_row`'s CANCEL BALANCE."""
+    from app.services.project_line_split_service import PlanRow
+
+    text = remark_for_row(qty=qty, is_cancel=True)
+    return PlanRow(new_qty=qty, new_date=None, remark=text, generated=text, is_cancel=True)
+
+
 def explained_by_splits(db: Session, line_id: str) -> Tuple[Decimal, Decimal]:
     """OI-LINE-SPLIT: `(moved out, moved in)` for one line in the running Confirm, read off
     `SPLIT_MOVED_KEY` - the qty of its cut (or growth) the splits explain, which nobody is
@@ -4601,7 +4610,12 @@ class ProjectOrderInquiryService:
             return
         queue[:] = kept
         for line_id, items in told.items():
-            self._queue_plan_rows(plans[line_id], items[0], actor_user_id=actor_user_id)
+            plan = plans[line_id]
+            dropped = self.dropped_split_qty(line_id, plan.facts.splits)
+            if dropped > _ZERO:
+                # AC-G17: what a re-plan dropped is told as its CANCEL BALANCE row.
+                plan = dataclasses.replace(plan, rows=plan.rows + [cancel_plan_row(dropped)])
+            self._queue_plan_rows(plan, items[0], actor_user_id=actor_user_id)
 
     def _plan_template(self, pso_id: str) -> Dict[str, Any]:
         """What `_queue_plan_rows` reads off a queued line, for a Confirm that queued none: the
@@ -4640,7 +4654,7 @@ class ProjectOrderInquiryService:
         else the generated one (AC-G5, AC-G6)."""
         line = plan.facts.line
         for index, row in enumerate(plan.rows):
-            whole = row.split is not None or row.extra
+            whole = row.split is not None or row.extra or row.is_cancel
             was: Dict[str, Any] = {}
             if whole or row.new_qty is not None:
                 was["qty"] = plan.base_qty
@@ -5890,6 +5904,9 @@ class ProjectOrderInquiryService:
             acted[line_id] = {
                 "rows": rows,
                 "cancels": cancels,
+                # What purchasing held for the line before this Confirm (after the moves): a
+                # plan below it drops the rest, an explicit reduction (AC-G17).
+                "held": sum((qty * n for (qty, _when), n in current.items()), _ZERO),
                 "line": entries[line_id]["line"],
                 "entry": entries[line_id],
                 "own_rows": state == SPLIT_STALE,
@@ -5928,6 +5945,13 @@ class ProjectOrderInquiryService:
             if not row.redirected_to_pool
             and (received or not self._received_documents_for(self._links_of(row.id)))
         ]
+
+    def dropped_split_qty(self, line_id: str, splits: Sequence[Any]) -> Decimal:
+        """What a split line's live CANCEL BALANCE rows tell beyond its own cancel splits: the
+        qty a re-plan dropped (AC-G17), printed as one CANCEL BALANCE row by the email and the
+        Excel."""
+        cancels = sum((_dec(s.qty) for s in splits if s.is_cancel), _ZERO)
+        return max(self._live_cancel_qty(line_id) - cancels, _ZERO)
 
     def _live_cancel_qty(self, line_id: str) -> Decimal:
         return sum(
@@ -6052,9 +6076,20 @@ class ProjectOrderInquiryService:
                     if source.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
                         source.changed_at = datetime.utcnow()
                         source.ack_state = ACK_CHANGED
-            if plan["cancels"] > _ZERO:
+            # AC-G17: each plan row keeps links only up to its own qty; the rest goes back.
+            for row in self._split_line_rows(line_id):
+                linked = sum((_dec(link.qty) for link in self._links_of(row.id)), _ZERO)
+                if self._trim_links(row, _dec(row.qty)) != linked:
+                    self.refresh_link_state([row])
+            # What the plan drops (an explicit cancel split, or a re-plan below what
+            # purchasing held) is ONE CANCEL BALANCE, never a silent cancel (AC-G17).
+            dropped = max(
+                plan["cancels"],
+                plan.get("held", _ZERO) - sum((qty for qty, _when in plan["rows"]), _ZERO),
+            )
+            if dropped > _ZERO:
                 told = self._live_cancel_qty(line_id)
-                if told < plan["cancels"]:
+                if told < dropped:
                     entry = plan["entry"]
                     self.db.add(
                         OrderInquiryRow(
@@ -6062,7 +6097,7 @@ class ProjectOrderInquiryService:
                             order_inquiry_id=inquiry.id,
                             so_line_id=line.id,
                             item_code=entry.get("item_code") or None,
-                            qty=plan["cancels"] - told,
+                            qty=dropped - told,
                             delivery_date=entry.get("required_date"),
                             stock_location=entry.get("stock_location"),
                             verb=IV_CANCEL_BALANCE,

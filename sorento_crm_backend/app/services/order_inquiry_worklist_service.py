@@ -90,6 +90,7 @@ from app.services.order_inquiry_reserve_service import reserve_status_predicates
 from app.services.project_order_inquiry_service import (
     ProjectOrderInquiryService,
     arrives_outside_window,
+    cancel_plan_row,
     derived_spo_open_clauses,
     project_customer_label,
     project_title_with_note,
@@ -3481,7 +3482,14 @@ class OrderInquiryWorklistService:
             # The row's own TAKEN / REMAINING / SUGGESTED belong to the row, printed once on
             # the line's first row; worked off the row as it stands.
             figures = (_export_taken(row), _export_remaining(row), _export_suggested(row))
-            for index, plan_row in enumerate(plan.rows):
+            plan_rows = list(plan.rows)
+            dropped = ProjectOrderInquiryService(self.db).dropped_split_qty(
+                line_id, plan.facts.splits
+            )
+            if dropped > _ZERO:
+                # AC-G17: what a re-plan dropped, the line's CANCEL BALANCE, as the email says.
+                plan_rows.append(cancel_plan_row(dropped))
+            for index, plan_row in enumerate(plan_rows):
                 first = index == 0
                 own_row = plan_row.split is None and not plan_row.extra
                 # What the row itself asks for: the split's (or extra's) qty, the line's
@@ -3501,7 +3509,7 @@ class OrderInquiryWorklistService:
                 )
                 live = (
                     _ZERO
-                    if split is not None and (split.is_cancel or inside)
+                    if plan_row.is_cancel or (split is not None and inside)
                     else row_qty
                 )
                 out.append(
@@ -3512,7 +3520,9 @@ class OrderInquiryWorklistService:
                         "row_qty": row_qty,
                         "row_date": row_date,
                         "live_qty": live,
-                        "inside": inside,
+                        # Not printed in the 10-column worksheet: inside another line's qty,
+                        # or a cancel (it asks for nothing).
+                        "inside": inside or plan_row.is_cancel,
                         "change_qty": plan_row.new_qty,
                         "change_date": plan_row.new_date,
                         "split_remark": plan_row.remark,
