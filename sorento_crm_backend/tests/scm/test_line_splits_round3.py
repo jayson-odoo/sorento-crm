@@ -891,6 +891,50 @@ def test_review_after_the_confirm_the_applied_plan_re_saves_and_a_14_plan_is_acc
     assert r.status_code == 200, ("a 14 plan is accepted", r.text)
 
 
+def test_review_a_remark_only_save_after_the_confirm_is_accepted_and_re_confirm_changes_nothing(
+    api, emails
+):
+    """Re-check BLOCKING: after the owner's Confirm, staff only type a remark on 480 and Save.
+    The FE sends every line (`lineSplitModel.ts` `toPayload`: split lines with their splits,
+    608 with []), so the applied plans are re-saved as they stand: 200 (it was 422 "Line 480:
+    the splits add up to 417, not 14"), the remark is stored, and a re-Confirm after that Save
+    still leaves live OI at 1295 with no email."""
+    s = _seed(api)
+    _save(s, _owner_plan())
+    _confirm_batch(s, emails)
+    r = _put(s, [
+        _applied_480(s, remark_14=TYPED),
+        {"line_id": _on(s, 608), "splits": []},
+        {"line_id": _on(s, 752), "splits": [
+            _sp(37, D_608, on=_on(s, 608)), _sp(467, D_752_NEW, on=_on(s, 752))]},
+    ])
+    assert r.status_code == 200, ("a remark-only Save after Confirm is accepted", r.status_code, r.text)
+    assert _line(_get(s), s, 480)["splits"][0]["remark"] == TYPED
+    start = len(emails)
+    _reconfirm(s)
+    assert _owner_total(s) == _d("1295"), (
+        "the re-saved applied plan does not act again",
+        {no: _worklist(s, s.line[no]) for no in OWNER_CASE})
+    resent = [(ln["qty"], ln["remark"]) for h in emails[start:] for ln in h.get("lines") or []]
+    assert resent == [], ("no email after a remark-only Save and re-Confirm", resent)
+
+
+def test_review_re_confirm_of_the_new_line_plan_changes_nothing(api, emails):
+    """Guard (`standing_splits`): after the Confirm that applied the New-line plan (480: 14 /
+    236 / 167 on 480), a re-Confirm leaves 480's rows as they are and sends no email."""
+    s = _seed(api)
+    _save(s, _new_line_plan())
+    _confirm_batch(s, emails)
+    before = sorted(_worklist(s, s.line[480]), key=str)
+    assert _live(before) == sorted(
+        [(_d("14"), D_480_NEW), (_d("236"), D_608), (_d("167"), D_167)]), "premise"
+    start = len(emails)
+    _reconfirm(s)
+    assert sorted(_worklist(s, s.line[480]), key=str) == before, _worklist(s, s.line[480])
+    assert emails[start:] == [], [
+        (ln["qty"], ln["remark"]) for h in emails[start:] for ln in h.get("lines") or []]
+
+
 def test_review_kept_split_rows_keep_their_links(api, emails):
     """BLOCKING link conservation: 480's row is placed, linked to a PO for its 417. The
     New-line plan 14 / 236 / 167 keeps every split on 480, so each kept row stays linked for its
@@ -954,19 +998,29 @@ def test_review_excel_total_qty_is_the_live_qty(api, emails):
 
 def test_review_the_ten_column_worksheet_prints_every_split_rows_qty(api, emails):
     """The reorder-run OI worksheet (`export_tasks.generate_oi_worksheet`, the first 10 columns,
-    no CHANGE QUANTITY): each split row prints its own qty in QTY, no blank QTY row."""
+    no CHANGE QUANTITY): every row prints its own qty in QTY (no blank QTY row), and its QTY
+    cells add up to the worklist export's TOTAL QTY (1295 for the owner plan). A split whose
+    qty already sits inside another line (236 / 167 from 480 and 37 from 752, inside 608's
+    632) is not printed again in this slice (re-check: the QTY cells summed 1735)."""
     from app.services.order_inquiry_worklist_service import EXPORT_HEADINGS
 
     s = _seed(api)
     _save(s, _owner_plan())
     _confirm_batch(s, emails)
+    full_heads, full_rows = _sheet(s)
+    at_total = full_heads.index("TOTAL QTY")
+    totals = [r[at_total] for r in full_rows if r[at_total] not in (None, "")]
+    assert totals == [1295.0], ("premise: the worklist export's TOTAL QTY", totals)
     heads, rows = _sheet(s, EXPORT_HEADINGS[:10])
     assert len(heads) == 10, heads
     at = heads.index("QTY")
     qtys = [r[at] for r in rows]
     assert None not in qtys and "" not in qtys, ("no blank QTY row", qtys)
-    for want in (14, 236, 167, 37, 467, 182):
-        assert float(want) in qtys, (f"the {want} split / extra row prints its qty", qtys)
+    for want in (14, 632, 467, 182):
+        assert float(want) in qtys, (f"the {want} row prints its qty", qtys)
+    assert sum(qtys) == totals[0], ("QTY cells add up to TOTAL QTY: nothing printed twice", qtys)
+    for moved in (236, 167, 37):
+        assert float(moved) not in qtys, (f"{moved} sits inside 608's 632, not printed again", qtys)
 
 
 def _mixed(api, emails, *, with_splits, placed):
@@ -1207,3 +1261,37 @@ def test_g13_a_re_confirm_after_a_declined_move_plan_changes_nothing(api, emails
         assert _cancel_balances(_worklist(s, line)) == [], (case, _worklist(s, line))
     resent = [(ln["qty"], ln["remark"]) for h in emails[start:] for ln in h.get("lines") or []]
     assert resent == [], ("no plan email again", case, resent)
+
+
+def test_g13_a_re_confirm_after_a_declined_move_off_a_line_cut_to_zero_changes_nothing(api, emails):
+    """Re-check: line 2 51 -> 0 (its document received in full) with its 51 split onto line 18
+    (82 -> 133); the move is declined, so line 2 keeps a 51 row at 01/11/2026 and line 18 asks
+    82 (AC-G12). A second Confirm with no change changes nothing: line 2 keeps its 51 row,
+    line 18 stays at 82, no CANCEL and no "ORDER 51" email (it cancelled the 51, raised line 18
+    to 133 and sent "133 ORDER 51")."""
+    from tests.scm.test_line_splits_confirm import D_18
+
+    s, origin, _splits = _declined(api, emails, "source_received_cut_to_zero")
+    target = s.no[18][1]
+    assert (_d("51"), D_18) in _live(_worklist(s, origin)), ("premise", _worklist(s, origin))
+    assert _asked(s, target) == _d("82"), ("premise", _worklist(s, target))
+    before = {no: sorted(_worklist(s, s.no[no][1]), key=str) for no in (2, 18)}
+    start = len(emails)
+
+    r = _confirm(s.client, s.order.id, [
+        _line_payload(v[1].id, buy_qty=str(now))
+        for v, (_no, _qty, _when, now) in zip(s.no.values(), s.specs)
+    ])
+    assert r.status_code == 200, r.text
+    s.db.commit()
+    s.db.expire_all()
+
+    after = {no: sorted(_worklist(s, s.no[no][1]), key=str) for no in (2, 18)}
+    assert after == before, ("a re-Confirm with no change changes no row", before, after)
+    assert (_d("51"), D_18) in _live(after[2]), ("line 2 keeps its 51 row", after[2])
+    assert _asked(s, target) == _d("82"), ("line 18 stays at 82", after[18])
+    for line in (origin, target):
+        assert _cancel_balances(_worklist(s, line)) == [], _worklist(s, line)
+    resent = [(ln["qty"], ln["remark"]) for h in emails[start:] for ln in h.get("lines") or []]
+    assert not [x for x in resent if "ORDER 51" in str(x[1])], resent
+    assert resent == [], ("no email for a re-Confirm with no change", resent)
