@@ -942,6 +942,10 @@ class LineSplitService:
                     }
                 )
             total = sum((r["qty"] for r in rows), _ZERO)
+            if rows and f.split_state == SPLIT_APPLIED and total == _dec(f.splits[0].base_qty):
+                # An applied plan saved again as it stands (the sheet sends every line, a
+                # remark typed): it keeps the base the Confirm applied it against (AC-G13).
+                base_qty, base_date = _dec(f.splits[0].base_qty), f.splits[0].base_date
             if rows and total != base_qty:
                 raise AppException(
                     status_code=422,
