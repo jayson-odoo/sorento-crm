@@ -3807,12 +3807,16 @@ def _oi_demand_rows(
         and r.project_line_id
         and str(r.project_line_id) not in settled
     ]
-    # OI-LINE-SPLIT (UAC AC-G10, crew ruling (a)): a line whose splits act has its cut
-    # explained by them (a split moved, kept at its own date, or an explicit cancel split
-    # the confirm writes itself), so no split is ever netted into a CANCEL BALANCE here.
+    # OI-LINE-SPLIT (UAC AC-G10, crew ruling (a)): a whole-Buy line whose splits act has its
+    # cut explained by them (a split moved, kept at its own date, or an explicit cancel
+    # split the confirm writes itself), so no split is netted into a CANCEL BALANCE here. A
+    # line partly from stock nets as before (AC-G13).
     from app.services.project_line_split_service import LineSplitService
+    from app.services.project_order_inquiry_service import whole_buy_line_ids
 
-    split_line_ids = LineSplitService(db).acting_origin_ids(qty_down_line_ids)
+    split_line_ids = LineSplitService(db).acting_origin_ids(qty_down_line_ids) & (
+        whole_buy_line_ids(db, qty_down_line_ids)
+    )
     qty_down_line_ids = [i for i in qty_down_line_ids if i not in split_line_ids]
     cancellable_by_line: Dict[str, Decimal] = defaultdict(lambda: _ZERO)
     if qty_down_line_ids:
