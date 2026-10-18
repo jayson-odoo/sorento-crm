@@ -30,8 +30,10 @@ from sqlalchemy.orm import Session
 
 from app.models.new_product_application import NewProductApplication, NewProductApplicationLine
 from app.models.order import Customer
-from app.models.procurement import StockInquiry, Supplier
-from app.models.product import Brand, ItemType, Product, ProductCategory, UnitOfMeasure
+from app.models.procurement import ProductSupplier, StockInquiry, Supplier
+from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
+from app.models.entity_attachment import EntityAttachmentLink
+from app.models.resources import Attachment
 from app.models.user import User
 from app.services.error_handler import AppException, handle_not_found
 
@@ -65,31 +67,18 @@ STATUS_LABELS = {
 EDITABLE = (DRAFT, REJECTED)
 LOCKED = (SUBMITTED, APPROVED)
 
-#: Owner switch (crew 18 Oct, PQ1 with the owner): the portal form carries no Supplier and
-#: no Cost price, and the portal lists no suppliers. Flip to True if the owner picks (a).
-PORTAL_SUPPLIER_AND_COST = False
-
 HEADER_TEXT = ("customer_name", "project_name", "remark")
-LINE_TEXT = ("proposed_code", "description", "further_description", "supplier_item_code", "remark")
-LINE_REFS = {
-    "category_id": ProductCategory,
-    "base_uom_id": UnitOfMeasure,
-    "brand_id": Brand,
-    "item_type_id": ItemType,
-    "supplier_id": Supplier,
-}
-LINE_NUMBERS = ("cost_price", "selling_price", "expected_qty")
-PORTAL_HIDDEN_LINE_FIELDS = ("supplier_id", "supplier_item_code", "cost_price")
+#: The v4 paper form's product block (AC-NPA-70): nothing else is written by the applicant.
+LINE_TEXT = ("proposed_code", "description", "dimension", "material", "thickness", "packing")
+LINE_REFS = {"brand_id": Brand}
+LINE_NUMBERS = ("expected_qty",)
 #: What a refusal calls each field (never the raw key).
-FIELD_WORDS = {
-    "category_id": "item group",
-    "base_uom_id": "base UOM",
-    "brand_id": "brand",
-    "item_type_id": "item type",
-    "supplier_id": "supplier",
-    "supplier_item_code": "supplier model no",
-    "cost_price": "cost price",
-}
+FIELD_WORDS = {"brand_id": "brand"}
+
+#: The entity type a product's images are linked under.
+LINE_ENTITY = "new_product_application_line"
+IMAGE_TYPES = ("image/jpeg", "image/png", "image/webp")
+IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
 
 
 @dataclass
@@ -200,7 +189,7 @@ def _ref_exists(db: Session, model, ref_id: Any) -> bool:
     return _is_uuid(ref_id) and db.query(model.id).filter(model.id == ref_id).first() is not None
 
 
-def _check_refs(db: Session, data: Dict[str, Any], *, portal: bool) -> None:
+def _check_refs(db: Session, data: Dict[str, Any]) -> None:
     inquiry_id = data.get("stock_inquiry_id")
     if inquiry_id is not None and not _ref_exists(db, StockInquiry, inquiry_id):
         raise _invalid("stock_inquiry_id", "That stock inquiry does not exist.")
@@ -208,18 +197,14 @@ def _check_refs(db: Session, data: Dict[str, Any], *, portal: bool) -> None:
     if customer_id is not None and not _ref_exists(db, Customer, customer_id):
         raise _invalid("customer_id", "That customer is not in the debtor list.")
     for index, line in enumerate(data.get("lines") or [], start=1):
-        if portal and not PORTAL_SUPPLIER_AND_COST:
-            for field in PORTAL_HIDDEN_LINE_FIELDS:
-                if line.get(field) is not None:
-                    raise _invalid(field, f"Line {index}: the {FIELD_WORDS[field]} is not set from the portal.")
         for field, model in LINE_REFS.items():
             value = line.get(field)
             if value is not None and not _ref_exists(db, model, value):
-                raise _invalid(field, f"Line {index}: the chosen {FIELD_WORDS[field]} does not exist.")
+                raise _invalid(field, f"Product {index}: the chosen {FIELD_WORDS[field]} does not exist.")
 
 
-def _apply(db: Session, app: NewProductApplication, data: Dict[str, Any], *, portal: bool) -> None:
-    _check_refs(db, data, portal=portal)
+def _apply(db: Session, app: NewProductApplication, data: Dict[str, Any]) -> None:
+    _check_refs(db, data)
     for key in ("stock_inquiry_id", "customer_id", "needed_by"):
         if key in data:
             setattr(app, key, data[key] or None)
@@ -227,17 +212,43 @@ def _apply(db: Session, app: NewProductApplication, data: Dict[str, Any], *, por
         if key in data:
             setattr(app, key, _clean(data[key]))
     if "lines" in data:
-        app.lines.clear()
-        db.flush()
-        for index, line in enumerate(data["lines"] or [], start=1):
-            row = NewProductApplicationLine(line_no=index)
-            for key in LINE_TEXT:
-                setattr(row, key, _clean(line.get(key)))
-            for key in LINE_REFS:
-                setattr(row, key, line.get(key) or None)
-            for key in LINE_NUMBERS:
-                setattr(row, key, line.get(key))
+        _apply_lines(db, app, data["lines"] or [])
+
+
+def _apply_lines(db: Session, app: NewProductApplication, body: List[Dict[str, Any]]) -> None:
+    """Products are kept by id (AC-NPA-71): a line sent with its id is updated in place (its
+    images stay), one without is added, a saved one left out is deleted with its image links.
+    Product numbers follow the body order."""
+    kept = {str(row.id): row for row in app.lines}
+    seen = set()
+    for index, line in enumerate(body, start=1):
+        line_id = line.get("id")
+        if line_id is not None and (str(line_id) not in kept or str(line_id) in seen):
+            raise _invalid("lines", f"Product {index}: that product is not on this application.")
+        seen.add(str(line_id))
+    for line_id, row in kept.items():
+        if line_id not in seen:
+            _drop_line(db, app, row)
+    db.flush()
+    for index, line in enumerate(body, start=1):
+        row = kept[str(line["id"])] if line.get("id") is not None else NewProductApplicationLine()
+        row.line_no = index
+        for key in LINE_TEXT:
+            setattr(row, key, _clean(line.get(key)))
+        for key in LINE_REFS:
+            setattr(row, key, line.get(key) or None)
+        for key in LINE_NUMBERS:
+            setattr(row, key, line.get(key))
+        if row.id is None or str(row.id) not in kept:
             app.lines.append(row)
+    db.flush()
+
+
+def _drop_line(db: Session, app: NewProductApplication, row: NewProductApplicationLine) -> None:
+    from app.services.entity_attachment_service import EntityAttachmentService
+
+    EntityAttachmentService(db).delete_links_for_entity(LINE_ENTITY, str(row.id))
+    app.lines.remove(row)
 
 
 # ------------------------------------------------------------------ create / edit / delete
@@ -260,7 +271,7 @@ def create_draft(
         space_id=space_id,
     )
     db.add(app)
-    _apply(db, app, data, portal=source == "portal")
+    _apply(db, app, data)
     db.flush()
     return app
 
@@ -269,14 +280,13 @@ def update(db: Session, app: NewProductApplication, *, actor: Actor, data: Dict[
     if not is_owner(app, actor):
         raise _forbidden("Only the applicant can edit this application.")
     if app.source == "portal" and actor.contact_id is None:
-        # The portal checks (own inquiry, own debtors, no supplier or cost) live on the
-        # portal route; a staff edit would skip them.
+        # The portal checks (own inquiry, own debtors) live on the portal route; a staff edit would skip them.
         raise _conflict(
             "This application was raised in the portal. Edit it in the portal.",
             "NEW_PRODUCT_APPLICATION_PORTAL_ONLY",
         )
     assert_unlocked(app)
-    _apply(db, app, data, portal=app.source == "portal")
+    _apply(db, app, data)
     db.flush()
 
 
@@ -315,8 +325,12 @@ def assert_deletable(db: Session, application_id: str, user_id: Optional[str]) -
 
 
 def delete_draft(db: Session, application_id: str, user_id: Optional[str]) -> None:
-    """Hard delete (the lines go with it). Runs when the pending-action window lapses."""
-    db.delete(assert_deletable(db, application_id, user_id))
+    """Hard delete (the lines and their image links go with it). Runs when the pending-action
+    window lapses."""
+    app = assert_deletable(db, application_id, user_id)
+    for row in list(app.lines):
+        _drop_line(db, app, row)
+    db.delete(app)
     db.commit()
 
 
@@ -325,14 +339,12 @@ def delete_draft(db: Session, application_id: str, user_id: Optional[str]) -> No
 
 def validate_submit(app: NewProductApplication) -> None:
     if not app.lines:
-        raise _invalid("lines", "Add at least one line before you submit.")
-    for line in app.lines:
-        if not line.description:
-            raise _invalid("description", f"Line {line.line_no}: enter the description.")
-        if not line.category_id:
-            raise _invalid("category_id", f"Line {line.line_no}: choose an item group.")
-        if not line.base_uom_id:
-            raise _invalid("base_uom_id", f"Line {line.line_no}: choose the base UOM.")
+        raise _invalid("lines", "Add at least one product before you submit.")
+    missing = [line.line_no for line in app.lines if not (line.description or "").strip()]
+    if missing:
+        raise _invalid(
+            "description", " ".join(f"Product {no}: enter the product type." for no in missing)
+        )
 
 
 def submit(db: Session, app: NewProductApplication, *, actor: Actor) -> str:
@@ -416,6 +428,12 @@ def revise(db: Session, app: NewProductApplication, *, actor: Actor, reason: Opt
     app.decided_at = None
     app.decided_by = None
     app.reject_reason = None
+    # AC-NPA-75: purchasing's answer was for the old version of the request.
+    app.lead_time = None
+    app.feedback_by = None
+    app.feedback_at = None
+    for line in app.lines:
+        line.cost_price = None
     db.flush()
     return "withdrawn" if was == SUBMITTED else None
 
@@ -515,14 +533,188 @@ def undo_line(db: Session, app: NewProductApplication, line_id: str, *, actor: A
     db.flush()
 
 
+def save_feedback(db: Session, app: NewProductApplication, *, actor: Actor, data: Dict[str, Any]) -> None:
+    """PURCHASING FEEDBACK (AC-NPA-74): lead time and cost per product, on an Approved or
+    Completed application. Stamps who and when; the status, the approval and the notices are
+    untouched. A key left out of ``data`` is not changed; a null clears."""
+    if not actor.can_open_code:
+        raise _forbidden("Only purchasing can save feedback on new product applications.")
+    if app.status not in (APPROVED, COMPLETED):
+        raise _conflict(
+            "Feedback can be saved once the application is approved.",
+            "NEW_PRODUCT_APPLICATION_ILLEGAL_MOVE",
+        )
+    by_id = {str(line.id): line for line in app.lines}
+    items = data.get("lines") or []
+    for item in items:
+        if str(item["id"]) not in by_id:
+            raise _invalid("lines", "That product is not on this application.")
+    if "lead_time" in data:
+        app.lead_time = _clean(data["lead_time"])
+    for item in items:
+        if "cost_price" in item:
+            by_id[str(item["id"])].cost_price = item["cost_price"]
+    app.feedback_by = actor.user_id
+    app.feedback_at = datetime.utcnow()
+    db.flush()
+
+
+# ------------------------------------------------------------------ images
+
+
+def _image_line(app: NewProductApplication, line_id: str, actor: Actor) -> NewProductApplicationLine:
+    """Only the applicant, and only while the application is editable (AC-NPA-73)."""
+    line = _line(app, line_id)
+    if not is_owner(app, actor):
+        raise _forbidden("Only the applicant can change the images of this application.")
+    assert_unlocked(app)
+    return line
+
+
+def add_image(
+    db: Session,
+    app: NewProductApplication,
+    line_id: str,
+    *,
+    actor: Actor,
+    contents: bytes,
+    filename: Optional[str],
+    content_type: Optional[str],
+) -> None:
+    from app.services.entity_attachment_service import create_response_attachment
+
+    line = _image_line(app, line_id, actor)
+    kind = (content_type or "").split(";", 1)[0].strip().lower()
+    if kind not in IMAGE_TYPES or not (filename or "").lower().endswith(IMAGE_EXTENSIONS):
+        raise _invalid("file", "Upload a JPEG, PNG or WebP image.")
+    create_response_attachment(
+        db,
+        entity_type=LINE_ENTITY,
+        entity_id=str(line.id),
+        contents=contents,
+        filename=filename,
+        content_type=kind,
+        uploaded_by=actor.user_id,
+        commit=False,
+        uploader_kind="contact" if actor.contact_id else "user",
+        uploaded_by_contact_id=actor.contact_id,
+    )
+
+
+def copy_image(
+    db: Session, app: NewProductApplication, line_id: str, *, actor: Actor, attachment_id: str
+) -> None:
+    """Link a file already attached to the application's own stock inquiry (no second upload)."""
+    from app.services.entity_attachment_service import EntityAttachmentService
+
+    line = _image_line(app, line_id, actor)
+    on_inquiry = (
+        db.query(Attachment.id)
+        .join(EntityAttachmentLink, EntityAttachmentLink.attachment_id == Attachment.id)
+        .filter(
+            EntityAttachmentLink.entity_type == "stock_inquiry",
+            EntityAttachmentLink.entity_id == str(app.stock_inquiry_id),
+            Attachment.id == attachment_id,
+            Attachment.mime_type.in_(IMAGE_TYPES),
+        )
+        .first()
+        if app.stock_inquiry_id and _is_uuid(attachment_id)
+        else None
+    )
+    if on_inquiry is None:
+        raise _invalid("attachment_id", "Pick an image attached to the stock inquiry.")
+    EntityAttachmentService(db).link_existing_attachment(
+        LINE_ENTITY,
+        str(line.id),
+        attachment_id,
+        created_by=actor.user_id if _is_uuid(actor.user_id) else None,
+    )
+
+
+def remove_image(db: Session, app: NewProductApplication, line_id: str, link_id: str, *, actor: Actor) -> None:
+    """Unlink only: the file row stays, as on the stock inquiry."""
+    from app.services.entity_attachment_service import EntityAttachmentService
+
+    line = _image_line(app, line_id, actor)
+    exists_ = (
+        db.query(EntityAttachmentLink.id)
+        .filter(
+            EntityAttachmentLink.id == link_id,
+            EntityAttachmentLink.entity_type == LINE_ENTITY,
+            EntityAttachmentLink.entity_id == str(line.id),
+        )
+        .first()
+        if _is_uuid(link_id)
+        else None
+    )
+    if exists_ is None:
+        raise handle_not_found("Image", link_id)
+    EntityAttachmentService(db).delete_link(link_id, LINE_ENTITY)
+
+
+def _images_by_line(db: Session, line_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+    from app.services.entity_attachment_service import _safe_presigned_url
+
+    if not line_ids:
+        return {}
+    rows = (
+        db.query(EntityAttachmentLink, Attachment)
+        .join(Attachment, Attachment.id == EntityAttachmentLink.attachment_id)
+        .filter(EntityAttachmentLink.entity_type == LINE_ENTITY, EntityAttachmentLink.entity_id.in_(line_ids))
+        .order_by(EntityAttachmentLink.sort_order.asc().nulls_last(), EntityAttachmentLink.created_at.asc())
+        .all()
+    )
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for link, att in rows:
+        out.setdefault(str(link.entity_id), []).append(
+            {
+                "link_id": str(link.id),
+                "attachment_id": str(att.id),
+                "filename": att.original_filename,
+                "url": _safe_presigned_url(att.file_path, getattr(att, "storage_provider", None)) or att.file_path,
+                "content_type": att.mime_type,
+            }
+        )
+    return out
+
+
+def inquiry_images(
+    db: Session, stock_inquiry_id: str, *, contact_id: Optional[str] = None, space_id: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """The copy picker: image files attached to the inquiry. A portal contact only sees its
+    OWN responded inquiry (404 otherwise), the same rule as `prefill`."""
+    from app.services.entity_attachment_service import _safe_presigned_url
+
+    inquiry = _inquiry_for(db, stock_inquiry_id, contact_id=contact_id, space_id=space_id)
+    rows = (
+        db.query(EntityAttachmentLink, Attachment)
+        .join(Attachment, Attachment.id == EntityAttachmentLink.attachment_id)
+        .filter(
+            EntityAttachmentLink.entity_type == "stock_inquiry",
+            EntityAttachmentLink.entity_id == str(inquiry.id),
+            Attachment.mime_type.in_(IMAGE_TYPES),
+        )
+        .order_by(EntityAttachmentLink.sort_order.asc().nulls_last(), EntityAttachmentLink.created_at.asc())
+        .all()
+    )
+    return [
+        {
+            "attachment_id": str(att.id),
+            "filename": att.original_filename,
+            "url": _safe_presigned_url(att.file_path, getattr(att, "storage_provider", None)) or att.file_path,
+            "content_type": att.mime_type,
+        }
+        for _link, att in rows
+    ]
+
+
 # ------------------------------------------------------------------ prefill
 
 
-def prefill(db: Session, stock_inquiry_id: str, *, contact_id: Optional[str] = None,
-            space_id: Optional[str] = None) -> Dict[str, Any]:
-    """A New form body copied as TEXT from the inquiry (card rule 1). Nothing is matched:
-    the customer stays typed text, the code field stays one line however many codes it
-    holds. A portal contact may only start from its OWN responded inquiry."""
+def _inquiry_for(
+    db: Session, stock_inquiry_id: str, *, contact_id: Optional[str] = None, space_id: Optional[str] = None
+) -> StockInquiry:
+    """A portal contact may only start from its OWN responded inquiry."""
     q = db.query(StockInquiry).filter(StockInquiry.id == stock_inquiry_id)
     if contact_id is not None:
         q = q.filter(StockInquiry.contact_id == str(contact_id), StockInquiry.status == "responded")
@@ -531,6 +723,15 @@ def prefill(db: Session, stock_inquiry_id: str, *, contact_id: Optional[str] = N
     inquiry = q.first() if _is_uuid(stock_inquiry_id) else None
     if inquiry is None:
         raise handle_not_found("Stock inquiry", stock_inquiry_id)
+    return inquiry
+
+
+def prefill(db: Session, stock_inquiry_id: str, *, contact_id: Optional[str] = None,
+            space_id: Optional[str] = None) -> Dict[str, Any]:
+    """A New form body copied as TEXT from the inquiry (card rule 1). Nothing is matched:
+    the customer stays typed text, the code field stays one line however many codes it
+    holds."""
+    inquiry = _inquiry_for(db, stock_inquiry_id, contact_id=contact_id, space_id=space_id)
     return {
         "stock_inquiry_id": str(inquiry.id),
         "stock_inquiry_number": inquiry.inquiry_number,
@@ -577,19 +778,6 @@ def search_products(db: Session, q: str) -> List[Dict[str, Any]]:
     return sample_request_service.search_products(db, q)
 
 
-def item_types(db: Session, q: str = "", limit: int = 50) -> List[Dict[str, Any]]:
-    query = db.query(ItemType).filter(ItemType.is_active.is_(True))
-    text = (q or "").strip()
-    if text:
-        query = query.filter(
-            or_(ItemType.item_type_name.ilike(f"%{text}%"), ItemType.item_type_code.ilike(f"%{text}%"))
-        )
-    return [
-        {"id": r.id, "item_type_code": r.item_type_code, "item_type_name": r.item_type_name}
-        for r in query.order_by(ItemType.item_type_name).limit(limit).all()
-    ]
-
-
 def _simple_lookup(db: Session, model, code_col, name_col, q: str, limit: int = 50) -> List[Dict[str, Any]]:
     query = db.query(model)
     if hasattr(model, "is_active"):
@@ -604,17 +792,9 @@ def _simple_lookup(db: Session, model, code_col, name_col, q: str, limit: int = 
 
 
 def portal_lookup(db: Session, kind: str, q: str = "") -> List[Dict[str, Any]]:
-    """The read-only selects the portal form needs (PQ1 (b): no suppliers unless the switch)."""
-    if kind == "item-groups":
-        return _simple_lookup(db, ProductCategory, ProductCategory.category_code, ProductCategory.category_name, q)
-    if kind == "uoms":
-        return _simple_lookup(db, UnitOfMeasure, UnitOfMeasure.uom_code, UnitOfMeasure.uom_name, q)
+    """The one read-only select the portal paper form needs: brands."""
     if kind == "brands":
         return _simple_lookup(db, Brand, Brand.brand_code, Brand.brand_name, q)
-    if kind == "item-types":
-        return _simple_lookup(db, ItemType, ItemType.item_type_code, ItemType.item_type_name, q)
-    if kind == "suppliers" and PORTAL_SUPPLIER_AND_COST:
-        return _simple_lookup(db, Supplier, Supplier.supplier_code, Supplier.supplier_name, q)
     raise handle_not_found("Lookup", kind)
 
 
@@ -776,17 +956,57 @@ def serialize_summary(
     }
 
 
+def _linked_product_facts(db: Session, product_ids: List[Any]) -> Dict[str, Dict[str, Any]]:
+    """Read-only values from the product purchasing linked (AC-NPA-76, D3): item group, base
+    UOM, list price and supplier (the primary supplier first, else the oldest row). Nothing is
+    copied into the application."""
+    wanted = {str(i) for i in product_ids if i}
+    if not wanted:
+        return {}
+    products = db.query(Product.id, Product.category_id, Product.base_uom_id, Product.list_price).filter(
+        Product.id.in_(wanted)
+    ).all()
+    cats = _names(db, ProductCategory, [p[1] for p in products], ProductCategory.category_name)
+    uoms = _names(db, UnitOfMeasure, [p[2] for p in products], UnitOfMeasure.uom_name)
+    suppliers: Dict[str, str] = {}
+    rows = (
+        db.query(ProductSupplier.product_id, Supplier.supplier_name)
+        .join(Supplier, Supplier.id == ProductSupplier.supplier_id)
+        .filter(ProductSupplier.product_id.in_(wanted))
+        .order_by(
+            ProductSupplier.product_id,
+            ProductSupplier.is_primary_supplier.desc(),
+            ProductSupplier.created_at.asc(),
+        )
+        .all()
+    )
+    for product_id, name in rows:
+        suppliers.setdefault(str(product_id), name)
+    return {
+        str(pid): {
+            "opened_category_name": cats.get(str(cat), (None,))[0],
+            "opened_base_uom_name": uoms.get(str(uom), (None,))[0],
+            "opened_list_price": _money(price),
+            "opened_supplier_name": suppliers.get(str(pid)),
+        }
+        for pid, cat, uom, price in products
+    }
+
+
+#: Item group, base UOM and list price are staff-only; the portal sees cost, lead time and
+#: the supplier (PQ1).
+_PORTAL_HIDDEN = ("opened_category_name", "opened_base_uom_name", "opened_list_price")
+
+
 def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = False) -> Dict[str, Any]:
     lines = list(app.lines)
-    cats = _names(db, ProductCategory, [l.category_id for l in lines], ProductCategory.category_code, ProductCategory.category_name)
-    uoms = _names(db, UnitOfMeasure, [l.base_uom_id for l in lines], UnitOfMeasure.uom_code, UnitOfMeasure.uom_name)
     brands = _names(db, Brand, [l.brand_id for l in lines], Brand.brand_name)
-    types = _names(db, ItemType, [l.item_type_id for l in lines], ItemType.item_type_name)
-    suppliers = _names(db, Supplier, [l.supplier_id for l in lines], Supplier.supplier_code, Supplier.supplier_name)
     products = _names(
         db, Product, [l.opened_product_id for l in lines], Product.product_code, Product.product_name, Product.is_active
     )
-    users = _user_names(db, [app.decided_by, app.applicant_id, *[l.resolved_by for l in lines]])
+    facts = _linked_product_facts(db, [l.opened_product_id for l in lines])
+    images = _images_by_line(db, [str(l.id) for l in lines])
+    users = _user_names(db, [app.decided_by, app.applicant_id, app.feedback_by, *[l.resolved_by for l in lines]])
     customer = (
         db.query(Customer.customer_code, Customer.customer_name).filter(Customer.id == app.customer_id).first()
         if app.customer_id
@@ -801,55 +1021,50 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
     )
 
     def line_out(l: NewProductApplicationLine) -> Dict[str, Any]:
-        cat = cats.get(str(l.category_id), (None, None))
-        uom = uoms.get(str(l.base_uom_id), (None, None))
-        sup = suppliers.get(str(l.supplier_id), (None, None))
         prod = products.get(str(l.opened_product_id), (None, None, None))
         out = {
             "id": l.id,
             "line_no": l.line_no,
             "proposed_code": l.proposed_code,
             "description": l.description,
-            "further_description": l.further_description,
-            "category_id": l.category_id,
-            "category_code": cat[0],
-            "category_name": cat[1],
-            "base_uom_id": l.base_uom_id,
-            "base_uom_code": uom[0],
-            "base_uom_name": uom[1],
+            "dimension": l.dimension,
+            "material": l.material,
+            "thickness": l.thickness,
+            "packing": l.packing,
             "brand_id": l.brand_id,
             "brand_name": brands.get(str(l.brand_id), (None,))[0],
-            "item_type_id": l.item_type_id,
-            "item_type_name": types.get(str(l.item_type_id), (None,))[0],
-            "supplier_id": l.supplier_id,
-            "supplier_code": sup[0],
-            "supplier_name": sup[1],
-            "supplier_item_code": l.supplier_item_code,
-            "cost_price": _money(l.cost_price),
-            "selling_price": _money(l.selling_price),
             "expected_qty": _num(l.expected_qty),
-            "remark": l.remark,
+            "cost_price": _money(l.cost_price),
+            "images": images.get(str(l.id), []),
             "opened_product_id": l.opened_product_id,
             "opened_product_code": prod[0],
             "opened_product_name": prod[1],
             "opened_product_active": prod[2],
+            "opened_category_name": None,
+            "opened_base_uom_name": None,
+            "opened_list_price": None,
+            "opened_supplier_name": None,
+            **facts.get(str(l.opened_product_id), {}),
             "closed_reason": l.closed_reason,
             "resolved_by": l.resolved_by,
             "resolved_by_name": users.get(str(l.resolved_by)) if l.resolved_by else None,
             "resolved_at": _iso(l.resolved_at),
         }
-        if portal and not PORTAL_SUPPLIER_AND_COST:
-            for key in ("supplier_id", "supplier_code", "supplier_name", "supplier_item_code", "cost_price"):
+        if portal:
+            for key in _PORTAL_HIDDEN:
                 out.pop(key, None)
         return out
 
     summary = serialize_summary(db, app)
-    return {
+    out = {
         **summary,
         "stock_inquiry_product_code": inquiry[1] if inquiry else None,
         "customer_id": app.customer_id,
         "customer_code": customer[0] if customer else None,
         "remark": app.remark,
+        "lead_time": app.lead_time,
+        "feedback_by_name": users.get(str(app.feedback_by)) if app.feedback_by else None,
+        "feedback_at": _iso(app.feedback_at),
         "decided_at": _iso(app.decided_at),
         "decided_by": app.decided_by,
         "decided_by_name": users.get(str(app.decided_by)) if app.decided_by else None,
@@ -861,6 +1076,10 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
         "updated_at": _iso(app.updated_at),
         "lines": [line_out(l) for l in lines],
     }
+    if portal:
+        out.pop("feedback_by_name")
+        out.pop("feedback_at")
+    return out
 
 
 # ------------------------------------------------------------------ notifications

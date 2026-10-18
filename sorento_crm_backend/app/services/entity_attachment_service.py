@@ -620,6 +620,8 @@ def create_response_attachment(
     content_type: Optional[str],
     uploaded_by: Optional[str],
     commit: bool = True,
+    uploader_kind: str = "user",
+    uploaded_by_contact_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Upload + link a staff response attachment (``response_attachment`` type, D9).
 
@@ -628,6 +630,8 @@ def create_response_attachment(
     share a per-record quota, and stamps ``uploader_kind='user'`` +
     ``uploaded_by`` (UAC B2/C4). Returns the fixed upload-and-link response
     shape shared by the stock-inquiry and complaint response-attachment routes.
+    A portal contact's upload (new product application images) passes
+    ``uploader_kind='contact'`` with ``uploaded_by=None`` and its contact id.
     """
     service = EntityAttachmentService(db)
     attachment_type = service.get_attachment_type_by_code(RESPONSE_ATTACHMENT_TYPE_CODE)
@@ -681,7 +685,8 @@ def create_response_attachment(
         storage_provider=provider,
         mime_type=content_type,
         uploaded_by=uploader_id,
-        uploader_kind="user",
+        uploader_kind=uploader_kind,
+        uploaded_by_contact_id=uploaded_by_contact_id,
     )
     if commit:
         db.commit()

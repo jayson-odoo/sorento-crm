@@ -2,23 +2,31 @@
 
 Rules live in `new_product_application_service`; this module resolves who is asking and maps
 the HTTP shape. Every move commits first and notifies after (`svc.notify`), so a notification
-failure never undoes the move. Literal paths (`/prefill`, `/products`, `/item-types`) are
+failure never undoes the move. Literal paths (`/prefill`, `/products`, `/inquiry-attachments`) are
 declared before `/{application_id}`.
 """
 from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
 from app.database import get_db
 from app.dependencies import get_current_user, require_permission
-from app.schemas.new_product_application import LinkIn, NewProductApplicationWrite, ReasonIn
+from app.schemas.new_product_application import (
+    FeedbackIn,
+    ImageCopyIn,
+    LinkIn,
+    NewProductApplicationWrite,
+    ReasonIn,
+)
 from app.services import new_product_application_service as svc
+from app.services import npa_xlsx
 from app.services.error_handler import AppException
 from app.services.uuid_path_param import validate_uuid_path
+from app.utils.http import content_disposition
 
 router = APIRouter()
 
@@ -74,14 +82,14 @@ def search_products(
     return svc.search_products(db, q)
 
 
-@router.get("/item-types")
-def item_types(
-    q: str = Query(""),
-    user: dict = Depends(get_current_user),
+@router.get("/inquiry-attachments")
+def inquiry_attachments(
+    stock_inquiry_id: str = Query(...),
+    _user: dict = Depends(require_permission(svc.CREATE)),
     db: Session = Depends(get_db),
 ):
-    _any_actor(db, user)
-    return svc.item_types(db, q)
+    """The image files on a stock inquiry: the "Copy from the inquiry" picker."""
+    return svc.inquiry_images(db, stock_inquiry_id)
 
 
 @router.get("")
@@ -151,6 +159,23 @@ def update_application(
     except Exception:
         db.rollback()
         raise
+
+
+@router.get("/{application_id}/download")
+def download_application(
+    application_id: str,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The paper sheet as a workbook (AC-NPA-77), for whoever can view the record."""
+    app = _load(db, application_id)
+    svc.assert_can_view(app, _actor(db, user))
+    content, filename = npa_xlsx.to_xlsx(db, app)
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": content_disposition(filename)},
+    )
 
 
 def _move(db: Session, user: dict, application_id: str, fn, **kw):
@@ -247,3 +272,58 @@ def undo_line(
     db: Session = Depends(get_db),
 ):
     return _line_move(db, user, application_id, line_id, svc.undo_line)
+
+
+@router.put("/{application_id}/feedback")
+def save_feedback(
+    application_id: str,
+    payload: FeedbackIn,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return _move(db, user, application_id, svc.save_feedback, data=payload.model_dump(exclude_unset=True))
+
+
+def _image_move(db: Session, user: dict, application_id: str, line_id: str, fn, **kw):
+    # Every refusal comes before any write, so no explicit rollback: the session closes with
+    # the request (a rollback here would also discard whatever the caller had not committed).
+    app = _load(db, application_id, for_update=True)
+    fn(db, app, validate_uuid_path(line_id, resource="Line"), actor=_actor(db, user), **kw)
+    return _done(db, app)
+
+
+@router.post("/{application_id}/lines/{line_id}/images", status_code=status.HTTP_201_CREATED)
+async def upload_image(
+    application_id: str,
+    line_id: str,
+    file: UploadFile = File(...),
+    user: dict = Depends(require_permission(svc.CREATE)),
+    db: Session = Depends(get_db),
+):
+    contents = await file.read()
+    return _image_move(
+        db, user, application_id, line_id, svc.add_image,
+        contents=contents, filename=file.filename, content_type=file.content_type,
+    )
+
+
+@router.post("/{application_id}/lines/{line_id}/images/copy", status_code=status.HTTP_201_CREATED)
+def copy_image(
+    application_id: str,
+    line_id: str,
+    payload: ImageCopyIn,
+    user: dict = Depends(require_permission(svc.CREATE)),
+    db: Session = Depends(get_db),
+):
+    return _image_move(db, user, application_id, line_id, svc.copy_image, attachment_id=payload.attachment_id)
+
+
+@router.delete("/{application_id}/lines/{line_id}/images/{link_id}")
+def remove_image(
+    application_id: str,
+    line_id: str,
+    link_id: str,
+    user: dict = Depends(require_permission(svc.CREATE)),
+    db: Session = Depends(get_db),
+):
+    return _image_move(db, user, application_id, line_id, svc.remove_image, link_id=link_id)

@@ -89,6 +89,10 @@ class NewProductApplication(Base, CompanyScopedMixin):
     cancelled_at = Column(DateTime(timezone=False), nullable=True)
     cancel_reason = Column(Text, nullable=True)
     completed_at = Column(DateTime(timezone=False), nullable=True)
+    #: PURCHASING FEEDBACK (v4): one lead time per application, who saved feedback and when.
+    lead_time = Column(Text, nullable=True)
+    feedback_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    feedback_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -131,7 +135,14 @@ class NewProductApplicationLine(Base):
     )
     line_no = Column(Integer, nullable=False)
     proposed_code = Column(String(255), nullable=True)
+    #: PRODUCT TYPE on the paper form (the only required field).
     description = Column(Text, nullable=True)
+    dimension = Column(Text, nullable=True)
+    material = Column(Text, nullable=True)
+    thickness = Column(Text, nullable=True)
+    packing = Column(Text, nullable=True)
+    #: Kept in the table, no longer written (v4 D3): item group, UOM, selling price and supplier
+    #: are read from the linked product.
     further_description = Column(Text, nullable=True)
     category_id = Column(
         UUID(as_uuid=False), ForeignKey("product_categories.id", ondelete="SET NULL"), nullable=True
