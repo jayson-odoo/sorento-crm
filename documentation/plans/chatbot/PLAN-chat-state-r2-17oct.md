@@ -172,6 +172,24 @@ prompt hash, v168 and model on both lane runs, no r3 code on their path. One run
     turn tier first run 2 base-side rows (cand-0243 base errored, cand-0277 base made no tool call; neither row
     carries state_changes, so no r3 code reaches them), re-run 0/585.
 
+### Round 3 final set (crew 18 Oct (a), owner: emphasis on chat lanes)
+- origin/main 0f5c6537e merged (main only; #1755 kept at f0f94bc38, its newer head is still moving): 55ea3c0f10,
+  conflict-free; main touched no chatbot runtime or prompt file, so lane prompt v168 stays; 314 touched tests pass.
+- Envelope: ~$4.2 for x3 lane vs x3 main on train2_followups, interleaved; runner + grade_sets.py from a 0f5c6537e
+  checkout (#1775 scope listeners); real and synthetic apart; paired CI. Parser-call cap for 18 Oct raised by crew
+  from 700 to 1400 (~600 used before this set). The earlier caps lived only in crew messages; this one is enforced
+  as a hard per-run `--max-calls` in the final-set runner (scratchpad evalrun4/run_sets.py) and a cumulative stop
+  in evalrun4/final.sh (per-run cap 150 at evalrun4/run_sets.py:9, sets.sh:11).
+- L1 gate 55ea3c0f10 vs PURE main 0f5c6537e (first base without #1755): grounding 0/1506; turn 3 rows with the same
+  tools / decision / grounding / reply and one extra blocked provider.OpenAIProvider call on head; by the earlier
+  gates (r2 vs main+#1755+r1 = 0, each r3 slice = 0) that call is #1755's, not this lane's. CI green on 55ea3c0f10.
+- **Result (x3 vs x3 interleaved, scoped harness; $4.042, 693 calls):** all 111 items lane 82.33 vs main 72.00,
+  +10.33 [+2.67, +18.33]; real 58: 50.00 vs 50.33, -0.33 [-3.33, +2.67]; synthetic 53: 32.33 vs 21.67,
+  +10.67 [+4.00, +17.33]; synthetic refine 28: 13.00 vs 0.33, +12.67 [+7.67, +17.67]; synthetic answer 25: 19.33 vs
+  21.33, -2.00 [-5.00, 0.00], all of it 2 items the grader scores unknown on the lane (answered roster read as a
+  fresh question, EVAL-BENCH r35). Real switch -1 = es-e1f8fae46c (#1755 near-code candidate, routed).
+  Crew-note on #1772 (comment 6249197686); rows scratchpad evalrun4.
+
 ### R4 (crew via CHAT-CODE-LOOKUP, 18 Oct): no slice
 On main + v63 the parser never sees `Current subject:` (vocabulary line over the 350 L2 cap, context.py:29; only the
 subject shrinks, context.py:437-443; train2 s_main1 108/108, cp0 r2main 86/86). With the state section on, `_render_l2`
