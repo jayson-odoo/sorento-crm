@@ -50,7 +50,16 @@ make sure the sort handler is at the leftmost, go"), Q1 drag yes, Q2-Q4 (a), Q5 
   DELAY / ADVANCE / CANCEL, AC-A11) is the email's change word and stays. A zero-qty split is dropped when focus leaves its line and on Save.
 - AC-A5 "+ Split" in BALANCE, or Ctrl/Cmd+Enter in a split row, adds a split row under the line:
   qty = what is left on the line (0 when nothing is), the line's base date, sitting on "New line";
-  its qty gets focus, selected. The x button, or Ctrl/Cmd+Backspace in the row, removes a
+  its qty gets focus, selected.
+  Pending change default (owner hand test 18 Oct: "this should be 14 and the remaining in second line,
+  the new qty will be the first value by default, this date should be the new date also"): "+ Split" on
+  a line that is NOT split yet and has a pending change (a NEW QTY or NEW DATE shown, AC-A2b) starts it
+  as TWO rows: row 1 on this line = NEW QTY capped at QTY, at NEW DATE (each falls back to QTY /
+  DELIVERY DATE when blank); row 2 on "New line" = QTY minus row 1 (0 when nothing is left), at
+  DELIVERY DATE; row 2's qty gets focus. SO417636 line 480: 14 @ 20/09/2026 + 403 @ 20/10/2026; line
+  752 (504 -> 649, 20/12/2026 -> 02/01/2027): 504 @ 02/01/2027 + 0 @ 20/12/2026. With no pending change
+  "+ Split" is unchanged (QTY @ DELIVERY DATE on this line + what is left). Clicking or typing in an
+  unsplit line's value cell is unchanged (AC-A4). The x button, or Ctrl/Cmd+Backspace in the row, removes a
   split row at once (staged until Save; no confirm).
 - AC-A6 BALANCE of a split line: "0" with a tick when its splits add up; "N left" as a draggable chip
   when short; "N over" in red when over. A line that is not split shows only "+ Split".

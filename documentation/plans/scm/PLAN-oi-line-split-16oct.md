@@ -1,6 +1,6 @@
 # PLAN: split one SO line into delivery tranches in Order Inquiries (OI-LINE-SPLIT)
 
-Status: Build, owner round 18 Oct (hand test of 875e2ab53f: data right, PRESENTATION FAIL): email-style QTY | NEW QTY | DELIVERY DATE | NEW DATE off one backend function, AUTOCOUNT LINE column removed (owner answer (b)); main merged locally at 47cfc432a3 (ols_0001 on spec_hint_0001). See "Owner round 18 Oct" at the bottom of Build v4; UAC AC-A2/A2b/A3/A5/A7/F1. Before that: v4 hand test filed at 875e2ab53f (reviewer READY, CI green, browser 6/6). Track: full (L): migration, new
+Status: Build, owner round 2 18 Oct (hand test of 51210b8c3: columns OK, FAIL on "+ Split" defaults): a pending line starts as NEW QTY @ NEW DATE + the rest @ DELIVERY DATE (UAC AC-A5); REMAIN pill question with crew. Before that: owner round 1 pushed 51210b8c3 (email-style NEW QTY/NEW DATE off one handover_moves, no AUTOCOUNT LINE column; reviewer READY, CI green, browser PASS). Track: full (L): migration, new
 endpoint with RBAC, engine change. Lead pattern: tester red tests, one coder (Opus: tangled engine in
 a 13k-line service), reviewer + security-reviewer, browser pass 1280/375. Stacked on #1748
 (OI Excel one sheet; merged into this branch at c1f8f57d8).
@@ -146,8 +146,8 @@ Files (PS = sorento_crm_frontend/app/(protected)/project-sales/, FP = PS/fulfilm
   the tests that only cover them; `lineSplitParts.tsx` keeps `ChangePill`, `SitsOnSelect`
   (relabelled per AC-A7), `QtyInput` where they still fit.
 - Model `FP/lib/lineSplitModel.ts` (pure, vitest): `addSplit` fills what is left and sits on New line
-  (AC-A5); `placeRest(lines, lineId, target)` for the chip (AC-A9); `targetDateOf(line)` = nowDate ??
-  baseDate; `setSitsOn` onto another line takes its date (AC-A7); `sortLines` (AC-A2); `readsRemain`
+  (AC-A5; on an unsplit line with a pending change it starts NEW QTY @ NEW DATE + the rest, owner 18 Oct); `placeRest(lines, lineId, target)` for the chip (AC-A9); `targetDateOf(line)` = nowDate ??
+  baseDate; a drop onto another line takes its planned date (AC-A7 select removed 18 Oct); `sortLines` (AC-A2); `readsRemain`
   (only split equal to base on own line and date, any remark: AC-A4). Drops reuse `moveSplit` (:164)
   with qty = all.
 - Backend: `so_date` on the GET payload (schema + service; pytest asserts it, response_model lesson).
