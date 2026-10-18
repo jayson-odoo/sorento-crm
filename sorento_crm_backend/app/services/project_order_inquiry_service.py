@@ -5690,10 +5690,24 @@ class ProjectOrderInquiryService:
             moved_by_origin.pop(line_id, None)
         if len(entries) < 2 or not line_changes:
             return
+        from app.services.project_line_split_service import LineSplitService, SplitOutputs
+
+        # A row with an empty `from` reads the same pending base the split view does: a line
+        # AutoCount added and then edited inside this one batch starts from its `added` row
+        # (UAC B2, SO417636), so the split staff made on it can act. A line truly added here
+        # keeps the empty `from` (it only receives).
+        no_before = [
+            line_id
+            for line_id in entries
+            if (line_changes.get(line_id) or {}).get("from_qty") is None
+        ]
+        derived = LineSplitService(self.db).pending_from_by_line(no_before)
 
         def _change(line_id: str) -> Tuple[Optional[Decimal], Optional[Decimal]]:
             change = line_changes.get(line_id) or {}
             before, after = change.get("from_qty"), change.get("to_qty")
+            if before is None:
+                before = (derived.get(line_id) or {}).get("qty")
             return (
                 _dec(before) if before is not None else None,
                 _dec(after) if after is not None else None,
@@ -5713,7 +5727,6 @@ class ProjectOrderInquiryService:
         }
         if not went_down or not went_up:
             return
-        from app.services.project_line_split_service import LineSplitService, SplitOutputs
 
         # Stale splits (made against a base AutoCount has since moved on from) never act.
         acting = LineSplitService(self.db).acting_origin_ids(went_down)
