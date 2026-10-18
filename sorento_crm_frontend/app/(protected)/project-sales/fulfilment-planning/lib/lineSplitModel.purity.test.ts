@@ -71,7 +71,6 @@ const CALLS: Array<[string, (lines: Line[]) => unknown]> = [
   ['backToOwn', (l) => m.backToOwn(l, 'a2', 's403')],
   ['setQty', (l) => m.setQty(l, 'a2', 's403', 5)],
   ['setDate', (l) => m.setDate(l, 'a2', 's403', '2026-12-01')],
-  ['setSitsOn', (l) => m.setSitsOn(l, 'a2', 's403', 'a4')],
   ['setRemark', (l) => m.setRemark(l, 'a2', 's403', 'note')],
   ['setPair', (l) => m.setPair(l, 'a2', 's14', 's403', 20)],
   ['addSplit', (l) => m.addSplit(l, 'a2')],

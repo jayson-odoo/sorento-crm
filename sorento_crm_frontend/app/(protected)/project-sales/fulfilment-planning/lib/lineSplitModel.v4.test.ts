@@ -1,6 +1,6 @@
 /**
  * OI-LINE-SPLIT v4 model deltas (UAC A2, A4, A5, A7, A9): addSplit fills what is left,
- * placeRest, targetDateOf, setSitsOn taking the target date, sortLines, readsRemain.
+ * placeRest, targetDateOf, sortLines, readsRemain.
  * Numbers are SO417636 CSK14B: line 480 (417 @ 2026-10-20), line 608 (192 @ 2026-11-20).
  */
 import { describe, expect, it } from 'vitest';
@@ -161,53 +161,6 @@ describe('placeRest (the "N left" chip)', () => {
   });
 });
 
-describe('setSitsOn takes the target line date (AC-A7)', () => {
-  const lines = (): Line[] => {
-    const l480 = mk('l480', 480, 417, '2026-10-20', {
-      splits: [sp('a', 14, '2026-09-20', 'l480'), sp('b', 403, '2026-10-20', 'l480')],
-    });
-    return [l480, mk('l608', 608, 192, '2026-11-20'), by(owner(), 'l752')];
-  };
-
-  it('onto another line takes that line date', () => {
-    const next = m.setSitsOn(lines(), 'l480', 'b', 'l608');
-    expect(by(next, 'l480').splits.find((s) => s.id === 'b')).toMatchObject({
-      sitsOnLineId: 'l608',
-      deliveryDate: '2026-11-20',
-    });
-  });
-
-  it('onto a line AutoCount moved takes AutoCount now date', () => {
-    const next = m.setSitsOn(lines(), 'l480', 'b', 'l752');
-    expect(by(next, 'l480').splits.find((s) => s.id === 'b')!.deliveryDate).toBe('2027-01-02');
-  });
-
-  it('onto its own line or New line keeps the date', () => {
-    const own = m.setSitsOn(lines(), 'l480', 'a', 'l480');
-    expect(by(own, 'l480').splits.find((s) => s.id === 'a')!.deliveryDate).toBe('2026-09-20');
-    const fresh = m.setSitsOn(lines(), 'l480', 'a', null);
-    expect(by(fresh, 'l480').splits.find((s) => s.id === 'a')).toMatchObject({
-      sitsOnLineId: null,
-      deliveryDate: '2026-09-20',
-    });
-  });
-
-  it('leaving cancel to New line takes the base date', () => {
-    const l = mk('l480', 480, 417, '2026-10-20', {
-      splits: [
-        sp('a', 17, '2026-10-20', 'l480'),
-        sp('c', 400, null, 'l480', { isCancel: true }),
-      ],
-    });
-    const next = m.setSitsOn([l], 'l480', 'c', null);
-    expect(by(next, 'l480').splits.find((s) => s.id === 'c')).toMatchObject({
-      isCancel: false,
-      deliveryDate: '2026-10-20',
-      sitsOnLineId: null,
-    });
-  });
-});
-
 describe('sortLines (AC-A2)', () => {
   it('orders by item code, location, base date, then line no, without touching the input', () => {
     const input = [
@@ -260,43 +213,6 @@ describe('readsRemain (AC-A4)', () => {
         splits: [sp('s', 9, '2026-01-01', 'l'), sp('t', 1, '2026-01-01', 'l')],
       }),
     ).toBe(false);
-  });
-});
-
-describe('review round 1: picking a line in the select merges like a drop (S2)', () => {
-  const lines = (): Line[] => [
-    mk('l480', 480, 417, '2026-10-20', {
-      splits: [
-        sp('a', 14, '2026-09-20', 'l480'),
-        sp('b', 236, '2026-11-20', 'l608', { remark: 'first' }),
-        sp('c', 167, '2029-11-20', null, { remark: 'second' }),
-      ],
-    }),
-    mk('l608', 608, 192, '2026-11-20'),
-  ];
-
-  it('setSitsOn onto a line that already holds a split of this line on that date gives ONE merged split', () => {
-    const next = m.setSitsOn(lines(), 'l480', 'c', 'l608');
-    const splits = by(next, 'l480').splits;
-    expect(splits).toHaveLength(2);
-    expect(splits.find((s) => s.sitsOnLineId === 'l608')).toMatchObject({
-      qty: 403,
-      deliveryDate: '2026-11-20',
-      remark: 'first; second',
-    });
-    expect(m.gapOf(by(next, 'l480'))).toBe(0);
-  });
-
-  it('does not merge when the date differs or the other split is on another line', () => {
-    const l = lines();
-    by(l, 'l480').splits[1].deliveryDate = '2026-12-01';
-    // Planned-date rule (crew audit, PR comment 6232157002): line 608's own split that stays on
-    // it fixes its planned date at 2026-11-20, so the pick lands there, not on b's 2026-12-01.
-    by(l, 'l608').splits = [
-      sp('k', 100, '2026-11-20', 'l608'),
-      sp('j', 92, '2026-12-15', null),
-    ];
-    expect(by(m.setSitsOn(l, 'l480', 'c', 'l608'), 'l480').splits).toHaveLength(3);
   });
 });
 

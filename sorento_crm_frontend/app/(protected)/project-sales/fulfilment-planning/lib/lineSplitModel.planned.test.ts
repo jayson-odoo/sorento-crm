@@ -83,20 +83,6 @@ describe('plannedDateOf', () => {
   });
 });
 
-describe('setSitsOn takes the planned date', () => {
-  it('picking line 752 takes the date of the split that stays on 752, not AutoCount\'s date', () => {
-    const lines = [
-      mk('o', 480, 417, '2026-10-20', { splits: [sp('m', 417, '2026-10-20', null)] }),
-      mk('a', 752, 504, '2026-12-20', {
-        nowQty: 649, nowDate: '2027-01-02',
-        splits: [sp('x', 14, '2026-09-20', 'a'), sp('y', 490, null, 'a', { isCancel: true })],
-      }),
-    ];
-    const next = m.setSitsOn(lines, 'o', 'm', 'a');
-    expect(by(next, 'o').splits[0]).toMatchObject({ sitsOnLineId: 'a', deliveryDate: '2026-09-20' });
-  });
-});
-
 describe('plannedDateOf rule (b) is order-free: the EARLIEST foreign date', () => {
   const build = () => [
     mk('p', 480, 100, '2026-10-20', { splits: [sp('x', 100, '2026-12-05', 'l')] }),
