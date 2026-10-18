@@ -688,6 +688,23 @@ def _delta_qty_move(row: Dict[str, Any]) -> Optional[Tuple[Decimal, Decimal]]:
         return None
 
 
+def handover_moves(
+    previous_qty: Any, previous_date: Any, new_qty: Any, new_date: Any
+) -> Dict[str, Any]:
+    """What moved between a line's previous and new qty / date, keyed by the PREVIOUS value.
+
+    The one rule for "what moved" (owner: one function): the handover email's settled line
+    and the split sheet's NEW QTY / NEW DATE both read it. A new date of None is "no date
+    given", never a move.
+    """
+    moves: Dict[str, Any] = {}
+    if new_qty != previous_qty:
+        moves["qty"] = previous_qty
+    if new_date is not None and new_date != previous_date:
+        moves["delivery_date"] = previous_date
+    return moves
+
+
 def _format_handover_was(was: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """`was` as recorded, with its two FORMATTABLE keys turned into the same strings the
     line itself prints (`_qty_str` / dd-mm-yyyy) - every other key (a CHANGE SO NO row's
@@ -2587,11 +2604,7 @@ class ProjectOrderInquiryService:
             self._dispatch_changed_with_links(inquiry, row, had_link=linked > _ZERO)
             # AC-H3/AC-H4: only the field(s) that actually moved - a settle restating the
             # same date the confirmation never proposed changing must not read as one.
-            handover_was: Dict[str, Any] = {}
-            if need != previous_qty:
-                handover_was["qty"] = previous_qty
-            if required_date is not None and required_date != previous_date:
-                handover_was["delivery_date"] = previous_date
+            handover_was = handover_moves(previous_qty, previous_date, need, required_date)
             if product_moved:
                 handover_was["item_code"] = previous_item_code
             self._record_handover(

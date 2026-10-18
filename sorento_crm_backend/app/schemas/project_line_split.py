@@ -33,6 +33,10 @@ class LineSplitLineOut(BaseModel):
     base_date: Optional[date] = None
     now_qty: float
     now_date: Optional[date] = None
+    #: What AutoCount moved the line to, as the handover email reads it: set only when it
+    #: differs from the base (`handover_moves`), else null = blank.
+    new_qty: Optional[float] = None
+    new_date: Optional[date] = None
     #: The line carries a pending AutoCount change (it is inside Confirm).
     pending_change: bool = False
     #: The saved splits still act on Confirm: false once AutoCount moved on from the base

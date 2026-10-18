@@ -32,6 +32,9 @@ export interface SplitLine {
   baseDate: string | null;
   nowQty: number;
   nowDate: string | null;
+  /** What AutoCount moved the line to (email style): null = blank. */
+  newQty?: number | null;
+  newDate?: string | null;
   pendingChange: boolean;
   /** The saved splits still act on Confirm (false: AutoCount moved on from their base). */
   acting?: boolean;
@@ -555,6 +558,8 @@ export function fromPayload(payload: LineSplitsPayload): SplitLine[] {
     baseDate: line.base_date,
     nowQty: Number(line.now_qty) || 0,
     nowDate: line.now_date,
+    newQty: line.new_qty == null ? null : Number(line.new_qty),
+    newDate: line.new_date ?? null,
     pendingChange: Boolean(line.pending_change),
     acting: line.acting !== false,
     stale: line.split_state

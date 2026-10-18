@@ -50,7 +50,6 @@ import {
   setDate,
   setQty,
   setRemark,
-  setSitsOn,
   sortLines,
   splitsOf,
   plannedDateOf,
@@ -69,7 +68,6 @@ import {
   type SheetDrag,
   type SheetHandlers,
 } from './LineSplitSheet';
-import { SITS_ON_CANCEL, SITS_ON_NEW } from './lineSplitParts';
 
 interface Draft {
   lines: SplitLine[];
@@ -489,26 +487,6 @@ export function LineSplitDialog({
             : clearDate(all, line.lineId, splitId),
         );
       },
-      sitsOn: (line, splitId, value) => {
-        const on =
-          value === SITS_ON_CANCEL
-            ? 'cancel'
-            : value === SITS_ON_NEW
-              ? null
-              : value;
-        const qty =
-          splitsOf(liveLine(line.lineId) ?? line).find(
-            (split) => split.id === splitId,
-          )?.qty ?? 0;
-        const done = apply((all) => setSitsOn(all, line.lineId, splitId, on));
-        // Picking another line is a drop by other means: the same toast (UAC A7).
-        if (done && on && on !== 'cancel' && on !== line.lineId && qty > 0)
-          movedToast(
-            qty,
-            targetLabel(lineDropId(on), done.before) ?? lineShort(line),
-            done,
-          );
-      },
       remark: (line, splitId, remark) => {
         apply(
           (all) => setRemark(all, line.lineId, splitId, remark),
@@ -532,7 +510,7 @@ export function LineSplitDialog({
         typingRef.current = null;
       },
     }),
-    [apply, liveLine, movedToast, requestFocus],
+    [apply, liveLine, requestFocus],
   );
 
   // ---- drag and drop (UAC A8, A9)

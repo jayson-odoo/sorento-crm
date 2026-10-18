@@ -31,7 +31,7 @@ import {
   type SplitDraft,
   type SplitLine,
 } from '../lib/lineSplitModel';
-import { ChangePill, QtyInput, SitsOnSelect } from './lineSplitParts';
+import { ChangePill, QtyInput } from './lineSplitParts';
 
 /**
  * OI-LINE-SPLIT v4: the one split sheet (UAC A2 to A12, F1; mock v4
@@ -69,7 +69,6 @@ export interface SheetHandlers {
   open: (line: SplitLine, cell: 'qty' | 'date', typed?: string) => void;
   qty: (line: SplitLine, splitId: string, qty: number) => void;
   date: (line: SplitLine, splitId: string, iso: string | null) => void;
-  sitsOn: (line: SplitLine, splitId: string, value: string) => void;
   remark: (line: SplitLine, splitId: string, remark: string) => void;
   add: (line: SplitLine) => void;
   remove: (line: SplitLine, splitId: string) => void;
@@ -101,11 +100,12 @@ const COLUMNS: Array<{
   { key: 'item', label: 'Item code', width: 112, className: ITEM_STICKY },
   { key: 'location', label: 'Location', width: 64, className: DESKTOP_ONLY },
   { key: 'qty', label: 'Qty', width: 52 },
+  { key: 'newQty', label: 'New qty', width: 56 },
   { key: 'date', label: 'Delivery date', width: 96 },
+  { key: 'newDate', label: 'New date', width: 96 },
   { key: 'changeQty', label: 'Change quantity', width: 80, change: true },
   // DD/MM/YYYY in full beside the calendar button and the widest pill (ADVANCE).
   { key: 'changeDate', label: 'Change date', width: 236, change: true },
-  { key: 'sitsOn', label: 'AutoCount line', width: 144, change: true },
   { key: 'remark', label: 'Remark', change: true },
   { key: 'balance', label: 'Balance', width: 88 },
   { key: 'remove', label: '', width: 34, aria: 'Remove' },
@@ -294,8 +294,6 @@ const RemainButton = ({
 
 interface LineBlockProps {
   line: SplitLine;
-  /** Lines of the same item and location, sorted (the AUTOCOUNT LINE options). */
-  groupLines: SplitLine[];
   incoming: string;
   soNumber: string;
   soDate: string;
@@ -313,7 +311,6 @@ interface LineBlockProps {
 
 const LineBlock = React.memo(function LineBlock({
   line,
-  groupLines,
   incoming,
   soNumber,
   soDate,
@@ -374,16 +371,15 @@ const LineBlock = React.memo(function LineBlock({
       <TableCell rowSpan={span} className={cn(baseCell, 'tabular-nums')}>
         {delivered ? (line.deliveredQty ?? 0) : added ? 0 : line.baseQty}
       </TableCell>
+      <TableCell
+        rowSpan={span}
+        data-testid={`new-qty-${no}`}
+        className={cn(baseCell, 'tabular-nums')}
+      >
+        {line.newQty ?? ''}
+      </TableCell>
       <TableCell rowSpan={span} className={baseCell}>
         <span>{added ? '-' : formatSplitDate(line.baseDate)}</span>
-        {line.pendingChange && !added ? (
-          <span className="block text-2xs leading-tight text-warning">
-            AutoCount now{' '}
-            <span className="tabular-nums">
-              {`${line.nowQty} · ${formatSplitDate(line.nowDate)}`}
-            </span>
-          </span>
-        ) : null}
         {line.stale ? (
           <Badge
             variant="warning"
@@ -404,6 +400,13 @@ const LineBlock = React.memo(function LineBlock({
               </span>
             ))
           : null}
+      </TableCell>
+      <TableCell
+        rowSpan={span}
+        data-testid={`new-date-${no}`}
+        className={baseCell}
+      >
+        {formatSplitDate(line.newDate)}
       </TableCell>
     </>
   );
@@ -470,9 +473,6 @@ const LineBlock = React.memo(function LineBlock({
             {`Delivered ${line.deliveredQty ?? 0}`}
           </span>
         </TableCell>
-        <TableCell className={changeCell}>
-          <span className="text-muted-foreground">-</span>
-        </TableCell>
         <TableCell className={changeCell} />
         {balance}
         <TableCell className={changeCell} />
@@ -483,14 +483,7 @@ const LineBlock = React.memo(function LineBlock({
       <TableRow className="border-0 hover:bg-transparent">
         <TableCell data-pinned="" className={gripCell} />
         {baseCells}
-        <TableCell colSpan={2} className={changeCell}>
-          <span className="text-2xs italic text-muted-foreground">
-            {`Added in AutoCount: ${line.nowQty} · ${formatSplitDate(line.nowDate)}`}
-          </span>
-        </TableCell>
-        <TableCell className={changeCell}>
-          <span className="text-muted-foreground">-</span>
-        </TableCell>
+        <TableCell colSpan={2} className={changeCell} />
         <TableCell className={changeCell} />
         {balance}
         <TableCell className={changeCell} />
@@ -529,9 +522,6 @@ const LineBlock = React.memo(function LineBlock({
             line={line}
             handlers={handlers}
           />
-        </TableCell>
-        <TableCell className={changeCell}>
-          <span className="text-muted-foreground">-</span>
         </TableCell>
         <TableCell className={changeCell}>
           <Input
@@ -606,17 +596,6 @@ const LineBlock = React.memo(function LineBlock({
                 ) : null}
               </div>
             )}
-          </TableCell>
-          <TableCell className={cell}>
-            <div data-nav-col="line" className="min-w-0">
-              <SitsOnSelect
-                split={split}
-                origin={line}
-                groupLines={groupLines}
-                label={`AutoCount line, line ${no} split ${n}`}
-                onChange={(value) => handlers.sitsOn(line, split.id, value)}
-              />
-            </div>
           </TableCell>
           <TableCell className={cell}>
             <Input
@@ -754,7 +733,7 @@ export function LineSplitSheet({
 }: {
   /** The lines on screen (search and filter applied), in sheet order. */
   lines: SplitLine[];
-  /** Every line, in sheet order (AUTOCOUNT LINE options, "+N from line M"). */
+  /** Every line, in sheet order ("+N from line M"). */
   allLines: SplitLine[];
   soNumber: string;
   soDate: string;
@@ -764,27 +743,6 @@ export function LineSplitSheet({
   flashLineId: string | null;
   handlers: SheetHandlers;
 }) {
-  // A group's array is reused while its lines are the same objects, so typing in one line
-  // re-renders that line's group only.
-  const groupCache = React.useRef(new Map<string, SplitLine[]>());
-  const groups = React.useMemo(() => {
-    const map = new Map<string, SplitLine[]>();
-    for (const line of allLines) {
-      const key = groupKeyOf(line);
-      map.set(key, [...(map.get(key) ?? []), line]);
-    }
-    for (const [key, list] of map) {
-      const cached = groupCache.current.get(key);
-      if (
-        cached &&
-        cached.length === list.length &&
-        cached.every((line, index) => line === list[index])
-      )
-        map.set(key, cached);
-    }
-    groupCache.current = map;
-    return map;
-  }, [allLines]);
   const lineById = React.useMemo(
     () => new Map(allLines.map((line) => [line.lineId, line])),
     [allLines],
@@ -827,7 +785,7 @@ export function LineSplitSheet({
     const up =
       (event.key === 'Enter' && event.shiftKey) || event.key === 'ArrowUp';
     if (!down && !up) return;
-    // Enter presses a button: an unsplit line's value cell opens, the AUTOCOUNT LINE list opens.
+    // Enter presses a button: an unsplit line's value cell opens.
     if (event.key === 'Enter' && target.tagName === 'BUTTON') return;
     const table = event.currentTarget;
     const cells = Array.from(
@@ -889,7 +847,6 @@ export function LineSplitSheet({
           <React.Fragment key={line.lineId}>
             <LineBlock
               line={line}
-              groupLines={groups.get(key) ?? [line]}
               incoming={incoming.get(line.lineId) ?? ''}
               soNumber={soNumber}
               soDate={soDate}

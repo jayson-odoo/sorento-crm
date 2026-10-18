@@ -32,6 +32,7 @@ from app.models.project_so import (
     SOLineSplit,
 )
 from app.services.error_handler import AppException
+from app.services.project_order_inquiry_service import handover_moves
 
 _ZERO = Decimal("0")
 
@@ -476,6 +477,11 @@ class LineSplitService:
         out_lines = []
         for f in listed:
             base_qty, base_date = f.base()
+            moves = (
+                {}
+                if f.delivered_in_full(sitting_on)
+                else handover_moves(base_qty, base_date, f.now_qty, f.now_date)
+            )
             out_lines.append(
                 {
                     "line_id": f.line_id,
@@ -486,6 +492,8 @@ class LineSplitService:
                     "base_date": base_date,
                     "now_qty": float(f.now_qty),
                     "now_date": f.now_date,
+                    "new_qty": float(f.now_qty) if "qty" in moves else None,
+                    "new_date": f.now_date if "delivery_date" in moves else None,
                     "pending_change": f.pending,
                     # The saved splits still act on Confirm (`splits_act`); false once
                     # AutoCount moved on from the base they were made against.

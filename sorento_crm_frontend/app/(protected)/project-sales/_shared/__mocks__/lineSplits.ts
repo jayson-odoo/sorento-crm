@@ -21,11 +21,13 @@ export const LINE_SPLITS_SO417636 = {
     {
       line_id: 'line-10', line_no: 10, item_code: 'CSK14B', location: 'BRW-BB',
       base_qty: 301, base_date: '2026-08-24', now_qty: 301, now_date: '2026-08-24',
+      new_qty: null, new_date: null,
       pending_change: false, delivered_qty: 0, splits: [],
     },
     {
       line_id: 'line-20', line_no: 20, item_code: 'CSK14B', location: 'BRW-BB',
       base_qty: 417, base_date: '2026-10-20', now_qty: 14, now_date: '2026-09-20',
+      new_qty: 14, new_date: '2026-09-20',
       pending_change: true, delivered_qty: 0,
       splits: [
         { id: 'sp-20-14', qty: 14, delivery_date: '2026-09-20', is_cancel: false,
@@ -39,11 +41,13 @@ export const LINE_SPLITS_SO417636 = {
     {
       line_id: 'line-30', line_no: 30, item_code: 'CSK14B', location: 'BRW-BB',
       base_qty: 192, base_date: '2026-11-20', now_qty: 632, now_date: '2026-11-20',
+      new_qty: 632, new_date: null,
       pending_change: true, delivered_qty: 0, splits: [],
     },
     {
       line_id: 'line-40', line_no: 40, item_code: 'CSK14B', location: 'BRW-BB',
       base_qty: 504, base_date: '2026-12-20', now_qty: 649, now_date: '2027-01-02',
+      new_qty: 649, new_date: '2027-01-02',
       pending_change: true, delivered_qty: 0,
       splits: [
         { id: 'sp-40-37', qty: 37, delivery_date: '2026-11-20', is_cancel: false,
@@ -55,6 +59,7 @@ export const LINE_SPLITS_SO417636 = {
     {
       line_id: 'line-50', line_no: 50, item_code: 'CSK11A', location: 'BRW-BB',
       base_qty: 335, base_date: '2027-01-02', now_qty: 335, now_date: '2027-01-02',
+      new_qty: null, new_date: null,
       pending_change: false, delivered_qty: 0, splits: [],
     },
   ],

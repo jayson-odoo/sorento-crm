@@ -25,6 +25,9 @@ export interface LineSplitLine {
   base_date: string | null;
   now_qty: number;
   now_date: string | null;
+  /** Set only where AutoCount moved the line off its base; null = blank. */
+  new_qty: number | null;
+  new_date: string | null;
   /** The line carries a pending AutoCount change (it is inside Confirm). */
   pending_change: boolean;
   /** The saved splits still act on Confirm; false once AutoCount moved on from their base. */
