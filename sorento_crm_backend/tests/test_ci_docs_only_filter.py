@@ -1669,7 +1669,14 @@ def _run_changed_step(tmp_path: Path, files: str, **env) -> tuple[int, list[str]
     log.write_text("")
     result = subprocess.run(
         ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", _step_script("Run the changed test files (executing gate)")],
-        env={"PATH": f"{stub}:{os.environ.get('PATH', '/usr/bin:/bin')}", "FILES": files, "PY_LOG": str(log), **env},
+        # XDIST_WORKERS as the step's env sets it on GitHub-hosted (`auto`; 2 on the Mac).
+        env={
+            "PATH": f"{stub}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+            "FILES": files,
+            "PY_LOG": str(log),
+            "XDIST_WORKERS": "auto",
+            **env,
+        },
         capture_output=True,
         text=True,
     )

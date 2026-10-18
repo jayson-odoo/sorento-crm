@@ -260,3 +260,43 @@ def test_the_gitleaks_cli_matches_the_runner_architecture(tmp_path, machine, exp
         env={"PATH": f"{bindir}:/usr/bin:/bin"}, capture_output=True, text=True,
     )
     assert result.stdout.strip() == expected, result.stdout + result.stderr
+
+
+# --- how many xdist workers a job on the Mac runs -----------------------------
+# The Mac runner's VM is 4 CPU, 6 GiB, no swap (scripts/ci-runner/up.sh). `-n
+# auto` there is 4 workers at about 1.4 GB each, plus Postgres and Redis: the
+# release run 39126899668 lost four workers of shard 5 to the OOM killer and
+# shard 7 hung to its cap. Two workers on the Mac, `auto` on GitHub-hosted, set
+# in the step's env (the PR gate's script is executed by
+# test_ci_docs_only_filter.py, and bash cannot run a `${{ }}`).
+# `--max-worker-restart 0` ends the session on the first crashed worker, where
+# xdist's default (4 x workers) respawned each one into the same pressure.
+
+XDIST_WORKERS = "${{ needs.changes.outputs.tests_runner == 'sorento-mac' && 2 || 'auto' }}"
+XDIST_JOBS = ["lean-gate", "test-backend", "test-backend-scm"]
+# An xdist call: `--dist`, or a worker count (not `[ -n "$x" ]` or `echo -n`).
+_XDIST_CALL = re.compile(r"\s--dist\s|\s-n\s+(auto|\d+|\$\{\{)")
+
+
+def _xdist_steps(job: str) -> list[tuple[dict, list[str]]]:
+    found = []
+    for step in _jobs()[job].get("steps", []):
+        run = (step.get("run") or "").replace("\\\n", " ")
+        calls = [line.strip() for line in run.splitlines() if _XDIST_CALL.search(line)]
+        if calls:
+            found.append((step, calls))
+    return found
+
+
+@pytest.mark.parametrize("job", XDIST_JOBS)
+def test_the_backend_test_jobs_run_xdist(job):
+    assert _xdist_steps(job), f"{job}: no xdist call found, XDIST_JOBS is stale"
+
+
+@pytest.mark.parametrize("job", TEST_JOBS)
+def test_xdist_on_the_mac_runs_two_workers_and_never_respawns_a_crashed_one(job):
+    for step, calls in _xdist_steps(job):
+        assert step.get("env", {}).get("XDIST_WORKERS") == XDIST_WORKERS, (job, step.get("name"))
+        for line in calls:
+            assert '-n "$XDIST_WORKERS"' in line, (job, step.get("name"), line)
+            assert "--max-worker-restart 0" in line, (job, step.get("name"), line)
