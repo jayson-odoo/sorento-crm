@@ -5738,7 +5738,7 @@ class ProjectOrderInquiryService:
         whole = whole_buy_line_ids(self.db, split_lines, decision)
         acting = {line_id for line_id in whole if facts[line_id].split_state == SPLIT_ACTING}
         standing = {line_id for line_id in whole if facts[line_id].split_state == SPLIT_APPLIED}
-        if not acting:
+        if not acting and not standing:
             return {}, {}, standing
         stored = [split for f in facts.values() for split in f.splits]
         sits = service.effective_sits_on(stored)
@@ -5772,16 +5772,67 @@ class ProjectOrderInquiryService:
                 "line": entries[line_id]["line"],
                 "entry": entries[line_id],
             }
-        for target, qty in declined_in.items():
-            before, after = changes.get(target, (None, None))
-            if target in needs or target not in entries or after is None:
+        # AC-G13: a plan a Confirm already applied still keeps what its origin holds for the
+        # splits sitting on other lines (a declined move), so that target is not asked again.
+        for line_id in sorted(standing):
+            f = facts[line_id]
+            elsewhere = [
+                split
+                for split in f.splits
+                if not split.is_cancel
+                and sits.get(str(split.id))
+                and sits.get(str(split.id)) != line_id
+            ]
+            if not elsewhere:
                 continue
-            grew = after - (before if before is not None else _ZERO)
+            on_line = sum(
+                (
+                    _dec(split.qty)
+                    for split in f.splits
+                    if not split.is_cancel and sits.get(str(split.id)) == line_id
+                ),
+                _ZERO,
+            ) + (plans[line_id].extra_qty or _ZERO)
+            spare = self._asked_qty(line_id) - on_line
+            for split in elsewhere:
+                take = min(_dec(split.qty), spare)
+                if take <= _ZERO:
+                    break
+                declined_in[sits[str(split.id)]] += take
+                spare -= take
+        for target, qty in declined_in.items():
+            if target in needs or target in standing or target not in entries:
+                continue
+            before, after = changes.get(target, (None, None))
+            if after is not None:
+                grew = after - (before if before is not None else _ZERO)
+            elif facts.get(target) is not None and facts[target].refers_back:
+                # No change in this Confirm: the growth the last applied change brought.
+                grew = facts[target].now_qty - facts[target].applied_base()[0]
+            else:
+                continue
             if grew <= _ZERO:
                 continue
             # Crew ruling (a): AutoCount's growth already counts the qty the origin keeps.
             needs[target] = max(_dec(entries[target].get("buy_qty")) - min(qty, grew), _ZERO)
         return kept_out, needs, standing
+
+    def _asked_qty(self, line_id: str) -> Decimal:
+        """What a line's live ORDER rows still ask purchasing for: not cancelled, not given
+        back to the pool, not a row whose cover is a document received in full."""
+        return sum(
+            (
+                _dec(row.qty)
+                for row in self.db.query(OrderInquiryRow).filter(
+                    OrderInquiryRow.so_line_id == line_id,
+                    OrderInquiryRow.verb == IV_ORDER,
+                    OrderInquiryRow.state != INQUIRY_CANCELLED,
+                )
+                if not row.redirected_to_pool
+                and not self._received_documents_for(self._links_of(row.id))
+            ),
+            _ZERO,
+        )
 
     def _qty_changes(
         self, line_ids: Sequence[str], line_changes: Mapping[str, Dict[str, Any]]
