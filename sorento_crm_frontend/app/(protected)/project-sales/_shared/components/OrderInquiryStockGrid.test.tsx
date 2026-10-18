@@ -185,7 +185,7 @@ describe('STOCK-GROUPBY (AC-20): the OI line expand carries the Group by bar', (
     >('../../fulfilment-planning/components/CellStockTable');
     render(
       <QueryClientProvider client={new QueryClient()}>
-        <actual.CellStockTable {...(props as React.ComponentProps<typeof actual.CellStockTable>)} />
+        <actual.CellStockTable {...(props as unknown as React.ComponentProps<typeof actual.CellStockTable>)} />
       </QueryClientProvider>,
     );
     expect(screen.getByTestId('group-by-bar')).toBeInTheDocument();

@@ -17,6 +17,7 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -4215,9 +4216,9 @@ describe('STOCK-GROUPBY (AC-20): the cell Stock tab carries the Group by bar', (
       isLoading: false,
       isError: false,
     });
-    const { unmount } = renderDialog([demand()], { 'BRW-BB': '40' });
+    renderDialog([demand()], { 'BRW-BB': '40' });
     expect(await screen.findByTestId('group-by-bar')).toBeInTheDocument();
-    unmount();
+    cleanup();
     useStockStatusMock.mockReturnValue({ data: undefined, isLoading: false, isError: true });
     renderDialog([demand()], { 'BRW-BB': '40' });
     expect(screen.queryByTestId('group-by-bar')).not.toBeInTheDocument();

@@ -76,7 +76,7 @@ describe('STOCK-GROUPBY (AC-17, AC-20): the quotation popover carries the bar on
     >('../../fulfilment-planning/components/CellStockTable');
     render(
       <QueryClientProvider client={new QueryClient()}>
-        <actual.CellStockTable {...(props as React.ComponentProps<typeof actual.CellStockTable>)} />
+        <actual.CellStockTable {...(props as unknown as React.ComponentProps<typeof actual.CellStockTable>)} />
       </QueryClientProvider>,
     );
   }
