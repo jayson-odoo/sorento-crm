@@ -245,11 +245,7 @@ def _line(w, **over):
     body = {
         "proposed_code": "XY-1234-MB",
         "description": "Kitchen sink, nanograin finish",
-        "category_id": w.refs.category,
-        "base_uom_id": w.refs.uom,
         "brand_id": w.refs.brand,
-        "item_type_id": w.refs.item_type,
-        "supplier_id": None,
         "expected_qty": "55",
     }
     body.update(over)
@@ -326,11 +322,11 @@ def test_ac01_create_needs_the_create_permission(world):
 
 
 def test_ac02_a_draft_saves_empty_fields_and_cleared_numbers_stay_null(world):
-    d = _draft(world, lines=[{"description": None, "expected_qty": None, "cost_price": None}])
+    d = _draft(world, lines=[{"description": None, "expected_qty": None, "dimension": None}])
     line = d["lines"][0]
     assert line["expected_qty"] is None
     assert line["cost_price"] is None
-    assert line["category_id"] is None
+    assert line["dimension"] is None
 
 
 def test_ac03_only_the_applicant_edits_a_draft(world):
@@ -376,23 +372,11 @@ def test_ac03_a_submitted_application_is_not_deletable(world):
     assert exc.value.status_code == 409
 
 
-@pytest.mark.parametrize("field", ["category_id", "base_uom_id", "brand_id", "item_type_id", "supplier_id"])
+@pytest.mark.parametrize("field", ["brand_id"])
 def test_ac04_an_unknown_reference_is_422_naming_the_field(world, field):
     res = world.api.as_(world.sales).post(NPA, json=_body(world, lines=[_line(world, **{field: uid()})]))
     assert res.status_code == 422, res.text
     assert field in res.text
-
-
-def test_ac04_another_companys_category_is_refused(world):
-    from app.models.base import company_scope
-
-    other = second_company(world.db)
-    with company_scope(world.db, frozenset({other})):
-        foreign = _refs(world.db)
-    res = world.api.as_(world.sales).post(
-        NPA, json=_body(world, lines=[_line(world, category_id=foreign.category)])
-    )
-    assert res.status_code == 422, res.text
 
 
 def test_ac04_unknown_stock_inquiry_and_customer_are_refused(world):
@@ -441,16 +425,11 @@ def test_ac10_submit_needs_at_least_one_line(world):
     assert _get(world, d["id"])["status"] == "draft"
 
 
-@pytest.mark.parametrize(
-    "missing, words",
-    [("description", "description"), ("category_id", "item group"), ("base_uom_id", "UOM")],
-)
-def test_ac10_submit_names_the_line_and_the_missing_field(world, missing, words):
-    d = _draft(world, lines=[_line(world), _line(world, **{missing: None})])
+def test_ac10_submit_names_the_product_and_the_missing_product_type(world):
+    d = _draft(world, lines=[_line(world), _line(world, description=None)])
     res = _act(world, d["id"], "submit", world.sales)
     assert res.status_code == 422
-    assert "Line 2" in res.text
-    assert words in res.text
+    assert "Product 2: enter the product type." in res.text
     after = _get(world, d["id"])
     assert after["status"] == "draft"
     assert len(after["lines"]) == 2
@@ -765,8 +744,7 @@ def test_ac51_detail_resolves_labels_not_ids(world):
     assert got["stock_inquiry_number"] == world.inquiry.inquiry_number
     assert got["customer_code"] == world.customer.customer_code
     line = got["lines"][0]
-    for key in ("category_name", "base_uom_code", "brand_name", "item_type_name"):
-        assert line[key], key
+    assert line["brand_name"]
 
 
 def test_ac53_another_companys_application_is_invisible(world):
@@ -780,10 +758,10 @@ def test_ac53_another_companys_application_is_invisible(world):
         assert d["id"] not in {r["id"] for r in listed["items"]}
 
 
-def test_item_type_select_lists_the_company_item_types(world):
+def test_item_type_select_is_gone(world):
+    """v4 D3: the applicant no longer picks an item type, so the unused select is removed."""
     res = world.api.as_(world.sales).get(f"{NPA}/item-types", params={"q": "kitchen"})
-    assert res.status_code == 200, res.text
-    assert world.refs.item_type in {r["id"] for r in res.json()}
+    assert res.status_code in (404, 405, 422), res.text
 
 
 # ------------------------------------------------------------------ review round 1
@@ -879,7 +857,7 @@ def test_review_staff_cannot_edit_a_portal_application(world):
     assert res.status_code == 409, res.text
 
 
-@pytest.mark.parametrize("field", ["description", "further_description", "remark"])
+@pytest.mark.parametrize("field", ["description"])
 def test_review_line_text_is_capped(world, field):
     res = world.api.as_(world.sales).post(NPA, json=_body(world, lines=[_line(world, **{field: "x" * 5001})]))
     assert res.status_code == 422
@@ -891,7 +869,763 @@ def test_review_reason_is_capped(world):
 
 
 def test_review_refusals_name_the_field_in_words(world):
-    res = world.api.as_(world.sales).post(NPA, json=_body(world, lines=[_line(world, category_id=uid())]))
+    res = world.api.as_(world.sales).post(NPA, json=_body(world, lines=[_line(world, brand_id=uid())]))
     assert res.status_code == 422
-    assert "item group" in res.text
-    assert "category_id does not exist" not in res.text
+    assert "brand" in res.text
+    assert "brand_id does not exist" not in res.text
+
+
+# ====================================================================================
+# v4: the paper layout (AC-NPA-70..78). Written red-first from the UAC and the plan.
+# ====================================================================================
+
+from datetime import datetime  # noqa: E402
+from decimal import Decimal  # noqa: E402
+
+from ._npa_v4_support import (  # noqa: E402
+    IMAGE_FORMATS,
+    REFUSED_LINE_KEYS,
+    refused_value,
+    SHEET_LABELS,
+    downloaded_name,
+    image_bytes,
+    label_rows,
+    noon,
+    open_workbook,
+    seed_attachment,
+    sheet_values,
+    text_of,
+)
+
+LOCKED_CODE = "new_product_application_locked"
+
+
+@pytest.fixture()
+def store(monkeypatch, world):
+    from ._npa_v4_support import install_storage, seed_attachment_type
+
+    seed_attachment_type(world.db)
+    return install_storage(monkeypatch)
+
+
+def _put(w, aid, lines, user=None, **over):
+    return w.api.as_(user or w.sales).put(f"{NPA}/{aid}", json=_body(w, lines=lines, **over))
+
+
+def _upload(w, aid, line_id, user=None, name="photo.png", data=None, mime="image/png"):
+    return w.api.as_(user or w.sales).post(
+        f"{NPA}/{aid}/lines/{line_id}/images",
+        files={"file": (name, data if data is not None else image_bytes(), mime)},
+    )
+
+
+def _ok(res):
+    assert res.status_code in (200, 201), res.text
+    return res
+
+
+def _images(w, aid, index=0):
+    return _get(w, aid)["lines"][index]["images"]
+
+
+def _feedback(w, aid, user=None, **body):
+    return w.api.as_(user or w.buyer).put(f"{NPA}/{aid}/feedback", json=body)
+
+
+def _rows_for(w, entity_type, entity_id):
+    from app.models.resources import EntityAttachmentLink
+
+    return (
+        w.db.query(EntityAttachmentLink)
+        .filter(EntityAttachmentLink.entity_type == entity_type, EntityAttachmentLink.entity_id == entity_id)
+        .all()
+    )
+
+
+# ------------------------------------------------------------------ AC-NPA-70 the write body
+
+
+def test_ac70_the_paper_fields_round_trip(world):
+    d = _draft(
+        world,
+        lines=[
+            _line(
+                world,
+                dimension="600 x 450 mm",
+                material="Stainless steel",
+                thickness="1.2 mm",
+                packing="1 pc per carton",
+            )
+        ],
+    )
+    for got in (d["lines"][0], _get(world, d["id"])["lines"][0]):
+        assert got["dimension"] == "600 x 450 mm"
+        assert got["material"] == "Stainless steel"
+        assert got["thickness"] == "1.2 mm"
+        assert got["packing"] == "1 pc per carton"
+        assert got["brand_id"] == world.refs.brand
+        assert got["images"] == []
+
+
+@pytest.mark.parametrize("key", REFUSED_LINE_KEYS)
+def test_ac70_a_removed_line_key_is_422_naming_the_field_on_create(world, key):
+    res = world.api.as_(world.sales).post(
+        NPA, json=_body(world, lines=[_line(world, **{key: refused_value(key, world.refs)})])
+    )
+    assert res.status_code == 422, res.text
+    assert key in res.text
+
+
+@pytest.mark.parametrize("key", REFUSED_LINE_KEYS)
+def test_ac70_a_removed_line_key_is_422_naming_the_field_on_update(world, key):
+    d = _draft(world)
+    res = _put(world, d["id"], [_line(world, **{key: refused_value(key, world.refs)})])
+    assert res.status_code == 422, res.text
+    assert key in res.text
+    assert len(_get(world, d["id"])["lines"]) == 2  # the refused save changed nothing
+
+
+@pytest.mark.parametrize("key", ["status", "application_no", "applicant_id"])
+def test_ac70_an_unknown_header_key_is_422_naming_the_field(world, key):
+    res = world.api.as_(world.sales).post(NPA, json=_body(world, **{key: "x"}))
+    assert res.status_code == 422, res.text
+    assert key in res.text
+
+
+# ------------------------------------------------------------------ AC-NPA-71 products kept by id
+
+
+def test_ac71_an_edit_keeps_the_product_id_and_its_image(world, store):
+    d = _draft(world)
+    first, second = [l["id"] for l in d["lines"]]
+    _ok(_upload(world, d["id"], first))
+    link_before = _images(world, d["id"])[0]["link_id"]
+
+    res = _put(
+        world,
+        d["id"],
+        [_line(world, id=first, description="Sink, now polished"), _line(world, id=second)],
+    )
+    assert res.status_code == 200, res.text
+    lines = res.json()["lines"]
+    assert [l["id"] for l in lines] == [first, second]
+    assert lines[0]["description"] == "Sink, now polished"
+    assert [i["link_id"] for i in lines[0]["images"]] == [link_before]
+
+
+def test_ac71_a_product_without_an_id_is_added_in_body_order(world):
+    d = _draft(world)
+    first, second = [l["id"] for l in d["lines"]]
+    res = _put(
+        world,
+        d["id"],
+        [_line(world, proposed_code="NEW-1"), _line(world, id=second), _line(world, id=first)],
+    )
+    assert res.status_code == 200, res.text
+    lines = res.json()["lines"]
+    assert [l["line_no"] for l in lines] == [1, 2, 3]
+    assert lines[0]["proposed_code"] == "NEW-1"
+    assert lines[0]["id"] not in (first, second)
+    assert [l["id"] for l in lines[1:]] == [second, first]
+
+
+def test_ac71_a_product_left_out_is_deleted_with_its_image_links(world, store):
+    d = _draft(world)
+    first, second = [l["id"] for l in d["lines"]]
+    _ok(_upload(world, d["id"], second))
+    assert len(_rows_for(world, "new_product_application_line", second)) == 1
+
+    res = _put(world, d["id"], [_line(world, id=first)])
+    assert res.status_code == 200, res.text
+    assert [l["id"] for l in res.json()["lines"]] == [first]
+    assert _rows_for(world, "new_product_application_line", second) == []
+
+
+@pytest.mark.parametrize("which", ["other_application", "unknown"])
+def test_ac71_a_line_id_of_another_application_is_422(world, which):
+    mine = _draft(world)
+    other = _draft(world)
+    foreign = other["lines"][0]["id"] if which == "other_application" else uid()
+    res = _put(world, mine["id"], [_line(world, id=foreign)])
+    assert res.status_code == 422, res.text
+    assert [l["id"] for l in _get(world, other["id"])["lines"]] == [l["id"] for l in other["lines"]]
+    assert len(_get(world, mine["id"])["lines"]) == 2
+
+
+# ------------------------------------------------------------------ AC-NPA-72 submit
+
+
+def test_ac72_submit_names_every_product_without_a_type(world):
+    d = _draft(world, lines=[_line(world, description=None), _line(world), _line(world, description="  ")])
+    res = _act(world, d["id"], "submit", world.sales)
+    assert res.status_code == 422
+    assert "Product 1: enter the product type." in res.text
+    assert "Product 3: enter the product type." in res.text
+    assert "Product 2: enter the product type." not in res.text
+    assert _get(world, d["id"])["status"] == "draft"
+
+
+def test_ac72_a_product_with_only_a_type_submits(world):
+    d = _draft(world, lines=[{"description": "Kitchen sink"}])
+    res = _act(world, d["id"], "submit", world.sales)
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "submitted"
+
+
+def test_ac72_submit_needs_at_least_one_product(world):
+    d = _draft(world, lines=[])
+    assert _act(world, d["id"], "submit", world.sales).status_code == 422
+
+
+# ------------------------------------------------------------------ AC-NPA-73 images
+
+
+@pytest.mark.parametrize("fmt, mime, name", IMAGE_FORMATS)
+def test_ac73_the_applicant_uploads_a_jpeg_png_or_webp(world, store, fmt, mime, name):
+    d = _draft(world)
+    res = _ok(_upload(world, d["id"], d["lines"][0]["id"], name=name, data=image_bytes(fmt), mime=mime))
+    assert res.status_code in (200, 201)
+    images = _images(world, d["id"])
+    assert len(images) == 1
+    image = images[0]
+    assert image["filename"] == name
+    assert image["content_type"] == mime
+    assert image["url"] and image["link_id"] and image["attachment_id"]
+    assert _images(world, d["id"], 1) == []
+
+
+@pytest.mark.parametrize(
+    "name, mime, data",
+    [("notes.txt", "text/plain", b"hello"), ("sheet.pdf", "application/pdf", b"%PDF-1.4 fake")],
+)
+def test_ac73_anything_but_an_image_is_422(world, store, name, mime, data):
+    d = _draft(world)
+    res = _upload(world, d["id"], d["lines"][0]["id"], name=name, data=data, mime=mime)
+    assert res.status_code == 422, res.text
+    assert _images(world, d["id"]) == []
+
+
+def test_ac73_upload_is_open_again_after_a_rejection(world, store):
+    d = _submitted(world)
+    assert _act(world, d["id"], "reject", world.manager, reason="Add a photo").status_code == 200
+    _ok(_upload(world, d["id"], d["lines"][0]["id"]))
+    assert len(_images(world, d["id"])) == 1
+
+
+@pytest.mark.parametrize("state", ["submitted", "approved"])
+def test_ac73_images_are_locked_while_submitted_or_approved(world, store, state):
+    d = _draft(world)
+    line = d["lines"][0]["id"]
+    _ok(_upload(world, d["id"], line))
+    link_id = _images(world, d["id"])[0]["link_id"]
+    att_id, _ = seed_attachment(world.db, store, "stock_inquiry", world.inquiry.id, "site.png", image_bytes(), "image/png")
+    assert _act(world, d["id"], "submit", world.sales).status_code == 200
+    if state == "approved":
+        assert _act(world, d["id"], "approve", world.manager).status_code == 200
+
+    up = _upload(world, d["id"], line)
+    cp = world.api.as_(world.sales).post(f"{NPA}/{d['id']}/lines/{line}/images/copy", json={"attachment_id": att_id})
+    rm = world.api.as_(world.sales).delete(f"{NPA}/{d['id']}/lines/{line}/images/{link_id}")
+    for res in (up, cp, rm):
+        assert res.status_code == 422, res.text
+        assert LOCKED_CODE in res.text
+    assert len(_images(world, d["id"])) == 1
+
+
+def test_ac73_only_the_owner_changes_images(world, store):
+    d = _draft(world)
+    line = d["lines"][0]["id"]
+    _ok(_upload(world, d["id"], line))
+    link_id = _images(world, d["id"])[0]["link_id"]
+    att_id, _ = seed_attachment(world.db, store, "stock_inquiry", world.inquiry.id, "site.png", image_bytes(), "image/png")
+
+    assert _upload(world, d["id"], line, user=world.sales_b).status_code == 403
+    cp = world.api.as_(world.sales_b).post(f"{NPA}/{d['id']}/lines/{line}/images/copy", json={"attachment_id": att_id})
+    assert cp.status_code == 403
+    rm = world.api.as_(world.sales_b).delete(f"{NPA}/{d['id']}/lines/{line}/images/{link_id}")
+    assert rm.status_code == 403
+    assert len(_images(world, d["id"])) == 1
+
+
+def test_ac73_copy_links_a_file_already_on_the_stock_inquiry(world, store):
+    from app.models.resources import Attachment
+
+    d = _draft(world)
+    line = d["lines"][0]["id"]
+    att_id, _ = seed_attachment(world.db, store, "stock_inquiry", world.inquiry.id, "site.png", image_bytes(), "image/png")
+    before = world.db.query(Attachment).count()
+    res = world.api.as_(world.sales).post(
+        f"{NPA}/{d['id']}/lines/{line}/images/copy", json={"attachment_id": att_id}
+    )
+    _ok(res)
+    images = _images(world, d["id"])
+    assert [i["attachment_id"] for i in images] == [att_id]
+    assert images[0]["filename"] == "site.png"
+    assert world.db.query(Attachment).count() == before  # linked, never uploaded twice
+
+
+@pytest.mark.parametrize("which", ["other_inquiry", "unknown"])
+def test_ac73_copy_refuses_a_file_not_on_this_inquiry(world, store, which):
+    d = _draft(world)
+    line = d["lines"][0]["id"]
+    if which == "other_inquiry":
+        other = _inquiry(world.db)
+        att_id, _ = seed_attachment(world.db, store, "stock_inquiry", other.id, "x.png", image_bytes(), "image/png")
+    else:
+        att_id = uid()
+    res = world.api.as_(world.sales).post(
+        f"{NPA}/{d['id']}/lines/{line}/images/copy", json={"attachment_id": att_id}
+    )
+    assert res.status_code == 422, res.text
+    assert _images(world, d["id"]) == []
+
+
+def test_ac73_unlink_removes_the_link_and_keeps_the_file_row(world, store):
+    from app.models.resources import Attachment
+
+    d = _draft(world)
+    line = d["lines"][0]["id"]
+    _ok(_upload(world, d["id"], line))
+    image = _images(world, d["id"])[0]
+    res = world.api.as_(world.sales).delete(f"{NPA}/{d['id']}/lines/{line}/images/{image['link_id']}")
+    assert res.status_code in (200, 204), res.text
+    assert _images(world, d["id"]) == []
+    assert world.db.query(Attachment).filter(Attachment.id == image["attachment_id"]).count() == 1
+
+
+# ------------------------------------------------------------------ AC-NPA-74 purchasing feedback
+
+
+def _line_costs(w, aid):
+    return [l["cost_price"] for l in _get(w, aid)["lines"]]
+
+
+def test_ac74_open_code_saves_leadtime_and_cost_and_stamps_who_and_when(world):
+    d = _approved(world)
+    first, second = [l["id"] for l in d["lines"]]
+    res = _feedback(
+        world, d["id"], lead_time="3 weeks after PO",
+        lines=[{"id": first, "cost_price": "12.50"}, {"id": second, "cost_price": 0}],
+    )
+    assert res.status_code == 200, res.text
+    got = _get(world, d["id"])
+    assert got["lead_time"] == "3 weeks after PO"
+    assert [Decimal(l["cost_price"]) for l in got["lines"]] == [Decimal("12.50"), Decimal("0")]
+    assert got["feedback_by_name"] == f"{MARKER} purchasing"
+    assert got["feedback_at"]
+    # No approval or status change: still Approved, still decided by the approver.
+    assert got["status"] == "approved"
+    assert got["decided_by"] == world.manager
+    assert got["completed_at"] is None
+
+
+@pytest.mark.parametrize("who", ["viewer", "sales", "stranger", "manager"])
+def test_ac74_only_open_code_may_save_feedback(world, who):
+    d = _approved(world)
+    res = _feedback(world, d["id"], user=getattr(world, who), lead_time="1 week")
+    assert res.status_code == 403, res.text
+    assert _get(world, d["id"])["lead_time"] is None
+
+
+@pytest.mark.parametrize("state", ["draft", "submitted", "rejected", "cancelled"])
+def test_ac74_feedback_is_409_before_approval_or_after_a_stop(world, state):
+    d = _draft(world)
+    if state in ("submitted", "rejected"):
+        assert _act(world, d["id"], "submit", world.sales).status_code == 200
+    if state == "rejected":
+        assert _act(world, d["id"], "reject", world.manager, reason="no").status_code == 200
+    if state == "cancelled":
+        assert _act(world, d["id"], "cancel", world.sales).status_code == 200
+    res = _feedback(world, d["id"], lead_time="1 week")
+    assert res.status_code == 409, res.text
+    assert _get(world, d["id"])["lead_time"] is None
+
+
+def test_ac74_feedback_is_open_on_a_completed_application(world):
+    d = _approved(world)
+    assert _link(world, d["id"], d["lines"][0]["id"], world.product.id).status_code == 200
+    assert _link(world, d["id"], d["lines"][1]["id"], world.product2.id).status_code == 200
+    assert _get(world, d["id"])["status"] == "completed"
+    res = _feedback(world, d["id"], lead_time="2 weeks")
+    assert res.status_code == 200, res.text
+    got = _get(world, d["id"])
+    assert got["lead_time"] == "2 weeks"
+    assert got["status"] == "completed"
+
+
+def test_ac74_a_cost_below_zero_is_422_and_saves_nothing(world):
+    d = _approved(world)
+    first = d["lines"][0]["id"]
+    res = _feedback(world, d["id"], lead_time="9 days", lines=[{"id": first, "cost_price": "-0.01"}])
+    assert res.status_code == 422, res.text
+    got = _get(world, d["id"])
+    assert got["lead_time"] is None
+    assert _line_costs(world, d["id"]) == [None, None]
+
+
+def test_ac74_an_empty_cost_clears_it_to_null(world):
+    d = _approved(world)
+    first = d["lines"][0]["id"]
+    _ok(_feedback(world, d["id"], lines=[{"id": first, "cost_price": "7.25"}]))
+    assert Decimal(_line_costs(world, d["id"])[0]) == Decimal("7.25")
+    _ok(_feedback(world, d["id"], lines=[{"id": first, "cost_price": None}]))
+    assert _line_costs(world, d["id"])[0] is None
+
+
+def test_ac74_feedback_notifies_nobody(world):
+    d = _approved(world)
+    world.sent.clear()
+    _ok(_feedback(world, d["id"], lead_time="5 days"))
+    assert _types(world, d["id"]) == []
+    assert world.sent == []
+
+
+def test_ac74_feedback_writes_an_audit_row(world):
+    import json
+
+    from app.models.audit import AuditLog
+
+    d = _approved(world)
+    world.db.commit()
+
+    def rows():
+        return (
+            world.db.query(AuditLog)
+            .filter(AuditLog.entity_type == "new_product_application", AuditLog.entity_id == d["id"])
+            .all()
+        )
+
+    before = len(rows())
+    _ok(_feedback(world, d["id"], lead_time="a distinctive lead time"))
+    world.db.commit()
+    after = rows()
+    assert len(after) > before
+    assert any("a distinctive lead time" in json.dumps(r.new_values or {}) for r in after)
+
+
+# ------------------------------------------------------------------ AC-NPA-75 revise
+
+
+def test_ac75_revise_clears_leadtime_every_cost_and_the_stamp(world):
+    d = _approved(world)
+    first, second = [l["id"] for l in d["lines"]]
+    _ok(_feedback(world, d["id"], lead_time="3 weeks",
+                  lines=[{"id": first, "cost_price": "12.50"}, {"id": second, "cost_price": "8.00"}]))
+    assert _get(world, d["id"])["feedback_at"]
+    res = _act(world, d["id"], "revise", world.sales, reason="wrong packing")
+    assert res.status_code == 200, res.text
+    got = _get(world, d["id"])
+    assert got["status"] == "draft"
+    assert got["lead_time"] is None
+    assert got["feedback_by_name"] is None
+    assert got["feedback_at"] is None
+    assert _line_costs(world, d["id"]) == [None, None]
+
+
+# ------------------------------------------------------------------ AC-NPA-76 read-only values from the linked product
+
+
+def _linked_product(w, *, suppliers):
+    """A product with a category, a base UOM, list price 100 and `suppliers`:
+    [(name, is_primary, created_at)]."""
+    from app.models.procurement import ProductSupplier, Supplier
+
+    product = make_product(w.db, name=f"{MARKER} D3 item {uid()[:6]}")
+    for name, primary, created in suppliers:
+        supplier = Supplier(id=uid(), supplier_code=f"ZZT-S{uid()[:6]}", supplier_name=name)
+        w.db.add(supplier)
+        w.db.flush()
+        w.db.add(
+            ProductSupplier(
+                id=uid(), product_id=product.id, supplier_id=supplier.id,
+                is_primary_supplier=primary, created_at=created,
+            )
+        )
+    w.db.flush()
+    return product
+
+
+def _opened(w, product):
+    d = _approved(w)
+    res = _link(w, d["id"], d["lines"][0]["id"], product.id)
+    assert res.status_code == 200, res.text
+    return _get(w, d["id"])["lines"][0]
+
+
+def test_ac76_before_a_link_the_read_only_values_are_empty(world):
+    d = _approved(world)
+    line = _get(world, d["id"])["lines"][0]
+    for key in ("opened_category_name", "opened_base_uom_name", "opened_list_price", "opened_supplier_name"):
+        assert key in line, key
+        assert line[key] is None, key
+
+
+def test_ac76_a_linked_product_shows_group_uom_price_and_the_primary_supplier(world):
+    from app.models.product import ProductCategory, UnitOfMeasure
+
+    product = _linked_product(
+        world,
+        suppliers=[
+            ("Older Example Supplier", False, datetime(2026, 1, 1)),
+            ("Primary Example Supplier", True, datetime(2026, 6, 1)),
+        ],
+    )
+    line = _opened(world, product)
+    assert line["opened_category_name"] == world.db.get(ProductCategory, product.category_id).category_name
+    assert line["opened_base_uom_name"] == world.db.get(UnitOfMeasure, product.base_uom_id).uom_name
+    assert Decimal(str(line["opened_list_price"])) == Decimal("100")
+    assert line["opened_supplier_name"] == "Primary Example Supplier"
+    assert line.get("category_id") is None  # shown, never copied into the application
+
+
+def test_ac76_with_no_primary_the_oldest_supplier_row_wins(world):
+    product = _linked_product(
+        world,
+        suppliers=[
+            ("Newer Example Supplier", False, datetime(2026, 6, 1)),
+            ("Oldest Example Supplier", False, datetime(2026, 1, 1)),
+        ],
+    )
+    assert _opened(world, product)["opened_supplier_name"] == "Oldest Example Supplier"
+
+
+def test_ac76_a_product_with_no_supplier_shows_none(world):
+    product = _linked_product(world, suppliers=[])
+    assert _opened(world, product)["opened_supplier_name"] is None
+
+
+# ------------------------------------------------------------------ AC-NPA-77 Download Excel
+
+
+def _xlsx_app(w, **over):
+    """An Approved application with made-up values and purchasing feedback saved."""
+    from app.models.new_product_application import NewProductApplication
+    from app.models.user import User
+
+    w.db.get(User, w.sales).name = "Alex Tan"
+    lines = over.pop(
+        "lines",
+        [
+            _line(
+                w, proposed_code="XY-1234-MB", description="Sink A", dimension="600 x 450 mm",
+                material="Stainless steel", thickness="1.2 mm", packing="1 pc per carton",
+                expected_qty="55",
+            ),
+            _line(w, proposed_code="XY-1234-BG", description="Sink B"),
+        ],
+    )
+    d = _approved(
+        w, customer_name=over.pop("customer_name", "Example Developer Sdn Bhd"),
+        project_name="Example Residence, Tower B", remark="Deliver in two drops", lines=lines, **over,
+    )
+    row = w.db.get(NewProductApplication, d["id"])
+    row.created_at = noon()
+    w.db.commit()
+    _ok(_feedback(w, d["id"], lead_time="3 weeks after PO",
+                  lines=[{"id": d["lines"][0]["id"], "cost_price": "12.50"}]))
+    return _get(w, d["id"])
+
+
+def _download(w, aid, user=None):
+    return w.api.as_(user or w.viewer).get(f"{NPA}/{aid}/download")
+
+
+def _workbook(w, aid, user=None):
+    res = _download(w, aid, user)
+    assert res.status_code == 200, res.text
+    return res, open_workbook(res.content)
+
+
+def test_ac77_one_sheet_per_product_with_the_paper_rows_in_order(world):
+    d = _xlsx_app(world)
+    res, wb = _workbook(world, d["id"])
+    assert res.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert wb.sheetnames == ["Product 1", "Product 2"]
+    for ws in wb.worksheets:
+        assert [label for label, _row in label_rows(ws)] == SHEET_LABELS, ws.title
+
+
+def test_ac77_the_cells_carry_the_application_values(world):
+    d = _xlsx_app(world)
+    _res, wb = _workbook(world, d["id"])
+    one = sheet_values(wb["Product 1"])
+    assert text_of(one["PRODUCT CODE:"]) == "XY-1234-MB"
+    assert text_of(one["PRODUCT TYPE:"]) == "Sink A"
+    assert text_of(one["DIMENSION:"]) == "600 x 450 mm"
+    assert text_of(one["MATERIAL:"]) == "Stainless steel"
+    assert text_of(one["THICKNESS:"]) == "1.2 mm"
+    assert text_of(one["PACKING"]) == "1 pc per carton"
+    assert float(text_of(one["QTY:"])) == 55
+    assert text_of(one["DATE:"]) == "17/01/2028"
+    assert text_of(one["SALES PERSON:"]) == "Alex Tan"
+    assert text_of(one["CUSTOMER:"]) == "Example Developer Sdn Bhd"
+    assert text_of(one["PROJECT:"]) == "Example Residence, Tower B"
+    assert text_of(one["REMARK:"]) == "Deliver in two drops"
+    assert "2028" in text_of(one["TARGET DELIVERY:"])
+    assert float(text_of(one["COST:"])) == 12.5
+    assert text_of(one["LEADTIME:"]) == "3 weeks after PO"
+    two = sheet_values(wb["Product 2"])
+    assert text_of(two["PRODUCT CODE:"]) == "XY-1234-BG"
+    assert text_of(two["COST:"]) == ""  # no cost saved for product 2
+    assert text_of(two["LEADTIME:"]) == "3 weeks after PO"  # one per application
+
+
+def test_ac77_the_file_name_and_the_reff_cell_agree(world):
+    d = _xlsx_app(world)
+    res, wb = _workbook(world, d["id"])
+    name = downloaded_name(res)
+    assert name == (
+        "NPA_20280117_AT_Example Developer Sdn Bhd (XY-1234-MB Sink A) (XY-1234-BG Sink B).xlsx"
+    )
+    stem = name[: -len(".xlsx")]
+    for ws in wb.worksheets:
+        assert text_of(sheet_values(ws)["REFF:"]) == stem
+
+
+def test_ac77_a_file_name_drops_forbidden_characters_and_is_capped(world):
+    d = _xlsx_app(world, customer_name='Example/Dev: "Sdn" <Bhd>? ' + "Z" * 200)
+    res, wb = _workbook(world, d["id"])
+    name = downloaded_name(res)
+    assert name.endswith(".xlsx") and name.startswith("NPA_20280117_AT_")
+    assert not any(ch in name for ch in '/\\:*?"<>|')
+    assert len(name) <= 255
+    assert text_of(sheet_values(wb["Product 1"])["REFF:"]) == name[: -len(".xlsx")]
+
+
+def test_ac77_labels_are_bold_right_values_wrapped_and_bordered(world):
+    d = _xlsx_app(world)
+    _res, wb = _workbook(world, d["id"])
+    ws = wb["Product 1"]
+    row = dict(label_rows(ws))["PRODUCT TYPE:"]
+    label, value = ws.cell(row=row, column=1), ws.cell(row=row, column=2)
+    assert label.font.b is True
+    assert label.alignment.horizontal == "right"
+    assert value.alignment.wrap_text is True
+    for cell in (label, value):
+        for side in ("left", "right", "top", "bottom"):
+            assert getattr(cell.border, side).style == "thin", (cell.coordinate, side)
+
+
+def test_ac77_a4_portrait_fit_to_one_page(world):
+    d = _xlsx_app(world)
+    _res, wb = _workbook(world, d["id"])
+    for ws in wb.worksheets:
+        assert ws.page_setup.orientation == "portrait"
+        assert str(ws.page_setup.paperSize) == "9"
+        assert ws.sheet_properties.pageSetUpPr.fitToPage is True
+        assert ws.page_setup.fitToWidth == 1
+        assert ws.page_setup.fitToHeight == 1
+
+
+def test_ac77_a_value_starting_with_equals_is_text_not_a_formula(world):
+    d = _xlsx_app(
+        world,
+        lines=[_line(world, description="=SUM(A1)", material="@cmd", packing="-2+3")],
+    )
+    _res, wb = _workbook(world, d["id"])
+    values = sheet_values(wb["Product 1"])
+    for label, needle in (("PRODUCT TYPE:", "SUM(A1)"), ("MATERIAL:", "cmd"), ("PACKING", "2+3")):
+        cell = values[label]
+        assert cell.data_type != "f", label
+        assert needle in text_of(cell), label
+
+
+def test_ac77_the_first_image_sits_in_the_image_row(world, store):
+    d = _xlsx_app(world)
+    first = d["lines"][0]["id"]
+    # The application is Approved (locked), so attach through the service the way an earlier
+    # draft would have left it.
+    seed_attachment(world.db, store, "new_product_application_line", first, "front.png", image_bytes(), "image/png")
+    world.db.commit()
+    _res, wb = _workbook(world, d["id"])
+    assert len(wb["Product 1"]._images) == 1
+    assert len(wb["Product 2"]._images) == 0
+
+
+def test_ac77_an_attachment_that_is_not_an_image_shows_its_file_name(world, store):
+    d = _xlsx_app(world)
+    first = d["lines"][0]["id"]
+    seed_attachment(world.db, store, "new_product_application_line", first, "broken.png", b"not an image at all", "image/png")
+    world.db.commit()
+    _res, wb = _workbook(world, d["id"])
+    ws = wb["Product 1"]
+    assert len(ws._images) == 0
+    assert "broken.png" in text_of(sheet_values(ws)["IMAGE:"])
+
+
+def test_ac77_an_image_over_40_megapixels_shows_its_file_name(world, store):
+    import io
+
+    from PIL import Image
+
+    d = _xlsx_app(world)
+    first = d["lines"][0]["id"]
+    buf = io.BytesIO()
+    Image.new("L", (7000, 6000), 128).save(buf, format="PNG")  # 42 MP
+    seed_attachment(world.db, store, "new_product_application_line", first, "huge.png", buf.getvalue(), "image/png")
+    world.db.commit()
+    _res, wb = _workbook(world, d["id"])
+    ws = wb["Product 1"]
+    assert len(ws._images) == 0
+    assert "huge.png" in text_of(sheet_values(ws)["IMAGE:"])
+
+
+def test_ac77_whoever_can_view_downloads_and_nobody_else(world):
+    d = _draft(world)
+    assert _download(world, d["id"], world.viewer).status_code == 200
+    assert _download(world, d["id"], world.sales).status_code == 200  # the owner, a draft
+    assert _download(world, d["id"], world.stranger).status_code == 403
+    assert _download(world, d["id"], world.sales_b).status_code == 403
+    assert _download(world, uid(), world.viewer).status_code == 404
+
+
+def test_ac77_another_companys_application_does_not_download(world):
+    from app.models.base import company_scope
+
+    d = _draft(world)
+    assert _download(world, d["id"], world.admin).status_code == 200
+    other = second_company(world.db)
+    with company_scope(world.db, frozenset({other})):
+        assert _download(world, d["id"], world.admin).status_code == 404
+
+
+# ------------------------------------------------------------------ AC-NPA-78 staff keeps the staff-only values
+
+
+def test_ac78_staff_detail_carries_cost_leadtime_and_the_opened_as_values(world):
+    d = _approved(world)
+    got = _get(world, d["id"])
+    for key in ("lead_time", "feedback_by_name", "feedback_at"):
+        assert key in got, key
+    for key in ("cost_price", "opened_category_name", "opened_base_uom_name", "opened_list_price",
+                "opened_supplier_name", "images", "dimension", "material", "thickness", "packing"):
+        assert key in got["lines"][0], key
+
+
+# ------------------------------------------------------------------ inquiry attachments picker (staff)
+
+
+def _inq_atts(w, inquiry_id, user=None):
+    return w.api.as_(user or w.sales).get(f"{NPA}/inquiry-attachments", params={"stock_inquiry_id": inquiry_id})
+
+
+def test_inquiry_attachments_lists_only_images_of_that_inquiry(world, store):
+    img, _ = seed_attachment(world.db, store, "stock_inquiry", world.inquiry.id, "site.png", image_bytes(), "image/png")
+    seed_attachment(world.db, store, "stock_inquiry", world.inquiry.id, "quote.pdf", b"%PDF-1.4 fake", "application/pdf")
+    other = _inquiry(world.db)
+    seed_attachment(world.db, store, "stock_inquiry", other.id, "other.png", image_bytes(), "image/png")
+    res = _inq_atts(world, world.inquiry.id)
+    assert res.status_code == 200, res.text
+    rows = res.json()
+    assert [r["attachment_id"] for r in rows] == [img]
+    assert rows[0]["filename"] == "site.png"
+    assert rows[0]["content_type"] == "image/png"
+    assert rows[0]["url"]
+
+
+def test_inquiry_attachments_needs_create_and_a_known_inquiry(world, store):
+    assert _inq_atts(world, world.inquiry.id, user=world.stranger).status_code == 403
+    assert _inq_atts(world, world.inquiry.id, user=world.viewer).status_code == 403
+    assert _inq_atts(world, uid()).status_code == 404

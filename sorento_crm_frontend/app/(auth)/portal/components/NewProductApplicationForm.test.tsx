@@ -40,6 +40,8 @@ vi.mock('../lib/new-product-application-service', () => ({
   getNewProductApplicationPrefill: vi.fn(),
   lookupNewProductApplication: vi.fn(async () => []),
   lookupNewProductApplicationCustomers: vi.fn(async () => []),
+  uploadNewProductApplicationLineImage: vi.fn(),
+  downloadNewProductApplicationExcel: vi.fn(),
   createNewProductApplication: vi.fn(),
   updateNewProductApplication: vi.fn(),
   submitNewProductApplication: vi.fn(),
@@ -55,6 +57,8 @@ import {
   listMyRespondedInquiries,
   reviseNewProductApplication,
   submitNewProductApplication,
+  uploadNewProductApplicationLineImage,
+  downloadNewProductApplicationExcel,
 } from '../lib/new-product-application-service';
 import NewProductApplicationForm from './NewProductApplicationForm';
 
@@ -78,16 +82,14 @@ function line(
     line_no: 1,
     proposed_code: 'XY-1234-MB',
     description: 'Example kitchen sink',
-    category_id: 'g-1',
-    category_code: 'KS',
-    category_name: 'Kitchen Sink',
-    base_uom_id: 'u-1',
-    base_uom_code: 'UNIT',
-    base_uom_name: 'Unit',
+    dimension: null,
+    material: null,
+    thickness: null,
+    packing: null,
     brand_name: null,
-    item_type_name: null,
-    supplier_code: null,
-    supplier_name: null,
+    cost_price: null,
+    images: [],
+    opened_supplier_name: null,
     opened_product_id: null,
     opened_product_code: null,
     opened_product_name: null,
@@ -127,6 +129,7 @@ function detail(
     created_at: '2026-10-17T01:00:00',
     updated_at: null,
     remark: null,
+    lead_time: null,
     decided_at: null,
     decided_by: null,
     decided_by_name: null,
@@ -178,7 +181,7 @@ describe('new application', () => {
 
     await waitFor(() =>
       expect(
-        (screen.getByLabelText('Proposed code') as HTMLInputElement).value,
+        (screen.getByLabelText('Product code') as HTMLInputElement).value,
       ).toBe('XY-1234-MB & XY-1234-BG'),
     );
     expect(getNewProductApplicationPrefill).toHaveBeenCalledWith('si-1');
@@ -198,24 +201,44 @@ describe('new application', () => {
     expect(body.lines[0].proposed_code).toBe('XY-1234-MB & XY-1234-BG');
   });
 
-  it('has no Supplier, Supplier model no or Cost price column', async () => {
+  it('has no item group, base UOM or selling price, and no cost box to write', async () => {
     render(<NewProductApplicationForm slug="acme" />);
-    await screen.findByLabelText('Proposed code');
-    expect(screen.queryByText(/^supplier/i)).toBeNull();
-    expect(screen.queryByText(/cost/i)).toBeNull();
-    expect(screen.queryByLabelText(/supplier/i)).toBeNull();
-    expect(screen.getByText(/selling/i)).toBeInTheDocument();
+    await screen.findByLabelText('Product code');
+    expect(screen.queryByText(/item group/i)).toBeNull();
+    expect(screen.queryByText(/base uom/i)).toBeNull();
+    expect(screen.queryByText(/selling/i)).toBeNull();
+    expect(screen.queryByLabelText('Cost')).toBeNull();
+    expect(screen.queryByLabelText('Lead time')).toBeNull();
+    expect(screen.getByText('PRODUCT CODE:')).toBeInTheDocument();
+    expect(screen.getByText('Product 1 of 1')).toBeInTheDocument();
+  });
+
+  it('stages an image and uploads it with the line id the create returns', async () => {
+    asMock(createNewProductApplication).mockResolvedValue(detail());
+    render(<NewProductApplicationForm slug="acme" />);
+    const file = new File(['x'], 'sample-front.png', { type: 'image/png' });
+    fireEvent.change(await screen.findByLabelText('Add image'), {
+      target: { files: [file] },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save as draft/i }));
+    await waitFor(() =>
+      expect(uploadNewProductApplicationLineImage).toHaveBeenCalledWith(
+        'a-1',
+        'l-1',
+        file,
+      ),
+    );
   });
 
   it('stays on the form with the server text when Submit is refused', async () => {
     asMock(submitNewProductApplication).mockRejectedValue(
-      new Error('Line 1: choose an item group'),
+      new Error('Product 1: enter the product type.'),
     );
     render(<NewProductApplicationForm slug="acme" />);
-    await screen.findByLabelText('Proposed code');
+    await screen.findByLabelText('Product code');
     fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
     expect(
-      await screen.findByText('Line 1: choose an item group'),
+      await screen.findByText('Product 1: enter the product type.'),
     ).toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
   });
@@ -229,7 +252,7 @@ describe('an existing application', () => {
     render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
 
     const description = (await screen.findByLabelText(
-      'Description',
+      'Product type',
     )) as HTMLInputElement;
     expect(description).toBeDisabled();
     expect(screen.queryByRole('button', { name: /save as draft/i })).toBeNull();
@@ -302,6 +325,57 @@ describe('an existing application', () => {
     expect(
       await screen.findByText(/Use the existing codes/),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText('Description')).not.toBeDisabled();
+    expect(screen.getByLabelText('Product type')).not.toBeDisabled();
+  });
+});
+
+describe('purchasing feedback on the portal (PQ1)', () => {
+  const filled = () =>
+    detail({
+      status: 'approved',
+      status_label: 'Approved',
+      lead_time: '3 weeks',
+      lines: [
+        line({
+          cost_price: '12.50',
+          opened_supplier_name: 'Example Supplier Co',
+        }),
+      ],
+    });
+
+  it('shows COST, LEADTIME and the supplier read-only, with no Save feedback', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(filled());
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    expect(await screen.findByText('3 weeks')).toBeInTheDocument();
+    expect(screen.getByText(/12\.50/)).toBeInTheDocument();
+    expect(screen.getByText(/Example Supplier Co/)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Cost')).toBeNull();
+    expect(screen.queryByLabelText('Lead time')).toBeNull();
+    expect(screen.queryByRole('button', { name: /save feedback/i })).toBeNull();
+    expect(screen.queryByText(/item group|base uom|selling/i)).toBeNull();
+  });
+
+  it('says purchasing fills it after approval while it is empty', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      detail({ status: 'submitted', status_label: 'Submitted' }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    expect(
+      await screen.findByText('Purchasing fills this after approval.'),
+    ).toBeInTheDocument();
+  });
+
+  it('Download Excel calls the portal download with the application id', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(filled());
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    fireEvent.click(
+      await screen.findByRole('button', { name: /download excel/i }),
+    );
+    await waitFor(() =>
+      expect(downloadNewProductApplicationExcel).toHaveBeenCalledTimes(1),
+    );
+    expect(asMock(downloadNewProductApplicationExcel).mock.calls[0][0]).toBe(
+      'a-1',
+    );
   });
 });

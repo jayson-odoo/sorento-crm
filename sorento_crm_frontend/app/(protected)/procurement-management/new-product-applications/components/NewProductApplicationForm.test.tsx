@@ -17,6 +17,11 @@ const mock = vi.hoisted(() => ({
   submitAsync: vi.fn(),
   prefill: undefined as unknown,
   prefillError: null as Error | null,
+  upload: vi.fn(),
+  copy: vi.fn(),
+  del: vi.fn(),
+  attachments: vi.fn(),
+  existing: undefined as unknown,
 }));
 
 vi.mock('next/navigation', () => ({
@@ -32,23 +37,22 @@ vi.mock('../hooks/useNewProductApplications', () => ({
     update: { mutateAsync: mock.updateAsync, isPending: false },
     submit: { mutateAsync: mock.submitAsync, isPending: false },
   }),
-  useNewProductApplicationQuery: () => ({ data: undefined, isLoading: false }),
+  useNewProductApplicationQuery: () => ({ data: mock.existing, isLoading: false }),
   useNewProductApplicationPrefillQuery: () => ({
     data: mock.prefill,
     isLoading: false,
     isError: Boolean(mock.prefillError),
     error: mock.prefillError,
   }),
-  useNewProductApplicationLookups: () => ({
-    itemGroups: async () => [],
-    uoms: async () => [],
-    brands: async () => [],
-    itemTypes: async () => [],
-    suppliers: async () => [],
-  }),
+  useNewProductApplicationLookups: () => ({ brands: async () => [] }),
 }));
 vi.mock('../services/newProductApplicationService', () => ({
   searchStockInquiryOptions: vi.fn(async () => []),
+  uploadNewProductApplicationLineImage: (...a: unknown[]) =>
+    mock.upload(...a),
+  copyNewProductApplicationLineImage: (...a: unknown[]) => mock.copy(...a),
+  deleteNewProductApplicationLineImage: (...a: unknown[]) => mock.del(...a),
+  getStockInquiryAttachmentsForNpa: (...a: unknown[]) => mock.attachments(...a),
 }));
 vi.mock(
   '@/app/(protected)/procurement-management/purchase-requests/services/customerLookupService',
@@ -95,6 +99,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mock.prefill = undefined;
   mock.prefillError = null;
+  mock.existing = undefined;
   mock.createAsync.mockResolvedValue({ id: 'npa-1' });
   mock.updateAsync.mockResolvedValue({ id: 'npa-1' });
   mock.submitAsync.mockResolvedValue({ id: 'npa-1' });
@@ -105,7 +110,7 @@ describe('pre-fill from a responded stock inquiry', () => {
     mock.prefill = PREFILL;
     renderForm({ stockInquiryId: 'si-1' });
 
-    const code = await screen.findByLabelText('Proposed code');
+    const code = await screen.findByLabelText('Product code');
     expect((code as HTMLInputElement).value).toBe('XY-1234-MB & XY-1234-BG');
     expect((screen.getByLabelText('Customer') as HTMLInputElement).value).toBe(
       'EXAMPLE DEVELOPER SDN BHD',
@@ -119,34 +124,94 @@ describe('pre-fill from a responded stock inquiry', () => {
     expect(body.stock_inquiry_id).toBe('si-1');
     expect(body.lines).toHaveLength(1);
     expect(body.lines[0].proposed_code).toBe('XY-1234-MB & XY-1234-BG');
-    expect(body.lines[0].category_id).toBeNull();
-    expect(body.lines[0].base_uom_id).toBeNull();
+    for (const k of [
+      'category_id',
+      'base_uom_id',
+      'item_type_id',
+      'supplier_id',
+      'cost_price',
+      'selling_price',
+      'further_description',
+    ])
+      expect(body.lines[0]).not.toHaveProperty(k);
   });
 });
 
 describe('number fields', () => {
-  it('sends null, never 0, once a figure is cleared', async () => {
+  it('sends null, never 0, once the quantity is cleared, and has no cost box', async () => {
     mock.prefill = PREFILL;
     renderForm({ stockInquiryId: 'si-1' });
 
-    const qty = (await screen.findByLabelText(
-      'Expected quantity',
-    )) as HTMLInputElement;
+    const qty = (await screen.findByLabelText('Qty')) as HTMLInputElement;
     expect(qty.value).toBe('55');
     fireEvent.change(qty, { target: { value: '' } });
-    fireEvent.change(screen.getByLabelText('Cost price'), {
-      target: { value: '12.5' },
-    });
-    fireEvent.change(screen.getByLabelText('Cost price'), {
-      target: { value: '' },
-    });
+    expect(screen.queryByLabelText('Cost')).toBeNull();
 
     saveDraft();
     await waitFor(() => expect(mock.createAsync).toHaveBeenCalledTimes(1));
-    const line = lastBody().lines[0];
-    expect(line.expected_qty).toBeNull();
-    expect(line.cost_price).toBeNull();
-    expect(line.selling_price).toBeNull();
+    expect(lastBody().lines[0].expected_qty).toBeNull();
+  });
+});
+
+describe('paper layout', () => {
+  it('shows the paper labels and adds and removes products', async () => {
+    renderForm();
+    expect(await screen.findByText('NEW PRODUCT APPLICATION')).toBeInTheDocument();
+    for (const l of ['REFF:', 'DATE:', 'SALES PERSON:', 'PRODUCT CODE:', 'CUSTOMER:'])
+      expect(screen.getByText(l)).toBeInTheDocument();
+    expect(screen.getByText('Product 1 of 1')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /add product/i }));
+    expect(screen.getByText('Product 2 of 2')).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { name: /^remove$/i })[0]);
+    expect(screen.getByText('Product 1 of 1')).toBeInTheDocument();
+    saveDraft();
+    await waitFor(() => expect(mock.createAsync).toHaveBeenCalledTimes(1));
+    expect(lastBody().lines).toHaveLength(1);
+  });
+
+  it('sends only the v4 header keys and the paper line keys', async () => {
+    mock.prefill = PREFILL;
+    renderForm({ stockInquiryId: 'si-1' });
+    await screen.findByLabelText('Product code');
+    fireEvent.change(screen.getByLabelText('Dimension'), {
+      target: { value: '600x400' },
+    });
+    fireEvent.change(screen.getByLabelText('Packing'), {
+      target: { value: 'Carton' },
+    });
+    saveDraft();
+    await waitFor(() => expect(mock.createAsync).toHaveBeenCalledTimes(1));
+    const body = lastBody();
+    expect(Object.keys(body).sort()).toEqual([
+      'customer_id',
+      'customer_name',
+      'lines',
+      'needed_by',
+      'project_name',
+      'remark',
+      'stock_inquiry_id',
+    ]);
+    expect(body.lines[0].dimension).toBe('600x400');
+    expect(body.lines[0].packing).toBe('Carton');
+  });
+
+  it('stages an image on a new draft and uploads it with the line id the create returns', async () => {
+    mock.createAsync.mockResolvedValue({
+      id: 'npa-1',
+      lines: [{ id: 'l-new', line_no: 1 }],
+    });
+    renderForm();
+    const file = new File(['x'], 'sample-front.png', { type: 'image/png' });
+    fireEvent.change(await screen.findByLabelText('Add image'), {
+      target: { files: [file] },
+    });
+    expect(mock.upload).not.toHaveBeenCalled();
+    saveDraft();
+    await waitFor(() => expect(mock.upload).toHaveBeenCalledTimes(1));
+    expect(mock.upload).toHaveBeenCalledWith('npa-1', 'l-new', file);
+    expect(mock.createAsync.mock.invocationCallOrder[0]).toBeLessThan(
+      mock.upload.mock.invocationCallOrder[0],
+    );
   });
 });
 
@@ -154,10 +219,10 @@ describe('Submit', () => {
   it('stays on the form when the server refuses, and reuses the saved draft on the next press', async () => {
     mock.prefill = PREFILL;
     mock.submitAsync.mockRejectedValueOnce(
-      new Error('Line 1: choose an item group'),
+      new Error('Product 1: enter the product type.'),
     );
     renderForm({ stockInquiryId: 'si-1' });
-    await screen.findByLabelText('Proposed code');
+    await screen.findByLabelText('Product code');
 
     fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
     await waitFor(() => expect(mock.submitAsync).toHaveBeenCalledTimes(1));
@@ -180,7 +245,7 @@ describe('pre-fill failure', () => {
     renderForm({ stockInquiryId: 'si-gone' });
 
     const code = (await screen.findByLabelText(
-      'Proposed code',
+      'Product code',
     )) as HTMLInputElement;
     expect(code.value).toBe('');
     expect(toast.error).toHaveBeenCalledWith(
@@ -188,5 +253,78 @@ describe('pre-fill failure', () => {
     );
     fireEvent.change(code, { target: { value: 'XY-1' } });
     expect(code.value).toBe('XY-1');
+  });
+});
+
+describe('images on a saved draft', () => {
+  const saved = () => ({
+    id: 'npa-1',
+    status: 'draft',
+    status_label: 'Draft',
+    source: 'staff',
+    application_no: 'NPA-000001',
+    applicant_name: 'Owner',
+    created_at: '2026-10-17T01:00:00',
+    stock_inquiry_id: 'si-1',
+    stock_inquiry_number: 'SI26-0412',
+    stock_inquiry_product_code: 'XY-1234-MB',
+    customer_id: null,
+    customer_name: 'EXAMPLE DEVELOPER SDN BHD',
+    project_name: null,
+    needed_by: null,
+    remark: null,
+    lead_time: null,
+    lines: [
+      {
+        id: 'l-1',
+        line_no: 1,
+        proposed_code: 'XY-1234-MB',
+        description: 'Example sink',
+        images: [
+          {
+            link_id: 'k-1',
+            attachment_id: 'at-1',
+            filename: 'sample-front.png',
+            url: '/files/1',
+            content_type: 'image/png',
+          },
+        ],
+      },
+    ],
+  });
+
+  it('Copy from the inquiry lists the inquiry attachments and a pick copies it to the line', async () => {
+    mock.existing = saved();
+    mock.attachments.mockResolvedValue([
+      { attachment_id: 'at-9', filename: 'inquiry-sketch.png' },
+    ]);
+    mock.copy.mockResolvedValue({});
+    renderForm({ applicationId: 'npa-1' });
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /copy from the inquiry/i }),
+    );
+    const pick = await screen.findByText('inquiry-sketch.png');
+    expect(mock.attachments).toHaveBeenCalledWith('si-1');
+    expect(mock.copy).not.toHaveBeenCalled();
+    fireEvent.click(pick);
+    await waitFor(() =>
+      expect(mock.copy).toHaveBeenCalledWith('npa-1', 'l-1', 'at-9'),
+    );
+  });
+
+  it('removing an image calls delete with the link id; the control names the file', async () => {
+    mock.existing = saved();
+    mock.del.mockResolvedValue(undefined);
+    renderForm({ applicationId: 'npa-1' });
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: /remove.*sample-front\.png/i,
+      }),
+    );
+    await waitFor(() =>
+      expect(mock.del).toHaveBeenCalledWith('npa-1', 'l-1', 'k-1'),
+    );
   });
 });
