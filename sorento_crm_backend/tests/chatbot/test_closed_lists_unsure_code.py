@@ -139,3 +139,33 @@ def test_control_a_confident_token_gets_the_did_you_mean_so_the_seed_has_neighbo
     )
 
     _assert_did_you_mean(_text(r), "zzcsk11b")
+
+
+# --- R2-2 MIXED-UNSURE (reviewer SF1, 18 Oct) -------------------------------------------------
+
+
+def test_one_unsure_token_with_neighbours_and_one_without_keeps_the_vague_clarify_naming_both(session_factory, seeded, stub_access, monkeypatch):
+    """The did-you-mean route applies only when EVERY unsure token has neighbours; otherwise the
+    vague clarify names all unsure tokens, so the neighboured one never vanishes."""
+    _seed(session_factory)
+
+    [r] = _turns(
+        session_factory, stub_access, monkeypatch,
+        [("zzcsk11b qqxjv stock?", _ask(_unsure("zzcsk11b"), _unsure("qqxjv")))], gate=True,
+    )
+
+    text = _text(r)
+    assert "couldn't tell which part is which" in text, text
+    assert '"zzcsk11b"' in text and '"qqxjv"' in text, text
+    assert "Did you mean" not in text, text
+
+
+def test_guard_every_unsure_token_with_neighbours_gets_the_did_you_mean(session_factory, seeded, stub_access, monkeypatch):
+    _seed(session_factory)
+
+    [r] = _turns(
+        session_factory, stub_access, monkeypatch,
+        [("zzcsk11b stock?", _ask(_unsure("zzcsk11b")))], gate=True,
+    )
+
+    _assert_did_you_mean(_text(r), "zzcsk11b")
