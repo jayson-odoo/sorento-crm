@@ -547,7 +547,7 @@ describe('copy from the inquiry on a NEW form', () => {
 
   it('drops staged copies when the inquiry is cleared before the first save', async () => {
     await stageCopy();
-    fireEvent.click(screen.getByRole('button', { name: /clear selection/i }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: /clear selection/i }));
     expect(screen.queryByText('inquiry-sketch.png')).toBeNull();
     expect(
       screen.queryByRole('button', { name: /copy from the inquiry/i }),
