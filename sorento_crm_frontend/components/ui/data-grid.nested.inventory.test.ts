@@ -226,6 +226,14 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
     'app/(protected)/project-sales/order-inquiries/[id]/components/ReserveConfirmDialog.tsx:262',
     'The DataGridTable of the same grid, not a second one',
   ],
+  [
+    'app/(protected)/master-data-management/product-specifications/components/TryInChatbotDialog.tsx:148',
+    "SPEC-REGISTRY-UI: the parser's picks for one test message, in the Try in chatbot dialog opened from the spec record's gear, outside any grid's JSX, so no grid context. It KEEPS the default `--grid-max-h` bound, like ConvertToPackingListDialog: the dialog body does not scroll, and one message yields a handful of picks",
+  ],
+  [
+    'app/(protected)/master-data-management/product-specifications/components/TryInChatbotDialog.tsx:155',
+    'The DataGridTable of the same grid, not a second one',
+  ],
 ]);
 
 /**

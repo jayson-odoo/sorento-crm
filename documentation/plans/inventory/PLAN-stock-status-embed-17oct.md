@@ -1,6 +1,6 @@
 # PLAN: Available stock status, embedded in every process (STOCK-STATUS)
 
-Status: Built v6 (S1 to S3, reviewer fix round in), S4 reviewer done and browser pass PASS, awaiting owner hand test (owner OK 18 Oct 07:56: '1. Keep' the stand-alone page, '2. Ok, rmb to drop where column in the ui'; 06:00: the same table on the project quotation). Lane STOCK-STATUS, size L, standard track
+Status: Built v6, owner PASS 18 Oct ('Ok for 1752', head 67e87c24d1), ready to merge; quotation pill stays today's figure (no ruling); group by customer or project is a follow-up lane (owner OK 18 Oct 07:56: '1. Keep' the stand-alone page, '2. Ok, rmb to drop where column in the ui'; 06:00: the same table on the project quotation). Lane STOCK-STATUS, size L, standard track
 
 ## Owner request (17 Oct)
 
