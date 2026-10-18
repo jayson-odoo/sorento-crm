@@ -8,13 +8,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   addBtn,
   balance,
-  block,
   dateIn,
   qty,
   queryQty,
   remainQty,
+  leaveSheet,
   renderDialog,
   sheet,
+  typeQty,
   wireLine,
 } from '@/test-mocks/lineSplitSheetKit';
 
@@ -87,6 +88,20 @@ describe('+ Split on a pending, unsplit line', () => {
     expect(qty(480, 1).value).toBe('417');
     expect(dateIn(480, 1).value).toBe('20/10/2026');
     expect(queryQty(480, 2)).toBeNull();
-    void block;
+  });
+
+  it('line 480 edited to 400 then back to 417 reads plain again; + Split gives 14 @ 20/09/2026 + 403 @ 20/10/2026', async () => {
+    await renderDialog();
+    await sheet();
+    fireEvent.click(remainQty(480));
+    await screen.findByLabelText('Quantity, line 480 split 1');
+    typeQty(480, 1, '400');
+    typeQty(480, 1, '417');
+    leaveSheet();
+    fireEvent.click(addBtn(480));
+    expect(qty(480, 1).value).toBe('14');
+    expect(dateIn(480, 1).value).toBe('20/09/2026');
+    expect(qty(480, 2).value).toBe('403');
+    expect(dateIn(480, 2).value).toBe('20/10/2026');
   });
 });
