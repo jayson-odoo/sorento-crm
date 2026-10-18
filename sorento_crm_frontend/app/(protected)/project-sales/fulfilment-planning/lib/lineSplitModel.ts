@@ -401,6 +401,33 @@ export function addSplit(
 ): { lines: SplitLine[]; id: string } {
   const line = lines.find((candidate) => candidate.lineId === lineId);
   const id = nextSplitId(lineId, line ? splitsOf(line) : []);
+  // An unsplit line with a pending change starts as NEW QTY at NEW DATE on its own line,
+  // the rest at the delivery date on a new line (AC-A5 "Pending change default").
+  if (
+    line &&
+    line.splits.length === 0 &&
+    (line.newQty != null || line.newDate != null)
+  ) {
+    const kept = Math.min(line.newQty ?? line.baseQty, line.baseQty);
+    return {
+      id,
+      lines: editLine(lines, lineId, (splits) => [
+        {
+          ...splits[0],
+          qty: kept,
+          deliveryDate: line.newDate ?? line.baseDate,
+        },
+        {
+          id,
+          qty: Math.max(0, line.baseQty - kept),
+          deliveryDate: line.baseDate,
+          isCancel: false,
+          sitsOnLineId: null,
+          remark: '',
+        },
+      ]),
+    };
+  }
   const left = line ? Math.max(0, gapOf(line)) : 0;
   return {
     id,
