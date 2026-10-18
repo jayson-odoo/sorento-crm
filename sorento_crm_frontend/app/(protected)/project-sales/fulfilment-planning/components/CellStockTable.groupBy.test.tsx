@@ -712,3 +712,180 @@ describe('AC-21 jumps open the groups holding the target location\'s lines', () 
   });
 });
 
+
+describe('fix round 1', () => {
+  function mount(props: Partial<React.ComponentProps<typeof CellStockTable>> = {}, ref?: React.Ref<CellStockTableHandle>) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    const tree = (p: Partial<React.ComponentProps<typeof CellStockTable>>) => (
+      <QueryClientProvider client={client}>
+        <CellStockTable ref={ref} locations={TODAY} autoCount={STATUS} {...p} />
+      </QueryClientProvider>
+    );
+    const utils = render(tree(props));
+    return { ...utils, update: (next: Partial<React.ComponentProps<typeof CellStockTable>>) => utils.rerender(tree(next)) };
+  }
+  const dialogProps = { landOnMount: true, forLine: 'SO-0005 line 1', lineIds: ['sol-5'] };
+
+  describe.each([
+    ['Customer > Project', ['customer', 'project']],
+    ['Location > Customer', ['location', 'customer']],
+  ])('R1 late read, levels %s', (_name, list) => {
+    function myLineKeys() {
+      const ref = React.createRef<CellStockTableHandle>();
+      const t = mount({}, ref);
+      act(() => ref.current!.jumpToThisLine());
+      const keys = lineKeys();
+      t.unmount();
+      return keys;
+    }
+
+    it('R1 landing with the read at mount equals the My line jump', () => {
+      levels(list);
+      const expected = myLineKeys();
+      expect(expected).toEqual(expect.arrayContaining(['so:sol-5', 'on-hand:wh-BRW-IB']));
+      expect(expected).not.toContain('so:sol-1');
+      mount({ ...dialogProps });
+      expect(lineKeys()).toEqual(expected);
+    });
+
+    it('R1 landing when the read arrives late equals the My line jump', () => {
+      levels(list);
+      const expected = myLineKeys();
+      const late = mount({ ...dialogProps, autoCount: null });
+      expect(lineRows()).toHaveLength(0);
+      late.update({ ...dialogProps, autoCount: STATUS });
+      expect(lineKeys()).toEqual(expected);
+    });
+
+    it('R1 it lands only once: a later new read does not re-open what the user closed', () => {
+      levels(list);
+      const late = mount({ ...dialogProps, autoCount: null });
+      late.update({ ...dialogProps, autoCount: STATUS });
+      const closeKey = list[0] === 'customer' ? 'customer=Customer A' : 'location=BRW-IB/customer=Customer A';
+      expect(isOpen(closeKey)).toBe(true);
+      toggle(closeKey);
+      expect(isOpen(closeKey)).toBe(false);
+      late.update({ ...dialogProps, autoCount: { ...STATUS } as StockStatus });
+      expect(isOpen(closeKey)).toBe(false);
+      expect(lineKeys()).not.toContain('so:sol-5');
+    });
+  });
+
+  it('R2 Location first: a listed location with no lines in the read has no chevron; others keep theirs', () => {
+    levels(['location', 'customer']);
+    mount({ locations: [...TODAY, row('CRM-ONLY')] });
+    expect(has('cell-location-CRM-ONLY')).toBe(true);
+    expect(has('stock-expand-CRM-ONLY')).toBe(false);
+    expect(has('stock-expand-BRW-BB')).toBe(true);
+    expect(has('stock-expand-BRW-IB')).toBe(true);
+    expect(has('stock-expand-MWH-IB')).toBe(true);
+  });
+
+  it('R3 stockOnly with Location alone: the bar and chip show, Expand all / Collapse all do not', () => {
+    mount({ stockOnly: true });
+    expect(has('group-by-bar')).toBe(true);
+    expect(has('group-by-chip')).toBe(true);
+    expect(has('group-by-trigger')).toBe(true);
+    expect(has('group-by-expand-all')).toBe(false);
+    expect(has('group-by-collapse-all')).toBe(false);
+  });
+
+  it('R3 stockOnly with grouping: Expand all / Collapse all show', () => {
+    levels(['customer']);
+    mount({ stockOnly: true });
+    expect(has('group-by-expand-all')).toBe(true);
+    expect(has('group-by-collapse-all')).toBe(true);
+  });
+
+  it('R4 Location first: after Collapse all, a search re-opens the location row and the groups down to the match', () => {
+    levels(['location', 'customer']);
+    const t = mount({ filterText: '' });
+    fireEvent.click(screen.getByTestId('group-by-expand-all'));
+    fireEvent.click(screen.getByTestId('group-by-collapse-all'));
+    expect(rows(/^stock-group-/)).toHaveLength(0);
+    t.update({ filterText: 'SO-0001' });
+    expect(has('stock-group-location=BRW-BB/customer=Customer B')).toBe(true);
+    expect(isOpen('location=BRW-BB/customer=Customer B')).toBe(true);
+    expect(lineKeys()).toEqual(['so:sol-1']);
+  });
+
+  it('R4 Location first: after closing the location row, a search re-opens it', () => {
+    levels(['location', 'customer']);
+    const t = mount({ filterText: '' });
+    fireEvent.click(screen.getByTestId('stock-expand-BRW-BB'));
+    fireEvent.click(screen.getByTestId('stock-expand-BRW-BB'));
+    expect(rows(/^stock-group-/)).toHaveLength(0);
+    t.update({ filterText: 'SO-0001' });
+    expect(screen.getByTestId('stock-expand-BRW-BB')).toHaveAttribute('aria-expanded', 'true');
+    expect(isOpen('location=BRW-BB/customer=Customer B')).toBe(true);
+    expect(lineKeys()).toEqual(['so:sol-1']);
+  });
+
+  it('R5 grouped: a location chevron says it shows groups; Location alone keeps today\'s label', () => {
+    levels(['location', 'customer']);
+    const t = mount();
+    const label = screen.getByTestId('stock-expand-BRW-BB').getAttribute('aria-label') ?? '';
+    expect(label).toContain('groups');
+    expect(label).not.toContain('documents');
+    t.unmount();
+    levels(['location']);
+    mount();
+    expect(screen.getByTestId('stock-expand-BRW-BB')).toHaveAttribute('aria-label', 'Show documents behind BRW-BB');
+  });
+
+  it('R5 menu items are named by their label only, even with a level number', async () => {
+    levels(['location', 'customer']);
+    mount();
+    fireEvent.pointerDown(screen.getByTestId('group-by-trigger'), { button: 0 });
+    expect(await screen.findByRole('menuitemcheckbox', { name: 'Customer' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Location' })).toBeInTheDocument();
+  });
+
+  describe('F1 long names', () => {
+    const LONG_PROJECT = 'Project ' + 'Alpha-Bravo-Charlie-Delta '.repeat(3).trim();
+    const LONG_SUPPLIER = 'Supplier ' + 'Echo-Foxtrot-Golf-Hotel '.repeat(3).trim();
+    const LONG = {
+      ...STATUS,
+      sales_orders: STATUS.sales_orders.map((s, i) => (i === 0 ? { ...s, project_label: LONG_PROJECT } : s)),
+      purchase_orders: STATUS.purchase_orders.map((p) => ({ ...p, supplier_name: LONG_SUPPLIER })),
+    } as StockStatus;
+
+    it('F1 fixture names are 60+ characters', () => {
+      expect(LONG_PROJECT.length).toBeGreaterThanOrEqual(60);
+      expect(LONG_SUPPLIER.length).toBeGreaterThanOrEqual(60);
+    });
+
+    it.each([
+      ['project', LONG_PROJECT],
+      ['supplier', LONG_SUPPLIER],
+    ])('F1 a long %s group label truncates with its full title; the count is a separate element', (dim, label) => {
+      levels([dim]);
+      mount({ autoCount: LONG });
+      const row = group(`${dim}=${label}`);
+      const labelEl = row.querySelector(`[title="${label}"]`) as HTMLElement;
+      expect(labelEl).not.toBeNull();
+      expect(labelEl).toHaveClass('truncate');
+      expect(labelEl.textContent).toBe(label);
+      const countEl = [...row.querySelectorAll('span')].find((el) => /^\d+ lines?$/.test(el.textContent ?? ''));
+      expect(countEl).toBeDefined();
+      expect(labelEl.contains(countEl!)).toBe(false);
+    });
+
+    it('F1 a line\'s muted second line wraps and breaks long words; the document row stays one line', () => {
+      levels(['type']);
+      mount({ autoCount: LONG });
+      toggle('type=S/O');
+      toggle('type=PO');
+      for (const key of ['so:sol-1', 'po:pol-1']) {
+        const meta = screen.getByTestId(`stock-line-meta-${key}`);
+        expect(meta).toHaveClass('whitespace-normal');
+        expect(meta).toHaveClass('break-words');
+        expect(meta).not.toHaveClass('truncate');
+      }
+      expect(screen.getByTestId('stock-line-meta-so:sol-1').textContent).toContain(LONG_PROJECT);
+      expect(screen.getByTestId('stock-line-meta-po:pol-1').textContent).toContain(LONG_SUPPLIER);
+      expect(screen.getByRole('link', { name: 'SO-0001' })).toHaveClass('truncate');
+      expect(screen.getByRole('link', { name: 'PO-0001' })).toHaveClass('truncate');
+    });
+  });
+});
