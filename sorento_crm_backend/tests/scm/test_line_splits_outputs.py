@@ -97,6 +97,26 @@ def _day(value):
     return value.date() if isinstance(value, datetime) else value
 
 
+def _num(value):
+    return None if value in (None, "") else float(value)
+
+
+def _plan_rows(heads, rows):
+    """AC-G7 (round 3): each printed row as (QTY, DELIVERY DATE, CHANGE QUANTITY, CHANGE DATE,
+    REMARK); QTY / DELIVERY DATE are a line's, on its first row only (blank under it)."""
+    at = [heads.index(h) for h in ("QTY", "DELIVERY DATE", "CHANGE QUANTITY", "CHANGE DATE",
+                                   "REMARK")]
+    return [
+        (_num(r[at[0]]), _day(r[at[1]]), _num(r[at[2]]), _day(r[at[3]]), r[at[4]] or "")
+        for r in rows
+    ]
+
+
+def _has_block(rows, block):
+    n = len(block)
+    return any(rows[i:i + n] == block for i in range(len(rows) - n + 1))
+
+
 # ---------------------------------------------------------------------------
 # (a) OI Excel
 # ---------------------------------------------------------------------------
@@ -122,22 +142,24 @@ def test_unsplit_rows_print_once_with_an_empty_remark(api):
 
 
 def test_a_row_whose_splits_add_up_prints_one_row_per_split(api):
+    """AC-G7 (round 3): one row per split; QTY / DELIVERY DATE the line's on its first row only,
+    CHANGE QUANTITY / CHANGE DATE the split's, REMARK the typed remark else the generated one."""
     s = _order(api, [(10, 10, D_A)])
     _confirm_all(s)
     _save(s, {10: [_sp(4, D_A, on=_on(s, 10)), _sp(6, D_B, on=_on(s, 10), remark="site not ready")]})
     heads, rows = _sheet_rows(s)
-    col = heads.index("REMARK")
     assert len(rows) == 2, rows
-    by_qty = {r[3]: r for r in rows}
-    assert set(by_qty) == {4.0, 6.0}
-    assert _day(by_qty[4.0][5]) == D_A and _day(by_qty[6.0][5]) == D_B
-    assert by_qty[4.0][col].startswith("REMAIN")
-    assert by_qty[6.0][col].startswith("DELAY") and "site not ready" in by_qty[6.0][col]
-    # TOTAL QTY stays the sum of the printed rows, on the last row of the run
+    assert _plan_rows(heads, rows) == [
+        (10.0, D_A, 4.0, D_A, "REMAIN"),
+        (None, None, 6.0, D_B, "site not ready"),
+    ], _plan_rows(heads, rows)
+    # TOTAL QTY stays the sum of the printed QTY cells, on the last row of the run
     assert rows[-1][4] == 10.0
 
 
-def test_splits_swapped_between_two_lines_print_from_line_n(api):
+def test_splits_swapped_between_two_lines_print_under_their_own_line(api):
+    """AC-G7 (round 3): each split prints under its own line (no "from line N" text), with the
+    line's QTY / DELIVERY DATE on its first row only."""
     s = _order(api, [(40, 10, D_A), (50, 12, D_A)])
     _confirm_all(s)
     _save(s, {
@@ -145,27 +167,32 @@ def test_splits_swapped_between_two_lines_print_from_line_n(api):
         50: [_sp(8, D_A, on=_on(s, 50)), _sp(4, D_B, on=_on(s, 40))],
     })
     heads, rows = _sheet_rows(s)
-    col = heads.index("REMARK")
-    assert len(rows) == 4, [(r[3], r[col]) for r in rows]
-    assert sorted(r[3] for r in rows) == [4.0, 4.0, 6.0, 8.0]
-    remarks = [r[col] for r in rows]
-    assert any("from line 40" in x for x in remarks), remarks
-    assert any("from line 50" in x for x in remarks), remarks
-    assert rows[-1][4] == 22.0, "TOTAL QTY is the sum of the rows"
+    got = _plan_rows(heads, rows)
+    assert len(got) == 4, got
+    assert _has_block(got, [(10.0, D_A, 6.0, D_A, "REMAIN"), (None, None, 4.0, D_B, "DELAY")]), got
+    assert _has_block(got, [(12.0, D_A, 8.0, D_A, "REMAIN"), (None, None, 4.0, D_B, "DELAY")]), got
+    assert not [r for r in got if "line" in r[4]], ("no line labels in REMARK", got)
+    assert rows[-1][4] == 22.0, "TOTAL QTY is the sum of the printed QTY cells"
 
 
-def test_a_row_whose_splits_do_not_add_up_prints_once_with_the_plan_in_remark(api):
+def test_a_line_whose_splits_do_not_cover_its_autocount_qty_prints_the_extra_row(api):
+    """Line 20 keeps 5 and parks 3 on line 30 while AutoCount still says 8 on line 20. AC-G7
+    (round 3): line 20 prints one row per split (5 REMAIN, 3 DELAY) and, AC-G3, its AutoCount
+    extra 8 - 5 = 3 as "ORDER 3" at the line's date; line 30 prints its own row (REMAIN). No
+    "SPLIT ..." plan text and no line labels."""
     s = _order(api, [(20, 8, D_A), (30, 6, D_A)])
     _confirm_all(s)
-    # line 20 keeps 5 and parks 3 on line 30: on line 30 the splits sitting there are 3, not 6
     _save(s, {20: [_sp(5, D_A, on=_on(s, 20)), _sp(3, D_B, on=_on(s, 30))]})
     heads, rows = _sheet_rows(s)
-    col = heads.index("REMARK")
-    assert len(rows) == 2, rows
-    assert sorted(r[3] for r in rows) == [6.0, 8.0]
-    by_qty = {r[3]: r for r in rows}
-    assert by_qty[8.0][col] == "SPLIT 5 REMAIN 02/11/2026; 3 DELAY 09/11/2026 to line 30"
-    assert by_qty[6.0][col] == "SPLIT 3 DELAY 09/11/2026 from line 20"
+    got = _plan_rows(heads, rows)
+    assert len(got) == 4, got
+    assert _has_block(got, [
+        (8.0, D_A, 5.0, D_A, "REMAIN"),
+        (None, None, 3.0, D_B, "DELAY"),
+        (None, None, 3.0, D_A, "ORDER 3"),
+    ]), got
+    assert (6.0, D_A, None, None, "REMAIN") in got, got
+    assert not [r for r in got if "SPLIT" in r[4] or "line" in r[4]], got
 
 
 # ---------------------------------------------------------------------------
@@ -203,20 +230,20 @@ def test_a_split_line_is_one_email_line_per_split_each_with_its_was(api, emails)
     _confirm_all(s)
     assert len(emails) == 1, emails
     lines = emails[0]["lines"]
-    assert len(lines) == 3, [(l["qty"], l["remark"]) for l in lines]
+    # AC-G6 (round 3): one row per split, REMARK the typed remark else the generated word
+    # ("after site visit" replaces DELAY). AC-G3: 4 + 4 + the 2 cancelled = 10, no extra row.
+    assert [(l["qty"], l["remark"]) for l in lines] == [
+        ("4", "REMAIN"), ("4", "after site visit"), ("2", "CANCEL BALANCE"),
+    ], [(l["qty"], l["remark"]) for l in lines]
     base_date = _handover_fmt_date(D_A)
     for line in lines:
         assert line["item_code"] == s.world.product.product_code
         assert line["location"] == s.world.own_wh.warehouse_code
         assert line["was"] == {"qty": "10", "delivery_date": base_date}, line
-    by_word = {l["remark"].split(",")[0].split(" ")[0]: l for l in lines}
-    assert set(by_word) >= {"REMAIN", "DELAY", "CANCEL"}, [l["remark"] for l in lines]
-    assert by_word["REMAIN"]["qty"] == "4" and by_word["REMAIN"]["delivery_date"] == base_date
-    assert by_word["DELAY"]["qty"] == "4"
-    assert by_word["DELAY"]["delivery_date"] == _handover_fmt_date(D_B)
-    assert "after site visit" in by_word["DELAY"]["remark"]
-    assert by_word["CANCEL"]["qty"] == "2"
-    assert by_word["CANCEL"]["remark"].startswith("CANCEL BALANCE")
+    # QTY / DELIVERY print on the line's first row only
+    assert [bool(l.get("continued")) for l in lines] == [False, True, True], lines
+    assert lines[0]["delivery_date"] == base_date
+    assert lines[1]["delivery_date"] == _handover_fmt_date(D_B)
 
 
 # ---------------------------------------------------------------------------
@@ -408,7 +435,10 @@ def test_excel_remark_names_the_origin_by_its_core_line_number(api):
         50: [_sp(8, D_A, on=_on(s, 50)), _sp(4, D_B, on=_on(s, 40))],
     })
     heads, rows = _sheet_rows(s)
+    # AC-G7 (round 3): no remark names a line, by its core number (480 / 608) or its mirror
+    # number (40 / 50); each split prints under its own line instead
     remarks = [r[heads.index("REMARK")] for r in rows]
-    assert any("from line 480" in x for x in remarks), remarks
-    assert any("from line 608" in x for x in remarks), remarks
-    assert not [x for x in remarks if "from line 40" in x or "from line 50" in x], remarks
+    assert not [x for x in remarks if "line" in x], remarks
+    got = _plan_rows(heads, rows)
+    assert _has_block(got, [(10.0, D_A, 6.0, D_A, "REMAIN"), (None, None, 4.0, D_B, "DELAY")]), got
+    assert _has_block(got, [(12.0, D_A, 8.0, D_A, "REMAIN"), (None, None, 4.0, D_B, "DELAY")]), got

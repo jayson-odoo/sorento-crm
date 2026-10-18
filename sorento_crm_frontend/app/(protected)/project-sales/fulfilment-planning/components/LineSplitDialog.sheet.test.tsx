@@ -110,16 +110,25 @@ describe('AC-A3 merged cells and the extra notes', () => {
     getLineSplits.mockResolvedValue(savedCase());
     await renderDialog();
     await sheet();
+    // Variant B (AC-G2): 480 keeps the splits that stay on it (14) and the one on a new line
+    // (167); the 236 dropped on 608 is drawn under 608 with its own LINE cell 480.
     const b = block(480);
-    expect(b.querySelectorAll('tr')).toHaveLength(3);
+    expect(b.querySelectorAll('tr')).toHaveLength(2);
     const itemCell = within(b).getByText('CSK14B').closest('td')!;
-    expect(itemCell.getAttribute('rowspan')).toBe('3');
-    expect(balance(480).closest('td')!.getAttribute('rowspan')).toBe('3');
+    expect(itemCell.getAttribute('rowspan')).toBe('2');
+    expect(balance(480).closest('td')!.getAttribute('rowspan')).toBe('2');
     // the merged cells appear once, in the first row
     expect(within(b).getAllByText('CSK14B')).toHaveLength(1);
-    // each split row has its own qty input
+    // each split row has its own qty input, numbered by its own line
     expect([1, 2, 3].map((n) => qty(480, n).value)).toEqual(['14', '236', '167']);
     expect(dateIn(480, 2).value).toBe('20/11/2026');
+    const moved = qty(480, 2).closest('tr') as HTMLTableRowElement;
+    expect(block(608).contains(moved), 's236 drawn in block 608').toBe(true);
+    expect(b.contains(moved)).toBe(false);
+    expect(
+      Array.from(moved.cells).some((td) => (td.textContent ?? '').trim() === '480'),
+      's236 LINE cell 480',
+    ).toBe(true);
   });
 
   it('an unsplit line has single-row cells (no rowSpan above 1)', async () => {
@@ -444,10 +453,10 @@ describe('AC-A11 change pill per split against its own line base date', () => {
   it('later DELAY, earlier ADVANCE, same REMAIN, cancel CANCEL', async () => {
     const p = ownerCase();
     p.lines.find((l) => l.line_id === 'L480')!.splits = [
-      { id: 'a', qty: 14, delivery_date: '2026-09-20', is_cancel: false, sits_on_line_id: 'L480', remark: '' },
-      { id: 'b', qty: 100, delivery_date: '2026-10-20', is_cancel: false, sits_on_line_id: 'L480', remark: '' },
-      { id: 'c', qty: 200, delivery_date: '2026-11-20', is_cancel: false, sits_on_line_id: 'L608', remark: '' },
-      { id: 'd', qty: 103, delivery_date: null, is_cancel: true, sits_on_line_id: 'L480', remark: '' },
+      { id: 'a', qty: 14, delivery_date: '2026-09-20', is_cancel: false, sits_on_line_id: 'L480', remark: '', remark_generated: '' },
+      { id: 'b', qty: 100, delivery_date: '2026-10-20', is_cancel: false, sits_on_line_id: 'L480', remark: '', remark_generated: '' },
+      { id: 'c', qty: 200, delivery_date: '2026-11-20', is_cancel: false, sits_on_line_id: 'L608', remark: '', remark_generated: '' },
+      { id: 'd', qty: 103, delivery_date: null, is_cancel: true, sits_on_line_id: 'L480', remark: '', remark_generated: '' },
     ];
     getLineSplits.mockResolvedValue(p);
     await renderDialog();

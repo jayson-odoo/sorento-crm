@@ -163,8 +163,14 @@ describe('no equations or labels', () => {
 });
 
 describe('unsplit line generated remark', () => {
-  const own = () => block(608).querySelector('[data-nav-col="remark"]') as HTMLInputElement;
-  const marked = () => block(608).querySelector('[data-remark-generated="true"]');
+  // 608's OWN row: block 608 also holds the rows moved onto it (s236, s167, s37), each with
+  // its own generated-remark marker (AC-G2, AC-G5), so every lookup is scoped to this row.
+  const ownRow = () =>
+    Array.from(block(608).querySelectorAll('tr')).find(
+      (tr) => !tr.hasAttribute('data-split-id') && !tr.hasAttribute('data-extra-row'),
+    ) as HTMLElement;
+  const own = () => ownRow().querySelector('[data-nav-col="remark"]') as HTMLInputElement;
+  const marked = () => ownRow().querySelector('[data-remark-generated="true"]');
   const shown = (el: HTMLInputElement) =>
     `${el.textContent ?? ''} ${el.value ?? ''} ${el.getAttribute('placeholder') ?? ''}`;
 

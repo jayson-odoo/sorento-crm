@@ -323,15 +323,19 @@ def test_oi_demand_rows_leaves_the_cancel_when_the_target_did_not_go_up(api):
 
 
 @pytest.mark.parametrize("line18_now", ["82", "60"])
-def test_the_email_prints_only_the_splits_the_engine_honoured(api, line18_now):
-    """Line 18 did not grow, so the 49 split was not honoured: no "49 DELAY" line, and the
-    normal netting tells the CANCEL 49 as it does today. The own-line split (2 REMAIN) may
-    still print."""
+def test_the_email_prints_the_split_rows_when_the_engine_declines_the_move(api, emails, line18_now):
+    """Line 18 did not grow, so the engine moves no link for the 49 split. AC-G4 / AC-G6
+    (round 3): the SENT email still prints line 2's plan, one row per split (2 REMAIN, 49
+    DELAY), and the 49 is never netted into a CANCEL."""
     s = _so402757(api, with_splits=True, line18_now=line18_now, batch_18=(line18_now != "82"))
-    told = _confirm_both(s, buy_18=line18_now)
-    line_2 = [(h["line"]["qty"], h["line"]["remark"]) for h in told if h.get("line_no") == 2]
-    assert not [t for t in line_2 if t[0] == "49" and t[1].startswith("DELAY")], line_2
-    assert ("49", "CANCEL 49") in line_2 or any(t[1] == "CANCEL 49" for t in line_2), line_2
+    start = len(emails)
+    _confirm_both(s, buy_18=line18_now)
+    sent = _sent_since(emails, start)
+    assert sent.count(("2", "REMAIN")) == 1, sent
+    assert sent.count(("49", "DELAY")) == 1, ("AC-G6: the 49 split prints its own row", sent)
+    assert not [r for _q, r in sent if "CANCEL" in r], ("AC-G4: no CANCEL from a split", sent)
+    row_2 = s.db.get(OrderInquiryRow, s.row_2.id)
+    assert _linked(s, row_2) == Decimal("2"), "the engine guard stands: no link moved"
 
 
 # ---------------------------------------------------------------------------
@@ -409,6 +413,18 @@ def _confirm_sent(s, emails):
     return [(ln["qty"], ln["remark"]) for ctx in emails for ln in ctx["lines"]]
 
 
+def _sent_since(emails, start):
+    """(qty, remark) of every line of the emails SENT after `start` (the batch Confirm's)."""
+    return [(ln["qty"], ln["remark"]) for ctx in emails[start:] for ln in ctx["lines"]]
+
+
+def _confirm_batch_sent(s, emails):
+    """`_confirm_sent`, read off the batch Confirm's emails only (not the first Confirm's)."""
+    start = len(emails)
+    _confirm_sent(s, emails)
+    return _sent_since(emails, start)
+
+
 def test_sent_email_for_a_move_alone_has_the_delay_and_no_order_for_the_moved_qty(api, emails):
     """SO417636 shape: line 20 417 -> 14 with 403 to line 30 (192 -> 595)."""
     d_a, d_b = date(2026, 10, 20), date(2026, 11, 20)
@@ -428,23 +444,30 @@ def test_sent_email_when_line_18_grows_by_exactly_the_moved_qty(api, emails):
     assert not [r for _q, r in sent if "ORDER 49" in r], sent
 
 
-def test_sent_email_tells_the_netting_remainder_as_a_cancel(api, emails):
-    """Line 2 goes 51 -> 1 while the splits say 2 own + 49 to line 18 (131): CANCEL 1."""
+def test_sent_email_never_nets_a_split_plan_into_a_cancel(api, emails):
+    """Line 2 goes 51 -> 1 while the splits say 2 own + 49 to line 18 (131). AC-G4 (round 3):
+    no split row is netted into a CANCEL (it used to read CANCEL 1); AC-G6: each split prints
+    its own row, 2 REMAIN and 49 DELAY."""
     s = _lines(api, [(2, 51, D_2, 1), (18, 82, D_18, 131)])
     _split(s, 2, [(2, D_2, "own"), (49, D_18, 18)])
-    sent = _confirm_sent(s, emails)
-    assert any(r == "CANCEL 1" or r.endswith("CANCEL 1") for _q, r in sent), sent
-    assert any(q == "49" and r.startswith("DELAY") for q, r in sent), sent
+    sent = _confirm_batch_sent(s, emails)
+    assert sent.count(("2", "REMAIN")) == 1, sent
+    assert sent.count(("49", "DELAY")) == 1, sent
+    assert not [r for _q, r in sent if "CANCEL" in r], sent
 
 
-def test_sent_email_for_a_partial_move_cancels_exactly_what_the_netting_cut(api, emails):
+def test_sent_email_for_a_partial_move_prints_every_split_and_no_cancel(api, emails):
     """Line 2 splits 2 own, 30 to line 18 (grew by 30), 19 to line 40 (did not grow); AutoCount
-    line 2 -> 1: the CANCEL is 20 (19 + 1), and no ORDER for the 30 on the grown line."""
+    line 2 -> 1. AC-G4 (round 3): nothing is netted into a CANCEL (it used to read CANCEL 20);
+    AC-G6: one row per split, 2 REMAIN / 30 DELAY / 19 DELAY; no ORDER for the 30 on the grown
+    line."""
     d_40 = date(2026, 12, 1)
     s = _lines(api, [(2, 51, D_2, 1), (18, 82, D_18, 112), (40, 60, d_40, 60)])
     _split(s, 2, [(2, D_2, "own"), (30, D_18, 18), (19, d_40, 40)])
-    sent = _confirm_sent(s, emails)
-    assert any(r.endswith("CANCEL 20") or r == "CANCEL 20" for _q, r in sent), sent
+    sent = _confirm_batch_sent(s, emails)
+    for row in (("2", "REMAIN"), ("30", "DELAY"), ("19", "DELAY")):
+        assert sent.count(row) == 1, (row, sent)
+    assert not [r for _q, r in sent if "CANCEL" in r], sent
     assert not [r for _q, r in sent if "ORDER 30" in r], sent
 
 
@@ -575,25 +598,34 @@ def test_sent_email_tells_a_cancel_split_once(api, emails):
 
 
 def test_a_split_does_not_move_off_a_row_whose_document_is_received_in_full(api, emails):
+    """The engine declines the link move (the source document is received in full). AC-G4 /
+    AC-G6 (round 3): the email still prints the plan rows (2 REMAIN, 49 DELAY, line 18 131
+    REMAIN), never a CANCEL, and the 49 is not ordered again on line 18."""
     s = _lines(api, [(2, 51, D_2, 2), (18, 82, D_18, 131)])
     s.po_line.qty_received = Decimal("51")
     s.db.commit()
     _split(s, 2, [(2, D_2, "own"), (49, D_18, 18)])
-    sent = _confirm_sent(s, emails)
+    sent = _confirm_batch_sent(s, emails)
+    assert sent.count(("2", "REMAIN")) == 1 and sent.count(("49", "DELAY")) == 1, sent
+    assert ("131", "REMAIN") in sent, ("line 18 is 82 + the 49 sitting on it", sent)
     assert not [t for t in sent if t == ("131", "ORDER")], ("line 18 is not told 131 fresh", sent)
-    assert any(r == "ORDER 49" for _q, r in sent), ("today's no-split result", sent)
+    assert not [r for _q, r in sent if "CANCEL" in r or "ORDER 49" in r], sent
     live_18 = _live(s, s.no[18][1], IV_ORDER)
     assert all(_linked(s, r) == Decimal("0") for r in live_18), "no link moved to line 18"
 
 
 def test_a_split_does_not_move_off_a_received_row_cut_to_zero(api, emails):
+    """Declined move off a received row cut to 0. AC-G4 / AC-G6 (round 3): the email prints
+    the plan (51 DELAY, line 18 133 REMAIN), no CANCEL and no ORDER 51."""
     s = _lines(api, [(2, 51, D_2, 0), (18, 82, D_18, 133)])
     s.po_line.qty_received = Decimal("51")
     s.db.commit()
     _split(s, 2, [(51, D_18, 18)])
-    sent = _confirm_sent(s, emails)
+    sent = _confirm_batch_sent(s, emails)
+    assert sent.count(("51", "DELAY")) == 1, sent
+    assert ("133", "REMAIN") in sent, sent
     assert not [t for t in sent if t == ("133", "ORDER")], ("line 18 is not told 133 fresh", sent)
-    assert any(r == "ORDER 51" for _q, r in sent), sent
+    assert not [r for _q, r in sent if "CANCEL" in r or "ORDER 51" in r], sent
 
 
 def test_a_split_does_not_move_off_a_placed_row_with_no_link(api, emails):
@@ -601,11 +633,13 @@ def test_a_split_does_not_move_off_a_placed_row_with_no_link(api, emails):
     s.no[2][2].state = INQUIRY_PLACED
     s.db.commit()
     _split(s, 2, [(50, D_2, "own"), (50, D_18, 18)])
-    sent = _confirm_sent(s, emails)
+    sent = _confirm_batch_sent(s, emails)
     source = s.db.get(OrderInquiryRow, s.no[2][2].id)
     assert source.state == INQUIRY_PLACED, "purchasing placed it: it must not go back to raised"
     assert not [t for t in sent if t == ("132", "ORDER")], ("nothing moved onto line 18", sent)
-    assert any(r == "CANCEL 60" for _q, r in sent), ("the netting tells it as without splits", sent)
+    # AC-G4 / AC-G6 (round 3): the plan rows print, never the netting's CANCEL 60
+    assert sent.count(("50", "REMAIN")) == 1 and sent.count(("50", "DELAY")) == 1, sent
+    assert not [r for _q, r in sent if "CANCEL" in r], sent
 
 
 # ---------------------------------------------------------------------------
@@ -614,9 +648,9 @@ def test_a_split_does_not_move_off_a_placed_row_with_no_link(api, emails):
 
 
 def test_a_split_does_not_move_onto_a_target_row_whose_document_is_received_in_full(api, emails):
-    """Rule: a split onto a received target changes nothing versus no splits. The same setup is
-    run twice in one world (two orders), once with the 49 split onto line 18 and once without;
-    the sent email lines and the rows of lines 2 and 18 must be equal."""
+    """Rule: a split onto a received target moves no link. The same setup is run twice in one
+    world (two orders), once with the 49 split onto line 18 and once without: the rows of lines
+    2 and 18 must be equal, while the sent email prints the plan rows (AC-G4 / AC-G6, round 3)."""
 
     def run(with_split):
         s = _lines(api, [(2, 51, D_2, 2), (18, 82, D_18, 131)])
@@ -651,7 +685,11 @@ def test_a_split_does_not_move_onto_a_target_row_whose_document_is_received_in_f
 
     plain_lines, plain_rows, plain_doc_a = run(False)
     split_lines, split_rows, split_doc_a = run(True)
-    assert split_lines == plain_lines, ("sent email differs from the no-split result", split_lines, plain_lines)
+    # AC-G4 / AC-G6 (round 3): the email prints the plan rows, not the no-split result's
+    # CANCEL 49 / ORDER 131
+    assert split_lines == sorted([("2", "REMAIN"), ("49", "DELAY"), ("131", "REMAIN")]), (
+        "the sent email prints the plan rows", split_lines, plain_lines)
+    assert not [r for _q, r in split_lines if "CANCEL" in r], split_lines
     assert split_rows == plain_rows, ("rows differ from the no-split result", split_rows, plain_rows)
     assert split_doc_a == plain_doc_a and split_doc_a > Decimal("0"), "DOC-A's link is not dropped"
 
@@ -661,12 +699,13 @@ def test_a_split_does_not_move_onto_a_placed_target_row_with_no_link(api, emails
     s.no[18][2].state = INQUIRY_PLACED
     s.db.commit()
     _split(s, 2, [(2, D_2, "own"), (49, D_18, 18)])
-    sent = _confirm_sent(s, emails)
+    sent = _confirm_batch_sent(s, emails)
     target = s.db.get(OrderInquiryRow, s.no[18][2].id)
     assert target.state == INQUIRY_PLACED, f"became {target.state}: purchasing placed it"
     assert _linked(s, target) == Decimal("0"), "no link moved onto the placed row"
-    assert not [t for t in sent if t[0] == "49" and t[1].startswith("DELAY")], sent
-    assert any(r == "CANCEL 49" for _q, r in sent), ("as without splits", sent)
+    # AC-G4 / AC-G6 (round 3): the plan rows print (2 REMAIN, 49 DELAY), never a CANCEL 49
+    assert sent.count(("2", "REMAIN")) == 1 and sent.count(("49", "DELAY")) == 1, sent
+    assert not [r for _q, r in sent if "CANCEL" in r], sent
 
 
 def test_row_notes_name_the_core_autocount_line_numbers(api, emails):
