@@ -983,6 +983,55 @@ def _order_rows_of(s, no, qty):
     )
 
 
+#: The QTY cell that opens each line's block in the email and the Excel (its base, AC-G1).
+BLOCK_QTY = {Decimal("417"): 480, Decimal("192"): 608, Decimal("504"): 752}
+
+
+def _by_line(rows):
+    """Printed rows `(QTY, NEW QTY, DELIVERY, NEW DATE, REMARK)` grouped under the line whose
+    QTY opens the block (QTY and DELIVERY are printed on a line's first row only): {line no:
+    [(qty, date)]}, a row's qty its NEW QTY else the block's QTY, its date its NEW DATE else
+    the block's DELIVERY."""
+    from tests.scm.test_line_splits_round3 import _day, _num
+
+    out: dict = {}
+    current = block_qty = block_date = None
+    for qty, new_qty, delivery, new_date, _remark in rows:
+        if qty not in (None, ""):
+            current = BLOCK_QTY.get(_num(qty))
+            block_qty, block_date = qty, delivery
+        if current is None:
+            continue
+        out.setdefault(current, []).append((
+            _num(new_qty if new_qty not in (None, "") else block_qty),
+            _day(new_date if new_date not in (None, "") else block_date),
+        ))
+    return out
+
+
+def _email_and_excel(s, sent):
+    """The rows the Confirm's email printed and the worklist Excel prints now, both as
+    `(QTY, NEW QTY, DELIVERY, NEW DATE, REMARK)` (the Excel's CHANGE QUANTITY / CHANGE DATE
+    standing for NEW QTY / NEW DATE)."""
+    printed = _printed(sent)
+    excel = [(q, cq, d, cd, remark) for q, d, cq, cd, remark in _excel_rows(s)]
+    return printed, excel
+
+
+def _assert_no_wrong_words(printed, excel, words):
+    """No CANCEL wording in either output, and none of `words` ((qty, remark) pairs, qty None =
+    any): what the worklist does not hold is never printed."""
+    from tests.scm.test_line_splits_round3 import _num
+
+    for name, rows in (("email", printed), ("Excel", excel)):
+        assert not [r for r in rows if any("CANCEL" in str(c) for c in r)], (
+            f"no CANCEL wording in the {name}", rows)
+        for qty, remark in words:
+            hits = [r for r in rows if remark in str(r[4])
+                    and (qty is None or _num(r[1]) == _num(qty))]
+            assert hits == [], (f"the {name} never prints {qty or ''} {remark}", hits, rows)
+
+
 def test_g19_a_declined_row_keeps_its_links_and_the_live_total_stays_within_autocount(
     api, emails
 ):
@@ -1001,7 +1050,7 @@ def test_g19_a_declined_row_keeps_its_links_and_the_live_total_stays_within_auto
     before_236 = _order_rows_of(s, 480, 236)
     assert [linked for _id, linked in before_236] == [_d("236")], (
         "premise: one 236 row on 480, linked for its 236", before_236)
-    _replan(s, emails, _card_replan())
+    sent = _replan(s, emails, _card_replan())
 
     assert _linked(s, 480, pos[236]) == _d("236"), (
         "480 keeps its 236 with all of PO-B's links", _linked(s, 480, pos[236]))
@@ -1013,6 +1062,78 @@ def test_g19_a_declined_row_keeps_its_links_and_the_live_total_stays_within_auto
     assert _owner_total(s) == _d("1295"), (
         "live ORDER total = AutoCount 1295 + 0 on New line (250 + 396 + 649)",
         _owner_total(s), _live_by_line(s))
+
+    # Reviewer B6: the email and the Excel print what the worklist holds. 608's raised ask is
+    # cut by the declined 236 (nothing was bought): 396 = 192 + 167 + 37.
+    live = _live_by_line(s)
+    assert sum((q for q, _when in live[608]), Decimal(0)) == _d("396"), (
+        "608's worklist asks 396", _worklist(s, s.line[608]))
+    printed, excel = _email_and_excel(s, sent)
+    for name, rows in (("email", printed), ("Excel", excel)):
+        blocks = _by_line(rows)
+        assert sum((q for q, _when in blocks.get(608, [])), Decimal(0)) == _d("396"), (
+            f"the {name} prints 608's rows as 396", blocks.get(608), rows)
+        assert (_d("236"), D_608) in blocks.get(480, []), (
+            f"the {name} prints the declined 236 under 480 at its own date", blocks.get(480),
+            rows)
+    _assert_no_wrong_words(printed, excel, [("632", "REMAIN"), (None, "ORDER 403")])
+
+
+def _link_480_p2(s):
+    """Reviewer P2: 480's 14 and 167 rows share one PO (PO-A, 181), the 236 row sits on PO-B
+    (236). Returns (PO-A, PO-B)."""
+    from app.models.project_so import INQUIRY_CANCELLED, IV_ORDER, OrderInquiryRow
+
+    rows = {
+        int(Decimal(str(r.qty))): r
+        for r in s.db.query(OrderInquiryRow).filter(
+            OrderInquiryRow.so_line_id == s.line[480].id, OrderInquiryRow.verb == IV_ORDER,
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+        )
+    }
+    assert sorted(rows) == [14, 167, 236], ("premise: 480 holds a 14, a 236 and a 167 row",
+                                            _worklist(s, s.line[480]))
+    tag = str(s.order.id)[:4]
+    _po, po_a = _po_line(s.world, _supplier(s.world), qty=181, expected_date=date(2026, 9, 10))
+    for qty in (14, 167):
+        _link(s.world, rows[qty], po_a, qty=qty, document=f"ZZT-S0480-A-{tag}")
+    _po, po_b = _po_line(s.world, _supplier(s.world), qty=236, expected_date=date(2026, 11, 10))
+    _link(s.world, rows[236], po_b, qty=236, document=f"ZZT-S0480-B-{tag}")
+    s.db.commit()
+    return po_a, po_b
+
+
+def test_g19_after_a_declined_move_the_email_and_excel_print_the_worklist(api, emails):
+    """Reviewer B6 (P2) / AC-G19: from the confirmed stored plan, 480's 14 and 167 rows share
+    one PO, and the 236 row's document is received in full. The partial re-plan (236 onto
+    608, 167 stays on New line) is saved and confirmed: the 236 is declined, and 608's raised
+    ask is cut by it (632 - 236 = 396). The email and the Excel print for 480 and 608 exactly
+    what the worklist holds (each line's total and dates), no CANCEL anywhere (it emailed
+    "396 CANCEL 236"), and the Excel prints no "632 REMAIN" and no "ORDER 204"."""
+    from tests.scm.test_line_splits_round3 import _num
+
+    s, _po = _dev_db_case(api, emails)
+    _po_a, po_b = _link_480_p2(s)
+    po_b.qty_received = Decimal("236")
+    s.db.commit()
+    sent = _replan(s, emails, _partial_replan())
+
+    live = _live_by_line(s)
+    assert sum((q for q, _when in live[608]), Decimal(0)) == _d("396"), (
+        "608's raised ask is cut by the declined 236", _worklist(s, s.line[608]))
+    printed, excel = _email_and_excel(s, sent)
+    assert not [x for x in _sent_remarks(sent) if "CANCEL" in x], (
+        "no CANCEL 236 in the email", _sent_remarks(sent))
+    _assert_no_wrong_words(printed, excel, [("632", "REMAIN"), (None, "ORDER 204")])
+    for name, rows in (("email", printed), ("Excel", excel)):
+        blocks = _by_line(rows)
+        for no in (480, 608):
+            held = live[no]
+            shown = blocks.get(no, [])
+            assert (sum((_num(q) for q, _w in shown), Decimal(0)),
+                    sorted({w for _q, w in shown})) == (
+                sum((q for q, _w in held), Decimal(0)), sorted({w for _q, w in held})), (
+                f"the {name} prints line {no} as the worklist holds it", shown, held, rows)
 
 
 D_S5 = date(2030, 1, 20)
@@ -1119,3 +1240,93 @@ def test_g19_a_split_re_landed_from_its_target_moves_links_its_origin_no_longer_
         "480's PO on 480": _d("0"), "480's PO on 608": _d("236"),
         "480's PO on 752": _d("167"), "PO-A on 480": _d("14"),
     }, ("the 167's links move from 608 to 752", got)
+
+
+# ---------------------------------------------------------------------------
+# AC-G19 reviewer final pass on ab12aa1868 (B6 above, B7, S6)
+# ---------------------------------------------------------------------------
+
+
+def test_g19_a_split_declined_for_its_target_keeps_its_links_when_another_split_moves(
+    api, emails
+):
+    """Reviewer B7 (P11) / AC-G19: the New-line plan applied (480 = 14 own, 236 @ 20/11/2026
+    and 167 @ 20/11/2029 on New line); 480's 14 sits on PO-A, its 236 on PO-B (open), its 167
+    unlinked; 608's row is placed with no link. 236 is re-planned onto 608 and 167 onto 752,
+    and confirmed. The 236 is declined for its target: 480 keeps the same 236 row with all
+    236 of PO-B's links, and no PO-B link reaches 752 with the 167's move (167 did, leaving
+    69)."""
+    s = _seed(api)
+    _save(s, _new_line_plan())
+    _confirm_batch(s, emails)
+    pos = _link_each_480_row(s, only=(14, 236))
+    _target_cannot_take_links(s, "target_placed_no_link")
+    before_236 = _order_rows_of(s, 480, 236)
+    assert [linked for _id, linked in before_236] == [_d("236")], (
+        "premise: one 236 row on 480, linked for its 236", before_236)
+
+    _replan(s, emails, {
+        480: [(14, D_480_NEW, 480, ""), (236, D_608, 608, ""), (167, D_167, 752, "")],
+        608: [],
+        752: [],
+    })
+    assert _linked(s, 752, pos[236]) == _d("0"), (
+        "no PO-B link reaches 752 with the 167", _linked(s, 752, pos[236]))
+    assert _linked(s, 608, pos[236]) == _d("0"), ("no PO-B link reaches 608",
+                                                  _linked(s, 608, pos[236]))
+    assert _linked(s, 480, pos[236]) == _d("236"), (
+        "480 keeps all 236 of PO-B's links", _linked(s, 480, pos[236]))
+    assert _order_rows_of(s, 480, 236) == before_236, (
+        "480 keeps the same 236 row", before_236, _order_rows_of(s, 480, 236),
+        _worklist(s, s.line[480]))
+
+
+def test_g19_a_kept_row_that_moves_whole_while_its_origin_stands_leaves_nothing_behind(
+    api, emails
+):
+    """Reviewer S6 / AC-G19 ("also when the origin otherwise stands"): the New-line plan
+    applied (480 = 14 own @ 20/09/2026, 236 @ 20/11/2026 and 167 @ 20/11/2029 on New line),
+    each of 480's rows on a PO of its own. Only the 167 is re-planned onto 608 and confirmed.
+    480's 14 and 236 stand exactly (same rows, same links, still 480's whole plan apart from
+    the 167, no AutoCount extra either way): no live 480 row is left at 20/11/2029 of any qty
+    (0 included), the 167's PO reaches 608, and nothing is raised twice (608 stays 632 with
+    the 167 inside it; live total 250 + 632 + 649 = 1531, AutoCount 1295 plus the 236 New-line
+    delivery).
+
+    Not a kill test for the whole-row cancel in `_move_replanned`: with that cancel switched
+    off in memory (19 Oct probe), the emptied row is still retired here, by the revision's
+    supersede ("Superseded by revision 3"), because the lingering 0-qty row keeps 480 from
+    reading as standing (`_kept_split_needs` counts it), so 480 is not refiled."""
+    from app.models.project_so import INQUIRY_CANCELLED
+
+    s = _seed(api)
+    _save(s, _new_line_plan())
+    _confirm_batch(s, emails)
+    pos = _link_each_480_row(s)
+    before = _rows_480(s)
+    assert sorted(before) == sorted([(_d("14"), D_480_NEW), (_d("236"), D_608),
+                                     (_d("167"), D_167)]), ("premise", before)
+
+    _replan(s, emails, {
+        480: [(14, D_480_NEW, 480, ""), (236, D_608, "new", ""), (167, D_167, 608, "")],
+        608: [],
+        752: [],
+    })
+    after = _rows_480(s)
+    for key in ((_d("14"), D_480_NEW), (_d("236"), D_608)):
+        assert after.get(key) == before[key], (
+            "the origin otherwise stands: the row and its links are untouched", key,
+            before[key], after.get(key))
+    at_its_date = [r for r in _worklist(s, s.line[480])
+                   if r[1] != INQUIRY_CANCELLED and r[3] == D_167]
+    assert at_its_date == [], (
+        "no live 480 row at the 167's date 20/11/2029, of any qty (0 included)",
+        _worklist(s, s.line[480]))
+    assert (_linked(s, 480, pos[167]), _linked(s, 608, pos[167])) == (_d("0"), _d("167")), (
+        "the 167's PO moves with it to 608", _linked(s, 480, pos[167]),
+        _linked(s, 608, pos[167]))
+    live = _live_by_line(s)
+    assert sum((q for q, _when in live[608]), Decimal(0)) == _d("632"), (
+        "608 holds the 167 inside its 632", _worklist(s, s.line[608]))
+    assert _owner_total(s) == _d("1531"), (
+        "nothing raised twice: 250 + 632 + 649 (AutoCount 1295 + the 236 on New line)", live)
