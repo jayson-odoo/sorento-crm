@@ -20,6 +20,10 @@ open batch carries an empty `from` on its later change row. Seeded here:
 * T3 (AC-G19): from T2's confirmed state, the card plan saved through the sheet's PUT and
   confirmed leaves purchasing the same live rows as the card plan confirmed from scratch on a
   twin order.
+* AC-G19's cases (round 2): a re-Confirm right after that Confirm changes nothing; a partial
+  re-plan (only 236 onto 608) moves only what moved; a move onto a target that cannot take
+  links is declined as in AC-G12; an origin received in full buys nothing twice; a plan with
+  no `split_plan` stamp on its decision (as the dev DB holds it) re-plans like a stamped one.
 
 Every row is seeded here (CI's database is empty) on the REAL database, rolled back
 (`test_planning_change_apply_on_board.world`).
@@ -29,6 +33,8 @@ from __future__ import annotations
 from datetime import date, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
+
+import pytest
 
 from app.models.planning_change import (
     PLANNING_CHANGE_KIND_ADDED,
@@ -260,14 +266,31 @@ def _malaysia_day_of_last_confirm(s):
 
 
 def _snapshot(s):
-    """Every OI row of 480 / 608 / 752: (line no, id, verb, state, qty, date)."""
+    """Every OI row of 480 / 608 / 752 with its links: (line no, id, verb, state, qty, date,
+    links as (PO line, qty))."""
     from app.models.project_so import OrderInquiryRow
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
+    svc = ProjectOrderInquiryService(s.db)
     return sorted(
-        (no, str(r.id), r.verb, r.state, Decimal(str(r.qty)).normalize(), r.delivery_date)
+        (no, str(r.id), r.verb, r.state, Decimal(str(r.qty)).normalize(), r.delivery_date,
+         tuple(sorted((str(link.po_line_id), str(Decimal(str(link.qty)).normalize()))
+                      for link in svc._links_of(r.id))))
         for no in OWNER_CASE
         for r in s.db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == s.line[no].id)
     )
+
+
+def _assert_a_re_confirm_changes_nothing(s, emails):
+    """AC-G13: a plain re-Confirm with no edit writes no OI row, moves no link and sends no
+    handover email."""
+    before = _snapshot(s)
+    start = len(emails)
+    _reconfirm(s)
+    after = _snapshot(s)
+    assert after == before, ("AC-G13: a second Confirm changes no OI row or link", before, after)
+    resent = [(ln["qty"], ln["remark"]) for h in emails[start:] for ln in h.get("lines") or []]
+    assert emails[start:] == [], ("AC-G13: a second Confirm sends no email", resent)
 
 
 def _linked(s, no, po_line):
@@ -286,6 +309,123 @@ def _linked(s, no, po_line):
             Decimal(0),
         )
     return total
+
+
+def _po_links(s, po):
+    """Where the two owner POs' links sit: 480's PO on 480 / 608, 752's PO on 752 / 608."""
+    return {
+        "480 on 480": _linked(s, 480, po[480]), "480 on 608": _linked(s, 608, po[480]),
+        "752 on 752": _linked(s, 752, po[752]), "752 on 608": _linked(s, 608, po[752]),
+    }
+
+
+def _card_replan():
+    """AC-G19's drag, as the sheet saves it (every line sent, 608 with no splits): 236 and
+    167 (date fixed to 20/11/2029) and 752's 37 onto 608, 467 back on 752 @ 02/01/2027."""
+    return {**_owner_plan(), 608: []}
+
+
+def _partial_replan():
+    """AC-G19 partial: only 236 onto 608; 167 stays on New line at its stored date, 752's
+    stored plan is sent as it stands."""
+    return {
+        480: [(14, D_480_NEW, 480, ""), (236, D_608, 608, ""), (167, D_167_STORED, "new", "")],
+        608: [],
+        752: STORED_PLAN[752],
+    }
+
+
+def _replan(s, emails, plan):
+    """Save `plan` through the sheet's PUT, then the board's plain Confirm (nothing pending on
+    the order, so no batch). Returns the handovers that Confirm sent."""
+    _save(s, plan)
+    start = len(emails)
+    _reconfirm(s)
+    return list(emails[start:])
+
+
+def _scratch_card_plan(api, emails):
+    """The card plan confirmed from scratch on a twin order (480 and 752 linked the same way):
+    what AC-G19's re-plan must leave purchasing with."""
+    scratch = _seed(api)
+    _link_owner_rows(scratch)
+    _save(scratch, _owner_plan())
+    _confirm_batch(scratch, emails)
+    want = _live_by_line(scratch)
+    assert _owner_total(scratch) == _d("1295"), ("premise: the card plan from scratch", want)
+    return want
+
+
+def _strip_split_plan_stamps(s):
+    """The dev DB's SO417636 decisions carry no `split_plan` stamp on any line snapshot (read
+    off the shared dev DB, 19 Oct: 0 of 3, 3, 4 snapshots): drop the ones the Confirm wrote."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models.project_so import SOSupplyDecision
+
+    decisions = (
+        s.db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == str(s.order.id))
+        .all()
+    )
+    for decision in decisions:
+        if decision.line_snapshots:
+            decision.line_snapshots = [
+                {k: v for k, v in snapshot.items() if k != "split_plan"}
+                for snapshot in decision.line_snapshots
+            ]
+            flag_modified(decision, "line_snapshots")
+    s.db.commit()
+    s.db.expire_all()
+    stamped = [
+        snapshot for decision in s.db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == str(s.order.id)).all()
+        for snapshot in decision.line_snapshots or [] if "split_plan" in snapshot
+    ]
+    assert stamped == [], ("premise: no decision snapshot carries a split_plan stamp", stamped)
+
+
+def _assert_no_cancel_anywhere(s, sent):
+    """AC-G4: no CANCEL BALANCE on purchasing's worklist for 480 / 608 / 752, and no CANCEL in
+    the email that Confirm sent or in the worklist Excel. Returns the Excel rows."""
+    for no in OWNER_CASE:
+        rows = _worklist(s, s.line[no])
+        assert _cancel_balances(rows) == [], ("no CANCEL on the worklist", no, rows)
+    assert not [x for x in _sent_remarks(sent) if "CANCEL" in x], _sent_remarks(sent)
+    if sent:
+        printed = _printed(sent)
+        assert not [r for r in printed if any("CANCEL" in c for c in r)], printed
+    excel = _excel_rows(s)
+    assert not [r for r in excel if "CANCEL" in str(r[4])], ("no CANCEL in the Excel", excel)
+    return excel
+
+
+def _assert_the_card_plan(s, po, sent, want):
+    """AC-G19: purchasing's live OI rows equal the card plan confirmed from scratch (`want`),
+    1295 in all, 608 totals 632, no 37 left on 752, 752's extra 182 "ORDER 182", 608 REMAIN,
+    the moved rows keep their links, no CANCEL anywhere."""
+    live = _live_by_line(s)
+    rows = {no: _worklist(s, s.line[no]) for no in OWNER_CASE}
+    assert live == want, ("AC-G19: the live OI rows equal the card plan from scratch", live, want)
+    assert _owner_total(s) == _d("1295"), ("nothing bought twice: 14 + 632 + 649", live)
+    assert sum((q for q, _when in live[608]), Decimal(0)) == _d("632"), rows[608]
+    assert not [q for q, _when in live[752] if q == _d("37")], ("the 37 left 752", rows[752])
+
+    out = _get(s)
+    l608, l752 = _line(out, s, 608), _line(out, s, 752)
+    assert _q(l752["extra_qty"]) == _d("182"), ("649 - 467", l752["extra_qty"])
+    assert l752["extra_remark"] == "ORDER 182", l752["extra_remark"]
+    assert l608["remark_generated"] == "REMAIN", l608["remark_generated"]
+
+    got = _po_links(s, po)
+    assert got == {
+        "480 on 480": _d("14"), "480 on 608": _d("403"),
+        "752 on 752": _d("467"), "752 on 608": _d("37"),
+    }, ("the moved rows keep their links", got)
+
+    excel = _assert_no_cancel_anywhere(s, sent)
+    assert _has_block(excel, EXCEL_752), ("752: 37 / 467 / extra 182", excel)
+    assert EXCEL_608 in excel, ("608: 192 -> 632 REMAIN", excel)
 
 
 # ---------------------------------------------------------------------------
@@ -349,13 +489,7 @@ def test_g18_refer_back_reads_an_applied_change_with_an_empty_from(api, emails):
     assert l480["extra_qty"] is None, ("14 + 236 + 167 = 417: no extra", l480["extra_qty"])
     assert l608["extra_qty"] is None, ("608 is not split: no extra row", l608["extra_qty"])
 
-    before = _snapshot(s)
-    start = len(emails)
-    _reconfirm(s)
-    assert _snapshot(s) == before, ("AC-G13: a second Confirm changes no OI row", before,
-                                    _snapshot(s))
-    resent = [(ln["qty"], ln["remark"]) for h in emails[start:] for ln in h.get("lines") or []]
-    assert emails[start:] == [], ("AC-G13: a second Confirm sends no email", resent)
+    _assert_a_re_confirm_changes_nothing(s, emails)
 
 
 # ---------------------------------------------------------------------------
@@ -371,48 +505,132 @@ def test_g19_re_planning_the_stored_plan_into_the_card_plan_equals_it_from_scrat
     632, no 37 left on 752), 752 shows its extra 182 "ORDER 182", 608 reads REMAIN, the moved
     rows keep their links (nothing bought twice) and no CANCEL appears in the worklist, the
     email or the Excel."""
-    scratch = _seed(api)
-    _link_owner_rows(scratch)
-    _save(scratch, _owner_plan())
-    _confirm_batch(scratch, emails)
-    want = _live_by_line(scratch)
-    assert _owner_total(scratch) == _d("1295"), ("premise: the card plan from scratch", want)
-
+    want = _scratch_card_plan(api, emails)
     s, po = _dev_db_case(api, emails, linked=True)
-    _save(s, {**_owner_plan(), 608: []})
-    start = len(emails)
-    _reconfirm(s)
-    sent = list(emails[start:])
+    sent = _replan(s, emails, _card_replan())
+    _assert_the_card_plan(s, po, sent, want)
+
+
+def test_g19_a_re_confirm_after_the_card_re_plan_changes_nothing(api, emails):
+    """AC-G19 / AC-G13: right after the Confirm that applied the card re-plan, a second
+    Confirm with no edit writes no OI row, moves no link and sends no email."""
+    s, _po = _dev_db_case(api, emails, linked=True)
+    _replan(s, emails, _card_replan())
+    _assert_a_re_confirm_changes_nothing(s, emails)
+
+
+def test_g19_a_partial_re_plan_moves_only_what_moved(api, emails):
+    """AC-G19 partial: from the confirmed stored plan only 236 is dragged onto 608 (167 stays
+    on New line, 752's plan is sent as it stands). After Save + Confirm, 480 holds 14 and 167
+    at their dates, 608 holds its own 192 plus the 236 and its extra 204 (632 in all, read
+    "ORDER 204"), 752 is untouched, the 236 takes its link to 608 and nothing says CANCEL.
+
+    Not asserted: the UAC's "keeps 1295 in total". With the 167 still on New line it is asked
+    on top of AutoCount (AC-G14, 480 asks 14 + 167 against AutoCount 14), so the bullet's own
+    rows add up to 14 + 167 + 632 + 649 = 1462, never 1295."""
+    s, po = _dev_db_case(api, emails, linked=True)
+    before_752 = _live_by_line(s)[752]
+    sent = _replan(s, emails, _partial_replan())
 
     live = _live_by_line(s)
     rows = {no: _worklist(s, s.line[no]) for no in OWNER_CASE}
-    assert live == want, ("AC-G19: the live OI rows equal the card plan from scratch", live, want)
-    assert _owner_total(s) == _d("1295"), ("nothing bought twice: 14 + 632 + 649", live)
-    assert sum((q for q, _when in live[608]), Decimal(0)) == _d("632"), rows[608]
-    assert not [q for q, _when in live[752] if q == _d("37")], ("the 37 left 752", rows[752])
+    assert live[480] == sorted([(_d("14"), D_480_NEW), (_d("167"), D_167_STORED)]), (
+        "480 holds 14 and 167 at their dates", rows[480])
+    assert sum((q for q, _when in live[608]), Decimal(0)) == _d("632"), (
+        "608 = own 192 + 236 + extra 204", rows[608])
+    assert live[752] == before_752, ("a partial re-plan moves only what moved: 752 untouched",
+                                     before_752, rows[752])
 
-    out = _get(s)
-    l608, l752 = _line(out, s, 608), _line(out, s, 752)
-    assert _q(l752["extra_qty"]) == _d("182"), ("649 - 467", l752["extra_qty"])
-    assert l752["extra_remark"] == "ORDER 182", l752["extra_remark"]
-    assert l608["remark_generated"] == "REMAIN", l608["remark_generated"]
+    l608 = _line(_get(s), s, 608)
+    assert _q(l608["extra_qty"]) == _d("204"), ("632 - 192 - 236", l608["extra_qty"])
+    assert l608["extra_remark"] == "ORDER 204", l608["extra_remark"]
 
-    got = {
-        "480 on 480": _linked(s, 480, po[480]), "480 on 608": _linked(s, 608, po[480]),
-        "752 on 752": _linked(s, 752, po[752]), "752 on 608": _linked(s, 608, po[752]),
-    }
+    got = _po_links(s, po)
     assert got == {
-        "480 on 480": _d("14"), "480 on 608": _d("403"),
-        "752 on 752": _d("467"), "752 on 608": _d("37"),
-    }, ("the moved rows keep their links", got)
+        "480 on 480": _d("181"), "480 on 608": _d("236"),
+        "752 on 752": _d("504"), "752 on 608": _d("0"),
+    }, ("the links follow the moved 236 only", got)
+    _assert_no_cancel_anywhere(s, sent)
 
-    for no in OWNER_CASE:
-        assert _cancel_balances(rows[no]) == [], ("no CANCEL on the worklist", no, rows[no])
-    assert not [x for x in _sent_remarks(sent) if "CANCEL" in x], _sent_remarks(sent)
-    if sent:
-        printed = _printed(sent)
-        assert not [r for r in printed if any("CANCEL" in c for c in r)], printed
-    excel = _excel_rows(s)
-    assert not [r for r in excel if "CANCEL" in str(r[4])], ("no CANCEL in the Excel", excel)
-    assert _has_block(excel, EXCEL_752), ("752: 37 / 467 / extra 182", excel)
-    assert EXCEL_608 in excel, ("608: 192 -> 632 REMAIN", excel)
+
+def _target_cannot_take_links(s, case):
+    """AC-G12's two declines, as round 3 sets them (`test_line_splits_confirm`): 608's live
+    ORDER row is placed with no link, or linked to a document received in full."""
+    from app.models.project_so import INQUIRY_PLACED
+
+    row = _order_row(s.world, s.line[608])
+    if case == "target_placed_no_link":
+        row.state = INQUIRY_PLACED
+    else:
+        _po, po_line = _po_line(s.world, _supplier(s.world), qty=row.qty,
+                                expected_date=date(2026, 11, 10))
+        _link(s.world, row, po_line, qty=row.qty, document=f"ZZT-S0608-{str(s.order.id)[:4]}")
+        po_line.qty_received = Decimal(str(row.qty))
+    s.db.commit()
+
+
+@pytest.mark.parametrize("case", ["target_placed_no_link", "target_received_in_full"])
+def test_g19_a_re_plan_onto_a_target_that_cannot_take_links_is_declined(api, emails, case):
+    """AC-G19 / AC-G12: 608's row cannot take links when 236 is dragged onto it. The move is
+    declined: 480 keeps its rows and the PO's 417 of links, no link reaches 608, 608 raises no
+    ORDER for the declined 236, nothing more is asked in all, and nothing says CANCEL.
+
+    Not asserted: "the live OI total equals AutoCount". In the confirmed stored state 608
+    already holds AutoCount's 632 (nothing sat on it when it was confirmed) and 480 holds 417
+    against AutoCount 14 (its New-line rows, AC-G14), so 1295 is out of reach without a
+    CANCEL; and whether 608's placed / received 632 is then cut to 632 - 236 is not pinned."""
+    s, po = _dev_db_case(api, emails, linked=True)
+    _target_cannot_take_links(s, case)
+    before = _live_by_line(s)
+    before_total = _owner_total(s)
+    sent = _replan(s, emails, _partial_replan())
+
+    live = _live_by_line(s)
+    assert live[480] == before[480], ("AC-G12: the origin keeps its rows", case, before[480],
+                                      live[480])
+    assert _linked(s, 480, po[480]) == _d("417"), ("AC-G12: the origin keeps its links", case,
+                                                   _po_links(s, po))
+    assert _linked(s, 608, po[480]) == _d("0"), ("no link moves onto 608", case, _po_links(s, po))
+    assert sum((q for q, _when in live[608]), Decimal(0)) <= sum(
+        (q for q, _when in before[608]), Decimal(0)), (
+        "608 raises no ORDER for the declined 236", case, before[608], live[608])
+    assert _owner_total(s) <= before_total, ("nothing bought twice", case, before, live)
+    _assert_no_cancel_anywhere(s, sent)
+
+
+def test_g19_a_re_plan_off_an_origin_received_in_full_buys_nothing_twice(api, emails):
+    """AC-G19: 480's PO (417, linked across its 14 / 236 / 167 rows) is received in full, then
+    the card re-plan drags 236 and 167 onto 608. Nothing is bought twice (live OI total =
+    AutoCount 1295), nothing is cancelled, and the worklist and the Excel agree (the Excel's
+    TOTAL QTY is the live total).
+
+    The UAC pins no rows for this case, so only these invariants are asserted; "the email
+    agrees" is checked as no CANCEL in it, nothing finer."""
+    from tests.scm.test_line_splits_round3 import _sheet
+
+    s, po = _dev_db_case(api, emails, linked=True)
+    po[480].qty_received = Decimal("417")
+    s.db.commit()
+    sent = _replan(s, emails, _card_replan())
+
+    live = _live_by_line(s)
+    assert _owner_total(s) == _d("1295"), ("nothing bought twice: live OI = AutoCount", live)
+    _assert_no_cancel_anywhere(s, sent)
+    heads, rows = _sheet(s)
+    at = heads.index("TOTAL QTY")
+    totals = [r[at] for r in rows if r[at] not in (None, "")]
+    assert totals == [float(_owner_total(s))], ("the Excel's TOTAL QTY is the live total",
+                                                totals, live)
+
+
+def test_g19_an_unstamped_applied_plan_re_planned_into_the_card_plan(api, emails):
+    """AC-G19, stamped or not: the dev DB's SO417636 decisions carry no `split_plan` stamp. A
+    plan with none counts as re-planned once: the card re-plan leaves purchasing the card plan
+    from scratch row for row (as test_g19 above), and a re-Confirm with no edit right after
+    changes nothing."""
+    want = _scratch_card_plan(api, emails)
+    s, po = _dev_db_case(api, emails, linked=True)
+    _strip_split_plan_stamps(s)
+    sent = _replan(s, emails, _card_replan())
+    _assert_the_card_plan(s, po, sent, want)
+    _assert_a_re_confirm_changes_nothing(s, emails)
