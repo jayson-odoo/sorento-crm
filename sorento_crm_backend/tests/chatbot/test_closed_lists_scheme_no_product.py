@@ -125,7 +125,8 @@ def _turns(session_factory, stub_access, monkeypatch, turns, *, gate: bool = Tru
         calls.append((name, args))
         if name == "crm_master_product_attachments_list":
             # The real endpoint pages at `limit: int = Query(50, ...)`
-            # (app/api/v1/master_data/product_attachments.py:153): default and ceiling 50.
+            # (app/api/v1/master_data/product_attachments.py:153): default 50, ceiling
+            # MAX_PAGE_LIMIT 1000 (app/schemas/common.py:31).
             rows = _rows(LINKED)[: int(args.get("limit") or 50)]
             return json.dumps({
                 "result_type": "product_attachments", "intro": "I have attached the file(s) below.", "ok": True,
@@ -348,3 +349,33 @@ def _turns_with(session_factory, stub_access, monkeypatch, call_tool, turns):
         (engine_mod.run_turn(_envelope(message=_message(text, n)), session_factory=session_factory), [])
         for n, (text, _v) in enumerate(turns)
     ]
+
+
+# --- R2-3 SCHEME-NONE-IN-SCOPE (reviewer SF2, 18 Oct) -----------------------------------------
+
+
+def _only_another_company_holds_the_scheme(session_factory) -> None:
+    db = session_factory()
+    db.add(Company(id=OTHER_COMPANY, name="Other", code=unique_code("OTH")[:20]))
+    cert_type = AttachmentType(
+        id=str(uuid.uuid4()), type_name="ZZT Certification", description="Certification by Purchasing",
+        allowed_extensions="pdf", is_certificate=True,
+    )
+    db.add(cert_type)
+    db.flush()
+    db.add(Certificate(
+        id=str(uuid.uuid4()), attachment_type_id=cert_type.id, scheme=SCHEME, certificate_number=uuid.uuid4().hex[:10],
+        status="active", company_id=OTHER_COMPANY,
+    ))
+    db.commit()
+
+
+def test_a_scheme_with_no_certificate_in_scope_and_nothing_held_says_so_plainly(session_factory, seeded, stub_access, monkeypatch):
+    """Scheme lists are the same for every company, so the scheme can be listed while no
+    certificate of it is in the contact's scope: said plainly, nothing sent."""
+    _only_another_company_holds_the_scheme(session_factory)
+
+    [(r, calls)] = _turns(session_factory, stub_access, monkeypatch, [("Span certificate", _file_ask(_scheme()))])
+
+    assert _text(r) == f"No {SCHEME} certificate on record.", (_text(r), calls)
+    assert not [c for c in calls if c[0] in ("crm_master_product_attachments_list", "crm_resource_attachments_list")], calls
