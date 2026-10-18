@@ -490,19 +490,12 @@ class LineSplitService:
         unapplied and the row still pending). A newer edit of the same line carries the older
         row's `from` (`build_batch`), so the newest row is the base. The ONE place the split
         view, its acting / stale state and Confirm's split links read a line's pending base.
-
-        UAC B2 (owner hand test 18 Oct, SO417636): when that `from` is empty because AutoCount
-        ADDED the line inside the same unapplied batch and edited it later, the `from` is the
-        line as it was added: the `to` of its own `added` row in that batch, older than the
-        newest pending row, matched by the exact AutoCount line (`core_line_id`; the mirror
-        line only when the pending row names no core line), never by qty, date or name. A line
-        whose newest pending row IS its `added` row keeps the empty `from` (base 0).
+        An empty `from` reads the line's older `added` row (`_from_of_newest`, UAC B2).
         """
         wanted = sorted({str(i) for i in line_ids if i})
         if not wanted:
             return {}
         from app.models.planning_change import (
-            PLANNING_CHANGE_KIND_ADDED,
             PLANNING_CHANGE_STATE_PENDING,
             PlanningChangeBatch,
             PlanningChangeRow,
@@ -519,6 +512,46 @@ class LineSplitService:
             .order_by(PlanningChangeRow.created_at.desc(), PlanningChangeRow.id.desc())
             .all()
         )
+        return self._from_of_newest(found)
+
+    def applied_from_by_line(self, line_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
+        """The `from` of the newest APPLIED planning-change row per mirror line: the last
+        change a Confirm applied. The refer-back source (UAC AC-G1); a line whose `from` is
+        empty (AutoCount added it) is left out.
+
+        AC-G18: the row's own state is the record (undo sets it back to pending), never its
+        batch's `applied_at`: the board Confirm applies one order at a time and stamps the
+        batch only once nothing in it is pending, so most confirmed lines sit in an open
+        batch. An empty `from` reads the line's older `added` row like the pending read."""
+        wanted = sorted({str(i) for i in line_ids if i})
+        if not wanted:
+            return {}
+        from app.models.planning_change import PLANNING_CHANGE_STATE_APPLIED, PlanningChangeRow
+
+        found = (
+            self.db.query(PlanningChangeRow)
+            .filter(
+                PlanningChangeRow.project_line_id.in_(wanted),
+                PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_APPLIED,
+            )
+            .order_by(PlanningChangeRow.created_at.desc(), PlanningChangeRow.id.desc())
+            .all()
+        )
+        out = self._from_of_newest(found)
+        return {line_id: got for line_id, got in out.items() if got.get("qty") is not None}
+
+    def _from_of_newest(self, found: Sequence[Any]) -> Dict[str, Dict[str, Any]]:
+        """`mirror line id -> from` of the newest of these change rows per line (`found`
+        newest first), the one rule the pending and the applied read share.
+
+        UAC B2 / AC-G18 (owner hand test 18 Oct, SO417636): when that `from` is empty because
+        AutoCount ADDED the line inside the same batch and edited it later, the `from` is the
+        line as it was added: the `to` of its own `added` row in that batch, older than the
+        newest row, matched by the exact AutoCount line (`core_line_id`; the mirror line only
+        when the row names no core line), never by qty, date or name. A line whose newest row
+        IS its `added` row keeps the empty `from` (base 0)."""
+        from app.models.planning_change import PLANNING_CHANGE_KIND_ADDED, PlanningChangeRow
+
         newest: Dict[str, Any] = {}
         for row in found:
             newest.setdefault(str(row.project_line_id), row)
@@ -560,43 +593,6 @@ class LineSplitService:
                     }
                 break
         return out
-
-    def applied_from_by_line(self, line_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
-        """The `from` of the newest APPLIED planning-change row per mirror line: the last
-        change a Confirm applied (newest applied batch, then its newest row, which carries
-        the batch's `from` like the pending read). The refer-back source (UAC AC-G1); a
-        line whose `from` is empty (AutoCount added it) is left out."""
-        wanted = sorted({str(i) for i in line_ids if i})
-        if not wanted:
-            return {}
-        from app.models.planning_change import (
-            PLANNING_CHANGE_STATE_APPLIED,
-            PlanningChangeBatch,
-            PlanningChangeRow,
-        )
-
-        found = (
-            self.db.query(PlanningChangeRow)
-            .join(PlanningChangeBatch, PlanningChangeBatch.id == PlanningChangeRow.batch_id)
-            .filter(
-                PlanningChangeRow.project_line_id.in_(wanted),
-                PlanningChangeBatch.applied_at.isnot(None),
-                PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_APPLIED,
-            )
-            .order_by(
-                PlanningChangeBatch.applied_at.desc(),
-                PlanningChangeRow.created_at.desc(),
-                PlanningChangeRow.id.desc(),
-            )
-            .all()
-        )
-        out: Dict[str, Dict[str, Any]] = {}
-        for row in found:
-            line_id = str(row.project_line_id)
-            if line_id in out:
-                continue
-            out[line_id] = dict(row.from_json or {})
-        return {line_id: got for line_id, got in out.items() if got.get("qty") is not None}
 
     def line_facts(self, order: ProjectSalesOrder) -> Dict[str, LineFacts]:
         """Every mirror line of the order, keyed by id, with its core line, codes and splits."""
