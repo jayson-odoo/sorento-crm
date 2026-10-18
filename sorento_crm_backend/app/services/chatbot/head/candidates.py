@@ -238,6 +238,9 @@ def _code_label(code: str, name: str | None, holds: bool) -> str:
     # Product rows are staff / import text: one line each, so a stored newline can never
     # start a line of its own in the user turn (security review, 17 Oct 2026).
     code, name = _one_line(code), _one_line(name or "")
+    # The label's own `;` and parentheses delimit candidate items: a name carrying them
+    # could close its label and forge a second item on the line.
+    name = " ".join(re.sub(r"[;()]", " ", name).split())
     label = f"code {code} ({name})" if name else f"code {code}"
     return label if holds else f"near {label}"
 
