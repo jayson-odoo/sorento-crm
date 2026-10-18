@@ -46,6 +46,12 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
     getClassificationEvidence(...args),
 }));
 
+/** STOCK-STATUS round 6: the Stock tab's AutoCount read. Empty unless a test sets it. */
+const useStockStatusMock = vi.fn((..._args: unknown[]) => ({ data: undefined as unknown, isLoading: false, isError: false }));
+vi.mock('@/components/stock-status/useStockStatus', () => ({
+  useStockStatus: (...args: unknown[]) => useStockStatusMock(...args),
+}));
+
 import { BoardCellBreakdownDialog, sourceAt } from './BoardCellBreakdownDialog';
 import { suggestedDecisionFor } from '../../_shared/lib/boardAmend';
 import { borrowKinds, LADDER_VERSION } from '../../_shared/lib/supplyVocabulary';
@@ -4149,3 +4155,25 @@ describe('AC-B1/AC-B11: the Decision column carries the same Verdict trio as the
 afterEach(() => {
   borrowKinds.shownApart = false;
 });
+
+describe('STOCK-STATUS round 6 (AC-35): the cell Stock tab shows AutoCount\'s figures', () => {
+  it('reads AutoCount for the cell\'s product and carries the Incoming PL row', async () => {
+    useStockStatusMock.mockReturnValue({
+      data: {
+        product_id: 'prod-x',
+        locations: [],
+        incoming_pl: [{ shipment_id: 'sh-1', shipment_number: 'PL-2610-001', container_number: null, eta: null, still_to_land: 5, on_spo: 0, counted: 5 }],
+        totals: { on_hand: 0, so_qty: 0, po_qty: 0, spo_qty: 0, forecast: 0, incoming_pl: 5, forecast_incl_pl: 5 },
+        sales_orders: [],
+        purchase_orders: [],
+        spos: [],
+      },
+      isLoading: false,
+      isError: false,
+    });
+    renderDialog([demand()], { 'BRW-BB': '40' });
+    expect(useStockStatusMock).toHaveBeenCalled();
+    expect(await screen.findByTestId('stock-incoming-pl')).toHaveTextContent('+5');
+  });
+});
+
