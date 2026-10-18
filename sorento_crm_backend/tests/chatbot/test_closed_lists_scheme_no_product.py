@@ -232,3 +232,119 @@ def test_nothing_held_at_all_sends_the_schemes_certificates_and_never_the_refusa
     sent = set(fetches[0].get("certificate_ids") or [])
     assert sent and sent <= set(ids["ours"]), fetches
     assert "That would search every product attachment" not in _text(r), _text(r)
+
+
+# --- R2-1 BRAND-SCOPE-ATTACH: the scheme message of a brand-scoped contact ---------------------
+
+
+def _brand_world(session_factory) -> dict[str, str]:
+    """A MOCHA-scoped contact; a SPAN certificate file on an in-brand and an out-of-brand product."""
+    from sqlalchemy import text
+
+    from app.models.product import Brand
+
+    db = session_factory()
+    cat = ProductCategory(
+        id=str(uuid.uuid4()), category_code=unique_code("CAT")[:50], category_name="ZZT cat", company_id=DEFAULT_COMPANY_ID,
+    )
+    uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code=unique_code("UOM")[:50], uom_name="Each", company_id=DEFAULT_COMPANY_ID)
+    cert_type = AttachmentType(
+        id=str(uuid.uuid4()), type_name="ZZT Certification", description="Certification by Purchasing",
+        allowed_extensions="pdf", is_certificate=True,
+    )
+    brands = {
+        key: Brand(id=str(uuid.uuid4()), brand_code=unique_code(key)[:50], brand_name=f"ZZT {key}", company_id=DEFAULT_COMPANY_ID)
+        for key in ("mocha", "sorento")
+    }
+    db.add_all([cat, uom, cert_type, *brands.values()])
+    db.flush()
+    out: dict[str, str] = {}
+    for key, code in (("mocha", "ZZTMOCHA1"), ("sorento", "ZZTSOREN1")):
+        p = Product(
+            id=str(uuid.uuid4()), product_code=code, product_name=f"ZZT {code}", category_id=cat.id, base_uom_id=uom.id,
+            list_price=1, company_id=DEFAULT_COMPANY_ID, brand_id=brands[key].id,
+        )
+        att = Attachment(
+            id=str(uuid.uuid4()), original_filename=f"{code}_{SCHEME}.pdf", stored_filename=uuid.uuid4().hex,
+            file_path=f"https://cdn.test/{code}.pdf", attachment_type_id=cert_type.id, is_deleted=False,
+            company_id=DEFAULT_COMPANY_ID,
+        )
+        db.add_all([p, att])
+        db.flush()
+        db.add(ProductAttachment(id=str(uuid.uuid4()), product_id=p.id, attachment_id=att.id, company_id=DEFAULT_COMPANY_ID))
+        cert = Certificate(
+            id=str(uuid.uuid4()), attachment_type_id=cert_type.id, scheme=SCHEME, certificate_number=uuid.uuid4().hex[:10],
+            status="active", company_id=DEFAULT_COMPANY_ID,
+        )
+        db.add(cert)
+        db.flush()
+        db.add(CertificateRevision(id=str(uuid.uuid4()), certificate_id=cert.id, revision_no=1, attachment_id=att.id, is_current=True))
+        out[key] = code
+    db.execute(
+        text("UPDATE respond_contacts SET brand_ids = CAST(:b AS uuid[]) WHERE respond_io_id = :cid"),
+        {"b": "{" + brands["mocha"].id + "}", "cid": str(CONTACT_ID)},
+    )
+    db.commit()
+    return out
+
+
+def test_a_brand_scoped_contact_never_gets_an_out_of_brand_products_certificate_file(session_factory, seeded, stub_access, monkeypatch):
+    """The fetch is run for real through the route's service under the contact's brand scope,
+    and every row's file is listed the way the MCP presenter does (even with product null)."""
+    from app.models.base import set_brand_scope, set_company_scope
+    from app.services.chatbot.engine import _contact_brand_scope
+    from app.services.product_service import ProductAttachmentService
+
+    codes = _brand_world(session_factory)
+    leaked: list[str] = []
+
+    def call_tool(self, name, args):
+        if name != "crm_master_product_attachments_list":
+            return json.dumps({"ok": True, "items": []})
+        db = session_factory()
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        set_brand_scope(db, _contact_brand_scope(session_factory, str(seeded_contact_id)))
+        payload = ProductAttachmentService(db).list_product_attachments(
+            limit=50, certificate_ids=args.get("certificate_ids"), attachment_type_ids=args.get("attachment_type_ids"),
+        )
+        leaked.extend(row.attachment.original_filename for row in payload["data"])
+        items = [
+            {"title": row.attachment.original_filename, "flags": {}, "fields": [
+                {"label": "File Name", "value": row.attachment.original_filename},
+            ]}
+            for row in payload["data"]
+        ]
+        return json.dumps({
+            "result_type": "product_attachments", "intro": "I have attached the file(s) below.", "ok": True,
+            "items": items, "attachments": [], "action_links": [], "last_updated_at": None, "has_result": bool(items),
+        })
+
+    from sqlalchemy import text
+
+    seeded_contact_id = session_factory().execute(
+        text("SELECT id FROM respond_contacts WHERE respond_io_id = :c"), {"c": str(CONTACT_ID)}
+    ).scalar()
+    [(r, _calls)] = _turns_with(session_factory, stub_access, monkeypatch, call_tool, [("Span certificate", _file_ask(_scheme()))])
+
+    text_out = _text(r)
+    assert not any(codes["sorento"] in name for name in leaked), (leaked, text_out)
+    assert codes["sorento"] not in text_out, text_out
+    assert codes["mocha"] in text_out, text_out
+
+
+def _turns_with(session_factory, stub_access, monkeypatch, call_tool, turns):
+    def fake_resolve_config(db, *, current_date, override_version_id=None):
+        return parser_mod.ParserConfig(
+            system_prompt="stub", prompt_version=1, provider="openai", model="m", api_key="k", closed_lists=True,
+        )
+
+    queue = [verdict for _text, verdict in turns]
+    monkeypatch.setattr(parser_mod, "resolve_config", fake_resolve_config)
+    monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: queue.pop(0))
+    monkeypatch.setattr(engine_mod, "_contact_company_scope", lambda f, c: frozenset({DEFAULT_COMPANY_ID}))
+    monkeypatch.setattr(MCPRuntimeClient, "call_tool", call_tool)
+    stub_access()
+    return [
+        (engine_mod.run_turn(_envelope(message=_message(text, n)), session_factory=session_factory), [])
+        for n, (text, _v) in enumerate(turns)
+    ]
