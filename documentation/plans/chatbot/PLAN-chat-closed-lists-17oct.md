@@ -1,6 +1,6 @@
 # PLAN: CHAT-CLOSED-LISTS - chatbot step 2, closed candidate lists
 
-Status: Review, fix round 18 Oct pushed (reviewer READY, security-reviewer PASS; hand test filed) (local lane CHAT-CLOSED-LISTS-L on a3 took over from the cloud lane at fa9fd99a; main 0f5c6537 merged). Round classes A-D, review rounds R2 and R3 built red-first (rows below); hand test filed as laneboard 1755.md. Track: full (size L, LEAD pattern).
+Status: Review, fix round 18 Oct pushed (reviewer READY, security-reviewer PASS; no hand test on its own: owner rule 16 Oct, the chatbot hand test runs on one combined held-out build; script kept at laneboard 1755.md) (local lane CHAT-CLOSED-LISTS-L on a3 took over from the cloud lane at fa9fd99a; main 0f5c6537 merged). Round classes A-D, review rounds R2 and R3 built red-first (rows below). Track: full (size L, LEAD pattern).
 Branch `claude/chat-closed-lists-x6ymb5` (the sandbox cannot push `crew/chat-closed-lists`), PR #1755.
 
 Design source: CHATBOT-SCALE-DESIGN-16oct section 8 step 2 + D2 (crew-only): code only SHORTLISTS
