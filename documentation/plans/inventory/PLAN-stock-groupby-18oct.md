@@ -1,6 +1,6 @@
 # PLAN: Flexible multi-level Group by on the stock status table (STOCK-GROUPBY)
 
-Status: Plan. Behaviour card being drafted (Phase 1, before any code). Lane STOCK-GROUPBY, size M, standard track
+Status: Plan. Card v1 answered by crew (18 Oct); mock v1 filed, awaiting owner OK (Phase 1, before any code). Lane STOCK-GROUPBY, size M, standard track
 (new behaviour + UI on an existing screen; no migration expected). Base: #1752's branch
 `claude/stock-status-embed-sxgykp` at 67e87c24d; rebase onto main once #1752 merges.
 
@@ -95,7 +95,7 @@ projects.projects.view / scm.reorder.run / scm.dashboard.view, `:26-30`). Respon
    `groupRowsBy`, `components/common/GroupBySelect.tsx:36`). A group exists only if it holds a line, except the
    locations today's table already lists (they stay, at zero, without a chevron).
 10. Document lines (last level), Odoo style inside the same table: the Location cell shows the type and document number
-    (links as today: S/O P:424, SPO P:440), with a muted second line carrying the values not already grouped and the
+    (links as today: S/O, PO and SPO, P:458-492), with a muted second line carrying the values not already grouped and the
     due / expected date; the quantity sits in its own column (S/O in SO qty, PO in PO qty, SPO in SPO qty, On hand in On hand).
 11. Groups start closed; each has a chevron; Expand all / Collapse all sit beside Group by.
 12. The last choice is remembered per browser and used on all four screens (localStorage, like the Location column
@@ -151,6 +151,12 @@ Columns are On hand / SO / PO / SPO.
    Recommendation (a): one table, one set of columns, and it works when Location is not a level (today's drill-down is
    per location or set, P:93-122).
 
+### Answers (crew, 18 Oct; owner can override on the mock)
+
+Crew: "owner asked for 'flexible group by, multiple layers, Odoo style'; all five recs fit that, so crew rules".
+Q1 (a) all six dimensions; Q2 (a) Available blank on non-location group rows; Q3 (a) "No customer" (etc.) group last,
+columns foot; Q4 (a) remembered per browser, same on all four screens; Q5 (a) document lines inside the same table.
+
 ### Build shape (after answers + mock OK)
 
 One reusable capability in `components/common/`: a pure `groupByLevels(lines, levels)` (tree of groups with count and
@@ -160,7 +166,12 @@ no migration.
 
 ## 3. Mock
 
-`documentation/mockups/STOCK-GROUPBY/index.html` (masked dev-data case).
+`documentation/mockups/STOCK-GROUPBY/index.html`, v1 (18 Oct): item CKS4238 from the dev DB, every customer, project,
+agent, supplier and document number masked. Frames: (1) default Location only with the menu open, (2) Location >
+Customer > Project with BRW-BB opened, (3) Customer > Project with Location removed and the "No customer" group,
+(4) 375px Location > Customer. Element-to-component map at the bottom of the mock. Lines inside a group keep the read's
+order (due / expected date, SVC:254, 295); with Location not picked, a line's location moves to its muted second line;
+the first column's heading names the first level.
 
 ## 4. Slices
 
