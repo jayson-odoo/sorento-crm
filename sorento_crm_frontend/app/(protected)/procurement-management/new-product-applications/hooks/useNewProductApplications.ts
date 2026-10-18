@@ -49,9 +49,13 @@ const NPA_SLUGS = [
  * actually holds; a create-only applicant keyed by `view` got a 403 and a grid
  * stuck on its skeleton (browser pass, 18 Oct).
  */
-export function useNewProductApplicationListingKey(suffix?: string): string {
-  const { permissionSet } = usePermissions();
-  const slug = NPA_SLUGS.find((s) => permissionSet.has(s)) ?? NPA_SLUGS[0];
+export function useNewProductApplicationListingKey(suffix?: string): string | null {
+  const { permissionSet, isLoading } = usePermissions();
+  // null (no preference fetch at all, data-grid.tsx) until the permissions are known:
+  // guessing `view` on the first render fired a 403 and a "Permission denied" toast at a
+  // create-only applicant on every visit (browser pass, 18 Oct).
+  const slug = isLoading ? undefined : NPA_SLUGS.find((s) => permissionSet.has(s));
+  if (!slug) return null;
   return suffix ? `${slug}::${suffix}` : slug;
 }
 

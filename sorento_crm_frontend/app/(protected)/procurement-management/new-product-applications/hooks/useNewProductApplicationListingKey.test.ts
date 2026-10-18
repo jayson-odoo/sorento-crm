@@ -3,8 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 const held = { set: new Set<string>() };
 
+const loading = { value: false };
+
 vi.mock('@/hooks/usePermissions', () => ({
-  usePermissions: () => ({ permissionSet: held.set, isLoading: false }),
+  usePermissions: () => ({ permissionSet: held.set, isLoading: loading.value }),
 }));
 
 import { useNewProductApplicationListingKey } from './useNewProductApplications';
@@ -14,6 +16,14 @@ describe('useNewProductApplicationListingKey', () => {
     held.set = new Set(['procurement.new_product_applications.create']);
     const { result } = renderHook(() => useNewProductApplicationListingKey('lines'));
     expect(result.current).toBe('procurement.new_product_applications.create::lines');
+  });
+
+  it('asks for no preferences until the permissions are known (no guessed 403)', () => {
+    loading.value = true;
+    held.set = new Set();
+    const { result } = renderHook(() => useNewProductApplicationListingKey('lines'));
+    expect(result.current).toBeNull();
+    loading.value = false;
   });
 
   it('prefers view, then approve, then open_code', () => {
