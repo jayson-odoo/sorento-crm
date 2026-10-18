@@ -290,8 +290,12 @@ def test_a_target_whose_autocount_qty_did_not_go_up_receives_nothing(api, line18
         assert _linked(s, row) == Decimal("0"), "no link moved to a line that did not grow"
 
 
-def test_oi_demand_rows_leaves_the_cancel_when_the_target_is_not_in_the_confirm(api):
+def test_oi_demand_rows_nets_no_cancel_for_a_split_whose_target_is_not_in_the_confirm(api):
+    """AC-G10 (crew ruling (a), round 3): line 18 is not in this apply, so the 49 split's link
+    is not moved; the 49 stays purchasing's own row at its date. The planning-change netting
+    tells no CANCEL BALANCE for it (it used to tell the full CANCEL 49)."""
     from app.services.planning_change_service import _oi_demand_rows
+    from app.services.project_order_inquiry_engine import CHANGE_QTY_DECREASE
 
     s = _so402757(api, with_splits=True)
     rows = (
@@ -302,12 +306,16 @@ def test_oi_demand_rows_leaves_the_cancel_when_the_target_is_not_in_the_confirm(
     )
     assert len(rows) == 1
     out, counts = _oi_demand_rows(s.db, rows, s.core_so.so_number)
-    assert counts == {"CANCEL_BALANCE": 1}, counts
-    assert out[0]["qty"] == Decimal("49"), "nothing linked moves: the full CANCEL is still told"
+    assert "CANCEL_BALANCE" not in counts, ("AC-G10: no CANCEL BALANCE from a split", counts, out)
+    assert not [o for o in out if o.get("change") == CHANGE_QTY_DECREASE], out
 
 
-def test_oi_demand_rows_leaves_the_cancel_when_the_target_did_not_go_up(api):
+def test_oi_demand_rows_nets_no_cancel_for_a_split_whose_target_did_not_go_up(api):
+    """AC-G10 (crew ruling (a), round 3): line 18 went down (82 -> 60), so the 49 split's link
+    is not moved; line 2 gets no CANCEL BALANCE for the 49 (it used to). What line 18's own
+    AutoCount cut tells is not this test's business."""
     from app.services.planning_change_service import _oi_demand_rows
+    from app.services.project_order_inquiry_engine import CHANGE_QTY_DECREASE
 
     s = _so402757(api, with_splits=True, line18_now="60")
     rows = (
@@ -318,8 +326,12 @@ def test_oi_demand_rows_leaves_the_cancel_when_the_target_did_not_go_up(api):
     )
     assert len(rows) == 2
     out, _counts = _oi_demand_rows(s.db, rows, s.core_so.so_number)
-    cancels = [o for o in out if o["qty"] == Decimal("49")]
-    assert cancels, [(o["qty"], o.get("line_no")) for o in out]
+    cancels = [
+        (o["qty"], str(o["line_id"])) for o in out
+        if o.get("change") == CHANGE_QTY_DECREASE
+        and (str(o["line_id"]) == str(s.line_2.id) or o["qty"] == Decimal("49"))
+    ]
+    assert cancels == [], ("AC-G10: no CANCEL BALANCE for line 2's split", out)
 
 
 @pytest.mark.parametrize("line18_now", ["82", "60"])
@@ -649,8 +661,9 @@ def test_a_split_does_not_move_off_a_placed_row_with_no_link(api, emails):
 
 def test_a_split_does_not_move_onto_a_target_row_whose_document_is_received_in_full(api, emails):
     """Rule: a split onto a received target moves no link. The same setup is run twice in one
-    world (two orders), once with the 49 split onto line 18 and once without: the rows of lines
-    2 and 18 must be equal, while the sent email prints the plan rows (AC-G4 / AC-G6, round 3)."""
+    world (two orders), once with the 49 split onto line 18 and once without: line 18's rows
+    must be equal; line 2 keeps the 49 as its own worklist row at its date (AC-G10), and the
+    sent email prints the plan rows (AC-G4 / AC-G6, round 3)."""
 
     def run(with_split):
         s = _lines(api, [(2, 51, D_2, 2), (18, 82, D_18, 131)])
@@ -666,31 +679,39 @@ def test_a_split_does_not_move_onto_a_target_row_whose_document_is_received_in_f
             (ln["qty"], ln["remark"]) for ctx in emails[start:] for ln in ctx["lines"]
         )
         svc = ProjectOrderInquiryService(s.db)
-        rows = {}
+        rows, live = {}, {}
         for no in (2, 18):
-            out = []
+            out, worklist = [], []
             for r in s.db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == s.no[no][1].id):
                 links = sorted(
                     (str(l.document), str(Decimal(str(l.qty)))) for l in svc._links_of(r.id)
                 )
                 out.append((r.verb, r.state, str(Decimal(str(r.qty))), r.ack_state, links))
-            rows[no] = sorted(out)
+                if r.state != INQUIRY_CANCELLED and r.verb != IV_CANCEL_BALANCE:
+                    worklist.append((str(Decimal(str(r.qty)).normalize()), r.delivery_date))
+            rows[no], live[no] = sorted(out), sorted(worklist)
         doc_a = Decimal("0")
         for r in s.db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == s.no[2][1].id):
             doc_a += sum(
                 (Decimal(str(l.qty)) for l in svc._links_of(r.id) if l.po_line_id == s.po_line.id),
                 Decimal("0"),
             )
-        return lines, rows, doc_a
+        return lines, rows, doc_a, live
 
-    plain_lines, plain_rows, plain_doc_a = run(False)
-    split_lines, split_rows, split_doc_a = run(True)
+    plain_lines, plain_rows, plain_doc_a, plain_live = run(False)
+    split_lines, split_rows, split_doc_a, split_live = run(True)
     # AC-G4 / AC-G6 (round 3): the email prints the plan rows, not the no-split result's
     # CANCEL 49 / ORDER 131
     assert split_lines == sorted([("2", "REMAIN"), ("49", "DELAY"), ("131", "REMAIN")]), (
         "the sent email prints the plan rows", split_lines, plain_lines)
     assert not [r for _q, r in split_lines if "CANCEL" in r], split_lines
-    assert split_rows == plain_rows, ("rows differ from the no-split result", split_rows, plain_rows)
+    assert split_rows[18] == plain_rows[18], (
+        "line 18 (the target the move was declined on) is as without splits",
+        split_rows[18], plain_rows[18])
+    # AC-G10 (crew ruling (a), round 3): the 49 the engine did not move stays line 2's own
+    # worklist row at its date (it used to vanish, netted like the no-split cut)
+    assert split_live[2] == sorted(plain_live[2] + [("49", D_18)]), (split_live[2], plain_live[2])
+    assert not [r for r in split_rows[2] if r[0] == IV_CANCEL_BALANCE], split_rows[2]
     assert split_doc_a == plain_doc_a and split_doc_a > Decimal("0"), "DOC-A's link is not dropped"
 
 

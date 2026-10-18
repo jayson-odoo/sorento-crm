@@ -27,6 +27,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import openpyxl
+import pytest
 
 from app.models.project_so import ACK_ACKNOWLEDGED
 from app.services.scm.outstanding_diff import DATE_AND_QTY_CHANGED, QTY_CHANGED
@@ -590,3 +591,162 @@ def test_g7_new_line_splits_are_excel_rows_never_a_cancel(api, emails):
     assert not [r for r in rows if "CANCEL" in str(r[4])], rows
     block = [(_d("417"), D_480, _d("14"), D_480_NEW, "ADVANCE")] + EXCEL_480[1:]
     assert _has_block(rows, block), ("480's New-line splits print as their own rows", rows)
+
+
+# ---------------------------------------------------------------------------
+# AC-G10 the Confirm engine follows the plan (crew ruling (a), 18 Oct): split qty that is not
+# moved onto another line stays purchasing's own OI worklist rows at the split dates, never a
+# CANCEL BALANCE. Worklist, email and Excel then agree.
+# ---------------------------------------------------------------------------
+
+
+def _worklist(s, line):
+    """Every OI worklist row of a mirror line, as (verb, state, qty, date)."""
+    from app.models.project_so import OrderInquiryRow
+
+    def qty(value):
+        q = Decimal(str(value))
+        return q.quantize(Decimal(1)) if q == q.to_integral_value() else q.normalize()
+
+    return [
+        (r.verb, r.state, qty(r.qty), r.delivery_date)
+        for r in s.db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == line.id).all()
+    ]
+
+
+def _live(rows):
+    """The live (not cancelled) rows that ask purchasing for goods: (qty, date), sorted."""
+    from app.models.project_so import INQUIRY_CANCELLED, IV_CANCEL_BALANCE
+
+    return sorted(
+        (qty, when) for verb, state, qty, when in rows
+        if state != INQUIRY_CANCELLED and verb != IV_CANCEL_BALANCE
+    )
+
+
+def _cancel_balances(rows):
+    from app.models.project_so import IV_CANCEL_BALANCE
+
+    return [(state, qty) for verb, state, qty, _when in rows if verb == IV_CANCEL_BALANCE]
+
+
+def test_g10_new_line_splits_stay_purchasings_own_worklist_rows(api, emails):
+    """SO417636 480 (417 @ 20/10/2026 -> 14 @ 20/09/2026) with 236 @ 20/11/2026 and 167 @
+    20/11/2029 left on New line: after Confirm 480's live OI rows are exactly 14 @ 20/09/2026,
+    236 @ 20/11/2026 and 167 @ 20/11/2029, nothing is cancelled for that qty, and the email
+    rows of 480 (ADVANCE / DELAY / DELAY) are the same three."""
+    from app.models.project_so import INQUIRY_CANCELLED
+
+    s = _seed(api)
+    _save(s, _new_line_plan())
+    sent = _confirm_batch(s, emails)
+    rows = _worklist(s, s.line[480])
+    expected = sorted([(_d("14"), D_480_NEW), (_d("236"), D_608), (_d("167"), D_167)])
+    assert _live(rows) == expected, ("AC-G10: 480's worklist rows follow the plan", rows)
+    assert _cancel_balances(rows) == [], ("AC-G10: no CANCEL BALANCE from a split", rows)
+    assert not [
+        r for r in rows if r[1] == INQUIRY_CANCELLED and r[2] in (_d("236"), _d("167"), _d("403"))
+    ], ("nothing cancelled for the New-line qty", rows)
+
+    printed = _printed(sent)
+    assert _has_block(printed, BLOCK_480), ("480 prints 14 ADVANCE / 236 DELAY / 167 DELAY", printed)
+    at = printed.index(BLOCK_480[0])
+    emailed = sorted(
+        (_d(r[1]), datetime.strptime(r[3], "%d/%m/%Y").date())
+        for r in printed[at:at + len(BLOCK_480)]
+    )
+    assert emailed == _live(rows), ("the email rows are the worklist rows", emailed, rows)
+
+
+def test_g10_an_explicit_cancel_split_still_makes_a_cancel_balance(api, emails):
+    """Guard: 480 = 14 own + 236 on New line + 167 "Cancel this qty". The 167 still reaches
+    purchasing as a CANCEL BALANCE, and it is the only one on the line."""
+    s = _seed(api)
+    _save(s, {480: [(14, D_480_NEW, 480, ""), (236, D_608, "new", ""), (167, None, "cancel", "")]})
+    _confirm_batch(s, emails)
+    from app.models.project_so import INQUIRY_CANCELLED
+
+    cancels = [
+        (state, qty) for state, qty in _cancel_balances(_worklist(s, s.line[480]))
+        if state != INQUIRY_CANCELLED
+    ]
+    assert cancels and all(qty == _d("167") for _state, qty in cancels), (
+        "AC-G10 guard: the explicit cancel split is a CANCEL BALANCE of 167",
+        _worklist(s, s.line[480]))
+    assert len(cancels) == 1, ("one CANCEL BALANCE, nothing netted beside it", cancels)
+
+
+#: The confirm tests' declined link moves (`test_line_splits_confirm.py`): the engine moves no
+#: link, so line 2's splits stay its own worklist rows.
+DECLINED = (
+    "source_received_in_full",
+    "source_received_cut_to_zero",
+    "source_placed_no_link",
+    "target_received_in_full",
+    "target_placed_no_link",
+    "target_did_not_grow_82",
+    "target_did_not_grow_60",
+)
+
+
+def _declined(api, emails, case):
+    """Seeds and confirms one declined move; returns (s, line 2, line 2's non-cancel splits as
+    (qty, date))."""
+    from app.models.project_so import INQUIRY_PLACED
+    from tests.scm import test_line_splits_confirm as c
+
+    d_2, d_18 = c.D_2, c.D_18
+    if case.startswith("target_did_not_grow"):
+        now = case.rsplit("_", 1)[1]
+        s = c._so402757(api, with_splits=True, line18_now=now, batch_18=(now != "82"))
+        c._confirm_both(s, buy_18=now)
+        return s, s.line_2, [(2, d_2), (49, d_18)]
+    if case == "source_received_cut_to_zero":
+        s = c._lines(api, [(2, 51, d_2, 0), (18, 82, d_18, 133)])
+        s.po_line.qty_received = Decimal("51")
+        plan = [(51, d_18, 18)]
+    elif case == "source_placed_no_link":
+        s = c._lines(api, [(2, 100, d_2, 40), (18, 82, d_18, 132)], link_first=False)
+        s.no[2][2].state = INQUIRY_PLACED
+        plan = [(50, d_2, "own"), (50, d_18, 18)]
+    else:
+        s = c._lines(api, [(2, 51, d_2, 2), (18, 82, d_18, 131)])
+        if case == "source_received_in_full":
+            s.po_line.qty_received = Decimal("51")
+        elif case == "target_received_in_full":
+            _po, po_b = c._po_line(s.world, c._supplier(s.world), qty=82,
+                                   expected_date=date(2026, 8, 25))
+            c._link(s.world, s.no[18][2], po_b, qty=82, document="DOC-B")
+            po_b.qty_received = Decimal("82")
+        elif case == "target_placed_no_link":
+            s.no[18][2].state = INQUIRY_PLACED
+        plan = [(2, d_2, "own"), (49, d_18, 18)]
+    s.db.commit()
+    c._split(s, 2, plan)
+    c._confirm_sent(s, emails)
+    return s, s.no[2][1], [(qty, when) for qty, when, _on in plan]
+
+
+def _missing(live, wanted):
+    """The (qty, date) of `wanted` that no live row of `live` stands for (a multiset)."""
+    left = list(live)
+    out = []
+    for qty, when in wanted:
+        key = (_d(str(qty)), when)
+        if key in left:
+            left.remove(key)
+        else:
+            out.append(key)
+    return out
+
+
+@pytest.mark.parametrize("case", DECLINED)
+def test_g10_a_declined_link_move_keeps_the_split_qty_as_its_own_worklist_rows(api, emails, case):
+    """AC-G10: the engine declines the move (a received or placed row, a target that did not
+    grow): each of line 2's splits stays line 2's own live OI row at the split's qty and date,
+    and no CANCEL BALANCE is written for it."""
+    s, origin, splits = _declined(api, emails, case)
+    rows = _worklist(s, origin)
+    assert _missing(_live(rows), splits) == [], (
+        "AC-G10: every split of line 2 is a live worklist row at its date", case, rows)
+    assert _cancel_balances(rows) == [], ("AC-G10: no CANCEL BALANCE from a split", case, rows)
