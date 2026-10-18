@@ -56,7 +56,7 @@ export const dateInputId = (splitId: string) => `split-date-${splitId}`;
 
 /** A line AutoCount added in the pending change: nothing of its own to split (base 0). */
 export function isAddedLine(line: SplitLine): boolean {
-  return !line.baseQty && line.splits.length === 0;
+  return !line.baseQty && line.splits.length === 0 && !line.deliveredInFull;
 }
 
 export interface SheetDrag {
@@ -328,10 +328,13 @@ const LineBlock = React.memo(function LineBlock({
   handlers,
 }: LineBlockProps) {
   const no = line.lineNo ?? '';
+  // Read-only rows: a line AutoCount added (it only receives) or delivered in full (UAC A3).
+  const delivered = Boolean(line.deliveredInFull);
   const added = isAddedLine(line);
-  const remain = !added && !open && readsRemain(line);
-  const splits = added ? [] : splitsOf(line);
-  const rows = remain || added ? 1 : Math.max(1, splits.length);
+  const readOnly = added || delivered;
+  const remain = !readOnly && !open && readsRemain(line);
+  const splits = readOnly ? [] : splitsOf(line);
+  const rows = remain || readOnly ? 1 : Math.max(1, splits.length);
   const span = rows > 1 ? rows : undefined;
   const gap = gapOf(line);
   const top = itemTop ? 'border-t-2 border-t-muted-foreground/40' : '';
@@ -369,7 +372,7 @@ const LineBlock = React.memo(function LineBlock({
         {line.location}
       </TableCell>
       <TableCell rowSpan={span} className={cn(baseCell, 'tabular-nums')}>
-        {added ? 0 : line.baseQty}
+        {delivered ? (line.deliveredQty ?? 0) : added ? 0 : line.baseQty}
       </TableCell>
       <TableCell rowSpan={span} className={baseCell}>
         <span>{added ? '-' : formatSplitDate(line.baseDate)}</span>
@@ -405,7 +408,7 @@ const LineBlock = React.memo(function LineBlock({
     </>
   );
 
-  const addButton = added ? null : (
+  const addButton = readOnly ? null : (
     <Button
       type="button"
       variant="outline"
@@ -425,7 +428,7 @@ const LineBlock = React.memo(function LineBlock({
       data-testid={`balance-${no}`}
       className={cn(baseCell)}
     >
-      {added ? null : (
+      {readOnly ? null : (
         <div className="flex flex-col items-center gap-1">
           {remain ? null : gap === 0 ? (
             <span className="inline-flex items-center gap-0.5 font-semibold tabular-nums text-success">
@@ -457,7 +460,25 @@ const LineBlock = React.memo(function LineBlock({
   const changeCell = cn(CELL, top);
 
   let body: React.ReactNode;
-  if (added) {
+  if (delivered) {
+    body = (
+      <TableRow className="border-0 hover:bg-transparent">
+        <TableCell data-pinned="" className={gripCell} />
+        {baseCells}
+        <TableCell colSpan={2} className={cn(changeCell, 'ps-2 text-start')}>
+          <span className="text-2xs text-muted-foreground">
+            {`Delivered ${line.deliveredQty ?? 0}`}
+          </span>
+        </TableCell>
+        <TableCell className={changeCell}>
+          <span className="text-muted-foreground">-</span>
+        </TableCell>
+        <TableCell className={changeCell} />
+        {balance}
+        <TableCell className={changeCell} />
+      </TableRow>
+    );
+  } else if (added) {
     body = (
       <TableRow className="border-0 hover:bg-transparent">
         <TableCell data-pinned="" className={gripCell} />
@@ -786,7 +807,7 @@ export function LineSplitSheet({
       target.closest<HTMLElement>('tr[data-split-id]')?.dataset.splitId;
     const mod = event.metaKey || event.ctrlKey;
     if (mod && event.key === 'Enter') {
-      if (isAddedLine(line)) return;
+      if (isAddedLine(line) || line.deliveredInFull) return;
       event.preventDefault();
       handlers.add(line);
       return;
@@ -877,7 +898,7 @@ export function LineSplitSheet({
               itemTop={!prev || prev.itemCode !== line.itemCode}
               flash={flashLineId === line.lineId}
               dimmed={inDrag && !sameGroup}
-              target={sameGroup && !isSource}
+              target={sameGroup && !isSource && !line.deliveredInFull}
               source={isSource}
               over={overTarget === lineDropId(line.lineId)}
               handlers={handlers}

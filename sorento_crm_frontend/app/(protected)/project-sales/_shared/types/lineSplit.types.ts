@@ -36,6 +36,8 @@ export interface LineSplitLine {
    */
   split_state?: 'acting' | 'applied' | 'stale';
   delivered_qty: number;
+  /** AutoCount delivered the whole line: listed read-only, never split, never a sits-on target. */
+  delivered_in_full?: boolean;
   splits: LineSplit[];
 }
 

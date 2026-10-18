@@ -57,7 +57,8 @@ export function sitsOnOptions(
   return [
     { value: origin.lineId, label: `${lineTitle(origin)} (this line)` },
     ...groupLines
-      .filter((line) => line.lineId !== origin.lineId)
+      // A line delivered in full takes nothing more (UAC A3).
+      .filter((line) => line.lineId !== origin.lineId && !line.deliveredInFull)
       .map((line) => {
         const date = formatSplitDate(plannedDateOf(groupLines, line.lineId));
         return {

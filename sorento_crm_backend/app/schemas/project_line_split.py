@@ -42,6 +42,9 @@ class LineSplitLineOut(BaseModel):
     #: "AutoCount changed" and reads its current base.
     split_state: str = "acting"
     delivered_qty: float = 0
+    #: AutoCount delivered the whole line (nothing open, no splits, nothing sitting on it):
+    #: listed read-only, never split and never a sits-on target (UAC A3).
+    delivered_in_full: bool = False
     splits: List[LineSplitOut] = []
 
 

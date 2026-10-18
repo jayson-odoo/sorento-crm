@@ -120,6 +120,18 @@ class LineFacts:
     def pending(self) -> bool:
         return self.pending_from is not None
 
+    def delivered_in_full(self, sitting_on: set) -> bool:
+        """AutoCount delivered the whole line (UAC A3): nothing open, something delivered, no
+        splits of its own and none of another line's sitting on it. Listed read-only."""
+        return (
+            not self.cancelled
+            and not self.splits
+            and self.line_id not in sitting_on
+            and self.now_qty == _ZERO
+            and self.delivered_qty > _ZERO
+            and self.live_base()[0] == _ZERO
+        )
+
     def base(self) -> Tuple[Decimal, Optional[date]]:
         """`(base_qty, base_date)` by the three rules in the module docstring.
 
@@ -456,6 +468,8 @@ class LineSplitService:
                 or f.pending
                 or f.splits
                 or f.line_id in sitting_on
+                # Every line, like the staff Excel: one delivered in full reads read-only.
+                or f.delivered_in_full(sitting_on)
             )
         ]
         listed.sort(key=lambda f: (f.item_code, f.location, f.line_no or 0))
@@ -478,6 +492,7 @@ class LineSplitService:
                     "acting": f.split_state == SPLIT_ACTING,
                     "split_state": f.split_state,
                     "delivered_qty": float(f.delivered_qty),
+                    "delivered_in_full": f.delivered_in_full(sitting_on),
                     "splits": [
                         {
                             "id": str(s.id),
@@ -526,6 +541,8 @@ class LineSplitService:
         no remark, is not split: its rows are deleted.
         """
         facts = self.line_facts(order)
+        stored = [s for f in facts.values() for s in f.splits]
+        sitting_on = {target for target in self.effective_sits_on(stored).values() if target}
         plans: List[Tuple[LineFacts, Decimal, Optional[date], List[Dict[str, Any]]]] = []
         named: set = set()
         for entry in lines:
@@ -550,6 +567,12 @@ class LineSplitService:
                     code="line_split_line_not_on_order",
                 )
             label = f"Line {f.line_no}"
+            if entry.splits and f.delivered_in_full(sitting_on):
+                raise AppException(
+                    status_code=422,
+                    message=f"{label} is delivered in full; it cannot be split.",
+                    code="line_split_line_delivered",
+                )
             base_qty, base_date = f.base()
             rows: List[Dict[str, Any]] = []
             for split in entry.splits:
@@ -585,6 +608,15 @@ class LineSplitService:
                                 f"and location on this sales order."
                             ),
                             code="line_split_sits_on_invalid",
+                        )
+                    if target.delivered_in_full(sitting_on):
+                        raise AppException(
+                            status_code=422,
+                            message=(
+                                f"{label}: line {target.line_no} is delivered in full; "
+                                f"a split cannot sit on it."
+                            ),
+                            code="line_split_sits_on_delivered",
                         )
                 rows.append(
                     {

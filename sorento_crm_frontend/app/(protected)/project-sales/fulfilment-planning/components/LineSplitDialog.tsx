@@ -627,6 +627,7 @@ export function LineSplitDialog({
       if (
         !to ||
         to.lineId === line.lineId ||
+        to.deliveredInFull ||
         groupKeyOf(to) !== groupKeyOf(line)
       )
         return;

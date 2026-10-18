@@ -38,6 +38,8 @@ export interface SplitLine {
   /** AutoCount moved on from the saved splits' base (`split_state` stale): warn. */
   stale?: boolean;
   deliveredQty?: number;
+  /** AutoCount delivered the whole line (UAC A3): shown read-only, never split or a target. */
+  deliveredInFull?: boolean;
   /** Stored splits; empty = not split (one implicit split, `splitsOf`). */
   splits: SplitDraft[];
 }
@@ -559,6 +561,7 @@ export function fromPayload(payload: LineSplitsPayload): SplitLine[] {
       ? line.split_state === 'stale'
       : line.acting === false,
     deliveredQty: Number(line.delivered_qty) || 0,
+    deliveredInFull: Boolean(line.delivered_in_full),
     splits: line.splits.map((split) => ({
       id: split.id,
       qty: Number(split.qty) || 0,
