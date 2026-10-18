@@ -369,3 +369,99 @@ price tier before finding any product, five run results, now fail), attachment 6
     answers) fails it. The same rule decides held-out rows that fail on `no_picker` alone: per run 1/2/3, code
     lookups 13 / 13 / 14 of 149, attachment 1 / 1 / 0, follow-ups 4 / 4 / 4, scope 1 / 2 / 3 (UNVERIFIED how many of
     them are sibling pickers). The owner's answer decides whether that rule changes.
+
+## Rounds 32 and 33 (17 Oct, CHAT-CODE-LOOKUP card + owner sibling-picker ruling; small fix track)
+
+- 32a grader: `_attribute_answered` reads the reply with WhatsApp emphasis markers (`*_~`) removed, so the engine's
+  `*weight:* not recorded for X` counts as an honest none. Held-out rows affected: 0.
+- 32 gold, in the crew tooling (`apply_gold_fixes.py`, `code_families.py`; crew rulings Q1 to Q6, 17 Oct):
+  - The round-30 code-family rule now covers code lookups and reads product sets as well as products. It is built
+    from the ORIGINAL gold.
+  - A typo names the one code a single edit away (owner 16 Oct: the valid value is kept). If 2+ codes are that
+    close, the item is `ambiguous` plus `code_unresolved`. A typed code that matches nothing is `code_unresolved`.
+  - Order and DO numbers are no codes: they are tagged `kind: order` and stay in code lookups.
+  - A bare code (no quantity) reuses the answer domain held before the turn (owner: resolve then reuse the answer).
+  - Photo items are `media`: graded on the recorded turn, out of live runs and exports.
+  - Cost asks are held (`cost_owner_pending`) until the owner rules who may see cost.
+  - Held-out code lookups at $0, runs 1/2/3: 76.0 / 75.3 / 74.7% to 78.6 / 79.3 / 80.0% (n 145; the photo item is
+    not graded live).
+- 33 grader (OWNER RULING 17 Oct): after a full answer to an exact code, a numbered picker of its sibling variants
+  is right (`lanes/business/answer.py:4846-4848`), so `no_picker` passes. Sibling means every option starts with the
+  gold code's family stem. Full means the reply carries an answer outside its option lines and every other check
+  passes. A did-you-mean picker instead of the answer still fails (typo ruling). On real rows both kinds record
+  `asking: product_pick` and `sections: 0`, so the reply text decides, not the trace flag. cp0-c7ec5f1c31 passes
+  8/8. Held-out, same gold, runs 1/2/3: follow-ups 83 / 85 / 81 to 84 / 86 / 82; every other slice is unchanged.
+- Open from the card: the leak failure on DO item cp0-d9971420da (asker linkage vs the grader's leak check) is not
+  yet investigated.
+
+## Round 34 and the replay guard (17 Oct)
+
+- Round 34 (owner CP0 c04/c19: a certification scheme is an index, like a spec or an attachment type). SPAN is a
+  listed Certificate scheme on the dev copy (`chatbot_prompt_vars.py:432`; 41 active certificates). A certificate ask
+  naming a listed scheme wants that scheme's certificates.
+  - The file envelope carries no scheme, so the gold lists the scheme's files: crew `cert_schemes.py`, every file of an
+    active certificate of that scheme, matched by file hash because a re-upload shares it.
+  - The grader's `scheme` check fails a sent file outside that list.
+  - Schemes are exact (crew, 17 Oct): IKRAM and IKRAM QA Scheme 1 are separate closed-list items, and a prefix rule
+    would be word matching. Superseded revisions count.
+  - "If the parser picks both items for a bare IKRAM, the gold accepts either" is not built: in 12 runs of the only
+    IKRAM item the parser picked no scheme. Trigger: the first run whose parse holds both schemes.
+  - 12 items change (7 TRAIN, 5 held-out). Held-out attachment is unchanged. On #1755's S7 TRAIN rows the attachment
+    gap goes from -6.2 to +1.2 points: main's earlier passes sent certificates of another scheme.
+- Replay guard (crew GO, after 585 turns were committed into `sorento_eval_base` through a raw call):
+  - `_replay_one` and `_live_one` refuse, before any DB use, a session factory `_rolled_back` did not yield.
+  - The mark is cleared when the block exits.
+  - The L1 replay runs the engine with `offload=False`, so a worker setting cannot move a turn outside the rollback.
+
+## The bench reads under the asker's scope (crew PRIORITY, 18 Oct)
+
+`replay.py` ran `engine.run_turn` in process but never called `register_company_scope_listeners()` (only
+`app/main.py` and `worker.py` do), so every bench run read candidates, resolver hits and set-summary counts with no
+company or brand scope; only the MCP fetch was scoped. Not a production leak. Now `run` and `live` register the
+listeners, the grounding tier opens its session under the row's contact scope, and the preflight, `replay_rows` and
+`live_rows` refuse when the listeners are missing or enforcement is off. Numbers from runs before this fix (CP0 and
+the 17 Oct combined run) are from the unscoped harness.
+
+## The bench fails loudly (crew PRIORITY, 17 Oct)
+
+#1718's missing column made every replayed turn error the same way in both arms. The gate compared two equally
+broken outputs and printed "unintended 0" for about 6 hours. The rules now (`scripts/chatbot_eval/replay.py`):
+- `diff` exits 3 and prints `BROKEN: broken N` with the first 5 ids when any row in either arm is broken: an error
+  miss, a turn the engine closed as `failed`, empty stages while not skipped, or a duplicate skip. It also exits 3
+  when nothing was compared (`compared 0`). The gate turns any non-zero diff into a failure.
+- `live` stops with `stopped: error_rate` once errored items (an error, a failed turn, or a turn with no trace and no
+  reply) exceed max(2, 2% of the planned items), exits 3, and prints the count and the first 5 ids.
+- `run` and `live` preflight the DB alembic revision against the cwd arm's heads. At a head: pass. Unknown to the arm
+  (the DB is ahead, e.g. the base arm on a migration lane): pass with a warning. Known but not a head (behind), or
+  unstamped: refused with exit 2 and the `alembic upgrade head` command.
+- Live runs on `sorento_cagent_stack` (at ctg_0001, behind head sr_0001) now refuse until crew upgrades that DB.
+
+## Round 35 (18 Oct, after the combined held-out run; TRAIN evidence only)
+
+Queued by crew from CHAT-CODE-LOOKUP, CHAT-STATE and EVAL-SETS; spec and card are crew-only. Red-first in
+`tests/chatbot_eval/test_round35.py`, kill-proof per rule, opus review twice (READY). Grader (`targets.py`):
+- (a) A staff stock ask about a family is list_all: every member's stock answers, and every member is named in the reply;
+  a dead end or a partial family fails. (c)/(h) A looked-up product set: its code resolves and the set is the new subject,
+  without pre-empting the held-order or lookup fallbacks and without counting set keys the gold does not want.
+- (d) A trace note "payload omitted: N bytes ..." is the omitted note. (e) A held family narrowed by product ids is applied.
+- (f) Crew ruling, option A: a refine on a held product whose family has no such variant passes on an honest none about
+  the held product (`none_on_record` gold, a lookup for the held product, no other product named); a catalogue list fails.
+- (i) A date never spans a newline and a day never starts right after a decimal point.
+- (j) Catalogue asks: with no catalogue type or alias in the registry, an honest "no catalogue on record" passes and
+  silence fails. (l) A refine with gold `filter_products` is judged by the looked-up ids; a word-only lookup is False,
+  only all-unmapped product ids are unknown. (n) spec_refine does not fail a turn whose quantity question is still open.
+- (m) G-HELD-BEFORE reviewed: no change (it would credit a filter that was read, not applied).
+Gold (crew files): (a) 4 TRAIN code lookups + 6 follow-ups + 8 held-out, (b) cp0-f61e0d4814, (c) cp0-9793ea25dc,
+(f) cp0-253d58ba8b and cp0-fcd44fe521, (g) cp0-aad2aaec55 (the pick wins), (l) cp0-75e516bd40, (j) 5 EVAL-SETS
+catalogue items; (k) 2 items where "square" is a customer name excluded (cp0 gold 646 to 644).
+
+## Round 36 (18 Oct, stacked on round 35; TRAIN evidence only)
+
+- G4 (CHAT-COMPOSER): `COULD_NOT_FIND_RE` reads a dead end with up to two qualifier words, underscores included, before
+  products/results/items ("But no master products matched these."), only from a word boundary, so `_spec` no longer
+  counts such a reply as shown. Fact lines ("no incoming matched", "no stock") stay out. One recorded reply flips (a real
+  dead end on an attachment item, no grade change).
+- G1 (CHAT-CODE-LOOKUP, crew gold): the bare-code rule's `DOMAIN_LABEL` gains `master_products -> product_info`, so a bare
+  code after a product-info answer is graded as product info, not stock.
+- G3 (CHAT-CODE-LOOKUP, crew gold): the eval-sets copy gets the round 35 (a) list_all rule (5 code lookups + 3 staff
+  follow-ups). Both gold rebuilds reproduce byte for byte. Opus review READY.

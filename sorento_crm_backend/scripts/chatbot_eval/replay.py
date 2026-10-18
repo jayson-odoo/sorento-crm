@@ -2,7 +2,11 @@
 
 usage (cwd = the backend dir of the checkout under test):
   python scripts/chatbot_eval/replay.py run --traces FILE... --out OUT.jsonl
-  python scripts/chatbot_eval/replay.py live --items F --recorded F --out F --max-calls N --max-usd X --require-key-last4 XXXX [--prompt-version-id ID]
+  python scripts/chatbot_eval/replay.py live --items F --recorded F --out F --max-calls N --max-usd X --require-key-last4 XXXX [--prompt-version-id ID] [--chain]
+      (--chain: items sharing `conv` run as one conversation in `conv_turn` order. Turn one starts from its recorded
+      row, or from empty memory and no history when the item has `start: "empty"`; each later turn starts from the
+      memory the previous live turn left (its dry-run session_patch, read as the console reads it) and sees this run's
+      own exchanges as its history. A turn with no output turn skips the rest of its conversation ("chain_broken").)
       (--prompt-version-id pins the semantic parser prompt to that stored version on every live turn, replacing any recorded
       override; the output row's provenance then carries prompt_version_id)
       (history is read as of the recorded turn (prod world), not as of now: previous reply, recent exchanges, earlier
@@ -115,9 +119,11 @@ def _rolled_back(session_factory: Callable[[], Any]) -> Iterator[Callable[[], An
         opened.append(s)
         return s
 
+    factory._rolled_back = True   # type: ignore[attr-defined]   # _replay_one refuses a factory without this mark
     try:
         yield factory
     finally:
+        factory._rolled_back = False   # type: ignore[attr-defined]   # a factory reused after the block is refused
         for s in opened:
             with contextlib.suppress(Exception):
                 s.close()
@@ -276,8 +282,33 @@ def _tools(trace: list[dict[str, Any]]) -> list[list[str]]:
     ]
 
 
+def _scope_refusal() -> str | None:
+    """Why this process would read the DB unscoped (None when the company/brand filter is live)."""
+    from app.services import company_scope
+
+    if not company_scope._ENFORCE:
+        return "company scope enforcement is off (COMPANY_SCOPE_ENFORCE=0); the replay would read every company and brand"
+    if not company_scope._INSTALLED:
+        return "the company scope listeners are not registered; the replay would read every company and brand unscoped"
+    return None
+
+
+def _require_scope() -> None:
+    why = _scope_refusal()
+    if why:
+        raise RuntimeError(why)
+
+
+def _require_rolled_back(factory: Callable[[], Any]) -> None:
+    """Refuse, before any DB use, a factory that `_rolled_back` did not yield (or has since closed), or an unscoped process."""
+    _require_scope()
+    if not getattr(factory, "_rolled_back", False):
+        raise RuntimeError("a replay needs a factory from _rolled_back; call replay_rows or live_rows")
+
+
 def _replay_one(row: dict[str, Any], factory: Callable[[], Any], stage: str | None = None,
-                vocab_box: list[Any] | None = None) -> dict[str, Any]:
+                vocab_box: dict[Any, Any] | None = None) -> dict[str, Any]:
+    _require_rolled_back(factory)
     from app.models.chatbot_turn import ChatbotTurn
     from app.services.chatbot import engine
     from app.services.chatbot.contracts import Envelope
@@ -298,13 +329,23 @@ def _replay_one(row: dict[str, Any], factory: Callable[[], Any], stage: str | No
     if stage == "grounding":
         from app.services.chatbot.head import grounding
 
-        db = factory()
+        from app.services.chatbot import engine
+        from app.services.chatbot.contracts import Envelope
+
+        # The contact's company and brand scope, as run_turn stamps it: an unset scope reads nothing.
+        contact = engine._contact_respond_id(Envelope(**copy.deepcopy(row.get("envelope") or {})))
+        scope, brand = engine._contact_company_scope(factory, contact), engine._contact_brand_scope(factory, contact)
+        db = engine._scoped_factory(factory, scope, brand)()
         g_misses: list[dict[str, Any]] = []
         try:
             with _patched({}, g_misses):
-                if vocab_box is not None and not vocab_box:
-                    vocab_box.append(grounding.load_vocabulary(db))
-                vocab = vocab_box[0] if vocab_box else None
+                if vocab_box is None:
+                    vocab = None
+                else:
+                    key = (scope, brand)
+                    if key not in vocab_box:
+                        vocab_box[key] = grounding.load_vocabulary(db)
+                    vocab = vocab_box[key]
                 out["stages"] = {"grounded": _ground_one(row, parse, db, vocab)}
         except Exception as exc:  # noqa: BLE001 - the replay records, never raises
             g_misses.append({"error": type(exc).__name__})
@@ -325,7 +366,7 @@ def _replay_one(row: dict[str, Any], factory: Callable[[], Any], stage: str | No
     misses: list[dict[str, Any]] = []
     with _patched(_recorded_tools(row), misses):
         try:
-            result = engine.run_turn(envelope, session_factory=factory)
+            result = engine.run_turn(envelope, session_factory=factory, offload=False)
         except Exception as exc:  # noqa: BLE001 - the replay records, never raises
             out["misses"] = misses + [{"error": type(exc).__name__}]
             return out
@@ -338,6 +379,8 @@ def _replay_one(row: dict[str, Any], factory: Callable[[], Any], stage: str | No
     trace = list(turn.trace or []) if turn is not None else []
     db.close()
     out["misses"] = misses
+    if getattr(result, "status", None) == "failed":   # the engine closed the turn as failed: a type and a stage, never text
+        misses.append({"error": "failed", "stage": getattr(result, "stage", None)})
     out["stages"] = {
         "grounded": _entities(trace),
         "decision": _decision(trace, result.branch_kind),
@@ -354,8 +397,9 @@ def replay_rows(rows: list[dict[str, Any]], *, session_factory: Callable[[], Any
                 stage: str | None = None, on_row: Callable[[dict[str, Any]], None] | None = None) -> list[dict[str, Any]]:
     """`stage="grounding"` runs only `grounding.ground()` per row (vocabulary loaded once per call)
     and returns `stages.grounded` alone; None runs the whole turn."""
+    _require_scope()
     results = []
-    vocab_box: list[Any] = []
+    vocab_box: dict[Any, Any] = {}
     # No log record may carry message or reply text (the engine and resolver log both on errors).
     previous_disable = logging.root.manager.disable
     logging.disable(logging.CRITICAL)
@@ -666,8 +710,10 @@ def _history_patches(stack: Any, history: dict[str, Any] | None) -> None:
     from app.services.chatbot import quoted
     from app.services.chatbot.turn import context as context_mod
 
-    # profile facts are read as of now; the L5 block is the recorded one verbatim (empty when the recorded prompt had none)
-    stack.enter_context(mock.patch.object(context_mod, "_render_l5", lambda facts: (history["about"], False)))
+    # profile facts are read as of now; the L5 block is the recorded one verbatim (empty when the recorded prompt had none;
+    # None, a chained turn with no recorded anchor, leaves the as-of-now block)
+    if history["about"] is not None:
+        stack.enter_context(mock.patch.object(context_mod, "_render_l5", lambda facts: (history["about"], False)))
     if history["l3"] is not None:  # L3 is the recorded prompt's block verbatim; without one the as-of DB reads above serve
         stack.enter_context(mock.patch.object(context_mod, "_render_l3", lambda *a, **k: history["l3"]))
     real_quoted = quoted.resolve_quoted_turn
@@ -692,14 +738,19 @@ def _history_patches(stack: Any, history: dict[str, Any] | None) -> None:
 
 
 def _live_one(item: dict[str, Any], row: dict[str, Any], factory: Callable[[], Any],
-              total: dict[str, Any], prompt_version_id: str | None = None) -> dict[str, Any]:
+              total: dict[str, Any], prompt_version_id: str | None = None,
+              carry: dict[str, Any] | None = None, sink: dict[str, Any] | None = None) -> dict[str, Any]:
+    """One live turn on the recorded row's state, or, for a chained turn, on `carry` ({memory, history}: what the
+    previous live turn left). `sink` receives what the next chained turn needs (memory, history, message, reply)."""
+    _require_rolled_back(factory)
     from app.models.chatbot_turn import ChatbotTurn
-    from app.services.chatbot import engine
+    from app.services.chatbot import console_service, engine
     from app.services.chatbot.contracts import Envelope
 
     out: dict[str, Any] = {"item_id": item["item_id"], "run": item.get("run")}
     payload = copy.deepcopy(row.get("envelope") or {})
-    payload.update(is_test=True, previous_conversation_state=_recorded_memory(row))
+    memory = _recorded_memory(row) if carry is None else carry["memory"]
+    payload.update(is_test=True, previous_conversation_state=memory)
     for key in ("mock_reformulator_output", "prompt_overrides", "referenced_result_set"):
         payload.pop(key, None)  # recorded harness keys never carry into a live item
     if prompt_version_id:
@@ -710,6 +761,9 @@ def _live_one(item: dict[str, Any], row: dict[str, Any], factory: Callable[[], A
     if inner is not None and isinstance(inner.setdefault("message", {}), dict):
         key = f"{item['item_id']}|{item.get('run')}"
         inner["message"]["messageId"] = "live-" + hashlib.sha256(key.encode()).hexdigest()[:16]
+        if carry is not None:  # a chained turn is this run's message: it quotes nothing the recorded prod turn quoted
+            inner["message"].pop("replyTo", None)
+            inner["message"].pop("reply_to", None)
     envelope = Envelope(**payload)
     usage, misses, tool_results = _new_usage(), [], []
     with contextlib.ExitStack() as stack:
@@ -726,7 +780,10 @@ def _live_one(item: dict[str, Any], row: dict[str, Any], factory: Callable[[], A
 
         stack.enter_context(mock.patch.object(ideate, "call_ideation_tool", ideation_blocked))
         hist_db = factory()
-        _history_patches(stack, _recorded_history(hist_db, row, envelope))
+        history = _recorded_history(hist_db, row, envelope)
+        if carry is not None:  # this run's conversation replaces the recorded one; the contact and anchor stay
+            history = {**(history or _NO_HISTORY), **carry["history"]}
+        _history_patches(stack, history)
         try:
             result = engine.run_turn(envelope, session_factory=factory, offload=False)
         except _CapStop as stop:
@@ -734,9 +791,16 @@ def _live_one(item: dict[str, Any], row: dict[str, Any], factory: Callable[[], A
             return {**out, "stopped": stop.reason}
     if getattr(result, "duplicate", False):
         return {**out, "skipped": "duplicate"}
+    if sink is not None:
+        left = console_service._next_state({"reply": result.reply, "session_patch": result.session_patch})
+        reply = result.reply.get("text") if isinstance(result.reply, dict) else None
+        sink.update(memory=memory if left is None else left, history=history, message=item["message"],
+                    reply=reply if isinstance(reply, str) else None)
     db = factory()
     turn = db.query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
     trace = list(turn.trace or []) if turn is not None else []
+    if sink is not None:
+        sink["turn_no"] = _turn_no(trace)
     uuid_codes = _uuid_codes(db, [t.get("args") for t in trace if isinstance(t, dict) and t.get("kind") == "tool"]
                              + [t.get("args") for t in tool_results])
     understood = next(((r.get("facts") or {}) for r in trace if isinstance(r, dict) and r.get("stage") == "understood"), {})
@@ -747,7 +811,7 @@ def _live_one(item: dict[str, Any], row: dict[str, Any], factory: Callable[[], A
         usage=usage, tool_results=tool_results, uuid_codes=uuid_codes,
         turn={"envelope": copy.deepcopy(turn.envelope) if turn is not None else None, "trace": trace,
               "response": copy.deepcopy(turn.response) if turn is not None else None,
-              "branch_kind": result.branch_kind},
+              "branch_kind": result.branch_kind, "status": getattr(result, "status", None)},
     )
     if misses:
         out["misses"] = misses
@@ -768,14 +832,77 @@ def _pin_resolves(session_factory: Callable[[], Any], version_id: str) -> bool:
         db.close()
 
 
+# a chained turn whose recorded row has no anchor: no recorded history to start from, the profile block as of now
+_NO_HISTORY: dict[str, Any] = {"l3": None, "anchor": None, "about": None, "turn_number": 0, "previous_reply": None,
+                               "recent": [], "summaries": [], "read_frames": [], "earlier_messages": []}
+# `start: "empty"`: a new conversation, nothing remembered and nothing said before it
+_FRESH_START: dict[str, Any] = {"memory": {}, "history": {"l3": None, "previous_reply": None, "recent": [], "summaries": [],
+                                                          "read_frames": [], "earlier_messages": [], "turn_number": 1}}
+
+
+def _conversations(items: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Items grouped by `conv` in order of first appearance, each group in `conv_turn` order; no `conv` = alone."""
+    groups: dict[tuple[str, Any], list[dict[str, Any]]] = {}
+    for n, item in enumerate(items):
+        key = ("conv", item["conv"], item.get("run")) if item.get("conv") is not None else ("item", n, None)
+        groups.setdefault(key, []).append(item)   # each run of a conversation is its own chain
+    return [sorted(group, key=lambda item: item.get("conv_turn") or 0) for group in groups.values()]
+
+
+def _turn_no(trace: list[Any]) -> int | None:
+    """The turn number the engine recorded for a live turn (the trace record carrying `turn_no` and `quoted_turn`)."""
+    queue: list[Any] = list(trace or [])
+    while queue:
+        node = queue.pop(0)
+        if isinstance(node, dict):
+            if "quoted_turn" in node and isinstance(node.get("turn_no"), int):
+                return node["turn_no"]
+            queue.extend(node.values())
+        elif isinstance(node, list):
+            queue.extend(node)
+    return None
+
+
+def _next_carry(sink: dict[str, Any]) -> dict[str, Any]:
+    """What the next chained turn starts from: the memory this turn left and this turn added to the history it saw
+    (L3 is then rendered from those reads, not taken verbatim from a recorded prompt). The turn number counts on from
+    the number this turn ran with (its trace), so a first turn with no recorded anchor still counts right."""
+    from app.services.chatbot import engine
+
+    seen = sink.get("history") or _NO_HISTORY
+    message, reply = sink["message"], sink.get("reply")
+    at = engine._short_day_time(seen["anchor"]) if seen.get("anchor") is not None else ""
+    recent = list(seen.get("recent") or []) + ([(message, reply)] if reply else [])
+    earlier = list(seen.get("earlier_messages") or []) + [{"created_at": at, "text": message}]
+    ran = sink.get("turn_no") if isinstance(sink.get("turn_no"), int) else int(seen.get("turn_number") or 0)
+    return {"memory": sink["memory"], "history": {
+        "l3": None, "previous_reply": reply, "recent": recent[-3:], "earlier_messages": earlier[-3:],
+        "turn_number": ran + 1, "summaries": list(seen.get("summaries") or []),
+        "read_frames": list(seen.get("read_frames") or [])}}
+
+
+LIVE_ERROR_RATE = 0.02
+
+
+def _live_errored(res: dict[str, Any]) -> bool:
+    """An item that raised, or whose turn came back with no trace and no response."""
+    if "error" in res:
+        return True
+    turn = res.get("turn")
+    return isinstance(turn, dict) and (turn.get("status") == "failed" or (not turn.get("trace") and not turn.get("response")))
+
+
 def live_rows(items: list[dict[str, Any]], recorded_rows: list[dict[str, Any]], *,
               session_factory: Callable[[], Any], max_calls: int, max_usd: float,
               require_key_last4: str, on_row: Callable[[dict[str, Any]], None] | None = None,
-              prompt_version_id: str | None = None) -> list[dict[str, Any]]:
+              prompt_version_id: str | None = None, chain: bool = False) -> list[dict[str, Any]]:
     """Run each item's message through the engine on its recorded state; stop cleanly at a call or spend cap,
     or at "wrong_key" when a provider or embedding key does not end with `require_key_last4` (exactly 4 non-blank
     characters, else ValueError before any item). A `prompt_version_id` that is not a stored version of the parser
-    prompt is a ValueError before any item (the registry would otherwise fall back silently)."""
+    prompt is a ValueError before any item (the registry would otherwise fall back silently).
+    `chain`: items sharing `conv` run as one conversation (module docstring, --chain); each turn is still rolled
+    back on its own, the conversation lives in the carried memory and history only."""
+    _require_scope()
     if not _valid_last4(require_key_last4):
         raise ValueError("require_key_last4 must be exactly 4 non-blank characters")
     if prompt_version_id and not _pin_resolves(session_factory, prompt_version_id):
@@ -785,30 +912,56 @@ def live_rows(items: list[dict[str, Any]], recorded_rows: list[dict[str, Any]], 
     total.update(max_calls=max_calls, max_usd=max_usd, stop=None, require_key_last4=require_key_last4)
     results: list[dict[str, Any]] = []
     stopped: str | None = None
+    error_ids: list[Any] = []
     previous_disable = logging.root.manager.disable
     logging.disable(logging.CRITICAL)
     try:
-        for item in items:
-            stopped = stopped or total.get("stop")
-            if stopped is None:
-                if total["calls"] >= max_calls:
-                    stopped = "max_calls"
-                elif total["usd"] >= max_usd:
-                    stopped = "max_usd"
-            if stopped:
-                res = {"item_id": item["item_id"], "run": item.get("run"), "stopped": stopped}
-            elif str(item.get("recorded_turn_id")) not in by_id:
-                res = {"item_id": item["item_id"], "run": item.get("run"), "skipped": "no_recorded_row"}
-            else:
-                try:
-                    with _rolled_back(session_factory) as factory:
-                        res = _live_one(item, by_id[str(item["recorded_turn_id"])], factory, total,
-                                        prompt_version_id)
-                except Exception as exc:  # noqa: BLE001 - record the type only; never message text
-                    res = {"item_id": item["item_id"], "run": item.get("run"), "error": type(exc).__name__}
-            results.append(res)
-            if on_row is not None:
-                on_row(res)
+        halted = False
+        for group in _conversations(items) if chain else [[item] for item in items]:
+            if halted:
+                break
+            carry = copy.deepcopy(_FRESH_START) if chain and group[0].get("start") == "empty" else None
+            broken = False
+            for item in group:
+                stopped = stopped or total.get("stop")
+                if stopped is None:
+                    if total["calls"] >= max_calls:
+                        stopped = "max_calls"
+                    elif total["usd"] >= max_usd:
+                        stopped = "max_usd"
+                if stopped:
+                    res = {"item_id": item["item_id"], "run": item.get("run"), "stopped": stopped}
+                elif broken:
+                    res = {"item_id": item["item_id"], "run": item.get("run"), "skipped": "chain_broken"}
+                elif str(item.get("recorded_turn_id")) not in by_id:
+                    res = {"item_id": item["item_id"], "run": item.get("run"), "skipped": "no_recorded_row"}
+                else:
+                    sink: dict[str, Any] = {}
+                    chained = {"carry": carry, "sink": sink} if chain else {}   # unchained: the call is unchanged
+                    try:
+                        with _rolled_back(session_factory) as factory:
+                            res = _live_one(item, by_id[str(item["recorded_turn_id"])], factory, total,
+                                            prompt_version_id, **chained)
+                    except Exception as exc:  # noqa: BLE001 - record the type only; never message text
+                        res = {"item_id": item["item_id"], "run": item.get("run"), "error": type(exc).__name__}
+                    if chain and "turn" in res:
+                        carry = _next_carry(sink)
+                if chain:
+                    broken = broken or "turn" not in res
+                    if item.get("conv") is not None:
+                        res = {**res, "conv": item["conv"], "conv_turn": item.get("conv_turn")}
+                results.append(res)
+                if on_row is not None:
+                    on_row(res)
+                if _live_errored(res):
+                    error_ids.append(item["item_id"])
+                if len(error_ids) > max(2, LIVE_ERROR_RATE * len(items)):   # (never on a lone error in a short list) the bench is broken, not the bot: stop spending
+                    res = {"stopped": "error_rate", "errors": len(error_ids), "first_ids": error_ids[:5]}
+                    results.append(res)
+                    if on_row is not None:
+                        on_row(res)
+                    halted = True
+                    break
     finally:
         logging.disable(previous_disable)
     return results
@@ -824,6 +977,17 @@ def _stage_value(row: dict[str, Any], stage: str) -> Any:
     if stage == "tools":
         return [stages.get("tools"), row.get("misses") or []]
     return stages.get(stage)
+
+
+def _broken_reason(r: dict[str, Any]) -> str | None:
+    """Why a replay row is no evidence: the engine errored, a run row has no stages, or the turn was a duplicate."""
+    if any(isinstance(m, dict) and "error" in m for m in r.get("misses") or []):
+        return "error"
+    if r.get("skipped") == "duplicate":
+        return "duplicate"
+    if not r.get("skipped") and not r.get("stages"):
+        return "empty_stages"
+    return None
 
 
 def diff_rows(base: list[dict[str, Any]], head: list[dict[str, Any]],
@@ -857,7 +1021,16 @@ def diff_rows(base: list[dict[str, Any]], head: list[dict[str, Any]],
             skipped["missing_in_base"] = skipped.get("missing_in_base", 0) + 1
             diffs.append((key[0], key[1], "missing_in_base"))
     unintended = [d for d in diffs if d[2] == "missing_in_base" or (d[0], d[2]) not in intended]
-    return {"diffs": diffs, "unintended": unintended, "counts": {"stage": stage_counts, "skipped": skipped}}
+    head_keys = {(h["case_id"], h["turn_id"]): h for h in head}
+    compared = sum(1 for b in base if (b["case_id"], b["turn_id"]) in head_keys
+                   and not b.get("skipped") and not head_keys[(b["case_id"], b["turn_id"])].get("skipped"))
+    broken: list[tuple[str, str, str]] = []
+    for r in (*base, *head):   # a row broken in either arm counts once, even when both arms match
+        key = (r["case_id"], r["turn_id"])
+        reason = _broken_reason(r)
+        if reason and key not in {b[:2] for b in broken}:
+            broken.append((*key, reason))
+    return {"diffs": diffs, "unintended": unintended, "broken": broken, "compared": compared, "counts": {"stage": stage_counts, "skipped": skipped}}
 
 
 # --------------------------------------------------------------------------- #
@@ -876,6 +1049,70 @@ def _read(path: str) -> list[dict[str, Any]]:
     return out
 
 
+def _db_revisions(session_factory: Callable[[], Any]) -> set[str]:
+    from sqlalchemy import text
+
+    db = session_factory()
+    try:
+        return {r[0] for r in db.execute(text("SELECT version_num FROM alembic_version"))}
+    finally:
+        db.close()
+
+
+def _code_heads(backend_dir: str) -> set[str]:
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    cfg = Config(os.path.join(backend_dir, "alembic.ini"))
+    cfg.set_main_option("script_location", os.path.join(backend_dir, "alembic"))
+    return set(ScriptDirectory.from_config(cfg).get_heads())
+
+
+def _revision_known(backend_dir: str, rev: str) -> bool:
+    """Whether this arm's migration scripts contain `rev` (False: the DB was migrated by another lane)."""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    cfg = Config(os.path.join(backend_dir, "alembic.ini"))
+    cfg.set_main_option("script_location", os.path.join(backend_dir, "alembic"))
+    try:
+        return ScriptDirectory.from_config(cfg).get_revision(rev) is not None
+    except Exception:  # noqa: BLE001 - an unresolvable revision is unknown to this arm
+        return False
+
+
+def _register_scope() -> None:
+    """Install the company/brand SELECT filter, as app.main and worker.py do: this process runs the engine itself."""
+    from app.services import company_scope
+
+    company_scope.register_company_scope_listeners()
+
+
+def _preflight(session_factory: Callable[[], Any]) -> int | None:
+    """Refuse (2) a replay DB that is not at this checkout's alembic head: a stale schema fails every turn quietly.
+
+    Also refuses (2) when the scope listeners are not installed: unscoped reads would skew the bench quietly."""
+    why = _scope_refusal()
+    if why:
+        print(f"refused: {why}", file=sys.stderr)
+        return 2
+    current, heads = _db_revisions(session_factory), _code_heads(os.getcwd())
+    if current == heads:
+        return None
+    if not current:
+        print(f"refused: replay DB has no alembic_version row (unstamped); run: "
+              f"SORENTO_ENV_FILE={os.environ.get('SORENTO_ENV_FILE') or '.env'} alembic upgrade head", file=sys.stderr)
+        return 2
+    ahead = {r for r in current - heads if not _revision_known(os.getcwd(), r)}   # the DB is ahead: another lane migrated it
+    if current - heads == ahead:
+        print(f"warning: replay DB alembic {' '.join(sorted(ahead))} is unknown to this checkout (DB ahead)", file=sys.stderr)
+        return None
+    env = os.environ.get("SORENTO_ENV_FILE") or ".env"
+    print(f"refused: replay DB alembic {' '.join(sorted(current))} != code head {' '.join(sorted(heads))}; "
+          f"run: SORENTO_ENV_FILE={env} alembic upgrade head", file=sys.stderr)
+    return 2
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     import app
 
@@ -884,6 +1121,10 @@ def _cmd_run(args: argparse.Namespace) -> int:
         return 2
     from app.database import SessionLocal
 
+    _register_scope()
+    refused = _preflight(SessionLocal)
+    if refused:
+        return refused
     rows = [r for path in args.traces for r in _read(path)]
     # One line per finished row, flushed, so a run killed at a time budget leaves its finished rows.
     with open(args.out, "w") as fh:
@@ -903,8 +1144,13 @@ def _cmd_live(args: argparse.Namespace) -> int:
         return 2
     from app.database import SessionLocal
 
+    _register_scope()
+    refused = _preflight(SessionLocal)
+    if refused:
+        return refused
     items, recorded = _read(args.items), _read(args.recorded)
     n = {"run": 0, "stopped": 0, "skipped": 0}
+    last: dict[str, Any] = {}
     with open(args.out, "w") as fh:
         os.chmod(args.out, 0o600)
 
@@ -912,11 +1158,15 @@ def _cmd_live(args: argparse.Namespace) -> int:
             fh.write(json.dumps(r) + "\n")
             fh.flush()
             n["stopped" if "stopped" in r else "skipped" if "skipped" in r else "run"] += 1
+            last.update(r)
 
         live_rows(items, recorded, session_factory=SessionLocal, max_calls=args.max_calls, max_usd=args.max_usd,
                   require_key_last4=args.require_key_last4, on_row=write,
-                  prompt_version_id=args.prompt_version_id)
+                  prompt_version_id=args.prompt_version_id, chain=args.chain)
     print(f"live items {len(items)} run {n['run']} stopped {n['stopped']} skipped {n['skipped']}")
+    if last.get("stopped") == "error_rate":
+        print(f"error_rate stop: {last['errors']} errored items, first {' '.join(str(i) for i in last['first_ids'])}")
+        return 3
     return 0
 
 
@@ -933,6 +1183,11 @@ def _cmd_diff(args: argparse.Namespace) -> int:
     print(f"stages {json.dumps(res['counts']['stage'], sort_keys=True)}")
     print(f"skipped {json.dumps(res['counts']['skipped'], sort_keys=True)}")
     print(f"unintended {len(res['unintended'])}")
+    print(f"compared {res['compared']}")
+    if res["broken"]:
+        print(f"BROKEN: broken {len(res['broken'])} {' '.join(str(b[1]) for b in res['broken'][:5])}".rstrip())
+    if res["broken"] or res["compared"] == 0:   # checked first: broken or nothing compared is no evidence, not "no diff"
+        return 3
     return 1 if res["unintended"] else 0
 
 
@@ -951,6 +1206,7 @@ def main(argv: list[str] | None = None) -> int:
     live.add_argument("--max-usd", type=float, required=True)
     live.add_argument("--require-key-last4", type=_last4_arg, required=True)
     live.add_argument("--prompt-version-id", default=None)
+    live.add_argument("--chain", action="store_true")
     diff = sub.add_parser("diff")
     diff.add_argument("base")
     diff.add_argument("head")
