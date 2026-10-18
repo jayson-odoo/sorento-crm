@@ -933,7 +933,7 @@ def _feedback(w, aid, user=None, **body):
 
 
 def _rows_for(w, entity_type, entity_id):
-    from app.models.resources import EntityAttachmentLink
+    from app.models.entity_attachment import EntityAttachmentLink
 
     return (
         w.db.query(EntityAttachmentLink)

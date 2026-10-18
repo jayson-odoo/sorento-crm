@@ -10,6 +10,9 @@ import importlib.util
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+ADDED_BY_NPA_0002 = {
+    "dimension", "material", "thickness", "packing", "lead_time", "feedback_by", "feedback_at",
+}
 
 
 def _load(name: str):
@@ -40,4 +43,6 @@ def test_migration_creates_every_model_column():
     source = (ROOT / "alembic" / "versions" / "npa_0001_new_product_apps.py").read_text()
     for model in (NewProductApplication, NewProductApplicationLine):
         for column in model.__table__.columns:
+            if column.name in ADDED_BY_NPA_0002:
+                continue  # v4 columns live in npa_0002_paper_layout (its own test checks them)
             assert f"            {column.name} " in source, (model.__tablename__, column.name)
