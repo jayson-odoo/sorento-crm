@@ -51,9 +51,10 @@ def _columns(raw, scratch) -> dict:
 
 
 def test_revision_id_fits_and_follows_fin_0002_as_the_single_head():
-    """fin_0002 is an ancestor and fin_0003 is the only head. The direct parent is whatever
-    main's head is when the lane lands (`scripts/alembic-reparent.sh` moves it), so it is not
-    pinned here."""
+    """fin_0002 is an ancestor of fin_0003, and fin_0003 is an ancestor of the single head
+    (later migrations land on top of it, so it is not required to BE the head). The direct
+    parent is whatever main's head is when the lane lands (`scripts/alembic-reparent.sh`
+    moves it), so it is not pinned here."""
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
@@ -62,11 +63,9 @@ def test_revision_id_fits_and_follows_fin_0002_as_the_single_head():
     assert len(module.revision) <= 32
     script = ScriptDirectory.from_config(Config(str(Path(__file__).resolve().parents[1] / "alembic.ini")))
     heads = script.get_heads()
-    # One head, and fin_0003 on its chain: a migration merged after this one (the NEW-PRODUCT-APP
-    # lane's npa_0001) becomes the head, which a pinned `== ["fin_0003..."]` would refuse.
     assert len(heads) == 1, heads
-    on_head_chain = {rev.revision for rev in script.walk_revisions("base", heads[0])}
-    assert "fin_0003_billing_outstanding" in on_head_chain
+    below_head = {rev.revision for rev in script.walk_revisions("base", heads[0])}
+    assert "fin_0003_billing_outstanding" in below_head
     ancestors = {rev.revision for rev in script.walk_revisions("base", "fin_0003_billing_outstanding")}
     assert "fin_0002_billing_demand_class" in ancestors
 

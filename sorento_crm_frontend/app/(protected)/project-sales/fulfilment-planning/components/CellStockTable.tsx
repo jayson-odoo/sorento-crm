@@ -1,12 +1,16 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { PillOverflow, type PillItem } from '@/components/common/PillOverflow';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
+import { withAutoCount } from '../../_shared/lib/autoCountStock';
+import { formatDateInMalaysia } from '@/lib/helpers';
+import type { StockStatus } from '@/components/stock-status/stockStatus.types';
 import {
   availableForProject,
   availableForProjectOf,
@@ -67,9 +71,6 @@ function writeStoredLocationWidth(px: number) {
     // localStorage disabled - the width still applies for this session.
   }
 }
-/** Wide enough for "Own location", which is the longest of the four tags. */
-const WHERE_COL = 'min-w-[104px]';
-
 /**
  * What a figure the server did not state renders as, which after AC-B2 is ONE row: the line
  * whose sales order names no location. A zero there would read as "that location is empty",
@@ -85,6 +86,7 @@ const EMPTY_TAKEN: Map<string, string> = new Map();
 const EMPTY_TAKEN_KINDS: Map<string, { kind: SupplyKind; qty: string }[]> =
   new Map();
 
+/** A section's subtotal label is still named by where its rows stand; no row carries the tag. */
 const WHERE_LABELS: Record<BoardLocationWhere, string> = {
   own: 'Own location',
   group: 'Group',
@@ -229,15 +231,22 @@ export interface CellStockTableProps {
   showGroupSubtotal?: boolean;
   /**
    * The stock position alone, for a reader with no order in hand (the quotation's stock chip):
-   * On hand, SO qty, SPO qty and Available, with no document chevrons. PO qty, Taken and
+   * On hand, SO qty, SPO qty, Available and PO qty, with no document chevrons. Taken and
    * Available for Project only mean something for an order being planned, and outside one they
    * read 0 or repeat Available.
    */
   stockOnly?: boolean;
+  /**
+   * AutoCount's Available Stock Status for the product (`GET /api/v1/inventory/stock-status`,
+   * STOCK-STATUS round 6). Given, the rows read AutoCount's On hand, SO qty, PO qty and SPO qty
+   * (`withAutoCount`), every location AutoCount holds joins the table, and one Incoming PL row
+   * sits under the Total. Absent (not read, or the read failed), the table is today's.
+   */
+  autoCount?: StockStatus | null;
 }
 
-/** The columns `stockOnly` keeps. */
-const STOCK_ONLY_COLUMNS = new Set(['on-hand', 'so', 'spo', 'available']);
+/** The columns `stockOnly` keeps; PO qty too, since the quotation's table reads AutoCount's. */
+const STOCK_ONLY_COLUMNS = new Set(['on-hand', 'so', 'spo', 'available', 'po']);
 
 /**
  * See the module doc above. Forwards a small imperative handle (`CellStockTableHandle`) so
@@ -250,7 +259,7 @@ export const CellStockTable = React.forwardRef<
   CellStockTableProps
 >(function CellStockTable(
   {
-    locations,
+    locations: serverLocations,
     groupNote,
     taken,
     takenKinds,
@@ -265,13 +274,19 @@ export const CellStockTable = React.forwardRef<
     badges,
     showGroupSubtotal = true,
     stockOnly = false,
+    autoCount = null,
   },
   ref,
 ) {
+  const locations = React.useMemo(
+    () => (autoCount ? withAutoCount(serverLocations, autoCount, poolSharePct) : serverLocations),
+    [serverLocations, autoCount, poolSharePct],
+  );
+  const [plOpen, setPlOpen] = React.useState(false);
   const numericColumns = stockOnly
     ? NUMERIC_COLUMNS.filter((column) => STOCK_ONLY_COLUMNS.has(column.key))
     : NUMERIC_COLUMNS;
-  const spanAll = (stockOnly ? 2 : 3) + numericColumns.length;
+  const spanAll = (stockOnly ? 1 : 2) + numericColumns.length;
   const drawn = taken ?? EMPTY_TAKEN;
   const drawnKinds = takenKinds ?? EMPTY_TAKEN_KINDS;
   /**
@@ -490,7 +505,9 @@ export const CellStockTable = React.forwardRef<
 
   return (
     <div className="space-y-1">
-      {forLine ? (
+      {/* AutoCount's figures are gross of every line, the asker's own included, so they are not
+          one line's position and the caption would name the wrong reading. */}
+      {forLine && !autoCount ? (
         <p
           data-testid="cell-stock-for-line"
           className="text-xs text-muted-foreground"
@@ -558,9 +575,6 @@ export const CellStockTable = React.forwardRef<
                   onPointerCancel={() => endLocationResize()}
                   onLostPointerCapture={() => endLocationResize()}
                 />
-              </th>
-              <th scope="col" className={cn(WHERE_COL, HEAD_CELL)}>
-                Where
               </th>
               {numericColumns.map((column) => (
                 <th
@@ -683,14 +697,6 @@ export const CellStockTable = React.forwardRef<
                           </span>
                         </div>
                       </td>
-                      <td className={cn(WHERE_COL, BODY_CELL)}>
-                        <span
-                          className="block truncate text-muted-foreground"
-                          title={WHERE_LABELS[entry.where ?? 'own']}
-                        >
-                          {WHERE_LABELS[entry.where ?? 'own']}
-                        </span>
-                      </td>
                       {numericColumns.map((column) => {
                         const value = valueOf(column, entry, drawn);
                         // Signed and never clamped: a negative Available IS the shortfall, and the
@@ -760,6 +766,7 @@ export const CellStockTable = React.forwardRef<
                             documentInfo={documentInfo}
                             filterText={filterText}
                             jumpTarget={activeJump}
+                            autoCount={autoCount}
                           />
                         </td>
                       </tr>
@@ -819,7 +826,6 @@ export const CellStockTable = React.forwardRef<
                       >
                         {section.label}
                       </td>
-                      <td className={cn(WHERE_COL, FOOT_CELL)} />
                       {numericColumns.map((column) => {
                         if (!column.total) {
                           return (
@@ -901,6 +907,7 @@ export const CellStockTable = React.forwardRef<
                                 documentInfo={documentInfo}
                                 filterText={filterText}
                                 jumpTarget={activeJump}
+                                autoCount={autoCount}
                               />
                             </td>
                           </tr>,
@@ -927,7 +934,6 @@ export const CellStockTable = React.forwardRef<
                 >
                   Total
                 </td>
-                <td className={cn(WHERE_COL, FOOT_CELL)} />
                 {numericColumns.map((column) => {
                   if (!column.total) {
                     return (
@@ -984,8 +990,34 @@ export const CellStockTable = React.forwardRef<
                   );
                 })}
               </tr>
+              {autoCount ? (
+                <IncomingPlRows
+                  status={autoCount}
+                  numericColumns={numericColumns}
+                  stockOnly={stockOnly}
+                  spanAll={spanAll}
+                  open={plOpen}
+                  onToggle={() => setPlOpen((current) => !current)}
+                  locationColClassName={locationColClassName}
+                  locationColStyle={locationColStyle}
+                />
+              ) : null}
             </tfoot>
           )}
+          {!(showGroupSubtotal && showTotals) && autoCount ? (
+            <tfoot>
+              <IncomingPlRows
+                status={autoCount}
+                numericColumns={numericColumns}
+                stockOnly={stockOnly}
+                spanAll={spanAll}
+                open={plOpen}
+                onToggle={() => setPlOpen((current) => !current)}
+                locationColClassName={locationColClassName}
+                locationColStyle={locationColStyle}
+              />
+            </tfoot>
+          ) : null}
         </table>
       </div>
       {groupNote ? (
@@ -1001,6 +1033,135 @@ export const CellStockTable = React.forwardRef<
     </div>
   );
 });
+
+/**
+ * AutoCount's Incoming PL (owner OK of mock v6, UAC AC-33): what the packing lists still to land
+ * add, net of what is already on an SPO, under the SPO qty column because that is the figure it
+ * extends. It names no location (a packing list has none until it lands), so it sits under the
+ * Total rather than on a location's row, and opens to its packing lists.
+ */
+function IncomingPlRows({
+  status,
+  numericColumns,
+  stockOnly,
+  spanAll,
+  open,
+  onToggle,
+  locationColClassName,
+  locationColStyle,
+}: {
+  status: StockStatus;
+  numericColumns: typeof NUMERIC_COLUMNS;
+  stockOnly: boolean;
+  spanAll: number;
+  open: boolean;
+  onToggle: () => void;
+  locationColClassName: string;
+  locationColStyle: React.CSSProperties | undefined;
+}) {
+  const lists = status.incoming_pl ?? [];
+  const toggle =
+    lists.length > 0 ? (
+      <Button
+        type="button"
+        mode="icon"
+        variant="ghost"
+        size="sm"
+        className="size-5"
+        aria-label={`${open ? 'Hide' : 'Show'} incoming packing lists`}
+        aria-expanded={open}
+        onClick={onToggle}
+      >
+        {open ? (
+          <ChevronDown className="size-3.5" aria-hidden />
+        ) : (
+          <ChevronRight className="size-3.5" aria-hidden />
+        )}
+      </Button>
+    ) : null;
+  const added = fromMinor(toMinor(status.totals?.incoming_pl ?? 0));
+  return (
+    <>
+      <tr data-testid="stock-incoming-pl">
+        {!stockOnly && (
+          <td className={cn(CHEVRON_COL, FOOT_CELL, 'px-1')}>{toggle}</td>
+        )}
+        <td
+          className={cn(locationColClassName, FOOT_CELL, 'text-muted-foreground')}
+          style={locationColStyle}
+        >
+          <div className="flex items-center gap-1">
+            {stockOnly ? toggle : null}
+            <span>Incoming PL</span>
+            <span className="font-normal">no location yet</span>
+          </div>
+        </td>
+        {numericColumns.map((column) => (
+          <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)}>
+            {column.key === 'spo' ? (
+              <span className="block truncate text-end tabular-nums">{`+${added}`}</span>
+            ) : null}
+          </td>
+        ))}
+      </tr>
+      {open && lists.length > 0 ? (
+        <tr data-testid="stock-incoming-pl-lists">
+          <td colSpan={spanAll} className="border-b border-border p-2">
+            <div className="overflow-x-auto">
+              <table className="w-full border-separate border-spacing-0 text-xs">
+                <thead>
+                  <tr>
+                    <th scope="col" className={cn(HEAD_CELL, 'min-w-[120px]')}>
+                      Packing list
+                    </th>
+                    <th scope="col" className={cn(HEAD_CELL, 'min-w-[96px]')}>
+                      ETA
+                    </th>
+                    <th scope="col" className={cn(HEAD_CELL, NUMBER_COL, 'text-end')}>
+                      Still to land
+                    </th>
+                    <th scope="col" className={cn(HEAD_CELL, NUMBER_COL, 'text-end')}>
+                      Already on SPO
+                    </th>
+                    <th scope="col" className={cn(HEAD_CELL, NUMBER_COL, 'text-end')}>
+                      Counted
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lists.map((pl) => (
+                    <tr key={pl.shipment_id}>
+                      <td className={BODY_CELL}>
+                        <Link
+                          href={`/procurement-management/packing-lists/${pl.shipment_id}`}
+                          className="font-medium text-primary hover:underline"
+                        >
+                          {pl.shipment_number}
+                        </Link>
+                      </td>
+                      <td className={BODY_CELL}>
+                        {pl.eta ? formatDateInMalaysia(pl.eta) : BLANK}
+                      </td>
+                      <td className={cn(BODY_CELL, 'text-end tabular-nums')}>
+                        {fromMinor(toMinor(pl.still_to_land))}
+                      </td>
+                      <td className={cn(BODY_CELL, 'text-end tabular-nums')}>
+                        {fromMinor(toMinor(pl.on_spo))}
+                      </td>
+                      <td className={cn(BODY_CELL, 'text-end tabular-nums')}>
+                        {fromMinor(toMinor(pl.counted))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </td>
+        </tr>
+      ) : null}
+    </>
+  );
+}
 
 type StockSection = {
   /** Stable per table, and what the subtotal row is addressed by in a test. */

@@ -17,6 +17,7 @@ import {
   useStockGroups,
 } from '../../_shared/hooks/useFulfilmentPlanning';
 import type { StockDetailIncoming } from '../../_shared/types/fulfilmentPlanning.types';
+import { useStockStatus } from '@/components/stock-status/useStockStatus';
 
 /** Where the "Stock at" choice is remembered, per browser (owner, Q5). */
 export const STOCK_GROUP_STORAGE_KEY = 'quotation-lines.stock-group';
@@ -221,6 +222,10 @@ function StockPopoverBody({
   // The site pools, read only once somebody opens the popover: a quotation of fifty lines
   // would otherwise ask for fifty pool readings nobody looks at.
   const pools = useStockDetail(productId, null, null, 'pools');
+  // STOCK-STATUS round 6 (owner 06:00 and the v6 OK, UAC AC-35): ONE table, the chosen group
+  // then the site pools, read against AutoCount, so every other location AutoCount holds joins
+  // it and PO qty reads too. A failed read leaves today's figures.
+  const autoCount = useStockStatus(productId);
   const incoming = [...groupIncoming, ...(pools.data?.incoming ?? [])];
 
   return (
@@ -231,20 +236,16 @@ function StockPopoverBody({
           {`Quoted ${trimQty(quantity)}${uom ? ` ${uom}` : ''}`}
         </p>
       </div>
-      <CellStockTable
-        locations={groupLocations ?? []}
-        showGroupSubtotal
-        stockOnly
-      />
-      {pools.isLoading ? (
+      {pools.isLoading || autoCount.isLoading ? (
         <Skeleton className="h-10 w-full" />
-      ) : pools.data ? (
+      ) : (
         <CellStockTable
-          locations={pools.data.locations ?? []}
+          locations={[...(groupLocations ?? []), ...(pools.data?.locations ?? [])]}
           showGroupSubtotal
           stockOnly
+          autoCount={autoCount.data ?? null}
         />
-      ) : null}
+      )}
       <div className="text-xs text-muted-foreground">
         {incoming.length === 0 ? (
           'No incoming SPO'
