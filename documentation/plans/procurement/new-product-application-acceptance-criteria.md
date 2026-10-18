@@ -1,7 +1,8 @@
 # UAC - New Product Application (NEW-PRODUCT-APP)
 
 Card: `CARD-new-product-application-17oct.md`. Plan: `PLAN-new-product-application-17oct.md`.
-Mock: `mockups/new-product-application-v2.html`. Staff side only (Q1 with the owner).
+Mock: `mockups/new-product-application-v4.html` (paper layout, owner OK 18 Oct). Staff and portal (Q1 = portal too).
+v4 (AC-NPA-70..79) supersedes AC-NPA-04's line pickers, AC-NPA-10's required fields and AC-NPA-60's line table.
 Every criterion is checked by a named test (pytest `tests/test_new_product_application*.py`, vitest beside the
 component) or by the browser pass (B).
 
@@ -75,3 +76,48 @@ component) or by the browser pass (B).
 - **AC-NPA-60** Create, edit and view are one document card; the line table scrolls inside its card; usable and
   not clipped at 375 and 1280 (B). Every optional select is clearable; every dropdown is SearchableSelect.
 - **AC-NPA-61** Menu: Procurement Management > New Product Applications, gated by `view` or `create`.
+
+## v4: the paper layout (owner 18 Oct: D1-D4 yes, PQ1 yes)
+
+- **AC-NPA-70** (D3) The write body, staff and portal alike, takes only: `stock_inquiry_id, customer_id,
+  customer_name, project_name, needed_by, remark` and per product `id, proposed_code, description (PRODUCT TYPE),
+  dimension, material, thickness, packing, brand_id, expected_qty`. Any other key (`category_id, base_uom_id,
+  item_type_id, supplier_id, supplier_item_code, cost_price, selling_price, further_description`, line `remark`) is
+  422 naming the field. The applicant never writes cost.
+- **AC-NPA-71** (D1) Several products per application. A product sent with its `id` is updated in place (its
+  images stay); one without `id` is added; a saved product left out is deleted with its image links. An `id` of
+  another application's product is 422. Product numbers follow the body order.
+- **AC-NPA-72** Submit needs at least one product and a PRODUCT TYPE on each; otherwise 422 with one message per
+  product, "Product N: enter the product type." Item group and base UOM are no longer asked for.
+- **AC-NPA-73** Images per product: the applicant (owner of a Draft or Rejected application; 422
+  `new_product_application_locked` while Submitted / Approved, 403 for anyone else) uploads a JPEG, PNG or WebP
+  (anything else 422), copies a file already attached to the application's stock inquiry (links the same file, no
+  second upload; a file not attached to that inquiry is 422), or removes one (unlink only, the file row stays). The
+  portal contact does the same on its own application. The detail lists each product's images (name, url, link id).
+- **AC-NPA-74** (D2) PURCHASING FEEDBACK: a holder of `open_code` saves LEADTIME (free text, one per application)
+  and COST (number >= 0, one per product; empty clears) on an Approved or Completed application (403 without
+  `open_code`, 409 in any other status). Saving stamps who and when, writes an audit row, does not change the status
+  or the approval, and notifies nobody.
+- **AC-NPA-75** Revise clears LEADTIME, every product's COST and the feedback stamp.
+- **AC-NPA-76** (D3) Once a product is linked (Link product), the staff detail shows read-only the linked
+  product's item group, base UOM, selling price (`list_price`) and supplier (primary supplier first, else the oldest
+  supplier row). Nothing is copied into the application.
+- **AC-NPA-77** (D4) Download Excel, staff (anyone who can view the record) and portal (own application only,
+  404 otherwise): one sheet per product named "Product N"; column A labels bold right-aligned, column B values
+  wrapped, thin borders; rows in this order: title NEW PRODUCT APPLICATION, REFF:, DATE: (dd/mm/yyyy, MYT),
+  SALES PERSON:, PRODUCT CODE:, PRODUCT TYPE:, DIMENSION:, MATERIAL:, THICKNESS:, PACKING, BRAND:, IMAGE:,
+  CUSTOMER:, PROJECT:, QTY:, TARGET DELIVERY:, REMARK:, PURCHASING FEEDBACK, COST:, LEADTIME:. A4 portrait, fit to
+  one page. File name `NPA_<YYYYMMDD>_<applicant initials, or the application number when raised on the
+  portal>_<customer> (<code> <product type>) (<code> <product type>).xlsx`, characters a file name cannot hold
+  removed, length capped; the REFF cell holds the same name without `.xlsx`. COST is filled on both sides (PQ1).
+  A value starting with `=`, `+`, `-` or `@` is written as text. The first image of the product sits in the IMAGE
+  row; an image over 40 megapixels or one that cannot be read shows its file name instead.
+- **AC-NPA-78** (PQ1) The portal shows each product's COST, the application's LEADTIME and the linked product's
+  supplier, read-only ("Purchasing fills this after approval." until filled). It never shows item group, base UOM
+  or selling price, and has no feedback route.
+- **AC-NPA-79** (B + vitest) Staff create, edit and view and the portal form and view are the paper sheet: title
+  NEW PRODUCT APPLICATION, bordered label:value rows with the paper's labels, REFF = the NPA number, "Product N of M"
+  blocks with Remove and "+ Add product", PRODUCT TYPE marked required, PURCHASING FEEDBACK at the bottom
+  (read-only to the applicant, editable in place with "Save feedback" for `open_code` on Approved / Completed),
+  OPENED AS per product on staff, "Download Excel" in the gear menu. Labels sit above values under 640 px; nothing
+  scrolls sideways at 375; usable at 1280.

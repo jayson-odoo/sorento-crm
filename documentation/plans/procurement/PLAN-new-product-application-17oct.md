@@ -1,7 +1,9 @@
 # PLAN - New product application (NEW-PRODUCT-APP)
 
-Lane NEW-PRODUCT-APP, size L, cloud. Status: Review. Owner OKed card + mock v3 on 18 Oct (Q1 = portal too); crew PQ1 (b), PQ2 (a). Built: migration,
-staff + portal BE and FE; reviewer round 1 fixed (6b68759f, 34a488d1); browser pass + hand test next.
+Lane NEW-PRODUCT-APP, size L. Status: Build (v4 paper layout, local lane NEW-PRODUCT-APP-L on 18 Oct; v1-v3 flow built
+and reviewed, see "v4" below). Owner OKed card + mock v3 on 18 Oct (Q1 = portal too); crew PQ1 (b), PQ2 (a); owner then
+OKed mock v4 (18 Oct 12:14) with D1-D4 = yes and PQ1 = yes. The cloud lane's v4 commits never reached GitHub; v4 is
+rebuilt from the PR head fbe04604.
 Track: full (migration + new permissions). PR #1769, branch `claude/new-product-application-0u631d`.
 
 Owner 15 Oct: stock inquiry about a new product code -> inquiry responded -> new product application ->
@@ -9,7 +11,7 @@ purchasing opens the product code after receiving the application.
 
 - Behaviour card: `CARD-new-product-application-17oct.md` (the rules; this plan does not restate them).
 - UAC: `new-product-application-acceptance-criteria.md`.
-- Mock: `mockups/new-product-application-v3.html` (v1, v2 kept for the record).
+- Mock: `mockups/new-product-application-v4.html` (v1-v3 kept for the record).
 
 ## Design (simplest thing)
 
@@ -117,3 +119,99 @@ Portal, base `/api/v1/public/portal` (X-Portal-Token, grant `new_product_applica
 `/new-product-application/lookups/{item-groups|uoms|brands|item-types}?q=` (`[{id, code, name}]`),
 `/new-product-application/customers?q=`. Portal lines have NO supplier_*/cost_price keys and refuse them (422)
 while `PORTAL_SUPPLIER_AND_COST` is off (crew PQ1 (b)).
+
+## v4: the paper layout (owner 18 Oct: D1-D4 yes, PQ1 yes; flow unchanged)
+
+Source: mock `mockups/new-product-application-v4.html` (owner "Ok" 18 Oct 12:14) and crew's masked layout spec of the
+company's paper NPA form (outside the repo; no value from it is committed). UAC: AC-NPA-70..79. Rebuilt locally from
+fbe04604 because the cloud lane's v4 commits never reached GitHub; the design follows that lane's posted plan
+(PR #1769 comments, 18 Oct 04:21 / 04:24 / 04:36).
+
+### Field map (paper label -> column; nothing renamed in the DB)
+
+| Paper row | Column | Who writes |
+|---|---|---|
+| REFF | `application_no` (screen); file-name stem (Excel) | system |
+| DATE | `created_at` (MYT) | system |
+| SALES PERSON | applicant (staff user) / contact (portal-raised) | system |
+| STOCK INQUIRY (app only) | `stock_inquiry_id` | applicant |
+| per product: PRODUCT CODE | line `proposed_code` | applicant |
+| PRODUCT TYPE * | line `description` (the only required field) | applicant |
+| DIMENSION / MATERIAL / THICKNESS / PACKING | line `dimension` / `material` / `thickness` / `packing` (NEW, text) | applicant |
+| BRAND | line `brand_id` (clearable picker) | applicant |
+| IMAGE | `entity_attachment_links` rows, `entity_type = "new_product_application_line"` | applicant |
+| QTY | line `expected_qty` | applicant |
+| OPENED AS (app only) | line `opened_product_id` / `closed_reason` (unchanged) | purchasing (`open_code`) |
+| CUSTOMER / PROJECT / TARGET DELIVERY / REMARK | `customer_id`+`customer_name` / `project_name` / `needed_by` / `remark` | applicant |
+| PURCHASING FEEDBACK: COST | line `cost_price` (one per product) | purchasing (`open_code`) |
+| PURCHASING FEEDBACK: LEADTIME | `lead_time` (NEW, text, one per application) | purchasing (`open_code`) |
+
+D3: `category_id`, `base_uom_id`, `item_type_id`, `supplier_id`, `supplier_item_code`, `selling_price`,
+`further_description` and line `remark` stay in the DB (nullable, no drop) but leave every write body. Item group,
+base UOM, selling price and supplier are set in AutoCount when purchasing opens the code, so they come from the
+product linked at purchasing's step (`services/new_product_application_service.py:466` `link_line`): `Product.category_id`,
+`base_uom_id`, `list_price` are NOT NULL (`models/product.py:241,269,280`); supplier = the product's
+`product_suppliers` row with `is_primary_supplier` first, then oldest (`models/procurement.py:96-116`). Read-only.
+
+### Data (migration `npa_0002_paper_layout`, parent `npa_0001_new_product_apps`, additive, `IF NOT EXISTS`)
+
+- `new_product_application_lines`: `dimension`, `material`, `thickness`, `packing` TEXT NULL.
+- `new_product_applications`: `lead_time` TEXT NULL, `feedback_by` VARCHAR(100) -> users SET NULL (same as
+  `decided_by`, `models/new_product_application.py:85`), `feedback_at` TIMESTAMP NULL.
+- Same idempotent DDL to `crew/state/migrations/NEW-PRODUCT-APP-L.sql` for the shared dev DB.
+
+### BE
+
+- Write schema (`schemas/new_product_application.py:15,31`, shared staff + portal): header `stock_inquiry_id,
+  customer_id, customer_name, project_name, needed_by, remark`; line `id?, proposed_code, description, dimension,
+  material, thickness, packing, brand_id, expected_qty`; `extra="forbid"` so any other key is 422 naming the field.
+- `_apply` (`svc :221`) keeps lines by id (update / insert / delete-with-image-links), renumbers `line_no` by body order;
+  a line id of another application is 422.
+- `validate_submit` (`svc :326`): at least one product; each has `description` -> "Product N: enter the product type."
+- `save_feedback` + `PUT /{id}/feedback` `{lead_time?, lines?: [{id, cost_price}]}`: `open_code`, Approved or Completed
+  (409 else), stamps `feedback_by/at`, audited, no status change, no notification.
+- `revise` (`svc :399`) clears `lead_time`, every `cost_price`, `feedback_by/at`.
+- Images: `POST /{id}/lines/{line_id}/images` (multipart, jpeg/png/webp only) reusing
+  `entity_attachment_service.create_response_attachment` (`:613`, gains an `uploader_kind` kwarg for the portal);
+  `POST /{id}/lines/{line_id}/images/copy {attachment_id}` links an attachment already linked to the application's
+  stock inquiry (`link_existing_attachment` `:179`); `DELETE /{id}/lines/{line_id}/images/{link_id}` unlinks only
+  (attachment row kept, as `delete_inquiry_attachment`). Owner only, unlocked statuses only (`assert_unlocked`).
+  Portal: same three under `BASE/{id}/lines/{line_id}/images...`, own application only.
+- `serialize_detail` (`svc :779`): line gains `dimension, material, thickness, packing, images[]
+  ({link_id, attachment_id, filename, url, content_type})`, and from the linked product `opened_category_name,
+  opened_base_uom_name, opened_list_price, opened_supplier_name`; header gains `lead_time, feedback_by_name,
+  feedback_at`. Portal (PQ1): `cost_price`, `lead_time`, `opened_supplier_name` shown; item group / UOM / list price
+  not sent. `PORTAL_SUPPLIER_AND_COST` and `PORTAL_HIDDEN_LINE_FIELDS` (`svc :70,:82`) go.
+- `npa_xlsx.py` (new, `services/`): `to_xlsx(db, app) -> (bytes, filename)`; openpyxl like
+  `scm/proforma_invoice_service.py:2378` (reuse `_xlsx_safe_text` `:2365`); one sheet per product ("Product N"),
+  rows in the paper's order (UAC AC-NPA-77); first image embedded via Pillow, capped at 40 MP, else the file name.
+  Routes `GET /{id}/download` (whoever can view) and portal `GET BASE/{id}/download`, `Response` +
+  `content_disposition` like `api/v1/scm/proforma_invoices.py:368-382`.
+- Unused lookups go: staff `GET /item-types`, portal `lookups/{item-groups|uoms|item-types}` (brands stays).
+
+### FE
+
+- One sheet component `components/common/NewProductApplicationSheet.tsx` (+ `ProductBlock`) replaces
+  `NewProductApplicationLines.tsx`; used by the staff Form + Detail and the portal form, view and edit identical
+  (labels swap to inputs in place). Bordered 2-column label:value table; labels stack above values under 640 px.
+- Staff detail: OPENED AS row per product (existing `OpenedAs`, `NewProductApplicationDetail.tsx:141-290`) plus a
+  read-only "From AutoCount" line once linked; PURCHASING FEEDBACK inline editable for `open_code` on
+  Approved / Completed with "Save feedback"; gear item "Download Excel".
+- Images: the IMAGE row lists thumbnails + "Add image" (upload) + "Copy from the inquiry" (picker over the inquiry's
+  attachments). On a not-yet-saved draft the picks are staged and sent right after the create returns line ids.
+- Portal form/view: same sheet, COST / LEADTIME / supplier read-only (PQ1), Download Excel.
+- Download through `lib/save-blob.ts` + `filenameFromContentDisposition` (as `proformaInvoiceService.ts:704`).
+
+### Test list v4 (tester, red first; coder may not weaken assertions)
+
+pytest `tests/test_new_product_application.py` + `tests/test_portal_new_product_application.py`: one test per
+AC-NPA-70..77 (refused keys per field, lines kept by id + images survive an edit, other-application line id 422,
+submit message, feedback permission/status/stamps/no status change, revise clears feedback, images type/lock/owner/
+copy-only-from-own-inquiry/unlink keeps attachment, D3 read-only values + primary supplier order, portal PQ1 keys
+present and staff-only keys absent, xlsx sheet count/row labels/REFF/file name/formula-safe/no image fallback,
+portal download own-only 404); `tests/test_migration_npa_0002_paper_layout.py` (id <= 32, one head, every new model
+column in the DDL). Existing tests that send removed keys are rewritten to the v4 contract by the tester.
+vitest: sheet labels + order, Product N of M add/remove, PRODUCT TYPE required marker, no cost input for the
+applicant, feedback editable only for open_code on Approved/Completed, portal shows cost/lead time/supplier read-only,
+staged images on a new draft, Download Excel calls the service.
+Global guards: `test_schema_uuid_id_principle.py`, `test_list_pagination_limit.py`, `test_company_scope.py`.
