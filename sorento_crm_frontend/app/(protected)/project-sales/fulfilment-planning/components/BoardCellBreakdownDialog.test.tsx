@@ -17,6 +17,7 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -4198,3 +4199,28 @@ describe('STOCK-STATUS round 6 (AC-35): the cell Stock tab shows AutoCount\'s fi
   });
 });
 
+
+describe('STOCK-GROUPBY (AC-20): the cell Stock tab carries the Group by bar', () => {
+  it('AC-20 with the AutoCount read the Stock tab shows the group-by-bar; without it, none', async () => {
+    useStockStatusMock.mockReturnValue({
+      data: {
+  product_id: 'prod-1',
+  item_code: 'ITEM-1',
+  locations: [{ warehouse_id: 'wh-BRW-BB', warehouse_code: 'BRW-BB', warehouse_name: 'BRW-BB', is_active: true, on_hand: 5, so_qty: 0, po_qty: 0, spo_qty: 0, forecast: 5 }],
+  totals: { on_hand: 5, so_qty: 0, po_qty: 0, spo_qty: 0, forecast: 5, incoming_pl: 0, forecast_incl_pl: 5 },
+  incoming_pl: [],
+  sales_orders: [],
+  purchase_orders: [],
+  spos: [],
+},
+      isLoading: false,
+      isError: false,
+    });
+    renderDialog([demand()], { 'BRW-BB': '40' });
+    expect(await screen.findByTestId('group-by-bar')).toBeInTheDocument();
+    cleanup();
+    useStockStatusMock.mockReturnValue({ data: undefined, isLoading: false, isError: true });
+    renderDialog([demand()], { 'BRW-BB': '40' });
+    expect(screen.queryByTestId('group-by-bar')).not.toBeInTheDocument();
+  });
+});
