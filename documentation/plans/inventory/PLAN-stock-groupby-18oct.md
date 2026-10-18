@@ -173,6 +173,35 @@ Customer > Project with BRW-BB opened, (3) Customer > Project with Location remo
 order (due / expected date, SVC:254, 295); with Location not picked, a line's location moves to its muted second line;
 the first column's heading names the first level.
 
-## 4. Slices
+## 4. Slices (build starts only after the owner OKs mock v1)
 
-(after the owner OKs the mock)
+UAC: `stock-groupby-18oct-acceptance-criteria.md` (AC-1 to AC-23). Frontend only, no backend, no migration.
+Lead pattern: tester writes every red test first (one `test(red):` commit), coder makes them green, reviewer once.
+
+- S1 Shared capability (`components/common/group-by/`): a pure `groupByLevels(lines, levels, options)` returning a tree
+  of groups (key, label, count, sums, children or lines; `No ...` groups last; exact decimal sums via minor units as
+  `autoCountStock.ts` does) and a `GroupByMenu` (DropdownMenu + `DropdownMenuCheckboxItem`, level numbers, chip with x,
+  Expand all / Collapse all). AC-3 to AC-7, AC-11, AC-15, AC-16.
+- S2 The stock table: `stockLinesOf(read, locationOrder)` next to `withAutoCount` (`_shared/lib/autoCountStock.ts`), the
+  grouped rendering inside `CellStockTable` (Location first keeps today's rows, sets and subtotals; otherwise group rows,
+  then lines), localStorage `cellStockTable.groupBy`, the dialog search and jumps in grouped mode. AC-1, AC-2, AC-8 to
+  AC-10, AC-12 to AC-14, AC-17 to AC-19, AC-21, AC-22.
+- S3 The four screens: no caller change expected (each already passes the read); one render check per screen. AC-20, AC-23.
+- S4 Reviewer, kill test, browser pass 1280 + 375 on the stand-alone page and the FP cell dialog, hand-test script.
+
+### Test list (for the tester)
+
+- `components/common/group-by/groupByLevels.test.ts`: one level; three levels (CKS4238-shaped fixture: BRW-BB ->
+  Customer B -> Project 2 / Project 3); `No ...` last; A to Z case-insensitive; Type order; counts; decimal sums
+  (`0.1 + 0.2` style); top-level sums equal totals for every level list; empty levels = flat lines.
+- `components/common/group-by/GroupByMenu.test.tsx`: six ticks in order; add appends; remove shifts; level numbers; chip
+  text and x; no x on Location alone; `Group by: none`.
+- `.../fulfilment-planning/components/CellStockTable.groupBy.test.tsx`: default unchanged (location row opens the
+  drill-down); Location > Customer > Project rows and figures; Customer first (heading, `No customer` last, Total
+  unchanged, Incoming PL row); set subtotal row opens the set's groups; Expand all / Collapse all; line links and muted
+  line; negative red; blank Available on group rows; no bar without the read; localStorage read, write, invalid and
+  throwing storage; dialog search narrows lines without changing sums; jump opens the target location's groups.
+- `_shared/lib/autoCountStock.test.ts` (extend): `stockLinesOf` builds one line per document and per non-zero on hand,
+  no Incoming PL line, values per AC-2.
+- One render check each: `StockStatusPageClient.test.tsx`, `OrderInquiryStockGrid.test.tsx`,
+  `QuotationStockChip.test.tsx` (bar on the AutoCount mount only), `BoardCellBreakdownDialog.test.tsx`.
