@@ -1527,21 +1527,16 @@ class ProjectOrderInquiryService:
                 # AC-G13: the line's rows already are its plan; a Confirm with nothing new for
                 # it leaves them as they are, and its change raises no separate notice. They
                 # are filed under this revision, so a later board Reject retires them (AC-G19).
-                for row in self.db.query(OrderInquiryRow).filter(
-                    OrderInquiryRow.order_inquiry_id == inquiry.id,
-                    OrderInquiryRow.so_line_id == line.id,
-                    OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK, IV_CANCEL_BALANCE)),
-                    OrderInquiryRow.state != INQUIRY_CANCELLED,
-                ):
-                    if not row.redirected_to_pool:
-                        row.supply_decision_id = decision.id
+                self._refile_rows(inquiry, line, decision)
                 if str(line.id) in settle_in_place:
                     settled_in_place.append(str(line.id))
                 continue
             if (kept_splits.get(str(line.id)) or {}).get("own_rows"):
                 # P2 (a): AutoCount moved on from a plan with kept New-line rows; those rows
                 # stand and `_keep_split_rows` moves the line's own row, never the netting
-                # (which would restate every row of the line onto the new figures).
+                # (which would restate every row of the line onto the new figures). The rows
+                # that stand are filed under this revision too (AC-G19).
+                self._refile_rows(inquiry, line, decision)
                 if str(line.id) in settle_in_place:
                     settled_in_place.append(str(line.id))
                 continue
@@ -6543,6 +6538,18 @@ class ProjectOrderInquiryService:
             handled.update(str(e["line"].id) for e in fresh)
         return handled
 
+    def _refile_rows(self, inquiry: OrderInquiry, line: Any, decision: Any) -> None:
+        """File a line's live OI rows under this revision, as a carried line's are: a later
+        board Reject (`retire_rows_for_dropped_lines`) retires only this revision's rows."""
+        for row in self.db.query(OrderInquiryRow).filter(
+            OrderInquiryRow.order_inquiry_id == inquiry.id,
+            OrderInquiryRow.so_line_id == line.id,
+            OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK, IV_CANCEL_BALANCE)),
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+        ):
+            if not row.redirected_to_pool:
+                row.supply_decision_id = decision.id
+
     def _row_can_move(self, row: OrderInquiryRow) -> bool:
         """The pure split's guards on one live row a split moves off or onto: an ORDER row
         (raised, partly linked or placed), not redirected, not refused, no CS reserve link,
@@ -6570,14 +6577,17 @@ class ProjectOrderInquiryService:
         target: OrderInquiryRow,
         qty: Decimal,
         po_line_ids: Optional[set] = None,
+        skip_po_line_ids: Optional[set] = None,
     ) -> Decimal:
-        """Hand up to `qty` of `source`'s links (only those on `po_line_ids` when given) to
-        `target`, latest-dated document first like `_split_row`. Returns what moved."""
+        """Hand up to `qty` of `source`'s links (only those on `po_line_ids` when given, none
+        on `skip_po_line_ids`) to `target`, latest-dated document first like `_split_row`.
+        Returns what moved."""
         links = sorted(
             (
                 link
                 for link in self._links_of(source.id)
-                if po_line_ids is None or str(link.po_line_id or "") in po_line_ids
+                if (po_line_ids is None or str(link.po_line_id or "") in po_line_ids)
+                and str(link.po_line_id or "") not in (skip_po_line_ids or set())
             ),
             key=lambda link: (
                 self._link_expected_date(link) or date.max,
@@ -6637,6 +6647,7 @@ class ProjectOrderInquiryService:
           is declined (AC-G12): the origin keeps it and `_kept_split_needs` reads it so.
         Then an origin still linked beyond the splits that stay on it hands that surplus to
         the rows its moves landed on (the links rode on another of its rows)."""
+        from app.models.project_so import SOLineSplit
         from app.services.project_line_split_service import LineSplitService
 
         moved_by_origin = self.db.info.setdefault(SPLIT_MOVED_KEY, {})
@@ -6690,6 +6701,7 @@ class ProjectOrderInquiryService:
                 if link.po_line_id
             }
             landed: List[Tuple[OrderInquiryRow, Decimal]] = []
+            declined: set = set()
             for move in sorted(moves, key=lambda m: m["split"].seq, reverse=True):
                 split, target_id = move["split"], move["target"]
                 qty = _dec(split.qty)
@@ -6702,8 +6714,28 @@ class ProjectOrderInquiryService:
                     usable, holder = _one(move["from"])
                     if not usable or holder is None:
                         continue
-                    room = max(_dec(target.qty) - _linked(target), _ZERO)
-                    self._move_link_qty(holder, target, min(qty, room), documents)
+                    room = min(qty, max(_dec(target.qty) - _linked(target), _ZERO))
+                    room -= self._move_link_qty(holder, target, room, documents)
+                    if room > _ZERO:
+                        # None of the origin's own rows hold that document any more: the
+                        # split's links are those on the line it sat on that no other line's
+                        # plan still sitting there brought.
+                        others = {
+                            str(link.po_line_id)
+                            for other in sorted(
+                                {
+                                    str(s.so_line_id)
+                                    for s in self.db.query(SOLineSplit).filter(
+                                        SOLineSplit.sits_on_line_id == move["from"]
+                                    )
+                                }
+                                - {origin, move["from"]}
+                            )
+                            for row in _rows(other)
+                            for link in self._links_of(row.id)
+                            if link.po_line_id
+                        }
+                        self._move_link_qty(holder, target, room, None, others)
                     continue
                 if move["date"] is not None:
                     at = [r for r in candidates if r.delivery_date == move["date"]]
@@ -6717,6 +6749,8 @@ class ProjectOrderInquiryService:
                     default=None,
                 )
                 if holder is None or not self._row_can_move(holder):
+                    if holder is not None:
+                        declined.add(holder.id)
                     continue
                 if target is not None and (
                     (target.item_code or None, target.stock_location or None)
@@ -6765,11 +6799,15 @@ class ProjectOrderInquiryService:
                     landed.append((landing, part - carried))
             # Links the origin holds beyond what stays on it rode on another of its rows: they
             # follow the qty that moved without them.
-            surplus = sum((_linked(r) for r in _rows(origin)), _ZERO) - sum(
+            # Only rows that can move give links, never a declined split's row (AC-G19).
+            givers = [
+                r for r in _rows(origin) if r.id not in declined and self._row_can_move(r)
+            ]
+            surplus = sum((_linked(r) for r in givers), _ZERO) - sum(
                 (qty for qty, _when in staying), _ZERO
             )
             for landing, short in landed:
-                for row in sorted(_rows(origin), key=lambda r: -_linked(r)):
+                for row in sorted(givers, key=lambda r: -_linked(r)):
                     if surplus <= _ZERO or short <= _ZERO:
                         break
                     room = max(_dec(landing.qty) - _linked(landing), _ZERO)
