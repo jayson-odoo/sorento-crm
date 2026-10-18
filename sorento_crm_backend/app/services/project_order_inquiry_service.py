@@ -1362,6 +1362,9 @@ class ProjectOrderInquiryService:
         self._apply_split_links(inquiry, decision, buy_lines, line_changes=line_changes)
         split_line_ids = self._apply_pure_splits(inquiry, decision, buy_lines)
         settled_in_place.extend(sorted(split_line_ids))
+        # OI-LINE-SPLIT (UAC AC-G10): a split line's rows follow its plan. What its splits
+        # keep on it (not moved onto another line) is its need, never netted as a cancel.
+        kept_splits = self._kept_split_needs(buy_lines, skip=split_line_ids)
         for entry in buy_lines:
             if entry.get("line") is not None and str(entry["line"].id) in split_line_ids:
                 continue
@@ -1424,7 +1427,11 @@ class ProjectOrderInquiryService:
                 settled_in_place.append(str(local_line.id))
                 continue
             line = entry["line"]
-            need = _dec(entry.get("buy_qty"))
+            need = (
+                kept_splits[str(line.id)]["need"]
+                if str(line.id) in kept_splits
+                else _dec(entry.get("buy_qty"))
+            )
             carried = bool(entry.get("carried"))
             # Is THIS line's Buy an order back (part 2 section 4b)? Only then does this
             # loop own the line's `ORDER_BACK` rows; on any other line such a row is a
@@ -2150,6 +2157,7 @@ class ProjectOrderInquiryService:
                     }
                 )
 
+        self._keep_split_rows(inquiry, decision, kept_splits)
         self._retire_uncovered_rows(
             inquiry,
             decision,
@@ -2493,34 +2501,7 @@ class ProjectOrderInquiryService:
                 ] or ["QTY_CHANGE"]
             return True
 
-        links = self._links_of(row.id)
-        linked = sum((_dec(link.qty) for link in links), _ZERO)
-        if linked > need:
-            # Latest arrival first: the row keeps the cover that lands soonest.
-            by_arrival = sorted(
-                links,
-                key=lambda link: (
-                    self._link_expected_date(link) or date.max,
-                    link.linked_at or datetime.min,
-                ),
-                reverse=True,
-            )
-            giving_back: List[OrderInquiryLink] = []
-            for link in by_arrival:
-                excess = linked - need
-                if excess <= _ZERO:
-                    break
-                qty = _dec(link.qty)
-                if excess >= qty:
-                    giving_back.append(link)
-                    linked -= qty
-                    continue
-                # Only the EXCESS goes back, not the whole placement: the buyer arranged
-                # that quantity on that document and the line still wants most of it.
-                link.qty = qty - excess
-                linked = need
-            if giving_back:
-                self._remove_links(row, giving_back)
+        linked = self._trim_links(row, need)
 
         # Did the CONFIRMATION actually restate this line, or is it only riding along
         # because a different line in the same order was named (review of PR #471, B2)?
@@ -2610,6 +2591,39 @@ class ProjectOrderInquiryService:
                 row, kind="settled", was=handover_was, actor_user_id=actor_user_id
             )
         return True
+
+    def _trim_links(self, row: OrderInquiryRow, need: Decimal) -> Decimal:
+        """Give back the links a row holds above `need`, latest arrival first (the row keeps
+        the cover that lands soonest); returns what it still holds."""
+        links = self._links_of(row.id)
+        linked = sum((_dec(link.qty) for link in links), _ZERO)
+        if linked > need:
+            # Latest arrival first: the row keeps the cover that lands soonest.
+            by_arrival = sorted(
+                links,
+                key=lambda link: (
+                    self._link_expected_date(link) or date.max,
+                    link.linked_at or datetime.min,
+                ),
+                reverse=True,
+            )
+            giving_back: List[OrderInquiryLink] = []
+            for link in by_arrival:
+                excess = linked - need
+                if excess <= _ZERO:
+                    break
+                qty = _dec(link.qty)
+                if excess >= qty:
+                    giving_back.append(link)
+                    linked -= qty
+                    continue
+                # Only the EXCESS goes back, not the whole placement: the buyer arranged
+                # that quantity on that document and the line still wants most of it.
+                link.qty = qty - excess
+                linked = need
+            if giving_back:
+                self._remove_links(row, giving_back)
+        return linked
 
     def _restate_product(
         self,
@@ -5589,6 +5603,164 @@ class ProjectOrderInquiryService:
         # the confirmation.
         self._drop_suggested_links(retired_this_pass)
 
+    def _kept_split_needs(
+        self, buy_lines: Sequence[Dict[str, Any]], *, skip: set
+    ) -> Dict[str, Dict[str, Any]]:
+        """OI-LINE-SPLIT (UAC AC-G10, crew ruling (a)): per Buy line of this Confirm whose
+        splits act, what its splits keep on purchasing's side: every non-cancel split less
+        what `_apply_split_links` moved onto another line (a split on New line, or a move the
+        engine declined, stays the origin's own), plus AutoCount's extra (AC-G3). That total
+        is the line's need, so the netting never turns a split into a CANCEL BALANCE.
+
+        Only a line bought whole (its Buy is its open qty): a line partly drawn from stock is
+        left to the netting as before. Returns `{line id: {"need", "kept", "cancels", ...}}`,
+        `kept` as `(split, qty kept, line it sits on)`."""
+        from app.services.project_line_split_service import LineSplitService, line_plans
+
+        entries = {
+            str(entry["line"].id): entry
+            for entry in buy_lines
+            if entry.get("line") is not None
+            and not entry.get("carried")
+            and entry.get("origin") != "local"
+            and not entry.get("order_back")
+            and str(entry["line"].id) not in skip
+        }
+        if not entries:
+            return {}
+        service = LineSplitService(self.db)
+        acting = service.acting_origin_ids(entries)
+        if not acting:
+            return {}
+        orders = sorted(
+            {str(entries[line_id]["line"].project_sales_order_id) for line_id in acting}
+        )
+        facts = service._facts_for(ProjectSalesOrderLine.project_sales_order_id.in_(orders))
+        stored = [split for f in facts.values() for split in f.splits]
+        sits = service.effective_sits_on(stored)
+        plans = line_plans(facts, sits, {target for target in sits.values() if target})
+        moved = self.db.info.get(SPLIT_MOVED_KEY) or {}
+        out: Dict[str, Dict[str, Any]] = {}
+        for line_id in sorted(acting):
+            f = facts.get(line_id)
+            if f is None or _dec(entries[line_id].get("buy_qty")) != f.now_qty:
+                continue
+            taken = (moved.get(line_id) or {}).get("splits") or {}
+            kept: List[Tuple[Any, Decimal, Optional[str]]] = []
+            cancels = _ZERO
+            for split in f.splits:
+                if split.is_cancel:
+                    cancels += _dec(split.qty)
+                    continue
+                left = _dec(split.qty) - _dec(taken.get(str(split.id)))
+                if left > _ZERO:
+                    kept.append((split, left, sits.get(str(split.id))))
+            extra = plans[line_id].extra_qty if line_id in plans else None
+            out[line_id] = {
+                "need": sum((qty for _s, qty, _on in kept), _ZERO) + (extra or _ZERO),
+                "kept": kept,
+                "cancels": cancels,
+                "line": entries[line_id]["line"],
+                "entry": entries[line_id],
+            }
+        return out
+
+    def _keep_split_rows(
+        self, inquiry: OrderInquiry, decision: Any, kept_splits: Mapping[str, Dict[str, Any]]
+    ) -> None:
+        """OI-LINE-SPLIT (UAC AC-G10): after the netting settled each split line to its kept
+        need, its rows are cut to the plan: the line's live ORDER row keeps the split that
+        stays on the line (and AutoCount's extra) at that split's date, and every other kept
+        split becomes a row of the same line at its own date, its links following the
+        quantity (`_split_row`). An explicit cancel split is purchasing's CANCEL BALANCE."""
+        for line_id, plan in kept_splits.items():
+            line = plan["line"]
+            kept = plan["kept"]
+            carrier = next((k for k in kept if k[2] == line_id), kept[0] if kept else None)
+            rest = [k for k in kept if k is not carrier]
+            rest_total = sum((qty for _s, qty, _on in rest), _ZERO)
+            live = [
+                row
+                for row in self.db.query(OrderInquiryRow).filter(
+                    OrderInquiryRow.order_inquiry_id == inquiry.id,
+                    OrderInquiryRow.so_line_id == line.id,
+                    OrderInquiryRow.verb == IV_ORDER,
+                    OrderInquiryRow.state.in_(
+                        (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED, INQUIRY_PLACED)
+                    ),
+                )
+                if not row.redirected_to_pool
+                and not self._received_documents_for(self._links_of(row.id))
+            ]
+            # The row this Confirm wrote first, else the biggest: it holds the line's need.
+            live.sort(
+                key=lambda row: (
+                    str(row.supply_decision_id) != str(decision.id),
+                    -_dec(row.qty),
+                )
+            )
+            source = next((row for row in live if _dec(row.qty) >= rest_total), None)
+            if source is not None and rest:
+                keep = _dec(source.qty) - rest_total
+                # The row keeps the cover of what stays on it; the rest of its links go
+                # back, as when the line itself is cut (the kept rows are asked fresh).
+                self._trim_links(source, keep)
+                placed = source.state == INQUIRY_PLACED and not self._links_of(source.id)
+                self._split_row(
+                    source,
+                    keep,
+                    [
+                        {"line": line, "buy_qty": qty, "required_date": split.delivery_date}
+                        for split, qty, _on in rest
+                    ],
+                    decision,
+                )
+                if placed:
+                    # Purchasing placed it: a split never sends it back to raised.
+                    source.state = INQUIRY_PLACED
+            if (
+                source is not None
+                and carrier is not None
+                and carrier[0].delivery_date is not None
+                and source.delivery_date != carrier[0].delivery_date
+            ):
+                source.previous_delivery_date = (
+                    source.previous_delivery_date or source.delivery_date
+                )
+                source.delivery_date = carrier[0].delivery_date
+            if plan["cancels"] > _ZERO:
+                told = sum(
+                    (
+                        _dec(row.qty)
+                        for row in self.db.query(OrderInquiryRow).filter(
+                            OrderInquiryRow.order_inquiry_id == inquiry.id,
+                            OrderInquiryRow.so_line_id == line.id,
+                            OrderInquiryRow.verb == IV_CANCEL_BALANCE,
+                            OrderInquiryRow.state != INQUIRY_CANCELLED,
+                        )
+                    ),
+                    _ZERO,
+                )
+                if told < plan["cancels"]:
+                    entry = plan["entry"]
+                    self.db.add(
+                        OrderInquiryRow(
+                            company_id=inquiry.company_id,
+                            order_inquiry_id=inquiry.id,
+                            so_line_id=line.id,
+                            item_code=entry.get("item_code") or None,
+                            qty=plan["cancels"] - told,
+                            delivery_date=entry.get("required_date"),
+                            stock_location=entry.get("stock_location"),
+                            verb=IV_CANCEL_BALANCE,
+                            note="Split: cancel this qty",
+                            supply_decision_id=decision.id,
+                            state=INQUIRY_RAISED,
+                            ack_state=ACK_AWAITING,
+                        )
+                    )
+            self.db.flush()
+
     def _apply_pure_splits(
         self, inquiry: OrderInquiry, decision: Any, buy_lines: Sequence[Dict[str, Any]]
     ) -> set:
@@ -5934,7 +6106,13 @@ class ProjectOrderInquiryService:
                     ack_state=source.ack_state,
                     acknowledged_by=source.acknowledged_by,
                     acknowledged_at=source.acknowledged_at,
-                    note=f"Split from line {source_no}" if source_no is not None else "Split",
+                    note=(
+                        "Split"
+                        if source_no is None
+                        else f"Split of line {source_no}"
+                        if str(entry["line"].id) == str(source.so_line_id)
+                        else f"Split from line {source_no}"
+                    ),
                 )
                 if when != source.delivery_date:
                     # The quantity moved date too: the Was / Now columns say from what, and
@@ -5979,7 +6157,12 @@ class ProjectOrderInquiryService:
             for e in fresh
             if line_nos.get(str(e["line"].id)) is not None
         )
-        stamp = f"Split: {_qty_str(_dec(source.qty) - keep)} moved to line {moved_to}"
+        stamp = (
+            # AC-G10: a split kept on its own line at its own date.
+            f"Split: {_qty_str(_dec(source.qty) - keep)} kept at its own dates"
+            if all(str(e["line"].id) == str(source.so_line_id) for e in fresh)
+            else f"Split: {_qty_str(_dec(source.qty) - keep)} moved to line {moved_to}"
+        )
         source.note = f"{source.note}; {stamp}" if source.note else stamp
         source.qty = keep
         source.supply_decision_id = decision.id

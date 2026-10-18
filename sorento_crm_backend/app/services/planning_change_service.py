@@ -3807,6 +3807,13 @@ def _oi_demand_rows(
         and r.project_line_id
         and str(r.project_line_id) not in settled
     ]
+    # OI-LINE-SPLIT (UAC AC-G10, crew ruling (a)): a line whose splits act has its cut
+    # explained by them (a split moved, kept at its own date, or an explicit cancel split
+    # the confirm writes itself), so no split is ever netted into a CANCEL BALANCE here.
+    from app.services.project_line_split_service import LineSplitService
+
+    split_line_ids = LineSplitService(db).acting_origin_ids(qty_down_line_ids)
+    qty_down_line_ids = [i for i in qty_down_line_ids if i not in split_line_ids]
     cancellable_by_line: Dict[str, Decimal] = defaultdict(lambda: _ZERO)
     if qty_down_line_ids:
         held_query = db.query(OrderInquiryRow).filter(
@@ -3887,12 +3894,10 @@ def _oi_demand_rows(
                 counts.get("DELAY" if r.kind == "delayed" else "ADVANCE", 0) + 1
             )
         elif r.kind == "qty_down":
+            if str(r.project_line_id) in split_line_ids:
+                continue
             from_qty = _dec((r.from_json or {}).get("qty"))
             to_qty = _dec((r.to_json or {}).get("qty"))
-            # OI-LINE-SPLIT: a line whose split moved qty to another line never reaches
-            # here - its one live row settles in place (`_split_row` re-reads a placed
-            # row with no link as raised, and a received-link redirect joins the settled
-            # lines too), so nothing it moved is netted as a cancel.
             drop = min(from_qty - to_qty, cancellable_by_line[str(r.project_line_id)])
             if drop <= _ZERO:
                 continue
