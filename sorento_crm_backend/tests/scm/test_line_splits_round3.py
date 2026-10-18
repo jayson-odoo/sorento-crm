@@ -866,18 +866,26 @@ def test_review_a_plain_re_confirm_after_the_batch_confirm_changes_nothing(api, 
     assert resent == [], ("no handover for a plan the batch Confirm already told", resent)
 
 
-def test_review_a_split_saved_after_the_confirm_is_checked_against_the_current_base(api, emails):
-    """After the Confirm that applied it, 480's open qty is 14: the plan is applied (the FE's
-    after-Confirm shape reads split_state "applied"), and a new save is checked against 14,
-    never the old 417 (a 417 plan saved again would act again on the next Confirm)."""
+def _applied_480(s, remark_14=""):
+    """480's splits as the owner's Confirm applied them (14 own, 236 + 167 on 608)."""
+    return {"line_id": _on(s, 480), "splits": [
+        _sp(14, D_480_NEW, on=_on(s, 480), remark=remark_14),
+        _sp(236, D_608, on=_on(s, 608)),
+        _sp(167, D_167, on=_on(s, 608)),
+    ]}
+
+
+def test_review_after_the_confirm_the_applied_plan_re_saves_and_a_14_plan_is_accepted(api, emails):
+    """After the Confirm that applied it, 480's plan is applied (the FE's after-Confirm shape
+    reads split_state "applied"). Re-saving that APPLIED plan (its splits still add up to the
+    stored split base 417) is accepted (lead-signed change: it was refused against 14), and a
+    new plan made against the current base 14 is accepted too."""
     s = _seed(api)
     _save(s, _owner_plan())
     _confirm_batch(s, emails)
     assert _line(_get(s), s, 480)["split_state"] == "applied", _line(_get(s), s, 480)
-    old_plan = {"line_id": _on(s, 480), "splits": [
-        _sp(14, D_480_NEW, on=_on(s, 480)), _sp(236, D_608, on=None), _sp(167, D_167, on=None)]}
-    r = _put(s, [old_plan])
-    assert r.status_code == 422, ("a 417 plan is refused: the current base is 14", r.status_code, r.text)
+    r = _put(s, [_applied_480(s)])
+    assert r.status_code == 200, ("the applied plan re-saves", r.status_code, r.text)
     r = _put(s, [{"line_id": _on(s, 480), "splits": [
         _sp(10, D_480_NEW, on=_on(s, 480)), _sp(4, D_608, on=None)]}])
     assert r.status_code == 200, ("a 14 plan is accepted", r.text)
