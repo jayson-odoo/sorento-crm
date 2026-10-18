@@ -578,26 +578,14 @@ def _held_cancels(s, no):
             if state != INQUIRY_CANCELLED]
 
 
-#: Lead ruling (reviewer S3, 19 Oct): the ONE CANCEL BALANCE of the declined 236 sits on a
-#: row purchasing can still cancel: on the target 608 while its document is open (placed with
-#: no link), on the origin 480's row holding the 236 when 608's document is received in full.
-#: The email and the Excel print that row with no line of its own (QTY 236, its date, item and
-#: location only), so WHICH line holds it is read off the worklist; they are held to printing
-#: it exactly once.
-CANCEL_ON = {"target_placed_no_link": 608, "target_received_in_full": 480}
-
-
 @pytest.mark.parametrize("case", ["target_placed_no_link", "target_received_in_full"])
 def test_g19_a_re_plan_onto_a_target_that_cannot_take_links_is_declined(api, emails, case):
-    """AC-G19 / AC-G12, lead rulings 19 Oct: 608's row cannot take links when 236 is dragged
-    onto it, and 608 already holds a placed or received 632. The move is declined: 480 keeps
-    its rows and the PO's 417 of links, no link reaches 608, and 608's need drops to 632 - 236,
-    so the surplus is exactly ONE CANCEL BALANCE of 236, held on the worklist and printed in
-    the email and the Excel (the AC-G17 reasoning). It sits on 608 while 608's document is
-    open (placed with no link), on 480's row holding the 236 when 608 is received in full
-    (reviewer S3: never on goods already received). Nothing is ordered anywhere, and net of
-    that CANCEL BALANCE the live total is AutoCount's 1295 plus the 167 New-line delivery,
-    1462 (the live rows themselves still sum 480 417 + 608 632 + 752 649 = 1698)."""
+    """AC-G19 / AC-G12, crew ruling (a) 19 Oct (owner rule: no CANCEL from splits, ever):
+    608's row cannot take links when 236 is dragged onto it, and 608 already holds a placed
+    or received 632. The move is declined: 480 keeps its rows (14 / 236 / 167) and the PO's 417
+    of links, no link reaches 608, and 608 keeps the 632 it holds (its need never drops below
+    what it holds). No CANCEL BALANCE on the worklist, no CANCEL in the email or the Excel, no
+    ORDER raised, and the live total stays 14 + 236 + 167 + 632 + 649 = 1698."""
     from app.models.project_so import INQUIRY_CANCELLED, IV_ORDER, OrderInquiryRow
 
     def orders():
@@ -611,7 +599,6 @@ def test_g19_a_re_plan_onto_a_target_that_cannot_take_links_is_declined(api, ema
             )
         }
 
-    on = CANCEL_ON[case]
     s, po = _dev_db_case(api, emails, linked=True)
     _target_cannot_take_links(s, case)
     before = _live_by_line(s)
@@ -623,35 +610,31 @@ def test_g19_a_re_plan_onto_a_target_that_cannot_take_links_is_declined(api, ema
     live = _live_by_line(s)
     assert live[480] == before[480], ("AC-G12: the origin keeps its rows", case, before[480],
                                       live[480])
+    assert sorted(q for q, _when in live[480]) == [_d("14"), _d("167"), _d("236")], (
+        "480 holds 14 / 236 / 167", case, live[480])
     assert _linked(s, 480, po[480]) == _d("417"), ("AC-G12: the origin keeps its links", case,
                                                    _po_links(s, po))
     assert _linked(s, 608, po[480]) == _d("0"), ("no link moves onto 608", case, _po_links(s, po))
+    assert live[608] == before[608], ("608 keeps the 632 it holds", case, before[608], live[608])
+    assert sum((q for q, _when in live[608]), Decimal(0)) == _d("632"), (case, live[608])
 
-    assert _held_cancels(s, on) == [_d("236")], (
-        f"ONE CANCEL BALANCE of the declined 236 on line {on}", case,
-        {no: _worklist(s, s.line[no]) for no in OWNER_CASE})
     for no in OWNER_CASE:
-        if no != on:
-            assert _held_cancels(s, no) == [], (f"no CANCEL BALANCE off line {on}", case, no,
-                                                _worklist(s, s.line[no]))
+        assert _held_cancels(s, no) == [], ("no CANCEL BALANCE from the declined move", case,
+                                            no, _worklist(s, s.line[no]))
     told = [(ln["qty"], ln["remark"]) for h in sent for ln in h.get("lines") or []]
-    assert len([x for x in told if "CANCEL" in str(x[1])
-                and (x[0] == "236" or "236" in str(x[1]))]) == 1, (
-        "the email prints the CANCEL BALANCE 236 once", case, told)
+    assert not [x for x in told if "CANCEL" in str(x[1])], ("no CANCEL in the email", case, told)
+    if sent:
+        printed = _printed(sent)
+        assert not [r for r in printed if any("CANCEL" in c for c in r)], (case, printed)
     xl = _excel_rows(s)
-    assert len([r for r in xl if "CANCEL" in str(r[4])
-                and (_d("236") in (r[0], r[2]) or "236" in str(r[4]))]) == 1, (
-        "the Excel prints the CANCEL BALANCE 236 once", case, xl)
+    assert not [r for r in xl if "CANCEL" in str(r[4])], ("no CANCEL in the Excel", case, xl)
 
     after_orders = orders()
     raised = {i: q for i, q in after_orders.items()
               if i not in before_orders or q > before_orders[i]}
     assert raised == {}, ("nothing is ordered: no new or grown ORDER row", case, raised)
-    net = _owner_total(s) - sum(
-        (q for no in OWNER_CASE for q in _held_cancels(s, no)), Decimal(0))
-    assert net == _d("1462"), (
-        "net of the CANCEL BALANCE: AutoCount 1295 + the 167 New-line delivery", case,
-        _owner_total(s), live)
+    assert _owner_total(s) == _d("1698"), (
+        "live total 14 + 236 + 167 + 632 + 649", case, _owner_total(s), live)
 
 
 def test_g19_a_re_plan_off_an_origin_received_in_full_buys_nothing_twice(api, emails):
@@ -845,29 +828,24 @@ def test_g19_re_planning_one_moved_split_moves_only_its_links(api, emails):
 
 @pytest.mark.parametrize("case", ["target_placed_no_link", "target_received_in_full"])
 def test_g19_a_re_confirm_after_a_declined_move_changes_nothing(api, emails, case):
-    """Reviewer B3 / AC-G19: after the re-plan whose move onto 608 was declined (one CANCEL
-    BALANCE 236 held), a plain re-Confirm with no edit changes nothing: the same rows and
-    links, the one CANCEL BALANCE stands (the same row, not cancelled and raised again), no
-    "CANCEL ALL", and no email."""
-    from app.models.project_so import IV_CANCEL_BALANCE
-
+    """Reviewer B3 / AC-G19, crew ruling (a): after the re-plan whose move onto 608 was
+    declined (no CANCEL, nothing ordered), a plain re-Confirm with no edit changes nothing:
+    the same rows and links, no CANCEL of any kind (no CANCEL BALANCE, no "CANCEL ALL"), and
+    no email."""
     s, _po = _dev_db_case(api, emails, linked=True)
     _target_cannot_take_links(s, case)
     _replan(s, emails, _partial_replan())
-    held = [q for no in OWNER_CASE for q in _held_cancels(s, no)]
-    assert held == [_d("236")], ("premise: one CANCEL BALANCE 236 after the declined move",
-                                 case, held)
     before = _snapshot(s)
-    cancel_rows = [r for r in before if r[2] == IV_CANCEL_BALANCE]
 
     start = len(emails)
     _reconfirm(s)
     after = _snapshot(s)
     told = [(ln["qty"], ln["remark"]) for h in emails[start:] for ln in h.get("lines") or []]
-    assert not [x for x in told if "CANCEL ALL" in str(x[1])], ("no CANCEL ALL", case, told)
-    assert [r for r in after if r[2] == IV_CANCEL_BALANCE] == cancel_rows, (
-        "the CANCEL BALANCE stands: the same row, not cancelled and raised again", case,
-        cancel_rows, [r for r in after if r[2] == IV_CANCEL_BALANCE])
+    for no in OWNER_CASE:
+        assert _held_cancels(s, no) == [], ("no CANCEL BALANCE", case, no,
+                                            _worklist(s, s.line[no]))
+    assert not [x for x in told if "CANCEL" in str(x[1])], (
+        "no CANCEL of any kind (CANCEL ALL included)", case, told)
     assert after == before, ("AC-G13: a re-Confirm changes no OI row or link", case, before,
                              after)
     assert emails[start:] == [], ("AC-G13: a re-Confirm sends no email", case, told)
