@@ -894,6 +894,12 @@ def apply_changes(
             else:
                 kept_entities.append(e)
         entities = kept_entities
+    for row in data_picks:
+        # The code only: a stored key is never trusted, the resolver settles the code fresh
+        # under the contact's current scope.
+        entities.extend(option_entities({k: v for k, v in row.items() if k not in ("uuid", "uuids")}))
+    if data_picks:
+        out[question_mod.POSITIONS_KEY] = []
     named_products = {
         str(c).casefold() for e in entities if e.get("hint") == "product"
         for c in (e.get("canonical_code"), e.get("raw")) if c
@@ -906,12 +912,6 @@ def apply_changes(
             if not (t.status == task_mod.OPEN and t.slots
                     and not any(str(sl.label).casefold() in named_products for sl in t.slots))
         )
-    for row in data_picks:
-        # The code only: a stored key is never trusted, the resolver settles the code fresh
-        # under the contact's current scope.
-        entities.extend(option_entities({k: v for k, v in row.items() if k not in ("uuid", "uuids")}))
-    if data_picks:
-        out[question_mod.POSITIONS_KEY] = []
     out["entities"] = entities
 
     led = (
