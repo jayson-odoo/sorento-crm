@@ -164,6 +164,13 @@ prompt hash, v168 and model on both lane runs, no r3 code on their path. One run
     still reaches the fetch. Only bites on a turn whose reply carries no availability block (task.py:1155-1218
     rebuilds the task otherwise). Fix later by comparing slot.key with the resolved product uuid.
   - PR gate red on 951f38dc (run 39105858911) = exactly the 10 R3-C red tests (456 others pass).
+  - Re-review round: red c3bf40dc5a (3 failed: a list pick beside a typed code dropped the picked product's task;
+    12 guards: S1 on a null-flag spec, one of two owed lines answered keeps the task, named-spec keeps the task);
+    fix f2c490b99d (named set + old-task close moved below the picks); kill reverted 3 failed / restored 36 passed.
+    Reviewer re-check READY (S1 revert 3 red, `any` -> `all` 1 red, product filter 5 red, block back above picks
+    3 red; dropping OPEN / canonical_code-only survive, judged harmless). Gate vs 951f38dc33: grounding 0/1506;
+    turn tier first run 2 base-side rows (cand-0243 base errored, cand-0277 base made no tool call; neither row
+    carries state_changes, so no r3 code reaches them), re-run 0/585.
 
 ### R4 (crew via CHAT-CODE-LOOKUP, 18 Oct): no slice
 On main + v63 the parser never sees `Current subject:` (vocabulary line over the 350 L2 cap, context.py:29; only the
