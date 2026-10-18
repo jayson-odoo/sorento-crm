@@ -38,7 +38,7 @@ function setup() {
 }
 
 const refreshedDetail = (spy: ReturnType<typeof vi.spyOn>) =>
-  spy.mock.calls.some(([f]) => {
+  spy.mock.calls.some(([f]: unknown[]) => {
     const key = (f as { queryKey?: unknown[] } | undefined)?.queryKey;
     return key?.[0] === 'new-product-application' && key?.[1] === 'npa-1';
   });

@@ -21,7 +21,7 @@ const mock = vi.hoisted(() => ({
   copy: vi.fn(),
   del: vi.fn(),
   attachments: vi.fn(),
-  inquiryOptions: vi.fn(async () => []),
+  inquiryOptions: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
   existing: undefined as unknown,
 }));
 
@@ -51,7 +51,7 @@ vi.mock('../hooks/useNewProductApplications', () => ({
   useNewProductApplicationLookups: () => ({ brands: async () => [] }),
 }));
 vi.mock('../services/newProductApplicationService', () => ({
-  searchStockInquiryOptions: (...a: unknown[]) => mock.inquiryOptions(...a),
+  searchStockInquiryOptions: (q: string) => mock.inquiryOptions(q),
   getStockInquiryAttachmentsForNpa: (...a: unknown[]) => mock.attachments(...a),
 }));
 vi.mock(
