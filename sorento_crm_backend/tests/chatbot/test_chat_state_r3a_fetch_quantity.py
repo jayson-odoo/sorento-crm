@@ -186,31 +186,15 @@ FAMILIES = [
 
 
 def _seed_family(session_factory, parent: str, children: list[str], other: str, *, registry: bool = True) -> dict[str, str]:
-    db = session_factory()
-    if registry:
-      db.add(ProductSpecRegistry(
-        id=str(uuid.uuid4()), spec_key="trap_type", label="Trap", data_type="enum",
-        allowed_values=["s_trap", "p_trap"], synonyms={"p_trap": ["p trap"], "s_trap": ["s trap"]},
-      ))
-    cat = ProductCategory(id=str(uuid.uuid4()), category_code=unique_code("WC")[:50], category_name="ZZT WC",
-                          class_label="Water Closet", company_id=DEFAULT_COMPANY_ID)
-    uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code=unique_code("UOM")[:50], uom_name="Each", company_id=DEFAULT_COMPANY_ID)
-    db.add_all([cat, uom])
-    db.flush()
-    ids: dict[str, str] = {}
-    rows = [(parent, None, "s_trap"), (other, parent, "s_trap")]
-    rows += [(c, parent, "p_trap") for c in children]
-    for code, up, trap in rows:
-        p = Product(id=str(uuid.uuid4()), product_code=code, product_name=f"Name {code}", category_id=cat.id,
-                    base_uom_id=uom.id, list_price=1, company_id=DEFAULT_COMPANY_ID,
-                    variant_of_id=ids.get(up) if up else None)
-        db.add(p)
-        db.flush()
-        ids[code] = p.id
-        db.add(ProductSpecifications(id=str(uuid.uuid4()), product_id=p.id,
-                                     values={"class": {"value": "Water Closet"}, "trap_type": {"value": trap}}))
-    db.commit()
-    return ids
+    """The REAL shape: parent, its non-matching sibling and the matching children share one
+    `family_code`; `variant_of_id` stays NULL (CHAT-STATE r4)."""
+    from tests.chatbot._family_code_seed import seed_rows
+
+    family = parent.split("-")[0]
+    rows = [(parent, family, "trap_type", "s_trap"), (other, family, "trap_type", "s_trap")]
+    rows += [(c, family, "trap_type", "p_trap") for c in children]
+    reg = ("trap_type", ["s_trap", "p_trap"], {"p_trap": ["p trap"], "s_trap": ["s trap"]}) if registry else None
+    return seed_rows(session_factory, rows, registry=reg)
 
 
 def _family_turn(session_factory, stub_access, monkeypatch, message, ids, parent, qty, verdict, *, held=None):
