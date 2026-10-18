@@ -161,3 +161,62 @@ make sure the sort handler is at the leftmost, go"), Q1 drag yes, Q2-Q4 (a), Q5 
   scrolls sideways. Grip and chip drag by touch long-press, the only way at 375 to move a split to
   another line (SO417636 CSK14B: touch-drag the 236 row onto line 608).
 - AC-F2 Usable and not clipped at 375px and 1280px.
+
+## G. Round 3 (owner 18 Oct evening: card answers + mock v5 variant B "B, ok")
+
+Contract source: `CARD-oi-line-split-refer-back-18oct.md` (owner answers section) and mock v5
+`documentation/mockups/OI-LINE-SPLIT/index.html` sections 2 (variant B), 4, 5, 6, 7. The worked example is
+SO417636 CSK14B BRW-BB, with the owner's plan:
+- 480: 14 @ 20/09/2026 on 480; 236 @ 20/11/2026 dropped on 608; 167 @ 20/11/2029 dropped on 608.
+- 752: 37 @ 20/11/2026 dropped on 608; 467 @ 02/01/2027 on 752.
+- AutoCount: 480 417 -> 14 (20/10 -> 20/09/2026), 608 192 -> 632, 752 504 -> 649 (20/12/2026 -> 02/01/2027).
+
+- AC-G1 **Refer back.** QTY / DELIVERY DATE show a line's figures BEFORE the AutoCount change being shown,
+  and NEW QTY / NEW DATE show them after it (blank when unchanged, `handover_moves`). The change shown is the
+  pending one, or, with nothing pending, the last change a Confirm applied. That last applied change stays
+  shown until a newer AutoCount change arrives.
+  - With nothing pending and a Confirm on record, the sheet's status line shows "Confirmed <dd/mm/yyyy>"
+    once. No per-line tag.
+  - SO417636 reads the same before and after the owner's Confirm: 480 417 | 14 | 20/10/2026 | 20/09/2026;
+    608 192 | 632 | 20/11/2026 | (blank); 752 504 | 649 | 20/12/2026 | 02/01/2027.
+- AC-G2 **Variant B layout.**
+  - A split dropped on another line is drawn under the line it landed on, and its own LINE cell shows the
+    line it came from (muted). Only the LINE column drops its rowSpan for those rows.
+  - The origin line keeps the splits that stay on it, plus any split left on New line.
+  - SO417636: 480 shows 14 @ 20/09/2026 (ADVANCE). 608 shows its own 192 @ 20/11/2026, then 236 (LINE 480)
+    @ 20/11/2026, 167 (LINE 480) @ 20/11/2029 and 37 (LINE 752) @ 20/11/2026. 752 shows 467 @ 02/01/2027
+    (DELAY) and 182 @ 02/01/2027.
+  - No equation text and no destination labels anywhere.
+- AC-G3 **AutoCount extra.**
+  - On a line, AutoCount qty (NEW QTY, else QTY) minus the splits that sit on that line (its own plus those
+    dropped on it) is the line's EXTRA.
+  - A positive extra shows as one more row under the line at the line's NEW DATE (else DELIVERY DATE): 752
+    shows 182 @ 02/01/2027, and 608 shows no extra (192 + 236 + 167 + 37 = 632).
+  - An extra is not a stored split. It is not editable, and its REMARK pre-fill is "ORDER <n>".
+- AC-G4 **No CANCEL from splits.**
+  - No split row is ever netted into a CANCEL: not in Confirm, not in the email, not in the Excel. A split on
+    New line is a delivery of that qty at its own date (ADVANCE / DELAY / REMAIN by date).
+  - CANCEL appears only for an explicit cancel split ("Cancel this qty", `is_cancel`, "CANCEL BALANCE"), and
+    for AutoCount cancelling a whole line ("CANCEL ALL").
+  - The `_tell_splits` guard (`project_order_inquiry_service.py` ~:4441-4463) no longer drops a line with
+    New-line splits to its per-line row.
+  - Mock section 7: 480 with 236 and 167 on New line prints 14 ADVANCE / 236 DELAY / 167 DELAY, never
+    "CANCEL 403".
+- AC-G5 **REMARK pre-fill.**
+  - Each split row's REMARK cell, and the extra row's, shows the text the email would print for it, muted,
+    while staff have not typed one.
+  - Typed text wins and is stored. Clearing it brings the generated text back.
+  - The generated text comes from ONE backend function, also used by the email and the Excel, and is sent
+    to the sheet by the API. No copy of the rule lives in the frontend.
+- AC-G6 **Email: one row per split** (mock section 5).
+  - Each split of a line prints its own row under that line, together with the line's extra row:
+    QTY / DELIVERY on the line's first row only, NEW QTY = the split's qty, NEW DATE = its date, REMARK = the
+    sheet value or else the generated text.
+  - SO417636: 480 rows 14 / 236 / 167; 608 row 192 -> 632; 752 rows 37 / 467 / 182.
+  - The generated REMARK of a line whose increase is fully explained by splits dropped on it (608) is
+    decided in crew ask "608 remark" (open). It is not "ORDER 440", because that qty is moved, not bought
+    (AC-E1).
+- AC-G7 **Excel** (worklist export): the same rows as AC-G6 in the existing layout (mock section 6), with
+  REMARK = the sheet value or else the generated text. QTY and DELIVERY DATE are merged down a line's rows.
+- AC-G8 **Typed dates commit on leaving the cell or Enter, never mid-typing** (`components/ui/date-picker.tsx`
+  :84-92). A calendar pick commits at once. Deleting one "1" from "20/11/2026" no longer stores 20/01/2026.

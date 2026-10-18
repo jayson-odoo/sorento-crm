@@ -1,6 +1,6 @@
 # PLAN: split one SO line into delivery tranches in Order Inquiries (OI-LINE-SPLIT)
 
-Status: Build, owner round 2 18 Oct (hand test of 51210b8c3: columns OK, FAIL on "+ Split" defaults): a pending line starts as NEW QTY @ NEW DATE + the rest @ DELIVERY DATE (UAC AC-A5); REMAIN pill question with crew. Before that: owner round 1 pushed 51210b8c3 (email-style NEW QTY/NEW DATE off one handover_moves, no AUTOCOUNT LINE column; reviewer READY, CI green, browser PASS). Track: full (L): migration, new
+Status: Build round 3 (owner 18 Oct evening: card answered, mock v5 variant B approved "B, ok"): refer back, variant B layout, AutoCount extra row, no CANCEL from splits, REMARK pre-fill from one backend function, one row per split in email + Excel, date-picker commit on leave (UAC section G). Before that: round 2 pushed 6c4b3c0524. Track: full (L): migration, new
 endpoint with RBAC, engine change. Lead pattern: tester red tests, one coder (Opus: tangled engine in
 a 13k-line service), reviewer + security-reviewer, browser pass 1280/375. Stacked on #1748
 (OI Excel one sheet; merged into this branch at c1f8f57d8).
