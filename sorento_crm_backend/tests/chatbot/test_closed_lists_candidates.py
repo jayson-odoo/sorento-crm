@@ -327,3 +327,32 @@ def test_a_class_label_can_never_close_its_quote_or_add_an_item(db):
         rest = line.split(": ", 1)[1]
         assert '"' not in rest, line
         assert len(_items_of(line)) == 1, line
+
+
+# --- R3-3 SCRUBBED-LABEL-GROUNDS (guard) -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value, rendered",
+    [("Basin (Counter Top)", "Basin Counter Top"), ('Slab 24" wide', "Slab 24 wide")],
+)
+def test_a_parser_pick_of_the_scrubbed_rendered_value_grounds_to_the_same_registry_value(db, value, rendered):
+    """The candidate line prints `spec finish = <scrubbed value>`. A stored value holding `(` or
+    `"` is printed altered; the parser picks what it saw, and grounding must still bind the
+    registry's own value (a display label was never a grounding phrase, scrubbed or not)."""
+    from app.services.chatbot.head import grounding
+
+    db.add(ProductSpecRegistry(
+        id=str(uuid.uuid4()), spec_key="finish", label="Finish", data_type="enum", allowed_values=[value],
+        synonyms={value: ["zzword"]},
+    ))
+    db.flush()
+    line = _lines(db, rendered.lower())[1]
+    assert f"spec finish = {rendered} (" in line, line
+    vocab = grounding.load_vocabulary(db)
+
+    entity = {"raw": rendered, "hint": "specification", "spec_key": "finish", "spec_value": rendered,
+              "current_message": True, "confident": True}
+    grounded = grounding._validate(entity, vocab)
+
+    assert [g.value for g in grounded] == [value], grounded
