@@ -47,7 +47,7 @@ One record, **New Product Application** `NPA-000001`, under Procurement Manageme
    rule, no auto name-matching): the applicant picks the debtor in the searchable box or leaves the typed name.
    Staff can also press **New** on the list and pick the inquiry themselves (Q3).
 2. **Header** (PR / SF / Stock Inquiry document card): Applicant (signed-in user, read-only), Date (today), Stock
-   inquiry (searchable picker of inquiries, shows `SI26-0123 - <product code>`, clearable), Customer (the PR
+   inquiry (searchable picker of inquiries, shows `SI-XX-0001 - <product code>`, clearable), Customer (the PR
    searchable customer box; free text allowed, then "No debtor code"), Project name, Needed by (date), Reason / remark.
 3. **Line items** (one row per new code, Q4). Columns:
    - Proposed code (text, optional: purchasing decides the final code) and Description (required);
