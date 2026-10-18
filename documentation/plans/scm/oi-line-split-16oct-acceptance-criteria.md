@@ -214,9 +214,17 @@ SO417636 CSK14B BRW-BB, with the owner's plan:
     sheet value or else the generated text.
   - SO417636: 480 rows 14 / 236 / 167; 608 row 192 -> 632; 752 rows 37 / 467 / 182.
   - The generated REMARK of a line whose increase is fully explained by splits dropped on it (608) is
-    decided in crew ask "608 remark" (open). It is not "ORDER 440", because that qty is moved, not bought
-    (AC-E1).
+    "REMAIN" (crew ruling 18 Oct: its date did not move, and moved qty never reads as ORDER). It is never
+    "ORDER 440", and it stays editable (AC-G5).
 - AC-G7 **Excel** (worklist export): the same rows as AC-G6 in the existing layout (mock section 6), with
   REMARK = the sheet value or else the generated text. QTY and DELIVERY DATE are merged down a line's rows.
 - AC-G8 **Typed dates commit on leaving the cell or Enter, never mid-typing** (`components/ui/date-picker.tsx`
   :84-92). A calendar pick commits at once. Deleting one "1" from "20/11/2026" no longer stores 20/01/2026.
+- AC-G9 **Build decisions** (lead, 18 Oct; contract for the round-3 tests):
+  - Each line also carries `remark_generated` for its own row, from the same `remark_for_row`. 608's is
+    "REMAIN".
+  - The email prints a line's later split rows with QTY and DELIVERY blank. The template lives in the DB
+    (`order_inquiry_handover_default`), so this ships as the next `oihr_` migration. The shared dev DB needs
+    that template update as crew SQL; it is an UPDATE, so it is held for crew/owner approval.
+  - The worklist Excel gets CHANGE QUANTITY and CHANGE DATE headings before REMARK, as in the approved mock
+    section 6. Existing columns are not renamed.
