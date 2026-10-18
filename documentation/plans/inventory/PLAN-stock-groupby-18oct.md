@@ -1,6 +1,6 @@
 # PLAN: Flexible multi-level Group by on the stock status table (STOCK-GROUPBY)
 
-Status: Plan. Card v1 answered by crew (18 Oct); mock v1 filed, awaiting owner OK (Phase 1, before any code). Lane STOCK-GROUPBY, size M, standard track
+Status: Build. Mock v1 approved by the owner 18 Oct ("Ok"); S1 to S3 red tests first (Phase 2). Lane STOCK-GROUPBY, size M, standard track
 (new behaviour + UI on an existing screen; no migration expected). Base: #1752's branch
 `claude/stock-status-embed-sxgykp` at 67e87c24d; rebase onto main once #1752 merges.
 
