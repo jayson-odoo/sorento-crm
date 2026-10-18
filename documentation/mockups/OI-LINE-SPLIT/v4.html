@@ -252,13 +252,13 @@ kbd{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;border:1px solid var(-
  <tr><td>+ Split, ×</td><td><code>FE/components/ui/button.tsx</code> (<code>size="sm"</code>, icon button with <code>aria-label</code>); remove is a staged row edit, nothing saved until Save</td></tr>
  <tr><td>Drop toast with Undo</td><td><code>FE/lib/toast.ts:48</code></td></tr>
 </table>
-<p class="note" style="margin-top:10px">Data: SO417636. CSK14B rows are the owner's Excel (the state before AutoCount changed); their line numbers and the "Inside Confirm" figures are the shared dev DB (read-only): line 32 (301), 480 (417, now 14 @ 20/09/2026), 608 (192, now 632 @ 20/11/2026), 752 (504, now 649 @ 02/01/2027), and line 4768 added by AutoCount (751 @ 01/01/2030). Every other row is the dev DB's SO417636 as it is: 6 of its 29 products, 39 of its 292 lines. Nothing here writes to AutoCount.</p>
+<p class="note" style="margin-top:10px">Data: SO-XXXX01. CSK14B rows are the owner's Excel (the state before AutoCount changed); their line numbers and the "Inside Confirm" figures are the shared dev DB (read-only): line 32 (301), 480 (417, now 14 @ 20/09/2026), 608 (192, now 632 @ 20/11/2026), 752 (504, now 649 @ 02/01/2027), and line 4768 added by AutoCount (751 @ 01/01/2030). Every other row is the dev DB's SO-XXXX01 as it is: 6 of its 29 products, 39 of its 292 lines. Nothing here writes to AutoCount.</p>
 </section>
 </div>
 
 <script>
 (function(){
-var SO = {no:'SO417636', date:'19/08/2026', customer:'GLOBAL INGRESS SDN BHD (PROJECT)', loc:'BRW-BB'};
+var SO = {no:'SO-XXXX01', date:'19/08/2026', customer:'GLOBAL INGRESS SDN BHD (PROJECT)', loc:'BRW-BB'};
 var DB = [["B2155-NL-BLUE",944,54,"2027-02-18"],["B2155-NL-BLUE",1392,136,"2027-03-20"],["B2155-NL-BLUE",1792,200,"2027-04-19"],["B2155-NL-BLUE",2192,224,"2027-05-19"],["B2155-NL-BLUE",2592,220,"2027-06-18"],["B2155-NL-BLUE",2992,224,"2027-07-18"],["B2155-NL-BLUE",3392,224,"2027-08-17"],["B2155-NL-BLUE",3792,224,"2027-09-16"],["B2155-NL-BLUE",4192,112,"2027-10-01"],["B2155-NL-BLUE",4592,2697,"2030-01-01"],["B2155-NL-BLUE",192,16,"2026-09-20"],["C-FH14",992,67,"2027-02-18"],["C-FH14",1408,168,"2027-03-20"],["C-FH14",1808,249,"2027-04-19"],["C-FH14",2208,280,"2027-05-19"],["C-FH14",2608,275,"2027-06-18"],["C-FH14",3008,280,"2027-07-18"],["C-FH14",3408,280,"2027-08-17"],["C-FH14",3808,280,"2027-09-16"],["C-FH14",4208,140,"2027-10-01"],["C-FH14",4608,3119,"2030-01-01"],["C-FH14",208,20,"2026-09-20"],["CB6633",384,407,"2026-09-20"],["CB6633",520,485,"2026-10-20"],["CB6633",592,478,"2026-11-20"],["CB6633",688,187,"2026-12-20"],["CB6633",736,485,"2027-01-02"],["CB6633",1168,672,"2027-02-18"],["CB6633",24,290,"2026-08-24"],["CSK11A",544,154,"2026-10-20"],["CSK11A",768,335,"2027-01-02"],["CSK11A",640,313,"2026-11-20"],["CSK14B",32,301,"2026-08-24"],["CSK14B",480,417,"2026-10-20"],["CSK14B",608,192,"2026-11-20"],["CSK14B",752,504,"2026-12-20"],["TPE-9101",400,816,"2026-09-20"],["TPE-9101",528,816,"2026-10-20"],["TPE-9101",600,817,"2026-11-20"]];
 var NOW = {480:{qty:14,date:'2026-09-20'},608:{qty:632,date:'2026-11-20'},752:{qty:649,date:'2027-01-02'}};
 var ADDED = {item:'CSK14B', label:4768, qty:751, date:'2030-01-01'};
@@ -284,7 +284,7 @@ function excelCase(lines){
   var by = {}; lines.forEach(function(l){ by[l.label]=l; });
   by[32].remark = 'ALREADY RESERVE FROM BRW';
   by[480].splits = [
-    {id:sid(), qty:14, date:'2026-09-20', on:'L480', remark:'UNDER PRE-ORDER, SO422271 ALREADY EMAIL FOR CHANGE THIS SO'},
+    {id:sid(), qty:14, date:'2026-09-20', on:'L480', remark:'UNDER PRE-ORDER, SO-XXXX03 ALREADY EMAIL FOR CHANGE THIS SO'},
     {id:sid(), qty:236, date:'2026-11-20', on:'L608', remark:'ORDER'},
     {id:sid(), qty:167, date:'2029-11-20', on:null, remark:'ORDER'}];
   by[752].splits = [
