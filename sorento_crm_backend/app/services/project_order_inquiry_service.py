@@ -4488,6 +4488,28 @@ class ProjectOrderInquiryService:
                 told.setdefault(line_id, []).append(item)
             else:
                 kept.append(item)
+        # A line of this Confirm whose pending change splits wholly explain queued nothing
+        # (its growth is what moved in, SO417636 608: 192 -> 632): its row is still told.
+        sample = next(
+            (item for item in queue if item.get("pso_id") == pso_id and item.get("line")),
+            None,
+        )
+        for line_id in sorted(ids - set(told)):
+            plan = plans.get(line_id)
+            if sample is None or plan is None or not plan.involved or not plan.facts.pending:
+                continue
+            f = plan.facts
+            told[line_id] = [
+                {
+                    **sample,
+                    "row_id": f"saved:{line_id}",
+                    "so_line_id": line_id,
+                    "item_code": f.item_code,
+                    "stock_location": f.line.stock_location or f.location,
+                    "verb_keys": ["QTY_CHANGE"],
+                    "line": {**sample["line"], "item_code": f.item_code},
+                }
+            ]
         if not told:
             return
         queue[:] = kept
@@ -5867,10 +5889,11 @@ class ProjectOrderInquiryService:
         is not told ORDER for it. What is left on each line is told by the settle and
         netting that run after this, as today.
 
-        Only where both lines are in this Confirm and AutoCount took A's quantity down
-        (`line_changes`), and under the pure split's own guards: A has one live ORDER row
-        (not redirected, not rejected, no CS reserve link) holding more than A's new Buy,
-        and B has one such row (the quantity merges into it) or none (a row is made for
+        Only where both lines are in this Confirm and AutoCount took B's quantity up
+        (`line_changes`), whatever A's own change (AC-G10), and under the pure split's own
+        guards: A has one live ORDER row (not redirected, not rejected, no CS reserve link)
+        holding more than A's new Buy when A went down (else its dropped splits), and B has
+        one such row (the quantity merges into it) or none (a row is made for
         it). Latest split first. Nothing is added to the handled or settled lines: the
         lines still settle and net as they would. No stored splits, nothing moves."""
         entries = {
@@ -5924,13 +5947,16 @@ class ProjectOrderInquiryService:
             if _change(line_id)[1] is not None
             and (_change(line_id)[0] is None or _change(line_id)[1] > _change(line_id)[0])
         }
-        if not went_down or not went_up:
+        if not went_up:
             return
 
+        # AC-G10 (round 3): a split dropped on a line that went up moves whatever its own
+        # line's net change (SO417636: 752 went 504 -> 649 and its 37 still moves to 608).
         # Stale splits (made against a base AutoCount has since moved on from) never act.
-        acting = LineSplitService(self.db).acting_origin_ids(went_down)
+        acting = LineSplitService(self.db).acting_origin_ids(entries)
         if not acting:
             return
+        went_down_set = set(went_down)
         splits = SplitOutputs(self.db, sorted(acting))
         linked_by_origin = {
             origin: [
@@ -5996,7 +6022,13 @@ class ProjectOrderInquiryService:
             usable, source = _movable(origin)
             if not usable or source is None:
                 continue
-            room = _dec(source.qty) - _dec(entries[origin].get("buy_qty"))
+            # An origin AutoCount took down gives what its new Buy no longer needs; any
+            # other gives its dropped splits themselves, out of what its row holds.
+            room = (
+                _dec(source.qty) - _dec(entries[origin].get("buy_qty"))
+                if origin in went_down_set
+                else min(_dec(source.qty), sum((_dec(v.split.qty) for v in views), _ZERO))
+            )
             for view in sorted(views, key=lambda v: v.split.seq, reverse=True):
                 if room <= _ZERO:
                     break
