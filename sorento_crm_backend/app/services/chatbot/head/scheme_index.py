@@ -51,6 +51,28 @@ def _held_certificates(db: "Session", product_ids: list[str], scheme: str) -> li
     return sorted(str(cid) for (cid,) in rows)
 
 
+# Every id rides one GET query string (h11's request line holds about 400): the same 200 cap
+# as product_predicate_service._CERTIFICATE_ID_CAP, restated rather than imported.
+_CERTIFICATE_ID_CAP = 200
+
+
+def _scheme_certificates(db: "Session", scheme: str) -> list[str]:
+    """The scheme's active certificates in the session's company scope: the read goes
+    through the scoped session, so another company's certificate never appears."""
+    from sqlalchemy import func
+
+    from app.models.certificate import Certificate
+
+    rows = (
+        db.query(Certificate.id)
+        .filter(func.lower(Certificate.scheme) == scheme.casefold(), Certificate.status == "active")
+        .order_by(Certificate.id)
+        .limit(_CERTIFICATE_ID_CAP)
+        .all()
+    )
+    return [str(cid) for (cid,) in rows]
+
+
 def _kind_item(db: "Session", scheme: str, kinds: dict[str, str]) -> str | None:
     """The certificate kind the scheme's own certificates are filed under, else the only
     (or first) kind listed."""
@@ -91,9 +113,9 @@ def index_scheme(
         return verdict, None
     scheme = str(schemes[0]["canonical_code"]).strip()
     kind = _kind_item(db, scheme, closed_list_items(db).get("cert_kind", {}))
-    if kind is None:
-        return verdict, None
-    has_kind = any(e.get("listed") == "cert_kind" for e in said)
+    # With no certificate kind listed there is none to add beside the scheme; the held
+    # products still stay the subject.
+    has_kind = kind is None or any(e.get("listed") == "cert_kind" for e in said)
     kind_entity = {**schemes[0], "canonical_code": kind, "listed_item": kind, "listed": "cert_kind"}
     # Added beside a kept scheme, the kind is its own entity: reconciliation keys on `raw`,
     # so it must not share the scheme's word (or it is retyped with it).
@@ -114,8 +136,44 @@ def index_scheme(
         out = [*carried, *entities, *([] if has_kind else [added_kind])]
         note = {"scheme": scheme, "held_by_products": True, "carried": len(carried)}
     else:
-        out = [kind_entity if e is schemes[0] else e for e in entities if e not in schemes[1:]]
-        if has_kind:
-            out = [e for e in out if e is not kind_entity]
-        note = {"scheme": scheme, "held_by_products": False, "as": kind}
+        # HELD-WITHOUT-SCHEME (crew ruling (b)): the products stay the subject and the scheme's
+        # certificates the filter; the engine says plainly that none is on record.
+        certificates = _scheme_certificates(db, scheme)
+        if certificates:
+            entities = [{**e, "hint": "certificate", "certificate_uuids": certificates} if e is schemes[0] else e for e in entities]
+        carried = [] if named else [
+            {"raw": p.get("canonical_code") or p.get("raw"), "hint": "product", "canonical_code": p.get("canonical_code"),
+             "current_message": True, "confident": True}
+            for p in held_products
+            if isinstance(p, dict) and p.get("uuid") and p.get("canonical_code")
+        ]
+        out = [*carried, *entities, *([] if has_kind else [added_kind])]
+        codes = [str(e.get("canonical_code")).strip() for e in [*carried, *said] if str(e.get("hint") or "").strip().lower() == "product" and str(e.get("canonical_code") or "").strip()]
+        note = {"scheme": scheme, "held_by_products": False, "none_match": True, "products": list(dict.fromkeys(codes))}
     return {**verdict, "entities": out}, note
+
+
+def scheme_without_product(db: "Session", verdict: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """SCHEME-NO-PRODUCT: a listed scheme pick asked as a file ask with no product named or
+    held (any product entity, said or carried, leaves the verdict as it is). The scheme's own
+    active certificates in the contact's companies become the fetch's filter (read through the scoped session, so another company's never appears); the tool's
+    own row limit bounds the reply. The verdict unchanged (and no note) otherwise; with no
+    certificate of the scheme in scope, the verdict unchanged and a `none_in_scope` note."""
+    if verdict.get("domain_hint") != "product_attachment":
+        return verdict, None
+    entities = [e for e in verdict.get("entities") or [] if isinstance(e, dict)]
+    said = [e for e in entities if e.get("current_message") is not False]
+    schemes = [e for e in said if e.get("listed") == "cert_scheme" and str(e.get("canonical_code") or "").strip()]
+    if not schemes or any(str(e.get("hint") or "").strip().lower() == "product" for e in entities):
+        return verdict, None
+    scheme = str(schemes[0]["canonical_code"]).strip()
+    certificates = _scheme_certificates(db, scheme)
+    if not certificates:
+        # The scheme list is the same for every company, so a scheme can be listed with no
+        # certificate of it in this contact's scope: said plainly by the engine, nothing sent.
+        return verdict, {"scheme": scheme, "held_by_products": False, "products": 0, "certificates": 0, "none_in_scope": True}
+    # Left typed as the attachment-type pick it is, so the ask stays a file ask: typed
+    # `certificate` it would read as the set "which products have this certificate". A product
+    # carried from an open pick is added later and skipped there (`with_carried_entities`).
+    out = [{**e, "certificate_uuids": certificates} if e is schemes[0] else e for e in entities]
+    return {**verdict, "entities": out}, {"scheme": scheme, "held_by_products": False, "products": 0, "certificates": len(certificates)}

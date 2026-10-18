@@ -4642,6 +4642,14 @@ def _run_stages_body(  # noqa: PLR0915
             # because this is the seam that skipped it.
             parser.assert_emission(parser_raw)
         verdict: dict[str, Any] = dict(parser_raw)
+        # `listed` and `certificate_uuids` are the ENGINE's own entity keys (grounding and the
+        # scheme index set them). One the parser emitted (the Anthropic path does not enforce
+        # additionalProperties) is dropped before any reader.
+        if isinstance(verdict.get("entities"), list):
+            verdict["entities"] = [
+                {k: v for k, v in e.items() if k not in ("listed", "certificate_uuids")} if isinstance(e, dict) else e
+                for e in verdict["entities"]
+            ]
         # CHATBOT-EMPTY-ROUTE-PICK: a declared answer to a question that was never
         # asked (no `Open question:` line went to the parser) is dropped before any
         # reader, and the `understood` record below shows the drop as `derived`.
@@ -4900,6 +4908,7 @@ def _run_stages_body(  # noqa: PLR0915
     verdict = closed_lists_verdict(verdict, gate=parser_config.closed_lists)
     verdict = code_lookup_verdict(verdict, gate=parser_config.code_lookup)
     held_none_match: dict[str, Any] | None = None
+    scheme_none_in_scope: str | None = None
     if parser_config.closed_lists and state_in.focus.products:
         # SPEC-OVER-HELD: a spec said about a held product narrows that product's family
         # (`head/held_family.py`). A read failure leaves the verdict as it was.
@@ -4929,11 +4938,21 @@ def _run_stages_body(  # noqa: PLR0915
         try:
             with _session(session_factory) as scheme_db:
                 verdict, scheme_note = scheme_index.index_scheme(scheme_db, verdict, list(state_in.focus.products))
+                # Held products are only added to the verdict later, so a held one (a uuid) is
+                # read here: the scheme path with no product never runs over a held subject.
+                if scheme_note is None and not any(
+                    isinstance(p, dict) and p.get("uuid") for p in state_in.focus.products
+                ):
+                    verdict, scheme_note = scheme_index.scheme_without_product(scheme_db, verdict)
         except Exception:  # noqa: BLE001 - an advisory reading, never a failed turn
             logger.warning("chatbot: scheme index failed; the turn goes on without it", exc_info=True)
             scheme_note = None
         if scheme_note:
             turn_trace.add("scheme_index", scheme_note)
+            if scheme_note.get("none_in_scope"):
+                scheme_none_in_scope = scheme_note["scheme"]
+            if scheme_note.get("none_match") and scheme_note.get("products"):
+                held_none_match = {"held": list(scheme_note["products"]), "said": [], "scheme": scheme_note["scheme"]}
     if _ranking_words:
         verdict = {**verdict, "entities": [*(verdict.get("entities") or []), *_ranking_words]}
     if grounding_notes:
@@ -6599,6 +6618,17 @@ def _run_stages_body(  # noqa: PLR0915
         # already says whether a pick is needed or a tier settles automatically, so this
         # fetch runs from a ONE-SPEC plan built for the occasion rather than waiting on
         # `narrow.py`'s now-shadowed ask.
+        if (
+            scheme_none_in_scope
+            and answer is None
+            and branch_kind == "business_query"
+            and completes_here
+            and not (sales_report_grant_refused or customer_scope_refused)
+        ):
+            # SCHEME-NONE-IN-SCOPE: nothing held, and no certificate of the listed scheme in
+            # this contact's scope. Said plainly; nothing is fetched.
+            answer = turn_compose.Answer(text=f"No {scheme_none_in_scope} certificate on record.")
+            turn_trace.add("scheme_none_in_scope", {"scheme": scheme_none_in_scope})
         fetch_plan = plan
         if (
             answer is None
@@ -7391,7 +7421,11 @@ def _run_stages_body(  # noqa: PLR0915
             # the held products' own rows as if they matched, never the catalogue's set.
             held_codes = ", ".join(dict.fromkeys(held_none_match["held"]))
             said = " ".join(dict.fromkeys(held_none_match["said"])) or "that"
-            answer = turn_compose.Answer(text=f"{held_codes}: none on record with {said}.")
+            # HELD-WITHOUT-SCHEME: the filter was a certificate scheme the products hold none of.
+            scheme_none = held_none_match.get("scheme")
+            answer = turn_compose.Answer(
+                text=f"{held_codes}: no {scheme_none} certificate on record." if scheme_none else f"{held_codes}: none on record with {said}."
+            )
             turn_trace.add("held_none_match", {"held": held_none_match["held"], "said": held_none_match["said"]})
 
     if answer is not None and lane_error_text is None:

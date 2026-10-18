@@ -42,6 +42,7 @@ import {
   Package,
   Users as PeopleIcon,
   Plug,
+  Receipt,
   Settings,
   Share2,
   Shield,
@@ -274,6 +275,16 @@ export const MENU_SIDEBAR: MenuConfig = [
     ],
   },
 
+  { heading: 'FINANCE' },
+  {
+    // PLAN-finance-billing-documents-27sep S2: AutoCount billing documents, read only.
+    title: 'Billing Documents',
+    icon: Receipt,
+    path: '/finance/billing-documents',
+    permission: 'finance.billing_documents.view',
+    moduleKey: 'finance',
+  },
+
   { heading: 'SUPPLY CHAIN' },
   {
     title: 'Supply Chain',
@@ -439,6 +450,13 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Stock',
         path: '/inventory-management/stock',
         permission: 'inventory.stock.view',
+      },
+      {
+        title: 'Stock status',
+        path: '/inventory-management/stock-status',
+        // The API's own gate (`app/api/v1/inventory/stock_status.py`): the panel shows SO
+        // customers and PO suppliers, which `inventory.stock.view` alone never granted.
+        permissionsAny: ['projects.projects.view', 'scm.reorder.run', 'scm.dashboard.view'],
       },
       {
         title: 'Stock Batches',
@@ -1969,6 +1987,13 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         permission: 'inventory.stock.view',
       },
       {
+        title: 'Stock status',
+        path: '/inventory-management/stock-status',
+        // The API's own gate (`app/api/v1/inventory/stock_status.py`): the panel shows SO
+        // customers and PO suppliers, which `inventory.stock.view` alone never granted.
+        permissionsAny: ['projects.projects.view', 'scm.reorder.run', 'scm.dashboard.view'],
+      },
+      {
         title: 'Stock Batches',
         path: '/inventory-management/stock-batches',
         permission: 'inventory.stock_batches.view',
@@ -2136,6 +2161,14 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         permission: 'projects.types.view',
       },
     ],
+  },
+  {
+    // PLAN-finance-billing-documents-27sep S2: AutoCount billing documents, read only.
+    title: 'Billing Documents',
+    icon: Receipt,
+    path: '/finance/billing-documents',
+    permission: 'finance.billing_documents.view',
+    moduleKey: 'finance',
   },
   {
     title: 'Marketing Management',

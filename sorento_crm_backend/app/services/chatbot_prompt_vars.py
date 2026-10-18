@@ -170,6 +170,13 @@ def _one_line(value: object) -> str:
             return text
 
 
+def candidate_text(value: object) -> str:
+    """Staff / import text printed inside a candidate line: one line (`_one_line`), and with
+    the line's own delimiters (`;`, `(`, `)`, `"`) turned into spaces, so no stored text can
+    close its label, add an item or start a line."""
+    return " ".join(_re_mod.sub(r'[;()"]', " ", _one_line(value)).split())
+
+
 def _quoted(value: object) -> str:
     """A word inside the prompt's own double quotes: a quote in it becomes an apostrophe."""
     return '"' + _one_line(value).replace('"', "'") + '"'
@@ -390,6 +397,10 @@ def _cert_kind_rows(db: Session) -> list[dict]:
     ]
 
 
+# The listed-item line's own delimiters: a scheme holding one could close its item or add one.
+_SCHEME_DELIMITERS = _re_mod.compile(r'[.:,;()"]')
+
+
 def _cert_schemes(db: Session) -> list[tuple[str, list[str]]]:
     """Every scheme on an active certificate plus the active `certificate_scheme` lookup
     options, one entry per scheme (case aside, the register's spelling first), each with the
@@ -402,7 +413,8 @@ def _cert_schemes(db: Session) -> list[tuple[str, list[str]]]:
         # A register scheme is filed from an uploaded certificate (external ingest), so a
         # long one is a read error, not a scheme: it never reaches the prompt or the enum
         # (security review, 17 Oct 2026; the staff form caps it at 60).
-        if name and len(name) <= MAX_LISTED_ITEM_CHARS:
+        # Same for one holding a delimiter of the listed-item line (security review, 18 Oct 2026).
+        if name and len(name) <= MAX_LISTED_ITEM_CHARS and not _SCHEME_DELIMITERS.search(name):
             schemes.setdefault(name.casefold(), (name, []))
     rows = db.execute(
         sql(
@@ -415,10 +427,10 @@ def _cert_schemes(db: Session) -> list[tuple[str, list[str]]]:
     )
     for value, keyword in rows:
         name = _one_line(value or "").strip()
-        if not name or len(name) > MAX_LISTED_ITEM_CHARS:
+        if not name or len(name) > MAX_LISTED_ITEM_CHARS or _SCHEME_DELIMITERS.search(name):
             continue
         _, words = schemes.setdefault(name.casefold(), (name, []))
-        if keyword and keyword.strip() and keyword.strip() not in words:
+        if keyword and keyword.strip() and not _SCHEME_DELIMITERS.search(keyword) and keyword.strip() not in words:
             words.append(keyword.strip())
     return sorted(schemes.values(), key=lambda entry: entry[0].casefold())
 
