@@ -5720,23 +5720,29 @@ class ProjectOrderInquiryService:
             line_plans,
         )
 
-        entries = {
+        named = {
             str(entry["line"].id): entry
             for entry in buy_lines
             if entry.get("line") is not None
-            and not entry.get("carried")
             and entry.get("origin") != "local"
             and not entry.get("order_back")
             and str(entry["line"].id) not in skip
         }
-        if not entries:
+        # A carried line (nothing of it named again, e.g. one cut to 0) can still stand on its
+        # applied plan; only a named one acts.
+        entries = {line_id: e for line_id, e in named.items() if not e.get("carried")}
+        if not named:
             return {}, {}, set()
         service = LineSplitService(self.db)
-        orders = sorted({str(entry["line"].project_sales_order_id) for entry in entries.values()})
+        orders = sorted({str(entry["line"].project_sales_order_id) for entry in named.values()})
         facts = service._facts_for(ProjectSalesOrderLine.project_sales_order_id.in_(orders))
-        split_lines = [line_id for line_id in entries if facts.get(line_id) and facts[line_id].splits]
+        split_lines = [line_id for line_id in named if facts.get(line_id) and facts[line_id].splits]
         whole = whole_buy_line_ids(self.db, split_lines, decision)
-        acting = {line_id for line_id in whole if facts[line_id].split_state == SPLIT_ACTING}
+        acting = {
+            line_id
+            for line_id in whole
+            if line_id in entries and facts[line_id].split_state == SPLIT_ACTING
+        }
         standing = {line_id for line_id in whole if facts[line_id].split_state == SPLIT_APPLIED}
         if not acting and not standing:
             return {}, {}, standing
