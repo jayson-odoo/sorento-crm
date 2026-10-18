@@ -111,3 +111,91 @@ def test_r3c_guard_a_lone_close_that_names_nothing_still_cancels(seam, message):
     assert STOCK not in [n for n, _ in seam.turn_calls[-1]], seam.turn_calls[-1]
     assert seam.state["open_question"] is None
     assert all(t.get("status") != "open" for t in (seam.state["focus"].get("tasks") or [])), seam.state["focus"].get("tasks")
+
+
+# --------------------------------------------------------------------------- #
+# Review round: B1 an open task whose products left the subject closes
+# --------------------------------------------------------------------------- #
+
+def _task_codes(seam: Seam) -> set[str]:
+    return {
+        s.get("code") or s.get("raw")
+        for t in (seam.state["focus"].get("tasks") or []) if t.get("status") == "open"
+        for s in (t.get("slots") or [])
+    }
+
+
+B1_CASES = [
+    ("en_es_3e53ca255a", "MBF97401-AL stock Available?", "MBF97401-AL", ["SRT1", "SRT391-GM"]),
+    ("bm", "MBF97401-AL ada stok tak?", "MBF97401-AL", ["SRT1", "SRT391-GM"]),
+    ("zh", "MBF97401-AL 有货吗", "MBF97401-AL", ["SRT1", "SRT391-GM"]),
+]
+
+
+def _then_five(seam: Seam, named: str, held: list[str]) -> None:
+    seam.say("5", _emit(domain_hint="inventory", intent_hint="check_stock", entities=[],
+                        state_changes=[_op("answer")], demand_qty=5,
+                        open_question_answer={"mode": "all", "picked": [], "items": [], "qty_for_all": 5}))
+    fetched = _fetched(seam.turn_calls[-1])
+    old = {seam.uuid_of[c] for c in held}
+    assert not (fetched & old), ("old task products fetched", seam.turn_calls[-1], seam.rules_fired)
+    assert not (set(_held_codes(seam)) & set(held)), _held_codes(seam)
+    assert not (_task_codes(seam) & set(held)), _task_codes(seam)
+
+
+@pytest.mark.parametrize("message,named,held", [c[1:] for c in B1_CASES], ids=[c[0] for c in B1_CASES])
+def test_r3c_b1_close_beside_named_product_then_a_number_is_not_for_the_old_task(seam, message, named, held):
+    prev = _owed(seam, held)
+    _seed_more(seam, [named] if named not in seam.uuid_of else [])
+    seam.say(message, _close_only(_named(named)), previous=prev)
+    assert _fetched(seam.turn_calls[-1]) == {seam.uuid_of[named]}, seam.turn_calls[-1]
+    _then_five(seam, named, held)
+
+
+@pytest.mark.parametrize("message,named,held", [c[1:] for c in B1_CASES], ids=[c[0] for c in B1_CASES])
+def test_r3c_b1_close_plus_set_product_then_a_number_is_not_for_the_old_task(seam, message, named, held):
+    prev = _owed(seam, held)
+    _seed_more(seam, [named] if named not in seam.uuid_of else [])
+    v = _emit(domain_hint="inventory", intent_hint="check_stock", entities=[_named(named)],
+              state_changes=[_op("close_question"), _op("set", "product")])
+    seam.say(message, v, previous=prev)
+    assert _fetched(seam.turn_calls[-1]) == {seam.uuid_of[named]}, seam.turn_calls[-1]
+    _then_five(seam, named, held)
+
+
+# --------------------------------------------------------------------------- #
+# S1: `current_message` null is not "restated"; it names its own
+# --------------------------------------------------------------------------- #
+
+NULL_FLAG = [
+    ("en", "MBF97401-AL stock Available?", "MBF97401-AL", ["SRT1", "SRT391-GM"]),
+    ("bm", "SRT93-BL pulak, ada?", "SRT93-BL", ["SRTSC04-BL", "SRTSC05-GM"]),
+]
+
+
+@pytest.mark.parametrize("message,named,held", [c[1:] for c in NULL_FLAG], ids=[c[0] for c in NULL_FLAG])
+def test_r3c_s1_a_null_current_message_with_a_lone_close_is_not_a_cancel(seam, message, named, held):
+    prev = _owed(seam, held)
+    _seed_more(seam, [named] if named not in seam.uuid_of else [])
+    seam.say(message, _close_only(_product(named) | {"current_message": None}), previous=prev)
+    assert "refused_empty_subject" not in seam.rules_fired, seam.rules_fired
+    assert _fetched(seam.turn_calls[-1]) == {seam.uuid_of[named]}, (seam.turn_calls[-1], seam.rules_fired)
+
+
+# --------------------------------------------------------------------------- #
+# S2 guard: a held product only restated (current_message false) + lone close cancels
+# --------------------------------------------------------------------------- #
+
+RESTATED = [
+    ("en", "forget it, SRT1", ["SRT1", "SRT391-GM"], "SRT1"),
+    ("bm", "tak jadi, SRT391-GM", ["SRT1", "SRT391-GM"], "SRT391-GM"),
+]
+
+
+@pytest.mark.parametrize("message,held,restated", [c[1:] for c in RESTATED], ids=[c[0] for c in RESTATED])
+def test_r3c_s2_guard_a_restated_held_product_with_a_lone_close_still_cancels(seam, message, held, restated):
+    prev = _owed(seam, held)
+    seam.say(message, _close_only(_product(restated) | {"current_message": False}), previous=prev)
+    assert STOCK not in [n for n, _ in seam.turn_calls[-1]], seam.turn_calls[-1]
+    assert seam.state["open_question"] is None
+    assert all(t.get("status") != "open" for t in (seam.state["focus"].get("tasks") or [])), seam.state["focus"].get("tasks")
