@@ -135,7 +135,7 @@ def seed_attachment_type(db) -> None:
     db.flush()
 
 
-def seed_attachment(db, store: FakeStorage, entity_type: str, entity_id: str, name: str, data: bytes, mime: str):
+def seed_attachment(db, store: FakeStorage, entity_type: str, entity_id: str, name: str, data: bytes, mime: str, size=None):
     """A file already attached to a record (bypasses every route). Returns (attachment_id, link_id)."""
     from app.services.entity_attachment_service import EntityAttachmentService
 
@@ -147,7 +147,7 @@ def seed_attachment(db, store: FakeStorage, entity_type: str, entity_id: str, na
         entity_id=entity_id,
         file_url=key,
         file_name=name,
-        file_size_bytes=len(data),
+        file_size_bytes=size if size is not None else len(data),
         attachment_type_code="response_attachment",
         storage_provider="s3",
         mime_type=mime,
@@ -224,3 +224,18 @@ def bad_upload(case: str) -> tuple[str, str, bytes]:
 
 
 BAD_UPLOAD_CASES = ["over_10mb", "not_an_image", "png_declared_jpeg", "over_40mp"]
+
+
+def record_upload_reads(monkeypatch) -> list:
+    """Patch starlette's UploadFile.read to record the size each call asked for."""
+    from starlette.datastructures import UploadFile
+
+    sizes: list = []
+    original = UploadFile.read
+
+    async def spy(self, size: int = -1):
+        sizes.append(size)
+        return await original(self, size)
+
+    monkeypatch.setattr(UploadFile, "read", spy)
+    return sizes

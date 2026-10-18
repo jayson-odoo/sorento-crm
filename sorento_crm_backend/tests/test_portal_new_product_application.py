@@ -666,3 +666,26 @@ def test_portal_upload_validation_refuses_oversize_fake_and_huge_images(portal, 
     res = _upload(portal, d["id"], d["lines"][0]["id"], name=name, data=data, mime=mime)
     assert res.status_code == 422, res.text
     assert _images(portal, d["id"]) == []
+
+
+def test_portal_copy_refuses_an_inquiry_file_over_the_10mb_cap(portal, store):
+    d = _create(portal)
+    line = d["lines"][0]["id"]
+    att, _ = seed_attachment(portal.db, store, "stock_inquiry", portal.mine.id, "big.png", image_bytes(),
+                             "image/png", size=10 * 1024 * 1024 + 1)
+    ok, _ = seed_attachment(portal.db, store, "stock_inquiry", portal.mine.id, "ok.png", image_bytes(), "image/png")
+    c = _as(portal, portal.granted)
+    assert c.post(f"{BASE}/{d['id']}/lines/{line}/images/copy", json={"attachment_id": ok}).status_code in (200, 201)
+    res = c.post(f"{BASE}/{d['id']}/lines/{line}/images/copy", json={"attachment_id": att})
+    assert res.status_code == 422, res.text
+    assert [i["attachment_id"] for i in _images(portal, d["id"])] == [ok]
+
+
+def test_portal_upload_reads_at_most_the_cap_plus_one_byte(portal, store, monkeypatch):
+    from ._npa_v4_support import record_upload_reads
+
+    sizes = record_upload_reads(monkeypatch)
+    d = _create(portal)
+    _upload(portal, d["id"], d["lines"][0]["id"])
+    assert sizes, "the route never read the upload"
+    assert all(isinstance(n, int) and 0 < n <= 10 * 1024 * 1024 + 1 for n in sizes), sizes

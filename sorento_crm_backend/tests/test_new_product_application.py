@@ -1738,3 +1738,44 @@ def test_xlsx_falls_back_to_the_original_when_there_is_no_thumbnail(world, store
     _res, wb = _workbook(world, d["id"])
     assert _embedded_size(wb["Product 1"]) == (16, 12)
     assert key in store.fetched
+
+
+# ------------------------------------------------------------------ security lows
+
+
+def test_copy_refuses_an_inquiry_file_over_the_10mb_cap(world, store):
+    d = _draft(world)
+    line = d["lines"][0]["id"]
+    att, _ = seed_attachment(world.db, store, "stock_inquiry", world.inquiry.id, "big.png", image_bytes(),
+                             "image/png", size=10 * 1024 * 1024 + 1)
+    ok, _ = seed_attachment(world.db, store, "stock_inquiry", world.inquiry.id, "ok.png", image_bytes(), "image/png")
+    api = world.api.as_(world.sales)
+    assert api.post(f"{NPA}/{d['id']}/lines/{line}/images/copy", json={"attachment_id": ok}).status_code in (200, 201)
+    res = api.post(f"{NPA}/{d['id']}/lines/{line}/images/copy", json={"attachment_id": att})
+    assert res.status_code == 422, res.text
+    assert [i["attachment_id"] for i in _images(world, d["id"])] == [ok]
+
+
+def test_xlsx_does_not_download_an_original_over_10mb_without_a_thumbnail(world, store):
+    d = _xlsx_app(world)
+    first = d["lines"][0]["id"]
+    seed_attachment(world.db, store, "new_product_application_line", first, "huge.png", image_bytes(),
+                    "image/png", size=10 * 1024 * 1024 + 1)
+    key = next(k for k in store.files if k.endswith("huge.png"))
+    world.db.commit()
+    store.fetched.clear()
+    _res, wb = _workbook(world, d["id"])
+    ws = wb["Product 1"]
+    assert len(ws._images) == 0
+    assert "huge.png" in text_of(sheet_values(ws)["IMAGE:"])
+    assert key not in store.fetched
+
+
+def test_staff_upload_reads_at_most_the_cap_plus_one_byte(world, store, monkeypatch):
+    from ._npa_v4_support import record_upload_reads
+
+    sizes = record_upload_reads(monkeypatch)
+    d = _draft(world)
+    _upload(world, d["id"], d["lines"][0]["id"])
+    assert sizes, "the route never read the upload"
+    assert all(isinstance(n, int) and 0 < n <= 10 * 1024 * 1024 + 1 for n in sizes), sizes
