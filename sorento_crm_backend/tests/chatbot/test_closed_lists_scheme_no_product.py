@@ -379,3 +379,32 @@ def test_a_scheme_with_no_certificate_in_scope_and_nothing_held_says_so_plainly(
 
     assert _text(r) == f"No {SCHEME} certificate on record.", (_text(r), calls)
     assert not [c for c in calls if c[0] in ("crm_master_product_attachments_list", "crm_resource_attachments_list")], calls
+
+
+# --- R2-7 CERT-ID-CAP (security nit) -----------------------------------------------------------
+
+
+def test_the_schemes_certificate_ids_are_capped_at_200_in_one_fetch(session_factory, seeded, stub_access, monkeypatch):
+    """Every id goes in one GET query string (h11's 16KB request line holds about 400)."""
+    db = session_factory()
+    cert_type = AttachmentType(
+        id=str(uuid.uuid4()), type_name="ZZT Certification", description="Certification by Purchasing",
+        allowed_extensions="pdf", is_certificate=True,
+    )
+    db.add(cert_type)
+    db.flush()
+    db.add_all([
+        Certificate(
+            id=str(uuid.uuid4()), attachment_type_id=cert_type.id, scheme=SCHEME, certificate_number=f"ZZT/{n:04d}",
+            status="active", company_id=DEFAULT_COMPANY_ID,
+        )
+        for n in range(205)
+    ])
+    db.commit()
+
+    [(r, calls)] = _turns(session_factory, stub_access, monkeypatch, [("Span certificate", _file_ask(_scheme(), _kind()))])
+
+    fetches = [args for name, args in calls if name == "crm_master_product_attachments_list"]
+    assert fetches, (_text(r), calls)
+    sent = fetches[0].get("certificate_ids") or []
+    assert 0 < len(sent) <= 200, len(sent)
