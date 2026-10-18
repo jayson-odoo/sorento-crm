@@ -210,7 +210,7 @@ describe('new application', () => {
     expect(screen.queryByText(/item group/i)).toBeNull();
     expect(screen.queryByText(/base uom/i)).toBeNull();
     expect(screen.queryByText(/selling/i)).toBeNull();
-    expect(screen.queryByLabelText('Cost')).toBeNull();
+    expect(screen.queryByLabelText(/^cost/i)).toBeNull();
     expect(screen.queryByLabelText('Lead time')).toBeNull();
     expect(screen.getByText('PRODUCT CODE:')).toBeInTheDocument();
     expect(screen.getByText('Product 1 of 1')).toBeInTheDocument();
@@ -254,10 +254,14 @@ describe('an existing application', () => {
     );
     render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
 
-    const description = (await screen.findByLabelText(
-      'Product type',
-    )) as HTMLInputElement;
-    expect(description).toBeDisabled();
+    expect(
+      (await screen.findAllByText('Example kitchen sink')).length,
+    ).toBeGreaterThan(0);
+    // S3: the read view is plain text, not disabled inputs
+    expect(screen.queryByLabelText('Product type')).toBeNull();
+    expect(screen.queryAllByRole('textbox')).toHaveLength(0);
+    expect(screen.queryAllByRole('combobox')).toHaveLength(0);
+    expect(screen.getAllByText('-').length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: /save as draft/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /^submit$/i })).toBeNull();
     expect(
@@ -352,7 +356,7 @@ describe('purchasing feedback on the portal (PQ1)', () => {
     expect(await screen.findByText('3 weeks')).toBeInTheDocument();
     expect(screen.getByText(/12\.50/)).toBeInTheDocument();
     expect(screen.getByText(/Example Supplier Co/)).toBeInTheDocument();
-    expect(screen.queryByLabelText('Cost')).toBeNull();
+    expect(screen.queryByLabelText(/^cost/i)).toBeNull();
     expect(screen.queryByLabelText('Lead time')).toBeNull();
     expect(screen.queryByRole('button', { name: /save feedback/i })).toBeNull();
     expect(screen.queryByText(/item group|base uom|selling/i)).toBeNull();
@@ -419,5 +423,83 @@ describe('image removal on a saved portal draft', () => {
       ),
     );
     expect(deleteNewProductApplicationLineImage).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('image merge after a save (B1, portal)', () => {
+  const img = (name: string, link: string) => ({
+    link_id: link,
+    attachment_id: `at-${link}`,
+    filename: name,
+    url: `/files/${link}`,
+    content_type: 'image/png',
+  });
+
+  it('B1a: old.png removed then new.png uploaded: old.png stays hidden, Save deletes it once', async () => {
+    const base = detail({
+      lines: [line({ images: [img('old.png', 'k-old')] } as never)],
+    });
+    asMock(getNewProductApplication).mockResolvedValue(base);
+    asMock(uploadNewProductApplicationLineImage).mockResolvedValue(
+      detail({
+        lines: [
+          line({
+            images: [img('old.png', 'k-old'), img('new.png', 'k-new')],
+          } as never),
+        ],
+      }),
+    );
+    asMock(updateNewProductApplication).mockResolvedValue(base);
+    asMock(deleteNewProductApplicationLineImage).mockResolvedValue(undefined);
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /remove.*old\.png/i }),
+    );
+    fireEvent.change(screen.getByLabelText('Add image'), {
+      target: { files: [new File(['x'], 'new.png', { type: 'image/png' })] },
+    });
+    expect(await screen.findByText('new.png')).toBeInTheDocument();
+    expect(screen.queryByText('old.png')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /save as draft/i }));
+    await waitFor(() =>
+      expect(deleteNewProductApplicationLineImage).toHaveBeenCalledTimes(1),
+    );
+    expect(deleteNewProductApplicationLineImage).toHaveBeenCalledWith(
+      'a-1',
+      'l-1',
+      'k-old',
+    );
+  });
+
+  it('B1b: a removed saved product plus a new one with an image: no duplicated id, upload to the returned id', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(detail());
+    asMock(updateNewProductApplication).mockResolvedValue(
+      detail({ lines: [line({ id: 'l-fresh', images: [] } as never)] }),
+    );
+    asMock(uploadNewProductApplicationLineImage).mockResolvedValue(detail());
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /add product/i }));
+    fireEvent.click(screen.getAllByRole('button', { name: /^remove$/i })[0]);
+    const file = new File(['x'], 'fresh.png', { type: 'image/png' });
+    fireEvent.change(screen.getByLabelText('Add image'), {
+      target: { files: [file] },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save as draft/i }));
+
+    await waitFor(() => expect(updateNewProductApplication).toHaveBeenCalled());
+    const lines = asMock(updateNewProductApplication).mock.calls[0][1]
+      .lines as { id?: string }[];
+    expect(lines).toHaveLength(1);
+    expect(lines[0].id ?? null).toBeNull();
+    await waitFor(() =>
+      expect(uploadNewProductApplicationLineImage).toHaveBeenCalledWith(
+        'a-1',
+        'l-fresh',
+        file,
+      ),
+    );
   });
 });

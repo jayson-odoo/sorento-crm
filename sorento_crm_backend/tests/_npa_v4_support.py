@@ -84,6 +84,7 @@ class FakeStorage:
 
     def __init__(self) -> None:
         self.files: dict[str, bytes] = {}
+        self.fetched: list[str] = []
 
     def upload_file(self, *args, **kwargs):
         if args:
@@ -94,6 +95,7 @@ class FakeStorage:
         return key, f"https://cdn.test/{key}"
 
     def download_file(self, key: str) -> bytes:
+        self.fetched.append(key)
         return self.files[key]
 
     def get_signed_url(self, key: str, expires_in: int = 3600) -> str:
@@ -197,3 +199,28 @@ def downloaded_name(res) -> str:
     marker = "filename*=UTF-8''"
     assert marker in header, header
     return unquote(header.split(marker, 1)[1].split(";", 1)[0])
+
+
+MB = 1024 * 1024
+
+
+def bad_upload(case: str) -> tuple[str, str, bytes]:
+    """(file name, declared content type, bytes) for an upload that must be refused with 422."""
+    import io
+
+    from PIL import Image
+
+    if case == "over_10mb":
+        return "big.png", "image/png", image_bytes("PNG") + b"\0" * (10 * MB)  # real image, trailing padding
+    if case == "not_an_image":
+        return "photo.png", "image/png", b"hello"
+    if case == "png_declared_jpeg":
+        return "photo.jpg", "image/jpeg", image_bytes("PNG")
+    if case == "over_40mp":
+        buf = io.BytesIO()
+        Image.new("L", (7000, 6000), 128).save(buf, format="PNG")
+        return "huge.png", "image/png", buf.getvalue()
+    raise KeyError(case)
+
+
+BAD_UPLOAD_CASES = ["over_10mb", "not_an_image", "png_declared_jpeg", "over_40mp"]

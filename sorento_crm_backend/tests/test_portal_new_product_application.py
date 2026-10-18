@@ -16,7 +16,9 @@ from app.main import app  # noqa: F401  MUST be first app import (circular impor
 
 from ._pg_fixture import blank_session
 from ._npa_v4_support import (
+    BAD_UPLOAD_CASES,
     IMAGE_FORMATS,
+    bad_upload,
     REFUSED_LINE_KEYS,
     refused_value,
     SHEET_LABELS,
@@ -655,3 +657,12 @@ def test_portal_inquiry_attachments_refuses_others_or_unanswered_inquiry(portal,
     seed_attachment(portal.db, store, "stock_inquiry", target.id, "x.png", image_bytes(), "image/png")
     assert _inq_atts(portal, portal.mine.id).status_code == 200  # the route exists for my own
     assert _inq_atts(portal, target.id).status_code == 404
+
+
+@pytest.mark.parametrize("case", BAD_UPLOAD_CASES)
+def test_portal_upload_validation_refuses_oversize_fake_and_huge_images(portal, store, case):
+    name, mime, data = bad_upload(case)
+    d = _create(portal)
+    res = _upload(portal, d["id"], d["lines"][0]["id"], name=name, data=data, mime=mime)
+    assert res.status_code == 422, res.text
+    assert _images(portal, d["id"]) == []

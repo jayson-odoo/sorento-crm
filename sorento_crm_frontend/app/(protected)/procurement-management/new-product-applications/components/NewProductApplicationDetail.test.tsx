@@ -418,7 +418,7 @@ describe('PURCHASING FEEDBACK', () => {
       fireEvent.change(screen.getByLabelText('Lead time'), {
         target: { value: '3 weeks' },
       });
-      fireEvent.change(screen.getAllByLabelText('Cost')[0], {
+      fireEvent.change(screen.getByLabelText('Cost for product 1'), {
         target: { value: '12.50' },
       });
       fireEvent.click(screen.getByRole('button', { name: /save feedback/i }));
@@ -447,7 +447,7 @@ describe('PURCHASING FEEDBACK', () => {
     state.data = approved();
     render(<Page />);
     expect(screen.queryByLabelText('Lead time')).toBeNull();
-    expect(screen.queryByLabelText('Cost')).toBeNull();
+    expect(screen.queryByLabelText(/^cost/i)).toBeNull();
     expect(screen.queryByRole('button', { name: /save feedback/i })).toBeNull();
     expect(
       screen.getByText('Purchasing fills this after approval.'),
@@ -495,5 +495,37 @@ describe('Download Excel', () => {
     fireEvent.click(screen.getByRole('button', { name: /download excel/i }));
     await waitFor(() => expect(state.download).toHaveBeenCalledTimes(1));
     expect(state.download.mock.calls[0][0]).toBe('a-1');
+  });
+});
+
+describe('read view shows plain values (S3)', () => {
+  it('renders values as text, not disabled inputs; dates dd/mm/yyyy; empty as a dash', () => {
+    state.data = detail({
+      status: 'submitted',
+      status_label: 'Submitted',
+      needed_by: '2028-01-17',
+    });
+    state.userId = 'u-other';
+    state.perms = new Set(['procurement.new_product_applications.view']);
+    render(<Page />);
+    expect(screen.queryAllByRole('textbox')).toHaveLength(0);
+    expect(screen.queryAllByRole('combobox')).toHaveLength(0);
+    expect(screen.queryAllByRole('spinbutton')).toHaveLength(0);
+    expect(screen.getAllByText('Example kitchen sink').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Carton').length).toBeGreaterThan(0);
+    expect(screen.getByText('17/01/2028')).toBeInTheDocument();
+    expect(screen.getByText('17/10/2026')).toBeInTheDocument();
+    expect(screen.getAllByText('-').length).toBeGreaterThan(0);
+  });
+});
+
+describe('Cost inputs are uniquely named (S6)', () => {
+  it('Cost for product 1 and 2 for open_code on an approved record', () => {
+    state.userId = 'u-buyer';
+    state.perms = new Set([OPEN]);
+    state.data = approved();
+    render(<Page />);
+    expect(screen.getByLabelText('Cost for product 1')).toBeInTheDocument();
+    expect(screen.getByLabelText('Cost for product 2')).toBeInTheDocument();
   });
 });

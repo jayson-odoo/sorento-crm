@@ -21,6 +21,7 @@ const mock = vi.hoisted(() => ({
   copy: vi.fn(),
   del: vi.fn(),
   attachments: vi.fn(),
+  inquiryOptions: vi.fn(async () => []),
   existing: undefined as unknown,
 }));
 
@@ -36,6 +37,9 @@ vi.mock('../hooks/useNewProductApplications', () => ({
     create: { mutateAsync: mock.createAsync, isPending: false },
     update: { mutateAsync: mock.updateAsync, isPending: false },
     submit: { mutateAsync: mock.submitAsync, isPending: false },
+    uploadImage: { mutateAsync: mock.upload, isPending: false },
+    copyImage: { mutateAsync: mock.copy, isPending: false },
+    deleteImage: { mutateAsync: mock.del, isPending: false },
   }),
   useNewProductApplicationQuery: () => ({ data: mock.existing, isLoading: false }),
   useNewProductApplicationPrefillQuery: () => ({
@@ -47,11 +51,7 @@ vi.mock('../hooks/useNewProductApplications', () => ({
   useNewProductApplicationLookups: () => ({ brands: async () => [] }),
 }));
 vi.mock('../services/newProductApplicationService', () => ({
-  searchStockInquiryOptions: vi.fn(async () => []),
-  uploadNewProductApplicationLineImage: (...a: unknown[]) =>
-    mock.upload(...a),
-  copyNewProductApplicationLineImage: (...a: unknown[]) => mock.copy(...a),
-  deleteNewProductApplicationLineImage: (...a: unknown[]) => mock.del(...a),
+  searchStockInquiryOptions: (...a: unknown[]) => mock.inquiryOptions(...a),
   getStockInquiryAttachmentsForNpa: (...a: unknown[]) => mock.attachments(...a),
 }));
 vi.mock(
@@ -100,6 +100,12 @@ beforeEach(() => {
   mock.prefill = undefined;
   mock.prefillError = null;
   mock.existing = undefined;
+  mock.attachments.mockReset();
+  mock.upload.mockReset();
+  mock.copy.mockReset();
+  mock.del.mockReset();
+  mock.inquiryOptions.mockReset();
+  mock.inquiryOptions.mockResolvedValue([]);
   mock.createAsync.mockResolvedValue({ id: 'npa-1' });
   mock.updateAsync.mockResolvedValue({ id: 'npa-1' });
   mock.submitAsync.mockResolvedValue({ id: 'npa-1' });
@@ -145,7 +151,7 @@ describe('number fields', () => {
     const qty = (await screen.findByLabelText('Qty')) as HTMLInputElement;
     expect(qty.value).toBe('55');
     fireEvent.change(qty, { target: { value: '' } });
-    expect(screen.queryByLabelText('Cost')).toBeNull();
+    expect(screen.queryByLabelText(/^cost/i)).toBeNull();
 
     saveDraft();
     await waitFor(() => expect(mock.createAsync).toHaveBeenCalledTimes(1));
@@ -208,7 +214,11 @@ describe('paper layout', () => {
     expect(mock.upload).not.toHaveBeenCalled();
     saveDraft();
     await waitFor(() => expect(mock.upload).toHaveBeenCalledTimes(1));
-    expect(mock.upload).toHaveBeenCalledWith('npa-1', 'l-new', file);
+    expect(mock.upload).toHaveBeenCalledWith({
+      id: 'npa-1',
+      lineId: 'l-new',
+      file,
+    });
     expect(mock.createAsync.mock.invocationCallOrder[0]).toBeLessThan(
       mock.upload.mock.invocationCallOrder[0],
     );
@@ -309,7 +319,11 @@ describe('images on a saved draft', () => {
     expect(mock.copy).not.toHaveBeenCalled();
     fireEvent.click(pick);
     await waitFor(() =>
-      expect(mock.copy).toHaveBeenCalledWith('npa-1', 'l-1', 'at-9'),
+      expect(mock.copy).toHaveBeenCalledWith({
+        id: 'npa-1',
+        lineId: 'l-1',
+        attachmentId: 'at-9',
+      }),
     );
   });
 
@@ -328,7 +342,11 @@ describe('images on a saved draft', () => {
 
     saveDraft();
     await waitFor(() => expect(mock.del).toHaveBeenCalledTimes(1));
-    expect(mock.del).toHaveBeenCalledWith('npa-1', 'l-1', 'k-1');
+    expect(mock.del).toHaveBeenCalledWith({
+      id: 'npa-1',
+      lineId: 'l-1',
+      linkId: 'k-1',
+    });
     expect(mock.updateAsync.mock.invocationCallOrder[0]).toBeLessThan(
       mock.del.mock.invocationCallOrder[0],
     );
@@ -345,7 +363,11 @@ describe('images on a saved draft', () => {
     expect(mock.del).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
     await waitFor(() =>
-      expect(mock.del).toHaveBeenCalledWith('npa-1', 'l-1', 'k-1'),
+      expect(mock.del).toHaveBeenCalledWith({
+      id: 'npa-1',
+      lineId: 'l-1',
+      linkId: 'k-1',
+    }),
     );
     expect(mock.del).toHaveBeenCalledTimes(1);
   });
@@ -359,5 +381,124 @@ describe('images on a saved draft', () => {
     fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
     unmount();
     expect(mock.del).not.toHaveBeenCalled();
+  });
+
+  const image = (name: string, link: string) => ({
+    link_id: link,
+    attachment_id: `at-${link}`,
+    filename: name,
+    url: `/files/${link}`,
+    content_type: 'image/png',
+  });
+
+  it('B1a: after removing old.png and uploading new.png, old.png stays hidden and Save deletes it once', async () => {
+    const rec = saved();
+    rec.lines[0].images = [image('old.png', 'k-old')];
+    mock.existing = rec;
+    // the server has not seen the removal yet, so its answer still lists old.png
+    mock.upload.mockResolvedValue({
+      ...rec,
+      lines: [
+        {
+          ...rec.lines[0],
+          images: [image('old.png', 'k-old'), image('new.png', 'k-new')],
+        },
+      ],
+    });
+    mock.del.mockResolvedValue(undefined);
+    renderForm({ applicationId: 'npa-1' });
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /remove.*old\.png/i }),
+    );
+    fireEvent.change(screen.getByLabelText('Add image'), {
+      target: {
+        files: [new File(['x'], 'new.png', { type: 'image/png' })],
+      },
+    });
+    expect(await screen.findByText('new.png')).toBeInTheDocument();
+    expect(screen.queryByText('old.png')).toBeNull();
+
+    saveDraft();
+    await waitFor(() => expect(mock.del).toHaveBeenCalledTimes(1));
+    expect(mock.del).toHaveBeenCalledWith({
+      id: 'npa-1',
+      lineId: 'l-1',
+      linkId: 'k-old',
+    });
+  });
+
+  it('B1b: a removed saved product plus a new one with an image sends no duplicated id and uploads to the returned id', async () => {
+    mock.existing = saved();
+    mock.updateAsync.mockResolvedValue({
+      id: 'npa-1',
+      lines: [{ id: 'l-fresh', line_no: 1, images: [] }],
+    });
+    mock.upload.mockResolvedValue({ id: 'npa-1', lines: [] });
+    renderForm({ applicationId: 'npa-1' });
+
+    fireEvent.click(await screen.findByRole('button', { name: /add product/i }));
+    fireEvent.click(screen.getAllByRole('button', { name: /^remove$/i })[0]);
+    expect(screen.getByText('Product 1 of 1')).toBeInTheDocument();
+    const file = new File(['x'], 'fresh.png', { type: 'image/png' });
+    fireEvent.change(screen.getByLabelText('Add image'), {
+      target: { files: [file] },
+    });
+    saveDraft();
+
+    await waitFor(() => expect(mock.updateAsync).toHaveBeenCalledTimes(1));
+    const lines = mock.updateAsync.mock.calls[0][0].data.lines as {
+      id?: string;
+    }[];
+    expect(lines).toHaveLength(1);
+    expect(lines[0].id ?? null).toBeNull();
+    const ids = lines.map((l) => l.id).filter(Boolean);
+    expect(new Set(ids).size).toBe(ids.length);
+    await waitFor(() => expect(mock.upload).toHaveBeenCalledTimes(1));
+    expect(mock.upload).toHaveBeenCalledWith({
+      id: 'npa-1',
+      lineId: 'l-fresh',
+      file,
+    });
+  });
+
+  it('S4: a failed inquiry attachment fetch toasts the error and does not claim the inquiry has no images', async () => {
+    mock.existing = saved();
+    mock.attachments.mockRejectedValue(new Error('Could not load the inquiry files'));
+    renderForm({ applicationId: 'npa-1' });
+    fireEvent.click(
+      await screen.findByRole('button', { name: /copy from the inquiry/i }),
+    );
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(toast.error).toHaveBeenCalledWith('Could not load the inquiry files');
+    expect(screen.queryByText(/no images on the inquiry/i)).toBeNull();
+  });
+
+  it('S5: with the inquiry changed but unsaved, Copy from the inquiry never reads the new inquiry', async () => {
+    mock.existing = saved();
+    mock.inquiryOptions.mockResolvedValue([
+      { value: 'si-2', label: 'SI26-0999 - XY-9' },
+    ]);
+    mock.attachments.mockResolvedValue([]);
+    renderForm({ applicationId: 'npa-1' });
+
+    const picker = await screen.findByRole('combobox', {
+      name: /stock inquiry/i,
+    });
+    fireEvent.click(picker);
+    fireEvent.change(picker, { target: { value: 'SI26' } });
+    const option = await screen.findByText('SI26-0999 - XY-9');
+    fireEvent.mouseDown(option);
+    fireEvent.click(option);
+    expect(await screen.findByText(/SI26-0999/)).toBeInTheDocument();
+
+    const copy = screen.queryByRole('button', {
+      name: /copy from the inquiry/i,
+    });
+    if (copy) {
+      fireEvent.click(copy);
+      await waitFor(() => expect(mock.attachments).toHaveBeenCalled());
+    }
+    for (const c of mock.attachments.mock.calls) expect(c[0]).toBe('si-1');
   });
 });

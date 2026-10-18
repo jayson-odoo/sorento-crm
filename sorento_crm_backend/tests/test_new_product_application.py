@@ -883,7 +883,9 @@ from datetime import datetime  # noqa: E402
 from decimal import Decimal  # noqa: E402
 
 from ._npa_v4_support import (  # noqa: E402
+    BAD_UPLOAD_CASES,
     IMAGE_FORMATS,
+    bad_upload,
     REFUSED_LINE_KEYS,
     refused_value,
     SHEET_LABELS,
@@ -1629,3 +1631,110 @@ def test_inquiry_attachments_needs_create_and_a_known_inquiry(world, store):
     assert _inq_atts(world, world.inquiry.id, user=world.stranger).status_code == 403
     assert _inq_atts(world, world.inquiry.id, user=world.viewer).status_code == 403
     assert _inq_atts(world, uid()).status_code == 404
+
+
+# ====================================================================================
+# fix round (review + security findings on 8a6793b9fb)
+# ====================================================================================
+
+
+def test_s2_deleting_a_draft_leaves_no_image_links_behind(world, store):
+    from app.services import new_product_application_service as svc
+
+    d = _draft(world)
+    lines = [l["id"] for l in d["lines"]]
+    for line in lines:
+        _ok(_upload(world, d["id"], line))
+        assert len(_rows_for(world, "new_product_application_line", line)) == 1
+    svc.delete_draft(world.db, d["id"], world.sales)
+    world.db.flush()
+    for line in lines:
+        assert _rows_for(world, "new_product_application_line", line) == []
+
+
+def test_staff_image_routes_are_refused_on_a_portal_raised_application(world, store):
+    from app.models.new_product_application import NewProductApplication
+
+    d = _draft(world)
+    line = d["lines"][0]["id"]
+    att, link = seed_attachment(world.db, store, "new_product_application_line", line, "a.png", image_bytes(), "image/png")
+    inq_att, _ = seed_attachment(world.db, store, "stock_inquiry", world.inquiry.id, "b.png", image_bytes(), "image/png")
+    row = world.db.get(NewProductApplication, d["id"])
+    row.source = "portal"
+    world.db.commit()
+    put = world.api.as_(world.sales).put(f"{NPA}/{d['id']}", json=_body(world, remark="x"))
+    assert put.status_code == 409, put.text
+    base = f"{NPA}/{d['id']}/lines/{line}/images"
+    api = world.api.as_(world.sales)
+    for res in (
+        _upload(world, d["id"], line),
+        api.post(f"{base}/copy", json={"attachment_id": inq_att}),
+        api.delete(f"{base}/{link}"),
+    ):
+        assert res.status_code == put.status_code, res.text
+        assert res.json().get("code") == put.json().get("code")
+    assert len(_rows_for(world, "new_product_application_line", line)) == 1
+
+
+@pytest.mark.parametrize("case", BAD_UPLOAD_CASES)
+def test_upload_validation_refuses_oversize_fake_and_huge_images(world, store, case):
+    name, mime, data = bad_upload(case)
+    d = _draft(world)
+    res = _upload(world, d["id"], d["lines"][0]["id"], name=name, data=data, mime=mime)
+    assert res.status_code == 422, res.text
+    assert _images(world, d["id"]) == []
+
+
+def test_xlsx_control_characters_are_removed_from_the_cells(world):
+    d = _approved(
+        world, remark="line\x0bbreak\x01", customer_name="Example Developer Sdn Bhd",
+        lines=[_line(world, material="steel\x0b\x01plate", description="Sink\x08 A")],
+    )
+    _res, wb = _workbook(world, d["id"])
+    values = sheet_values(wb["Product 1"])
+    assert text_of(values["REMARK:"]) == "linebreak"
+    assert text_of(values["MATERIAL:"]) == "steelplate"
+    assert text_of(values["PRODUCT TYPE:"]) == "Sink A"
+
+
+def _thumb_fixture(world, store, *, with_thumbnail):
+    import io
+
+    from PIL import Image
+
+    from app.services.image_thumbnailer import thumbnail_key_for
+
+    d = _xlsx_app(world)
+    first = d["lines"][0]["id"]
+    seed_attachment(world.db, store, "new_product_application_line", first, "front.png", image_bytes(size=(16, 12)), "image/png")
+    key = next(k for k in store.files if k.endswith("front.png"))
+    if with_thumbnail:
+        buf = io.BytesIO()
+        Image.new("RGB", (5, 7), (10, 10, 200)).save(buf, format="JPEG")
+        store.files[thumbnail_key_for(key)] = buf.getvalue()
+    world.db.commit()
+    store.fetched.clear()
+    return d, key
+
+
+def _embedded_size(ws):
+    import io
+
+    from PIL import Image
+
+    return Image.open(io.BytesIO(ws._images[0]._data())).size
+
+
+def test_xlsx_embeds_the_stored_thumbnail_and_never_fetches_the_original(world, store):
+    d, key = _thumb_fixture(world, store, with_thumbnail=True)
+    _res, wb = _workbook(world, d["id"])
+    assert len(wb["Product 1"]._images) == 1
+    assert _embedded_size(wb["Product 1"]) == (5, 7)
+    assert key not in store.fetched
+
+
+def test_xlsx_falls_back_to_the_original_when_there_is_no_thumbnail(world, store):
+    d, key = _thumb_fixture(world, store, with_thumbnail=False)
+    _res, wb = _workbook(world, d["id"])
+    assert _embedded_size(wb["Product 1"]) == (16, 12)
+    assert key in store.fetched

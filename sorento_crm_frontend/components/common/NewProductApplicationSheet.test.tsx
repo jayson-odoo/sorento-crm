@@ -154,7 +154,7 @@ describe('purchasing feedback', () => {
 
   it('is read-only to the applicant: no COST or LEADTIME input, a waiting line', () => {
     render(<Harness initial={withFeedback()} feedback={{ editable: false }} />);
-    expect(screen.queryByLabelText('Cost')).toBeNull();
+    expect(screen.queryByLabelText(/^cost/i)).toBeNull();
     expect(screen.queryByLabelText('Lead time')).toBeNull();
     expect(
       screen.getByText('Purchasing fills this after approval.'),
@@ -171,7 +171,7 @@ describe('purchasing feedback', () => {
     render(<Harness initial={filled} feedback={{ editable: false }} />);
     expect(screen.getByText('3 weeks')).toBeInTheDocument();
     expect(screen.getByText(/12\.50/)).toBeInTheDocument();
-    expect(screen.queryByLabelText('Cost')).toBeNull();
+    expect(screen.queryByLabelText(/^cost/i)).toBeNull();
     expect(
       screen.queryByText('Purchasing fills this after approval.'),
     ).toBeNull();
@@ -188,10 +188,10 @@ describe('purchasing feedback', () => {
     fireEvent.change(screen.getByLabelText('Lead time'), {
       target: { value: '3 weeks' },
     });
-    fireEvent.change(screen.getByLabelText('Cost'), {
+    fireEvent.change(screen.getByLabelText('Cost for product 1'), {
       target: { value: '12.50' },
     });
-    expect((screen.getByLabelText('Cost') as HTMLInputElement).value).toBe(
+    expect((screen.getByLabelText('Cost for product 1') as HTMLInputElement).value).toBe(
       '12.50',
     );
     fireEvent.click(screen.getByRole('button', { name: /save feedback/i }));
@@ -243,5 +243,66 @@ describe('images', () => {
     );
     expect(screen.queryByLabelText('Add image')).toBeNull();
     expect(screen.queryByRole('button', { name: /add product/i })).toBeNull();
+  });
+});
+
+describe('read-only view shows plain values (S3)', () => {
+  it('renders the paper values as text, dates as dd/mm/yyyy, empty as a dash', () => {
+    const line = {
+      ...blankLine(),
+      id: 'l-1',
+      description: 'Example sink',
+      packing: 'Carton',
+      expected_qty: '55',
+    };
+    render(
+      <NewProductApplicationSheet
+        value={{
+          ...EMPTY_FORM,
+          project_name: 'EXAMPLE RESIDENCE, TOWER B',
+          needed_by: '2028-01-17',
+          remark: '',
+          lines: [line],
+        }}
+        onChange={() => {}}
+        applicationNo="NPA-000001"
+        createdAt="2026-10-17T01:00:00"
+        salesPerson="Example Staff"
+        readOnly
+        stockInquiryField={<span>SI26-0412</span>}
+        customerField={<span>EXAMPLE DEVELOPER SDN BHD</span>}
+        brands={async () => []}
+      />,
+    );
+    expect(screen.queryAllByRole('textbox')).toHaveLength(0);
+    expect(screen.queryAllByRole('combobox')).toHaveLength(0);
+    expect(screen.queryAllByRole('spinbutton')).toHaveLength(0);
+    expect(document.querySelectorAll('input:disabled, textarea:disabled')).toHaveLength(0);
+    expect(screen.getByText('Example sink')).toBeInTheDocument();
+    expect(screen.getByText('Carton')).toBeInTheDocument();
+    expect(screen.getByText('55')).toBeInTheDocument();
+    expect(screen.getByText('17/01/2028')).toBeInTheDocument();
+    expect(screen.getByText('17/10/2026')).toBeInTheDocument();
+    expect(screen.getAllByText('-').length).toBeGreaterThan(0);
+  });
+});
+
+describe('cost inputs are uniquely named (S6)', () => {
+  it('names each COST input by its product', () => {
+    render(
+      <Harness
+        initial={{
+          ...EMPTY_FORM,
+          lead_time: '',
+          lines: [
+            { ...blankLine(), id: 'l-1' },
+            { ...blankLine(), id: 'l-2' },
+          ],
+        }}
+        feedback={{ editable: true, onSave: () => {} }}
+      />,
+    );
+    expect(screen.getByLabelText('Cost for product 1')).toBeInTheDocument();
+    expect(screen.getByLabelText('Cost for product 2')).toBeInTheDocument();
   });
 });
