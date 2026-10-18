@@ -124,3 +124,35 @@ plans 37 + 467 = 504. Where does the extra 145 come from?
    Excel print it.
    (b) Generate at Save and freeze it.
    **Rec (a):** the remark stays right while qty or date are still being edited.
+
+## Owner answers (18 Oct evening, via crew; verbatim parts quoted)
+
+- Q1 **(a)**. After Confirm, keep the confirmed change: QTY / DELIVERY DATE before, NEW QTY / NEW DATE after.
+  A single "Confirmed <date>" may sit in the sheet's header line, NOT on each line (see Q2's no-labels rule).
+- Q2 **No equations, no labels**: "whenever i see long equation + + +, again i get confused when i see too
+  many label, the position of the value should be self explanatory". Where a lump sum came from is shown
+  only by the POSITION of values in the existing columns. The mock shows two layouts:
+  - A, "under the line it came from", like his Excel.
+  - B, "under the line it landed on", where the moved row's own Line cell names its origin.
+  R2's equation and "not linked yet" text are dropped.
+- Q3 **(b)**: no per-row destination labels (same reason). R3 is dropped.
+- Q4 "it is not really cancel 403 right, the 403 just go to other places?". Rule: **split rows NEVER net into
+  a CANCEL.**
+  - A split left on "new line" is a delivery of that qty at its own date. It is its own row in the sheet,
+    the email and the Excel, with a pill by date (ADVANCE / DELAY / REMAIN).
+  - The netting that turns an unlinked split rest into "CANCEL N" (OI:4441-4463, `_tell_splits`) stops doing
+    that for split rows.
+  - CANCEL appears only where the user explicitly cancels: the "Cancel this qty" drop / Cancel target makes
+    an `is_cancel` split (`lineSplitModel.ts:183`, `:462`). The email word for it is "CANCEL BALANCE"
+    (LSS:70-73).
+  - Unchanged: AutoCount cancelling a whole line still prints "CANCEL ALL" (OI:622/661), and a line that is
+    NOT split prints its AutoCount reduction as today.
+- Q5 **(a)**: REMARK pre-filled live with the generated text until staff edits it. Staff text wins, and the
+  email and Excel print the sheet's value.
+- Data: "the extra 145 is really extra qty". AutoCount added new qty to 752, shown as a NEW QTY increase,
+  not as a move. Arithmetic flag for the owner:
+  - If the 37 moved from 752 to 608 (608's 632 = 192 + 236 + 167 + 37), then 752's 649 = 467 + **182**.
+  - The 145 in the email is 649 - 504, without taking the 37 out.
+  - The mock shows 182 and asks him to confirm.
+- Approved small fix (crew, S): a typed date commits on leaving the cell or on Enter, not mid-typing
+  (`components/ui/date-picker.tsx:84-92`). Red-first in the build round.
