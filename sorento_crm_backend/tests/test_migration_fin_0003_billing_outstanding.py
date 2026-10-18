@@ -61,7 +61,12 @@ def test_revision_id_fits_and_follows_fin_0002_as_the_single_head():
     assert module.revision == "fin_0003_billing_outstanding"
     assert len(module.revision) <= 32
     script = ScriptDirectory.from_config(Config(str(Path(__file__).resolve().parents[1] / "alembic.ini")))
-    assert script.get_heads() == ["fin_0003_billing_outstanding"]
+    heads = script.get_heads()
+    # One head, and fin_0003 on its chain: a migration merged after this one (the NEW-PRODUCT-APP
+    # lane's npa_0001) becomes the head, which a pinned `== ["fin_0003..."]` would refuse.
+    assert len(heads) == 1, heads
+    on_head_chain = {rev.revision for rev in script.walk_revisions("base", heads[0])}
+    assert "fin_0003_billing_outstanding" in on_head_chain
     ancestors = {rev.revision for rev in script.walk_revisions("base", "fin_0003_billing_outstanding")}
     assert "fin_0002_billing_demand_class" in ancestors
 
