@@ -1767,3 +1767,53 @@ def test_g16_a_later_autocount_change_after_a_re_plan_moves_only_the_own_row(
                                                 variant, told)
     assert [t for t in told if f"{word} 2" in t[1] or (t[0] == "2" and word in t[1])], (
         f"the email says {word} 2", variant, told)
+
+
+# ---------------------------------------------------------------------------
+# Re-check on e39e123f15: a plan that was NEVER applied acts normally even when purchasing's
+# rows already match it (it is not a "later change" of an applied plan).
+# ---------------------------------------------------------------------------
+
+D_117 = date(2026, 12, 20)
+
+
+@pytest.mark.parametrize("on_117", [480, "new"], ids=["both_on_480", "117_on_new_line"])
+def test_g14_a_never_applied_plan_is_not_read_as_a_later_change(api, emails, on_117):
+    """480's 417 already sits in two ORDER rows (300 @ 20/10/2026 and 117 @ 20/12/2026), the
+    AutoCount change 417 -> 14 is pending, and staff save that same layout as a plan against
+    base 417 (the 117 on 480, or on New line). The batch Confirm acts normally (AC-G4 / G10 /
+    G14): purchasing keeps 300 and 117, nothing says CANCEL, and the worklist, email and Excel
+    agree. It read the line as a later change: netted it to 14 with "14 ADVANCE, CANCEL 403",
+    or wrote a CANCEL BALANCE 300 beside the raised ORDER 300."""
+    from app.models.project_so import OrderInquiryRow
+
+    s = _seed(api)
+    row = _order_row(s.world, s.line[480])
+    row.qty = Decimal("300")
+    s.db.add(OrderInquiryRow(
+        company_id=row.company_id, order_inquiry_id=row.order_inquiry_id, so_line_id=row.so_line_id,
+        item_code=row.item_code, qty=Decimal("117"), delivery_date=D_117,
+        stock_location=row.stock_location, verb=row.verb, state=row.state,
+        supply_decision_id=row.supply_decision_id, ack_state=row.ack_state,
+    ))
+    s.db.commit()
+    assert _live(_worklist(s, s.line[480])) == sorted([(_d("300"), D_480), (_d("117"), D_117)]), (
+        "premise: purchasing already holds 300 and 117", _worklist(s, s.line[480]))
+    _save(s, {480: [(300, D_480, 480, ""), (117, D_117, on_117, "")]})
+    sent = _confirm_batch(s, emails)
+
+    rows = _worklist(s, s.line[480])
+    held = sorted([(_d("300"), D_480), (_d("117"), D_117)])
+    assert _live(rows) == held, ("purchasing keeps 300 and 117", on_117, rows)
+    assert _cancel_balances(rows) == [], ("no CANCEL BALANCE on 480", on_117, rows)
+    lines = [ln for h in sent for ln in h.get("lines") or []]
+    assert not [ln for ln in lines if "CANCEL" in str(ln.get("remark"))], (
+        "no CANCEL in the email", on_117, [(ln["qty"], ln["remark"]) for ln in lines])
+    emailed = sorted(
+        (_d(ln["qty"]), datetime.strptime(ln["delivery_date"], "%d/%m/%Y").date())
+        for ln in lines if ln["qty"] in ("300", "117")
+    )
+    assert emailed == held, ("the email rows are the worklist rows", on_117, emailed)
+    xl = [(r[2], r[3]) for r in _excel_rows(s) if r[2] in (_d("300"), _d("117"))]
+    assert sorted(xl) == held, ("the Excel rows are the worklist rows", on_117, _excel_rows(s))
+    assert not [r for r in _excel_rows(s) if "CANCEL" in str(r[4])], _excel_rows(s)
