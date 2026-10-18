@@ -4,7 +4,6 @@ import * as React from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { CellStockTable } from '../../../project-sales/fulfilment-planning/components/CellStockTable';
-import type { BoardCellLocation } from '../../../project-sales/_shared/types/fulfilmentPlanning.types';
 import { searchStockStatusProducts } from '@/components/stock-status/stockStatusService';
 import { useStockStatus } from '@/components/stock-status/useStockStatus';
 
@@ -13,6 +12,9 @@ import { useStockStatus } from '@/components/stock-status/useStockStatus';
  * in the same stock table Fulfilment Planning and Order Inquiry show (owner, 18 Oct: "1. Keep").
  * The item lives in the URL (`?product_id=`), so a link can be shared.
  */
+/** The page has no order in hand, so the table is AutoCount's locations alone. */
+const NO_ROWS: never[] = [];
+
 export default function StockStatusPageClient() {
   const router = useRouter();
   const pathname = usePathname();
@@ -49,7 +51,7 @@ export default function StockStatusPageClient() {
       </div>
       {productId ? (
         picked.data ? (
-          <CellStockTable locations={rowsOf(picked.data)} />
+          <CellStockTable locations={NO_ROWS} autoCount={picked.data} />
         ) : null
       ) : (
         <div className="rounded-md border px-4 py-8 text-center">
@@ -59,20 +61,4 @@ export default function StockStatusPageClient() {
       )}
     </div>
   );
-}
-
-/** AutoCount's locations as stock-table rows: every location holding the item. */
-function rowsOf(data: NonNullable<ReturnType<typeof useStockStatus>['data']>): BoardCellLocation[] {
-  return data.locations.map((loc) => ({
-    location: loc.warehouse_code,
-    where: 'other_group',
-    product_id: data.product_id,
-    warehouse_id: loc.warehouse_id,
-    qty: '0',
-    qty_on_hand: String(loc.on_hand),
-    so_qty: String(loc.so_qty),
-    spo_qty: String(loc.spo_qty),
-    po_open_qty: String(loc.po_qty),
-    available_qty: String(loc.on_hand - loc.so_qty + loc.spo_qty),
-  }));
 }

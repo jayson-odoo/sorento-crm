@@ -52,7 +52,7 @@ vi.mock('@/app/(protected)/inventory-management/warehouses/services/warehouseSer
   getWarehouses: (...args: unknown[]) => getWarehousesMock(...args),
 }));
 
-const useStockStatusMock = vi.fn((..._args: unknown[]) => ({ data: undefined as unknown, isLoading: false }));
+const useStockStatusMock = vi.fn<(...args: unknown[]) => Record<string, unknown>>(() => ({ data: undefined as unknown, isLoading: false }));
 vi.mock('@/components/stock-status/useStockStatus', () => ({
   useStockStatus: (...args: unknown[]) => useStockStatusMock(...args),
 }));

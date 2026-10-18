@@ -28,7 +28,7 @@ vi.mock('../../../project-sales/fulfilment-planning/components/CellStockTable', 
 }));
 
 const STATUS = { product_id: 'prod-1', item_code: 'SRTWB1515', locations: [], incoming_pl: [] };
-const useStockStatusMock = vi.fn((..._args: unknown[]) => ({ data: STATUS as unknown, isLoading: false }));
+const useStockStatusMock = vi.fn<(...args: unknown[]) => Record<string, unknown>>(() => ({ data: STATUS as unknown, isLoading: false }));
 vi.mock('@/components/stock-status/useStockStatus', () => ({
   useStockStatus: (...args: unknown[]) => useStockStatusMock(...args),
 }));

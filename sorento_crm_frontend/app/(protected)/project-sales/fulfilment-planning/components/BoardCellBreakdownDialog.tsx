@@ -66,6 +66,7 @@ import {
   useDecisionRowExpansion,
 } from './decisionRowExpansion';
 import { CellStockTable } from './CellStockTable';
+import { useStockStatus } from '@/components/stock-status/useStockStatus';
 import type {
   BoardCell,
   BoardContribution,
@@ -305,6 +306,14 @@ export function BoardCellBreakdownDialog({
     [cell.contributions, openKey],
   );
   const shownLocations = shownContribution?.locations ?? cell.locations;
+  /**
+   * STOCK-STATUS round 6 (UAC AC-35): AutoCount's read of the cell's one product, so the Stock
+   * tab reads AutoCount's figures. A cell whose rows name more than one product (a pivot) has
+   * no single position and reads nothing; a failed read leaves today's table.
+   */
+  const stockProductIds = new Set(shownLocations.map((entry) => entry.product_id).filter(Boolean));
+  const stockProductId = stockProductIds.size === 1 ? ([...stockProductIds][0] as string) : null;
+  const autoCount = useStockStatus(stockProductId);
 
   /**
    * The lightbox's own navigation (S3, PLAN-scm-planning-feedback-31aug): a jump to "This
@@ -1299,6 +1308,7 @@ export function BoardCellBreakdownDialog({
                 filterText={stockSearch.debouncedValue}
                 landOnMount
                 poolSharePct={poolSharePct}
+                autoCount={autoCount.data ?? null}
               />
             </TabsContent>
 

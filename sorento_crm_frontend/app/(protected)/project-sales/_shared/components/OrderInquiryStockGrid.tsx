@@ -5,6 +5,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { getWarehouses } from '@/app/(protected)/inventory-management/warehouses/services/warehouseService';
 import { CellStockTable } from '../../fulfilment-planning/components/CellStockTable';
 import { useStockDetail } from '../hooks/useFulfilmentPlanning';
+import { useStockStatus } from '@/components/stock-status/useStockStatus';
 import { groupOfWarehouseCode } from '../lib/supplyVocabulary';
 
 /**
@@ -83,6 +84,9 @@ export function OrderInquiryStockGrid({
     };
   }, [isBarePoolCode, location]);
 
+  // STOCK-STATUS round 6 (UAC AC-35): AutoCount's figures in the same table; a failed read
+  // leaves today's.
+  const autoCount = useStockStatus(productId);
   const warehouseId = isBarePoolCode ? resolvedWarehouseId : null;
   const detail = useStockDetail(
     productId,
@@ -138,7 +142,14 @@ export function OrderInquiryStockGrid({
     );
   }
 
-  return <CellStockTable locations={locations} lineIds={lineIds} showGroupSubtotal />;
+  return (
+    <CellStockTable
+      locations={locations}
+      lineIds={lineIds}
+      showGroupSubtotal
+      autoCount={autoCount.data ?? null}
+    />
+  );
 }
 
 export default OrderInquiryStockGrid;

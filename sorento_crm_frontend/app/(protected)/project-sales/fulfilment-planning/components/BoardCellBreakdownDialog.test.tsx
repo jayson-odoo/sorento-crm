@@ -47,7 +47,7 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
 }));
 
 /** STOCK-STATUS round 6: the Stock tab's AutoCount read. Empty unless a test sets it. */
-const useStockStatusMock = vi.fn((..._args: unknown[]) => ({ data: undefined as unknown, isLoading: false, isError: false }));
+const useStockStatusMock = vi.fn<(...args: unknown[]) => Record<string, unknown>>(() => ({ data: undefined as unknown, isLoading: false, isError: false }));
 vi.mock('@/components/stock-status/useStockStatus', () => ({
   useStockStatus: (...args: unknown[]) => useStockStatusMock(...args),
 }));
@@ -698,7 +698,6 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
     // use it.
     expect(stockRow('BRW-BB').slice(1)).toEqual([
       'BRW-BB',
-      'Own location',
       '478',
       '47009',
       '0',
@@ -731,12 +730,12 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
     );
 
     const row = stockRow('BRW-IB');
-    expect(row[4]).toBe('10805');
-    expect(row[5]).toBe('0');
+    expect(row[3]).toBe('10805');
+    expect(row[4]).toBe('0');
     // A stated location with no figure of its own reads 0 (AC-B2): an absent stock row means
     // the last upload counted none there. Only a line with NO location keeps its blanks.
-    expect(row[3]).toBe('0');
-    expect(row[6]).toBe('0');
+    expect(row[2]).toBe('0');
+    expect(row[5]).toBe('0');
   });
 
   it('leaves the figures blank when the sales order named no location', () => {
@@ -756,7 +755,7 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
 
     const row = stockRow('none');
     expect(row[1]).toBe('No location');
-    expect(row.slice(3)).toEqual(['-', '-', '-', '-', '-', '-', '-']);
+    expect(row.slice(2)).toEqual(['-', '-', '-', '-', '-', '-', '-']);
     expect(row).not.toContain('0');
   });
 

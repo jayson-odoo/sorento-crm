@@ -106,6 +106,14 @@ describe('withAutoCount', () => {
     expect(extra.net_of ?? null).toBeNull();
   });
 
+  it("puts a location of a group the table nets into that group's set, and counts it in the net", () => {
+    const status = { ...STATUS, locations: [...STATUS.locations, loc('DC1-IB', 5, 0, 0, 0)] } as StockStatus;
+    const rows = withAutoCount(TODAY, status, 50);
+    expect(rows.map((r) => r.location)).toEqual(['BRW-IB', 'MWH-IB', 'RSW-IB', 'DC1-IB', 'BRW', 'RESERVE', 'MWH', 'BRW-BB']);
+    expect(by(rows, 'DC1-IB')).toMatchObject({ where: 'group', net_of: 'IB', available_qty: '5' });
+    expect(rows.filter((r) => r.net_of === 'IB').map((r) => r.net)).toEqual(['-1983', '-1983', '-1983', '-1983']);
+  });
+
   it('leaves a row with no location as it is (the line whose sales order names none)', () => {
     const blank = row('', { location: null, qty_on_hand: null, so_qty: null });
     expect(withAutoCount([blank], STATUS, 50)[0]).toEqual(blank);
@@ -114,5 +122,6 @@ describe('withAutoCount', () => {
   it('builds the whole table from AutoCount alone when given no rows (the stand-alone page)', () => {
     const rows = withAutoCount([], STATUS, 50);
     expect(rows.map((r) => r.location)).toEqual(['BRW-BB', 'MWH-IB', 'RESERVE', 'BRW', 'BRW-IB', 'MWH']);
+    expect(rows.every((r) => r.where === 'other_group' && (r.net ?? null) === null)).toBe(true); // no subtotal, as v6 draws it
   });
 });
