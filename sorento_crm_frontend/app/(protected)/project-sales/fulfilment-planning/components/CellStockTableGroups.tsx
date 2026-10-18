@@ -68,7 +68,7 @@ export function GroupRows(props: GroupRowsProps) {
                   )}
                 </Button>
               </td>
-              <td className={cn(locationColClassName, classes.foot)} style={locationColStyle}>
+              <td className={cn(locationColClassName, classes.foot, 'max-w-0')} style={locationColStyle}>
                 <div
                   className="flex min-w-0 items-baseline gap-2"
                   style={{ paddingInlineStart: (baseDepth + node.depth) * INDENT_PX }}
@@ -151,7 +151,7 @@ export function LineRows({
         return (
           <tr key={line.key} data-testid={`stock-line-${line.key}`}>
             <td className={cn(classes.chevron, classes.body)} />
-            <td className={cn(locationColClassName, classes.body)} style={locationColStyle}>
+            <td className={cn(locationColClassName, classes.body, 'max-w-0')} style={locationColStyle}>
               <div className="min-w-0" style={{ paddingInlineStart: depth * INDENT_PX }}>
                 <div className="flex min-w-0 items-baseline gap-1.5">
                   <span className="shrink-0 text-muted-foreground">{line.type}</span>
@@ -168,8 +168,7 @@ export function LineRows({
                 {meta ? (
                   <div
                     data-testid={`stock-line-meta-${line.key}`}
-                    className="truncate text-muted-foreground"
-                    title={meta}
+                    className="whitespace-normal break-words text-muted-foreground"
                   >
                     {meta}
                   </div>

@@ -451,6 +451,10 @@ export const CellStockTable = React.forwardRef<
     }
     return open;
   }, [grouped, needle, locationLed, topGroups, lines, showLine, groupsUnder]);
+  const locationsWithLines = React.useMemo(
+    () => new Set(lines.map((line) => line.location)),
+    [lines],
+  );
   const isGroupOpen = (key: string) => groupOpen[key] ?? searchOpen.has(key);
   const needleRef = React.useRef(needle);
   React.useEffect(() => {
@@ -458,7 +462,15 @@ export const CellStockTable = React.forwardRef<
     if (needleRef.current === needle) return;
     needleRef.current = needle;
     setGroupOpen({});
-  }, [needle]);
+    // A location row the reader closed (or Collapse all closed) opens again when it holds a match.
+    if (locationLed) {
+      setExpanded((current) =>
+        Object.fromEntries(
+          Object.entries(current).filter(([key]) => !searchOpen.has(`location=${key}`)),
+        ),
+      );
+    }
+  }, [needle, locationLed, searchOpen]);
 
   const openableRows = sections
     .flatMap((section) => section.rows)
@@ -561,6 +573,7 @@ export const CellStockTable = React.forwardRef<
     [grouped, locationLed, groupsUnder, topGroups],
   );
 
+  const groupedLandedRef = React.useRef(false);
   const ownSection = React.useCallback(
     () =>
       sections.find((section) =>
@@ -617,9 +630,16 @@ export const CellStockTable = React.forwardRef<
    */
   React.useEffect(() => {
     if (!landOnMount) return;
+    if (grouped) groupedLandedRef.current = true;
     openSectionAndJump(ownSection(), 'this-line');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // The read can arrive after mount: land once, the moment grouping first applies.
+  React.useEffect(() => {
+    if (!landOnMount || !grouped || groupedLandedRef.current) return;
+    groupedLandedRef.current = true;
+    openSectionAndJump(ownSection(), 'this-line');
+  }, [landOnMount, grouped, openSectionAndJump, ownSection]);
 
   if (locations.length === 0) {
     // Rendered rather than hidden, per the CRUD standard. A pivoted cell holds several products,
@@ -673,8 +693,8 @@ export const CellStockTable = React.forwardRef<
           value={levels}
           defaultValue={[...DEFAULT_STOCK_GROUP_LEVELS]}
           onChange={changeLevels}
-          onExpandAll={expandAll}
-          onCollapseAll={collapseAll}
+          onExpandAll={grouped || !stockOnly ? expandAll : undefined}
+          onCollapseAll={grouped || !stockOnly ? collapseAll : undefined}
         />
       ) : null}
       {/* NO vertical bound, and the Stock tab has exactly ONE scroll region: the dialog body
@@ -776,7 +796,10 @@ export const CellStockTable = React.forwardRef<
                 // B2155-NL-BLUE on the live book, so resolving one from the code would answer
                 // confidently about the wrong product.
                 const addressable = Boolean(
-                  entry.product_id && entry.warehouse_id,
+                  entry.product_id &&
+                    entry.warehouse_id &&
+                    // Location first: a location with no lines in the read has no groups to open.
+                    (!locationLed || (entry.location && locationsWithLines.has(entry.location))),
                 );
                 const isOpen = locationLed
                   ? (expanded[key] ?? searchOpen.has(`location=${testKey}`))
@@ -794,9 +817,9 @@ export const CellStockTable = React.forwardRef<
                             size="sm"
                             className="size-5"
                             data-testid={`stock-expand-${testKey}`}
-                            aria-label={`${isOpen ? 'Hide' : 'Show'} documents behind ${
-                              entry.location ?? 'this location'
-                            }`}
+                            aria-label={`${isOpen ? 'Hide' : 'Show'} ${
+                              locationLed ? 'groups' : 'documents'
+                            } behind ${entry.location ?? 'this location'}`}
                             aria-expanded={isOpen}
                             onClick={() =>
                               setExpanded((current) => ({

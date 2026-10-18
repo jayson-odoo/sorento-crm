@@ -107,6 +107,7 @@ export function GroupByMenu({
                 {level >= 0 && (
                   <span
                     data-testid={`group-by-level-${option.id}`}
+                    aria-hidden
                     className="ms-auto ps-3 text-xs font-semibold text-primary"
                   >
                     {level + 1}
