@@ -228,3 +228,16 @@ SO417636 CSK14B BRW-BB, with the owner's plan:
     that template update as crew SQL; it is an UPDATE, so it is held for crew/owner approval.
   - The worklist Excel gets CHANGE QUANTITY and CHANGE DATE headings before REMARK, as in the approved mock
     section 6. Existing columns are not renamed.
+- AC-G10 **The Confirm engine follows the plan too** (crew ruling (a), 18 Oct: "the 403 just go to other
+  places").
+  - Confirm never nets a split row into a CANCEL BALANCE OI row. Split qty that is not moved onto another
+    line (a split on New line, or a link move the engine declines) stays on purchasing's side as its own OI
+    worklist rows at the split dates. Worklist, email and Excel then always agree.
+  - SO417636 480 with 236 @ 20/11/2026 and 167 @ 20/11/2029 on New line: after Confirm, 480's live OI rows
+    are 14 @ 20/09/2026, 236 @ 20/11/2026 and 167 @ 20/11/2029 (ADVANCE / DELAY / DELAY), with no CANCEL
+    BALANCE.
+  - An explicit cancel split still makes a CANCEL BALANCE. No "refuse Confirm" stop-gap.
+  - This ships as its own build slice: red tests first, then the fix, a kill test and the reviewer.
+- AC-G11 Email continuation rows (a line's 2nd+ split row) blank LOCATION and ITEM CODE as well as QTY and
+  DELIVERY (mock section 5). The sheet shows no "+N from line M" text (no labels; variant B already places
+  moved rows under the line they landed on).
