@@ -155,8 +155,8 @@ def index_scheme(
 
 def scheme_without_product(db: "Session", verdict: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """SCHEME-NO-PRODUCT: a listed scheme pick asked as a file ask with no product named or
-    held. The scheme's own active certificates in the contact's companies become the fetch's
-    filter (read through the scoped session, so another company's never appears); the tool's
+    held (any product entity, said or carried, leaves the verdict as it is). The scheme's own
+    active certificates in the contact's companies become the fetch's filter (read through the scoped session, so another company's never appears); the tool's
     own row limit bounds the reply. The verdict unchanged (and no note) otherwise; with no
     certificate of the scheme in scope, the verdict unchanged and a `none_in_scope` note."""
     if verdict.get("domain_hint") != "product_attachment":
@@ -164,7 +164,7 @@ def scheme_without_product(db: "Session", verdict: dict[str, Any]) -> tuple[dict
     entities = [e for e in verdict.get("entities") or [] if isinstance(e, dict)]
     said = [e for e in entities if e.get("current_message") is not False]
     schemes = [e for e in said if e.get("listed") == "cert_scheme" and str(e.get("canonical_code") or "").strip()]
-    if not schemes or any(str(e.get("hint") or "").strip().lower() == "product" for e in said):
+    if not schemes or any(str(e.get("hint") or "").strip().lower() == "product" for e in entities):
         return verdict, None
     scheme = str(schemes[0]["canonical_code"]).strip()
     certificates = _scheme_certificates(db, scheme)
@@ -174,11 +174,6 @@ def scheme_without_product(db: "Session", verdict: dict[str, Any]) -> tuple[dict
         return verdict, {"scheme": scheme, "held_by_products": False, "products": 0, "certificates": 0, "none_in_scope": True}
     # Left typed as the attachment-type pick it is, so the ask stays a file ask: typed
     # `certificate` it would read as the set "which products have this certificate". A product
-    # carried from an open pick no product answered is no subject here: left in, its miss
-    # would empty the scheme's own answer.
-    out = [
-        {**e, "certificate_uuids": certificates} if e is schemes[0] else e
-        for e in entities
-        if e is schemes[0] or e.get("current_message") is not False or str(e.get("hint") or "").strip().lower() != "product"
-    ]
+    # carried from an open pick is added later and skipped there (`with_carried_entities`).
+    out = [{**e, "certificate_uuids": certificates} if e is schemes[0] else e for e in entities]
     return {**verdict, "entities": out}, {"scheme": scheme, "held_by_products": False, "products": 0, "certificates": len(certificates)}
