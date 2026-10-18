@@ -5871,8 +5871,14 @@ class ProjectOrderInquiryService:
             current = Counter(
                 (_dec(row.qty), row.delivery_date) for row in self._split_line_rows(line_id)
             )
+            # AC-G17: rows whose document is received in full still hold the plan they were
+            # cut to (and a received row left from before the plan is history beside it).
+            with_received = Counter(
+                (_dec(row.qty), row.delivery_date)
+                for row in self._split_line_rows(line_id, received=True)
+            )
             held_cancel = self._live_cancel_qty(line_id)
-            if current == Counter(rows) and held_cancel == cancels:
+            if Counter(rows) in (current, with_received) and held_cancel == cancels:
                 standing.add(line_id)
                 if state == SPLIT_ACTING and f.pending:
                     # The link moves already left its rows as planned; the change is told.
@@ -5906,9 +5912,10 @@ class ProjectOrderInquiryService:
         acted_by_order[str(decision.project_sales_order_id)] = set(acted) | told
         return acted, needs, standing
 
-    def _split_line_rows(self, line_id: str) -> List[OrderInquiryRow]:
+    def _split_line_rows(self, line_id: str, *, received: bool = False) -> List[OrderInquiryRow]:
         """A split line's live ORDER rows that hold purchasing's plan: not cancelled, not
-        given back to the pool, not a row whose cover is a document received in full."""
+        given back to the pool and, unless `received`, not a row whose cover is a document
+        received in full."""
         return [
             row
             for row in self.db.query(OrderInquiryRow).filter(
@@ -5919,7 +5926,7 @@ class ProjectOrderInquiryService:
                 ),
             )
             if not row.redirected_to_pool
-            and not self._received_documents_for(self._links_of(row.id))
+            and (received or not self._received_documents_for(self._links_of(row.id)))
         ]
 
     def _live_cancel_qty(self, line_id: str) -> Decimal:
