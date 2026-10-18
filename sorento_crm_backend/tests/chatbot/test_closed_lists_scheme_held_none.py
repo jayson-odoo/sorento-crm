@@ -204,3 +204,44 @@ def test_guard_a_held_product_holding_the_scheme_still_gets_only_that_schemes_fi
     assert fetches and fetches[0].get("product_ids") == [ids["ZZTHOLDS1"]], (_text(r2), c2)
     assert fetches[0].get("certificate_ids") == [ids[f"cert:{SCHEME}"]], fetches
     assert "no ZZSPAN certificate on record" not in _text(r2), _text(r2)
+
+
+# --- R2-4 KIND-NONE-HELD (reviewer nit, ruling (b) safety) -----------------------------------
+
+
+def test_guard_with_no_certificate_kind_listed_the_engine_keeps_the_held_product(session_factory, seeded, stub_access, monkeypatch):
+    """No attachment type is a certificate kind, so the scheme pick cannot become the kind. The
+    held product stays the subject: no fetch drops it, and the scheme's full list (another
+    product's files, here ZZSTRANGER1's) is never sent in its place."""
+    from sqlalchemy import text
+
+    ids = _seed(session_factory, {"ZZTKN1": OTHERS})
+    db = session_factory()
+    db.execute(text("UPDATE attachment_types SET is_certificate = false"))
+    db.commit()
+
+    (_r1, _c1), (r2, c2) = _turns(
+        session_factory, stub_access, monkeypatch,
+        [("ZZTKN1", _stock(_product("ZZTKN1"))), ("Span certificate", _file_ask(_scheme()))],
+    )
+
+    fetches = [args for name, args in c2 if name == "crm_master_product_attachments_list"]
+    assert all(args.get("product_ids") == [ids["ZZTKN1"]] for args in fetches), (_text(r2), c2)
+    assert not [c for c in c2 if c[0] == "crm_resource_attachments_list"], c2
+
+
+def test_scheme_without_product_never_runs_when_the_verdict_holds_a_product(session_factory):
+    """`scheme_without_product` filtered every carried product out of the verdict and sent the
+    scheme's whole list. A verdict holding any product entity (said, or carried with a uuid)
+    is left exactly as it is, with no note."""
+    from app.models.base import set_company_scope
+    from app.services.chatbot.head.scheme_index import scheme_without_product
+
+    ids = _seed(session_factory, {"ZZTKN2": OTHERS})
+    db = session_factory()
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    carried = {"raw": "ZZTKN2", "hint": "product", "canonical_code": "ZZTKN2", "uuid": ids["ZZTKN2"],
+               "current_message": False, "confident": True}
+    verdict = {"domain_hint": "product_attachment", "entities": [carried, {**_scheme(), "listed": "cert_scheme"}]}
+
+    assert scheme_without_product(db, verdict) == (verdict, None)
