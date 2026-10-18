@@ -826,3 +826,328 @@ def test_g10_the_moved_37_takes_its_po_link_from_752_to_608(api, emails):
     got = {no: linked(no) for no in (608, 752)}
     assert got == {608: Decimal("37"), 752: Decimal("467")}, (
         "AC-E1: the 37 moves with its link, 752 keeps the rest", got)
+
+
+# ---------------------------------------------------------------------------
+# Review of 89aad589bf (reviewer NOT READY), round 3
+# ---------------------------------------------------------------------------
+
+
+def _owner_total(s):
+    """Live OI qty over 480 / 608 / 752 (not cancelled, not a CANCEL BALANCE)."""
+    return sum((q for no in OWNER_CASE for q, _when in _live(_worklist(s, s.line[no]))), Decimal(0))
+
+
+def _reconfirm(s):
+    """A plain re-Confirm of the same Buy, no batch (the reviewer's probe)."""
+    r = _confirm(s.client, s.order.id, [
+        _line_payload(s.line[no].id, buy_qty=str(after[0]))
+        for no, (_before, after) in OWNER_CASE.items()
+    ])
+    assert r.status_code == 200, r.text
+    s.db.commit()
+    s.db.expire_all()
+
+
+def test_review_a_plain_re_confirm_after_the_batch_confirm_changes_nothing(api, emails):
+    """BLOCKING: the batch Confirm applied the owner's plan (live OI 1295 = AutoCount). A second
+    Confirm with no change must not act on the plan again: live OI stays 1295 (it read 1735,
+    +440) and no handover email is queued for the plan."""
+    s = _seed(api)
+    _save(s, _owner_plan())
+    _confirm_batch(s, emails)
+    assert _owner_total(s) == _d("1295"), "premise: the batch Confirm applied the plan"
+    start = len(emails)
+    _reconfirm(s)
+    assert _owner_total(s) == _d("1295"), (
+        "a re-Confirm with no change asks for nothing more",
+        {no: _worklist(s, s.line[no]) for no in OWNER_CASE})
+    resent = [(ln["qty"], ln["remark"]) for h in emails[start:] for ln in h.get("lines") or []]
+    assert resent == [], ("no handover for a plan the batch Confirm already told", resent)
+
+
+def test_review_a_split_saved_after_the_confirm_is_checked_against_the_current_base(api, emails):
+    """After the Confirm that applied it, 480's open qty is 14: the plan is applied (the FE's
+    after-Confirm shape reads split_state "applied"), and a new save is checked against 14,
+    never the old 417 (a 417 plan saved again would act again on the next Confirm)."""
+    s = _seed(api)
+    _save(s, _owner_plan())
+    _confirm_batch(s, emails)
+    assert _line(_get(s), s, 480)["split_state"] == "applied", _line(_get(s), s, 480)
+    old_plan = {"line_id": _on(s, 480), "splits": [
+        _sp(14, D_480_NEW, on=_on(s, 480)), _sp(236, D_608, on=None), _sp(167, D_167, on=None)]}
+    r = _put(s, [old_plan])
+    assert r.status_code == 422, ("a 417 plan is refused: the current base is 14", r.status_code, r.text)
+    r = _put(s, [{"line_id": _on(s, 480), "splits": [
+        _sp(10, D_480_NEW, on=_on(s, 480)), _sp(4, D_608, on=None)]}])
+    assert r.status_code == 200, ("a 14 plan is accepted", r.text)
+
+
+def test_review_kept_split_rows_keep_their_links(api, emails):
+    """BLOCKING link conservation: 480's row is placed, linked to a PO for its 417. The
+    New-line plan 14 / 236 / 167 keeps every split on 480, so each kept row stays linked for its
+    own qty (417 in all): nothing orphaned, nothing asked again (it read 14 / 0 / 0)."""
+    from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryLink, OrderInquiryRow
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+    from tests.test_planning_change_apply_on_board import _link, _po_line, _supplier
+
+    s = _seed(api)
+    _po, po_line = _po_line(s.world, _supplier(s.world), qty=417, expected_date=date(2026, 10, 10))
+    _link(s.world, _order_row(s.world, s.line[480]), po_line, qty=417, document="ZZT-S0480")
+    s.db.commit()
+    _save(s, _new_line_plan())
+    _confirm_batch(s, emails)
+
+    svc = ProjectOrderInquiryService(s.db)
+    got = {}
+    for row in s.db.query(OrderInquiryRow).filter(
+        OrderInquiryRow.so_line_id == s.line[480].id, OrderInquiryRow.state != INQUIRY_CANCELLED
+    ):
+        linked = sum(
+            (Decimal(str(l.qty)) for l in svc._links_of(row.id) if l.po_line_id == po_line.id),
+            Decimal(0),
+        )
+        got[(_d(str(Decimal(str(row.qty)).normalize())), row.delivery_date)] = linked
+    assert got == {
+        (_d("14"), D_480_NEW): _d("14"),
+        (_d("236"), D_608): _d("236"),
+        (_d("167"), D_167): _d("167"),
+    }, ("each kept row is linked for its own qty", got)
+    everywhere = sum(
+        (Decimal(str(l.qty)) for l in s.db.query(OrderInquiryLink)
+         .filter(OrderInquiryLink.po_line_id == po_line.id).all()),
+        Decimal(0),
+    )
+    assert everywhere == _d("417"), ("the PO's 417 is still linked in full", everywhere)
+
+
+def _sheet(s, columns=None):
+    from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
+
+    kwargs = {"columns": columns} if columns else {}
+    _name, data = OrderInquiryWorklistService(s.db).export_xlsx(query=s.core_so.so_number, **kwargs)
+    rows = list(openpyxl.load_workbook(io.BytesIO(data)).worksheets[0].iter_rows(values_only=True))
+    heads = list(rows[1])
+    return heads, [r for r in rows[2:] if any(v not in (None, "") for v in r)]
+
+
+def test_review_excel_total_qty_is_the_live_qty(api, emails):
+    """Excel TOTAL QTY (`_write_sheet`) adds up what the rows ask for now, not the base QTY
+    cells: SO417636 after the owner's plan, 1295 = AutoCount 14 + 632 + 649 (it read 1113 =
+    417 + 192 + 504)."""
+    s = _seed(api)
+    _save(s, _owner_plan())
+    _confirm_batch(s, emails)
+    heads, rows = _sheet(s)
+    at = heads.index("TOTAL QTY")
+    totals = [r[at] for r in rows if r[at] not in (None, "")]
+    assert totals == [1295.0], ("one run, TOTAL QTY = the live qty", totals)
+
+
+def test_review_the_ten_column_worksheet_prints_every_split_rows_qty(api, emails):
+    """The reorder-run OI worksheet (`export_tasks.generate_oi_worksheet`, the first 10 columns,
+    no CHANGE QUANTITY): each split row prints its own qty in QTY, no blank QTY row."""
+    from app.services.order_inquiry_worklist_service import EXPORT_HEADINGS
+
+    s = _seed(api)
+    _save(s, _owner_plan())
+    _confirm_batch(s, emails)
+    heads, rows = _sheet(s, EXPORT_HEADINGS[:10])
+    assert len(heads) == 10, heads
+    at = heads.index("QTY")
+    qtys = [r[at] for r in rows]
+    assert None not in qtys and "" not in qtys, ("no blank QTY row", qtys)
+    for want in (14, 236, 167, 37, 467, 182):
+        assert float(want) in qtys, (f"the {want} split / extra row prints its qty", qtys)
+
+
+def _mixed(api, emails, *, with_splits, placed):
+    """Owner seed, 480 confirmed partly from stock (USE pool 4 + Buy 10 with an amend reason,
+    the mixed line `_kept_split_needs` leaves to the netting); `with_splits` saves the New-line
+    plan first. Returns (worklist rows by line, sent email lines, Excel rows)."""
+    from app.models.project_so import INQUIRY_PLACED
+
+    s = _seed(api)
+    if placed:
+        _order_row(s.world, s.line[480]).state = INQUIRY_PLACED  # placed with no link
+    s.db.commit()
+    if with_splits:
+        _save(s, _new_line_plan())
+    start = len(emails)
+    r = _confirm(s.client, s.order.id, [
+        _line_payload(s.line[480].id, reserve=[{"warehouse_id": s.world.pool_wh.id, "qty": "4"}],
+                      buy_qty="10", amend_reason="Part from the pool."),
+        _line_payload(s.line[608].id, buy_qty="632"),
+        _line_payload(s.line[752].id, buy_qty="649"),
+    ], batch_id=str(s.batch.id))
+    assert r.status_code == 200, r.text
+    s.db.commit()
+    s.db.expire_all()
+    rows = {no: sorted(_worklist(s, s.line[no]), key=str) for no in OWNER_CASE}
+    pool = s.world.pool_wh.warehouse_code
+    sent = [(ln["qty"], str(ln["remark"]).replace(pool, "POOL"))
+            for h in emails[start:] for ln in h.get("lines") or []]
+    return rows, sent, _excel_rows(s)
+
+
+@pytest.mark.parametrize("placed", [False, True], ids=["raised", "placed_unlinked"])
+def test_review_a_mixed_line_nets_as_before_and_prints_what_the_worklist_holds(api, emails, placed):
+    """A line partly from stock is not a whole-Buy split line (`_kept_split_needs`): it nets as
+    without splits, and the email / Excel print what the worklist then holds, never the plan
+    (worklist, email and Excel agree). The same Confirm is run on a twin order with no splits."""
+    from tests.test_so_supply_confirmation import _stock
+
+    _client, world = api
+    _stock(world.db, world.product, world.pool_wh, on_hand=50)  # one pool stock row, both orders
+    world.db.commit()
+    plain_rows, plain_sent, plain_xl = _mixed(api, emails, with_splits=False, placed=placed)
+    split_rows, split_sent, split_xl = _mixed(api, emails, with_splits=True, placed=placed)
+    assert split_rows == plain_rows, ("the worklist nets as without splits", split_rows, plain_rows)
+    assert split_sent == plain_sent, (
+        "the email prints what the worklist holds, not the plan", split_sent, plain_sent)
+    assert split_xl == plain_xl, ("the Excel prints what the worklist holds", split_xl, plain_xl)
+
+
+def test_review_confirmed_at_is_the_malaysia_date_of_the_confirm(api, emails):
+    """AC-G1 status line: a Confirm at 2026-10-18 23:30 UTC is 19/10/2026 in Malaysia."""
+    from app.models.project_so import SOSupplyDecision
+
+    s = _seed(api)
+    _save(s, _owner_plan())
+    _confirm_batch(s, emails)
+    s.db.query(SOSupplyDecision).filter(
+        SOSupplyDecision.project_sales_order_id == str(s.order.id)
+    ).update({SOSupplyDecision.confirmed_at: datetime(2026, 10, 18, 23, 30)},
+             synchronize_session=False)
+    s.db.commit()
+    assert _get(s)["confirmed_at"] == "2026-10-19", _get(s)["confirmed_at"]
+
+
+def _closed_line_case(api):
+    """Line 2 (its own item) confirmed Buy 10, then AutoCount closes it (`closed`, qty 0)."""
+    from app.services.scm.outstanding_diff import CLOSED
+    from tests.test_planning_changes import _product
+
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    item = _product(db)
+    when = date(2026, 11, 9)
+    core = _core_line(db, core_so, item, world.own_wh, qty_ordered="10", required_date=when)
+    line = _project_line(db, order, line_no=2, product=item, core_line=core)
+    db.commit()
+    r = _confirm(client, order.id, [_line_payload(line.id, buy_qty="10")])
+    assert r.status_code == 200, r.text
+    row = _order_row(world, line)
+    core.line_status = "closed"
+    line.qty = Decimal("0")
+    db.commit()
+    batch = _build(world, [_change(CLOSED, core, so_number=core_so.so_number, old_date=when,
+                                   new_date=None, old_qty="10", new_qty="0")],
+                   core_so, [str(core.id)])
+    assert batch is not None, "premise: the close is a pending change"
+    return client, order, line, row
+
+
+def test_review_unsplit_line_prefill_is_the_email_remark_cancel_all(api):
+    """One function (AC-G5) for an UNSPLIT line AutoCount cancelled: the sheet's pre-fill is the
+    email's REMARK for it, "CANCEL ALL" (`handover_remark`, kind cancelled), not "CANCEL 10"."""
+    from app.services.project_order_inquiry_service import handover_remark
+
+    client, order, line, row = _closed_line_case(api)
+    out = client.get(_url(order.id)).json()
+    mine = next(x for x in out["lines"] if x["line_id"] == str(line.id))
+    email = handover_remark("cancelled", row, {"qty": row.qty})
+    assert email == "CANCEL ALL", "premise: the email spells a cancelled line CANCEL ALL"
+    assert mine["remark_generated"] == email, (mine["remark_generated"], email)
+
+
+@pytest.mark.parametrize("case", ["qty_and_date", "new_item_code"])
+def test_review_unsplit_line_prefill_is_the_email_remark(api, emails, case):
+    """One function (AC-G5) for an UNSPLIT line: the sheet's pre-fill before the Confirm is the
+    REMARK the Confirm's email prints for that line. qty_and_date (752, DELAY, ORDER 145) is the
+    guard; new_item_code (AutoCount swapped the product) prints NEW ITEM CODE."""
+    if case == "qty_and_date":
+        s = _seed(api)
+        before = _line(_get(s), s, 752)["remark_generated"]
+        sent = _confirm_batch(s, emails)
+        printed = [r[4] for r in _printed(sent) if r[0] == "504"]
+    else:
+        from tests.test_oi_product_follow_apply import _apply, _swap_fixture
+
+        fx = _swap_fixture(api, acknowledged=True)
+        out = fx["client"].get(_url(fx["order"].id)).json()
+        before = next(x for x in out["lines"] if x["line_id"] == str(fx["line"].id))[
+            "remark_generated"]
+        start = len(emails)
+        r = _apply(fx)
+        assert r.status_code == 200, r.text
+        fx["world"].db.commit()
+        printed = [str(ln["remark"]) for h in emails[start:] for ln in h.get("lines") or []
+                   if ln.get("item_code") == fx["new"].product_code]
+    assert len(printed) == 1, ("the Confirm prints one row for the line", printed)
+    assert before == printed[0], ("sheet pre-fill == email REMARK", before, printed[0])
+
+
+# ---------------------------------------------------------------------------
+# Crew ruling (a) on a declined move onto a target that grew: the origin keeps its rows AND
+# links; the target's need excludes the declined incoming qty, so nothing is bought twice,
+# nothing is cancelled, and what purchasing is asked for equals AutoCount.
+# ---------------------------------------------------------------------------
+
+
+def _asked(s, line):
+    """Live rows that still ask purchasing for goods: not cancelled, not a CANCEL BALANCE, and
+    not a row whose every link is on a document received in full."""
+    from app.models.procurement import PurchaseOrderLine
+    from app.models.project_so import (
+        INQUIRY_CANCELLED,
+        IV_CANCEL_BALANCE,
+        OrderInquiryRow,
+    )
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    svc = ProjectOrderInquiryService(s.db)
+    total = Decimal(0)
+    for row in s.db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == line.id):
+        if row.state == INQUIRY_CANCELLED or row.verb == IV_CANCEL_BALANCE:
+            continue
+        links = svc._links_of(row.id)
+        received = bool(links) and all(
+            (po := s.db.get(PurchaseOrderLine, link.po_line_id)) is not None
+            and Decimal(str(po.qty_received or 0)) >= Decimal(str(po.qty_ordered or 0))
+            for link in links
+        )
+        if not received:
+            total += Decimal(str(row.qty))
+    return total
+
+
+@pytest.mark.parametrize("case", ["target_placed_no_link", "target_received_in_full"])
+def test_g10_a_declined_move_onto_a_grown_target_buys_nothing_twice(api, emails, case):
+    """Line 2 51 -> 2 keeps 2 own + 49 at 01/11/2026 (the move onto line 18, 82 -> 131, is
+    declined). Purchasing is asked for AutoCount's 2 + 131 = 133 (it was 182): line 2 keeps 2 +
+    49 with its PO link (51), line 18 raises no ORDER for the declined 49 (asked 131 - 49 = 82),
+    and nothing is cancelled."""
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+    from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow
+
+    s, origin, _splits = _declined(api, emails, case)
+    target = s.no[18][1]
+    asked = {2: _asked(s, origin), 18: _asked(s, target)}
+    assert asked[2] + asked[18] == _d("133"), ("asked == AutoCount 2 + 131", case, asked,
+                                               _worklist(s, origin), _worklist(s, target))
+    assert asked[18] == _d("82"), ("line 18 asks 131 less the declined 49", case,
+                                   _worklist(s, target))
+    svc = ProjectOrderInquiryService(s.db)
+    kept_link = sum(
+        (Decimal(str(l.qty))
+         for row in s.db.query(OrderInquiryRow).filter(
+             OrderInquiryRow.so_line_id == origin.id, OrderInquiryRow.state != INQUIRY_CANCELLED)
+         for l in svc._links_of(row.id) if l.po_line_id == s.po_line.id),
+        Decimal(0),
+    )
+    assert kept_link == _d("51"), ("the origin keeps its rows AND links (2 + 49)", case, kept_link)
+    for line in (origin, target):
+        assert _cancel_balances(_worklist(s, line)) == [], (case, _worklist(s, line))

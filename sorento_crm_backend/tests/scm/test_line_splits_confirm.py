@@ -661,9 +661,10 @@ def test_a_split_does_not_move_off_a_placed_row_with_no_link(api, emails):
 
 def test_a_split_does_not_move_onto_a_target_row_whose_document_is_received_in_full(api, emails):
     """Rule: a split onto a received target moves no link. The same setup is run twice in one
-    world (two orders), once with the 49 split onto line 18 and once without: line 18's rows
-    must be equal; line 2 keeps the 49 as its own worklist row at its date (AC-G10), and the
-    sent email prints the plan rows (AC-G4 / AC-G6, round 3)."""
+    world (two orders), once with the 49 split onto line 18 and once without. Crew ruling (a):
+    line 2 keeps the 49 as its own worklist row at its date with its link (AC-G10), line 18's
+    need excludes that 49 (the same total as without splits, nothing cancelled), and the sent
+    email prints the plan rows (AC-G4 / AC-G6, round 3)."""
 
     def run(with_split):
         s = _lines(api, [(2, 51, D_2, 2), (18, 82, D_18, 131)])
@@ -705,14 +706,24 @@ def test_a_split_does_not_move_onto_a_target_row_whose_document_is_received_in_f
     assert split_lines == sorted([("2", "REMAIN"), ("49", "DELAY"), ("131", "REMAIN")]), (
         "the sent email prints the plan rows", split_lines, plain_lines)
     assert not [r for _q, r in split_lines if "CANCEL" in r], split_lines
-    assert split_rows[18] == plain_rows[18], (
-        "line 18 (the target the move was declined on) is as without splits",
-        split_rows[18], plain_rows[18])
     # AC-G10 (crew ruling (a), round 3): the 49 the engine did not move stays line 2's own
     # worklist row at its date (it used to vanish, netted like the no-split cut)
     assert split_live[2] == sorted(plain_live[2] + [("49", D_18)]), (split_live[2], plain_live[2])
-    assert not [r for r in split_rows[2] if r[0] == IV_CANCEL_BALANCE], split_rows[2]
-    assert split_doc_a == plain_doc_a and split_doc_a > Decimal("0"), "DOC-A's link is not dropped"
+    # Crew ruling (a) on a declined move onto a grown target: line 18's need excludes the
+    # declined incoming 49, so nothing is bought twice (it pinned line 18 "as without
+    # splits", which asked for the 49 again beside line 2's own 49 row)
+    total = lambda live: sum(  # noqa: E731
+        (Decimal(q) for no in (2, 18) for q, _when in live[no]), Decimal("0"))
+    line_18 = lambda live: sum((Decimal(q) for q, _when in live[18]), Decimal("0"))  # noqa: E731
+    assert total(split_live) == total(plain_live), (
+        "nothing bought twice: the same total as without splits", split_live, plain_live)
+    assert line_18(split_live) == line_18(plain_live) - Decimal("49"), (
+        "line 18 raises no ORDER for the declined 49", split_live[18], plain_live[18])
+    for no in (2, 18):
+        assert not [r for r in split_rows[no] if r[0] == IV_CANCEL_BALANCE], split_rows[no]
+    # ... and the origin keeps its rows AND links: DOC-A's 51 stays on line 2 (2 + 49)
+    assert split_doc_a == Decimal("51"), ("DOC-A's link stays on line 2's rows", split_doc_a,
+                                           plain_doc_a)
 
 
 def test_a_split_does_not_move_onto_a_placed_target_row_with_no_link(api, emails):
