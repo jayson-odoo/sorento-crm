@@ -701,3 +701,26 @@ describe('portal: copy from the inquiry on a new form, non-image files, B1c', ()
     ).toBeInTheDocument();
   });
 });
+
+describe('an application that is not this contact\'s', () => {
+  it('shows a not-found state with a way back and no paper sheet when the load is refused', async () => {
+    asMock(getNewProductApplication).mockRejectedValue(
+      new Error('Application not found'),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-other" />);
+
+    expect(
+      await screen.findByRole('heading', { name: 'Application not found' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('It may have been removed, or it belongs to another account.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /back/i })).toBeInTheDocument();
+
+    expect(screen.queryByRole('button', { name: /save as draft/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^submit$/i })).toBeNull();
+    expect(screen.queryByLabelText('Product type')).toBeNull();
+    expect(screen.queryByText('REFF:')).toBeNull();
+    expect(screen.queryByText('PRODUCT TYPE:')).toBeNull();
+  });
+});
