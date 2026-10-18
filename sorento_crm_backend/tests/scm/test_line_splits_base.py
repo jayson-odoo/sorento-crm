@@ -11,8 +11,6 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
-import pytest
-
 from app.models.planning_change import (
     PLANNING_CHANGE_STATE_PENDING,
     PLANNING_CHANGE_STATE_SUPERSEDED,
@@ -145,6 +143,61 @@ def test_a_sum_that_misses_the_derived_base_is_refused(api):
 
 
 # ---------------------------------------------------------------------------
+# Guards on where the arrival comes from
+# ---------------------------------------------------------------------------
+
+
+def _extra_added(s, core, *, qty, at, batch, state=PLANNING_CHANGE_STATE_SUPERSEDED, line_no=0):
+    row = _row(s.db, batch, s.order, core=core, line=None, kind="added", state=state,
+               to_qty=qty, to_date=D_417, at=at, line_no=line_no)
+    s.db.commit()
+    return row
+
+
+def test_only_an_added_row_older_than_the_newest_pending_row_counts(api):
+    """An `added` row of the same line NEWER than the pending row is never the arrival."""
+    s = _seed(api)
+    _extra_added(s, s.c480, qty=999, at=datetime(2026, 9, 24, 9, 20, 0), batch=s.batch, line_no=480)
+    l480 = _line(_get(s), s.l480.id)
+    assert _q(l480["base_qty"]) == 417
+    assert l480["base_date"] == "2026-10-20"
+
+
+def test_only_an_added_row_of_the_same_unapplied_batch_counts(api):
+    """An `added` row of an older batch that was APPLIED is not the arrival of this change."""
+    s = _seed(api)
+    old = PlanningChangeBatch(company_id=s.world.company_id, created_by=s.world.actor,
+                              applied_at=datetime(2026, 9, 1, 9, 0, 0))
+    s.db.add(old)
+    s.db.flush()
+    # more recent than the same batch's own 417 row, so a missing batch check would pick it
+    _extra_added(s, s.c480, qty=888, at=datetime(2026, 9, 24, 9, 5, 0), batch=old, line_no=480)
+    l480 = _line(_get(s), s.l480.id)
+    assert _q(l480["base_qty"]) == 417
+
+
+def test_an_added_row_only_in_an_applied_batch_gives_no_base(api):
+    """The applied batch's row is the ONLY `added` row of line 970: its base stays 0."""
+    s = _seed(api)
+    world = s.world
+    c970, l970 = _mirror(s.db, s.order, s.core_so, world.product, world.own_wh,
+                         line_no=970, qty=5, when=date(2026, 8, 1))
+    s.db.flush()
+    old = PlanningChangeBatch(company_id=world.company_id, created_by=world.actor,
+                              applied_at=datetime(2026, 9, 1, 9, 0, 0))
+    s.db.add(old)
+    s.db.flush()
+    _extra_added(s, c970, qty=888, at=datetime(2026, 9, 1, 8, 0, 0), batch=old, line_no=970)
+    _row(s.db, s.batch, s.order, core=c970, line=l970, kind="qty_up",
+         state=PLANNING_CHANGE_STATE_PENDING, to_qty=5, to_date=date(2026, 8, 1),
+         at=datetime(2026, 9, 24, 9, 10, 0), line_no=970)
+    s.db.commit()
+    l970 = _line(_get(s), l970.id)
+    assert _q(l970["base_qty"]) == 0
+    assert l970["base_date"] is None
+
+
+# ---------------------------------------------------------------------------
 # A line delivered in full is listed, read-only
 # ---------------------------------------------------------------------------
 
@@ -207,7 +260,6 @@ def test_confirm_moves_the_links_of_a_split_made_on_the_derived_base(api):
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
     from app.services.scm.outstanding_diff import QTY_CHANGED
     from tests.scm.test_line_splits_confirm import _linked, _live
-    from tests.test_oi_cancel_bugs_so422492 import _TOLD
     from tests.test_planning_change_apply_on_board import (
         _build, _change, _confirm, _link, _order_row, _po_line, _supplier,
     )
@@ -260,18 +312,15 @@ def test_confirm_moves_the_links_of_a_split_made_on_the_derived_base(api):
         _sp(14, D_14, on=str(line_a.id)), _sp(403, D_192, on=str(line_b.id))]}])
     assert r.status_code == 200, f"premise: the splits save on the derived base ({r.status_code}) {r.text}"
 
-    before = len(_TOLD)
     r = _confirm(client, order.id, [_line_payload(line_a.id, buy_qty="14"),
                                     _line_payload(line_b.id, buy_qty="632")],
                  batch_id=str(batch.id))
     assert r.status_code == 200, r.text
     db.commit()
     db.expire_all()
-    remarks = [(h.get("line_no"), h["line"]["remark"]) for h in _TOLD[before:]]
-    from app.models.project_so import INQUIRY_CANCELLED  # noqa: F401
     from tests.scm.test_line_splits_confirm import IV_CANCEL_BALANCE, IV_ORDER
     assert _live(_Ctx(db), line_a, IV_CANCEL_BALANCE) == [], "no CANCEL BALANCE for the moved 403"
-    assert not [x for x in remarks if x[0] == 20 and "CANCEL" in x[1]], remarks
+    assert _live(_Ctx(db), line_b, IV_CANCEL_BALANCE) == [], "nor a CANCEL BALANCE on the target"
     live_b = _live(_Ctx(db), line_b, IV_ORDER)
     assert len(live_b) == 1, "no second ORDER row for the moved qty"
     links = ProjectOrderInquiryService(db)._links_of(live_b[0].id)
