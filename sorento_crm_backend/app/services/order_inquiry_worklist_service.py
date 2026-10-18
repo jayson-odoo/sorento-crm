@@ -3492,19 +3492,16 @@ class OrderInquiryWorklistService:
                 # TOTAL QTY adds what the rows ask for now: a split dropped on another line
                 # sits inside that line's qty, and a cancel asks for nothing (AC-G13).
                 target = plans.get(str(split.sits_on_line_id or "")) if split is not None else None
+                # Inside the qty of the line it sits on, when that line prints its own row (it
+                # is not split itself).
+                inside = (
+                    target is not None
+                    and str(split.sits_on_line_id) != line_id
+                    and not any(r.split is not None for r in target.rows)
+                )
                 live = (
                     _ZERO
-                    if split is not None
-                    and (
-                        split.is_cancel
-                        # Inside the qty of the line it sits on, when that line prints its
-                        # own row (it is not split itself).
-                        or (
-                            target is not None
-                            and str(split.sits_on_line_id) != line_id
-                            and not any(r.split is not None for r in target.rows)
-                        )
-                    )
+                    if split is not None and (split.is_cancel or inside)
                     else row_qty
                 )
                 out.append(
@@ -3515,6 +3512,7 @@ class OrderInquiryWorklistService:
                         "row_qty": row_qty,
                         "row_date": row_date,
                         "live_qty": live,
+                        "inside": inside,
                         "change_qty": plan_row.new_qty,
                         "change_date": plan_row.new_date,
                         "split_remark": plan_row.remark,
@@ -3536,6 +3534,13 @@ class OrderInquiryWorklistService:
         sheet = workbook.create_sheet(title=title[:31])
         sheet.append([EXPORT_TITLE])
         sheet.append(list(columns))
+        # Without CHANGE QUANTITY (the 10-column worksheet) a split line's rows print each
+        # row's own qty and date (AC-G13), never a blank QTY.
+        own_figures = "CHANGE QUANTITY" not in columns
+        if own_figures:
+            # ... and a split already inside another line's qty is not printed again: the QTY
+            # cells add up to TOTAL QTY.
+            rows = [row for row in rows if not row.get("inside")]
         # `￿` sorts after every real string, so a missing supplier or item code
         # lands at the end rather than at the top where a buyer would read it first.
         ordered = sorted(
@@ -3551,9 +3556,6 @@ class OrderInquiryWorklistService:
         runs = groupby(
             ordered, key=lambda row: (row.get("supplier"), row.get("item_code"))
         )
-        # Without CHANGE QUANTITY (the 10-column worksheet) a split line's rows print each
-        # row's own qty and date (AC-G13), never a blank QTY.
-        own_figures = "CHANGE QUANTITY" not in columns
         for (_supplier, code), members in runs:
             run = list(members)
             total = sum(
