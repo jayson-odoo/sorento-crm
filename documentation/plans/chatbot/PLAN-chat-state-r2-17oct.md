@@ -152,6 +152,18 @@ prompt hash, v168 and model on both lane runs, no r3 code on their path. One run
   is a cancel (chat_state.py:782-786), the cancel clears every product incl. the named one (apply.py:3530-3538), the
   empty subject is refused (apply.py:2470) and the reply is generic. Expected: a close that comes with an entity this
   message names is not a cancel; a lone close that names nothing still cancels.
+  - R3-C proof: red 39a7014d17 (10 failed / 4 guards), fix 39ca8b84eb, kill reverted 10 failed; gate 0/1506 + 0/585.
+    Reviewer NOT READY: B1 a close naming a new product left the old stock_qty task open (the next "5" fetched the
+    old products; same on close + set product), S1 a null `current_message` should count as named, S2 guard. Red
+    d5ff9cde61 (8 failed); fix 6ed46da68d (an open task whose products this message does not name closes when the
+    message names a product; S1 `is not False`); kill reverted 8 failed; gate vs 951f38dc33 0/1506 + 0/585.
+    Re-review: code holds; tests missed S1 (masked by B1), B1's `any` and the product filter; should-fix: a list pick
+    beside a typed code dropped the picked product's task (named set built before the picked rows).
+  - Follow-up (not this slice): a typed form only the resolver maps onto a held code ("srt391gm", "SRT39") does not
+    match the task's slot label, so the task closes although the subject is the held product; the stated quantity
+    still reaches the fetch. Only bites on a turn whose reply carries no availability block (task.py:1155-1218
+    rebuilds the task otherwise). Fix later by comparing slot.key with the resolved product uuid.
+  - PR gate red on 951f38dc (run 39105858911) = exactly the 10 R3-C red tests (456 others pass).
 
 ### R4 (crew via CHAT-CODE-LOOKUP, 18 Oct): no slice
 On main + v63 the parser never sees `Current subject:` (vocabulary line over the 350 L2 cap, context.py:29; only the
