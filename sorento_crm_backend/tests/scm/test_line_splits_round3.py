@@ -1368,3 +1368,183 @@ def test_g3_the_owner_case_numbers_stand(api, emails):
     _confirm_batch(s, emails)
     assert _line(_get(s), s, 608)["remark_generated"] == "REMAIN"
     assert _owner_total(s) == _d("1295"), {no: _worklist(s, s.line[no]) for no in OWNER_CASE}
+
+
+# ---------------------------------------------------------------------------
+# Crew rulings P1 / P2 (18 Oct): an applied New-line plan that staff EDIT acts again on the
+# next Confirm; the next AutoCount change on a line with kept New-line rows leaves those rows
+# standing. 480's row is linked to a PO for its 417, so "links kept" is checked row by row.
+# ---------------------------------------------------------------------------
+
+D_167_EDIT = date(2029, 12, 20)
+D_36 = date(2030, 1, 20)
+
+
+def _rows_with_links(s, po_line):
+    """480's live rows as (qty, date) -> qty linked on `po_line`."""
+    from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    svc = ProjectOrderInquiryService(s.db)
+    out = {}
+    for row in s.db.query(OrderInquiryRow).filter(
+        OrderInquiryRow.so_line_id == s.line[480].id, OrderInquiryRow.state != INQUIRY_CANCELLED
+    ):
+        key = (_d(str(Decimal(str(row.qty)).normalize())), row.delivery_date)
+        out[key] = out.get(key, Decimal(0)) + sum(
+            (Decimal(str(l.qty)) for l in svc._links_of(row.id) if l.po_line_id == po_line.id),
+            Decimal(0),
+        )
+    return out
+
+
+def _new_line_plan_applied(api, emails):
+    """Owner seed, 480 linked to a PO for its 417, the New-line plan confirmed (480: 14 own,
+    236 and 167 on New line), each kept row linked for its own qty."""
+    from tests.test_planning_change_apply_on_board import _link, _po_line, _supplier
+
+    s = _seed(api)
+    _po, po_line = _po_line(s.world, _supplier(s.world), qty=417, expected_date=date(2026, 10, 10))
+    _link(s.world, _order_row(s.world, s.line[480]), po_line, qty=417, document="ZZT-S0480")
+    s.db.commit()
+    _save(s, _new_line_plan())
+    _confirm_batch(s, emails)
+    assert _rows_with_links(s, po_line) == {
+        (_d("14"), D_480_NEW): _d("14"), (_d("236"), D_608): _d("236"),
+        (_d("167"), D_167): _d("167"),
+    }, ("premise: the New-line plan applied with its links", _rows_with_links(s, po_line))
+    return s, po_line
+
+
+def _edit_480(s, parts):
+    """PUT 480's plan, parts [(qty, date, 'own' | 'new', remark)]: the Save must be accepted."""
+    body = [_sp(q, w, on=_on(s, 480) if on == "own" else None, remark=remark)
+            for q, w, on, remark in parts]
+    r = _put(s, [{"line_id": _on(s, 480), "splits": body}])
+    assert r.status_code == 200, ("the edit of the applied plan saves", r.status_code, r.text)
+
+
+def _sent_since(emails, start):
+    return [ln for h in emails[start:] for ln in h.get("lines") or []]
+
+
+def test_p1_editing_a_split_date_of_an_applied_plan_acts_on_the_next_confirm(api, emails):
+    """P1 (a): the 167's date is edited to 20/12/2029 (same total) and saved. The line is no
+    longer a standing plan for Confirm: the next Confirm moves purchasing's 167 row to
+    20/12/2029 with its link, emails that change (DELAY, NEW DATE 20/12/2029), and the worklist,
+    email and Excel all read 20/12/2029."""
+    s, po_line = _new_line_plan_applied(api, emails)
+    _edit_480(s, [(14, D_480_NEW, "own", ""), (236, D_608, "new", ""), (167, D_167_EDIT, "new", "")])
+    start = len(emails)
+    _reconfirm(s)
+
+    got = _rows_with_links(s, po_line)
+    assert got == {
+        (_d("14"), D_480_NEW): _d("14"), (_d("236"), D_608): _d("236"),
+        (_d("167"), D_167_EDIT): _d("167"),
+    }, ("the 167 row moves to 20/12/2029 with its link", got)
+    sent = _sent_since(emails, start)
+    moved = [ln for ln in sent if ln["qty"] == "167"]
+    assert len(moved) == 1 and moved[0]["delivery_date"] == "20/12/2029", (
+        "the Confirm emails the 167's new date", [(l["qty"], l["delivery_date"], l["remark"]) for l in sent])
+    assert str(moved[0]["remark"]).startswith("DELAY"), moved[0]["remark"]
+    xl = _excel_rows(s)
+    assert [r for r in xl if r[2] == _d("167") and r[3] == D_167_EDIT], ("Excel 167 @ 20/12/2029", xl)
+    assert not [r for r in xl if r[3] == D_167], ("nothing reads 20/11/2029 any more", xl)
+
+
+def test_p1_editing_a_split_qty_of_an_applied_plan_acts_on_the_next_confirm(api, emails):
+    """P1 (a): 236 -> 200 with the 36 to a new split on 20/01/2030 (total unchanged). The next
+    Confirm writes 200 and 36 at their dates, each linked for its own qty (417 in all), and
+    the worklist, email and Excel all carry the new rows."""
+    s, po_line = _new_line_plan_applied(api, emails)
+    _edit_480(s, [(14, D_480_NEW, "own", ""), (200, D_608, "new", ""), (36, D_36, "new", ""),
+                  (167, D_167, "new", "")])
+    start = len(emails)
+    _reconfirm(s)
+
+    got = _rows_with_links(s, po_line)
+    assert got == {
+        (_d("14"), D_480_NEW): _d("14"), (_d("200"), D_608): _d("200"),
+        (_d("36"), D_36): _d("36"), (_d("167"), D_167): _d("167"),
+    }, ("200 and 36 replace the 236, each with its own link", got)
+    sent = [(ln["qty"], ln["delivery_date"]) for ln in _sent_since(emails, start)]
+    assert ("200", "20/11/2026") in sent and ("36", "20/01/2030") in sent, (
+        "the Confirm emails the edited rows", sent)
+    xl = _excel_rows(s)
+    for qty, when in ((_d("200"), D_608), (_d("36"), D_36)):
+        assert [r for r in xl if r[2] == qty and r[3] == when], (qty, when, xl)
+    assert not [r for r in xl if r[2] == _d("236")], ("the 236 is gone", xl)
+
+
+def test_p1_a_remark_only_edit_of_an_applied_plan_changes_nothing_on_confirm(api, emails):
+    """P1 guard: only a remark typed on the 236 and saved; the next Confirm changes no row and
+    sends no email."""
+    s, po_line = _new_line_plan_applied(api, emails)
+    before = sorted(_worklist(s, s.line[480]), key=str)
+    _edit_480(s, [(14, D_480_NEW, "own", ""), (236, D_608, "new", "SITE HOLD"),
+                  (167, D_167, "new", "")])
+    start = len(emails)
+    _reconfirm(s)
+    assert sorted(_worklist(s, s.line[480]), key=str) == before, _worklist(s, s.line[480])
+    assert _rows_with_links(s, po_line)[(_d("236"), D_608)] == _d("236")
+    assert _sent_since(emails, start) == [], [
+        (l["qty"], l["remark"]) for l in _sent_since(emails, start)]
+
+
+def test_p2_the_next_autocount_change_keeps_the_new_line_rows_standing(api, emails):
+    """P2 (a): after the New-line plan applied, AutoCount moves 480 from 14 to 20 (same date).
+    After that Confirm 480's own row is 20, the 236 and 167 rows stand as they were (qty, date,
+    link), nothing says CANCEL (worklist, email, Excel), and the email tells only 480's 14 ->
+    20."""
+    from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    s, po_line = _new_line_plan_applied(api, emails)
+    svc = ProjectOrderInquiryService(s.db)
+
+    def kept():
+        out = []
+        for row in s.db.query(OrderInquiryRow).filter(
+            OrderInquiryRow.so_line_id == s.line[480].id,
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+            OrderInquiryRow.delivery_date.in_([D_608, D_167]),
+        ):
+            links = sorted((str(l.document), str(Decimal(str(l.qty)).normalize()))
+                           for l in svc._links_of(row.id))
+            out.append((str(row.id), row.verb, Decimal(str(row.qty)).normalize(),
+                        row.delivery_date, links))
+        return sorted(out)
+
+    standing = kept()
+    assert len(standing) == 2, ("premise: the 236 and 167 rows", standing)
+
+    core = s.core[480]
+    core.qty_ordered, s.line[480].qty = Decimal("20"), Decimal("20")
+    s.db.commit()
+    batch = _build(s.world, [_change(QTY_CHANGED, core, so_number=s.core_so.so_number,
+                                     old_date=D_480_NEW, new_date=D_480_NEW, old_qty="14",
+                                     new_qty="20")], s.core_so, [str(core.id)])
+    assert batch is not None, "premise: the AutoCount change is pending"
+    start = len(emails)
+    r = _confirm(s.client, s.order.id, [
+        _line_payload(s.line[480].id, buy_qty="20"),
+        _line_payload(s.line[608].id, buy_qty="632"),
+        _line_payload(s.line[752].id, buy_qty="649"),
+    ], batch_id=str(batch.id))
+    assert r.status_code == 200, r.text
+    s.db.commit()
+    s.db.expire_all()
+
+    assert _live(_worklist(s, s.line[480])) == sorted(
+        [(_d("20"), D_480_NEW), (_d("236"), D_608), (_d("167"), D_167)]), (
+        "480's own row follows AutoCount, the New-line rows stand", _worklist(s, s.line[480]))
+    assert kept() == standing, ("the 236 and 167 rows are untouched", standing, kept())
+    for no in OWNER_CASE:
+        assert _cancel_balances(_worklist(s, s.line[no])) == [], (no, _worklist(s, s.line[no]))
+    sent = _sent_since(emails, start)
+    assert not [l for l in sent if "CANCEL" in str(l.get("remark"))], sent
+    assert not [r for r in _excel_rows(s) if "CANCEL" in str(r[4])], _excel_rows(s)
+    told = [(l["qty"], (l.get("was") or {}).get("qty")) for l in sent]
+    assert told == [("20", "14")], ("the email tells only 480's 14 -> 20", told,
+                                   [l["remark"] for l in sent])
