@@ -154,10 +154,28 @@ export default function NewProductApplicationForm({
         }
       }
     }
+    // Removals staged during the edit are applied now that the save went through.
+    for (const line of state.lines) {
+      if (!line.id) continue;
+      for (const linkId of line.removed_link_ids) {
+        try {
+          await deleteNewProductApplicationLineImage(id, line.id, linkId);
+        } catch (e) {
+          toast.error(
+            e instanceof Error ? e.message : 'Failed to remove the image',
+          );
+        }
+      }
+    }
     adopt(saved);
     setState((prev) => ({
       ...prev,
-      lines: prev.lines.map((l) => ({ ...l, staged_images: [] })),
+      lines: prev.lines.map((l) => ({
+        ...l,
+        images: l.images.filter((i) => !l.removed_link_ids.includes(i.link_id)),
+        staged_images: [],
+        removed_link_ids: [],
+      })),
     }));
   };
 
@@ -179,25 +197,6 @@ export default function NewProductApplicationForm({
         );
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Failed to copy the image');
-      }
-    },
-    remove: async (line, image) => {
-      if (!recordId || !line.id) return;
-      try {
-        adopt(
-          await deleteNewProductApplicationLineImage(recordId, line.id, image.link_id),
-        );
-        // A refreshed list is not always returned; drop it locally either way.
-        setState((prev) => ({
-          ...prev,
-          lines: prev.lines.map((l) =>
-            l.id === line.id
-              ? { ...l, images: l.images.filter((i) => i.link_id !== image.link_id) }
-              : l,
-          ),
-        }));
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : 'Failed to remove the image');
       }
     },
     listInquiry: () => getStockInquiryAttachmentsForNpa(state.stock_inquiry_id),

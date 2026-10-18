@@ -41,10 +41,6 @@ export type LookupFetcher = (
 export interface SheetImageActions {
   upload: (line: DraftLine, file: File) => Promise<void> | void;
   copy: (line: DraftLine, attachmentId: string) => Promise<void> | void;
-  remove: (
-    line: DraftLine,
-    image: NewProductApplicationImage,
-  ) => Promise<void> | void;
   listInquiry: () => Promise<NewProductApplicationInquiryImage[]>;
 }
 
@@ -102,12 +98,14 @@ function ImageCell({
   readOnly,
   imageActions,
   onStage,
+  onRemoveSaved,
 }: {
   line: DraftLine;
   inquiryId: string;
   readOnly?: boolean;
   imageActions?: SheetImageActions;
   onStage: (files: File[]) => void;
+  onRemoveSaved: (image: NewProductApplicationImage) => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [picking, setPicking] = useState(false);
@@ -152,7 +150,7 @@ function ImageCell({
               variant="ghost"
               size="sm"
               aria-label={`Remove ${image.filename}`}
-              onClick={() => void imageActions?.remove(line, image)}
+              onClick={() => onRemoveSaved(image)}
             >
               <X className="size-4" />
             </Button>
@@ -347,6 +345,12 @@ export function NewProductApplicationSheet({
               readOnly={readOnly}
               imageActions={imageActions}
               onStage={(files) => patchLine(line.key, { staged_images: files })}
+              onRemoveSaved={(image) =>
+                patchLine(line.key, {
+                  images: line.images.filter((i) => i.link_id !== image.link_id),
+                  removed_link_ids: [...line.removed_link_ids, image.link_id],
+                })
+              }
             />
           </Row>
           <Row label="QTY:">

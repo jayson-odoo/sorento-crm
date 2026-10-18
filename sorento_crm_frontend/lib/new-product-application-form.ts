@@ -34,6 +34,8 @@ export interface DraftLine {
   images: NewProductApplicationImage[];
   /** Picked before the application exists; uploaded right after the create returns line ids. */
   staged_images: File[];
+  /** Saved images removed in this edit; the host unlinks them when Save succeeds. Never sent in the write. */
+  removed_link_ids: string[];
 }
 
 export interface FormState {
@@ -79,6 +81,7 @@ export const blankLine = (): DraftLine => ({
   cost_price: '',
   images: [],
   staged_images: [],
+  removed_link_ids: [],
 });
 
 /** "SI26-0412 - XY-1234-MB": the inquiry as the header picker and the detail page name it. */
@@ -108,6 +111,7 @@ function lineFromDetail(l: NewProductApplicationLine): DraftLine {
     cost_price: figure(l.cost_price),
     images: l.images ?? [],
     staged_images: [],
+    removed_link_ids: [],
   };
 }
 
