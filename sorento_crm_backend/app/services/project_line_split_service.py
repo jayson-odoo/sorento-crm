@@ -351,15 +351,16 @@ def line_plans(
         own = [] if f.split_state == SPLIT_STALE else list(f.splits)
         moved_in = incoming.get(line_id, _ZERO)
         involved = bool(own) or moved_in > _ZERO
-        # What the plan puts on the line: its own splits that stay on it (an explicit
-        # cancel split sits on its own line too, AC-G3), what others dropped on it, or its
-        # base when it is not split.
+        # What the plan puts on the line: its own splits that stay on it, or on New line
+        # (AC-G14: a New-line split is its own line's plan, never AutoCount extra), an
+        # explicit cancel split (AC-G3), what others dropped on it, or its base when it is
+        # not split.
         on_line = moved_in + (
             sum(
                 (
                     _dec(s.qty)
                     for s in own
-                    if s.is_cancel or sits.get(str(s.id)) == line_id
+                    if s.is_cancel or sits.get(str(s.id)) in (line_id, None)
                 ),
                 _ZERO,
             )
