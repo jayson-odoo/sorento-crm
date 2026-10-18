@@ -168,8 +168,8 @@ _HANDOVER_PENDING_KEY = "oi_handover_pending"
 _SAVED_TOLD_KEY = "oi_saved_lines_told"
 #: OI-LINE-SPLIT: per origin line, what `_apply_split_links` moved to another line in the
 #: running Confirm: `{"qty": total, "splits": {split id: qty}}`. The planning-change cancel
-#: netting (`_oi_demand_rows`) takes `qty` off; the email (`_tell_splits`) prints only the
-#: splits named here beside the line's own.
+#: netting (`_oi_demand_rows`) takes `qty` off, and the saved lines' email words read it
+#: (`explained_by_splits`).
 SPLIT_MOVED_KEY = "oi_split_moved_by_origin"
 
 
@@ -4423,53 +4423,132 @@ class ProjectOrderInquiryService:
         *,
         actor_user_id: Optional[str] = None,
     ) -> None:
-        """OI-LINE-SPLIT (UAC D1): a SPLIT line this Confirm tells purchasing about reads one
-        email line per split instead of what it queued, each queued through
-        `_record_handover` like every other line (`split_handover_items`). A split line this
-        Confirm tells nothing about stays untold (Q3)."""
+        """OI-LINE-SPLIT (UAC D1, AC-G4, AC-G6): every line of this Confirm that acting splits
+        touch (split itself, or another line's acting split sits on it) reads its plan rows
+        (`line_plans`) instead of what it queued: one row per split under its own line, its
+        own row when it is not split, and the AutoCount extra row, QTY / DELIVERY on the
+        line's first row only. Whatever else the line queued (its saved line, a netted
+        CANCEL) is replaced: a split is never told as a CANCEL, only an explicit cancel split
+        reads CANCEL BALANCE. A line this Confirm tells nothing about stays untold (Q3)."""
         queue = self.db.info.get(_HANDOVER_PENDING_KEY)
         if not queue:
             return
-        from app.services.project_line_split_service import LineSplitService
+        import dataclasses
 
-        from app.services.project_line_split_service import SplitOutputs
-
-        # Only splits that still act: a stale plan is not told again on a later change.
-        acting = LineSplitService(self.db).acting_origin_ids(str(line.id) for line in lines)
-        if not acting:
-            return
-        # The email agrees with the OI rows: it prints the splits the engine honoured in this
-        # Confirm (the line's own splits, and those `_apply_split_links` moved) and nothing
-        # of a split sitting elsewhere that did not move - that qty is the netting's CANCEL.
-        moved = self.db.info.get(SPLIT_MOVED_KEY) or {}
-        splits = SplitOutputs(self.db, sorted(acting))
-        honoured: Dict[str, Dict[str, Decimal]] = {}
-        for origin in acting:
-            moved_splits = (moved.get(origin) or {}).get("splits") or {}
-            printed: Dict[str, Decimal] = {}
-            left = _ZERO
-            for view in splits.by_origin.get(origin, []):
-                split_id = str(view.split.id)
-                qty = _dec(view.split.qty)
-                if view.split.is_cancel or view.sits_on == origin:
-                    printed[split_id] = qty
-                elif split_id in moved_splits:
-                    printed[split_id] = _dec(moved_splits[split_id])
-                    left += qty - printed[split_id]
-                else:
-                    left += qty
-            if left > _ZERO and not moved_splits:
-                # Nothing moved: the line's own told line (its CANCEL) stands as it is.
-                continue
-            # What the netting itself told (a CANCEL left after the moves, already net of
-            # what moved) stays as told; the honoured splits print beside it.
-            honoured[origin] = printed
-        if not honoured:
-            return
-        self.split_handover_items(
-            queue, line_ids=set(honoured), actor_user_id=actor_user_id, queued=True,
-            honoured=honoured,
+        from app.services.project_line_split_service import (
+            SPLIT_ACTING,
+            LineSplitService,
+            line_plans,
         )
+
+        ids = {str(line.id) for line in lines}
+        order = self.db.get(ProjectSalesOrder, pso_id)
+        if order is None or not ids:
+            return
+        service = LineSplitService(self.db)
+        facts = service.line_facts(order)
+        if not any(f.splits for f in facts.values()):
+            return
+        # Only splits that still act: a stale (or applied) plan is not told again.
+        facts = {
+            line_id: (
+                f if f.split_state == SPLIT_ACTING else dataclasses.replace(f, splits=[])
+            )
+            for line_id, f in facts.items()
+        }
+        stored = [split for f in facts.values() for split in f.splits]
+        sits = service.effective_sits_on(stored)
+        sitting_on = {target for target in sits.values() if target}
+        plans = line_plans(facts, sits, sitting_on)
+        told: Dict[str, List[Dict[str, Any]]] = {}
+        kept: List[Dict[str, Any]] = []
+        for item in queue:
+            line_id = str(item.get("so_line_id") or "")
+            plan = plans.get(line_id)
+            if (
+                item.get("pso_id") == pso_id
+                and line_id in ids
+                and plan is not None
+                and plan.involved
+            ):
+                told.setdefault(line_id, []).append(item)
+            else:
+                kept.append(item)
+        if not told:
+            return
+        queue[:] = kept
+        for line_id, items in told.items():
+            self._queue_plan_rows(plans[line_id], items[0], actor_user_id=actor_user_id)
+
+    def _queue_plan_rows(
+        self, plan: Any, template: Mapping[str, Any], *, actor_user_id: Optional[str] = None
+    ) -> None:
+        """One line's `LinePlan` rows on the handover queue, each through `_record_handover`
+        like every other line: QTY / DELIVERY the line's base on its first row (`continued`
+        blanks them on the rest), NEW QTY / NEW DATE the row's, REMARK the sheet's remark,
+        else the generated one (AC-G5, AC-G6)."""
+        line = plan.facts.line
+        for index, row in enumerate(plan.rows):
+            whole = row.split is not None or row.extra
+            was: Dict[str, Any] = {}
+            if whole or row.new_qty is not None:
+                was["qty"] = plan.base_qty
+            if whole or row.new_date is not None:
+                was["delivery_date"] = plan.base_date
+            qty = row.new_qty if row.new_qty is not None else plan.base_qty
+            stand_in = SimpleNamespace(
+                id=template.get("row_id"),
+                order_inquiry_id=template.get("order_inquiry_id"),
+                so_line_id=line.id,
+                item_code=template.get("item_code"),
+                stock_location=line.stock_location or template.get("stock_location"),
+                verb=IV_ORDER,
+                covered_by=None,
+                cited_document=None,
+                note=None,
+                qty=qty,
+                delivery_date=row.new_date if whole or row.new_date is not None else plan.base_date,
+            )
+            self._record_handover(
+                stand_in, kind="settled", was=was, actor_user_id=actor_user_id, qty=qty
+            )
+            item = self.db.info[_HANDOVER_PENDING_KEY][-1]
+            self._fill_from_template(item, template)
+            entry = item["line"]
+            entry["remark"] = row.remark
+            entry["was"] = _format_handover_was(was or None)
+            entry["continued"] = index > 0
+            item["verb_keys"] = self._plan_row_keys(row, template)
+
+    @staticmethod
+    def _fill_from_template(item: Dict[str, Any], template: Mapping[str, Any]) -> None:
+        """The order's facts as the line's own item carried them, where the stand-in's
+        header could not be read (a saved line queued before any header existed)."""
+        for key in ("pso_id", "so_number", "customer", "project"):
+            if not item.get(key):
+                item[key] = template.get(key)
+        entry = item["line"]
+        for key in ("so_date", "so_number", "customer", "project"):
+            if not entry.get(key):
+                entry[key] = (template.get("line") or {}).get(key)
+        if template.get("actor") and not item.get("actor"):
+            item["actor"] = template.get("actor")
+        item["told_for_saved_line"] = True
+
+    @staticmethod
+    def _plan_row_keys(row: Any, template: Mapping[str, Any]) -> List[str]:
+        """The headline verb of one plan row: its change word's, ORDER for an extra row."""
+        from app.services.project_line_split_service import WORD_ADVANCE, WORD_DELAY
+
+        if row.extra:
+            return [IV_ORDER]
+        if row.is_cancel:
+            return [IV_CANCEL_BALANCE]
+        if row.generated == WORD_DELAY:
+            return [IV_DELAY]
+        if row.generated == WORD_ADVANCE:
+            return [IV_ADVANCE]
+        return list(template.get("verb_keys") or ["QTY_CHANGE"])
 
     def split_handover_items(
         self,
@@ -4477,20 +4556,14 @@ class ProjectOrderInquiryService:
         *,
         line_ids: Optional[set] = None,
         actor_user_id: Optional[str] = None,
-        queued: bool = False,
-        honoured: Optional[Mapping[str, Mapping[str, Decimal]]] = None,
     ) -> List[Dict[str, Any]]:
-        """OI-LINE-SPLIT (UAC D1): every handover item of a SPLIT line (its own splits, the
-        origin view) is replaced by one line per split, each reading alone in the same
-        template: QTY / DELIVERY = the base the line was split from (`was`), NEW QTY / NEW
-        DATE = the split's (blank date for a cancel), REMARK = its change word and remark.
-
-        Send to purchasing (`oi_handover_resend`) passes its built items and gets the new
-        list back. Confirm (`_tell_splits`) passes the pending queue with `queued=True`:
-        the line's items leave the queue and each split is queued by `_record_handover`.
-        `line_ids` narrows which lines may expand. `honoured` (Confirm only): per line, the
-        splits to print with the qty each prints, beside the CANCEL the netting told for the
-        line; without it every saved split prints (the saved plan)."""
+        """OI-LINE-SPLIT (UAC D1): Send to purchasing (`oi_handover_resend`) passes its built
+        items and gets the new list back: every item of a SPLIT line (its own splits, the
+        origin view) is replaced by one line per saved split: QTY / DELIVERY = the base the
+        line was split from (`was`, on the line's first row only), NEW QTY / NEW DATE = the
+        split's (blank date for a cancel), REMARK = its remark, else its change word.
+        `line_ids` narrows which lines may expand. Confirm tells its lines through
+        `_tell_splits`."""
         from app.services.project_line_split_service import SplitOutputs
 
         candidates = {str(i.get("so_line_id")) for i in items if i.get("so_line_id")}
@@ -4501,74 +4574,26 @@ class ProjectOrderInquiryService:
         if not expanding:
             return list(items)
         templates: Dict[str, Dict[str, Any]] = {}
-        netting_cancels: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         out: List[Dict[str, Any]] = []
         for item in items:
             line_id = str(item.get("so_line_id") or "")
             if line_id in expanding:
                 templates.setdefault(line_id, item)
-                if honoured is not None and IV_CANCEL_BALANCE in (item.get("verb_keys") or ()):
-                    netting_cancels[line_id].append(item)
             else:
                 out.append(item)
-        # Inside a Confirm, the CANCEL the netting told for a split line stands for the part
-        # no printed split already says: the line's own cancel splits print as their own
-        # CANCEL BALANCE lines, so only the remainder is told again (never twice).
-        for line_id, told in netting_cancels.items():
-            netted = _ZERO
-            for told_item in told:
-                entry = told_item.get("line") or {}
-                was_qty = (entry.get("was") or {}).get("qty")
-                if was_qty is not None:
-                    netted += max(_dec(was_qty) - _dec(entry.get("qty")), _ZERO)
-            explained = sum(
-                (
-                    _dec((honoured or {}).get(line_id, {}).get(str(view.split.id)))
-                    for view in splits.by_origin.get(line_id, [])
-                    if view.split.is_cancel
-                ),
-                _ZERO,
-            )
-            remainder = netted - explained
-            if explained <= _ZERO or netted <= _ZERO:
-                out.extend(told)
-                continue
-            if remainder <= _ZERO:
-                continue
-            first = told[0]
-            entry = first.get("line") or {}
-            entry["remark"] = re.sub(
-                r"CANCEL [0-9.]+", f"CANCEL {_qty_str(remainder)}", entry.get("remark") or ""
-            )
-            out.append(first)
-        if queued:
-            items[:] = out
         for line_id, template in templates.items():
             line = self.db.get(ProjectSalesOrderLine, line_id)
-            plan = honoured.get(line_id) if honoured is not None else None
-            views: List[Tuple[Any, Decimal]] = []
-            for view in splits.by_origin[line_id]:
-                if plan is None:
-                    views.append((view, _dec(view.split.qty)))
-                elif str(view.split.id) in plan:
-                    views.append((view, _dec(plan[str(view.split.id)])))
-            for view, qty in views:
+            for index, view in enumerate(splits.by_origin[line_id]):
+                qty = _dec(view.split.qty)
                 stand_in = self._split_stand_in(template, view, line)
-                stand_in.qty = qty
                 was = {"qty": view.split.base_qty, "delivery_date": view.split.base_date}
-                if queued:
-                    self._record_handover(
-                        stand_in, kind="settled", was=was,
-                        actor_user_id=actor_user_id, qty=qty,
-                    )
-                    item = self.db.info[_HANDOVER_PENDING_KEY][-1]
-                else:
-                    item = self.handover_item(
-                        stand_in, kind="settled", was=was,
-                        actor_user_id=actor_user_id, qty=qty,
-                    )
-                    out.append(item)
+                item = self.handover_item(
+                    stand_in, kind="settled", was=was,
+                    actor_user_id=actor_user_id, qty=qty,
+                )
+                out.append(item)
                 self._read_as_split(item, template, view)
+                item["line"]["continued"] = index > 0
         return out
 
     @staticmethod
@@ -4601,15 +4626,14 @@ class ProjectOrderInquiryService:
         split = view.split
         word = view.word
         entry = item["line"]
-        # The order's facts as the line's own item carried them, where the stand-in's
-        # header could not be read (a saved line queued before any header existed).
-        for key in ("pso_id", "so_number", "customer", "project"):
-            if not item.get(key):
-                item[key] = template.get(key)
-        for key in ("so_date", "so_number", "customer", "project"):
-            if not entry.get(key):
-                entry[key] = (template.get("line") or {}).get(key)
-        entry["remark"] = f"{word}, {split.remark}" if split.remark else word
+        ProjectOrderInquiryService._fill_from_template(item, template)
+        # AC-G5: the sheet's remark as typed, else the generated one (`remark_for_row`).
+        entry["remark"] = (split.remark or "").strip() or remark_for_row(
+            qty=split.qty,
+            delivery_date=split.delivery_date,
+            base_date=split.base_date,
+            is_cancel=bool(split.is_cancel),
+        )
         entry["was"] = _format_handover_was(
             {"qty": split.base_qty, "delivery_date": split.base_date}
         )
@@ -4621,9 +4645,6 @@ class ProjectOrderInquiryService:
             item["verb_keys"] = [IV_ADVANCE]
         else:
             item["verb_keys"] = list(template.get("verb_keys") or ["QTY_CHANGE"])
-        if template.get("actor") and not item.get("actor"):
-            item["actor"] = template.get("actor")
-        item["told_for_saved_line"] = True
 
     def forget_rows_told_for_saved_lines(self, pso_id: str) -> None:
         """A planning-change apply confirms its lines first (one decision line each, which
@@ -13728,3 +13749,9 @@ def register_order_inquiry_post_commit_dispatch() -> None:
             fresh.close()
 
     _POST_COMMIT_DISPATCH_REGISTERED = True
+
+
+# OI-LINE-SPLIT (UAC AC-G5): the ONE generated-REMARK function, the same object the split
+# sheet and the OI Excel use. Imported last: `project_line_split_service` reads
+# `handover_moves` from this module.
+from app.services.project_line_split_service import remark_for_row  # noqa: E402
