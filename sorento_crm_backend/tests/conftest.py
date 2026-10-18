@@ -10,6 +10,9 @@ import os
 
 import pytest
 
+# A crashed xdist worker fails the session; see the module.
+from tests._xdist_crash_guard import pytest_sessionfinish, pytest_testnodedown  # noqa: F401
+
 
 # Holds the session-long advisory lock. Kept on a module global because the lock lives on the
 # CONNECTION: closing it would release the lock and let a concurrent run start sweeping.

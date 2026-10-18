@@ -275,7 +275,7 @@ def test_the_gitleaks_cli_matches_the_runner_architecture(tmp_path, machine, exp
 XDIST_WORKERS = "${{ needs.changes.outputs.tests_runner == 'sorento-mac' && 2 || 'auto' }}"
 XDIST_JOBS = ["lean-gate", "test-backend", "test-backend-scm"]
 # An xdist call: `--dist`, or a worker count (not `[ -n "$x" ]` or `echo -n`).
-_XDIST_CALL = re.compile(r"\s--dist\s|\s-n\s+(auto|\d+|\$\{\{)")
+_XDIST_CALL = re.compile(r"\s--dist[\s=]|\s(-n|--numprocesses)[\s=]+(auto|logical|\d+|\$\{\{)")
 
 
 def _xdist_steps(job: str) -> list[tuple[dict, list[str]]]:

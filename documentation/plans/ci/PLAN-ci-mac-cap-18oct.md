@@ -32,11 +32,17 @@ worker into the same memory pressure (gw4..gw7 are respawns) instead of failing.
    2 workers on the Mac (2 x 1.4 GB fits beside Postgres and Redis), unchanged on GitHub-hosted.
    Env, not an inline `${{ }}`: tests/test_ci_docs_only_filter.py executes the PR gate's script
    in bash, which cannot run one (the step already passes FILES the same way).
-2. `--max-worker-restart 0`: a crashed worker ends the session at once ("worker gwN crashed and
-   worker restarting disabled", the crashed test reported failed) instead of respawning or
-   hanging to the cap. Applies on both runner kinds: a worker crash is never a healthy run.
+2. `--max-worker-restart 0`: a crashed worker ends the session at once instead of respawning
+   into the same pressure or hanging to the cap. Applies on both runner kinds: a worker crash is
+   never a healthy run.
+3. `tests/_xdist_crash_guard.py` (loaded by `tests/conftest.py`), from review: with restarts off,
+   a worker killed before it reports its collection ends the session "no tests ran" with exit 0
+   (xdist 3.8, reproduced 4/4), and the PR gate's `run()` also passes exit 5. The guard turns
+   exit 0/5 into 1 whenever `pytest_testnodedown` reports an error. A worker killed mid-test
+   already exits 1 (its test is reported failed).
 
-Pinned by `sorento_crm_backend/tests/test_ci_runner_routing.py` (red first).
+Pinned by `sorento_crm_backend/tests/test_ci_runner_routing.py` and
+`sorento_crm_backend/tests/test_xdist_crash_guard.py` (red first, each).
 
 Not changed (crew's call): `RUNNER_TESTS`, the colima VM size. Raising the `ci` VM to >= 10 GiB
 is the alternative that keeps 4 workers.
