@@ -309,8 +309,7 @@ def portal_download(
 
 def _image_move(db: Session, token: PortalToken, application_id: str, line_id: str, fn, **kw):
     _assert_visible(db, token.contact_id)
-    # Every refusal comes before any write, so no explicit rollback: the session closes with
-    # the request.
+    # No explicit rollback: every refusal precedes a write, and get_db's close() rolls back whatever is left.
     with company_scope(db, frozenset({_resolve_company(db, token)})):
         app = _own(db, token, application_id, for_update=True)
         fn(db, app, validate_uuid_path(line_id, resource="Line"), actor=_actor(token), **kw)

@@ -285,8 +285,7 @@ def save_feedback(
 
 
 def _image_move(db: Session, user: dict, application_id: str, line_id: str, fn, **kw):
-    # Every refusal comes before any write, so no explicit rollback: the session closes with
-    # the request (a rollback here would also discard whatever the caller had not committed).
+    # No explicit rollback: every refusal precedes a write, and get_db's close() rolls back whatever is left.
     app = _load(db, application_id, for_update=True)
     fn(db, app, validate_uuid_path(line_id, resource="Line"), actor=_actor(db, user), **kw)
     return _done(db, app)

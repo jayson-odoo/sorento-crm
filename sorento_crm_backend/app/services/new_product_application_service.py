@@ -276,15 +276,19 @@ def create_draft(
     return app
 
 
-def update(db: Session, app: NewProductApplication, *, actor: Actor, data: Dict[str, Any]) -> None:
-    if not is_owner(app, actor):
-        raise _forbidden("Only the applicant can edit this application.")
+def _assert_staff_may_edit(app: NewProductApplication, actor: Actor) -> None:
     if app.source == "portal" and actor.contact_id is None:
         # The portal checks (own inquiry, own debtors) live on the portal route; a staff edit would skip them.
         raise _conflict(
             "This application was raised in the portal. Edit it in the portal.",
             "NEW_PRODUCT_APPLICATION_PORTAL_ONLY",
         )
+
+
+def update(db: Session, app: NewProductApplication, *, actor: Actor, data: Dict[str, Any]) -> None:
+    if not is_owner(app, actor):
+        raise _forbidden("Only the applicant can edit this application.")
+    _assert_staff_may_edit(app, actor)
     assert_unlocked(app)
     _apply(db, app, data)
     db.flush()
@@ -567,8 +571,34 @@ def _image_line(app: NewProductApplication, line_id: str, actor: Actor) -> NewPr
     line = _line(app, line_id)
     if not is_owner(app, actor):
         raise _forbidden("Only the applicant can change the images of this application.")
+    _assert_staff_may_edit(app, actor)
     assert_unlocked(app)
     return line
+
+
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_IMAGE_PIXELS = 40_000_000
+_PIL_FORMAT = {"image/jpeg": "JPEG", "image/png": "PNG", "image/webp": "WEBP"}
+
+
+def _check_image(contents: bytes, kind: str) -> None:
+    """Refuse before anything is stored: too big, not really an image of the declared type, or
+    so many pixels that decoding it later (thumbnail, Excel) would cost real memory."""
+    import io
+
+    from PIL import Image
+
+    if len(contents) > MAX_IMAGE_BYTES:
+        raise _invalid("file", "The image is larger than 10 MB.")
+    try:
+        with Image.open(io.BytesIO(contents), formats=tuple(_PIL_FORMAT.values())) as image:
+            format_, pixels = image.format, image.width * image.height
+    except Exception:  # noqa: BLE001 - any decode failure means it is not an image we take
+        raise _invalid("file", "Upload a JPEG, PNG or WebP image.") from None
+    if format_ != _PIL_FORMAT[kind]:
+        raise _invalid("file", "The file is not the image type it claims to be.")
+    if pixels > MAX_IMAGE_PIXELS:
+        raise _invalid("file", "The image has too many pixels (over 40 megapixels).")
 
 
 def add_image(
@@ -587,6 +617,7 @@ def add_image(
     kind = (content_type or "").split(";", 1)[0].strip().lower()
     if kind not in IMAGE_TYPES or not (filename or "").lower().endswith(IMAGE_EXTENSIONS):
         raise _invalid("file", "Upload a JPEG, PNG or WebP image.")
+    _check_image(contents, kind)
     create_response_attachment(
         db,
         entity_type=LINE_ENTITY,

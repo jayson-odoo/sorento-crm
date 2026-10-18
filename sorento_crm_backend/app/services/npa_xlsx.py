@@ -19,6 +19,8 @@ from app.models.product import Brand
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.resources import Attachment
 from app.models.user import User
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+
 from app.services.scm.proforma_invoice_service import _xlsx_safe_text
 
 #: Larger images show their file name instead (memory, and Pillow's own bomb guard sits higher).
@@ -89,6 +91,17 @@ def file_stem(db: Session, app: NewProductApplication) -> str:
     return stem[:_NAME_CAP].strip()
 
 
+def _thumbnail_or_original(backend, row) -> bytes:
+    """The stored grid thumbnail when there is one (small, already decoded once); the original
+    only when the upload never got one."""
+    from app.services.image_thumbnailer import thumbnail_key_for
+
+    try:
+        return backend.download_file(thumbnail_key_for(row.file_path))
+    except Exception:  # noqa: BLE001 - no thumbnail stored
+        return backend.download_file(row.file_path)
+
+
 def _first_image(db: Session, line: NewProductApplicationLine) -> Optional[Tuple[str, Optional[bytes]]]:
     """(file name, thumbnail PNG bytes or None) of the product's first image."""
     from PIL import Image
@@ -109,8 +122,8 @@ def _first_image(db: Session, line: NewProductApplicationLine) -> Optional[Tuple
         return None
     try:
         provider = row.storage_provider or storage_router.default_provider()
-        data = storage_router.get_backend(provider).download_file(row.file_path)
-        with Image.open(io.BytesIO(data)) as image:
+        data = _thumbnail_or_original(storage_router.get_backend(provider), row)
+        with Image.open(io.BytesIO(data), formats=("JPEG", "PNG", "WEBP")) as image:
             if image.width * image.height > MAX_IMAGE_PIXELS:
                 return row.original_filename, None
             image.load()
@@ -120,6 +133,13 @@ def _first_image(db: Session, line: NewProductApplicationLine) -> Optional[Tuple
         return row.original_filename, out.getvalue()
     except Exception:  # noqa: BLE001 - an unreadable image shows its name, never fails the download
         return row.original_filename, None
+
+
+def _cell(value):
+    """Text with the characters a worksheet cannot hold removed, and formula-safe."""
+    if isinstance(value, str):
+        value = ILLEGAL_CHARACTERS_RE.sub("", value)
+    return _xlsx_safe_text(value) if value not in (None, "") else None
 
 
 def to_xlsx(db: Session, app: NewProductApplication) -> Tuple[bytes, str]:
@@ -169,7 +189,7 @@ def to_xlsx(db: Session, app: NewProductApplication) -> Tuple[bytes, str]:
             head = ws.cell(row=row, column=1, value=label)
             head.font = bold
             head.alignment = Alignment(horizontal="right", vertical="top")
-            body = ws.cell(row=row, column=2, value=_xlsx_safe_text(value) if value not in (None, "") else None)
+            body = ws.cell(row=row, column=2, value=_cell(value))
             body.alignment = Alignment(wrap_text=True, vertical="top", horizontal="left")
             head.border = box
             body.border = box
