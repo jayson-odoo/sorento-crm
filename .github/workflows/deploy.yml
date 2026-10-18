@@ -1026,10 +1026,12 @@ jobs:
       # drained and nothing else on the database.
       - name: Run SCM backend suite (executing gate)
         working-directory: sorento_crm_backend
+        env:
+          XDIST_WORKERS: ${{ needs.changes.outputs.tests_runner == 'sorento-mac' && 2 || 'auto' }}
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
           echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus the serial_ddl tests; shard ${{ matrix.shard }} of 3"
-          python -m pytest -q -p no:cacheprovider -n auto --dist loadfile --durations=30 \
+          python -m pytest -q -p no:cacheprovider -n "$XDIST_WORKERS" --dist loadfile --max-worker-restart 0 --durations=30 \
             --splits 3 --group ${{ matrix.shard }} \
             --store-durations --durations-path .test_durations \
             -m "not serial_ddl" $IGNORES tests/scm/
@@ -1275,13 +1277,25 @@ jobs:
       # per-test timing this job produces, and reviewers are pointed at it by
       # documentation/reference/PR-CHECKLIST.md ("Test cost") to justify a new
       # slow test rather than discovering it three weeks later as wall clock.
+      #
+      # XDIST_WORKERS: two workers on the Mac runner, `auto` elsewhere
+      # (CI-MAC-CAP, 18 Oct 2026). The Mac's VM is 4 CPU, 6 GiB, no swap
+      # (scripts/ci-runner/up.sh), so `auto` is 4 workers at about 1.4 GB each
+      # beside Postgres and Redis: release run 39126899668 lost four workers of
+      # shard 5 to the OOM killer and shard 7 hung to the 90 min cap.
+      # `--max-worker-restart 0` ends the session on the first crashed worker
+      # (its test reported failed) instead of xdist's default 4 x workers
+      # respawns into the same pressure. The SCM shards and the PR gate carry
+      # the same two settings; all pinned by tests/test_ci_runner_routing.py.
       - name: Run backend suite under xdist (executing gate)
         if: matrix.shard != 'serial'
         working-directory: sorento_crm_backend
+        env:
+          XDIST_WORKERS: ${{ needs.changes.outputs.tests_runner == 'sorento-mac' && 2 || 'auto' }}
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
           echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus tests/scm, tests/test_migration_*.py and the serial_ddl tests; shard ${{ matrix.shard }} of 10"
-          python -m pytest -q -p no:cacheprovider -n auto --dist loadfile --durations=30 \
+          python -m pytest -q -p no:cacheprovider -n "$XDIST_WORKERS" --dist loadfile --max-worker-restart 0 --durations=30 \
             --splits 10 --group ${{ matrix.shard }} \
             --store-durations --durations-path .test_durations \
             --ignore-glob='tests/test_migration_*.py' \
@@ -1603,6 +1617,7 @@ jobs:
         working-directory: sorento_crm_backend
         env:
           FILES: ${{ steps.select.outputs.files }}
+          XDIST_WORKERS: ${{ needs.changes.outputs.tests_runner == 'sorento-mac' && 2 || 'auto' }}
         run: |
           # The shards' split. tests/scm and the rest run as separate pytest
           # sessions, as on the shards: several main-tree files import
@@ -1626,7 +1641,7 @@ jobs:
           run() { python -m pytest -q -p no:cacheprovider "$@" || { r=$?; [ "$r" -eq 5 ] || rc=$r; }; }
           for pool in "$main" "$scm"; do
             [ -n "$pool" ] || continue
-            run -n auto --dist loadfile --durations=20 -m "not serial_ddl" $pool
+            run -n "$XDIST_WORKERS" --dist loadfile --max-worker-restart 0 --durations=20 -m "not serial_ddl" $pool
             run -p no:xdist --durations=10 -m serial_ddl $pool
           done
           [ -z "$migrations" ] || run -p no:xdist --durations=10 $migrations
