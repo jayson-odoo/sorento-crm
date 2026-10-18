@@ -254,15 +254,35 @@ export default function NewProductApplicationForm({
     setSavedId(saved.id);
     setSavedInquiry(state.stock_inquiry_id);
     // Images picked before the application existed go up now, in product order.
+    // Ids first, so each answer below lands on the product it belongs to and a refused
+    // Submit leaves the uploaded images on screen.
+    adopt(saved, true);
     for (const [i, line] of state.lines.entries()) {
       const lineId = saved.lines?.[i]?.id;
       if (!lineId) continue;
       for (const file of line.staged_images) {
         try {
-          await uploadNewProductApplicationLineImage(saved.id, lineId, file);
+          adopt(
+            await uploadNewProductApplicationLineImage(saved.id, lineId, file),
+          );
         } catch (e) {
           toast.error(
             e instanceof Error ? e.message : 'Failed to upload the image',
+          );
+        }
+      }
+      for (const copy of line.staged_copies) {
+        try {
+          adopt(
+            await copyNewProductApplicationLineImage(
+              saved.id,
+              lineId,
+              copy.attachment_id,
+            ),
+          );
+        } catch (e) {
+          toast.error(
+            e instanceof Error ? e.message : 'Failed to copy the image',
           );
         }
       }
@@ -280,13 +300,13 @@ export default function NewProductApplicationForm({
         }
       }
     }
-    adopt(saved, true);
     setState((prev) => ({
       ...prev,
       lines: prev.lines.map((l) => ({
         ...l,
         images: l.images.filter((i) => !l.removed_link_ids.includes(i.link_id)),
         staged_images: [],
+        staged_copies: [],
         removed_link_ids: [],
       })),
     }));
@@ -326,9 +346,9 @@ export default function NewProductApplicationForm({
           )
         : undefined,
     savedInquiryId: savedInquiryId,
-    listInquiry: async () => {
+    listInquiry: async (inquiryId) => {
       try {
-        return await listInquiryImagesForNewProductApplication(savedInquiryId);
+        return await listInquiryImagesForNewProductApplication(inquiryId);
       } catch (e) {
         toast.error(
           e instanceof Error ? e.message : 'Failed to load the inquiry images',
@@ -561,6 +581,10 @@ export default function NewProductApplicationForm({
                         ...prev,
                         stock_inquiry_id: '',
                         stock_inquiry_label: '',
+                        lines: prev.lines.map((l) => ({
+                          ...l,
+                          staged_copies: [],
+                        })),
                       }));
                     }
                   }}

@@ -36,6 +36,8 @@ export interface DraftLine {
   staged_images: File[];
   /** Saved images removed in this edit; the host unlinks them when Save succeeds. Never sent in the write. */
   removed_link_ids: string[];
+  /** Inquiry images picked before the application exists; copied right after the first save. */
+  staged_copies: { attachment_id: string; filename: string }[];
 }
 
 export interface FormState {
@@ -82,6 +84,7 @@ export const blankLine = (): DraftLine => ({
   images: [],
   staged_images: [],
   removed_link_ids: [],
+  staged_copies: [],
 });
 
 /** "SI26-0412 - XY-1234-MB": the inquiry as the header picker and the detail page name it. */
@@ -112,6 +115,7 @@ function lineFromDetail(l: NewProductApplicationLine): DraftLine {
     images: l.images ?? [],
     staged_images: [],
     removed_link_ids: [],
+    staged_copies: [],
   };
 }
 

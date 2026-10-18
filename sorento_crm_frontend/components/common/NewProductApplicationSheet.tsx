@@ -13,6 +13,7 @@
 
 import { useRef, useState, type ReactNode } from 'react';
 import { Plus, X } from 'lucide-react';
+import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
@@ -43,8 +44,10 @@ export interface SheetImageActions {
   copy: (line: DraftLine, attachmentId: string) => Promise<void> | void;
   /** The inquiry the SAVED application points at; "Copy from the inquiry" is hidden while another one is picked and unsaved. */
   savedInquiryId: string;
-  /** Null when the list could not be read (the host has said why); never an empty list then. */
-  listInquiry: () => Promise<NewProductApplicationInquiryImage[] | null>;
+  /** Images on the given inquiry. Null when the list could not be read (the host has said why); never an empty list then. */
+  listInquiry: (
+    inquiryId: string,
+  ) => Promise<NewProductApplicationInquiryImage[] | null>;
 }
 
 export interface NewProductApplicationSheetProps {
@@ -67,6 +70,8 @@ export interface NewProductApplicationSheetProps {
 }
 
 const IMAGE_ACCEPT = 'image/jpeg,image/png,image/webp';
+const IMAGE_MIME = IMAGE_ACCEPT.split(',');
+const NOT_AN_IMAGE = 'Upload a JPEG, PNG or WebP image.';
 
 function Row({
   label,
@@ -98,16 +103,21 @@ function Row({
 function ImageCell({
   line,
   copyEnabled,
+  inquiryId,
   readOnly,
   imageActions,
   onStage,
+  onStageCopy,
   onRemoveSaved,
 }: {
   line: DraftLine;
   copyEnabled: boolean;
+  /** The inquiry the picker reads: the saved one for a saved product, the picked one otherwise. */
+  inquiryId: string;
   readOnly?: boolean;
   imageActions?: SheetImageActions;
   onStage: (files: File[]) => void;
+  onStageCopy: (copies: DraftLine['staged_copies']) => void;
   onRemoveSaved: (image: NewProductApplicationImage) => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
@@ -116,16 +126,18 @@ function ImageCell({
   const live = Boolean(line.id && imageActions);
 
   const choose = (files: FileList | null) => {
-    const picked = Array.from(files ?? []);
+    const all = Array.from(files ?? []);
     if (input.current) input.current.value = '';
+    const picked = all.filter((f) => IMAGE_MIME.includes(f.type));
+    if (picked.length < all.length) toast.error(NOT_AN_IMAGE);
     if (picked.length === 0) return;
     if (live) picked.forEach((f) => void imageActions?.upload(line, f));
-    else onStage(picked);
+    else onStage([...line.staged_images, ...picked]);
   };
 
   const togglePicker = async () => {
     if (picking) return setPicking(false);
-    const found = (await imageActions?.listInquiry()) ?? null;
+    const found = (await imageActions?.listInquiry(inquiryId)) ?? null;
     if (found === null) return;
     setOffers(found);
     setPicking(true);
@@ -185,9 +197,38 @@ function ImageCell({
           )}
         </div>
       ))}
-      {line.images.length === 0 && line.staged_images.length === 0 && (
-        <span className="text-muted-foreground">-</span>
-      )}
+      {line.staged_copies.map((copy) => (
+        <div
+          key={copy.attachment_id}
+          className="flex min-w-0 items-center gap-2"
+        >
+          <span className="min-w-0 truncate" title={copy.filename}>
+            {copy.filename}
+          </span>
+          {!readOnly && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label={`Remove ${copy.filename}`}
+              onClick={() =>
+                onStageCopy(
+                  line.staged_copies.filter(
+                    (c) => c.attachment_id !== copy.attachment_id,
+                  ),
+                )
+              }
+            >
+              <X className="size-4" />
+            </Button>
+          )}
+        </div>
+      ))}
+      {line.images.length === 0 &&
+        line.staged_images.length === 0 &&
+        line.staged_copies.length === 0 && (
+          <span className="text-muted-foreground">-</span>
+        )}
       {!readOnly && (
         <div className="flex flex-wrap gap-2">
           <input
@@ -207,7 +248,7 @@ function ImageCell({
           >
             Add image
           </Button>
-          {live && copyEnabled && (
+          {copyEnabled && (
             <Button
               type="button"
               variant="outline"
@@ -231,7 +272,19 @@ function ImageCell({
               className="block w-full truncate text-left text-primary hover:underline"
               onClick={() => {
                 setPicking(false);
-                void imageActions?.copy(line, offer.attachment_id);
+                if (live) void imageActions?.copy(line, offer.attachment_id);
+                else if (
+                  !line.staged_copies.some(
+                    (c) => c.attachment_id === offer.attachment_id,
+                  )
+                )
+                  onStageCopy([
+                    ...line.staged_copies,
+                    {
+                      attachment_id: offer.attachment_id,
+                      filename: offer.filename,
+                    },
+                  ]);
               }}
             >
               {offer.filename}
@@ -364,12 +417,22 @@ export function NewProductApplicationSheet({
             <ImageCell
               line={line}
               copyEnabled={
-                Boolean(imageActions?.savedInquiryId) &&
-                imageActions?.savedInquiryId === value.stock_inquiry_id
+                line.id && imageActions
+                  ? Boolean(imageActions.savedInquiryId) &&
+                    imageActions.savedInquiryId === value.stock_inquiry_id
+                  : Boolean(value.stock_inquiry_id)
+              }
+              inquiryId={
+                line.id && imageActions
+                  ? imageActions.savedInquiryId
+                  : value.stock_inquiry_id
               }
               readOnly={readOnly}
               imageActions={imageActions}
               onStage={(files) => patchLine(line.key, { staged_images: files })}
+              onStageCopy={(copies) =>
+                patchLine(line.key, { staged_copies: copies })
+              }
               onRemoveSaved={(image) =>
                 patchLine(line.key, {
                   images: line.images.filter(

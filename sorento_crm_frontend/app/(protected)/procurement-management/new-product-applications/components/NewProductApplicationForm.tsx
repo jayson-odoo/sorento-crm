@@ -24,6 +24,7 @@ import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import {
   EMPTY_FORM,
   blankLine,
+  type DraftLine,
   numberErrors,
   payloadFromState,
   stateFromDetail,
@@ -43,6 +44,12 @@ import {
   getStockInquiryAttachmentsForNpa,
   searchStockInquiryOptions,
 } from '../services/newProductApplicationService';
+
+// Copies staged from one inquiry mean nothing under another.
+const dropStagedCopies = (l: DraftLine): DraftLine => ({
+  ...l,
+  staged_copies: [],
+});
 
 const BASE_PATH = '/procurement-management/new-product-applications';
 
@@ -157,12 +164,28 @@ export default function NewProductApplicationForm({
     saved: Partial<NewProductApplicationDetail>,
   ) => {
     const lines = saved.lines ?? [];
+    // Ids first, so each answer below lands on the product it belongs to and a refused
+    // Submit leaves the uploaded images on screen.
+    adopt(saved, true);
     for (const [i, line] of state.lines.entries()) {
       const lineId = lines[i]?.id;
       if (!lineId) continue;
       for (const file of line.staged_images) {
         try {
-          await uploadImage.mutateAsync({ id, lineId, file });
+          adopt(await uploadImage.mutateAsync({ id, lineId, file }));
+        } catch {
+          // the mutation's own onError toast names the refusal
+        }
+      }
+      for (const copy of line.staged_copies) {
+        try {
+          adopt(
+            await copyImage.mutateAsync({
+              id,
+              lineId,
+              attachmentId: copy.attachment_id,
+            }),
+          );
         } catch {
           // the mutation's own onError toast names the refusal
         }
@@ -179,13 +202,13 @@ export default function NewProductApplicationForm({
         }
       }
     }
-    adopt(saved, true);
     setState((prev) => ({
       ...prev,
       lines: prev.lines.map((l) => ({
         ...l,
         images: l.images.filter((i) => !l.removed_link_ids.includes(i.link_id)),
         staged_images: [],
+        staged_copies: [],
         removed_link_ids: [],
       })),
     }));
@@ -224,13 +247,9 @@ export default function NewProductApplicationForm({
     savedInquiryId: applicationId
       ? (existing.data?.stock_inquiry_id ?? '')
       : savedInquiry,
-    listInquiry: async () => {
+    listInquiry: async (inquiryId) => {
       try {
-        return await getStockInquiryAttachmentsForNpa(
-          applicationId
-            ? (existing.data?.stock_inquiry_id ?? '')
-            : savedInquiry,
-        );
+        return await getStockInquiryAttachmentsForNpa(inquiryId);
       } catch (e) {
         toast.error(
           e instanceof Error ? e.message : 'Failed to load the inquiry images',
@@ -326,6 +345,7 @@ export default function NewProductApplicationForm({
                       ...prev,
                       stock_inquiry_id: '',
                       stock_inquiry_label: '',
+                      lines: prev.lines.map(dropStagedCopies),
                     }));
                 }}
                 onOptionChange={(opt) =>
@@ -334,6 +354,7 @@ export default function NewProductApplicationForm({
                     ...prev,
                     stock_inquiry_id: opt.value,
                     stock_inquiry_label: opt.label,
+                    lines: prev.lines.map(dropStagedCopies),
                   }))
                 }
               />
