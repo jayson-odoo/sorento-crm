@@ -1694,3 +1694,76 @@ def test_g17_a_re_confirm_after_a_re_plan_keeps_its_cancel_balance(api, emails, 
                              before, after)
     resent = [(ln["qty"], ln["remark"]) for ln in _sent_since(emails, start)]
     assert resent == [], ("no email for a re-Confirm with no change", variant, resent)
+
+
+# ---------------------------------------------------------------------------
+# AC-G16 (P2) after an AC-G17 re-plan: a later AutoCount change moves only 480's own row.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("now,own_after,word", [(12, 8, "CANCEL"), (16, 12, "ORDER")],
+                         ids=["cut_14_to_12", "up_14_to_16"])
+@pytest.mark.parametrize("variant", ["linked", "unlinked"])
+def test_g16_a_later_autocount_change_after_a_re_plan_moves_only_the_own_row(
+    api, emails, variant, now, own_after, word
+):
+    """New-line plan 14 / 236 / 167 applied, re-planned 10 own + 4 on New line and confirmed (one
+    CANCEL BALANCE 403). AutoCount then moves 480 from 14 to `now` (same date). After that
+    Confirm 480's own row follows AutoCount's delta (10 -> 8, or 10 -> 12), the cut is one
+    CANCEL BALANCE of 2 (the up case orders 2, no new cancel), the 403 stays raised, the 4
+    New-line row stands (qty, date, links), the email tells only the own row's change, and
+    the live qty is AutoCount's (own row + the standing 4). It changed no row and re-sent 10 /
+    4 / 403."""
+    from app.models.project_so import INQUIRY_CANCELLED
+
+    if variant == "linked":
+        s, _po_line = _new_line_plan_applied(api, emails)
+    else:
+        s = _seed(api)
+        _save(s, _new_line_plan())
+        _confirm_batch(s, emails)
+    sent = _replan_480(s, emails)
+    assert _cancelled_403_in(sent), "premise: the re-plan Confirm told the CANCEL 403"
+    before = _snapshot_480(s)
+    standing = [r for r in before if r[2] != INQUIRY_CANCELLED
+                and ((r[1] == "CANCEL_BALANCE" and r[3] == _d("403"))
+                     or (r[1] != "CANCEL_BALANCE" and (r[3], r[4]) == (_d("4"), D_608)))]
+    assert len(standing) == 2, ("premise: the 403 and the 4 rows", before)
+
+    core = s.core[480]
+    core.qty_ordered, s.line[480].qty = Decimal(now), Decimal(now)
+    s.db.commit()
+    batch = _build(s.world, [_change(QTY_CHANGED, core, so_number=s.core_so.so_number,
+                                     old_date=D_480_NEW, new_date=D_480_NEW, old_qty="14",
+                                     new_qty=str(now))], s.core_so, [str(core.id)])
+    assert batch is not None, "premise: the AutoCount change is pending"
+    start = len(emails)
+    r = _confirm(s.client, s.order.id, [
+        _line_payload(s.line[480].id, buy_qty=str(now)),
+        _line_payload(s.line[608].id, buy_qty="632"),
+        _line_payload(s.line[752].id, buy_qty="649"),
+    ], batch_id=str(batch.id))
+    assert r.status_code == 200, r.text
+    s.db.commit()
+    s.db.expire_all()
+
+    rows = _worklist(s, s.line[480])
+    assert _live(rows) == sorted([(_d(str(own_after)), D_480_NEW), (_d("4"), D_608)]), (
+        f"the own row follows AutoCount (10 -> {own_after}), the 4 stands", variant, rows)
+    after = _snapshot_480(s)
+    for row in standing:
+        assert row in after, ("the 403 and the 4 rows stand untouched", variant, row, after)
+    cancels = sorted(q for state, q in _cancel_balances(rows) if state != INQUIRY_CANCELLED)
+    want = sorted([_d("2"), _d("403")]) if word == "CANCEL" else [_d("403")]
+    assert cancels == want, ("one CANCEL BALANCE of 2 for the cut, the 403 kept", variant, rows)
+    assert sum((q for q, _when in _live(rows)), Decimal(0)) == _d(str(now)), (
+        "live qty == AutoCount (own row + the standing 4)", variant, rows)
+
+    told = [(ln["qty"], str(ln["remark"]), (ln.get("was") or {}).get("qty"))
+            for ln in _sent_since(emails, start)]
+    assert told, ("the Confirm tells the own row's change", variant)
+    assert not [t for t in told if t[0] in ("4", "403") or t[1] in ("REMAIN", "DELAY")
+                or "CANCEL BALANCE" in t[1]], ("nothing but the own row's change is told",
+                                                variant, told)
+    assert [t for t in told if f"{word} 2" in t[1] or (t[0] == "2" and word in t[1])], (
+        f"the email says {word} 2", variant, told)
