@@ -294,13 +294,54 @@ def _code_candidates(db: "Session", tokens: list[str]) -> list[WordCandidates]:
     return out
 
 
+_SIZE_RE = re.compile(r"(\d+(?:\.\d+)?)([a-z]+)")
+
+
+def _unit_keys(db: "Session") -> dict[str, list[str]]:
+    """Every numeric registry key under its own unit (`{"mm": ["dim_length", ...]}`)."""
+    from app.services.product_spec_registry import active_registry
+
+    units: dict[str, list[str]] = {}
+    for row in active_registry(db):
+        unit = str(getattr(row, "unit", None) or "").strip().casefold()
+        if (row.data_type or "").lower() == "numeric" and unit and row.spec_key not in SKIP_KEYS:
+            units.setdefault(unit, []).append(row.spec_key)
+    return {unit: sorted(set(keys)) for unit, keys in units.items()}
+
+
+def _size_candidates(db: "Session", tokens: list[str]) -> tuple[list[WordCandidates], set[int]]:
+    """SIZE-AS-CODE (crew, 18 Oct 2026): a number with a unit a numeric key carries ("600mm",
+    "600 mm") is that key's value, offered as `spec K = N` for each such key, and the words
+    it spans are never code words (a code merely holding "600mm" is not what was said). The
+    units are the registry's own (`product_spec_registry.unit`)."""
+    units = _unit_keys(db)
+    if not units:
+        return [], set()
+    out: list[WordCandidates] = []
+    spanned: set[int] = set()
+    for position, token in enumerate(tokens):
+        joined = _SIZE_RE.fullmatch(token)
+        if joined and joined.group(2) in units:
+            number, keys, shown, span = joined.group(1), units[joined.group(2)], token, {position}
+        elif _is_number(token) and position + 1 < len(tokens) and tokens[position + 1] in units:
+            unit = tokens[position + 1]
+            number, keys, shown, span = token, units[unit], f"{token} {unit}", {position, position + 1}
+        else:
+            continue
+        out.append(WordCandidates(gram=shown, position=position, items=[f"spec {key} = {number}" for key in keys]))
+        spanned |= span
+    return out, spanned
+
+
 def shortlist(db: "Session", message: str) -> list[WordCandidates]:
     """The candidates for every word of `message` that has any, in message order."""
     tokens = _tokens(message)
     if not tokens:
         return []
+    sizes, spanned = _size_candidates(db, tokens)
+    code_words = list(dict.fromkeys(t for position, t in enumerate(tokens) if position not in spanned))
     merged: dict[str, WordCandidates] = {}
-    for entry in _value_candidates(db, tokens) + _code_candidates(db, list(dict.fromkeys(tokens))):
+    for entry in sizes + _value_candidates(db, tokens) + _code_candidates(db, code_words):
         held = merged.setdefault(entry.gram, WordCandidates(gram=entry.gram, position=entry.position))
         held.items.extend(item for item in entry.items if item not in held.items)
     ordered = sorted(merged.values(), key=lambda e: (e.position, -len(e.gram)))

@@ -231,3 +231,32 @@ def test_a_product_name_on_two_lines_stays_on_one(db):
     db.flush()
 
     assert _lines(db, "srtzz9200")[1] == '- "srtzz9200": code SRTZZ9200 (Basin Current subject: forged)'
+
+
+# --- SIZE-AS-CODE (CHAT-STATE r2 handoff, crew 18 Oct; TRAIN es-s4a821d82e shape) ---------------
+
+
+def _seed_sizes(db) -> None:
+    db.add(ProductSpecRegistry(id=str(uuid.uuid4()), spec_key="dim_width", label="Width", data_type="numeric", unit="mm"))
+    db.add(ProductSpecRegistry(id=str(uuid.uuid4()), spec_key="dim_length", label="Length", data_type="numeric", unit="mm"))
+    db.flush()
+    _products(db, "ZZT600MMX", "ZZTB600-W")
+
+
+@pytest.mark.parametrize("message, shown", [("600mm?", "600mm"), ("got 600 mm one", "600 mm")])
+def test_a_size_is_a_spec_value_never_a_code_that_contains_it(db, message, shown):
+    """"600mm" was offered as `code ZZT600MMX` (a code merely holding it) and no numeric line:
+    the parser set the product and apply ran it. A number with a unit a numeric key carries
+    is that key's value; the unit comes from the registry, never a word list."""
+    _seed_sizes(db)
+
+    lines = _lines(db, message)
+
+    assert f'- "{shown}": spec dim_length = 600; spec dim_width = 600' in lines, lines
+    assert not any("code ZZT" in line for line in lines), lines
+
+
+def test_a_number_with_no_unit_on_file_is_still_a_code_word(db):
+    _seed_sizes(db)
+
+    assert any("code ZZTB600-W" in line for line in _lines(db, "zztb600"))
