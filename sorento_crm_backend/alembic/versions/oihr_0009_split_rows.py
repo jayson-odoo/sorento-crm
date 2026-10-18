@@ -2,11 +2,11 @@
 (OI-LINE-SPLIT round 3, UAC AC-G6 / AC-G9, `documentation/plans/scm/oi-line-split-16oct-
 acceptance-criteria.md`).
 
-A split line prints one row per split under the SO line, like the owner's own Excel: QTY and
-DELIVERY on the line's first row only, NEW QTY / NEW DATE / REMARK on every row. The line
-items carry `continued` on every row after a line's first; this is `oihr_0008`'s document with
-that one rule added to the QTY and DELIVERY cells (HTML and text part). Every other cell and
-the existing blank rule are unchanged.
+A split line prints one row per split under the SO line, like the owner's own Excel:
+LOCATION, ITEM CODE, QTY and DELIVERY on the line's first row only (AC-G11), NEW QTY / NEW
+DATE / REMARK on every row. The line items carry `continued` on every row after a line's
+first; this is `oihr_0008`'s document with that one rule added to those four cells (HTML and
+text part). Every other cell and the existing blank rule are unchanged.
 
 Updates ``email_templates`` (``code`` = ``TEMPLATE_CODE``) IN PLACE only while its
 ``layout_json`` and ``body_text`` are still exactly what `oihr_0008_so_table_on_top` wrote; a
@@ -47,14 +47,25 @@ _PREVIOUS = _load("oihr_0008_so_table_on_top")
 _QTY = "{% if line.was and line.was.qty %}{{ line.was.qty }}"
 _DELIVERY = "{% if line.was and line.was.delivery_date %}{{ line.was.delivery_date }}"
 _BLANK = "{% if line.continued %}{% elif "
+#: LOCATION and ITEM CODE, as `oihr_0008` prints them in the HTML part and the text part.
+_LOCATION = '{{ line.location | default("", true) }}'
+_ITEM = (
+    "{% if line.was and line.was.item_code %}{{ line.was.item_code }}{% else %}"
+    '{{ line.item_code | default("", true) }}{% endif %}'
+)
 
 
 def _continued(text: str) -> str:
-    """QTY and DELIVERY blank on a continued row; fails loudly if `oihr_0008`'s text moved."""
+    """QTY, DELIVERY, LOCATION and ITEM CODE blank on a continued row (AC-G6, AC-G11); fails
+    loudly if `oihr_0008`'s text moved."""
     for old in (_QTY, _DELIVERY):
         if text.count(old) != 1:
             raise RuntimeError(f"oihr_0009: expected one {old[:40]!r} in oihr_0008's document")
         text = text.replace(old, _BLANK + old[len("{% if "):])
+    for old in (_LOCATION, _ITEM):
+        if text.count(old) != 1:
+            raise RuntimeError(f"oihr_0009: expected one {old[:40]!r} in oihr_0008's document")
+        text = text.replace(old, "{% if not line.continued %}" + old + "{% endif %}")
     return text
 
 
