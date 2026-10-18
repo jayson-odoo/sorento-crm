@@ -31,6 +31,8 @@ export interface WireLine {
   now_qty: number;
   now_date: string | null;
   pending_change: boolean;
+  new_qty: number | null;
+  new_date: string | null;
   delivered_qty: number;
   split_state: 'acting' | 'applied' | 'stale';
   acting: boolean;
@@ -54,6 +56,8 @@ export function wireLine(
     now_qty: baseQty,
     now_date: baseDate,
     pending_change: false,
+    new_qty: null,
+    new_date: null,
     delivered_qty: 0,
     split_state: 'acting',
     acting: true,
@@ -98,6 +102,8 @@ export function ownerCase() {
         now_qty: 649,
         now_date: '2027-01-02',
         pending_change: true,
+        new_qty: 649,
+        new_date: '2027-01-02',
       }),
       wireLine(608, 'CSK14B', 192, '2026-11-20'),
       wireLine(480, 'CSK14B', 417, '2026-10-20'),
@@ -140,6 +146,8 @@ export function addedCase() {
         now_qty: 4,
         now_date: '2026-10-16',
         pending_change: true,
+        new_qty: 4,
+        new_date: '2026-10-16',
       }),
     ],
   };
@@ -187,8 +195,6 @@ export const dateIn = (no: number, n: number) =>
   screen.getByLabelText(`Date, line ${no} split ${n}`) as HTMLInputElement;
 export const remarkIn = (no: number, n: number) =>
   screen.getByLabelText(`Remark, line ${no} split ${n}`) as HTMLInputElement;
-export const onSel = (no: number, n: number) =>
-  screen.getByRole('combobox', { name: `AutoCount line, line ${no} split ${n}` });
 export const queryQty = (no: number, n: number) =>
   screen.queryByLabelText(`Quantity, line ${no} split ${n}`);
 export const remainQty = (no: number) =>

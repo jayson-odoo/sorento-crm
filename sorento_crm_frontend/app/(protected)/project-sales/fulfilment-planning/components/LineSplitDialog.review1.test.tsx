@@ -1,5 +1,5 @@
 /**
- * OI-LINE-SPLIT v4 review round 1: the select merges like a drop (S2), New date never merges
+ * OI-LINE-SPLIT v4 review round 1: a drag merges (S2, moved from the removed select), New date never merges
  * (S1), and the handles carry the design-language hit target and press classes (S4).
  */
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
@@ -9,7 +9,6 @@ import {
   addBtn,
   balance,
   dateIn,
-  onSel,
   ownerCase,
   qty,
   queryQty,
@@ -52,8 +51,8 @@ beforeEach(() => {
   getLineSplits.mockResolvedValue(structuredClone(ownerCase()));
 });
 
-describe('S2 the AUTOCOUNT LINE select merges like a drop', () => {
-  it('picking line 608 for the 167 row gives ONE 403 row on 608, remarks joined', async () => {
+describe('S2 a drag of the 167 row onto line 608 merges', () => {
+  it('dragging the 167 row onto line 608 gives ONE 403 row on 608, remarks joined', async () => {
     const p = ownerCase();
     p.lines.find((l) => l.line_id === 'L480')!.splits = [
       wireSplit('a', 14, '2026-09-20', 'L480'),
@@ -63,11 +62,9 @@ describe('S2 the AUTOCOUNT LINE select merges like a drop', () => {
     getLineSplits.mockResolvedValue(p);
     await renderDialog();
     await sheet();
-    fireEvent.click(onSel(480, 3));
-    const option = (await screen.findAllByRole('option')).find((o) =>
-      /^Line 608/.test((o.textContent ?? '').trim()),
-    )!;
-    fireEvent.click(option);
+    await pickUp(screen.getByRole('button', { name: 'Drag split 3 of line 480' }));
+    press('ArrowDown');
+    await dropIt();
     await waitFor(() => expect(queryQty(480, 3)).toBeNull());
     expect(qty(480, 2).value).toBe('403');
     expect(dateIn(480, 2).value).toBe('20/11/2026');

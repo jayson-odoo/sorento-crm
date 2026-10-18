@@ -5,12 +5,11 @@ import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   addBtn,
+  block,
   dateIn,
-  onSel,
   ownerCase,
   qty,
   queryQty,
-  remainQty,
   renderDialog,
   savedCase,
   sheet,
@@ -46,16 +45,6 @@ async function dropIt() {
   await waitFor(() => expect(screen.queryByTestId('drop-cancel')).toBeNull());
 }
 const toasts = () => toastCalls(toastFn, toastSuccess, toastWarning);
-const options = async () => screen.findAllByRole('option');
-const pick = (label: RegExp | string) => {
-  const o = screen.getAllByRole('option').find((x) => {
-    const t = (x.textContent ?? '').trim();
-    return typeof label === 'string' ? t === label : label.test(t);
-  });
-  expect(o, `option ${String(label)}`).toBeDefined();
-  fireEvent.click(o!);
-};
-
 /** Line 752 split so that 14 stays on it @ 20/09/2026 (the rest cancelled): planned 20/09/2026. */
 function with752Split() {
   const p = ownerCase();
@@ -83,7 +72,7 @@ describe('planned date of a line', () => {
     );
     await dropIt();
     expect(dateIn(480, 1).value).toBe('20/09/2026');
-    expect(onSel(480, 1)).toHaveTextContent(/Line 752/);
+    expect(block(752).textContent).toMatch(/from line 480/);
   });
 
   it('the "N left" chip dropped onto 752 lands on 20/09/2026 too', async () => {
@@ -98,41 +87,22 @@ describe('planned date of a line', () => {
     expect(dateIn(480, 2).value).toBe('20/09/2026');
   });
 
-  it('the AUTOCOUNT LINE option reads "Line 752 · 20/09/2026" and picking it takes that date', async () => {
-    await renderDialog();
-    await sheet();
-    await splitLine(480);
-    typeQty(480, 1, '14');
-    fireEvent.click(addBtn(480));
-    fireEvent.click(onSel(480, 2));
-    await options();
-    expect(screen.getAllByRole('option').map((o) => (o.textContent ?? '').trim())).toContain(
-      'Line 752 · 20/09/2026',
-    );
-    pick('Line 752 · 20/09/2026');
-    await waitFor(() => expect(dateIn(480, 2).value).toBe('20/09/2026'));
-  });
-
   it('a typed date stays as typed', async () => {
     await renderDialog();
     await sheet();
     await splitLine(480);
     typeQty(480, 1, '14');
-    fireEvent.click(addBtn(480));
-    fireEvent.click(onSel(480, 2));
-    await options();
-    pick('Line 752 · 20/09/2026');
+    await pickUp(screen.getByRole('button', { name: 'Drag the 403 left of line 480' }));
+    press('ArrowDown');
+    press('ArrowDown');
+    await dropIt();
     await waitFor(() => expect(dateIn(480, 2).value).toBe('20/09/2026'));
     typeDate(480, 2, '05/10/2026');
     expect(dateIn(480, 2).value).toBe('05/10/2026');
   });
 });
 
-describe('picking another line shows the drop toast', () => {
-  async function openPick(no: number, n: number) {
-    fireEvent.click(onSel(no, n));
-    await options();
-  }
+describe('dropping on another line shows the drop toast', () => {
   const moved = (re: RegExp) => toasts().find((t) => re.test(t.msg));
 
   it('"Moved 403 to 20/11/2026 · line 608" with Undo, and Undo restores the row', async () => {
@@ -142,15 +112,16 @@ describe('picking another line shows the drop toast', () => {
     await splitLine(480);
     typeQty(480, 1, '14');
     fireEvent.click(addBtn(480));
-    await openPick(480, 2);
-    pick(/^Line 608/);
+    await pickUp(screen.getByRole('button', { name: 'Drag split 2 of line 480' }));
+    press('ArrowDown');
+    await dropIt();
     await waitFor(() => expect(dateIn(480, 2).value).toBe('20/11/2026'));
     const t = moved(/^Moved 403 to 20\/11\/2026 · line 608/);
     expect(t, 'pick toast').toBeDefined();
     expect(t!.opts?.action?.label).toBe('Undo');
     act(() => t!.opts!.action!.onClick());
     await waitFor(() => expect(dateIn(480, 2).value).toBe('20/10/2026'));
-    expect(onSel(480, 2)).toHaveTextContent(/New line/);
+    expect(block(608).textContent).not.toMatch(/from line 480/);
     expect(qty(480, 2).value).toBe('403');
   });
 
@@ -164,8 +135,9 @@ describe('picking another line shows the drop toast', () => {
     getLineSplits.mockResolvedValue(p);
     await renderDialog();
     await sheet();
-    await openPick(480, 3);
-    pick(/^Line 608/);
+    await pickUp(screen.getByRole('button', { name: 'Drag split 3 of line 480' }));
+    press('ArrowDown');
+    await dropIt();
     await waitFor(() => expect(queryQty(480, 3)).toBeNull());
     expect(qty(480, 2).value).toBe('403');
     const t = moved(/^Moved 167 to 20\/11\/2026 · line 608/);
@@ -176,23 +148,6 @@ describe('picking another line shows the drop toast', () => {
     expect(screen.getByLabelText('Remark, line 480 split 2')).toHaveValue('first');
     expect(screen.getByLabelText('Remark, line 480 split 3')).toHaveValue('second');
     expect(dateIn(480, 3).value).toBe('20/11/2029');
-  });
-
-  it('picking New line, Cancel or this line shows no Moved toast', async () => {
-    getLineSplits.mockResolvedValue(ownerCase());
-    await renderDialog();
-    await sheet();
-    await splitLine(480);
-    typeQty(480, 1, '14');
-    fireEvent.click(addBtn(480));
-    await openPick(480, 2);
-    pick('Cancel');
-    await waitFor(() => expect(screen.queryByLabelText('Date, line 480 split 2')).toBeNull());
-    await openPick(480, 2);
-    pick('Line 480 (this line)');
-    await waitFor(() => expect(dateIn(480, 2).value).toBe('20/10/2026'));
-    expect(toasts().filter((t) => /^Moved/.test(t.msg))).toHaveLength(0);
-    void remainQty;
   });
 });
 
@@ -216,19 +171,6 @@ describe('planned date is order-free (review round 2)', () => {
     p.lines[i752] = a;
     return p;
   }
-
-  it('the option label for 608 shows the earliest date and picking it lands on that same date', async () => {
-    getLineSplits.mockResolvedValue(twoForeign());
-    await renderDialog();
-    await sheet();
-    fireEvent.click(onSel(480, 3));
-    await options();
-    expect(screen.getAllByRole('option').map((o) => (o.textContent ?? '').trim())).toContain(
-      'Line 608 · 25/11/2026',
-    );
-    pick('Line 608 · 25/11/2026');
-    await waitFor(() => expect(dateIn(480, 3).value).toBe('25/11/2026'));
-  });
 
   it('the drop overlay names the same date', async () => {
     getLineSplits.mockResolvedValue(twoForeign());

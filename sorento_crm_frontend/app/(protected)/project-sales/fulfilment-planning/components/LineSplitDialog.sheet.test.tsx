@@ -12,7 +12,6 @@ import {
   blockIds,
   dateIn,
   leaveSheet,
-  onSel,
   ownerCase,
   qty,
   queryQty,
@@ -68,7 +67,7 @@ describe('AC-A2 one table, columns and line sort', () => {
     ]);
   });
 
-  it('lists the columns in order: LINE ... BALANCE, with CHANGE QUANTITY after DELIVERY DATE', async () => {
+  it('lists the columns in order: LINE ... BALANCE, NEW QTY / NEW DATE beside QTY / DELIVERY DATE, no AUTOCOUNT LINE', async () => {
     await renderDialog();
     const table = await sheet();
     const heads = within(table)
@@ -82,10 +81,11 @@ describe('AC-A2 one table, columns and line sort', () => {
       'item code',
       'location',
       'qty',
+      'new qty',
       'delivery date',
+      'new date',
       'change quantity',
       'change date',
-      'autocount line',
       'remark',
       'balance',
     ]);
@@ -129,19 +129,22 @@ describe('AC-A3 merged cells and the extra notes', () => {
     for (const c of cells) expect(Number(c.getAttribute('rowspan'))).toBeLessThanOrEqual(1);
   });
 
-  it('inside Confirm a line with a pending change shows "AutoCount now <qty> · <date>"', async () => {
+  it('a line with a pending change shows NEW QTY and NEW DATE cells, never "AutoCount now"', async () => {
     await renderDialog();
     await sheet();
-    expect(block(752).textContent).toMatch(/AutoCount now\s*649 · 02\/01\/2027/);
+    expect(block(752).textContent).toContain('649');
+    expect(block(752).textContent).toContain('02/01/2027');
+    expect(block(752).textContent).not.toMatch(/AutoCount now/);
     expect(block(608).textContent).not.toMatch(/AutoCount now/);
   });
 
-  it('an AutoCount-added line shows QTY 0 and "Added in AutoCount: <qty> · <date>" and cannot be split or dragged', async () => {
+  it('an AutoCount-added line shows QTY 0, NEW QTY and NEW DATE (no "Added in AutoCount" text) and cannot be split or dragged', async () => {
     getLineSplits.mockResolvedValue(addedCase());
     await renderDialog({ focusLineId: 'L16' }, 'pso-424910');
     await sheet();
     const b = block(32);
-    expect(b.textContent).toMatch(/Added in AutoCount: 4 · 16\/10\/2026/);
+    expect(b.textContent).not.toMatch(/Added in AutoCount/);
+    expect(b.textContent).toContain('16/10/2026');
     expect(within(b).getAllByText('0').length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: 'Split line 32 quantity' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add a split to line 32' })).toBeNull();
@@ -230,7 +233,6 @@ describe('AC-A4 REMAIN', () => {
     const q = await splitLine(480);
     expect((q as HTMLInputElement).value).toBe('417');
     expect(dateIn(480, 1).value).toBe('20/10/2026');
-    expect(onSel(480, 1)).toHaveTextContent(/Line 480 \(this line\)/);
     expect(document.activeElement).toBe(q);
     expect(screen.queryByRole('button', { name: 'Split line 480 quantity' })).toBeNull();
     // the other lines still show their values
@@ -306,7 +308,7 @@ describe('AC-A4 REMAIN', () => {
 });
 
 describe('AC-A5 + Split, Ctrl/Cmd+Enter, remove', () => {
-  it('+ Split fills what is left, on the base date, AutoCount line New line, qty focused and selected', async () => {
+  it('+ Split fills what is left, on the base date, qty focused and selected', async () => {
     await renderDialog();
     await sheet();
     await splitLine(480);
@@ -315,7 +317,6 @@ describe('AC-A5 + Split, Ctrl/Cmd+Enter, remove', () => {
     const q2 = qty(480, 2);
     expect(q2.value).toBe('403');
     expect(dateIn(480, 2).value).toBe('20/10/2026');
-    expect(onSel(480, 2)).toHaveTextContent(/New line/);
     expect(document.activeElement).toBe(q2);
     expect((q2.selectionEnd ?? 0) - (q2.selectionStart ?? 0)).toBe(3);
     expect(balance(480).textContent).toMatch(/^\s*0/);
@@ -327,7 +328,6 @@ describe('AC-A5 + Split, Ctrl/Cmd+Enter, remove', () => {
     fireEvent.click(addBtn(608));
     expect(qty(608, 1).value).toBe('192');
     expect(qty(608, 2).value).toBe('0');
-    expect(onSel(608, 2)).toHaveTextContent(/New line/);
   });
 
   it('Ctrl+Enter and Cmd+Enter in a split row add a split under the line', async () => {
@@ -390,61 +390,6 @@ describe('AC-A6 balance', () => {
     expect(balance(608).textContent).not.toMatch(/left|over|^\s*0/);
     expect(addBtn(608)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Drag the .* left of line 608/ })).toBeNull();
-  });
-});
-
-describe('AC-A7 AUTOCOUNT LINE select', () => {
-  async function openSelect() {
-    await renderDialog();
-    await sheet();
-    await splitLine(480);
-    typeQty(480, 1, '14');
-    fireEvent.click(addBtn(480));
-    fireEvent.click(onSel(480, 2));
-    await screen.findAllByRole('option');
-  }
-  const labels = () =>
-    screen.getAllByRole('option').map((o) => (o.textContent ?? '').trim());
-  const pick = (name: string | RegExp) => {
-    const o = screen.getAllByRole('option').find((x) =>
-      typeof name === 'string' ? (x.textContent ?? '').trim() === name : name.test(x.textContent ?? ''),
-    );
-    expect(o, `option ${String(name)}`).toBeDefined();
-    fireEvent.click(o!);
-  };
-
-  it('offers this line, every other line of the same item and location with its date, New line and Cancel', async () => {
-    await openSelect();
-    expect(labels()).toEqual([
-      'Line 480 (this line)',
-      'Line 608 · 20/11/2026',
-      // line 752 shows AutoCount's current date
-      'Line 752 · 02/01/2027',
-      'New line',
-      'Cancel',
-    ]);
-  });
-
-  it('picking another line sets the split date to that line date', async () => {
-    await openSelect();
-    pick('Line 608 · 20/11/2026');
-    await waitFor(() => expect(dateIn(480, 2).value).toBe('20/11/2026'));
-    fireEvent.click(onSel(480, 2));
-    await screen.findAllByRole('option');
-    pick('Line 752 · 02/01/2027');
-    await waitFor(() => expect(dateIn(480, 2).value).toBe('02/01/2027'));
-  });
-
-  it('Cancel makes the date cell read CANCEL; leaving Cancel takes the base date', async () => {
-    await openSelect();
-    pick('Cancel');
-    await waitFor(() => expect(screen.queryByLabelText('Date, line 480 split 2')).toBeNull());
-    const row = qty(480, 2).closest('tr')!;
-    expect(within(row).getAllByText(/^CANCEL/).length).toBeGreaterThan(0);
-    fireEvent.click(onSel(480, 2));
-    await screen.findAllByRole('option');
-    pick('Line 480 (this line)');
-    await waitFor(() => expect(dateIn(480, 2).value).toBe('20/10/2026'));
   });
 });
 

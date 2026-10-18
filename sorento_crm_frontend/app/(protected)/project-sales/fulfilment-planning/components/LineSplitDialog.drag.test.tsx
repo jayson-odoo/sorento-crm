@@ -14,7 +14,6 @@ import {
   balance,
   block,
   dateIn,
-  onSel,
   ownerCase,
   qty,
   queryQty,
@@ -193,7 +192,6 @@ describe('AC-A9 drops move ALL of it at once', () => {
     await dropIt();
     expect(qty(480, 2).value).toBe('403');
     expect(dateIn(480, 2).value).toBe('20/11/2026');
-    expect(onSel(480, 2)).toHaveTextContent(/Line 608/);
     expect(balance(608).closest('tbody')!.textContent).toMatch(/\+403 from line 480/);
     const moved = toasts().find((t) => /^Moved 403 to 20\/11\/2026 · line 608/.test(t.msg));
     expect(moved, 'toast Moved 403 to 20/11/2026 · line 608').toBeDefined();
@@ -211,7 +209,7 @@ describe('AC-A9 drops move ALL of it at once', () => {
     expect(qty(480, 1).value).toBe('14');
     expect(qty(480, 2).value).toBe('403');
     expect(dateIn(480, 2).value).toBe('20/11/2026');
-    expect(onSel(480, 2)).toHaveTextContent(/Line 608/);
+    expect(block(608).textContent).toMatch(/\+403 from line 480/);
     expect(balance(480).textContent).not.toMatch(/left|over/);
     expect(toasts().some((t) => /^Moved 403 to /.test(t.msg))).toBe(true);
   });
@@ -260,7 +258,7 @@ describe('AC-A9 drops move ALL of it at once', () => {
     await dropIt();
     expect(qty(480, 1).value).toBe('417');
     expect(dateIn(480, 1).value).toBe('20/11/2026');
-    expect(onSel(480, 1)).toHaveTextContent(/Line 608/);
+    expect(block(608).textContent).toMatch(/\+417 from line 480/);
     expect(screen.queryByRole('button', { name: 'Split line 480 quantity' })).toBeNull();
     expect(toasts().some((t) => /^Moved 417 to 20\/11\/2026 · line 608/.test(t.msg))).toBe(true);
   });
@@ -282,7 +280,6 @@ describe('AC-A9 drops move ALL of it at once', () => {
     await dropIt();
     const d = dateIn(480, 1);
     expect(d.value).toBe('');
-    expect(onSel(480, 1)).toHaveTextContent(/New line/);
     await waitFor(() => expect(document.activeElement).toBe(d));
     expect(saveButton()).toBeDisabled();
     expect(screen.getByRole('status', { name: /split status/i }).textContent).toMatch(/CSK14B line 480: date to fill/);
@@ -348,7 +345,7 @@ describe('the owner case, SO417636 CSK14B line 480 end to end', () => {
     await dropIt();
     expect(qty(480, 2).value).toBe('403');
     expect(dateIn(480, 2).value).toBe('20/11/2026');
-    expect(onSel(480, 2)).toHaveTextContent(/Line 608/);
+    expect(block(608).textContent).toMatch(/\+403 from line 480/);
 
     // 4/5 type 236 over 403: "167 left" appears
     typeQty(480, 2, '236');

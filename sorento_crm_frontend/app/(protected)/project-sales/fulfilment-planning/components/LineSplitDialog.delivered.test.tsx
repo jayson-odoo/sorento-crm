@@ -1,19 +1,15 @@
 /**
  * OI-LINE-SPLIT owner hand test 18 Oct (AC-A3): a line delivered in full is listed read-only so
  * the sheet matches the Excel: QTY and DELIVERY DATE as values, "Delivered 301" in CHANGE
- * QUANTITY, no grip, not offered in the AUTOCOUNT LINE select, not a drop target.
+ * QUANTITY, no grip, not a drop target. (18 Oct: the AUTOCOUNT LINE select is gone.)
  */
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  addBtn,
   block,
-  onSel,
   ownerCase,
   renderDialog,
   sheet,
-  splitLine,
-  typeQty,
   wireLine,
 } from '@/test-mocks/lineSplitSheetKit';
 
@@ -65,18 +61,6 @@ describe('a line delivered in full', () => {
     expect(screen.queryByRole('button', { name: 'Split line 32 quantity' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Split line 32 date' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add a split to line 32' })).toBeNull();
-  });
-
-  it('is not offered in another line AUTOCOUNT LINE options', async () => {
-    await renderDialog();
-    await sheet();
-    await splitLine(480);
-    typeQty(480, 1, '14');
-    fireEvent.click(addBtn(480));
-    fireEvent.click(onSel(480, 2));
-    const labels = (await screen.findAllByRole('option')).map((o) => (o.textContent ?? '').trim());
-    expect(labels.some((l) => /^Line 32\b/.test(l)), labels.join('|')).toBe(false);
-    expect(labels.some((l) => /^Line 608\b/.test(l))).toBe(true);
   });
 
   it('is not a drop target: keyboard targets skip it and it is never highlighted', async () => {
