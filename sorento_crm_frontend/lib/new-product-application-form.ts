@@ -6,33 +6,34 @@
  */
 import type {
   NewProductApplicationDetail,
+  NewProductApplicationImage,
   NewProductApplicationLine,
   NewProductApplicationPrefill,
   NewProductApplicationWrite,
 } from '@/types/newProductApplication';
 import { numberFieldError } from '@/lib/number-field';
 
+/** One product block of the paper sheet (v4). */
 export interface DraftLine {
   key: string;
+  /** Set once the product is saved: it travels with the write so the server keeps it. */
+  id?: string;
   proposed_code: string;
+  /** PRODUCT TYPE, the only required field. */
   description: string;
-  further_description: string;
-  category_id: string;
-  category_label: string;
-  base_uom_id: string;
-  base_uom_label: string;
+  dimension: string;
+  material: string;
+  thickness: string;
+  packing: string;
   brand_id: string;
   brand_label: string;
-  item_type_id: string;
-  item_type_label: string;
-  supplier_id: string;
-  supplier_label: string;
-  supplier_item_code: string;
   /** Typed text; an emptied box is sent as null, never 0. */
-  cost_price: string;
-  selling_price: string;
   expected_qty: string;
-  remark: string;
+  /** Purchasing feedback, shown and edited on the sheet but never part of the write body. */
+  cost_price: string;
+  images: NewProductApplicationImage[];
+  /** Picked before the application exists; uploaded right after the create returns line ids. */
+  staged_images: File[];
 }
 
 export interface FormState {
@@ -44,6 +45,8 @@ export interface FormState {
   project_name: string;
   needed_by: string;
   remark: string;
+  /** Purchasing feedback, one per application; not part of the write body. */
+  lead_time: string;
   lines: DraftLine[];
 }
 
@@ -55,6 +58,7 @@ export const EMPTY_FORM: FormState = {
   project_name: '',
   needed_by: '',
   remark: '',
+  lead_time: '',
   lines: [],
 };
 
@@ -65,22 +69,16 @@ export const blankLine = (): DraftLine => ({
   key: nextKey(),
   proposed_code: '',
   description: '',
-  further_description: '',
-  category_id: '',
-  category_label: '',
-  base_uom_id: '',
-  base_uom_label: '',
+  dimension: '',
+  material: '',
+  thickness: '',
+  packing: '',
   brand_id: '',
   brand_label: '',
-  item_type_id: '',
-  item_type_label: '',
-  supplier_id: '',
-  supplier_label: '',
-  supplier_item_code: '',
-  cost_price: '',
-  selling_price: '',
   expected_qty: '',
-  remark: '',
+  cost_price: '',
+  images: [],
+  staged_images: [],
 });
 
 /** "SI26-0412 - XY-1234-MB": the inquiry as the header picker and the detail page name it. */
@@ -97,24 +95,19 @@ const figure = (v: string | number | null | undefined) =>
 function lineFromDetail(l: NewProductApplicationLine): DraftLine {
   return {
     key: nextKey(),
+    id: l.id,
     proposed_code: text(l.proposed_code),
     description: text(l.description),
-    further_description: text(l.further_description),
-    category_id: text(l.category_id),
-    category_label: text(l.category_name),
-    base_uom_id: text(l.base_uom_id),
-    base_uom_label: text(l.base_uom_code),
+    dimension: text(l.dimension),
+    material: text(l.material),
+    thickness: text(l.thickness),
+    packing: text(l.packing),
     brand_id: text(l.brand_id),
     brand_label: text(l.brand_name),
-    item_type_id: text(l.item_type_id),
-    item_type_label: text(l.item_type_name),
-    supplier_id: text(l.supplier_id),
-    supplier_label: text(l.supplier_name),
-    supplier_item_code: text(l.supplier_item_code),
-    cost_price: figure(l.cost_price),
-    selling_price: figure(l.selling_price),
     expected_qty: figure(l.expected_qty),
-    remark: text(l.remark),
+    cost_price: figure(l.cost_price),
+    images: l.images ?? [],
+    staged_images: [],
   };
 }
 
@@ -129,6 +122,7 @@ export function stateFromDetail(d: NewProductApplicationDetail): FormState {
     project_name: text(d.project_name),
     needed_by: text(d.needed_by),
     remark: text(d.remark),
+    lead_time: text(d.lead_time),
     lines: (d.lines ?? []).map(lineFromDetail),
   };
 }
@@ -170,25 +164,20 @@ export function payloadFromState(s: FormState): NewProductApplicationWrite {
     needed_by: s.needed_by || null,
     remark: clean(s.remark),
     lines: s.lines.map((l) => ({
+      ...(l.id ? { id: l.id } : {}),
       proposed_code: clean(l.proposed_code),
       description: clean(l.description),
-      further_description: clean(l.further_description),
-      category_id: l.category_id || null,
-      base_uom_id: l.base_uom_id || null,
+      dimension: clean(l.dimension),
+      material: clean(l.material),
+      thickness: clean(l.thickness),
+      packing: clean(l.packing),
       brand_id: l.brand_id || null,
-      item_type_id: l.item_type_id || null,
-      supplier_id: l.supplier_id || null,
-      supplier_item_code: clean(l.supplier_item_code),
-      cost_price: clean(l.cost_price),
-      selling_price: clean(l.selling_price),
       expected_qty: clean(l.expected_qty),
-      remark: clean(l.remark),
     })),
   };
 }
 
-/** Money may be emptied or 0 or more; the quantity may be emptied or above 0. */
-const MONEY = { min: 0, optional: true } as const;
+/** The quantity may be emptied or above 0 (cost is purchasing feedback, checked where it is saved). */
 const QTY = { min: 0, minExclusive: true, optional: true } as const;
 
 /** Keys are `<field>_<line key>`; empty means every number is fine or blank. */
@@ -197,15 +186,8 @@ export function numberErrors(
 ): Record<string, string> {
   const found: Record<string, string> = {};
   for (const l of s.lines) {
-    const checks: [string, string, typeof MONEY | typeof QTY][] = [
-      ['cost_price', l.cost_price, MONEY],
-      ['selling_price', l.selling_price, MONEY],
-      ['expected_qty', l.expected_qty, QTY],
-    ];
-    for (const [field, raw, rules] of checks) {
-      const problem = numberFieldError(raw, rules);
-      if (problem) found[`${field}_${l.key}`] = problem;
-    }
+    const problem = numberFieldError(l.expected_qty, QTY);
+    if (problem) found[`expected_qty_${l.key}`] = problem;
   }
   return found;
 }

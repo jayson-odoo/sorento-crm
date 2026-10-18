@@ -10,12 +10,12 @@ import { toast } from '@/lib/toast';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
-import type { NewProductApplicationLookups } from '@/components/common/NewProductApplicationLines';
-import { getSuppliersSelect } from '@/services/supplierSelectService';
+import type { LookupFetcher } from '@/components/common/NewProductApplicationSheet';
 import { useBrandSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query';
-import { useProductCategorySelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-product-category-select-query';
-import { useUOMSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-uom-select-query';
-import type { NewProductApplicationWrite } from '@/types/newProductApplication';
+import type {
+  NewProductApplicationFeedbackWrite,
+  NewProductApplicationWrite,
+} from '@/types/newProductApplication';
 import {
   approveNewProductApplication,
   cancelNewProductApplication,
@@ -28,7 +28,7 @@ import {
   linkNewProductApplicationLine,
   rejectNewProductApplication,
   reviseNewProductApplication,
-  searchNewProductApplicationItemTypes,
+  saveNewProductApplicationFeedback,
   submitNewProductApplication,
   undoNewProductApplicationLine,
   updateNewProductApplication,
@@ -149,50 +149,28 @@ const matches = (label: string, q: string) =>
   label.toLowerCase().includes(q.trim().toLowerCase());
 
 /**
- * The staff selects of the line table: item group, UOM and brand from the master-data select
- * hooks (read once, filtered here), supplier and item type from their own searches. The
- * portal passes its own lookups to the same table.
+ * The one select of the paper sheet: brand, from the master-data select hook (read once,
+ * filtered here). The portal passes its own lookup to the same sheet.
  */
-export function useNewProductApplicationLookups(): NewProductApplicationLookups {
-  const groups = useProductCategorySelectQuery();
-  const uoms = useUOMSelectQuery();
+export function useNewProductApplicationLookups(): { brands: LookupFetcher } {
   const brands = useBrandSelectQuery();
-  // The fetchers stay the same function between renders, so an open dropdown is not
-  // refetched each time a query settles; they read what the hooks last returned.
-  const latest = useRef<Record<string, SearchableSelectOption[]>>({});
-  latest.current = {
-    groups: (groups.data ?? []).map((c) => ({
-      value: c.id,
-      label: c.category_name,
-      code: c.category_code,
-    })),
-    uoms: (uoms.data ?? []).map((u) => ({
-      value: u.id,
-      label: u.uom_code,
-      description: u.uom_name,
-    })),
-    brands: (brands.data ?? []).map((b) => ({
-      value: b.id,
-      label: b.brand_name,
-      code: b.brand_code,
-    })),
-  };
-  return useMemo(() => {
-    const pick = (key: string) => async (q: string) =>
-      (latest.current[key] ?? []).filter(
-        (o) =>
-          !q.trim() ||
-          matches(`${o.label} ${o.code ?? ''} ${o.description ?? ''}`, q),
-      );
-    return {
-      itemGroups: pick('groups'),
-      uoms: pick('uoms'),
-      brands: pick('brands'),
-      itemTypes: (q: string) => searchNewProductApplicationItemTypes(q),
-      suppliers: (q: string, pageIndex: number) =>
-        getSuppliersSelect(q, pageIndex),
-    };
-  }, []);
+  // The fetcher stays the same function between renders, so an open dropdown is not
+  // refetched each time the query settles; it reads what the hook last returned.
+  const latest = useRef<SearchableSelectOption[]>([]);
+  latest.current = (brands.data ?? []).map((b) => ({
+    value: b.id,
+    label: b.brand_name,
+    code: b.brand_code,
+  }));
+  return useMemo(
+    () => ({
+      brands: async (q: string) =>
+        latest.current.filter(
+          (o) => !q.trim() || matches(`${o.label} ${o.code ?? ''}`, q),
+        ),
+    }),
+    [],
+  );
 }
 
 export function useNewProductApplicationMutations() {
@@ -282,6 +260,16 @@ export function useNewProductApplicationMutations() {
     }) => closeNewProductApplicationLine(id, lineId, reason),
     ...move('Failed to close the line'),
   });
+  const feedback = useMutation({
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: NewProductApplicationFeedbackWrite;
+    }) => saveNewProductApplicationFeedback(id, data),
+    ...move('Failed to save the feedback', 'Feedback saved'),
+  });
   const undo = useMutation({
     mutationFn: ({ id, lineId }: { id: string; lineId: string }) =>
       undoNewProductApplicationLine(id, lineId),
@@ -299,5 +287,6 @@ export function useNewProductApplicationMutations() {
     link,
     close,
     undo,
+    feedback,
   };
 }

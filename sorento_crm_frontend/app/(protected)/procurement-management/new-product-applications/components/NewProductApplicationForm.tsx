@@ -6,23 +6,21 @@
  * the same order.
  */
 
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Loader2, Plus } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { NewProductApplicationLines } from '@/components/common/NewProductApplicationLines';
+import {
+  NewProductApplicationSheet,
+  type SheetImageActions,
+} from '@/components/common/NewProductApplicationSheet';
 import { AsyncCombobox } from '@/app/(auth)/portal/components/AsyncCombobox';
-import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
-import { cn } from '@/lib/utils';
 import {
   EMPTY_FORM,
   blankLine,
@@ -34,47 +32,22 @@ import {
 } from '@/lib/new-product-application-form';
 import { lookupCustomersForRequest } from '@/app/(protected)/procurement-management/purchase-requests/services/customerLookupService';
 import type { CustomerLookupItem } from '@/app/(protected)/procurement-management/purchase-requests/types/purchaseRequest.types';
+import type { NewProductApplicationDetail } from '@/types/newProductApplication';
 import {
   useNewProductApplicationLookups,
   useNewProductApplicationMutations,
   useNewProductApplicationPrefillQuery,
   useNewProductApplicationQuery,
 } from '../hooks/useNewProductApplications';
-import { searchStockInquiryOptions } from '../services/newProductApplicationService';
+import {
+  copyNewProductApplicationLineImage,
+  deleteNewProductApplicationLineImage,
+  getStockInquiryAttachmentsForNpa,
+  searchStockInquiryOptions,
+  uploadNewProductApplicationLineImage,
+} from '../services/newProductApplicationService';
 
 const BASE_PATH = '/procurement-management/new-product-applications';
-
-function DocField({
-  label,
-  htmlFor,
-  className,
-  children,
-}: {
-  label: string;
-  htmlFor?: string;
-  className?: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className={cn('min-w-0', className)}>
-      {htmlFor ? (
-        <Label
-          htmlFor={htmlFor}
-          className="text-sm font-normal text-muted-foreground"
-        >
-          {label}
-        </Label>
-      ) : (
-        <p className="text-sm text-muted-foreground">{label}</p>
-      )}
-      <div className="mt-1.5">{children}</div>
-    </div>
-  );
-}
-
-const ReadValue = ({ children }: { children: ReactNode }) => (
-  <p className="min-h-9 break-words py-2 text-sm">{children || '-'}</p>
-);
 
 export default function NewProductApplicationForm({
   applicationId,
@@ -100,12 +73,6 @@ export default function NewProductApplicationForm({
   const [errors, setErrors] = useState<Record<string, string>>({});
   // A Submit the server refuses leaves the draft saved; the next press updates it.
   const [savedId, setSavedId] = useState<string | null>(null);
-
-  const set = useCallback(
-    <K extends keyof FormState>(key: K, value: FormState[K]) =>
-      setState((prev) => ({ ...prev, [key]: value })),
-    [],
-  );
 
   useEffect(() => {
     if (hydrated) return;
@@ -138,13 +105,102 @@ export default function NewProductApplicationForm({
 
   const saving = create.isPending || update.isPending || submit.isPending;
 
+  // The server answered with line ids and images: keep them on the draft so the next save
+  // updates the same products instead of replacing them.
+  const adopt = useCallback((saved?: Partial<NewProductApplicationDetail>) => {
+    const lines = saved?.lines;
+    if (!lines) return;
+    setState((prev) => ({
+      ...prev,
+      lines: prev.lines.map((l, i) => {
+        const match = l.id ? lines.find((x) => x.id === l.id) : lines[i];
+        return match
+          ? { ...l, id: match.id, images: match.images ?? l.images }
+          : l;
+      }),
+    }));
+  }, []);
+
   const save = async () => {
     const body = payloadFromState(state);
     const id = applicationId ?? savedId;
-    if (id) return update.mutateAsync({ id, data: body });
+    if (id) {
+      const updated = await update.mutateAsync({ id, data: body });
+      await uploadStaged(id, updated);
+      return updated;
+    }
     const created = await create.mutateAsync(body);
     setSavedId(created.id);
+    await uploadStaged(created.id, created);
     return created;
+  };
+
+  // Images picked before the application existed go up now, in product order.
+  const uploadStaged = async (
+    id: string,
+    saved: Partial<NewProductApplicationDetail>,
+  ) => {
+    const lines = saved.lines ?? [];
+    for (const [i, line] of state.lines.entries()) {
+      const lineId = lines[i]?.id;
+      if (!lineId) continue;
+      for (const file of line.staged_images) {
+        try {
+          await uploadNewProductApplicationLineImage(id, lineId, file);
+        } catch (e) {
+          toast.error(
+            e instanceof Error ? e.message : 'Failed to upload the image',
+          );
+        }
+      }
+    }
+    adopt(saved);
+    setState((prev) => ({
+      ...prev,
+      lines: prev.lines.map((l) => ({ ...l, staged_images: [] })),
+    }));
+  };
+
+  const recordId = applicationId ?? savedId;
+  const imageActions: SheetImageActions = {
+    upload: async (line, file) => {
+      if (!recordId || !line.id) return;
+      try {
+        adopt(await uploadNewProductApplicationLineImage(recordId, line.id, file));
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Failed to upload the image');
+      }
+    },
+    copy: async (line, attachmentId) => {
+      if (!recordId || !line.id) return;
+      try {
+        adopt(
+          await copyNewProductApplicationLineImage(recordId, line.id, attachmentId),
+        );
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Failed to copy the image');
+      }
+    },
+    remove: async (line, image) => {
+      if (!recordId || !line.id) return;
+      try {
+        adopt(
+          await deleteNewProductApplicationLineImage(recordId, line.id, image.link_id),
+        );
+        // A refreshed list is not always returned; drop it locally either way.
+        setState((prev) => ({
+          ...prev,
+          lines: prev.lines.map((l) =>
+            l.id === line.id
+              ? { ...l, images: l.images.filter((i) => i.link_id !== image.link_id) }
+              : l,
+          ),
+        }));
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Failed to remove the image');
+      }
+    },
+    listInquiry: () => getStockInquiryAttachmentsForNpa(state.stock_inquiry_id),
   };
 
   const checkNumbers = () => {
@@ -202,23 +258,18 @@ export default function NewProductApplicationForm({
               {record?.status_label ?? 'Draft'}
             </span>
           </div>
-          <h2 className="mb-6 border-b border-border pb-4 text-center text-xl font-semibold tracking-tight">
-            New Product Application
-          </h2>
-
-          <div className="grid grid-cols-1 gap-x-10 gap-y-5 sm:grid-cols-2">
-            <DocField label="Applicant">
-              <ReadValue>{record?.applicant_name ?? 'You'}</ReadValue>
-            </DocField>
-            <DocField label="Date">
-              <ReadValue>
-                {formatDateInMalaysia(record?.created_at ?? new Date()) || '-'}
-              </ReadValue>
-            </DocField>
-
-            <DocField label="Stock inquiry" htmlFor="npa-inquiry">
+          <NewProductApplicationSheet
+            value={state}
+            onChange={setState}
+            applicationNo={record?.application_no}
+            createdAt={record?.created_at}
+            salesPerson={record?.applicant_name ?? 'You'}
+            brands={lookups.brands}
+            errors={errors}
+            imageActions={imageActions}
+            stockInquiryField={
               <SearchableSelect
-                id="npa-inquiry"
+                aria-label="Stock inquiry"
                 value={state.stock_inquiry_id}
                 clearable
                 placeholder="Search a stock inquiry"
@@ -249,93 +300,32 @@ export default function NewProductApplicationForm({
                   }))
                 }
               />
-            </DocField>
-            <DocField label="Needed by" htmlFor="npa-needed-by">
-              <Input
-                id="npa-needed-by"
-                type="date"
-                value={state.needed_by}
-                onChange={(e) => set('needed_by', e.target.value)}
-              />
-            </DocField>
-
-            <DocField
-              label="Customer"
-              htmlFor="npa-customer"
-              className="sm:col-span-2"
-            >
-              <AsyncCombobox<CustomerLookupItem>
-                id="npa-customer"
-                value={state.customer_name}
-                onChange={(v, item) =>
-                  setState((prev) => ({
-                    ...prev,
-                    customer_id: item?.customer_id ?? '',
-                    customer_name: v,
-                  }))
-                }
-                fetchOptions={lookupCustomersForRequest}
-                optionValue={(o) => o.debtor_name}
-                optionLabel={(o) => o.debtor_name}
-                optionMeta={(o) => o.customer_code}
-                placeholder="Customer name"
-              />
-              {!state.customer_id && state.customer_name.trim() && (
-                <Badge variant="secondary" className="mt-1.5">
-                  No debtor code
-                </Badge>
-              )}
-            </DocField>
-
-            <DocField
-              label="Project name"
-              htmlFor="npa-project"
-              className="sm:col-span-2"
-            >
-              <Input
-                id="npa-project"
-                value={state.project_name}
-                onChange={(e) => set('project_name', e.target.value)}
-              />
-            </DocField>
-
-            <DocField
-              label="Reason / remark"
-              htmlFor="npa-remark"
-              className="sm:col-span-2"
-            >
-              <Textarea
-                id="npa-remark"
-                rows={3}
-                value={state.remark}
-                onChange={(e) => set('remark', e.target.value)}
-              />
-            </DocField>
-          </div>
-
-          <div className="mb-3 mt-8 flex items-center justify-between gap-3">
-            <h3 className="text-base font-semibold">Line items</h3>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                setState((prev) => ({
-                  ...prev,
-                  lines: [...prev.lines, blankLine()],
-                }))
-              }
-            >
-              <Plus className="size-4" />
-              Add row
-            </Button>
-          </div>
-          <NewProductApplicationLines
-            lines={state.lines}
-            onChange={(lines) => set('lines', lines)}
-            lookups={lookups}
-            hideSupplierAndCost={record?.source === 'portal'}
-            errors={errors}
+            }
+            customerField={
+              <>
+                <AsyncCombobox<CustomerLookupItem>
+                  ariaLabel="Customer"
+                  value={state.customer_name}
+                  onChange={(v, item) =>
+                    setState((prev) => ({
+                      ...prev,
+                      customer_id: item?.customer_id ?? '',
+                      customer_name: v,
+                    }))
+                  }
+                  fetchOptions={lookupCustomersForRequest}
+                  optionValue={(o) => o.debtor_name}
+                  optionLabel={(o) => o.debtor_name}
+                  optionMeta={(o) => o.customer_code}
+                  placeholder="Customer name"
+                />
+                {!state.customer_id && state.customer_name.trim() && (
+                  <Badge variant="secondary" className="mt-1.5">
+                    No debtor code
+                  </Badge>
+                )}
+              </>
+            }
           />
 
           <div className="mt-8 flex flex-col gap-2 sm:flex-row sm:justify-end">

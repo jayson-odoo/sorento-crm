@@ -1,4 +1,6 @@
 import { apiFetch } from '@/lib/api';
+import { filenameFromContentDisposition } from '@/app/(protected)/project-sales/_shared/services/fileDownload';
+import { saveBlobAs } from '@/lib/save-blob';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { stockInquiryLabel } from '@/lib/new-product-application-form';
@@ -6,7 +8,8 @@ import type { SearchableSelectOption } from '@/components/common/SearchableSelec
 import {
   NewProductApplicationError,
   type NewProductApplicationDetail,
-  type NewProductApplicationItemType,
+  type NewProductApplicationFeedbackWrite,
+  type NewProductApplicationInquiryImage,
   type NewProductApplicationPage,
   type NewProductApplicationPrefill,
   type NewProductApplicationProductHit,
@@ -192,20 +195,81 @@ export async function searchNewProductApplicationProducts(
   );
 }
 
-/** The item type select (no master-data select endpoint exists for it). */
-export async function searchNewProductApplicationItemTypes(
-  q: string,
-): Promise<SearchableSelectOption[]> {
-  const res = await apiFetch(`${BASE}/item-types?q=${encodeURIComponent(q)}`);
-  const rows = await read<NewProductApplicationItemType[]>(
-    res,
-    'Failed to load item types',
+/** PURCHASING FEEDBACK: lead time and one cost per product (open_code, Approved or Completed). */
+export async function saveNewProductApplicationFeedback(
+  id: string,
+  data: NewProductApplicationFeedbackWrite,
+): Promise<NewProductApplicationDetail> {
+  const res = await apiFetch(`${BASE}/${at(id)}/feedback`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+  return read<NewProductApplicationDetail>(res, 'Failed to save the feedback');
+}
+
+const imagesPath = (id: string, lineId: string) =>
+  `${BASE}/${at(id)}/lines/${at(lineId)}/images`;
+
+export async function uploadNewProductApplicationLineImage(
+  id: string,
+  lineId: string,
+  file: File,
+): Promise<NewProductApplicationDetail> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await apiFetch(imagesPath(id, lineId), {
+    method: 'POST',
+    body: form,
+  });
+  return read<NewProductApplicationDetail>(res, 'Failed to upload the image');
+}
+
+export async function copyNewProductApplicationLineImage(
+  id: string,
+  lineId: string,
+  attachmentId: string,
+): Promise<NewProductApplicationDetail> {
+  const res = await apiFetch(`${imagesPath(id, lineId)}/copy`, {
+    method: 'POST',
+    body: JSON.stringify({ attachment_id: attachmentId }),
+  });
+  return read<NewProductApplicationDetail>(res, 'Failed to copy the image');
+}
+
+export async function deleteNewProductApplicationLineImage(
+  id: string,
+  lineId: string,
+  linkId: string,
+): Promise<NewProductApplicationDetail> {
+  const res = await apiFetch(`${imagesPath(id, lineId)}/${at(linkId)}`, {
+    method: 'DELETE',
+  });
+  return read<NewProductApplicationDetail>(res, 'Failed to remove the image');
+}
+
+/** The image files on a stock inquiry: the "Copy from the inquiry" picker. */
+export async function getStockInquiryAttachmentsForNpa(
+  stockInquiryId: string,
+): Promise<NewProductApplicationInquiryImage[]> {
+  const res = await apiFetch(
+    `${BASE}/inquiry-attachments?stock_inquiry_id=${at(stockInquiryId)}`,
   );
-  return rows.map((r) => ({
-    value: r.id,
-    label: r.item_type_name,
-    code: r.item_type_code,
-  }));
+  return read<NewProductApplicationInquiryImage[]>(
+    res,
+    'Failed to load the inquiry images',
+  );
+}
+
+/** The paper sheet as a workbook; the name comes from the server so file and sheet agree. */
+export async function downloadNewProductApplicationExcel(
+  id: string,
+): Promise<void> {
+  const res = await apiFetch(`${BASE}/${at(id)}/download`);
+  if (!res.ok) return fail(res, 'Failed to download the application');
+  const filename =
+    filenameFromContentDisposition(res.headers.get('Content-Disposition')) ??
+    'new-product-application.xlsx';
+  saveBlobAs(await res.blob(), filename);
 }
 
 /** Stock inquiries for the header picker, labelled "SI26-0412 - <product code>". */

@@ -1,10 +1,9 @@
 'use client';
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { type ColumnDef } from '@tanstack/react-table';
-import { Link2, Trash2, XCircle } from 'lucide-react';
+import { Download, Link2, Trash2, XCircle } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -25,14 +24,15 @@ import { Textarea } from '@/components/ui/textarea';
 import AuditTrail from '@/components/audit/AuditTrail';
 import DetailActions from '@/components/common/DetailActions';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
-import { PanelDataGrid } from '@/components/common/PanelDataGrid';
+import { NewProductApplicationSheet } from '@/components/common/NewProductApplicationSheet';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
-import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { AsyncCombobox } from '@/app/(auth)/portal/components/AsyncCombobox';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useEffectiveUserId } from '@/hooks/useEffectiveUserId';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { numberFieldError } from '@/lib/number-field';
+import { stateFromDetail } from '@/lib/new-product-application-form';
 import { codeWithName } from '@/lib/product-display';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import type {
@@ -43,10 +43,15 @@ import type {
 import {
   newProductApplicationsPagerQuery,
   useNewProductApplicationMutations,
-  useNewProductApplicationListingKey,
   useNewProductApplicationQuery,
 } from '../hooks/useNewProductApplications';
-import { searchNewProductApplicationProducts } from '../services/newProductApplicationService';
+import {
+  downloadNewProductApplicationExcel,
+  searchNewProductApplicationProducts,
+} from '../services/newProductApplicationService';
+
+// The sheet is read-only here, so no brand is ever searched.
+const NO_BRANDS = async () => [];
 
 const BASE_PATH = '/procurement-management/new-product-applications';
 
@@ -56,26 +61,6 @@ const LOCK_SENTENCE =
 const day = (value: string | null | undefined) =>
   value ? formatDateInMalaysia(value) : '';
 const isResolved = (l: Line) => Boolean(l.opened_product_id || l.closed_reason);
-
-/** One label / value cell of the document card; an empty value reads as `empty`. */
-function Field({
-  label,
-  children,
-  empty = 'None',
-  wide = false,
-}: {
-  label: string;
-  children?: ReactNode;
-  empty?: string;
-  wide?: boolean;
-}) {
-  return (
-    <div className={wide ? 'sm:col-span-2' : undefined}>
-      <p className="text-sm text-muted-foreground">{label}</p>
-      <p className="font-medium whitespace-pre-wrap">{children || empty}</p>
-    </div>
-  );
-}
 
 function ReasonDialog({
   title,
@@ -301,7 +286,7 @@ export default function NewProductApplicationDetail({
     isError,
     error,
   } = useNewProductApplicationQuery(applicationId);
-  const { submit, approve, reject, revise, cancel, link, close, undo } =
+  const { submit, approve, reject, revise, cancel, link, close, undo, feedback } =
     useNewProductApplicationMutations();
   const canCreate = useHasPermission(
     'procurement.new_product_applications.create',
@@ -316,9 +301,17 @@ export default function NewProductApplicationDetail({
   const canViewRecord = useHasPermission(
     'procurement.new_product_applications.view',
   );
-  const linesListingKey = useNewProductApplicationListingKey('new-product-application-lines');
   const userId = useEffectiveUserId();
   const [asking, setAsking] = useState<Asking | null>(null);
+  // Purchasing's edits to LEADTIME and COST before Save feedback; null shows the saved values.
+  const [draft, setDraft] = useState<{
+    lead_time: string;
+    costs: Record<string, string>;
+  } | null>(null);
+  const savedState = useMemo(
+    () => (application ? stateFromDetail(application) : null),
+    [application],
+  );
 
   // Delete draft asks nothing (D7): a countdown takes the primary area, Cancel is the way back.
   const deletion = useDeferredAction({
@@ -344,60 +337,6 @@ export default function NewProductApplicationDetail({
     close.isPending ||
     undo.isPending;
 
-  const lineColumns = useMemo<ColumnDef<Line>[]>(() => {
-    const text = (
-      id: string,
-      title: string,
-      size: number,
-      read: (l: Line) => string | null | undefined,
-    ): ColumnDef<Line> => ({
-      id,
-      accessorFn: (row) => read(row) ?? '',
-      header: ({ column }) => (
-        <DataGridColumnHeader title={title} column={column} />
-      ),
-      size,
-      cell: ({ row }) => (
-        <span className="truncate" title={read(row.original) ?? undefined}>
-          {read(row.original) || '-'}
-        </span>
-      ),
-      meta: { headerTitle: title },
-    });
-    return [
-      text('line_no', 'No.', 60, (l) => String(l.line_no)),
-      text('proposed_code', 'Proposed code', 150, (l) => l.proposed_code),
-      text('description', 'Description', 240, (l) => l.description),
-      text('category', 'Item group', 150, (l) => l.category_name),
-      text('base_uom', 'Base UOM', 100, (l) => l.base_uom_code),
-      text('brand', 'Brand', 130, (l) => l.brand_name),
-      text('item_type', 'Item type', 130, (l) => l.item_type_name),
-      text('supplier', 'Supplier', 160, (l) => l.supplier_name),
-      text(
-        'supplier_item_code',
-        'Supplier model no',
-        140,
-        (l) => l.supplier_item_code,
-      ),
-      text('cost_price', 'Cost (MYR)', 100, (l) =>
-        l.cost_price == null ? null : String(l.cost_price),
-      ),
-      text('selling_price', 'Selling (MYR)', 110, (l) =>
-        l.selling_price == null ? null : String(l.selling_price),
-      ),
-      text('expected_qty', 'Exp. qty', 90, (l) =>
-        l.expected_qty == null ? null : String(l.expected_qty),
-      ),
-      text(
-        'further_description',
-        'Further description',
-        200,
-        (l) => l.further_description,
-      ),
-      text('remark', 'Remark', 160, (l) => l.remark),
-    ];
-  }, []);
-
   if (isLoading) {
     return (
       <div className="space-y-4">
@@ -417,32 +356,6 @@ export default function NewProductApplicationDetail({
   }
 
   const r: Detail = application;
-  const columns: ColumnDef<Line>[] = [
-    ...lineColumns,
-    {
-      id: 'opened_as',
-      header: ({ column }) => (
-        <DataGridColumnHeader title="Opened as" column={column} />
-      ),
-      size: 300,
-      enableSorting: false,
-      cell: ({ row }) => (
-        <OpenedAs
-          line={row.original}
-          applicationStatus={r.status}
-          canOpen={canOpen}
-          busy={busy}
-          onLink={(lineId, productId) =>
-            link.mutate({ id: r.id, lineId, productId })
-          }
-          onClose={(lineId) => setAsking({ kind: 'close', lineId })}
-          onUndo={(lineId) => undo.mutate({ id: r.id, lineId })}
-        />
-      ),
-      meta: { headerTitle: 'Opened as' },
-    },
-  ];
-
   const isOwner = Boolean(userId) && r.applicant_id === userId;
   const ownerActs = isOwner && canCreate;
   const editable = r.status === 'draft' || r.status === 'rejected';
@@ -452,6 +365,64 @@ export default function NewProductApplicationDetail({
   const canCancel =
     ownerActs && (r.status === 'draft' || locked) && !anyResolved;
   const stamp = r.submitted_at ?? r.created_at;
+  const canFeedback = canOpen && (r.status === 'approved' || r.status === 'completed');
+  const sheetState = savedState && {
+    ...savedState,
+    ...(draft
+      ? {
+          lead_time: draft.lead_time,
+          lines: savedState.lines.map((l) => ({
+            ...l,
+            cost_price: draft.costs[l.id ?? ''] ?? l.cost_price,
+          })),
+        }
+      : {}),
+  };
+
+  const saveFeedback = async () => {
+    if (!sheetState) return;
+    if (
+      sheetState.lines.some((l) =>
+        numberFieldError(l.cost_price, { min: 0, optional: true }),
+      )
+    ) {
+      toast.error('Cost must be 0 or more.');
+      return;
+    }
+    try {
+      await feedback.mutateAsync({
+        id: r.id,
+        data: {
+          lead_time: sheetState.lead_time.trim() || null,
+          lines: sheetState.lines.map((l) => ({
+            id: l.id as string,
+            cost_price: l.cost_price.trim() || null,
+          })),
+        },
+      });
+      setDraft(null);
+    } catch {
+      // the mutation's own onError toast names the refusal
+    }
+  };
+
+  const downloadExcel = async () => {
+    try {
+      await downloadNewProductApplicationExcel(r.id);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to download');
+    }
+  };
+
+  const fromAutoCount = (l: Line) =>
+    [
+      l.opened_category_name,
+      l.opened_base_uom_name,
+      l.opened_list_price == null ? null : `MYR ${l.opened_list_price}`,
+      l.opened_supplier_name,
+    ]
+      .filter(Boolean)
+      .join(', ');
 
   const confirmAsk = async (value: string) => {
     if (!asking) return;
@@ -568,6 +539,12 @@ export default function NewProductApplicationDetail({
                 <Link2 className="size-4" />
                 Copy link
               </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() => void downloadExcel()}
+              >
+                <Download className="size-4" />
+                Download Excel
+              </DropdownMenuItem>
               {canCancel && (
                 <DropdownMenuItem
                   variant="destructive"
@@ -656,16 +633,45 @@ export default function NewProductApplicationDetail({
               {r.status_label}
             </span>
           </div>
-          <h2 className="mb-6 border-b border-border pb-4 text-center text-xl font-semibold tracking-tight">
-            New Product Application
-          </h2>
-          <div className="grid grid-cols-1 gap-x-10 gap-y-5 sm:grid-cols-2 [&>div]:min-w-0 [&_p]:break-words">
-            <Field label="Applicant">{r.applicant_name}</Field>
-            <Field label="Date">{day(r.created_at)}</Field>
-            <div>
-              <p className="text-sm text-muted-foreground">Stock inquiry</p>
-              <p className="font-medium">
-                {r.stock_inquiry_id && r.stock_inquiry_number ? (
+          {(r.revise_reason || r.cancel_reason) && (
+            <div className="mb-4 space-y-1 text-sm [&_p]:break-words">
+              {r.revise_reason && (
+                <p>
+                  <span className="text-muted-foreground">Revised because: </span>
+                  {r.revise_reason}
+                </p>
+              )}
+              {r.cancel_reason && (
+                <p>
+                  <span className="text-muted-foreground">Cancel reason: </span>
+                  {r.cancel_reason}
+                </p>
+              )}
+            </div>
+          )}
+          {sheetState && (
+            <NewProductApplicationSheet
+              value={sheetState}
+              onChange={(next) =>
+                setDraft({
+                  lead_time: next.lead_time,
+                  costs: Object.fromEntries(
+                    next.lines.map((l) => [l.id ?? '', l.cost_price]),
+                  ),
+                })
+              }
+              readOnly
+              applicationNo={r.application_no}
+              createdAt={r.created_at}
+              salesPerson={r.applicant_name}
+              brands={NO_BRANDS}
+              feedback={{
+                editable: canFeedback,
+                onSave: () => void saveFeedback(),
+                saving: feedback.isPending,
+              }}
+              stockInquiryField={
+                r.stock_inquiry_id && r.stock_inquiry_number ? (
                   <Link
                     href={`/procurement-management/stock-inquiries/${r.stock_inquiry_id}`}
                     className="text-primary hover:underline"
@@ -674,50 +680,44 @@ export default function NewProductApplicationDetail({
                   </Link>
                 ) : (
                   'None'
-                )}
-              </p>
-            </div>
-            <Field label="Needed by">{day(r.needed_by)}</Field>
-            <div className="sm:col-span-2">
-              <p className="text-sm text-muted-foreground">Customer</p>
-              <p className="flex flex-wrap items-center gap-2 font-medium">
-                {[r.customer_code, r.customer_name]
-                  .filter(Boolean)
-                  .join(' - ') || 'None'}
-                {!r.customer_code && r.customer_name && (
-                  <Badge variant="secondary">No debtor code</Badge>
-                )}
-              </p>
-            </div>
-            <Field label="Project name" wide>
-              {r.project_name}
-            </Field>
-            <Field label="Reason / remark" wide>
-              {r.remark}
-            </Field>
-            {r.revise_reason && (
-              <Field label="Revised because" wide>
-                {r.revise_reason}
-              </Field>
-            )}
-            {r.cancel_reason && (
-              <Field label="Cancel reason" wide>
-                {r.cancel_reason}
-              </Field>
-            )}
-          </div>
-
-          <div className="mt-8">
-            <p className="mb-3 text-sm font-medium">Line items</p>
-            <PanelDataGrid
-              columns={columns}
-              rows={r.lines}
-              getRowId={(row) => row.id}
-              listingKey={linesListingKey}
-              emptyTitle="No lines"
-              paginate={false}
+                )
+              }
+              customerField={
+                <span className="flex flex-wrap items-center gap-2">
+                  {[r.customer_code, r.customer_name]
+                    .filter(Boolean)
+                    .join(' - ') || 'None'}
+                  {!r.customer_code && r.customer_name && (
+                    <Badge variant="secondary">No debtor code</Badge>
+                  )}
+                </span>
+              }
+              lineFooter={(draftLine) => {
+                const l = r.lines.find((x) => x.id === draftLine.id);
+                if (!l) return null;
+                return (
+                  <div className="min-w-0 space-y-1.5">
+                    <OpenedAs
+                      line={l}
+                      applicationStatus={r.status}
+                      canOpen={canOpen}
+                      busy={busy}
+                      onLink={(lineId, productId) =>
+                        link.mutate({ id: r.id, lineId, productId })
+                      }
+                      onClose={(lineId) => setAsking({ kind: 'close', lineId })}
+                      onUndo={(lineId) => undo.mutate({ id: r.id, lineId })}
+                    />
+                    {l.opened_product_id && (
+                      <p className="text-xs text-muted-foreground">
+                        From AutoCount: {fromAutoCount(l) || '-'}
+                      </p>
+                    )}
+                  </div>
+                );
+              }}
             />
-          </div>
+          )}
         </CardContent>
       </Card>
 

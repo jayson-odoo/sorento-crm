@@ -12,22 +12,22 @@ export type NewProductApplicationStatus =
   | 'completed'
   | 'cancelled';
 
-/** One line as written (create and draft update replace all lines); null clears a field. */
+/**
+ * One product as written (v4 paper layout, AC-NPA-70). `id` is sent only for a saved product so
+ * the server keeps it (and its images); null clears a field. The applicant never writes cost.
+ */
 export interface NewProductApplicationLineWrite {
+  id?: string;
   proposed_code?: string | null;
+  /** PRODUCT TYPE on the paper form, the only required field. */
   description?: string | null;
-  further_description?: string | null;
-  category_id?: string | null;
-  base_uom_id?: string | null;
+  dimension?: string | null;
+  material?: string | null;
+  thickness?: string | null;
+  packing?: string | null;
   brand_id?: string | null;
-  item_type_id?: string | null;
-  supplier_id?: string | null;
-  supplier_item_code?: string | null;
   /** Numbers travel as strings or numbers; null clears, never 0. */
-  cost_price?: string | number | null;
-  selling_price?: string | number | null;
   expected_qty?: string | number | null;
-  remark?: string | null;
 }
 
 /** The write payload, staff and portal alike. `needed_by` is YYYY-MM-DD. */
@@ -67,17 +67,27 @@ export interface NewProductApplicationSummary {
   created_at: string | null;
 }
 
+/** One picture of a product: the link row (to remove it) and the file (to show it). */
+export interface NewProductApplicationImage {
+  link_id: string;
+  attachment_id: string;
+  filename: string;
+  url: string;
+  content_type: string | null;
+}
+
 export interface NewProductApplicationLine extends NewProductApplicationLineWrite {
   id: string;
   line_no: number;
-  category_code: string | null;
-  category_name: string | null;
-  base_uom_code: string | null;
-  base_uom_name: string | null;
   brand_name: string | null;
-  item_type_name: string | null;
-  supplier_code: string | null;
-  supplier_name: string | null;
+  /** Purchasing feedback: COST, one per product. */
+  cost_price: string | number | null;
+  images: NewProductApplicationImage[];
+  /** Read from the linked product (staff only except the supplier, PQ1). */
+  opened_category_name?: string | null;
+  opened_base_uom_name?: string | null;
+  opened_list_price?: string | number | null;
+  opened_supplier_name: string | null;
   opened_product_id: string | null;
   opened_product_code: string | null;
   opened_product_name: string | null;
@@ -93,6 +103,10 @@ export interface NewProductApplicationDetail extends NewProductApplicationSummar
   customer_id: string | null;
   customer_code: string | null;
   remark: string | null;
+  /** Purchasing feedback: LEADTIME, one per application. */
+  lead_time: string | null;
+  feedback_by_name?: string | null;
+  feedback_at?: string | null;
   decided_at: string | null;
   decided_by: string | null;
   decided_by_name: string | null;
@@ -112,13 +126,21 @@ export interface NewProductApplicationPage {
   limit: number;
 }
 
-/** GET /item-types and GET /products rows (the only fields the screens read). */
-export interface NewProductApplicationItemType {
-  id: string;
-  item_type_code: string;
-  item_type_name: string;
+/** An image file on a stock inquiry, offered by "Copy from the inquiry". */
+export interface NewProductApplicationInquiryImage {
+  attachment_id: string;
+  filename: string;
+  url?: string;
+  content_type?: string | null;
 }
 
+/** PUT /feedback: one lead time, one cost per product; null clears. */
+export interface NewProductApplicationFeedbackWrite {
+  lead_time: string | null;
+  lines: { id: string; cost_price: string | null }[];
+}
+
+/** GET /products rows (the only fields the screens read). */
 export interface NewProductApplicationProductHit {
   id: string;
   product_code: string;

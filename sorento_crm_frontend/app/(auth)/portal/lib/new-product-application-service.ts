@@ -5,9 +5,12 @@
  * The shapes live in `types/newProductApplication.ts`, shared with the staff feature.
  */
 import { extractApiError } from '@/lib/api-client';
+import { filenameFromContentDisposition } from '@/app/(protected)/project-sales/_shared/services/fileDownload';
+import { saveBlobAs } from '@/lib/save-blob';
 import {
   NewProductApplicationError,
   type NewProductApplicationDetail,
+  type NewProductApplicationInquiryImage,
   type NewProductApplicationPrefill,
   type NewProductApplicationSummary,
   type NewProductApplicationWrite,
@@ -56,7 +59,7 @@ export interface PortalLookupHit {
   name: string;
 }
 
-export type PortalLookupKind = 'item-groups' | 'uoms' | 'brands' | 'item-types';
+export type PortalLookupKind = 'brands';
 
 export interface PortalCustomerHit {
   customer_id: string;
@@ -202,3 +205,69 @@ export const cancelNewProductApplication = (id: string, reason?: string) =>
     'Failed to cancel the application',
     reason ? { reason } : {},
   );
+
+const imagesPath = (id: string, lineId: string) =>
+  `${BASE}/${at(id)}/lines/${at(lineId)}/images`;
+
+export async function uploadNewProductApplicationLineImage(
+  id: string,
+  lineId: string,
+  file: File,
+): Promise<NewProductApplicationDetail> {
+  const form = new FormData();
+  form.append('file', file);
+  return unwrap<NewProductApplicationDetail>(
+    await portalFetch(imagesPath(id, lineId), { method: 'POST', body: form }),
+    'Failed to upload the image',
+  );
+}
+
+export async function copyNewProductApplicationLineImage(
+  id: string,
+  lineId: string,
+  attachmentId: string,
+): Promise<NewProductApplicationDetail> {
+  return unwrap<NewProductApplicationDetail>(
+    await portalFetch(`${imagesPath(id, lineId)}/copy`, {
+      method: 'POST',
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ attachment_id: attachmentId }),
+    }),
+    'Failed to copy the image',
+  );
+}
+
+export async function deleteNewProductApplicationLineImage(
+  id: string,
+  lineId: string,
+  linkId: string,
+): Promise<NewProductApplicationDetail> {
+  return unwrap<NewProductApplicationDetail>(
+    await portalFetch(`${imagesPath(id, lineId)}/${at(linkId)}`, {
+      method: 'DELETE',
+    }),
+    'Failed to remove the image',
+  );
+}
+
+/** Image files on the contact's own responded inquiry: the "Copy from the inquiry" picker. */
+export async function listInquiryImagesForNewProductApplication(
+  stockInquiryId: string,
+): Promise<NewProductApplicationInquiryImage[]> {
+  return unwrap<NewProductApplicationInquiryImage[]>(
+    await portalFetch(`${OWN}/inquiry-attachments?stock_inquiry_id=${at(stockInquiryId)}`),
+    'Failed to load the inquiry images',
+  );
+}
+
+/** The paper sheet as a workbook; the name comes from the server so file and sheet agree. */
+export async function downloadNewProductApplicationExcel(
+  id: string,
+): Promise<void> {
+  const res = await portalFetch(`${BASE}/${at(id)}/download`);
+  if (!res.ok) await unwrap<never>(res, 'Failed to download the application');
+  const filename =
+    filenameFromContentDisposition(res.headers.get('Content-Disposition')) ??
+    'new-product-application.xlsx';
+  saveBlobAs(await res.blob(), filename);
+}

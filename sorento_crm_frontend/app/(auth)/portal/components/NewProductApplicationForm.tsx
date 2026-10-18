@@ -2,24 +2,18 @@
 
 /**
  * Portal new product application - create / edit a draft or rejected application / read-only
- * view (NEW-PRODUCT-APP). One document card like the portal Sample Request, then the line table
- * (no supplier, supplier model no or cost: purchasing fills those in). Approval and the opening
- * of codes are staff work; the portal only shows their result.
+ * view (NEW-PRODUCT-APP v4). The same paper sheet as the staff pages; COST, LEADTIME and the
+ * supplier are purchasing's and read-only here (PQ1). Approval and the opening of codes are
+ * staff work; the portal only shows their result.
  */
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Loader2, Plus, XCircle } from 'lucide-react';
+import { ArrowLeft, Download, Loader2, XCircle } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import {
   Dialog,
   DialogBody,
@@ -30,17 +24,16 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
 import {
-  NewProductApplicationLines,
+  NewProductApplicationSheet,
   type LookupFetcher,
-  type NewProductApplicationLookups,
-} from '@/components/common/NewProductApplicationLines';
+  type SheetImageActions,
+} from '@/components/common/NewProductApplicationSheet';
 import {
   EMPTY_FORM,
   blankLine,
@@ -52,20 +45,24 @@ import {
   type FormState,
 } from '@/lib/new-product-application-form';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import { cn } from '@/lib/utils';
 import type { NewProductApplicationDetail } from '@/types/newProductApplication';
 import { portalBase } from '../lib/portal-paths';
 import {
   cancelNewProductApplication,
+  copyNewProductApplicationLineImage,
   createNewProductApplication,
+  deleteNewProductApplicationLineImage,
+  downloadNewProductApplicationExcel,
   getNewProductApplication,
   getNewProductApplicationPrefill,
+  listInquiryImagesForNewProductApplication,
   listMyRespondedInquiries,
   lookupNewProductApplication,
   lookupNewProductApplicationCustomers,
   reviseNewProductApplication,
   submitNewProductApplication,
   updateNewProductApplication,
+  uploadNewProductApplicationLineImage,
   type PortalCustomerHit,
   type PortalInquiryHit,
   type PortalLookupKind,
@@ -74,25 +71,6 @@ import { AsyncCombobox } from './AsyncCombobox';
 
 const LOCK_SENTENCE =
   'Locked: Revise to change it; it goes back to Draft and needs approval again.';
-
-function FormField({
-  label,
-  htmlFor,
-  className,
-  children,
-}: {
-  label: string;
-  htmlFor: string;
-  className?: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className={cn('min-w-0 space-y-1.5', className)}>
-      <Label htmlFor={htmlFor}>{label}</Label>
-      {children}
-    </div>
-  );
-}
 
 /** The select fetcher for one portal lookup list (the server filters by `q`). */
 const portalLookup =
@@ -107,12 +85,7 @@ const portalLookup =
       code: hit.code,
     }));
 
-const PORTAL_LOOKUPS: NewProductApplicationLookups = {
-  itemGroups: portalLookup('item-groups', (h) => h.name),
-  uoms: portalLookup('uoms', (h) => h.code),
-  brands: portalLookup('brands', (h) => h.name),
-  itemTypes: portalLookup('item-types', (h) => h.name),
-};
+const BRANDS: LookupFetcher = portalLookup('brands', (h) => h.name);
 
 function ReasonDialog({
   title,
@@ -193,7 +166,6 @@ export default function NewProductApplicationForm({
   const [asking, setAsking] = useState<'revise' | 'cancel' | null>(null);
 
   const backPath = `${portalBase(slug)}?type=new_product_application`;
-  const lookups = useMemo(() => PORTAL_LOOKUPS, []);
   const set = useCallback(
     <K extends keyof FormState>(key: K, value: FormState[K]) =>
       setState((prev) => ({ ...prev, [key]: value })),
@@ -240,6 +212,22 @@ export default function NewProductApplicationForm({
   const canCancel =
     Boolean(application) && !anyResolved && (locked || status === 'draft');
 
+  // The server answered with line ids and images: keep them on the draft so the next save
+  // updates the same products instead of replacing them.
+  const adopt = useCallback((saved?: Partial<NewProductApplicationDetail>) => {
+    const lines = saved?.lines;
+    if (!lines) return;
+    setState((prev) => ({
+      ...prev,
+      lines: prev.lines.map((l, i) => {
+        const match = l.id ? lines.find((x) => x.id === l.id) : lines[i];
+        return match
+          ? { ...l, id: match.id, images: match.images ?? l.images }
+          : l;
+      }),
+    }));
+  }, []);
+
   const save = async (): Promise<{ id: string }> => {
     const body = payloadFromState(state);
     const id = application?.id ?? savedId;
@@ -247,7 +235,78 @@ export default function NewProductApplicationForm({
       ? await updateNewProductApplication(id, body)
       : await createNewProductApplication(body);
     setSavedId(saved.id);
+    // Images picked before the application existed go up now, in product order.
+    for (const [i, line] of state.lines.entries()) {
+      const lineId = saved.lines?.[i]?.id;
+      if (!lineId) continue;
+      for (const file of line.staged_images) {
+        try {
+          await uploadNewProductApplicationLineImage(saved.id, lineId, file);
+        } catch (e) {
+          toast.error(
+            e instanceof Error ? e.message : 'Failed to upload the image',
+          );
+        }
+      }
+    }
+    adopt(saved);
+    setState((prev) => ({
+      ...prev,
+      lines: prev.lines.map((l) => ({ ...l, staged_images: [] })),
+    }));
     return saved;
+  };
+
+  const recordId = application?.id ?? savedId;
+  const attempt = async (run: () => Promise<unknown>, fallback: string) => {
+    try {
+      adopt((await run()) as Partial<NewProductApplicationDetail> | undefined);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : fallback);
+    }
+  };
+  const imageActions: SheetImageActions = {
+    upload: (line, file) =>
+      recordId && line.id
+        ? attempt(
+            () => uploadNewProductApplicationLineImage(recordId, line.id!, file),
+            'Failed to upload the image',
+          )
+        : undefined,
+    copy: (line, attachmentId) =>
+      recordId && line.id
+        ? attempt(
+            () =>
+              copyNewProductApplicationLineImage(recordId, line.id!, attachmentId),
+            'Failed to copy the image',
+          )
+        : undefined,
+    remove: async (line, image) => {
+      if (!recordId || !line.id) return;
+      await attempt(
+        () => deleteNewProductApplicationLineImage(recordId, line.id!, image.link_id),
+        'Failed to remove the image',
+      );
+      setState((prev) => ({
+        ...prev,
+        lines: prev.lines.map((l) =>
+          l.id === line.id
+            ? { ...l, images: l.images.filter((i) => i.link_id !== image.link_id) }
+            : l,
+        ),
+      }));
+    },
+    listInquiry: () =>
+      listInquiryImagesForNewProductApplication(state.stock_inquiry_id),
+  };
+
+  const downloadExcel = async () => {
+    if (!application) return;
+    try {
+      await downloadNewProductApplicationExcel(application.id);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to download');
+    }
   };
 
   const explain = (e: unknown, fallback: string) => {
@@ -378,8 +437,12 @@ export default function NewProductApplicationForm({
                 Revise
               </Button>
             )}
-            {canCancel && (
-              <DetailActionsMenu ariaLabel="Application actions">
+            <DetailActionsMenu ariaLabel="Application actions">
+              <DropdownMenuItem onSelect={() => void downloadExcel()}>
+                <Download className="size-4" />
+                <span>Download Excel</span>
+              </DropdownMenuItem>
+              {canCancel && (
                 <DropdownMenuItem
                   variant="destructive"
                   onSelect={() => setAsking('cancel')}
@@ -387,8 +450,8 @@ export default function NewProductApplicationForm({
                   <XCircle className="size-4" />
                   <span>Cancel application</span>
                 </DropdownMenuItem>
-              </DetailActionsMenu>
-            )}
+              )}
+            </DetailActionsMenu>
           </div>
         )}
       </div>
@@ -429,18 +492,19 @@ export default function NewProductApplicationForm({
               {application?.status_label ?? 'Draft'}
             </Badge>
           </div>
-          <h2 className="text-center text-xl font-semibold tracking-tight border-b border-border pb-4 mb-6">
-            New Product Application
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5">
-            {!application ? (
-              <FormField
-                label="Start from my stock inquiry"
-                htmlFor="npa-inquiry"
-                className="sm:col-span-2"
-              >
+          <NewProductApplicationSheet
+            value={state}
+            onChange={setState}
+            readOnly={readOnly}
+            applicationNo={application?.application_no}
+            createdAt={application?.created_at}
+            salesPerson={application?.applicant_name}
+            brands={BRANDS}
+            errors={errors}
+            imageActions={imageActions}
+            stockInquiryField={
+              !application ? (
                 <AsyncCombobox<PortalInquiryHit>
-                  id="npa-inquiry"
                   ariaLabel="Start from my stock inquiry"
                   value={state.stock_inquiry_id}
                   displayValue={state.stock_inquiry_label}
@@ -463,149 +527,73 @@ export default function NewProductApplicationForm({
                     }
                   }}
                 />
-              </FormField>
-            ) : (
-              <FormField label="Stock inquiry" htmlFor="npa-inquiry-read">
-                <p id="npa-inquiry-read" className="min-h-9 py-2 text-sm">
-                  {application.stock_inquiry_number || '-'}
-                </p>
-              </FormField>
-            )}
-
-            <FormField
-              label="Customer"
-              htmlFor="npa-customer"
-              className="sm:col-span-2"
-            >
-              <AsyncCombobox<PortalCustomerHit>
-                id="npa-customer"
-                disabled={readOnly}
-                value={state.customer_name}
-                onChange={(v, item) =>
-                  setState((prev) => ({
-                    ...prev,
-                    customer_id: item?.customer_id ?? '',
-                    customer_name: v,
-                  }))
-                }
-                fetchOptions={(q) => lookupNewProductApplicationCustomers(q)}
-                optionValue={(o) => o.debtor_name}
-                optionLabel={(o) => o.debtor_name}
-                optionMeta={(o) => o.customer_code}
-                placeholder="Customer name"
-              />
-              {!state.customer_id && state.customer_name.trim() && (
-                <Badge variant="secondary" className="mt-1.5">
-                  No debtor code
-                </Badge>
-              )}
-            </FormField>
-
-            <FormField label="Project name" htmlFor="npa-project">
-              <Input
-                id="npa-project"
-                disabled={readOnly}
-                value={state.project_name}
-                onChange={(e) => set('project_name', e.target.value)}
-              />
-            </FormField>
-            <FormField label="Needed by" htmlFor="npa-needed-by">
-              <Input
-                id="npa-needed-by"
-                type="date"
-                disabled={readOnly}
-                value={state.needed_by}
-                onChange={(e) => set('needed_by', e.target.value)}
-              />
-            </FormField>
-
-            <FormField
-              label="Reason / remark"
-              htmlFor="npa-remark"
-              className="sm:col-span-2"
-            >
-              <Textarea
-                id="npa-remark"
-                rows={3}
-                disabled={readOnly}
-                value={state.remark}
-                onChange={(e) => set('remark', e.target.value)}
-              />
-            </FormField>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Items</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <NewProductApplicationLines
-            lines={state.lines}
-            onChange={(lines) => set('lines', lines)}
-            lookups={lookups}
-            hideSupplierAndCost
-            errors={errors}
-            disabled={readOnly}
-          />
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={readOnly}
-            onClick={() =>
-              setState((prev) => ({
-                ...prev,
-                lines: [...prev.lines, blankLine()],
-              }))
+              ) : (
+                <span>{application.stock_inquiry_number || '-'}</span>
+              )
             }
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Add item
-          </Button>
+            customerField={
+              <>
+                <AsyncCombobox<PortalCustomerHit>
+                  ariaLabel="Customer"
+                  disabled={readOnly}
+                  value={state.customer_name}
+                  onChange={(v, item) =>
+                    setState((prev) => ({
+                      ...prev,
+                      customer_id: item?.customer_id ?? '',
+                      customer_name: v,
+                    }))
+                  }
+                  fetchOptions={(q) => lookupNewProductApplicationCustomers(q)}
+                  optionValue={(o) => o.debtor_name}
+                  optionLabel={(o) => o.debtor_name}
+                  optionMeta={(o) => o.customer_code}
+                  placeholder="Customer name"
+                />
+                {!state.customer_id && state.customer_name.trim() && (
+                  <Badge variant="secondary" className="mt-1.5">
+                    No debtor code
+                  </Badge>
+                )}
+              </>
+            }
+            lineFooter={
+              application
+                ? (draftLine) => {
+                    const l = application.lines.find((x) => x.id === draftLine.id);
+                    if (!l) return null;
+                    return (
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {l.opened_product_id ? (
+                            <>
+                              <Badge status="completed">Opened</Badge>
+                              <span className="font-medium">
+                                {l.opened_product_code}
+                              </span>
+                            </>
+                          ) : l.closed_reason ? (
+                            <>
+                              <Badge status="cancelled">Not opening</Badge>
+                              <span>{l.closed_reason}</span>
+                            </>
+                          ) : (
+                            <span className="text-muted-foreground">Not yet</span>
+                          )}
+                        </div>
+                        {l.opened_supplier_name && (
+                          <p className="text-xs text-muted-foreground">
+                            Supplier: {l.opened_supplier_name}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  }
+                : undefined
+            }
+          />
         </CardContent>
       </Card>
-
-      {application && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Opened as</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {anyResolved ? (
-              <ul className="space-y-1.5 text-sm">
-                {application.lines.map((l) => (
-                  <li key={l.id} className="flex flex-wrap items-center gap-2">
-                    <span className="text-muted-foreground">
-                      Line {l.line_no}
-                    </span>
-                    {l.opened_product_id ? (
-                      <>
-                        <Badge status="completed">Opened</Badge>
-                        <span className="font-medium">
-                          {l.opened_product_code}
-                        </span>
-                      </>
-                    ) : l.closed_reason ? (
-                      <>
-                        <Badge status="cancelled">Not opening</Badge>
-                        <span>{l.closed_reason}</span>
-                      </>
-                    ) : (
-                      <span className="text-muted-foreground">Not yet</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Nothing opened yet
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      )}
 
       {serverMessage && (
         <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
