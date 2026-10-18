@@ -177,6 +177,9 @@ product linked at purchasing's step (`services/new_product_application_service.p
   stock inquiry (`link_existing_attachment` `:179`); `DELETE /{id}/lines/{line_id}/images/{link_id}` unlinks only
   (attachment row kept, as `delete_inquiry_attachment`). Owner only, unlocked statuses only (`assert_unlocked`).
   Portal: same three under `BASE/{id}/lines/{line_id}/images...`, own application only.
+  The copy picker reads `GET /inquiry-attachments?stock_inquiry_id=` (`create`; image attachments linked to that
+  inquiry: `[{attachment_id, filename, url, content_type}]`) and portal `GET OWN/inquiry-attachments?stock_inquiry_id=`
+  (own responded inquiry only, 404 otherwise). FE: `getStockInquiryAttachmentsForNpa(stockInquiryId)`.
 - `serialize_detail` (`svc :779`): line gains `dimension, material, thickness, packing, images[]
   ({link_id, attachment_id, filename, url, content_type})`, and from the linked product `opened_category_name,
   opened_base_uom_name, opened_list_price, opened_supplier_name`; header gains `lead_time, feedback_by_name,
