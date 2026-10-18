@@ -275,3 +275,23 @@ SO417636 CSK14B BRW-BB, with the owner's plan:
   - each kept row keeps links only up to its own qty, and the rest is given back.
   Worklist, email and Excel agree. A line whose PO is received in full is a standing plan like any other: a
   re-Confirm sends nothing.
+- AC-G18 **Refer back reads every applied change, whatever its batch says** (lead, 19 Oct; found on the
+  owner's real SO417636 before the hand test). The board Confirm applies one order at a time and stamps the
+  AutoCount batch only when nothing in it is still pending (`planning_change_service.py:5178`), so most
+  confirmed lines sit in a batch with no `applied_at` (dev DB: 280 of 397 lines). AC-G1 still holds for them:
+  - the "last change a Confirm applied" is the line's latest change row whose own state is applied (undo
+    resets it to pending), ordered by created_at then id; the batch's `applied_at` is not read;
+  - an applied change with an empty `from` (a line added and changed inside one open batch) takes its
+    "before" from the line's own older `added` row in that batch, by `core_line_id`, the same rule
+    `pending_from_by_line` already uses (one shared helper, no second copy);
+  - SO417636 on the dev DB as stored (480 = 14 own, 236 and 167 on New line; 752 = 37 own @ 02/01/2027,
+    467 @ 20/12/2026 on New line): 480 417 | 14 | 20/10/2026 | 20/09/2026; 608 192 | 632 | 20/11/2026 |
+    blank; 752 504 | 649 | 20/12/2026 | 02/01/2027, its plan applied (not stale), extra 649 - 37 - 467 = 145
+    (REMARK "ORDER 145"); 608 has nothing dropped on it, so its REMARK is "ORDER 440"; 480 and 608 show no
+    extra row. "Confirmed <date>" stays hidden while any line of the order is still pending (CSK11A).
+  - A second Confirm with nothing changed still sends nothing (AC-G13).
+- AC-G19 **Re-plan a confirmed New-line plan into the card plan** (the owner's path in the hand test). From
+  the stored plan above, staff drag 236 and 167 (date fixed to 20/11/2029) and 752's 37 onto line 608, Save,
+  Confirm. Then purchasing's live OI rows equal the card plan confirmed from scratch (AC-G6 / AC-G10: live OI
+  total 1295, 608 totals 632, 752 extra 182 "ORDER 182", 608 REMARK "REMAIN"), the moved rows keep their
+  links, nothing is bought twice, and no CANCEL appears in the worklist, email or Excel.
