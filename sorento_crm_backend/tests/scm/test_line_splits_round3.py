@@ -750,3 +750,79 @@ def test_g10_a_declined_link_move_keeps_the_split_qty_as_its_own_worklist_rows(a
     assert _missing(_live(rows), splits) == [], (
         "AC-G10: every split of line 2 is a live worklist row at its date", case, rows)
     assert _cancel_balances(rows) == [], ("AC-G10: no CANCEL BALANCE from a split", case, rows)
+
+
+# ---------------------------------------------------------------------------
+# AC-G10 / AC-E1 (owner, 18 Oct: "the 632 comes from part of 417, part of 504"): a split dropped
+# on a line of the Confirm whose AutoCount qty went up is MOVED there (with its links, AC-E1)
+# whatever the origin line's net change. The owner's 752 went UP (504 -> 649 = 467 own + 182
+# extra) yet its 37 sits on 608 (192 -> 632 = 192 + 236 + 167 + 37): purchasing must not be
+# asked for the 37 on 752 as well as inside 608's 632.
+# ---------------------------------------------------------------------------
+
+
+def _live_by_line(s):
+    return {no: _live(_worklist(s, s.line[no])) for no in OWNER_CASE}
+
+
+def test_g10_a_split_dropped_on_a_line_that_went_up_moves_even_when_its_origin_went_up(api, emails):
+    s = _seed(api)
+    _save(s, _owner_plan())
+    sent = _confirm_batch(s, emails)
+    live = _live_by_line(s)
+    rows = {no: _worklist(s, s.line[no]) for no in OWNER_CASE}
+
+    assert not [q for q, _when in live[752] if q == _d("37")], (
+        "the 37 moved to 608: no 37 row left on 752", rows[752])
+    assert sum((q for q, _when in live[608]), Decimal(0)) == _d("632"), rows[608]
+    assert sum((q for q, _when in live[752]), Decimal(0)) == _d("649"), (
+        "752 keeps 467 own + 182 extra", rows[752])
+    total = sum((q for no in live for q, _when in live[no]), Decimal(0))
+    assert total == _d("1295"), (
+        "no double ask: live OI qty = AutoCount 14 + 632 + 649", live)
+    for no in OWNER_CASE:
+        assert _cancel_balances(rows[no]) == [], (no, rows[no])
+
+    # the email and the Excel still read as AC-G6 / AC-G7
+    printed = _printed(sent)
+    assert _has_block(printed, BLOCK_480), printed
+    assert _has_block(printed, BLOCK_752), printed
+    assert ROW_608 in printed, printed
+    excel = _excel_rows(s)
+    assert _has_block(excel, [(_d("417"), D_480, _d("14"), D_480_NEW, "ADVANCE")] + EXCEL_480[1:]), excel
+    assert _has_block(excel, EXCEL_752), excel
+    assert EXCEL_608 in excel, excel
+
+
+def test_g10_the_moved_37_takes_its_po_link_from_752_to_608(api, emails):
+    """AC-E1 for an origin that went up: 752's row is linked to a PO for its 504. The 37 moves
+    to 608 with 37 of that link; 752 keeps 467 of it (504 in all, nothing dropped)."""
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+    from tests.test_planning_change_apply_on_board import _link, _po_line, _supplier
+
+    s = _seed(api)
+    _po, po_line = _po_line(s.world, _supplier(s.world), qty=504, expected_date=date(2026, 12, 10))
+    _link(s.world, _order_row(s.world, s.line[752]), po_line, qty=504, document="ZZT-S0752")
+    s.db.commit()
+    _save(s, _owner_plan())
+    _confirm_batch(s, emails)
+
+    from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow
+
+    svc = ProjectOrderInquiryService(s.db)
+
+    def linked(no):
+        total = Decimal(0)
+        for row in s.db.query(OrderInquiryRow).filter(
+            OrderInquiryRow.so_line_id == s.line[no].id,
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+        ):
+            total += sum(
+                (Decimal(str(l.qty)) for l in svc._links_of(row.id) if l.po_line_id == po_line.id),
+                Decimal(0),
+            )
+        return total
+
+    got = {no: linked(no) for no in (608, 752)}
+    assert got == {608: Decimal("37"), 752: Decimal("467")}, (
+        "AC-E1: the 37 moves with its link, 752 keeps the rest", got)
