@@ -324,12 +324,19 @@ SO417636 CSK14B BRW-BB, with the owner's plan:
     board Reject (`uncover_lines`) retires them like any other line's rows. The same holds for the kept
     New-line rows of a line whose own row followed a later AutoCount change (AC-G16): after that Confirm, a
     board Reject retires every row of the line (reviewer B4).
-  - Only links on rows that can move ever move. A declined split (its row received in full) keeps its row
-    and its links, and no other split's move takes links from it. Example: 480 = 14 on PO-A, 236 on PO-B
+  - Only links on rows that can move ever move. A declined split keeps its row and its links, and no other
+    split's move takes links from it, whether it was declined for its own row (received in full) or for its
+    target (placed with no link, received in full) (reviewer B7). Example: 480 = 14 on PO-A, 236 on PO-B
     received in full, 167 unlinked; the card re-plan declines the 236, and 480 keeps the 236 with PO-B's
     links, and the live ORDER total never exceeds what AutoCount plus the New-line deliveries need
     (reviewer B5).
   - A split re-landed from one target onto another (608 to 752) moves its links from the target that holds
     them, even when none of the origin's own rows still hold a link of that PO (reviewer nit).
   - A kept row that moves whole leaves no live row behind on the origin at its date, of any qty (its qty is
-    cancelled there, not raised twice).
+    cancelled there, not raised twice), also when the origin otherwise stands.
+  - After any declined move, the email and the Excel print exactly the rows purchasing's worklist holds, and
+    never a CANCEL or an ORDER the worklist does not hold (AC-G10; owner rule: no CANCEL from splits). A
+    target whose row is only RAISED (not yet placed) has that ask cut by the declined qty, since nothing was
+    bought: in the B5 example 608's ask is 396 (192 + 167 + 37), the email and Excel print 608's rows as that
+    396, and the declined 236 stays printed under 480 at its own date. No "632 REMAIN", no "ORDER 403", no
+    "CANCEL 236" (reviewer B6, lead 19 Oct: flooring at a raised ask would buy the 236 twice).
