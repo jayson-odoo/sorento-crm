@@ -305,8 +305,25 @@ SO417636 CSK14B BRW-BB, with the owner's plan:
   - A move onto a target that cannot take the links (placed with no link, or its document received in full)
     is declined as in AC-G12: the origin keeps its rows and links, the target's need excludes that qty. When
     the target already holds more than that need (608 holds a placed or received 632, its need drops to
-    632 - 236), the surplus is ONE CANCEL BALANCE of the declined qty on the target, printed in the worklist,
-    email and Excel, and nothing is ordered (lead decision 19 Oct, the AC-G17 reasoning: the re-plan reduced
-    what the target needs, and purchasing must be told).
+    632 - 236), the surplus is ONE CANCEL BALANCE of the declined qty, printed in the worklist, email and
+    Excel, and nothing is ordered (lead decision 19 Oct, the AC-G17 reasoning: the re-plan reduced what the
+    target needs, and purchasing must be told). It sits on a row purchasing can still cancel:
+    - target placed with no link (its document still open): on the target;
+    - target received in full: on the origin's row holding that split (its PO is still open), never on goods
+      already received (reviewer S3, 19 Oct).
+    A plain re-Confirm after that changes nothing: the live CANCEL BALANCE already equals the declined qty, so
+    it stands; no new row, no "CANCEL ALL", no email (AC-G13).
   - An origin whose document is received in full: nothing is bought twice, nothing is cancelled, the live OI
     total equals AutoCount, and worklist, email and Excel agree.
+  - A re-planned origin moves only qty its previous plan kept on it (its own line or New line), and only from
+    the row that holds that split, links included. A split whose row cannot move (received in full, or none
+    found) is declined as in AC-G12. Rows of splits that did not move never move, and no fresh unlinked ORDER
+    is raised for qty that left. Examples:
+    - only the 236 row's document is received, then 236 moves onto 608: the 236 is declined, and 480 keeps 14
+      and 167 on their rows with their links;
+    - the card plan confirmed, then 167 re-planned from 608 onto 752: only the 167's links move from 608 to 752,
+      and 480's own 14 and its links stay on 480.
+  - A line that stands at a re-Confirm (AC-G13) has its live rows filed under the new decision, so a later
+    board Reject (`uncover_lines`) retires them like any other line's rows.
+  - A kept row that moves whole leaves no live row behind on the origin (its qty is cancelled there, not
+    raised twice).
