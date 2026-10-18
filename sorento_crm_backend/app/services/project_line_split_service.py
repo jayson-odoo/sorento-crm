@@ -477,10 +477,12 @@ class LineSplitService:
         out_lines = []
         for f in listed:
             base_qty, base_date = f.base()
+            in_full = f.delivered_in_full(sitting_on)
+            # NEW cells only while a change is pending (an applied split reads blank).
             moves = (
-                {}
-                if f.delivered_in_full(sitting_on)
-                else handover_moves(base_qty, base_date, f.now_qty, f.now_date)
+                handover_moves(base_qty, base_date, f.now_qty, f.now_date)
+                if f.pending and not in_full
+                else {}
             )
             out_lines.append(
                 {
@@ -500,7 +502,7 @@ class LineSplitService:
                     "acting": f.split_state == SPLIT_ACTING,
                     "split_state": f.split_state,
                     "delivered_qty": float(f.delivered_qty),
-                    "delivered_in_full": f.delivered_in_full(sitting_on),
+                    "delivered_in_full": in_full,
                     "splits": [
                         {
                             "id": str(s.id),

@@ -2532,9 +2532,8 @@ class ProjectOrderInquiryService:
         # confirmation states one - an entry that names none is not proposing a date
         # change, whatever the row's own date already reads.
         required_date = entry.get("required_date")
-        qty_or_date_moved = need != previous_qty or (
-            required_date is not None and required_date != previous_date
-        )
+        moves = handover_moves(previous_qty, previous_date, need, required_date)
+        qty_or_date_moved = bool(moves)
         # OI-PRODUCT-FOLLOW R1: the entry names the line's LIVE product (`_carried_lines`
         # patches the identity), so a product AutoCount swapped reaches the row here, at
         # Confirm, like the qty and date do. Links are left as they are (R2).
@@ -2604,7 +2603,7 @@ class ProjectOrderInquiryService:
             self._dispatch_changed_with_links(inquiry, row, had_link=linked > _ZERO)
             # AC-H3/AC-H4: only the field(s) that actually moved - a settle restating the
             # same date the confirmation never proposed changing must not read as one.
-            handover_was = handover_moves(previous_qty, previous_date, need, required_date)
+            handover_was = dict(moves)
             if product_moved:
                 handover_was["item_code"] = previous_item_code
             self._record_handover(
@@ -5306,9 +5305,8 @@ class ProjectOrderInquiryService:
         required_date = entry.get("required_date")
         previous_qty = _dec(row.qty)
         previous_date = row.delivery_date
-        qty_moved = qty != previous_qty
-        date_moved = required_date is not None and required_date != previous_date
-        if not (qty_moved or date_moved):
+        moves = handover_moves(previous_qty, previous_date, qty, required_date)
+        if not moves:
             # Nothing for purchasing to act on. The note follows the entry's own wording
             # (a provisional ref becomes the AutoCount number) without a word to them.
             note = entry.get("note")
@@ -5316,7 +5314,7 @@ class ProjectOrderInquiryService:
                 row.note = note
             return
         row.qty = qty
-        if date_moved:
+        if "delivery_date" in moves:
             row.delivery_date = required_date
         row.previous_qty = previous_qty
         row.previous_delivery_date = previous_date
@@ -5332,13 +5330,8 @@ class ProjectOrderInquiryService:
         if row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
             row.changed_at = datetime.utcnow()
             row.ack_state = ACK_CHANGED
-        handover_was: Dict[str, Any] = {}
-        if qty_moved:
-            handover_was["qty"] = previous_qty
-        if date_moved:
-            handover_was["delivery_date"] = previous_date
         self._record_handover(
-            row, kind="settled", was=handover_was, actor_user_id=actor_user_id,
+            row, kind="settled", was=dict(moves), actor_user_id=actor_user_id,
             borrow_hole=True,
         )
 

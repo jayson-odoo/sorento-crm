@@ -328,7 +328,7 @@ export function targetDateOf(line: SplitLine): string | null {
 }
 
 /**
- * A line's PLANNED date, the one a split dropped or picked onto it takes (UAC A7: one
+ * A line's PLANNED date, the one a split dropped onto it takes (UAC A7: one
  * AutoCount line carries one date): the date of its own split that stays on it (not a
  * cancel) when it is split; else the EARLIEST date among every other line's splits already
  * sitting on it (so the answer never depends on the order of `lines`); else its AutoCount
@@ -354,51 +354,6 @@ export function plannedDateOf(
     }
   }
   return earliest ?? targetDateOf(line);
-}
-
-/**
- * Sits on another line, a new line (`null`) or `'cancel'` (UAC A7). Another line does what a
- * drop does: the split takes that line's planned date and merges into a split of its own line
- * already there (qty added, remarks joined). Leaving Cancel takes the base date; its own line or a new
- * line keeps the date it has.
- */
-export function setSitsOn(
-  lines: SplitLine[],
-  lineId: string,
-  splitId: string,
-  on: string | null | 'cancel',
-): SplitLine[] {
-  const target =
-    on && on !== 'cancel' && on !== lineId
-      ? lines.find((candidate) => candidate.lineId === on)
-      : undefined;
-  const date = target ? plannedDateOf(lines, target.lineId) : null;
-  const origin = lines.find((candidate) => candidate.lineId === lineId);
-  const moving = origin
-    ? splitsOf(origin).find((candidate) => candidate.id === splitId)
-    : undefined;
-  if (target && date && moving && moving.qty > 0)
-    return moveSplit(lines, lineId, splitId, moving.qty, {
-      date,
-      sitsOnLineId: target.lineId,
-    });
-  return editLine(lines, lineId, (splits, line) => {
-    const split = splits.find((candidate) => candidate.id === splitId);
-    if (!split) return null;
-    if (on === 'cancel') {
-      split.isCancel = true;
-      split.deliveryDate = null;
-      split.sitsOnLineId = lineId;
-      return splits;
-    }
-    if (split.isCancel) {
-      split.isCancel = false;
-      split.deliveryDate = line.baseDate;
-    }
-    if (target) split.deliveryDate = date ?? split.deliveryDate;
-    split.sitsOnLineId = on;
-    return splits;
-  });
 }
 
 export function setRemark(

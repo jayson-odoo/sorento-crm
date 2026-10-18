@@ -609,7 +609,7 @@ export function LineSplitDialog({
         groupKeyOf(to) !== groupKeyOf(line)
       )
         return;
-      // The line's planned date: one AutoCount line carries one date (UAC A7, A9).
+      // The line's planned date: one AutoCount line carries one date (UAC A9).
       const date = plannedDateOf(current.lines, to.lineId);
       target = { date: date ?? '', sitsOnLineId: to.lineId };
     }
