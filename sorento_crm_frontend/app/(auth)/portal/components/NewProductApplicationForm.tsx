@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Download, Loader2, XCircle } from 'lucide-react';
 import { toast } from '@/lib/toast';
@@ -158,6 +159,7 @@ export default function NewProductApplicationForm({
   // The inquiry the saved record points at; "Copy from the inquiry" reads this one only.
   const [savedInquiry, setSavedInquiry] = useState('');
   const [loading, setLoading] = useState(Boolean(applicationId));
+  const [notFound, setNotFound] = useState(false);
   const [state, setState] = useState<FormState>({
     ...EMPTY_FORM,
     lines: [blankLine()],
@@ -189,11 +191,9 @@ export default function NewProductApplicationForm({
       .then((d) => {
         if (!cancelled) load(d);
       })
-      .catch((e) => {
-        if (!cancelled)
-          toast.error(
-            e instanceof Error ? e.message : 'Failed to load the application',
-          );
+      .catch(() => {
+        // Someone else's application and a removed one both answer 404: one state for both.
+        if (!cancelled) setNotFound(true);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -464,6 +464,25 @@ export default function NewProductApplicationForm({
       <div className="min-h-dvh max-w-7xl mx-auto px-4 py-6 space-y-4">
         <Skeleton className="h-8 w-40" />
         <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  if (notFound) {
+    return (
+      <div className="min-h-dvh max-w-7xl mx-auto px-4 py-6">
+        <div className="rounded-lg border border-dashed px-6 py-12 text-center">
+          <h2 className="text-base font-semibold">Application not found</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            It may have been removed, or it belongs to another account.
+          </p>
+          <Link
+            href={backPath}
+            className="mt-4 inline-block text-sm text-primary hover:underline"
+          >
+            Back
+          </Link>
+        </div>
       </div>
     );
   }
