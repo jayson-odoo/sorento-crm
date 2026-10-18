@@ -5891,8 +5891,10 @@ class ProjectOrderInquiryService:
                 (_dec(row.qty), row.delivery_date)
                 for row in self._split_line_rows(line_id, received=True)
             )
+            # A CANCEL BALANCE the line already tells counts too: its explicit cancel splits,
+            # or what an earlier re-plan dropped (AC-G17), which a re-Confirm keeps as it is.
             held_cancel = self._live_cancel_qty(line_id)
-            if Counter(rows) in (current, with_received) and held_cancel == cancels:
+            if Counter(rows) in (current, with_received) and held_cancel >= cancels:
                 standing.add(line_id)
                 if state == SPLIT_ACTING and f.pending:
                     # The link moves already left its rows as planned; the change is told.
