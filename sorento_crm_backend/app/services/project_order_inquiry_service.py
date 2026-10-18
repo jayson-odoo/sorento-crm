@@ -234,6 +234,21 @@ def whole_buy_line_ids(
     return out
 
 
+def split_plan_key(splits: Sequence[Any]) -> List[str]:
+    """A saved split plan as the decision snapshot records it (AC-G16): its base and each
+    split's qty, date, line it sits on and cancel, never its remark (a remark-only edit is the
+    same plan)."""
+    if not splits:
+        return []
+    first = splits[0]
+    base = f"{_qty_str(_dec(first.base_qty))}@{first.base_date.isoformat() if first.base_date else ''}"
+    return [base] + sorted(
+        f"{_qty_str(_dec(s.qty))}@{s.delivery_date.isoformat() if s.delivery_date else ''}"
+        f"@{s.sits_on_line_id or ''}@{'cancel' if s.is_cancel else ''}"
+        for s in splits
+    )
+
+
 def cancel_plan_row(qty: Decimal) -> Any:
     """The one row the email and the Excel print for what a re-plan dropped (AC-G17): its
     qty, no date, REMARK `remark_for_row`'s CANCEL BALANCE."""
@@ -1506,8 +1521,10 @@ class ProjectOrderInquiryService:
                 continue
             line = entry["line"]
             if str(line.id) in standing_splits:
-                # AC-G13: the Confirm that applied this line's plan already wrote its rows;
-                # a Confirm with nothing new for it leaves them as they are.
+                # AC-G13: the line's rows already are its plan; a Confirm with nothing new for
+                # it leaves them as they are, and its change raises no separate notice.
+                if str(line.id) in settle_in_place:
+                    settled_in_place.append(str(line.id))
                 continue
             if (kept_splits.get(str(line.id)) or {}).get("own_rows"):
                 # P2 (a): AutoCount moved on from a plan with kept New-line rows; those rows
@@ -2243,6 +2260,9 @@ class ProjectOrderInquiryService:
                 )
 
         self._keep_split_rows(inquiry, decision, kept_splits)
+        # AC-G16: this Confirm's decision records the plan each split line now stands on, the
+        # marker `_later_change_lines` reads on the next Confirm.
+        self._record_applied_plans(decision, set(kept_splits) | standing_splits)
         self._retire_uncovered_rows(
             inquiry,
             decision,
@@ -5987,6 +6007,23 @@ class ProjectOrderInquiryService:
         )
         if not ids:
             return set()
+        # Only the plan the order's last Confirm applied (recorded on its decision): a plan
+        # saved since, even one laid out like purchasing's rows, acts as usual.
+        from app.models.project_so import SOSupplyDecision
+
+        previous = (
+            self.db.query(SOSupplyDecision)
+            .filter(
+                SOSupplyDecision.project_sales_order_id == decision.project_sales_order_id,
+                SOSupplyDecision.revision_no < decision.revision_no,
+            )
+            .order_by(SOSupplyDecision.revision_no.desc())
+            .first()
+        )
+        applied = {
+            str(snapshot.get("project_line_id") or ""): snapshot.get("split_plan")
+            for snapshot in (previous.line_snapshots if previous is not None else None) or []
+        }
         facts = LineSplitService(self.db)._facts_for(ProjectSalesOrderLine.id.in_(ids))
         pending = [
             line_id
@@ -5996,6 +6033,8 @@ class ProjectOrderInquiryService:
         out: set = set()
         for line_id in sorted(whole_buy_line_ids(self.db, pending, decision)):
             f = facts[line_id]
+            if not applied.get(line_id) or applied[line_id] != split_plan_key(f.splits):
+                continue
             own = [
                 (_dec(s.qty), s.delivery_date)
                 for s in f.splits
@@ -6016,6 +6055,26 @@ class ProjectOrderInquiryService:
             if current == Counter(rows):
                 out.add(line_id)
         return out
+
+    def _record_applied_plans(self, decision: Any, line_ids: Iterable[str]) -> None:
+        """Stamp each of these split lines' plan (`split_plan_key`) on this Confirm's decision
+        snapshot: the explicit record of the plan this Confirm applied or found standing."""
+        from sqlalchemy.orm.attributes import flag_modified
+
+        from app.services.project_line_split_service import LineSplitService
+
+        wanted = {str(i) for i in line_ids if i}
+        if not wanted or not decision.line_snapshots:
+            return
+        splits = LineSplitService(self.db).splits_of_lines(wanted)
+        snapshots = []
+        for snapshot in decision.line_snapshots:
+            line_id = str(snapshot.get("project_line_id") or "")
+            if line_id in wanted and splits.get(line_id):
+                snapshot = {**snapshot, "split_plan": split_plan_key(splits[line_id])}
+            snapshots.append(snapshot)
+        decision.line_snapshots = snapshots
+        flag_modified(decision, "line_snapshots")
 
     def _split_line_rows(self, line_id: str, *, received: bool = False) -> List[OrderInquiryRow]:
         """A split line's live ORDER rows that hold purchasing's plan: not cancelled, not
