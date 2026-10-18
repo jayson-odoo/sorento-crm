@@ -259,3 +259,12 @@ SO417636 CSK14B BRW-BB, with the owner's plan:
   - "Confirmed <date>" uses the Malaysia date.
   - For an unsplit line, the sheet's pre-filled REMARK equals the email's, including CANCEL ALL and NEW ITEM
     CODE.
+- AC-G14 **A New-line split counts as part of its own line's plan** (reviewer, 19 Oct). It is never AutoCount
+  extra again. A line of 14 planned as 10 own + 4 on New line asks 14, not 18, and shows no "ORDER 4".
+- AC-G15 **Editing an applied plan acts again** (crew ruling P1 (a), 19 Oct). After Confirm, a changed split
+  qty or date makes the plan act on the next Confirm. That Confirm moves purchasing's rows (links kept) and
+  emails the change, so worklist, email and Excel agree; this is the owner's mistyped-date fix. A remark-only
+  edit changes nothing on Confirm.
+- AC-G16 **A later AutoCount change on a line with kept New-line rows** (crew ruling P2 (a), 19 Oct). The
+  line's own row follows AutoCount (14 -> 20). The kept New-line rows stand until staff change or remove
+  them. No CANCEL from splits, ever.
