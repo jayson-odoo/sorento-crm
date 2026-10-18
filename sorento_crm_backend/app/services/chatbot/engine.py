@@ -4616,6 +4616,14 @@ def _run_stages_body(  # noqa: PLR0915
             # because this is the seam that skipped it.
             parser.assert_emission(parser_raw)
         verdict: dict[str, Any] = dict(parser_raw)
+        # `listed` and `certificate_uuids` are the ENGINE's own entity keys (grounding and the
+        # scheme index set them). One the parser emitted (the Anthropic path does not enforce
+        # additionalProperties) is dropped before any reader.
+        if isinstance(verdict.get("entities"), list):
+            verdict["entities"] = [
+                {k: v for k, v in e.items() if k not in ("listed", "certificate_uuids")} if isinstance(e, dict) else e
+                for e in verdict["entities"]
+            ]
         # CHATBOT-EMPTY-ROUTE-PICK: a declared answer to a question that was never
         # asked (no `Open question:` line went to the parser) is dropped before any
         # reader, and the `understood` record below shows the drop as `derived`.
