@@ -502,3 +502,230 @@ describe('images on a saved draft', () => {
     for (const c of mock.attachments.mock.calls) expect(c[0]).toBe('si-1');
   });
 });
+
+const IMG = (name: string, link: string) => ({
+  link_id: link,
+  attachment_id: `at-${link}`,
+  filename: name,
+  url: `/files/${link}`,
+  content_type: 'image/png',
+});
+const NOT_IMAGE = 'Upload a JPEG, PNG or WebP image.';
+const pdf = () => new File(['x'], 'notes.pdf', { type: 'application/pdf' });
+
+describe('copy from the inquiry on a NEW form', () => {
+  const offer = [{ attachment_id: 'at-9', filename: 'inquiry-sketch.png' }];
+
+  async function stageCopy() {
+    mock.prefill = PREFILL;
+    mock.attachments.mockResolvedValue(offer);
+    renderForm({ stockInquiryId: 'si-1' });
+    fireEvent.click(
+      await screen.findByRole('button', { name: /copy from the inquiry/i }),
+    );
+    expect(mock.attachments).toHaveBeenCalledWith('si-1');
+    fireEvent.click(await screen.findByText('inquiry-sketch.png'));
+  }
+
+  it('lists the preset inquiry images; a pick is staged (name shown, nothing called) and copied after the first save', async () => {
+    await stageCopy();
+    expect(screen.getAllByText('inquiry-sketch.png').length).toBeGreaterThan(0);
+    expect(mock.copy).not.toHaveBeenCalled();
+    mock.createAsync.mockResolvedValue({
+      id: 'npa-1',
+      lines: [{ id: 'l-new', line_no: 1, images: [] }],
+    });
+    mock.copy.mockResolvedValue({ id: 'npa-1', lines: [] });
+    saveDraft();
+    await waitFor(() => expect(mock.copy).toHaveBeenCalledTimes(1));
+    expect(mock.copy).toHaveBeenCalledWith({
+      id: 'npa-1',
+      lineId: 'l-new',
+      attachmentId: 'at-9',
+    });
+  });
+
+  it('drops staged copies when the inquiry is cleared before the first save', async () => {
+    await stageCopy();
+    fireEvent.click(screen.getByRole('button', { name: /clear selection/i }));
+    expect(screen.queryByText('inquiry-sketch.png')).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: /copy from the inquiry/i }),
+    ).toBeNull();
+    mock.createAsync.mockResolvedValue({
+      id: 'npa-1',
+      lines: [{ id: 'l-new', line_no: 1, images: [] }],
+    });
+    saveDraft();
+    await waitFor(() => expect(mock.createAsync).toHaveBeenCalledTimes(1));
+    expect(mock.copy).not.toHaveBeenCalled();
+  });
+
+  it('drops staged copies when the inquiry is changed before the first save', async () => {
+    await stageCopy();
+    mock.inquiryOptions.mockResolvedValue([
+      { value: 'si-2', label: 'SI26-0999 - XY-9' },
+    ]);
+    const picker = screen.getByRole('combobox', { name: /stock inquiry/i });
+    fireEvent.click(picker);
+    fireEvent.change(picker, { target: { value: 'SI26' } });
+    const option = await screen.findByText('SI26-0999 - XY-9');
+    fireEvent.mouseDown(option);
+    fireEvent.click(option);
+    expect(await screen.findByText(/SI26-0999/)).toBeInTheDocument();
+    expect(screen.queryByText('inquiry-sketch.png')).toBeNull();
+    mock.createAsync.mockResolvedValue({
+      id: 'npa-1',
+      lines: [{ id: 'l-new', line_no: 1, images: [] }],
+    });
+    saveDraft();
+    await waitFor(() => expect(mock.createAsync).toHaveBeenCalledTimes(1));
+    expect(mock.copy).not.toHaveBeenCalled();
+    for (const c of mock.attachments.mock.calls) expect(c[0]).toBe('si-1');
+  });
+});
+
+describe('a file that is not an image', () => {
+  it('is refused at once on an unsaved product: toast, nothing shown, no upload later', async () => {
+    mock.createAsync.mockResolvedValue({
+      id: 'npa-1',
+      lines: [{ id: 'l-new', line_no: 1, images: [] }],
+    });
+    renderForm();
+    fireEvent.change(await screen.findByLabelText('Add image'), {
+      target: { files: [pdf()] },
+    });
+    expect(toast.error).toHaveBeenCalledWith(NOT_IMAGE);
+    expect(screen.queryByText('notes.pdf')).toBeNull();
+    saveDraft();
+    await waitFor(() => expect(mock.createAsync).toHaveBeenCalledTimes(1));
+    expect(mock.upload).not.toHaveBeenCalled();
+  });
+
+  it('is refused on a saved product too: toast, no upload call', async () => {
+    mock.existing = {
+      id: 'npa-1',
+      status: 'draft',
+      status_label: 'Draft',
+      source: 'staff',
+      application_no: 'NPA-000001',
+      created_at: '2026-10-17T01:00:00',
+      stock_inquiry_id: null,
+      lead_time: null,
+      lines: [{ id: 'l-1', line_no: 1, images: [] }],
+    };
+    renderForm({ applicationId: 'npa-1' });
+    fireEvent.change(await screen.findByLabelText('Add image'), {
+      target: { files: [pdf()] },
+    });
+    expect(toast.error).toHaveBeenCalledWith(NOT_IMAGE);
+    expect(mock.upload).not.toHaveBeenCalled();
+    expect(screen.queryByText('notes.pdf')).toBeNull();
+  });
+});
+
+describe('products and images after a save (B1c)', () => {
+  it('a live upload before and after a save targets each product own id and no save sends a duplicated id', async () => {
+    mock.existing = {
+      id: 'npa-1',
+      status: 'draft',
+      status_label: 'Draft',
+      source: 'staff',
+      application_no: 'NPA-000001',
+      created_at: '2026-10-17T01:00:00',
+      stock_inquiry_id: null,
+      lead_time: null,
+      lines: [
+        { id: 'l-1', line_no: 1, description: 'First', images: [] },
+        { id: 'l-2', line_no: 2, description: 'Second', images: [] },
+      ],
+    };
+    // before the save the server still holds l-1 and l-2 (it has not seen the removal)
+    const before = {
+      id: 'npa-1',
+      lines: [
+        { id: 'l-1', line_no: 1, description: 'First', images: [] },
+        { id: 'l-2', line_no: 2, description: 'Second', images: [IMG('one.png', 'k-1')] },
+      ],
+    };
+    const after = {
+      id: 'npa-1',
+      lines: [
+        { id: 'l-2', line_no: 1, description: 'Second', images: [IMG('one.png', 'k-1')] },
+        { id: 'l-new', line_no: 2, images: [] },
+      ],
+    };
+    mock.updateAsync.mockResolvedValue(after);
+    mock.upload.mockResolvedValueOnce(before).mockResolvedValue(after);
+    renderForm({ applicationId: 'npa-1' });
+
+    fireEvent.click(
+      (await screen.findAllByRole('button', { name: /^remove$/i }))[0],
+    );
+    fireEvent.click(screen.getByRole('button', { name: /add product/i }));
+
+    const f1 = new File(['x'], 'one.png', { type: 'image/png' });
+    const f2 = new File(['x'], 'two.png', { type: 'image/png' });
+    fireEvent.change(screen.getAllByLabelText('Add image')[0], {
+      target: { files: [f1] },
+    });
+    await waitFor(() => expect(mock.upload).toHaveBeenCalledTimes(1));
+    expect(mock.upload.mock.calls[0][0]).toEqual({
+      id: 'npa-1',
+      lineId: 'l-2',
+      file: f1,
+    });
+
+    saveDraft();
+    await waitFor(() => expect(mock.updateAsync).toHaveBeenCalledTimes(1));
+    const first = (
+      mock.updateAsync.mock.calls[0][0].data.lines as { id?: string }[]
+    ).map((l) => l.id ?? null);
+    expect(first).toEqual(['l-2', null]);
+
+    fireEvent.change(screen.getAllByLabelText('Add image')[1], {
+      target: { files: [f2] },
+    });
+    await waitFor(() => expect(mock.upload).toHaveBeenCalledTimes(2));
+    expect(mock.upload.mock.calls[1][0]).toEqual({
+      id: 'npa-1',
+      lineId: 'l-new',
+      file: f2,
+    });
+
+    saveDraft();
+    await waitFor(() => expect(mock.updateAsync).toHaveBeenCalledTimes(2));
+    const second = (
+      mock.updateAsync.mock.calls[1][0].data.lines as { id?: string }[]
+    ).map((l) => l.id);
+    expect(second).toEqual(['l-2', 'l-new']);
+  });
+});
+
+describe('a refused Submit on a new draft', () => {
+  it('keeps the image just uploaded on the IMAGE row', async () => {
+    mock.createAsync.mockResolvedValue({
+      id: 'npa-1',
+      lines: [{ id: 'l-new', line_no: 1, images: [] }],
+    });
+    mock.upload.mockResolvedValue({
+      id: 'npa-1',
+      lines: [{ id: 'l-new', line_no: 1, images: [IMG('sample-front.png', 'k-1')] }],
+    });
+    mock.submitAsync.mockRejectedValue(
+      new Error('Product 1: enter the product type.'),
+    );
+    renderForm();
+    fireEvent.change(await screen.findByLabelText('Add image'), {
+      target: {
+        files: [new File(['x'], 'sample-front.png', { type: 'image/png' })],
+      },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
+    await waitFor(() => expect(mock.submitAsync).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('sample-front.png')).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: 'sample-front.png' }),
+    ).toBeInTheDocument();
+  });
+});

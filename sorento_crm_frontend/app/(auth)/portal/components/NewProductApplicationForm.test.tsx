@@ -6,6 +6,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { toast } from '@/lib/toast';
 import type {
   NewProductApplicationDetail,
   NewProductApplicationLine,
@@ -42,6 +43,8 @@ vi.mock('../lib/new-product-application-service', () => ({
   lookupNewProductApplicationCustomers: vi.fn(async () => []),
   uploadNewProductApplicationLineImage: vi.fn(),
   deleteNewProductApplicationLineImage: vi.fn(),
+  copyNewProductApplicationLineImage: vi.fn(),
+  listInquiryImagesForNewProductApplication: vi.fn(),
   downloadNewProductApplicationExcel: vi.fn(),
   createNewProductApplication: vi.fn(),
   updateNewProductApplication: vi.fn(),
@@ -60,6 +63,8 @@ import {
   submitNewProductApplication,
   uploadNewProductApplicationLineImage,
   deleteNewProductApplicationLineImage,
+  copyNewProductApplicationLineImage,
+  listInquiryImagesForNewProductApplication,
   updateNewProductApplication,
   downloadNewProductApplicationExcel,
 } from '../lib/new-product-application-service';
@@ -501,5 +506,198 @@ describe('image merge after a save (B1, portal)', () => {
         file,
       ),
     );
+  });
+});
+
+describe('portal: copy from the inquiry on a new form, non-image files, B1c', () => {
+  const NOT_IMAGE = 'Upload a JPEG, PNG or WebP image.';
+  const pdf = () => new File(['x'], 'notes.pdf', { type: 'application/pdf' });
+
+  it('stages a copy from the started-from inquiry and applies it after the first save', async () => {
+    asMock(getNewProductApplicationPrefill).mockResolvedValue({
+      stock_inquiry_id: 'si-1',
+      stock_inquiry_number: 'SI26-0412',
+      customer_id: null,
+      customer_name: 'EXAMPLE DEVELOPER SDN BHD',
+      project_name: null,
+      needed_by: null,
+      remark: null,
+      lines: [{ proposed_code: 'XY-1', description: 'Example sinks' }],
+    });
+    asMock(listInquiryImagesForNewProductApplication).mockResolvedValue([
+      { attachment_id: 'at-9', filename: 'inquiry-sketch.png' },
+    ]);
+    asMock(copyNewProductApplicationLineImage).mockResolvedValue(detail());
+    render(<NewProductApplicationForm slug="acme" />);
+    const picker = await screen.findByRole('combobox', {
+      name: /start from my stock inquiry/i,
+    });
+    fireEvent.focus(picker);
+    const hit = await screen.findByText('SI26-0412 - XY-1234-MB & XY-1234-BG');
+    fireEvent.mouseDown(hit);
+    fireEvent.click(hit);
+    await waitFor(() =>
+      expect(
+        (screen.getByLabelText('Product code') as HTMLInputElement).value,
+      ).toBe('XY-1'),
+    );
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /copy from the inquiry/i }),
+    );
+    expect(listInquiryImagesForNewProductApplication).toHaveBeenCalledWith(
+      'si-1',
+    );
+    fireEvent.click(await screen.findByText('inquiry-sketch.png'));
+    expect(screen.getAllByText('inquiry-sketch.png').length).toBeGreaterThan(0);
+    expect(copyNewProductApplicationLineImage).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /save as draft/i }));
+    await waitFor(() =>
+      expect(copyNewProductApplicationLineImage).toHaveBeenCalledWith(
+        'a-1',
+        'l-1',
+        'at-9',
+      ),
+    );
+  });
+
+  it('refuses a non-image file at once on an unsaved product', async () => {
+    render(<NewProductApplicationForm slug="acme" />);
+    fireEvent.change(await screen.findByLabelText('Add image'), {
+      target: { files: [pdf()] },
+    });
+    expect(toast.error).toHaveBeenCalledWith(NOT_IMAGE);
+    expect(screen.queryByText('notes.pdf')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /save as draft/i }));
+    await waitFor(() =>
+      expect(createNewProductApplication).toHaveBeenCalledTimes(1),
+    );
+    expect(uploadNewProductApplicationLineImage).not.toHaveBeenCalled();
+  });
+
+  it('refuses a non-image file on a saved product: toast, no upload call', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(detail());
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    fireEvent.change(await screen.findByLabelText('Add image'), {
+      target: { files: [pdf()] },
+    });
+    expect(toast.error).toHaveBeenCalledWith(NOT_IMAGE);
+    expect(uploadNewProductApplicationLineImage).not.toHaveBeenCalled();
+  });
+
+  it('B1c: a live upload before and after a save targets each product own id; no save sends a duplicated id', async () => {
+    const img = {
+      link_id: 'k-1',
+      attachment_id: 'at-1',
+      filename: 'one.png',
+      url: '/files/1',
+      content_type: 'image/png',
+    };
+    asMock(getNewProductApplication).mockResolvedValue(
+      detail({
+        lines: [
+          line({ id: 'l-1', line_no: 1, description: 'First' }),
+          line({ id: 'l-2', line_no: 2, description: 'Second' }),
+        ],
+      }),
+    );
+    const before = detail({
+      lines: [
+        line({ id: 'l-1', line_no: 1, description: 'First' }),
+        line({ id: 'l-2', line_no: 2, description: 'Second', images: [img] } as never),
+      ],
+    });
+    const after = detail({
+      lines: [
+        line({ id: 'l-2', line_no: 1, description: 'Second', images: [img] } as never),
+        line({ id: 'l-new', line_no: 2, description: null }),
+      ],
+    });
+    asMock(updateNewProductApplication).mockResolvedValue(after);
+    asMock(uploadNewProductApplicationLineImage)
+      .mockResolvedValueOnce(before)
+      .mockResolvedValue(after);
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+
+    fireEvent.click(
+      (await screen.findAllByRole('button', { name: /^remove$/i }))[0],
+    );
+    fireEvent.click(screen.getByRole('button', { name: /add product/i }));
+    const f1 = new File(['x'], 'one.png', { type: 'image/png' });
+    const f2 = new File(['x'], 'two.png', { type: 'image/png' });
+    fireEvent.change(screen.getAllByLabelText('Add image')[0], {
+      target: { files: [f1] },
+    });
+    await waitFor(() =>
+      expect(uploadNewProductApplicationLineImage).toHaveBeenCalledTimes(1),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /save as draft/i }));
+    await waitFor(() => expect(updateNewProductApplication).toHaveBeenCalled());
+    const first = (
+      asMock(updateNewProductApplication).mock.calls[0][1].lines as {
+        id?: string;
+      }[]
+    ).map((l) => l.id ?? null);
+    expect(first).toEqual(['l-2', null]);
+
+    fireEvent.change(screen.getAllByLabelText('Add image')[1], {
+      target: { files: [f2] },
+    });
+    await waitFor(() =>
+      expect(uploadNewProductApplicationLineImage).toHaveBeenCalledTimes(2),
+    );
+    const up = asMock(uploadNewProductApplicationLineImage).mock.calls;
+    expect(up[0]).toEqual(['a-1', 'l-2', f1]);
+    expect(up[1]).toEqual(['a-1', 'l-new', f2]);
+
+    fireEvent.click(screen.getByRole('button', { name: /save as draft/i }));
+    await waitFor(() =>
+      expect(updateNewProductApplication).toHaveBeenCalledTimes(2),
+    );
+    const second = (
+      asMock(updateNewProductApplication).mock.calls[1][1].lines as {
+        id?: string;
+      }[]
+    ).map((l) => l.id);
+    expect(second).toEqual(['l-2', 'l-new']);
+  });
+
+  it('keeps the image just uploaded on the IMAGE row after a refused Submit', async () => {
+    asMock(createNewProductApplication).mockResolvedValue(
+      detail({ lines: [line({ id: 'l-1', images: [] } as never)] }),
+    );
+    asMock(uploadNewProductApplicationLineImage).mockResolvedValue(
+      detail({
+        lines: [
+          line({
+            images: [
+              {
+                link_id: 'k-1',
+                attachment_id: 'at-1',
+                filename: 'sample-front.png',
+                url: '/files/1',
+                content_type: 'image/png',
+              },
+            ],
+          } as never),
+        ],
+      }),
+    );
+    asMock(submitNewProductApplication).mockRejectedValue(
+      new Error('Product 1: enter the product type.'),
+    );
+    render(<NewProductApplicationForm slug="acme" />);
+    fireEvent.change(await screen.findByLabelText('Add image'), {
+      target: {
+        files: [new File(['x'], 'sample-front.png', { type: 'image/png' })],
+      },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
+    await waitFor(() => expect(submitNewProductApplication).toHaveBeenCalled());
+    expect(
+      await screen.findByRole('link', { name: 'sample-front.png' }),
+    ).toBeInTheDocument();
   });
 });
