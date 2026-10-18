@@ -190,6 +190,33 @@ prompt hash, v168 and model on both lane runs, no r3 code on their path. One run
   fresh question, EVAL-BENCH r35). Real switch -1 = es-e1f8fae46c (#1755 near-code candidate, routed).
   Crew-note on #1772 (comment 6249197686); rows scratchpad evalrun4.
 
+## Round 4 (crew 19 Oct, owner agreed): refine the last answer, on REAL conversations
+
+Context: crew's combined held-out run, follow-ups 84.0 vs bar 90, refine the hole (~30%); the x3 TRAIN set showed
+synthetic refine +12.7 but real flat. Steps: $0 root cause on real refine failures (main + this branch), behaviour
+notes only if a rule is the owner's, red-first fixes, reviewer, paired TRAIN real x1 with the owner's early-stop rule
+(checkpoints, stop on regression). Budget: per-PR gate, cap $3 for the round. Synthetic = regression check only.
+- Data gap (19 Oct): train2's real split has no refine items (pick 16 / switch 24 / and_x 18; eval-sets README:41-42,
+  "0 refine turns were free"). The only real refine on TRAIN: cp0/train_followups, 5 items (cp0-b5eb30e1b9,
+  cp0-fcd44fe521, cp0-253d58ba8b, cp0-665ba3e897, cp0-75e516bd40). Asked crew: (a) EVAL-SETS mines more real refine
+  turns, (b) measure on the 5 now + fresh real-shaped paraphrase tests, (c) EVAL-BENCH relabel. Crew 19 Oct:
+  (a)+(b): (b) now (~$0.10); EVAL-BENCH mines >= 8 new REAL refine follow-ups for TRAIN (never held-out) as a set
+  file, then the paired x1 with checkpoints runs on it.
+- (b) result (5 real cp0 refine, x1, scoped harness, $0.114): lane d3ea0dd9ce 2/5 vs main 0f5c6537e 1/5; lane gains
+  cp0-b5eb30e1b9 (R3-A carried quantity); both fail cp0-665ba3e897, cp0-253d58ba8b, cp0-fcd44fe521.
+- Root cause (scratchpad evalrun5/rootcause-r4.md; counts checked by SQL): no parse failure; R3-A carried the quantity
+  (`_carried_quantity` shared 10 / 5). The held-family narrowing never fires on real data: held_family.py reads a
+  family only from `products.variant_of_id` (2 of 15,439 products), while real families sit in `family_code` (13,983;
+  SRTWC286-SH's siblings include -P and -NEW-P). So `carry_onto_family` never runs, the fetch has no
+  requested_quantities, and the reply asks "How many units for each?" over the catalogue's P-traps. R3-A's and
+  #1755's family tests seed `variant_of_id` links the data does not have, which is why they were green.
+  C1 none-match (253d58ba8b, fcd44fe521) exists on #1755 head 0665fa0db6; C2 family by `family_code` (665ba3e897) is
+  not built; C1 without C2 gives 665 a false "none on record". Crew 19 Oct (a): CHAT-CLOSED-LISTS-L builds C2
+  (family_code) in held_family.py on #1755 (one owner per file). This lane: engine-seam red tests on the 3 real
+  items in the family_code shape, kept local until #1755 lands; then merge #1755's head into #1772, rewrite the R3-A
+  family fixtures to the real shape, paired real x1 with checkpoints (+ EVAL-BENCH's new real refine set).
+  Lesson: seed the shape real data has (here family_code), never a link the data lacks.
+
 ### R4 (crew via CHAT-CODE-LOOKUP, 18 Oct): no slice
 On main + v63 the parser never sees `Current subject:` (vocabulary line over the 350 L2 cap, context.py:29; only the
 subject shrinks, context.py:437-443; train2 s_main1 108/108, cp0 r2main 86/86). With the state section on, `_render_l2`
