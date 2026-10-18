@@ -26,6 +26,10 @@ make sure the sort handler is at the leftmost, go"), Q1 drag yes, Q2-Q4 (a), Q5 
   other lines' splits sit on shows "+N from line M" for each.
   A line whose saved splits no longer act (`split_state` stale) shows an "AutoCount changed" pill
   under its delivery date; an applied line shows none (as built).
+  A line AutoCount has DELIVERED IN FULL (nothing open, no splits, nothing sitting on it) is still
+  listed, read-only, so the sheet shows every line like the staff Excel: QTY = its ordered qty,
+  DELIVERY DATE, CHANGE QUANTITY "Delivered <qty>", no grip, not a drop target, not in the
+  AUTOCOUNT LINE options (SO417636 line 32: 301 @ 20/09/2026).
 - AC-A4 A line that is not split ("REMAIN" in this document) shows its own QTY and DELIVERY DATE as
   plain values in CHANGE QUANTITY and CHANGE DATE (DD/MM/YYYY; the base values, also inside Confirm),
   never the word REMAIN (owner hand test, 17 Oct evening: "don't put remain, just put the value"); its
@@ -86,6 +90,12 @@ make sure the sort handler is at the leftmost, go"), Q1 drag yes, Q2-Q4 (a), Q5 
 - AC-B2 Base qty and date of a line = the qty and date before its pending AutoCount change when one
   is pending, else its current qty and date; a partly delivered line splits only its open qty. A
   saved split keeps the base it was made against.
+  When the pending change has no "before" because AutoCount ADDED the line inside the same
+  still-unapplied change and edited it later (owner hand test 18 Oct, SO417636: added 417 @
+  20/10/2026, then edited to 14 @ 20/09/2026), the base is the line AS IT WAS ADDED: the `to` of
+  its own `added` row in that change, matched by the exact AutoCount line (never by qty, date or
+  name), less what is delivered. Only a line whose newest pending row IS its `added` row reads
+  "Added in AutoCount" (base 0). The sheet, the acting / stale state and Confirm read this one base.
 - AC-B3 Save writes every split of the SO in one call; the server refuses (422, message names the
   line) when a line does not add up, a split sits on a line of another SO, item or location, a qty
   is not a positive number, or a non-cancel split has no date. Nothing is saved on a refusal.
