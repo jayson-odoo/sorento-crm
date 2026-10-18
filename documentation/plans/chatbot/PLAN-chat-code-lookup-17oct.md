@@ -1,6 +1,6 @@
 # PLAN: CHAT-CODE-LOOKUP (chatbot code lookups toward the owner's 97% bar)
 
-Status: Round 2 in progress (Build): R2-1, R2-2, R2-4, R2-5 committed; R2-6 prompt-only near-code rule and three round-2 review fixes in red-first; round 1 was crew-done at 36b75db496. Stacked on #1755, retarget after it merges. Track: L, LEAD pattern, local lane. Branch
+Status: Round 2 crew-done 18 Oct at b79ce5f1e6 (reviewer READY, L1 0 vs #1755 fa9fd99ae4; R2-1, R2-2, R2-4, R2-5, R2-7 built; R2-6 reverted; train2 lane arm waits for #1775). Stacked on #1755, retarget after it merges. Track: L, LEAD pattern, local lane. Branch
 `crew/chat-code-lookup`, base origin/main 20c191d861.
 
 Owner approval: 17 Oct ~14:10 ("Ok" to a code-lookup lane, in parallel with steps 1-2).
