@@ -241,3 +241,21 @@ SO417636 CSK14B BRW-BB, with the owner's plan:
 - AC-G11 Email continuation rows (a line's 2nd+ split row) blank LOCATION and ITEM CODE as well as QTY and
   DELIVERY (mock section 5). The sheet shows no "+N from line M" text (no labels; variant B already places
   moved rows under the line they landed on).
+- AC-G12 **Declined move onto a target that grew** (crew ruling (a), 18 Oct). Sometimes the engine cannot move
+  a dropped split's links: the target row is placed with no link, or the target's document was received in
+  full. Then:
+  - the origin keeps its rows and links;
+  - the target's need excludes the declined incoming qty, so the target raises no ORDER for it.
+  Nothing is bought twice, nothing is cancelled, and the live OI total equals AutoCount (reviewer probe:
+  133, not 182).
+- AC-G13 **Review round on 89aad589bf** (reviewer NOT READY):
+  - A second Confirm with no changes changes nothing: live OI qty is unchanged and no plan email goes out
+    again.
+  - A split saved after Confirm is checked against the line's current base.
+  - Kept splits keep purchasing's links: each kept row is linked for its own qty.
+  - The Excel TOTAL QTY is the rows' live qty. The 10-column reorder-run worksheet prints each row's real
+    qty.
+  - A line partly from stock nets as before, and the worklist, email and Excel agree for it.
+  - "Confirmed <date>" uses the Malaysia date.
+  - For an unsplit line, the sheet's pre-filled REMARK equals the email's, including CANCEL ALL and NEW ITEM
+    CODE.
