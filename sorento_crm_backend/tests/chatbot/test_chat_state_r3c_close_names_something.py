@@ -119,7 +119,7 @@ def test_r3c_guard_a_lone_close_that_names_nothing_still_cancels(seam, message):
 
 def _task_codes(seam: Seam) -> set[str]:
     return {
-        s.get("code") or s.get("raw")
+        s.get("label")
         for t in (seam.state["focus"].get("tasks") or []) if t.get("status") == "open"
         for s in (t.get("slots") or [])
     }
@@ -199,3 +199,74 @@ def test_r3c_s2_guard_a_restated_held_product_with_a_lone_close_still_cancels(se
     assert STOCK not in [n for n, _ in seam.turn_calls[-1]], seam.turn_calls[-1]
     assert seam.state["open_question"] is None
     assert all(t.get("status") != "open" for t in (seam.state["focus"].get("tasks") or [])), seam.state["focus"].get("tasks")
+
+
+# --------------------------------------------------------------------------- #
+# Re-review: S1 on a non-product entity, one owed line answered, a pick beside a code
+# --------------------------------------------------------------------------- #
+
+S1_SPEC = [
+    ("putih", _spec("putih", "colour", "white")),
+    ("grey", _spec("grey", "colour", "grey")),
+    ("stainless", _spec("stainless steel", "material", "stainless_steel")),
+]
+
+
+@pytest.mark.parametrize("spec", [c[1] for c in S1_SPEC], ids=[c[0] for c in S1_SPEC])
+def test_r3c_s1_a_null_current_message_spec_with_a_lone_close_is_not_a_cancel(seam, spec):
+    held = ["SRT1", "SRT391-GM"]
+    prev = _owed(seam, held)
+    seam.say("ada yang putih?", _close_only(spec | {"current_message": None}), previous=prev)
+    assert "refused_empty_subject" not in seam.rules_fired, seam.rules_fired
+    assert "task_close_clears_products" not in seam.rules_fired, seam.rules_fired
+    fetched = _fetched(seam.turn_calls[-1])
+    assert fetched and fetched <= {seam.uuid_of[c] for c in held}, (seam.turn_calls[-1], seam.rules_fired)
+
+
+def test_r3c_guard_answering_one_owed_line_by_its_code_keeps_the_task_for_the_other(seam):
+    held = ["SRT1", "SRT391-GM"]
+    prev = _owed(seam, held)
+    seam.say("SRT391-GM 3", _emit(domain_hint="inventory", intent_hint="check_stock",
+                                  entities=[_named("SRT391-GM") | {"quantity": 3}],
+                                  state_changes=[_op("answer")], demand_qty=3,
+                                  open_question_answer={"mode": "items", "picked": [], "qty_for_all": None,
+                                                        "items": [{"position": 2, "qty": 3}]}),
+             previous=prev)
+    assert "SRT1" in _task_codes(seam), (_task_codes(seam), seam.rules_fired)
+
+
+@pytest.mark.parametrize("message,spec,held", [c[1:] for c in NAMED_SPEC], ids=[c[0] for c in NAMED_SPEC])
+def test_r3c_guard_a_named_spec_keeps_the_open_task(seam, message, spec, held):
+    prev = _owed(seam, held)
+    seam.say(message, _close_only(spec | {"current_message": True}), previous=prev)
+    assert _task_codes(seam) & set(held), (_task_codes(seam), seam.rules_fired)
+
+
+def _list_and_task(seam: Seam) -> dict:
+    """SRT1 held with an open task holding its quantity (10); SRT1 is position 1 of the last list."""
+    _seed_more(seam, [c for c in ["SRT1", "SRT391-GM"] if c not in seam.uuid_of])
+    key = seam.uuid_of["SRT1"]
+    row = {"raw": "SRT1", "canonical_code": "SRT1", "hint": "product", "uuid": key, "current_message": False,
+           "quantity": 10}
+    task = task_mod.Task(kind="stock_qty", domain="inventory", status=task_mod.OPEN,
+                         slots=(task_mod.Slot(key, "SRT1", 10),))
+    last = [{"position": 1, "label": "SRT1", "code": "SRT1", "entity_type": "product", "uuid": key, "uuids": [key]}]
+    return {"focus": focus_to_wire(Focus(products=[row], domains=["inventory"], tasks=(task,), last_list=last)),
+            "open_question": None}
+
+
+PICK_BESIDE_CODE = [("en", "1 and SRT93-BL", "SRT93-BL"), ("bm", "yang 1 dan SRT93-BL", "SRT93-BL"),
+                    ("zh", "第1个和SRTWB1409", "SRTWB1409")]
+
+
+@pytest.mark.parametrize("message,code", [c[1:] for c in PICK_BESIDE_CODE], ids=[c[0] for c in PICK_BESIDE_CODE])
+def test_r3c_a_list_pick_beside_a_typed_code_keeps_the_picked_products_task(seam, message, code):
+    prev = _list_and_task(seam)
+    _seed_more(seam, [code] if code not in seam.uuid_of else [])
+    seam.say(message, _emit(domain_hint="inventory", intent_hint="check_stock", entities=[_named(code)],
+                            reference_positions=[1],
+                            state_changes=[_op("pick", position=1), _op("set", "product")]),
+             previous=prev)
+    held = _held_codes(seam)
+    assert set(held) == {code, "SRT1"}, held
+    assert "SRT1" in _task_codes(seam), (_task_codes(seam), seam.rules_fired)
