@@ -292,9 +292,60 @@ const RemainButton = ({
   </button>
 );
 
+/** A split of another line that sits on this one: drawn in this line's block (AC-G2). */
+interface IncomingRow {
+  origin: SplitLine;
+  split: SplitDraft;
+  /** Its place among its own line's splits (the labels name it by its own line). */
+  n: number;
+}
+
+/**
+ * REMARK cell: the typed remark, or the server's generated one shown muted over the empty
+ * input (AC-G5). Typing replaces it; clearing brings it back.
+ */
+function RemarkCell({
+  value,
+  generated,
+  label,
+  onValue,
+  onBlur,
+}: {
+  value: string;
+  generated: string;
+  label: string;
+  onValue: (remark: string) => void;
+  onBlur: () => void;
+}) {
+  const showGenerated = !value && Boolean(generated);
+  return (
+    <div className="relative">
+      <Input
+        variant="sm"
+        data-nav-col="remark"
+        aria-label={label}
+        value={value}
+        title={value || generated || undefined}
+        onChange={(event) => onValue(event.target.value)}
+        onBlur={onBlur}
+      />
+      {showGenerated ? (
+        <span
+          data-remark-generated="true"
+          aria-hidden
+          className="pointer-events-none absolute inset-y-0 start-2 end-2 flex items-center truncate text-xs text-muted-foreground"
+        >
+          {generated}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 interface LineBlockProps {
   line: SplitLine;
   incoming: string;
+  incomingRows: IncomingRow[];
   soNumber: string;
   soDate: string;
   /** More than one location on the SO: the phone shows it under the item code. */
@@ -312,6 +363,7 @@ interface LineBlockProps {
 const LineBlock = React.memo(function LineBlock({
   line,
   incoming,
+  incomingRows,
   soNumber,
   soDate,
   multiLocation,
@@ -330,9 +382,22 @@ const LineBlock = React.memo(function LineBlock({
   const added = isAddedLine(line);
   const readOnly = added || delivered;
   const remain = !readOnly && !open && readsRemain(line);
-  const splits = readOnly ? [] : splitsOf(line);
-  const rows = remain || readOnly ? 1 : Math.max(1, splits.length);
+  const allOwn = readOnly ? [] : splitsOf(line);
+  // Variant B (AC-G2): a split dropped on another line is drawn under that line, so this
+  // block holds the splits that stay on it (or on a new line, or cancel) ...
+  const splits = allOwn.filter(
+    (split) =>
+      split.isCancel ||
+      !split.sitsOnLineId ||
+      split.sitsOnLineId === line.lineId,
+  );
+  // ... then other lines' splits sitting on it, then AutoCount's extra (AC-G3).
+  const extraQty = !delivered && line.extraQty ? line.extraQty : null;
+  const ownRows = remain || readOnly ? 1 : Math.max(1, splits.length);
+  const rows =
+    ownRows + (delivered ? 0 : incomingRows.length) + (extraQty ? 1 : 0);
   const span = rows > 1 ? rows : undefined;
+  const lineSpan = ownRows > 1 ? ownRows : undefined;
   const gap = gapOf(line);
   const top = itemTop ? 'border-t-2 border-t-muted-foreground/40' : '';
   const baseCell = cn(BASE_CELL, top, flash && 'jump-flash');
@@ -340,7 +405,7 @@ const LineBlock = React.memo(function LineBlock({
   const baseCells = (
     <>
       <TableCell
-        rowSpan={span}
+        rowSpan={lineSpan}
         className={cn(baseCell, DESKTOP_ONLY, 'tabular-nums')}
       >
         {no}
@@ -524,15 +589,11 @@ const LineBlock = React.memo(function LineBlock({
           />
         </TableCell>
         <TableCell className={changeCell}>
-          <Input
-            variant="sm"
-            data-nav-col="remark"
-            aria-label={`Remark, line ${no}`}
+          <RemarkCell
+            label={`Remark, line ${no}`}
             value={only?.remark ?? ''}
-            title={only?.remark || undefined}
-            onChange={(event) =>
-              only && handlers.remark(line, only.id, event.target.value)
-            }
+            generated={line.remarkGenerated ?? ''}
+            onValue={(remark) => only && handlers.remark(line, only.id, remark)}
             onBlur={handlers.fieldBlur}
           />
         </TableCell>
@@ -540,95 +601,154 @@ const LineBlock = React.memo(function LineBlock({
         <TableCell className={changeCell} />
       </TableRow>
     );
+  } else if (splits.length === 0) {
+    // Every split of the line sits on another line: its own row keeps the base cells.
+    body = (
+      <TableRow className="border-0 hover:bg-transparent">
+        <TableCell data-pinned="" className={gripCell} />
+        {baseCells}
+        <TableCell colSpan={2} className={changeCell} />
+        <TableCell className={changeCell} />
+        {balance}
+        <TableCell className={changeCell} />
+      </TableRow>
+    );
   } else {
-    body = splits.map((split, index) => {
-      const n = index + 1;
-      const first = index === 0;
-      const cell = cn(CELL, first && top);
-      const word = changeOf(split, line);
-      return (
+    body = splits.map((split, index) =>
+      splitRow(line, split, allOwn.indexOf(split) + 1, index === 0, false),
+    );
+  }
+
+  /**
+   * One split row. `origin` is the line the split belongs to (its labels, handlers and drag
+   * name it); `incomingRow` = drawn under the line it sits on, with its own muted LINE cell.
+   */
+  function splitRow(
+    origin: SplitLine,
+    split: SplitDraft,
+    n: number,
+    first: boolean,
+    incomingRow: boolean,
+  ) {
+    const originNo = origin.lineNo ?? '';
+    const cell = cn(CELL, first && top);
+    const word = changeOf(split, origin);
+    return (
+      <TableRow
+        key={split.id}
+        data-split-id={split.id}
+        data-origin-line-id={origin.lineId}
+        className="border-0 hover:bg-transparent"
+      >
+        <TableCell
+          data-pinned=""
+          className={cn(cell, GRIP_STICKY, 'max-md:z-[1] px-0')}
+        >
+          <DragHandle
+            id={`drag-split:${split.id}`}
+            source={{ kind: 'split', lineId: origin.lineId, splitId: split.id }}
+            label={`Drag split ${n} of line ${originNo}`}
+            disabled={!split.qty}
+            data-grip-split={split.id}
+            className="inline-flex h-7 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+          />
+        </TableCell>
+        {first ? baseCells : null}
+        {incomingRow ? (
+          <TableCell
+            className={cn(cell, DESKTOP_ONLY, 'tabular-nums text-muted-foreground')}
+          >
+            {originNo}
+          </TableCell>
+        ) : null}
+        <TableCell className={cell}>
+          <QtyInput
+            variant="sm"
+            data-nav-col="qty"
+            data-qty-split={split.id}
+            aria-label={`Quantity, line ${originNo} split ${n}`}
+            value={split.qty}
+            onValue={(qty) => handlers.qty(origin, split.id, qty)}
+            onBlur={handlers.fieldBlur}
+            className="text-center font-semibold tabular-nums"
+          />
+        </TableCell>
+        <TableCell className={cell}>
+          {split.isCancel ? (
+            <ChangePill word="CANCEL" />
+          ) : (
+            <div className="flex items-center gap-1">
+              <DateCell
+                split={split}
+                label={`Date, line ${originNo} split ${n}`}
+                onDate={(iso) => handlers.date(origin, split.id, iso)}
+                onBlur={handlers.fieldBlur}
+              />
+              {split.deliveryDate ? (
+                <span className="shrink-0">
+                  <ChangePill word={word} />
+                </span>
+              ) : null}
+            </div>
+          )}
+        </TableCell>
+        <TableCell className={cell}>
+          <RemarkCell
+            label={`Remark, line ${originNo} split ${n}`}
+            value={split.remark}
+            generated={split.remarkGenerated ?? ''}
+            onValue={(remark) => handlers.remark(origin, split.id, remark)}
+            onBlur={handlers.fieldBlur}
+          />
+        </TableCell>
+        {first ? balance : null}
+        <TableCell className={cn(cell, 'px-0')}>
+          <Button
+            type="button"
+            variant="ghost"
+            mode="icon"
+            size="sm"
+            className="size-7 text-muted-foreground"
+            aria-label={`Remove split ${n} of line ${originNo}`}
+            title="Remove split"
+            onClick={() => handlers.remove(origin, split.id)}
+          >
+            <X aria-hidden />
+          </Button>
+        </TableCell>
+      </TableRow>
+    );
+  }
+
+  const extraDate = formatSplitDate(line.newDate ?? line.baseDate);
+  const tail = (
+    <>
+      {delivered
+        ? null
+        : incomingRows.map(({ origin, split, n }) =>
+            splitRow(origin, split, n, false, true),
+          )}
+      {extraQty ? (
         <TableRow
-          key={split.id}
-          data-split-id={split.id}
+          data-extra-row=""
           className="border-0 hover:bg-transparent"
         >
-          <TableCell
-            data-pinned=""
-            className={cn(cell, GRIP_STICKY, 'max-md:z-[1] px-0')}
-          >
-            <DragHandle
-              id={`drag-split:${split.id}`}
-              source={{ kind: 'split', lineId: line.lineId, splitId: split.id }}
-              label={`Drag split ${n} of line ${no}`}
-              disabled={!split.qty}
-              data-grip-split={split.id}
-              className="inline-flex h-7 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
-            />
+          <TableCell data-pinned="" className={cn(CELL, GRIP_STICKY, 'max-md:z-[1] px-0')} />
+          <TableCell className={cn(CELL, DESKTOP_ONLY)} />
+          <TableCell className={cn(CELL, 'tabular-nums font-semibold')}>
+            {extraQty}
           </TableCell>
-          {first ? baseCells : null}
-          <TableCell className={cell}>
-            <QtyInput
-              variant="sm"
-              data-nav-col="qty"
-              data-qty-split={split.id}
-              aria-label={`Quantity, line ${no} split ${n}`}
-              value={split.qty}
-              onValue={(qty) => handlers.qty(line, split.id, qty)}
-              onBlur={handlers.fieldBlur}
-              className="text-center font-semibold tabular-nums"
-            />
+          <TableCell className={cn(CELL, 'tabular-nums')}>{extraDate}</TableCell>
+          <TableCell className={cn(CELL, 'text-start text-muted-foreground')}>
+            <span className="block truncate ps-2" title={line.extraRemark ?? undefined}>
+              {line.extraRemark ?? ''}
+            </span>
           </TableCell>
-          <TableCell className={cell}>
-            {split.isCancel ? (
-              <ChangePill word="CANCEL" />
-            ) : (
-              <div className="flex items-center gap-1">
-                <DateCell
-                  split={split}
-                  label={`Date, line ${no} split ${n}`}
-                  onDate={(iso) => handlers.date(line, split.id, iso)}
-                  onBlur={handlers.fieldBlur}
-                />
-                {split.deliveryDate ? (
-                  <span className="shrink-0">
-                    <ChangePill word={word} />
-                  </span>
-                ) : null}
-              </div>
-            )}
-          </TableCell>
-          <TableCell className={cell}>
-            <Input
-              variant="sm"
-              data-nav-col="remark"
-              aria-label={`Remark, line ${no} split ${n}`}
-              value={split.remark}
-              title={split.remark || undefined}
-              onChange={(event) =>
-                handlers.remark(line, split.id, event.target.value)
-              }
-              onBlur={handlers.fieldBlur}
-            />
-          </TableCell>
-          {first ? balance : null}
-          <TableCell className={cn(cell, 'px-0')}>
-            <Button
-              type="button"
-              variant="ghost"
-              mode="icon"
-              size="sm"
-              className="size-7 text-muted-foreground"
-              aria-label={`Remove split ${n} of line ${no}`}
-              title="Remove split"
-              onClick={() => handlers.remove(line, split.id)}
-            >
-              <X aria-hidden />
-            </Button>
-          </TableCell>
+          <TableCell className={CELL} />
         </TableRow>
-      );
-    });
-  }
+      ) : null}
+    </>
+  );
 
   return (
     <DropBody
@@ -651,6 +771,7 @@ const LineBlock = React.memo(function LineBlock({
       )}
     >
       {body}
+      {tail}
     </DropBody>
   );
 });
@@ -720,6 +841,23 @@ function incomingByLine(lines: SplitLine[]): Map<string, string> {
   return new Map([...out].map(([key, list]) => [key, list.join('\n')]));
 }
 
+const NO_ROWS: IncomingRow[] = [];
+
+/** Every other line's split sitting on each line, in sheet order (variant B rows, AC-G2). */
+function incomingRowsByLine(lines: SplitLine[]): Map<string, IncomingRow[]> {
+  const out = new Map<string, IncomingRow[]>();
+  for (const origin of lines) {
+    origin.splits.forEach((split, index) => {
+      if (split.isCancel || !split.sitsOnLineId) return;
+      if (split.sitsOnLineId === origin.lineId) return;
+      const list = out.get(split.sitsOnLineId) ?? [];
+      list.push({ origin, split, n: index + 1 });
+      out.set(split.sitsOnLineId, list);
+    });
+  }
+  return out;
+}
+
 export function LineSplitSheet({
   lines,
   allLines,
@@ -757,8 +895,11 @@ export function LineSplitSheet({
     if (drag) return;
     const target = event.target as HTMLElement;
     if (target.closest('[data-drag-handle]')) return;
-    const lineId = target.closest<HTMLElement>('tbody[data-line-id]')?.dataset
-      .lineId;
+    // A split drawn under the line it sits on still belongs to its own line (AC-G2).
+    const lineId =
+      target.closest<HTMLElement>('tr[data-origin-line-id]')?.dataset
+        .originLineId ??
+      target.closest<HTMLElement>('tbody[data-line-id]')?.dataset.lineId;
     const line = lineId ? lineById.get(lineId) : undefined;
     if (!line) return;
     const splitId =
@@ -797,6 +938,7 @@ export function LineSplitSheet({
     focusCell(next);
   };
   const incoming = React.useMemo(() => incomingByLine(allLines), [allLines]);
+  const incomingRows = React.useMemo(() => incomingRowsByLine(allLines), [allLines]);
   const multiLocation = React.useMemo(
     () => new Set(allLines.map((line) => line.location)).size > 1,
     [allLines],
@@ -848,6 +990,7 @@ export function LineSplitSheet({
             <LineBlock
               line={line}
               incoming={incoming.get(line.lineId) ?? ''}
+              incomingRows={incomingRows.get(line.lineId) ?? NO_ROWS}
               soNumber={soNumber}
               soDate={soDate}
               multiLocation={multiLocation}

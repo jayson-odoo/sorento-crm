@@ -21,6 +21,8 @@ export interface SplitDraft {
   /** The line this split sits on; `null` = a new line not in AutoCount yet. */
   sitsOnLineId: string | null;
   remark: string;
+  /** The server's generated REMARK, shown muted while `remark` is empty (AC-G5). */
+  remarkGenerated?: string;
 }
 
 export interface SplitLine {
@@ -43,6 +45,11 @@ export interface SplitLine {
   deliveredQty?: number;
   /** AutoCount delivered the whole line (UAC A3): shown read-only, never split or a target. */
   deliveredInFull?: boolean;
+  /** AutoCount qty less the splits sitting on the line (AC-G3): one more read-only row. */
+  extraQty?: number | null;
+  extraRemark?: string | null;
+  /** The server's generated REMARK for the line's own row (AC-G9). */
+  remarkGenerated?: string;
   /** Stored splits; empty = not split (one implicit split, `splitsOf`). */
   splits: SplitDraft[];
 }
@@ -550,6 +557,9 @@ export function fromPayload(payload: LineSplitsPayload): SplitLine[] {
       : line.acting === false,
     deliveredQty: Number(line.delivered_qty) || 0,
     deliveredInFull: Boolean(line.delivered_in_full),
+    extraQty: line.extra_qty == null ? null : Number(line.extra_qty),
+    extraRemark: line.extra_remark ?? null,
+    remarkGenerated: line.remark_generated ?? '',
     splits: line.splits.map((split) => ({
       id: split.id,
       qty: Number(split.qty) || 0,
@@ -557,6 +567,7 @@ export function fromPayload(payload: LineSplitsPayload): SplitLine[] {
       isCancel: split.is_cancel,
       sitsOnLineId: split.is_cancel ? line.line_id : split.sits_on_line_id,
       remark: split.remark ?? '',
+      remarkGenerated: split.remark_generated ?? '',
     })),
   }));
 }

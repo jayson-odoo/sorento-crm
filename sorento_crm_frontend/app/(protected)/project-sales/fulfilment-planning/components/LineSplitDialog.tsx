@@ -805,6 +805,12 @@ export function LineSplitDialog({
                 {`${sorted.length} line${sorted.length === 1 ? '' : 's'} · ${products} product${products === 1 ? '' : 's'} · ${splitCount} split`}
               </span>
             ) : null}
+            {/* AC-G1: the change shown is the one the last Confirm applied. */}
+            {lines && query.data?.confirmed_at ? (
+              <span className="font-medium text-success">
+                {`Confirmed ${formatSplitDate(query.data.confirmed_at.slice(0, 10))}`}
+              </span>
+            ) : null}
             {problems.map((problem) => (
               <span
                 key={problem.lineId}

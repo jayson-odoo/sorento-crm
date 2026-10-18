@@ -13,6 +13,8 @@ export interface LineSplit {
   is_cancel: boolean;
   sits_on_line_id: string | null;
   remark: string;
+  /** What the email and the Excel print while `remark` is empty (server `remark_for_row`). */
+  remark_generated?: string;
 }
 
 /** One open SO line: its base (what the splits add up to), AutoCount now, and its splits. */
@@ -41,6 +43,11 @@ export interface LineSplitLine {
   delivered_qty: number;
   /** AutoCount delivered the whole line: listed read-only, never split, never a sits-on target. */
   delivered_in_full?: boolean;
+  /** AutoCount qty less the splits sitting on the line, when positive: one more row, not stored. */
+  extra_qty?: number | null;
+  extra_remark?: string | null;
+  /** What the email prints for the line's own row (server `remark_for_row`). */
+  remark_generated?: string;
   splits: LineSplit[];
 }
 
@@ -51,6 +58,8 @@ export interface LineSplitsPayload {
   so_date?: string | null;
   customer: string | null;
   project: string | null;
+  /** The last Confirm's date while nothing is pending; null otherwise. */
+  confirmed_at?: string | null;
   lines: LineSplitLine[];
 }
 
