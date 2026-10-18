@@ -205,3 +205,94 @@ Lead pattern: tester writes every red test first (one `test(red):` commit), code
   no Incoming PL line, values per AC-2.
 - One render check each: `StockStatusPageClient.test.tsx`, `OrderInquiryStockGrid.test.tsx`,
   `QuotationStockChip.test.tsx` (bar on the AutoCount mount only), `BoardCellBreakdownDialog.test.tsx`.
+
+## 5. Contract (tester and coder both build to this; paths under `sorento_crm_frontend/`)
+
+### 5.1 `components/common/group-by/groupByLevels.ts` (pure, generic)
+
+```ts
+export type Measure<T> = (line: T) => string | number | null | undefined;
+export interface GroupDimension<T> {
+  id: string;                 // 'customer'
+  label: string;              // 'Customer' (menu, chip, first-column heading)
+  noneLabel: string;          // 'No customer'
+  valueOf: (line: T) => string | null | undefined; // trimmed; '' / whitespace / null / undefined = none
+  rank?: (value: string) => number; // fixed order when given (lower first, unranked after ranked, A to Z); else A to Z
+}
+export interface GroupNode<T> {
+  key: string;                // path, e.g. 'customer=Customer B/project=Project 2'; none = 'project=' (empty value)
+  dimension: string;          // the level's id
+  label: string;              // the value, or noneLabel
+  isNone: boolean;
+  depth: number;              // 0 = top level
+  count: number;              // lines beneath
+  sums: Record<string, string>; // measure id -> exact decimal string via toMinor/fromMinor ('396', '0.3', '-2')
+  children: GroupNode<T>[];   // [] at the last level
+  lines: T[];                 // every line beneath, in input order
+}
+export function groupByLevels<T>(
+  lines: readonly T[], levels: readonly GroupDimension<T>[], measures: Record<string, Measure<T>>,
+): GroupNode<T>[]; // [] when levels is empty; siblings: ranked/A-Z (case-insensitive), none group last
+```
+
+Decimal helpers: `toMinor` / `fromMinor` in `app/(protected)/project-sales/_shared/lib/supplyComposition.ts:32,44`.
+
+### 5.2 `components/common/group-by/GroupByMenu.tsx`
+
+```ts
+export interface GroupByOption { id: string; label: string }
+export interface GroupByMenuProps {
+  options: GroupByOption[]; value: string[]; defaultValue: string[];
+  onChange: (next: string[]) => void; onExpandAll?: () => void; onCollapseAll?: () => void; className?: string;
+}
+```
+
+DOM: root `data-testid="group-by-bar"` (flex-wrap). Chip `group-by-chip`: text `Group by` then the labels joined by
+` > ` (e.g. contains `Location > Customer > Project`), or `none` when empty. Reset button `group-by-chip-clear`
+(aria-label `Reset group by`), absent when value equals defaultValue. `group-by-expand-all` (`Expand all`) and
+`group-by-collapse-all` (`Collapse all`) render only when their handler is given. Trigger `group-by-trigger`
+(`Group by`, Layers icon). Items: `DropdownMenuCheckboxItem` `group-by-option-<id>` (role menuitemcheckbox,
+aria-checked) in options order; a ticked item shows its level number in `group-by-level-<id>` ('1', '2', ...).
+A click toggles the item (add = append, remove = later levels move up) and the menu stays open.
+
+### 5.3 `app/(protected)/project-sales/_shared/lib/stockGroupLines.ts`
+
+```ts
+export type StockLineType = 'On hand' | 'S/O' | 'PO' | 'SPO';
+export interface StockLine {
+  key: string;      // 'on-hand:<warehouse_id>' | 'so:<line_id>' | 'po:<line_id>' | 'spo:<allocation_id>'
+  type: StockLineType;
+  location: string; // warehouse code
+  customer: string | null; project: string | null; agent: string | null; supplier: string | null;
+  docNo: string | null;  // null for On hand
+  href: string | null;   // S/O /scm/sales-orders/{sales_order_id}; PO /scm/purchase-orders/{purchase_order_id};
+                         // SPO spoDetailHref(spo_number) (`lib/spo-detail`); On hand null
+  date: string | null;   // S/O due_date; PO expected_date; SPO arrival_date; On hand null
+  onHand: string; so: string; spo: string; po: string; // its qty in its own column, '0' in the others
+}
+export function stockLinesOf(status: StockStatus, locationOrder: readonly string[]): StockLine[]; // AC-1, AC-2, AC-5
+export const STOCK_GROUP_OPTIONS: GroupByOption[]; // location Location, customer Customer, project Project,
+                                                   // agent Agent, supplier Supplier, type Type (this order)
+export function stockGroupDimensions(locationOrder: readonly string[]): Record<string, GroupDimension<StockLine>>;
+export const STOCK_LINE_MEASURES: Record<'on-hand' | 'so' | 'spo' | 'po', Measure<StockLine>>; // CellStockTable column keys
+export const STOCK_GROUP_STORAGE_KEY = 'cellStockTable.groupBy';
+export const DEFAULT_STOCK_GROUP_LEVELS: readonly string[]; // ['location']
+export function readStockGroupLevels(storage?: Storage | null): string[];  // AC-19 fallbacks, never throws
+export function writeStockGroupLevels(levels: readonly string[], storage?: Storage | null): void; // never throws
+```
+
+### 5.4 `CellStockTable` (grouping only when `autoCount` is non-null)
+
+- `GroupByMenu` above the table, options `STOCK_GROUP_OPTIONS`, default `['location']`, levels read on mount and
+  written on change.
+- Group row `<tr data-testid="stock-group-<key>">`, chevron `stock-group-toggle-<key>` (aria-expanded), sums
+  `stock-group-<column>-<key>` for on-hand / so / spo / po; available / available-for-project / taken cells empty.
+  The label cell holds the label and `1 line` / `n lines`.
+- Keys under a parent row carry its prefix: under a location row `location=<code>/...`, under a set subtotal row
+  `set=<section key>/...`; with Location not first the keys are `groupByLevels`' own (`customer=Customer B/location=BRW-BB`).
+- Line row `stock-line-<line key>`; its document number is a link (href as 5.3); muted second line
+  `stock-line-meta-<line key>`; qty cells `stock-line-<column>-<line key>`, only its own column filled.
+- Location first + more levels: existing `stock-expand-<loc>` / `stock-set-expand-<section>` open the next-level
+  groups; the `StockDocumentsPanel` drill-down does not mount. Location alone: today's behaviour exactly.
+- Location not first: first-column heading = first level's label; no `cell-location-*` and no `stock-subtotal-*` rows;
+  `stock-total-*` and `stock-incoming-pl` unchanged.
