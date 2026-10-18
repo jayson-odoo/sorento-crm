@@ -1151,3 +1151,51 @@ def test_g10_a_declined_move_onto_a_grown_target_buys_nothing_twice(api, emails,
     assert kept_link == _d("51"), ("the origin keeps its rows AND links (2 + 49)", case, kept_link)
     for line in (origin, target):
         assert _cancel_balances(_worklist(s, line)) == [], (case, _worklist(s, line))
+
+
+def _origin_link(s, origin):
+    """What line 2's live rows hold of its own PO line (`s.po_line`, 51 at the start)."""
+    from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    svc = ProjectOrderInquiryService(s.db)
+    return sum(
+        (Decimal(str(l.qty))
+         for row in s.db.query(OrderInquiryRow).filter(
+             OrderInquiryRow.so_line_id == origin.id, OrderInquiryRow.state != INQUIRY_CANCELLED)
+         for l in svc._links_of(row.id) if l.po_line_id == s.po_line.id),
+        Decimal(0),
+    )
+
+
+@pytest.mark.parametrize("case", ["target_placed_no_link", "target_received_in_full"])
+def test_g13_a_re_confirm_after_a_declined_move_plan_changes_nothing(api, emails, case):
+    """AC-G12 + AC-G13: after the Confirm that applied the plan (asked 133 = AutoCount, line 2
+    holding 51 of its link), a second Confirm with no change changes nothing: the same worklist
+    rows, asked still 133, line 18 does not ask for the declined 49 again, line 2's link
+    unchanged, no CANCEL, no plan email again."""
+    s, origin, _splits = _declined(api, emails, case)
+    target = s.no[18][1]
+    assert _asked(s, origin) + _asked(s, target) == _d("133"), "premise: the plan applied"
+    assert _origin_link(s, origin) == _d("51"), "premise: line 2 keeps its link"
+    before = {no: sorted(_worklist(s, s.no[no][1]), key=str) for no in (2, 18)}
+    start = len(emails)
+
+    r = _confirm(s.client, s.order.id, [
+        _line_payload(v[1].id, buy_qty=str(now))
+        for v, (_no, _qty, _when, now) in zip(s.no.values(), s.specs)
+    ])
+    assert r.status_code == 200, r.text
+    s.db.commit()
+    s.db.expire_all()
+
+    after = {no: sorted(_worklist(s, s.no[no][1]), key=str) for no in (2, 18)}
+    assert after == before, ("a re-Confirm with no change changes no row", case, before, after)
+    assert _asked(s, origin) + _asked(s, target) == _d("133"), (case, after)
+    assert _asked(s, target) == _d("82"), ("line 18 does not ask for the declined 49 again",
+                                           case, after[18])
+    assert _origin_link(s, origin) == _d("51"), (case, "line 2's link is unchanged")
+    for line in (origin, target):
+        assert _cancel_balances(_worklist(s, line)) == [], (case, _worklist(s, line))
+    resent = [(ln["qty"], ln["remark"]) for h in emails[start:] for ln in h.get("lines") or []]
+    assert resent == [], ("no plan email again", case, resent)
