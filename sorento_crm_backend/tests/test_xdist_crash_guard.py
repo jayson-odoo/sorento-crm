@@ -5,7 +5,9 @@ the OOM killer takes ends the run instead of being respawned. Killed mid-test,
 its test is reported failed. Killed before it reports its collection, xdist 3.8
 ends the session "no tests ran" with exit 0, and the PR gate's `run()` also
 passes exit 5. Each case runs a real `pytest -n 2` session in a scratch
-directory, one worker SIGKILLed the way the OOM killer does it.
+directory, one worker SIGKILLed the way the OOM killer does it. Loaded with
+`-p` on exactly the calls that set the flag (pinned by
+tests/test_ci_runner_routing.py).
 """
 from __future__ import annotations
 
@@ -77,10 +79,3 @@ def test_a_worker_killed_mid_test_fails_the_session(tmp_path):
     result = _session(tmp_path, kill_at="test")
     assert "crashed while running 'test_x.py::test_b'" in result.stdout, result.stdout
     assert result.returncode == 1, result.stdout + result.stderr
-
-
-def test_the_suite_conftest_loads_the_guard(request):
-    from tests import _xdist_crash_guard as guard
-
-    impls = [impl.function for impl in request.config.hook.pytest_sessionfinish.get_hookimpls()]
-    assert guard.pytest_sessionfinish in impls

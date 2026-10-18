@@ -270,7 +270,9 @@ def test_the_gitleaks_cli_matches_the_runner_architecture(tmp_path, machine, exp
 # in the step's env (the PR gate's script is executed by
 # test_ci_docs_only_filter.py, and bash cannot run a `${{ }}`).
 # `--max-worker-restart 0` ends the session on the first crashed worker, where
-# xdist's default (4 x workers) respawned each one into the same pressure.
+# xdist's default (4 x workers) respawned each one into the same pressure, and
+# `-p tests._xdist_crash_guard` keeps that exit non-zero when the worker died
+# before running a test (tests/test_xdist_crash_guard.py).
 
 XDIST_WORKERS = "${{ needs.changes.outputs.tests_runner == 'sorento-mac' && 2 || 'auto' }}"
 XDIST_JOBS = ["lean-gate", "test-backend", "test-backend-scm"]
@@ -300,3 +302,4 @@ def test_xdist_on_the_mac_runs_two_workers_and_never_respawns_a_crashed_one(job)
         for line in calls:
             assert '-n "$XDIST_WORKERS"' in line, (job, step.get("name"), line)
             assert "--max-worker-restart 0" in line, (job, step.get("name"), line)
+            assert "-p tests._xdist_crash_guard" in line, (job, step.get("name"), line)
