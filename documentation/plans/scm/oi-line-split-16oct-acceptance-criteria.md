@@ -268,3 +268,10 @@ SO417636 CSK14B BRW-BB, with the owner's plan:
 - AC-G16 **A later AutoCount change on a line with kept New-line rows** (crew ruling P2 (a), 19 Oct). The
   line's own row follows AutoCount (14 -> 20). The kept New-line rows stand until staff change or remove
   them. No CANCEL from splits, ever.
+- AC-G17 **A re-plan that drops kept rows is an explicit reduction** (lead, applying the crew rule "CANCEL only
+  where the user explicitly reduces qty"; reviewer 19 Oct). Example: 480's confirmed 14 / 236 / 167 is
+  re-planned as 10 + 4. On the next Confirm:
+  - the dropped qty (403) is one CANCEL BALANCE, held on purchasing's worklist AND printed in the email;
+  - each kept row keeps links only up to its own qty, and the rest is given back.
+  Worklist, email and Excel agree. A line whose PO is received in full is a standing plan like any other: a
+  re-Confirm sends nothing.
