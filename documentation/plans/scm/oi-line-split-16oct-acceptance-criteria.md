@@ -300,8 +300,13 @@ SO417636 CSK14B BRW-BB, with the owner's plan:
     re-planned once; a later re-Confirm with no edit has nothing to move and only stamps it.
   - A re-Confirm right after that Confirm changes nothing: no new OI rows, no email (AC-G13).
   - A partial re-plan moves only what moved: 236 onto 608 while 167 stays on New line leaves 480 with 14 and
-    167, gives 608 its own 192 plus 236 (extra 204, "ORDER 204"), and keeps 1295 in total.
+    167, and gives 608 its own 192 plus 236 (extra 204, "ORDER 204"). The live total is 14 + 167 + 632 + 649 =
+    1462: AutoCount's 1295 plus the 167 still planned as a New-line delivery (AC-G10).
   - A move onto a target that cannot take the links (placed with no link, or its document received in full)
-    is declined as in AC-G12: the origin keeps its rows and links, the target's need excludes that qty.
+    is declined as in AC-G12: the origin keeps its rows and links, the target's need excludes that qty. When
+    the target already holds more than that need (608 holds a placed or received 632, its need drops to
+    632 - 236), the surplus is ONE CANCEL BALANCE of the declined qty on the target, printed in the worklist,
+    email and Excel, and nothing is ordered (lead decision 19 Oct, the AC-G17 reasoning: the re-plan reduced
+    what the target needs, and purchasing must be told).
   - An origin whose document is received in full: nothing is bought twice, nothing is cancelled, the live OI
     total equals AutoCount, and worklist, email and Excel agree.
