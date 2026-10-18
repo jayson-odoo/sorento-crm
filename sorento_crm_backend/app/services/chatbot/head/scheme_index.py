@@ -51,6 +51,11 @@ def _held_certificates(db: "Session", product_ids: list[str], scheme: str) -> li
     return sorted(str(cid) for (cid,) in rows)
 
 
+# Every id rides one GET query string (h11's request line holds about 400): the same 200 cap
+# as product_predicate_service._CERTIFICATE_ID_CAP, restated rather than imported.
+_CERTIFICATE_ID_CAP = 200
+
+
 def _scheme_certificates(db: "Session", scheme: str) -> list[str]:
     """The scheme's active certificates in the session's company scope: the read goes
     through the scoped session, so another company's certificate never appears."""
@@ -58,8 +63,14 @@ def _scheme_certificates(db: "Session", scheme: str) -> list[str]:
 
     from app.models.certificate import Certificate
 
-    rows = db.query(Certificate.id).filter(func.lower(Certificate.scheme) == scheme.casefold(), Certificate.status == "active").all()
-    return sorted(str(cid) for (cid,) in rows)
+    rows = (
+        db.query(Certificate.id)
+        .filter(func.lower(Certificate.scheme) == scheme.casefold(), Certificate.status == "active")
+        .order_by(Certificate.id)
+        .limit(_CERTIFICATE_ID_CAP)
+        .all()
+    )
+    return [str(cid) for (cid,) in rows]
 
 
 def _kind_item(db: "Session", scheme: str, kinds: dict[str, str]) -> str | None:
@@ -146,7 +157,8 @@ def scheme_without_product(db: "Session", verdict: dict[str, Any]) -> tuple[dict
     """SCHEME-NO-PRODUCT: a listed scheme pick asked as a file ask with no product named or
     held. The scheme's own active certificates in the contact's companies become the fetch's
     filter (read through the scoped session, so another company's never appears); the tool's
-    own row limit bounds the reply. The verdict unchanged (and no note) otherwise."""
+    own row limit bounds the reply. The verdict unchanged (and no note) otherwise; with no
+    certificate of the scheme in scope, the verdict unchanged and a `none_in_scope` note."""
     if verdict.get("domain_hint") != "product_attachment":
         return verdict, None
     entities = [e for e in verdict.get("entities") or [] if isinstance(e, dict)]
@@ -157,7 +169,9 @@ def scheme_without_product(db: "Session", verdict: dict[str, Any]) -> tuple[dict
     scheme = str(schemes[0]["canonical_code"]).strip()
     certificates = _scheme_certificates(db, scheme)
     if not certificates:
-        return verdict, None
+        # The scheme list is the same for every company, so a scheme can be listed with no
+        # certificate of it in this contact's scope: said plainly by the engine, nothing sent.
+        return verdict, {"scheme": scheme, "held_by_products": False, "products": 0, "certificates": 0, "none_in_scope": True}
     # Left typed as the attachment-type pick it is, so the ask stays a file ask: typed
     # `certificate` it would read as the set "which products have this certificate". A product
     # carried from an open pick no product answered is no subject here: left in, its miss

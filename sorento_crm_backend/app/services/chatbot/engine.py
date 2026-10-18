@@ -4879,6 +4879,7 @@ def _run_stages_body(  # noqa: PLR0915
         )
     verdict = closed_lists_verdict(verdict, gate=parser_config.closed_lists)
     held_none_match: dict[str, Any] | None = None
+    scheme_none_in_scope: str | None = None
     if parser_config.closed_lists and state_in.focus.products:
         # SPEC-OVER-HELD: a spec said about a held product narrows that product's family
         # (`head/held_family.py`). A read failure leaves the verdict as it was.
@@ -4915,6 +4916,8 @@ def _run_stages_body(  # noqa: PLR0915
             scheme_note = None
         if scheme_note:
             turn_trace.add("scheme_index", scheme_note)
+            if scheme_note.get("none_in_scope"):
+                scheme_none_in_scope = scheme_note["scheme"]
             if scheme_note.get("none_match") and scheme_note.get("products"):
                 held_none_match = {"held": list(scheme_note["products"]), "said": [], "scheme": scheme_note["scheme"]}
     if _ranking_words:
@@ -6582,6 +6585,17 @@ def _run_stages_body(  # noqa: PLR0915
         # already says whether a pick is needed or a tier settles automatically, so this
         # fetch runs from a ONE-SPEC plan built for the occasion rather than waiting on
         # `narrow.py`'s now-shadowed ask.
+        if (
+            scheme_none_in_scope
+            and answer is None
+            and branch_kind == "business_query"
+            and completes_here
+            and not (sales_report_grant_refused or customer_scope_refused)
+        ):
+            # SCHEME-NONE-IN-SCOPE: nothing held, and no certificate of the listed scheme in
+            # this contact's scope. Said plainly; nothing is fetched.
+            answer = turn_compose.Answer(text=f"No {scheme_none_in_scope} certificate on record.")
+            turn_trace.add("scheme_none_in_scope", {"scheme": scheme_none_in_scope})
         fetch_plan = plan
         if (
             answer is None
