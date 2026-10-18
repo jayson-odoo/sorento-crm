@@ -1590,11 +1590,20 @@ def test_review_a_linked_re_plan_that_drops_kept_rows_cancels_them_and_gives_the
     """Linked: each kept row was linked for its own qty (417 on one PO). After the re-plan the
     10 and 4 rows are linked for their own qty only, the 403 of links is given back (it sat on
     the 10 row: 413), and worklist / email / Excel agree on the CANCEL 403."""
-    from app.models.project_so import OrderInquiryLink
+    from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryLink
 
     s, po_line = _new_line_plan_applied(api, emails)
+    assert _cancel_balances(_worklist(s, s.line[480])) == [], "premise: no CANCEL BALANCE yet"
     sent = _replan_480(s, emails)
     _assert_dropped_403_is_told(s, sent)
+    # Exactly ONE live CANCEL BALANCE, of 403, created by the re-plan Confirm. In this linked
+    # case the placed-row netting writes it ("Placed 417, new need 14") and AC-G17's own write
+    # in `_keep_split_rows` stands down on its `told < dropped` check: one row, never a second
+    # 403 beside it. (Which path wrote it cannot be told apart here; the AC-G17 write itself
+    # is guarded by the unlinked test below, which fails with that write disabled.)
+    live_cancels = [(state, q) for state, q in _cancel_balances(_worklist(s, s.line[480]))
+                    if state != INQUIRY_CANCELLED]
+    assert live_cancels == [("raised", _d("403"))], ("one CANCEL BALANCE of 403", live_cancels)
     got = _rows_with_links(s, po_line)
     assert got.get((_d("10"), D_480_NEW)) == _d("10") and got.get((_d("4"), D_608)) == _d("4"), (
         "each plan row is linked for its own qty only", got)
@@ -1632,3 +1641,56 @@ def test_review_kept_rows_on_a_received_document_stand_through_re_confirms(api, 
         assert sorted(_worklist(s, s.line[480]), key=str) == before, (attempt, _worklist(s, s.line[480]))
         sent = [(ln["qty"], ln["remark"]) for ln in _sent_since(emails, start)]
         assert sent == [], (f"re-Confirm {attempt} sends no email", sent)
+
+
+
+# ---------------------------------------------------------------------------
+# Re-check on 0bb56b851c: a re-Confirm after an AC-G17 re-plan changes nothing.
+# ---------------------------------------------------------------------------
+
+
+def _snapshot_480(s):
+    """480's rows as (id, verb, state, qty, date, links), the whole worklist record."""
+    from app.models.project_so import OrderInquiryRow
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    svc = ProjectOrderInquiryService(s.db)
+    return sorted(
+        (str(r.id), r.verb, r.state, Decimal(str(r.qty)).normalize(), r.delivery_date,
+         sorted((str(l.document), str(Decimal(str(l.qty)).normalize()))
+                for l in svc._links_of(r.id)))
+        for r in s.db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == s.line[480].id)
+    )
+
+
+@pytest.mark.parametrize("variant", ["linked", "unlinked", "placed_no_link"])
+def test_g17_a_re_confirm_after_a_re_plan_keeps_its_cancel_balance(api, emails, variant):
+    """New-line plan 14 / 236 / 167 applied, re-planned 10 + 4 and confirmed (one CANCEL BALANCE
+    403, emailed). A second Confirm with no change changes nothing: the CANCEL BALANCE 403 stays
+    raised, the 10 and 4 rows are neither cancelled nor re-raised (same ids, qty, date, links),
+    and no email is queued (it withdrew the 403 and re-sent "10 REMAIN / 4 DELAY")."""
+    from app.models.project_so import INQUIRY_CANCELLED, INQUIRY_PLACED
+
+    if variant == "linked":
+        s, _po_line = _new_line_plan_applied(api, emails)
+    else:
+        s = _seed(api)
+        if variant == "placed_no_link":
+            _order_row(s.world, s.line[480]).state = INQUIRY_PLACED
+            s.db.commit()
+        _save(s, _new_line_plan())
+        _confirm_batch(s, emails)
+    sent = _replan_480(s, emails)
+    assert _cancelled_403_in(sent), ("premise: the re-plan Confirm told the CANCEL 403",
+                                     [(ln["qty"], ln["remark"]) for ln in sent])
+    before = _snapshot_480(s)
+    live_cancels = [r for r in before if r[1] == "CANCEL_BALANCE" and r[2] != INQUIRY_CANCELLED]
+    assert [(r[2], r[3]) for r in live_cancels] == [("raised", _d("403"))], ("premise", before)
+
+    start = len(emails)
+    _reconfirm(s)
+    after = _snapshot_480(s)
+    assert after == before, ("a re-Confirm with no change changes no row of 480", variant,
+                             before, after)
+    resent = [(ln["qty"], ln["remark"]) for ln in _sent_since(emails, start)]
+    assert resent == [], ("no email for a re-Confirm with no change", variant, resent)
