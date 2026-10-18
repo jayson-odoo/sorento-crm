@@ -1,6 +1,6 @@
 # PLAN: spec-registry-ui (owner edits chatbot closed lists from the front end)
 
-Status: Build (full track): S1-S5 + fix rounds 1-2; review, security review and browser pass done, hand test next. Track: full (size L, one migration).
+Status: Build (full track) done: S1-S5 + fix rounds 1-2; review READY, security READY, browser pass PASS, owner hand test PASS (17 Oct, head cd8369ee1a). Merge-ready.
 crew-lane: SPEC-REGISTRY-UI
 
 ## Owner request (17 Oct)

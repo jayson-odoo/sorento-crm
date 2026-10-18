@@ -452,9 +452,20 @@ def test_redis_down_fails_open(client, monkeypatch):
 
 
 def test_the_db_connection_is_released_before_the_provider_call(client, db, monkeypatch):
+    from sqlalchemy import text
+
     seen: dict = {}
     seams = _Seams([_entity(raw="x", hint="category")])
     seams.install(monkeypatch)
+    stub_resolve = parser_mod.resolve_config
+
+    # The real resolve_config reads the prompt registry, which opens a transaction. The
+    # stub must do the same, or the assert below holds whether the route releases it or not.
+    def resolve_config(db_, *, current_date, override_version_id=None):
+        db_.execute(text("select 1"))
+        return stub_resolve(db_, current_date=current_date, override_version_id=override_version_id)
+
+    monkeypatch.setattr(parser_mod, "resolve_config", resolve_config)
 
     def parse(config, user_block):
         seen["in_transaction"] = db.in_transaction()
