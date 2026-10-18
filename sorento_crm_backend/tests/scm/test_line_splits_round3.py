@@ -1295,3 +1295,76 @@ def test_g13_a_re_confirm_after_a_declined_move_off_a_line_cut_to_zero_changes_n
     resent = [(ln["qty"], ln["remark"]) for h in emails[start:] for ln in h.get("lines") or []]
     assert not [x for x in resent if "ORDER 51" in str(x[1])], resent
     assert resent == [], ("no email for a re-Confirm with no change", resent)
+
+
+# ---------------------------------------------------------------------------
+# Re-check on 4d59aee4a7 (BLOCKING double ask since 160f1fb4b3): a split left on New line (no
+# sits-on line) is part of its own line's plan (AC-G2) and is NOT counted again as the line's
+# AutoCount extra (AC-G3).
+# ---------------------------------------------------------------------------
+
+
+def _one_line(api, qty, when):
+    """One published order with line 480 at `qty` @ `when`, confirmed as Buy, nothing pending."""
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    core = _core_line(db, core_so, world.product, world.own_wh, qty_ordered=str(qty),
+                      required_date=when)
+    core.line_no = 480
+    line = _project_line(db, order, line_no=480, product=world.product, core_line=core)
+    line.stock_location = world.own_wh.warehouse_code
+    db.commit()
+    r = _confirm(client, order.id, [_line_payload(line.id, buy_qty=str(qty))])
+    assert r.status_code == 200, r.text
+    db.commit()
+    s = _S()
+    s.client, s.world, s.db, s.core_so, s.order = client, world, db, core_so, order
+    s.line, s.qty = {480: line}, qty
+    return s
+
+
+@pytest.mark.parametrize("qty,own,new", [(14, 10, 4), (100, 60, 40)], ids=["480_at_14", "100_no_cut"])
+def test_g3_a_new_line_split_is_not_counted_again_as_autocount_extra(api, emails, qty, own, new):
+    """(a) 480 at 14, nothing pending after a Confirm, plan 10 own + 4 on New line; (b) a line of
+    100 with no AutoCount cut, plan 60 own + 40 on New line. AutoCount qty = own + New line,
+    so there is no extra: the API's extra is null, nothing says "ORDER <new>", the Confirm
+    asks for the line's qty (14 / 100, not 18 / 140), the email prints the two split rows only
+    (REMAIN / DELAY) and the Excel the same two rows (it printed an extra "ORDER 4" / "ORDER 40"
+    row and asked for it)."""
+    d, d_new = D_480_NEW, D_608
+    s = _one_line(api, qty, d)
+    _save(s, {480: [(own, d, 480, ""), (new, d_new, "new", "")]})
+    line = _line(_get(s), s, 480)
+    assert line["extra_qty"] is None and line["extra_remark"] is None, (
+        "AC-G3: a New-line split is not AutoCount extra", line["extra_qty"], line["extra_remark"])
+    assert [x.get("remark_generated") for x in line["splits"]] == ["REMAIN", "DELAY"], line["splits"]
+    rows = [(_d(str(qty)), d, _d(str(own)), d, "REMAIN"), (None, None, _d(str(new)), d_new, "DELAY")]
+    assert _excel_rows(s) == rows, ("the Excel prints the two split rows only", _excel_rows(s))
+
+    start = len(emails)
+    r = _confirm(s.client, s.order.id, [_line_payload(s.line[480].id, buy_qty=str(qty))])
+    assert r.status_code == 200, r.text
+    s.db.commit()
+    s.db.expire_all()
+    live = _live(_worklist(s, s.line[480]))
+    assert live == sorted([(_d(str(own)), d), (_d(str(new)), d_new)]), (
+        f"the Confirm asks for {qty}, not {qty + new}", _worklist(s, s.line[480]))
+    sent = [(ln["qty"], ln["remark"]) for h in emails[start:] for ln in h.get("lines") or []]
+    assert sent == [(str(own), "REMAIN"), (str(new), "DELAY")], ("email: the two split rows only", sent)
+    assert not [r for r in _excel_rows(s) if str(r[4]).startswith("ORDER")], _excel_rows(s)
+
+
+def test_g3_the_owner_case_numbers_stand(api, emails):
+    """Guard: the owner case keeps its numbers (752's real AutoCount extra 182, 608 REMAIN,
+    live OI 1295 after the Confirm)."""
+    s = _seed(api)
+    _save(s, _owner_plan())
+    out = _get(s)
+    assert _q(_line(out, s, 752)["extra_qty"]) == _d("182"), _line(out, s, 752)["extra_qty"]
+    assert _line(out, s, 480)["extra_qty"] is None
+    assert _line(out, s, 608)["extra_qty"] is None
+    _confirm_batch(s, emails)
+    assert _line(_get(s), s, 608)["remark_generated"] == "REMAIN"
+    assert _owner_total(s) == _d("1295"), {no: _worklist(s, s.line[no]) for no in OWNER_CASE}
