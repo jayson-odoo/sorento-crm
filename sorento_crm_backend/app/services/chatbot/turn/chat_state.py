@@ -830,7 +830,7 @@ def apply_changes(
         if question_mod.is_the_stock_question(open_question):
             # Only an owed quantities question is cancelled, and only by a lone close that
             # names nothing of its own: a close with an entity this message states is a new ask.
-            names_own = any(e.get("current_message") is True for e in _entities(out))
+            names_own = any(e.get("current_message") is not False for e in _entities(out))
             if open_question.get("kind") == question_mod.QUANTITIES and set(ops) == {"close_question"} and not names_own:
                 out[question_mod.ANSWER_KEY] = {**question_mod.NO_ANSWER, "mode": "cancel"}
         elif open_question is not None:
@@ -894,6 +894,18 @@ def apply_changes(
             else:
                 kept_entities.append(e)
         entities = kept_entities
+    named_products = {
+        str(c).casefold() for e in entities if e.get("hint") == "product"
+        for c in (e.get("canonical_code"), e.get("raw")) if c
+    }
+    if named_products:
+        # Card R4: a new subject is only what this message names. An open task whose
+        # products have all left the subject closes with them.
+        focus.tasks = tuple(
+            t for t in focus.tasks or ()
+            if not (t.status == task_mod.OPEN and t.slots
+                    and not any(str(sl.label).casefold() in named_products for sl in t.slots))
+        )
     for row in data_picks:
         # The code only: a stored key is never trusted, the resolver settles the code fresh
         # under the contact's current scope.
