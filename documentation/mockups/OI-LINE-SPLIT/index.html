@@ -367,16 +367,16 @@ function sheet(narrow){
         h += '<td class="base c-item m"'+rs+'><b style="font-weight:600">'+esc(l.item)+'</b><span class="lno">line '+l.label+'</span></td>';
         h += '<td class="base c-loc m"'+rs+'>'+esc(l.loc)+'</td>';
         h += '<td class="base m num"'+rs+'>'+(l.added?'0':l.qty)+'</td>';
-        h += '<td class="base m"'+rs+'>'+(l.added?'<span class="mut">–</span>':iso2(l.date))+nowTxt+inc+'</td>';
+        h += '<td class="base m"'+rs+'>'+(l.added?'<span class="mut">-</span>':iso2(l.date))+nowTxt+inc+'</td>';
       }
       if(l.added){
-        h += '<td colspan="2"><span class="added">Added in AutoCount: '+l.now.qty+' · '+iso2(l.now.date)+'</span></td><td><span class="mut">–</span></td><td></td><td class="base"></td><td></td></tr>';
+        h += '<td colspan="2"><span class="added">Added in AutoCount: '+l.now.qty+' · '+iso2(l.now.date)+'</span></td><td><span class="mut">-</span></td><td></td><td class="base"></td><td></td></tr>';
         return;
       }
       if(s===null){
         h += '<td><div class="qcell"><button class="grip" data-drag="line" data-line-id="'+l.id+'" aria-label="Drag line '+l.label+'" title="Drag to another line">'+ICON.grip+'</button><button class="remain" data-act="open" data-f="qty" data-k="'+l.id+'|-|qty" aria-label="Split line '+l.label+' quantity">REMAIN</button></div></td>';
         h += '<td><button class="remain" style="width:100%" data-act="open" data-f="date" data-k="'+l.id+'|-|date" aria-label="Split line '+l.label+' date">REMAIN</button></td>';
-        h += '<td><span class="mut">–</span></td>';
+        h += '<td><span class="mut">-</span></td>';
         h += '<td><textarea rows="1" class="cell-in rm" data-f="remark0" data-line-id="'+l.id+'" data-k="'+l.id+'|-|remark" aria-label="Remark line '+l.label+'">'+esc(l.remark)+'</textarea></td>';
       } else {
         var w = word(s,l);
