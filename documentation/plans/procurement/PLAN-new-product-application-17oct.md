@@ -1,9 +1,12 @@
 # PLAN - New product application (NEW-PRODUCT-APP)
 
-Lane NEW-PRODUCT-APP, size L. Status: Build (v4 paper layout, local lane NEW-PRODUCT-APP-L on 18 Oct; v1-v3 flow built
-and reviewed, see "v4" below). Owner OKed card + mock v3 on 18 Oct (Q1 = portal too); crew PQ1 (b), PQ2 (a); owner then
-OKed mock v4 (18 Oct 12:14) with D1-D4 = yes and PQ1 = yes. The cloud lane's v4 commits never reached GitHub; v4 is
-rebuilt from the PR head fbe04604.
+Lane NEW-PRODUCT-APP, size L. Status: Review (v4 paper layout built by local lane NEW-PRODUCT-APP-L, 18 Oct): reviewer
+READY, security findings fixed, browser pass on the crew test copy done, owner hand test next. v1-v3 flow built and reviewed
+earlier. Owner OKed card + mock v3 on 18 Oct (Q1 = portal too); crew PQ1 (b), PQ2 (a); owner then OKed mock v4 (18 Oct
+12:14) with D1-D4 = yes and PQ1 = yes. v4 was rebuilt from the PR head because the cloud lane's v4 commits never reached
+GitHub. Decisions taken in the build: Copy from the inquiry and image picks are staged on an unsaved draft and applied
+after the first save; removing an image is staged until Save (no countdown needed); the Excel embeds the stored 320 px
+thumbnail; NPA images are capped at 10 MB and 40 MP and checked by content.
 Track: full (migration + new permissions). PR #1769, branch `claude/new-product-application-0u631d`.
 
 Owner 15 Oct: stock inquiry about a new product code -> inquiry responded -> new product application ->
