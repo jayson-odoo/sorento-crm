@@ -522,8 +522,7 @@ class LineSplitService:
         AC-G18: the row's own state is the record (undo sets it back to pending), never its
         batch's `applied_at`: the board Confirm applies one order at a time and stamps the
         batch only once nothing in it is pending, so most confirmed lines sit in an open
-        batch. An empty `from` reads the line's older `added` row like the pending read.
-        Newest is the highest revision the apply stamped on the row."""
+        batch. An empty `from` reads the line's older `added` row like the pending read."""
         wanted = sorted({str(i) for i in line_ids if i})
         if not wanted:
             return {}
@@ -535,16 +534,7 @@ class LineSplitService:
                 PlanningChangeRow.project_line_id.in_(wanted),
                 PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_APPLIED,
             )
-            # Newest first by the revision the apply minted (stamped on every row it
-            # applied): rows written in one transaction share `created_at`.
-            .order_by(
-                PlanningChangeRow.result_json["supply_decision_revision_no"]
-                .as_integer()
-                .desc()
-                .nullslast(),
-                PlanningChangeRow.created_at.desc(),
-                PlanningChangeRow.id.desc(),
-            )
+            .order_by(PlanningChangeRow.created_at.desc(), PlanningChangeRow.id.desc())
             .all()
         )
         out = self._from_of_newest(found)

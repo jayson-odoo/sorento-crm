@@ -1525,7 +1525,16 @@ class ProjectOrderInquiryService:
             line = entry["line"]
             if str(line.id) in standing_splits:
                 # AC-G13: the line's rows already are its plan; a Confirm with nothing new for
-                # it leaves them as they are, and its change raises no separate notice.
+                # it leaves them as they are, and its change raises no separate notice. They
+                # are filed under this revision, so a later board Reject retires them (AC-G19).
+                for row in self.db.query(OrderInquiryRow).filter(
+                    OrderInquiryRow.order_inquiry_id == inquiry.id,
+                    OrderInquiryRow.so_line_id == line.id,
+                    OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK, IV_CANCEL_BALANCE)),
+                    OrderInquiryRow.state != INQUIRY_CANCELLED,
+                ):
+                    if not row.redirected_to_pool:
+                        row.supply_decision_id = decision.id
                 if str(line.id) in settle_in_place:
                     settled_in_place.append(str(line.id))
                 continue
@@ -5799,7 +5808,7 @@ class ProjectOrderInquiryService:
         skip: set,
         line_changes: Optional[Mapping[str, Dict[str, Any]]] = None,
         later: Optional[set] = None,
-        replanned: Optional[Mapping[str, Mapping[str, Decimal]]] = None,
+        replanned: Optional[Mapping[str, Sequence[Dict[str, Any]]]] = None,
     ) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Decimal], set]:
         """OI-LINE-SPLIT (UAC AC-G10 to AC-G16, crew rulings (a), P1, P2) for the whole-Buy lines
         of this Confirm (`whole_buy_line_ids`; a line partly from stock nets as before).
@@ -5864,6 +5873,49 @@ class ProjectOrderInquiryService:
         standing: set = set()
         told: set = set()
         declined_in: Dict[str, Decimal] = defaultdict(lambda: _ZERO)
+        # What other lines' plans drop on each line (their stale plans aside).
+        incoming: Dict[str, Decimal] = defaultdict(lambda: _ZERO)
+        for other_id, other in facts.items():
+            if other.split_state == SPLIT_STALE:
+                continue
+            for split in other.splits:
+                on = sits.get(str(split.id))
+                if not split.is_cancel and on and on != other_id:
+                    incoming[on] += _dec(split.qty)
+
+        def _grew(target: str) -> Optional[Decimal]:
+            """What the target's AutoCount qty grew by: in this Confirm, else in the last
+            change applied to it; `None` when neither is known."""
+            before, after = changes.get(target, (None, None))
+            if after is not None:
+                return after - (before if before is not None else _ZERO)
+            if facts.get(target) is not None and facts[target].refers_back:
+                # No change in this Confirm: the growth the last applied change brought.
+                return facts[target].now_qty - facts[target].applied_base()[0]
+            return None
+
+        def _held(line_id: str) -> Decimal:
+            return sum(
+                (_dec(row.qty) for row in self._split_line_rows(line_id, received=True)),
+                _ZERO,
+            )
+
+        def _received_surplus(target: str, qty: Decimal) -> Decimal:
+            """AC-G19 (reviewer S3): of a declined split onto a target whose rows are all on
+            documents received in full, what cutting the target's need would leave it holding
+            beyond that need. Purchasing cannot cancel received goods, so the origin, whose row
+            still holds the split on an open document, cancels it instead."""
+            if target not in entries or self._split_line_rows(target):
+                return _ZERO
+            grew = _grew(target)
+            if grew is None or grew <= _ZERO:
+                return _ZERO
+            need = max(
+                _dec(entries[target].get("buy_qty")) - min(declined_in[target] + qty, grew),
+                _ZERO,
+            )
+            return min(qty, max(_held(target) - need, _ZERO))
+
         for line_id in sorted(whole):
             f = facts[line_id]
             state = f.split_state
@@ -5872,6 +5924,15 @@ class ProjectOrderInquiryService:
             # A later AutoCount change on an applied plan (`_later_change_lines`) reads as P2.
             own_rows = state == SPLIT_STALE or line_id in (later or set())
             cancels = sum((_dec(s.qty) for s in f.splits if s.is_cancel), _ZERO)
+            current = Counter(
+                (_dec(row.qty), row.delivery_date) for row in self._split_line_rows(line_id)
+            )
+            # AC-G17: rows whose document is received in full still hold the plan they were
+            # cut to (and a received row left from before the plan is history beside it).
+            with_received = Counter(
+                (_dec(row.qty), row.delivery_date)
+                for row in self._split_line_rows(line_id, received=True)
+            )
             if own_rows:
                 # P2 (a), AC-G16: AutoCount moved on. The kept New-line rows stand until staff
                 # change them; the line's own row moves by AutoCount's change (14 -> 20: +6,
@@ -5912,46 +5973,57 @@ class ProjectOrderInquiryService:
                     if left > _ZERO:
                         kept.append((left, split.delivery_date, sits.get(str(split.id))))
                 extra = plans[line_id].extra_qty or _ZERO
+
+                def _laid(kept_rows, extra_qty):
+                    carrier = next(
+                        (k for k in kept_rows if k[2] == line_id),
+                        kept_rows[0] if kept_rows else None,
+                    )
+                    laid = [
+                        (qty + (extra_qty if k is carrier else _ZERO), when)
+                        for k in kept_rows
+                        for qty, when, _on in (k,)
+                    ]
+                    if carrier is None and extra_qty > _ZERO:
+                        laid = [(extra_qty, f.now_date)]
+                    return laid
+
                 if state == SPLIT_APPLIED:
                     # Of the splits on other lines, the origin still holds only what a declined
                     # move left it (what its rows ask beyond its own plan).
                     own = [k for k in kept if k[2] in (line_id, None)]
                     # A re-planned line's rows on a document received in full hold its plan
                     # too: a split they keep could not move (AC-G19).
-                    spare = (
-                        self._asked_qty(line_id, received=line_id in (replanned or {}))
-                        - sum((k[0] for k in own), _ZERO)
-                        - extra
-                    )
-                    elsewhere = []
-                    for qty, when, on in (k for k in kept if k[2] not in (line_id, None)):
-                        take = min(qty, spare)
-                        if take > _ZERO:
-                            elsewhere.append((take, when, on))
-                            spare -= take
-                    kept = own + elsewhere
+                    asked = self._asked_qty(line_id, received=line_id in (replanned or {}))
+
+                    def _keeps(extra_qty):
+                        spare = asked - sum((k[0] for k in own), _ZERO) - extra_qty
+                        elsewhere = []
+                        for qty, when, on in (k for k in kept if k[2] not in (line_id, None)):
+                            take = min(qty, spare)
+                            if take > _ZERO:
+                                elsewhere.append((take, when, on))
+                                spare -= take
+                        return own + elsewhere
+
+                    plain = _keeps(extra)
+                    if incoming[line_id] > _ZERO and Counter(
+                        _laid(_keeps(extra + incoming[line_id]), extra + incoming[line_id])
+                    ) in (current, with_received):
+                        # AC-G19: what other lines' plans drop on this line already sits in its
+                        # row (their links moved in, its AutoCount counts it): it stands.
+                        extra = extra + incoming[line_id]
+                        plain = _keeps(extra)
+                    kept = plain
                 for qty, _when, on in kept:
                     if on and on != line_id:
-                        declined_in[on] += qty
-                carrier = next(
-                    (k for k in kept if k[2] == line_id), kept[0] if kept else None
-                )
-                rows = [
-                    (qty + (extra if k is carrier else _ZERO), when)
-                    for k in kept
-                    for qty, when, _on in (k,)
-                ]
-                if carrier is None and extra > _ZERO:
-                    rows = [(extra, f.now_date)]
-            current = Counter(
-                (_dec(row.qty), row.delivery_date) for row in self._split_line_rows(line_id)
-            )
-            # AC-G17: rows whose document is received in full still hold the plan they were
-            # cut to (and a received row left from before the plan is history beside it).
-            with_received = Counter(
-                (_dec(row.qty), row.delivery_date)
-                for row in self._split_line_rows(line_id, received=True)
-            )
+                        surplus = (
+                            _received_surplus(on, qty) if state == SPLIT_APPLIED else _ZERO
+                        )
+                        cancels += surplus
+                        if qty > surplus:
+                            declined_in[on] += qty - surplus
+                rows = _laid(kept, extra)
             # A CANCEL BALANCE the line already tells counts too: its explicit cancel splits,
             # or what an earlier re-plan dropped (AC-G17), which a re-Confirm keeps as it is.
             held_cancel = self._live_cancel_qty(line_id)
@@ -5987,18 +6059,17 @@ class ProjectOrderInquiryService:
         for target, qty in declined_in.items():
             if target in needs or target in standing or target not in entries:
                 continue
-            before, after = changes.get(target, (None, None))
-            if after is not None:
-                grew = after - (before if before is not None else _ZERO)
-            elif facts.get(target) is not None and facts[target].refers_back:
-                # No change in this Confirm: the growth the last applied change brought.
-                grew = facts[target].now_qty - facts[target].applied_base()[0]
-            else:
-                continue
-            if grew <= _ZERO:
+            grew = _grew(target)
+            if grew is None or grew <= _ZERO:
                 continue
             # Crew ruling (a): AutoCount's growth already counts the qty the origin keeps.
-            needs[target] = max(_dec(entries[target].get("buy_qty")) - min(qty, grew), _ZERO)
+            need = max(_dec(entries[target].get("buy_qty")) - min(qty, grew), _ZERO)
+            told_cancel = self._live_cancel_qty(target)
+            if told_cancel > _ZERO and _held(target) - told_cancel == need:
+                # AC-G19 (B3): its CANCEL BALANCE already tells the cut; a re-Confirm keeps it.
+                standing.add(target)
+                continue
+            needs[target] = need
         # AC-G13 / AC-G19: a line other lines' splits sit on, not split itself and with no
         # AutoCount change in this Confirm, whose rows already hold its Buy stands like a
         # split line whose rows are its plan (the netting would restate its linked row).
@@ -6047,16 +6118,17 @@ class ProjectOrderInquiryService:
 
     def _replanned_lines(
         self, buy_lines: Sequence[Dict[str, Any]], decision: Any
-    ) -> Dict[str, Dict[str, Decimal]]:
+    ) -> Dict[str, List[Dict[str, Any]]]:
         """OI-LINE-SPLIT (UAC AC-G19, crew ruling P1 (a)): the whole-Buy split lines of this
         Confirm whose plan an earlier Confirm applied and staff edited since (its
         `split_plan_key` differs from the one the previous decision recorded; a plan with no
         record counts as edited once). An edit acts again, a changed landing line included.
 
-        Per such line, what each other named line now takes of its plan beyond what the
-        recorded plan already put there: what this Confirm moves onto it with purchasing's
-        links (`_apply_split_links`). Only onto a line that grew in the last change applied
-        to it, the rule a declined move's target reads (`_kept_split_needs`)."""
+        Per such line, its moves (`_apply_split_links`): each split that now sits on another
+        named line it did not sit on in the recorded plan, with where the recorded plan had
+        it (`from`: `None` for the line's own rows, else the line it was dropped on) and at
+        which date (`None` without a record). Only onto a line that grew in the last change
+        applied to it, the rule a declined move's target reads (`_kept_split_needs`)."""
         from app.services.project_line_split_service import SPLIT_APPLIED, LineSplitService
 
         ids = sorted(
@@ -6081,34 +6153,54 @@ class ProjectOrderInquiryService:
         if not edited:
             return {}
         recorded = self._previous_split_plans(decision)
-        out: Dict[str, Dict[str, Decimal]] = {}
+        out: Dict[str, List[Dict[str, Any]]] = {}
         for line_id in sorted(whole_buy_line_ids(self.db, edited, decision)):
             f = facts[line_id]
             before = recorded.get(line_id)
             if before == split_plan_key(f.splits):
                 continue
-            had: Dict[str, Decimal] = defaultdict(lambda: _ZERO)
+            # The recorded plan's splits: (qty, date, the line it sat on or None for this one).
+            was: List[Tuple[Decimal, Optional[date], Optional[str]]] = []
             for part in (before or [])[1:]:
-                qty, _when, on, cancel = (part.split("@") + ["", "", "", ""])[:4]
-                if on and on != line_id and not cancel:
-                    had[on] += _dec(qty)
-            takes: Dict[str, Decimal] = defaultdict(lambda: _ZERO)
+                qty, when, on, cancel = (part.split("@") + ["", "", "", ""])[:4]
+                if not cancel:
+                    was.append(
+                        (_dec(qty), _as_date(when), on if on and on != line_id else None)
+                    )
             sits = service.effective_sits_on(f.splits)
+            moves: List[Dict[str, Any]] = []
             for split in f.splits:
-                on = sits.get(str(split.id))
-                if on and on != line_id and not split.is_cancel:
-                    takes[on] += _dec(split.qty)
-            fresh: Dict[str, Decimal] = {}
-            for target in sorted(takes):
+                target = sits.get(str(split.id))
+                if split.is_cancel or not target or target == line_id:
+                    continue
+                qty = _dec(split.qty)
+                # Its recorded self: the same qty, on this target first, then the same date.
+                same = [w for w in was if w[0] == qty]
+                match = next(
+                    (w for w in same if w[2] == target),
+                    next((w for w in same if w[1] == split.delivery_date), same[0] if same else None),
+                )
+                if match is not None:
+                    was.remove(match)
+                    if match[2] == target:
+                        continue
                 target_facts = facts.get(target)
                 grew = (
                     target_facts.now_qty - target_facts.applied_base()[0]
                     if target_facts is not None and target_facts.refers_back
                     else _ZERO
                 )
-                if takes[target] > had[target] and grew > _ZERO:
-                    fresh[target] = takes[target] - had[target]
-            out[line_id] = fresh
+                if grew <= _ZERO:
+                    continue
+                moves.append(
+                    {
+                        "split": split,
+                        "target": target,
+                        "from": match[2] if match is not None else None,
+                        "date": match[1] if match is not None else None,
+                    }
+                )
+            out[line_id] = moves
         return out
 
     def _later_change_lines(self, buy_lines: Sequence[Dict[str, Any]], decision: Any) -> set:
@@ -6461,6 +6553,240 @@ class ProjectOrderInquiryService:
             handled.update(str(e["line"].id) for e in fresh)
         return handled
 
+    def _row_can_move(self, row: OrderInquiryRow) -> bool:
+        """The pure split's guards on one live row a split moves off or onto: an ORDER row
+        (raised, partly linked or placed), not redirected, not refused, no CS reserve link,
+        and not where `_settle_row_in_place` would decline it (a placed row with no link, or
+        links on a document received in full)."""
+        links = self._links_of(row.id)
+        ok = (
+            row.verb == IV_ORDER
+            and row.state in (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED, INQUIRY_PLACED)
+            and not row.redirected_to_pool
+            and row.ack_state != ACK_REJECTED
+            # A CS reserve link is tied to its reserve request row; it never moves.
+            and not any(link.reserve_request_row_id for link in links)
+        )
+        if ok:
+            if row.state == INQUIRY_PLACED and not links:
+                ok = False
+            elif links and self._received_documents_for(links):
+                ok = False
+        return ok
+
+    def _move_link_qty(
+        self,
+        source: OrderInquiryRow,
+        target: OrderInquiryRow,
+        qty: Decimal,
+        po_line_ids: Optional[set] = None,
+    ) -> Decimal:
+        """Hand up to `qty` of `source`'s links (only those on `po_line_ids` when given) to
+        `target`, latest-dated document first like `_split_row`. Returns what moved."""
+        links = sorted(
+            (
+                link
+                for link in self._links_of(source.id)
+                if po_line_ids is None or str(link.po_line_id or "") in po_line_ids
+            ),
+            key=lambda link: (
+                self._link_expected_date(link) or date.max,
+                link.linked_at or datetime.min,
+                _dec(link.qty),
+            ),
+            reverse=True,
+        )
+        moved = _ZERO
+        for link in links:
+            if moved >= qty:
+                break
+            take = min(_dec(link.qty), qty - moved)
+            if take == _dec(link.qty):
+                link.row_id = target.id
+            else:
+                self.db.add(
+                    OrderInquiryLink(
+                        company_id=link.company_id,
+                        row_id=target.id,
+                        po_line_id=link.po_line_id,
+                        spo_allocation_id=link.spo_allocation_id,
+                        document=link.document,
+                        qty=take,
+                        linked_by=link.linked_by,
+                        linked_at=link.linked_at,
+                        auto=bool(link.auto),
+                        claim_id=link.claim_id,
+                    )
+                )
+                link.qty = _dec(link.qty) - take
+            moved += take
+        if moved > _ZERO:
+            self.db.flush()
+            self._invalidate_link_cache()
+            self.refresh_link_state([source, target])
+        return moved
+
+    def _move_replanned(
+        self,
+        inquiry: OrderInquiry,
+        decision: Any,
+        entries: Mapping[str, Dict[str, Any]],
+        replanned: Mapping[str, Sequence[Dict[str, Any]]],
+    ) -> None:
+        """OI-LINE-SPLIT (UAC AC-G19, crew ruling P1 (a)): each re-planned origin's changed
+        landings (`_replanned_lines`) take purchasing's links to the line they now sit on.
+
+        * A split the recorded plan kept on its origin (own line or New line) moves off the
+          row holding it (the origin's row at its recorded date, never the row of a split
+          that stays), qty and links (`_split_row`); a kept row moved whole is cancelled.
+        * A split the recorded plan dropped on another line hands that line's links of the
+          origin's documents to its new line; both lines keep their qty (AutoCount's).
+        * The target's last applied change already raised the qty: the moved links replace
+          that much of its own unlinked ask, so nothing is asked twice.
+        * A move whose row cannot move (`_row_can_move`; received in full, or none found)
+          is declined (AC-G12): the origin keeps it and `_kept_split_needs` reads it so.
+        Then an origin still linked beyond the splits that stay on it hands that surplus to
+        the rows its moves landed on (the links rode on another of its rows)."""
+        from app.services.project_line_split_service import LineSplitService
+
+        moved_by_origin = self.db.info.setdefault(SPLIT_MOVED_KEY, {})
+        service = LineSplitService(self.db)
+
+        def _rows(line_id: str) -> List[OrderInquiryRow]:
+            return [
+                row
+                for row in self.db.query(OrderInquiryRow).filter(
+                    OrderInquiryRow.order_inquiry_id == inquiry.id,
+                    OrderInquiryRow.so_line_id == line_id,
+                    OrderInquiryRow.state != INQUIRY_CANCELLED,
+                    OrderInquiryRow.verb != IV_CANCEL_BALANCE,
+                )
+            ]
+
+        def _linked(row: OrderInquiryRow) -> Decimal:
+            return sum((_dec(link.qty) for link in self._links_of(row.id)), _ZERO)
+
+        def _one(line_id: str) -> Tuple[bool, Optional[OrderInquiryRow]]:
+            live = _rows(line_id)
+            if not live:
+                return True, None
+            if len(live) != 1 or not self._row_can_move(live[0]):
+                return False, None
+            return True, live[0]
+
+        for origin in sorted(replanned):
+            moves = [m for m in replanned[origin] if m["target"] in entries]
+            if not moves:
+                continue
+            splits = service.splits_of_lines([origin]).get(origin, [])
+            sits = service.effective_sits_on(splits)
+            # The rows of the splits that stay on the origin never move.
+            staying = [
+                (_dec(s.qty), s.delivery_date)
+                for s in splits
+                if not s.is_cancel and sits.get(str(s.id)) in (origin, None)
+            ]
+            candidates = _rows(origin)
+            for key in staying:
+                hit = next(
+                    (r for r in candidates if (_dec(r.qty), r.delivery_date) == key), None
+                )
+                if hit is not None:
+                    candidates.remove(hit)
+            documents = {
+                str(link.po_line_id)
+                for row in _rows(origin)
+                for link in self._links_of(row.id)
+                if link.po_line_id
+            }
+            landed: List[Tuple[OrderInquiryRow, Decimal]] = []
+            for move in sorted(moves, key=lambda m: m["split"].seq, reverse=True):
+                split, target_id = move["split"], move["target"]
+                qty = _dec(split.qty)
+                usable, target = _one(target_id)
+                if not usable:
+                    continue
+                if move["from"] is not None:
+                    if target is None:
+                        continue
+                    usable, holder = _one(move["from"])
+                    if not usable or holder is None:
+                        continue
+                    room = max(_dec(target.qty) - _linked(target), _ZERO)
+                    self._move_link_qty(holder, target, min(qty, room), documents)
+                    continue
+                if move["date"] is not None:
+                    at = [r for r in candidates if r.delivery_date == move["date"]]
+                else:
+                    at = [r for r in candidates if r.delivery_date == split.delivery_date] or [
+                        r for r in candidates if _dec(r.qty) == qty
+                    ] or list(candidates)
+                holder = max(
+                    at,
+                    key=lambda r: (_dec(r.qty) == qty, _linked(r), _dec(r.qty)),
+                    default=None,
+                )
+                if holder is None or not self._row_can_move(holder):
+                    continue
+                if target is not None and (
+                    (target.item_code or None, target.stock_location or None)
+                    != (holder.item_code or None, holder.stock_location or None)
+                ):
+                    continue
+                part = min(qty, _dec(holder.qty))
+                unlinked = max(_dec(target.qty) - _linked(target), _ZERO) if target else _ZERO
+                carried = _linked(holder)
+                self._split_row(
+                    holder,
+                    _dec(holder.qty) - part,
+                    [
+                        {
+                            "line": entries[target_id]["line"],
+                            "buy_qty": part,
+                            "required_date": split.delivery_date
+                            or entries[target_id].get("required_date"),
+                            "row": target,
+                        }
+                    ],
+                    decision,
+                )
+                carried -= _linked(holder)
+                record = moved_by_origin.setdefault(
+                    origin, {"qty": _ZERO, "splits": {}, "to": {}}
+                )
+                record["qty"] += part
+                record["splits"][str(split.id)] = part
+                record["to"][target_id] = record["to"].get(target_id, _ZERO) + part
+                if target is not None and unlinked > _ZERO:
+                    # The target's own ask already holds this qty (its last applied change
+                    # raised it): the moved links replace that much of it.
+                    target.qty = _dec(target.qty) - min(part, unlinked)
+                    self.refresh_link_state([target])
+                if _dec(holder.qty) <= _ZERO and not self._links_of(holder.id):
+                    # The whole kept row moved: nothing is left on the origin for it.
+                    holder.state = INQUIRY_CANCELLED
+                    candidates.remove(holder)
+                self.db.flush()
+                self._invalidate_link_cache()
+                landing = target or next(
+                    (r for r in _rows(target_id) if _dec(r.qty) == part), None
+                )
+                if landing is not None and part > carried:
+                    landed.append((landing, part - carried))
+            # Links the origin holds beyond what stays on it rode on another of its rows: they
+            # follow the qty that moved without them.
+            surplus = sum((_linked(r) for r in _rows(origin)), _ZERO) - sum(
+                (qty for qty, _when in staying), _ZERO
+            )
+            for landing, short in landed:
+                for row in sorted(_rows(origin), key=lambda r: -_linked(r)):
+                    if surplus <= _ZERO or short <= _ZERO:
+                        break
+                    room = max(_dec(landing.qty) - _linked(landing), _ZERO)
+                    got = self._move_link_qty(row, landing, min(surplus, short, room))
+                    surplus -= got
+                    short -= got
+
     def _apply_split_links(
         self,
         inquiry: OrderInquiry,
@@ -6469,7 +6795,7 @@ class ProjectOrderInquiryService:
         *,
         line_changes: Optional[Mapping[str, Dict[str, Any]]] = None,
         exclude: Optional[set] = None,
-        replanned: Optional[Mapping[str, Mapping[str, Decimal]]] = None,
+        replanned: Optional[Mapping[str, Sequence[Dict[str, Any]]]] = None,
     ) -> None:
         """OI-LINE-SPLIT (UAC E1, `PLAN-oi-line-split-16oct.md` Engine): Confirm honours the
         splits staff linked. A stored split of line A that sits on line B of the same order
@@ -6486,11 +6812,8 @@ class ProjectOrderInquiryService:
         it). Latest split first. Nothing is added to the handled or settled lines: the
         lines still settle and net as they would. No stored splits, nothing moves.
 
-        AC-G19 (crew ruling P1 (a)): an applied plan staff re-planned onto another line
-        (`replanned`, from `_replanned_lines`) moves what it now puts there, off the rows its
-        applied plan left the origin (one per kept split, each under the same guards). The
-        target's last applied change already raised that qty, so it replaces the target's
-        own unlinked ask instead of adding to it."""
+        AC-G19: an applied plan staff re-planned moves its changed landings first
+        (`_move_replanned`)."""
         entries = {
             str(entry["line"].id): entry
             for entry in buy_lines
@@ -6505,17 +6828,16 @@ class ProjectOrderInquiryService:
         moved_by_origin = self.db.info.setdefault(SPLIT_MOVED_KEY, {})
         for line_id in entries:
             moved_by_origin.pop(line_id, None)
-        fresh = {
-            origin: {target: qty for target, qty in targets.items() if target in entries}
-            for origin, targets in (replanned or {}).items()
-            if origin in entries and origin not in (exclude or set())
-        }
-        fresh = {origin: targets for origin, targets in fresh.items() if targets}
-        if len(entries) < 2 or not (line_changes or fresh):
+        if len(entries) >= 2 and replanned:
+            self._move_replanned(
+                inquiry, decision, entries,
+                {o: m for o, m in replanned.items() if o not in (exclude or set())},
+            )
+        if len(entries) < 2 or not line_changes:
             return
         from app.services.project_line_split_service import LineSplitService, SplitOutputs
 
-        changes = self._qty_changes(list(entries), line_changes or {})
+        changes = self._qty_changes(list(entries), line_changes)
 
         def _change(line_id: str) -> Tuple[Optional[Decimal], Optional[Decimal]]:
             return changes.get(line_id, (None, None))
@@ -6532,15 +6854,13 @@ class ProjectOrderInquiryService:
             if _change(line_id)[1] is not None
             and (_change(line_id)[0] is None or _change(line_id)[1] > _change(line_id)[0])
         }
-        if not went_up and not fresh:
+        if not went_up:
             return
 
         # AC-G10 (round 3): a split dropped on a line that went up moves whatever its own
         # line's net change (SO417636: 752 went 504 -> 649 and its 37 still moves to 608).
         # Stale splits (made against a base AutoCount has since moved on from) never act.
-        acting = (
-            LineSplitService(self.db).acting_origin_ids(entries) | set(fresh)
-        ) - (exclude or set())
+        acting = LineSplitService(self.db).acting_origin_ids(entries) - (exclude or set())
         if not acting:
             return
         went_down_set = set(went_down)
@@ -6552,7 +6872,7 @@ class ProjectOrderInquiryService:
                 if not view.split.is_cancel
                 and view.sits_on
                 and view.sits_on != origin
-                and view.sits_on in (fresh[origin] if origin in fresh else went_up)
+                and view.sits_on in went_up
             ]
             for origin, views in splits.by_origin.items()
         }
@@ -6578,147 +6898,66 @@ class ProjectOrderInquiryService:
             carried; a move would hand on a received link and a fresh order), or a PLACED row
             with no link (a move re-reads it as raised, and purchasing loses that they placed
             it). Declined, nothing moves and the netting tells both lines as without splits."""
-            live = _live(line_id)
+            live = [
+                row for row in rows_by_line.get(line_id, [])
+                if row.state != INQUIRY_CANCELLED and row.verb != IV_CANCEL_BALANCE
+            ]
             if not live:
                 return True, None
             if len(live) != 1:
                 return False, None
             row = live[0]
-            ok = _row_moves(row)
+            ok = self._row_can_move(row)
             return ok, row if ok else None
-
-        def _live(line_id: str) -> List[OrderInquiryRow]:
-            return [
-                row for row in rows_by_line.get(line_id, [])
-                if row.state != INQUIRY_CANCELLED and row.verb != IV_CANCEL_BALANCE
-            ]
-
-        def _row_moves(row: OrderInquiryRow) -> bool:
-            links = self._links_of(row.id)
-            ok = (
-                row.verb == IV_ORDER
-                and row.state in (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED, INQUIRY_PLACED)
-                and not row.redirected_to_pool
-                and row.ack_state != ACK_REJECTED
-                # A CS reserve link is tied to its reserve request row; it never moves.
-                and not any(link.reserve_request_row_id for link in links)
-            )
-            if ok:
-                if row.state == INQUIRY_PLACED and not links:
-                    ok = False
-                elif links and self._received_documents_for(links):
-                    ok = False
-            return ok
-
-        def _linked(row: OrderInquiryRow) -> Decimal:
-            return sum((_dec(link.qty) for link in self._links_of(row.id)), _ZERO)
-
-        def _best_source(sources: List[OrderInquiryRow], take: Decimal) -> OrderInquiryRow:
-            """The re-planned origin's row whose move carries the most of its links
-            (`_split_row` hands on what is linked above the qty it keeps): the kept row of
-            that split, linked for its own qty. Ties read by qty, then date."""
-
-            def carried(row: OrderInquiryRow) -> Decimal:
-                part = min(take, _dec(row.qty))
-                return min(part, max(_linked(row) - (_dec(row.qty) - part), _ZERO))
-
-            return max(
-                sources,
-                key=lambda row: (
-                    carried(row),
-                    _dec(row.qty) == take,
-                    _dec(row.qty),
-                    row.delivery_date or date.min,
-                ),
-            )
 
         for origin, views in linked_by_origin.items():
             if not views:
                 continue
-            left_for: Optional[Dict[str, Decimal]] = None
-            if origin in fresh:
-                sources = [row for row in _live(origin) if _row_moves(row)]
-                left_for = dict(fresh[origin])
-                room = min(
-                    sum(left_for.values(), _ZERO),
-                    sum((_dec(row.qty) for row in sources), _ZERO),
-                )
-            else:
-                usable, source = _movable(origin)
-                if not usable or source is None:
-                    continue
-                sources = [source]
-                # An origin AutoCount took down gives what its new Buy no longer needs; any
-                # other gives its dropped splits themselves, out of what its row holds.
-                room = (
-                    _dec(source.qty) - _dec(entries[origin].get("buy_qty"))
-                    if origin in went_down_set
-                    else min(_dec(source.qty), sum((_dec(v.split.qty) for v in views), _ZERO))
-                )
+            usable, source = _movable(origin)
+            if not usable or source is None:
+                continue
+            # An origin AutoCount took down gives what its new Buy no longer needs; any
+            # other gives its dropped splits themselves, out of what its row holds.
+            room = (
+                _dec(source.qty) - _dec(entries[origin].get("buy_qty"))
+                if origin in went_down_set
+                else min(_dec(source.qty), sum((_dec(v.split.qty) for v in views), _ZERO))
+            )
             for view in sorted(views, key=lambda v: v.split.seq, reverse=True):
                 if room <= _ZERO:
                     break
                 target_id = view.sits_on
+                usable, target = _movable(target_id)
+                if not usable:
+                    continue
+                if target is not None and (
+                    (target.item_code or None, target.stock_location or None)
+                    != (source.item_code or None, source.stock_location or None)
+                ):
+                    continue
                 take = min(_dec(view.split.qty), room)
-                if left_for is not None:
-                    take = min(take, left_for.get(target_id, _ZERO))
-                while take > _ZERO and sources:
-                    usable, target = _movable(target_id)
-                    if not usable:
-                        break
-                    source = _best_source(sources, take) if left_for is not None else sources[0]
-                    if target is not None and (
-                        (target.item_code or None, target.stock_location or None)
-                        != (source.item_code or None, source.stock_location or None)
-                    ):
-                        break
-                    part = min(take, _dec(source.qty))
-                    if part <= _ZERO:
-                        break
-                    record = moved_by_origin.setdefault(
-                        origin, {"qty": _ZERO, "splits": {}, "to": {}}
-                    )
-                    record["qty"] += part
-                    record["splits"][str(view.split.id)] = (
-                        record["splits"].get(str(view.split.id), _ZERO) + part
-                    )
-                    record["to"][target_id] = record["to"].get(target_id, _ZERO) + part
-                    unlinked = (
-                        max(_dec(target.qty) - _linked(target), _ZERO)
-                        if target is not None
-                        else _ZERO
-                    )
-                    self._split_row(
-                        source,
-                        _dec(source.qty) - part,
-                        [
-                            {
-                                "line": entries[target_id]["line"],
-                                "buy_qty": part,
-                                "required_date": view.split.delivery_date
-                                or entries[target_id].get("required_date"),
-                                "row": target,
-                            }
-                        ],
-                        decision,
-                    )
-                    take -= part
-                    room -= part
-                    if left_for is not None:
-                        left_for[target_id] -= part
-                        if target is not None and unlinked > _ZERO:
-                            # The target's own ask already holds this qty (its last applied
-                            # change raised it): the moved links replace that much of it.
-                            target.qty = _dec(target.qty) - min(part, unlinked)
-                            self.refresh_link_state([target])
-                        if _dec(source.qty) <= _ZERO and not self._links_of(source.id):
-                            # The whole kept row moved: nothing is left on the origin for it.
-                            source.state = INQUIRY_CANCELLED
-                            sources.remove(source)
-                        self.db.flush()
-                        self._invalidate_link_cache()
-                    if target is not None:
-                        continue
+                record = moved_by_origin.setdefault(
+                    origin, {"qty": _ZERO, "splits": {}, "to": {}}
+                )
+                record["qty"] += take
+                record["splits"][str(view.split.id)] = take
+                record["to"][target_id] = record["to"].get(target_id, _ZERO) + take
+                self._split_row(
+                    source,
+                    _dec(source.qty) - take,
+                    [
+                        {
+                            "line": entries[target_id]["line"],
+                            "buy_qty": take,
+                            "required_date": view.split.delivery_date
+                            or entries[target_id].get("required_date"),
+                            "row": target,
+                        }
+                    ],
+                    decision,
+                )
+                room -= take
+                if target is None:
                     # The row just made is the target's one live row from here on.
                     rows_by_line[target_id] = [
                         row
