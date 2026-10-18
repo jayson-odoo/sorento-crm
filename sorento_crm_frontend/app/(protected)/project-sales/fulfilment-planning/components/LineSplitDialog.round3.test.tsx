@@ -42,7 +42,7 @@ function afterConfirm() {
           wireSplit('s167', 167, '2029-11-20', 'L608', { remark_generated: 'Delayed to 20/11/2029' }),
         ],
       }),
-      wireLine(608, 'CSK14B', 192, '2026-11-20', { now_qty: 632, new_qty: 632 }),
+      wireLine(608, 'CSK14B', 192, '2026-11-20', { now_qty: 632, new_qty: 632, remark_generated: 'REMAIN' }),
       wireLine(752, 'CSK14B', 504, '2026-12-20', {
         now_qty: 649, now_date: '2027-01-02', new_qty: 649, new_date: '2027-01-02',
         split_state: 'applied',
@@ -159,5 +159,25 @@ describe('no equations or labels', () => {
     const table = await sheet();
     const text = rowText(table) + (screen.getByRole('status', { name: 'Split status' }).textContent ?? '');
     expect(text).not.toMatch(/->|=|not linked|this line/i);
+  });
+});
+
+describe('unsplit line generated remark', () => {
+  const own = () => block(608).querySelector('[data-nav-col="remark"]') as HTMLInputElement;
+  const marked = () => block(608).querySelector('[data-remark-generated="true"]');
+  const shown = (el: HTMLInputElement) =>
+    `${el.textContent ?? ''} ${el.value ?? ''} ${el.getAttribute('placeholder') ?? ''}`;
+
+  it('608 shows REMAIN muted, typing replaces it, clearing restores it', async () => {
+    await renderDialog({}, 'pso-417636');
+    await sheet();
+    expect(marked(), 'muted generated marker on 608').toBeTruthy();
+    expect(shown(marked() as HTMLInputElement)).toMatch(/REMAIN/);
+    fireEvent.change(own(), { target: { value: 'Keep' } });
+    await waitFor(() => expect(shown(own())).toMatch(/Keep/));
+    expect(marked()).toBeNull();
+    fireEvent.change(own(), { target: { value: '' } });
+    await waitFor(() => expect(marked()).toBeTruthy());
+    expect(shown(marked() as HTMLInputElement)).toMatch(/REMAIN/);
   });
 });

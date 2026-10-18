@@ -49,4 +49,11 @@ describe('fromPayload round 3 fields', () => {
     expect(line.extraRemark).toBeNull();
     expect(line.splits[0].remarkGenerated).toBe('');
   });
+
+  it('maps a line remark_generated to remarkGenerated', () => {
+    const [line] = fromPayload(
+      payload([wireLine(608, 'CSK14B', 192, '2026-11-20', { remark_generated: 'REMAIN' })]),
+    );
+    expect((line as unknown as { remarkGenerated: string }).remarkGenerated).toBe('REMAIN');
+  });
 });

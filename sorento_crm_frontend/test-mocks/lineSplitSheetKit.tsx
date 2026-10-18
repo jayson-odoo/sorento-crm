@@ -41,6 +41,8 @@ export interface WireLine {
   /** Round 3: qty of the extra row AutoCount added beyond the base; null = none. */
   extra_qty: number | null;
   extra_remark: string | null;
+  /** Round 3: generated text for the line's own row. */
+  remark_generated: string;
   splits: WireSplit[];
 }
 
@@ -68,6 +70,7 @@ export function wireLine(
     acting: true,
     extra_qty: null,
     extra_remark: null,
+    remark_generated: '',
     splits: [],
     ...opts,
   };
