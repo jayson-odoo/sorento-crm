@@ -3403,6 +3403,10 @@ class OrderInquiryWorklistService:
                 OrderInquiryRow.delivery_date.asc().nulls_last(),
                 Supplier.supplier_name.asc().nulls_last(),
                 OrderInquiryRow.item_code.asc().nulls_last(),
+                # Raised order, then the bigger row, before the random id: the same rows
+                # print in the same order.
+                OrderInquiryRow.created_at.asc(),
+                OrderInquiryRow.qty.desc(),
                 OrderInquiryRow.id.asc(),
             )
             .all()
@@ -3433,7 +3437,10 @@ class OrderInquiryWorklistService:
         under it), CHANGE QUANTITY / CHANGE DATE the row's, REMARK the sheet's remark else
         the generated one. The line prints once, off its first OI row. Every other row
         prints as today, REMARK empty."""
+        import dataclasses
+
         from app.services.project_line_split_service import LineSplitService, line_plans
+        from app.services.project_order_inquiry_service import whole_buy_line_ids
 
         line_ids = sorted({str(row["so_line_id"]) for row in rows if row.get("so_line_id")})
         if not line_ids:
@@ -3449,6 +3456,12 @@ class OrderInquiryWorklistService:
         )
         service = LineSplitService(self.db)
         facts = service._facts_for(ProjectSalesOrderLine.project_sales_order_id.in_(orders))
+        # AC-G13: only a line bought whole prints its plan; a line partly from stock prints
+        # what its rows hold, as without splits.
+        whole = whole_buy_line_ids(self.db, [i for i, f in facts.items() if f.splits])
+        facts = {
+            i: f if i in whole else dataclasses.replace(f, splits=[]) for i, f in facts.items()
+        }
         stored = [split for f in facts.values() for split in f.splits]
         if not stored:
             return rows
@@ -3470,11 +3483,38 @@ class OrderInquiryWorklistService:
             figures = (_export_taken(row), _export_remaining(row), _export_suggested(row))
             for index, plan_row in enumerate(plan.rows):
                 first = index == 0
+                own_row = plan_row.split is None and not plan_row.extra
+                # What the row itself asks for: the split's (or extra's) qty, the line's
+                # changed qty on its own row. The 10-column worksheet prints it in QTY.
+                row_qty = plan_row.new_qty if plan_row.new_qty is not None else plan.base_qty
+                row_date = plan_row.new_date or (plan.base_date if own_row else None)
+                split = plan_row.split
+                # TOTAL QTY adds what the rows ask for now: a split dropped on another line
+                # sits inside that line's qty, and a cancel asks for nothing (AC-G13).
+                target = plans.get(str(split.sits_on_line_id or "")) if split is not None else None
+                live = (
+                    _ZERO
+                    if split is not None
+                    and (
+                        split.is_cancel
+                        # Inside the qty of the line it sits on, when that line prints its
+                        # own row (it is not split itself).
+                        or (
+                            target is not None
+                            and str(split.sits_on_line_id) != line_id
+                            and not any(r.split is not None for r in target.rows)
+                        )
+                    )
+                    else row_qty
+                )
                 out.append(
                     {
                         **row,
                         "qty": _qty_str(plan.base_qty) if first else None,
                         "delivery_date": plan.base_date if first else None,
+                        "row_qty": row_qty,
+                        "row_date": row_date,
+                        "live_qty": live,
                         "change_qty": plan_row.new_qty,
                         "change_date": plan_row.new_date,
                         "split_remark": plan_row.remark,
@@ -3511,9 +3551,15 @@ class OrderInquiryWorklistService:
         runs = groupby(
             ordered, key=lambda row: (row.get("supplier"), row.get("item_code"))
         )
+        # Without CHANGE QUANTITY (the 10-column worksheet) a split line's rows print each
+        # row's own qty and date (AC-G13), never a blank QTY.
+        own_figures = "CHANGE QUANTITY" not in columns
         for (_supplier, code), members in runs:
             run = list(members)
-            total = sum((_dec(row.get("qty")) for row in run), _ZERO)
+            total = sum(
+                (_dec(row["live_qty"] if "live_qty" in row else row.get("qty")) for row in run),
+                _ZERO,
+            )
             for index, row in enumerate(run):
                 last_of_run = index == len(run) - 1
                 # Only where it says something the QTY column does not: a single-row
@@ -3523,9 +3569,11 @@ class OrderInquiryWorklistService:
                     row.get("so_date"),
                     row.get("so_number") or "",
                     code or "",
-                    float(_dec(row.get("qty"))) if row.get("qty") not in (None, "") else None,
+                    float(_dec(row["row_qty"]))
+                    if own_figures and "row_qty" in row
+                    else float(_dec(row.get("qty"))) if row.get("qty") not in (None, "") else None,
                     run_total,
-                    row.get("delivery_date"),
+                    row["row_date"] if own_figures and "row_qty" in row else row.get("delivery_date"),
                     row.get("project_customer") or "",
                     # Blank means nobody has placed it, exactly as it does on their
                     # sheet.
