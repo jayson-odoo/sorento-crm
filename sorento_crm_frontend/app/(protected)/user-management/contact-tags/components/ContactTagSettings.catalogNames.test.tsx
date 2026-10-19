@@ -88,6 +88,28 @@ describe('ContactTagSettings view: names from the catalog', () => {
     expect(within(group('Attachment types')).queryAllByText('Removed')).toHaveLength(0);
   });
 
+  // Every group that names ids from the catalog, each holding two ids it cannot name yet.
+  const NAMED: [string, Record<string, unknown>][] = [
+    ['Access types', { access_types: ['x1', 'x2'] }],
+    ['Brands', { brands: ['b1', 'b2'] }],
+    ['Companies', { companies: ['c1', 'c2'] }],
+    ['Market segments', { market_segments: ['m1', 'm2'] }],
+    ['Field reveals', { field_reveals: { 'r.one': true, 'r.two': false } }],
+    ['Chatbot agents', { agents: { g1: true, g2: false } }],
+    ['Agent field access', {
+      agent_fields: [{ agent_code: 'ag', resource: 'res', field_key: 'f1', is_allowed: true }],
+    }],
+    ['Attachment types', { attachment_types: ['a1', 'a2'] }],
+    ['Stock visibility', { stock_visibility: { warehouse_ids: ['w1', 'w2'] } }],
+    ['Spec visibility', { spec_visibility: { spec_keys: ['s1', 's2'] } }],
+  ];
+  it.each(NAMED)('while the names load, %s never says Removed', (title, settings) => {
+    apiFetch.mockReturnValue(new Promise(() => {}));
+    render(settings);
+
+    expect(within(group(title)).queryAllByText(/Removed/)).toHaveLength(0);
+  });
+
   it('when the names cannot load, the group shows why instead of Removed', async () => {
     apiFetch.mockResolvedValue({
       ok: false,
