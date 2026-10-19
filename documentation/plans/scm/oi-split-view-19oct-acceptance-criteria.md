@@ -1,6 +1,6 @@
 # UAC: OI-SPLIT-VIEW (split follow-ups after #1749)
 
-Status: DRAFT, waiting for the owner's OK on mock v2 and Q4. Card:
+Status: DRAFT, waiting for the owner's OK on mock v3 and Q4 (v2 note 21:44: the chip goes in its own column). Card:
 `oi-split-view-behaviour-card.md`. Mock: `documentation/mockups/OI-SPLIT-VIEW/index.html`.
 Rulings: Q1 (a), Q2 (a) (crew, ask a14412763); Q3 (b) and Q5 = (i) popup per line (owner + crew
 ruling a14761180); Q4 open, built on (a).
@@ -50,10 +50,14 @@ own, 236 @ 20/11/2026 New line, 167 @ 20/11/2026 New line (AutoCount 417 @ 20/10
 
 ## B. "Split N" + (i) popup on the SO and OI Lines tabs
 
-- B1 **Chip and (i).** On the Sales Order page > Lines tab and on the Order Inquiry page > Lines tab,
-  a line with saved splits shows "Split N" (N = its split rows; the AutoCount extra row is not
-  counted) and an (i) icon button labelled "Show the splits of line <n>". A line without splits
-  shows neither. Nothing opens by default (Q3 b). The OI chevron keeps what it shows today.
+- B1 **Its own Split column.** On the Sales Order page > Lines tab and on the Order Inquiry page >
+  Lines tab, a column headed "Split" sits right after Product (owner, mock v2 note: "i don't want to
+  jumble up the product column"). For a line with saved splits it shows "Split N" (N = its split
+  rows; the AutoCount extra row is not counted) and an (i) icon button labelled "Show the splits of
+  line <n>"; for a line without splits it is empty. The Product cell shows the product only (the OI
+  page's "Split N" moves out of it). The Columns menu lists "Split" and turns it on or off like any
+  other column, saved per user like the others. Nothing opens by default (Q3 b). The OI chevron keeps
+  what it shows today.
 - B2 **The popup** (a Dialog the size of the Email Outbox body view). Title "Line <n> <item>:
   split"; under it the SO number and, when the line has an OI row, "<OI number> line <n>". Then the
   plan status (B3), the line's purchasing State (and PO on the OI page), and one grid:

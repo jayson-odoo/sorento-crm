@@ -113,7 +113,10 @@ it rides on (Sits on line 480 = OI-2609-0578 line 480; a New-line split rides on
   exact (engine pairs split and OI row by qty + date, `project_order_inquiry_service.py:6189`; line
   752's own OI row is 182 = split 37 + extra 145). Crew ruling a14761180: pick (2), "Split N" chip + (i)
   on the line on both the OI and SO Lines tabs, one popup like the email view. Q4 still with the
-  owner; mock v2 (`index.html`) is built on Q4 (a) and marks it open.
+  owner; mock v2 (`v2.html`) is built on Q4 (a) and marks it open.
+- Owner on mock v2 (Lavish 21:44): "this one can put in an individual column? i don't want to jumble
+  up the product column". Mock v3 (`index.html`): own "Split" column (chip + (i)) after Product on
+  both grids, on/off in Columns; the Product cell stays clean.
 
 ## Build notes (for the plan, not for the owner)
 

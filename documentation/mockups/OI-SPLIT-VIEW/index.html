@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OI-SPLIT-VIEW mock v2</title>
+<title>OI-SPLIT-VIEW mock v3</title>
 <style>
 /* Tokens copied from sorento_crm_frontend/css/config.reui.css (light theme), same set as documentation/mockups/OI-LINE-SPLIT */
 :root{--background:#fff;--foreground:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#e4e4e7;--input:#e4e4e7;--primary:#3b82f6;--primary-soft:#eff6ff;--destructive:#dc2626;--success:#15803d;--success-soft:#f0fdf4;--success-line:#bbf7d0;--warning:#a16207;--warning-soft:#fefce8;--warning-line:#fde68a;--info:#1d4ed8;--info-soft:#eff6ff;--info-line:#bfdbfe;--page:#f7f7f8;--ease:cubic-bezier(.2,0,0,1)}
@@ -97,13 +97,20 @@ table.s tfoot td{font-weight:500;background:#fafafa}
 .map code{font-size:11.5px}
 .qs{font-size:13px;max-width:1040px}
 .qs li{margin:0 0 6px}
+.colwrap{position:relative;display:inline-block}
+.colmenu{position:absolute;right:0;top:36px;z-index:15;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:6px;min-width:200px;font-size:13px}
+.colmenu[hidden]{display:none}
+.colmenu label{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:5px;cursor:pointer}
+.colmenu label:hover{background:var(--muted)}
+.colmenu .new{margin-left:auto;font-size:10.5px;color:var(--primary)}
+[data-hide-split] .c-split{display:none}
 @media (prefers-reduced-motion:reduce){.scrim,.dlg{animation:none}}
 </style>
 </head>
 <body>
 <div class="doc">
-<h1>OI-SPLIT-VIEW mock v2: confirm saved split edits, see a line's split from the SO and the OI</h1>
-<p class="intro">Owner's case (sales order masked as SO-XXXX01; real line numbers, items, qty and dates from the dev DB, board revision 3 confirmed 19/10/2026 8:32 pm). v2 follows the owner's answers: nothing extra shows by default (Q3 b); no database change, so the split is shown per LINE through an <b>(i)</b> button next to "Split N" that opens one popup like the email view (Q5, option 2: a split cannot be tied exactly to one OI row without a migration). Press <b>(i)</b> on line 480 or 752. Use <b>After saving</b> to see the owner's date fix: 167 moved from 20/11/2026 to 20/11/2029 on the split sheet and Saved, not yet confirmed.</p>
+<h1>OI-SPLIT-VIEW mock v3: confirm saved split edits, see a line's split from the SO and the OI</h1>
+<p class="intro">Owner's case (sales order masked as SO-XXXX01; real line numbers, items, qty and dates from the dev DB, board revision 3 confirmed 19/10/2026 8:32 pm). v3 follows the owner's answers and the v2 note "put it in an individual column": "Split N" and (i) now sit in their own <b>Split</b> column (on/off in Columns), the Product cell stays clean; nothing extra shows by default (Q3 b); no database change, so the split is shown per LINE through an <b>(i)</b> button next to "Split N" that opens one popup like the email view (Q5, option 2: a split cannot be tied exactly to one OI row without a migration). Press <b>(i)</b> on line 480 or 752. Use <b>After saving</b> to see the owner's date fix: 167 moved from 20/11/2026 to 20/11/2029 on the split sheet and Saved, not yet confirmed.</p>
 <div class="nav">
   <a href="#board">1 Planning board</a><a href="#so">2 Sales order Lines</a><a href="#oi">3 Order inquiry Lines</a><a href="#phone">4 Phone 375</a><a href="#map">Element map</a><a href="#qs">Open questions</a>
   <span class="sp"></span>
@@ -132,17 +139,17 @@ table.s tfoot td{font-weight:500;background:#fafafa}
 </section>
 
 <section id="so">
-<h2><span class="nb">2</span>Sales order page &gt; Lines: "Split N" + (i) on the line, nothing open by default</h2>
-<p class="why">The grid is today's grid plus the "Split 3" chip (the OI page's chip) and an (i) button. (i) opens the line's split in a popup: Qty, Delivery date, Change (the email's REMARK word), Sits on (the OI line it rides on), Remark, the AutoCount extra row, the total, and one status for the plan.</p>
+<h2><span class="nb">2</span>Sales order page &gt; Lines: a Split column ("Split N" + (i)), nothing open by default</h2>
+<p class="why">The grid is today's grid plus one <b>Split</b> column after Product: the "Split 3" chip (the OI page's chip) and an (i) button, empty for a line with no split. Columns turns it on or off like any other column (press Columns to try). (i) opens the line's split in a popup: Qty, Delivery date, Change (the email's REMARK word), Sits on (the OI line it rides on), Remark, the AutoCount extra row, the total, and one status for the plan.</p>
 <div class="desk" data-frame="so"><div class="main">
   <div class="crumb">Dashboards › Project Sales Admin › Sales Orders › Sales Order</div>
   <div class="ph"><span class="t">SO-XXXX01</span><span class="badge ok">Outstanding</span><span class="badge warn">Partly 191/286</span><span class="s" style="margin-left:6px">Project (masked)</span><span class="r"><span class="btn icon" aria-label="More">⚙</span><span class="btn pri">Plan</span></span></div>
   <div class="tabs"><span>General</span><span class="on">Lines</span><span>Delivery</span><span>Invoices</span><span>Transfers</span></div>
   <div class="card">
-    <div class="hd"><b>Order lines</b><span class="search">Search product...</span><span class="btn">Columns</span></div>
-    <div class="scroll"><table class="g" style="min-width:1180px">
-      <colgroup><col style="width:44px"><col style="width:64px"><col style="width:220px"><col style="width:92px"><col style="width:92px"><col style="width:92px"><col style="width:110px"><col style="width:100px"><col style="width:90px"><col style="width:112px"><col style="width:70px"><col style="width:110px"></colgroup>
-      <thead><tr><th></th><th class="num">No.</th><th>Product</th><th class="num">Qty ordered</th><th class="num">Qty delivered</th><th class="num">Qty cancelled</th><th class="num">Outstanding qty</th><th>Linked to</th><th>Location</th><th>Delivery date</th><th>UoM</th><th>Status</th></tr></thead>
+    <div class="hd"><b>Order lines</b><span class="search">Search product...</span><span class="colwrap"><button type="button" class="btn" data-cols="so" aria-haspopup="true" aria-expanded="false">Columns</button><div class="colmenu" data-colmenu="so" hidden></div></span></div>
+    <div class="scroll"><table class="g" data-table="so" style="min-width:1270px">
+      <colgroup><col style="width:44px"><col style="width:64px"><col style="width:170px"><col class="c-split" style="width:110px"><col style="width:92px"><col style="width:92px"><col style="width:92px"><col style="width:110px"><col style="width:100px"><col style="width:90px"><col style="width:112px"><col style="width:70px"><col style="width:110px"></colgroup>
+      <thead><tr><th></th><th class="num">No.</th><th>Product</th><th class="c-split">Split</th><th class="num">Qty ordered</th><th class="num">Qty delivered</th><th class="num">Qty cancelled</th><th class="num">Outstanding qty</th><th>Linked to</th><th>Location</th><th>Delivery date</th><th>UoM</th><th>Status</th></tr></thead>
       <tbody data-grid="so"></tbody>
     </table></div>
   </div>
@@ -150,16 +157,16 @@ table.s tfoot td{font-weight:500;background:#fafafa}
 </section>
 
 <section id="oi">
-<h2><span class="nb">3</span>Order inquiry page &gt; Lines: the same (i) and the same popup</h2>
-<p class="why">Today's grid plus (i) next to "Split 3". The chevron keeps what it shows today. State and PO stay on the line; "Sits on line 480" is OI-2609-0578 line 480.</p>
+<h2><span class="nb">3</span>Order inquiry page &gt; Lines: the same Split column and the same popup</h2>
+<p class="why">Today's grid plus the same Split column after Product ("Split 3" leaves the Product cell). The chevron keeps what it shows today. State and PO stay on the line; "Sits on line 480" is OI-2609-0578 line 480.</p>
 <div class="desk" data-frame="oi"><div class="main">
   <div class="ph"><span class="t">OI-2609-0578</span><span class="badge warn">Outstanding</span><span class="s">Raised by A. Staff on 20/09/2026, 11:19 am</span><span class="r"><span class="btn icon" aria-label="More">⚙</span><span class="btn pri">Confirm</span></span></div>
   <div class="tabs"><span class="on">Lines</span><span>General</span><span>Related PO</span><span>Related SPO</span></div>
   <div class="card">
-    <div class="hd"><span class="search">Search product...</span><span class="btn">State ▾</span><span class="btn">Columns</span><b></b></div>
-    <div class="scroll"><table class="g" style="min-width:1000px">
-      <colgroup><col style="width:40px"><col style="width:36px"><col style="width:64px"><col style="width:240px"><col style="width:40px"><col style="width:90px"><col style="width:100px"><col style="width:170px"><col style="width:150px"></colgroup>
-      <thead><tr><th></th><th><input type="checkbox" aria-label="Select all"></th><th class="num">No.</th><th>Product</th><th></th><th class="num">SO Qty</th><th class="num">Requested</th><th>State</th><th>PO</th></tr></thead>
+    <div class="hd"><span class="search">Search product...</span><span class="btn">State ▾</span><span class="colwrap"><button type="button" class="btn" data-cols="oi" aria-haspopup="true" aria-expanded="false">Columns</button><div class="colmenu" data-colmenu="oi" hidden></div></span><b></b></div>
+    <div class="scroll"><table class="g" data-table="oi" style="min-width:1090px">
+      <colgroup><col style="width:40px"><col style="width:36px"><col style="width:64px"><col style="width:200px"><col class="c-split" style="width:110px"><col style="width:40px"><col style="width:90px"><col style="width:100px"><col style="width:170px"><col style="width:150px"></colgroup>
+      <thead><tr><th></th><th><input type="checkbox" aria-label="Select all"></th><th class="num">No.</th><th>Product</th><th class="c-split">Split</th><th></th><th class="num">SO Qty</th><th class="num">Requested</th><th>State</th><th>PO</th></tr></thead>
       <tbody data-grid="oi"></tbody>
     </table></div>
   </div>
@@ -167,18 +174,18 @@ table.s tfoot td{font-weight:500;background:#fafafa}
 </section>
 
 <section id="phone">
-<h2><span class="nb">4</span>Phone 375: the same (i), the popup fills the width</h2>
+<h2><span class="nb">4</span>Phone 375: the same Split column, the popup fills the width</h2>
 <div class="row2">
 <div class="phone" data-frame="ph"><div style="padding:14px 16px;height:640px">
   <div style="display:flex;gap:8px;align-items:center;margin:0 0 10px"><b style="font-size:17px">SO-XXXX01</b><span class="badge ok">Outstanding</span></div>
   <div class="tabs" style="gap:14px;font-size:13px;overflow:hidden"><span>General</span><span class="on">Lines</span><span>Delivery</span><span>Invoices</span></div>
   <div class="card"><div class="hd" style="padding:10px"><span class="search" style="width:auto;flex:1">Search product...</span><span class="btn">Columns</span></div>
-  <div class="scroll"><table class="g" style="min-width:470px;font-size:12.5px">
-    <colgroup><col style="width:46px"><col style="width:168px"><col style="width:86px"><col style="width:100px"><col style="width:100px"></colgroup>
-    <thead><tr><th class="num">No.</th><th>Product</th><th class="num">Qty ordered</th><th class="num">Outstanding</th><th>Delivery date</th></tr></thead>
+  <div class="scroll"><table class="g" style="min-width:540px;font-size:12.5px">
+    <colgroup><col style="width:46px"><col style="width:112px"><col style="width:96px"><col style="width:86px"><col style="width:100px"><col style="width:100px"></colgroup>
+    <thead><tr><th class="num">No.</th><th>Product</th><th>Split</th><th class="num">Qty ordered</th><th class="num">Outstanding</th><th>Delivery date</th></tr></thead>
     <tbody data-grid="ph"></tbody>
   </table></div></div>
-</div><div class="scrim" data-scrim="ph" hidden style="padding-top:40px"></div><div class="cap">375 px: press (i) on line 480. The popup keeps Qty, Date and Change in view; Sits on is the small line under Change.</div></div>
+</div><div class="scrim" data-scrim="ph" hidden style="padding-top:40px"></div><div class="cap">375 px: the Split column sits right after Product, so it is in view without scrolling; press (i) on line 480. The popup keeps Qty, Date and Change in view; Sits on is the small line under Change.</div></div>
 </div>
 </section>
 
@@ -188,7 +195,8 @@ table.s tfoot td{font-weight:500;background:#fafafa}
 <tr><th>Element</th><th>Existing component / format</th></tr>
 <tr><td>Board "N to confirm", Confirm (N)</td><td><code>project-sales/fulfilment-planning/components/FulfilmentBoardPanel.tsx:2312</code>, <code>:2498-2505</code>; count from <code>_shared/lib/fulfilmentBoard.ts:861 confirmSummaryFor</code> plus a server flag per line</td></tr>
 <tr><td>"Split edits to confirm" line in the result card</td><td>same card as "Confirmed: line ..." (FulfilmentBoardPanel result card), one more text line</td></tr>
-<tr><td>SO Order lines grid, Columns toggle</td><td><code>scm/sales-orders/[id]/components/SalesOrderDetail.tsx:2167</code>, <code>DataGridColumnVisibility :2194</code>; unchanged apart from the Product cell</td></tr>
+<tr><td>SO Order lines grid, Columns toggle</td><td><code>scm/sales-orders/[id]/components/SalesOrderDetail.tsx:2167</code>, <code>DataGridColumnVisibility :2194</code>; unchanged apart from the new Split column</td></tr>
+<tr><td>Split column (header "Split", after Product, on/off in Columns)</td><td>one more DataGrid column (<code>components/ui/data-grid*.tsx</code>, fixed size, resizable) listed by the existing Columns toggle: SO <code>DataGridColumnVisibility</code> <code>SalesOrderDetail.tsx:2194</code>, OI Columns in <code>OrderInquiryLinesTab.tsx</code>; saved per user like the other columns (<code>/list-query/column-config/{listing_key}</code>)</td></tr>
 <tr><td>"Split N" chip</td><td><code>SplitChip</code>, <code>order-inquiries/[id]/components/orderInquiryHeaderLinesColumns.tsx:223</code> (Badge secondary light), moved to <code>_shared</code></td></tr>
 <tr><td>(i) button</td><td>icon <code>Button</code> (<code>components/ui/button.tsx</code>, variant ghost, size icon, lucide <code>Info</code>), labelled "Show the splits of line 480"</td></tr>
 <tr><td>Popup</td><td><code>components/ui/dialog.tsx</code> Dialog, same size as the Email Outbox body view (<code>system-management/email-outbox/components/EmailOutboxList.tsx:354</code>, max-w-3xl, max-h 85vh)</td></tr>
@@ -262,7 +270,7 @@ let opened = null; // {frame, no, from}
 function chip(frame, no) {
   const s = SPLITS[no];
   if (!s) return '';
-  return ` <span class="badge sec">Split ${s.rows.filter(r => !r.label).length}</span><button type="button" class="ib" data-i="${frame}:${no}" aria-label="Show the splits of line ${no}" aria-haspopup="dialog">${info}</button>`;
+  return `<span style="display:inline-flex;align-items:center;gap:2px"><span class="badge sec">Split ${s.rows.filter(r => !r.label).length}</span><button type="button" class="ib" data-i="${frame}:${no}" aria-label="Show the splits of line ${no}" aria-haspopup="dialog">${info}</button></span>`;
 }
 function status(no) {
   if (no === 480 && state === 'after') return '<span class="badge warn">Saved, not confirmed</span><span class="mut">Confirm on the planning board sends it to purchasing</span>';
@@ -292,16 +300,16 @@ function dialog(frame, no) {
 }
 function renderSO() {
   const label = {open: '<span class="badge ok">Outstanding</span>', closed: '<span class="badge sec">Completed</span>'};
-  document.querySelector('[data-grid=so]').innerHTML = SO.map(l => `<tr><td>${truck}</td><td class="num">${l.no}</td><td>${l.item}${chip('so', l.no)}</td><td class="num">${l.q}</td><td class="num">${l.d}</td><td class="num">${l.c}</td><td class="num">${l.os}</td><td>-</td><td>BRW-BB</td><td>${l.date}</td><td>UNIT</td><td>${label[l.st]}</td></tr>`).join('');
+  document.querySelector('[data-grid=so]').innerHTML = SO.map(l => `<tr><td>${truck}</td><td class="num">${l.no}</td><td>${l.item}</td><td class="c-split">${chip('so', l.no)}</td><td class="num">${l.q}</td><td class="num">${l.d}</td><td class="num">${l.c}</td><td class="num">${l.os}</td><td>-</td><td>BRW-BB</td><td>${l.date}</td><td>UNIT</td><td>${label[l.st]}</td></tr>`).join('');
 }
 function renderOI() {
   document.querySelector('[data-grid=oi]').innerHTML = OI.map(l => {
     const st = l.st === 'To Buy' ? 'TOBUY' : 'ONPO';
-    return `<tr><td><span class="chev">${chev}</span></td><td><input type="checkbox" aria-label="Select line ${l.no}"></td><td class="num">${l.no}</td><td>${l.item}${chip('oi', l.no)}</td><td></td><td class="num">${l.so}</td><td class="num">${l.req}</td><td><span class="pill ${st}">${l.st}</span></td><td>${l.po === '-' ? '-' : `<span style="color:var(--primary)">${l.po}</span>`}</td></tr>`;
+    return `<tr><td><span class="chev">${chev}</span></td><td><input type="checkbox" aria-label="Select line ${l.no}"></td><td class="num">${l.no}</td><td>${l.item}</td><td class="c-split">${chip('oi', l.no)}</td><td></td><td class="num">${l.so}</td><td class="num">${l.req}</td><td><span class="pill ${st}">${l.st}</span></td><td>${l.po === '-' ? '-' : `<span style="color:var(--primary)">${l.po}</span>`}</td></tr>`;
   }).join('');
 }
 function renderPhone() {
-  document.querySelector('[data-grid=ph]').innerHTML = SO.filter(l => l.st === 'open').map(l => `<tr><td class="num">${l.no}</td><td>${l.item}${chip('ph', l.no)}</td><td class="num">${l.q}</td><td class="num">${l.os}</td><td>${l.date}</td></tr>`).join('');
+  document.querySelector('[data-grid=ph]').innerHTML = SO.filter(l => l.st === 'open').map(l => `<tr><td class="num">${l.no}</td><td>${l.item}</td><td>${chip('ph', l.no)}</td><td class="num">${l.q}</td><td class="num">${l.os}</td><td>${l.date}</td></tr>`).join('');
 }
 function renderBoard() {
   const n = state === 'after' ? 1 : 0;
@@ -319,7 +327,20 @@ function renderDialog() {
   });
   if (opened) document.querySelector(`[data-scrim=${opened.frame}] [data-close]`).focus();
 }
-function render() { renderBoard(); renderSO(); renderOI(); renderPhone(); renderDialog(); }
+const COLS = {
+  so: ['No.', 'Product', 'Split', 'Qty ordered', 'Qty delivered', 'Qty cancelled', 'Outstanding qty', 'Linked to', 'Location', 'Delivery date', 'UoM', 'Status'],
+  oi: ['No.', 'Product', 'Split', 'SO Qty', 'Requested', 'State', 'PO'],
+};
+const hidden = {so: false, oi: false};
+function renderCols(g) {
+  const menu = document.querySelector(`[data-colmenu=${g}]`);
+  menu.innerHTML = COLS[g].map(c => c === 'Split'
+    ? `<label><input type="checkbox" data-colsplit="${g}" ${hidden[g] ? '' : 'checked'}> Split <span class="new">new</span></label>`
+    : `<label><input type="checkbox" checked disabled> ${c}</label>`).join('');
+  const t = document.querySelector(`[data-table=${g}]`);
+  if (hidden[g]) t.setAttribute('data-hide-split', ''); else t.removeAttribute('data-hide-split');
+}
+function render() { renderBoard(); renderSO(); renderOI(); renderPhone(); renderCols('so'); renderCols('oi'); renderDialog(); }
 function closeDialog() {
   if (!opened) return;
   const back = opened.from;
@@ -329,6 +350,11 @@ function closeDialog() {
   if (btn) btn.focus();
 }
 document.addEventListener('click', e => {
+  const cb = e.target.closest('[data-cols]');
+  if (cb) { const m = document.querySelector(`[data-colmenu=${cb.dataset.cols}]`); m.hidden = !m.hidden; cb.setAttribute('aria-expanded', String(!m.hidden)); return; }
+  const cs = e.target.closest('[data-colsplit]');
+  if (cs) { hidden[cs.dataset.colsplit] = !cs.checked; renderCols(cs.dataset.colsplit); return; }
+  if (!e.target.closest('.colmenu')) document.querySelectorAll('.colmenu').forEach(m => { m.hidden = true; });
   const i = e.target.closest('[data-i]');
   if (i) { const [frame, no] = i.dataset.i.split(':'); opened = {frame, no: Number(no), from: i.dataset.i}; renderDialog(); return; }
   if (e.target.closest('[data-close]') || e.target.matches('[data-scrim]')) { closeDialog(); return; }
