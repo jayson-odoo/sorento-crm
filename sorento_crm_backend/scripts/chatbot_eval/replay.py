@@ -67,6 +67,14 @@ def _args_sha(args: Any) -> str:
 
 
 def _recorded_parse(row: dict[str, Any]) -> dict[str, Any] | None:
+    # The understood record carries the full parser output (state_changes included); ctx.parse._parser_raw
+    # is stripped of it on rows from the CHAT-STATE build, and is the only copy on older rows.
+    for rec in row.get("trace") or []:
+        if isinstance(rec, dict) and rec.get("stage") == "understood":
+            full = (rec.get("raw") or {}).get("parser_raw")
+            if isinstance(full, dict) and full:
+                return full
+            break
     ctx = ((row.get("response") or {}).get("ctx") or {})
     raw = (ctx.get("parse") or {}).get("_parser_raw")
     return raw if isinstance(raw, dict) and raw else None
@@ -355,6 +363,12 @@ def _replay_one(row: dict[str, Any], factory: Callable[[], Any], stage: str | No
         out["misses"] = g_misses
         return out
     payload = copy.deepcopy(row.get("envelope") or {})
+    # get_prompt (ai_prompt_registry.py:1463) falls back to the hardcoded template when an override id is
+    # missing, so a pin this DB lacks would silently measure other code: skip the row instead.
+    pinned = (payload.get("prompt_overrides") or {}).get(PARSER_PROMPT_KEY)
+    if pinned and not _pin_resolves(factory, pinned):
+        out["skipped"] = "prompt_missing"
+        return out
     payload.update(is_test=True, mock_reformulator_output=parse,
                    previous_conversation_state=_recorded_memory(row))
     # A fresh respond message id (deterministic per row, so base and head agree): the engine's
