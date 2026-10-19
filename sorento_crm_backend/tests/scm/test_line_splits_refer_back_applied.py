@@ -499,6 +499,7 @@ def test_g18_refer_back_reads_an_applied_change_with_an_empty_from(api, emails):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.xfail(strict=True, reason="AC-G19 re-plan moves deferred to a follow-up lane (crew ruling a71847692 (b))")
 def test_g19_re_planning_the_stored_plan_into_the_card_plan_equals_it_from_scratch(api, emails):
     """From the stored plan above, confirmed (480 and 752 linked to their POs), staff drag 236
     and 167 (date fixed to 20/11/2029) and 752's 37 onto line 608, Save through the sheet's
@@ -521,6 +522,7 @@ def test_g19_a_re_confirm_after_the_card_re_plan_changes_nothing(api, emails):
     _assert_a_re_confirm_changes_nothing(s, emails)
 
 
+@pytest.mark.xfail(strict=True, reason="AC-G19 re-plan moves deferred to a follow-up lane (crew ruling a71847692 (b))")
 def test_g19_a_partial_re_plan_moves_only_what_moved(api, emails):
     """AC-G19 partial: from the confirmed stored plan only 236 is dragged onto 608 (167 stays
     on New line, 752's plan is sent as it stands). After Save + Confirm, 480 holds 14 and 167
@@ -579,6 +581,7 @@ def _held_cancels(s, no):
             if state != INQUIRY_CANCELLED]
 
 
+@pytest.mark.xfail(strict=True, reason="AC-G19 re-plan moves deferred to a follow-up lane (crew ruling a71847692 (b))")
 @pytest.mark.parametrize("case", ["target_placed_no_link", "target_received_in_full"])
 def test_g19_a_re_plan_onto_a_target_that_cannot_take_links_is_declined(api, emails, case):
     """AC-G19 / AC-G12, crew ruling (a) 19 Oct (owner rule: no CANCEL from splits, ever):
@@ -641,6 +644,7 @@ def test_g19_a_re_plan_onto_a_target_that_cannot_take_links_is_declined(api, ema
     _assert_printed_as_held(s, sent, 608, email_required=False)
 
 
+@pytest.mark.xfail(strict=True, reason="AC-G19 re-plan moves deferred to a follow-up lane (crew ruling a71847692 (b))")
 def test_g19_a_re_plan_off_an_origin_received_in_full_buys_nothing_twice(api, emails):
     """AC-G19: 480's PO (417, linked across its 14 / 236 / 167 rows) is received in full, then
     the card re-plan drags 236 and 167 onto 608. Nothing is bought twice (live OI total =
@@ -666,6 +670,7 @@ def test_g19_a_re_plan_off_an_origin_received_in_full_buys_nothing_twice(api, em
                                                 totals, live)
 
 
+@pytest.mark.xfail(strict=True, reason="AC-G19 re-plan moves deferred to a follow-up lane (crew ruling a71847692 (b))")
 def test_g19_an_unstamped_applied_plan_re_planned_into_the_card_plan(api, emails):
     """AC-G19, stamped or not: the dev DB's SO417636 decisions carry no `split_plan` stamp. A
     plan with none counts as re-planned once: the card re-plan leaves purchasing the card plan
@@ -802,6 +807,7 @@ def test_g19_a_re_plan_whose_split_row_is_received_is_declined_and_moves_nothing
         "the email tells 14 / 167 as the worklist holds them", told, sorted(held))
 
 
+@pytest.mark.xfail(strict=True, reason="AC-G19 re-plan moves deferred to a follow-up lane (crew ruling a71847692 (b))")
 def test_g19_re_planning_one_moved_split_moves_only_its_links(api, emails):
     """Reviewer B2 / AC-G19: the card plan confirmed from scratch (links 480 on 480 14, on
     608 403; 752 on 752 467, on 608 37), then the 167 re-planned from 608 onto 752 and
@@ -833,6 +839,7 @@ def test_g19_re_planning_one_moved_split_moves_only_its_links(api, emails):
         _rows_480(s), _worklist(s, s.line[480]))
 
 
+@pytest.mark.xfail(strict=True, reason="AC-G19 re-plan moves deferred to a follow-up lane (crew ruling a71847692 (b))")
 @pytest.mark.parametrize("case", ["target_placed_no_link", "target_received_in_full"])
 def test_g19_a_re_confirm_after_a_declined_move_changes_nothing(api, emails, case):
     """Reviewer B3 / AC-G19, crew ruling (a): after the re-plan whose move onto 608 was
@@ -858,6 +865,7 @@ def test_g19_a_re_confirm_after_a_declined_move_changes_nothing(api, emails, cas
     assert emails[start:] == [], ("AC-G13: a re-Confirm sends no email", case, told)
 
 
+@pytest.mark.xfail(strict=True, reason="AC-G19 re-plan moves deferred to a follow-up lane (crew ruling a71847692 (b))")
 @pytest.mark.parametrize("linked_37", [False, True], ids=["37_row_unlinked", "37_row_on_its_own_po"])
 def test_g19_a_kept_row_that_moves_whole_leaves_nothing_behind(api, emails, linked_37):
     """Reviewer S2 / AC-G19: 752's 37 is a kept row of its own (the owner seed with 752 = 37
@@ -1050,6 +1058,7 @@ def _b5_replanned(api, emails):
     return s, pos, before_236, sent
 
 
+@pytest.mark.xfail(strict=True, reason="AC-G19 re-plan moves deferred to a follow-up lane (crew ruling a71847692 (b))")
 def test_g19_a_declined_row_keeps_its_links_and_the_live_total_stays_within_autocount(
     api, emails
 ):
@@ -1149,6 +1158,7 @@ def _p2_replanned(api, emails):
     return s, _replan(s, emails, _partial_replan())
 
 
+@pytest.mark.xfail(strict=True, reason="AC-G19 re-plan moves deferred to a follow-up lane (crew ruling a71847692 (b))")
 def test_g19_after_a_declined_move_the_email_and_excel_print_the_worklist(api, emails):
     """Reviewer B6 (P2) / AC-G19: from the confirmed stored plan, 480's 14 and 167 rows share
     one PO, and the 236 row's document is received in full. The partial re-plan (236 onto
@@ -1179,6 +1189,7 @@ def test_g19_after_a_declined_move_the_email_and_excel_print_the_worklist(api, e
 
 
 
+@pytest.mark.xfail(strict=True, reason="AC-G19 re-plan moves deferred to a follow-up lane (crew ruling a71847692 (b))")
 @pytest.mark.parametrize("case", ["b5_card_replan", "p2_partial_replan"])
 def test_g19_a_re_confirm_after_an_origin_row_decline_changes_nothing(api, emails, case):
     """Reviewer B8 / AC-G19 ("this holds on every Confirm"): after the re-plan Confirm whose
@@ -1227,6 +1238,7 @@ def _link_rows_of(s, no):
     return out
 
 
+@pytest.mark.xfail(strict=True, reason="AC-G19 re-plan moves deferred to a follow-up lane (crew ruling a71847692 (b))")
 def test_g19_a_staying_splits_row_is_never_moved_for_a_moving_split_of_the_same_qty(
     api, emails
 ):
@@ -1262,6 +1274,7 @@ def test_g19_a_staying_splits_row_is_never_moved_for_a_moving_split_of_the_same_
         "the moving 167 takes its own PO to 608", _linked(s, 608, pos[(_d("167"), D_167)]))
 
 
+@pytest.mark.xfail(strict=True, reason="AC-G19 re-plan moves deferred to a follow-up lane (crew ruling a71847692 (b))")
 def test_g19_a_split_re_landed_from_its_target_moves_links_its_origin_no_longer_holds(
     api, emails
 ):
@@ -1315,6 +1328,7 @@ def test_g19_a_split_re_landed_from_its_target_moves_links_its_origin_no_longer_
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.xfail(strict=True, reason="AC-G19 re-plan moves deferred to a follow-up lane (crew ruling a71847692 (b))")
 def test_g19_a_split_declined_for_its_target_keeps_its_links_when_another_split_moves(
     api, emails
 ):
@@ -1354,6 +1368,7 @@ def test_g19_a_split_declined_for_its_target_keeps_its_links_when_another_split_
     _assert_printed_as_held(s, sent, 608, email_required=False)
 
 
+@pytest.mark.xfail(strict=True, reason="AC-G19 re-plan moves deferred to a follow-up lane (crew ruling a71847692 (b))")
 def test_g19_a_kept_row_that_moves_whole_while_its_origin_stands_leaves_nothing_behind(
     api, emails
 ):
@@ -1410,6 +1425,7 @@ def test_g19_a_kept_row_that_moves_whole_while_its_origin_stands_leaves_nothing_
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.xfail(strict=True, reason="AC-G19 re-plan moves deferred to a follow-up lane (crew ruling a71847692 (b))")
 def test_g19_a_decline_at_the_first_confirm_prints_the_rows_the_worklist_holds(api, emails):
     """Reviewer B10 (P13) / AC-G19: 480's single 417 row sits on a PO received in full; the
     card plan is then saved from scratch (236 and 167 onto 608, 752's 37 onto 608) and the

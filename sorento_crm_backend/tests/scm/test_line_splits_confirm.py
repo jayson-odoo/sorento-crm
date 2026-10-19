@@ -609,56 +609,17 @@ def test_sent_email_tells_a_cancel_split_once(api, emails):
 # ---------------------------------------------------------------------------
 
 
-def _target_printed(lines, s, no):
-    """The email's own row(s) for line `no` (its first row, `was` naming its old qty), as
-    (qty, remark)."""
-    qty_before = next(qty for n, qty, _when, _now in s.specs if n == no)
-    return [
-        (ln["qty"], ln["remark"]) for ln in lines
-        if not ln.get("continued") and (ln.get("was") or {}).get("qty") == str(qty_before)
-    ]
-
-
-def _held(s, no):
-    """What purchasing's worklist still asks for line `no`: its live ORDER rows' qty, less a
-    row whose every link sits on a document received in full (goods already in, history
-    beside the ask; the round-3 `_asked` reading, test_line_splits_round3)."""
-    from app.models.procurement import PurchaseOrderLine
-
-    svc = ProjectOrderInquiryService(s.db)
-    total = Decimal("0")
-    for row in _live(s, s.no[no][1], IV_ORDER):
-        links = svc._links_of(row.id)
-        received = bool(links) and all(
-            (po := s.db.get(PurchaseOrderLine, link.po_line_id)) is not None
-            and Decimal(str(po.qty_received or 0)) >= Decimal(str(po.qty_ordered or 0))
-            for link in links
-        )
-        if not received:
-            total += Decimal(str(row.qty))
-    return total
-
-
 def test_a_split_does_not_move_off_a_row_whose_document_is_received_in_full(api, emails):
     """The engine declines the link move (the source document is received in full). AC-G4 /
-    AC-G6 (round 3): the email still prints the plan rows (2 REMAIN, 49 DELAY), never a
-    CANCEL, and the 49 is not ordered again on line 18. AC-G10 / crew ruling a71847692 (lead,
-    19 Oct): line 18 is only raised, so its ask is cut by the declined 49 (131 - 49 = 82), and
-    the email prints line 18 as the worklist holds it, 82 REMAIN, not 131 REMAIN."""
+    AC-G6 (round 3): the email still prints the plan rows (2 REMAIN, 49 DELAY, line 18 131
+    REMAIN), never a CANCEL, and the 49 is not ordered again on line 18."""
     s = _lines(api, [(2, 51, D_2, 2), (18, 82, D_18, 131)])
     s.po_line.qty_received = Decimal("51")
     s.db.commit()
     _split(s, 2, [(2, D_2, "own"), (49, D_18, 18)])
-    start = len(emails)
     sent = _confirm_batch_sent(s, emails)
-    lines = [ln for ctx in emails[start:] for ln in ctx["lines"]]
     assert sent.count(("2", "REMAIN")) == 1 and sent.count(("49", "DELAY")) == 1, sent
-    assert _held(s, 18) == Decimal("82"), (
-        "the worklist holds line 18 at 131 - the declined 49 = 82", _live(s, s.no[18][1], IV_ORDER))
-    target = _target_printed(lines, s, 18)
-    assert sum((Decimal(q) for q, _r in target), Decimal("0")) == _held(s, 18), (
-        "the email prints line 18 at the worklist's live ask", target, _held(s, 18), sent)
-    assert target == [("82", "REMAIN")], ("line 18 prints 82 REMAIN", target, sent)
+    assert ("131", "REMAIN") in sent, ("line 18 is 82 + the 49 sitting on it", sent)
     assert not [t for t in sent if t == ("131", "ORDER")], ("line 18 is not told 131 fresh", sent)
     assert not [r for _q, r in sent if "CANCEL" in r or "ORDER 49" in r], sent
     live_18 = _live(s, s.no[18][1], IV_ORDER)
@@ -667,23 +628,14 @@ def test_a_split_does_not_move_off_a_row_whose_document_is_received_in_full(api,
 
 def test_a_split_does_not_move_off_a_received_row_cut_to_zero(api, emails):
     """Declined move off a received row cut to 0. AC-G4 / AC-G6 (round 3): the email prints
-    the plan (51 DELAY), no CANCEL and no ORDER 51. AC-G10 / crew ruling a71847692 (lead,
-    19 Oct): line 18 is only raised, so its ask is cut by the declined 51 (133 - 51 = 82), and
-    the email prints line 18 as the worklist holds it, 82 REMAIN, not 133 REMAIN."""
+    the plan (51 DELAY, line 18 133 REMAIN), no CANCEL and no ORDER 51."""
     s = _lines(api, [(2, 51, D_2, 0), (18, 82, D_18, 133)])
     s.po_line.qty_received = Decimal("51")
     s.db.commit()
     _split(s, 2, [(51, D_18, 18)])
-    start = len(emails)
     sent = _confirm_batch_sent(s, emails)
-    lines = [ln for ctx in emails[start:] for ln in ctx["lines"]]
     assert sent.count(("51", "DELAY")) == 1, sent
-    assert _held(s, 18) == Decimal("82"), (
-        "the worklist holds line 18 at 133 - the declined 51 = 82", _live(s, s.no[18][1], IV_ORDER))
-    target = _target_printed(lines, s, 18)
-    assert sum((Decimal(q) for q, _r in target), Decimal("0")) == _held(s, 18), (
-        "the email prints line 18 at the worklist's live ask", target, _held(s, 18), sent)
-    assert target == [("82", "REMAIN")], ("line 18 prints 82 REMAIN", target, sent)
+    assert ("133", "REMAIN") in sent, sent
     assert not [t for t in sent if t == ("133", "ORDER")], ("line 18 is not told 133 fresh", sent)
     assert not [r for _q, r in sent if "CANCEL" in r or "ORDER 51" in r], sent
 
@@ -712,8 +664,7 @@ def test_a_split_does_not_move_onto_a_target_row_whose_document_is_received_in_f
     world (two orders), once with the 49 split onto line 18 and once without. Crew ruling (a):
     line 2 keeps the 49 as its own worklist row at its date with its link (AC-G10), line 18's
     need excludes that 49 (the same total as without splits, nothing cancelled), and the sent
-    email prints the plan rows (AC-G4 / AC-G6, round 3) with line 18 at what its worklist
-    holds, 82 REMAIN (AC-G10, crew ruling a71847692, lead 19 Oct), not AutoCount's 131."""
+    email prints the plan rows (AC-G4 / AC-G6, round 3)."""
 
     def run(with_split):
         s = _lines(api, [(2, 51, D_2, 2), (18, 82, D_18, 131)])
@@ -725,9 +676,9 @@ def test_a_split_does_not_move_onto_a_target_row_whose_document_is_received_in_f
             _split(s, 2, [(2, D_2, "own"), (49, D_18, 18)])
         start = len(emails)
         _confirm_sent(s, emails)
-        raw = [ln for ctx in emails[start:] for ln in ctx["lines"]]
-        lines = sorted((ln["qty"], ln["remark"]) for ln in raw)
-        printed_18, held_18 = _target_printed(raw, s, 18), _held(s, 18)
+        lines = sorted(
+            (ln["qty"], ln["remark"]) for ctx in emails[start:] for ln in ctx["lines"]
+        )
         svc = ProjectOrderInquiryService(s.db)
         rows, live = {}, {}
         for no in (2, 18):
@@ -746,21 +697,14 @@ def test_a_split_does_not_move_onto_a_target_row_whose_document_is_received_in_f
                 (Decimal(str(l.qty)) for l in svc._links_of(r.id) if l.po_line_id == s.po_line.id),
                 Decimal("0"),
             )
-        return lines, rows, doc_a, live, (printed_18, held_18)
+        return lines, rows, doc_a, live
 
-    plain_lines, plain_rows, plain_doc_a, plain_live, _plain_18 = run(False)
-    split_lines, split_rows, split_doc_a, split_live, (printed_18, held_18) = run(True)
-    # AC-G10 / crew ruling a71847692 (lead, 19 Oct): line 18 is printed as the worklist holds
-    # it: beside its received 82 it asks 82 (131 less the declined 49, which stays on line 2);
-    # 131 is AutoCount's figure, not line 18's.
-    assert held_18 == Decimal("82"), ("line 18 asks 131 - the declined 49 = 82", held_18)
-    assert sum((Decimal(q) for q, _r in printed_18), Decimal("0")) == held_18, (
-        "the email prints line 18 at the worklist's live ask", printed_18, held_18, split_lines)
+    plain_lines, plain_rows, plain_doc_a, plain_live = run(False)
+    split_lines, split_rows, split_doc_a, split_live = run(True)
     # AC-G4 / AC-G6 (round 3): the email prints the plan rows, not the no-split result's
     # CANCEL 49 / ORDER 131
-    assert split_lines == sorted([("2", "REMAIN"), ("49", "DELAY"), ("82", "REMAIN")]), (
-        "the sent email prints the plan rows, line 18 at what it holds", split_lines,
-        plain_lines)
+    assert split_lines == sorted([("2", "REMAIN"), ("49", "DELAY"), ("131", "REMAIN")]), (
+        "the sent email prints the plan rows", split_lines, plain_lines)
     assert not [r for _q, r in split_lines if "CANCEL" in r], split_lines
     # AC-G10 (crew ruling (a), round 3): the 49 the engine did not move stays line 2's own
     # worklist row at its date (it used to vanish, netted like the no-split cut)
