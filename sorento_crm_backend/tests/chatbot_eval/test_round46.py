@@ -298,3 +298,44 @@ def test_an_empty_recording_is_parse_missing_not_parse_failed():
     out = parser_flips([[prow("a", **BASE)], [empty], [prow("a", **BASE)]])
     assert out["parse_missing"] == 1 and out["parse_failed"] == 0 and out["parse_capped"] == 0
     assert out["partial_parse"] == 1
+
+
+# ---------------------------------------------------------------- guards, fix round 2
+def test_state_changes_order_does_not_flip():
+    two = {**BASE, "state_changes": [{"op": "refine", "axis": "brand", "position": 1},
+                                     {"op": "carry", "axis": "size", "position": 2}]}
+    rev = {**two, "state_changes": list(reversed(two["state_changes"]))}
+    assert parser_flips([[prow("a", **two)], [prow("a", **rev)]])["flipped"] == 0
+
+
+def test_internal_whitespace_collapses_in_entity_raw():
+    one = {**BASE, "entities": [{"raw": "ab 1", "hint": "product", "spec_key": None}]}
+    two = {**BASE, "entities": [{"raw": "ab  1", "hint": "product", "spec_key": None}]}
+    assert parser_flips([[prow("a", **one)], [prow("a", **two)]])["flipped"] == 0
+
+
+def test_never_parsed_item_is_no_parse_and_not_partial():
+    bare = {"item_id": "a", "turn": {"trace": []}}
+    capped = {"item_id": "a", "turn": {"trace": [{"stage": "understood", "raw": "payload omitted"}]}}
+    out = parser_flips([[bare], [capped]])
+    assert out["no_parse"] == 1 and out["partial_parse"] == 0
+    assert out["parse_failed"] == out["parse_capped"] == out["parse_missing"] == 0
+
+
+def test_capped_outranks_failed_for_one_item():
+    failed = _understood("a", {"status": "failed", "raw": {"parser_raw": None}})
+    capped = _understood("a", {"raw": "payload omitted"})
+    out = parser_flips([[prow("a", **BASE)], [failed], [capped], [prow("a", **BASE)]])
+    assert out["partial_parse"] == 1 and out["parse_capped"] == 1 and out["parse_failed"] == 0
+
+
+def test_string_parser_raw_is_capped():
+    odd = _understood("a", {"raw": {"parser_raw": "truncated..."}})
+    out = parser_flips([[prow("a", **BASE)], [odd]])
+    assert out["parse_capped"] == 1 and out["parse_failed"] == 0
+
+
+def test_empty_parser_raw_dict_is_failed():
+    empty = _understood("a", {"raw": {"parser_raw": {}}})
+    out = parser_flips([[prow("a", **BASE)], [empty]])
+    assert out["parse_failed"] == 1 and out["parse_capped"] == 0
