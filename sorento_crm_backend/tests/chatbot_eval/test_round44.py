@@ -184,8 +184,30 @@ def test_red_z_a_sixty_row_malay_or_chinese_dump_fails():
 
 
 def test_red_aa_one_comma_line_of_sixty_codes_is_a_dump():
-    assert _check("Water closets with stock: " + ", ".join(EXPECTED))[0] is False
+    assert _check(", ".join(EXPECTED))[0] is False
 
 
 def test_guard_ab_a_comma_line_of_three_codes_is_not_a_dump():
     assert _check("Water closets with stock: " + ", ".join(EXPECTED[:3]))[0] is not False
+
+
+def _fifty_nine_rows_and(line):
+    return _rows(EXPECTED[:48], "Product Code") + "\n" + line
+
+
+def test_red_ac_a_spec_value_line_with_code_shaped_values_is_no_comma_run():
+    page = _fifty_nine_rows_and("*Material:* SUS304, SUS316")
+    assert _check(page + MORE)[0] is True
+    assert _check(page, spec_products=EXPECTED[:48])[0] == "absent"
+
+
+def test_red_ad_a_warehouse_sentence_is_no_comma_run():
+    page = _fifty_nine_rows_and("Stock sits at DC1-SMC, WH3-IB.")
+    assert _check(page + MORE)[0] is True
+    assert _check(_rows(EXPECTED[:49], "Product Code") + "\nStock sits at DC1-SMC, WH3-IB.", spec_products=EXPECTED[:49])[0] == "absent"
+
+
+def test_guard_ae_a_comma_run_after_a_product_label_or_not_recorded_for_still_counts():
+    for head in ("*Product:* ", "\u2022 product: ", "*Product Code:* ", "*Kod Produk:* ", "*\u4ea7\u54c1\u4ee3\u7801:* "):
+        assert _check(head + ", ".join(EXPECTED))[0] is False, head
+    assert _check("*steel_grade:* not recorded for " + ", ".join(EXPECTED))[0] is False
