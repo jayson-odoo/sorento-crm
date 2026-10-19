@@ -6084,11 +6084,12 @@ def _run_stages_body(  # noqa: PLR0915
                 ]
 
         if state_in.subject is not None:
-            # CHAT-STATE r6 AC-S1-8: the one settle step, after the resolver and its re-entry:
-            # a said product it placed makes the Subject `ids`, only one it could not place
-            # leaves it `unresolved` (the trace logs the settled Subject).
+            # CHAT-STATE r6 AC-S1-8 / AC-S1-11: the one settle step, after the resolver and its
+            # re-entry: a token it placed makes the Subject `ids`, one it could not place is kept
+            # in `unplaced` (the trace logs the settled Subject).
             state_out = chat_state.settle_subject(
-                state_out, state_in.subject, log=remembered_before.get("_chat_state")
+                state_out, state_in.subject, unplaced_tokens=unplaced_tokens,
+                log=remembered_before.get("_chat_state"),
             )
 
         # D ROUTE. Two facts outrank the plan and neither is IN one: a refused access

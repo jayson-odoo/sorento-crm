@@ -288,10 +288,14 @@ class Subject:
     (uuid, else code; None for a bare word), the entity kind, and a grounded spec's own
     fields, so the fetch never re-reads the focus. The class is ONE axis. `provenance` maps
     an axis (the predicate axes plus "product") to "held" / "said" / "offer"; a cleared axis
-    is absent."""
+    is absent. `product_tokens` are the named products with no key yet, `{"value", "key":
+    <code>, "hint": "product"}` (a held one stays a token until the resolver places it);
+    `unplaced` are the tokens the resolver could not place (set by `settle_subject`)."""
 
     source: str = "unresolved"
     product_ids: tuple[str, ...] = ()
+    product_tokens: tuple[dict[str, Any], ...] = ()
+    unplaced: tuple[dict[str, Any], ...] = ()
     predicate: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     scope: frozenset[str] = frozenset()
     hidden: frozenset[str] = frozenset()

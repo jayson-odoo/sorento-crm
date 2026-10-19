@@ -691,17 +691,25 @@ def _held_rows(focus: Focus) -> dict[str, list[dict[str, Any]]]:
     }
 
 
+def _token_row(entity: dict[str, Any]) -> dict[str, Any] | None:
+    """A named product with no key yet, keyed by its code (AC-S1-10)."""
+    code = str(entity.get("canonical_code") or entity.get("raw") or "").strip()
+    return {"value": str(entity.get("raw") or code).strip(), "key": code, "hint": "product"} if code else None
+
+
 def _build_subject(
     state: State, focus: Focus, out: dict[str, Any], brands: list[Any], led: str | None
 ) -> Subject:
-    """The Subject of this turn, before anything is resolved: the focus the ops left (held),
-    with every value this message types replacing the held value on its axis (said, under ANY
-    op, as the R16 period rule reads a stated period; offer when the brand is one the last
-    answer offered). Whether the OTHER held axes stay beside a said one is the op's (`led`):
-    a refine (`set` / `clear` / a list pick) keeps them; a keep, an answer, a new subject or a
-    change set the applier rejected makes what was said the whole predicate. Nothing said
-    keeps the held subject whole. A said product token has no key yet: `unresolved` until
-    `settle_subject` reads what the resolver placed. `scope` and `hidden` stay empty."""
+    """The Subject of this turn, before anything is resolved (AC-S1-9, card R1 / R4 / R5): the
+    focus the ops left (held), with what this message types `said` on its own axis (`offer`
+    when the brand is one the last answer offered). The op decides the OTHER held axes: a
+    refine (`set` / `clear` / a list pick), an `answer` and a change set the applier rejected
+    (`led` None) keep every held axis the message did not fill; a plain `keep` (`led` "keep"
+    here) changes nothing, so a value typed on an axis the State holds stays held (one on an
+    empty axis is said); a `new_subject` (`led` "new_ask") drops every held axis, the product
+    axis included. A held product with no key stays as a token keyed by its code (AC-S1-10);
+    a said one is `unresolved` until `settle_subject` reads what the resolver placed. `scope`
+    and `hidden` stay empty."""
     said_rows = [e for e in _entities(out) if e.get("current_message") is not False]
     said: dict[str, list[dict[str, Any]]] = {}
     for e in said_rows:
@@ -709,9 +717,11 @@ def _build_subject(
         row = _typed_row(e, str(e.get("hint"))) if axis else None
         if row:
             said.setdefault(axis, []).append(row)
-    held = _held_rows(focus)
-    if led != "refine" and said:
-        held = {axis: [] for axis in held}
+    fresh = led == "new_ask"
+    held = {axis: [] for axis in _PREDICATE_AXES} if fresh else _held_rows(focus)
+    if led == "keep":
+        # `keep` changes nothing: a value typed on an axis the State holds is not a change.
+        said = {axis: rows for axis, rows in said.items() if not held[axis]}
     offered = bool(offered_brand_picks(state, out, brands))
     predicate: dict[str, list[dict[str, Any]]] = {}
     provenance: dict[str, str] = {}
@@ -721,18 +731,20 @@ def _build_subject(
         if unique:
             predicate[axis], provenance[axis] = unique, how
 
-    if any(e.get("hint") == "product" for e in said_rows):
+    said_products = [e for e in said_rows if e.get("hint") == "product"]
+    if said_products:
         provenance["product"] = "said"
-        said_ids = tuple(dict.fromkeys(str(e["uuid"]) for e in said_rows if e.get("hint") == "product" and e.get("uuid")))
-        if said_ids:
-            return Subject(source="ids", product_ids=said_ids, predicate=predicate, provenance=provenance)
-        return Subject(source="unresolved", predicate=predicate, provenance=provenance)
-    rows = [r for r in focus.products if isinstance(r, dict) and r.get("uuid")]
-    members = [r for r in rows if r.get("described_set") is True]
-    ids = [str(r["uuid"]) for r in rows if r.get("described_set") is not True]
-    if ids:
+        said_ids = tuple(dict.fromkeys(str(e["uuid"]) for e in said_products if e.get("uuid")))
+        tokens = tuple(t for t in (_token_row(e) for e in said_products if not e.get("uuid")) if t)
+        return Subject(source="ids" if said_ids else "unresolved", product_ids=said_ids, product_tokens=tokens,
+                       predicate=predicate, provenance=provenance)
+    rows = [] if fresh else [r for r in focus.products if isinstance(r, dict)]
+    members = [r for r in rows if r.get("uuid") and r.get("described_set") is True]
+    ids = tuple(str(r["uuid"]) for r in rows if r.get("uuid") and r.get("described_set") is not True)
+    tokens = tuple(t for t in (_token_row(r) for r in rows if not r.get("uuid")) if t)
+    if ids or tokens:
         provenance["product"] = "held"
-        return Subject(source="ids", product_ids=tuple(ids), predicate=predicate, provenance=provenance)
+        return Subject(source="ids", product_ids=ids, product_tokens=tokens, predicate=predicate, provenance=provenance)
     if predicate:
         if members:
             provenance["product"] = "held"
@@ -740,32 +752,49 @@ def _build_subject(
     return Subject(source="unresolved")
 
 
-def settle_subject(state: State, subject: Subject | None, *, log: dict[str, Any] | None = None) -> State:
-    """AC-S1-8: the ONE settle step, run by the engine after the resolver (and its re-entry
-    into APPLY) on the State that re-entry left. A product this message said that the resolver
-    placed now carries its key on the focus: the Subject's source is `ids` with those keys. Only
-    when nothing said was placed is it `unresolved`. The held predicate and every provenance
-    stay as `apply_changes` decided. The trace's `subject` is the settled one."""
+def settle_subject(
+    state: State, subject: Subject | None, *, unplaced_tokens: Any = None, log: dict[str, Any] | None = None
+) -> State:
+    """AC-S1-8 / AC-S1-11: the ONE settle step, run by the engine after the resolver (and its
+    re-entry into APPLY) on the State that re-entry left. A product token the resolver placed
+    carries its key on the focus now (a said one on this turn's own row, a held one on the row of
+    its code): `source` is `ids` with those keys. A token it could not place (its own
+    `unplaced_tokens`) is kept in `unplaced`; only when nothing was placed is the Subject
+    `unresolved`. A token the resolver never saw leaves the source as the applier set it. The
+    predicate and every provenance stay as `apply_changes` decided; the trace logs the settled
+    Subject."""
+    from app.services.chatbot.turn.state import token_key
+
     if subject is None:
         return state
     settled = subject
-    if subject.provenance.get("product") == "said":
+    said = subject.provenance.get("product") == "said"
+    if said or subject.product_tokens:
+        missed = {token_key(k) for k in (unplaced_tokens or {})} | {token_key(v) for v in (unplaced_tokens or {}).values()}
+        held_codes = {token_key(t["key"]) for t in subject.product_tokens} if not said else set()
         placed = tuple(dict.fromkeys([*subject.product_ids, *(
             str(r["uuid"]) for r in state.focus.products
-            if isinstance(r, dict) and r.get("uuid") and r.get("current_message") is not False
+            if isinstance(r, dict) and r.get("uuid") and (
+                (said and r.get("current_message") is not False)
+                or token_key(r.get("canonical_code")) in held_codes or token_key(r.get("raw")) in held_codes
+            )
         )]))
-        settled = replace(subject, source="ids" if placed else "unresolved", product_ids=placed)
+        unplaced = tuple(t for t in subject.product_tokens if token_key(t["key"]) in missed or token_key(t["value"]) in missed)
+        source = "ids" if placed else "unresolved" if unplaced else subject.source
+        settled = replace(subject, source=source, product_ids=placed, unplaced=unplaced)
     if log is not None:
         log["subject"] = subject_wire(settled)
     return replace(state, subject=settled)
 
 
 def subject_wire(subject: Subject) -> dict[str, Any]:
-    """The Subject as the trace's JSON dict (same field names). A predicate row prints as its
-    value: the trace is read by people, and the keys ride on the Subject itself."""
+    """The Subject as the trace's JSON dict (same field names). A row prints as its value: the
+    trace is read by people, and the keys ride on the Subject itself."""
     return {
         "source": subject.source,
         "product_ids": list(subject.product_ids),
+        "product_tokens": [t.get("value") for t in subject.product_tokens],
+        "unplaced": [t.get("value") for t in subject.unplaced],
         "predicate": {k: [r.get("value") for r in v] for k, v in subject.predicate.items()},
         "scope": sorted(subject.scope),
         "hidden": sorted(subject.hidden),
@@ -800,16 +829,23 @@ def fetch_entities(
     What this message typed is its own entities, as they stand after grounding. What is HELD
     is read off the Subject alone: a predicate axis whose provenance is `held` rides as its
     typed rows (a said or offered axis is the message's own words, never the held value
-    beside it); the held products are the Subject's own ids. On a FETCH turn a settled
-    product is already in the plan and a bare class word beside it never rides (the
+    beside it); the held products are the Subject's own ids and tokens. On a FETCH turn a
+    settled product is already in the plan and a bare class word beside it never rides (the
     STALE-EXTRA-CARRY rule, read off the Subject's source). The State's other held slots
     (customer, warehouse, document type, order) ride per axis: a kind this message typed
     replaces the held one, every other held row is kept, as the ops left the focus."""
     from app.services.chatbot import turn_runtime
 
-    own = [e for e in parse_output.get("entities") or [] if isinstance(e, dict)]
+    # A word this message typed on an axis the Subject HOLDS was not a change (`keep`): the held
+    # rows answer for that axis and the typed word does not ride.
+    stated = [e for e in parse_output.get("entities") or [] if isinstance(e, dict)]
+    own = [
+        e for e in stated
+        if not (e.get("current_message") is not False
+                and subject.provenance.get(_SUBJECT_AXIS.get(str(e.get("hint") or ""), "")) == "held")
+    ]
     typed = {str(e.get("hint") or "").strip().lower() for e in own if e.get("current_message") is not False}
-    product_scoped = unsettled_only and subject.source == "ids" and subject.provenance.get("product") == "held"
+    product_scoped = unsettled_only and bool(subject.product_ids) and subject.provenance.get("product") == "held"
     # A said product is the fetch's subject: the held predicate stays on the Subject as context
     # and never gates or widens the lookup of what was said.
     by_ids = subject.provenance.get("product") == "said"
@@ -831,6 +867,13 @@ def fetch_entities(
     if not unsettled_only:
         held += turn_runtime.focus_entities(Focus(products=held_products))[0]
     scheme_pick = bool(parse_output.get("closed_lists")) and any(e.get("listed") == "cert_scheme" for e in own)
+    if subject.provenance.get("product") == "held" and not scheme_pick:
+        # A held product with no key is a token every turn hands over until the resolver places
+        # it (AC-S1-10); a listed scheme pick does not answer an open product pick.
+        held += [
+            {"raw": t["value"], "hint": "product", "canonical_code": t["key"], "current_message": False, "confident": True}
+            for t in subject.product_tokens
+        ]
     held += turn_runtime.focus_entities(
         focus, unsettled_only=unsettled_only, skip_kinds=SUBJECT_KINDS | {"product"} | typed, scheme_pick=scheme_pick,
     )[0]
@@ -839,7 +882,7 @@ def fetch_entities(
         # Nothing of the subject was said: the ask is about the held settled products the plan
         # already carries, so no `require` leg (`resolve_gate.resolve_entity_body`).
         out[turn_runtime.SUBJECT_SETTLED_KEY] = True
-    if held:
+    if held or len(own) != len(stated):
         out["entities"] = [*held, *own]
     return out
 
@@ -1188,7 +1231,7 @@ def apply_changes(
     log["slots"] = slots
     log["ignored"] = ignored
     log["dropped_entities"] = dropped_entities
-    subject = _build_subject(state, focus, out, brands, led)
+    subject = _build_subject(state, focus, out, brands, "keep" if led == "carry" and plain_keeps else led)
     log["subject"] = subject_wire(subject)
     return Applied(
         True, replace(state, focus=focus, pending=pending, state_led=led, slot_ask=slot_ask, subject=subject), out, log
