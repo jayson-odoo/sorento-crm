@@ -4797,6 +4797,21 @@ def _run_stages_body(  # noqa: PLR0915
                 # tail puts it back, so the stored focus keeps it.
                 state_in = chat_state.set_aside(applied.state, applied.log.get("slots") or {})
                 verdict = applied.verdict
+                picked_brand = chat_state.offered_brand_pick(state_in, verdict)
+                if picked_brand and state_in.focus.products:
+                    # R4-A: the brand the offer listed narrows the HELD set, never the catalogue.
+                    from app.models.product import Brand, Product
+
+                    held_keys = [str(r.get("uuid")) for r in state_in.focus.products if isinstance(r, dict) and r.get("uuid")]
+                    with _session(session_factory) as brand_db:
+                        brand_of = {
+                            str(pid): name
+                            for pid, name in brand_db.query(Product.id, Brand.brand_name)
+                            .join(Brand, Brand.id == Product.brand_id)
+                            .filter(Product.id.in_(held_keys))
+                            .all()
+                        }
+                    state_in = chat_state.narrow_held_to_brand(state_in, picked_brand, brand_of)
             else:
                 verdict = applied.verdict
         remembered_before["_chat_state"] = state_log

@@ -444,7 +444,7 @@ def test_b1_a_sole_close_question_cancels_only_an_owed_quantities_question():
     "focus",
     [
         Focus(set_clarify={"kind": "brand", "options": ["Sorento", "Mocha"]}),
-        Focus(set_page={"other_brands": ["Mocha"]}),
+        Focus(set_page={"set_key": {"other_brands": [{"brand": "Mocha", "count": 2}]}}),
         Focus(top_selling={"asked": {"slot": "basis"}}),
     ],
     ids=["set_clarify", "other_brands", "top_selling_asked"],
@@ -584,7 +584,7 @@ def test_nit_the_focus_wire_omits_last_list_when_none_and_keeps_it_when_set():
 
 
 def test_nit_close_question_also_closes_the_top_selling_ask_and_other_brands_offer():
-    focus = Focus(top_selling={"asked": {"slot": "basis"}, "basis": "qty"}, set_page={"other_brands": ["Mocha"], "page": 1})
+    focus = Focus(top_selling={"asked": {"slot": "basis"}, "basis": "qty"}, set_page={"set_key": {"other_brands": [{"brand": "Mocha", "count": 2}]}, "page": 1})
     out = _apply(State(focus=focus, turn_no=3), verdict(state_changes=[_op("close_question")]), open_question=None)
     assert out.valid is True
     assert not (out.state.focus.top_selling or {}).get("asked")

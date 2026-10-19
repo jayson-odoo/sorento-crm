@@ -229,8 +229,8 @@ def _open_question(focus: Focus, oq: dict[str, Any] | None, pending: Any = None,
     extras: dict[str, Any] = {}
     if focus.set_clarify:
         extras["clarify"] = _plain(focus.set_clarify)
-    if isinstance(focus.set_page, dict) and focus.set_page.get("other_brands"):
-        extras["other_brands"] = _plain(focus.set_page["other_brands"])
+    if _offered_brands(focus):
+        extras["other_brands"] = _plain(_offered_brands(focus))
     asked = (focus.top_selling or {}).get("asked") if isinstance(focus.top_selling, dict) else None
     if asked:
         extras["asked"] = _plain(asked)
@@ -544,12 +544,59 @@ def _hand_over(state: State) -> Any:
     )
 
 
+def _offered_brands(focus: Focus) -> list[Any]:
+    """The brands the last set answer offered. The writer stores the offer at
+    `set_page["set_key"]["other_brands"]` (`turn_runtime`, the set page writer)."""
+    page = focus.set_page if isinstance(focus.set_page, dict) else {}
+    key = page.get("set_key")
+    return list(key.get("other_brands") or []) if isinstance(key, dict) else []
+
+
+def offered_brand_pick(state: State, verdict: dict[str, Any]) -> str | None:
+    """The offered brand the parser's own brand entity names, else None. The entity's code
+    or raw is compared to the offer's registry values; no word of the message is read."""
+    offered = {
+        str(o.get("brand") or "").strip().casefold(): str(o.get("brand") or "").strip()
+        for o in _offered_brands(state.focus)
+        if isinstance(o, dict)
+    }
+    offered.pop("", None)
+    if not offered:
+        return None
+    for e in _entities(verdict):
+        if e.get("hint") != "brand" or e.get("current_message") is False:
+            continue
+        for value in (e.get("canonical_code"), e.get("raw")):
+            hit = offered.get(str(value or "").strip().casefold())
+            if hit:
+                return hit
+    return None
+
+
+def narrow_held_to_brand(state: State, brand: str, brand_of: dict[str, str]) -> State:
+    """The state with the held products (and the slots a task still collects for them) kept
+    only where `brand_of[uuid]` is `brand`; a row whose brand is unknown goes with the rest.
+    Nothing held, or nothing of that brand held: the state is returned unchanged."""
+    want = brand.strip().casefold()
+    keep = lambda row: brand_of.get(str(row.get("uuid") or ""), "").strip().casefold() == want  # noqa: E731
+    rows = [r for r in state.focus.products if isinstance(r, dict)]
+    kept = [r for r in rows if keep(r)]
+    if not rows or not kept:
+        return state
+    keys = {str(r.get("uuid")) for r in kept}
+    tasks = tuple(
+        replace(t, slots=tuple(sl for sl in t.slots if str(sl.key) in keys)) if t.slots else t
+        for t in state.focus.tasks or ()
+    )
+    return replace(state, focus=replace(state.focus, products=kept, tasks=tasks))
+
+
 def _focus_questions(focus: Focus) -> bool:
     """A question the focus itself holds for one turn: a clarify, the other-brands offer, a
     top selling question."""
     return bool(
         focus.set_clarify
-        or (isinstance(focus.set_page, dict) and focus.set_page.get("other_brands"))
+        or _offered_brands(focus)
         or (isinstance(focus.top_selling, dict) and focus.top_selling.get("asked"))
     )
 
@@ -838,8 +885,9 @@ def apply_changes(
         focus.set_clarify = None
         if isinstance(focus.top_selling, dict) and "asked" in focus.top_selling:
             focus.top_selling = {k: v for k, v in focus.top_selling.items() if k != "asked"}
-        if isinstance(focus.set_page, dict) and "other_brands" in focus.set_page:
-            focus.set_page = {k: v for k, v in focus.set_page.items() if k != "other_brands"}
+        if _offered_brands(focus):
+            key = {k: v for k, v in focus.set_page["set_key"].items() if k != "other_brands"}
+            focus.set_page = {**focus.set_page, "set_key": key}
     if slots.get("customer") == "unclear" and focus.customers and unclear_slot_default() == "ask":
         mapped = [KIND_DOMAIN.get(str(row.get("hint"))) for row in focus.customers if isinstance(row, dict)]
         if not (mapped and all(mapped)):
