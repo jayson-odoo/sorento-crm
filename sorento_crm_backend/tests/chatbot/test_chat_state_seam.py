@@ -23,7 +23,7 @@ from app.services.chatbot.head import parser as parser_mod
 from app.services.chatbot.turn.state import Focus, State, focus_to_wire
 
 from tests.chatbot._r9_engine_console import OWNER_FAMILY, _seed_products
-from tests.chatbot._turn_helpers import entity, verdict
+from tests.chatbot._turn_helpers import entity, make_office_access_type, verdict
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, stub_access  # noqa: F401
 from tests.chatbot.test_rearch_s3_attribute_first import SORENTO, _link_contact_company
 from tests.chatbot.test_rearch_s3_roster_from_resolver import _seed_contact
@@ -140,6 +140,13 @@ class Seam:
 @pytest.fixture()
 def seam(session_factory, monkeypatch, stub_access):
     return Seam(session_factory, monkeypatch, stub_access)
+
+
+def _as_office_staff(seam: Seam) -> None:
+    """V1-DOC-SCOPE: the seam contact has no customer links, so it reads the orders book only as
+    staff (an unlinked non-staff contact owns no customer document). An ACTIVE office access type
+    marks it, the tier is untouched."""
+    make_office_access_type(seam.session_factory, CONTACT_ID)
 
 
 def _emit(**overrides: Any) -> dict[str, Any]:
@@ -399,6 +406,7 @@ def test_s4b_skip_customer_and_period_keep_them_out_of_the_args_and_in_the_store
 
 
 def test_s4b_a_following_keep_customer_applies_the_customer_to_the_order_ask(seam):
+    _as_office_staff(seam)
     prev = _held_customer_state(window=HELD_WINDOW)
     seam.say("SRT391-GM eta", _incoming_ask(_op("skip", "customer")), previous=prev)
     out = seam.say("delivery?", _order_ask(_op("switch_domain"), _op("keep", "customer")))
@@ -423,6 +431,7 @@ def test_s4b_clear_period_drops_it_from_the_stored_focus(seam):
 
 
 def test_s4b_keep_period_applies_the_held_window_to_the_order_ask(seam):
+    _as_office_staff(seam)
     prev = _held_customer_state(window=HELD_WINDOW)
     out = seam.say(
         "delivery?", _order_ask(_op("keep"), _op("keep", "period")), previous=prev
@@ -433,6 +442,7 @@ def test_s4b_keep_period_applies_the_held_window_to_the_order_ask(seam):
 
 def test_s4b_no_statement_about_a_held_slot_applies_it_as_on_main(seam):
     """Regression: [keep] says nothing about the customer, so the order ask names it."""
+    _as_office_staff(seam)
     prev = _held_customer_state(window=HELD_WINDOW)
     out = seam.say("delivery?", _order_ask(_op("keep")), previous=prev)
     assert CUSTOMER_UUID in _blob(seam) or "Customer X" in ((out.reply or {}).get("text") or "")
@@ -650,6 +660,7 @@ def test_r6_a_mock_emission_without_the_state_changes_key_is_off_and_with_a_null
 
 
 def test_r6_b2_example_5_the_ask_runs_as_order_for_the_customer_with_the_held_period(seam):
+    _as_office_staff(seam)
     prev = _held_customer_state(window=HELD_WINDOW)
     seam.say(
         "SRT391-GM delivery?",
@@ -808,6 +819,7 @@ def test_s7_an_enforced_contact_loses_a_held_customer_whose_own_link_was_removed
 
 
 def test_s7_a_still_readable_held_customer_is_kept_with_its_uuid_and_applied(seam):
+    _as_office_staff(seam)
     cid = _seed_real_customer(seam)
     prev = _held_real_customer_state(cid, _code_of(seam, cid))
     _order_keep(seam, prev)
@@ -821,6 +833,7 @@ def test_s7_with_the_state_path_off_the_stale_customer_is_untouched_as_on_main(s
     from app.services.chatbot.head import parser as parser_mod
     from tests.chatbot.test_engine import _envelope
 
+    _as_office_staff(seam)
     cid = _seed_real_customer(seam)
     prev = _held_real_customer_state(cid, _code_of(seam, cid))
     _swap_company(seam, add_b=False)
