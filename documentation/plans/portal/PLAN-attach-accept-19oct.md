@@ -1,6 +1,6 @@
 # PLAN: portal file picker follows the attachment type's allowed extensions (ATTACH-ACCEPT)
 
-Status: in build (small fix track, size S: no migration, no auth/RBAC change, no new ingest surface)
+Status: built, in review (small fix track, size S: no migration, no auth/RBAC change, no new ingest surface)
 
 ## Journey
 
@@ -45,8 +45,11 @@ Backend:
 
 Frontend:
 3. `PortalContact.attachment_allowed_extensions?: string[]` (`portal-client.ts:63`).
-4. `AttachmentDropzone` reads it from `fetchMe()` (same pattern as
-   `PortalImpersonationBanner.tsx:33`) when not read-only:
+4. `AttachmentDropzone` takes it as an `allowedExtensions` prop. The forms pass it off the
+   `/me` they already fetch, so a `/new` page still makes exactly one `/me` (D7 r3,
+   `SubmissionForm.visibility.test.tsx:70`): `SubmissionForm` from its `contact`;
+   `PriceTagRequestForm` now reads `/me` on an existing draft too (the visibility check
+   stays `/new`-only). The dropzone:
    - `accept` = `.ext` per allowed extension; no `accept` until the list is known or when it
      is empty (server stays the authority, never a wrong list).
    - Never stuck: a dropped, pasted or picked file whose extension is not allowed is refused
@@ -61,6 +64,8 @@ Frontend:
   - `/me` returns `[]` when the type row is missing, still 200.
   - upload of `stock.xlsx` and `stock.csv` accepted when the type lists them; `.exe` refused
     with "Allowed: ..." naming the same list `/me` returned.
+- vitest `SubmissionForm.attachAccept.test.tsx`, `PriceTagRequestForm.attachAccept.test.tsx`:
+  the list from `/me` reaches the picker, `/me` called once.
 - vitest `AttachmentDropzone.accept.test.tsx`:
   - file input `accept` equals `.csv,.jpg,.png,.xlsx` from the mocked `/me`.
   - picking `stock.xlsx` uploads it; picking `setup.exe` does not upload and toasts
