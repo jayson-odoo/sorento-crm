@@ -1114,12 +1114,6 @@ def _focus_rules(
     else:
         trace.rules_fired.append("reuse_alive")
 
-    from app.services.chatbot.class_named import names_own_class
-
-    if verdict.get("closed_lists") and focus.products and not by_kind.get("product") and names_own_class(entities):
-        focus.products = []
-        trace.rules_fired.append("named_class_drops_product")
-
     asks = verdict.get("asks") or []
     if by_kind:
         if decision.starts_fresh:
