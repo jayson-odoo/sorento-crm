@@ -339,3 +339,10 @@ def test_empty_parser_raw_dict_is_failed():
     empty = _understood("a", {"raw": {"parser_raw": {}}})
     out = parser_flips([[prow("a", **BASE)], [empty]])
     assert out["parse_failed"] == 1 and out["parse_capped"] == 0
+
+
+def test_failed_outranks_missing_for_one_item():
+    failed = _understood("a", {"status": "failed", "raw": {"parser_raw": None}})
+    empty = {"item_id": "a", "turn": {"trace": []}}
+    out = parser_flips([[prow("a", **BASE)], [failed], [empty]])
+    assert out["partial_parse"] == 1 and out["parse_failed"] == 1 and out["parse_missing"] == 0
