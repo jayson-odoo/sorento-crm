@@ -45,7 +45,7 @@ def test_guard_1c_neither_is_none():
     assert replay_mod._recorded_parse(_row()) is None
 
 
-def test_red_1d_an_empty_understood_dict_falls_back():
+def test_guard_1d_an_empty_understood_dict_falls_back():
     assert replay_mod._recorded_parse(_row(understood={}, ctx_raw={"intent": "a"})) == {"intent": "a"}
 
 

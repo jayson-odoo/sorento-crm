@@ -103,6 +103,9 @@ def test_ac2_2_replaying_the_same_row_twice_is_identical_and_diff_is_empty(sessi
 def test_ac2_7_row_without_parse_is_skipped_not_diffed(session_factory, recorded):
     row = copy.deepcopy(recorded)
     row["response"]["ctx"]["parse"].pop("_parser_raw", None)
+    for rec in row["trace"]:
+        if rec.get("stage") == "understood":
+            (rec.get("raw") or {}).pop("parser_raw", None)
     out = replay_mod.replay_rows([row], session_factory=session_factory)
     assert out[0]["skipped"] == "no_parse"
     res = replay_mod.diff_rows(out, out)
