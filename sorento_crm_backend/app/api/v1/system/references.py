@@ -1413,6 +1413,13 @@ class ResolveReferenceRequest(BaseModel):
             "the known choices before anything is counted or searched."
         ),
     )
+    cert_number_is_code: bool = Field(
+        default=False,
+        description=(
+            "CLOSED LISTS: a token the resolver matched exactly as a certificate counts as a "
+            "typed code, so `require` does not describe a set over the leftover words."
+        ),
+    )
     set_list_max: int | None = Field(
         default=None,
         ge=1,
@@ -1620,7 +1627,7 @@ class ResolveReferenceRequest(BaseModel):
 _CODE_MATCH_TIERS = frozenset({"exact", "prefix", "substring", "head_code", "and"})
 
 
-def _code_matched(result: dict[str, Any], tokens: list[str] | None = None) -> bool:
+def _code_matched(result: dict[str, Any], tokens: list[str] | None = None, *, certificates: bool = False) -> bool:
     """Code first (fix round 13 on PR #833, owner 28 Sep 2026: "if found by product code
     -> forward asking, if cannot find product code, fallback to spec search -> reverse
     asking"): did the resolver match a caller token to a product BY ITS CODE?
@@ -1642,6 +1649,9 @@ def _code_matched(result: dict[str, Any], tokens: list[str] | None = None) -> bo
 
     def _hit(token: Any, match: Any) -> bool:
         fragment = _fold(token)
+        if certificates and isinstance(match, dict) and match.get("entity_type") == "certificate":
+            # CLOSED LISTS: a certificate matched exactly (by number, or scheme and number).
+            return any(ch.isdigit() for ch in fragment) and match.get("match_tier") == "exact"
         return (
             any(ch.isdigit() for ch in fragment)
             and isinstance(match, dict)
@@ -3294,7 +3304,7 @@ def resolve_reference_post(
     # UNLESS a caller token matched a product by code (`_code_matched`: code first,
     # spec search only when no code matched), so the response stays byte-identical to
     # the same request without `require`.
-    if payload.require and not _code_matched(result, payload.tokens):
+    if payload.require and not _code_matched(result, payload.tokens, certificates=payload.cert_number_is_code):
         from app.services.product_predicate_service import (
             recover_certificate_scheme,
             resolve_product_set,
