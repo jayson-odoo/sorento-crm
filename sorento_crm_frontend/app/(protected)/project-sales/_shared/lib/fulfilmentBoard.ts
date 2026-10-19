@@ -329,6 +329,9 @@ type PressRole =
   | { kind: 'blocked_reject' }
   | { kind: 'stale' }
   | { kind: 'post'; line: ConfirmLine }
+  // OI-SPLIT-VIEW (UAC A2, A4): a saved split edit with nothing else staged. No body line:
+  // the server applies every split-edited line of an order it confirms.
+  | { kind: 'split_edit' }
   | { kind: 'unpostable'; reason: UnpostableReason };
 
 function pressRoleFor(
@@ -371,9 +374,25 @@ function pressRoleFor(
     return { kind: 'stale' };
   }
   const built = lineFor(contribution, decision);
-  if (built === null) return { kind: 'skip' };
+  if (built === null) {
+    // A pending planning change confirms through its own apply, which carries no split edit.
+    return contribution.split_edited && !batchBlocked ? { kind: 'split_edit' } : { kind: 'skip' };
+  }
   if (typeof built === 'string') return { kind: 'unpostable', reason: built };
   return { kind: 'post', line: built };
+}
+
+/**
+ * OI-SPLIT-VIEW (UAC A2, A4): a saved split edit on a line nothing else is staged on. The
+ * press confirms its order (with no body line for it: the server applies the edit), and the
+ * count adds it once.
+ */
+export function pressAppliesSplitEdit(
+  contribution: BoardContribution,
+  decision: BoardDecision | undefined,
+  batchBlocked = false,
+): boolean {
+  return pressRoleFor(contribution, decision, batchBlocked).kind === 'split_edit';
 }
 
 /**
@@ -395,7 +414,14 @@ export function pressPostsContribution(
     options?.batchBlocked ?? false,
     options?.batchNamedKeys,
   );
-  if (role.kind === 'post' || role.kind === 'withdraw' || role.kind === 'cancel_so') return true;
+  if (
+    role.kind === 'post' ||
+    role.kind === 'withdraw' ||
+    role.kind === 'cancel_so' ||
+    role.kind === 'split_edit'
+  ) {
+    return true;
+  }
   return role.kind === 'unpostable' && role.reason === 'no_mirror' && Boolean(options?.unadopted);
 }
 
@@ -828,7 +854,8 @@ export function plannedLineCount(
       role.kind === 'cancelled' ||
       role.kind === 'withdraw' ||
       role.kind === 'post' ||
-      role.kind === 'cancel_so'
+      role.kind === 'cancel_so' ||
+      role.kind === 'split_edit'
     ) {
       return true;
     }
@@ -906,6 +933,19 @@ export function confirmSummaryFor(
       continue;
     }
     const decision = draft[contribution.key];
+    // OI-SPLIT-VIEW (UAC A2): a saved split edit admits its order on its own; the count
+    // below adds the line once, whatever else is staged on it.
+    if (
+      pressRoleFor(
+        contribution,
+        decision,
+        batchBlockedSalesOrderIds.has(contribution.sales_order_id),
+        options?.batchNamedKeys,
+      ).kind === 'split_edit'
+    ) {
+      orderIds.add(contribution.sales_order_id);
+      continue;
+    }
     // 8 Sep 2026 ruling (reverses R11): an untouched, uncovered line is undecided, not
     // agreed - it must not pull its order into the confirmable set on its own. `decision`
     // is the caller's own draft, already merged with whatever the server sent as
