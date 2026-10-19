@@ -40,6 +40,7 @@ from app.models.base import set_brand_scope, set_company_scope
 from app.models.chatbot_turn import ChatbotTurn
 from app.services import llm_cassette
 from app.services.chatbot import direct_ingress, dispatch, jsc, llm_call, media_intake, send_order, trace as trace_mod
+from app.services.chatbot import user_turn as user_turn_mod
 from app.services.chatbot.contracts import (
     BUSINESS_BRANCH_KINDS,
     CRM_COMPLETED_BRANCH_KINDS,
@@ -1089,11 +1090,11 @@ def closed_lists_verdict(verdict: dict[str, Any], *, gate: bool) -> dict[str, An
     return {k: v for k, v in verdict.items() if k != "closed_lists"} if "closed_lists" in verdict else verdict
 
 
-def _candidate_lines(db: Session, latest_user_message: str, held_ids: list[str] | None = None) -> list[str] | None:
-    """The candidate block for the message's OWN first line (the quoted reply under it is
-    not this message's words, the line grounding reads too). It only advises the parser,
-    so a failure leaves it out and the turn goes on (savepoint: the session stays usable)."""
-    message = latest_user_message.split("\n", 1)[0]
+def _candidate_lines(db: Session, user_turn: Any, held_ids: list[str] | None = None) -> list[str] | None:
+    """The candidate block for the message's OWN line (`UserTurn.own_text`: the quoted reply
+    under it is not this message's words, the line grounding reads too). It only advises the
+    parser, so a failure leaves it out and the turn goes on (savepoint: the session stays usable)."""
+    message = user_turn.own_text
     try:
         with db.begin_nested():
             return candidates_mod.candidate_lines(candidates_mod.shortlist(db, message, held_ids))
@@ -4348,6 +4349,9 @@ def _run_stages_body(  # noqa: PLR0915
         if dry_run:
             session_block = _inject_harness_session(session_block, envelope)
         latest_user_message = build_latest_user_message(envelope, session_block)
+        # CHAT-STATE r6 S6: what the customer sent, read ONCE for the turn (webhook and direct
+        # ingress alike); every first-line reader takes it rather than re-splitting the text.
+        user_turn = user_turn_mod.from_envelope(envelope, session_block)
         # -- stage A's three shelves (PLAN "State: three shelves, one writer each") --- #
         policy = load_policy(db)
         # Roster cap (PLAN-chatbot-answer-half-reattach.md, owner ruling 20 Sep 2026):
@@ -4572,6 +4576,7 @@ def _run_stages_body(  # noqa: PLR0915
         # (`needs_clarification` no longer nulls it - service.py's own change), or
         # the transcript verbatim - never the url, never the envelope's own text.
         latest_user_message = outcome.rendered_text or ""
+        user_turn = user_turn_mod.with_media_read(user_turn, latest_user_message)
 
     # Resolved HERE, not inside the `received` session block above: a media-denied
     # turn returned before this line and never needed a provider configured for a
@@ -4595,10 +4600,10 @@ def _run_stages_body(  # noqa: PLR0915
         candidate_lines = (
             _candidate_lines(
                 db,
-                latest_user_message,
+                user_turn,
                 [str(p["uuid"]) for p in state_in.focus.products if isinstance(p, dict) and p.get("uuid")],
             )
-            if parser_config.closed_lists and isinstance(latest_user_message, str)
+            if parser_config.closed_lists
             else None
         )
 
@@ -5004,7 +5009,7 @@ def _run_stages_body(  # noqa: PLR0915
         verdict, grounding_notes = grounding.ground(
             grounding_db,
             verdict,
-            message=latest_user_message.split("\n", 1)[0] if isinstance(latest_user_message, str) else None,
+            message=user_turn.own_text,
             closed_lists=parser_config.closed_lists,
         )
     verdict = closed_lists_verdict(verdict, gate=parser_config.closed_lists)
@@ -6184,7 +6189,7 @@ def _run_stages_body(  # noqa: PLR0915
         # CHAT-LANGUAGE: this turn's reply language, from the message's own words first. Pure,
         # so every arm has it (`run_tail` carries `item["reply_language"]` to the next turn);
         # the business lane below recomputes it once its codes and names are known.
-        item["reply_language"] = _turn_language(latest_user_message, remembered_before, profile)
+        item["reply_language"] = _turn_language(user_turn, remembered_before, profile)
 
         # Owner ruling, hand pass 10 (21 Sep 2026, `test_rearch_r10_handpass10_
         # replay.py::TestHandPass10PromotionAskRepeatsAfterATierPick`): a fresh
@@ -6470,7 +6475,7 @@ def _run_stages_body(  # noqa: PLR0915
             pre_question: Any = None
             if vague or (verdict.get("family") is None and len(turn_sub_asks._sub_asks(verdict)) >= 2):
                 reply_language = _turn_language(
-                    latest_user_message,
+                    user_turn,
                     remembered_before,
                     state_out.profile,
                     strip=[
@@ -6528,7 +6533,7 @@ def _run_stages_body(  # noqa: PLR0915
             and turn_sub_asks.wants(verdict, state_in.pending)
         ):
             reply_language = _turn_language(
-                latest_user_message,
+                user_turn,
                 remembered_before,
                 state_out.profile,
                 strip=[
@@ -6869,7 +6874,7 @@ def _run_stages_body(  # noqa: PLR0915
             # CHAT-LANGUAGE: the words of this turn that are data (codes, customer names) must
             # not decide the language, and the catalog is read once, here, with the db open.
             reply_language = _turn_language(
-                latest_user_message,
+                user_turn,
                 remembered_before,
                 state_out.profile,
                 strip=[
@@ -7888,6 +7893,7 @@ def _run_stages_body(  # noqa: PLR0915
             recalled=recalled,
             fallback=fallback_ctx,
             chat_console=_chat_console(envelope),
+            user_turn=user_turn,
         )
 
     return TurnResult(
@@ -9121,6 +9127,7 @@ def _run_casual_lane(
     recalled: list[dict[str, Any]] | None = None,
     fallback: Any = None,
     chat_console: bool = False,
+    user_turn: Any = None,
 ) -> TurnResult:
     """The `low_signal` lane, from the model call to the closed turn (AC-401, AC-403).
 
@@ -9179,7 +9186,7 @@ def _run_casual_lane(
             answer_shape = said.shape
             text = said.text
             if fallback is not None and (said.shape == "ack" or fallback.kind == "history"):
-                reply_language = _fallback_language(ctx, fallback, remembered_before, said.language)
+                reply_language = _fallback_language(user_turn, fallback, remembered_before, said.language)
                 ack = said.text.strip()
                 # AC-MEM081: an ack stating a figure, code, price or date its own
                 # input never had is replaced by the canned one for the language.
@@ -9220,7 +9227,7 @@ def _run_casual_lane(
             logger.warning("chatbot turn %s: clarifier usage log failed", turn_id, exc_info=True)
     if failed is not None and fallback is not None and fallback.kind == "history" and fallback.copy is not None:
         # The history list needs no model: behind the canned ack it still answers.
-        reply_language = _fallback_language(ctx, fallback, remembered_before, None)
+        reply_language = _fallback_language(user_turn, fallback, remembered_before, None)
         text = fallback_mod.compose(
             fallback.copy.render_in("fallback_ack", reply_language), fallback, fallback.copy, reply_language
         )
@@ -10167,14 +10174,15 @@ def _ask_localizer(ask: Any, db: Session, item: Mapping[str, Any], *, dry_run: b
 
 
 def _fallback_language(
-    ctx: Any, fallback: Any, remembered_before: Mapping[str, Any] | None, said_language: str | None
+    user_turn: Any, fallback: Any, remembered_before: Mapping[str, Any] | None, said_language: str | None
 ) -> str:
     """The fallback reply's language: one the contact STATED this turn, then the message's own
-    words, the clarifier's reading, the conversation's last language, the saved fact."""
+    words (`UserTurn.typed_line`, what they typed), the clarifier's reading, the conversation's
+    last language, the saved fact."""
     stated = next((s.get("value") for s in fallback.noted if s.get("key") == "language"), None)
     return fallback_mod.pick_language(
         stated,
-        language_mod.detect(_ctx_message_text(ctx).split("\n")[0]),
+        language_mod.detect(user_turn.typed_line),
         said_language,
         (remembered_before or {}).get("reply_language"),
         fallback.saved_language,
@@ -10182,17 +10190,17 @@ def _fallback_language(
 
 
 def _turn_language(
-    latest_user_message: str,
+    user_turn: Any,
     remembered_before: Mapping[str, Any],
     profile: Any,
     *,
     strip: Any = (),
 ) -> str:
-    """`language.for_turn` on the typed line (the quoted `reply to:` line is not the customer's
-    words), against a copy so `remembered_before` stays the state the turn started with."""
+    """`language.for_turn` on the customer's own line (`UserTurn.own_text`: the quoted
+    `reply to:` line is not their words), against a copy so `remembered_before` stays the
+    state the turn started with."""
     carried = {"reply_language": remembered_before.get("reply_language")}
-    first_line = (latest_user_message or "").split("\n")[0]
-    return language_mod.for_turn(first_line, carried, getattr(profile, "language", None), strip=strip)
+    return language_mod.for_turn(user_turn.own_text, carried, getattr(profile, "language", None), strip=strip)
 
 
 def _ctx_message_text(ctx: Any) -> str:

@@ -1312,7 +1312,10 @@ def with_set_count_from_text(
     count, the count is that number and no position is picked. A message that names
     anything else (a subject, a word the regex does not know) is left to the parser.
     """
-    if not isinstance(carried, dict) or not isinstance(message, str):
+    from app.services.chatbot.user_turn import own_line_of
+
+    line = own_line_of(message)
+    if not isinstance(carried, dict) or line is None:
         return verdict
     echoed = any(isinstance(e, dict) and e.get("current_message") is True for e in (verdict.get("entities") or []))
     # CLASS-HINT-KIND-PICK R2 (CHATBOT-TRIO console case 12, 7 Oct 2026): the parser read
@@ -1346,10 +1349,9 @@ def with_set_count_from_text(
         return {**base, "top_n": more, "reference_positions": [], SET_CONTINUE_KEY: True}
     if shown == 0 and named_count(verdict.get("top_n")) is not None:
         return base
-    # Line 1 is the customer's own text; a quoted "reply to: ..." rides on line 2
-    # (`engine.build_latest_user_message`).
-    lines = message.strip().splitlines()
-    match = _BARE_COUNT_RE.match(lines[0].strip()) if lines else None
+    # The customer's own line (CHAT-STATE r6 S6, `UserTurn.own_line`); a quoted "reply to: ..."
+    # is not their words.
+    match = _BARE_COUNT_RE.match(line.strip()) if line else None
     if not match:
         return verdict
     count = int(match.group(1))
@@ -1427,13 +1429,15 @@ def with_clarify_answer(verdict: dict[str, Any], message: Any, *, carried: Any) 
     the question's own ask again, "any water tap basin" with "water tap basin" read as
     "tap", so the customer gets the counted set ("2 taps have stock."). A message that is
     not one of the options is a question of its own and is left to the parser."""
-    if not isinstance(carried, dict) or not isinstance(message, str):
+    from app.services.chatbot.user_turn import own_line_of
+
+    line = own_line_of(message)
+    if not isinstance(carried, dict) or line is None:
         return verdict
     term = jsc.nullish_str(carried.get("term")).strip()
     options = [o for o in (carried.get("options") or []) if isinstance(o, str) and o]
     ask = carried.get("ask") if isinstance(carried.get("ask"), dict) else None
-    lines = message.strip().splitlines()
-    words = re.findall(r"[a-z0-9]+", lines[0].lower()) if lines else []
+    words = re.findall(r"[a-z0-9]+", line.lower()) if line else []
     while words and words[0] in _CLARIFY_LEAD_WORDS:
         words = words[1:]
     reply = " ".join(words)
@@ -1508,11 +1512,11 @@ _CONTINUE_COUNT_RE = re.compile(
 
 
 def set_continue_count(message: Any) -> int | None:
-    """The count in an "another N" message, or None."""
-    if not isinstance(message, str):
-        return None
-    lines = message.strip().splitlines()
-    match = _CONTINUE_COUNT_RE.search(lines[0]) if lines else None
+    """The count in an "another N" message, or None (the customer's own line, `UserTurn`)."""
+    from app.services.chatbot.user_turn import own_line_of
+
+    line = own_line_of(message)
+    match = _CONTINUE_COUNT_RE.search(line) if line else None
     if not match:
         return None
     count = int(match.group(1) or match.group(2))
@@ -4554,7 +4558,10 @@ def with_brand_from_offer(verdict: dict[str, Any], message: Any, *, carried: Any
     named there narrows the SAME set (`turn/apply.py`, `set_brand_chosen`), so the count
     in the offer and the narrowed answer are one count. A message that names a product,
     a class or any other subject is a new question and is left alone."""
-    if not isinstance(carried, dict) or not isinstance(message, str):
+    from app.services.chatbot.user_turn import own_line_of
+
+    line = own_line_of(message)
+    if not isinstance(carried, dict) or line is None:
         return verdict
     offered = (carried.get("set_key") or {}).get("other_brands") or []
     names = {str(o.get("brand") or "").strip().lower(): str(o.get("brand") or "").strip() for o in offered if isinstance(o, dict)}
@@ -4566,8 +4573,7 @@ def with_brand_from_offer(verdict: dict[str, Any], message: Any, *, carried: Any
             continue
         if str(e.get("hint") or "").strip().lower() != "brand":
             return verdict
-    lines = message.strip().splitlines()
-    words = [w for w in re.findall(r"[a-z0-9]+", lines[0].lower()) if w not in _BRAND_PICK_FILLER] if lines else []
+    words = [w for w in re.findall(r"[a-z0-9]+", line.lower()) if w not in _BRAND_PICK_FILLER] if line else []
     said = " ".join(words)
     chosen = names.get(said)
     if chosen is None:
