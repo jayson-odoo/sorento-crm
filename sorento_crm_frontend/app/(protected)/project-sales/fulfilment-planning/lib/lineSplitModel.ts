@@ -424,7 +424,9 @@ export function addSplit(
     });
     // Nothing left after the first row: the first row only, never a split of qty 0.
     if (kept >= line.baseQty) {
-      return { id, lines: editLine(lines, lineId, (splits) => [first(splits)]) };
+      const only = editLine(lines, lineId, (splits) => [first(splits)]);
+      const row = only.find((candidate) => candidate.lineId === lineId);
+      return { id: row?.splits[0]?.id ?? id, lines: only };
     }
     return {
       id,
@@ -474,6 +476,12 @@ export function placeRest(
     const isCancel = target.date === 'cancel';
     const date = isCancel ? null : target.date || null;
     const on = isCancel ? lineId : target.sitsOnLineId;
+    // Cancel keeps merging into the line's cancel split; a drop on a line is its own row.
+    const cancel = isCancel ? splits.find((candidate) => candidate.isCancel) : undefined;
+    if (cancel) {
+      cancel.qty += left;
+      return splits;
+    }
     splits.push({
       id: nextSplitId(lineId, splits),
       qty: left,
