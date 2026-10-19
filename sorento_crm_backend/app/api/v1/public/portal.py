@@ -61,6 +61,7 @@ from app.services.portal_service import (
     PortalAuthError,
     PortalService,
     SUPPORTED_TYPES,
+    parse_allowed_extensions,
 )
 from app.utils.http import content_disposition
 
@@ -327,6 +328,10 @@ class PortalMeResponse(BaseModel):
     # overrides). The landing reads it to decide which entry points to show;
     # every form route still enforces the same rule server-side.
     visible_form_types: list[str] = []
+    # ATTACH-ACCEPT: the portal_submission type's allowed extensions (no dots,
+    # sorted). The file picker's `accept` is built from this, so it offers
+    # exactly what the upload check below lets through. Empty = no limit set.
+    attachment_allowed_extensions: list[str] = []
 
 
 @router.get("/me", response_model=PortalMeResponse)
@@ -383,6 +388,7 @@ def portal_me(
         visible_form_types=sorted(
             resolve_visible_form_types(db, token.contact_id)
         ),
+        attachment_allowed_extensions=service.portal_allowed_extensions(),
     )
 
 
@@ -1248,14 +1254,10 @@ def _check_quota(
     incoming_size: int,
     incoming_ext: str,
 ) -> None:
-    allowed_exts = {
-        e.strip().lower().lstrip(".")
-        for e in (attachment_type.allowed_extensions or "").split(",")
-        if e.strip()
-    }
+    allowed_exts = parse_allowed_extensions(attachment_type.allowed_extensions)
     if allowed_exts and incoming_ext not in allowed_exts:
         raise handle_validation_error(
-            f"Unsupported file type. Allowed: {', '.join(sorted(allowed_exts))}."
+            f"Unsupported file type. Allowed: {', '.join(allowed_exts)}."
         )
     max_bytes = (attachment_type.max_file_size_mb or 0) * 1024 * 1024
     if max_bytes and incoming_size > max_bytes:
