@@ -1,52 +1,67 @@
-# PLAN: CHAT-STATE round 7 - one open referent: the last list or question the bot showed (LAST-REFERENT)
+# PLAN: CHAT-STATE round 7 - the referent of a bare number: the quote first, then today's rule (LAST-REFERENT v2)
 
-**Status:** Plan, approved by crew a51605376 (a) (20 Oct): lands on #1772 (`crew/chat-state-r2`). Track: inside the L
-lane, LEAD pattern (tester red -> coder -> lead kill-proof -> reviewer + security-reviewer -> L1 gate -> ONE push).
-**UAC:** `chat-state-last-referent-r7-acceptance-criteria.md` (alongside). **Source:** owner rule 20 Oct 07:04 on the
-bench pass audit row 6 ("I thought the list supposed to stay open? So whatever the last open question should be the
-reference for the picker?"); crew review F5 (CHAT-ARCH-REVIEW-20oct.md:104-107, "a shown list mints a State `last
-list`", owned by CHAT-STATE).
+**Status:** Build v2, approved: owner 20 Oct ~07:55 ("oh ok yeah correct") on crew's three rules; crew un-HOLD. v1
+(recency: the newest of list / question / task wins) is withdrawn (owner 20 Oct ~07:40 "how many outranks a newer
+list"). Lands on #1772 (`crew/chat-state-r2`). Track: inside the L lane, LEAD pattern (tester red -> coder -> lead
+kill-proof -> reviewer + security-reviewer (MCP presenter + fetch ids) -> L1 gate -> ONE push).
+**UAC:** `chat-state-last-referent-r7-acceptance-criteria.md` (alongside). **Source:** owner r40 case-12 ruling (a
+QUOTED reply follows the quoted message's context); owner 20 Oct ~07:40; crew review F5 (CHAT-ARCH-REVIEW-20oct.md:104-107).
 
 ## Goal
-A list the bot showed stays open. A bare number or a pick refers to the NEWEST of: the last list, the pending question,
-the open stock task. One referent, chosen by recency, never by type. Every row kind of a list is pickable.
+1. A quoted reply's referent wins: "1" quoting the flyer list picks flyer 1; "1" quoting the how-many is the quantity.
+2. Without a quote, today's rule stays: an open how-many beats a newer list (`turn/apply.py:2613-2639`).
+3. Promo, file and order rows of a shown list are pickable by number only when no question is open, and a pick fetches
+   exactly that row.
 
-## Today (measured 20 Oct, head 7f299b4cc8)
-- `Focus.last_list` exists (turn/state.py:209), one writer `turn/tail.py:103-125` (`last_list_after`), state path only.
-  A newer list replaces it; a turn that shows nothing keeps it. It carries no turn stamp.
-- Precedence is by type: `turn/question.py:129-141` picks required_ask, then pending, then the stock task; a data list
-  is never the question. `turn/apply.py:2613-2639` `_bare_position_is_the_quantity` turns a lone position into
-  `demand_qty` whenever a stock task is owed a number. Audit row 6: "1" after a two-file promo list, with the older
-  MKS9505-GM-HC how-many still open, answered "MKS9505-GM-HC x 1".
-- Only product rows with a code are pickable (`turn/chat_state.py:809-812`; `_row_item` keeps only "Product Code",
-  tail.py:89-100); a promo / file / order row is shown but never pickable.
-- Stamps that exist: `Pending.asked_at_turn` (turn/pending.py:82), `Task.touched_at_turn` (turn/task.py:91),
-  `State.turn_no` (turn/state.py:313).
+## Today (measured 20 Oct, head a77e5d8b9d)
+- Quote: respond.io `replyTo.id` (engine.py:1186-1190) resolves to the quoted ChatbotTurn by message id, text match as
+  fallback (quoted.py:64-132; `QuotedTurn.turn_no` quoted.py:39). `_quoted_context` (engine.py:1213-1286, called ~4370)
+  swaps `state_in.focus` + `pending` for the quoted turn's; the live ones ride `State.quoted_live` (turn/state.py:324)
+  and are written back by `carry_live_state` (turn/tail.py:20-65).
+- Gap 1: the quoted turn's focus still carries the owed stock task, so `_bare_position_is_the_quantity` turns a "1"
+  quoting the flyer list into the quantity. Nothing says the list was THAT message's content: `Focus.last_list` has no
+  stamp (turn/state.py:209; writer turn/tail.py:103-125).
+- Gap 2: promo rows carry no key: `_promotions` calls `b.item` without `entity_id` (sorento_crm_mcp presenters.py:
+  1051-1064) though `_Builder.item` supports it (presenters.py:287, :329, top-level "id", never printed); `_row_item`
+  keeps only "Product Code" (tail.py:89-100); `_pickable` is product-only (turn/chat_state.py:809-812).
+- Gap 3: a promo pick has no fetch path: `promo_filter` (turn_runtime.py:568-606) takes promotion ids only from the
+  resolver, which matches Promotion.description exactly (entity_resolver.py:~2412). The id param exists:
+  `TYPE_TO_PARAM["promotion"] = "promotion_ids"` (lanes/business/fetch.py:320).
+- Gap 4: file rows are not in `last_list` at all (Section.files is separate from figures, turn/compose.py:49-54) and
+  `attach()` emits no attachment id (presenters.py:352-363).
 
 ## ARCHITECTURE
-1. Layer: State (the tail writer + the chat_state view / applier). No new text rewriter. The prompt lines are
-   CHAT-CODE-LOOKUP's template (P1-P3 sent through crew 20 Oct).
-2. Shared mechanism: `last_list` rows carry their kind + key (product id/code, attachment id, promotion id, order id)
-   and the list carries `shown_at_turn`. One function in turn/chat_state.py, `open_referent(state)`, returns the newest
-   of {last list (shown_at_turn), pending (asked_at_turn), stock task owed a value (touched_at_turn)}. The view prints
-   only that one as open (an older stock task prints as a held task, not as the open question); the pick and a bare
-   number resolve against it.
-3. Also fixes: picks on file, promotion and order lists; the 26 Sep picker-not-sticky ruling still holds by recency
-   (the how-many asked after the list is the newest); a pending roster vs a newer list.
-4. Removes on the state path: the type rule in `_bare_position_is_the_quantity` (apply.py:2613-2639; it reads
-   `open_referent` or stands down under the state gate), the product-only `_pickable` rule (chat_state.py:809-812),
-   the "Product Code"-only row key in `_row_item`. Off the state path nothing is recorded (decide.py:237-302) and the
-   legacy rule stays until the state flag retires (state-off byte-identical, lane invariant).
+1. Layer: State (tail writer, chat_state pick) + the quoted-turn swap, plus one presenter field (row ids). No new text
+   rewriter; the prompt is not touched (the base prompt's bare-number rule already matches "how many outranks").
+2. Shared mechanism: `last_list` carries the turn that showed it (`shown_at_turn`) and each row's kind + id. A quote
+   resolves to a turn (existing); when that turn showed the list (`shown_at_turn == QuotedTurn.turn_no`), the list is
+   the referent and the owed stock task does not take the number. One `_pickable(row, open_question)` rule: product
+   rows as today; a keyed promotion / file / order row only when no question is open. A picked row enters as an entity of its
+   kind with its id, so the existing id params fetch it (promotion_ids; attachment_ids for files; the order's id).
+3. Also fixes: every quoted pick over an older owed task (stock, count, clarify); every promo / file list pick when
+   nothing is open; promo picks no longer depend on an exact description match.
+4. Removes: the product-only `_pickable`; the "Product Code"-only row key. Kept on purpose: the how-many-outranks rule
+   (owner 20 Oct) and the base prompt lines (chatbot_parser_prompt.py:414-416, 464-465); P1-P3 sent to crew 20 Oct are
+   WITHDRAWN.
 
 ## Slices (each: tester red -> coder -> lead kill-proof -> reviewer; L1 gate at round end)
-- R7-1 writer: `last_list_after` stamps `shown_at_turn` and keeps each row's kind + key for every row kind.
-- R7-2 referent: `open_referent` + the view prints one open referent; the stock task under a newer list is held.
-- R7-3 readers: the pick resolves against the referent for every row kind into the right Subject axis; the bare-number
-  rule reads the referent. The 2 code pins of the old rule change with an owner-rule cite: test_chat_state_apply.py:488,
-  test_stock_ask_ht26_r5_picker_not_sticky.py:101 (its prompt-text pin :127 moves with CHAT-CODE-LOOKUP's P1).
+- R7-1 keys: presenter promo rows carry `entity_id`; file rows carry the attachment id; the tail writes promo and file
+  rows into `last_list` with kind + id and stamps `shown_at_turn` (a question's options keep its `asked_at_turn`, per
+  the v1 coder's seam finding: test_chat_state_seam.py same-input same-focus).
+- R7-2 quote: a quote of the turn that showed the list makes the list the referent (the owed task does not take the
+  number); a quote of the how-many turn keeps the quantity.
+- R7-3 pick: `_pickable` per rule 3; the pick enters as an entity of its kind with its id; the fetch sends that row.
+
+## Before any push
+The v1 red commit a77e5d8b9d encodes the withdrawn recency rule: its rewritten pins (test_chat_state_apply.py:488,
+test_stock_ask_ht26_r5_picker_not_sticky.py:101) go back to today's rule and test_chat_state_r7_last_referent.py is
+rewritten to v2 by the tester (new `test(red):` commit). The v1 coder WIP patch (scratchpad r7-coder-wip.patch) is
+reused only for the writer stamp + row kind/key; its `open_referent` recency is dropped.
 
 ## Measurement
-L1 replay gate (base 7f299b4cc8) for first asks / state-off; the state-path effect rides the paired TRAIN x1 that
-already waits for the DEV key (cap 0.3 USD).
+L1 replay gate (base 7f299b4cc8); state-path effect rides the paired TRAIN x1 (cap 0.3 USD).
 
 ## Round log
+- v2 approved by the owner 20 Oct ~07:55; crew un-HOLD. Prompt: only chat_state_prompt.py:34 changes (sent to crew).
+- v1 (recency) planned + reds a77e5d8b9d + coder WIP (all reds green) 20 Oct; HELD by crew, withdrawn by owner ruling
+  20 Oct ~07:40. v1 finding kept: the promo pick could not fetch the file (gap 3).
