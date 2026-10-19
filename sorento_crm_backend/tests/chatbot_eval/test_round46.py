@@ -131,8 +131,8 @@ BASE = dict(domain_hint="inventory", routing={"suggested_team": "warehouse", "su
 
 def test_identical_signatures_do_not_flip():
     out = parser_flips([[prow("a", **BASE)], [prow("a", **BASE)], [prow("a", **BASE)]])
-    assert {k: out[k] for k in ("items", "flipped", "rate", "fields", "no_parse")} == {
-        "items": 1, "flipped": 0, "rate": 0.0, "fields": {}, "no_parse": 0}
+    assert out == {"items": 1, "flipped": 0, "rate": 0.0, "fields": {}, "no_parse": 0, "no_id": 0, "dup_rows": 0,
+                   "partial_parse": 0, "parse_failed": 0, "parse_capped": 0}
 
 
 def test_state_change_op_difference_flips_that_field():
