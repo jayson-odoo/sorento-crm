@@ -1134,6 +1134,9 @@ PAGE_CAP = 50
 NOT_RECORDED_RE = re.compile(r"^\s*\*([^*\n:]+):\*\s*not recorded for\b", re.I | re.M)
 
 
+VALUE_LINE_RE = re.compile(r"^\s*\*([^*\n:]+):\*\s*(.+)$", re.M)
+
+
 def _attribute_none(reply: str, gold_spec: list[dict[str, Any]], every: bool = False) -> bool:
     """Owner (19 Oct): "grade is not on record for these gratings". A "not recorded" line for the gold's OWN spec key is the honest
     none of a none-on-record spec gold (the label is the registry label or the asked word: "Steel grade", "steel_grade"). `every`: the
@@ -1141,7 +1144,23 @@ def _attribute_none(reply: str, gold_spec: list[dict[str, Any]], every: bool = F
     keys = {re.sub(r"[\s_]+", " ", str(sp.get("key") or "").lower()).strip() for sp in gold_spec if sp.get("key") not in CLASS_KEYS}
     keys.discard("")
     named = {re.sub(r"[\s_]+", " ", m.group(1).lower()).strip() for m in NOT_RECORDED_RE.finditer(reply)}
-    return bool(keys) and (keys <= named if every else bool(keys & named))
+    if not keys:
+        return False
+    # a gold value shown on a line ("*Steel grade:* 201") is the attribute ON record for that product: no honest none
+    gold_values: dict[str, set[str]] = {}
+    for sp in gold_spec:
+        if sp.get("key") not in CLASS_KEYS:
+            gold_values.setdefault(re.sub(r"[\s_]+", " ", str(sp.get("key") or "").lower()).strip(), set()).add(_val(sp.get("value")))
+    for m in VALUE_LINE_RE.finditer(reply):
+        label, value = re.sub(r"[\s_]+", " ", m.group(1).lower()).strip(), m.group(2).strip()
+        if label in gold_values and _val(value) in gold_values[label]:
+            return False
+    return keys <= named if every else bool(keys & named)
+
+
+# a PRODUCT row: a code at the start of a line (after a number or bullet), or the code of a "*Product Code:*" line. A code in a label
+# ("*DC1-SMC:* 0", a warehouse) or in a value ("*Material:* SUS304") is no product, so a stock page's warehouse rows never count.
+PRODUCT_ROW_RE = re.compile(r"^(?:\d+\.\s+|[\u2022-]\s+)?(?:\*?Product Code:\*?\s*)?(?=[A-Z0-9-]*\d)(?=[A-Z0-9-]*[A-Z])([A-Z][A-Z0-9-]{3,})\b", re.M)
 
 
 def _capped_list_check(row: dict[str, Any], item: dict[str, Any]) -> tuple[str, bool | None, str] | None:
@@ -1153,7 +1172,7 @@ def _capped_list_check(row: dict[str, Any], item: dict[str, Any]) -> tuple[str, 
     expected = {_raw(c) for c in gold.get("spec_products") or [] if c}
     if gold.get("none_on_record"):
         return None
-    listed = {_raw(c) for c in CODE_RE.findall(reply_text(row))}
+    listed = {_raw(c) for c in PRODUCT_ROW_RE.findall(reply_text(row))}
     if not listed:
         return None
     msg = "The reply listed more than a page of the set instead of a capped page with a way to see more."
