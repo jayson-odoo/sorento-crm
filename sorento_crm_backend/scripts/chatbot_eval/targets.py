@@ -285,6 +285,16 @@ def _fact_ok(row: dict[str, Any], fact: Any) -> bool:
     return fact in domains or any(str(fact) in str(t.get("name")) for t in _tools(row))
 
 
+def _memory_omitted(row: dict[str, Any]) -> bool:
+    """The memory payload was capped out of the trace (the bare note replaces it)."""
+    return str(_kind(row, "memory").get("note") or "").startswith("payload omitted")
+
+
+def _oq_unreadable(row: dict[str, Any]) -> bool:
+    """The question after cannot be read: memory capped out and the post-turn state has none to stand in."""
+    return _memory_omitted(row) and "open_question" not in _kind(row, "state")
+
+
 def _oq(row: dict[str, Any]) -> tuple[Any, Any]:
     """(question before, question after): `memory.open_question` is {before, after} in real traces, the bare
     after value in older rows. A missing `before` is unknown: the `state` record is written after the turn, so it
@@ -292,6 +302,10 @@ def _oq(row: dict[str, Any]) -> tuple[Any, Any]:
     mem = _kind(row, "memory").get("open_question")
     if isinstance(mem, dict) and ("before" in mem or "after" in mem):
         return mem.get("before"), mem.get("after")
+    if _memory_omitted(row) and "open_question" in _kind(row, "state"):
+        # the memory payload was capped out of the trace: the state record is written after the turn from the same
+        # memory, so it holds the question AFTER (never the one before, which stays unknown)
+        return None, _kind(row, "state").get("open_question")
     # a hand-built row (its memory event has no focus before/after) records the question before in `state`; in a
     # real trace the `state` event is written after the turn, so it never stands in for the unknown before
     focus = _kind(row, "memory").get("focus")
@@ -584,6 +598,16 @@ def _quantity_check(row: dict[str, Any], gold: dict[str, Any] | None = None,
     return ("qty_ask_ok", True, "The bot asked how many instead of giving the answer.")
 
 
+def _unresolved_held(row: dict[str, Any]) -> bool:
+    """A code held before the turn is one the lookup could not resolve (the looked_up envelopes list it as unresolved)."""
+    held = _codes_of(_mem_focus(row, "before").get("products"))
+    gone: set[str] = set()
+    for env in (_stage(row, "looked_up").get("raw") or {}).get("envelopes") or []:
+        if isinstance(env, dict):
+            gone |= {_key(c) for c in env.get("unresolved") or []}
+    return bool(held & gone)
+
+
 def _picker_check(row: dict[str, Any], gold: dict[str, Any] | None = None) -> tuple[str, bool, str] | None:
     """A variant picker (a product_pick list, a stock picker, a one-option did-you-mean) after the answer is a needless
     question unless the gold code is ambiguous."""
@@ -596,6 +620,8 @@ def _picker_check(row: dict[str, Any], gold: dict[str, Any] | None = None) -> tu
     def codes(q: Any) -> set[str]:
         return {_key(o.get("code") or o.get("label")) for o in (q.get("options") or []) if isinstance(o, dict)} if isinstance(q, dict) else set()
 
+    if _unresolved_held(row):   # a did-you-mean for a held code that is not on file is an honest answer, not a picker
+        return ("no_picker", True, "The bot left a list of products open to pick from instead of answering.")
     same_list = isinstance(before, dict) and before.get("kind") == "product_pick" and codes(before) == codes(after)
     return ("no_picker", same_list, "The bot left a list of products open to pick from instead of answering.")
 
@@ -716,6 +742,27 @@ def _subject_check(want: set[str], after: set[str]) -> tuple[str, bool | None, s
     return ("new_subject", (want <= after) if want else None, "The new subject was not picked up.")
 
 
+def _customer_targeted(row: dict[str, Any], fragment: Any) -> bool:
+    """A gold that names a customer by a fragment: the tool's customer ids are mapped to names through the options of the
+    questions before and after (each option names its ids). True when at least one id resolves and every resolved id is
+    a customer whose name or code holds the fragment; an id no option names resolves to nothing."""
+    want = _squash(fragment)
+    if not want:
+        return False
+    names: dict[str, str] = {}
+    for q in _oq(row):
+        for o in (q.get("options") or []) if isinstance(q, dict) else []:
+            if isinstance(o, dict):
+                label = _squash(" ".join(str(o.get(k) or "") for k in ("name", "label", "code")))
+                for u in [o.get("uuid"), *(o.get("uuids") or [])]:
+                    if u:
+                        names[str(u).lower()] = label
+    ids = [x.lower() for t in _tools(row) for k in ("customer_ids", "customer_id")
+           for x in _strings((t.get("args") or {}).get(k)) if UUID_RE.fullmatch(x)]
+    resolved = [names[i] for i in ids if i in names]
+    return bool(resolved) and all(want in n for n in resolved)
+
+
 def _followup(row, item):
     kind, gold = item.get("kind"), item.get("gold") or {}
     needless = _needless(row, gold, menu=kind in {"and_x", "switch"}, slice_name="followup")
@@ -812,8 +859,10 @@ def _followup_checks(row, item, kind, gold):
         if gold.get("code"):
             code = _key(gold["code"])
             # no named tool ran (the bot asked its next question): the target is unknown, not wrong
-            targeted = code in _tool_targets(row) or any(_mentions(_dump(t.get("args")), gold["code"]) for t in _tools(row))
-            unknown = not _tools(row) and bool(_asking(row))
+            targeted = (code in _tool_targets(row) or any(_mentions(_dump(t.get("args")), gold["code"]) for t in _tools(row))
+                        or _customer_targeted(row, gold["code"]))
+            # the bot asked its next question (a clarify, or the period question of a DO list ask, which fetches nothing)
+            unknown = not _tools(row) and (bool(_asking(row)) or bool(_kind(row, "do_range")))
             checks.append(("tool_target", None if unknown else targeted, "The lookup tool did not target the chosen item."))
         return checks
     if kind == "answer" and gold.get("idea_ref"):
@@ -920,6 +969,9 @@ def _followup_checks(row, item, kind, gold):
             narrowed = bool(hf) and any(_val(spec[1]) == fv for spec in hf.get("specs") or []
                                         if isinstance(spec, (list, tuple)) and len(spec) > 1) \
                 and bool({_key(c) for c in hf.get("matched") or []} & _tool_targets(row))
+            # a brand narrowing writes the same event (`brands`) with no spec: the gold names a brand filter
+            narrowed = narrowed or (bool(hf) and (flt.get("key") or flt.get("kind")) == "brand" and bool(hf.get("brands"))
+                                    and bool({_key(c) for c in hf.get("matched") or []} & _tool_targets(row)))
             # held, none match (crew option A, a gold with none_on_record): an honest none about the held product
             reply = reply_text(row)
             named = {_key(c) for c in CODE_RE.findall(reply)}
@@ -1143,12 +1195,19 @@ def _attachment(row, item):
     announced = (_stage(row, "replied").get("facts") or {}).get("files")
     files = _sent_files(row, announced)
     sent = announced if isinstance(announced, int) else len(files)
-    asked = [_type_word(e.get("canonical_code") or e.get("raw")) for e in _entities(row) if e.get("hint") == "attachment_type"]
+    ents, readable = _entities(row), True
+    if _apply_omitted(row) and not ents:   # the apply payload was capped: the parser's own entities are the uncapped source
+        derived = (_stage(row, "understood").get("raw") or {}).get("derived")
+        listed = derived.get("entities") if isinstance(derived, dict) else None
+        ents, readable = [e for e in listed or [] if isinstance(e, dict)], isinstance(listed, list)
+    asked = [_type_word(e.get("canonical_code") or e.get("raw")) for e in ents if e.get("hint") == "attachment_type"]
     from_memory = (_mem_focus(row, "after").get("extra") or {}).get("attachment_type")
     if isinstance(from_memory, (str, dict)):
         from_memory = [from_memory]
     asked += [_type_word(x.get("canonical_code") or x.get("raw") if isinstance(x, dict) else x) for x in from_memory or [] if x]
     asked_ok: bool | None = bool(asked) and all(_type_ok(a, accepted) for a in asked)
+    if not asked and not readable:   # no uncapped source for the entities: unknown, never a failure
+        asked_ok = None
     if not accepted:   # no registry type exists for the ask (a catalogue): the asked type cannot be right or wrong
         asked_ok = None
     checks = [("asked_type", asked_ok, "The asked type was read differently from the type requested."),
@@ -1279,6 +1338,9 @@ def grade_turn(row: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
         passed, failed = False, tier_spec[2]
     elif tier:
         passed, failed = None, "The bot asked an access question (price tier); the bench cannot judge it."
+    elif passed is False and _oq_unreadable(row) and (_stage(row, "replied").get("facts") or {}).get("asking") == "tier_pick":
+        # the question after was capped out and nothing uncapped holds it: the tier ask cannot be ruled out
+        passed, failed = None, "The bench could not read the question the bot asked (trace cap)."
     elif passed and checks and all(ok is None for _, ok, _ in checks):
         passed, failed = None, "The bench could not confirm what the bot understood."
     return {
