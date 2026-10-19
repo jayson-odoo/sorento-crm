@@ -461,3 +461,26 @@ def test_template_number_alone_is_stock_only_when_stock_is_the_newest_thing():
     assert re.search(r"numbered list", block, re.I) and re.search(r"position", block, re.I), (
         "R-P1-03 does not say a number alone after a numbered list is a position"
     )
+
+
+# --- F1-H: a stated quantity leaves R-P1-02 for R-P1-03 in any count form ------------------------
+
+
+def test_template_held_subject_rule_defers_a_stated_quantity_to_stock_rule():
+    block = _block("R-P1-02")
+    paragraph = next((ln for ln in block.splitlines() if "After an ETA answer" in ln), None)
+    assert paragraph, "R-P1-02 has no 'After an ETA answer' paragraph"
+    assert "see R-P1-03" in paragraph, (
+        "R-P1-02's new-value / bare-code paragraph does not defer a stated quantity to R-P1-03"
+    )
+
+
+def test_template_stated_quantity_form_of_the_count_does_not_matter():
+    block = _block("R-P1-03")
+    assert re.search(
+        r"(form|shape|way)[^.\n]{0,60}(does not|doesn't|never|no) matter|any form|any count form|same stated quantity|same quantity",
+        block, re.I,
+    ), "R-P1-03 does not say the form of the count does not matter"
+    assert re.search(r"x ?\d|x N", block) and re.search(r"\d+ ?pcs|N pcs|units?", block, re.I), (
+        "R-P1-03 does not name both 'x N' and 'N pcs' forms"
+    )
