@@ -15,6 +15,7 @@ every row seeded here.
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 
 import pytest
 
@@ -25,6 +26,7 @@ from tests.scm.test_line_splits_refer_back_applied import (
     _dev_db_case,
     _snapshot,
     _strip_split_plan_stamps,
+    _uncover,
 )
 from tests.scm.test_line_splits_round3 import (
     D_167,
@@ -36,6 +38,7 @@ from tests.scm.test_line_splits_round3 import (
     _new_line_plan,
     _on,
     _owner_plan,
+    _owner_total,
     _reconfirm,
     _save,
     _seed,
@@ -341,3 +344,54 @@ def test_a_confirm_between_two_saves_makes_its_plan_the_baseline(api, emails):
         752: CARD_752,
         608: [],
     }, "the 4 dropped (cancelled)")
+
+
+# ---------------------------------------------------------------------------
+# After a board Reject of the line (reviewer re-check of 03000b13ed): the active decision no
+# longer names the line, yet the plan its last Confirm applied still holds the guard.
+# ---------------------------------------------------------------------------
+
+
+def _card_plan_confirmed_then_480_rejected(api, emails):
+    s = _card_plan_confirmed(api, emails)
+    _uncover(s, [480])
+    return s
+
+
+def test_after_a_board_reject_qty_taken_off_another_line_cannot_come_back_through_a_cancel(
+    api, emails
+):
+    """Probe A5: the card plan confirmed, then the board's Reject of 480 (`uncover_lines`).
+    Save 1 cancels the 236 on 608 (allowed); Save 2 turns that cancel into 236 on New line:
+    422, nothing stored. Both saved, and the re-decide Confirm left 480 at 14 + 236 beside
+    608's 632 (live 1531, the 236 bought twice)."""
+    s = _card_plan_confirmed_then_480_rejected(api, emails)
+    _assert_saved(s, {
+        480: [(14, D_480_NEW, 480, ""), (236, None, "cancel", ""), (167, D_167, 608, "")],
+        752: CARD_752,
+        608: [],
+    }, "Save 1 after the Reject: 236 on 608 cancelled")
+    _assert_refused(s, {
+        480: [(14, D_480_NEW, 480, ""), (236, D_608, "new", ""), (167, D_167, 608, "")],
+        752: CARD_752,
+        608: [],
+    }, "Save 2 after the Reject: the cancelled 236 back on New line")
+
+
+def test_after_a_board_reject_a_direct_move_is_still_refused(api, emails):
+    """Guard: after the same Reject, one Save taking the 236 off 608 onto New line is refused."""
+    s = _card_plan_confirmed_then_480_rejected(api, emails)
+    _assert_refused(s, {
+        480: [(14, D_480_NEW, 480, ""), (236, D_608, "new", ""), (167, D_167, 608, "")],
+        752: CARD_752,
+        608: [],
+    }, "one Save after the Reject: 236 from 608 to New line")
+
+
+def test_after_a_board_reject_a_re_decide_confirm_with_no_edit_asks_autocount(api, emails):
+    """Guard: after the same Reject, the re-decide Confirm with no edit leaves purchasing the
+    card plan's 1295 (14 + 632 + 649)."""
+    s = _card_plan_confirmed_then_480_rejected(api, emails)
+    _reconfirm(s)
+    assert _owner_total(s) == Decimal("1295"), ("live total after the re-decide Confirm",
+                                                _owner_total(s))
