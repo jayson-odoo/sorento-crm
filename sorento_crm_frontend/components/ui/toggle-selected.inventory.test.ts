@@ -104,6 +104,18 @@ const HAND_ROLLED: Array<{ file: string; was: string | null; now: string }> = [
     was: 'has-[[data-state=active]]:bg-background',
     now: 'has-[[data-state=active]]:bg-primary',
   },
+  // The $ button inside the selected scope chip: its own hover and open colours would
+  // otherwise win and paint it near-black or blue on the blue chip.
+  {
+    file: 'app/(protected)/project-sales/[projectId]/quotation-documents/[documentId]/components/QuotationScopeTabs.tsx',
+    was: null,
+    now: 'group-has-[[data-state=active]]/scope:hover:text-primary-foreground',
+  },
+  {
+    file: 'app/(protected)/project-sales/[projectId]/quotation-documents/[documentId]/components/QuotationScopeTabs.tsx',
+    was: null,
+    now: 'group-has-[[data-state=active]]/scope:data-[state=open]:text-primary-foreground',
+  },
 ];
 
 describe('every toggle selects in the primary colour', () => {
@@ -111,7 +123,7 @@ describe('every toggle selects in the primary colour', () => {
 
   it('no call site paints a selected ToggleGroupItem / Toggle anything but primary', () => {
     const offenders = files.flatMap((file) =>
-      [...read(file).matchAll(/data-\[state=on\]:bg-(?!primary\b)[\w/.-]+/g)].map((m) => `${file}: ${m[0]}`),
+      [...read(file).matchAll(/data-\[state=on\]:bg-(?!primary(?![\w/-]))[\w/.-]+/g)].map((m) => `${file}: ${m[0]}`),
     );
     expect(offenders).toEqual([]);
   });
@@ -120,7 +132,7 @@ describe('every toggle selects in the primary colour', () => {
     const offenders = files
       .filter((file) => file !== path.join('components', 'ui', 'tabs.tsx'))
       .flatMap((file) =>
-        [...read(file).matchAll(/data-\[state=active\]:bg-(?!primary\b|transparent\b)[\w/.-]+/g)].map(
+        [...read(file).matchAll(/data-\[state=active\]:bg-(?!primary(?![\w/-])|transparent(?![\w/-]))[\w/.-]+/g)].map(
           (m) => `${file}: ${m[0]}`,
         ),
       );
