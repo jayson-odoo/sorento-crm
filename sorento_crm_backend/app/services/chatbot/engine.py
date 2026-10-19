@@ -1109,9 +1109,7 @@ def _candidate_lines(
     message = latest_user_message.split("\n", 1)[0]
     try:
         with db.begin_nested():
-            # `hidden` rides only when the contact has some, so a bare caller's call is unchanged.
-            extra = {"hidden": hidden} if hidden else {}
-            return candidates_mod.candidate_lines(candidates_mod.shortlist(db, message, held_ids, **extra))
+            return candidates_mod.candidate_lines(candidates_mod.shortlist(db, message, held_ids, hidden=hidden))
     except Exception:  # noqa: BLE001 - advisory block, never a failed turn
         logger.warning("chatbot: candidate shortlist failed; parsing without it", exc_info=True)
         return None
