@@ -33,6 +33,7 @@ from app.services.chatbot.turn.decide import (
     DOCUMENT_BY_SCOPE,
     NEW_ASK,
     OUTSTANDING_KINDS,
+    REFINE,
     EVERYTHING,
     FAMILY,
     Decision,
@@ -3435,6 +3436,12 @@ def _apply(
         # own subject reading is bypassed. why="state_changes" keeps `starts_fresh` False,
         # so the carry eviction in `_focus_rules` cannot fire.
         decision = replace(decision, kind=state.state_led, why="state_changes")
+    elif getattr(state, "state_gate", False) and decision.kind != ANSWER:
+        # CHAT-STATE r6 S5: under the state gate decide()'s standing-subject table (its
+        # refine-of-standing-subject row included) stands down too. An `answer` the open
+        # question did not take, or a rejected change set, keeps every held axis and fills
+        # what the message typed (card R1 / R5): a refine of it, a carry when it typed nothing.
+        decision = replace(decision, kind=REFINE if decision.entities else CARRY, why="state_changes")
     trace.decision = decision.as_trace()
 
     refused = _stock_pick_refuses_all(state, verdict, decision, trace)
@@ -3464,9 +3471,15 @@ def _apply(
     trace.rules_fired.extend(task_outcome.rules)
 
     verdict_entities = list(verdict.get("entities") or [])
-    entities, domain_override, reconcile_short_circuit = _reconcile_step(
-        verdict_entities, resolved, policy, verdict, trace, turn_no=state.turn_no
-    )
+    if getattr(state, "state_gate", False):
+        # CHAT-STATE r6 S5: under the state gate the resolver never re-types the parser's
+        # entity kinds (reconcile.py's retype and kind pick): the kind the parser read, the
+        # one the State holds, stands. Off the state path the reconciliation runs as before.
+        entities, domain_override, reconcile_short_circuit = list(verdict_entities), None, None
+    else:
+        entities, domain_override, reconcile_short_circuit = _reconcile_step(
+            verdict_entities, resolved, policy, verdict, trace, turn_no=state.turn_no
+        )
     if reconcile_short_circuit is not None:
         # #1262 slice 8 (F1b siblings): a kind pick over ONE ambiguous token
         # ("Sorento", customer or transporter) must not throw the WHOLE turn's

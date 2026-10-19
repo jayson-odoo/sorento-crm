@@ -459,10 +459,14 @@ def _reject(
     held, and what this message typed is said on its axis (the same Subject a `keep` gives)."""
     log["rejected"] = reasons
     out = {k: v for k, v in verdict.items() if k != "state_changes"}
+    if isinstance(out.get("entities"), list):
+        # Values come from the parse as stated (as on an applied turn): the parser's echo of a
+        # held row (current_message false) goes; the Subject carries what is held.
+        out["entities"] = [e for e in out["entities"] if not (isinstance(e, dict) and e.get("current_message") is False)]
     _unmarked(out)
     subject = _build_subject(state, state.focus, out, brands, None)
     log["subject"] = subject_wire(subject)
-    return Applied(False, replace(state, subject=subject), out, log)
+    return Applied(False, replace(state, subject=subject, state_gate=True), out, log)
 
 
 def _brand_words(brands: list[Any]) -> set[str]:
@@ -588,7 +592,8 @@ def offered_brand_picks(state: State, verdict: dict[str, Any], brands: list[Any]
     }
     picks: list[str] = []
     for e in _entities(verdict):
-        if e.get("hint") != "brand" or e.get("current_message") is False:
+        if e.get("hint") != "brand" or e.get("current_message") is False or e.get(KEPT_ASIDE):
+            # A brand `keep` set aside on the held brand axis is not a change, so not a pick.
             continue
         for value in (e.get("canonical_code"), e.get("raw")):
             key = str(value or "").strip().casefold()
@@ -1418,5 +1423,8 @@ def apply_changes(
     subject = _build_subject(state, focus, out, brands, led)
     log["subject"] = subject_wire(subject)
     return Applied(
-        True, replace(state, focus=focus, pending=pending, state_led=led, slot_ask=slot_ask, subject=subject), out, log
+        True,
+        replace(state, focus=focus, pending=pending, state_led=led, slot_ask=slot_ask, subject=subject, state_gate=True),
+        out,
+        log,
     )

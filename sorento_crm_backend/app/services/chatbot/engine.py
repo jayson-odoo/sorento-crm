@@ -4883,32 +4883,35 @@ def _run_stages_body(  # noqa: PLR0915
                 # tail puts it back, so the stored focus keeps it.
                 state_in = chat_state.set_aside(applied.state, applied.log.get("slots") or {})
                 verdict = applied.verdict
-                picked = chat_state.offered_brand_picks(state_in, verdict, brands)
-                if picked:
-                    # R4-A: the held products' brands are read here; the narrow-or-re-run decision
-                    # and the Subject it leaves are the applier module's (`pick_offered_brands`).
-                    brand_of: dict[str, str] = {}
-                    held_keys = [str(r["uuid"]) for r in chat_state.held_products(state_in)]
-                    if held_keys:
-                        from app.models.product import Brand, Product
-
-                        try:
-                            with _session(session_factory) as brand_db:
-                                brand_of = {
-                                    str(pid): name
-                                    for pid, name in brand_db.query(Product.id, Brand.brand_name)
-                                    .join(Brand, Brand.id == Product.brand_id)
-                                    .filter(Product.id.in_(held_keys))
-                                    .all()
-                                }
-                        except Exception:  # noqa: BLE001 - an advisory narrowing, never a failed turn
-                            logger.warning("chatbot: offered brand narrowing failed; the turn goes on without it", exc_info=True)
-                    state_in, verdict = chat_state.pick_offered_brands(state_in, verdict, picked, brand_of)
             else:
                 # A rejected change set changes nothing, but the turn is still on the state
                 # path: the input State with its Subject (held axes, this message's said values).
                 state_in = applied.state
                 verdict = applied.verdict
+            # R4-A on any state turn, a rejected one included (S5: it replaces the text
+            # rewriter `with_brand_from_offer` there): a brand the parser read that the last
+            # answer offered.
+            picked = chat_state.offered_brand_picks(state_in, verdict, brands)
+            if picked:
+                # R4-A: the held products' brands are read here; the narrow-or-re-run decision
+                # and the Subject it leaves are the applier module's (`pick_offered_brands`).
+                brand_of: dict[str, str] = {}
+                held_keys = [str(r["uuid"]) for r in chat_state.held_products(state_in)]
+                if held_keys:
+                    from app.models.product import Brand, Product
+
+                    try:
+                        with _session(session_factory) as brand_db:
+                            brand_of = {
+                                str(pid): name
+                                for pid, name in brand_db.query(Product.id, Brand.brand_name)
+                                .join(Brand, Brand.id == Product.brand_id)
+                                .filter(Product.id.in_(held_keys))
+                                .all()
+                            }
+                    except Exception:  # noqa: BLE001 - an advisory narrowing, never a failed turn
+                        logger.warning("chatbot: offered brand narrowing failed; the turn goes on without it", exc_info=True)
+                state_in, verdict = chat_state.pick_offered_brands(state_in, verdict, picked, brand_of)
             class_rows = chat_state.class_said_over_held(state_in)
             if class_rows:
                 # Lead decision S3 / review round 4: a class said over held products, whatever the
@@ -4941,26 +4944,34 @@ def _run_stages_body(  # noqa: PLR0915
     # #865 round 6 (R3): a reply naming one of the companies an open escalation offer
     # showed ("mocha", "srt", "yes please escalate to sorento team") picks it - n8n's
     # deterministic company-pick tier, with the parser's own pick as the validated fallback.
+    # CHAT-STATE r6 S5 (AC-S5-1): under the state gate (`State.state_gate`: the applier read
+    # the ops over a shown State, a rejected change set included) no text rewriter runs; each outcome comes from an op or a
+    # parse field instead: the company pick and the clarify answer from the `answer` op filling
+    # the asked slot, the row count from the parser's `top_n`, the offered brand from the R4-A
+    # pick (`chat_state.pick_offered_brands`), a class word's new set from `new_subject` / a
+    # class said over the held set. Off the state path every rewriter runs as before.
+    state_gate = state_in.state_gate
     if not state_led or answering:
-        verdict = turn_runtime.with_company_pick(
-            verdict, pending=state_in.pending, message=latest_user_message
-        )
-        # Reviewer S1 on PR #833: the answer to "how many should I show?" must not rest on
-        # the parser filling `top_n` for a bare "10" - its prompt has no example of one, and
-        # its positional rule pulls a bare number toward `reference_positions`.
-        # Round 4 R5 on PR #833: the answer to an open clarify re-runs the ask it was about.
-        verdict = turn_runtime.with_clarify_answer(
-            verdict, latest_user_message, carried=state_in.focus.set_clarify
-        )
+        if not state_gate:
+            verdict = turn_runtime.with_company_pick(
+                verdict, pending=state_in.pending, message=latest_user_message
+            )
+            # Reviewer S1 on PR #833: the answer to "how many should I show?" must not rest
+            # on the parser filling `top_n` for a bare "10" - its prompt has no example of
+            # one, and its positional rule pulls a bare number toward `reference_positions`.
+            # Round 4 R5 on PR #833: the answer to an open clarify re-runs the ask it was about.
+            verdict = turn_runtime.with_clarify_answer(
+                verdict, latest_user_message, carried=state_in.focus.set_clarify
+            )
         verdict = _with_account_answer(verdict, state_in.focus.set_clarify)
         # CHAT-STATE: an option the parser declared picked is not a row count.
-        if not (state_led and (verdict.get("open_question_answer") or {}).get("mode") == "pick"):
+        if not state_gate and not (state_led and (verdict.get("open_question_answer") or {}).get("mode") == "pick"):
             verdict = turn_runtime.with_set_count_from_text(
                 verdict, latest_user_message, carried=state_in.focus.set_page
             )
         # Round 7 on PR #833 (owner hand test, item 6): a brand the last set answer offered
         # narrows that set.
-        if not state_led:
+        if not state_led and not state_gate:
             verdict = turn_runtime.with_brand_from_offer(
                 verdict, latest_user_message, carried=state_in.focus.set_page
             )
@@ -4968,8 +4979,10 @@ def _run_stages_body(  # noqa: PLR0915
     # the focus already holds settled is the carry restated, not an axis to rewrite with
     # an unsettled copy.
     verdict = turn_runtime.without_restated_rows(verdict, state_in.focus)
-    # Round 3 W3 on PR #833: a class word of this message's own starts a new set.
-    verdict = turn_runtime.with_new_set_words(verdict)
+    if not state_gate:
+        # Round 3 W3 on PR #833: a class word of this message's own starts a new set. On the
+        # state path the applier already dropped the parser's echoes of earlier rows.
+        verdict = turn_runtime.with_new_set_words(verdict)
     # Fix round 8 on PR #833 (owner retest of round 7): every descriptor the parser
     # emitted is grounded against the specification registry, after the clarify answer
     # is substituted (so "p trap" answering "t trap" is read as the choice it is) and
@@ -5167,7 +5180,7 @@ def _run_stages_body(  # noqa: PLR0915
         # R2 (round 7): read before the verdict below can change the conversation.
         in_ranking_conversation = _in_ranking_conversation(state_in.focus)
         top_selling_rule = None
-        if not state_led:
+        if not state_led and not state_gate:
             verdict, state_in, top_selling_rule = _top_selling_verdict(
                 db, verdict, state_in, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
             )
@@ -5192,7 +5205,7 @@ def _run_stages_body(  # noqa: PLR0915
 
         order_list_was_open = order_list_mod.is_open_order_list(state_in.focus)
         order_list_rule = None
-        if not state_led:
+        if not state_led and not state_gate:
             verdict, state_in, order_list_rule = order_list_mod.order_list_verdict(
                 db, verdict, state_in, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
             )
@@ -5267,7 +5280,8 @@ def _run_stages_body(  # noqa: PLR0915
 
         if getattr(getattr(state_in, "profile", None), "stock_availability_only", False):
             typed = jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
-            stock_ask = _as_a_stock_ask_by_its_own_words(verdict, typed)
+            # S5: the stock-ask regex stands down under the state gate (the parser's intent).
+            stock_ask = verdict if state_gate else _as_a_stock_ask_by_its_own_words(verdict, typed)
             if stock_ask is not verdict:
                 turn_trace.add("stock_ask_by_its_own_words", {"parser_intent": verdict.get("intent_hint")})
                 verdict = stock_ask

@@ -335,6 +335,11 @@ class State:
     # CHAT-STATE: a question the state change itself raises (an unclear held slot): the
     # engine asks it instead of fetching. Never serialised.
     slot_ask: Any = None
+    # CHAT-STATE r6 S5: the turn is under the state gate: the applier read the parser's ops over
+    # a State it showed (applied or rejected), so the legacy text rewriters stand down. False on
+    # a first ask over nothing shown, which runs exactly as without the key. Written only by
+    # `chat_state.apply_changes`; never serialised.
+    state_gate: bool = False
     # CHAT-STATE r6 S4: who this contact is for the Subject, read by the engine ONCE per turn on
     # the state path before the applier runs: its company scope (company ids) and its hidden
     # keys ({"customer"} when it may not see other customers' rows or documents, V1-DOC-SCOPE).
