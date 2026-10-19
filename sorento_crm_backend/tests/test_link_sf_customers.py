@@ -217,6 +217,17 @@ def test_other_company_scope_matches_only_that_company(db, scenario):
     assert rows[ids["link_spaced"]]["status"] == "NO MATCH"  # alpha is a Sorento customer
 
 
+def test_company_filter_holds_even_with_an_all_companies_scope(db, scenario):
+    from scripts.link_sf_customers import propose
+
+    set_company_scope(db, None)
+    rows = _by_sf(propose(db, DEFAULT_COMPANY_ID))
+    ids = scenario["ids"]
+
+    assert rows[ids["no_match_other_company_only"]]["status"] == "NO MATCH"
+    assert rows[ids["link_other_company_twin_ignored"]]["customer_id"] == str(scenario["both"].id)
+
+
 # --- CL1: the dry run -------------------------------------------------------- #
 
 
@@ -270,14 +281,17 @@ def test_apply_refuses_a_row_the_owner_hand_marked_link(db, scenario, tmp_path):
         if r["sf_id"] in (ids["ambiguous"], ids["no_match_text"]):
             r["status"] = "LINK"
             r["customer_id"] = str(scenario["alpha"].id)
+        if r["sf_id"] == ids["link_spaced"]:  # a LINK row pointed at another customer
+            r["customer_id"] = str(scenario["beta"].id)
     _rewrite_csv(path, rows)
 
     result = apply_csv(db, str(path), DEFAULT_COMPANY_ID)
 
-    assert result["linked"] == 4
-    assert result["skipped_changed"] == 2
+    assert result["linked"] == 3
+    assert result["skipped_changed"] == 3
     assert _stored(db, ids["ambiguous"])[0] is None
     assert _stored(db, ids["no_match_text"])[0] is None
+    assert _stored(db, ids["link_spaced"])[0] is None
 
 
 def test_apply_never_overwrites_and_skips_rows_that_changed_since_the_dry_run(db, scenario, tmp_path):
