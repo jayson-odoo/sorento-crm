@@ -350,3 +350,39 @@ describe('D1 / D2: the board gear carries Split delivery and View splits per ord
     expect(dialog.textContent).not.toContain('Line 608');
   });
 });
+
+describe('review round 1 (UAC A3): the list names exactly the lines the count includes', () => {
+  it('a split-edited line with a stale draft is in both the count and the list, or in neither', async () => {
+    const board = withSplitEdited(
+      buildBoard([demand()], { today: TODAY, freeStock: {}, granularity: 'week' }),
+      ['pl-1-1'],
+    );
+    const stale = (entry: { project_line_id?: string | null }) =>
+      entry.project_line_id === 'pl-1-1'
+        ? {
+            ...entry,
+            draft: {
+              decision: { verdict: 'approved' },
+              saved_by: 'Test Planner',
+              saved_at: '2026-09-08T00:00:00Z',
+              stale: true,
+            },
+          }
+        : entry;
+    const staleBoard = {
+      ...board,
+      cells: board.cells.map((c) => ({ ...c, contributions: c.contributions.map(stale) })),
+      contributions: (board as unknown as { contributions?: { project_line_id?: string }[] })
+        .contributions?.map(stale),
+    } as unknown as ReturnType<typeof buildBoard>;
+    getPlanningBoard.mockResolvedValue(staleBoard);
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+    const summary = await screen.findByTestId('board-confirm-summary');
+    const counted = Number((summary.textContent ?? '').match(/(\d+) to confirm/)?.[1]);
+    const listed = screen.queryByText('Split edits to confirm: line 1 ZZT-ITEM-1') !== null;
+    expect(listed).toBe(counted === 1);
+    // and the Confirm button agrees with the count
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent(`Confirm (${counted})`);
+  });
+});

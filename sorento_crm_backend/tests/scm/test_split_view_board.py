@@ -335,3 +335,56 @@ def test_a6_moving_a_confirmed_split_onto_another_line_is_still_refused(api, ema
         _sp(167, D_167, on=_on(s, 608))]}])
     assert r.status_code == 422, (r.status_code, r.text)
     assert "a confirmed split cannot move to another line" in r.text
+
+
+# ---------------------------------------------------------------------------
+# Review round 1, A9: a line with a pending AutoCount change goes the AutoCount way
+# ---------------------------------------------------------------------------
+
+D_32 = date(2026, 12, 20)
+D_32_EDIT = date(2027, 1, 20)
+
+
+def _pending_growth_608(api, emails):
+    """608 with an applied plan 600 + 32, AutoCount 632 -> 700 pending, the 32's date edited."""
+    from app.services.scm.outstanding_diff import QTY_CHANGED
+    from tests.scm.test_line_splits_round3 import _build, _change
+
+    s, _po = _new_line_plan_applied(api, emails)
+    _save(s, {608: [(600, D_608, 608, ""), (32, D_32, "new", "")]})
+    _reconfirm(s)
+    core = s.core[608]
+    core.qty_ordered, s.line[608].qty = Decimal("700"), Decimal("700")
+    s.db.commit()
+    s.batch = _build(s.world, [_change(QTY_CHANGED, core, so_number=s.core_so.so_number,
+                                       old_date=D_608, new_date=D_608, old_qty="632",
+                                       new_qty="700")], s.core_so, [str(core.id)])
+    assert s.batch is not None, "premise: the AutoCount change is pending"
+    r = _put(s, [{"line_id": _on(s, 608), "splits": [
+        _sp(600, D_608, on=_on(s, 608)), _sp(32, D_32_EDIT, on=None)]}])
+    assert r.status_code == 200, ("premise: the edit saves", r.text)
+    return s
+
+
+def test_r1a_a9_the_batch_confirm_emails_what_main_emails_600_remain_and_68_order(api, emails):
+    s = _pending_growth_608(api, emails)
+    start = len(emails)
+    r = _confirm(s.client, s.order.id, [_line_payload(s.line[608].id, buy_qty="700")],
+                 batch_id=str(s.batch.id))
+    assert r.status_code == 200, r.text
+    s.db.commit()
+    s.db.expire_all()
+    sent = [(ln["qty"], str(ln["remark"])) for ln in _sent_since(emails, start)]
+    assert [x for x in sent if x[0] == "600" and "REMAIN" in x[1]], ("600 REMAIN", sent)
+    assert [x for x in sent if x[0] == "68" and "ORDER 68" in x[1]], ("68 ORDER 68", sent)
+
+
+def test_r1b_a9_a_confirm_naming_only_line_752_answers_200_despite_the_pending_608(api, emails):
+    s = _pending_growth_608(api, emails)
+    r = _confirm(s.client, s.order.id, [_line_payload(s.line[752].id, buy_qty="649")])
+    assert r.status_code == 200, (r.status_code, r.text)
+
+
+def test_r1c_a9_a_line_with_a_pending_autocount_change_is_not_split_edited(api, emails):
+    s = _pending_growth_608(api, emails)
+    assert _board_flag(s, 608) is False

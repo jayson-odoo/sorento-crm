@@ -89,9 +89,11 @@ describe('a split-edited line counts in the confirm summary (A2)', () => {
     expect(confirmSummaryFor(all, draft).toConfirm).toBe(2);
   });
 
-  it('a line the planner unticked in the dialog is left out', () => {
+  it('a split-edited line cannot be unticked: excluding its key still counts it (A10)', () => {
     const all = contributionsOf([demand(1)], [1]);
-    expect(confirmSummaryFor(all, {}, new Set(), { excludeKeys: new Set([keyOf(all, 1)]) }).toConfirm).toBe(0);
+    expect(
+      confirmSummaryFor(all, {}, new Set(), { excludeKeys: new Set([keyOf(all, 1)]) }).toConfirm,
+    ).toBe(1);
   });
 
   it('a split-edited line posts no body line of its own (the server applies it)', () => {

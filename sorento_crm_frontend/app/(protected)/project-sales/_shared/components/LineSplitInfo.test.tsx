@@ -251,3 +251,41 @@ describe('OrderSplitsDialog - the whole order', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });
+
+/**
+ * Review round 1 (UAC B5a): the popups render their rows through the shared DataGrid, and the
+ * total is a line of text ("Total 417 ..."), not a table row.
+ */
+describe('B5a: shared DataGrid, total as text', () => {
+  const GRID = '[data-slot="data-grid-table"]';
+
+  it('the line popup holds exactly one DataGrid and "Total 417" is text outside any table row', () => {
+    info(VIEW_480);
+    const button = screen.getByRole('button', { name: 'Show the splits of line 480' });
+    button.focus();
+    fireEvent.click(button);
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.querySelectorAll(GRID)).toHaveLength(1);
+    const total = within(dialog).getByText(/Total 417/);
+    expect(total.closest('tr')).toBeNull();
+    expect(total.textContent).toContain('AutoCount 417 @ 20/10/2026, now 14 @ 20/09/2026');
+  });
+
+  it('the whole-order popup holds one DataGrid per split line, each under its own heading', () => {
+    render(
+      <OrderSplitsDialog
+        title="SO417636: splits"
+        lines={[
+          { lineNo: 480, itemCode: 'CSK14B', view: VIEW_480 },
+          { lineNo: 752, itemCode: 'CSK14B', view: VIEW_752 },
+        ]}
+        open
+        onOpenChange={() => {}}
+      />,
+    );
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.querySelectorAll(GRID)).toHaveLength(2);
+    expect(within(dialog).getByText(/Line 480 CSK14B/).closest('tr')).toBeNull();
+    expect(within(dialog).getByText(/Line 752 CSK14B/).closest('tr')).toBeNull();
+  });
+});

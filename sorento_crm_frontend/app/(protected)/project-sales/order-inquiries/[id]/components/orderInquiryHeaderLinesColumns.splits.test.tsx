@@ -201,3 +201,22 @@ describe('OI Lines tab: the Split column (UAC B1)', () => {
     expect(container.textContent).not.toMatch(/Split \d/);
   });
 });
+
+describe('OI Split column sort value (review round 1, UAC B7a)', () => {
+  it('is the chip N: the AutoCount extra row is not counted (752-like: 2, not 3)', () => {
+    const split = columnsNow().find((c) => c.id === 'split') as unknown as {
+      accessorFn?: (row: unknown, index: number) => unknown;
+      enableSorting?: boolean;
+    };
+    const view = {
+      ...SPLIT_VIEW,
+      rows: [
+        { ...SPLIT_VIEW.rows[0], sits_on: 'own' },
+        { ...SPLIT_VIEW.rows[1], sits_on: 'new', sits_on_line_no: null },
+        { ...SPLIT_VIEW.rows[0], qty: '145', change: 'ORDER 145', sits_on: 'extra' },
+      ],
+    };
+    expect(split.accessorFn?.(linesRow({ split_view: view }), 0)).toBe(2);
+    expect(split.enableSorting).not.toBe(false);
+  });
+});

@@ -253,3 +253,46 @@ def test_b4_nothing_is_marked_on_a_confirmed_plan(api, emails):
     view = _one(_views(s, 480))
     assert view["status"] == "confirmed"
     assert not [r for r in view["rows"] if r["changed"]], view["rows"]
+
+
+# ---------------------------------------------------------------------------
+# Review round 1: B3 partly-from-stock line, B7 access
+# ---------------------------------------------------------------------------
+
+
+def test_r2_b3_a_line_partly_from_stock_reads_confirmed_right_after_its_confirm(api, emails):
+    from tests.test_so_supply_confirmation import _stock
+    from tests.scm.test_line_splits_round3 import _new_line_plan
+
+    _client, world_ = api
+    _stock(world_.db, world_.product, world_.pool_wh, on_hand=50)
+    world_.db.commit()
+    s = _seed(api)
+    _save(s, _new_line_plan())
+    from tests.test_planning_change_apply_on_board import _confirm
+    r = _confirm(s.client, s.order.id, [
+        _line_payload(s.line[480].id, reserve=[{"warehouse_id": s.world.pool_wh.id, "qty": "4"}],
+                      buy_qty="10", amend_reason="Part from the pool."),
+        _line_payload(s.line[608].id, buy_qty="632"),
+        _line_payload(s.line[752].id, buy_qty="649"),
+    ], batch_id=str(s.batch.id))
+    assert r.status_code == 200, r.text
+    s.db.commit()
+    s.db.expire_all()
+    sheet = s.client.get(_url(s.order.id)).json()
+    view = {ln["line_id"]: ln for ln in sheet["lines"]}[_on(s, 480)].get("split_view")
+    assert view is not None, "split_view is on the sheet read"
+    assert view["status"] == "confirmed", view["status"]
+    assert not [r for r in view["rows"] if r["changed"]], view["rows"]
+
+
+def test_b7_a_user_of_another_company_cannot_read_the_sales_order_or_its_split_view(api, emails):
+    """Pin (may pass today): the SCM SO read of a foreign company's order answers 404."""
+    from app.models.base import company_scope
+
+    s = _seed(api)
+    _save(s, PLAN_480_752)
+    other = "00000000-0000-0000-0000-00000000dead"
+    with company_scope(s.db, frozenset({other})):
+        r = s.client.get(f"/api/v1/scm/sales-orders/{s.core_so.id}")
+    assert r.status_code == 404, (r.status_code, r.text[:200])

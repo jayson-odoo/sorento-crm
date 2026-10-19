@@ -302,3 +302,38 @@ describe('SalesOrderDetail gear: View splits (D1)', () => {
     expect(within(dialog).getByText('Every line ships as AutoCount has it.')).toBeInTheDocument();
   });
 });
+
+describe('SalesOrderDetail Split column sort (review round 1, UAC B7a)', () => {
+  it('sorts by the chip N, the AutoCount extra row not counted', () => {
+    const row = (extra: boolean) => ({
+      ...VIEW_480,
+      rows: [
+        ...VIEW_480.rows,
+        ...(extra
+          ? [{ ...VIEW_480.rows[0], qty: '145', change: 'ORDER 145', sits_on: 'extra' }]
+          : []),
+      ].slice(extra ? 1 : 0, extra ? 4 : 3),
+    });
+    // line 752: 2 splits + extra row (N = 2); line 480: 3 splits (N = 3); line 608: none.
+    const withExtra = { ...row(true), rows: [VIEW_480.rows[0], VIEW_480.rows[1], { ...VIEW_480.rows[0], sits_on: 'extra', change: 'ORDER 145' }] };
+    useSalesOrder.mockReturnValue({
+      data: {
+        ...order(),
+        lines: [
+          { ...line('l-480', 480), split_view: VIEW_480 },
+          { ...line('l-752', 752), split_view: withExtra },
+          { ...line('l-608', 608), split_view: null },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+    fireEvent.click(screen.getByRole('button', { name: 'Split' }));
+    const nos = Array.from(document.querySelectorAll('tbody tr'))
+      .map((r) => (r.textContent ?? '').match(/(480|608|752)/)?.[1])
+      .filter(Boolean);
+    expect(nos).toEqual(['608', '752', '480']);
+  });
+});
