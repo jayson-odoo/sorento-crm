@@ -1,0 +1,223 @@
+"""PARSER-TEMPLATE F1-A (plan PLAN-parser-template-20oct.md): the one consolidated parser prompt.
+
+Red tests: the lint, the template's size and gate markers, the `template` flag on ParserConfig,
+the stock-ask regex standing down under the template, and the unlabelled idempotent publisher.
+"""
+from __future__ import annotations
+
+import types
+import uuid
+
+import pytest
+
+import app.main  # noqa: F401  isort:skip
+from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
+from app.services import ai_prompt_registry
+from app.services.chatbot.head import parser as parser_mod
+from tests._pg_fixture import blank_session
+
+KEY = parser_mod.PROMPT_KEY
+MARKER = "== PARSER TEMPLATE =="
+
+
+def _pt():
+    from app.services.chatbot.head import parser_template
+
+    return parser_template
+
+
+@pytest.fixture(autouse=True)
+def _fresh_cache():
+    ai_prompt_registry.bust_cache()
+    yield
+    ai_prompt_registry.bust_cache()
+
+
+# --- lint on small fixture texts -----------------------------------------------------------------
+
+CLEAN = f"""{MARKER}
+R-P1-01 Relation to the state
+Read state_changes first. Say what the message does to the held list.
+
+R-P2-01 Entities in this message
+Pick the product the message names from the candidate block, or none.
+
+R-P3-02 Domain
+The `domain_hint` follows the thing asked about.
+"""
+
+
+def test_lint_clean_text_passes():
+    assert _pt().lint(CLEAN) == []
+
+
+def test_lint_missing_rule_id_fails():
+    text = CLEAN + "\nEntities without an id\nPick the product the message names.\n"
+    assert _pt().lint(text) != []
+
+
+def test_lint_duplicate_ids_fail():
+    text = CLEAN + "\nR-P1-01 Relation again\nSecond block with a used id.\n"
+    problems = _pt().lint(text)
+    assert problems and any("R-P1-01" in p for p in problems)
+
+
+ABSOLUTE_PAIR = f"""{MARKER}
+R-P3-01 Domain of a count
+The `domain_hint` is ALWAYS stock when a count sits beside a code.
+
+R-P3-02 Domain of a lone item
+The `domain_hint` is NEVER stock when only another item is named.
+"""
+
+
+def test_lint_two_absolute_rules_over_one_field_fail_without_a_see_link():
+    problems = _pt().lint(ABSOLUTE_PAIR)
+    assert problems and any("domain_hint" in p for p in problems)
+
+
+def test_lint_two_absolute_rules_pass_once_one_names_the_other():
+    linked = ABSOLUTE_PAIR.replace(
+        "The `domain_hint` is NEVER stock when only another item is named.",
+        "The `domain_hint` is NEVER stock when only another item is named (see R-P3-01).",
+    )
+    assert _pt().lint(linked) == []
+
+
+@pytest.mark.parametrize("word", ["overrides", "override", "alias"])
+def test_lint_override_or_alias_wording_fails(word):
+    text = CLEAN + f"\nR-X-01 Extra\nThis rule {word} the earlier ones.\n"
+    assert _pt().lint(text) != []
+
+
+def _word_list(n: int) -> str:
+    items = ", ".join(f'"word{i}"' for i in range(n))
+    return CLEAN + f"\nR-X-02 Triggers\nAsking for stock is any of {items}.\n"
+
+
+def test_lint_nine_item_quoted_word_list_fails():
+    assert _pt().lint(_word_list(9)) != []
+
+
+def test_lint_eight_item_quoted_word_list_passes():
+    assert _pt().lint(_word_list(8)) == []
+
+
+# --- the template itself -------------------------------------------------------------------------
+
+
+def test_template_lints_clean():
+    assert _pt().lint(_pt().TEMPLATE) == []
+
+
+def test_template_keeps_gate_markers():
+    lines = [ln.strip() for ln in _pt().TEMPLATE.splitlines()]
+    for marker in ("== CLOSED LISTS ==", "== CODE LOOKUP ==", MARKER):
+        assert marker in lines
+
+
+def test_template_size_at_most_90k():
+    assert len(_pt().TEMPLATE) <= 90_000
+
+
+def test_template_has_marker():
+    assert _pt().MARKER == MARKER
+    assert MARKER in [ln.strip() for ln in _pt().TEMPLATE.splitlines()]
+
+
+# --- ParserConfig.template -----------------------------------------------------------------------
+
+
+def _version(db, template: str, *, label: str | None = None) -> AIPromptVersion:
+    versions = [v for (v,) in db.query(AIPromptVersion.version).filter(AIPromptVersion.name == KEY)]
+    row = AIPromptVersion(
+        id=str(uuid.uuid4()), name=KEY, version=max(versions, default=0) + 1, type="text", template=template,
+        variables=["current_date"],
+    )
+    db.add(row)
+    db.flush()
+    if label:
+        db.add(AIPromptLabel(id=str(uuid.uuid4()), name=KEY, label=label, version_id=row.id))
+        db.flush()
+    return row
+
+
+def _stub_resolve(monkeypatch):
+    from app.services import ai_assistant_service, chatbot_prompt_vars, llm_provider
+
+    monkeypatch.setattr(parser_mod, "render", lambda db, key, current_date, override_version_id=None: ("sys", 1))
+    monkeypatch.setattr(parser_mod, "agent_model", lambda db, key: (None, None))
+    monkeypatch.setattr(
+        ai_assistant_service.AIAssistantConfigService, "get",
+        lambda self: types.SimpleNamespace(provider="openai", model="m"),
+    )
+    monkeypatch.setattr(llm_provider, "resolve_api_key", lambda config, provider: "k")
+    monkeypatch.setattr(chatbot_prompt_vars, "closed_list_enum", lambda db: [])
+
+
+def test_config_template_flag_follows_marker(monkeypatch):
+    _stub_resolve(monkeypatch)
+    with blank_session() as db:
+        with_marker = _version(db, f"parser\n{MARKER}\nbody")
+        without = _version(db, "parser body", label="production")
+
+        def cfg(row):
+            return parser_mod.resolve_config(db, current_date="2026-10-20", override_version_id=row.id)
+
+        assert cfg(with_marker).template is True
+        assert cfg(without).template is False
+    default = parser_mod.ParserConfig(system_prompt="x", prompt_version=1, provider="openai", model="m", api_key="k")
+    assert default.template is False
+
+
+# --- the stock-ask regex stands down -------------------------------------------------------------
+
+
+def _incoming_verdict() -> dict:
+    return {
+        "intent_hint": "check_incoming",
+        "domain_hint": "incoming",
+        "requested_attributes": [],
+        "entities": [{"raw": "CWCX611", "hint": "product", "canonical_code": "CWCX611", "quantity": 300}],
+        "asks": [],
+    }
+
+
+def test_stock_ask_regex_stands_down_under_the_template():
+    from app.services.chatbot import engine
+
+    # Off: put back to inventory, exactly as today.
+    off = engine._as_a_stock_ask_by_its_own_words(_incoming_verdict(), "CWCX611 x 300")
+    assert off["domain_hint"] == "inventory" and off["intent_hint"] == "check_stock"
+    # master_products reading is put back too when off.
+    mp = {**_incoming_verdict(), "intent_hint": "check_product", "domain_hint": "master_products"}
+    assert engine._as_a_stock_ask_by_its_own_words(mp, "CWCX611 x 300")["domain_hint"] == "inventory"
+    # On: the parser's verdict stands (R-DOM-QTY in the prompt decides).
+    on = engine._as_a_stock_ask_by_its_own_words(_incoming_verdict(), "CWCX611 x 300", template=True)
+    assert on["domain_hint"] == "incoming" and on["intent_hint"] == "check_incoming"
+    on_mp = engine._as_a_stock_ask_by_its_own_words(mp, "CWCX611 x 300", template=True)
+    assert on_mp["domain_hint"] == "master_products"
+
+
+# --- the publisher -------------------------------------------------------------------------------
+
+
+def _publisher():
+    from scripts import publish_parser_template
+
+    return publish_parser_template
+
+
+def test_publisher_publishes_unlabelled_and_is_idempotent():
+    with blank_session() as db:
+        _version(db, "older parser", label="production")
+        first = _publisher().publish(db)
+        again = _publisher().publish(db)
+
+        row = db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY, AIPromptVersion.version == first).one()
+        assert first == 2
+        assert row.template == _pt().TEMPLATE
+        assert again is None
+        assert db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY).count() == 2
+        labels = db.query(AIPromptLabel).filter(AIPromptLabel.name == KEY).all()
+        assert [lb.version_id for lb in labels] == [db.query(AIPromptVersion).filter_by(name=KEY, version=1).one().id]
