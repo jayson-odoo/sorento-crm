@@ -10,7 +10,7 @@ from app.services.chatbot import engine as engine_mod
 from scripts.chatbot_eval import replay as replay_mod
 
 PIN = "11111111-1111-4111-8111-111111111111"
-STATE = {"set": {"brand": "x"}}
+STATE = [{"op": "set", "axis": "brand", "position": None}]
 
 
 def _row(*, understood=None, ctx_raw=None, override=None):
