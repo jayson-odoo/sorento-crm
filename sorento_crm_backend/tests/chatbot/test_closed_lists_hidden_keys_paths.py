@@ -191,13 +191,13 @@ def route_db():
         yield db
 
 
-def _resolve(db, query: str, hidden: list[str]) -> dict:
+def _resolve(db, query: str, hidden: list[str], **extra) -> dict:
     from app.api.v1.system.references import ResolveReferenceRequest, resolve_reference_post
     from app.config import settings
 
     body = {
         "query": query, "require": {"stock": True}, "scope_terms": ["water closet"], "hidden_spec_keys": hidden,
-        "understand_phrase": False,
+        "understand_phrase": False, **extra,
     }
     principal = {"id": getattr(settings, "external_api_key_act_as_user_id", None)}
     return resolve_reference_post(ResolveReferenceRequest(**body), current_user=principal, db=db)
@@ -243,3 +243,63 @@ def test_guard_an_unknown_value_on_a_visible_key_keeps_its_breakdown(route_db):
     assert [u.get("key") for u in predicate.get("unknown_values") or []] == ["trap_type"], predicate
     assert (predicate.get("members") or {}).get("total") == 4, predicate
     assert "P trap" in json.dumps(predicate.get("members") or {}, default=str), predicate
+
+
+# --- B4: a keyless unknown value picks its own splitting attribute ---------------------------
+
+
+@pytest.fixture
+def split_db():
+    """Four ZZ water closets whose FIRST splitting attribute in registry order is finish (white /
+    black), with trap_type (P / S) splitting them later; brand and class split nothing."""
+    from app.services.product_class_signal import backfill_category_signals
+    from app.services.product_spec_registry import seed_spec_registry
+
+    with blank_session() as db:
+        cat = ProductCategory(
+            id=str(uuid.uuid4()), category_code=unique_code("WC")[:50], category_name="ZZ WC", class_label="Water Closet",
+        )
+        uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code=unique_code("UOM")[:50], uom_name="Each")
+        db.add_all([cat, uom])
+        db.flush()
+        backfill_category_signals(db)
+        seed_spec_registry(db)
+        for code, trap, finish in (
+            ("ZZHX-P1", "p_trap", "white"), ("ZZHX-P2", "p_trap", "black"),
+            ("ZZHX-S1", "s_trap", "white"), ("ZZHX-S2", "s_trap", "black"),
+        ):
+            p = Product(
+                id=str(uuid.uuid4()), product_code=code, product_name=f"ZZ closet {code}", category_id=cat.id,
+                base_uom_id=uom.id, list_price=Decimal("1.00"),
+            )
+            db.add(p)
+            db.flush()
+            db.add(ProductSpecifications(
+                id=str(uuid.uuid4()), product_id=p.id,
+                values={"class": {"value": "Water Closet"}, "trap_type": {"value": trap}, "finish": {"value": finish}},
+            ))
+        db.flush()
+        yield db
+
+
+#: What the lane sends for a word grounding placed on no key ("pnk" in "pnk water closet").
+KEYLESS = [{"key": "", "label": "", "said": "pnk", "known": []}]
+HIDDEN_FINISH_WORDS = ('"finish"', "Finish or colour", "White", "Black")
+
+
+def test_b4_a_keyless_unknown_never_breaks_the_set_down_by_a_hidden_key(split_db):
+    """`_unknown_value_members` calls `resolve_product_set(..., breakdown_over=0)` for a keyless
+    unknown, and `_set_breakdown` takes the first registry key that splits the set: the hidden
+    finish. `unknown_values_reply` prints `members.breakdown` and `members.description`."""
+    result = _resolve(split_db, "which pnk water closet has stock", ["finish", "thickness", "board_thickness"], unknown_values=KEYLESS)
+
+    said = json.dumps(result.get("predicate") or {}, default=str)
+    assert not [w for w in HIDDEN_FINISH_WORDS if w in said], said
+
+
+def test_guard_a_keyless_unknown_for_a_contact_with_no_policy_breaks_down_by_finish(split_db):
+    result = _resolve(split_db, "which pnk water closet has stock", ["thickness", "board_thickness"], unknown_values=KEYLESS)
+
+    members = (result.get("predicate") or {}).get("members") or {}
+    assert members.get("total") == 4, result.get("predicate")
+    assert (members.get("breakdown") or {}).get("key") == "finish", members
