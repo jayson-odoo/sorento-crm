@@ -57,6 +57,7 @@ import { DEMAND_CLASS_OPTIONS } from '@/app/(protected)/master-data-management/s
 import { OrderInquiryStatePill } from '@/app/(protected)/project-sales/_shared/components/OrderInquiryVerbPill';
 import {
   LineSplitInfo,
+  splitCount,
   OrderSplitsDialog,
   type OrderSplitLine,
 } from '@/app/(protected)/project-sales/_shared/components/LineSplitInfo';
@@ -963,7 +964,8 @@ export function SalesOrderDetail({
       // Product, on Columns like the rest; empty for a line with no splits.
       {
         id: 'split',
-        accessorFn: (line) => (line.split_view ? `Split ${line.split_view.rows.length}` : ''),
+        // B7a: sorts by the chip's N (the AutoCount extra row not counted).
+        accessorFn: (line) => splitCount(line.split_view),
         header: ({ column }) => <DataGridColumnHeader title="Split" column={column} />,
         cell: ({ row }) => (
           <LineSplitInfo
@@ -974,7 +976,6 @@ export function SalesOrderDetail({
           />
         ),
         size: 110,
-        enableSorting: false,
         meta: { headerTitle: 'Split' },
       },
       {

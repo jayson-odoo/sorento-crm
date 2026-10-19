@@ -55,7 +55,11 @@ import type {
 } from '../../../_shared/types/orderInquiry.types';
 import { OrderInquiryDocumentLink, ViaSpoPoNumber } from '../../components/OrderInquiryDocumentDialog';
 import { SoLineAttachmentsButton } from '../../../_shared/components/SoLineAttachmentsButton';
-import { LineSplitInfo, splitDateText } from '../../../_shared/components/LineSplitInfo';
+import {
+  LineSplitInfo,
+  splitCount,
+  splitDateText,
+} from '../../../_shared/components/LineSplitInfo';
 import type { SoLineAttachmentsByLine } from '../../../_shared/services/soLineAttachmentService';
 
 /**
@@ -638,10 +642,10 @@ export function useOrderInquiryHeaderLinesColumns({
       // Product (the Product cell stays the product only), on Columns like the rest.
       {
         id: 'split',
-        accessorFn: (row) => (row.split_view ? `Split ${row.split_view.rows.length}` : ''),
+        // B7a: sorts by the chip's N (the AutoCount extra row not counted).
+        accessorFn: (row) => splitCount(row.split_view),
         header: ({ column }) => <DataGridColumnHeader title="Split" column={column} />,
         size: 110,
-        enableSorting: false,
         meta: { headerTitle: 'Split' },
         cell: ({ row }) => {
           const line = lineOf(row.original);
