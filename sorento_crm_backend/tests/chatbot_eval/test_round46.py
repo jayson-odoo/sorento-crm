@@ -6,6 +6,8 @@ with the parser output at the `understood` record's `raw.parser_raw`.
 """
 from __future__ import annotations
 
+import pytest
+
 from scripts.chatbot_eval import targets
 from scripts.chatbot_eval.targets import summarise
 
@@ -59,7 +61,7 @@ def test_majority_counts_and_known_in_one_run_exclusion():
 
 
 def test_majority_needs_more_than_half():
-    runs = [[g("a", True)], [g("a", False)]] 
+    runs = [[g("a", True)], [g("a", False)]]
     st = summarise(runs, BARS)["slices"]["s"]
     assert st["majority_n"] == 1 and st["majority_pass"] == 0
 
@@ -150,3 +152,74 @@ def test_missing_understood_counts_no_parse_and_single_run_items_are_skipped():
     bare = {"item_id": "b", "turn": {"trace": [{"stage": "routed"}]}}
     out = parser_flips([[prow("a", **BASE), bare, prow("only", **BASE)], [prow("a", **BASE), bare]])
     assert out["items"] == 1 and out["no_parse"] == 1 and out["flipped"] == 0
+
+
+# ---------------------------------------------------------------- guards (behaviour already in place)
+def _changed(field):
+    b = {k: (list(v) if isinstance(v, list) else dict(v) if isinstance(v, dict) else v) for k, v in BASE.items()}
+    if field == "domain_hint":
+        b["domain_hint"] = "order"
+    elif field == "routing_team":
+        b["routing"] = {**b["routing"], "suggested_team": "purchasing"}
+    elif field == "routing_agent":
+        b["routing"] = {**b["routing"], "suggested_agent": "b"}
+    elif field == "ask":
+        b["asks"] = [{"domain": "inventory", "intent": "check_po"}]
+    elif field == "entity_raw":
+        b["entities"] = [{**b["entities"][0], "raw": "cd2"}]
+    elif field == "entity_hint":
+        b["entities"] = [{**b["entities"][0], "hint": "customer"}]
+    elif field == "entity_spec_key":
+        b["entities"] = [{**b["entities"][0], "spec_key": "colour"}]
+    elif field == "state_op":
+        b["state_changes"] = [{**b["state_changes"][0], "op": "carry"}]
+    return b
+
+
+@pytest.mark.parametrize("field,reported", [
+    ("domain_hint", "domain_hint"), ("routing_team", "routing"), ("routing_agent", "routing"), ("ask", "asks"),
+    ("entity_raw", "entities"), ("entity_hint", "entities"), ("entity_spec_key", "entities"),
+    ("state_op", "state_changes")])
+def test_each_signature_field_flips_alone(field, reported):
+    out = parser_flips([[prow("a", **BASE)], [prow("a", **_changed(field))]])
+    assert out["flipped"] == 1 and out["fields"] == {reported: 1}
+
+
+def test_go_uses_pooled_not_rate():
+    # run 1: 1 of 1 passes; run 2: 8 of 10 pass. rate = (1 + 0.8) / 2 = 0.9, pooled = 9/11 = 0.818
+    out = summarise([run("s", [True]), run("s", [True] * 8 + [False] * 2)], {"s": 0.85})
+    st = out["slices"]["s"]
+    assert st["rate"] >= 0.85 > st["pooled"] and st["go"] is False
+    # run 1: 0 of 1; run 2: 10 of 10. rate = 0.5, pooled = 10/11 = 0.909
+    out = summarise([run("s", [False]), run("s", [True] * 10)], {"s": 0.85})
+    st = out["slices"]["s"]
+    assert st["rate"] < 0.85 <= st["pooled"] and st["go"] is True
+
+
+def test_duplicate_rows_in_one_run_pass_only_if_all_known_passed():
+    r1 = [g("a", True), g("a", False)]   # all -> fail; any -> pass; last -> fail
+    r2 = [g("a", False), g("a", True)]   # all -> fail; any -> pass; last -> pass
+    r3 = [g("a", True), g("a", True)]    # pass
+    st = summarise([r1, r2, r3], BARS)["slices"]["s"]
+    assert st["majority_n"] == 1 and st["majority_pass"] == 0 and st["flips"] == 1
+
+
+def test_stopped_barred_slice_with_fewer_than_three_runs():
+    out = summarise([run("s", [True] * 10)], {"s": 0.9}, stopped={"s": 0.5})
+    assert out["slices"]["s"] == {"status": "stopped", "best_reachable": 0.5}
+    assert out["meets"] is False
+
+
+def test_unreadable_parse_is_no_parse_not_a_crash():
+    def with_raw(item, raw):
+        return {"item_id": item, "turn": {"trace": [{"stage": "understood", "raw": raw}]}}
+    rows = [with_raw("a", "payload omitted: 9 bytes exceeds cap"), with_raw("b", {"parser_raw": None}),
+            with_raw("c", {"parser_raw": "truncated..."}), with_raw("d", None)]
+    out = parser_flips([rows, rows])
+    assert out["items"] == 0 and out["flipped"] == 0 and out["no_parse"] == 4
+
+
+def test_item_parsed_in_some_runs_is_not_no_parse():
+    bare = {"item_id": "a", "turn": {"trace": []}}
+    out = parser_flips([[bare], [prow("a", **BASE)], [prow("a", **BASE)]])
+    assert out["items"] == 1 and out["no_parse"] == 0
