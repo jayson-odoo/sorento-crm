@@ -536,7 +536,8 @@ gratings": "Yeah". Applied under the owner's skim rule ("owner 19 Oct: skim, app
 1. Capped list. A spec item whose expected set is larger than a page (`PAGE_CAP` = 50, the bot's own `answer.SET_LIST_MAX`,
    answer.py:2760) carries a `capped_list` check, added inside `_spec` beside `class_set` (no existing check read the expected-set
    size: `shown` wants one code, `set_list` judges the header, `class_set` the held product). The listing is the product codes the
-   customer reads in the reply. A reply listing more than a page fails, whatever the expected set size. A page drawn from an expected
+   customer reads in the reply: PRODUCT rows only (a code at the start of a line after a number or bullet, or on a `*Product Code:*` line,
+   `PRODUCT_ROW_RE`), so warehouse label lines and code-shaped values never count. A reply listing more than a page fails, whatever the expected set size. A page drawn from an expected
    set larger than a page, ending with the more-line, passes. A page without the more-line, or not drawn from the set, is unknown.
    The more-line is the composer's `Reply "more" to see the next N.` (composers/sets.py:10) and its translations (label_catalog.py:581,
    ms `Balas "more" untuk lihat N seterusnya.`, zh `回复 "more" 查看接下来的 N 个。`): `SEE_MORE_RE` matches the quoted word "more"
@@ -544,7 +545,7 @@ gratings": "Yeah". Applied under the owner's skim rule ("owner 19 Oct: skim, app
 2. Honest none on a spec attribute. The bot's "*<label>:* not recorded for A, B (+N more)" line (fetch.py, `spec_misses`, label =
    registry label or the asked word) for the gold's own non-class spec key counts as the honest none of a `none_on_record` spec gold
    (`NOT_RECORDED_RE`); another attribute's line does not. When the lines name every non-class key of the gold, the spec words count
-   as met too (`spec_set`): "not on record" is the right answer, so the parser not grounding the asked words is no longer a failure.
+   as met too (`spec_set`), unless a line shows a gold value for that key on a product (the attribute is then on record): "not on record" is the right answer, so the parser not grounding the asked words is no longer a failure.
 
 Measured at $0 on the held-out run and TRAIN g1755c / g1755d: no capped page and no over-page reply; one "not recorded" line on a
 none-on-record item. The only verdict change is that item (see the crew regrade).
