@@ -507,3 +507,26 @@ failure into a pass:
 Red-first per item, kill-proof per hunk, two Opus review rounds (the first found a wrong-option pass, a leak turned
 unknown and an `asked_type` fallback that passed 11 of 34 real failures; all closed). TRAIN gate rows: no verdict
 changes. Held-out re-grade at $0 went to crew only.
+
+## Round 46 (20 Oct): certification rule, pre-registered (owner architecture review; crew ruling a29610120)
+
+ARCHITECTURE: (1) layer: measurement. (2) Shared mechanism: `targets.summarise` / `_stats`, the one scorer every run
+report reads, plus `parser_flips`. (3) Other slices it fixes: all of them; no slice is again accepted or rejected on one
+run near its bar. (4) Removes: x1 verdicts near the bar, a percentage printed for an early-stopped slice, and the
+mean of per-run rates standing in for the pooled rate.
+
+The rule (fixed before any run it is applied to):
+- Certification needs at least 3 runs. A slice is certified when `pooled` (all passes over all known verdicts across
+  the runs; unknown verdicts stay out of the denominator) is at or above its bar, with zero leaks and zero made-up
+  facts in every run. `meets` reads `pooled`.
+- Beside every score: `majority_pass` of `majority_n` (items passing in more than half of the runs where they had a
+  known verdict, over items known in at least 2 runs) and the item flip rate (`flips` / `flip_rate`: items whose known
+  verdict differs between runs).
+- Fewer than 3 runs is go/no-go only: each barred slice gets `go` (pooled at or above the bar) and `meets` stays false.
+- An early-stopped slice reports `status: stopped` and its best reachable rate only; it shows no rate, and a stopped
+  barred slice fails `meets`.
+- `parser_flips(runs_rows)`: on identical inputs (the same item over the runs) the share of items whose parse
+  signature differs (domain hint, routing team and agent, asks, entities, state changes), with a per-field count.
+  Reported beside every score; it is the run-to-run parser variance, a class of its own.
+- Fresh certification sets (>= 100 items per slice, dual-labelled with adjudication, from conversations after a cut
+  date) are certified with this rule; the current held-out set is dev-heldout from 20 Oct.
