@@ -1,6 +1,7 @@
 # PLAN: PARSER-TEMPLATE (F1, one consolidated parser prompt)
 
-Status: Plan, awaiting crew on ask a29454970 (where it lives, CHAT-STATE hand-over, #1755 prompt freeze). Owner:
+Status: Build, F1-E fix round after review (NOT READY: B1, B2 test gaps); TRAIN x1 attachment + spec paired is a merge
+gate item waiting for dev-key credits (crew a38627742). Track L. Owner:
 CHAT-CODE-LOOKUP (crew architecture review, 20 Oct, crew/state/reports/CHAT-ARCH-REVIEW-20oct.md M1 + F1 + section 3).
 Track: L, LEAD pattern. Owner 20 Oct: keep the bars, fix at the architecture layer.
 
@@ -101,3 +102,23 @@ Only regressing pair: c2-01 "gambar X" (3 -> 0); a USD 0.06 probe shows a word q
 "picture X", "X 图片" 2/2), not a language or rule gap, so no one-shape text. L1 (base chat-state-r2 d29ad44928,
 head combined fbc49b0b3d): unintended 0 on grounding (5,584) and turn (1,095 of 1,480). TRAIN x1 attempt 1 invalid
 (no MCP stack listening; USD 1.12); waiting on crew for a stack and cap. Spend USD 4.96.
+
+## F1-E (review round 1 fixes)
+
+Reviewer on 3a039cd00d: NOT READY. B1: #1755's H1 hidden keys under CODE LOOKUP (engine.py:1145) have no test.
+B2: the dealer stand-down call site (engine.py ~5274, `template=`) has no engine-seam test. Both are guard tests
+(kill proof, not red proof). Template: S1, D2 contradicted #1755 F3-b B-5 (PLAN-chat-closed-lists-17oct.md:345-346):
+a listed scheme alone is the whole certificate ask, one entity, and code adds the parent kind
+(scheme_index._with_parent_kind); a kind entity only when no listed scheme is named. The scheme line does not name its
+kind: with B-2/B-3 the model never needs it, so no rendering change. S6, R-X-03 claims a quantity-only message repeats
+the held domain; it defers to R-P1-03 instead. N2/N3 "see" links (show me; R-P1-04 file types; requested_attributes
+restated in R-P3-01/-06/-12). Grader S3: attachment_types ignores an entity downstream drops (confident false,
+NOT_LISTED; grounding.py:723-725). N6 publisher commit message, N4 fetch.py docstring.
+
+Gate correction (S2): the $0 lint catches explicit absolute pairs (always / never / only / must beside one field) and
+word lists; it does not catch a conflict in meaning (D1 passed it). The paid gold is the gate for that class; the lint
+promise above is narrowed accordingly.
+Label rule (S4): "(answered)" in the template's State lines is printed only by #1772 (chat_state.py:278); no template
+version gets a label before #1772 merges.
+Routed to CHAT-STATE F2 (S5): the template asks for state ops skip / unclear that the strict schema's op enum lacks
+(parser.py:702-704), a gap #1772 shares.
