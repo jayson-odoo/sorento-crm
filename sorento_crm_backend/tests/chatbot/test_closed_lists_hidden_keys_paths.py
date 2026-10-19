@@ -24,7 +24,7 @@ from app.models.product_spec import ProductSpecifications, ProductSpecRegistry
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests._pg_fixture import blank_session, unique_code
 from tests.chatbot.conftest import session_factory  # noqa: F401
-from tests.chatbot.test_closed_lists_hidden_keys_entries import _hide, _run
+from tests.chatbot.test_closed_lists_hidden_keys_entries import _hide, _run, real_hidden_spec_keys
 from tests.chatbot.test_closed_lists_spec_over_held import _stock_ask
 from tests.chatbot.test_engine import seeded, stub_access  # noqa: F401
 
@@ -481,7 +481,7 @@ def _stored_focus(session_factory, stub_access, monkeypatch, turns, *, state_blo
     monkeypatch.setattr(trace_mod.TurnTrace, "persisted", lambda self: (traces.append(real(self)) or traces[-1]))
     monkeypatch.setattr(engine_mod, "_contact_company_scope", lambda f, c: frozenset({DEFAULT_COMPANY_ID}))
     monkeypatch.setattr(MCPRuntimeClient, "call_tool", lambda self, name, args: json.dumps({"ok": True, "items": []}))
-    stub_access()
+    stub_access(hidden_spec_keys=real_hidden_spec_keys(session_factory))
     out: list[dict] = []
     for n, (text_, _verdict) in enumerate(turns):
         traces.clear()

@@ -67,6 +67,20 @@ def _hide(session_factory, *keys: str) -> None:
     db.commit()
 
 
+def real_hidden_spec_keys(session_factory) -> list[str]:
+    """The hidden set the real `check_access` carries for the turn's contact (head/access
+    `_hidden_spec_keys` over the seeded `spec_visibility_policies`, under the stubbed default
+    space), so a stubbed access snapshot still says what the real policy says."""
+    from app.services.chatbot.head import access as access_mod
+    from tests.chatbot.test_engine import CONTACT_ID
+
+    db = session_factory()
+    try:
+        return access_mod._hidden_spec_keys(db, contact_id=str(CONTACT_ID), space_id="364817")
+    finally:
+        db.close()
+
+
 def _run(session_factory, stub_access, monkeypatch, message: str, verdict: dict, *, gate: bool = True):
     """(parser user block, trace records) of one turn."""
     blocks: list[str] = []
@@ -87,7 +101,7 @@ def _run(session_factory, stub_access, monkeypatch, message: str, verdict: dict,
     monkeypatch.setattr(trace_mod.TurnTrace, "persisted", lambda self: (traces.append(real(self)) or traces[-1]))
     monkeypatch.setattr(engine_mod, "_contact_company_scope", lambda f, c: frozenset({DEFAULT_COMPANY_ID}))
     monkeypatch.setattr(MCPRuntimeClient, "call_tool", lambda self, name, args: json.dumps({"ok": True, "items": []}))
-    stub_access()
+    stub_access(hidden_spec_keys=real_hidden_spec_keys(session_factory))
     engine_mod.run_turn(_envelope(message=_message(message, 0)), session_factory=session_factory)
     return blocks[0], traces[-1] if traces else []
 

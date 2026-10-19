@@ -23,6 +23,7 @@ from app.models.product_spec import ProductSpecifications, ProductSpecRegistry
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests._pg_fixture import unique_code
 from tests.chatbot.conftest import session_factory  # noqa: F401
+from tests.chatbot.test_closed_lists_hidden_keys_entries import real_hidden_spec_keys
 from tests.chatbot.test_closed_lists_spec_over_held import _fetched, _stock_ask, _turns
 from tests.chatbot.test_engine import seeded, stub_access  # noqa: F401
 
@@ -98,7 +99,11 @@ def _ask(session_factory, stub_access, monkeypatch, text_: str, *entities: dict,
     turns = [(text_, _stock_ask(*entities))]
     if held:
         turns.insert(0, ("the held ones", _stock_ask(*[_ent(c, "product", canonical_code=c) for c in held])))
-    out = _turns(session_factory, stub_access, monkeypatch, turns, gate=True)
+    # The access snapshot carries the real policy's hidden set (R6-6 seeds `spec_visibility_policies`).
+    def with_real_hidden() -> None:
+        stub_access(hidden_spec_keys=real_hidden_spec_keys(session_factory))
+
+    out = _turns(session_factory, with_real_hidden, monkeypatch, turns, gate=True)
     return out[-1]
 
 

@@ -154,9 +154,13 @@ def stub_parser(monkeypatch):
 
 @pytest.fixture()
 def stub_access(monkeypatch):
-    def _install(allowed: bool = True, decision: str = "allow", attributes: list | None = None):
+    def _install(
+        allowed: bool = True, decision: str = "allow", attributes: list | None = None, hidden_spec_keys: list | None = None
+    ):
         # `attributes` = the contact's granted field-reveal keys (`ctx["access"]["attributes"]`);
         # None is the empty grant set, exactly as `head/access.py` reports it live.
+        # `hidden_spec_keys` = the contact's hidden spec keys, as the real `check_access` carries
+        # them (`head/access._hidden_spec_keys`); None is none hidden.
         monkeypatch.setattr(
             engine_mod,
             "check_access",
@@ -166,6 +170,7 @@ def stub_access(monkeypatch):
                 "agent_name": "General Enquiries",
                 "attributes": attributes,
                 "all_attributes_allowed": None,
+                "hidden_spec_keys": list(hidden_spec_keys or []),
             },
         )
         monkeypatch.setattr(engine_mod, "default_space_id", lambda db: "364817")
