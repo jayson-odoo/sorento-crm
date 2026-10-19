@@ -498,7 +498,11 @@ failure into a pass:
   restated 19 Oct): `Profile.stock_availability_only` (an availability-only contact, a dealer) gets a bare list, everyone
   else is stamped (`lanes/business/answer.py` gates it, `turn_runtime._stock_availability_only` resolves it). The stamp is
   read from each option's `stamp`; an unstamped list for a stamped contact, a stamped list for a dealer, another type's
-  stamp and a list over other codes still fail.
+  stamp and a list over other codes still fail. The trace carries no profile flag, so the grader INFERS the setting
+  from the item's asker audience (dealer / linked_dealer = bare, else stamped). Measured read-only against
+  `stock_visibility.resolve_policy` for every attachment asker in the held-out and TRAIN gate sets: 79 of 79 agree.
+  Trigger for an exact source (the gold carrying the asker's policy at build time): an asker whose policy differs
+  from their audience.
 - Gold (crew files): the AI-blocked contact's item leaves the set (manual exclusions).
 Red-first per item, kill-proof per hunk, two Opus review rounds (the first found a wrong-option pass, a leak turned
 unknown and an `asked_type` fallback that passed 11 of 34 real failures; all closed). TRAIN gate rows: no verdict
