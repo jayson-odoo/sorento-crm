@@ -57,7 +57,8 @@ make sure the sort handler is at the leftmost, go"), Q1 drag yes, Q2-Q4 (a), Q5 
   as TWO rows: row 1 on this line = NEW QTY capped at QTY, at NEW DATE (each falls back to QTY /
   DELIVERY DATE when blank); row 2 on "New line" = QTY minus row 1 (0 when nothing is left), at
   DELIVERY DATE; row 2's qty gets focus. SO417636 line 480: 14 @ 20/09/2026 + 403 @ 20/10/2026; line
-  752 (504 -> 649, 20/12/2026 -> 02/01/2027): 504 @ 02/01/2027 + 0 @ 20/12/2026. With no pending change
+  752 (504 -> 649, 20/12/2026 -> 02/01/2027): only 504 @ 02/01/2027, focused (AC-G20: never a row of qty
+  0; when nothing is left, row 1 alone gets focus). With no pending change
   "+ Split" is unchanged (QTY @ DELIVERY DATE on this line + what is left). Clicking or typing in an
   unsplit line's value cell is unchanged (AC-A4). The x button, or Ctrl/Cmd+Backspace in the row, removes a
   split row at once (staged until Save; no confirm).
@@ -81,7 +82,8 @@ make sure the sort handler is at the leftmost, go"), Q1 drag yes, Q2-Q4 (a), Q5 
 - AC-A9 A drop moves ALL of it at once, with no "how many" box (Q5 a). A split row: sits on the target
   line and takes that line's planned date (AC-A7); if a split of the same own line already sits there on
   that date the two merge (qty added, remarks joined). The "N left" chip: a new split of N at the
-  target (merging the same way). A REMAIN line: the whole line moves. "New date": sits on "New line"
+  target, its own row on a line (AC-G20), merged only into an existing cancel when dropped on "Cancel
+  this qty". A REMAIN line: the whole line moves. "New date": sits on "New line"
   with an empty date, focused, and Save waits until a date is typed. "Cancel this qty": a cancel
   split. A toast "Moved N to <target>" offers Undo. To move part, type the qty first, then drag what
   is left (SO417636 CSK14B 480: type 14, drag "403 left" onto line 608 -> 403 @ 20/11/2026 on 608).
@@ -374,5 +376,7 @@ SO417636 CSK14B BRW-BB, with the owner's plan:
   - The extra row (AC-G3) comes from the saved plan (the API's `extra_qty`). While the draft has changed a line's
     splits, or splits dropped on it, that line shows no extra row; after Save the sheet shows the server's value
     (752: 182 once the 37 sits on 608). No copy of the extra rule in the frontend.
-  - "+ Split" on a line whose NEW QTY is not below its QTY (752: 649 vs 504) makes only the first row; it never
-    makes a row of qty 0.
+  - "+ Split" makes only the first row whenever nothing is left after it (752: 649 vs 504, or a date-only
+    change), and that row gets focus; it never makes a row of qty 0.
+  - The "N left" chip dropped on "Cancel this qty" still merges into the line's existing cancel split (one
+    CANCEL row, qty added); only drops on a line make their own row.
