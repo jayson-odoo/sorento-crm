@@ -389,7 +389,7 @@ _STRUCTURE_LINE = re.compile(r"^(?:==\s.*\s==|##\s.*|<<<.*>>>)$")
 _ID_REF = r"R-(?:P[123]|X)-\d{2}"
 _SEE = re.compile(r"\bsee\s+(" + _ID_REF + r"(?:\s*(?:,|and|or)\s*" + _ID_REF + r")*)")
 _BANNED = re.compile(r"\b(?:overrid\w*|alias\w*|outrank\w*)\b|whatever the previous domain", re.IGNORECASE)
-_DASHES = re.compile("[–—]")
+_DASHES = re.compile("[\u2013\u2014]")
 #: "Absolute" words: always / never in any case; ONLY and MUST when shouted.
 _ABSOLUTE = re.compile(r"\b(?:[Aa]lways|ALWAYS|[Nn]ever|NEVER|ONLY|MUST)\b")
 _BACKTICKED = re.compile(r"`([^`\n]+)`")
