@@ -526,3 +526,25 @@ is a held product or a variant AND either exactly one product (with its variants
 expected set; so a held list narrowed to expected members passes, and a held list re-answered with no expected member fails.
 It passes when the held product (with variants) is the whole expected set, and is unknown when nothing shows what was answered.
 Refine items (a filter over a held set) are not spec items and are untouched.
+
+## Round 44 (19 Oct, a capped list with a way to see more, and an honest "not recorded" line; crew a7418687)
+
+Owner notes on card r43 (19 Oct 19:11, verbatim): on a long P-trap toilet list, "Correct, but we shouldn't show all la, should show a
+cap with the ability to see more"; on a material-grade ask over held gratings, option (a) "grade is not on record for these
+gratings": "Yeah". Applied under the owner's skim rule ("owner 19 Oct: skim, apply unless flagged").
+
+1. Capped list. A spec item whose expected set is larger than a page (`PAGE_CAP` = 50, the bot's own `answer.SET_LIST_MAX`,
+   answer.py:2760) carries a `capped_list` check, added inside `_spec` beside `class_set` (no existing check read the expected-set
+   size: `shown` wants one code, `set_list` judges the header, `class_set` the held product). The listing is the product codes the
+   customer reads in the reply. A reply listing more than a page fails, whatever the expected set size. A page drawn from an expected
+   set larger than a page, ending with the more-line, passes. A page without the more-line, or not drawn from the set, is unknown.
+   The more-line is the composer's `Reply "more" to see the next N.` (composers/sets.py:10) and its translations (label_catalog.py:581,
+   ms `Balas "more" untuk lihat N seterusnya.`, zh `回复 "more" 查看接下来的 N 个。`): `SEE_MORE_RE` matches the quoted word "more"
+   (straight or curly quotes), the header's "showing A to B" and the old cues.
+2. Honest none on a spec attribute. The bot's "*<label>:* not recorded for A, B (+N more)" line (fetch.py, `spec_misses`, label =
+   registry label or the asked word) for the gold's own non-class spec key counts as the honest none of a `none_on_record` spec gold
+   (`NOT_RECORDED_RE`); another attribute's line does not. When the lines name every non-class key of the gold, the spec words count
+   as met too (`spec_set`): "not on record" is the right answer, so the parser not grounding the asked words is no longer a failure.
+
+Measured at $0 on the held-out run and TRAIN g1755c / g1755d: no capped page and no over-page reply; one "not recorded" line on a
+none-on-record item. The only verdict change is that item (see the crew regrade).
