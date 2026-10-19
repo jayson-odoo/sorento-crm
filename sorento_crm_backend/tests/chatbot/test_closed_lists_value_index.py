@@ -178,7 +178,7 @@ def test_r2_a_shared_enum_phrase_lists_the_more_held_key_first_though_its_name_s
         ("ZZMB201", {"zz_colour": "ivory"}),
         ("ZZMB305", {"zz_finish": "ivory"}),
         ("ZZMB409", {"zz_finish": "ivory"}),
-        ("ZZMB512", {"zz_finish": "ivory"}),
+        ("ZZMB512", {"zz_finish": ["satin", "ivory"]}),  # a list value, as real rows store two finishes
     ))
     _scoped(db)
 
@@ -370,3 +370,24 @@ def test_r6_near_spellings_keep_the_per_word_cap_while_exact_holding_lines_stay_
     assert [i for i in items if i.startswith("spec ")] == [f"spec {key} = 450" for key in SIX_HOLDING_BY_DATA], items
     assert near, items  # the seven near spellings are found at all
     assert len(near) <= candidates.CAP_PER_WORD, (len(near), items)
+
+
+def test_r7_a_list_valued_spec_counts_for_each_of_its_values(db):
+    """Real rows store a LIST for a product with two values (SRTWT9605-RG "Rose Gold + Matt Black";
+    product_spec_search.py `_states` and the containment branch of `filter_specs`). Fails on HEAD:
+    the value index compares `lower(values->key->>'value')` with the value, so a list never counts
+    and zz_colour (one scalar holder) ranks ahead of zz_finish (three list holders)."""
+    _seed_shared_phrase(db)
+    _products(db, (
+        ("ZZLV101", {"zz_finish": ["ivory", "satin"]}),
+        ("ZZLV102", {"zz_finish": ["satin", "ivory"]}),
+        ("ZZLV103", {"zz_finish": ["ivory"]}),
+        ("ZZLV201", {"zz_colour": "ivory"}),
+    ))
+    _scoped(db)
+
+    items = _items(db, "got these in ivory?", "ivory")
+
+    finish, colour = _spec_item(items, "zz_finish"), _spec_item(items, "zz_colour")
+    assert finish >= 0 and colour >= 0, items
+    assert finish < colour, items
