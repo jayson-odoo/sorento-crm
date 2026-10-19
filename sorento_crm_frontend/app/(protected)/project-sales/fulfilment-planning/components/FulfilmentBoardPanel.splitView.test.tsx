@@ -152,7 +152,7 @@ function demand(overrides: Partial<BoardDemandLine> = {}): BoardDemandLine {
     sales_order_id: 'so-1',
     so_number: 'SO000001',
     customer_name: 'Test Customer',
-    project_sales_order_id: 'pso-1',
+    project_sales_order_id: 'pso-so-1',
     project_line_id: 'pl-1-1',
     line_no: 1,
     item_code: 'ZZT-ITEM-1',
@@ -202,7 +202,7 @@ const TWO_ORDERS = [
   demand({
     sales_order_id: 'so-2',
     so_number: 'SO000002',
-    project_sales_order_id: 'pso-2',
+    project_sales_order_id: 'pso-so-2',
     project_line_id: 'pl-2-1',
     line_no: 1,
     item_code: 'ZZT-ITEM-2',
@@ -270,7 +270,7 @@ describe('A3: the card lists the lines whose split edits wait', () => {
 });
 
 describe('A4: Confirm posts the order of a split-edited line even with no line of its own', () => {
-  it('posts pso-1 with an empty lines list', async () => {
+  it('posts pso-so-1 with an empty lines list', async () => {
     getPlanningBoard.mockResolvedValue(
       withSplitEdited(
         buildBoard([demand()], { today: TODAY, freeStock: {}, granularity: 'week' }),
@@ -278,7 +278,7 @@ describe('A4: Confirm posts the order of a split-edited line even with no line o
       ),
     );
     confirmMany.mockResolvedValue({
-      results: [{ pso_id: 'pso-1', ok: true, decision_revision: 4, lines_confirmed: [] }],
+      results: [{ pso_id: 'pso-so-1', ok: true, decision_revision: 4, lines_confirmed: [] }],
     });
     renderPanel();
     await screen.findByTestId('fulfilment-board-matrix');
@@ -287,7 +287,7 @@ describe('A4: Confirm posts the order of a split-edited line even with no line o
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     const [body] = confirmMany.mock.calls[0];
-    const sent = body.orders.find((order: { pso_id: string }) => order.pso_id === 'pso-1');
+    const sent = body.orders.find((order: { pso_id: string }) => order.pso_id === 'pso-so-1');
     expect(sent, JSON.stringify(body)).toBeDefined();
     expect(sent.lines).toEqual([]);
   });
@@ -314,7 +314,7 @@ describe('D1 / D2: the board gear carries Split delivery and View splits per ord
     const menu = await openBoardActions();
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Split delivery SO000001' }));
     const dialog = await screen.findByTestId('line-split-dialog');
-    expect(dialog).toHaveAttribute('data-pso', 'pso-1');
+    expect(dialog).toHaveAttribute('data-pso', 'pso-so-1');
   });
 
   it('"View splits SO000001" reads the order and opens "SO000001: splits"', async () => {
@@ -329,7 +329,7 @@ describe('D1 / D2: the board gear carries Split delivery and View splits per ord
       }],
     });
     getLineSplits.mockResolvedValue({
-      pso_id: 'pso-1', so_number: 'SO000001', customer: null, project: null,
+      pso_id: 'pso-so-1', so_number: 'SO000001', customer: null, project: null,
       lines: [
         { line_id: 'pl-1-1', line_no: 480, item_code: 'CSK14B', split_view: view('14') },
         { line_id: 'pl-1-2', line_no: 752, item_code: 'CSK14B', split_view: view('37') },
@@ -343,7 +343,7 @@ describe('D1 / D2: the board gear carries Split delivery and View splits per ord
     const menu = await openBoardActions();
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'View splits SO000001' }));
     const dialog = await screen.findByRole('dialog');
-    expect(getLineSplits).toHaveBeenCalledWith('pso-1');
+    expect(getLineSplits).toHaveBeenCalledWith('pso-so-1');
     expect(within(dialog).getByText('SO000001: splits')).toBeInTheDocument();
     expect(dialog.textContent).toContain('2 split lines');
     expect(dialog.textContent).toContain('Line 480 CSK14B');

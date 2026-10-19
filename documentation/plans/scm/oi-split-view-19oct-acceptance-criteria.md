@@ -28,9 +28,11 @@ own, 236 @ 20/11/2026 New line, 167 @ 20/11/2026 New line (AutoCount 417 @ 20/10
   - A first split saved on a confirmed unsplit line (608: 600 @ 20/11/2026 own + 32 @ 20/12/2026 New
     line) counts 1 (Q1 a).
   - A line delivered in full never counts.
-- A3 **Listed in the result card.** While split edits wait, the board's order card shows one line
+- A3 **Listed on the board.** While split edits wait, the board shows one line under its action bar
   "Split edits to confirm: line 480 CSK14B", AutoCount line numbers, comma-separated items for
-  several lines.
+  several lines (lead, build: the result card exists only after a Confirm, so the line sits under the
+  bar; the mock's "(167 now 20/11/2029)" suffix is dropped because the board read carries no before
+  values; the View splits popup shows "was").
 - A4 **Confirm acts on every split-edited line of the order.** Pressing Confirm (N) confirms the
   order even when nothing else on it changed, and the server applies every split-edited line of that
   order (A1), whether or not the browser named it. The engine path is #1749's AC-G15: purchasing's
@@ -46,6 +48,8 @@ own, 236 @ 20/11/2026 New line, 167 @ 20/11/2026 New line (AutoCount 417 @ 20/10
 - A5 **Simulate confirm** (admin) shows the same rows and email as A4 for the same board state.
 - A6 **Save guard unchanged** (Q2 a). Moving a confirmed split onto another SO line still answers 422
   "Line <n>: a confirmed split cannot move to another line." and stores nothing (#1749 AC-G19).
+- A8 **Whole-Buy lines only** (known limit carried from #1749: the split plan logic covers lines the
+  active decision buys whole). A line partly served from stock is never flagged split-edited.
 - A7 **Never stuck.** If the Confirm fails, the board shows the server's message, the count stays,
   and nothing is half-applied (the order's Confirm is one transaction, as today).
 
@@ -77,8 +81,8 @@ own, 236 @ 20/11/2026 New line, 167 @ 20/11/2026 New line (AutoCount 417 @ 20/10
 - B4 **What changed, only when exact.** In "Saved, not confirmed", a split row whose
   (qty, date, sits on, cancel) is not in the applied plan is highlighted. When the saved plan and
   the applied plan differ by exactly one row removed and one row added, the added row also shows
-  "was <qty>" or "was <date>" (the removed row's values) and the board card (A3) adds "(167 now
-  20/11/2029)". Otherwise no "was" is shown. Never a guess.
+  "was <qty>" or "was <date>" (the removed row's values). Otherwise no "was" is shown. Never a
+  guess.
 - B5 **Same data, same component.** Both pages get the popup's data from one backend read (the same
   function feeds the OI rows and the SO lines) and render one shared component. Opening the popup
   makes no extra request beyond the page's own read.
