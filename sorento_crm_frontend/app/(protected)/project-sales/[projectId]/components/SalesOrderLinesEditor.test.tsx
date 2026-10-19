@@ -316,6 +316,8 @@ describe('SalesOrderLinesEditor, editing', () => {
     expect(input).toHaveValue('01/07/2026');
 
     fireEvent.change(input, { target: { value: '15/08/2026' } });
+    // A typed date commits when the box is left (AC-G8, the shared DatePicker).
+    fireEvent.blur(input);
 
     const reported = session.stage.mock.calls.at(-1)?.[0] as StagedSalesOrderLine[];
     expect(reported[0].draft.delivery_date).toBe('2026-08-15');
@@ -329,6 +331,8 @@ describe('SalesOrderLinesEditor, editing', () => {
       name: /Delivery on CB6633/,
     }) as HTMLInputElement;
     fireEvent.change(input, { target: { value: '' } });
+    // A cleared date commits on Enter, the other way to leave the typed text (AC-G8).
+    fireEvent.keyDown(input, { key: 'Enter' });
 
     const reported = session.stage.mock.calls.at(-1)?.[0] as StagedSalesOrderLine[];
     expect(reported[0].draft.delivery_date).toBe('');

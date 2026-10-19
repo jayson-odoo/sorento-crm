@@ -3807,6 +3807,17 @@ def _oi_demand_rows(
         and r.project_line_id
         and str(r.project_line_id) not in settled
     ]
+    # OI-LINE-SPLIT (UAC AC-G10, crew ruling (a)): a whole-Buy line whose splits act has its
+    # cut explained by them (a split moved, kept at its own date, or an explicit cancel
+    # split the confirm writes itself), so no split is netted into a CANCEL BALANCE here. A
+    # line partly from stock nets as before (AC-G13).
+    from app.services.project_line_split_service import LineSplitService
+    from app.services.project_order_inquiry_service import whole_buy_line_ids
+
+    split_line_ids = LineSplitService(db).acting_origin_ids(qty_down_line_ids) & (
+        whole_buy_line_ids(db, qty_down_line_ids)
+    )
+    qty_down_line_ids = [i for i in qty_down_line_ids if i not in split_line_ids]
     cancellable_by_line: Dict[str, Decimal] = defaultdict(lambda: _ZERO)
     if qty_down_line_ids:
         held_query = db.query(OrderInquiryRow).filter(
@@ -3887,6 +3898,8 @@ def _oi_demand_rows(
                 counts.get("DELAY" if r.kind == "delayed" else "ADVANCE", 0) + 1
             )
         elif r.kind == "qty_down":
+            if str(r.project_line_id) in split_line_ids:
+                continue
             from_qty = _dec((r.from_json or {}).get("qty"))
             to_qty = _dec((r.to_json or {}).get("qty"))
             drop = min(from_qty - to_qty, cancellable_by_line[str(r.project_line_id)])
@@ -4829,6 +4842,11 @@ def _apply_one_order(
     # session must never swallow this apply's own notices.
     if confirm_lines:
         ProjectOrderInquiryService(db).forget_rows_told_for_saved_lines(str(order.id))
+    # OI-LINE-SPLIT: this order's moved-split record has been read (the netting above, the
+    # email inside the confirm); a long-lived session must never carry it into a later apply.
+    from app.services.project_order_inquiry_service import SPLIT_MOVED_KEY
+
+    db.info.pop(SPLIT_MOVED_KEY, None)
 
     for r in live:
         r.applied_state = PLANNING_CHANGE_STATE_APPLIED
