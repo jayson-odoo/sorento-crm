@@ -141,6 +141,10 @@ def test_output_row_shape_and_the_full_turn(session_factory, recorded, live_env)
     turn = out["turn"]
     assert set(turn) >= {"envelope", "trace", "response", "branch_kind"}
     assert turn["trace"] and "reply" in turn["response"]
+    # round 41: the profile the engine loaded for this turn, captured on the row (the grader reads the stamp setting from it)
+    prof = out["asker_profile"]
+    assert isinstance(prof["stock_availability_only"], bool), prof
+    assert prof["source"] == "turn_runtime.load_profile (captured)", prof
 
 
 def test_run_stops_at_max_calls_with_a_reason(session_factory, recorded, live_env):

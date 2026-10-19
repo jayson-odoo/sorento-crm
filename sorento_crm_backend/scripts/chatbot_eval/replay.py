@@ -737,6 +737,33 @@ def _history_patches(stack: Any, history: dict[str, Any] | None) -> None:
     stack.enter_context(mock.patch.object(engine, "_memory_intake", intake))
 
 
+@contextlib.contextmanager
+def _profile_capture(into: list[Any]) -> Iterator[None]:
+    """Pass-through on `turn_runtime.load_profile` (the engine calls it through the module attribute): keeps the Profile each
+    call returned, so the flag the bot ran with is read from the bot itself rather than recomputed."""
+    from unittest import mock
+
+    from app.services.chatbot import turn_runtime
+
+    original = turn_runtime.load_profile
+
+    def load_profile(*args: Any, **kwargs: Any) -> Any:
+        result = original(*args, **kwargs)
+        into.append(result[0] if isinstance(result, tuple) else result)
+        return result
+
+    with mock.patch.object(turn_runtime, "load_profile", load_profile):
+        yield
+
+
+def _record_asker_profile(out: dict[str, Any], captured: list[Any]) -> None:
+    """Store the stock-visibility flag of the profile the turn loaded (the first call: the one the turn ran on); nothing
+    when the turn loaded none, so the grader falls back or reports unknown."""
+    flag = getattr(captured[0], "stock_availability_only", None) if captured else None
+    if isinstance(flag, bool):
+        out["asker_profile"] = {"stock_availability_only": flag, "source": "turn_runtime.load_profile (captured)"}
+
+
 def _live_one(item: dict[str, Any], row: dict[str, Any], factory: Callable[[], Any],
               total: dict[str, Any], prompt_version_id: str | None = None,
               carry: dict[str, Any] | None = None, sink: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -770,6 +797,8 @@ def _live_one(item: dict[str, Any], row: dict[str, Any], factory: Callable[[], A
         _guard_network(stack, misses, MODEL_HOSTS)
         stack.enter_context(_metered(usage, total))
         stack.enter_context(_tool_capture(tool_results, misses))
+        profiles: list[Any] = []
+        stack.enter_context(_profile_capture(profiles))
         from unittest import mock
 
         from app.services.chatbot.lanes import ideate
@@ -813,6 +842,7 @@ def _live_one(item: dict[str, Any], row: dict[str, Any], factory: Callable[[], A
               "response": copy.deepcopy(turn.response) if turn is not None else None,
               "branch_kind": result.branch_kind, "status": getattr(result, "status", None)},
     )
+    _record_asker_profile(out, profiles)
     if misses:
         out["misses"] = misses
     db.close()
