@@ -224,3 +224,106 @@ def test_r6_s3_names_own_class_is_deleted_from_its_seams():
     root = Path(__file__).resolve().parents[2] / "app" / "services" / "chatbot"
     for rel in ("turn/task.py", "head/scheme_index.py", "head/held_family.py", "engine.py"):
         assert "names_own_class" not in (root / rel).read_text(), f"{rel} still reads names_own_class"
+
+
+# --------------------------------------------------------------------------- review round 4 (lead decision):
+# a class SAID this message over held explicit products filters them by class membership WHATEVER the op.
+SAID_CLASS_OPS = [
+    ([_op("keep")], "keep"),
+    ([_op("answer")], "answer"),
+    ([_op("set", "no_such_axis")], "reject"),
+]
+
+
+def _scheme_with_ops(session_factory, stub_access, monkeypatch, class_word, ops):
+    ids = _seed(session_factory)
+    _label_class(session_factory, ids, "Water Closet")
+    ask = _file_ask(_ent(class_word, "category"), _scheme("zzpps", "ZZPPS"))
+    ask["state_changes"] = ops
+    if ops[0]["op"] == "answer":
+        ask["open_question_answer"] = {"mode": "value", "picked": [], "items": [], "qty_for_all": None}
+    (_r1, _c1), (_r2, calls) = _turns(session_factory, stub_access, monkeypatch,
+                                      [(CODE, _stock_first()), (f"zzpps certificate {class_word}", ask)])
+    return ids, _file_fetches(calls), calls
+
+
+@pytest.mark.parametrize("ops", [c[0] for c in SAID_CLASS_OPS], ids=[c[1] for c in SAID_CLASS_OPS])
+def test_r6_s3_a_said_class_the_held_product_is_not_in_does_not_index_it_whatever_the_op(
+    session_factory, seeded, stub_access, monkeypatch, applied, ops
+):
+    ids, fetches, calls = _scheme_with_ops(session_factory, stub_access, monkeypatch, "basin", ops)
+    assert all(f.get("product_ids") != [ids["product"]] for f in fetches), ("the held WC was indexed for a basin ask", calls)
+
+
+@pytest.mark.parametrize("ops", [c[0] for c in SAID_CLASS_OPS], ids=[c[1] for c in SAID_CLASS_OPS])
+def test_r6_s3_a_said_class_the_held_product_is_a_member_of_still_indexes_it(
+    session_factory, seeded, stub_access, monkeypatch, applied, ops
+):
+    ids, fetches, calls = _scheme_with_ops(session_factory, stub_access, monkeypatch, "water closet", ops)
+    assert fetches and fetches[0].get("product_ids") == [ids["product"]], ("the held member was dropped", calls)
+
+
+# --------------------------------------------------------------------------- kept_aside after grounding
+def test_r6_s3_a_word_set_aside_under_keep_stays_set_aside_after_grounding_rewrites_it():
+    from app.services.chatbot.turn import chat_state
+    from app.services.chatbot.turn.state import Focus, State
+
+    held = {"raw": "Wash Basin", "canonical_code": None, "hint": "product_type", "current_message": False, "confident": True}
+    focus = Focus(domains=["inventory"], extra={"product_type": [held]})
+    typed = {"raw": "washbasin", "hint": "product_type", "canonical_code": "wash_basin", "current_message": True, "confident": True}
+    out = chat_state.apply_changes(State(focus=focus, turn_no=3), {"state_changes": [_op("keep")], "entities": [typed],
+                                   "domain_hint": "inventory", "intent_hint": "check_stock"},
+                                   open_question=None, domains=["inventory"], kinds=["product_type"], brands=[],
+                                   positions_read_elsewhere=False)
+    assert out.valid, out.log
+    # grounding (head/grounding.py ~806 / ~819) replaces the typed name with the listed / canonical one
+    grounded = {**typed, "raw": "Wash Basin", "canonical_code": None}
+    ents = chat_state.fetch_entities(out.state.subject, {"entities": [grounded]}, out.state.focus, unsettled_only=False)["entities"]
+    riding = [e for e in ents if e.get("current_message") is not False and e.get("hint") == "product_type"]
+    assert not riding, ("the keep's word rode along after grounding rewrote it", riding)
+
+
+# --------------------------------------------------------------------------- _class_members: unknown keeps the held set
+def test_r6_s3_a_said_class_that_resolves_to_no_category_keeps_the_held_set(session_factory):
+    from app.models.base import set_company_scope
+    from app.services.chatbot.engine import _class_members
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+
+    ids = seed_rows(session_factory, [("ZZTCM-A", "ZZTCMA", "trap_type", "s_trap")], registry=TRAP_REG)
+    db = session_factory()
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    held = [ids["ZZTCM-A"]]
+    assert _class_members(db, [{"value": "zzqxunknownclassword", "key": None, "hint": "category"}], held) == set(held)
+
+
+def test_r6_s3_a_class_row_whose_key_resolves_when_its_value_does_not_uses_the_key(session_factory):
+    from app.models.base import set_company_scope
+    from app.services.chatbot.engine import _class_members
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+
+    wc = seed_rows(session_factory, [("ZZTCM-W", "ZZTCMW", "trap_type", "s_trap")], registry=TRAP_REG, class_label="Water Closet")
+    basin = seed_rows(session_factory, [("ZZTCM-B", "ZZTCMB", "trap_type", "s_trap")], class_label="Basin")
+    db = session_factory()
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    held = [wc["ZZTCM-W"], basin["ZZTCM-B"]]
+    row = {"value": "zzqxunknownclassword", "key": "Water Closet", "hint": "category", "canonical_code": "Water Closet"}
+    assert _class_members(db, [row], held) == {wc["ZZTCM-W"]}
+
+
+# --------------------------------------------------------------------------- held_family_landed: Subject and focus agree
+def test_r6_s3_after_a_held_family_landing_the_next_fetch_holds_only_the_matched_members():
+    from app.services.chatbot.turn import chat_state
+    from app.services.chatbot.turn.state import Focus, State
+
+    old = [{"raw": f"OLD{i}", "canonical_code": f"OLD{i}", "hint": "product", "uuid": f"0000000{i}-0000-0000-0000-000000000000",
+            "described_set": True, "current_message": False} for i in range(2)]
+    focus = Focus(products=old, domains=["inventory"])
+    state = State(focus=focus, turn_no=3)
+    out = chat_state.apply_changes(state, {"state_changes": [_op("keep")], "entities": [], "domain_hint": "inventory",
+                                           "intent_hint": "check_stock"}, open_question=None, domains=["inventory"],
+                                   kinds=["product"], brands=[], positions_read_elsewhere=False)
+    assert out.valid, out.log
+    landed, verdict2 = chat_state.held_family_landed(out.state, out.verdict, ["SRTWC286-SH-P", "SRTWC286-SH-NEW-P"])
+    ents = chat_state.fetch_entities(landed.subject, {"entities": []}, landed.focus, unsettled_only=False)["entities"]
+    codes = {str(e.get("canonical_code") or e.get("raw")) for e in ents if e.get("hint") == "product"}
+    assert codes == {"SRTWC286-SH-P", "SRTWC286-SH-NEW-P"}, ("old described_set rows ride beside the matched tokens", codes)
