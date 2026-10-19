@@ -209,9 +209,17 @@ function BoolRow({
   );
 }
 
-function Labelled({ label, children }: { label: string; children: ReactNode }) {
+function Labelled({
+  label,
+  children,
+  testId,
+}: {
+  label: string;
+  children: ReactNode;
+  testId?: string;
+}) {
   return (
-    <div className="flex flex-col gap-1 py-1">
+    <div data-testid={testId} className="flex flex-col gap-1 py-1">
       <span className="text-sm">{label}</span>
       {children}
     </div>
@@ -564,65 +572,66 @@ type Entry = {
   is_allowed: boolean;
 };
 
+const fieldId = (e: Omit<Entry, 'is_allowed'>) =>
+  `${e.agent_code}|${e.resource}|${e.field_key}`;
+
+/** One entry per field, the last winning as the server applies them: a tag saved before the
+ * server refused repeats can still hold a field twice. */
+function uniqueAgentFields(entries: Entry[]): Entry[] {
+  return [...new Map(entries.map((e) => [fieldId(e), e])).values()];
+}
+
+/** Allow and Deny lists: a tag entry overrides the agent's default either way. */
 function AgentFields({ s, set, editing, catalog }: BodyProps) {
-  const entries = (s.agent_fields ?? []) as Entry[];
-  const [pick, setPick] = useState('');
+  const entries = uniqueAgentFields((s.agent_fields ?? []) as Entry[]);
   const agents = catalog.agents ?? [];
   const agentName = (code: string) =>
     agents.find((a) => a.code === code)?.label ?? 'Removed agent';
   // The gated fields the server knows, each with the agent that owns it: no free text.
   const gated = (catalog.agent_fields ?? []).map((f) => ({
-    value: `${f.agent_code}|${f.resource}|${f.field_key}`,
-    label: `${agentName(f.agent_code)}: ${f.field_key}`,
+    value: fieldId(f),
+    label: `${agentName(f.agent_code)}: ${f.label}`,
   }));
+  const ids = (allowed: boolean) =>
+    entries.filter((e) => e.is_allowed === allowed).map(fieldId);
+  const lists = { allow: ids(true), deny: ids(false) };
+  const write = (allow: string[], deny: string[]) => {
+    const entry = (id: string, is_allowed: boolean) => {
+      const [agent_code, resource, field_key] = id.split('|');
+      return { agent_code, resource, field_key, is_allowed };
+    };
+    set('agent_fields', [
+      ...allow.map((id) => entry(id, true)),
+      ...deny.map((id) => entry(id, false)),
+    ]);
+  };
+  if (!editing && !entries.length) return <Pills labels={[]} />;
   return (
     <div>
-      {entries.map((e, i) => (
-        <BoolRow
-          key={`${e.agent_code}.${e.resource}.${e.field_key}`}
-          id={`${e.agent_code}.${e.resource}.${e.field_key}`}
-          label={`${agentName(e.agent_code)}: ${e.field_key}`}
-          value={e.is_allowed}
-          onChange={(v) =>
-            set(
-              'agent_fields',
-              v === undefined
-                ? entries.filter((_, j) => j !== i)
-                : entries.map((x, j) =>
-                    j === i ? { ...x, is_allowed: v } : x,
-                  ),
-            )
-          }
-          editing={editing}
-          words={['Allow', 'Deny']}
-        />
-      ))}
-      {editing ? (
-        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-          <SearchableSelect
-            value={pick}
-            onChange={setPick}
-            options={gated}
-            placeholder="Gated field"
-            clearable
-          />
-          <Button
-            type="button"
-            variant="outline"
-            disabled={!pick}
-            onClick={() => {
-              const [agent_code, resource, field_key] = pick.split('|');
-              set('agent_fields', [
-                ...entries,
-                { agent_code, resource, field_key, is_allowed: true },
-              ]);
-              setPick('');
-            }}
+      {(['allow', 'deny'] as const).map((which) => {
+        const other = which === 'allow' ? lists.deny : lists.allow;
+        if (!editing && !lists[which].length) return null;
+        return (
+          <Labelled
+            key={which}
+            label={which === 'allow' ? 'Allow' : 'Deny'}
+            testId={`agent-fields-${which}`}
           >
-            Add field
-          </Button>
-        </div>
-      ) : null}
+            <PickList
+              value={lists[which]}
+              onChange={(v) =>
+                which === 'allow'
+                  ? write(v ?? [], lists.deny)
+                  : write(lists.allow, v ?? [])
+              }
+              // A field sits in one list: the other list's picks are not offered.
+              options={gated.filter((o) => !other.includes(o.value))}
+              editing={editing}
+              placeholder="None"
+            />
+          </Labelled>
+        );
+      })}
     </div>
   );
 }
@@ -723,7 +732,7 @@ function cleaned(settings: S): S {
   for (const [k, v] of Object.entries(settings)) {
     if (v === undefined || (isEmptyObject(v) && k !== 'media')) continue;
     if (k === 'media' && isEmptyObject(v)) continue;
-    out[k] = v;
+    out[k] = k === 'agent_fields' ? uniqueAgentFields(v as Entry[]) : v;
   }
   return out;
 }
