@@ -97,14 +97,21 @@ def _phrase(text: str) -> str:
     return " ".join(_WORD_RE.findall(str(text).casefold().replace("_", " ")))
 
 
-def _vocabulary(db: "Session") -> tuple[dict[str, list[_Value]], dict[str, list[str]]]:
+def _registry(db: "Session", hidden: frozenset[str]) -> list:
+    """The active registry rows minus the contact's hidden spec keys: the ONE place a hidden
+    key leaves what the parser is shown (value, size and boolean lines all read through it)."""
+    from app.services.product_spec_registry import active_registry
+
+    return [row for row in active_registry(db) if row.spec_key not in hidden]
+
+
+def _vocabulary(db: "Session", hidden: frozenset[str] = frozenset()) -> tuple[dict[str, list[_Value]], dict[str, list[str]]]:
     """Every enum registry value under each of its phrases (value, label, synonyms), and
     every numeric key under the words that name it ("in 1" for `piece_count`). The class
     key is an open vocabulary: its values are its worded labels plus every class label a
     category carries."""
     from app.models.product import ProductCategory
     from app.services.product_spec_registry import (
-        active_registry,
         display_spec_value,
         merged_allowed_values,
         merged_synonyms,
@@ -112,7 +119,7 @@ def _vocabulary(db: "Session") -> tuple[dict[str, list[_Value]], dict[str, list[
 
     phrases: dict[str, list[_Value]] = {}
     numeric: dict[str, list[str]] = {}
-    for row in active_registry(db):
+    for row in _registry(db, hidden):
         data_type = (row.data_type or "").lower()
         if row.spec_key in SKIP_KEYS:
             continue
@@ -188,8 +195,8 @@ def _numeric_candidates(numeric: dict[str, list[str]], grams: list[tuple[int, st
     return out
 
 
-def _value_candidates(db: "Session", tokens: list[str]) -> list[WordCandidates]:
-    vocab, numeric = _vocabulary(db)
+def _value_candidates(db: "Session", tokens: list[str], hidden: frozenset[str] = frozenset()) -> list[WordCandidates]:
+    vocab, numeric = _vocabulary(db, hidden)
     if not vocab and not numeric:
         return []
     words = [_phrase(t) for t in tokens]
@@ -322,25 +329,21 @@ def _code_candidates(db: "Session", tokens: list[str]) -> list[WordCandidates]:
 _SIZE_RE = re.compile(r"(\d+(?:\.\d+)?)([a-z]+)")
 
 
-def _unit_keys(db: "Session") -> dict[str, list[str]]:
+def _unit_keys(db: "Session", hidden: frozenset[str] = frozenset()) -> dict[str, list[str]]:
     """Every numeric registry key under its own unit (`{"mm": ["dim_length", ...]}`)."""
-    from app.services.product_spec_registry import active_registry
-
     units: dict[str, list[str]] = {}
-    for row in active_registry(db):
+    for row in _registry(db, hidden):
         unit = str(getattr(row, "unit", None) or "").strip().casefold()
         if (row.data_type or "").lower() == "numeric" and unit and row.spec_key not in SKIP_KEYS:
             units.setdefault(unit, []).append(row.spec_key)
     return {unit: sorted(set(keys)) for unit, keys in units.items()}
 
 
-def _bare_size_keys(db: "Session") -> dict[str, list[str]]:
+def _bare_size_keys(db: "Session", hidden: frozenset[str] = frozenset()) -> dict[str, list[str]]:
     """The numeric keys a size given alone can mean, per unit: the registry's own
     `matches_bare_size` flag, or a key a class scopes (`applies_when.class`). Data only."""
-    from app.services.product_spec_registry import active_registry
-
     out: dict[str, list[str]] = {}
-    for row in active_registry(db):
+    for row in _registry(db, hidden):
         unit = str(getattr(row, "unit", None) or "").strip().casefold()
         scoped = bool((getattr(row, "applies_when", None) or {}).get("class"))
         if (row.data_type or "").lower() == "numeric" and unit and (getattr(row, "matches_bare_size", False) or scoped):
@@ -385,13 +388,13 @@ def _keys_holding(db: "Session", keys: list[str], number: str, family: set[str])
 
 
 def _size_candidates(
-    db: "Session", tokens: list[str], held_ids: list[str] | None = None
+    db: "Session", tokens: list[str], held_ids: list[str] | None = None, hidden: frozenset[str] = frozenset()
 ) -> tuple[list[WordCandidates], set[int]]:
     """SIZE-AS-CODE (crew, 18 Oct 2026): a number with a unit a numeric key carries ("600mm",
     "600 mm") is that key's value, offered as `spec K = N` for each such key, and the words
     it spans are never code words (a code merely holding "600mm" is not what was said). The
     units are the registry's own (`product_spec_registry.unit`)."""
-    units = _unit_keys(db)
+    units = _unit_keys(db, hidden)
     if not units:
         return [], set()
     out: list[WordCandidates] = []
@@ -413,7 +416,7 @@ def _size_candidates(
 
             family = _family_ids(db, held_ids) if held_ids else set()
         unit_name = shown.split()[-1] if " " in shown else _SIZE_RE.fullmatch(shown).group(2)
-        bare = _bare_size_keys(db).get(unit_name, [])
+        bare = _bare_size_keys(db, hidden).get(unit_name, [])
         bare_held = _keys_holding(db, bare, number, family) if bare else []
         keys = _keys_holding(db, keys, number, family) or keys
         items = [f"spec {key} = {number}" for key in keys]
@@ -425,15 +428,18 @@ def _size_candidates(
     return out, spanned
 
 
-def shortlist(db: "Session", message: str, held_ids: list[str] | None = None) -> list[WordCandidates]:
-    """The candidates for every word of `message` that has any, in message order."""
+def shortlist(
+    db: "Session", message: str, held_ids: list[str] | None = None, hidden: frozenset[str] = frozenset()
+) -> list[WordCandidates]:
+    """The candidates for every word of `message` that has any, in message order. A key in
+    `hidden` (the contact's hidden spec keys) is named by no line."""
     tokens = _tokens(message)
     if not tokens:
         return []
-    sizes, spanned = _size_candidates(db, tokens, held_ids)
+    sizes, spanned = _size_candidates(db, tokens, held_ids, hidden)
     code_words = list(dict.fromkeys(t for position, t in enumerate(tokens) if position not in spanned))
     merged: dict[str, WordCandidates] = {}
-    for entry in sizes + _value_candidates(db, tokens) + _code_candidates(db, code_words):
+    for entry in sizes + _value_candidates(db, tokens, hidden) + _code_candidates(db, code_words):
         held = merged.setdefault(entry.gram, WordCandidates(gram=entry.gram, position=entry.position))
         held.items.extend(item for item in entry.items if item not in held.items)
     ordered = sorted(merged.values(), key=lambda e: (e.position, -len(e.gram)))

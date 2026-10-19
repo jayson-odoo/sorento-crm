@@ -1090,14 +1090,28 @@ def closed_lists_verdict(verdict: dict[str, Any], *, gate: bool) -> dict[str, An
     return {k: v for k, v in verdict.items() if k != "closed_lists"} if "closed_lists" in verdict else verdict
 
 
-def _candidate_lines(db: Session, latest_user_message: str, held_ids: list[str] | None = None) -> list[str] | None:
+def _strip_hidden_spec_entities(verdict: dict[str, Any], hidden: frozenset[str]) -> dict[str, Any]:
+    """H1: the parser's own emission is the second entry a contact-hidden spec key must not
+    pass; a spec entity on one is dropped here, before grounding or any other consumer."""
+    entities = verdict.get("entities")
+    if not hidden or not isinstance(entities, list):
+        return verdict
+    kept = [e for e in entities if not (isinstance(e, dict) and e.get("spec_key") in hidden)]
+    return verdict if len(kept) == len(entities) else {**verdict, "entities": kept}
+
+
+def _candidate_lines(
+    db: Session, latest_user_message: str, held_ids: list[str] | None = None, hidden: frozenset[str] = frozenset()
+) -> list[str] | None:
     """The candidate block for the message's OWN first line (the quoted reply under it is
     not this message's words, the line grounding reads too). It only advises the parser,
     so a failure leaves it out and the turn goes on (savepoint: the session stays usable)."""
     message = latest_user_message.split("\n", 1)[0]
     try:
         with db.begin_nested():
-            return candidates_mod.candidate_lines(candidates_mod.shortlist(db, message, held_ids))
+            # `hidden` rides only when the contact has some, so a bare caller's call is unchanged.
+            extra = {"hidden": hidden} if hidden else {}
+            return candidates_mod.candidate_lines(candidates_mod.shortlist(db, message, held_ids, **extra))
     except Exception:  # noqa: BLE001 - advisory block, never a failed turn
         logger.warning("chatbot: candidate shortlist failed; parsing without it", exc_info=True)
         return None
@@ -4593,11 +4607,19 @@ def _run_stages_body(  # noqa: PLR0915
         product_details = turn_runtime.product_detail_values(db)
         # CHAT-CLOSED-LISTS: what is on file under the words of this message, for a
         # version carrying the CLOSED LISTS section only (code shortlists, the parser picks).
+        # H1: the contact's hidden spec keys (the real policy, `head/access`), read once here and
+        # applied at the parser's two entries (the block it is shown, the spec entities it emits).
+        hidden_spec = (
+            frozenset(access_mod._hidden_spec_keys(db, contact_id=str(contact_respond_id), space_id=default_space_id(db)))
+            if parser_config.closed_lists
+            else frozenset()
+        )
         candidate_lines = (
             _candidate_lines(
                 db,
                 latest_user_message,
                 [str(p["uuid"]) for p in state_in.focus.products if isinstance(p, dict) and p.get("uuid")],
+                hidden_spec,
             )
             if parser_config.closed_lists and isinstance(latest_user_message, str)
             else None
@@ -4925,6 +4947,7 @@ def _run_stages_body(  # noqa: PLR0915
     # is on the list.
     # ATTACH-GROUNDING-TYPO: `ctx.parse._parser_raw` is the verdict as it stood before
     # grounding rewrote the entities.
+    verdict = _strip_hidden_spec_entities(verdict, hidden_spec)
     parser_verdict = copy.deepcopy(verdict)
     # REPORT-ENGINE 1b code review S3: a sales ranking's brand / sales agent / category
     # words are the lane's own (matched against their tables, an exact name winning alone),
@@ -4933,13 +4956,6 @@ def _run_stages_body(  # noqa: PLR0915
 
     verdict, _ranking_words = _report_ask.hold_words(verdict)
     with _session(session_factory) as grounding_db:
-        # The contact's hidden spec keys (the real policy, `head/access`), read once for the
-        # CLOSED LISTS size path and the held family: a hidden key never filters or narrows.
-        hidden_spec = (
-            frozenset(access_mod._hidden_spec_keys(grounding_db, contact_id=str(contact_respond_id), space_id=default_space_id(grounding_db)))
-            if parser_config.closed_lists
-            else frozenset()
-        )
         verdict, grounding_notes = grounding.ground(
             grounding_db,
             verdict,
