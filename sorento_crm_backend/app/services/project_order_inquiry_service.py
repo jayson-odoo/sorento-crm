@@ -171,6 +171,11 @@ _SAVED_TOLD_KEY = "oi_saved_lines_told"
 #: netting (`_oi_demand_rows`) takes `qty` off, and the saved lines' email words read it
 #: (`explained_by_splits`).
 SPLIT_MOVED_KEY = "oi_split_moved_by_origin"
+#: OI-LINE-SPLIT (AC-G19): per line of the running Confirm, `{split id: qty moved}` (empty when
+#: nothing moved). `split_declines` reads an acting plan's declines off it; it lives until the
+#: session commits, so the Confirm's email reads what its engine read. Not the rows (before the
+#: netting, after it and before any Confirm they read alike) nor the stamp (written after).
+SPLIT_CONFIRMED_KEY = "oi_split_confirmed_moves"
 #: OI-LINE-SPLIT: per sales order, the lines the running Confirm moved to their split plan
 #: (`_kept_split_needs`); `_tell_splits` tells their plan rows.
 SPLIT_ACTED_KEY = "oi_split_acted_by_order"
@@ -1453,6 +1458,12 @@ class ProjectOrderInquiryService:
             inquiry, decision, buy_lines, line_changes=line_changes, exclude=later_changes,
             replanned=replanned,
         )
+        moved_now = self.db.info.get(SPLIT_MOVED_KEY) or {}
+        confirmed = self.db.info.setdefault(SPLIT_CONFIRMED_KEY, {})
+        for entry in buy_lines:
+            if entry.get("line") is not None:
+                line_id = str(entry["line"].id)
+                confirmed[line_id] = dict((moved_now.get(line_id) or {}).get("splits") or {})
         split_line_ids = self._apply_pure_splits(inquiry, decision, buy_lines)
         settled_in_place.extend(sorted(split_line_ids))
         # OI-LINE-SPLIT (UAC AC-G10): a split line's rows follow its plan. What its splits
@@ -1531,7 +1542,9 @@ class ProjectOrderInquiryService:
                 if str(line.id) in settle_in_place:
                     settled_in_place.append(str(line.id))
                 continue
-            if (kept_splits.get(str(line.id)) or {}).get("own_rows"):
+            if (kept_splits.get(str(line.id)) or {}).get("own_rows") or (
+                kept_splits.get(str(line.id)) or {}
+            ).get("received"):
                 # P2 (a): AutoCount moved on from a plan with kept New-line rows; those rows
                 # stand and `_keep_split_rows` moves the line's own row, never the netting
                 # (which would restate every row of the line onto the new figures). The rows
@@ -4601,7 +4614,7 @@ class ProjectOrderInquiryService:
         }
         stored = [split for f in facts.values() for split in f.splits]
         sits = service.effective_sits_on(stored)
-        plans = self.output_line_plans(facts, sits)
+        plans = self.output_line_plans(facts, sits, self.declines_for_orders([pso_id]))
         told: Dict[str, List[Dict[str, Any]]] = {}
         kept: List[Dict[str, Any]] = []
         for item in queue:
@@ -5856,34 +5869,14 @@ class ProjectOrderInquiryService:
         stored = [split for f in facts.values() for split in f.splits]
         sits = service.effective_sits_on(stored)
         plans = line_plans(facts, sits, {target for target in sits.values() if target})
-        moved = self.db.info.get(SPLIT_MOVED_KEY) or {}
         changes = self._qty_changes(list(entries), line_changes or {})
         acted: Dict[str, Dict[str, Any]] = {}
         needs: Dict[str, Decimal] = {}
         standing: set = set()
         told: set = set()
-        declined_in: Dict[str, Decimal] = defaultdict(lambda: _ZERO)
-        # What other lines' plans drop on each line (their stale plans aside).
-        incoming: Dict[str, Decimal] = defaultdict(lambda: _ZERO)
-        for other_id, other in facts.items():
-            if other.split_state == SPLIT_STALE:
-                continue
-            for split in other.splits:
-                on = sits.get(str(split.id))
-                if not split.is_cancel and on and on != other_id:
-                    incoming[on] += _dec(split.qty)
-
-        def _grew(target: str) -> Optional[Decimal]:
-            """What the target's AutoCount qty grew by: in this Confirm, else in the last
-            change applied to it; `None` when neither is known."""
-            before, after = changes.get(target, (None, None))
-            if after is not None:
-                return after - (before if before is not None else _ZERO)
-            if facts.get(target) is not None and facts[target].refers_back:
-                # No change in this Confirm: the growth the last applied change brought.
-                return facts[target].now_qty - facts[target].applied_base()[0]
-            return None
-
+        # The one reading of declined moves (AC-G12 / AC-G19), the email's and Excel's too.
+        reading = self.split_declines(facts, sits, plans)
+        declined = reading["declined"]
         for line_id in sorted(whole):
             f = facts[line_id]
             state = f.split_state
@@ -5928,68 +5921,33 @@ class ProjectOrderInquiryService:
                 rows = ([(own_qty, own_date)] if own_qty > _ZERO else []) + new_line
                 cancels = _ZERO
             else:
-                taken = (
-                    (moved.get(line_id) or {}).get("splits") or {}
-                    if state == SPLIT_ACTING or line_id in (replanned or {})
-                    else {}
-                )
+                # Its splits that stay on it or on New line, and what its declined moves left
+                # on it (`split_declines`).
                 kept: List[Tuple[Decimal, Optional[date], Optional[str]]] = []
                 for split in f.splits:
+                    on = sits.get(str(split.id))
                     if split.is_cancel:
                         continue
-                    left = _dec(split.qty) - _dec(taken.get(str(split.id)))
-                    if left > _ZERO:
-                        kept.append((left, split.delivery_date, sits.get(str(split.id))))
-                extra = plans[line_id].extra_qty or _ZERO
-
-                def _laid(kept_rows, extra_qty):
-                    carrier = next(
-                        (k for k in kept_rows if k[2] == line_id),
-                        kept_rows[0] if kept_rows else None,
+                    qty = (
+                        _dec(split.qty)
+                        if on in (line_id, None)
+                        else _dec(declined.get(str(split.id)))
                     )
-                    laid = [
-                        (qty + (extra_qty if k is carrier else _ZERO), when)
-                        for k in kept_rows
-                        for qty, when, _on in (k,)
-                    ]
-                    if carrier is None and extra_qty > _ZERO:
-                        laid = [(extra_qty, f.now_date)]
-                    return laid
-
+                    if qty > _ZERO:
+                        kept.append((qty, split.delivery_date, on))
+                extra = plans[line_id].extra_qty or _ZERO
                 if state == SPLIT_APPLIED:
-                    # Of the splits on other lines, the origin still holds only what a declined
-                    # move left it (what its rows ask beyond its own plan).
-                    own = [k for k in kept if k[2] in (line_id, None)]
-                    # A re-planned line's rows on a document received in full hold its plan
-                    # too: a split they keep could not move (AC-G19).
-                    away = [k for k in kept if k[2] not in (line_id, None)]
-
-                    def _keeps(extra_qty):
-                        held = self._held_back(
-                            line_id,
-                            sum((k[0] for k in own), _ZERO) + extra_qty,
-                            [k[0] for k in away],
-                            received=line_id in (replanned or {}),
-                        )
-                        return own + [
-                            (take, when, on)
-                            for take, (_qty, when, on) in zip(held, away)
-                            if take > _ZERO
-                        ]
-
-                    plain = _keeps(extra)
-                    if incoming[line_id] > _ZERO and Counter(
-                        _laid(_keeps(extra + incoming[line_id]), extra + incoming[line_id])
-                    ) in (current, with_received):
-                        # AC-G19: what other lines' plans drop on this line already sits in its
-                        # row (their links moved in, its AutoCount counts it): it stands.
-                        extra = extra + incoming[line_id]
-                        plain = _keeps(extra)
-                    kept = plain
-                for qty, _when, on in kept:
-                    if on and on != line_id:
-                        declined_in[on] += qty
-                rows = _laid(kept, extra)
+                    # AC-G19: what other lines' plans drop on this line already sits in its
+                    # row (their links moved in, its AutoCount counts it).
+                    extra += reading["incoming"].get(line_id, _ZERO)
+                carrier = next((k for k in kept if k[2] == line_id), kept[0] if kept else None)
+                rows = [
+                    (qty + (extra if k is carrier else _ZERO), when)
+                    for k in kept
+                    for qty, when, _on in (k,)
+                ]
+                if carrier is None and extra > _ZERO:
+                    rows = [(extra, f.now_date)]
             # A CANCEL BALANCE the line already tells counts too: its explicit cancel splits,
             # or what an earlier re-plan dropped (AC-G17), which a re-Confirm keeps as it is.
             held_cancel = self._live_cancel_qty(line_id)
@@ -6012,6 +5970,12 @@ class ProjectOrderInquiryService:
                 continue
             needs[line_id] = sum((qty for qty, _when in rows), _ZERO)
             acted[line_id] = {
+                # AC-G12 (B10): rows all on documents received in full that hold the plan's
+                # total are cut to the plan themselves; nothing is bought again beside them.
+                "received": not current
+                and bool(with_received)
+                and sum((qty * n for (qty, _w), n in with_received.items()), _ZERO)
+                == needs[line_id],
                 "rows": rows,
                 "cancels": cancels,
                 # What purchasing held for the line before this Confirm (after the moves): a
@@ -6022,18 +5986,10 @@ class ProjectOrderInquiryService:
                 "entry": entries[line_id],
                 "own_rows": own_rows,
             }
-        for target, qty in declined_in.items():
+        for target, held in sorted(reading["held"].items()):
             if target in needs or target in standing or target not in entries:
                 continue
-            grew = _grew(target)
-            if grew is None or grew <= _ZERO:
-                continue
-            # Crew ruling (a): AutoCount's growth already counts the qty the origin keeps, but
-            # the cut never goes below what the target already holds (AC-G19: no CANCEL from
-            # splits, ever).
-            needs[target] = max(
-                _dec(entries[target].get("buy_qty")) - min(qty, grew), self._placed_qty(target)
-            )
+            needs[target] = held
         # AC-G13 / AC-G19: a line other lines' splits sit on, not split itself and with no
         # AutoCount change in this Confirm, whose rows already hold its Buy stands like a
         # split line whose rows are its plan (the netting would restate its linked row).
@@ -6280,59 +6236,122 @@ class ProjectOrderInquiryService:
             _ZERO,
         )
 
-    def _held_back(
-        self, line_id: str, stays: Decimal, away: Sequence[Decimal], *, received: bool = True
-    ) -> List[Decimal]:
-        """AC-G12 / AC-G19: of the qty a line's applied plan drops on other lines (`away`, in
-        plan order), what its rows still hold, a move that was declined: what they ask
-        beyond what stays on the line (`stays`: its own and New-line splits and AutoCount's
-        extra). The one reading the Confirm engine and the email and Excel share."""
-        spare = self._asked_qty(line_id, received=received) - stays
-        out: List[Decimal] = []
-        for qty in away:
-            take = max(min(qty, spare), _ZERO)
-            out.append(take)
-            spare -= take
-        return out
+    def split_declines(
+        self, facts: Dict[str, Any], sits: Dict[str, Optional[str]], plans: Dict[str, Any]
+    ) -> Dict[str, Dict[str, Decimal]]:
+        """AC-G12 / AC-G19: the one reading of declined moves. The Confirm engine
+        (`_kept_split_needs`), the email (`_tell_splits`) and the Excel all call it the same
+        way, off the lines' facts, where their splits sit and `line_plans`.
 
-    def output_line_plans(
-        self, facts: Dict[str, Any], sits: Dict[str, Optional[str]]
-    ) -> Dict[str, Any]:
-        """AC-G19 (reviewer B6): the plans the Confirm's email and the worklist Excel print:
-        `line_plans`, with what declined moves left on their origins (`_held_back`) read
-        that way, so both print the rows purchasing's worklist holds."""
-        from app.services.project_line_split_service import SPLIT_APPLIED, line_plans
+        * `declined`: per split dropped on another line, the qty its origin still holds. A
+          plan acting in this Confirm keeps what its moves (`SPLIT_CONFIRMED_KEY`) did not
+          take, and one not yet confirmed has declined nothing; an applied plan keeps what
+          its rows (received ones too) hold beyond what stays on it (its own and New-line
+          splits, AutoCount's extra, what others drop on it), splits that did not move in
+          this Confirm first.
+        * `held`: per target of a declined split, what its rows hold for it: its AutoCount
+          qty less the declined qty (up to what its AutoCount grew by), never below what
+          purchasing already holds for it (`_placed_qty`; no CANCEL from splits, ever).
+        * `incoming`: per line, what other lines' plans drop on it and reached it."""
+        from app.services.project_line_split_service import SPLIT_ACTING, SPLIT_STALE
 
-        sitting_on = {target for target in sits.values() if target}
-        plans = line_plans(facts, sits, sitting_on)
-        incoming: Dict[str, Decimal] = defaultdict(lambda: _ZERO)
+        confirmed = self.db.info.get(SPLIT_CONFIRMED_KEY) or {}
+        dropped: Dict[str, Decimal] = defaultdict(lambda: _ZERO)
         for other_id, other in facts.items():
+            if other.split_state == SPLIT_STALE:
+                continue
             for split in other.splits:
                 on = sits.get(str(split.id))
                 if not split.is_cancel and on and on != other_id:
-                    incoming[on] += _dec(split.qty)
+                    dropped[on] += _dec(split.qty)
         declined: Dict[str, Decimal] = {}
-        for line_id, f in facts.items():
-            if not f.splits or f.split_state != SPLIT_APPLIED:
+        declined_in: Dict[str, Decimal] = defaultdict(lambda: _ZERO)
+        for line_id in sorted(facts):
+            f = facts[line_id]
+            if not f.splits or f.split_state == SPLIT_STALE:
                 continue
-            stays = sum(
-                (
-                    _dec(s.qty)
-                    for s in f.splits
-                    if not s.is_cancel and sits.get(str(s.id)) in (line_id, None)
-                ),
-                _ZERO,
-            ) + (plans[line_id].extra_qty or _ZERO) + incoming[line_id]
+            taken = confirmed.get(line_id) or {}
             away = [
                 s for s in f.splits
                 if not s.is_cancel and sits.get(str(s.id)) not in (line_id, None)
             ]
-            for split, take in zip(
-                away, self._held_back(line_id, stays, [_dec(s.qty) for s in away])
-            ):
+            if not away:
+                continue
+            if f.split_state == SPLIT_ACTING:
+                keeps = (
+                    {
+                        str(s.id): max(_dec(s.qty) - _dec(taken.get(str(s.id))), _ZERO)
+                        for s in away
+                    }
+                    if line_id in confirmed
+                    else {}
+                )
+            else:
+                stays = sum(
+                    (
+                        _dec(s.qty)
+                        for s in f.splits
+                        if not s.is_cancel and sits.get(str(s.id)) in (line_id, None)
+                    ),
+                    _ZERO,
+                ) + (plans[line_id].extra_qty or _ZERO) + dropped[line_id]
+                spare = self._asked_qty(line_id) - stays
+                keeps = {}
+                for s in sorted(away, key=lambda s: (_dec(taken.get(str(s.id))) > _ZERO, s.seq)):
+                    take = max(min(_dec(s.qty) - _dec(taken.get(str(s.id))), spare), _ZERO)
+                    keeps[str(s.id)] = take
+                    spare -= take
+            for split in away:
+                take = keeps.get(str(split.id), _ZERO)
                 if take > _ZERO:
                     declined[str(split.id)] = take
-        return line_plans(facts, sits, sitting_on, declined) if declined else plans
+                    declined_in[str(sits[str(split.id)])] += take
+        held: Dict[str, Decimal] = {}
+        for target, qty in declined_in.items():
+            t = facts.get(target)
+            if t is None:
+                continue
+            if t.pending:
+                grew = t.now_qty - t.live_base()[0]
+            elif t.refers_back:
+                grew = t.now_qty - t.applied_base()[0]
+            else:
+                continue
+            if grew <= _ZERO:
+                continue
+            held[target] = max(t.now_qty - min(qty, grew), self._placed_qty(target))
+        incoming = {
+            line_id: qty - declined_in.get(line_id, _ZERO) for line_id, qty in dropped.items()
+        }
+        return {"declined": declined, "held": held, "incoming": incoming}
+
+    def output_line_plans(
+        self, facts: Dict[str, Any], sits: Dict[str, Optional[str]], reading: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """AC-G19 (reviewer B6): the plans the Confirm's email and the worklist Excel print:
+        `line_plans` with `split_declines`' reading, so both print the rows purchasing's
+        worklist holds."""
+        from app.services.project_line_split_service import line_plans
+
+        return line_plans(
+            facts,
+            sits,
+            {target for target in sits.values() if target},
+            reading["declined"],
+            reading["held"],
+        )
+
+    def declines_for_orders(self, order_ids: Iterable[str]) -> Dict[str, Any]:
+        """`split_declines` over every line of these orders (their unfiltered facts)."""
+        from app.services.project_line_split_service import LineSplitService, line_plans
+
+        service = LineSplitService(self.db)
+        facts = service._facts_for(
+            ProjectSalesOrderLine.project_sales_order_id.in_(sorted({str(i) for i in order_ids}))
+        )
+        sits = service.effective_sits_on([s for f in facts.values() for s in f.splits])
+        plans = line_plans(facts, sits, {target for target in sits.values() if target})
+        return self.split_declines(facts, sits, plans)
 
     def _placed_qty(self, line_id: str) -> Decimal:
         """What purchasing already holds for a line, as the netting counts it: its live
@@ -6353,10 +6372,9 @@ class ProjectOrderInquiryService:
                 held += _dec(row.qty)
         return held
 
-    def _asked_qty(self, line_id: str, *, received: bool = False) -> Decimal:
-        """What a line's live ORDER rows still ask purchasing for: not cancelled, not given
-        back to the pool, not a row whose cover is a document received in full (unless
-        `received`)."""
+    def _asked_qty(self, line_id: str) -> Decimal:
+        """What a line's live ORDER rows hold for it: not cancelled, not given back to the
+        pool (rows on a document received in full included: they hold its plan too)."""
         return sum(
             (
                 _dec(row.qty)
@@ -6366,7 +6384,6 @@ class ProjectOrderInquiryService:
                     OrderInquiryRow.state != INQUIRY_CANCELLED,
                 )
                 if not row.redirected_to_pool
-                and (received or not self._received_documents_for(self._links_of(row.id)))
             ),
             _ZERO,
         )
@@ -6412,7 +6429,7 @@ class ProjectOrderInquiryService:
             line = plan["line"]
             want = list(plan["rows"])
             left: List[OrderInquiryRow] = []
-            for row in self._split_line_rows(line_id):
+            for row in self._split_line_rows(line_id, received=bool(plan.get("received"))):
                 key = (_dec(row.qty), row.delivery_date)
                 if key in want:
                     want.remove(key)
@@ -14555,6 +14572,14 @@ def register_order_inquiry_post_commit_dispatch() -> None:
             fresh.close()
 
     @event.listens_for(Session, "after_commit")
+    def _forget_confirmed_split_moves(session):  # noqa: ANN001
+        """OI-LINE-SPLIT (AC-G19): a Confirm's own moves (`SPLIT_CONFIRMED_KEY`) are read by
+        that Confirm only; once its root transaction commits, a later read of the same
+        session reads its plans as they stand."""
+        if session.get_nested_transaction() is None:
+            session.info.pop(SPLIT_CONFIRMED_KEY, None)
+
+    @event.listens_for(Session, "after_commit")
     def _mark_handover_transaction_committed(session):  # noqa: ANN001
         """Record that the ROOT transaction just committed, for `_fire_pending_handover`
         below to tell a genuine root commit apart from a rollback (AC-H27/AC-H28,
@@ -14786,6 +14811,7 @@ def register_order_inquiry_post_commit_dispatch() -> None:
         # not wipe a move whose rows still stand.
         if previous_transaction.parent is None and not previous_transaction.nested:
             session.info.pop(SPLIT_MOVED_KEY, None)
+            session.info.pop(SPLIT_CONFIRMED_KEY, None)
             session.info.pop(SPLIT_ACTED_KEY, None)
         # A write that never landed has nothing to tell purchasing about either - but ONLY
         # that write. This fires on a nested rollback too, and a batch apply gives each

@@ -3471,7 +3471,8 @@ class OrderInquiryWorklistService:
             return rows
         sits = service.effective_sits_on(stored)
         # AC-G19: what declined moves left on their origins prints as the worklist holds it.
-        plans = ProjectOrderInquiryService(self.db).output_line_plans(facts, sits)
+        oi = ProjectOrderInquiryService(self.db)
+        plans = oi.output_line_plans(facts, sits, oi.declines_for_orders(orders))
         out: List[Dict[str, Any]] = []
         printed: set = set()
         for row in rows:

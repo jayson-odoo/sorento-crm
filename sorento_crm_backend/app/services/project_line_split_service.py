@@ -329,14 +329,16 @@ def line_plans(
     sits: Dict[str, Optional[str]],
     sitting_on: set,
     declined: Optional[Dict[str, Decimal]] = None,
+    held: Optional[Dict[str, Decimal]] = None,
 ) -> Dict[str, LinePlan]:
     """Every line's `LinePlan` off its facts and where each split sits (`effective_sits_on`):
     the one place the rows, the AutoCount extra (AC-G3) and every generated REMARK
     (`remark_for_row`) are worked out, for the sheet, the email and the Excel alike.
 
-    `declined` (AC-G19, the email and the Excel): per split, the qty of a declined move its
-    origin still holds. That qty never reached its target, so the target's row prints its
-    ask less it (the Confirm cut it), with no extra row."""
+    `declined` / `held` (AC-G19, the email and the Excel, from the Confirm engine's own
+    reading `split_declines`): per split, the qty of a declined move its origin still holds,
+    and per target, what its rows hold instead. That qty never reached the target, so the
+    target prints one row of what it holds, with no extra row."""
     incoming: Dict[str, Decimal] = {}
     held_back: Dict[str, Decimal] = {}
     for f in facts.values():
@@ -383,8 +385,9 @@ def line_plans(
         )
         extra = f.now_qty - on_line if involved and not in_full else _ZERO
         if cut > _ZERO and not own:
-            # Its ask was cut by what declined moves left on their origins: one row of it.
-            new_qty, extra = f.now_qty - cut, _ZERO
+            # Declined moves never reached it: one row of what its rows hold.
+            new_qty = (held or {}).get(line_id, f.now_qty)
+            extra = _ZERO
         shown_from = (f.pending_from if f.pending else f.applied_from) or {}
         generated = remark_for_row(
             qty=new_qty if cut > _ZERO and not own else f.now_qty,
