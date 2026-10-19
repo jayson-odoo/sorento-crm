@@ -22,11 +22,26 @@ import re
 import sys
 from typing import Any
 
-EXPECT_KEYS = frozenset({"status", "not_status", "domain_hint", "intent_hint", "product", "no_attribute", "customer", "canonical", "attributes_only"})
+EXPECT_KEYS = frozenset({
+    "status", "not_status", "domain_hint", "intent_hint", "product", "no_attribute", "customer", "canonical",
+    "attributes_only", "attributes_include", "attachment_types",
+})
+#: PARSER-TEMPLATE F1-B: what a gold row may say the conversation held before its message. Each
+#: value is the text as the user block shows it, or null.
+CONTEXT_KEYS = frozenset({"previous_reply", "subject", "open_question"})
+
+
+def _valid_context(context: Any) -> bool:
+    return (
+        isinstance(context, dict)
+        and set(context) <= CONTEXT_KEYS
+        and all(value is None or isinstance(value, str) for value in context.values())
+    )
 
 
 def load_gold(path: Any) -> list[dict[str, Any]]:
-    """The gold rows `{id, message, expect}`; ValueError on bad JSON, a blank message, a repeated id or an unknown expect key."""
+    """The gold rows `{id, message, expect}` (plus `context` when the row has one); ValueError on bad
+    JSON, a blank message, a repeated id, an unknown expect key or a malformed context."""
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
     with open(path, encoding="utf-8") as fh:
@@ -46,8 +61,13 @@ def load_gold(path: Any) -> list[dict[str, Any]]:
             expect = row.get("expect", {})
             if not isinstance(expect, dict) or set(expect) - EXPECT_KEYS:
                 raise ValueError(f"line {n}: unknown expect key")
+            if "context" in row and not _valid_context(row["context"]):
+                raise ValueError(f"line {n}: context must map {sorted(CONTEXT_KEYS)} to text or null")
             seen.add(row["id"])
-            rows.append({"id": row["id"], "message": row["message"], "expect": expect})
+            gold = {"id": row["id"], "message": row["message"], "expect": expect}
+            if "context" in row:
+                gold["context"] = row["context"]
+            rows.append(gold)
     return rows
 
 
@@ -83,6 +103,19 @@ def grade_parse(verdict: dict[str, Any], expect: dict[str, Any]) -> tuple[bool, 
         extra = sorted({str(a).casefold() for a in verdict.get("requested_attributes") or []} - allowed)
         if extra:
             reasons.append(f"attributes outside the allowed set: {extra}")
+    if "attributes_include" in expect:
+        asked = {_fold(a) for a in verdict.get("requested_attributes") or []}
+        missing = [a for a in expect["attributes_include"] or [] if _fold(a) not in asked]
+        if missing:
+            reasons.append(f"attributes not requested: {missing}")
+    if "attachment_types" in expect:
+        named = {
+            _fold(e.get(k)) for e in entities if e.get("hint") == "attachment_type"
+            for k in ("canonical_code", "listed_item") if e.get(k)
+        }
+        missing = [t for t in expect["attachment_types"] or [] if _fold(t) not in named]
+        if missing:
+            reasons.append(f"no attachment_type entity for {missing}")
     if "no_attribute" in expect:
         asked = {str(a).casefold() for a in verdict.get("requested_attributes") or []}
         if str(expect["no_attribute"]).casefold() in asked:
@@ -104,8 +137,24 @@ def summarise(rows: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
     return out
 
 
-def _parse_one(message: str, config: Any, factory: Any) -> Any:
-    """The parser's emission for one message, with the user turn the engine builds for a turn with no history."""
+def _state_block(context: dict[str, Any]) -> str:
+    """A gold context as the `State:` block, in `chat_state.render`'s four-line shape (the gold
+    gives the subject already rendered, so there is no Focus to view)."""
+    question = context.get("open_question")
+    return "\n".join([
+        "State:",
+        f"- subject: {context.get('subject') or 'none'}",
+        "- open question: " + (json.dumps(question, ensure_ascii=False) if question else "none"),
+        "- last list: none",
+        "- pending task: none",
+    ])
+
+
+def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] | None = None) -> Any:
+    """The parser's emission for one message, with the user turn the engine builds: for a turn with no
+    history, or (F1-B) for a gold `context` rendered through the same ContextLayers, as the `State:`
+    block when the version asks for one and as the legacy Current subject / Open question lines
+    otherwise."""
     from app.models.base import set_company_scope
     from app.services.chatbot import engine, turn_runtime
     from app.services.chatbot.head import parser
@@ -126,11 +175,19 @@ def _parse_one(message: str, config: Any, factory: Any) -> Any:
         )
     finally:
         db.close()
+    held = context or {}
+    # As the engine: an empty state adds no block.
+    held_any = bool(held.get("subject") or held.get("open_question"))
+    state = _state_block(held) if config.state_block and held_any else None
     layers = context_mod.ContextLayers(
-        level="off", profile_facts=None, summaries=None, earlier_messages=None, previous_response=None,
-        current_subject=None, pending_kind=None, pending_options=None, settings_profile_line=None,
+        level="off", profile_facts=None, summaries=None, earlier_messages=None,
+        previous_response=held.get("previous_reply"),
+        current_subject=None if state else held.get("subject"),
+        pending_kind=None, pending_options=None, settings_profile_line=None,
         current_message=message, reply_to=None, media_line=None, brands=brands, promotion_kinds=promotion_kinds,
         product_types=product_types, product_details=product_details, candidate_lines=lines,
+        open_question_line=None if state else parser.open_question_line(held.get("open_question")),
+        state_block=state,
     )
     user_block, _report = context_mod.assemble(layers)
     return parser.parse(config, user_block)
@@ -190,7 +247,7 @@ def run_live(rows: list[dict[str, Any]], *, session_factory: Any, version_id: st
                         before = total["usd"]
                         row: dict[str, Any] = {"id": case["id"], "repeat": repeat, "prompt_version": config.prompt_version}
                         try:
-                            verdict = dict(_parse_one(case["message"], config, factory))
+                            verdict = dict(_parse_one(case["message"], config, factory, context=case.get("context")))
                             passed, reasons = grade_parse(verdict, case["expect"])
                             row.update(
                                 passed=passed, reasons=reasons,
