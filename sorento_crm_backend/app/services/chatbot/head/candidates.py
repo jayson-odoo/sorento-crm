@@ -9,8 +9,9 @@ none and the bot asks. Nothing here decides what a word means, and nothing downs
 on a candidate: the parser's pick is validated against the lists, never against this
 module's scores.
 
-Bounded: at most `CAP_PER_WORD` candidates per word and `CAP_LINES` lines per message; one
-whole-code query for the message plus one query per word with a digit (at most
+Bounded: at most `CAP_PER_WORD` code rows per word and `CAP_LINES` lines per message (a spec
+line is never cut: every key that holds a value has its line, ranked by data, F3-a); one
+scoped count query for the message's spec and size pairs; one whole-code query for the message plus one query per word with a digit (at most
 `CODE_WORDS_PER_MESSAGE`); the registry read once per call. Runs in the
 session-held phase before the parse; a product read goes through the ORM so the contact's
 company and brand scope and `chat_searchable_products` apply as on every other chat read.
@@ -55,6 +56,10 @@ class WordCandidates:
     gram: str
     position: int
     items: list[str] = field(default_factory=list)
+    #: F3-a: item -> (key, value, "num" | "text") for the spec lines the value index counts.
+    pairs: dict[str, tuple[str, str, str]] = field(default_factory=dict)
+    #: F3-a: a number + unit word, resolved against the counts: (number, unit, keys, bare keys).
+    size: tuple[str, str, list[str], set[str]] | None = None
 
 
 @dataclass(frozen=True)
@@ -252,6 +257,8 @@ def _value_candidates(db: "Session", tokens: list[str], hidden: frozenset[str] =
     ):
         entry = by_gram.setdefault(gram, WordCandidates(gram=gram, position=position))
         entry.items.append(value.text() if exact else f"near {value.text()}")
+        if exact and value.kind != "product type":
+            entry.pairs[value.text()] = (value.spec_key, value.value, "text")
     return list(by_gram.values()) + numbered
 
 
@@ -329,52 +336,52 @@ def _code_candidates(db: "Session", tokens: list[str]) -> list[WordCandidates]:
 _SIZE_RE = re.compile(r"(\d+(?:\.\d+)?)([a-z]+)")
 
 
-def _unit_keys(db: "Session", hidden: frozenset[str] = frozenset()) -> dict[str, list[str]]:
-    """Every numeric registry key under its own unit (`{"mm": ["dim_length", ...]}`)."""
-    units: dict[str, list[str]] = {}
+def _unit_index(db: "Session", hidden: frozenset[str] = frozenset()) -> dict[str, tuple[list[str], set[str]]]:
+    """Every numeric registry key under its own unit, in name order, with the keys a size given
+    alone can mean (the registry's `matches_bare_size` flag, or a key a class scopes):
+    `{"mm": (["dim_length", ...], {"dim_width", ...})}`. Data only."""
+    units: dict[str, tuple[list[str], set[str]]] = {}
     for row in _registry(db, hidden):
         unit = str(getattr(row, "unit", None) or "").strip().casefold()
-        if (row.data_type or "").lower() == "numeric" and unit and row.spec_key not in SKIP_KEYS:
-            units.setdefault(unit, []).append(row.spec_key)
-    return {unit: sorted(set(keys)) for unit, keys in units.items()}
+        if (row.data_type or "").lower() != "numeric" or not unit or row.spec_key in SKIP_KEYS:
+            continue
+        keys, bare = units.setdefault(unit, ([], set()))
+        keys.append(row.spec_key)
+        if getattr(row, "matches_bare_size", False) or (getattr(row, "applies_when", None) or {}).get("class"):
+            bare.add(row.spec_key)
+    return {unit: (sorted(set(keys)), bare) for unit, (keys, bare) in units.items()}
 
 
-def _bare_size_keys(db: "Session", hidden: frozenset[str] = frozenset()) -> dict[str, list[str]]:
-    """The numeric keys a size given alone can mean, per unit: the registry's own
-    `matches_bare_size` flag, or a key a class scopes (`applies_when.class`). Data only."""
-    out: dict[str, list[str]] = {}
-    for row in _registry(db, hidden):
-        unit = str(getattr(row, "unit", None) or "").strip().casefold()
-        scoped = bool((getattr(row, "applies_when", None) or {}).get("class"))
-        if (row.data_type or "").lower() == "numeric" and unit and (getattr(row, "matches_bare_size", False) or scoped):
-            out.setdefault(unit, []).append(row.spec_key)
-    return out
-
-
-def _keys_holding(db: "Session", keys: list[str], number: str, family: set[str]) -> list[str]:
-    """The unit's keys that hold `number` in product_specifications (an exact numeric match on
-    the stored JSON value), the held family's keys first, then the most held, then by name.
-    ONE query for all the keys, through the scoped Product join; `[]` when no key holds it."""
-    from decimal import Decimal, InvalidOperation
+def _support(
+    db: "Session", pairs: set[tuple[str, str, str]], held_ids: list[str] | None
+) -> dict[tuple[str, str, str], tuple[int, int]]:
+    """F3-a: for each (key, value, kind) pair, the chat-searchable products in the contact's
+    scope that hold it and how many of the held family do. ONE query for every pair, through
+    the scoped Product join; a number compares as a number (450 holds 450.0), a text value
+    case-folded."""
+    if not pairs:
+        return {}
+    from decimal import Decimal
 
     from sqlalchemy import Numeric, case, cast, func
 
     from app.models.product import Product, chat_searchable_products
     from app.models.product_spec import ProductSpecifications
+    from app.services.chatbot.head.held_family import _family_ids
 
-    try:
-        wanted = Decimal(number)
-    except InvalidOperation:
-        return []
+    family = _family_ids(db, held_ids) if held_ids else set()
     values = ProductSpecifications.values
+    in_family = ProductSpecifications.product_id.in_(list(family) or ["00000000-0000-0000-0000-000000000000"])
+    ordered = sorted(pairs)
     columns = []
-    for key in keys:
+    for key, value, kind in ordered:
         raw = values[key]["value"]
-        holds = cast(case((func.jsonb_typeof(raw) == "number", raw.astext), else_=None), Numeric) == wanted
+        if kind == "num":
+            holds = cast(case((func.jsonb_typeof(raw) == "number", raw.astext), else_=None), Numeric) == Decimal(value)
+        else:
+            holds = func.lower(raw.astext) == value.casefold()
         columns.append(func.coalesce(func.sum(case((holds, 1), else_=0)), 0))
-        columns.append(
-            func.coalesce(func.sum(case((holds & ProductSpecifications.product_id.in_(list(family) or ["00000000-0000-0000-0000-000000000000"]), 1), else_=0)), 0)
-        )
+        columns.append(func.coalesce(func.sum(case((holds & in_family, 1), else_=0)), 0))
     row = (
         db.query(*columns)
         .select_from(ProductSpecifications)
@@ -382,50 +389,60 @@ def _keys_holding(db: "Session", keys: list[str], number: str, family: set[str])
         .filter(chat_searchable_products())
         .one()
     )
-    counts = {key: (int(row[2 * i]), int(row[2 * i + 1])) for i, key in enumerate(keys)}
-    held = [k for k in keys if counts[k][0] > 0]
-    return sorted(held, key=lambda k: (-(counts[k][1] > 0), -counts[k][0], k))
+    return {pair: (int(row[2 * i]), int(row[2 * i + 1])) for i, pair in enumerate(ordered)}
+
+
+def _by_data(counts: dict, pair: tuple[str, str, str]) -> tuple[int, int, str]:
+    """The rank of a spec line among the keys of one word: the held family's key first, then
+    the most products holding it, then the key name as a stable tiebreak."""
+    total, in_family = counts.get(pair, (0, 0))
+    return (-(in_family > 0), -total, pair[0])
 
 
 def _size_candidates(
-    db: "Session", tokens: list[str], held_ids: list[str] | None = None, hidden: frozenset[str] = frozenset()
+    db: "Session", tokens: list[str], hidden: frozenset[str] = frozenset()
 ) -> tuple[list[WordCandidates], set[int]]:
     """SIZE-AS-CODE (crew, 18 Oct 2026): a number with a unit a numeric key carries ("600mm",
     "600 mm") is that key's value, offered as `spec K = N` for each such key, and the words
     it spans are never code words (a code merely holding "600mm" is not what was said). The
-    units are the registry's own (`product_spec_registry.unit`)."""
-    units = _unit_keys(db, hidden)
+    units are the registry's own (`product_spec_registry.unit`). The entries come back
+    unresolved (`size` set): which keys hold the number is the value index's count."""
+    units = _unit_index(db, hidden)
     if not units:
         return [], set()
     out: list[WordCandidates] = []
     spanned: set[int] = set()
-    family: set[str] | None = None
     for position, token in enumerate(tokens):
         joined = _SIZE_RE.fullmatch(token)
         if joined and joined.group(2) in units:
-            number, keys, shown, span = joined.group(1), units[joined.group(2)], token, {position}
+            number, unit_name, shown, span = joined.group(1), joined.group(2), token, {position}
         elif _is_number(token) and position + 1 < len(tokens) and tokens[position + 1] in units:
-            unit = tokens[position + 1]
-            number, keys, shown, span = token, units[unit], f"{token} {unit}", {position, position + 1}
+            unit_name = tokens[position + 1]
+            number, shown, span = token, f"{token} {unit_name}", {position, position + 1}
         else:
             continue
-        # R5-1: only the keys that hold this number (the held family's first); every key of
-        # the unit when none does.
-        if family is None:
-            from app.services.chatbot.head.held_family import _family_ids
-
-            family = _family_ids(db, held_ids) if held_ids else set()
-        unit_name = shown.split()[-1] if " " in shown else _SIZE_RE.fullmatch(shown).group(2)
-        bare = _bare_size_keys(db, hidden).get(unit_name, [])
-        bare_held = _keys_holding(db, bare, number, family) if bare else []
-        keys = _keys_holding(db, keys, number, family) or keys
-        items = [f"spec {key} = {number}" for key in keys]
-        if bare_held:
-            # R6-1: a size given alone (no dimension named); the parser picks the reserved key "size".
-            items.insert(0, f"size {number} {unit_name} (no dimension named)")
-        out.append(WordCandidates(gram=shown, position=position, items=items))
+        keys, bare = units[unit_name]
+        out.append(WordCandidates(gram=shown, position=position, size=(number, unit_name, keys, bare)))
         spanned |= span
     return out, spanned
+
+
+def _resolve(entries: list[WordCandidates], counts: dict) -> None:
+    """F3-a: a size's lines are the keys that hold the number, ranked by data (every key of the
+    unit, in name order, when none does), the bare-size line first when a flagged key holds it
+    (R6-1); a shared phrase's exact spec lines are ranked by data in the slots they hold."""
+    for entry in entries:
+        if entry.size:
+            number, unit_name, keys, bare = entry.size
+            holders = [k for k in keys if counts.get((k, number, "num"), (0, 0))[0] > 0]
+            ranked = sorted(holders, key=lambda k: _by_data(counts, (k, number, "num"))) or keys
+            entry.items = [f"spec {key} = {number}" for key in ranked]
+            if bare & set(holders):
+                entry.items.insert(0, f"size {number} {unit_name} (no dimension named)")
+            continue
+        slots = [n for n, item in enumerate(entry.items) if item in entry.pairs]
+        for slot, item in zip(slots, sorted((entry.items[n] for n in slots), key=lambda i: _by_data(counts, entry.pairs[i]))):
+            entry.items[slot] = item
 
 
 def shortlist(
@@ -436,16 +453,26 @@ def shortlist(
     tokens = _tokens(message)
     if not tokens:
         return []
-    sizes, spanned = _size_candidates(db, tokens, held_ids, hidden)
+    sizes, spanned = _size_candidates(db, tokens, hidden)
+    values = _value_candidates(db, tokens, hidden)
+    # The pairs that need data: every size's keys, and the exact spec lines of a word two keys share.
+    wanted = {(k, n, "num") for e in sizes for n in [e.size[0]] for k in e.size[2]}
+    for entry in values:
+        if len({pair[0] for pair in entry.pairs.values()}) > 1:
+            wanted.update(entry.pairs.values())
+    _resolve(sizes + values, _support(db, wanted, held_ids))
     code_words = list(dict.fromkeys(t for position, t in enumerate(tokens) if position not in spanned))
     merged: dict[str, WordCandidates] = {}
-    for entry in sizes + _value_candidates(db, tokens, hidden) + _code_candidates(db, code_words):
+    for entry in sizes + values + _code_candidates(db, code_words):
         held = merged.setdefault(entry.gram, WordCandidates(gram=entry.gram, position=entry.position))
         held.items.extend(item for item in entry.items if item not in held.items)
     ordered = sorted(merged.values(), key=lambda e: (e.position, -len(e.gram)))
     for entry in ordered:
         exact = [i for i in entry.items if not i.startswith("near ")]
-        entry.items = (exact + [i for i in entry.items if i.startswith("near ")])[:CAP_PER_WORD]
+        rows = exact + [i for i in entry.items if i.startswith("near ")]
+        # Only a code / near-code row is cut; a spec line is never (every holding key keeps its line).
+        coded = [i for i in rows if i.startswith(("code ", "near code "))][:CAP_PER_WORD]
+        entry.items = [i for i in rows if not i.startswith(("code ", "near code ")) or i in coded]
     return ordered
 
 
