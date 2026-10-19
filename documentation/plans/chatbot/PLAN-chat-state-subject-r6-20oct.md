@@ -1,7 +1,7 @@
 # PLAN: CHAT-STATE round 6 - one typed Subject between parse and tools (F2 / M2)
 
-**Status:** Build: S1..S5 done locally (reviewer READY on S1..S3, security PASS on S1..S4, L1 gate 0/1506 + 0/585 on
-S1..S5); S6 next. Track: L (cross-cutting; the Subject CARRIES company scope + hidden keys this round, while enforcement stays at the
+**Status:** Build, round 6 complete (S1..S6), pushed for CI: reviewer READY (final 2f34e1076a + nits ed718fbf55), security
+PASS (S1..S4), L1 gate vs the pre-round head 0/1506 + 0/585 no errors; paired TRAIN x1 waits for the DEV key. Track: L (cross-cutting; the Subject CARRIES company scope + hidden keys this round, while enforcement stays at the
 existing gates: _readable_customers, doc scope, customer_docs_hidden, hide_customers / scope_linked. S5 / S6 never
 remove those gates; the one-boundary enforcement move is a named follow-up (crew review F2). security-reviewer joins). LEAD pattern. Branch `crew/chat-state-r2`, PR #1772. Approved: crew a29999356 (20 Oct).
 **UAC:** `chat-state-subject-r6-acceptance-criteria.md` (alongside). **Source:** crew/state/reports/
@@ -57,3 +57,15 @@ seven first-line reads. State-off stays byte-identical.
 - L1 gate S1..S5 vs 2d2d2c0e79: grounding 0/1506, turn 0/585, no errors either arm (eval_base got chs_0001). The replay
   corpus is mostly state-off parses, so it proves first asks / state-off unchanged; the state-path effect needs the
   paired TRAIN x1 (DEV key out of credits until the owner tops it up).
+- S5 review: reconcile stays on the state path (crew a41487222 (a); R11 / R15 data-led) and its retype + hint
+  narrowing need an exact whole-token hit (review M2, both paths); count question shown as the State's open question;
+  company pick and clarify answer through the answer op (pinned). The class-word-inside-codes miss comes from the
+  resolver's spec_search substring on the whole-message phrase (references.py); CHAT-CLOSED-LISTS-L owns it (crew
+  a43940036 (b)); 4 reds xfail(strict) here.
+- S6: UserTurn (user_turn.py) built once per turn for webhook + direct ingress; 8 first-line reads moved; value-
+  identical off the state path (first_text_line_of pinned). Follow-up: on a blank own line the four legacy readers read
+  the quoted `reply to:` line as the customer's words (old behaviour kept).
+- Push (crew a44494231 (a)): on main + #1755 1e10fc261c. #1755's newer head re-adds names_own_class seams
+  (class_named.py); crew asks CHAT-CLOSED-LISTS-L to make them state-OFF only; when #1755 lands, merge main and verify
+  no seam fires under the state gate.
+- Local env, not lane: test_direct_ingress (4) + test_queue_fix_1oct (2) fail identically at d29ad44928 (CI green there).
