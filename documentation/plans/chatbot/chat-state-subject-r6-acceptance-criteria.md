@@ -25,7 +25,9 @@ trace is byte-identical to today unless a line says otherwise.
 - AC-S1-9 (review round 2, lead decision per card R1 / R4 / R5) The op decides the other held axes: `set` (refine)
   keeps every held axis it does not set; `keep` changes nothing (a restated held value keeps every axis; a value typed
   under keep is not a change); `answer` fills ONLY the asked slot and keeps the others (card R5); `new_subject` drops
-  every held axis, the product axis included (card R4); a rejected change set leaves the held Subject as it was.
+  every held axis, the product axis included (card R4); a rejected change set keeps every held axis and lets a value
+  typed this message fill only its own axis, exactly the held Subject when nothing was typed (lead decision, review
+  round 2: with the ops untrusted, the typed words are the only signal).
 - AC-S1-10 (review round 2) A held product without a uuid stays in the Subject as a token (key = its code) and the
   fetch hands it over, as the browser-pass-6 promo turn 0bd47e62 needs (never a fetch scoped to no product).
 - AC-S1-11 (review round 2) Settle keeps the said tokens it could not place in `unplaced`; a Subject with placed ids
