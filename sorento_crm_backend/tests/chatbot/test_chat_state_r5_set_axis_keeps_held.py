@@ -34,18 +34,41 @@ class StateChat(_Leena):
     """Round 7's chat with the State path on, as the live prompt version has it."""
 
     def say(self, text: str, verdict: dict[str, Any]) -> str:
-        real = parser_mod.resolve_config
+        inst = self.stub_parser
+        real_inst = inst
 
-        def with_state(db, *, current_date, override_version_id=None):
-            cfg = real(db, current_date=current_date, override_version_id=override_version_id)
-            return dataclasses.replace(cfg, state_block=True)
+        def wrapped(output=None, **kw):
+            real_inst(output, **kw)
+            real = parser_mod.resolve_config
 
-        self.stub_parser(verdict)
-        parser_mod.resolve_config = with_state
+            def with_state(db, *, current_date, override_version_id=None):
+                cfg = real(db, current_date=current_date, override_version_id=override_version_id)
+                return dataclasses.replace(cfg, state_block=True)
+
+            parser_mod.resolve_config = with_state
+
+        self.stub_parser = wrapped
+        orig = parser_mod.resolve_config
+        # Guard: the engine's state path runs `chat_state.apply_changes` on a verdict that
+        # carries `state_changes`; if state_block never reaches the engine it is never called.
+        from app.services.chatbot.turn import chat_state
+
+        real_apply = chat_state.apply_changes
+        ran: list[int] = []
+
+        def counted(*a, **k):
+            ran.append(1)
+            return real_apply(*a, **k)
+
+        chat_state.apply_changes = counted
         try:
-            return super().say(text, verdict)
+            out = super().say(text, verdict)
+            assert ran, "state path did NOT run: state_block never reached the engine (harness bug), turn ran state-OFF"
+            return out
         finally:
-            parser_mod.resolve_config = real
+            chat_state.apply_changes = real_apply
+            self.stub_parser = real_inst
+            parser_mod.resolve_config = orig
 
 
 @pytest.fixture()
