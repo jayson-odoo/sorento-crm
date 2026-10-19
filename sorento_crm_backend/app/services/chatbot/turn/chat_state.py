@@ -564,6 +564,11 @@ def offered_brand_picks(state: State, verdict: dict[str, Any], brands: list[Any]
     offered.pop("", None)
     if not offered:
         return []
+    # The set's own brand is pickable beside an offered one ("sorento and cabana" over a
+    # Sorento set that offers Cabana).
+    own = ((state.focus.set_page or {}).get("set_key") or {}).get("brand")
+    if isinstance(own, str) and own.strip():
+        offered.setdefault(own.strip().casefold(), own.strip())
     name_of_code = {
         str(b.get("brand_code")).strip().casefold(): str(b.get("brand_name")).strip().casefold()
         for b in brands or ()

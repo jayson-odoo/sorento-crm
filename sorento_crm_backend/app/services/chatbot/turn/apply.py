@@ -3701,6 +3701,15 @@ def _apply(
                 o for o in key.get("other_brands") or []
                 if isinstance(o, dict) and str(o.get("brand") or "").lower() in {b.lower() for b in brand_names}
             ]
+            own_brand = key.get("brand")
+            if (
+                isinstance(chosen_brand, list)
+                and isinstance(own_brand, str)
+                and own_brand.lower() in {b.lower() for b in brand_names}
+                and not any(str(o.get("brand") or "").lower() == own_brand.lower() for o in offered_rows)
+            ):
+                # State path: the set's own brand counts with the set's own total.
+                offered_rows.append({"brand": own_brand, "count": key.get("total") or 0})
             for stale in ("offer_only", "other_brands"):
                 key.pop(stale, None)
             key.update(
