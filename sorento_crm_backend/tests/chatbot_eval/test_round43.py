@@ -67,3 +67,44 @@ def test_guard_g_answering_only_a_variant_of_the_held_product_is_still_held_only
     row = _row(tools=[tool_v], reply="SRTA100-BL has 3 pcs.", after=[prod("SRTA100", UA), prod("SRTA100-BL", UB)])
     state, _ = _check(row)
     assert state is False, state
+
+
+# ------------------------------------------------------------------ review fixes: the held-set gate and the variant boundary
+UC = "33333333-3333-4333-8333-333333333333"
+
+
+def _held_set_row(answer_ids, *, extra_after=()):
+    held = [prod("SRTA100", UA), prod("SRTB200", UB)]
+    return row2(message="which water closet 200mm got stock", reply="Here you go.", verdict={"entities": ENTS, "reference_positions": []},
+                mem_before=held, mem_after=held + list(extra_after),
+                tools=[{"name": "crm_inventory_list", "args": {"product_ids": list(answer_ids)}}])
+
+
+def test_red_h_a_held_set_narrowed_to_expected_members_passes():
+    row = _held_set_row([UB], extra_after=[])
+    state, _ = _check(row, spec_products=["SRTB200", "SRTC300", "SRTD400"])
+    assert state is True, state
+
+
+def test_guard_h_a_held_set_re_answered_with_no_expected_member_fails():
+    state, _ = _check(_held_set_row([UA, UB]), spec_products=["SRTC300", "SRTD400", "SRTE500"])
+    assert state is False, state
+
+
+def test_guard_h_one_held_product_answered_alone_fails_even_when_it_is_expected():
+    state, _ = _check(_row(), spec_products=["SRTA100", "SRTB200", "SRTC300"])
+    assert state is False, state
+
+
+def test_red_i_a_longer_model_number_is_not_a_variant_of_the_held_code():
+    row = _row(tools=[{"name": "crm_inventory_list", "args": {"product_ids": [UB]}}], reply="SRTA1000 has 3 pcs.",
+               after=[prod("SRTA100", UA), prod("SRTA1000", UB)])
+    state, _ = _check(row)
+    assert state is True, state
+
+
+def test_guard_i_a_dash_suffix_is_a_variant_of_the_held_code():
+    row = _row(tools=[{"name": "crm_inventory_list", "args": {"product_ids": [UB]}}], reply="SRTA100-BL has 3 pcs.",
+               after=[prod("SRTA100", UA), prod("SRTA100-BL", UB)])
+    state, _ = _check(row)
+    assert state is False, state
