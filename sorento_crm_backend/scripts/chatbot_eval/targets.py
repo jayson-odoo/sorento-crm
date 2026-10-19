@@ -1343,6 +1343,8 @@ def grade_turn(row: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
         passed, failed = False, tier_spec[2]
     elif tier:
         passed, failed = None, "The bot asked an access question (price tier); the bench cannot judge it."
+    elif leak_msg and _oq_unreadable(row) and (_stage(row, "replied").get("facts") or {}).get("asking") == "tier_pick":
+        passed, failed = False, leak_msg   # a leak is never unknown: it names the failure, as it does for a read tier ask
     elif passed is False and not leak_msg and _oq_unreadable(row) and (_stage(row, "replied").get("facts") or {}).get("asking") == "tier_pick":
         # the question after was capped out and nothing uncapped holds it: the tier ask cannot be ruled out
         passed, failed = None, "The bench could not read the question the bot asked (trace cap)."
