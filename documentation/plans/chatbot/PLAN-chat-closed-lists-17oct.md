@@ -1,6 +1,6 @@
 # PLAN: CHAT-CLOSED-LISTS - chatbot step 2, closed candidate lists
 
-Status: Review, round 5 pushed (R5-1 size keys by data, R5-2 contains-is-not-the-code; reviewer READY); the lane prompt template changed (R5-2), so crew republishes an unlabelled CLOSED LISTS version before the next live / combined held-out run. Track: full (size L, LEAD pattern).
+Status: Build, ROUND 6 (TRAIN only; EVAL-BENCH-train-classes-19oct.md): SIZE-WRONG-KEY with the owner bare-size data rule (crew ruling a21061914 (a)), SPEC-DROPPED-FRESH, HELD-OVER-NEW-CLASS, TYPE-ONLY-EMPTY-SET, SIZE-AS-CODE check; COUNT-ONLY-SET stays with CHAT-COMPOSER #1771/#1776. Track: full (size L, LEAD pattern).
 Branch `claude/chat-closed-lists-x6ymb5` (the sandbox cannot push `crew/chat-closed-lists`), PR #1755.
 
 Design source: CHATBOT-SCALE-DESIGN-16oct section 8 step 2 + D2 (crew-only): code only SHORTLISTS
@@ -224,3 +224,18 @@ Not built (root cause rc5-downflips.md): cp0-362022362a TYPE-OMITTED (MODEL, bot
 pick (MODEL, single; owner call on keeping an unsure pick). Bench notes for EVAL-BENCH: the spec grader compares values,
 never keys (3 of the lane's 5 spec up flips are wrong-key passes). Reviewer nits kept: `_keys_holding` skips
 string-stored values (all 17 numeric keys are JSON numbers on the dev copy); the family reader is linear in the held set.
+
+## Round 6 (19 Oct): TRAIN classes from EVAL-BENCH-train-classes-19oct.md
+
+combined3 held-out (crew): attachments 53.8 (bar 95), spec 73.7 (bar 90), leaks 0. Plan approved by crew:
+1. SIZE-WRONG-KEY (9 items): owner rule, crew ruling (a), data only: a bare size (the customer names no dimension; the
+   parser picks a `size N <unit>` candidate) matches dim_width OR dim_length; trap_length where the registry says it
+   applies to the class and holds N there (WC 200 / 300); a named dimension stays strict.
+2. SPEC-DROPPED-FRESH (5): piece_count / finish phrases get candidate lines from registry data.
+3. HELD-OVER-NEW-CLASS (2 left): a grounded class-key spec counts as naming the class; owner rule: a class ask
+   answered with only the held product is a fail.
+4. TYPE-ONLY-EMPTY-SET (2): a type-only follow-up over held products fetches their files, never a described set (R4-5).
+5. SIZE-AS-CODE (4): check that R5-1 / R5-2 cover it; build only a gap.
+Not this lane: COUNT-ONLY-SET (CHAT-COMPOSER #1771/#1776), SIZE-AS-QTY (CHAT-STATE prompt), TYPE-WORD-DROPPED (MODEL;
+owner call on unconfident picks); classes 1, 4, 14 fixed on #1755 per the report. Spend: $0 root cause and tests, one
+paired TRAIN x1 by EVAL-BENCH at the end (~0.9 USD, cap 3).
