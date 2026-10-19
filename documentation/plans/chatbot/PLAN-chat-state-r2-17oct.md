@@ -216,6 +216,44 @@ notes only if a rule is the owner's, red-first fixes, reviewer, paired TRAIN rea
   items in the family_code shape, kept local until #1755 lands; then merge #1755's head into #1772, rewrite the R3-A
   family fixtures to the real shape, paired real x1 with checkpoints (+ EVAL-BENCH's new real refine set).
   Lesson: seed the shape real data has (here family_code), never a link the data lacks.
+- Red 6156c918af (local): 9 seam cases on the real family_code shape (3 real cp0 items x 3 phrasings) + the R3-A
+  family group re-seeded to family_code (5 fail, assertions unchanged); waits for #1755's C2.
+- EVAL-BENCH real refine set `eval-sets/train2_refine` (8 real TRAIN items, round 36 grader; recorded prod 1/8).
+  Baseline x1 (scoped): lane 4cdd3f37fd 0/8, main 0f5c6537e 0/8 ($0.162). `filter` fails 8/8 on both arms
+  (rootcause-r4.md section 2):
+  - **R4-A BRAND-OFFER-KEY (this lane; es-e9d2507a71, es-242b332bca):** the brand offer is stored as
+    `set_page = {"set_key": {..., "other_brands": [...]}}` (turn_runtime.py ~4460) but chat_state.py:232/552/841 read
+    `set_page["other_brands"]`, so the parser never sees the offer; engine.py ~4822 also skips the offer pick on
+    state-led turns; "Sorento" widened to the catalogue's SORENTO products (on 242 the lane is worse than main).
+  - #1755: C2 must filter the held products first and reach family_code siblings only when none matches (reading
+    the whole family breaks e9 / 242 / f173); number key `trap_length` vs the parser's `dim_width` (0db8cf0a48).
+    Crew-note posted on #1755.
+  - Parse / owner data: a code segment said as a filter (02332dd6a1, d2692e6c09; "bl" / "gm" registry synonyms).
+  - EVAL-BENCH: 9ed83ea52c and 5ebea068a5 are an offer pick ("Mocha" answers the hand-over offer) labelled refine;
+    242 gold vs a product created after the turn; a false none-on-record passes `subject` (targets.py:881).
+  Projected ladder: C1 3/8, + held-first C2 + key 4, + synonyms 5, + relabel 7 (UNVERIFIED).
+- R4-A proof so far (all local): red f9d3e409d2 (12 failed / 5 guards), fix 413cff7e5b (nested offer read; held set
+  narrowed to the parser's offered brand), kill reverted 12 failed. Gate vs 55ea3c0f10: grounding 0/1506; 1 turn row
+  (cand-0132) = a caught failed turn (GENERIC_ERROR_REPLY, engine.py:131) during Postgres "out of shared memory"
+  from other processes' schema drops; 30 reruns match; R4-A unreachable on it. The gate reports a caught failed
+  turn as a diff (for EVAL-BENCH). Reviewer NOT READY: an offered brand not held kept nothing (owner's PR #833 r7
+  item 6 shape); regex route still deciding on answer turns; two brands kept the first; unguarded brand query.
+  Lead decision (card R1 vs R5): a held brand = refine -> narrow the held set; an offered brand not held = answer to
+  the offer -> main's `set_brand_chosen` re-runs the set; on the state path the parser's brand decides.
+  Red 9c66b9160a (15 failed), fix 1594d7c32b, kill reverted 15 failed; gate 0/1506 + 0/585. Re-check NOT READY:
+  the task.py hunk changed main's state-OFF path (an open stock task no longer resumed on a brand pick; the replay
+  corpus has no such turn, so the gate missed it) -> gate it to the state path + a state-off pin test; the "no
+  capped-set rule" deviation rested on a fixture holding 7 of 37 (real e9 37/37, 242 182/182) -> a capped set re-runs
+  the set; a held + an offered-not-held brand dropped one silently -> lead decision: re-run the set once with every
+  named brand (state path only). Lesson again: fixtures must carry the shape real data has.
+  Red 5bca9ebb9a (12 failed: state-off pin x2, capped set x4, mixed brands x6; fixtures now hold the real counts),
+  fix 0ca2aca38d (state path writes `set_brand` as a list, main a string; task.py skips the resume only for a list;
+  capped set / any offered-not-held brand re-run the set once with every named brand; product_predicate
+  `_brand_clause` IN, one name = the old `==`); kill reverted 12 failed; gate 0/1506 + 0/585; reviewer READY with
+  should-fixes: red 2e365f41c2 (the set's own brand dropped beside an offered one; direct two-brand predicate
+  tests), fix 4d36d9f9c3 (own brand pickable on the list path), kill reverted 3 failed / restored 59 passed; gate
+  0/1506 + 0/585; reviewer re-check 4 READY (mutations R5 / R6 now killed; held-brand narrowing unchanged; main's
+  string path unchanged, both state-off pins pass).
 
 ### R4 (crew via CHAT-CODE-LOOKUP, 18 Oct): no slice
 On main + v63 the parser never sees `Current subject:` (vocabulary line over the 350 L2 cap, context.py:29; only the
