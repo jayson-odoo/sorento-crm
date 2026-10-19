@@ -507,3 +507,10 @@ failure into a pass:
 Red-first per item, kill-proof per hunk, two Opus review rounds (the first found a wrong-option pass, a leak turned
 unknown and an `asked_type` fallback that passed 11 of 34 real failures; all closed). TRAIN gate rows: no verdict
 changes. Held-out re-grade at $0 went to crew only.
+
+## Round 41 (19 Oct, the which-one stamp setting is read, not inferred; crew order)
+
+The `which_one` check no longer guesses the stamp setting from the asker's audience. It reads the bot's own value:
+`stock_visibility.resolve_policy` -> `turn_runtime._stock_availability_only` -> `Profile.stock_availability_only` -> the stamp
+gate (`lanes/business/answer.py`). The live runner records it on each row (`asker_profile`); a stock tool envelope's
+`stock_visibility.mode` is the fallback; with neither the check is unknown (None), never inferred.
