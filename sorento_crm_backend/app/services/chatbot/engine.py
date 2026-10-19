@@ -1103,7 +1103,7 @@ def code_lookup_verdict(verdict: dict[str, Any], *, gate: bool) -> dict[str, Any
 
 
 def _candidate_lines(
-    db: Session, latest_user_message: str, *, code_lookup: bool = False
+    db: Session, latest_user_message: str, held_ids: list[str] | None = None, *, code_lookup: bool = False
 ) -> tuple[list[str] | None, frozenset[str], dict[str, dict[str, Any]]]:
     """The candidate block for the message's OWN first line (the quoted reply under it is
     not this message's words, the line grounding reads too). It only advises the parser,
@@ -1113,9 +1113,9 @@ def _candidate_lines(
     try:
         with db.begin_nested():
             entries = (
-                candidates_mod.shortlist(db, message, code_lookup=True)
+                candidates_mod.shortlist(db, message, held_ids, code_lookup=True)
                 if code_lookup
-                else candidates_mod.shortlist(db, message)
+                else candidates_mod.shortlist(db, message, held_ids)
             )
             return (
                 candidates_mod.candidate_lines(entries),
@@ -4563,7 +4563,12 @@ def _run_stages_body(  # noqa: PLR0915
         # CHAT-CLOSED-LISTS: what is on file under the words of this message, for a
         # version carrying the CLOSED LISTS section only (code shortlists, the parser picks).
         candidate_lines, listed_codes, pick_info = (
-            _candidate_lines(db, latest_user_message, code_lookup=parser_config.code_lookup)
+            _candidate_lines(
+                db,
+                latest_user_message,
+                [str(p["uuid"]) for p in state_in.focus.products if isinstance(p, dict) and p.get("uuid")],
+                code_lookup=parser_config.code_lookup,
+            )
             if parser_config.closed_lists and isinstance(latest_user_message, str)
             else (None, frozenset(), {})
         )
@@ -4645,6 +4650,7 @@ def _run_stages_body(  # noqa: PLR0915
         # `listed` and `certificate_uuids` are the ENGINE's own entity keys (grounding and the
         # scheme index set them). One the parser emitted (the Anthropic path does not enforce
         # additionalProperties) is dropped before any reader.
+        verdict.pop("dropped_kinds", None)
         if isinstance(verdict.get("entities"), list):
             verdict["entities"] = [
                 {k: v for k, v in e.items() if k not in ("listed", "certificate_uuids")} if isinstance(e, dict) else e
@@ -4940,8 +4946,9 @@ def _run_stages_body(  # noqa: PLR0915
                 verdict, scheme_note = scheme_index.index_scheme(scheme_db, verdict, list(state_in.focus.products))
                 # Held products are only added to the verdict later, so a held one (a uuid) is
                 # read here: the scheme path with no product never runs over a held subject.
-                if scheme_note is None and not any(
-                    isinstance(p, dict) and p.get("uuid") for p in state_in.focus.products
+                if scheme_note is None and (
+                    scheme_index.names_own_class(verdict.get("entities") or [])
+                    or not any(isinstance(p, dict) and p.get("uuid") for p in state_in.focus.products)
                 ):
                     verdict, scheme_note = scheme_index.scheme_without_product(scheme_db, verdict)
         except Exception:  # noqa: BLE001 - an advisory reading, never a failed turn

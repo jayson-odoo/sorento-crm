@@ -1,6 +1,6 @@
 # PLAN: CHAT-CLOSED-LISTS - chatbot step 2, closed candidate lists
 
-Status: Review, fix round 18 Oct pushed (reviewer READY, security-reviewer PASS; no hand test on its own: owner rule 16 Oct, the chatbot hand test runs on one combined held-out build; script kept at laneboard 1755.md) (local lane CHAT-CLOSED-LISTS-L on a3 took over from the cloud lane at fa9fd99a; main 0f5c6537 merged). Round classes A-D, review rounds R2 and R3 built red-first (rows below). Track: full (size L, LEAD pattern).
+Status: Review, round 5 pushed (R5-1 size keys by data, R5-2 contains-is-not-the-code; reviewer READY); the lane prompt template changed (R5-2), so crew republishes an unlabelled CLOSED LISTS version before the next live / combined held-out run. Track: full (size L, LEAD pattern).
 Branch `claude/chat-closed-lists-x6ymb5` (the sandbox cannot push `crew/chat-closed-lists`), PR #1755.
 
 Design source: CHATBOT-SCALE-DESIGN-16oct section 8 step 2 + D2 (crew-only): code only SHORTLISTS
@@ -164,3 +164,63 @@ the gate from `listed_item` on the parse; a whole-turn replay pins the version t
 label and text can disagree only across a TTL expiry and a label move in the same instant), N4
 (the file-ask roster lists certificate types too: the customer is asking which file of THIS
 product, and its certificates are files of it).
+
+## Round 4 (19 Oct, owner): attachments only
+
+Held-out attachments (crew-only) sits at 63.5 against the 95 bar, flat across rounds; its first-failing classes are
+files 9, asked_type 6, no_picker 3. The lane measures on TRAIN only: the 27 real attachment conversations
+(`crew/state/eval/cp0/train_attachment`, the attachment slice of gate #3 `g1755c`, lane head 0665fa0d, 40.7 vs main 33.3).
+
+Steps:
+1. $0 root cause on every TRAIN attachment failure of gate #3: the stage that lost it (parser type pick, grounding,
+   scheme index, resolver, apply/narrowing, fetch args, scope, composer), file:line, class (>= 2 item-runs), and
+   MODEL LIMIT vs CODE per class (crew may try a stronger parser model separately).
+2. Red-first fixes per CODE class, reviewer (+ security-reviewer if scope/ingest is touched).
+3. Paired TRAIN x1 (lane vs main) under the owner's early-stop rule (checkpoints, stop on regression), cap 3 USD.
+
+### Round 4 part 1 (19 Oct)
+
+| Class | Red | Green | Notes |
+|---|---|---|---|
+| C2 FAMILY-BY-FAMILY-CODE (crew priority) | f49d099c | 3c8810c6 | a held product's family = same company + same non-null `family_code`, chat-searchable, plus the variant graph; dev copy: variant_of_id on 2 of 15,439 products, family_code on 13,983, largest family 16 |
+| HELD-OVER-NAMED-CLASS (TRAIN 41147cbf9f, 7a655af8fa, c026f64f50) | fa67869f | f6eb1165 | a current-message category / product_type entity names its own subject: no held carry, no held_none_match, the scheme's certificates filter; fixture made real in c0c43178, 1546db61, 4df5178d, 6665f100 (parse fields, class_label, certificate_products rows); a harness-only apply rule was removed |
+
+Root cause of the 27 real attachment conversations (gate #3): crew-note 6256793867; grader artefact G1 (trace cap)
+goes to EVAL-BENCH; gold calls to the owner; MODEL classes to the gpt-5.4 parser run (CHAT-CODE-LOOKUP).
+Residual (reviewer): a refine that repeats the held product's own class ("p trap wc?") would drop the held subject; not
+seen in g1755c (114 held turns) or train_followups (56).
+
+### Round 4 part 2 (19 Oct)
+
+| Class | Red | Green | Notes |
+|---|---|---|---|
+| R4-2 SCHEME-NO-PRODUCT-RETYPED (cp0-fce51f2811) | 026863c6 | fd246a88 | `scheme_without_product` adds the certificate kind beside the scheme, as `index_scheme` does; the reconciler's retype can no longer empty the type slot |
+| R4-3 DROPPED-TYPE-CARRIES-OLD (cp0-6240dc53f8) | 55b6d27e | 7e8b2a37 | grounding records an engine-owned `dropped_kinds` (popped from parser output); apply clears that axis so the old type never answers |
+| R4-4 CERT-NUMBER-AS-SET (cp0-5b20fdfe69) | f71eaaa4 | fe9f1b92 | an exact certificate match is a typed code for the Shape B skip (`cert_number_is_code`); narrowed to a listed scheme when picked |
+| R4-5 NO-FREE-REMAINDER-ON-FILE-ASK (cp0-5c93483505) | d1cc720b | ac91fd9b | on a file ask under the gate the set is described by parser entities only; spec and other domains keep their remainder (guard test) |
+
+Shared test helper `tests/chatbot/_attach_world.py` carries the real parse fields and the real certificate link chain
+(certificate_products included). Watch item (reviewer): a class word the parser hints as `product` on a file ask is no
+longer scoped by the leftover remainder.
+
+### C2b HELD-FIRST (19 Oct, CHAT-STATE correction)
+
+| Class | Red | Green | Notes |
+|---|---|---|---|
+| C2b HELD-FIRST | f1628123 | 4b11b5d1 | one filter applied twice: held products first; family_code siblings (+ variant graph) only when no held product matches; none line only when both are empty. Keeps es-e9d2507a71 / es-242b332bca / es-f173186e97 within the shown set, still fixes cp0-665ba3e897; old C2 brand test re-seeded so the held product lacks the filter (9ac7e39d) |
+
+Open (CHAT-STATE, UNVERIFIED): es-0db8cf0a48 "150" is `trap_length` on file while the parser emits `dim_width`; a
+numeric-key candidate line is this lane's (candidates.py). Reviewer nits kept: the held pass has no
+`chat_searchable_products()` filter (held came from a searchable resolution).
+
+### Round 5 (19 Oct, after the paired TRAIN x1 on ad78e1e7: pooled +15.3, refine +33, spec +17, attachment +7)
+
+| Class | Red | Green | Notes |
+|---|---|---|---|
+| R5-1 SIZE-KEYS-BY-DATA (cp0-caafdcebea "(1)" header, es-0db8cf0a48 false none, 7 TRAIN rows on a wrong key) | 62d59d12 | 30995a98 | a size word offers only the unit's keys that hold that number in product_specifications (exact numeric), most held first, the held family's keys first; falls back to today's list when no key holds it; one query per size word, scoped |
+| R5-2 CONTAINS-IS-NOT-THE-CODE (cp0-75be0b79cf, cp0-cd3328e3f1) | 36270373 | da83acf9 | a code that only contains the word is labelled `holding "W"`; one CLOSED LISTS line: such a code is that product only when the message names it (template change) |
+
+Not built (root cause rc5-downflips.md): cp0-362022362a TYPE-OMITTED (MODEL, both arms), cp0-6240dc53f8 confident-false
+pick (MODEL, single; owner call on keeping an unsure pick). Bench notes for EVAL-BENCH: the spec grader compares values,
+never keys (3 of the lane's 5 spec up flips are wrong-key passes). Reviewer nits kept: `_keys_holding` skips
+string-stored values (all 17 numeric keys are JSON numbers on the dev copy); the family reader is linear in the held set.

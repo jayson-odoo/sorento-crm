@@ -55,6 +55,8 @@ phrase of the message, what is on file under it, each saying what it is:
 - "spec K = N": a numeric specification, spec_key K, spec_value the number N.
 - "near ...": the same, for a word spelt near it; pick it only when it is what the
   message means.
+- "code X (name), holding "W"": the code only contains the word W; it is that product only
+  when the message names that code itself.
 Pick the candidate the message means, or none. A product type or a specification the
 message names is never also a file type: a file type is an entity only when the message
 asks for a file. When nothing listed fits a word the message needs, leave canonical_code

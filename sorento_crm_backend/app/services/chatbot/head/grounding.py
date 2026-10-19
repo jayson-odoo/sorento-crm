@@ -785,6 +785,7 @@ def ground(
     out: list[Any] = []
     notes: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
+    dropped_types = False
     closed_items: dict[str, dict[str, str]] | None = None
     listed_types: dict[str, str] | None = None
 
@@ -953,6 +954,7 @@ def ground(
             tagged = _on_closed_lists(entity, closed_items)
             if tagged is None:
                 notes.append({"from": hint, "raw": raw, "to": "dropped: not on the closed lists"})
+                dropped_types = True
                 continue
             notes.append({"from": hint, "raw": raw, "to": f"on the {tagged['listed']} list: {tagged['canonical_code']}"})
             out.append(tagged)
@@ -971,6 +973,13 @@ def ground(
     if not notes:
         return verdict, []
     grounded_verdict = {**verdict, "entities": out}
+    if dropped_types and not any(
+        isinstance(e, dict) and str(e.get("hint") or "").strip().lower() == _ATTACHMENT_HINT and e.get("current_message") is not False
+        for e in out
+    ):
+        # R4-3: a file type this message named and the lists dropped still replaces the type
+        # axis (with nothing), so a type from an earlier turn never answers it.
+        grounded_verdict["dropped_kinds"] = [_ATTACHMENT_HINT]
     return grounded_verdict, notes
 
 

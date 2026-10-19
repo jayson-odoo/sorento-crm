@@ -890,6 +890,10 @@ def resolve_entity_body(
         from app.services.chatbot.lanes.business import answer as answer_mod
 
         body["set_list_max"] = int(answer_mod.SET_LIST_MAX)
+        if parse_output.get("closed_lists"):
+            body["cert_number_is_code"] = True
+            if parse_output.get("domain_hint") == "product_attachment":
+                body["no_free_remainder"] = True
         if scope_terms:
             body["scope_terms"] = scope_terms
     return body

@@ -49,7 +49,7 @@ def _run(session_factory, stub_access, monkeypatch, **envelope) -> list[str]:
 def test_s1_the_shortlist_reads_the_messages_own_first_line(session_factory, seeded, stub_access, monkeypatch):
     seen: list[str] = []
     real = candidates.shortlist
-    monkeypatch.setattr(candidates, "shortlist", lambda db, message: seen.append(message) or real(db, message))
+    monkeypatch.setattr(candidates, "shortlist", lambda db, message, held_ids=None: seen.append(message) or real(db, message, held_ids))
 
     _run(session_factory, stub_access, monkeypatch)
 
@@ -72,7 +72,7 @@ def test_s2_the_query_count_is_bounded_per_message():
 
 
 def test_s3_a_shortlist_failure_leaves_the_block_out_and_the_turn_goes_on(session_factory, seeded, stub_access, monkeypatch):
-    def broken(db, message):
+    def broken(db, message, held_ids=None):
         raise RuntimeError("statement timeout")
 
     monkeypatch.setattr(candidates, "shortlist", broken)

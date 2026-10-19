@@ -99,7 +99,7 @@ def test_a_code_token_lists_the_codes_that_hold_it_exact_first(db):
     lines = _lines(db, "stock srtwc8517")
     assert lines == [
         candidates.HEADER,
-        '- "srtwc8517": code SRTWC8517 (Name of SRTWC8517); code SRTWC8517-WH (Name of SRTWC8517-WH)',
+        '- "srtwc8517": code SRTWC8517 (Name of SRTWC8517); code SRTWC8517-WH (Name of SRTWC8517-WH), holding "srtwc8517"',
     ]
 
 
@@ -356,3 +356,89 @@ def test_a_parser_pick_of_the_scrubbed_rendered_value_grounds_to_the_same_regist
     grounded = grounding._validate(entity, vocab)
 
     assert [g.value for g in grounded] == [value], grounded
+
+
+# --- R5-1 SIZE-KEYS-BY-DATA (19 Oct; TRAIN cp0-caafdcebea, es-0db8cf0a48) -----------------------
+# The registry holds 7+ mm keys and the per-word cap cut them by name, so trap_length and
+# dim_width were never offered. Rule (data, not words): a size word offers only the unit's keys
+# that actually hold that number in product_specifications, the most-held first.
+
+MM_KEYS = ("board_thickness", "depth", "diameter", "dim_height", "dim_length", "dim_width", "trap_length")
+
+
+def _seed_mm_keys(db) -> None:
+    for key in MM_KEYS:
+        db.add(ProductSpecRegistry(id=str(uuid.uuid4()), spec_key=key, label=key.replace("_", " ").title(), data_type="numeric", unit="mm"))
+    db.flush()
+
+
+def _product_with(db, code: str, **values) -> None:
+    """A product whose numeric specs are stored as JSON numbers (the real shape)."""
+    from app.models.product_spec import ProductSpecifications
+
+    _products(db, code)
+    pid = db.query(Product.id).filter(Product.product_code == code).scalar()
+    db.add(ProductSpecifications(
+        id=str(uuid.uuid4()), product_id=pid, values={k: {"value": v} for k, v in values.items()},
+    ))
+    db.flush()
+
+
+def test_a_size_word_offers_only_the_keys_that_hold_that_number_most_held_first(db):
+    _seed_mm_keys(db)
+    _product_with(db, "ZZWC810-S-300", trap_length=300)
+    _product_with(db, "ZZWC811-S-300", trap_length=300)
+    _product_with(db, "ZZWC812", dim_length=300)
+    _product_with(db, "ZZWC813", depth=450)
+
+    lines = _lines(db, "do you stock s-trap closets at 300 mm?")
+
+    assert '- "300 mm": spec trap_length = 300; spec dim_length = 300' in lines, lines
+
+
+def test_guard_a_number_no_key_holds_still_offers_the_unit_keys(db):
+    _seed_mm_keys(db)
+    _product_with(db, "ZZWC814", trap_length=300)
+
+    lines = _lines(db, "any at 777 mm?")
+
+    line = next(line for line in lines if line.startswith('- "777 mm"'))
+    assert "spec dim_length = 777" in line and "spec depth = 777" in line, lines
+
+
+# --- R5-2 CONTAINS-IS-NOT-THE-CODE (19 Oct; TRAIN cp0-75be0b79cf, cp0-cd3328e3f1) ---------------
+# A code that merely CONTAINS the word was labelled like a whole-code match, so the parser read a
+# bare number ("2400") as an unsure product. A code equal to the word keeps its label; a code that
+# only holds the word says so.
+
+
+def test_a_code_that_only_holds_the_word_says_so(db):
+    _products(db, "ZZKB2400", "ZZTB-2400-L")
+
+    lines = _lines(db, "zz basin 2400 how many in stock")
+
+    line = next(ln for ln in lines if ln.startswith('- "2400"'))
+    assert 'code ZZKB2400 (Name of ZZKB2400), holding "2400"' in line, lines
+    assert 'code ZZTB-2400-L (Name of ZZTB-2400-L), holding "2400"' in line, lines
+
+
+def test_guard_a_whole_code_match_keeps_its_plain_label(db):
+    _products(db, "ZZKB2400", "ZZTB-2400-L")
+
+    lines = _lines(db, "zzkb2400 stock")
+
+    assert '- "zzkb2400": code ZZKB2400 (Name of ZZKB2400)' in lines, lines
+
+
+def test_guard_a_split_code_word_still_offers_the_code(db):
+    _products(db, "ZZKB2400", "ZZTB-2400-L")
+
+    lines = _lines(db, "zzkb 2400")
+
+    assert any("code ZZKB2400 (Name of ZZKB2400)" in ln for ln in lines), lines
+
+
+def test_the_closed_lists_section_says_a_held_word_code_is_that_product_only_when_named():
+    from app.services.chatbot.head import closed_lists_prompt as clp
+
+    assert 'holding "W"' in clp.SECTION, clp.SECTION

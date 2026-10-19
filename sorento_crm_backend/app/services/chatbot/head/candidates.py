@@ -245,7 +245,7 @@ def _value_candidates(db: "Session", tokens: list[str]) -> list[WordCandidates]:
     return list(by_gram.values()) + numbered
 
 
-def _code_label(code: str, name: str | None, holds: bool, kind: str = "code") -> str:
+def _code_label(code: str, name: str | None, holds: bool, kind: str = "code", *, holding: str | None = None) -> str:
     from app.services.chatbot_prompt_vars import candidate_text
 
     # Product rows are staff / import text: one line each and free of the line's own
@@ -253,6 +253,9 @@ def _code_label(code: str, name: str | None, holds: bool, kind: str = "code") ->
     # (security review, 17 Oct 2026) and a name or code can never add an item to the line.
     code, name = candidate_text(code), candidate_text(name or "")
     label = f"{kind} {code} ({name})" if name else f"{kind} {code}"
+    if holding:
+        # R5-2: a code that only CONTAINS the word is not the word's own code; it says so.
+        label += f', holding "{candidate_text(holding)}"'
     return label if holds else f"near {label}"
 
 
@@ -361,7 +364,12 @@ def _code_candidates(db: "Session", tokens: list[str], *, code_lookup: bool = Fa
         if position in coded:
             sim = func.similarity(norm, word)
             rows = (
-                db.query(Product.product_code, Product.product_name, norm.contains(word, autoescape=True).label("holds"))
+                db.query(
+                    Product.product_code,
+                    Product.product_name,
+                    norm.contains(word, autoescape=True).label("holds"),
+                    (norm == word).label("whole"),
+                )
                 .filter(chat_searchable_products(), or_(norm.contains(word, autoescape=True), sim >= NEAR_CODE))
                 .order_by(
                     case((norm == word, 0), (norm.startswith(word, autoescape=True), 1),
@@ -372,6 +380,8 @@ def _code_candidates(db: "Session", tokens: list[str], *, code_lookup: bool = Fa
                 .limit(CAP_PER_WORD)
                 .all()
             )
+            # R5-2: `whole` is the code IS the word; a code that only holds it says so (`holding`).
+            rows = [(code, name, holds) for code, name, holds, _whole in rows]
             sets = _set_rows(db, word) if code_lookup else []
             set_exact = any(_fold_code(code) == word for code, _name in sets)
             if code_lookup and not set_exact and not any(_fold_code(code) == word for code, _name, _holds in rows):
@@ -384,7 +394,10 @@ def _code_candidates(db: "Session", tokens: list[str], *, code_lookup: bool = Fa
                     .limit(CAP_PER_WORD)
                     .all()
                 ]
-            labelled = [(_code_label(code, name, holds), code) for code, name, holds in rows]
+            labelled = [
+                (_code_label(code, name, holds, holding=token if holds and _fold_code(code) != word else None), code)
+                for code, name, holds in rows
+            ]
             meta = [(code, holds) for code, _name, holds in rows]
             if sets:
                 exact = set_exact or any(_fold_code(code) == word for code, _name, _holds in rows)
@@ -393,7 +406,10 @@ def _code_candidates(db: "Session", tokens: list[str], *, code_lookup: bool = Fa
                     [(code, name, "code") for code, name, _holds in rows] + [(code, name, "set code") for code, name in sets],
                     NEAR_CODE if exact else NEAR_CODE_NO_EXACT,
                 )
-                labelled = [(_code_label(code, name, holds, kind), code) for code, name, holds, kind in merged]
+                labelled = [
+                    (_code_label(code, name, holds, kind, holding=token if holds and _fold_code(code) != word else None), code)
+                    for code, name, holds, kind in merged
+                ]
                 meta = [(code, holds) for code, _name, holds, _kind in merged]
         else:
             labelled = [(_code_label(code, name, True), code) for code, name in by_word.get(word, [])]
@@ -423,7 +439,45 @@ def _unit_keys(db: "Session") -> dict[str, list[str]]:
     return {unit: sorted(set(keys)) for unit, keys in units.items()}
 
 
-def _size_candidates(db: "Session", tokens: list[str]) -> tuple[list[WordCandidates], set[int]]:
+def _keys_holding(db: "Session", keys: list[str], number: str, family: set[str]) -> list[str]:
+    """The unit's keys that hold `number` in product_specifications (an exact numeric match on
+    the stored JSON value), the held family's keys first, then the most held, then by name.
+    ONE query for all the keys, through the scoped Product join; `[]` when no key holds it."""
+    from decimal import Decimal, InvalidOperation
+
+    from sqlalchemy import Numeric, case, cast, func
+
+    from app.models.product import Product, chat_searchable_products
+    from app.models.product_spec import ProductSpecifications
+
+    try:
+        wanted = Decimal(number)
+    except InvalidOperation:
+        return []
+    values = ProductSpecifications.values
+    columns = []
+    for key in keys:
+        raw = values[key]["value"]
+        holds = cast(case((func.jsonb_typeof(raw) == "number", raw.astext), else_=None), Numeric) == wanted
+        columns.append(func.coalesce(func.sum(case((holds, 1), else_=0)), 0))
+        columns.append(
+            func.coalesce(func.sum(case((holds & ProductSpecifications.product_id.in_(list(family) or ["00000000-0000-0000-0000-000000000000"]), 1), else_=0)), 0)
+        )
+    row = (
+        db.query(*columns)
+        .select_from(ProductSpecifications)
+        .join(Product, Product.id == ProductSpecifications.product_id)
+        .filter(chat_searchable_products())
+        .one()
+    )
+    counts = {key: (int(row[2 * i]), int(row[2 * i + 1])) for i, key in enumerate(keys)}
+    held = [k for k in keys if counts[k][0] > 0]
+    return sorted(held, key=lambda k: (-(counts[k][1] > 0), -counts[k][0], k))
+
+
+def _size_candidates(
+    db: "Session", tokens: list[str], held_ids: list[str] | None = None
+) -> tuple[list[WordCandidates], set[int]]:
     """SIZE-AS-CODE (crew, 18 Oct 2026): a number with a unit a numeric key carries ("600mm",
     "600 mm") is that key's value, offered as `spec K = N` for each such key, and the words
     it spans are never code words (a code merely holding "600mm" is not what was said). The
@@ -433,6 +487,7 @@ def _size_candidates(db: "Session", tokens: list[str]) -> tuple[list[WordCandida
         return [], set()
     out: list[WordCandidates] = []
     spanned: set[int] = set()
+    family: set[str] | None = None
     for position, token in enumerate(tokens):
         joined = _SIZE_RE.fullmatch(token)
         if joined and joined.group(2) in units:
@@ -442,17 +497,26 @@ def _size_candidates(db: "Session", tokens: list[str]) -> tuple[list[WordCandida
             number, keys, shown, span = token, units[unit], f"{token} {unit}", {position, position + 1}
         else:
             continue
+        # R5-1: only the keys that hold this number (the held family's first); every key of
+        # the unit when none does.
+        if family is None:
+            from app.services.chatbot.head.held_family import _family_ids
+
+            family = _family_ids(db, held_ids) if held_ids else set()
+        keys = _keys_holding(db, keys, number, family) or keys
         out.append(WordCandidates(gram=shown, position=position, items=[f"spec {key} = {number}" for key in keys]))
         spanned |= span
     return out, spanned
 
 
-def shortlist(db: "Session", message: str, *, code_lookup: bool = False) -> list[WordCandidates]:
+def shortlist(
+    db: "Session", message: str, held_ids: list[str] | None = None, *, code_lookup: bool = False
+) -> list[WordCandidates]:
     """The candidates for every word of `message` that has any, in message order."""
     tokens = _tokens(message)
     if not tokens:
         return []
-    sizes, spanned = _size_candidates(db, tokens)
+    sizes, spanned = _size_candidates(db, tokens, held_ids)
     code_words = list(dict.fromkeys(t for position, t in enumerate(tokens) if position not in spanned))
     merged: dict[str, WordCandidates] = {}
     for entry in sizes + _value_candidates(db, tokens) + _code_candidates(db, code_words, code_lookup=code_lookup):
