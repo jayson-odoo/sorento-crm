@@ -786,7 +786,10 @@ def resolve_entity_body(
     if brands:
         body["brand_tokens"] = brands
     grounded_specs = [
-        {"key": g.get("spec_key"), "value": g.get("spec_value"), "evidence": g.get("raw"), "grounded": True}
+        {
+            "key": g.get("spec_key"), "value": g.get("spec_value"), "evidence": g.get("raw"), "grounded": True,
+            **({"any_keys": list(g["spec_any_keys"])} if g.get("spec_any_keys") else {}),
+        }
         for g in grounded
         if g.get("spec_key") and g.get("spec_value") is not None
     ]

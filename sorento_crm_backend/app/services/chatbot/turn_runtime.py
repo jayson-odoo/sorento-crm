@@ -4988,7 +4988,7 @@ def with_carried_entities(
             # Fix round 8 on PR #833: a grounded specification keeps its registry key and
             # value, so "cert?" after "any gunmetal basin has incoming?" asks about the
             # SAME gunmetal basins.
-            for name in ("spec_key", "spec_value", "spec_unit", "spec_label", "spec_words", "spec_known"):
+            for name in ("spec_key", "spec_value", "spec_unit", "spec_label", "spec_words", "spec_known", "spec_any_keys"):
                 if name in row:
                     entity[name] = row[name]
             carried.append(entity)

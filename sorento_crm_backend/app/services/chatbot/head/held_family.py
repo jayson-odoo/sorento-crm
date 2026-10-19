@@ -126,7 +126,7 @@ def narrow_held_family(
     filter too. When no member carries what the message names, the held products stay the
     subject ("held, none match"), so the answer says plainly that they do not have it,
     never the whole catalogue's set."""
-    from sqlalchemy import func
+    from sqlalchemy import func, or_
 
     from app.models.product import Product
     from app.models.product_spec import ProductSpecifications
@@ -134,7 +134,7 @@ def narrow_held_family(
     entities = [e for e in verdict.get("entities") or [] if isinstance(e, dict)]
     said = [e for e in entities if e.get("current_message") is not False]
     specs = [
-        (str(e.get("spec_key")), e.get("spec_value"))
+        (str(e.get("spec_key")), e.get("spec_value"), [str(k) for k in e.get("spec_any_keys") or []])
         for e in said
         if str(e.get("hint") or "").strip().lower() in _SPEC_HINTS
         and e.get("spec_key")
@@ -153,8 +153,13 @@ def narrow_held_family(
         query = db.query(Product.id, Product.product_code).filter(Product.id.in_(list(ids)))
         if specs:
             query = query.join(ProductSpecifications, ProductSpecifications.product_id == Product.id)
-        for key, value in specs:
-            query = query.filter(func.lower(ProductSpecifications.values[key]["value"].astext).in_(_value_texts(value)))
+        for key, value, any_keys in specs:
+            # A bare size: the number under any of the keys (one OR), else the one key.
+            clauses = [
+                func.lower(ProductSpecifications.values[k]["value"].astext).in_(_value_texts(value))
+                for k in (any_keys or [key])
+            ]
+            query = query.filter(or_(*clauses))
         if brand_ids is not None:
             query = query.filter(Product.brand_id.in_(list(brand_ids) or [""]))
         return sorted(query.all(), key=lambda row: row[1])
