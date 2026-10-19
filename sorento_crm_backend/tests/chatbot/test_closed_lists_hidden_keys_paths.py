@@ -333,18 +333,22 @@ def test_b5_a_carried_set_replay_never_splits_by_a_hidden_key(split_db):
 # --- B6: a scope term on a hidden key; B7: the spec fallback's unknown-value read ---------------
 
 
-def _black_in_stock(db) -> None:
-    """Stock for the two black closets only, so "white water closets with stock" is a zero set."""
+def _in_stock(db, codes: list[str]) -> None:
     from app.models.inventory import Stock, Warehouse
 
     wh = Warehouse(id=str(uuid.uuid4()), warehouse_code=unique_code("WH")[:20], warehouse_name="ZZ WH")
     db.add(wh)
     db.flush()
-    for (pid,) in db.query(Product.id).filter(Product.product_code.in_(["ZZHX-P2", "ZZHX-S2"])).all():
+    for (pid,) in db.query(Product.id).filter(Product.product_code.in_(codes)).all():
         db.add(Stock(
             id=str(uuid.uuid4()), product_id=pid, warehouse_id=wh.id, quantity_on_hand=5, quantity_reserved=0, quantity_damaged=0,
         ))
     db.flush()
+
+
+def _black_in_stock(db) -> None:
+    """Stock for the two black closets only, so "white water closets with stock" is a zero set."""
+    _in_stock(db, ["ZZHX-P2", "ZZHX-S2"])
 
 
 def _set_fields(result: dict) -> dict:
@@ -408,3 +412,128 @@ def test_guard_the_spec_fallbacks_unknown_value_on_a_visible_key_keeps_its_label
     result = _fallback(split_db, "any water clost t trap?", "water clost t trap", ["thickness", "board_thickness"])
 
     assert [(u.get("key"), u.get("label")) for u in result.get("unknown_spec_values") or []] == [("trap_type", "Trap")], result
+
+
+# --- T1: the two breakdown paths the H1b fix (1a6cc8762a) covers, pinned after the fix -------
+# Written after the fix; each was proved by reverting its own `hidden_keys` argument.
+
+HIDE_FINISH = ["finish", "thickness", "board_thickness"]
+
+
+def test_b9_a_set_longer_than_the_list_max_is_never_broken_down_by_a_hidden_key(split_db):
+    """The main Shape B call (`breakdown_over=set_list_max`): four water closets with stock, a list
+    max of 2, so the set comes back broken down; finish is hidden, so the breakdown is by another key."""
+    _in_stock(split_db, ["ZZHX-P1", "ZZHX-P2", "ZZHX-S1", "ZZHX-S2"])
+
+    result = _resolve(split_db, "which water closet has stock", HIDE_FINISH, set_list_max=2)
+
+    predicate = result.get("predicate") or {}
+    assert predicate.get("qualifying_total") == 4 and predicate.get("breakdown"), predicate
+    said = json.dumps({k: predicate.get(k) for k in ("breakdown", "members")}, default=str)
+    assert not [w for w in HIDDEN_FINISH_WORDS if w in said], said
+
+
+def test_b9_a_zero_set_with_more_members_than_the_list_max_never_breaks_them_down_by_a_hidden_key(split_db):
+    """A set that qualifies nothing (no stock anywhere) with four members over a list max of 2:
+    `members.breakdown` (resolve_product_set's members branch); finish is hidden."""
+    result = _resolve(split_db, "which water closet has stock", HIDE_FINISH, set_list_max=2)
+
+    predicate = result.get("predicate") or {}
+    members = predicate.get("members") or {}
+    assert predicate.get("qualifying_total") == 0 and members.get("total") == 4 and members.get("breakdown"), predicate
+    said = json.dumps({k: predicate.get(k) for k in ("breakdown", "members")}, default=str)
+    assert not [w for w in HIDDEN_FINISH_WORDS if w in said], said
+
+
+def test_guard_a_long_set_for_a_contact_with_no_policy_breaks_down_by_finish(split_db):
+    _in_stock(split_db, ["ZZHX-P1", "ZZHX-P2", "ZZHX-S1", "ZZHX-S2"])
+
+    result = _resolve(split_db, "which water closet has stock", ["thickness", "board_thickness"], set_list_max=2)
+
+    assert ((result.get("predicate") or {}).get("breakdown") or {}).get("key") == "finish", result.get("predicate")
+
+
+# --- B8: what the turn stores for the next turn ----------------------------------------------
+
+
+def _stored_focus(session_factory, stub_access, monkeypatch, turns, *, state_block: bool = False) -> list[dict]:
+    """The focus each turn stores for the next one (the `state` trace record: the session payload
+    the tail writes), for `turns` = [(message, verdict)], with the CLOSED LISTS parser stubbed."""
+    from app.services.ai_assistant_service import MCPRuntimeClient
+    from app.services.chatbot import engine as engine_mod
+    from app.services.chatbot import trace as trace_mod
+    from app.services.chatbot.head import parser as parser_mod
+    from tests.chatbot.test_closed_lists_spec_over_held import _message
+    from tests.chatbot.test_engine import _envelope
+
+    queue = [verdict for _message_text, verdict in turns]
+    traces: list = []
+    real = trace_mod.TurnTrace.persisted
+
+    def fake_resolve_config(db, *, current_date, override_version_id=None):
+        return parser_mod.ParserConfig(
+            system_prompt="stub", prompt_version=1, provider="openai", model="m", api_key="k", closed_lists=True,
+            state_block=state_block,
+        )
+
+    monkeypatch.setattr(parser_mod, "resolve_config", fake_resolve_config)
+    monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: queue.pop(0))
+    monkeypatch.setattr(trace_mod.TurnTrace, "persisted", lambda self: (traces.append(real(self)) or traces[-1]))
+    monkeypatch.setattr(engine_mod, "_contact_company_scope", lambda f, c: frozenset({DEFAULT_COMPANY_ID}))
+    monkeypatch.setattr(MCPRuntimeClient, "call_tool", lambda self, name, args: json.dumps({"ok": True, "items": []}))
+    stub_access()
+    out: list[dict] = []
+    for n, (text_, _verdict) in enumerate(turns):
+        traces.clear()
+        engine_mod.run_turn(_envelope(message=_message(text_, n)), session_factory=session_factory)
+        records = traces[-1] if traces else []
+        states = [r for r in records if r.get("kind") == "state"]
+        assert states, [r.get("kind") or r.get("stage") for r in records]
+        out.append(states[-1].get("focus") or {})
+    return out
+
+
+def _with_state(verdict: dict, *changes: dict) -> dict:
+    return {**verdict, "state_changes": list(changes)}
+
+
+def test_b8_a_spec_the_parser_emits_on_a_hidden_key_never_reaches_the_stored_focus(session_factory, seeded, stub_access, monkeypatch):
+    _seed(session_factory)
+    _hide(session_factory, "zz_colour")
+
+    (focus,) = _stored_focus(session_factory, stub_access, monkeypatch, [(
+        "ivory zz basin got?",
+        _stock_ask(_ent("zz basin", "category"), _ent("ivory", "specification", spec_key="zz_colour", spec_value="ivory")),
+    )])
+
+    assert "zz_colour" not in json.dumps(focus, default=str), focus
+
+
+def test_b8_a_hidden_spec_on_a_state_led_refine_never_reaches_the_stored_focus(session_factory, seeded, stub_access, monkeypatch):
+    """The CHAT-STATE path: turn 2's `state_changes` are applied (`chat_state.apply_changes`) before
+    the strip, with about ten verdict rewrites between; the stored focus must still hold no hidden key."""
+    _seed(session_factory)
+    _hide(session_factory, "zz_colour")
+
+    _first, second = _stored_focus(session_factory, stub_access, monkeypatch, [
+        ("matte zz basin got?", _with_state(_stock_ask(
+            _ent("zz basin", "category"), _ent("matte", "specification", spec_key="zz_finish", spec_value="matt"),
+        ))),
+        ("in ivory instead", _with_state(_stock_ask(
+            _ent("ivory", "specification", spec_key="zz_colour", spec_value="ivory"),
+        ), {"op": "keep"})),
+    ], state_block=True)
+
+    assert "zz_colour" not in json.dumps(second, default=str), second
+
+
+def test_guard_a_visible_spec_reaches_the_stored_focus(session_factory, seeded, stub_access, monkeypatch):
+    _seed(session_factory)
+    _hide(session_factory, "zz_colour")
+
+    (focus,) = _stored_focus(session_factory, stub_access, monkeypatch, [(
+        "matte zz basin got?",
+        _stock_ask(_ent("zz basin", "category"), _ent("matte", "specification", spec_key="zz_finish", spec_value="matt")),
+    )])
+
+    assert any(e.get("spec_key") == "zz_finish" for e in (focus.get("extra") or {}).get("specification") or []), focus
