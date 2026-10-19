@@ -1078,6 +1078,11 @@ def _focus_rules(
     replaced_kinds = {kind for kind in by_kind if kind not in picked_kinds}
     for kind in replaced_kinds:
         _set_kind_field(focus, kind, by_kind[kind])
+    # CLOSED LISTS: a kind this message named and grounding dropped replaces the axis with nothing.
+    for kind in verdict.get("dropped_kinds") or []:
+        if kind not in by_kind and kind not in picked_kinds:
+            _set_kind_field(focus, kind, [])
+            trace.rules_fired.append(f"dropped_{kind}_clears_axis")
     # MULTI-CODE-DYM Q3 (owner, 4 Oct 2026): "2 and SRTWC286-SH-150" picks one option AND
     # names a code of its own. The typed code that is not the picked row's own word is a
     # second subject, answered beside the pick, never dropped.

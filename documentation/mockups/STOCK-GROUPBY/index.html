@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stock group by mock v1</title>
+<style>
+:root{color-scheme:light}
+body{margin:0;background:#eef0f3;color:#18202b;font:15px/1.55 system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:1360px;margin:0 auto;padding:24px 16px 60px}
+h1{font-size:26px;margin:0 0 6px}
+h2{font-size:21px;margin:40px 0 10px;padding-top:14px;border-top:2px solid #d5d9e0}
+p{margin:6px 0}
+.sub{color:#5b6472}
+.note{background:#fff8e6;border:1px solid #f0dca8;border-radius:8px;padding:10px 12px;font-size:14px;margin:10px 0}
+ul{padding-left:20px}
+li{margin:3px 0}
+.map{border-collapse:collapse;width:100%;background:#fff}
+.map td,.map th{font-size:13px;padding:6px 8px;border-bottom:1px solid #e4e6eb;text-align:left;vertical-align:top}
+.map code{font-size:12px}
+
+.mk{--bg:#f5f6f8;--card:#fff;--line:#e4e6eb;--text:#18202b;--muted:#6b7280;--pri:#1b84ff;--pri-soft:#e9f3ff;--bad:#e5484d;--gray-soft:#f1f2f4;
+font:13px/1.45 system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--text)}
+.mk *{box-sizing:border-box}
+.mk .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:6px}
+.mk .fd{width:1280px;background:var(--bg);border:1px solid #cfd3da;border-radius:10px;overflow:hidden;display:flex;min-height:520px}
+.mk .fm{width:375px;background:var(--bg);border:1px solid #cfd3da;border-radius:22px;overflow:hidden;min-height:600px}
+.mk .side{width:210px;background:#101828;color:#cbd2dc;padding:14px 10px;flex:none}
+.mk .side .logo{color:#fff;font-weight:700;font-size:15px;padding:4px 8px 14px}
+.mk .side .grp{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#8792a2;padding:10px 8px 4px}
+.mk .side .it{padding:6px 8px;border-radius:6px}
+.mk .side .it.on{background:#1f2a3d;color:#fff}
+.mk .main{flex:1;min-width:0;display:flex;flex-direction:column}
+.mk .top{height:48px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 20px;gap:12px;color:var(--muted)}
+.mk .top .sp{flex:1}
+.mk .av{width:26px;height:26px;border-radius:50%;background:#dbe7ff;color:#1b4fb8;display:inline-grid;place-items:center;font-size:11px;font-weight:600}
+.mk .pg{padding:18px 20px;flex:1}
+.mk .mtop{height:48px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 14px;gap:10px}
+.mk .mtop b{font-size:15px}
+.mk .mpg{padding:12px}
+.mk h1{font-size:19px;margin:0}
+.mk .crumb{color:var(--muted);font-size:12px;margin-bottom:4px}
+.mk .ph{margin-bottom:14px}
+.mk .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px}
+.mk .btn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border-radius:7px;border:1px solid var(--line);background:#fff;color:var(--text);font-weight:500;white-space:nowrap}
+.mk .btn.sm{height:26px;padding:0 9px;font-size:12px}
+.mk .ss{display:inline-flex;align-items:center;gap:6px;height:32px;border:1px solid var(--line);border-radius:7px;background:#fff;padding:0 8px 0 10px;min-width:0}
+.mk .ss .v{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mk .ss .x{color:#9aa3af}
+.mk .ss .cv{color:#6b7280;font-size:10px}
+.mk .lay{display:inline-block;width:12px;height:10px;border:1.5px solid #6b7280;border-radius:2px;box-shadow:0 -3px 0 -1.5px #fff,0 -4px 0 -1.5px #6b7280;margin-right:1px}
+.mk .gbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 8px;position:relative}
+.mk .gbar .sp{flex:1}
+.mk .facet{display:inline-flex;align-items:center;gap:4px;background:var(--gray-soft);border-radius:6px;padding:3px 8px;font-size:12px;white-space:nowrap}
+.mk .facet .k{color:var(--muted)}
+.mk .facet .gt{color:#9aa3af;padding:0 2px}
+.mk .facet .x{color:#6b7280;margin-left:4px;font-size:13px}
+.mk .menu{position:absolute;right:0;top:34px;width:220px;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(16,24,40,.12);z-index:3;padding:6px}
+.mk .menu .hd{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;padding:4px 8px 6px}
+.mk .menu .o{padding:6px 8px;border-radius:5px;display:flex;gap:8px;align-items:center}
+.mk .menu .o.h{background:var(--pri-soft)}
+.mk .menu .o .n{margin-left:auto;font-size:11px;color:var(--pri);font-weight:600}
+.mk .ck{width:14px;height:14px;border:1.5px solid #9aa3af;border-radius:3px;display:inline-grid;place-items:center;flex:none;color:#fff;font-size:10px;line-height:1}
+.mk .ck.on{background:var(--pri);border-color:var(--pri)}
+.mk .new{outline:2px dashed #e0b85a;outline-offset:2px;border-radius:6px}
+.mk table.cst{border-collapse:separate;border-spacing:0;width:100%;font-size:12px;background:#fff;border:1px solid var(--line);border-radius:8px}
+.mk table.cst th{background:#f6f7f9;font-weight:600;text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap;color:var(--muted)}
+.mk table.cst td{padding:7px 8px;border-bottom:1px solid #eef0f3;white-space:nowrap;vertical-align:top}
+.mk table.cst .num{text-align:right;font-variant-numeric:tabular-nums}
+.mk table.cst td.loc{min-width:250px;white-space:normal}
+.mk table.cst tr.tot td{font-weight:700;background:#fafbfc;border-top:1px solid #cfd3da}
+.mk table.cst tr.pl td{background:#fffaf0}
+.mk table.cst tr.g1 td{font-weight:600;background:#f4f8ff}
+.mk table.cst tr.g2 td{font-weight:600;background:#f8fbff}
+.mk table.cst tr.g1 td.loc{padding-left:30px}
+.mk table.cst tr.g2 td.loc{padding-left:52px}
+.mk table.cst tr.g3 td.loc{padding-left:52px}
+.mk table.cst tr.ln td{background:#fff}
+.mk table.cst tr.ln td.loc{padding-left:74px}
+.mk table.cst tr.ln.d2 td.loc{padding-left:52px}
+.mk .chev{display:inline-block;width:14px;color:var(--muted)}
+.mk .cnt{color:var(--muted);font-weight:400;margin-left:6px}
+.mk .neg{color:#b42328}
+.mk .lnk{color:#1463c7;font-weight:600}
+.mk .typ{display:inline-block;min-width:34px;margin-right:6px;color:var(--muted);font-weight:500}
+.mk .ms{display:block;color:var(--muted);font-size:11px;font-weight:400}
+.mk .legend{font-size:12px;color:var(--muted);margin:8px 0 0}
+.mk .strip{font-size:12px;color:var(--muted);margin:0 0 10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Stock status: Group by, mock v1</h1>
+<p class="sub">Lane STOCK-GROUPBY, on #1752's stock table. Real case from the dev DB (item CKS4238, CABANA KITCHEN SINK, single bowl), every customer, project, agent, supplier and document number masked. Dashed outline = the only new thing on the screen. Columns are today's (On hand, SO qty, SPO qty, Available, Available for Project, PO qty, Taken).</p>
+<div class="note">Crew answers on card v1 applied: all six dimensions (Location, Customer, Project, Agent, Supplier, Type); Available left blank on any group that is not a location; lines with no value go to a "No customer" / "No project" group listed last, so every column adds up to the Total; the choice is remembered per browser on all four screens; the last level shows document lines inside the same table.</div>
+
+<h2>1. Default: Location only (today's table, unchanged), menu open</h2>
+<p class="sub">Stand-alone page. Only the bar above the table is new. With Location alone the table is exactly #1752: a location row opens today's documents drill-down. The same bar sits on the Fulfilment Planning cell dialog's Stock tab, the order inquiry line expand and the project quotation's stock popover (it lives inside the table, so all four get it).</p>
+<div class="mk"><div class="scroll"><div class="fd">
+ <div class="side"><div class="logo">Sorento CRM</div><div class="grp">Inventory</div><div class="it">Stock</div><div class="it">Warehouses</div><div class="it on">Stock status</div></div>
+ <div class="main"><div class="top"><span>Inventory / Stock status</span><span class="sp"></span><span class="av">U</span></div>
+ <div class="pg">
+  <div class="ph"><div class="crumb">Inventory</div><h1>Stock status</h1></div>
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px"><span style="color:var(--muted)">Item</span><span class="ss" style="width:384px"><span class="v">CKS4238 · CABANA KITCHEN SINK (420X380X200MM)</span><span class="x">✕</span><span class="cv">▼</span></span></div>
+  <div class="gbar new">
+   <span class="facet"><span class="k">Group by</span> Location</span>
+   <span class="sp"></span>
+   <span class="btn sm">Expand all</span><span class="btn sm">Collapse all</span>
+   <span class="btn sm" style="border-color:var(--pri);color:var(--pri)"><span class="lay"></span> Group by ▾</span>
+   <div class="menu">
+    <div class="hd">Group by</div>
+    <div class="o"><span class="ck on">✓</span>Location<span class="n">1</span></div>
+    <div class="o h"><span class="ck"></span>Customer</div>
+    <div class="o"><span class="ck"></span>Project</div>
+    <div class="o"><span class="ck"></span>Agent</div>
+    <div class="o"><span class="ck"></span>Supplier</div>
+    <div class="o"><span class="ck"></span>Type</div>
+   </div>
+  </div>
+  <table class="cst">
+   <thead><tr><th style="width:22px"></th><th>Location</th><th class="num">On hand</th><th class="num">SO qty</th><th class="num">SPO qty</th><th class="num">Available</th><th class="num">Available for Project</th><th class="num">PO qty</th><th class="num">Taken</th></tr></thead>
+   <tbody>
+    <tr><td><span class="chev">›</span></td><td class="loc">BRW</td><td class="num">52</td><td class="num">1</td><td class="num">0</td><td class="num">51</td><td class="num">51</td><td class="num">6</td><td class="num">0</td></tr>
+    <tr><td><span class="chev">›</span></td><td class="loc">BRW-BB</td><td class="num">17</td><td class="num">396</td><td class="num">0</td><td class="num neg">-379</td><td class="num neg">-379</td><td class="num">144</td><td class="num">0</td></tr>
+    <tr><td><span class="chev">›</span></td><td class="loc">BRW-IB</td><td class="num">1</td><td class="num">333</td><td class="num">0</td><td class="num neg">-332</td><td class="num neg">-332</td><td class="num">330</td><td class="num">0</td></tr>
+    <tr><td><span class="chev">›</span></td><td class="loc">BRW-NTC</td><td class="num">1</td><td class="num">1</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+    <tr><td><span class="chev">›</span></td><td class="loc">HQ</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">200</td><td class="num">0</td></tr>
+    <tr><td><span class="chev">›</span></td><td class="loc">MWH</td><td class="num">21</td><td class="num">0</td><td class="num">0</td><td class="num">21</td><td class="num">21</td><td class="num">0</td><td class="num">0</td></tr>
+    <tr><td><span class="chev">›</span></td><td class="loc">MWH-BB</td><td class="num">59</td><td class="num">0</td><td class="num">0</td><td class="num">59</td><td class="num">59</td><td class="num">0</td><td class="num">0</td></tr>
+    <tr><td><span class="chev">›</span></td><td class="loc">BRW-DFCT</td><td class="num">6</td><td class="num">0</td><td class="num">0</td><td class="num">6</td><td class="num">6</td><td class="num">0</td><td class="num">0</td></tr>
+    <tr><td><span class="chev">›</span></td><td class="loc">CON</td><td class="num">10</td><td class="num">0</td><td class="num">0</td><td class="num">10</td><td class="num">10</td><td class="num">0</td><td class="num">0</td></tr>
+   </tbody>
+   <tfoot>
+    <tr class="tot"><td></td><td class="loc">Total</td><td class="num">167</td><td class="num">731</td><td class="num">0</td><td class="num neg">-564</td><td class="num neg">-564</td><td class="num">680</td><td class="num">0</td></tr>
+    <tr class="pl"><td><span class="chev">›</span></td><td class="loc">Incoming PL <span class="ms">as today (#1752), never grouped: packing lists carry no location or customer</span></td><td colspan="7"></td></tr>
+   </tfoot>
+  </table>
+  <p class="legend">Figures: dev DB raw SQL with the read's own rules (not yet run through the endpoint). Clicking Customer in the menu adds it as level 2 and gives frame 2.</p>
+ </div></div>
+</div></div></div>
+
+<h2>2. Location &gt; Customer &gt; Project</h2>
+<p class="sub">Locations keep today's rows and figures. BRW-BB is opened: its customers, then each customer's projects, then the document lines. On hand and PO at BRW-BB have no customer, so they sit in "No customer", last; BRW-BB's own row still reads 17 / 396 / 144. Group rows show the line count and the sums; Available, Available for Project and Taken are blank on them.</p>
+<div class="mk"><div class="scroll"><div class="fd" style="min-height:0">
+ <div class="side"><div class="logo">Sorento CRM</div><div class="grp">Inventory</div><div class="it on">Stock status</div></div>
+ <div class="main"><div class="top"><span>Inventory / Stock status</span><span class="sp"></span><span class="av">U</span></div>
+ <div class="pg">
+  <div class="gbar new">
+   <span class="facet"><span class="k">Group by</span> Location <span class="gt">&gt;</span> Customer <span class="gt">&gt;</span> Project <span class="x">✕</span></span>
+   <span class="sp"></span>
+   <span class="btn sm">Expand all</span><span class="btn sm">Collapse all</span>
+   <span class="btn sm"><span class="lay"></span> Group by ▾</span>
+  </div>
+  <table class="cst">
+   <thead><tr><th style="width:22px"></th><th>Location</th><th class="num">On hand</th><th class="num">SO qty</th><th class="num">SPO qty</th><th class="num">Available</th><th class="num">Available for Project</th><th class="num">PO qty</th><th class="num">Taken</th></tr></thead>
+   <tbody>
+    <tr><td><span class="chev">›</span></td><td class="loc">BRW</td><td class="num">52</td><td class="num">1</td><td class="num">0</td><td class="num">51</td><td class="num">51</td><td class="num">6</td><td class="num">0</td></tr>
+    <tr><td><span class="chev">⌄</span></td><td class="loc">BRW-BB</td><td class="num">17</td><td class="num">396</td><td class="num">0</td><td class="num neg">-379</td><td class="num neg">-379</td><td class="num">144</td><td class="num">0</td></tr>
+    <tr class="g1 new"><td></td><td class="loc"><span class="chev">⌄</span>Customer B<span class="cnt">4 lines</span></td><td class="num">0</td><td class="num">396</td><td class="num">0</td><td></td><td></td><td class="num">0</td><td></td></tr>
+    <tr class="g2"><td></td><td class="loc"><span class="chev">⌄</span>Project 2<span class="cnt">1 line</span></td><td class="num">0</td><td class="num">144</td><td class="num">0</td><td></td><td></td><td class="num">0</td><td></td></tr>
+    <tr class="ln"><td></td><td class="loc"><span class="typ">S/O</span><span class="lnk">SO-xxx3</span><span class="ms">Agent 1 · due 1 Dec 2026</span></td><td></td><td class="num">144</td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr class="g2"><td></td><td class="loc"><span class="chev">⌄</span>Project 3<span class="cnt">3 lines</span></td><td class="num">0</td><td class="num">252</td><td class="num">0</td><td></td><td></td><td class="num">0</td><td></td></tr>
+    <tr class="ln"><td></td><td class="loc"><span class="typ">S/O</span><span class="lnk">SO-xxx4</span><span class="ms">Agent 1 · due 22 Dec 2026</span></td><td></td><td class="num">76</td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr class="ln"><td></td><td class="loc"><span class="typ">S/O</span><span class="lnk">SO-xxx4</span><span class="ms">Agent 1 · due 20 Feb 2027</span></td><td></td><td class="num">76</td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr class="ln"><td></td><td class="loc"><span class="typ">S/O</span><span class="lnk">SO-xxx4</span><span class="ms">Agent 1 · due 15 Apr 2027</span></td><td></td><td class="num">100</td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr class="g1"><td></td><td class="loc"><span class="chev">›</span>No customer<span class="cnt">2 lines</span></td><td class="num">17</td><td class="num">0</td><td class="num">0</td><td></td><td></td><td class="num">144</td><td></td></tr>
+    <tr><td><span class="chev">›</span></td><td class="loc">BRW-IB</td><td class="num">1</td><td class="num">333</td><td class="num">0</td><td class="num neg">-332</td><td class="num neg">-332</td><td class="num">330</td><td class="num">0</td></tr>
+    <tr><td><span class="chev">›</span></td><td class="loc">BRW-NTC</td><td class="num">1</td><td class="num">1</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+    <tr><td><span class="chev">›</span></td><td class="loc">HQ</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">200</td><td class="num">0</td></tr>
+    <tr><td><span class="chev">›</span></td><td class="loc">MWH, MWH-BB, BRW-DFCT, CON <span class="ms">(four rows as in frame 1, folded here for space)</span></td><td class="num">96</td><td class="num">0</td><td class="num">0</td><td class="num">96</td><td class="num">96</td><td class="num">0</td><td class="num">0</td></tr>
+   </tbody>
+   <tfoot>
+    <tr class="tot"><td></td><td class="loc">Total</td><td class="num">167</td><td class="num">731</td><td class="num">0</td><td class="num neg">-564</td><td class="num neg">-564</td><td class="num">680</td><td class="num">0</td></tr>
+    <tr class="pl"><td><span class="chev">›</span></td><td class="loc">Incoming PL <span class="ms">as today</span></td><td colspan="7"></td></tr>
+   </tfoot>
+  </table>
+  <p class="legend">BRW-IB opened the same way would give Customer A 2 (Project 1), Customer C 330 (Project 6), Customer D 1 (Project 5), then No customer (On hand 1, PO 330). Document numbers link as today's drill-down (S/O to its sales order, PO to its purchase order, SPO to its SPO).</p>
+ </div></div>
+</div></div></div>
+
+<h2>3. Customer first (Customer &gt; Project), Location removed</h2>
+<p class="sub">Unticking Location in the menu: the top rows become customers across every location. The six customers add up to the Total's SO qty 731. Everything without a customer (on hand at each location, the four PO lines) sits in "No customer", last, so every column still foots to the Total. The Total and Incoming PL rows do not change.</p>
+<div class="mk"><div class="scroll"><div class="fd" style="min-height:0">
+ <div class="side"><div class="logo">Sorento CRM</div><div class="grp">Inventory</div><div class="it on">Stock status</div></div>
+ <div class="main"><div class="top"><span>Inventory / Stock status</span><span class="sp"></span><span class="av">U</span></div>
+ <div class="pg">
+  <div class="gbar new">
+   <span class="facet"><span class="k">Group by</span> Customer <span class="gt">&gt;</span> Project <span class="x">✕</span></span>
+   <span class="sp"></span>
+   <span class="btn sm">Expand all</span><span class="btn sm">Collapse all</span>
+   <span class="btn sm"><span class="lay"></span> Group by ▾</span>
+  </div>
+  <table class="cst">
+   <thead><tr><th style="width:22px"></th><th>Customer</th><th class="num">On hand</th><th class="num">SO qty</th><th class="num">SPO qty</th><th class="num">Available</th><th class="num">Available for Project</th><th class="num">PO qty</th><th class="num">Taken</th></tr></thead>
+   <tbody>
+    <tr class="g1 new"><td><span class="chev">›</span></td><td class="loc" style="padding-left:8px">Customer A<span class="cnt">1 line</span></td><td class="num">0</td><td class="num">2</td><td class="num">0</td><td></td><td></td><td class="num">0</td><td></td></tr>
+    <tr class="g1"><td><span class="chev">⌄</span></td><td class="loc" style="padding-left:8px">Customer B<span class="cnt">4 lines</span></td><td class="num">0</td><td class="num">396</td><td class="num">0</td><td></td><td></td><td class="num">0</td><td></td></tr>
+    <tr class="g2"><td></td><td class="loc" style="padding-left:30px"><span class="chev">›</span>Project 2<span class="cnt">1 line</span></td><td class="num">0</td><td class="num">144</td><td class="num">0</td><td></td><td></td><td class="num">0</td><td></td></tr>
+    <tr class="g2"><td></td><td class="loc" style="padding-left:30px"><span class="chev">›</span>Project 3<span class="cnt">3 lines</span></td><td class="num">0</td><td class="num">252</td><td class="num">0</td><td></td><td></td><td class="num">0</td><td></td></tr>
+    <tr class="g1"><td><span class="chev">›</span></td><td class="loc" style="padding-left:8px">Customer C<span class="cnt">1 line</span></td><td class="num">0</td><td class="num">330</td><td class="num">0</td><td></td><td></td><td class="num">0</td><td></td></tr>
+    <tr class="g1"><td><span class="chev">›</span></td><td class="loc" style="padding-left:8px">Customer D<span class="cnt">1 line</span></td><td class="num">0</td><td class="num">1</td><td class="num">0</td><td></td><td></td><td class="num">0</td><td></td></tr>
+    <tr class="g1"><td><span class="chev">⌄</span></td><td class="loc" style="padding-left:8px">Customer E<span class="cnt">1 line</span></td><td class="num">0</td><td class="num">1</td><td class="num">0</td><td></td><td></td><td class="num">0</td><td></td></tr>
+    <tr class="g2"><td></td><td class="loc" style="padding-left:30px"><span class="chev">⌄</span>No project<span class="cnt">1 line</span></td><td class="num">0</td><td class="num">1</td><td class="num">0</td><td></td><td></td><td class="num">0</td><td></td></tr>
+    <tr class="ln d2"><td></td><td class="loc" style="padding-left:52px"><span class="typ">S/O</span><span class="lnk">SO-xxx1</span><span class="ms">BRW · Agent 2 · due 2 May 2024</span></td><td></td><td class="num">1</td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr class="g1"><td><span class="chev">›</span></td><td class="loc" style="padding-left:8px">Customer F<span class="cnt">1 line</span></td><td class="num">0</td><td class="num">1</td><td class="num">0</td><td></td><td></td><td class="num">0</td><td></td></tr>
+    <tr class="g1"><td><span class="chev">⌄</span></td><td class="loc" style="padding-left:8px">No customer<span class="cnt">12 lines</span></td><td class="num">167</td><td class="num">0</td><td class="num">0</td><td></td><td></td><td class="num">680</td><td></td></tr>
+    <tr class="g2"><td></td><td class="loc" style="padding-left:30px"><span class="chev">⌄</span>No project<span class="cnt">12 lines</span></td><td class="num">167</td><td class="num">0</td><td class="num">0</td><td></td><td></td><td class="num">680</td><td></td></tr>
+    <tr class="ln d2"><td></td><td class="loc" style="padding-left:52px"><span class="typ">On hand</span>BRW</td><td class="num">52</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr class="ln d2"><td></td><td class="loc" style="padding-left:52px"><span class="typ">PO</span><span class="lnk">PO-xxx1</span><span class="ms">BRW · Supplier 1 · expected 30 Jun 2026</span></td><td></td><td></td><td></td><td></td><td></td><td class="num">6</td><td></td></tr>
+    <tr class="ln d2"><td></td><td class="loc" style="padding-left:52px"><span class="typ">On hand</span>BRW-BB</td><td class="num">17</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr class="ln d2"><td></td><td class="loc" style="padding-left:52px"><span class="typ">PO</span><span class="lnk">PO-xxx1</span><span class="ms">BRW-BB · Supplier 1 · expected 1 Aug 2026</span></td><td></td><td></td><td></td><td></td><td></td><td class="num">144</td><td></td></tr>
+    <tr class="ln d2"><td></td><td class="loc" style="padding-left:52px;color:var(--muted)">… 8 more lines (on hand at BRW-IB, BRW-NTC, MWH, MWH-BB, BRW-DFCT, CON; PO-xxx2 BRW-IB 330; PO-xxx3 HQ 200), folded here for space</td><td colspan="7"></td></tr>
+   </tbody>
+   <tfoot>
+    <tr class="tot"><td></td><td class="loc">Total</td><td class="num">167</td><td class="num">731</td><td class="num">0</td><td class="num neg">-564</td><td class="num neg">-564</td><td class="num">680</td><td class="num">0</td></tr>
+    <tr class="pl"><td><span class="chev">›</span></td><td class="loc">Incoming PL <span class="ms">as today</span></td><td colspan="7"></td></tr>
+   </tfoot>
+  </table>
+  <p class="legend">The first column's heading names the first level (Customer here). With Location not picked, a line's location moves to its muted second line. Customer A to F are A to Z by name, "No customer" last. The 12 "No customer" lines = 8 on hand lines (HQ holds 0, so it has none) + 4 PO lines.</p>
+ </div></div>
+</div></div></div>
+
+<h2>4. Phone, 375px: Location &gt; Customer</h2>
+<p class="sub">The chip wraps under the buttons; the table scrolls sideways as today, Location column first.</p>
+<div class="mk"><div class="fm">
+ <div class="mtop"><span>☰</span><b>Stock status</b></div>
+ <div class="mpg">
+  <div style="margin-bottom:10px"><span class="ss" style="width:100%"><span class="v">CKS4238 · CABANA KITCHEN SINK</span><span class="x">✕</span><span class="cv">▼</span></span></div>
+  <div class="gbar new">
+   <span class="btn sm"><span class="lay"></span> Group by ▾</span><span class="btn sm">Expand all</span><span class="btn sm">Collapse all</span>
+   <span class="facet"><span class="k">Group by</span> Location <span class="gt">&gt;</span> Customer <span class="x">✕</span></span>
+  </div>
+  <div class="scroll">
+  <table class="cst" style="width:560px">
+   <thead><tr><th style="width:22px"></th><th>Location</th><th class="num">On hand</th><th class="num">SO qty</th><th class="num">SPO qty</th><th class="num">Available</th></tr></thead>
+   <tbody>
+    <tr><td><span class="chev">›</span></td><td class="loc" style="min-width:170px">BRW</td><td class="num">52</td><td class="num">1</td><td class="num">0</td><td class="num">51</td></tr>
+    <tr><td><span class="chev">⌄</span></td><td class="loc" style="min-width:170px">BRW-BB</td><td class="num">17</td><td class="num">396</td><td class="num">0</td><td class="num neg">-379</td></tr>
+    <tr class="g1"><td></td><td class="loc" style="min-width:170px"><span class="chev">›</span>Customer B<span class="cnt">4</span></td><td class="num">0</td><td class="num">396</td><td class="num">0</td><td></td></tr>
+    <tr class="g1"><td></td><td class="loc" style="min-width:170px"><span class="chev">›</span>No customer<span class="cnt">2</span></td><td class="num">17</td><td class="num">0</td><td class="num">0</td><td></td></tr>
+    <tr><td><span class="chev">›</span></td><td class="loc" style="min-width:170px">BRW-IB</td><td class="num">1</td><td class="num">333</td><td class="num">0</td><td class="num neg">-332</td></tr>
+   </tbody>
+   <tfoot><tr class="tot"><td></td><td class="loc">Total</td><td class="num">167</td><td class="num">731</td><td class="num">0</td><td class="num neg">-564</td></tr></tfoot>
+  </table>
+  </div>
+  <p class="legend">Swipe for Available for Project, PO qty, Taken.</p>
+ </div>
+</div></div>
+
+<h2>How it behaves</h2>
+<ul>
+ <li>Click a dimension in the menu to add it as the next level; click it again to remove it. Level order is click order (Odoo's own way), so to reorder you untick and tick again. The chip's ✕ goes back to Location alone.</li>
+ <li>Location first: today's rows, sets, subtotals and Total stay; a location (or a set's subtotal row, over its whole set) opens its next level instead of the drill-down. Location alone opens today's drill-down, unchanged.</li>
+ <li>Group rows: name, line count, sums of On hand, SO qty, SPO qty and PO qty; Available, Available for Project and Taken blank. Negative figures red, as today.</li>
+ <li>Groups A to Z, "No ..." last; locations in today's order; a group exists only when it holds a line. Lines inside a group keep the read's order (by due / expected date).</li>
+ <li>Groups start closed; Expand all / Collapse all open or close every level.</li>
+ <li>The last choice is remembered in this browser and used on all four screens. A table without the AutoCount read (Borrow dialog, or the read failed) shows no bar and today's table.</li>
+ <li>The Fulfilment Planning dialog's search keeps today's meaning: it narrows the document lines and opens the groups holding a match; group figures stay.</li>
+</ul>
+
+<h2>Each element and what it reuses</h2>
+<table class="map">
+ <tr><th>Element</th><th>Reuses (repo path, under sorento_crm_frontend/)</th></tr>
+ <tr><td>Group by button (Layers icon)</td><td><code>components/ui/dropdown-menu.tsx</code>, icon as <code>components/ui/group-by-select.tsx:51</code>, small outline <code>components/ui/button.tsx</code></td></tr>
+ <tr><td>Menu with ticks and level numbers</td><td><code>DropdownMenuCheckboxItem</code>, as the grid's Columns toggle <code>components/ui/data-grid-column-visibility.tsx:42</code></td></tr>
+ <tr><td>"Group by Location &gt; Customer ✕" chip</td><td><code>components/ui/badge.tsx</code> (secondary) with a clear button</td></tr>
+ <tr><td>Expand all / Collapse all</td><td>same wording and place as the grid toolbar's <code>components/ui/data-grid-list-toolbar.tsx:192</code></td></tr>
+ <tr><td>Location rows, sets, subtotals, Total, Incoming PL</td><td>today's <code>app/(protected)/project-sales/fulfilment-planning/components/CellStockTable.tsx</code> (rows :593-776, subtotal :781-884, Total :921-992, Incoming PL :1043-1164), unchanged</td></tr>
+ <tr><td>Group rows (indent, chevron, bold sums)</td><td>styled as today's set subtotal row (CellStockTable.tsx:781-884) and its chevron (:628-632)</td></tr>
+ <tr><td>Document lines and links</td><td>the drill-down's S/O, PO and SPO links, <code>StockDocumentsPanel.tsx:458-492</code>; type names S/O, PO, SPO, On hand as its Type column (:432)</td></tr>
+ <tr><td>Remembered choice</td><td>localStorage, as the table's Location column width <code>CellStockTable.tsx:51</code></td></tr>
+ <tr><td>Grouping itself</td><td>new, shared: <code>components/common/</code> (pure grouping function + the menu), so any other grid can take it later; nothing else changes</td></tr>
+</table>
+</div>
+</body>
+</html>

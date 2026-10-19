@@ -2629,7 +2629,7 @@ def _outstanding_report_text(item: Any) -> str:
     return jsc.js_string(body.get("response") or "").strip()
 
 
-def _unplaced_token_has_neighbours(resolved: Any, gate: Any) -> bool:
+def _unplaced_token_has_neighbours(resolved: Any, gate: Any, only_token: str | None = None) -> bool:
     """True when a token the customer typed missed AND has real did-you-mean neighbours.
 
     AC-1703. The described-set branches below all assert something about the SET the
@@ -2663,6 +2663,8 @@ def _unplaced_token_has_neighbours(resolved: Any, gate: Any) -> bool:
     for res in _ms_miss_resolutions(r, gate=g):
         token = jsc.nullish_str(jsc.get(res, "token")).strip()
         if len(token) < 3 or not _CODE_RE.fullmatch(token):
+            continue
+        if only_token is not None and token.lower() != only_token.strip().lower():
             continue
         candidates = [
             *jsc.array(jsc.get(res, "matches")),
@@ -3934,13 +3936,22 @@ def not_found_error_message(
         vague_unresolved = [
             t for t in unresolved if jsc.get(by_raw.get(_nf_norm_raw(t)), "confident") is False
         ]
+        if jsc.truthy(jsc.get(q, "closed_lists")):
+            # CLOSED LISTS: an unsure token the resolver has real neighbours for is a
+            # mistyped code, so it takes the did-you-mean below, not the vague clarify.
+            # Only when EVERY unsure token has neighbours: otherwise the clarify names them all.
+            if all(_unplaced_token_has_neighbours(r, g, t) for t in vague_unresolved):
+                vague_unresolved = []
 
         if len(vague_unresolved) > 0:
             is_clarification = True  # so escalate-catalog's is_escalate_offer is false
             labels = _human_list(
                 [_prettify_type(t) for t in (allowed_types if isinstance(allowed_types, list) else [])]
             )
-            captured = ", ".join(jsc.js_string(t) for t in vague_unresolved)
+            # CLOSED LISTS: each unsure word is quoted on its own ("a", "b"), never one quoted run.
+            captured = (
+                '", "' if jsc.truthy(jsc.get(q, "closed_lists")) else ", "
+            ).join(jsc.js_string(t) for t in vague_unresolved)
             unresolved_set = {_nf_norm_raw(t) for t in unresolved}
             resolved_ents = [
                 e

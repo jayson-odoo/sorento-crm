@@ -23,11 +23,17 @@ from pathlib import Path
 
 import pytest
 
+# setup-python on the self-hosted Mac runner links python3 to libpython through
+# LD_LIBRARY_PATH, so a subprocess env built from PATH alone drops it and python3
+# exits 127 ("libpython3.12.so.1.0: cannot open shared object file", PR gate run
+# 39138107134). Every such env carries it through.
+PY_ENV = {k: os.environ[k] for k in ("LD_LIBRARY_PATH",) if k in os.environ}
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "blue_green_deploy.sh"
 
 DOCKER_STUB = r'''#!/usr/bin/env python3
 import os, subprocess, sys
+
 d = os.environ["STUB_DIR"]
 args = sys.argv[1:]
 def rd(name, default=""):
@@ -191,7 +197,7 @@ def box(tmp_path):
 
 def _run(box, timeout=120, args=(), **env_extra):
     env = {
-        "PATH": f"{box['bin']}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+        "PATH": f"{box['bin']}:{os.environ.get('PATH', '/usr/bin:/bin')}", **PY_ENV,
         "STUB_DIR": str(box["stub"]),
         "IMAGE_TAG": "abc123",
         "MEMINFO_FILE": str(box["meminfo"]),

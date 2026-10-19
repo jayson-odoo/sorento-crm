@@ -231,14 +231,14 @@ class ContextLayers:
     product_types: list[str] | None = None
     #: AC-36: the registry's descriptor keys and values, one `Product details:` line.
     product_details: list[tuple[str, list[str]]] | None = None
-    #: CHAT-STATE: the rendered `State:` block. When set it replaces the five legacy state
-    #: lines (Current subject, Open task, Open question, Pending, Open question options)
-    #: and is never trimmed.
-    state_block: str | None = None
     #: CHAT-CLOSED-LISTS: the candidate block for the words of the current message
     #: (`head/candidates.candidate_lines`), right after the message; None for a prompt
     #: version without the CLOSED LISTS section, which keeps the block unchanged.
     candidate_lines: list[str] | None = None
+    #: CHAT-STATE: the rendered `State:` block. When set it replaces the five legacy state
+    #: lines (Current subject, Open task, Open question, Pending, Open question options)
+    #: and is never trimmed.
+    state_block: str | None = None
 
 
 def _l5_segment(fact: dict[str, Any]) -> str:

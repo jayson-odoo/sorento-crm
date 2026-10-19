@@ -1,6 +1,6 @@
 # PLAN: CHAT-CLOSED-LISTS - chatbot step 2, closed candidate lists
 
-Status: Review (S1-S5, S4b-v2, S4c green; reviewer + security-reviewer running; S6 bench held by crew until the grader pin). Track: full (size L, LEAD pattern).
+Status: Review, round 4 part 2 + C2b pushed (reviewer READY); next the paired TRAIN x1 (crew bench, early stop, 3 USD cap). Track: full (size L, LEAD pattern).
 Branch `claude/chat-closed-lists-x6ymb5` (the sandbox cannot push `crew/chat-closed-lists`), PR #1755.
 
 Design source: CHATBOT-SCALE-DESIGN-16oct section 8 step 2 + D2 (crew-only): code only SHORTLISTS
@@ -118,11 +118,32 @@ one entity hint value and no new top-level key.
 | S5 no word rewrites under the gate (c27) | (S5 red commit) | 811f22fb | `_category_word_under_documents` off; listed type binds; F4 kept |
 | T2 scheme pick indexes the product's certificates | c6c71e8b | c6c71e8b | explicit link product > attachment > revision > scheme; none held = the cert kind |
 | `{{specs}}` token in the lane version (SPEC-REGISTRY-UI #1765) | (this commit) | (this commit) | the publisher swaps the baked specification lines for `{{specs}}`; the existing `specs` variable renders them at read time |
+| scheme word is never a certificate record lookup | (in fix commit) | 7b7db72b | no separate `test(red):` commit; retro red-proof posted 18 Oct (new tests on the parent's code) |
+| FILTER-OVER-HELD-WIDENS (CHAT-STATE card R1) | (in fix commit) | f7412977 | numeric size / brand narrows the held family; none-match keeps the held subject; retro red-proof 18 Oct |
+| SIZE-AS-CODE | (in fix commit) | fa9fd99a | number + a registry unit = `spec K = N` candidate line, never a code word; retro red-proof 18 Oct |
+| D CANDIDATE-LABEL-FORGE (CHAT-CODE-LOOKUP security nit) | acf5d713 | 8f3248bb | `;()` in a product name become spaces in `_code_label`, so a name never adds a candidate item |
+| A UNSURE-CODE-KEEPS-DYM (cp0-2ab2f7ccc9) | 4fa98da6 | 571e06be | an unsure (confident false) product token with resolver neighbours takes the did-you-mean; no neighbours keeps the vague clarify |
+| B HELD-WITHOUT-SCHEME (crew ruling (b) 18 Oct; cp0-9010f39a3d, 9f9e15dd0c, 7a655af8fa) | 5283ef89 | 0eb31d68 | held products stay the subject, the scheme's certificates filter the fetch, reply `<codes>: no <scheme> certificate on record.`; supersedes T2's "send the certificates they have" |
+| C SCHEME-NO-PRODUCT (cp0-fce51f2811) | d433a648 | 0eb31d68 | clarify policy is default here (`turn/policy_rows.py:91` narrow_by_tier, `turn/narrow.py:553`): the scheme's company-scoped certificates filter the fetch, at most 50 rows (endpoint default `api/v1/master_data/product_attachments.py:153`) |
+| R2-1 BRAND-SCOPE-ATTACH (security blocker) | a9cefbee | 36fa732b | `ProductAttachmentService.list_product_attachments` filters `product_in_scope_clauses`; ungated; unscoped sessions unchanged |
+| R2-2 MIXED-UNSURE (reviewer) | 6e174c98 | 23db525d | the did-you-mean only when every unsure token has neighbours; under the gate the vague clarify quotes each word on its own (accepted format) |
+| R2-3 SCHEME-NONE-IN-SCOPE (reviewer) | a64d26e3 | 957269b0 | nothing held, no certificate of the scheme in scope: `No <SCHEME> certificate on record.`, nothing fetched |
+| R2-4 KIND-NONE-HELD (reviewer) | 0d523a7a | a7c5bc48 | `scheme_without_product` leaves a verdict holding a product unchanged; the untested filter is gone |
+| R2-5 CANDIDATE-TEXT-SCRUB (security) | 41cea408 | ae92cec3 | `candidate_text` (`chatbot_prompt_vars.py`) for code, name, spec key, value, display, class label |
+| R2-6 ENGINE-KEYS-STRIPPED (security) | c92c8744 (wrong reason), a3be90b9 (corrected, after the fix) | 540bc7e6 | parser entities lose `listed` / `certificate_uuids` before grounding; ungated; red-proof by reverting the strip |
+| R2-7 CERT-ID-CAP (security) | 7afed4b4 | 957269b0 | scheme certificate ids capped at 200, id order |
+| R3-1 SCHEME-NAME-PUNCT (security) | 6987cb13 | e93d14c8 | a scheme name / option / keyword with `.:,;()"` never reaches the list or the enum (external ingest, like the over-long read error) |
+| R3-2 KIND-NONE-HELD-ENGINE (reviewer) | f57030bb | 0e467cc0 | the engine never calls `scheme_without_product` while a focus product carries a uuid; `index_scheme` no longer returns early with no certificate kind listed (it adds none) |
+| R3-3 SCRUBBED-LABEL-GROUNDS (guard) | 0aa38cc6 (guard, green) | - | a pick of a scrubbed rendered value grounds to the same registry value |
 
 Held (crew Q4 (a)): deleting the gate-off rewrites waits for the owner to move the label; each is
 listed with the replay diff it would need. Gated off under the CLOSED LISTS path today:
 `_category_word_under_documents`, the class split of a listed type pick, the cert regexes and
 the `user_goal` fallback in `derive_require`.
+
+Follow-up (security, staff-written text): attachment type names and description words in the closed lists get the same punctuation rule as schemes. Note: R3-1 drops a dotted scheme name ("S.I.R.I.M") rather than scrubbing it; none exists on the dev copy (11 register schemes, no `certificate_scheme` lookup rows).
+
+Residual (one item, reported, not fixed): cp0-7a655af8fa drops its held products for an unresolved category word ("tap fittings") before the scheme leg.
 
 Open: c06's
 "300mm" reads trap_length where the answer key says dim_length (a numeric key choice; no
@@ -143,3 +164,51 @@ the gate from `listed_item` on the parse; a whole-turn replay pins the version t
 label and text can disagree only across a TTL expiry and a label move in the same instant), N4
 (the file-ask roster lists certificate types too: the customer is asking which file of THIS
 product, and its certificates are files of it).
+
+## Round 4 (19 Oct, owner): attachments only
+
+Held-out attachments (crew-only) sits at 63.5 against the 95 bar, flat across rounds; its first-failing classes are
+files 9, asked_type 6, no_picker 3. The lane measures on TRAIN only: the 27 real attachment conversations
+(`crew/state/eval/cp0/train_attachment`, the attachment slice of gate #3 `g1755c`, lane head 0665fa0d, 40.7 vs main 33.3).
+
+Steps:
+1. $0 root cause on every TRAIN attachment failure of gate #3: the stage that lost it (parser type pick, grounding,
+   scheme index, resolver, apply/narrowing, fetch args, scope, composer), file:line, class (>= 2 item-runs), and
+   MODEL LIMIT vs CODE per class (crew may try a stronger parser model separately).
+2. Red-first fixes per CODE class, reviewer (+ security-reviewer if scope/ingest is touched).
+3. Paired TRAIN x1 (lane vs main) under the owner's early-stop rule (checkpoints, stop on regression), cap 3 USD.
+
+### Round 4 part 1 (19 Oct)
+
+| Class | Red | Green | Notes |
+|---|---|---|---|
+| C2 FAMILY-BY-FAMILY-CODE (crew priority) | f49d099c | 3c8810c6 | a held product's family = same company + same non-null `family_code`, chat-searchable, plus the variant graph; dev copy: variant_of_id on 2 of 15,439 products, family_code on 13,983, largest family 16 |
+| HELD-OVER-NAMED-CLASS (TRAIN 41147cbf9f, 7a655af8fa, c026f64f50) | fa67869f | f6eb1165 | a current-message category / product_type entity names its own subject: no held carry, no held_none_match, the scheme's certificates filter; fixture made real in c0c43178, 1546db61, 4df5178d, 6665f100 (parse fields, class_label, certificate_products rows); a harness-only apply rule was removed |
+
+Root cause of the 27 real attachment conversations (gate #3): crew-note 6256793867; grader artefact G1 (trace cap)
+goes to EVAL-BENCH; gold calls to the owner; MODEL classes to the gpt-5.4 parser run (CHAT-CODE-LOOKUP).
+Residual (reviewer): a refine that repeats the held product's own class ("p trap wc?") would drop the held subject; not
+seen in g1755c (114 held turns) or train_followups (56).
+
+### Round 4 part 2 (19 Oct)
+
+| Class | Red | Green | Notes |
+|---|---|---|---|
+| R4-2 SCHEME-NO-PRODUCT-RETYPED (cp0-fce51f2811) | 026863c6 | fd246a88 | `scheme_without_product` adds the certificate kind beside the scheme, as `index_scheme` does; the reconciler's retype can no longer empty the type slot |
+| R4-3 DROPPED-TYPE-CARRIES-OLD (cp0-6240dc53f8) | 55b6d27e | 7e8b2a37 | grounding records an engine-owned `dropped_kinds` (popped from parser output); apply clears that axis so the old type never answers |
+| R4-4 CERT-NUMBER-AS-SET (cp0-5b20fdfe69) | f71eaaa4 | fe9f1b92 | an exact certificate match is a typed code for the Shape B skip (`cert_number_is_code`); narrowed to a listed scheme when picked |
+| R4-5 NO-FREE-REMAINDER-ON-FILE-ASK (cp0-5c93483505) | d1cc720b | ac91fd9b | on a file ask under the gate the set is described by parser entities only; spec and other domains keep their remainder (guard test) |
+
+Shared test helper `tests/chatbot/_attach_world.py` carries the real parse fields and the real certificate link chain
+(certificate_products included). Watch item (reviewer): a class word the parser hints as `product` on a file ask is no
+longer scoped by the leftover remainder.
+
+### C2b HELD-FIRST (19 Oct, CHAT-STATE correction)
+
+| Class | Red | Green | Notes |
+|---|---|---|---|
+| C2b HELD-FIRST | f1628123 | 4b11b5d1 | one filter applied twice: held products first; family_code siblings (+ variant graph) only when no held product matches; none line only when both are empty. Keeps es-e9d2507a71 / es-242b332bca / es-f173186e97 within the shown set, still fixes cp0-665ba3e897; old C2 brand test re-seeded so the held product lacks the filter (9ac7e39d) |
+
+Open (CHAT-STATE, UNVERIFIED): es-0db8cf0a48 "150" is `trap_length` on file while the parser emits `dim_width`; a
+numeric-key candidate line is this lane's (candidates.py). Reviewer nits kept: the held pass has no
+`chat_searchable_products()` filter (held came from a searchable resolution).

@@ -16,7 +16,6 @@ signature enforces the discipline - nothing here takes a `Session`.
 from __future__ import annotations
 
 import copy
-import functools
 import json
 import logging
 from dataclasses import dataclass
@@ -82,14 +81,14 @@ class ParserConfig:
     provider: str
     model: str
     api_key: str
-    # CHAT-STATE: the prompt in use asks for `state_changes` (set by `resolve_config` in S5).
-    state_block: bool = False
     # CHAT-CLOSED-LISTS: the version carries the CLOSED LISTS section, so the user turn
     # carries the candidate block and grounding validates picks against the lists.
     closed_lists: bool = False
     # CHAT-CLOSED-LISTS S4b-v2: the gated version's own strict schema (`closed_lists_schema`),
     # None for the production one.
     json_schema: dict[str, Any] | None = None
+    # CHAT-STATE: the prompt in use asks for `state_changes` (set by `resolve_config` in S5).
+    state_block: bool = False
 
 
 def _build_base_json_schema() -> dict[str, Any]:
@@ -792,14 +791,15 @@ TOLERATED_ABSENT: frozenset[str] = frozenset(
 )
 
 
-def closed_lists_schema(items: list[str]) -> dict[str, Any]:
-    """The strict schema of a CLOSED LISTS version: the production one, with each entity's
-    `listed_item` held to the items the lists render (a JSON enum) or null. The provider
-    then guarantees the parser picks a listed file type, certificate kind or scheme, or
-    none; no code ever maps the customer's word to one (CHAT-CLOSED-LISTS card R2/R5)."""
+def closed_lists_schema(items: list[str], *, state: bool = False) -> dict[str, Any]:
+    """The strict schema of a CLOSED LISTS version: the production one (the CHAT-STATE one
+    when the version also asks for `state_changes`), with each entity's `listed_item` held
+    to the items the lists render (a JSON enum) or null. The provider then guarantees the
+    parser picks a listed file type, certificate kind or scheme, or none; no code ever maps
+    the customer's word to one (CHAT-CLOSED-LISTS card R2/R5)."""
     import copy
 
-    schema = copy.deepcopy(PARSE_OUTPUT_JSON_SCHEMA)
+    schema = copy.deepcopy(PARSE_OUTPUT_JSON_SCHEMA_WITH_STATE if state else PARSE_OUTPUT_JSON_SCHEMA)
     entity = schema["properties"]["entities"]["items"]
     # No item at all is a null-only key: an enum of [null] alone is refused by some providers.
     from app.services.chatbot.head.closed_lists_prompt import NOT_LISTED
@@ -808,16 +808,6 @@ def closed_lists_schema(items: list[str]) -> dict[str, Any]:
         {"type": ["string", "null"], "enum": [*items, NOT_LISTED, None]} if items else {"type": "null"}
     )
     entity["required"] = [*entity["required"], "listed_item"]
-    return schema
-
-
-@functools.lru_cache(maxsize=8)
-def _closed_lists_state_schema(items: tuple[str, ...]) -> dict[str, Any]:
-    """The closed-lists schema plus `state_changes` (a version carrying both sections), built
-    once per item list and shared; callers must not mutate it."""
-    schema = closed_lists_schema(list(items))
-    schema["properties"]["state_changes"] = copy.deepcopy(_STATE_CHANGES_SCHEMA)
-    schema["required"] = [*schema["required"], "state_changes"]
     return schema
 
 
@@ -854,27 +844,26 @@ def resolve_config(
     api_key = resolve_api_key(config, provider)
     if not api_key:
         raise ParserError(f"no API key configured for provider {provider!r}")
-    # Both gates read the same RAW template that was rendered above (one registry read).
     from app.services.chatbot.head.closed_lists_prompt import gate_on
 
+    # The same one read as the state gate (#1747 R6): both gates and the text, one version.
     closed_lists = gate_on(raw_template)
+    # CHAT-STATE: the literal on the prompt text (never on a message) opts the turn in.
     state_block = HEADING in (raw_template or "")
     json_schema = None
     if closed_lists:
         from app.services.chatbot_prompt_vars import closed_list_enum
 
-        items = closed_list_enum(db)
-        json_schema = _closed_lists_state_schema(tuple(items)) if state_block else closed_lists_schema(items)
+        json_schema = closed_lists_schema(closed_list_enum(db), state=state_block)
     return ParserConfig(
         system_prompt=system_prompt,
         prompt_version=prompt_version,
         provider=provider,
         model=model,
         api_key=api_key,
-        # CHAT-STATE: the literal on the prompt text (never on a message) opts the turn in.
-        state_block=state_block,
         closed_lists=closed_lists,
         json_schema=json_schema,
+        state_block=state_block,
     )
 
 
@@ -1146,11 +1135,8 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
             messages,
             temperature=0.0,
             max_tokens=PARSER_MAX_TOKENS,
-            # CHAT-CLOSED-LISTS' own gated schema wins when set; otherwise CHAT-STATE's state schema
-            # when its section is on. A version carrying BOTH sections needs one combined schema (follow-up).
-            json_schema=config.json_schema or (
-                PARSE_OUTPUT_JSON_SCHEMA_WITH_STATE if config.state_block else PARSE_OUTPUT_JSON_SCHEMA
-            ),
+            json_schema=config.json_schema
+            or (PARSE_OUTPUT_JSON_SCHEMA_WITH_STATE if config.state_block else PARSE_OUTPUT_JSON_SCHEMA),
             json_schema_name=PARSE_OUTPUT_SCHEMA_NAME,
             # One cache bucket per published prompt version: every parse on it shares
             # the same static prefix (OpenAI only; the others ignore it).

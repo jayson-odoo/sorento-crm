@@ -155,11 +155,16 @@ def test_the_family_reaches_the_parent_of_a_held_variant(session_factory):
     assert note["matched"] == ["ZZTWC286-SH"]
 
 
-def test_no_member_with_the_spec_leaves_the_verdict_as_it_was(session_factory):
+def test_no_member_with_the_spec_keeps_the_held_subject(session_factory):
+    """Crew ruling (a), 18 Oct (FILTER-OVER-HELD): held, none match keeps the subject and
+    says so (`test_closed_lists_filter_over_held.py`); it never leaves the turn to widen."""
     _seed(session_factory)
-    verdict = {"entities": [{**P_TRAP, "raw": "s trap", "spec_value": "s_trap"}]}
+    s_trap = {**P_TRAP, "raw": "s trap", "spec_value": "s_trap"}
 
-    assert _unit(session_factory, verdict, ["ZZTWC900-P"]) == (verdict, None)
+    verdict, note = _unit(session_factory, {"entities": [s_trap]}, ["ZZTWC900-P"])
+
+    assert [e["canonical_code"] for e in verdict["entities"] if e["hint"] == "product"] == ["ZZTWC900-P"]
+    assert note["none_match"] is True and note["matched"] == []
 
 
 def test_a_message_naming_its_own_product_is_not_narrowed(session_factory):
