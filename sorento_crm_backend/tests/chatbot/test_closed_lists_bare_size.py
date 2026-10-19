@@ -291,9 +291,26 @@ def test_a_strict_entry_on_a_hidden_key_is_dropped_from_the_set(session_factory,
 
     r, calls = _ask(session_factory, stub_access, monkeypatch, "600mm wide zzbasin", _ent("zzbasin", "category"), _spec("600mm wide", "dim_width", 600))
 
-    text_ = ((r.reply or {}).get("text") or "").lower()
+    text_ = (r.reply or {}).get("text") or ""
     assert _fetched(calls) != [ids["ZZBS-W"]], (r.reply, calls)
-    assert "width" not in text_, text_
+    # Owner ruling a35818889 (b), "b follow policy" (lead sign-off): the customer NAMED the hidden
+    # width, so the set is not narrowed by it and the reply says it is not available, once.
+    assert _fetched(calls) == sorted(ids.values()), (r.reply, calls)
+    assert text_.count("*Width:* not available") == 1, text_
+    assert "600" not in text_ and "wide" not in text_.lower(), text_
+
+
+def test_a_hidden_dim_width_the_customer_did_not_name_stays_silent_on_a_bare_size(session_factory, seeded, stub_access, monkeypatch):
+    """Owner ruling a35818889 (b) covers a hidden key the customer NAMES; a bare size names no
+    dimension, so the hidden width (a leg of the bare-size OR) is never mentioned."""
+    ids = _seed(session_factory, BASINS)
+    _hide(session_factory, "dim_width")
+
+    r, calls = _ask(session_factory, stub_access, monkeypatch, "need a 600mm zzbasin", _ent("zzbasin", "category"), _spec("600mm", "size", 600))
+
+    text_ = (r.reply or {}).get("text") or ""
+    assert _fetched(calls) == [ids["ZZBS-L"]], (r.reply, calls)
+    assert "not available" not in text_ and "width" not in text_.lower(), text_
 
 
 def test_guard_a_hidden_unrelated_key_changes_nothing(session_factory, seeded, stub_access, monkeypatch):
