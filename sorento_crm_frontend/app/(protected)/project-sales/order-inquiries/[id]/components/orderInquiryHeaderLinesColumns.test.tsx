@@ -73,6 +73,8 @@ describe('AC-B3-1: the Lines tab reads Product, Qty, Taken, Remaining, Delivery 
       // replace Qty.
       'No.',
       'Product',
+      // OI-SPLIT-VIEW (UAC B1): the "Split" chip column sits right after Product.
+      'Split',
       'Confirmed',
       'SO Qty',
       'Requested',
