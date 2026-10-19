@@ -388,3 +388,67 @@ def test_r1b_a9_a_confirm_naming_only_line_752_answers_200_despite_the_pending_6
 def test_r1c_a9_a_line_with_a_pending_autocount_change_is_not_split_edited(api, emails):
     s = _pending_growth_608(api, emails)
     assert _board_flag(s, 608) is False
+
+
+# ---------------------------------------------------------------------------
+# Review round 2, A11: a held-back line stays held back
+# ---------------------------------------------------------------------------
+
+
+def _split_edited_608(api, emails):
+    """608 plan 600 + 32 applied, 100 delivered, then edited to 500 + 32 (so the flag is on)."""
+    s, _po = _new_line_plan_applied(api, emails)
+    _save(s, {608: [(600, D_608, 608, ""), (32, D_32, "new", "")]})
+    _reconfirm(s)
+    s.core[608].qty_delivered = Decimal("100")
+    s.db.commit()
+    r = _put(s, [{"line_id": _on(s, 608), "splits": [
+        _sp(500, D_608, on=_on(s, 608)), _sp(32, D_32, on=None)]}])
+    assert r.status_code == 200, ("premise: the edit saves", r.text)
+    assert _board_flag(s, 608) is True, "premise: 608 is split-edited"
+    return s
+
+
+def _line_nos(s, rows):
+    names = {str(s.line[n].id): n for n in OWNER_CASE}
+    return [names.get(x.get("project_line_id")) for x in rows or []]
+
+
+def _rows_of(s, no):
+    from app.models.project_so import OrderInquiryRow
+
+    s.db.expire_all()
+    return sorted(
+        (str(r.id), r.verb, str(r.qty), r.delivery_date)
+        for r in s.db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == s.line[no].id).all()
+    )
+
+
+def test_r2_a11_a_named_split_edited_line_the_server_refuses_is_held_back_only(api, emails):
+    s = _split_edited_608(api, emails)
+    before = _rows_of(s, 608)
+    start = len(emails)
+    r = _confirm(s.client, s.order.id, [_line_payload(s.line[608].id, buy_qty="532"),
+                                        _line_payload(s.line[752].id, buy_qty="649")])
+    assert r.status_code == 200, (r.status_code, r.text)
+    body = r.json()
+    held = [h.get("line_no") for h in body.get("lines_held_back") or []]
+    assert 608 in held, ("608 is held back", body.get("lines_held_back"))
+    assert 608 not in _line_nos(s, body.get("lines_confirmed")), ("608 is not confirmed", body["lines_confirmed"])
+    s.db.commit()
+    assert _rows_of(s, 608) == before, "no OI row change for the held-back line"
+    assert [ln for ln in _sent_since(emails, start) if ln["qty"] in ("500", "532", "32")] == [], (
+        "no email for the held-back line", _sent_since(emails, start))
+
+
+def test_r2_a11_an_unnamed_split_edited_line_that_fails_the_check_never_makes_the_confirm_422(api, emails):
+    s = _split_edited_608(api, emails)
+    before = _rows_of(s, 608)
+    r = _confirm(s.client, s.order.id, [_line_payload(s.line[752].id, buy_qty="649")])
+    assert r.status_code == 200, ("the other line confirms", r.status_code, r.text)
+    body = r.json()
+    assert 752 in _line_nos(s, body.get("lines_confirmed")), body.get("lines_confirmed")
+    assert 608 in [h.get("line_no") for h in body.get("lines_held_back") or []], body.get("lines_held_back")
+    assert 608 not in _line_nos(s, body.get("lines_confirmed"))
+    s.db.commit()
+    assert _rows_of(s, 608) == before

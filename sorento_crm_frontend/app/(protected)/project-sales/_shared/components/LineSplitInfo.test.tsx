@@ -230,6 +230,20 @@ describe('OrderSplitsDialog - the whole order', () => {
     expect(text).toContain('ORDER 145');
   });
 
+  it('reads "1 split line" for one split line (UAC D1, review round 2)', () => {
+    render(
+      <OrderSplitsDialog
+        title="SO417636: splits"
+        lines={[LINES[0]]}
+        open
+        onOpenChange={() => {}}
+      />,
+    );
+    const text = screen.getByRole('dialog').textContent ?? '';
+    expect(text).toMatch(/1 split line(?!s)/);
+    expect(text).not.toContain('1 split lines');
+  });
+
   it('puts the subtitle (the SO number on the OI page) under the title', () => {
     render(
       <OrderSplitsDialog

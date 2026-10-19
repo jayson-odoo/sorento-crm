@@ -352,7 +352,7 @@ describe('D1 / D2: the board gear carries Split delivery and View splits per ord
 });
 
 describe('review round 1 (UAC A3): the list names exactly the lines the count includes', () => {
-  it('a split-edited line with a stale draft is in both the count and the list, or in neither', async () => {
+  it('a split-edited line with a stale draft counts exactly 1 and is listed (review round 2)', async () => {
     const board = withSplitEdited(
       buildBoard([demand()], { today: TODAY, freeStock: {}, granularity: 'week' }),
       ['pl-1-1'],
@@ -381,7 +381,8 @@ describe('review round 1 (UAC A3): the list names exactly the lines the count in
     const summary = await screen.findByTestId('board-confirm-summary');
     const counted = Number((summary.textContent ?? '').match(/(\d+) to confirm/)?.[1]);
     const listed = screen.queryByText('Split edits to confirm: line 1 ZZT-ITEM-1') !== null;
-    expect(listed).toBe(counted === 1);
+    expect(counted).toBe(1);
+    expect(listed).toBe(true);
     // and the Confirm button agrees with the count
     expect(screen.getByTestId('board-confirm')).toHaveTextContent(`Confirm (${counted})`);
   });

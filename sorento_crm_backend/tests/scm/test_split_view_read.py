@@ -296,3 +296,69 @@ def test_b7_a_user_of_another_company_cannot_read_the_sales_order_or_its_split_v
     with company_scope(s.db, frozenset({other})):
         r = s.client.get(f"/api/v1/scm/sales-orders/{s.core_so.id}")
     assert r.status_code == 404, (r.status_code, r.text[:200])
+
+
+# ---------------------------------------------------------------------------
+# Review round 2, B3: the pending-line ruling and the precedence
+# ---------------------------------------------------------------------------
+
+D_32 = date(2026, 12, 20)
+D_32_EDIT = date(2027, 1, 20)
+
+
+def _pending_growth_608(api, emails):
+    """608 with an applied plan 600 + 32, AutoCount 632 -> 700 pending, the 32's date edited."""
+    from decimal import Decimal
+
+    from app.services.scm.outstanding_diff import QTY_CHANGED
+    from tests.scm.test_line_splits_round3 import _reconfirm
+
+    s, _po = _new_line_plan_applied(api, emails)
+    _save(s, {608: [(600, D_608, 608, ""), (32, D_32, "new", "")]})
+    _reconfirm(s)
+    core = s.core[608]
+    core.qty_ordered, s.line[608].qty = Decimal("700"), Decimal("700")
+    s.db.commit()
+    s.batch = _build(s.world, [_change(QTY_CHANGED, core, so_number=s.core_so.so_number,
+                                       old_date=D_608, new_date=D_608, old_qty="632",
+                                       new_qty="700")], s.core_so, [str(core.id)])
+    assert s.batch is not None, "premise: the AutoCount change is pending"
+    r = _put(s, [{"line_id": _on(s, 608), "splits": [
+        _sp(600, D_608, on=_on(s, 608)), _sp(32, D_32_EDIT, on=None)]}])
+    assert r.status_code == 200, ("premise: the edit saves", r.text)
+    return s
+
+
+def test_r2_b3_a_pending_autocount_line_with_an_edited_32_reads_saved_and_marks_the_row(api, emails):
+    s = _pending_growth_608(api, emails)
+    view = _one(_views(s, 608))
+    assert view["status"] == "saved", ("lead ruling: saved, not confirmed", view["status"])
+    changed = [r for r in view["rows"] if r["changed"]]
+    assert [(r["qty"], r["delivery_date"]) for r in changed] == [("32", "2027-01-20")], view["rows"]
+    assert changed[0]["was_date"] == "2026-12-20", changed[0]
+    assert changed[0]["was_qty"] is None
+
+
+def test_r2_b3_the_board_flag_of_that_line_stays_false(api, emails):
+    from tests.scm.test_split_view_board import _board_flag
+
+    s = _pending_growth_608(api, emails)
+    assert _board_flag(s, 608) is False, "A9: the board counts the line once, for its AutoCount change"
+
+
+def test_r2_b3_a_stale_plan_reads_autocount_changed_even_when_it_is_edited(api, emails):
+    from decimal import Decimal
+
+    from app.services.scm.outstanding_diff import QTY_CHANGED
+
+    s, _po = _new_line_plan_applied(api, emails)
+    _edit_480(s, [(14, D_480_NEW, "own", ""), (236, D_608, "new", ""), (167, D_167_EDIT, "new", "")])
+    core = s.core[480]
+    core.qty_ordered, s.line[480].qty = Decimal("20"), Decimal("20")
+    s.db.commit()
+    batch = _build(s.world, [_change(QTY_CHANGED, core, so_number=s.core_so.so_number,
+                                     old_date=D_480_NEW, new_date=D_480_NEW, old_qty="14",
+                                     new_qty="20")], s.core_so, [str(core.id)])
+    assert batch is not None, "premise: the AutoCount change is pending"
+    view = _one(_views(s, 480))
+    assert view["status"] == "autocount_changed", ("precedence: AutoCount changed first", view["status"])
