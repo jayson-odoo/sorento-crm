@@ -468,6 +468,42 @@ def _check_key(total: dict[str, Any], key: Any) -> None:
         raise _CapStop("wrong_key")
 
 
+_QUOTA_CODES = frozenset({"insufficient_quota", "billing_not_active", "billing_hard_limit_reached"})
+
+
+def _refusal_kind(exc: BaseException) -> str | None:
+    """"insufficient_quota" or "auth" when the provider refused the KEY itself, else None (a transient 429, a 5xx,
+    a bad request: ordinary errors). Matched on status and code, never on message text. The openai SDK's
+    `APIStatusError` carries `.status_code` and `.code` (`app/services/llm_provider.py:369` builds that client); the
+    embeddings endpoint is a plain httpx call (`app/services/embedding_worker.py:635`), so its `HTTPStatusError`
+    carries `.response` with the same status and an `{"error": {"code": ...}}` body."""
+    response = getattr(exc, "response", None)
+    status = getattr(exc, "status_code", None) or getattr(response, "status_code", None)
+    code = getattr(exc, "code", None)
+    if code is None:
+        body = getattr(exc, "body", None)
+        if body is None and response is not None:
+            try:
+                body = response.json()
+            except Exception:  # noqa: BLE001 - an unreadable body is just "no code"
+                body = None
+        if isinstance(body, dict):
+            err = body.get("error")
+            code = (err if isinstance(err, dict) else body).get("code")
+    if code in _QUOTA_CODES:
+        return "insufficient_quota"
+    if status in (401, 403):
+        return "auth"
+    return None
+
+
+def _note_refusal(total: dict[str, Any], exc: BaseException) -> None:
+    kind = _refusal_kind(exc)
+    if kind:
+        total["stop"] = "provider_refused"
+        total["stop_kind"] = kind
+
+
 @contextlib.contextmanager
 def _metered(usage: dict[str, Any], total: dict[str, Any]) -> Iterator[None]:
     """Pass-through wrapper on every provider `chat`: checks the caps BEFORE the call, then counts calls and tokens
@@ -482,7 +518,11 @@ def _metered(usage: dict[str, Any], total: dict[str, Any]) -> Iterator[None]:
         def chat(self: Any, *args: Any, **kwargs: Any) -> Any:
             _check_caps(total)
             _check_key(total, getattr(self, "api_key", ""))
-            res = original(self, *args, **kwargs)
+            try:
+                res = original(self, *args, **kwargs)
+            except Exception as exc:
+                _note_refusal(total, exc)  # the engine still sees the exception, as before
+                raise
             prompt = int(getattr(res, "prompt_tokens", 0) or 0)
             cached = int(getattr(res, "cached_tokens", 0) or 0)
             out = int(getattr(res, "completion_tokens", 0) or 0)
@@ -509,7 +549,11 @@ def _metered(usage: dict[str, Any], total: dict[str, Any]) -> Iterator[None]:
 
             if getattr(settings, "openai_api_key", ""):  # empty: the original raises before any request goes out
                 _check_key(total, settings.openai_api_key)
-            res = original(chunks)
+            try:
+                res = original(chunks)
+            except Exception as exc:
+                _note_refusal(total, exc)
+                raise
 
             tokens = sum(len(str(c)) for c in chunks) // 4  # an estimate: the endpoint's own count is not returned
             model = str(getattr(settings, "embedding_model_name", ""))
@@ -789,6 +833,8 @@ def _live_one(item: dict[str, Any], row: dict[str, Any], factory: Callable[[], A
         except _CapStop as stop:
             total["stop"] = total.get("stop") or stop.reason
             return {**out, "stopped": stop.reason}
+    if total.get("stop") == "provider_refused":  # the engine swallowed the refusal: this turn is not a bot result
+        return {**out, "stopped": "provider_refused", "kind": total.get("stop_kind")}
     if getattr(result, "duplicate", False):
         return {**out, "skipped": "duplicate"}
     if sink is not None:
@@ -931,6 +977,8 @@ def live_rows(items: list[dict[str, Any]], recorded_rows: list[dict[str, Any]], 
                         stopped = "max_usd"
                 if stopped:
                     res = {"item_id": item["item_id"], "run": item.get("run"), "stopped": stopped}
+                    if stopped == "provider_refused":
+                        res["kind"] = total.get("stop_kind")
                 elif broken:
                     res = {"item_id": item["item_id"], "run": item.get("run"), "skipped": "chain_broken"}
                 elif str(item.get("recorded_turn_id")) not in by_id:
@@ -1167,6 +1215,9 @@ def _cmd_live(args: argparse.Namespace) -> int:
     if last.get("stopped") == "error_rate":
         print(f"error_rate stop: {last['errors']} errored items, first {' '.join(str(i) for i in last['first_ids'])}")
         return 3
+    if last.get("stopped") == "provider_refused":
+        print(f"provider_refused stop: the provider refused the key ({last.get('kind')})")
+        return 4
     return 0
 
 
