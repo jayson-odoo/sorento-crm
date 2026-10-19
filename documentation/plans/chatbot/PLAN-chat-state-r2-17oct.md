@@ -235,6 +235,12 @@ notes only if a rule is the owner's, red-first fixes, reviewer, paired TRAIN rea
   585 replayed). Reviewer READY; should-fix done: state-off guard 9666d3884c (3 phrasings, no `state_changes`;
   fetch exactly SH-P + SH-NEW-P; fix reverted -> fails on the extra -PP; the state-off path carries no quantity,
   so none is asserted). #1755's own fixtures have no -PP-style sibling; crew-note on #1755 6260819707.
+  Pushed d45781dbfb (+ origin/main ada7cfc990, eval scripts only); 687 touched tests pass; one ci label (crew).
+- Paired real x1 with checkpoints (lane d45781dbfb + v168 vs main 0f5c6537e0 = main's app code; crew-note
+  6260953750): train2_refine lane 2/8 vs main 0/8 (gains es-e9d2507a71 R4-A, es-f173186e97 C2b); cp0 real refine
+  lane 5/5 vs main 2/5 (gains 665ba3e897, 253d58ba8b, fcd44fe521); real refine 7/13 vs 2/13, no item regressed,
+  0.18 USD (round ~0.55 of 3). Left on TRAIN, all owned elsewhere: EVAL-BENCH (242 gold, 9ed / 5eb offer-pick
+  labels), #1755 number key (0db8), owner registry synonyms (02332, d2692).
 - EVAL-BENCH real refine set `eval-sets/train2_refine` (8 real TRAIN items, round 36 grader; recorded prod 1/8).
   Baseline x1 (scoped): lane 4cdd3f37fd 0/8, main 0f5c6537e 0/8 ($0.162). `filter` fails 8/8 on both arms
   (rootcause-r4.md section 2):
