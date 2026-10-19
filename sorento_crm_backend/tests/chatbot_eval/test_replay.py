@@ -292,7 +292,7 @@ def test_replay_run_cli_writes_no_message_or_reply_text_to_stdout_or_stderr(tmp_
     while isinstance(node, dict) and "text" not in node:
         node = node.get("message")
     node["text"] = phrase
-    raw = row["response"]["ctx"]["parse"]["_parser_raw"]
+    raw = replay_mod._recorded_parse(row)  # the row's own dict, whichever source the replay reads
     for e in raw.get("entities") or []:
         e["raw"] = phrase
     traces = tmp_path / "rows.jsonl"
@@ -320,7 +320,7 @@ def test_replay_rows_emits_no_log_record_carrying_the_message_words(session_fact
     while isinstance(node, dict) and "text" not in node:
         node = node.get("message")
     node["text"] = phrase
-    for e in row["response"]["ctx"]["parse"]["_parser_raw"].get("entities") or []:
+    for e in replay_mod._recorded_parse(row).get("entities") or []:
         e["raw"] = phrase
     with caplog.at_level(logging.DEBUG):
         out = replay_mod.replay_rows([row], session_factory=session_factory)
