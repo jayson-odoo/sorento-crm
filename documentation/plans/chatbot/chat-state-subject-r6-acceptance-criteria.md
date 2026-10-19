@@ -27,7 +27,11 @@ trace is byte-identical to today unless a line says otherwise.
   under keep is not a change); `answer` fills ONLY the asked slot and keeps the others (card R5); `new_subject` drops
   every held axis, the product axis included (card R4); a rejected change set keeps every held axis and lets a value
   typed this message fill only its own axis, exactly the held Subject when nothing was typed (lead decision, review
-  round 2: with the ops untrusted, the typed words are the only signal).
+  round 2: with the ops untrusted, the typed words are the only signal). Under `keep` the applier records exactly the words it saw typed on
+  a held axis (a Subject field written only under keep); the fetch drops exactly those and never a word a later step
+  added (review round 3: a type-clarify answer with a category held reaches the fetch).
+- AC-S1-12 (review round 3) `source` ids means explicit uuids; a token-only Subject is `unresolved` until settle places
+  the token.
 - AC-S1-10 (review round 2) A held product without a uuid stays in the Subject as a token (key = its code) and the
   fetch hands it over, as the browser-pass-6 promo turn 0bd47e62 needs (never a fetch scoped to no product).
 - AC-S1-11 (review round 2) Settle keeps the said tokens it could not place in `unplaced`; a Subject with placed ids
@@ -62,7 +66,9 @@ trace is byte-identical to today unless a line says otherwise.
 ## S5 Legacy rewriters stand down
 - AC-S5-1 Under the state gate none of: with_set_count_from_text, with_brand_from_offer, with_company_pick,
   with_new_set_words, the stock-ask regex, decide.py's refine-of-standing-subject branch, reconcile.py:110-121 runs;
-  each is ported to an op semantic or deleted, and each has a test pin.
+  each is ported to an op semantic or deleted, and each has a test pin. Under the state gate they stand down on reject turns too
+  (state_led None), so the fetch never reads a Subject a rewriter changed behind it; one reject turn pins it (lead
+  decision, review round 3).
 
 ## S6 UserTurn at ingress
 - AC-S6-1 One UserTurn (own_text, quoted_text, media reads) is built at ingress for the webhook path and #1766's
