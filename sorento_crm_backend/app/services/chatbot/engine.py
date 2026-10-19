@@ -4887,22 +4887,23 @@ def _run_stages_body(  # noqa: PLR0915
                         except Exception:  # noqa: BLE001 - an advisory narrowing, never a failed turn
                             logger.warning("chatbot: offered brand narrowing failed; the turn goes on without it", exc_info=True)
                     state_in, verdict = chat_state.pick_offered_brands(state_in, verdict, picked, brand_of)
-                class_rows = chat_state.class_set_over_held(state_in)
-                if class_rows:
-                    # Lead decision S3: a class `set` over held products keeps the members of that
-                    # class (read from the data here) and drops the others (`keep_class_members`).
-                    try:
-                        with _session(session_factory) as class_db:
-                            members = _class_members(class_db, class_rows, list(state_in.subject.product_ids))
-                    except Exception:  # noqa: BLE001 - an advisory narrowing, never a failed turn
-                        logger.warning("chatbot: class membership read failed; the held products stay", exc_info=True)
-                        members = set(state_in.subject.product_ids)
-                    state_in = chat_state.keep_class_members(state_in, members)
             else:
                 # A rejected change set changes nothing, but the turn is still on the state
                 # path: the input State with its Subject (held axes, this message's said values).
                 state_in = applied.state
                 verdict = applied.verdict
+            class_rows = chat_state.class_said_over_held(state_in)
+            if class_rows:
+                # Lead decision S3 / review round 4: a class said over held products, whatever the
+                # op, keeps the members of that class (read from the data here) and drops the
+                # others (`keep_class_members`).
+                try:
+                    with _session(session_factory) as class_db:
+                        members = _class_members(class_db, class_rows, list(state_in.subject.product_ids))
+                except Exception:  # noqa: BLE001 - an advisory narrowing, never a failed turn
+                    logger.warning("chatbot: class membership read failed; the held products stay", exc_info=True)
+                    members = set(state_in.subject.product_ids)
+                state_in = chat_state.keep_class_members(state_in, members)
         remembered_before["_chat_state"] = state_log
     state_led = state_in.state_led is not None
     answering = state_in.state_led == "answer"
@@ -8859,7 +8860,9 @@ def _held_for_the_seams(state_in: Any, verdict: dict[str, Any], *, for_family: b
 def _class_members(db: Session, class_rows: list[dict[str, Any]], held_ids: list[str]) -> set[str]:
     """The held products whose category is of the class the rows name, through the catalogue's
     class vocabulary (`services.resolve_category_class`, the stock ask's own); a row carrying a
-    category key counts it directly. Data only: membership is never read off the word itself."""
+    category key counts it directly, and a row whose word does not resolve is tried by its
+    code. A class the catalogue does not know says nothing about membership: every held
+    product stays. Data only: membership is never read off the word itself."""
     from sqlalchemy import func, or_
 
     from app.models.product import Product, ProductCategory
@@ -8867,11 +8870,16 @@ def _class_members(db: Session, class_rows: list[dict[str, Any]], held_ids: list
     category_ids: set[str] = {str(r["uuid"]) for r in class_rows if r.get("uuid")}
     labels: set[str] = set()
     for row in class_rows:
-        ids, names = business_services.resolve_category_class(db, str(row.get("value") or ""))
-        category_ids.update(ids)
-        labels.update(n.casefold() for n in names)
-    if not (category_ids or labels) or not held_ids:
+        for word in (row.get("value"), row.get("canonical_code")):
+            ids, names = business_services.resolve_category_class(db, str(word or ""))
+            if ids or names:
+                category_ids.update(ids)
+                labels.update(n.casefold() for n in names)
+                break
+    if not held_ids:
         return set()
+    if not (category_ids or labels):
+        return set(held_ids)
     member_of = [
         *([Product.category_id.in_(sorted(category_ids))] if category_ids else []),
         *([func.lower(ProductCategory.class_label).in_(sorted(labels))] if labels else []),

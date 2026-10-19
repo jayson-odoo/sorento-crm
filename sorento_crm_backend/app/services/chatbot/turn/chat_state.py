@@ -459,6 +459,7 @@ def _reject(
     held, and what this message typed is said on its axis (the same Subject a `keep` gives)."""
     log["rejected"] = reasons
     out = {k: v for k, v in verdict.items() if k != "state_changes"}
+    _mark_kept_aside(_entities(out), [])
     subject = _build_subject(state, state.focus, out, brands, None)
     log["subject"] = subject_wire(subject)
     return Applied(False, replace(state, subject=subject), out, log)
@@ -661,12 +662,13 @@ def pick_offered_brands(
     }
 
 
-def class_set_over_held(state: State) -> list[dict[str, Any]]:
-    """The class rows a refine `set` over held explicit products (lead decision, S3): the engine
-    reads which held products are members of that class. Empty when the rule does not apply."""
+def class_said_over_held(state: State) -> list[dict[str, Any]]:
+    """The class rows this message SAID over held explicit products, whatever the op (lead
+    decision, review round 4: the Subject's class provenance decides, never the op kind): the
+    engine reads which held products are members of that class. Empty when it does not apply."""
     subject = state.subject
     if (
-        subject is None or state.state_led != "refine" or subject.provenance.get("class") != "said"
+        subject is None or subject.provenance.get("class") != "said"
         or subject.provenance.get("product") != "held" or not subject.product_ids
     ):
         return []
@@ -674,9 +676,9 @@ def class_set_over_held(state: State) -> list[dict[str, Any]]:
 
 
 def keep_class_members(state: State, members: set[str]) -> State:
-    """Lead decision S3 (card R1; membership read from the data): a `set` on the class axis is a
-    refine over the held explicit products. The members of the said class stay the subject;
-    the others drop, and with none left the subject is the class predicate with the other held
+    """Lead decision S3 (card R1; membership read from the data): a class said over the held
+    explicit products filters them. The members of the said class stay the subject; the
+    others drop, and with none left the subject is the class predicate with the other held
     axes kept. A described set's members and a held token are not explicit products here."""
     rows = [r for r in state.focus.products if isinstance(r, dict)]
     kept = [r for r in rows if not (r.get("uuid") and r.get("described_set") is not True) or str(r["uuid"]) in members]
@@ -708,12 +710,17 @@ def held_family_landed(state: State, verdict: dict[str, Any], matched: list[str]
     subject = state.subject
     if subject is None or not matched:
         return state, verdict
-    tokens = tuple({"value": c, "key": c, "hint": "product"} for c in dict.fromkeys(matched))
+    codes = list(dict.fromkeys(matched))
+    tokens = tuple({"value": c, "key": c, "hint": "product"} for c in codes)
     subject = replace(
         subject, source="unresolved", product_ids=(), product_tokens=tokens,
         provenance={**subject.provenance, "product": "held"},
     )
-    return replace(state, subject=subject), carry_onto_family(verdict, matched)
+    # One write: the focus holds the same members as the Subject, so no earlier held row (a
+    # described set's member) rides beside them.
+    rows = [{"raw": c, "canonical_code": c, "hint": "product", "current_message": False} for c in codes]
+    focus = replace(state.focus, products=rows)
+    return replace(state, focus=focus, subject=subject), carry_onto_family(verdict, matched)
 
 
 def _focus_questions(focus: Focus) -> bool:
@@ -765,6 +772,22 @@ _PREDICATE_AXES = ("brand", "class", "spec")
 _ROW_FIELDS = ("uuid", "canonical_code", "spec_key", "spec_value", "spec_unit", "spec_label", "spec_words", "spec_known")
 
 
+#: The applier's mark on a parse entity `keep` set aside (a word typed on a held axis). Written
+#: on the parse's own row, so every later copy of it (grounding's `{**entity}`) still carries it;
+#: `fetch_entities` drops exactly the marked rows. The engine's key, never the parser's.
+KEPT_ASIDE = "_kept_aside"
+
+
+def _mark_kept_aside(entities: list[dict[str, Any]], aside: list[dict[str, Any]]) -> None:
+    """Mark exactly the `aside` rows; a mark on any other row (one the parser emitted) goes."""
+    marked = {id(e) for e in aside}
+    for e in entities:
+        if id(e) in marked:
+            e[KEPT_ASIDE] = True
+        else:
+            e.pop(KEPT_ASIDE, None)
+
+
 def _typed_row(entity: dict[str, Any], hint: str) -> dict[str, Any] | None:
     """One typed predicate row (AC-S1-7): the word as said or held, its registry key (the uuid,
     else the code; None for a bare word), the kind, and the entity's own grounding fields."""
@@ -799,13 +822,16 @@ def _build_subject(
     focus the ops left (held), with what this message types `said` on its own axis (`offer`
     when the brand is one the last answer offered). The op decides the OTHER held axes: a
     refine (`set` / `clear` / a list pick), an `answer` and a change set the applier rejected
-    (`led` None) keep every held axis the message did not fill; a plain `keep` (`led` "keep"
-    here) changes nothing, so a value typed on an axis the State holds stays held (one on an
-    empty axis is said); a `new_subject` (`led` "new_ask") drops every held axis, the product
-    axis included. A held product with no key stays as a token keyed by its code (AC-S1-10);
+    (`led` None) keep every held axis the message did not fill; a plain `keep` changes nothing,
+    so a word typed on an axis the State holds stays held (the applier marked it `KEPT_ASIDE`;
+    one on an empty axis is said); a `new_subject` (`led` "new_ask") drops every held axis,
+    the product axis included. A held product with no key stays as a token keyed by its code (AC-S1-10);
     a said one is `unresolved` until `settle_subject` reads what the resolver placed. `scope`
     and `hidden` stay empty."""
-    said_rows = [e for e in _entities(out) if e.get("current_message") is not False]
+    typed_rows = [e for e in _entities(out) if e.get("current_message") is not False]
+    # A word `keep` set aside (`_mark_kept_aside`) is not a change: it is recorded, never said.
+    kept_aside = tuple(r for r in (_typed_row(e, str(e.get("hint"))) for e in typed_rows if e.get(KEPT_ASIDE)) if r)
+    said_rows = [e for e in typed_rows if not e.get(KEPT_ASIDE)]
     said: dict[str, list[dict[str, Any]]] = {}
     for e in said_rows:
         axis = _SUBJECT_AXIS.get(str(e.get("hint") or ""))
@@ -814,13 +840,6 @@ def _build_subject(
             said.setdefault(axis, []).append(row)
     fresh = led == "new_ask"
     held = {axis: [] for axis in _PREDICATE_AXES} if fresh else _held_rows(focus)
-    kept_aside: tuple[dict[str, Any], ...] = ()
-    if led == "keep":
-        # `keep` changes nothing: a value typed on an axis the State holds is not a change. The
-        # words set aside are recorded, so the fetch drops exactly those and nothing a later
-        # step adds (a clarify answer's chosen type, review round 3).
-        kept_aside = tuple(r for axis, rows in said.items() if held[axis] for r in rows)
-        said = {axis: rows for axis, rows in said.items() if not held[axis]}
     offered = bool(offered_brand_picks(state, out, brands))
     predicate: dict[str, list[dict[str, Any]]] = {}
     provenance: dict[str, str] = {}
@@ -938,20 +957,11 @@ def fetch_entities(
     replaces the held one, every other held row is kept, as the ops left the focus."""
     from app.services.chatbot import turn_runtime
 
-    # The words a `keep` set aside (typed on a held axis, recorded by the applier) were not a
-    # change: the held rows answer for that axis and exactly those words do not ride. Nothing
-    # else is dropped, whatever step added it.
-    aside = {
-        (_SUBJECT_AXIS.get(str(r.get("hint") or "")), str(r.get("value") or "").strip().casefold())
-        for r in subject.kept_aside
-    }
+    # The words a `keep` set aside (the applier marked them, `KEPT_ASIDE`; the Subject records
+    # them in `kept_aside`) were not a change: the held rows answer for that axis and exactly
+    # those rows do not ride, however a later step rewrote them. Nothing else is dropped.
     stated = [e for e in parse_output.get("entities") or [] if isinstance(e, dict)]
-    own = [
-        e for e in stated
-        if not (e.get("current_message") is not False and (
-            _SUBJECT_AXIS.get(str(e.get("hint") or "")), str(e.get("raw") or e.get("canonical_code") or "").strip().casefold()
-        ) in aside)
-    ]
+    own = [e for e in stated if not (e.get("current_message") is not False and e.get(KEPT_ASIDE))]
     typed = {str(e.get("hint") or "").strip().lower() for e in own if e.get("current_message") is not False}
     product_scoped = unsettled_only and bool(subject.product_ids or subject.product_tokens) and (
         subject.provenance.get("product") == "held"
@@ -1029,6 +1039,7 @@ def apply_changes(
     if log["shown"] is None:
         # Nothing shown, nothing to carry: a first ask runs exactly as it does without the key.
         out = {k: v for k, v in verdict.items() if k != "state_changes"}
+        _mark_kept_aside(_entities(out), [])
         subject = _build_subject(state, state.focus, out, brands, None)
         log["subject"] = subject_wire(subject)
         return Applied(True, replace(state, subject=subject), out, log)
@@ -1276,6 +1287,16 @@ def apply_changes(
         else:
             slot_ask = _period_ask(state, focus.date_window, (switch_to or focus.domains or [None])[0])
     held_products = list(state.focus.products)
+    keeping = bool(plain_keeps) and not (
+        answering or new_subject or set_axes or "clear" in ops or data_picks or period_answer
+    )
+    held_axes = {axis for axis, rows in _held_rows(focus).items() if rows}
+    # AC-S1-9: `keep` changes nothing. A brand / class / spec word typed on an axis the State
+    # holds is set aside: marked on the parse's own row, before anything copies it.
+    _mark_kept_aside(_entities(out), [
+        e for e in _entities(out)
+        if keeping and e.get("current_message") is not False and _SUBJECT_AXIS.get(str(e.get("hint") or "")) in held_axes
+    ])
     # Values come from the parse as stated; a restated held row (current_message false) goes.
     dropped_entities = [{"kind": e.get("hint")} for e in _entities(out) if e.get("current_message") is False]
     entities = [copy.deepcopy(e) for e in _entities(out) if e.get("current_message") is not False]
@@ -1346,7 +1367,7 @@ def apply_changes(
     log["slots"] = slots
     log["ignored"] = ignored
     log["dropped_entities"] = dropped_entities
-    subject = _build_subject(state, focus, out, brands, "keep" if led == "carry" and plain_keeps else led)
+    subject = _build_subject(state, focus, out, brands, led)
     log["subject"] = subject_wire(subject)
     return Applied(
         True, replace(state, focus=focus, pending=pending, state_led=led, slot_ask=slot_ask, subject=subject), out, log
