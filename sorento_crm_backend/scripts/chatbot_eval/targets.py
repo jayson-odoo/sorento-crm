@@ -1191,6 +1191,34 @@ def _sent_files(row: dict[str, Any], announced: Any = None) -> list[dict[str, An
             for f in (t["envelope"].get("attachments") or []) if isinstance(f, dict)]
 
 
+NO_STAMP_AUDIENCES = frozenset({"dealer", "linked_dealer"})   # an "Availability only" contact (Profile.stock_availability_only)
+
+
+def _which_one_check(row: dict[str, Any], item: dict[str, Any], gold: dict[str, Any],
+                     accepted: set[str]) -> tuple[str, bool, str] | None:
+    """An ambiguous attachment ask answered by the which-one picker. PHOTO-PICKER (owner 5 Oct): the picker lists every
+    matching code, stamped has / no for the asked type, unless the contact is availability-only (a dealer): then bare
+    (`lanes/business/answer.py` gates the stamp on `Profile.stock_availability_only`). The stamp is read from each
+    option's `stamp`, not the reply; the options must be codes holding a code-like word the customer typed."""
+    after = _oq(row)[1]
+    if not (gold.get("ambiguous") and isinstance(after, dict) and after.get("kind") == "product_pick"):
+        return None
+    options = [o for o in after.get("options") or [] if isinstance(o, dict)]
+    typed = {_key(t) for t in _TOKEN_RE.findall(user_message(row)) if re.search(r"\d", t) and len(_key(t)) >= 3}
+    stamped = not (str((item.get("asker") or {}).get("audience") or "") in NO_STAMP_AUDIENCES)
+
+    def stamp_ok(o: dict[str, Any]) -> bool:
+        st = _norm(o.get("stamp"))
+        if not stamped:
+            return not st
+        m = re.fullmatch(r"(?:has|no)\s+(.+)", st)
+        return bool(m) and _type_ok(_type_word(m.group(1)), accepted)
+
+    ok = bool(options and typed) and all(any(t in _key(o.get("code") or o.get("label")) for t in typed) and stamp_ok(o)
+                                         for o in options)
+    return ("which_one", ok, "The which-one list is not over the matching codes, stamped as the domain setting says.")
+
+
 def _attachment(row, item):
     gold = item.get("gold") or {}
     accepted = {_type_word(x) for x in [gold.get("attachment_type"), gold.get("attachment_type_name"),
@@ -1217,6 +1245,9 @@ def _attachment(row, item):
         asked_ok = None
     checks = [("asked_type", asked_ok, "The asked type was read differently from the type requested."),
               *_needless(row, gold, slice_name="attachment")]
+    which = _which_one_check(row, item, gold, accepted)
+    if which is not None:   # an ambiguous ask answered with the which-one picker: no file is owed
+        return checks + [which]
     if gold.get("asked_words"):
         checks.append(("said_none", _says_none(reply_text(row), gold["asked_words"]),
                        "The bot did not say there is none on record."))
