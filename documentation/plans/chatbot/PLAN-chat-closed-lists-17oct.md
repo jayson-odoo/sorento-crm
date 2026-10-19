@@ -1,6 +1,6 @@
 # PLAN: CHAT-CLOSED-LISTS - chatbot step 2, closed candidate lists
 
-Status: Build, round 7 (H1 hidden keys at the entries, then F3-c, F3-a, F3-b, F3-d per crew rulings a29310107 + a29691875); round 6 pushed at 18e9760e7d (reviewer READY, security PASS). Track: full (size L, LEAD pattern).
+Status: Review, round 7 (H1, H1b, F3-a) fix round 1 done, re-review next; ci HOLD (crew a35818889: owner rules whether a contact-hidden key the customer names may narrow a list; R6-6 broke main tests round8/round9, owner case #833); order F3-a, F3-b, F3-d per crew a30139843, F3-c only after the $0 TRAIN count; cp0-6240dc53f8 held for the owner. Track: full (size L, LEAD pattern).
 Branch `claude/chat-closed-lists-x6ymb5` (the sandbox cannot push `crew/chat-closed-lists`), PR #1755.
 
 Design source: CHATBOT-SCALE-DESIGN-16oct section 8 step 2 + D2 (crew-only): code only SHORTLISTS
@@ -320,19 +320,30 @@ exactly a listed item) waits for the owner; neither side is built.
   name order), uncut.
 - A5 Unchanged (existing tests are the guards): the bare-size line and its flag (R6-1), boolean phrases (R6-2), size
   keys by data (R5-1), SIZE-AS-CODE spanned words, numeric key words ("4 in 1"), hidden keys (H1, R6-6), gate off.
-- Removes: `_keys_holding`, `_bare_size_keys` and `_unit_keys` as separate per-key readers (folded into the index),
-  the `or keys` name-order fallback, the spec-line cut in `shortlist`.
+- Removes: `_keys_holding`, `_bare_size_keys` and `_unit_keys` as separate per-key readers (folded into the index)
+  and the spec-line cut in `shortlist`; the no-holder fallback (every key of the unit) stays per A4, uncut.
 
 ### Round 7 results
 
 | Slice | Red | Green | Notes |
 |---|---|---|---|
 | H1 HIDDEN-KEYS-AT-THE-ENTRIES | f6e8c02d | 426eb3b4, 32971002 (+ stub 90bc48e9, lead sign-off) | candidate block filtered in one place (`_registry`); parse output stripped once; kill-proof 3 red; security PASS with should-fixes -> H1b |
-| H1b HIDDEN-KEYS-AT-EVERY-ENTRY (security should-fixes) | f95faa7d, 9329f07b | d4272502, 1a6cc876 (B4), (B5 carried-set replay in progress) | grounding output stripped too (raw-word re-derive); Shape B reads the hidden set once before the unknown-value branch; a set breakdown never splits by a hidden key (B4); `.strip()` on spec_key; kill-proof 5 red |
-| F3-a ONE VALUE INDEX | 3fffdd4b, f1f1645d | 5cd73ded, 8ff8ef7d | one registry index + one scoped count query; spec lines ranked held family / count / name; holding keys never cut; near rows keep CAP_PER_WORD; removed `_keys_holding`, `_bare_size_keys`, `_unit_keys`, `or keys`; kill-proof 5 red + 1 red |
+| H1b HIDDEN-KEYS-AT-EVERY-ENTRY (security should-fixes) | f95faa7d, 9329f07b | d4272502, 1a6cc876 (B4); B5 guard 9f2118af (the carried-set replay asks no breakdown, turn_runtime.py:4627); B6/B7 red 2b795073, fix 05da2ecd (no registry_rows filter: a hidden value word stays known); coverage + B8 guards 0cfb36c5 (written after the fixes, proved by revert); one strip after grounding 56ecab11 | grounding output stripped too (raw-word re-derive); Shape B reads the hidden set once before the unknown-value branch; a set breakdown never splits by a hidden key (B4); `.strip()` on spec_key; kill-proof 5 red |
+| F3-a ONE VALUE INDEX | 3fffdd4b, f1f1645d, 40cb920e | 5cd73ded, 8ff8ef7d, b82fe597 (list-valued specs count via membership_clause), 56ecab11 (cap by source) | one registry index + one scoped count query; spec lines ranked held family / count / name; holding keys never cut; near rows keep CAP_PER_WORD; removed `_keys_holding`, `_bare_size_keys`, `_unit_keys` (the no-holder fallback to every unit key stays, as A4 says, now uncut); kill-proof 5 red + 1 red |
 
 Dev data for F3-a (sorento_cagent_stack, read-only, searchable, not company-scoped): 5 numbers held by 6+ of the 9 mm
 keys (250: trap_length 329, dim_height 107, dim_length 43, dim_width 20, thickness 8, diameter 7, depth 6; the old cut
 dropped diameter and depth and the bare-size line took a slot). The 3 enum phrases two keys share whose name order
 differs from data order ("urinal", "mixer", "mixer tap") all pair a type line with another line, and type stays ahead,
 so A2's enum ranking changes none of them today.
+
+### Round 7 open: hidden key named by the customer (crew a35818889, owner call)
+
+tests/chatbot/test_attribute_asks_round8.py (3) and round9.py (2), owner case #833 "kitchen sink 1.2mm thickness",
+pass on main 359abb5682 and fail on the pushed head 18e9760e7d; bisected to R6-6 658cbdfa. The default policy hides
+thickness (app/services/spec_visibility.py:43); main's Shape B set path never applied hidden keys, so the thickness
+filter narrowed. R6-6 and H1b B2/B6 make a hidden key never narrow. PR CI runs only changed test files, so this would
+first fail at release. Options sent: (a) a named hidden key still narrows, prints stay hidden; (b) never narrows, the
+policy's "not available" line; recommendation (b). The engine keeps its single pre-parse policy read (engine.py ~:4613):
+`check_access` keys on the parser's routing and runs after grounding, so its snapshot cannot serve the candidate block.
+The test stub now returns `hidden_spec_keys` like the real check_access (6f09cf2d).
