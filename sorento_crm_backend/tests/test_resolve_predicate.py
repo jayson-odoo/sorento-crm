@@ -154,6 +154,10 @@ def test_an_unknown_require_key_is_a_422(client):
 # --------------------------------------------------------------------------- #
 
 
+#: A certified product whose CODE holds "bidet" and nothing else about it does (CS-3).
+BIDET_DECOY = "ZZX-BIDETHOSE"
+
+
 def _three_bidets(db):
     """ACC-BIDET / CAB-BIDET / SRT-BIDET - the exact three codes AC-1319's own worked
     example names. ACC-BIDET and SRT-BIDET carry a certificate, CAB-BIDET does not - TWO
@@ -161,25 +165,35 @@ def _three_bidets(db):
     qualifies" must fail today for the CORRECT reason (no brand scope applied yet), not
     pass by coincidence because an unrestricted require-only scan over an otherwise-empty
     scratch schema happens to have only one certified row.
+
+    CODE-SUBSTRING CS-3 (crew a44428307 (a), lead sign-off): "bidet" reaches the three through
+    their own data (name "Bidet Spray Set", product_type bidet derived from the description),
+    never through the word inside their codes. `BIDET_DECOY` is a certified product whose CODE
+    holds BIDET and whose name and description say only what it is (a shower hose): it must
+    never join a "bidet" set.
     """
     from app.models.certificate import Certificate, CertificateProduct
 
     cat = db.query(ProductCategory).first()
     uom = db.query(UnitOfMeasure).first()
     codes = ["ACC-BIDET", "CAB-BIDET", "SRT-BIDET"]
-    certified_codes = {"ACC-BIDET", "SRT-BIDET"}
-    for code in codes:
+    certified_codes = {"ACC-BIDET", "SRT-BIDET", BIDET_DECOY}
+    for code, name, description in (
+        *((c, f"Bidet Spray Set {c.split('-')[0]}", "BIDET SPRAY SET") for c in codes),
+        (BIDET_DECOY, "ZZX Shower Hose", "FLEXIBLE SHOWER HOSE 1.2M"),
+    ):
         product = Product(
             id=str(uuid.uuid4()),
             product_code=code,
-            product_name=code,
-            description="BIDET SPRAY SET",
+            product_name=name,
+            description=description,
             category_id=cat.id,
             base_uom_id=uom.id,
             list_price=Decimal("1.00"),
         )
         db.add(product)
         db.flush()
+        derive_for_code(db, code)
         if code in certified_codes:
             cert = Certificate(
                 id=str(uuid.uuid4()),
@@ -259,11 +273,13 @@ def test_described_set_unions_lookup_matches_bindings_and_brand(client, db):
 
     _three_bidets(db)
     by_code = {p.product_code: p for p in db.query(Product).filter(Product.product_code.in_(
-        ["ACC-BIDET", "CAB-BIDET", "SRT-BIDET"]
+        ["ACC-BIDET", "CAB-BIDET", "SRT-BIDET", BIDET_DECOY]
     ))}
     by_code["ACC-BIDET"].brand_id = cabana.id
     by_code["CAB-BIDET"].brand_id = cabana.id
     by_code["SRT-BIDET"].brand_id = sorento.id
+    # CS-3: certified and Sorento, so it would be counted if its code alone joined it.
+    by_code[BIDET_DECOY].brand_id = sorento.id
     db.flush()
 
     response = client.post(
@@ -308,6 +324,8 @@ def test_predicate_matches_carry_the_shape_the_fetch_reads(client, db):
         if m.get("match_tier") == "spec_search"
     ]
     assert matches, "expected at least one spec_search match (SRT-BIDET is certified)"
+    # CS-3: the code-only BIDET product is certified too, but a word never joins it by its code.
+    assert BIDET_DECOY not in [m["canonical_code"] for m in matches], matches
     for m in matches:
         assert m["entity_type"] == "product"
         assert m["match_tier"] == "spec_search"
@@ -1688,3 +1706,81 @@ def test_bare_certificate_true_stays_bare_when_remainder_names_no_scheme(client,
     predicate = response.json()["predicate"]
     assert predicate["require"] == {"certificate": True}, predicate
     assert "zzqx" in [str(t).lower() for t in predicate["unrecognized_terms"]], predicate
+
+
+# --------------------------------------------------------------------------- #
+# CODE-SUBSTRING (crew a43940036, plan a44428307 ruled (a)), CS-1: a word token  #
+# (no digit) never adds a product to a described set by a code substring or     #
+# AND-contains hit, in Shape B and in the spec fallback. The decoy is a water    #
+# closet with stock whose CODE holds "basin" and whose name and description say  #
+# only what it is; the basin is a class Wash Basin product by its own data.      #
+# --------------------------------------------------------------------------- #
+
+
+def _stocked(db, code: str, name: str, description: str) -> Product:
+    cat = db.query(ProductCategory).first()
+    uom = db.query(UnitOfMeasure).first()
+    wh = db.query(Warehouse).first()
+    product = Product(
+        id=str(uuid.uuid4()), product_code=code, product_name=name, description=description,
+        category_id=cat.id, base_uom_id=uom.id, list_price=Decimal("1.00"),
+    )
+    db.add(product)
+    db.flush()
+    derive_for_code(db, code)
+    db.add(Stock(
+        id=str(uuid.uuid4()), product_id=product.id, warehouse_id=wh.id, quantity_on_hand=5, quantity_reserved=0,
+        quantity_damaged=0,
+    ))
+    db.flush()
+    return product
+
+
+def _basin_and_decoy(db) -> tuple[Product, Product]:
+    return (
+        _stocked(db, "ZZTWB01", "ZZT White Wash Basin", "ZZT WHITE WASH BASIN"),
+        _stocked(db, "ZZBASINWC7", "ZZT Close Coupled WC", "CLOSE COUPLED P-TRAP WATER CLOSET"),
+    )
+
+
+def _product_codes(payload: dict, *, tier: str | None = None) -> list[str]:
+    rows = [m for r in payload.get("resolutions") or [] for m in r.get("matches") or []]
+    rows += list(payload.get("intersection") or [])
+    return [
+        m.get("canonical_code") for m in rows
+        if m.get("entity_type") == "product" and (tier is None or m.get("match_tier") == tier)
+    ]
+
+
+def test_cs1_a_word_never_joins_a_described_set_by_a_code_substring(client, db):
+    """Shape B (`_collect_lookup_product_ids`): RED on HEAD, the resolver's prefix probe falls back
+    to ILIKE '%basin%' on codes (tier "substring") and the decoy joins the set."""
+    basin, decoy = _basin_and_decoy(db)
+
+    response = client.post(
+        ENDPOINT,
+        json={
+            "query": "which basin has stock", "tokens": ["basin"], "scope_terms": ["basin"],
+            "require": {"stock": True}, "predicate_words": ["stock"],
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    described = _product_codes(payload, tier="spec_search")
+    assert decoy.product_code not in described, payload.get("predicate")
+    assert basin.product_code in described, payload.get("predicate")
+
+
+def test_cs1_the_spec_fallback_never_answers_a_word_with_a_code_substring_product(client, db):
+    """The spec fallback (no `require`): RED on HEAD, the word's code-substring row answers it."""
+    _basin, decoy = _basin_and_decoy(db)
+
+    response = client.post(
+        ENDPOINT,
+        json={
+            "query": "any basin?", "tokens": ["basin"], "raw_tokens": ["basin"], "spec_fallback": True,
+            "exact_match": True, "fallback_to_all_types": True, "understand_phrase": False,
+        },
+    )
+    assert response.status_code == 200
+    assert decoy.product_code not in _product_codes(response.json()), response.json().get("resolutions")
