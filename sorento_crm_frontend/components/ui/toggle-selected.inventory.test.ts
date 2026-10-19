@@ -116,6 +116,12 @@ const HAND_ROLLED: Array<{ file: string; was: string | null; now: string }> = [
     was: null,
     now: 'group-has-[[data-state=active]]/scope:data-[state=open]:text-primary-foreground',
   },
+  // ...and at rest. The surrounding spaces keep this from matching inside the two rows above.
+  {
+    file: 'app/(protected)/project-sales/[projectId]/quotation-documents/[documentId]/components/QuotationScopeTabs.tsx',
+    was: null,
+    now: ' group-has-[[data-state=active]]/scope:text-primary-foreground ',
+  },
 ];
 
 describe('every toggle selects in the primary colour', () => {
