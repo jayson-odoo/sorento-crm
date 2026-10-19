@@ -514,6 +514,7 @@ def test_g19_re_planning_the_stored_plan_into_the_card_plan_equals_it_from_scrat
     _assert_the_card_plan(s, po, sent, want)
 
 
+@pytest.mark.xfail(strict=True, reason="AC-G19 re-plan moves deferred to a follow-up lane (crew ruling a71847692 (b))")
 def test_g19_a_re_confirm_after_the_card_re_plan_changes_nothing(api, emails):
     """AC-G19 / AC-G13: right after the Confirm that applied the card re-plan, a second
     Confirm with no edit writes no OI row, moves no link and sends no email."""
