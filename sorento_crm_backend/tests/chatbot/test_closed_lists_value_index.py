@@ -336,3 +336,37 @@ def test_guard_a_product_type_stays_ahead_of_a_spec_under_the_same_phrase(db):
 
     assert items[0].startswith("product type "), items
     assert _spec_item(items, "zz_mounting") > 0, items
+
+
+# --- after F3-a: the lead's rulings on what stays (20 Oct) ------------------------------------
+
+
+def test_guard_an_enum_value_no_product_holds_keeps_its_line_after_the_holders(db):
+    """Lead ruling on ambiguity 1: a value no product holds is still listed, ranked after the
+    keys that hold it (a shared phrase), and alone (a phrase of one key)."""
+    _seed_shared_phrase(db)
+    _products(db, (("ZZMB305", {"zz_finish": "ivory"}), ("ZZMB409", {"zz_finish": "ivory"})))
+    _scoped(db)
+
+    lines = _lines(db, "ivory or charcoal ones")
+
+    assert '- "ivory": spec zz_finish = ivory (Ivory); spec zz_colour = ivory (Ivory)' in lines, lines
+    assert '- "charcoal": spec zz_colour = charcoal (Charcoal)' in lines, lines
+
+
+def test_r6_near_spellings_keep_the_per_word_cap_while_exact_holding_lines_stay_uncut(db):
+    """A3 exempts only the EXACT spec lines of keys that hold the value: near rows (spec and code
+    together) still share CAP_PER_WORD, as before F3-a. Seven board keys share the phrase
+    "450x450mm", spelt near the size word "450mm", whose six holding mm keys keep every line."""
+    _seed_keys(db, *MM_KEYS)
+    for n in range(1, 8):
+        _enum(db, f"zz_board_size_{n}", f"Board size {n}", ["450x450mm"])
+    _products(db, HOLDS_450)
+    _scoped(db)
+
+    items = _items(db, "got 450mm ones?", "450mm")
+
+    near = [i for i in items if i.startswith("near ")]
+    assert [i for i in items if i.startswith("spec ")] == [f"spec {key} = 450" for key in SIX_HOLDING_BY_DATA], items
+    assert near, items  # the seven near spellings are found at all
+    assert len(near) <= candidates.CAP_PER_WORD, (len(near), items)
