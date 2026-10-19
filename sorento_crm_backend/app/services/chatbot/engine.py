@@ -1081,7 +1081,7 @@ def _contact_brand_scope(factory: SessionFactory, contact_respond_id: str) -> fr
         db.close()
 
 
-_ENGINE_ENTITY_KEYS = ("listed", "certificate_uuids", "parent_kind", "parent_kind_uuid", "parent_kind_name")
+_ENGINE_ENTITY_KEYS = ("listed", "certificate_uuids", "parent_kind", "parent_kind_uuid", "parent_kind_name", "class_hint")
 
 
 def closed_lists_verdict(verdict: dict[str, Any], *, gate: bool) -> dict[str, Any]:
@@ -4702,7 +4702,7 @@ def _run_stages_body(  # noqa: PLR0915
             # because this is the seam that skipped it.
             parser.assert_emission(parser_raw)
         verdict: dict[str, Any] = dict(parser_raw)
-        # `listed`, `certificate_uuids` and the `parent_kind*` keys are the ENGINE's own entity keys
+        # `listed`, `certificate_uuids`, `class_hint` and the `parent_kind*` keys are the ENGINE's own entity keys
         # (grounding and the scheme index set them). One the parser emitted (the Anthropic path does not enforce
         # additionalProperties) is dropped before any reader.
         verdict.pop("dropped_kinds", None)

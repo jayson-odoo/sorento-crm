@@ -152,7 +152,6 @@ def index_scheme(
         return verdict, None
     scheme = str(schemes[0]["canonical_code"]).strip()
     kinds = closed_list_items(db).get("cert_kind", {})
-    parent = _parent_kind(db, scheme, kinds)
     held = _held_certificates(db, product_ids, scheme)
     if held:
         # The certificates the scheme names for these products, read here through the link,
@@ -177,7 +176,7 @@ def index_scheme(
         certificates = _scheme_certificates(db, scheme)
         scheme_entity = {**schemes[0], "hint": "certificate", "certificate_uuids": certificates} if certificates else schemes[0]
         entities = [scheme_entity if e is schemes[0] else e for e in entities]
-        entities = _with_parent_kind(entities, scheme_entity, parent, kinds)
+        entities = _with_parent_kind(entities, scheme_entity, _parent_kind(db, scheme, kinds), kinds)
         carried = [] if named else [
             {"raw": p.get("canonical_code") or p.get("raw"), "hint": "product", "canonical_code": p.get("canonical_code"),
              "current_message": True, "confident": True}
