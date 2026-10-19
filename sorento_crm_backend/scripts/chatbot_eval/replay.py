@@ -750,6 +750,13 @@ def _asker_profile(db: Any, envelope: Any) -> dict[str, Any] | None:
     return {"stock_availability_only": bool(flag), "source": "turn_runtime._stock_availability_only"}
 
 
+def _record_asker_profile(out: dict[str, Any], db: Any, envelope: Any) -> None:
+    """Store the bot's stock-visibility flag on the live row (nothing when it cannot be read)."""
+    profile = _asker_profile(db, envelope)
+    if profile is not None:
+        out["asker_profile"] = profile
+
+
 def _live_one(item: dict[str, Any], row: dict[str, Any], factory: Callable[[], Any],
               total: dict[str, Any], prompt_version_id: str | None = None,
               carry: dict[str, Any] | None = None, sink: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -826,9 +833,7 @@ def _live_one(item: dict[str, Any], row: dict[str, Any], factory: Callable[[], A
               "response": copy.deepcopy(turn.response) if turn is not None else None,
               "branch_kind": result.branch_kind, "status": getattr(result, "status", None)},
     )
-    profile = _asker_profile(db, envelope)
-    if profile is not None:
-        out["asker_profile"] = profile
+    _record_asker_profile(out, db, envelope)
     if misses:
         out["misses"] = misses
     db.close()
