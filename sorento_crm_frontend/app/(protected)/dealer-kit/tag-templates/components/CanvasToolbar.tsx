@@ -163,9 +163,9 @@ export function ToolbarButton({
     <Tooltip delayDuration={300}>
       <TooltipTrigger asChild>
         <Button
-          variant="ghost"
+          variant={active ? 'primary' : 'ghost'}
           size="sm"
-          className={cn('h-8 w-8 shrink-0 p-0', active && 'bg-accent text-accent-foreground')}
+          className="h-8 w-8 shrink-0 p-0"
           onClick={onClick}
           disabled={disabled}
           aria-pressed={active}
