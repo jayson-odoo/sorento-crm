@@ -408,6 +408,12 @@ def test_apply_never_overwrites_and_skips_rows_that_changed_since_the_dry_run(db
     assert result["linked"] == 1  # only the other-company-twin row is still exactly as reviewed
     assert result["skipped_already_linked"] == 1
     assert result["skipped_changed"] == 2
+    # The operator sees WHICH reviewed rows were not linked, by form number.
+    numbers = {
+        k: db.execute(text("SELECT request_number FROM purchase_requests WHERE id = :i"), {"i": ids[k]}).scalar()
+        for k in ("link_spaced", "link_suffix_as_stored", "link_inactive_twin_ignored")
+    }
+    assert sorted(result["skipped_forms"]) == sorted(numbers.values())
     assert _stored(db, ids["link_spaced"])[0] == str(scenario["both"].id)
     assert _stored(db, ids["link_suffix_as_stored"])[0] is None
     assert _stored(db, ids["link_inactive_twin_ignored"])[0] is None
@@ -461,6 +467,65 @@ def test_apply_refuses_a_csv_without_the_key_columns(db, scenario, tmp_path):
         apply_csv(db, str(path), DEFAULT_COMPANY_ID)
 
 
+def test_apply_refuses_a_csv_missing_any_proposal_column(db, scenario, tmp_path):
+    """Every column is compared, so a file without one (here customer_code) is not a reviewed proposal."""
+    from scripts.link_sf_customers import apply_csv, propose
+
+    path = _write(tmp_path / "proposal.csv", propose(db, DEFAULT_COMPANY_ID))
+    _rewrite_csv(path, [{k: v for k, v in r.items() if k != "customer_code"} for r in _read_csv(path)])
+
+    with pytest.raises(ValueError):
+        apply_csv(db, str(path), DEFAULT_COMPANY_ID)
+    assert _stored(db, scenario["ids"]["link_spaced"])[0] is None
+
+
+def test_apply_refuses_a_form_listed_twice_in_another_case(db, scenario, tmp_path):
+    from scripts.link_sf_customers import apply_csv, propose
+
+    ids = scenario["ids"]
+    path = _write(tmp_path / "proposal.csv", propose(db, DEFAULT_COMPANY_ID))
+    rows = _read_csv(path)
+    twice = next(r for r in rows if r["sf_id"] == ids["link_spaced"])
+    rows.append(dict(twice, status="SKIP", sf_id=twice["sf_id"].upper()))
+    _rewrite_csv(path, rows)
+
+    with pytest.raises(ValueError):
+        apply_csv(db, str(path), DEFAULT_COMPANY_ID)
+    assert _stored(db, ids["link_spaced"])[0] is None
+
+
+def test_apply_locks_the_forms_it_links(db, scenario, tmp_path):
+    """A staff link saved during the run waits for this commit instead of being overwritten."""
+    from sqlalchemy import event
+
+    from scripts.link_sf_customers import apply_csv, propose
+
+    path = _write(tmp_path / "proposal.csv", propose(db, DEFAULT_COMPANY_ID))
+    seen: list = []
+    conn = db.connection()
+    listener = lambda *a, **k: seen.append(a[2])  # noqa: E731 - (conn, cursor, statement, ...)
+    event.listen(conn, "before_cursor_execute", listener)
+    try:
+        apply_csv(db, str(path), DEFAULT_COMPANY_ID)
+    finally:
+        event.remove(conn, "before_cursor_execute", listener)
+
+    assert any("FOR UPDATE OF" in stmt and "purchase_requests" in stmt for stmt in seen)
+
+
+def test_proposal_csv_opens_as_utf8_in_a_spreadsheet_and_only_its_owner_can_read_it(db, scenario, tmp_path):
+    """Excel reads a CSV without a BOM in the local code page; the file holds real customer names."""
+    import os
+    import stat
+
+    from scripts.link_sf_customers import propose
+
+    path = _write(tmp_path / "proposal.csv", propose(db, DEFAULT_COMPANY_ID))
+
+    assert path.read_bytes()[:3] == b"\xef\xbb\xbf"
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+
+
 # --- CLI ---------------------------------------------------------------------- #
 
 
@@ -500,6 +565,7 @@ def test_cli_dry_run_then_apply_then_points_at_the_sales_type_backfill(db, scena
     assert script.main(["--apply", "--from-csv", str(path)]) == 0
     applied = capsys.readouterr().out
     assert "Linked: 4" in applied
+    assert "Not linked: none" in applied
     assert "scripts/backfill_sf_sales_type.py" in applied
     assert _stored(db, scenario["ids"]["link_spaced"])[0] == str(scenario["alpha"].id)
 
