@@ -19,10 +19,10 @@
 {"id": "cp2-c6-02", "message": "ETA from factory for SRTJC0414", "expect": {"domain_hint": "incoming", "product": "SRTJC0414"}, "context": {"previous_reply": "SRTJC1515: 20 pcs in stock.", "subject": "domain inventory (answered); customer ZZ Demo Trading; product SRTJC1515", "open_question": null}}
 {"id": "cp2-c6-03", "message": "when will SRTJC1787 arrive", "expect": {"domain_hint": "incoming", "product": "SRTJC1787"}}
 {"id": "cp2-c6-04", "message": "wen deliverd SRTJC286A to ZZ Demo Trading", "expect": {"domain_hint": "order", "status": "outstanding", "product": "SRTJC286A", "customer": true}}
-{"id": "cp2-c2-01", "message": "gambar SRTJC3305", "expect": {"product": "SRTJC3305", "attachment_types": ["photo"]}}
-{"id": "cp2-c2-02", "message": "video SRTJC5107", "expect": {"product": "SRTJC5107", "attachment_types": ["video"]}}
-{"id": "cp2-c2-03", "message": "pps cert SRTJC7753", "expect": {"product": "SRTJC7753", "attachment_types": ["certificate"]}}
-{"id": "cp2-c2-04", "message": "SPAN cert for SRTKS1105F", "expect": {"product": "SRTKS1105F", "attachment_types": ["certificate"]}}
+{"id": "cp2-c2-01", "message": "gambar SRTJC3305", "expect": {"product": "SRTJC3305", "attachment_types": ["product_photos"]}}
+{"id": "cp2-c2-02", "message": "video SRTJC5107", "expect": {"product": "SRTJC5107", "attachment_types": ["product_videos"]}}
+{"id": "cp2-c2-03", "message": "pps cert SRTJC7753", "expect": {"product": "SRTJC7753", "attachment_types": ["PPS"]}}
+{"id": "cp2-c2-04", "message": "SPAN cert for SRTKS1105F", "expect": {"product": "SRTKS1105F", "attachment_types": ["SPAN"]}}
 {"id": "cp2-c3-01", "message": "SRTKS317CB check weight ?", "expect": {"domain_hint": "master_products", "product": "SRTKS317CB", "attributes_include": ["weight"]}}
 {"id": "cp2-c3-02", "message": "steel grade of SRTKX105550A", "expect": {"product": "SRTKX105550A", "attributes_include": ["steel grade"]}}
 {"id": "cp2-c3-03", "message": "SRTKX4911 spec", "expect": {"product": "SRTKX4911", "attributes_only": []}}
