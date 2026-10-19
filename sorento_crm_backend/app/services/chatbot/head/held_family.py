@@ -1,11 +1,14 @@
 """SPEC-OVER-HELD (CHAT-CLOSED-LISTS, CHAT-STATE handoff 17 Oct 2026): a spec said about a
 held product narrows that product's family, never the catalogue.
 
+A family is the chat-searchable products of the held product's own company that share its
+non-null `products.family_code` (the field the ORM derives from the code), plus the variant
+graph (`products.variant_of_id`, root and descendants) for hand-curated links.
+
 "How about p trap" after "SRTWC286-SH x 10: no stock" is about the SRTWC286 family's P-trap
 variant, which exists; the bot answered every P-trap WC. When a gated message names
 specification values and no product of its own, and the conversation holds products, the
-held products' family (the variant graph: `products.variant_of_id`, root and descendants)
-is filtered by the stored spec values, the parser's registry values compared exactly. The
+held products' family is filtered by the stored spec values, the parser's registry values compared exactly. The
 members that carry every named value become this turn's products. No member carries them:
 the verdict is left as it was. Data only: no word of the message is read.
 """
@@ -23,6 +26,8 @@ _SPEC_HINTS = frozenset({"specification", "spec"})
 
 
 def _family_ids(db: "Session", held_ids: list[str]) -> set[str]:
+    from sqlalchemy import or_
+
     from app.models.product import Product, chat_searchable_products
 
     roots: set[str] = set()
@@ -45,6 +50,27 @@ def _family_ids(db: "Session", held_ids: list[str]) -> set[str]:
         }
         frontier = children - family
         family |= children
+    # The same company's products sharing a held product's family_code. One query for the
+    # held rows' (company, family_code), one for the members; NULL adds nothing.
+    codes = {
+        (str(company_id), str(code))
+        for company_id, code in db.query(Product.company_id, Product.family_code)
+        .filter(Product.id.in_(list(family)), Product.family_code.isnot(None))
+        .all()
+    }
+    if codes:
+        by_company: dict[str, set[str]] = {}
+        for company_id, code in codes:
+            by_company.setdefault(company_id, set()).add(code)
+        family |= {
+            str(pid)
+            for (pid,) in db.query(Product.id)
+            .filter(
+                or_(*[(Product.company_id == c) & Product.family_code.in_(sorted(v)) for c, v in by_company.items()]),
+                chat_searchable_products(),
+            )
+            .all()
+        }
     return {
         str(pid)
         for (pid,) in db.query(Product.id).filter(Product.id.in_(list(family)), chat_searchable_products()).all()
