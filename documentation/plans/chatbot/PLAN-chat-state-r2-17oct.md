@@ -312,3 +312,14 @@ crew/state/reports/EVAL-BENCH-train-classes-19oct.md. Track: small fix (< ~300 l
   then the tie-break order goes to the owner as a card question before any code. Fallback without logprobs: k=3
   parses with an op majority (3x parser cost).
 - Budget: replays 0 USD; one paired TRAIN x1 on the class-word items after the fix (< 0.3 USD); probe < 0.01 USD.
+- Probe PASS (1 call, 1829 in / 493 out, eval key): gpt-5.4-mini returns token logprobs under the strict state
+  schema (`max_completion_tokens`, not `max_tokens`); "How about p trap" op1 set 0.78 vs keep 0.22, op2 set 0.999.
+- Op pairs, 0 USD, lane train2 x3 (55ea3c0f10 + v168): 108 items carry ops in all 3 runs, 55 differ, 4 of those
+  flip the grade (all synthetic). Largest kinds change nothing: an extra no-op keep (13), same ops on another axis
+  (8). In 3 of the 4 grade flips the passing run had `set:specification` where a lone `keep` failed, so "smaller
+  change wins" would lock them into a fail. Owner card a22153683: (a) smaller change, (b) agree with the parse's
+  own extraction (close to the post-parser override ban), (c) k=3 majority, (d) no change; recommendation (d) now.
+- Class-word wording: the tester built 24 seam shapes (held / fresh, state on / off, EN / BM / ZH, class hint
+  category / product / product_type / none): no reply carries the miss line, so the live turn needs the real
+  resolver to list the word unresolved while the class fallback narrows. Draft kept uncommitted; asked crew
+  a22180003 for the held-out turn's structural trace fields (or a 0.05 USD live probe).
