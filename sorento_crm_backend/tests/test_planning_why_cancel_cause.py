@@ -468,3 +468,38 @@ def test_retiring_a_placed_row_on_a_dropped_line_records_one_superseded_cancel(a
     assert entry.new_values["revision_no"] == 2
     assert entry.new_values["supply_decision_id"] == successor.id
     assert entry.new_values["so_line_no"] == 593
+
+
+# --------------------------------------------------------------------------- split join
+
+
+def test_joining_a_split_lines_rows_records_one_superseded_cancel_by_the_actor(api):
+    """OI-LINE-SPLIT `_keep_split_rows`: a line's rows that match no plan row join one row,
+    and every row folded away is a cancel (release run 39288462357: it recorded no cause)."""
+    import uuid
+    from types import SimpleNamespace
+
+    from app.models.project_so import OrderInquiry
+
+    fx = _with_two_owed_rows(_confirmed_order(api, line_no=594))
+    world = fx["world"]
+    row, twin = fx["row"], fx["twin"]
+    inquiry = world.db.query(OrderInquiry).filter(OrderInquiry.id == row.order_inquiry_id).one()
+    successor = SimpleNamespace(id=str(uuid.uuid4()), revision_no=2)
+    # 25 + 25 owed, the plan is one row of 50: neither row stands, so one joins the other.
+    plan = {"line": fx["line"], "rows": [(Decimal("50"), row.delivery_date)],
+            "cancels": Decimal("0")}
+
+    ProjectOrderInquiryService(world.db)._keep_split_rows(
+        inquiry, successor, {str(fx["line"].id): plan}, actor_user_id=str(world.actor)
+    )
+    world.db.commit()
+
+    world.db.expire_all()
+    gone = [r for r in (row, twin) if r.state == INQUIRY_CANCELLED]
+    assert len(gone) == 1, "exactly one of the two rows is folded into the other"
+    entry = _one_cancel(world, gone[0])
+    assert entry.new_values["cause"] == "superseded"
+    assert entry.new_values["supply_decision_id"] == successor.id
+    assert entry.new_values["so_line_no"] == 594
+    assert str(entry.user_id) == str(world.actor)
