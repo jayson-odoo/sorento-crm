@@ -11433,6 +11433,7 @@ class ProjectSupplyService:
         assert_can_act: Callable[[Session, ProjectSalesOrder], None],
         write: Optional[Callable[[ProjectSalesOrder, Any], Dict[str, Any]]] = None,
         can_hold_back: Optional[Callable[[Any], bool]] = None,
+        prepare: Optional[Callable[[ProjectSalesOrder, Any], Any]] = None,
         preview: bool = False,
         raw_errors: bool = False,
         describe_writes: bool = False,
@@ -11471,6 +11472,9 @@ class ProjectSupplyService:
 
         An entry's `only_line_ids` scopes the order to exactly those lines BEFORE the write:
         a line outside the list is neither confirmed, held back nor echoed.
+
+        `prepare` (OI-SPLIT-VIEW A11) completes an order's entry once, after that scoping and
+        BEFORE the hold-back, so what it adds is held back like any named line.
         """
         write = write or (
             lambda order, entry: self.confirm(order, entry, actor_user_id=actor_user_id)
@@ -11521,6 +11525,8 @@ class ProjectSupplyService:
                             ],
                         }
                     )
+                if prepare is not None:
+                    entry = prepare(order, entry)
                 before_decision_id = None
                 before_rows: Dict[str, Tuple[Any, ...]] = {}
                 before_moves: Dict[str, Tuple[Any, ...]] = {}

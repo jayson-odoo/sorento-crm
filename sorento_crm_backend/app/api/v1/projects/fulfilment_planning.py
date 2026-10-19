@@ -502,8 +502,18 @@ def _run_confirm_many(
     supply = ProjectSupplyService(db)
     any_per_order = any(entry.batch_id for entry in payload.orders)
 
+    def batch_of_entry(entry):
+        return entry.batch_id or (None if any_per_order else payload.batch_id)
+
+    def prepare_one(order, entry):
+        # OI-SPLIT-VIEW (UAC A4, A11): every saved split edit of the order rides along, added
+        # once before the hold-back so a refused one is held back like any named line.
+        if batch_of_entry(entry):
+            return entry
+        return _with_split_edits(db, supply, order, entry)
+
     def write_one(order, entry):
-        resolved_batch_id = entry.batch_id or (None if any_per_order else payload.batch_id)
+        resolved_batch_id = batch_of_entry(entry)
         # `_confirm_with_possible_rejects` opens its OWN `UndoJournal` per branch (S1,
         # #978: `confirm_many` commits or rolls back each entry on its own, so a journal
         # opened HERE - inside that per-order try - never survives past this order's own
@@ -534,10 +544,9 @@ def _run_confirm_many(
         actor_user_id=actor_id,
         assert_can_act=lambda session, order: _assert_can_act_on(session, order, current_user),
         write=write_one,
+        prepare=prepare_one,
         # #1362 hold-back: an order answering a planning-change batch is applied whole.
-        can_hold_back=lambda entry: not (
-            entry.batch_id or (None if any_per_order else payload.batch_id)
-        ),
+        can_hold_back=lambda entry: not batch_of_entry(entry),
         preview=preview,
         raw_errors=raw_errors,
         describe_writes=describe_writes,
@@ -1286,8 +1295,13 @@ def _with_split_edits(db: Session, service: ProjectSupplyService, order, payload
     `split_edited` flag reads) and that the body does not already name, withdraw, cancel or
     scope out (`only_line_ids`). Each is re-posted with its active decision's composition (a
     whole Buy: only such a line's plan becomes purchasing's rows), so the engine acts on the
-    edited plan exactly as for a named line (#1749 AC-G15). Confirm, Confirm all and Simulate
-    all reach this through `_confirm_with_possible_rejects`."""
+    edited plan exactly as for a named line (#1749 AC-G15).
+
+    A11: run ONCE per order, BEFORE the hold-back (`_write_holding_back`), never inside its
+    retry: an added line is then an ordinary named line the hold-back can drop when the
+    recheck refuses it, and a held-back line is never added back. Confirm calls it before
+    its hold-back; Confirm all and Simulate through `confirm_many`'s `prepare`. A press
+    answering a planning-change batch never calls it (the batch names its lines)."""
     from app.schemas.project_supply import ConfirmLine
     from app.services.project_line_split_service import LineSplitService
 
@@ -1371,9 +1385,6 @@ def _confirm_with_possible_rejects(
     THROUGH `confirm()`'s own `uncover_line_ids` parameter instead, which stays inside the
     journal exactly as an ordinary reconfirm does - undoable, as the plan states.
     """
-    if not batch_id:
-        # OI-SPLIT-VIEW (UAC A4): every saved split edit of the order rides along, named or not.
-        payload = _with_split_edits(db, service, order, payload)
     named = {str(entry.project_line_id) for entry in getattr(payload, "lines", []) or []}
     # DEDUPED (nit, fix round, review): a line named twice in `rejected_line_ids` is one
     # withdrawal, not two - `dict.fromkeys` keeps the FIRST occurrence's order, which
@@ -1541,9 +1552,12 @@ def confirm_supply(
         # refuses the whole order. The lines the recheck refuses are held back and named, and
         # the rest confirm - the same seam Confirm all uses (#1362). A planning-change press
         # names its lines on purpose, so it is never applied in part.
+        # OI-SPLIT-VIEW (UAC A4, A11): every saved split edit of the order rides along, named
+        # or not, added once before the hold-back so a refused one is held back like any line.
+        posted = payload if payload.batch_id else _with_split_edits(db, service, order, payload)
         body, _entry, held = service._write_holding_back(
             order,
-            payload,
+            posted,
             lambda target, entry: _confirm_with_possible_rejects(
                 db,
                 service,

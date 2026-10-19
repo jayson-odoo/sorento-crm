@@ -1458,7 +1458,7 @@ class ProjectOrderInquiryService:
         settled_in_place.extend(sorted(split_line_ids))
         # OI-LINE-SPLIT (UAC AC-G10): a split line's rows follow its plan. What its splits
         # keep on it (not moved onto another line) is its need, never netted as a cancel.
-        kept_splits, split_needs, standing_splits = self._kept_split_needs(
+        kept_splits, split_needs, standing_splits, waiting_splits = self._kept_split_needs(
             buy_lines, decision, skip=split_line_ids, line_changes=line_changes,
             later=later_changes,
         )
@@ -1524,10 +1524,12 @@ class ProjectOrderInquiryService:
                 settled_in_place.append(str(local_line.id))
                 continue
             line = entry["line"]
-            if str(line.id) in standing_splits:
+            if str(line.id) in standing_splits or str(line.id) in waiting_splits:
                 # AC-G13: the line's rows already are its plan; a Confirm with nothing new for
                 # it leaves them as they are, and its change raises no separate notice. They
                 # are filed under this revision, so a later board Reject retires them.
+                # OI-SPLIT-VIEW (UAC A11): a carried line whose saved plan waits for its own
+                # Confirm (held back, or not named) keeps its rows the same way.
                 self._refile_rows(inquiry, line, decision)
                 if str(line.id) in settle_in_place:
                     settled_in_place.append(str(line.id))
@@ -5813,7 +5815,7 @@ class ProjectOrderInquiryService:
         skip: set,
         line_changes: Optional[Mapping[str, Dict[str, Any]]] = None,
         later: Optional[set] = None,
-    ) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Decimal], set]:
+    ) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Decimal], set, set]:
         """OI-LINE-SPLIT (UAC AC-G10 to AC-G16, crew rulings (a), P1, P2) for the whole-Buy lines
         of this Confirm (`whole_buy_line_ids`; a line partly from stock nets as before).
 
@@ -5832,9 +5834,12 @@ class ProjectOrderInquiryService:
         * a line that grew in this Confirm and that a declined split sits on: its need
           excludes that split's qty (the origin keeps it), so nothing is bought twice.
 
-        Returns `(acted, needs, standing)`: `acted` per line `{"rows", "cancels", "line",
-        "entry"}` with `rows` the plan as `(qty, date)`, `needs` per line, `standing` the lines
-        left alone. The acted lines are also kept on the session for `_tell_splits`."""
+        Returns `(acted, needs, standing, waiting)`: `acted` per line `{"rows", "cancels",
+        "line", "entry"}` with `rows` the plan as `(qty, date)`, `needs` per line, `standing`
+        the lines left alone, `waiting` the CARRIED lines whose saved plan still acts (held
+        back or not named, OI-SPLIT-VIEW UAC A11): their rows stand as the last Confirm left
+        them ("nothing changed, nothing moves", #1226) and their plan is not stamped. The
+        acted lines are also kept on the session for `_tell_splits`."""
         from collections import Counter
 
         from app.services.project_line_split_service import (
@@ -5861,14 +5866,14 @@ class ProjectOrderInquiryService:
         # plan; only a named one acts.
         entries = {line_id: e for line_id, e in named.items() if not e.get("carried")}
         if not named:
-            return {}, {}, set()
+            return {}, {}, set(), set()
         service = LineSplitService(self.db)
         orders = sorted({str(entry["line"].project_sales_order_id) for entry in named.values()})
         facts = service._facts_for(ProjectSalesOrderLine.project_sales_order_id.in_(orders))
         split_lines = [line_id for line_id in named if facts.get(line_id) and facts[line_id].splits]
         whole = whole_buy_line_ids(self.db, split_lines, decision)
         if not whole:
-            return {}, {}, set()
+            return {}, {}, set(), set()
         stored = [split for f in facts.values() for split in f.splits]
         sits = service.effective_sits_on(stored)
         plans = line_plans(facts, sits, {target for target in sits.values() if target})
@@ -5877,12 +5882,15 @@ class ProjectOrderInquiryService:
         acted: Dict[str, Dict[str, Any]] = {}
         needs: Dict[str, Decimal] = {}
         standing: set = set()
+        waiting: set = set()
         told: set = set()
         declined_in: Dict[str, Decimal] = defaultdict(lambda: _ZERO)
         for line_id in sorted(whole):
             f = facts[line_id]
             state = f.split_state
             if state == SPLIT_ACTING and line_id not in entries:
+                # A11: carried (not named, or held back), its saved plan waits.
+                waiting.add(line_id)
                 continue
             # A later AutoCount change on an applied plan (`_later_change_lines`) reads as P2.
             own_rows = state == SPLIT_STALE or line_id in (later or set())
@@ -6016,7 +6024,7 @@ class ProjectOrderInquiryService:
             decision,
             {line_id: facts[line_id] for line_id, plan in acted.items() if not plan["own_rows"]},
         )
-        return acted, needs, standing
+        return acted, needs, standing, waiting
 
     def _applied_plan_edits(self, decision: Any, facts: Mapping[str, Any]) -> Dict[str, List[str]]:
         """OI-SPLIT-VIEW (UAC A4): `line id -> applied plan` for those of these acted lines whose
