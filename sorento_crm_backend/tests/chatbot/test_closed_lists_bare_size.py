@@ -238,3 +238,63 @@ def test_a_bare_size_miss_line_carries_the_unit(session_factory, seeded, stub_ac
     text_ = (r.reply or {}).get("text") or ""
     assert "700" in text_, text_
     assert "700 mm" in text_, text_
+
+
+# --- R6-6 HIDDEN-KEYS-EVERYWHERE: a contact-hidden key never filters, narrows or prints ----------
+# The REAL policy: a default `spec_visibility_policies` row excluding the key, read through
+# head/access `_hidden_spec_keys` for the turn's contact (no monkeypatch).
+
+
+def _hide(session_factory, *keys: str) -> None:
+    db = session_factory()
+    db.execute(
+        text("INSERT INTO spec_visibility_policies (id, spec_keys, excluded_spec_keys) VALUES (gen_random_uuid(), NULL, :ex)"),
+        {"ex": list(keys)},
+    )
+    db.commit()
+
+
+def test_a_hidden_dim_width_never_narrows_a_held_family_by_a_bare_size(session_factory, seeded, stub_access, monkeypatch):
+    ids = _seed(session_factory, (
+        ("ZZBH1-A", BASIN, {"dim_width": 500, "dim_length": 400}),
+        ("ZZBH1-B", BASIN, {"dim_width": 600}),
+        ("ZZBH1-C", BASIN, {"dim_length": 600}),
+        ("ZZBH1-D", BASIN, {"dim_height": 600}),
+    ))
+    _hide(session_factory, "dim_width")
+
+    r, calls = _ask(session_factory, stub_access, monkeypatch, "600mm one pls", _spec("600mm", "size", 600), held=["ZZBH1-A"])
+
+    assert ids["ZZBH1-B"] not in _fetched(calls), (r.reply, calls)
+    assert _fetched(calls) == [ids["ZZBH1-C"]], (r.reply, calls)
+
+
+def test_a_hidden_trap_length_is_never_the_class_key_of_a_bare_size(session_factory, seeded, stub_access, monkeypatch):
+    ids = _seed(session_factory, WCS)
+    _hide(session_factory, "trap_length")
+
+    r, calls = _ask(session_factory, stub_access, monkeypatch, "any 300mm zzwc", _ent("zzwc", "category"), _spec("300mm", "size", 300))
+
+    text_ = ((r.reply or {}).get("text") or "").lower()
+    assert "trap" not in text_, text_
+    assert _fetched(calls) == [ids["ZZWC-W"]], (r.reply, calls)  # the visible width-or-length OR instead
+
+
+def test_a_strict_entry_on_a_hidden_key_is_dropped_from_the_set(session_factory, seeded, stub_access, monkeypatch):
+    ids = _seed(session_factory, BASINS)
+    _hide(session_factory, "dim_width")
+
+    r, calls = _ask(session_factory, stub_access, monkeypatch, "600mm wide zzbasin", _ent("zzbasin", "category"), _spec("600mm wide", "dim_width", 600))
+
+    text_ = ((r.reply or {}).get("text") or "").lower()
+    assert _fetched(calls) != [ids["ZZBS-W"]], (r.reply, calls)
+    assert "width" not in text_, text_
+
+
+def test_guard_a_hidden_unrelated_key_changes_nothing(session_factory, seeded, stub_access, monkeypatch):
+    ids = _seed(session_factory, BASINS)
+    _hide(session_factory, "dim_height")
+
+    r, calls = _ask(session_factory, stub_access, monkeypatch, "need a 600mm zzbasin", _ent("zzbasin", "category"), _spec("600mm", "size", 600))
+
+    assert _fetched(calls) == sorted([ids["ZZBS-W"], ids["ZZBS-L"]]), (r.reply, calls)
