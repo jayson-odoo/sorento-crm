@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from app.services.chatbot.class_named import class_named_applies
 from app.services.chatbot.head.scheme_index import names_own_class
 
 if TYPE_CHECKING:
@@ -149,7 +150,7 @@ def narrow_held_family(
     ]
     brands = [e for e in said if str(e.get("hint") or "").strip().lower() == "brand"]
     # A message naming its own class is not about the held products either.
-    names_a_product = any(str(e.get("hint") or "").strip().lower() == "product" for e in said) or names_own_class(said)
+    names_a_product = any(str(e.get("hint") or "").strip().lower() == "product" for e in said) or (class_named_applies(verdict) and names_own_class(said))
     held_ids = [str(p["uuid"]) for p in held_products if isinstance(p, dict) and p.get("uuid")]
     if not (specs or brands) or names_a_product or not held_ids or verdict.get("family") is True:
         return verdict, None

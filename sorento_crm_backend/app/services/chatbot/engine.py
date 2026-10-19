@@ -4706,6 +4706,7 @@ def _run_stages_body(  # noqa: PLR0915
         # (grounding and the scheme index set them). One the parser emitted (the Anthropic path does not enforce
         # additionalProperties) is dropped before any reader.
         verdict.pop("dropped_kinds", None)
+        verdict.pop("state_path", None)
         if isinstance(verdict.get("entities"), list):
             verdict["entities"] = [
                 {k: v for k, v in e.items() if k not in _ENGINE_ENTITY_KEYS} if isinstance(e, dict) else e
@@ -4859,6 +4860,7 @@ def _run_stages_body(  # noqa: PLR0915
     state_path = bool(parser_config.state_block or (parser_bypassed and "state_changes" in verdict))
     if state_path:
         state_in = dataclasses_replace(state_in, state_path=True)
+        verdict = {**verdict, "state_path": True}  # the class-named seams read it (`class_named`)
         with _session(session_factory) as hygiene_db:
             state_in = dataclasses_replace(
                 state_in,
@@ -5004,7 +5006,7 @@ def _run_stages_body(  # noqa: PLR0915
                 # Held products are only added to the verdict later, so a held one (a uuid) is
                 # read here: the scheme path with no product never runs over a held subject.
                 if scheme_note is None and (
-                    scheme_index.names_own_class(verdict.get("entities") or [])
+                    (scheme_index.class_named_applies(verdict) and scheme_index.names_own_class(verdict.get("entities") or []))
                     or not any(isinstance(p, dict) and p.get("uuid") for p in state_in.focus.products)
                 ):
                     verdict, scheme_note = scheme_index.scheme_without_product(scheme_db, verdict)

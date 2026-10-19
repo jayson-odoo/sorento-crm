@@ -14,13 +14,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from app.services.chatbot.class_named import names_own_class  # noqa: F401  (re-exported)
+from app.services.chatbot.class_named import class_named_applies, names_own_class  # noqa: F401  (re-exported)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
-def _asked_product_ids(db: "Session", said: list[dict[str, Any]], held: list[dict[str, Any]]) -> tuple[list[str], bool]:
+def _asked_product_ids(
+    db: "Session", said: list[dict[str, Any]], held: list[dict[str, Any]], verdict: dict[str, Any]
+) -> tuple[list[str], bool]:
     """The products the ask is about and whether the message named them itself."""
     from app.models.product import Product, chat_searchable_products
 
@@ -32,7 +34,7 @@ def _asked_product_ids(db: "Session", said: list[dict[str, Any]], held: list[dic
     if codes:
         rows = db.query(Product.id).filter(Product.product_code.in_(codes), chat_searchable_products()).all()
         return [str(pid) for (pid,) in rows], True
-    if names_own_class(said):
+    if class_named_applies(verdict) and names_own_class(said):
         # The message is about its own class, not the products an earlier turn still holds.
         return [], False
     return [str(p["uuid"]) for p in held if isinstance(p, dict) and p.get("uuid")], False
@@ -147,7 +149,7 @@ def index_scheme(
     schemes = [e for e in said if e.get("listed") == "cert_scheme" and str(e.get("canonical_code") or "").strip()]
     if not schemes:
         return verdict, None
-    product_ids, named = _asked_product_ids(db, said, held_products)
+    product_ids, named = _asked_product_ids(db, said, held_products, verdict)
     if not product_ids:
         return verdict, None
     scheme = str(schemes[0]["canonical_code"]).strip()

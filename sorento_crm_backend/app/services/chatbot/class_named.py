@@ -16,3 +16,9 @@ def names_own_class(entities: list[dict[str, Any]]) -> bool:
         for e in entities
         if isinstance(e, dict)
     )
+
+
+def class_named_applies(verdict: dict[str, Any]) -> bool:
+    """The class-named seams run only off the state path: with CHAT-STATE on, the Subject decides
+    whether the message names its own class. `state_path` is the engine's own verdict flag."""
+    return not verdict.get("state_path")
