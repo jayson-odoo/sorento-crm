@@ -460,6 +460,8 @@ def shortlist(
     _resolve(sizes + values, _support(db, wanted, held_ids))
     code_words = list(dict.fromkeys(t for position, t in enumerate(tokens) if position not in spanned))
     merged: dict[str, WordCandidates] = {}
+    # The exact lines the index made (product type, spec, size and numeric-word lines) are never cut.
+    index_lines = {i for e in sizes + values for i in e.items if not i.startswith("near ")}
     for entry in sizes + values + _code_candidates(db, code_words):
         held = merged.setdefault(entry.gram, WordCandidates(gram=entry.gram, position=entry.position))
         held.items.extend(item for item in entry.items if item not in held.items)
@@ -467,10 +469,10 @@ def shortlist(
     for entry in ordered:
         exact = [i for i in entry.items if not i.startswith("near ")]
         rows = exact + [i for i in entry.items if i.startswith("near ")]
-        # Only an exact spec line is never cut (every holding key keeps its line); every code
-        # and near row shares the cap.
-        capped = [i for i in rows if i.startswith(("code ", "near "))][:CAP_PER_WORD]
-        entry.items = [i for i in rows if not i.startswith(("code ", "near ")) or i in capped]
+        # By source, not wording: the index's exact lines keep every holding key; every other row
+        # (code, near-code, near spelling) shares the cap.
+        capped = [i for i in rows if i not in index_lines][:CAP_PER_WORD]
+        entry.items = [i for i in rows if i in index_lines or i in capped]
     return ordered
 
 

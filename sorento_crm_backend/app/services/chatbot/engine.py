@@ -1091,8 +1091,9 @@ def closed_lists_verdict(verdict: dict[str, Any], *, gate: bool) -> dict[str, An
 
 
 def _strip_hidden_spec_entities(verdict: dict[str, Any], hidden: frozenset[str]) -> dict[str, Any]:
-    """H1: the parser's own emission is the second entry a contact-hidden spec key must not
-    pass; a spec entity on one is dropped here, before grounding or any other consumer."""
+    """H1: a spec entity on a contact-hidden key is dropped. Runs once, on the grounding output
+    (the parser's own emission and what grounding re-derives from raw words alike), before
+    `turn_apply`, the only writer of spec entities into the focus."""
     entities = verdict.get("entities")
     if not hidden or not isinstance(entities, list):
         return verdict
@@ -4946,7 +4947,6 @@ def _run_stages_body(  # noqa: PLR0915
     # is on the list.
     # ATTACH-GROUNDING-TYPO: `ctx.parse._parser_raw` is the verdict as it stood before
     # grounding rewrote the entities.
-    verdict = _strip_hidden_spec_entities(verdict, hidden_spec)
     parser_verdict = copy.deepcopy(verdict)
     # REPORT-ENGINE 1b code review S3: a sales ranking's brand / sales agent / category
     # words are the lane's own (matched against their tables, an exact name winning alone),
@@ -4963,8 +4963,8 @@ def _run_stages_body(  # noqa: PLR0915
             held_ids=[str(p["uuid"]) for p in state_in.focus.products if isinstance(p, dict) and p.get("uuid")],
             hidden_keys=hidden_spec,
         )
-    # H1b: grounding re-derives specs from the raw words over the whole registry, so the
-    # output is stripped again (the pre-grounding strip keeps `_parser_raw` clean).
+    # H1: the ONE strip, on the grounding output: grounding re-derives specs from the raw words
+    # over the whole registry, so this covers the parser's own emission too.
     verdict = _strip_hidden_spec_entities(verdict, hidden_spec)
     verdict = closed_lists_verdict(verdict, gate=parser_config.closed_lists)
     held_none_match: dict[str, Any] | None = None
