@@ -81,7 +81,7 @@ def _seed(seam: Seam, member: dict) -> None:
     db = seam.session_factory()
     db.info["company_scope"] = frozenset({SORENTO})
     brands: dict[str, str] = {}
-    for name in list(member["held"]) + ["Sorento"]:
+    for name in list(member["held"]) + ["Sorento"] + [b for b, _n in member["offer"]] + ["Grohe"]:
         if name in brands:
             continue
         row = db.query(Brand).filter(Brand.brand_code == name.upper(), Brand.company_id == SORENTO).first()
@@ -111,10 +111,12 @@ def _held_state(seam: Seam, member: dict) -> dict:
     return {"focus": focus_to_wire(focus), "open_question": None}
 
 
-def _brand_pick(raw: str, code: str | None = None) -> dict:
-    return _emit(domain_hint="inventory", intent_hint="check_stock",
-                 entities=[entity(raw, "brand", canonical_code=code or raw.upper())],
-                 state_changes=[_op("set", "brand")])
+def _brand_pick(raw: str, code: str | None = None, changes: list | None = None, current: bool = True,
+                *more: str) -> dict:
+    ents = [entity(r, "brand", canonical_code=(code if (code and r == raw) else r.upper()), current_message=current)
+            for r in (raw, *more)]
+    return _emit(domain_hint="inventory", intent_hint="check_stock", entities=ents,
+                 state_changes=changes if changes is not None else [_op("set", "brand")])
 
 
 def _ids_in_calls(calls) -> set[str]:
@@ -210,3 +212,110 @@ def test_r4a_guard_a_brand_not_offered_does_not_pick_from_the_offer(seam, member
     prev = _held_state(seam, member)
     seam.say(message, _brand_pick(raw), previous=prev)
     assert "set_brand_chosen" not in seam.rules_fired, seam.rules_fired
+
+
+# --------------------------------------------------------------------------- #
+# Review round: lead decision, card R1 vs R5
+# --------------------------------------------------------------------------- #
+
+def _rules(seam: Seam) -> list[str]:
+    return seam.rules_fired
+
+
+# held = default-brand rows only; the offer lists other brands (PR #833 r7 item 6 shape)
+DEFAULT_HELD_E9 = {**E9, "held": {"Sorento": E9["held"]["Sorento"]},
+                   "offer": [("Cabana", 3), ("Mocha", 2)], "total": 5}
+DEFAULT_HELD_242 = {**M242, "held": {"Sorento": M242["held"]["Sorento"] + M242["held"]["Cabana"] + M242["held"]["Mocha"]
+                                     + M242["held"]["Bravat"] + M242["held"]["Infinity"]}}
+
+NOT_HELD = [
+    ("e9_en_cabana", DEFAULT_HELD_E9, "Cabana", "Cabana"),
+    ("e9_bm_cabana_pulak", DEFAULT_HELD_E9, "Cabana pulak", "Cabana"),
+    ("e9_zh_yao_cabana", DEFAULT_HELD_E9, "要Cabana的", "Cabana"),
+    ("e9_en_mocha", DEFAULT_HELD_E9, "show me Mocha", "Mocha"),
+    ("242_en_iborn", DEFAULT_HELD_242, "Iborn", "Iborn"),
+    ("242_bm_iborn", DEFAULT_HELD_242, "Iborn je", "Iborn"),
+    ("242_zh_iborn", DEFAULT_HELD_242, "只要Iborn", "Iborn"),
+]
+
+
+@pytest.mark.parametrize("member,message,brand", [c[1:] for c in NOT_HELD], ids=[c[0] for c in NOT_HELD])
+def test_r4a_r_an_offered_brand_the_held_set_lacks_reruns_the_set_with_that_brand(seam, member, message, brand):
+    """The existing route `set_brand_chosen` (turn/apply.py) is the contract: it re-runs the set
+    live with the brand (owner PR #833 r7 item 6). Asserted on the rule, plus no held row fetched."""
+    prev = _held_state(seam, member)
+    seam.say(message, _brand_pick(brand), previous=prev)
+    held_ids = {seam.uuid_of[c] for c in _held_codes(member)}
+    assert "set_brand_chosen" in seam.rules_fired, (seam.turn_calls[-1], seam.rules_fired)
+    assert not _ids_in_calls(seam.turn_calls[-1]) & held_ids, (seam.turn_calls[-1], seam.rules_fired)
+
+
+# answer-op: the offer is an open question, so the parser may send `answer`
+
+ANSWER_CASES = [CASES[0], CASES[5], CASES[4], CASES[8]]
+
+
+@pytest.mark.parametrize("member,message,raw,brand", [c[1:] for c in ANSWER_CASES], ids=[c[0] for c in ANSWER_CASES])
+def test_r4a_r_the_same_narrowing_when_the_parser_sends_answer(seam, member, message, raw, brand):
+    prev = _held_state(seam, member)
+    seam.say(message, _brand_pick(raw, changes=[_op("answer")]), previous=prev)
+    want = {seam.uuid_of[c] for c in member["held"][brand]}
+    ids = _ids_in_calls(seam.turn_calls[-1])
+    assert ids, ("no product-scoped fetch", seam.turn_calls[-1], seam.rules_fired)
+    assert ids <= want, (seam.turn_calls[-1], seam.rules_fired)
+
+
+# two brands
+
+TWO = [("en", E9, "sorento and cabana"), ("bm", E9, "sorento dan cabana"), ("zh", E9, "sorento和cabana"),
+       ("242_en", M242, "sorento and cabana")]
+
+
+@pytest.mark.parametrize("member,message", [c[1:] for c in TWO], ids=[c[0] for c in TWO])
+def test_r4a_r_two_offered_brands_keep_the_union(seam, member, message):
+    prev = _held_state(seam, member)
+    seam.say(message, _brand_pick("sorento", None, None, True, "cabana"), previous=prev)
+    want = {seam.uuid_of[c] for b in ("Sorento", "Cabana") for c in member["held"][b]}
+    ids = _ids_in_calls(seam.turn_calls[-1])
+    assert ids == want, (ids ^ want, seam.turn_calls[-1], seam.rules_fired)
+
+
+# guards that reach the new code: a REGISTERED brand outside the offer; a restated brand
+
+@pytest.mark.parametrize("member,message,raw", [(E9, "only grohe", "Grohe"), (M242, "Grohe", "Grohe")], ids=["e9", "242"])
+def test_r4a_r_guard_a_registered_brand_not_in_the_offer_leaves_the_held_set_and_fetch(seam, member, message, raw):
+    prev = _held_state(seam, member)
+    seam.say(message, _brand_pick(raw), previous=prev)
+    held_ids = {seam.uuid_of[c] for c in _held_codes(member)}
+    assert "set_brand_chosen" not in seam.rules_fired, seam.rules_fired
+    assert _ids_in_calls(seam.turn_calls[-1]) <= held_ids, (seam.turn_calls[-1], seam.rules_fired)
+    after = {p["canonical_code"] for p in (seam.state["focus"].get("products") or [])}
+    assert set(_held_codes(member)) <= after, (after, seam.rules_fired)
+
+
+@pytest.mark.parametrize("member,message,raw", [(E9, "stock?", "Sorento"), (M242, "stock?", "Cabana")], ids=["e9", "242"])
+def test_r4a_r_guard_a_restated_brand_does_not_pick(seam, member, message, raw):
+    prev = _held_state(seam, member)
+    seam.say(message, _brand_pick(raw, None, [_op("keep")], False), previous=prev)
+    held_ids = {seam.uuid_of[c] for c in _held_codes(member)}
+    assert "set_brand_chosen" not in seam.rules_fired, seam.rules_fired
+    assert _ids_in_calls(seam.turn_calls[-1]) <= held_ids, (seam.turn_calls[-1], seam.rules_fired)
+    after = {p["canonical_code"] for p in (seam.state["focus"].get("products") or [])}
+    assert set(_held_codes(member)) <= after, (after, seam.rules_fired)
+
+
+def test_r4a_r_the_open_tasks_slots_are_narrowed_with_the_held_rows(seam):
+    prev = _held_state(seam, E9)
+    seam.say("only sorento", _brand_pick("sorento"), previous=prev)
+    sorento = set(E9["held"]["Sorento"])
+    labels = {sl.get("label") for t in (seam.state["focus"].get("tasks") or []) for sl in (t.get("slots") or [])}
+    assert labels <= sorento, (labels, seam.rules_fired)
+
+
+@pytest.mark.parametrize("member,message,brand", [(DEFAULT_HELD_E9, "Cabana", "Cabana"), (DEFAULT_HELD_242, "Iborn", "Iborn")],
+                         ids=["e9", "242"])
+def test_r4a_r_nothing_held_of_the_brand_never_yields_an_empty_set(seam, member, message, brand):
+    prev = _held_state(seam, member)
+    seam.say(message, _brand_pick(brand), previous=prev)
+    held = {p["canonical_code"] for p in (seam.state["focus"].get("products") or [])}
+    assert held or "set_brand_chosen" in seam.rules_fired, (held, seam.rules_fired)

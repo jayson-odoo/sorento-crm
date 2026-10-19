@@ -588,7 +588,10 @@ def test_nit_close_question_also_closes_the_top_selling_ask_and_other_brands_off
     out = _apply(State(focus=focus, turn_no=3), verdict(state_changes=[_op("close_question")]), open_question=None)
     assert out.valid is True
     assert not (out.state.focus.top_selling or {}).get("asked")
-    assert not (out.state.focus.set_page or {}).get("other_brands")
+    from app.services.chatbot.turn import chat_state as _cs
+
+    assert not _cs._offered_brands(out.state.focus)
+    assert out.state.focus.set_page.get("page") == 1 and out.state.focus.set_page.get("set_key") is not None
 
 
 # --------------------------------------------------------------------------- #
