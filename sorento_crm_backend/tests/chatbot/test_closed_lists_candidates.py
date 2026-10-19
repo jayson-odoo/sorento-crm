@@ -150,11 +150,15 @@ def test_a_word_alone_is_never_read_for_a_code_inside_a_longer_code(db):
     ]
 
 
-def test_a_boolean_key_is_left_to_the_parser_and_a_numeric_key_word_lists_its_number(db):
+def test_a_boolean_key_phrase_gets_its_line_and_a_numeric_key_word_lists_its_number(db):
     _registry(db, "width_mm", "Width", [], {"_self": ["width"]}, data_type="numeric")
     _registry(db, "has_massage", "Massage jets", [], {"true": ["jacuzzi"]}, data_type="boolean")
 
-    assert _lines(db, "width 600 jacuzzi") == [candidates.HEADER, '- "width 600": spec width_mm = 600']
+    assert _lines(db, "width 600 jacuzzi") == [
+        candidates.HEADER,
+        '- "width 600": spec width_mm = 600',
+        '- "jacuzzi": spec has_massage = true (Massage jets)',
+    ]
 
 
 # --- the registry's real shapes (crew CP0 cards, masked; synthetic codes) ------------------------
