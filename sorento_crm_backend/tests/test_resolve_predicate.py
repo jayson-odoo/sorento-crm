@@ -1869,3 +1869,25 @@ def test_cs_t6_the_code_prefix_probe_escapes_like_wildcards(db, token, code):
     _stocked(db, code, f"ZZT {code}", "CLOSE COUPLED P-TRAP WATER CLOSET")
 
     assert code not in [e.canonical_code for e in _prefix_probe_product(db, token)], token
+
+
+@pytest.mark.parametrize("code", ["ZZSORENTOX", "ZZ-SORENTOX"])
+@pytest.mark.parametrize("path", ["shape b", "spec fallback"])
+def test_cs_t8_a_whole_typed_code_with_no_digit_stays_a_hit_in_and_mode(client, db, path, code):
+    """CS-2: in AND mode a digitless whole code arrives only as an AND-tier row (the AND product
+    probe has no exact tier); the row whose code equals the token, separators aside, stays a hit."""
+    _stocked(db, code, "ZZT Placeholder", "CLOSE COUPLED P-TRAP WATER CLOSET")
+    body = {
+        "query": "zzsorentox", "tokens": ["zzsorentox"], "raw_tokens": ["zzsorentox"], "match_mode": "and",
+        "exact_match": True, "understand_phrase": False,
+    }
+    if path == "shape b":
+        body.update({"require": {"stock": True}, "predicate_words": ["stock"]})
+    else:
+        body.update({"spec_fallback": True, "fallback_to_all_types": True})
+
+    payload = client.post(ENDPOINT, json=body).json()
+
+    # The rows the answer is built from (resolutions / intersection), not the `by_entity_type` echo,
+    # which T2 shows can still list a dropped row.
+    assert code in _product_codes(payload), payload
