@@ -104,6 +104,25 @@ def _list_ask() -> dict[str, Any]:
     )
 
 
+def _give_access_type(session_factory, name: str) -> None:
+    """Hand the seeded contact one ACTIVE access type by name (not an office one, so it is no
+    staff marker)."""
+    code = f"ZZTAT{uuid.uuid4().hex[:8]}"
+    db = session_factory()
+    db.execute(
+        text("INSERT INTO contact_access_types (code, name, is_active) VALUES (:c, :n, true)"),
+        {"c": code, "n": name},
+    )
+    db.execute(
+        text(
+            "INSERT INTO respond_contact_access_types (contact_id, access_type_code) "
+            "SELECT id, :c FROM respond_contacts WHERE respond_io_id = :cid"
+        ),
+        {"c": code, "cid": str(CONTACT_ID)},
+    )
+    db.commit()
+
+
 # --------------------------------------------------------------------------- #
 # 1. A delivery order by number
 # --------------------------------------------------------------------------- #
@@ -177,6 +196,41 @@ class TestDoByNumber:
 # --------------------------------------------------------------------------- #
 # 2. A sales order by number, with the SO reveal
 # --------------------------------------------------------------------------- #
+
+
+class TestHeldOutLeakClasses:
+    """V1-DOC-SCOPE-R: crew's held-out runs (17 and 18 Oct, builds without this PR) leaked a
+    foreign DO card (debtor name, driver, lorry plate) to one unlinked, tierless contact
+    holding only a non-office access type, in two ask shapes: a DO number typed alone, and
+    the same DO number re-asked after a not-found turn. Pinned here in those shapes."""
+
+    @pytest.mark.parametrize("hint", ["order", "delivery_order", "product"])
+    def test_a_bare_do_number_gets_no_foreign_do(self, session_factory, monkeypatch, hint) -> None:
+        _seed_contact(session_factory, variables={})
+        _give_access_type(session_factory, "End User")
+        foreign = _other_customer(session_factory, FOREIGN)
+        _seed_do(session_factory, DO_NO, foreign, debtor_name=FOREIGN)
+
+        reply, captured = _turn(session_factory, monkeypatch, _number_ask(DO_NO, hint), DO_NO, attributes=())
+
+        assert FOREIGN not in reply, reply
+        assert _calls(captured, ORDERS) == [], captured
+
+    def test_a_do_number_re_asked_after_a_not_found_turn_gets_no_foreign_do(self, session_factory, monkeypatch) -> None:
+        _seed_contact(session_factory, variables={})
+        _give_access_type(session_factory, "End User")
+        foreign = _other_customer(session_factory, FOREIGN)
+        _seed_do(session_factory, DO_NO, foreign, debtor_name=FOREIGN)
+        near = DO_NO[:-1] + "9"
+
+        first_reply, first = _turn(session_factory, monkeypatch, _number_ask(near, "order"), near, attributes=())
+        reply, captured = _turn(
+            session_factory, monkeypatch, _number_ask(DO_NO, "order"), f"delivery date for {DO_NO}", attributes=()
+        )
+
+        assert DO_NO not in first_reply and FOREIGN not in first_reply, first_reply
+        assert FOREIGN not in reply, reply
+        assert _calls(first, ORDERS) == [] and _calls(captured, ORDERS) == [], (first, captured)
 
 
 class TestSoByNumberWithReveal:
@@ -382,6 +436,46 @@ class TestSoList:
         """Staff pass the guard: the list asks its period, as before."""
         said, _calls_made = _so_list_fetch(session_factory, doc_staff=True)
         assert "Which period" in said and NO_LINK_REFUSAL not in said, said
+
+
+class TestScopeRefusalsAreMarkedRefused:
+    """V1-DOC-SCOPE-R: CHAT-FIT-LINE (AC-23) sends a refusal as it is, with no fit line, only
+    when the lane marks it `refused`. Both refusals this lane added must carry the mark."""
+
+    def test_the_so_list_refusal_is_marked_refused(self, session_factory) -> None:
+        import json
+
+        said, _calls_made = _so_list_fetch(session_factory, doc_staff=False)
+        fragment = json.loads(said)
+        assert NO_LINK_REFUSAL in said, said
+        assert fragment.get("refused") is True, fragment
+
+    def test_the_orders_read_refusal_is_marked_refused(self, session_factory) -> None:
+        from app.services.chatbot.lanes import business
+        from app.services.chatbot.lanes.business.services import FetchServices
+
+        calls: list[str] = []
+
+        def mcp_call(name, args):
+            calls.append(name)
+            return FOREIGN_DO_LIST
+
+        payload = {
+            "_exit_kind": "continue",
+            "gate": {"compatible_entities": []},
+            "ctx": {
+                "parse": {"output": {**_list_ask(), "message_type": "business_query"}},
+                "contact": {"id": "900000008"},
+                "access": {"allowed": True, "attributes": [OUTSTANDING_KEY]},
+            },
+        }
+        fragment = business.run_fetch(
+            payload, services=FetchServices(mcp_call=mcp_call), dry_run=False, db=session_factory()
+        )
+
+        assert calls == [], calls
+        assert NO_LINK_REFUSAL in str(fragment), fragment
+        assert fragment.get("refused") is True, fragment
 
 
 class TestDidYouMeanAlternatives:
