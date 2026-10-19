@@ -1162,22 +1162,28 @@ def _attribute_none(reply: str, gold_spec: list[dict[str, Any]], every: bool = F
 # ("*DC1-SMC:* 0", a warehouse) or in a value ("*Material:* SUS304") is no product, so a stock page's warehouse rows never count.
 PRODUCT_ROW_RE = re.compile(r"^(?:\d+\.\s+|[\u2022-]\s+)?(?:\*?(?:Product Code|Kod Produk|\u4ea7\u54c1\u4ee3\u7801):\*?\s*)?(?=[A-Z0-9-]*\d)(?=[A-Z0-9-]*[A-Z])([A-Z][A-Z0-9-]{3,})\b", re.M)
 # the row label is translated by the app (label_catalog.py:35: ms "Kod Produk", zh "产品代码"); the grader is stdlib-only, so the three are listed here
-# a comma-run of codes on one line ("A100, B200, C300") is one row per code
-CODE_RUN_RE = re.compile(r"(?<![A-Z0-9-])(?=[A-Z0-9-]*\d)(?=[A-Z0-9-]*[A-Z])[A-Z][A-Z0-9-]{3,}(?:\s*,\s*(?=[A-Z0-9-]*\d)(?=[A-Z0-9-]*[A-Z])[A-Z][A-Z0-9-]{3,})+")
+# a comma-run of codes ("A100, B200, C300") is one row per code, but only where a product list stands: at the start of a line (after a number
+# or bullet, and optionally a product label: Product, Product Code, Kod Produk, 产品代码) or after "not recorded for". A comma-run inside a value
+# ("*Material:* SUS304, SUS316") or a sentence ("Stock sits at DC1-SMC, WH3-IB.") is no product list.
+_ONE_CODE = r"(?=[A-Z0-9-]*\d)(?=[A-Z0-9-]*[A-Z])[A-Z][A-Z0-9-]{3,}"
+_RUN = rf"{_ONE_CODE}(?:\s*,\s*{_ONE_CODE})+"
+CODE_RUN_RE = re.compile(rf"^(?:\d+\.\s+|[\u2022-]\s+)?(?:\*?(?i:product code|product|kod produk|产品代码):\*?\s*)?({_RUN})"
+                         rf"|\bnot recorded for\s+({_RUN})", re.M)
 
 
 def _listed_products(reply: str) -> set[str]:
-    """The product codes a reply lists: product rows plus every code of a comma-run line. Label and value codes never count."""
+    """The product codes a reply lists: product rows plus every code of a comma-run that starts a line (after a product label) or follows
+    "not recorded for". Codes in a label, a value or a sentence never count."""
     listed = {_raw(c) for c in PRODUCT_ROW_RE.findall(reply)}
-    for run in CODE_RUN_RE.findall(reply):
-        listed |= {_raw(c) for c in CODE_RE.findall(run)}
+    for m in CODE_RUN_RE.finditer(reply):
+        listed |= {_raw(c) for c in CODE_RE.findall(m.group(1) or m.group(2))}
     return listed
 
 
 def _capped_list_check(row: dict[str, Any], item: dict[str, Any]) -> tuple[str, bool | None, str] | None:
     """Owner (19 Oct): "we shouldn't show all la, should show a cap with the ability to see more". When the expected set is larger
     than a page, a reply listing more than a page fails (a dump), and a page drawn from the expected set that ends with the more-line
-    passes. The listing is the codes the customer reads in the reply. A page without the more-line, or not drawn from the set, is
+    passes. The listing is the product rows of the reply (`_listed_products`): never a code in a label, a value or a sentence. A page without the more-line, or not drawn from the set, is
     unknown (the other checks judge it). Absent when the set fits one page, the gold is none-on-record, or the reply lists nothing."""
     gold = item.get("gold") or {}
     expected = {_raw(c) for c in gold.get("spec_products") or [] if c}
