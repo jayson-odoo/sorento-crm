@@ -3535,6 +3535,9 @@ def resolve_reference_post(
             log_usage=not payload.dry_run,
         )
         specs = _with_parser_brand(specs, payload.brand_tokens)
+        # Owner a35818889 (b): a hidden key the customer NAMED (a strict entry) never narrows the set;
+        # the reply says it is not available, like the fetch projection's `spec_hidden:<key>` line.
+        named_hidden = sorted({str(e["key"]) for e in specs if "any_keys" not in e and e.get("key") in hidden})
         specs = _without_hidden_specs(specs, hidden)
         if understanding is None and not specs and not payload.scope_terms and not payload.free_terms:
             # Nothing describes a set: the message held only predicate words ("Stock") and
@@ -3637,6 +3640,13 @@ def resolve_reference_post(
             "truncated": outcome["truncated"],
             "unrecognized_terms": outcome["unrecognized_terms"],
         }
+        if named_hidden:
+            from app.services.product_spec_registry import active_registry
+
+            labels = {row.spec_key: row.label for row in active_registry(db)}
+            result["predicate"]["spec_hidden"] = [
+                {"key": key, "label": labels.get(key) or key.replace("_", " ").capitalize()} for key in named_hidden
+            ]
         # D2/AC-1313: present ONLY on a scheme miss - a resolvable scheme carries
         # no such key at all, so a caller reading it never has to tell "no schemes"
         # from "not a scheme question".

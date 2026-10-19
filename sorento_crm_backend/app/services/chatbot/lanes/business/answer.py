@@ -2828,6 +2828,16 @@ def what_you_want_reply(asked: str, lines: list[str], *, missing: str = "", leg:
     return f"{head}\n\n{tail} Would you like me to escalate to {team} team?" if team else f"{head}\n\n{tail}"
 
 
+def spec_hidden_misses(predicate: Any) -> list[dict[str, Any]]:
+    """Owner a35818889 (b): the hidden spec keys a set ask NAMED (the route's `predicate.spec_hidden`),
+    as the same `spec_hidden:<key>` "not available" misses the product projection builds."""
+    return [
+        {"key": f"spec_hidden:{h.get('key')}", "label": h.get("label"), "value": "not available"}
+        for h in (jsc.get(predicate, "spec_hidden") or [] if isinstance(predicate, dict) else [])
+        if isinstance(h, dict) and h.get("key")
+    ]
+
+
 def described_members_reply(predicate: Any, team: Any) -> str | None:
     """A set that qualified nothing, in `what_you_want_reply`: the described products
     (`predicate.members`, the set without its legs) under "Here's what you want", then
@@ -4443,6 +4453,17 @@ def not_found_error_message(
 
     # Q23: the customer named an access level they do not hold. The gate detects it; say so
     # here too, or an entitlement problem reads as an ordinary "couldn't find it".
+    hidden_lines = [
+        f"*{m['label']}:* {m['value']}" for m in spec_hidden_misses(jsc.get(g, "predicate") if jsc.truthy(g) else None)
+    ]
+    if hidden_lines and jsc.truthy(escalate_message):
+        # Before the closing question when there is one, so the offer stays the last line.
+        head, sep, tail = jsc.js_string(escalate_message).rpartition("\n\n")
+        escalate_message = (
+            f"{head}\n\n" + "\n\n".join(hidden_lines) + f"\n\n{tail}"
+            if sep and tail.rstrip().endswith("?")
+            else f"{escalate_message}\n\n" + "\n\n".join(hidden_lines)
+        )
     access_notice = jsc.get(g, "access_notice")
     if jsc.truthy(g) and jsc.truthy(access_notice) and jsc.truthy(escalate_message):
         escalate_message = f"{jsc.js_string(access_notice)}\n\n{escalate_message}"
