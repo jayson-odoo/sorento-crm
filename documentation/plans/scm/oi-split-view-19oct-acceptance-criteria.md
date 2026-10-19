@@ -30,7 +30,7 @@ own, 236 @ 20/11/2026 New line, 167 @ 20/11/2026 New line (AutoCount 417 @ 20/10
   - A line delivered in full never counts.
 - A3 **Listed on the board.** While split edits wait, the board shows one line under its action bar
   "Split edits to confirm: line 480 CSK14B", AutoCount line numbers, comma-separated items for
-  several lines (lead, build: the result card exists only after a Confirm, so the line sits under the
+  several lines; it lists exactly the lines the count includes (lead, build: the result card exists only after a Confirm, so the line sits under the
   bar; the mock's "(167 now 20/11/2029)" suffix is dropped because the board read carries no before
   values; the View splits popup shows "was").
 - A4 **Confirm acts on every split-edited line of the order.** Pressing Confirm (N) confirms the
@@ -48,6 +48,15 @@ own, 236 @ 20/11/2026 New line, 167 @ 20/11/2026 New line (AutoCount 417 @ 20/10
 - A5 **Simulate confirm** (admin) shows the same rows and email as A4 for the same board state.
 - A6 **Save guard unchanged** (Q2 a). Moving a confirmed split onto another SO line still answers 422
   "Line <n>: a confirmed split cannot move to another line." and stores nothing (#1749 AC-G19).
+- A9 **A line with a pending AutoCount change goes the AutoCount way** (reviewer round 1, lead). Such a
+  line is never split-edited (A1 skips it): the board already counts it for its AutoCount change, and its
+  Confirm (batch or not) behaves exactly as on main, email and worklist included (e.g. 608 plan 600 + 32
+  applied, AutoCount 632 -> 700, the 32's date edited: the batch Confirm emails what main emails, 600
+  REMAIN and 68 ORDER 68 included). A Confirm that names only OTHER lines never fails because of such a
+  line (main answers 200, so must this). Known older gap, not this lane: on main that batch Confirm does
+  not move the edited 32 row either (follow-up ticket).
+- A10 **The pre-confirm list cannot leave a split-edited line out.** Its row shows no untick box: the
+  server applies every split-edited line of an order it confirms.
 - A8 **Whole-Buy lines only** (known limit carried from #1749: the split plan logic covers lines the
   active decision buys whole). A line partly served from stock is never flagged split-edited.
 - A7 **Never stuck.** If the Confirm fails, the board shows the server's message, the count stays,
@@ -76,18 +85,25 @@ own, 236 @ 20/11/2026 New line, 167 @ 20/11/2026 New line (AutoCount 417 @ 20/10
   - 752: rows 37 / 20/11/2026 / ADVANCE / line 752; 467 / 02/01/2027 / DELAY / New line; 145 /
     02/01/2027 / ORDER 145 / line 752 (AutoCount extra); total 649.
 - B3 **Plan status**, one per line: "Confirmed" with "revision <r>, <dd/mm/yyyy>" when the saved
-  plan equals the applied plan; "Saved, not confirmed" when the line is split-edited (A1);
+  plan equals the applied plan; "Saved, not confirmed" exactly when the line is split-edited (A1, the same
+  membership the board flag reads; a partly-from-stock line right after its Confirm reads "Confirmed",
+  nothing highlighted);
   "AutoCount changed" when the plan is stale (`split_state` stale).
 - B4 **What changed, only when exact.** In "Saved, not confirmed", a split row whose
   (qty, date, sits on, cancel) is not in the applied plan is highlighted. When the saved plan and
   the applied plan differ by exactly one row removed and one row added, the added row also shows
   "was <qty>" or "was <date>" (the removed row's values). Otherwise no "was" is shown. Never a
   guess.
+- B5a **Grids are the shared DataGrid** (PRINCIPLES hard-fail: no hand-rolled table). The line popup is
+  one DataGrid of the split rows with the total under it as a line of text ("Total 417 · AutoCount 417 @
+  20/10/2026, now 14 @ 20/09/2026"); the whole-order popup is one section per split line (a heading
+  "Line 480 CSK14B" with its status badge and the AutoCount text) holding that line's DataGrid.
 - B5 **Same data, same component.** Both pages get the popup's data from one backend read (the same
   function feeds the OI rows and the SO lines) and render one shared component. Opening the popup
   makes no extra request beyond the page's own read.
 - B6 **Q4 (a) (owner, 21:54).** A split sitting on another SO line is listed in its own line's
   popup with Sits on "line <n>"; the landing line shows only its own splits.
+- B7a **Split column sorts by split count** (the chip's N, extra row not counted).
 - B7 **Access.** The SO page shows splits to anyone who can open that sales order (scoped by its
   company, as the page's lines are); no new permission. An SO with no project order shows no chip.
 - B8 **Layout.** Unclipped at 1280 and 375; at 375 the popup fills the width and keeps Qty, Date and
