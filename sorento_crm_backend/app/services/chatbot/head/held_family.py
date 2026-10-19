@@ -16,13 +16,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from app.services.chatbot.head.scheme_index import names_own_class
+
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 #: How far up and down the variant graph a family is read (codes nest a few levels deep).
 MAX_DEPTH = 6
-
-from app.services.chatbot.head.scheme_index import names_own_class
 
 _SPEC_HINTS = frozenset({"specification", "spec"})
 
