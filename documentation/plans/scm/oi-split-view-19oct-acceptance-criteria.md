@@ -61,7 +61,12 @@ own, 236 @ 20/11/2026 New line, 167 @ 20/11/2026 New line (AutoCount 417 @ 20/10
   `lines_held_back` only, its OI rows stay as they were and its plan is not stamped (so it stays
   split-edited). This goes past main: on main a held-back line whose saved split plan still acts got a
   new ORDER row and an email line (3e2666c5e3: "632 ADVANCE, ORDER 600"); fixed here in
-  `_kept_split_needs` (d8438ef1af). A split-edited line the press did not name is added BEFORE the
+  `_kept_split_needs` (d8438ef1af). A Confirm of OTHER lines leaves a line's applied split plan alone:
+  no row change and no email for it (main collapsed 608's applied 600 + 32 rows into one 632 row and
+  emailed "632 ORDER 32"). Exception, unchanged from main and out of scope: an unnamed split-edited line
+  whose confirmed Buy no longer adds up with no pending AutoCount change (qty_ordered drift outside an
+  AutoCount batch) is held back from the decision, but its rows get main's carried-line treatment
+  (cancelled, "CANCEL ALL"); follow-up ticket with the other older gaps. A split-edited line the press did not name is added BEFORE the
   hold-back runs, so the hold-back can drop it like any named line; a Confirm of the order's other lines
   never answers 422 because of it.
 - A10 **The pre-confirm list cannot leave a split-edited line out.** Its row shows no untick box: the
