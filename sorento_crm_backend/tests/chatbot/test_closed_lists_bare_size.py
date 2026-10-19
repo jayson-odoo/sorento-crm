@@ -224,3 +224,17 @@ def test_a_hidden_dim_width_leaves_dim_length_alone_in_the_bare_size_or(session_
 
     assert ids["ZZBS-W"] not in _fetched(calls), (r.reply, calls)
     assert _fetched(calls) == [ids["ZZBS-L"]], (r.reply, calls)
+
+
+# --- R6-5 N3: a bare-size miss line carries the unit --------------------------------------------
+
+
+def test_a_bare_size_miss_line_carries_the_unit(session_factory, seeded, stub_access, monkeypatch):
+    """"700 zz wash basins" said no unit; the any-key set's unit comes from its members."""
+    _seed(session_factory, BASINS)
+
+    r, calls = _ask(session_factory, stub_access, monkeypatch, "need a 700mm zzbasin", _ent("zzbasin", "category"), _spec("700mm", "size", 700))
+
+    text_ = (r.reply or {}).get("text") or ""
+    assert "700" in text_, text_
+    assert "700 mm" in text_, text_
