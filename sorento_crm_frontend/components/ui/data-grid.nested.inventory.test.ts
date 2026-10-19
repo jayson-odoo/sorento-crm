@@ -90,8 +90,16 @@ const EXPANDED_CONTENT_SITES = new Map<string, string>([
     'NESTED GRID: OrderInquiryStockGrid, a thin wrapper over CellStockTable (the hand-rolled <table> carve-out) whose rows open StockDocumentsPanel (PanelDataGrid). The expansion sits inside the OI detail lines grid\'s own provider, so the context default covers it, AND StockDocumentsPanel passes scrollerMaxHeight={false} itself (S3, PLAN-oi-request-cs-reserve.md, stock grid on the OI page)',
   ],
   [
+    'app/(protected)/project-sales/sample-requests/components/SampleRequestDetail.tsx',
+    'NESTED GRID: OrderInquiryStockGrid (BRW) under a sample request line, the same wrapper over CellStockTable as the OI entry above, whose rows open StockDocumentsPanel (PanelDataGrid). The expansion sits inside the sample request lines PanelDataGrid\'s own provider, so the context default covers it, AND StockDocumentsPanel passes scrollerMaxHeight={false} itself (SR-CORE, #1718)',
+  ],
+  [
     'app/(protected)/master-data-management/products/[id]/components/ProductSuppliersTab.tsx',
     'NESTED GRID: SupplierCostPrices (PanelDataGrid) under a supplier row, #1305 round 9. Covered by the context default (it names no scrollerMaxHeight of its own)',
+  ],
+  [
+    'app/(protected)/project-sales/sample-requests/components/SampleRequestDetail.tsx',
+    'OrderInquiryStockGrid for the line product at BRW (the same thin CellStockTable wrapper as the OI lines grid) under a sample request line. Baseline addition for a site main introduced in #1718, not a behaviour test; the expansion sits inside the lines PanelDataGrid provider, so the context default covers it',
   ],
   // The primitives themselves: the prop declaration, the renderer, and the
   // wrapper that forwards `expanded`. Not nesting sites.
@@ -155,8 +163,8 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
     'NESTED GRID: the items popover opens from a CELL of this section\'s own grid. It names scrollerMaxHeight="16rem", so the nested default leaves it alone and it keeps its sticky header inside that window',
   ],
   [
-    'app/(protected)/project-sales/fulfilment-planning/components/BoardCellBreakdownDialog.tsx:1306',
-    'Contributing lines, in a dialog opened as a sibling of the board (a hand-rolled matrix). Already scrollerMaxHeight={false}. (Line moved 1223 -> 1251 when the Decision column gained the Verdict actions and the Product column its chip; 1251 -> 1268 when PLAN-oi-decision-trail-ui.md round 2 added a DecisionTrailButton after the verdict chip in the same cell renderer; 1268 -> 1293 when #1362 round 2 gave a fulfilled line its own card in place of the Suggestion card; 1293 -> 1294 when #1362 round 4 imported soLineLabel; 1294 -> 1304 when #1622 showed OrderInquiryRejectedBadge in place of the state pill of a rejected inquiry; the census is keyed by line, so a site that moves is a one-line diff here rather than a silent pass)',
+    'app/(protected)/project-sales/fulfilment-planning/components/BoardCellBreakdownDialog.tsx:1321',
+    'Contributing lines, in a dialog opened as a sibling of the board (a hand-rolled matrix). Already scrollerMaxHeight={false}. (Line moved 1223 -> 1251 when the Decision column gained the Verdict actions and the Product column its chip; 1251 -> 1268 when PLAN-oi-decision-trail-ui.md round 2 added a DecisionTrailButton after the verdict chip in the same cell renderer; 1268 -> 1293 when #1362 round 2 gave a fulfilled line its own card in place of the Suggestion card; 1293 -> 1294 when #1362 round 4 imported soLineLabel; 1294 -> 1304 when #1622 showed OrderInquiryRejectedBadge in place of the state pill of a rejected inquiry; 1306 -> 1321 when STOCK-STATUS round 6 read AutoCount for the Stock tab; the census is keyed by line, so a site that moves is a one-line diff here rather than a silent pass)',
   ],
   [
     'app/(protected)/project-sales/fulfilment-planning/components/FulfilmentPlanningSheet.tsx:457',
@@ -179,11 +187,11 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
     'Supply tab, same dialog. (Line moved 666 -> 619, same round; 619 -> 667 in R42, same as above; 715 -> 753 in #1594.)',
   ],
   [
-    'app/(protected)/scm/proforma-invoices/components/ConvertToPackingListDialog.tsx:455',
+    'app/(protected)/scm/proforma-invoices/components/ConvertToPackingListDialog.tsx:486',
     "What goes in the container, in a dialog opened as a sibling of the invoice list or the invoice's own detail - no grid context. It KEEPS the default `--grid-max-h` bound rather than turning it off: the dialog body does not scroll, so the table is what scrolls, with its header sticking inside that window while the container size select and Convert stay put",
   ],
   [
-    'app/(protected)/scm/proforma-invoices/components/ConvertToPackingListDialog.tsx:468',
+    'app/(protected)/scm/proforma-invoices/components/ConvertToPackingListDialog.tsx:473',
     'The DataGridTable of the same grid, not a second one',
   ],
   [
@@ -195,19 +203,19 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
     'The DataGridTable of the same grid, not a second one',
   ],
   [
-    'app/(protected)/project-sales/_shared/components/LinkDocumentDialog.tsx:343',
+    'app/(protected)/project-sales/_shared/components/LinkDocumentDialog.tsx:348',
     "S8's candidate DataGrid, in a dialog opened as a sibling of the worklist. Already scrollerMaxHeight={false}",
   ],
   [
-    'app/(protected)/project-sales/_shared/components/LinkDocumentDialog.tsx:349',
+    'app/(protected)/project-sales/_shared/components/LinkDocumentDialog.tsx:354',
     'The DataGridTable of the same grid, not a second one',
   ],
   [
-    'app/(protected)/project-sales/_shared/components/RequestReserveDialog.tsx:302',
+    'app/(protected)/project-sales/_shared/components/RequestReserveDialog.tsx:322',
     "G6 (PLAN-oi-request-cs-reserve.md section 6d): one row per selected line, in a dialog opened as a sibling of the OI Lines tab (Request CS to reserve). Already scrollerMaxHeight={false}. Round 4 review (24 Sep, AC-RS-89): line moved - the inert outer overflow-x-auto wrapper is gone and columnsDraggable: false was added.",
   ],
   [
-    'app/(protected)/project-sales/_shared/components/RequestReserveDialog.tsx:314',
+    'app/(protected)/project-sales/_shared/components/RequestReserveDialog.tsx:334',
     'The DataGridTable of the same grid, not a second one',
   ],
   [
@@ -216,6 +224,14 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
   ],
   [
     'app/(protected)/project-sales/order-inquiries/[id]/components/ReserveConfirmDialog.tsx:262',
+    'The DataGridTable of the same grid, not a second one',
+  ],
+  [
+    'app/(protected)/master-data-management/product-specifications/components/TryInChatbotDialog.tsx:148',
+    "SPEC-REGISTRY-UI: the parser's picks for one test message, in the Try in chatbot dialog opened from the spec record's gear, outside any grid's JSX, so no grid context. It KEEPS the default `--grid-max-h` bound, like ConvertToPackingListDialog: the dialog body does not scroll, and one message yields a handful of picks",
+  ],
+  [
+    'app/(protected)/master-data-management/product-specifications/components/TryInChatbotDialog.tsx:155',
     'The DataGridTable of the same grid, not a second one',
   ],
 ]);
