@@ -12,6 +12,7 @@ from typing import Any
 from tests.chatbot.test_chat_state_seam import (  # noqa: F401 - fixtures used by name
     CUSTOMER_UUID,
     HELD_WINDOW,
+    _as_office_staff,
     _emit,
     _held_customer_state,
     _mem_state,
@@ -65,6 +66,7 @@ def test_the_policy_default_is_ask_in_one_named_place():
 
 def test_unclear_customer_is_settled_by_the_held_entity_type_with_no_question(seam):
     """The held entity is a `customer` kind: the ask is a delivery ask for it (owner 16 Oct ~23:00)."""
+    _as_office_staff(seam)
     prev = _held_customer_state(window=HELD_WINDOW)
     out = seam.say("delivery?", _delivery(_op("keep"), _op("unclear", "customer")), previous=prev)
     _no_slot_question(seam, _text(out))
@@ -84,6 +86,7 @@ def test_unclear_period_asks_once_naming_the_held_period_and_another_with_no_ids
 
 
 def test_the_answer_fills_only_the_period_slot_and_the_ask_runs_with_that_period(seam):
+    _as_office_staff(seam)
     _ask(seam)
     out = seam.say(
         "1",
@@ -101,6 +104,7 @@ def test_the_answer_fills_only_the_period_slot_and_the_ask_runs_with_that_period
 def test_with_the_default_set_to_assume_no_question_is_asked_and_the_held_period_applies(seam, monkeypatch):
     from app.services.chatbot.turn import chat_state
 
+    _as_office_staff(seam)
     monkeypatch.setattr(chat_state, "unclear_slot_default", lambda: "assume")
     out = _ask(seam)
     _no_slot_question(seam)
@@ -136,6 +140,7 @@ def test_unclear_customer_with_an_unmapped_kind_asks_one_question_with_real_name
 
 
 def test_answering_another_period_asks_the_period_question_and_runs_nothing_unfiltered(seam):
+    _as_office_staff(seam)
     _ask(seam)
     out = seam.say(
         "2",

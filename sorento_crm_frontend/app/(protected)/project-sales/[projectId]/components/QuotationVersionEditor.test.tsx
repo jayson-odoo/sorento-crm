@@ -152,6 +152,10 @@ const useStockDetailMock = vi.fn(
     error: null,
   }),
 );
+// STOCK-STATUS round 6: the popover's AutoCount read, unanswered here (today's figures).
+vi.mock('@/components/stock-status/useStockStatus', () => ({
+  useStockStatus: () => ({ data: undefined, isLoading: false, isError: true }),
+}));
 vi.mock('../../_shared/hooks/useFulfilmentPlanning', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../_shared/hooks/useFulfilmentPlanning')>();
   return {
