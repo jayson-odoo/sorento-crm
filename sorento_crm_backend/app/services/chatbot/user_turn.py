@@ -26,10 +26,13 @@ class UserTurn:
     typed_line: str = ""
 
     @property
-    def own_line(self) -> str:
-        """The customer's own line as the text readers match it: `own_text` without its
-        surrounding blanks, up to its first line break."""
-        lines = self.own_text.strip().splitlines()
+    def first_text_line(self) -> str:
+        """The line the four text readers of `turn_runtime` (the set count, the clarify answer,
+        the "another N" count, the offered brand) have always read: the first non-blank line of
+        the turn's whole text, so value-identical to the old `message.strip().splitlines()[0]`
+        (AC-S6-2). Known quirk, kept on purpose (follow-up): when the customer's own line is
+        blank, that is the quoted `reply to: ...` line, read as if the customer had typed it."""
+        lines = f"{self.own_text}\n{self.quoted_text}".strip().splitlines()
         return lines[0] if lines else ""
 
 
@@ -61,12 +64,12 @@ def with_media_read(turn: UserTurn, rendered_text: str) -> UserTurn:
     return replace(turn, own_text=own, quoted_text=quoted, media=media)
 
 
-def own_line_of(message: Any) -> str | None:
-    """The customer's own line for a text reader: the turn's UserTurn, or (a direct caller
-    handing a bare message string) the same line read off that string. None for anything else."""
+def first_text_line_of(message: Any) -> str | None:
+    """`UserTurn.first_text_line` for a text reader: off the turn's UserTurn, or (a direct
+    caller handing a bare message string) off that string the same way. None for anything else."""
     if isinstance(message, UserTurn):
-        return message.own_line
+        return message.first_text_line
     if isinstance(message, str):
-        own, _quoted = _split(message)
-        return UserTurn(own_text=own).own_line
+        own, quoted = _split(message)
+        return UserTurn(own_text=own, quoted_text=quoted).first_text_line
     return None
