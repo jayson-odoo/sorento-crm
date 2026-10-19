@@ -1,6 +1,6 @@
 # PLAN: CHAT-CLOSED-LISTS - chatbot step 2, closed candidate lists
 
-Status: Review, round 4 part 2 + C2b pushed (reviewer READY); next the paired TRAIN x1 (crew bench, early stop, 3 USD cap). Track: full (size L, LEAD pattern).
+Status: Review, round 5 pushed (R5-1 size keys by data, R5-2 contains-is-not-the-code; reviewer READY); the lane prompt template changed (R5-2), so crew republishes an unlabelled CLOSED LISTS version before the next live / combined held-out run. Track: full (size L, LEAD pattern).
 Branch `claude/chat-closed-lists-x6ymb5` (the sandbox cannot push `crew/chat-closed-lists`), PR #1755.
 
 Design source: CHATBOT-SCALE-DESIGN-16oct section 8 step 2 + D2 (crew-only): code only SHORTLISTS
@@ -212,3 +212,15 @@ longer scoped by the leftover remainder.
 Open (CHAT-STATE, UNVERIFIED): es-0db8cf0a48 "150" is `trap_length` on file while the parser emits `dim_width`; a
 numeric-key candidate line is this lane's (candidates.py). Reviewer nits kept: the held pass has no
 `chat_searchable_products()` filter (held came from a searchable resolution).
+
+### Round 5 (19 Oct, after the paired TRAIN x1 on ad78e1e7: pooled +15.3, refine +33, spec +17, attachment +7)
+
+| Class | Red | Green | Notes |
+|---|---|---|---|
+| R5-1 SIZE-KEYS-BY-DATA (cp0-caafdcebea "(1)" header, es-0db8cf0a48 false none, 7 TRAIN rows on a wrong key) | 62d59d12 | 30995a98 | a size word offers only the unit's keys that hold that number in product_specifications (exact numeric), most held first, the held family's keys first; falls back to today's list when no key holds it; one query per size word, scoped |
+| R5-2 CONTAINS-IS-NOT-THE-CODE (cp0-75be0b79cf, cp0-cd3328e3f1) | 36270373 | da83acf9 | a code that only contains the word is labelled `holding "W"`; one CLOSED LISTS line: such a code is that product only when the message names it (template change) |
+
+Not built (root cause rc5-downflips.md): cp0-362022362a TYPE-OMITTED (MODEL, both arms), cp0-6240dc53f8 confident-false
+pick (MODEL, single; owner call on keeping an unsure pick). Bench notes for EVAL-BENCH: the spec grader compares values,
+never keys (3 of the lane's 5 spec up flips are wrong-key passes). Reviewer nits kept: `_keys_holding` skips
+string-stored values (all 17 numeric keys are JSON numbers on the dev copy); the family reader is linear in the held set.
