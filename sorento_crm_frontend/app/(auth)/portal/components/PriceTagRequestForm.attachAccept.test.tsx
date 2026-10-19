@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
@@ -61,13 +61,14 @@ describe('PriceTagRequestForm Sales Order box (ATTACH-ACCEPT)', () => {
     });
     render(<PriceTagRequestForm />);
 
-    await waitFor(() =>
-      expect(dropzoneProps.filter((p) => !p.readOnly).at(-1)?.allowedExtensions).toEqual([
-        'csv',
-        'pdf',
-        'xlsx',
-      ]),
-    );
+    // The Sales Order section starts collapsed on a new request.
+    fireEvent.click(await screen.findByRole('button', { name: /Sales Order & Lines/ }));
+
+    await waitFor(() => {
+      const editable = dropzoneProps.filter((p) => !p.readOnly);
+      expect(editable.length).toBeGreaterThan(0);
+      expect(editable.at(-1)?.allowedExtensions).toEqual(['csv', 'pdf', 'xlsx']);
+    });
     expect(fetchMe).toHaveBeenCalledTimes(1);
   });
 });
