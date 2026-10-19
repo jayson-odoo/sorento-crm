@@ -9,8 +9,7 @@ from __future__ import annotations
 import json
 
 from scripts.chatbot_eval.targets import grade_turn
-from tests.chatbot_eval.test_targets import check, item
-from tests.chatbot_eval.test_targets import _att, _file, GOLD_TS
+from tests.chatbot_eval.test_targets import GOLD_TS, _att, _file, check, item
 
 TOOL = "crm_master_product_attachments_list"
 CAPPED = {"head": '{"result_type": "product_attachments"', "bytes": 90000, "truncated": True}
@@ -31,7 +30,9 @@ def _capped(label_files, *, full=True, announce=False):
 
 
 def test_red_a_capped_envelope_files_are_read_from_full_results():
-    r = _capped([_file("Technical Specifications", "a.pdf"), _file("Technical Specifications", "b.pdf")])
+    # the live shape: the replied stage carries facts.files as an int above 0
+    r = _capped([_file("Technical Specifications", "a.pdf"), _file("Technical Specifications", "b.pdf")], announce=True)
+    assert any(x.get("stage") == "replied" and x["facts"]["files"] > 0 for x in r["trace"])
     res = grade_turn(r, item("attachment", **GOLD_TS))
     assert res["checks"]["files"] is True, res["checks"]
     assert res["checks"]["type"] is True, res["checks"]
