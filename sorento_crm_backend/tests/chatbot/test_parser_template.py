@@ -266,3 +266,63 @@ def test_template_uses_the_registry_variables():
     for name in pv.LITERAL_LIST_PATTERNS:
         assert name in pv.VARIABLE_NAMES
         assert "{{" + name + "}}" in template, name
+
+
+# --- F1-C: prompt-layer risks found by the read-only check of TEMPLATE ---------------------------
+
+
+def _rule_blocks(text: str) -> list[str]:
+    import re
+
+    blocks: list[str] = []
+    for line in text.splitlines():
+        if re.match(r"R-(?:P[123]|X)-\d\d\b", line):
+            blocks.append(line)
+        elif blocks:
+            blocks[-1] += "\n" + line
+    return blocks
+
+
+def _sentences(text: str) -> list[str]:
+    import re
+
+    return [s for s in re.split(r"(?<=[.!?])\s+|\n", text) if s.strip()]
+
+
+def test_template_explains_ranking_drill():
+    """report_ask.py reads a null ranking_drill as unsure and asks again; twice -> SCOPE_GIVE_UP.
+    The reply to 'above, or across all?' is read ONLY from ranking_drill, so the prompt must set it."""
+    template = _pt().TEMPLATE
+    explained = [
+        b for b in _rule_blocks(template)
+        if "`ranking_drill`" in b and "scoped" in b and "global" in b and "unsure" in b
+        and "sales ranking" in b and "group_by" in b
+    ]
+    assert explained, "no rule explains ranking_drill (scoped / global / unsure) on a sales ranking with its own group_by"
+    for sentence in _sentences(template):
+        if "`ranking_drill`" in sentence and "null" in sentence and "scoped" not in sentence:
+            pytest.fail("ranking_drill is listed among the keys stated null: " + sentence[:160])
+
+
+def test_template_value_only_narrowing_leaves_domain_null():
+    """turn/decide.py R24 `_keeps_subject` treats a domain_hint as the message's own ask, which drops
+    the stored scope; a reply that only narrows by a value must leave domain_hint null (v178)."""
+    import re
+
+    found = [
+        s for s in _sentences(_pt().TEMPLATE)
+        if re.search(r"narrow", s, re.I) and "`domain_hint`" in s and re.search(r"\bnull\b", s)
+        and re.search(r"purpose|ask of its own|own ask|new ask", s, re.I)
+    ]
+    assert found, "no sentence says a value-only narrowing with no new purpose leaves `domain_hint` null"
+
+
+def test_template_does_not_ask_for_unconfident_hints_when_guessing():
+    """_unsure_capture_as_codes drops the non-code words of `hint_confident` false entities for
+    dealers, so the prompt must not tell the model to flag a guessed kind that way."""
+    import re
+
+    for sentence in _sentences(_pt().TEMPLATE):
+        if re.search(r"guess|unsure of its kind", sentence, re.I) and "`hint_confident`" in sentence \
+                and re.search(r"false", sentence):
+            pytest.fail("guessing is tied to hint_confident false: " + sentence[:160])
