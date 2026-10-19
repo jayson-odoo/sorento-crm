@@ -1,0 +1,126 @@
+"""EVAL-BENCH round 44: a capped list with a more-line, and an honest "not recorded" line, on the spec slice.
+
+Owner (19 Oct, card r43; crew a7418687): "Correct, but we shouldn't show all la, should show a cap with the ability to see more" and, on
+a material-grade ask, "Yeah" to "grade is not on record for these gratings". Synthetic rows only.
+  1. the expected set is larger than a page (`answer.SET_LIST_MAX`, 50): a reply listing a page drawn from it that ends with the
+     more-line (`Reply "more" to see the next N.`, composers/sets.py, and its ms / zh forms) passes; a reply listing more than a page fails
+  2. a "*<key>:* not recorded for ..." line for the gold's own spec key is the honest none of a none-on-record spec gold, and the
+     grounding of its spec words is met when the line names every one of the gold's keys
+"""
+from __future__ import annotations
+
+from scripts.chatbot_eval.targets import grade_turn
+from tests.chatbot_eval.test_targets import item
+from tests.chatbot_eval.test_targets_v2 import row2
+
+CLS = {"key": "class", "value": "Water Closet"}
+PT = {"key": "trap_type", "value": "p_trap"}
+EXPECTED = [f"SRTP{n:03d}" for n in range(1, 61)]   # 60 expected, more than one page of 50
+ENTS = [{"hint": "category", "raw": "water closet", "canonical_code": "water closet"},
+        {"hint": "specification", "spec_key": "trap_type", "spec_value": "p_trap", "raw": "p trap"}]
+MORE = '\nReply "more" to see the next 10.'
+
+
+def _row(reply):
+    return row2(message="which toilets have p trap stock", reply=reply, verdict={"entities": ENTS, "reference_positions": []})
+
+
+def _check(reply, name="capped_list", **gold):
+    g = {"spec": [PT, CLS], "spec_products": EXPECTED, **gold}
+    res = grade_turn(_row(reply), item("spec", **g))
+    return res["checks"].get(name, "absent"), res
+
+
+def _list(codes):
+    return "\n".join(f"{i}. *Product Code:* {c}" for i, c in enumerate(codes, 1))
+
+
+def test_red_a_a_reply_over_the_page_cap_fails():
+    state, res = _check(_list(EXPECTED))
+    assert state is False and res["passed"] is False, (state, res["checks"])
+
+
+def test_red_b_a_capped_page_from_the_set_with_the_more_line_passes():
+    state, res = _check(_list(EXPECTED[:50]) + MORE)
+    assert state is True and res["passed"] is True, (state, res["checks"])
+
+
+def test_red_c_the_page_cap_is_the_bots_own_fifty():
+    assert _check(_list(EXPECTED[:51]))[0] is False
+    assert _check(_list(EXPECTED[:50]) + MORE)[0] is True
+
+
+def test_red_d_the_translated_more_lines_pass_too():
+    for line in ('\nBalas "more" untuk lihat 10 seterusnya.', '\n回复 "more" 查看接下来的 10 个。',
+                 '\nReply “more” to see the next 10.', '\nBalas “more” untuk lihat 10 seterusnya.'):
+        assert _check(_list(EXPECTED[:50]) + line)[0] is True, line
+
+
+def test_red_e_the_word_more_alone_is_no_more_line():
+    assert _check(_list(EXPECTED[:20]) + "\nThere is more stock coming.")[0] is None
+
+
+def test_guard_f_a_set_that_fits_one_page_is_not_judged():
+    assert _check(_list(EXPECTED[:3]), spec_products=EXPECTED[:3])[0] == "absent"
+    assert _check(_list(EXPECTED[:50]), spec_products=EXPECTED[:50])[0] == "absent"
+
+
+def test_red_g_a_page_without_the_more_line_is_not_a_failure_here():
+    assert _check(_list(EXPECTED[:20]))[0] is None
+
+
+def test_red_h_a_page_that_is_not_drawn_from_the_set_is_left_to_the_other_checks():
+    assert _check(_list(["XOTH001", *EXPECTED[:10]]) + MORE)[0] is None
+
+
+def test_guard_i_a_none_on_record_gold_is_not_judged_by_the_page_check():
+    assert _check(_list(EXPECTED), none_on_record=True)[0] == "absent"
+
+
+def test_guard_j_a_reply_with_no_product_is_not_judged():
+    assert _check("Sorry, nothing matched.")[0] == "absent"
+
+
+def test_red_k_more_than_a_page_fails_whatever_the_expected_set_size():
+    codes = [f"SRTQ{n:03d}" for n in range(1, 92)]
+    assert _check(_list(codes), spec_products=[])[0] is False
+    assert _check(_list(codes), spec_products=EXPECTED[:5])[0] is False
+
+
+GRADE = {"key": "steel_grade", "value": "201"}
+GRADE2 = {"key": "steel_grade", "value": "304"}
+LINE = "1. *Product Code:* SRTG100\n\n*steel_grade:* not recorded for SRTG100, SRTG100-BP"
+
+
+def _none(reply, spec=(GRADE, GRADE2)):
+    res = grade_turn(_row(reply), item("spec", spec=list(spec), none_on_record=True))
+    return res["checks"], res
+
+
+def test_red_l_a_not_recorded_line_for_the_asked_attribute_is_the_honest_none():
+    assert _none(LINE)[0]["none_on_record"] is True
+
+
+def test_red_m_the_registry_label_form_of_the_line_reads_too():
+    assert _none("1. *Product Code:* SRTG100\n\n*Steel grade:* not recorded for SRTG100 (+2 more)")[0]["none_on_record"] is True
+
+
+def test_red_n_the_line_naming_every_gold_key_meets_the_spec_words():
+    checks, res = _none(LINE)
+    assert checks["spec_set"] is True and res["passed"] is True, checks
+
+
+def test_guard_o_a_line_for_another_attribute_is_no_honest_none_and_grounds_nothing():
+    checks, res = _none("1. *Product Code:* SRTG100\n\n*finish:* not recorded for SRTG100")
+    assert checks["none_on_record"] is False and checks["spec_set"] is False and res["passed"] is False, checks
+
+
+def test_red_p_a_line_naming_only_one_of_two_gold_keys_does_not_meet_the_spec_words():
+    checks, _ = _none("1. *Product Code:* SRTG100\n\n*steel_grade:* not recorded for SRTG100",
+                      spec=(GRADE, {"key": "finish", "value": "chrome"}))
+    assert checks["none_on_record"] is True and checks["spec_set"] is False, checks
+
+
+def test_guard_q_products_with_no_such_line_stay_no_honest_none():
+    checks, _ = _none("1. *Product Code:* SRTG100")
+    assert checks["none_on_record"] is False and checks["spec_set"] is False, checks
