@@ -561,13 +561,28 @@ def listed_scheme_resolutions(parser: dict[str, Any], resolved: dict[str, Any]) 
             }
             for uid in e["certificate_uuids"]
         ]
+        # F3-b: the scheme's parent kind rides on the scheme's own entity (`head/scheme_index`),
+        # resolved here as the attachment type the fetch narrows the files by, in its own row
+        # (the gate reads one entity type per row).
+        kind_name = jsc.nullish_str(e.get("parent_kind"))
+        kind_matches = [{
+            "entity_type": "attachment_type", "canonical_code": kind_name, "uuid": e["parent_kind_uuid"],
+            "match_field": "scheme_parent", "match_tier": "exact", "similarity": None,
+            "company_id": None, "company_name": None, "company_code": None,
+            "display": {"type_name": jsc.nullish_str(e.get("parent_kind_name")) or kind_name},
+        }] if e.get("parent_kind_uuid") else []
         if "resolutions" in resolved:  # the OR shape: one row per token
             resolved["resolutions"].append(
                 {"token": _token_of(e), "resolved": True, "ambiguous": False, "matches": matches, "alternatives": []}
             )
+            if kind_matches:
+                resolved["resolutions"].append(
+                    {"token": kind_name, "resolved": True, "ambiguous": False, "matches": kind_matches, "alternatives": []}
+                )
         else:  # the AND shape: the intersection, by entity type
-            resolved.setdefault("intersection", []).extend(matches)
-            resolved.setdefault("by_entity_type", {}).setdefault("certificate", []).extend(matches)
+            for match in [*matches, *kind_matches]:
+                resolved.setdefault("intersection", []).append(match)
+                resolved.setdefault("by_entity_type", {}).setdefault(match["entity_type"], []).append(match)
 
 
 def hint_locked_tokens(

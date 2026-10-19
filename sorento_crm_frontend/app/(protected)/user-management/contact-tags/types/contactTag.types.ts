@@ -67,7 +67,12 @@ export interface SettingsCatalog {
   /** Absent when the viewer may not read them (stock / agents / companies). */
   warehouses?: CatalogOption[];
   agents?: CatalogOption[];
-  agent_fields?: { agent_code: string; resource: string; field_key: string }[];
+  agent_fields?: {
+    agent_code: string;
+    resource: string;
+    field_key: string;
+    label: string;
+  }[];
   companies?: CatalogOption[];
   field_reveals: CatalogOption[];
   portal_forms: CatalogOption[];

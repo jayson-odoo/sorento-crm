@@ -1094,6 +1094,9 @@ def _contact_brand_scope(factory: SessionFactory, contact_respond_id: str) -> fr
         db.close()
 
 
+_ENGINE_ENTITY_KEYS = ("listed", "certificate_uuids", "parent_kind", "parent_kind_uuid", "parent_kind_name", "class_hint")
+
+
 def closed_lists_verdict(verdict: dict[str, Any], *, gate: bool) -> dict[str, Any]:
     """CHAT-CLOSED-LISTS: a verdict parsed by a CLOSED LISTS version says so, so the lanes
     read the parser's listed picks and none of the word fallbacks (card R2/R5). The key is
@@ -1111,8 +1114,25 @@ def code_lookup_verdict(verdict: dict[str, Any], *, gate: bool) -> dict[str, Any
     return {k: v for k, v in verdict.items() if k != "code_lookup"} if "code_lookup" in verdict else verdict
 
 
+def _strip_hidden_spec_entities(verdict: dict[str, Any], hidden: frozenset[str]) -> dict[str, Any]:
+    """H1: a spec entity on a contact-hidden key is dropped. Runs once, on the grounding output
+    (the parser's own emission and what grounding re-derives from raw words alike), before
+    `turn_apply`, the only writer of spec entities into the focus."""
+    entities = verdict.get("entities")
+    if not hidden or not isinstance(entities, list):
+        return verdict
+    # Grounding binds on the stripped key, so the compare is on the stripped key too.
+    kept = [e for e in entities if not (isinstance(e, dict) and str(e.get("spec_key") or "").strip() in hidden)]
+    return verdict if len(kept) == len(entities) else {**verdict, "entities": kept}
+
+
 def _candidate_lines(
-    db: Session, latest_user_message: str, held_ids: list[str] | None = None, *, code_lookup: bool = False
+    db: Session,
+    latest_user_message: str,
+    held_ids: list[str] | None = None,
+    hidden: frozenset[str] = frozenset(),
+    *,
+    code_lookup: bool = False,
 ) -> tuple[list[str] | None, frozenset[str], dict[str, dict[str, Any]]]:
     """The candidate block for the message's OWN first line (the quoted reply under it is
     not this message's words, the line grounding reads too). It only advises the parser,
@@ -1122,9 +1142,9 @@ def _candidate_lines(
     try:
         with db.begin_nested():
             entries = (
-                candidates_mod.shortlist(db, message, held_ids, code_lookup=True)
+                candidates_mod.shortlist(db, message, held_ids, hidden=hidden, code_lookup=True)
                 if code_lookup
-                else candidates_mod.shortlist(db, message, held_ids)
+                else candidates_mod.shortlist(db, message, held_ids, hidden=hidden)
             )
             return (
                 candidates_mod.candidate_lines(entries),
@@ -4626,11 +4646,19 @@ def _run_stages_body(  # noqa: PLR0915
         product_details = turn_runtime.product_detail_values(db)
         # CHAT-CLOSED-LISTS: what is on file under the words of this message, for a
         # version carrying the CLOSED LISTS section only (code shortlists, the parser picks).
+        # H1: the contact's hidden spec keys (the real policy, `head/access`), read once here and
+        # applied at the parser's two entries (the block it is shown, the spec entities it emits).
+        hidden_spec = (
+            frozenset(access_mod._hidden_spec_keys(db, contact_id=str(contact_respond_id), space_id=default_space_id(db)))
+            if parser_config.closed_lists
+            else frozenset()
+        )
         candidate_lines, listed_codes, pick_info = (
             _candidate_lines(
                 db,
                 latest_user_message,
                 [str(p["uuid"]) for p in state_in.focus.products if isinstance(p, dict) and p.get("uuid")],
+                hidden_spec,
                 code_lookup=parser_config.code_lookup,
             )
             if parser_config.closed_lists and isinstance(latest_user_message, str)
@@ -4711,13 +4739,13 @@ def _run_stages_body(  # noqa: PLR0915
             # because this is the seam that skipped it.
             parser.assert_emission(parser_raw)
         verdict: dict[str, Any] = dict(parser_raw)
-        # `listed` and `certificate_uuids` are the ENGINE's own entity keys (grounding and the
-        # scheme index set them). One the parser emitted (the Anthropic path does not enforce
+        # `listed`, `certificate_uuids`, `class_hint` and the `parent_kind*` keys are the ENGINE's own entity keys
+        # (grounding and the scheme index set them). One the parser emitted (the Anthropic path does not enforce
         # additionalProperties) is dropped before any reader.
         verdict.pop("dropped_kinds", None)
         if isinstance(verdict.get("entities"), list):
             verdict["entities"] = [
-                {k: v for k, v in e.items() if k not in ("listed", "certificate_uuids")} if isinstance(e, dict) else e
+                {k: v for k, v in e.items() if k not in _ENGINE_ENTITY_KEYS} if isinstance(e, dict) else e
                 for e in verdict["entities"]
             ]
         # CHATBOT-EMPTY-ROUTE-PICK: a declared answer to a question that was never
@@ -4967,13 +4995,6 @@ def _run_stages_body(  # noqa: PLR0915
 
     verdict, _ranking_words = _report_ask.hold_words(verdict)
     with _session(session_factory) as grounding_db:
-        # The contact's hidden spec keys (the real policy, `head/access`), read once for the
-        # CLOSED LISTS size path and the held family: a hidden key never filters or narrows.
-        hidden_spec = (
-            frozenset(access_mod._hidden_spec_keys(grounding_db, contact_id=str(contact_respond_id), space_id=default_space_id(grounding_db)))
-            if parser_config.closed_lists
-            else frozenset()
-        )
         verdict, grounding_notes = grounding.ground(
             grounding_db,
             verdict,
@@ -4984,6 +5005,9 @@ def _run_stages_body(  # noqa: PLR0915
             held_ids=[str(p["uuid"]) for p in state_in.focus.products if isinstance(p, dict) and p.get("uuid")],
             hidden_keys=hidden_spec,
         )
+    # H1: the ONE strip, on the grounding output: grounding re-derives specs from the raw words
+    # over the whole registry, so this covers the parser's own emission too.
+    verdict = _strip_hidden_spec_entities(verdict, hidden_spec)
     verdict = closed_lists_verdict(verdict, gate=parser_config.closed_lists)
     verdict = code_lookup_verdict(verdict, gate=parser_config.code_lookup)
     held_none_match: dict[str, Any] | None = None

@@ -49,7 +49,7 @@ def _run(session_factory, stub_access, monkeypatch, **envelope) -> list[str]:
 def test_s1_the_shortlist_reads_the_messages_own_first_line(session_factory, seeded, stub_access, monkeypatch):
     seen: list[str] = []
     real = candidates.shortlist
-    monkeypatch.setattr(candidates, "shortlist", lambda db, message, held_ids=None: seen.append(message) or real(db, message, held_ids))
+    monkeypatch.setattr(candidates, "shortlist", lambda db, message, held_ids=None, **kw: seen.append(message) or real(db, message, held_ids, **kw))
 
     _run(session_factory, stub_access, monkeypatch)
 

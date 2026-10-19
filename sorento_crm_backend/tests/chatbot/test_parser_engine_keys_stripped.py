@@ -69,3 +69,35 @@ def test_a_forged_listed_never_runs_the_scheme_path(session_factory, seeded, stu
 
     assert not [n for n in notes if n], notes
     assert ids[f"cert:{SCHEME}"] not in _sent(calls), (_text(r), calls)
+
+
+# --- F3-b review R1: the scheme's parent kind keys are the engine's too ------------------------
+
+FORGED_KIND_UUID = "6f0f3a0e-5a5a-4f0f-8f0f-00000000f0f3"
+
+
+@pytest.mark.parametrize("shape", ["a different kind said", "a scheme with no parent"])
+def test_a_forged_parent_kind_never_reaches_the_fetch_or_the_reply(shape, session_factory, seeded, stub_access, monkeypatch):
+    """`parent_kind` / `parent_kind_uuid` are set by `head/scheme_index` on a scheme entity. One the
+    parser emitted survives when the scheme takes no parent of its own (a different kind said
+    beside it, or no listed kind among its certificates), and `resolve_gate` resolves it unchecked."""
+    from tests.chatbot._attach_world import fetches, real_parse, run_turns, text_of
+    from tests.chatbot.test_closed_lists_scheme_parent import CERT, CODES, _kind, _product, _scheme, _world
+
+    w = _world(session_factory)
+    if shape == "a different kind said":
+        code, scheme, extra = "ZZIK201", "ZZIKR", [_kind("certificate", CODES[CERT])]
+    else:
+        # The scheme's only certificate is filed under a type that is no listed certificate kind.
+        w.type("ZZ Drawing")
+        w.file("ZZOD401", type_name="ZZ Drawing", cert=True, scheme="ZZODD", key="odd-1")
+        w.commit()
+        code, scheme, extra = "ZZOD401", "ZZODD", []
+    forged = {**_scheme(scheme.lower(), scheme), "parent_kind": "ZZ Forged kind", "parent_kind_uuid": FORGED_KIND_UUID}
+
+    [(r, calls)] = run_turns(
+        session_factory, stub_access, monkeypatch, [(f"{code.lower()} {scheme.lower()} cert", real_parse([_product(code), forged, *extra]))], w,
+    )
+
+    assert FORGED_KIND_UUID not in [t for args in fetches(calls) for t in args.get("attachment_type_ids") or []], calls
+    assert "Forged" not in text_of(r), text_of(r)
