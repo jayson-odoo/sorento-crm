@@ -260,7 +260,7 @@ def _value_candidates(db: "Session", tokens: list[str], hidden: frozenset[str] =
         entry = by_gram.setdefault(gram, WordCandidates(gram=gram, position=position))
         entry.items.append(value.text() if exact else f"near {value.text()}")
         if exact and value.kind != "product type":
-            entry.pairs[value.text()] = (value.spec_key, value.value, "text")
+            entry.pairs[value.text()] = (value.spec_key, value.value, "flag" if value.kind == "flag" else "text")
     return list(by_gram.values()) + numbered
 
 
@@ -359,29 +359,24 @@ def _support(
 ) -> dict[tuple[str, str, str], tuple[int, int]]:
     """F3-a: for each (key, value, kind) pair, the chat-searchable products in the contact's
     scope that hold it and how many of the held family do. ONE query for every pair, through
-    the scoped Product join; a number compares as a number (450 holds 450.0), a text value
-    case-folded."""
+    the scoped Product join; each pair holds the way the set search matches it
+    (`membership_clause`: a number as a number, a list-valued spec by containment, a yes as true)."""
     if not pairs:
         return {}
-    from decimal import Decimal
-
-    from sqlalchemy import Numeric, case, cast, func
+    from sqlalchemy import case, func
 
     from app.models.product import Product, chat_searchable_products
     from app.models.product_spec import ProductSpecifications
     from app.services.chatbot.head.held_family import _family_ids
+    from app.services.product_spec_search import membership_clause
 
     family = _family_ids(db, held_ids) if held_ids else set()
-    values = ProductSpecifications.values
     in_family = ProductSpecifications.product_id.in_(list(family) or ["00000000-0000-0000-0000-000000000000"])
     ordered = sorted(pairs)
     columns = []
     for key, value, kind in ordered:
-        raw = values[key]["value"]
-        if kind == "num":
-            holds = cast(case((func.jsonb_typeof(raw) == "number", raw.astext), else_=None), Numeric) == Decimal(value)
-        else:
-            holds = func.lower(raw.astext) == value.casefold()
+        typed = float(value) if kind == "num" else (value.lower() == "true") if kind == "flag" else value
+        holds = membership_clause({key: [typed]})
         columns.append(func.coalesce(func.sum(case((holds, 1), else_=0)), 0))
         columns.append(func.coalesce(func.sum(case((holds & in_family, 1), else_=0)), 0))
     row = (
