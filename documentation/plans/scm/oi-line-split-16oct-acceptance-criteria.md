@@ -365,3 +365,14 @@ SO417636 CSK14B BRW-BB, with the owner's plan:
       prints in the email the same rows the worklist and Excel hold (608 at 229), never "632 REMAIN"
       (reviewer B10).
     The engine, the email and the Excel read the declined qty from one function, called the same way.
+- AC-G20 **Sheet fixes from the round-3 browser pass** (lead, 19 Oct; crew-note 6261740132). The owner's approved
+  layout (mock v5 variant B) must be buildable by the gestures in the hand-test script:
+  - The "N left" chip dropped on a line always makes its OWN split row there (at the line's planned date), never
+    merged into a split of the same line that already sits there. Example: 480 = 14 + 403, the 403 dragged onto
+    608 and cut to 236, then the "167 left" chip dropped onto 608 gives a separate 167 row under 608 at
+    20/11/2026 that staff then re-date to 20/11/2029. Dragging a whole row keeps today's behaviour.
+  - The extra row (AC-G3) comes from the saved plan (the API's `extra_qty`). While the draft has changed a line's
+    splits, or splits dropped on it, that line shows no extra row; after Save the sheet shows the server's value
+    (752: 182 once the 37 sits on 608). No copy of the extra rule in the frontend.
+  - "+ Split" on a line whose NEW QTY is not below its QTY (752: 649 vs 504) makes only the first row; it never
+    makes a row of qty 0.
