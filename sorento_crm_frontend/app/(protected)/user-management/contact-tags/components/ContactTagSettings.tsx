@@ -575,10 +575,18 @@ type Entry = {
 const fieldId = (e: Omit<Entry, 'is_allowed'>) =>
   `${e.agent_code}|${e.resource}|${e.field_key}`;
 
-/** One entry per field, the last winning as the server applies them: a tag saved before the
- * server refused repeats can still hold a field twice. */
+/** One entry per field: a tag saved before the server refused repeats can still hold a field
+ * twice. Deny wins, as the server applies them (one tag's entries for a field are ANDed). */
 function uniqueAgentFields(entries: Entry[]): Entry[] {
-  return [...new Map(entries.map((e) => [fieldId(e), e])).values()];
+  const out = new Map<string, Entry>();
+  for (const e of entries) {
+    const seen = out.get(fieldId(e));
+    out.set(fieldId(e), {
+      ...e,
+      is_allowed: (seen?.is_allowed ?? true) && e.is_allowed,
+    });
+  }
+  return [...out.values()];
 }
 
 /** Allow and Deny lists: a tag entry overrides the agent's default either way. */
@@ -588,10 +596,22 @@ function AgentFields({ s, set, editing, catalog }: BodyProps) {
   const agentName = (code: string) =>
     agents.find((a) => a.code === code)?.label ?? 'Removed agent';
   // The gated fields the server knows, each with the agent that owns it: no free text.
-  const gated = (catalog.agent_fields ?? []).map((f) => ({
+  const known = (catalog.agent_fields ?? []).map((f) => ({
     value: fieldId(f),
     label: `${agentName(f.agent_code)}: ${f.label}`,
   }));
+  // A stored field no longer gated still needs a chip to remove it by.
+  const gated = [
+    ...known,
+    ...entries
+      .filter((e) => !known.some((o) => o.value === fieldId(e)))
+      .map((e) => ({
+        value: fieldId(e),
+        label: `${agentName(e.agent_code)}: Removed field`,
+      })),
+  ];
+  // Until the catalog arrives every stored field would read as removed.
+  if (!catalog.agent_fields) return null;
   const ids = (allowed: boolean) =>
     entries.filter((e) => e.is_allowed === allowed).map(fieldId);
   const lists = { allow: ids(true), deny: ids(false) };

@@ -39,9 +39,11 @@ which I don't know how to delete"
    `ContactTagSettings.tsx:494-528`). Options = the catalog's gated fields, label
    "<agent name>: <readable field label>". A field picked in one list leaves the other's options. Chips carry
    an x to remove. View: the two lists as pills, each shown only when non-empty. "Set on this tag" stays as is.
-2. Collapse duplicates: the stored list is read through one helper keyed on (agent_code, resource, field_key),
-   last entry wins (the order the backend applies them). View, Edit and `cleaned()` on Save all go through it,
-   so an old tag with a duplicate shows it once and saves it once.
+2. Collapse duplicates: the stored list is read through one helper keyed on (agent_code, resource, field_key);
+   Deny wins, because the server ANDs one tag's entries for a field (`contact_tag_settings.py` `evaluate`
+   groups leaves by key, `_m_and`). View, Edit and `cleaned()` on Save all go through it, so an old tag with a
+   duplicate shows it once and saves it once. A stored field the catalog no longer offers shows as
+   "<agent>: Removed field" with an x; the group body waits for the catalog so nothing flashes as removed.
 3. Backend: `_v_agent_fields` rejects a key listed twice (422, "listed twice"); the catalog's `agent_fields`
    options carry `label` from `field_label()`; the preview label at `contact_tag_settings.py:683` uses it too.
 
@@ -54,6 +56,13 @@ No migration: no stored duplicates exist locally; any elsewhere collapse the nex
   a field picked under Allow is not offered under Deny.
 - pytest `tests/test_contact_tag_settings*.py`: a settings PUT with the same key twice is a 422; the catalog
   options carry readable labels.
+
+## Known edges (reviewer round 1, accepted)
+
+- A tag that still holds a legacy duplicate collapses on its next save, which counts as an agent_fields change:
+  a user without `user_management.access_agents.edit` gets the section's 403 when saving another group on that
+  tag. No such tag exists locally (scan above).
+- The tag list's Settings count (`lib/settingsCount.ts`) counts a legacy duplicate twice until the tag is saved.
 
 ## Out of scope
 
