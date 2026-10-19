@@ -2,7 +2,9 @@
 
 Each rewriter is spied at its real call site: turn_runtime.{with_set_count_from_text, with_brand_from_offer,
 with_company_pick, with_new_set_words, with_clarify_answer}, engine._as_a_stock_ask_by_its_own_words (the
-stock-ask regex), engine._top_selling_verdict, order_list.order_list_verdict, turn.reconcile.apply_reconciliation.
+stock-ask regex), engine._top_selling_verdict, order_list.order_list_verdict.
+reconcile.apply_reconciliation is NOT spied: it is data-led, not a text rewriter, and stays on the state path
+(crew ruling a41487222; its pins live in test_chat_state_r6_s5b_reconcile_and_answer_ports.py).
 decide.py's refine-of-standing-subject branch has no isolated function to spy (it lives inside `decide`);
 it is reported as not pinnable here. State-off twin: the same spies DO fire off the state path.
 """
@@ -26,7 +28,6 @@ TARGETS = [
     ("_as_a_stock_ask_by_its_own_words", "app.services.chatbot.engine"),
     ("_top_selling_verdict", "app.services.chatbot.engine"),
     ("order_list_verdict", "app.services.chatbot.order_list"),
-    ("apply_reconciliation", "app.services.chatbot.turn.apply"),
 ]
 
 
