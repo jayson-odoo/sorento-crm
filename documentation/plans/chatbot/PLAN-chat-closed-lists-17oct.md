@@ -1,6 +1,6 @@
 # PLAN: CHAT-CLOSED-LISTS - chatbot step 2, closed candidate lists
 
-Status: Review, round 7 (H1, H1b, F3-a) fix round 1 done, re-review next; ci HOLD (crew a35818889: owner rules whether a contact-hidden key the customer names may narrow a list; R6-6 broke main tests round8/round9, owner case #833); order F3-a, F3-b, F3-d per crew a30139843, F3-c only after the $0 TRAIN count; cp0-6240dc53f8 held for the owner. Track: full (size L, LEAD pattern).
+Status: Waiting (owner + bench). Round 7 pushed at 2a2e4d6c2c (H1, H1b, F3-a, F3-b; Opus READY x2, security PASS); ci HOLD until the owner rules a35818889 (a named hidden key narrowing a list); cp0-6240dc53f8 owner call open; F3-c / F3-d not built (crew a38450503, triggers below); EVAL-BENCH paired TRAIN x1 on 2a2e4d6c2c + R5-2 A/B x3 per arm requested by crew. Track: full (size L, LEAD pattern).
 Branch `claude/chat-closed-lists-x6ymb5` (the sandbox cannot push `crew/chat-closed-lists`), PR #1755.
 
 Design source: CHATBOT-SCALE-DESIGN-16oct section 8 step 2 + D2 (crew-only): code only SHORTLISTS
@@ -370,3 +370,18 @@ first fail at release. Options sent: (a) a named hidden key still narrows, print
 policy's "not available" line; recommendation (b). The engine keeps its single pre-parse policy read (engine.py ~:4613):
 `check_access` keys on the parser's routing and runs after grounding, so its snapshot cannot serve the candidate block.
 The test stub now returns `hidden_spec_keys` like the real check_access (6f09cf2d).
+
+### F3-c and F3-d evidence ($0, TRAIN only; scratchpad f3c-count.md, f3d-count.md)
+
+- F3-c (ask on an unconfident or tied spec / type pick), on g1755d + g1755c (heads before R5-1, R6-1, F3-a): spec entities
+  with confident=false 0; type 1 (main only, cp0-7534f5e637); attachment 1 (cp0-6240dc53f8, the owner call). Ties (2+
+  spec keys offered for one word, parser picked one): 7 + 23 lane turns, about 4 failing on a key outside gold
+  (8988c61024, caafdcebea, 79001a386a, b0b71b2581), all the "NNNmm" class that R5-1 / R6-1 / F3-a now rank by data;
+  3 passing dim_length picks would risk turning into asks. Low yield, real pass-to-fail risk.
+- F3-d (registry unit_conversions / short_forms / is_piece_count), 516 TRAIN messages: inch sizes 1 (a code suffix, not
+  a size); short finish codes 22 (21 are code suffixes; the free-text "BL Gm" gold is a colour, not a finish value);
+  "N in 1" 7 (the one failure, cp0-8dd4b6395d, already had `spec piece_count = 4` offered). No field fixes a failure.
+- Crew ruling a38450503 (a): build neither now.
+- Trigger to build: F3-d when a graded TRAIN or held-out failure is caused by an inch size or a finish short code the
+  registry does not hold; F3-c when the paired TRAIN run on the new head shows a tie or unconfident pick class of 2+
+  failing items.
