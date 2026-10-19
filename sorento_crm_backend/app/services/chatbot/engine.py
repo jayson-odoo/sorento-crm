@@ -2134,25 +2134,43 @@ def _top_selling_dealer_scope(
     return {**parse_output, "entities": [e for e in entities if not _is_customer(e)]}
 
 
-def _reference_scope(customer_scope: dict[str, Any] | None, profile: Any) -> list[Any] | None:
+def _reference_scope(
+    customer_scope: dict[str, Any] | None, profile: Any, *, doc_staff: bool = False
+) -> list[Any] | None:
     """REF-PROBES: the customer links a reference-number match must belong to, or None when
     no scope applies. Enforced dealers and any non-staff contact are held to their links (an
-    unlinked dealer has none, so another customer's sales order is never offered)."""
+    unlinked dealer has none, so another customer's sales order is never offered).
+    V1-DOC-SCOPE: for an SO / DO number staff is the tier OR the contact's `doc_staff` (an
+    active office access type or a staff CRM user, read with the scope by
+    `services.customer_scope_and_staff`). A linked staff user is enforced yet `doc_staff`,
+    and is not held to its links here; the tier alone never lifts an enforced scope. Called
+    without `doc_staff` this is the tier rule (`ref_staff`), which a customer PO ref keeps
+    (V1-DOC-SCOPE-SALES crew ruling, 14 Oct)."""
     scope = customer_scope or {}
-    if scope.get("enforced"):
+    if scope.get("enforced") and not doc_staff:
         return list(scope.get("linked") or [])
-    return None if is_staff_profile(profile) else list(scope.get("linked") or [])
+    return None if (doc_staff or is_staff_profile(profile)) else list(scope.get("linked") or [])
 
 
 def _reference_kinds(
-    ctx: dict[str, Any], customer_scope: dict[str, Any] | None, profile: Any, *, per_match_scope: bool = True
+    ctx: dict[str, Any],
+    customer_scope: dict[str, Any] | None,
+    profile: Any,
+    *,
+    per_match_scope: bool = True,
+    doc_staff: bool = False,
 ) -> list[str]:
     """The reference kinds this asker may have probed. A lane with no per-match scope drop
-    (`per_match_scope=False`, the casual clarifier) loses the customer-owned kinds (sales order,
-    PO ref) for any contact held to links."""
+    (`per_match_scope=False`, the casual clarifier) loses the customer-owned kinds for any
+    contact held to links: a sales order by the document staff rule, a customer PO ref by
+    the tier rule (V1-DOC-SCOPE-SALES), so no PO ref match reaches the clarifier for a
+    contact the tier rule holds."""
     kinds = visible_reference_kinds((ctx.get("access") or {}).get("attributes"), is_staff_profile(profile))
-    if not per_match_scope and _reference_scope(customer_scope, profile) is not None:
-        kinds = [k for k in kinds if k not in ("sales_order", "customer_po_ref")]
+    if not per_match_scope:
+        if _reference_scope(customer_scope, profile, doc_staff=doc_staff) is not None:
+            kinds = [k for k in kinds if k != "sales_order"]
+        if _reference_scope(customer_scope, profile) is not None:
+            kinds = [k for k in kinds if k != "customer_po_ref"]
     return kinds
 
 
@@ -2177,7 +2195,14 @@ def _customer_scope_gate(
     (`self_reference` and a bare ask alike). Words carried from an earlier turn are never
     matched, so a refusal cannot lock the turns after it. `self_reference` ("my", "me",
     "our") means the links for staff too. Unlinked contacts, staff without "my" and top
-    selling (its own block, `_top_selling_dealer_scope`) are untouched."""
+    selling (its own block, `_top_selling_dealer_scope`) are untouched.
+
+    V1-DOC-SCOPE slice 3 (owner rule: unlinked != customer): an unlinked contact that is not
+    document staff owns no customer, but it is held AFTER the resolver, not here on the
+    parser's tag: `resolve_kinds(hide_customers=...)` drops every customer row before the
+    picker or its DO probe, and a word typed this message that only matched customers refuses
+    the turn with the no-link line. A brand the parser tagged a customer ("cabana stock",
+    owner Q1) is still the brand."""
     if not scope or focus.status == "top_selling":
         return parse_output, None, False, None
     self_reference = verdict.get("self_reference") is True
@@ -2252,6 +2277,28 @@ def _customer_scope_gate(
     if not in_order:
         return parse_output, None, False, None
     return without_customers, ids, False, None
+
+
+def _typed_this_message(tokens: Any, verdict: dict[str, Any]) -> bool:
+    """Is any of the resolver's `tokens` a word the contact typed this message (an entity
+    with `current_message`), compared case and space folded?"""
+
+    def _fold(word: Any) -> str:
+        return " ".join(jsc.js_string(word).split()).lower()
+
+    typed = {
+        _fold(e.get("raw"))
+        for e in verdict.get("entities") or []
+        if isinstance(e, dict) and e.get("current_message") is True and jsc.truthy(e.get("raw"))
+    }
+    return any(_fold(t) in typed for t in jsc.array(tokens))
+
+
+def _no_link_refusal() -> str:
+    """The scope refusal over no links ("I can only check on your own account")."""
+    from app.services import contact_customer_scope as scope_mod
+
+    return scope_mod.refusal_line(scope_mod.ContactCustomerScope(linked=(), staff=False))
 
 
 def _with_account_answer(verdict: dict[str, Any], carried: Any) -> dict[str, Any]:
@@ -5443,11 +5490,20 @@ def _run_stages_body(  # noqa: PLR0915
             ctx["top_selling_no_offer"] = True
         # PLAN-chatbot-customer-scope-29sep.md D3: the contact's customer scope, read once
         # per turn; the gate below and (through `make_tool_runner`) the lane read it.
-        # Lazily: only a turn on a domain a customer scope matters to (the order domain
-        # owns every customer-scoped tool; purchase_order is screened for customer words)
-        # or one saying "my" pays for the lookup.
+        # V1-DOC-SCOPE: read on EVERY turn (a reference number can be typed on any turn, and
+        # who may see ANY customer's documents is decided here), but still only APPLIED as
+        # `customer_scope` on a domain a customer scope matters to (the order domain owns
+        # every customer-scoped tool; purchase_order is screened for customer words) or on
+        # one saying "my". Document staff is the operator-set tier OR `doc_staff` (an active
+        # office access type, or a staff CRM user: V1-DOC-SCOPE-SALES). Everyone else is held
+        # to its links for documents (a linked staff user too, but for the in-process
+        # number lookups), and a contact with none sees no customer document (owner rule:
+        # unlinked != customer). A customer PO ref keeps the tier rule.
+        doc_scope, doc_staff = business_services.customer_scope_and_staff(
+            db, contact_respond_id, space_id_for_turn
+        )
         customer_scope = (
-            business_services.customer_scope(db, contact_respond_id, space_id_for_turn)
+            doc_scope
             if verdict.get("self_reference") is True
             or {*ORDER_OR_SALES_DOMAINS, "purchase_order", "chat_analytics"} & {*(plan.domains or ()), *(spec.domain for spec in plan.fetch)}
             else None
@@ -5509,6 +5565,28 @@ def _run_stages_body(  # noqa: PLR0915
                     "needs": _SALES_REPORT_GRANT,
                 },
             )
+
+        # V1-DOC-SCOPE slice 3: an unlinked contact that is not document staff owns no
+        # customer (`resolve_kinds(hide_customers=...)` and the typed-word refusal below).
+        # Crew ruling 15 Oct, keeping the owner's CA-3 Q5(a): a GRANTED report turn is exempt,
+        # picker included: the chat report under `chatbot.analytics`, and the sales report
+        # (every SALES_FIGURE_STATUSES ask, top selling and the ranking included) under
+        # `sales_orders.sales_report`, each granted per contact by the owner.
+        from app.services.chatbot.lanes.business.chat_report import GRANT as _CHAT_REPORT_GRANT
+
+        _granted = set(access.get("attributes") or [])
+        granted_report_turn = bool(
+            plan.fetch
+            and all(spec.domain == "chat_analytics" for spec in plan.fetch)
+            and _CHAT_REPORT_GRANT in _granted
+        ) or (
+            jsc.js_string(parsed_output.get("order_status") or "").strip() in SALES_FIGURE_STATUSES
+            and _SALES_REPORT_GRANT in _granted
+        )
+        # The grant opens the report's customers, never their delivery orders: the picker's DO
+        # probe stays off for any unlinked contact that is not document staff.
+        customer_docs_hidden = doc_scope is None and not (doc_staff or is_staff_profile(state_out.profile))
+        unlinked_held = customer_docs_hidden and not granted_report_turn
 
         top_selling_updates: dict[str, Any] = {}
         customer_scope_refused = False
@@ -5698,6 +5776,7 @@ def _run_stages_body(  # noqa: PLR0915
                             if isinstance(e, dict)
                         )
                         and not _roster_is_outstanding(verdict, state_out.focus)
+                        and not customer_docs_hidden
                     ),
                     # Rows 1 and 7: the promotion and purchase-order product rosters carry
                     # has promo / no promo and has PO / no PO, read the same way
@@ -5709,7 +5788,10 @@ def _run_stages_body(  # noqa: PLR0915
                     ),
                     roster_caps=roster_caps,
                     enforced_scope=bool((gate_scope or {}).get("enforced")),
-                    scope_linked=_reference_scope(customer_scope, state_out.profile),
+                    hide_customers=unlinked_held,
+                    skip_customer_probe=customer_docs_hidden,
+                    scope_linked=_reference_scope(doc_scope, state_out.profile, doc_staff=doc_staff),
+                    po_ref_scope_linked=_reference_scope(doc_scope, state_out.profile),
                 )
             )
             resolved_kinds = resolve_outcome.resolved_kinds
@@ -5762,6 +5844,8 @@ def _run_stages_body(  # noqa: PLR0915
                                 "compatible_entities": compatible_entities,
                             },
                         }
+            # V1-DOC-SCOPE slice 3: a word the resolver could only read as another customer.
+            hidden_customer_tokens = ((resolver_payload or {}).get("resolved") or {}).get("hidden_customer_tokens")
             # ACCOUNT-LEDGER Q4: staff asked a level the typed name lacks.
             staff_account_refusal = ((resolver_payload or {}).get("resolved") or {}).get("account_refusal")
             if staff_account_refusal and not (gate_scope or {}).get("enforced"):
@@ -5779,6 +5863,11 @@ def _run_stages_body(  # noqa: PLR0915
                     )
                 )
                 scope_refused = scope_refused or screened_refused
+            if unlinked_held and _typed_this_message(hidden_customer_tokens, verdict):
+                # V1-DOC-SCOPE slice 3: the resolver could only read a word typed THIS
+                # message as another customer (its rows were dropped before the picker).
+                screened_refused = scope_refused = True
+                account_question = account_question or _no_link_refusal()
             if scope_refused:
                 # ONE refusal for the whole turn (a fan-out says it once): nothing below
                 # fetches or asks; the fixed line is the answer.
@@ -6280,8 +6369,21 @@ def _run_stages_body(  # noqa: PLR0915
         if branch_kind == "low_signal" and completes_here:
             try:
                 resolved_for_prompt = casual.resolve_for_prompt(
-                    db, ctx={**ctx, "reference_kinds": _reference_kinds(ctx, customer_scope, state_out.profile, per_match_scope=False)}
+                    db, ctx={**ctx, "reference_kinds": _reference_kinds(
+                        ctx, doc_scope, state_out.profile, per_match_scope=False, doc_staff=doc_staff
+                    )}
                 )
+                # V1-DOC-SCOPE: the clarifier prompt names every match, so another customer's
+                # document numbers are dropped from it the way the business lane drops them.
+                clarifier_scope = _reference_scope(doc_scope, state_out.profile, doc_staff=doc_staff)
+                if clarifier_scope is not None and isinstance(resolved_for_prompt, dict):
+                    resolved_for_prompt = turn_runtime._without_foreign_sales_orders(
+                        db, {"resolved": resolved_for_prompt}, clarifier_scope
+                    )["resolved"]
+                if unlinked_held and isinstance(resolved_for_prompt, dict):
+                    # V1-DOC-SCOPE slice 3: the clarifier asks the resolver itself, so a held
+                    # contact's customer rows are dropped here too.
+                    resolve_gate._without_customer_rows(resolved_for_prompt)
                 clarifier_prompt = casual.construct_user_prompt(ctx, resolved_for_prompt)
                 clarifier_config = casual.resolve_clarifier_config(
                     db,
@@ -6790,6 +6892,7 @@ def _run_stages_body(  # noqa: PLR0915
                     # what this message's token is, not the parser's hint.
                     resolved_kinds=resolved_kinds,
                     customer_scope=customer_scope,
+                    doc_staff=doc_staff,
                     # MULTI-CODE-DYM: each unplaced token's did-you-mean, the same
                     # candidates a lone miss of that token offers.
                     unplaced_suggestions=_unplaced_suggestions(resolver_payload, unplaced_tokens),
@@ -7422,11 +7525,16 @@ def _run_stages_body(  # noqa: PLR0915
                     # printed here are the ones a bare "2" answers.
                     ask = offered
                     turn_trace.add("file_type_ask", {"options": len(offered.options)})
-            if ask.kind == "customer_pick" and not _roster_is_outstanding(verdict, state_out.focus):
+            if (
+                ask.kind == "customer_pick"
+                and not _roster_is_outstanding(verdict, state_out.focus)
+                and not customer_docs_hidden
+            ):
                 # PICKER-ONE (owner, 13 Oct 2026): a customer roster the narrower raised
                 # off the focus or off typed words carries the same has DO / no DO stamp
                 # every other customer picker does, through the one helper. R20 stands:
-                # an outstanding ask's roster is stamped with nothing.
+                # an outstanding ask's roster is stamped with nothing. V1-DOC-SCOPE slice 3:
+                # nor is the roster of a contact that sees no delivery order.
                 ask = turn_runtime.stamp_customer_ask(
                     db, ask, ctx=ctx, payload=resolver_payload, space_id=space_id_for_turn
                 )
