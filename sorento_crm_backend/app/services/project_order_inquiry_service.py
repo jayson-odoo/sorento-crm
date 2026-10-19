@@ -2263,7 +2263,7 @@ class ProjectOrderInquiryService:
                     }
                 )
 
-        self._keep_split_rows(inquiry, decision, kept_splits)
+        self._keep_split_rows(inquiry, decision, kept_splits, actor_user_id=actor_user_id)
         # AC-G16: this Confirm's decision records the plan each split line now stands on, the
         # marker `_later_change_lines` reads on the next Confirm.
         self._record_applied_plans(decision, set(kept_splits) | standing_splits)
@@ -6173,7 +6173,12 @@ class ProjectOrderInquiryService:
         return out
 
     def _keep_split_rows(
-        self, inquiry: OrderInquiry, decision: Any, acted: Mapping[str, Dict[str, Any]]
+        self,
+        inquiry: OrderInquiry,
+        decision: Any,
+        acted: Mapping[str, Dict[str, Any]],
+        *,
+        actor_user_id: Optional[str] = None,
     ) -> None:
         """OI-LINE-SPLIT (UAC AC-G10, AC-G15, AC-G16): after the netting settled each acted
         line to its plan's total, its rows are moved to the plan. A row already at a plan
@@ -6206,6 +6211,9 @@ class ProjectOrderInquiryService:
                         link.row_id = source.id
                     source.qty = _dec(source.qty) + _dec(other.qty)
                     other.state = INQUIRY_CANCELLED
+                    _record_cancel(
+                        self.db, other, "superseded", actor_user_id=actor_user_id, decision=decision
+                    )
                     other.note = (
                         f"{other.note}; Split: joined the line's row"
                         if other.note
