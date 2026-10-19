@@ -873,7 +873,8 @@ def _build_subject(
     one on an empty axis is said); a `new_subject` (`led` "new_ask") drops every held axis,
     the product axis included. A held product with no key stays as a token keyed by its code (AC-S1-10);
     a said one is `unresolved` until `settle_subject` reads what the resolver placed. `scope`
-    and `hidden` stay empty."""
+    and `hidden` are the contact's, read by the engine once per turn (`State.company_scope`,
+    `State.hidden_keys`)."""
     typed_rows = [e for e in _entities(out) if e.get("current_message") is not False]
     # A word `keep` set aside (`_mark_kept_aside`) is not a change: it is recorded, never said.
     kept_aside = tuple(r for r in (_typed_row(e, str(e.get("hint"))) for e in typed_rows if e.get(KEPT_ASIDE)) if r)
@@ -886,6 +887,8 @@ def _build_subject(
             said.setdefault(axis, []).append(row)
     fresh = led == "new_ask"
     held = {axis: [] for axis in _PREDICATE_AXES} if fresh else _held_rows(focus)
+    # S4: the contact's company scope and hidden keys, as the engine read them for this turn.
+    who = {"scope": frozenset(state.company_scope), "hidden": frozenset(state.hidden_keys)}
     offered = bool(offered_brand_picks(state, out, brands))
     predicate: dict[str, list[dict[str, Any]]] = {}
     provenance: dict[str, str] = {}
@@ -901,7 +904,7 @@ def _build_subject(
         said_ids = tuple(dict.fromkeys(str(e["uuid"]) for e in said_products if e.get("uuid")))
         tokens = tuple(t for t in (_token_row(e) for e in said_products if not e.get("uuid")) if t)
         return Subject(source="ids" if said_ids else "unresolved", product_ids=said_ids, product_tokens=tokens,
-                       predicate=predicate, provenance=provenance, kept_aside=kept_aside)
+                       predicate=predicate, provenance=provenance, kept_aside=kept_aside, **who)
     rows = [] if fresh else [r for r in focus.products if isinstance(r, dict)]
     members = [r for r in rows if r.get("uuid") and r.get("described_set") is True]
     ids = tuple(str(r["uuid"]) for r in rows if r.get("uuid") and r.get("described_set") is not True)
@@ -910,12 +913,12 @@ def _build_subject(
         # `ids` means explicit keys; a token-only Subject is unresolved until settled (AC-S1-12).
         provenance["product"] = "held"
         return Subject(source="ids" if ids else "unresolved", product_ids=ids, product_tokens=tokens,
-                       predicate=predicate, provenance=provenance, kept_aside=kept_aside)
+                       predicate=predicate, provenance=provenance, kept_aside=kept_aside, **who)
     if predicate:
         if members:
             provenance["product"] = "held"
-        return Subject(source="predicate", predicate=predicate, provenance=provenance, kept_aside=kept_aside)
-    return Subject(source="unresolved", kept_aside=kept_aside)
+        return Subject(source="predicate", predicate=predicate, provenance=provenance, kept_aside=kept_aside, **who)
+    return Subject(source="unresolved", kept_aside=kept_aside, **who)
 
 
 def settle_subject(

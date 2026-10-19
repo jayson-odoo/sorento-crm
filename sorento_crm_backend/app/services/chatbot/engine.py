@@ -4831,6 +4831,9 @@ def _run_stages_body(  # noqa: PLR0915
     # today's turn untouched.
     # A dry-run mock emission opts in by carrying the key (null counts as present).
     state_path = bool(parser_config.state_block or (parser_bypassed and "state_changes" in verdict))
+    # CHAT-STATE r6 S4: the contact's document scope, read ONCE on the state path (here, for the
+    # Subject) and reused by the customer scope read below; None off the state path.
+    turn_doc_scope: tuple[Any, bool] | None = None
     if state_path:
         state_in = dataclasses_replace(state_in, state_path=True)
         with _session(session_factory) as hygiene_db:
@@ -4843,6 +4846,20 @@ def _run_stages_body(  # noqa: PLR0915
                     ),
                 ),
             )
+            turn_doc_scope = business_services.customer_scope_and_staff(
+                hygiene_db, contact_respond_id, business_services.fetch_space_id(hygiene_db)
+            )
+        # Who this contact is, for the applier to write onto the Subject: its company scope, and
+        # `customer` hidden when it may not see other customers' rows or documents (the same
+        # rule as `customer_docs_hidden` below, V1-DOC-SCOPE). Nothing is scoped or hidden here.
+        early_scope, early_staff = turn_doc_scope
+        state_in = dataclasses_replace(
+            state_in,
+            company_scope=frozenset(str(c) for c in contact_scope or ()),
+            hidden_keys=frozenset({"customer"})
+            if early_scope is None and not (early_staff or is_staff_profile(state_in.profile))
+            else frozenset(),
+        )
         shown_view = chat_state.view(state_in, open_question)
         state_log: dict[str, Any] = {
             "shown": chat_state.render(shown_view),
@@ -5032,9 +5049,10 @@ def _run_stages_body(  # noqa: PLR0915
                 scheme_none_in_scope = scheme_note["scheme"]
             if scheme_note.get("none_match") and scheme_note.get("products"):
                 held_none_match = {"held": list(scheme_note["products"]), "said": [], "scheme": scheme_note["scheme"]}
-    # The words a `keep` set aside were read by the seams above; they are not a change, so they
-    # leave the verdict here with their mark (no later step, store or session sees either).
-    verdict = chat_state.without_kept_aside(verdict)
+    if state_in.subject is not None:
+        # The words a `keep` set aside were read by the seams above; they are not a change, so
+        # they leave the verdict here with their mark (no later step, store or session sees either).
+        verdict = chat_state.without_kept_aside(verdict)
     if _ranking_words:
         verdict = {**verdict, "entities": [*(verdict.get("entities") or []), *_ranking_words]}
     if grounding_notes:
@@ -5474,8 +5492,8 @@ def _run_stages_body(  # noqa: PLR0915
         # to its links for documents (a linked staff user too, but for the in-process
         # number lookups), and a contact with none sees no customer document (owner rule:
         # unlinked != customer). A customer PO ref keeps the tier rule.
-        doc_scope, doc_staff = business_services.customer_scope_and_staff(
-            db, contact_respond_id, space_id_for_turn
+        doc_scope, doc_staff = turn_doc_scope if turn_doc_scope is not None else (
+            business_services.customer_scope_and_staff(db, contact_respond_id, space_id_for_turn)
         )
         customer_scope = (
             doc_scope

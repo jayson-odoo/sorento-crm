@@ -335,6 +335,12 @@ class State:
     # CHAT-STATE: a question the state change itself raises (an unclear held slot): the
     # engine asks it instead of fetching. Never serialised.
     slot_ask: Any = None
+    # CHAT-STATE r6 S4: who this contact is for the Subject, read by the engine ONCE per turn on
+    # the state path before the applier runs: its company scope (company ids) and its hidden
+    # keys ({"customer"} when it may not see other customers' rows or documents, V1-DOC-SCOPE).
+    # Only `chat_state` reads them, to write `Subject.scope` / `Subject.hidden`. Never serialised.
+    company_scope: frozenset[str] = frozenset()
+    hidden_keys: frozenset[str] = frozenset()
     # CHAT-STATE r6: the typed subject the applier built from the focus and this turn's ops
     # (`chat_state.py` is its only writer: `apply_changes`, `narrow_held_to_brands`,
     # `settle_subject`); None off the state path. The fetch reads it (`fetch_entities`).
