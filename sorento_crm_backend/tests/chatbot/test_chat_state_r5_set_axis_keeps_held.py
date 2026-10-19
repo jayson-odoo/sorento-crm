@@ -30,11 +30,6 @@ from tests.chatbot.test_chat_state_seam import _op
 from tests.chatbot.test_engine import stub_access, stub_parser  # noqa: F401 - fixtures used by name
 
 
-XFAIL = pytest.mark.xfail(
-    strict=True, reason="round 6: one State-to-fetch function builds the fetch subject from the applied State"
-)
-
-
 class StateChat(_Leena):
     """Round 7's chat with the State path on, as the live prompt version has it."""
 
@@ -133,7 +128,6 @@ NARROW_TO_WC = [
 ]
 
 
-@XFAIL
 @pytest.mark.parametrize("message", [c[1] for c in NARROW_TO_WC], ids=[c[0] for c in NARROW_TO_WC])
 def test_r5_f1_setting_the_class_keeps_the_held_brand(chat, world, message):
     """Case 1: held = brand + classes (basin, water closet); the message sets the class to WC."""
@@ -163,7 +157,6 @@ SET_SPEC = [
 ]
 
 
-@XFAIL
 @pytest.mark.parametrize("message", [c[1] for c in SET_SPEC], ids=[c[0] for c in SET_SPEC])
 def test_r5_f1_setting_a_spec_keeps_the_held_brand_and_class(chat, world, message):
     """Case 2: held = brand + class (water closet); the message sets a spec (trap type)."""
@@ -187,7 +180,6 @@ SET_BRAND = [
 ]
 
 
-@XFAIL
 @pytest.mark.parametrize("message", [c[1] for c in SET_BRAND], ids=[c[0] for c in SET_BRAND])
 def test_r5_f1_setting_the_brand_keeps_the_held_class_and_spec(chat, world, message):
     """Case 3: held = class (water closet) + spec (p trap); the message sets the brand."""
@@ -291,7 +283,6 @@ def test_r5_f1_guard_a_typed_brand_is_never_unioned_with_the_held_brand(chat, wo
     assert listed <= g["cabana_wc"], sorted(listed)
 
 
-@XFAIL
 def test_r5_f1_a_newly_set_class_replaces_the_held_class_in_the_other_bucket(chat, world):
     """Held class sits as product_type (basin); setting category = water closet replaces it."""
     g = _groups(world)

@@ -244,3 +244,70 @@ def test_r6_s1_the_trace_shadow_logs_the_subject_and_the_fetch_is_today_s(tchat,
     assert subject["source"] == "predicate", subject
     assert {"brand", "class"} <= set(subject["predicate"]), subject
     assert subject["provenance"]["brand"] == "said" and subject["provenance"]["class"] == "said", subject
+
+
+# ----------------------------------------------------------------------- S2: the fetch reads the Subject
+def _spy_patches(monkeypatch):
+    """Count the legacy carry patches (AC-S2-4)."""
+    from app.services.chatbot import turn_runtime
+    from app.services.chatbot.turn import chat_state
+
+    seen: dict[str, int] = {"with_carried_entities": 0, "carry_onto_family": 0, "narrow_held_to_brands": 0}
+
+    def wrap(mod, name):
+        real = getattr(mod, name)
+
+        def spy(*a, **k):
+            seen[name] += 1
+            return real(*a, **k)
+
+        monkeypatch.setattr(mod, name, spy)
+
+    wrap(turn_runtime, "with_carried_entities")
+    wrap(chat_state, "carry_onto_family")
+    wrap(chat_state, "narrow_held_to_brands")
+    return seen
+
+
+def _f1_two_turns(chat, world, state_changes=True):
+    brand = _brand_word(world, "sorento")
+    chat.say(f"{brand} basins and water closets", _ask_with(
+        [_entity(brand, "brand"), _entity("basin", "category"), _entity("water closet", "category")],
+        [_op("set", "brand"), _op("set", "category")], "t1"))
+    n = len(chat.calls)
+    chat.say("toilets only", _ask_with([_entity("water closet", "category")],
+                                       [_op("set", "category"), _op("close_question")], "t2"))
+    return n
+
+
+def test_r6_s2_the_legacy_carry_patches_are_not_called_on_a_state_led_refine_turn(tchat, world, monkeypatch):
+    _f1_two_turns(tchat, world)  # warm: turn 1 builds the held set
+    seen = _spy_patches(monkeypatch)
+    tchat.say("tandas sahaja", _ask_with([_entity("water closet", "category")],
+                                          [_op("set", "category"), _op("close_question")], "t3"))
+    assert seen == {"with_carried_entities": 0, "carry_onto_family": 0, "narrow_held_to_brands": 0}, seen
+
+
+def test_r6_s2_guard_state_off_still_calls_with_carried_entities(session_factory, monkeypatch, stub_parser, stub_access, world):
+    from tests.chatbot.test_attribute_asks_round7 import _Leena
+
+    plain = _Leena(session_factory, monkeypatch, stub_parser, stub_access, world)  # no state_block
+    seen = _spy_patches(monkeypatch)
+    brand = _brand_word(world, "sorento")
+    plain.say(f"{brand} water closets", _ask_with(
+        [_entity(brand, "brand"), _entity("water closet", "category")], None, "t1"))
+    assert seen["with_carried_entities"] >= 1, seen
+
+
+def test_r6_s2_the_fetch_input_is_exactly_what_the_subject_says(tchat, world):
+    g = _groups(world)
+    n = _f1_two_turns(tchat, world)
+    subject = tchat.state_log().get("subject")
+    assert subject and subject["source"] == "predicate", subject
+    assert {x.casefold() for x in subject["predicate"]["brand"]} and "brand" in subject["predicate"], subject
+    assert [x.casefold() for x in subject["predicate"]["class"]] == ["water closet"], subject
+    ids = {pid for c in tchat.calls[n:] for pid in (c["args"].get("product_ids") or [])}
+    by_id = {p.id: p.product_code for p in world["every"]}
+    fetched = {by_id[i] for i in ids if i in by_id}
+    assert fetched, tchat.calls[n:]
+    assert fetched <= g["srt_wc"], ("the fetch holds more than the Subject (brand + class)", sorted(fetched - g["srt_wc"]))
