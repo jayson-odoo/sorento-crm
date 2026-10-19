@@ -77,48 +77,37 @@ def test_guard_c_a_picker_over_the_wrong_codes_fails_whatever_the_setting_source
     assert _which(_which_one(["XY-1", "XY-2"], STAMPS[:2])) is False
 
 
-# (d) the runner records the flag the engine uses
-def test_red_d_the_runner_stores_the_engine_s_stock_availability_flag(monkeypatch):
-    from app.services.chatbot import engine, turn_runtime
-
-    seen = []
-
-    def fake(db, contact, space_id):
-        seen.append((db, contact, space_id))
-        return True
-
-    monkeypatch.setattr(turn_runtime, "_stock_availability_only", fake)
-    monkeypatch.setattr(engine, "_contact_respond_id", lambda envelope: "c-1")
-    db = object()
-    out = replay_mod._asker_profile(db, SimpleNamespace())
-    assert out == {"stock_availability_only": True, "source": "turn_runtime._stock_availability_only"}, out
-    assert seen == [(db, "c-1", None)], seen   # the engine's own call: load_profile(db, contact) passes no space
+# (d) the runner records the profile the engine loaded (captured), not a second call
+SOURCE = "turn_runtime.load_profile (captured)"
 
 
-def test_red_d_an_unreadable_policy_stores_no_flag(monkeypatch):
-    from app.services.chatbot import engine, turn_runtime
+def test_red_d_the_capture_passes_the_engine_s_profile_through_and_keeps_it(monkeypatch):
+    from app.services.chatbot import turn_runtime
 
-    def boom(db, contact, space_id):
-        raise RuntimeError("policy unreadable")
+    profile = SimpleNamespace(stock_availability_only=True)
+    calls = []
 
-    monkeypatch.setattr(turn_runtime, "_stock_availability_only", boom)
-    monkeypatch.setattr(engine, "_contact_respond_id", lambda envelope: "c-1")
-    assert replay_mod._asker_profile(object(), SimpleNamespace()) is None
+    def fake_load(db, contact, *, space_id=None):
+        calls.append((db, contact, space_id))
+        return profile, False
+
+    monkeypatch.setattr(turn_runtime, "load_profile", fake_load)
+    box = []
+    with replay_mod._profile_capture(box):
+        got = turn_runtime.load_profile("db", "c-1", space_id="sp-1")   # the engine calls it through the module attribute
+    assert got == (profile, False) and calls == [("db", "c-1", "sp-1")], (got, calls)
+    assert box == [profile], box
+    assert turn_runtime.load_profile is fake_load   # the patch is undone on exit
 
 
-def test_red_d_the_live_row_gets_the_flag_beside_the_turn(monkeypatch):
-    from app.services.chatbot import engine, turn_runtime
+def test_red_d_the_runner_stores_the_captured_flag_with_its_source():
+    for flag in (True, False):
+        out = {"item_id": "it-1"}
+        replay_mod._record_asker_profile(out, [SimpleNamespace(stock_availability_only=flag)])
+        assert out["asker_profile"] == {"stock_availability_only": flag, "source": SOURCE}, out
 
-    monkeypatch.setattr(turn_runtime, "_stock_availability_only", lambda db, contact, space_id: False)
-    monkeypatch.setattr(engine, "_contact_respond_id", lambda envelope: "c-1")
+
+def test_red_d_a_turn_that_loaded_no_profile_records_nothing():
     out = {"item_id": "it-1"}
-    replay_mod._record_asker_profile(out, object(), SimpleNamespace())
-    assert out["asker_profile"] == {"stock_availability_only": False, "source": "turn_runtime._stock_availability_only"}, out
-
-    def boom(db, contact, space_id):
-        raise RuntimeError("unreadable")
-
-    monkeypatch.setattr(turn_runtime, "_stock_availability_only", boom)
-    bare = {"item_id": "it-2"}
-    replay_mod._record_asker_profile(bare, object(), SimpleNamespace())
-    assert "asker_profile" not in bare, bare
+    replay_mod._record_asker_profile(out, [])
+    assert "asker_profile" not in out, out
