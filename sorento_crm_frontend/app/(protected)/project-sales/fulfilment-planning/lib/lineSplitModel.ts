@@ -422,8 +422,8 @@ export function addSplit(
       qty: kept,
       deliveryDate: line.newDate ?? line.baseDate,
     });
-    // NEW QTY is not below QTY: the first row only, never a split of qty 0.
-    if (line.newQty != null && kept >= line.baseQty) {
+    // Nothing left after the first row: the first row only, never a split of qty 0.
+    if (kept >= line.baseQty) {
       return { id, lines: editLine(lines, lineId, (splits) => [first(splits)]) };
     }
     return {
