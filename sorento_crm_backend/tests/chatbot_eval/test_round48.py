@@ -184,3 +184,14 @@ def test_an_embed_call_after_a_refusal_never_reaches_the_original(monkeypatch):
         with pytest.raises(BaseException) as info:
             embedding_worker._embed_text_chunks(["x"])
     assert not reached and getattr(info.value, "reason", None) == "provider_refused"
+
+
+def test_an_unpriced_model_stop_does_not_block_a_later_embed_in_the_same_turn(monkeypatch):
+    reached = []
+    monkeypatch.setattr(embedding_worker, "_embed_text_chunks", lambda chunks: reached.append(1) or [[0.0]])
+    monkeypatch.setattr("app.config.settings.openai_api_key", "")
+    total = _total()
+    total["stop"] = "unpriced_model"
+    with replay_mod._metered(replay_mod._new_usage(), total):
+        embedding_worker._embed_text_chunks(["x"])
+    assert reached == [1]
