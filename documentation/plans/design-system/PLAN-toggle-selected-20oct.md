@@ -30,8 +30,8 @@ grey and reads the same as the unselected ones; the Switches above it are alread
    with a non-primary colour move to the same tokens (or to `ToggleGroup`).
 3. Keyboard / ARIA behaviour unchanged: Radix still owns `data-state`, `aria-pressed` / `aria-checked` and roving focus.
 
-Out of scope: `Tabs` (navigation, not a choice control; line tabs are the design-language standard) unless the audit
-finds a `TabsList` used as a value picker.
+In scope after the audit: pill (`variant="default"`) and `button` tab strips, which DESIGN-LANGUAGE.md section 4 reserves
+for view toggles. Line tabs are navigation and stay as they are.
 
 ## Acceptance criteria
 
