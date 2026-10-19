@@ -409,3 +409,17 @@ test_avail_picker_substring.py:46/128).
   product no longer joins.
 - CS-4 Before merge: the DATA GAP read-only on the dev DB (active products a class word reaches today only through a
   code substring, with no class / name data that matches), posted for the owner's catalogue fix.
+
+## CLASS-NAMED-OFF-UNDER-STATE (20 Oct; architecture review F2, crew)
+
+ARCHITECTURE: layer ROUTING (subject decision). The "names its own class" rule belongs to CHAT-STATE's Subject on the
+state path. One engine-owned verdict flag `state_path` (set from `parser_config.state_block`, head/parser.py:91 / :852;
+stripped from the parse like `dropped_kinds`) and one helper in class_named.py that every seam reads: grounding.py:866
+(class_hint), scheme_index.py:35, engine.py:5007, held_family.py:152, turn/task.py:733-735, lanes/business/gate.py:496-499
+(inert once no class_hint). State-off keeps R6-3 / R6-4 / HELD-OVER-NAMED-CLASS unchanged (their tests are the guards).
+Red af7903881c (5 seams; gate.py covered through grounding, names_own_class through its callers).
+
+| Slice | Red | Green | Notes |
+|---|---|---|---|
+| CODE-SUBSTRING | c9b33901 | bf462eb7 | 8 red (4 ported CHAT-STATE + 4 route), 33 guards; CS-4 data gap posted (crew-note 6277672165): wc 289 code-only |
+| CLASS-NAMED-OFF-UNDER-STATE | af790388 | 9bac0c2b | 5 red |
