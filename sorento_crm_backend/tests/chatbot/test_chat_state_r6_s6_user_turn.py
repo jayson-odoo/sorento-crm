@@ -127,3 +127,40 @@ def test_r6_s6_grounding_receives_the_user_turns_own_text():
     src = inspect.getsource(engine_mod)
     assert 'message=latest_user_message.split("\\n", 1)[0]' not in src and "user_turn.own_text" in src, (
         "grounding is not fed UserTurn.own_text")
+
+
+# ----------------------------------------------------------------------- the readers' first line (pins 75d36647ec)
+READER_MESSAGES = MESSAGES + [("blank-own-line-multi", dict(text="\n10", quoted="SRTWC286"))]
+
+
+def _old_reader_first_line(message: str):
+    """The four turn_runtime readers' old read, at 4092026517."""
+    lines = message.strip().splitlines()
+    return lines[0] if lines else None
+
+
+@pytest.mark.parametrize("kw", [m[1] for m in READER_MESSAGES], ids=[m[0] for m in READER_MESSAGES])
+def test_r6_s6_first_text_line_of_equals_the_old_reader_expression(kw):
+    env = _env(**kw)
+    latest = _old_latest(env)
+    assert latest.strip(), "vacuous fixture"
+    want = _old_reader_first_line(latest)
+    mod = _mod()
+    assert mod.first_text_line_of(latest) == want, (latest, want)
+    assert mod.first_text_line_of(mod.from_envelope(env)) == want, (latest, want)
+
+
+def test_r6_s6_state_off_a_count_only_in_the_quoted_line_is_not_a_bare_count():
+    """with_set_count_from_text with a blank own line and "10" only in the quoted block: the old reader
+    saw "reply to: 10" as its first line (no bare count), so the verdict is untouched."""
+    from app.services.chatbot import turn_runtime
+
+    env = _env(text="", quoted="10")
+    latest = _old_latest(env)
+    carried = {"set_key": {"total": 90, "shown": 0}}
+    v = {"top_n": None, "reference_positions": [], "entities": []}
+    old_first = _old_reader_first_line(latest)
+    assert old_first and "10" in old_first and old_first.strip() != "10", old_first
+    for message in (latest, _mod().from_envelope(env)):
+        out = turn_runtime.with_set_count_from_text(dict(v), message, carried=carried)
+        assert out.get("top_n") is None and not out.get("reference_positions"), (message, out)
