@@ -4831,9 +4831,13 @@ def _run_stages_body(  # noqa: PLR0915
     # today's turn untouched.
     # A dry-run mock emission opts in by carrying the key (null counts as present).
     state_path = bool(parser_config.state_block or (parser_bypassed and "state_changes" in verdict))
-    # CHAT-STATE r6 S4: the contact's document scope, read ONCE on the state path (here, for the
-    # Subject) and reused by the customer scope read below; None off the state path.
+    # CHAT-STATE r6 S4: the contact's document scope and the verdict drawn from it (may it see
+    # other customers' rows or documents), decided ONCE on the state path, from one profile,
+    # here for the Subject, and reused below by the customer scope read and by
+    # `customer_docs_hidden`, so the Subject never disagrees with what the turn hides. None off
+    # the state path.
     turn_doc_scope: tuple[Any, bool] | None = None
+    turn_docs_hidden: bool | None = None
     if state_path:
         state_in = dataclasses_replace(state_in, state_path=True)
         with _session(session_factory) as hygiene_db:
@@ -4850,15 +4854,13 @@ def _run_stages_body(  # noqa: PLR0915
                 hygiene_db, contact_respond_id, business_services.fetch_space_id(hygiene_db)
             )
         # Who this contact is, for the applier to write onto the Subject: its company scope, and
-        # `customer` hidden when it may not see other customers' rows or documents (the same
-        # rule as `customer_docs_hidden` below, V1-DOC-SCOPE). Nothing is scoped or hidden here.
-        early_scope, early_staff = turn_doc_scope
+        # `customer` hidden when it may not see other customers' rows or documents (the verdict
+        # `customer_docs_hidden` below reuses, V1-DOC-SCOPE). Nothing is scoped or hidden here.
+        turn_docs_hidden = _customer_docs_hidden(*turn_doc_scope, state_in.profile)
         state_in = dataclasses_replace(
             state_in,
             company_scope=frozenset(str(c) for c in contact_scope or ()),
-            hidden_keys=frozenset({"customer"})
-            if early_scope is None and not (early_staff or is_staff_profile(state_in.profile))
-            else frozenset(),
+            hidden_keys=frozenset({"customer"}) if turn_docs_hidden else frozenset(),
         )
         shown_view = chat_state.view(state_in, open_question)
         state_log: dict[str, Any] = {
@@ -5592,7 +5594,10 @@ def _run_stages_body(  # noqa: PLR0915
         )
         # The grant opens the report's customers, never their delivery orders: the picker's DO
         # probe stays off for any unlinked contact that is not document staff.
-        customer_docs_hidden = doc_scope is None and not (doc_staff or is_staff_profile(state_out.profile))
+        customer_docs_hidden = (
+            turn_docs_hidden if turn_docs_hidden is not None
+            else _customer_docs_hidden(doc_scope, doc_staff, state_out.profile)
+        )
         unlinked_held = customer_docs_hidden and not granted_report_turn
 
         top_selling_updates: dict[str, Any] = {}
@@ -8875,6 +8880,13 @@ def _readable_customers(db: Any, rows: Any, contact_respond_id: Any, has_company
             continue
         kept.append(row)
     return kept
+
+
+def _customer_docs_hidden(doc_scope: Any, doc_staff: bool, profile: Any) -> bool:
+    """V1-DOC-SCOPE: an unlinked contact that is not document staff (nor office tier) owns no
+    customer, so it may not see other customers' rows or documents. The ONE rule both the
+    Subject's hidden keys and the turn's `customer_docs_hidden` are drawn from."""
+    return doc_scope is None and not (doc_staff or is_staff_profile(profile))
 
 
 def _held_for_the_seams(state_in: Any, verdict: dict[str, Any], *, for_family: bool) -> list[dict[str, Any]]:
