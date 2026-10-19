@@ -1632,6 +1632,12 @@ class ResolveReferenceRequest(BaseModel):
 #: code prefix, a code substring, a set's head code, the AND probe (code-only by design).
 #: Never `embedding`, `trgm` or `spec_search`: those are nearest-neighbour guesses.
 _CODE_MATCH_TIERS = frozenset({"exact", "prefix", "substring", "head_code", "and"})
+#: The code tiers that read a token as a code FRAGMENT: only a token with a digit may make one.
+_CODE_FRAGMENT_TIERS = frozenset({"substring", "and"})
+
+
+def _has_digit(token: Any) -> bool:
+    return any(ch.isdigit() for ch in str(token or ""))
 
 
 def _contact_hidden_spec_keys(db: Session, payload: "ResolveReferenceRequest") -> set[str]:
@@ -1737,10 +1743,14 @@ def _collect_lookup_product_ids(result: dict[str, Any]) -> list[str]:
     ids: list[str] = []
     seen: set[str] = set()
 
-    def _take(match: Any) -> None:
+    def _take(match: Any, tokens: list[Any]) -> None:
         if not isinstance(match, dict) or match.get("entity_type") != "product":
             return
         if match.get("match_tier") not in _CODE_MATCH_TIERS:
+            return
+        # CODE-SUBSTRING: a substring / AND row is a code FRAGMENT read, so only a token with a
+        # digit (the test `_code_matched` applies) can make one; a word never joins by it.
+        if match.get("match_tier") in _CODE_FRAGMENT_TIERS and not any(_has_digit(t) for t in tokens):
             return
         uid = match.get("uuid")
         if uid and uid not in seen:
@@ -1749,14 +1759,39 @@ def _collect_lookup_product_ids(result: dict[str, Any]) -> list[str]:
 
     for resolution in result.get("resolutions") or []:
         for match in (resolution or {}).get("matches") or []:
-            _take(match)
+            _take(match, [(resolution or {}).get("token")])
+    # AND mode's intersection blends every token, so any caller token with a digit stands for it.
+    blended = [*(result.get("tokens") or []), *((r or {}).get("token") for r in result.get("resolutions") or [])]
     for match in result.get("intersection") or []:
-        _take(match)
+        _take(match, blended)
     return ids
 
 
 #: The resolver tiers that answer a token with its nearest neighbour, not a match.
 _NEIGHBOUR_TIERS = frozenset({"embedding", "trgm"})
+
+
+def _drop_word_code_fragments(result: dict[str, Any]) -> None:
+    """CODE-SUBSTRING, for the spec fallback: a WORD token (no digit) keeps no product row a
+    code substring or AND probe produced ("basin" reaching ZZBASINWC7); a token with a digit
+    keeps them (a code fragment). Mirrors `_drop_word_neighbours`."""
+    def fragment(match: Any) -> bool:
+        return isinstance(match, dict) and match.get("entity_type") == "product" and match.get("match_tier") in _CODE_FRAGMENT_TIERS
+
+    for resolution in result.get("resolutions") or []:
+        if not isinstance(resolution, dict) or _has_digit(resolution.get("token")):
+            continue
+        kept = [m for m in resolution.get("matches") or [] if not fragment(m)]
+        if len(kept) != len(resolution.get("matches") or []):
+            resolution["matches"] = kept
+            if not kept:
+                resolution["resolved"] = False
+                token = resolution.get("token")
+                unresolved = result.setdefault("unresolved_tokens", [])
+                if token and token not in unresolved:
+                    unresolved.append(token)
+    if not any(_has_digit(t) for t in result.get("tokens") or []) and isinstance(result.get("intersection"), list):
+        result["intersection"] = [m for m in result["intersection"] if not fragment(m)]
 
 
 def _drop_word_neighbours(result: dict[str, Any]) -> None:
@@ -3637,6 +3672,10 @@ def resolve_reference_post(
     # whole block - every other signal here answers "is a WORD unanswered", and a
     # query whose every token already resolved exactly has no unanswered word by
     # definition, whatever a coverage claim over punctuation says.
+    if payload.spec_fallback:
+        # CODE-SUBSTRING: a word answered only by a code substring is no answer; the spec search
+        # below is the word's reading.
+        _drop_word_code_fragments(result)
     if (
         payload.spec_fallback
         and not _every_caller_token_resolved(result)

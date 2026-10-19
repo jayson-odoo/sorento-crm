@@ -894,11 +894,11 @@ def resolve_product_set(
     attribute-first asks, work item C3, AC-1306/1308. Either alone is enough to
     describe the set. A name match stands in for WHAT the product is (its class,
     type or brand, `_SET_NOUN_KEYS`), so on those keys a product needs ONE of
-    the two ("which tap has cert": a code with TAP in it, or a class-Tap
-    product); a property asked of the set (a trap, a finish) holds for every
-    member, name-matched or not (chat fix PR-A, AC-A8: "any P-trap WC?" counts
-    the P-trap water closets, never every name match beside them, dev 220
-    against 183). ``brand`` scopes the WHOLE set on top of that (D3): it reads
+    the two (a code the caller typed, or a class member; a word never reaches
+    `product_ids` by a code substring, CODE-SUBSTRING); a property asked of the
+    set (a trap, a finish) holds for every member, code-matched or not (chat fix
+    PR-A, AC-A8: "any P-trap WC?" counts the P-trap water closets, never every
+    code match beside them, dev 220 against 183). ``brand`` scopes the WHOLE set on top of that (D3): it reads
     `Product.brand_id` live, not the spec-derived echo, so it is correct even
     when a product's brand changed since its spec row was last derived.
 
