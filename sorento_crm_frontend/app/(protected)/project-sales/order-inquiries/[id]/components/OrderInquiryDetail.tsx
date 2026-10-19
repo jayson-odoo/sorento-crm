@@ -893,12 +893,9 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                     <Printer className="size-4" aria-hidden />
                     Download history
                   </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onSelect={(e) => {
-                      e.preventDefault();
-                      setViewSplitsOpen(true);
-                    }}
-                  >
+                  {/* OI-SPLIT-VIEW (UAC D1): closes the menu and opens the popup, like the SO
+                      and board gears, so Escape and Close hand focus back to the gear. */}
+                  <DropdownMenuItem onSelect={() => setViewSplitsOpen(true)}>
                     <Split className="size-4" aria-hidden />
                     View splits
                   </DropdownMenuItem>

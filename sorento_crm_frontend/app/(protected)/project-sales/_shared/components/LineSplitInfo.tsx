@@ -410,7 +410,9 @@ export function OrderSplitsDialog({
   );
   const sub = [
     subtitle,
-    sorted.length > 0 ? `${sorted.length} split lines` : null,
+    sorted.length > 0
+      ? `${sorted.length} ${sorted.length === 1 ? 'split line' : 'split lines'}`
+      : null,
   ]
     .filter(Boolean)
     .join(' · ');
