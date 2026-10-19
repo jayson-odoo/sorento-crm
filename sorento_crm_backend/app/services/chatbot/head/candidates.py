@@ -104,7 +104,9 @@ def _phrase(text: str) -> str:
 
 def _registry(db: "Session", hidden: frozenset[str]) -> list:
     """The active registry rows minus the contact's hidden spec keys: the ONE place a hidden
-    key leaves what the parser is shown (value, size and boolean lines all read through it)."""
+    key leaves the candidate LINES (value, size and boolean lines all read through it). The
+    other things the parser sees (the {{specs}} vocabulary, the Product details line) list
+    registry names only."""
     from app.services.product_spec_registry import active_registry
 
     return [row for row in active_registry(db) if row.spec_key not in hidden]

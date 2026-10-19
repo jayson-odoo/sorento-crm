@@ -1096,7 +1096,8 @@ def _strip_hidden_spec_entities(verdict: dict[str, Any], hidden: frozenset[str])
     entities = verdict.get("entities")
     if not hidden or not isinstance(entities, list):
         return verdict
-    kept = [e for e in entities if not (isinstance(e, dict) and e.get("spec_key") in hidden)]
+    # Grounding binds on the stripped key, so the compare is on the stripped key too.
+    kept = [e for e in entities if not (isinstance(e, dict) and str(e.get("spec_key") or "").strip() in hidden)]
     return verdict if len(kept) == len(entities) else {**verdict, "entities": kept}
 
 
@@ -4962,6 +4963,9 @@ def _run_stages_body(  # noqa: PLR0915
             held_ids=[str(p["uuid"]) for p in state_in.focus.products if isinstance(p, dict) and p.get("uuid")],
             hidden_keys=hidden_spec,
         )
+    # H1b: grounding re-derives specs from the raw words over the whole registry, so the
+    # output is stripped again (the pre-grounding strip keeps `_parser_raw` clean).
+    verdict = _strip_hidden_spec_entities(verdict, hidden_spec)
     verdict = closed_lists_verdict(verdict, gate=parser_config.closed_lists)
     held_none_match: dict[str, Any] | None = None
     scheme_none_in_scope: str | None = None

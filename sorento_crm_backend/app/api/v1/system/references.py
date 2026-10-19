@@ -1844,7 +1844,21 @@ def _with_grounded_unknowns(found: list[dict], grounded: list[dict] | None) -> l
     return extra + [u for u in found if u.get("key") not in keys]
 
 
-def _unknown_value_members(db: Session, payload, query_text: str, unknown: list[dict], current_user) -> dict | None:
+def _without_hidden_specs(specs: list[dict], hidden: set[str]) -> list[dict]:
+    """A contact-hidden key never filters the set: out of a bare size's OR (R6-5 S2), and a
+    strict entry on it is dropped, the rule the spec fallback applies (R6-6)."""
+    if not hidden:
+        return specs
+    specs = [
+        {**e, "any_keys": [k for k in e["any_keys"] if k not in hidden]} if e.get("any_keys") else e
+        for e in specs
+    ]
+    return [e for e in specs if ("any_keys" in e and e["any_keys"]) or ("any_keys" not in e and e.get("key") not in hidden)]
+
+
+def _unknown_value_members(
+    db: Session, payload, query_text: str, unknown: list[dict], current_user, hidden: set[str] = frozenset()
+) -> dict | None:
     """The described set without its unknown value, broken down by that value's key:
     "pink water closets" is answered with the finishes the water closets do come in
     (fix round 9 on PR #833, owner: "always break it down"). None when the rest of the
@@ -1867,7 +1881,7 @@ def _unknown_value_members(db: Session, payload, query_text: str, unknown: list[
         log_usage=False,
     )
     brand_entry = next((e for e in specs if e.get("key") == "brand"), None)
-    specs = [e for e in specs if e.get("key") not in ("brand", key)]
+    specs = _without_hidden_specs([e for e in specs if e.get("key") not in ("brand", key)], hidden)
     scope_terms = list(payload.scope_terms or [])
     if not specs and not scope_terms:
         return None
@@ -3378,12 +3392,24 @@ def resolve_reference_post(
         # R6 (round 4 on PR #833, "why it match s trap?"): a value the registry does not
         # know ("t trap") is said back with the ones it does; the set is never counted
         # with it dropped or read as its nearest neighbour.
+        from app.services.product_spec_registry import active_registry
         from app.services.product_spec_search import unknown_spec_values
 
-        unknown = _with_grounded_unknowns(
-            unknown_spec_values(db, " ".join([payload.query or "", *(payload.scope_terms or [])])),
-            payload.unknown_values,
-        )
+        # H1b: the contact's hidden keys, read ONCE at this entry: a hidden key is never said
+        # back as an unknown value, never breaks the set down and never narrows it.
+        hidden = _contact_hidden_spec_keys(db, payload)
+        unknown = [
+            u
+            for u in _with_grounded_unknowns(
+                unknown_spec_values(
+                    db,
+                    " ".join([payload.query or "", *(payload.scope_terms or [])]),
+                    registry_rows=[row for row in active_registry(db) if row.spec_key not in hidden] if hidden else None,
+                ),
+                payload.unknown_values,
+            )
+            if u.get("key") not in hidden
+        ]
         if unknown:
             result["predicate"] = {
                 "require": payload.require,
@@ -3394,7 +3420,7 @@ def resolve_reference_post(
             }
             # Fix round 9 on PR #833: the subject without the unknown value, broken down
             # by that value's key, so the reply lists what the set does come in.
-            members = _unknown_value_members(db, payload, query_text, unknown, current_user)
+            members = _unknown_value_members(db, payload, query_text, unknown, current_user, hidden)
             if members:
                 result["predicate"]["members"] = members
             return _stamp_brand_on_products(db, result)
@@ -3424,16 +3450,7 @@ def resolve_reference_post(
             log_usage=not payload.dry_run,
         )
         specs = _with_parser_brand(specs, payload.brand_tokens)
-        if specs:
-            # A contact-hidden key never filters the set: out of a bare size's OR (R6-5 S2), and a
-            # strict entry on it is dropped, the rule the spec fallback applies (R6-6).
-            hidden = _contact_hidden_spec_keys(db, payload)
-            if hidden:
-                specs = [
-                    {**e, "any_keys": [k for k in e["any_keys"] if k not in hidden]} if e.get("any_keys") else e
-                    for e in specs
-                ]
-                specs = [e for e in specs if ("any_keys" in e and e["any_keys"]) or ("any_keys" not in e and e.get("key") not in hidden)]
+        specs = _without_hidden_specs(specs, hidden)
         if understanding is None and not specs and not payload.scope_terms and not payload.free_terms:
             # Nothing describes a set: the message held only predicate words ("Stock") and
             # no spec, brand or class word grounded. A set built off the looked-up ids
