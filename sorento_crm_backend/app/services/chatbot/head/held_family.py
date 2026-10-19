@@ -22,6 +22,8 @@ if TYPE_CHECKING:
 #: How far up and down the variant graph a family is read (codes nest a few levels deep).
 MAX_DEPTH = 6
 
+from app.services.chatbot.head.scheme_index import names_own_class
+
 _SPEC_HINTS = frozenset({"specification", "spec"})
 
 
@@ -139,7 +141,8 @@ def narrow_held_family(
         and str(e.get("spec_value")) != ""
     ]
     brands = [e for e in said if str(e.get("hint") or "").strip().lower() == "brand"]
-    names_a_product = any(str(e.get("hint") or "").strip().lower() == "product" for e in said)
+    # A message naming its own class is not about the held products either.
+    names_a_product = any(str(e.get("hint") or "").strip().lower() == "product" for e in said) or names_own_class(said)
     held_ids = [str(p["uuid"]) for p in held_products if isinstance(p, dict) and p.get("uuid")]
     if not (specs or brands) or names_a_product or not held_ids or verdict.get("family") is True:
         return verdict, None

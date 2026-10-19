@@ -18,6 +18,16 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
+def names_own_class(entities: list[dict[str, Any]]) -> bool:
+    """True when the message names its own subject by class: a current-message entity the
+    parser hinted `category` or `product_type`. Parser hints only, no word is read."""
+    return any(
+        e.get("current_message") is not False and str(e.get("hint") or "").strip().lower() in ("category", "product_type")
+        for e in entities
+        if isinstance(e, dict)
+    )
+
+
 def _asked_product_ids(db: "Session", said: list[dict[str, Any]], held: list[dict[str, Any]]) -> tuple[list[str], bool]:
     """The products the ask is about and whether the message named them itself."""
     from app.models.product import Product, chat_searchable_products
@@ -30,6 +40,9 @@ def _asked_product_ids(db: "Session", said: list[dict[str, Any]], held: list[dic
     if codes:
         rows = db.query(Product.id).filter(Product.product_code.in_(codes), chat_searchable_products()).all()
         return [str(pid) for (pid,) in rows], True
+    if names_own_class(said):
+        # The message is about its own class, not the products an earlier turn still holds.
+        return [], False
     return [str(p["uuid"]) for p in held if isinstance(p, dict) and p.get("uuid")], False
 
 
