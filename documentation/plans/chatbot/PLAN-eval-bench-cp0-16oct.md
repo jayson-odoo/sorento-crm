@@ -515,3 +515,12 @@ trap length) passed. The key the bot filtered on rides each specification entity
 Each gold value now needs an entity with that value and one of the gold's own keys for it (no other alias table exists); a value
 on another key fails; entities holding the value but no key are unknown. Class words are unchanged. `set_list` (the shape of the
 listing) does not read keys and is untouched.
+
+## Round 43 (19 Oct, answering only the held product over a class ask; crew a6854478)
+
+Owner: "answering only the held product when the ask is over a class is a bot fail". A spec item whose gold names a class and
+expects products (not none-on-record), asked while a product is held, now carries a `class_set` check: it fails when everything
+the bot answered (the tool's product ids, the full tool results, the codes in the reply) is the held product or one of its own
+variants while the expected set holds others; it passes when the held product is the whole set or any expected member beyond
+the held one is reached; unknown when nothing shows what was answered. A refine narrowing to the held item is not a spec item
+and is untouched.
