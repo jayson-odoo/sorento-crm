@@ -443,6 +443,11 @@ def test_r2_a11_a_named_split_edited_line_the_server_refuses_is_held_back_only(a
 
 def test_r2_a11_an_unnamed_split_edited_line_that_fails_the_check_never_makes_the_confirm_422(api, emails):
     s = _split_edited_608(api, emails)
+    # The server re-posts the active decision's Buy (632) for the unnamed line, and the check
+    # reads the plan quantity (qty_ordered). Make it 640 with no AutoCount batch, so the Buy
+    # no longer adds up and the line is not A9-pending.
+    s.core[608].qty_ordered, s.line[608].qty = Decimal("640"), Decimal("640")
+    s.db.commit()
     before = _rows_of(s, 608)
     r = _confirm(s.client, s.order.id, [_line_payload(s.line[752].id, buy_qty="649")])
     assert r.status_code == 200, ("the other line confirms", r.status_code, r.text)
