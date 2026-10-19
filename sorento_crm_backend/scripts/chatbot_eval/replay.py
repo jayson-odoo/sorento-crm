@@ -547,6 +547,8 @@ def _metered(usage: dict[str, Any], total: dict[str, Any]) -> Iterator[None]:
         def embed(chunks: Any) -> Any:  # counted, never capped: a query embedding is tiny next to a chat call
             from app.config import settings
 
+            if total.get("stop"):  # a refused key (or any other stop) ends the turn's embedding calls too
+                raise _CapStop(total["stop"])
             if getattr(settings, "openai_api_key", ""):  # empty: the original raises before any request goes out
                 _check_key(total, settings.openai_api_key)
             try:
@@ -832,7 +834,8 @@ def _live_one(item: dict[str, Any], row: dict[str, Any], factory: Callable[[], A
             result = engine.run_turn(envelope, session_factory=factory, offload=False)
         except _CapStop as stop:
             total["stop"] = total.get("stop") or stop.reason
-            return {**out, "stopped": stop.reason}
+            kind = {"kind": total.get("stop_kind")} if stop.reason == "provider_refused" else {}
+            return {**out, "stopped": stop.reason, **kind}
     if total.get("stop") == "provider_refused":  # the engine swallowed the refusal: this turn is not a bot result
         return {**out, "stopped": "provider_refused", "kind": total.get("stop_kind")}
     if getattr(result, "duplicate", False):
