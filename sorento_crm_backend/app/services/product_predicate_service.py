@@ -615,7 +615,9 @@ def describe_set(
     rows = (
         {
             row.spec_key: row
-            for row in db.query(ProductSpecRegistry).filter(ProductSpecRegistry.spec_key.in_(others)).all()
+            for row in db.query(ProductSpecRegistry)
+            .filter(ProductSpecRegistry.spec_key.in_([m for k in others for m in (k[4:].split("|") if k.startswith("any:") else [k])]))
+            .all()
         }
         if others
         else {}
@@ -644,6 +646,10 @@ def describe_set(
         values = [display_spec_value(v, labels) for v in membership[key]]
         # Fix round 8 on PR #833: a grounded number reads with its unit ("1.2 mm").
         unit = getattr(row, "unit", None) if row is not None and (row.data_type or "") == "numeric" else None
+        if row is None and key.startswith("any:"):
+            # A bare size's OR (`any:k1|k2`): its unit is the one its member keys share.
+            units = {getattr(rows.get(k), "unit", None) for k in key[4:].split("|")} - {None, ""}
+            unit = next(iter(units)) if len(units) == 1 else None
         if unit:
             values = [f"{v} {unit}" for v in values]
         out.append(

@@ -25,7 +25,7 @@ import json
 import re
 from decimal import Decimal
 
-from sqlalchemy import Float, and_, cast, func, literal, or_, select
+from sqlalchemy import Float, and_, case, cast, func, literal, or_, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session, joinedload
 
@@ -906,10 +906,15 @@ def membership_clause(membership: dict[str, Any]):
         if key.startswith(ANY_PREFIX):
             numbers = sorted(v for v in values if isinstance(v, (int, float)) and not isinstance(v, bool))
             key_clauses.append(or_(*[
-                and_(
-                    func.jsonb_typeof(ProductSpecifications.values[k]["value"]) == "number",
-                    cast(ProductSpecifications.values[k]["value"].astext, Float).between(n - 1e-6, n + 1e-6),
-                )
+                # CASE, not AND: the cast to Float must only ever see a JSON number (no reliance
+                # on the planner short-circuiting).
+                cast(
+                    case(
+                        (func.jsonb_typeof(ProductSpecifications.values[k]["value"]) == "number", ProductSpecifications.values[k]["value"].astext),
+                        else_=None,
+                    ),
+                    Float,
+                ).between(n - 1e-6, n + 1e-6)
                 for k in key[len(ANY_PREFIX):].split("|")
                 for n in numbers
             ]))

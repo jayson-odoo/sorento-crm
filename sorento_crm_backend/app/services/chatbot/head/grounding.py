@@ -861,7 +861,7 @@ def ground(
                 # furniture_type basin_cabinet): that value is what was asked for.
                 size = len(out)
                 add([whole], entity)
-                if len(out) > size:
+                if closed_lists and len(out) > size:
                     # The parser named a class; the spec this makes still says so (`names_own_class`).
                     out[-1] = {**out[-1], "class_hint": hint}
                 notes.append({"from": hint, "raw": raw, "to": [whole.__dict__]})
