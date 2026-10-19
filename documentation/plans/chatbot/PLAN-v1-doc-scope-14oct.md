@@ -1,7 +1,7 @@
 # PLAN: v1 chatbot - unlinked non-staff contacts get no other customers' documents (V1-DOC-SCOPE)
 
 Status: in review (small fix track + security review; no migration, no new reply text). PR #1648;
-V1-DOC-SCOPE-SALES fix round (salespeople keep document access) in review.
+V1-DOC-SCOPE-R round (19 Oct, hold lifted by the owner): main merged, paths re-verified, gates running.
 
 ## Problem
 
@@ -117,6 +117,21 @@ the resolver itself, so a held contact's customer rows are dropped from its prom
 
 Queued follow-up (crew, 15 Oct, after this PR merges): the same clarifier drop for an ENFORCED
 dealer, keeping only its own links' customer rows (pre-existing gap, same files).
+
+## V1-DOC-SCOPE-R: bring to current main (19 Oct)
+
+The owner lifted the hold on 19 Oct. Crew's combined held-out runs (17 and 18 Oct, builds without this PR)
+showed 6 scope leaks per run, all delivery-order / order class: an unlinked non-staff contact got another
+customer's debtor name, products, qty, driver, lorry plate, dates. The bar is 0.
+
+1. Merge origin/main (CHAT-STATE #1747, EVAL-BENCH #1762 and the 16-19 Oct chatbot merges); one alembic
+   head, no migration on this lane.
+2. Re-verify on the merged head every path that can show another customer's SO / DO / PO to an unlinked
+   non-staff contact: the SO card via `_so_numbers_asked`, the DO by number, the orders list, the PO list,
+   plus any path main added since 16 Oct (CHAT-STATE follow-ups carry a referenced document across turns).
+   Salespeople and other active staff users keep access. A path still open gets a `test(red):` commit
+   first, then the fix, then a kill-proof.
+3. Gates: $0 L1 replay (EVAL-BENCH), reviewer and security-reviewer on the head, then `ci please`.
 
 ## Open before merge
 
