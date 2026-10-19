@@ -421,7 +421,11 @@ def _clear_axis(focus: Focus, axis: str) -> None:
 def _write_set(focus: Focus, axis: str, verdict: dict[str, Any]) -> None:
     """The scalar axes a `set` writes onto the focus; entity axes are written by the
     existing kind rules from the parse's entities."""
-    if axis in ("product", "customer", "warehouse", "brand") or axis in (focus.extra or {}):
+    if axis in ("category", "product_type"):
+        # The class is ONE axis held in two buckets: a newly set class replaces both.
+        _clear_axis(focus, "category")
+        _clear_axis(focus, "product_type")
+    elif axis in ("product", "customer", "warehouse", "brand") or axis in (focus.extra or {}):
         # The stated entities replace the held value of this axis; the kind rules write them.
         _clear_axis(focus, axis)
     elif axis == "channel":
