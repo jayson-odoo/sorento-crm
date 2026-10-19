@@ -5,6 +5,7 @@ the stock-ask regex standing down under the template, and the unlabelled idempot
 """
 from __future__ import annotations
 
+import re
 import types
 import uuid
 
@@ -326,3 +327,51 @@ def test_template_does_not_ask_for_unconfident_hints_when_guessing():
         if re.search(r"guess|unsure of its kind", sentence, re.I) and "`hint_confident`" in sentence \
                 and re.search(r"false", sentence):
             pytest.fail("guessing is tied to hint_confident false: " + sentence[:160])
+
+
+# --- F1-D: gate run 1 fixes (precedence and priming) ---------------------------------------------
+
+
+def _block(rule_id: str) -> str:
+    found = [b for b in _rule_blocks(_pt().TEMPLATE) if b.startswith(rule_id)]
+    assert found, f"no rule block {rule_id}"
+    return found[0]
+
+
+def test_template_file_word_defers_to_file_rule():
+    """D1: R-P2-02's closed-list sentence must not make file types a word-less closed list over
+    R-P2-06; one rule decides the file word, and videos are handled as photos are."""
+    cand = _block("R-P2-02")
+    assert "see R-P2-06" in cand, "R-P2-02 does not defer file types to R-P2-06"
+    for sentence in _sentences(cand):
+        if "no word of its own" in sentence:
+            assert not re.search(r"file type", sentence, re.I), (
+                "closed-list sentence still names file types: " + sentence[:160]
+            )
+    file_rule = _block("R-P2-06")
+    assert re.search(r"video", file_rule, re.I), "R-P2-06 has no meaning rule for videos"
+
+
+def test_template_certificate_ask_always_carries_kind_plus_scheme():
+    """D2: a certificate ask always has the kind entity; a listed scheme is one MORE entity."""
+    block = _block("R-P2-06")
+    assert re.search(r"always", block, re.I) and "Certificate kind" in block, (
+        "R-P2-06 does not say a certificate ask ALWAYS carries the kind entity"
+    )
+    assert re.search(r"two entities|both|and one more", block, re.I), (
+        "R-P2-06 has no worked example naming the kind and the scheme as two entities"
+    )
+    assert "pps cert" in block, "R-P2-06 has no 'pps cert' example"
+
+
+def test_template_attribute_phrase_unprimed_and_still_sold_is_discontinued():
+    """D3: no 'list price' example priming an added word; the phrase is the user's own words;
+    'still sold' maps to discontinued."""
+    block = _block("R-P3-05")
+    assert "list price" not in block, "R-P3-05 still primes with the example 'list price'"
+    assert re.search(r"own words|no word added|never add|not add|without adding", block, re.I), (
+        "R-P3-05 does not say the phrase is the user's own words with no word added"
+    )
+    assert "still sold" in block and "discontinued" in block, (
+        "R-P3-05 does not tie 'still sold' to discontinued"
+    )
