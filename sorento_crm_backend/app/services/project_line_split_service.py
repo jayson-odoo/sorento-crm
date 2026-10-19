@@ -853,6 +853,7 @@ class LineSplitService:
         facts = self.line_facts(order)
         stored = [s for f in facts.values() for s in f.splits]
         sitting_on = {target for target in self.effective_sits_on(stored).values() if target}
+        recorded = self._recorded_split_plans(order)
         plans: List[Tuple[LineFacts, Decimal, Optional[date], List[Dict[str, Any]]]] = []
         named: set = set()
         for entry in lines:
@@ -952,7 +953,7 @@ class LineSplitService:
                     ),
                     code="line_split_sum_mismatch",
                 )
-            if self._moves_a_confirmed_split(f, rows):
+            if self._moves_a_confirmed_split(f, rows, recorded.get(line_id)):
                 raise AppException(
                     status_code=422,
                     message=f"{label}: a confirmed split cannot move to another line.",
@@ -1017,34 +1018,35 @@ class LineSplitService:
                 root_entity_id=str(order.id),
             )
 
-    def _moves_a_confirmed_split(self, f: LineFacts, rows: List[Dict[str, Any]]) -> bool:
+    def _recorded_split_plans(self, order: ProjectSalesOrder) -> Dict[str, Any]:
+        """`line id -> split_plan` from the newest decision of the order whose snapshot names
+        the line (a board Reject re-issues the active decision without it), `None` where that
+        snapshot recorded none. One query per save."""
+        from app.models.project_so import SOSupplyDecision
+
+        out: Dict[str, Any] = {}
+        for (snapshots,) in (
+            self.db.query(SOSupplyDecision.line_snapshots)
+            .filter(SOSupplyDecision.project_sales_order_id == str(order.id))
+            .order_by(SOSupplyDecision.revision_no.desc())
+            .all()
+        ):
+            for snapshot in snapshots or []:
+                line_id = str(snapshot.get("project_line_id") or "")
+                out.setdefault(line_id, snapshot.get("split_plan"))
+        return out
+
+    def _moves_a_confirmed_split(
+        self, f: LineFacts, rows: List[Dict[str, Any]], recorded: Optional[List[str]]
+    ) -> bool:
         """Until the AC-G19 lane ships (UAC AC-G19 "DEFERRED", "Until that lane ships"): would
         this save move qty of a plan a Confirm applied between lines? It may not put more of
         the line on any other line than the applied plan had there, and qty it takes off
         another line must leave the plan, not come back on its own-line or New-line rows.
 
-        The applied plan is the one the line's last Confirm recorded on the active decision
-        (`split_plan`), whatever the splits saved since; without that record (plans applied
-        before it existed, dev data only), the saved splits while they read applied."""
-        from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision
-
-        decision = (
-            self.db.query(SOSupplyDecision)
-            .filter(
-                SOSupplyDecision.project_sales_order_id == f.line.project_sales_order_id,
-                SOSupplyDecision.state == DECISION_ACTIVE,
-            )
-            .order_by(SOSupplyDecision.revision_no.desc())
-            .first()
-        )
-        recorded = next(
-            (
-                snapshot.get("split_plan")
-                for snapshot in (decision.line_snapshots if decision is not None else None) or []
-                if str(snapshot.get("project_line_id") or "") == f.line_id
-            ),
-            None,
-        )
+        The applied plan is `recorded`, the one the line's last Confirm recorded
+        (`_recorded_split_plans`), whatever the splits saved since; without that record (plans
+        applied before it existed, dev data only), the saved splits while they read applied."""
         if recorded:
             # `split_plan_key`: the base, then "qty@date@sits on@cancel" per split.
             applied = [
