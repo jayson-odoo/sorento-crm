@@ -368,7 +368,6 @@ def _code_candidates(db: "Session", tokens: list[str], *, code_lookup: bool = Fa
                     Product.product_code,
                     Product.product_name,
                     norm.contains(word, autoescape=True).label("holds"),
-                    (norm == word).label("whole"),
                 )
                 .filter(chat_searchable_products(), or_(norm.contains(word, autoescape=True), sim >= NEAR_CODE))
                 .order_by(
@@ -380,8 +379,6 @@ def _code_candidates(db: "Session", tokens: list[str], *, code_lookup: bool = Fa
                 .limit(CAP_PER_WORD)
                 .all()
             )
-            # R5-2: `whole` is the code IS the word; a code that only holds it says so (`holding`).
-            rows = [(code, name, holds) for code, name, holds, _whole in rows]
             sets = _set_rows(db, word) if code_lookup else []
             set_exact = any(_fold_code(code) == word for code, _name in sets)
             if code_lookup and not set_exact and not any(_fold_code(code) == word for code, _name, _holds in rows):
