@@ -72,6 +72,7 @@ def scenario(db):
     both = _customer(db, "ZZT BOTH SDN BHD", debtor_type="project")
     _customer(db, "ZZT BOTH SDN BHD", company_id=MOCHA_ID, debtor_type="project")
     _customer(db, "ZZT MOCHA ONLY SDN BHD", company_id=MOCHA_ID, debtor_type="project")
+    _customer(db, "   ", debtor_type="project")  # a blank-named customer never matches a blank SF
     ids = {
         "link_spaced": _sf(db, "  zzt   alpha\tsdn  bhd "),
         "link_suffix_as_stored": _sf(db, "zzt beta (project)"),
@@ -283,15 +284,89 @@ def test_apply_refuses_a_row_the_owner_hand_marked_link(db, scenario, tmp_path):
             r["customer_id"] = str(scenario["alpha"].id)
         if r["sf_id"] == ids["link_spaced"]:  # a LINK row pointed at another customer
             r["customer_id"] = str(scenario["beta"].id)
+    # A Purchase Request id typed in as a LINK row, with the customer its name matches.
+    rows.append(dict(rows[0], status="LINK", sf_id=ids["purchase_request"], customer_id=str(scenario["alpha"].id)))
     _rewrite_csv(path, rows)
 
     result = apply_csv(db, str(path), DEFAULT_COMPANY_ID)
 
     assert result["linked"] == 3
-    assert result["skipped_changed"] == 3
+    assert result["skipped_changed"] == 4
     assert _stored(db, ids["ambiguous"])[0] is None
     assert _stored(db, ids["no_match_text"])[0] is None
     assert _stored(db, ids["link_spaced"])[0] is None
+    assert _stored(db, ids["purchase_request"])[0] is None
+
+
+def test_apply_skips_a_link_row_whose_customer_columns_were_edited(db, scenario, tmp_path):
+    """The owner 'corrects' a LINK row to another customer by code/name: it is not linked at all."""
+    from scripts.link_sf_customers import apply_csv, propose
+
+    ids = scenario["ids"]
+    path = _write(tmp_path / "proposal.csv", propose(db, DEFAULT_COMPANY_ID))
+    rows = _read_csv(path)
+    for r in rows:
+        if r["sf_id"] == ids["link_spaced"]:
+            r["customer_code"] = scenario["beta"].customer_code
+        if r["sf_id"] == ids["link_suffix_as_stored"]:
+            r["customer_name"] = "ZZT ALPHA SDN BHD"
+    _rewrite_csv(path, rows)
+
+    result = apply_csv(db, str(path), DEFAULT_COMPANY_ID)
+
+    assert result["linked"] == 2
+    assert result["skipped_changed"] == 2
+    assert _stored(db, ids["link_spaced"])[0] is None
+    assert _stored(db, ids["link_suffix_as_stored"])[0] is None
+
+
+def test_apply_refuses_a_csv_that_lists_a_form_twice(db, scenario, tmp_path):
+    """Two rows for one SF (one kept as LINK, one changed to skip it) is a review mistake, not a choice."""
+    from scripts.link_sf_customers import apply_csv, propose
+
+    ids = scenario["ids"]
+    path = _write(tmp_path / "proposal.csv", propose(db, DEFAULT_COMPANY_ID))
+    rows = _read_csv(path)
+    twice = next(r for r in rows if r["sf_id"] == ids["link_spaced"])
+    rows.append(dict(twice, status="SKIP"))
+    _rewrite_csv(path, rows)
+
+    with pytest.raises(ValueError):
+        apply_csv(db, str(path), DEFAULT_COMPANY_ID)
+    assert _stored(db, ids["link_spaced"])[0] is None
+
+
+def test_csv_cells_never_start_a_spreadsheet_formula_and_still_apply(db, scenario, tmp_path):
+    """Typed text comes from portal SFs; the owner opens the CSV in a spreadsheet."""
+    from scripts.link_sf_customers import apply_csv, propose
+
+    set_company_scope(db, None)
+    dash = _customer(db, "-ZZT DASH CO", debtor_type="project")
+    dash_sf = _sf(db, "-zzt dash co")
+    formula_sf = _sf(db, '=HYPERLINK("http://x.zzt","ZZT")')
+    db.commit()
+    set_company_scope(db, SORENTO)
+    path = _write(tmp_path / "proposal.csv", propose(db, DEFAULT_COMPANY_ID))
+
+    by_sf = {r["sf_id"]: r for r in _read_csv(path)}
+    assert by_sf[formula_sf]["typed_customer"] == "'" + '=HYPERLINK("http://x.zzt","ZZT")'
+    assert by_sf[dash_sf]["typed_customer"] == "'-zzt dash co"
+    assert by_sf[dash_sf]["customer_name"] == "'-ZZT DASH CO"
+    for r in _read_csv(path):
+        assert not any((v or "")[:1] in ("=", "+", "-", "@") for v in r.values())
+
+    apply_csv(db, str(path), DEFAULT_COMPANY_ID)
+    assert _stored(db, dash_sf)[:2] == (str(dash.id), "-ZZT DASH CO")
+
+
+def test_default_proposal_csv_is_written_outside_the_working_directory():
+    """The prod compose directory is a git checkout: real names must not land in it by default."""
+    import os
+    import tempfile
+
+    from scripts.link_sf_customers import DEFAULT_CSV
+
+    assert os.path.dirname(DEFAULT_CSV) == tempfile.gettempdir()
 
 
 def test_apply_never_overwrites_and_skips_rows_that_changed_since_the_dry_run(db, scenario, tmp_path):
@@ -376,12 +451,26 @@ def test_apply_refuses_a_csv_without_the_key_columns(db, scenario, tmp_path):
 # --- CLI ---------------------------------------------------------------------- #
 
 
-def _patch_session(monkeypatch, db):
+def _patch_session(monkeypatch, db, registered=None):
     import scripts.link_sf_customers as script
 
     monkeypatch.setattr(db, "close", lambda: None)
     monkeypatch.setattr(script, "SessionLocal", lambda: db)
+    # The audit listeners are global on Session: spy instead of registering them for the whole run.
+    calls = registered if registered is not None else []
+    monkeypatch.setattr(script, "register_audit_listeners", lambda: calls.append("audit"))
+    monkeypatch.setattr(script, "register_company_scope_listeners", lambda: calls.append("company_scope"))
     return script
+
+
+def test_cli_registers_the_company_scope_and_audit_listeners(db, scenario, tmp_path, monkeypatch):
+    """A script process has no app startup: without these the scope is a no-op and the links leave no audit."""
+    registered: list = []
+    script = _patch_session(monkeypatch, db, registered)
+
+    assert script.main(["--csv", str(tmp_path / "proposal.csv")]) == 0
+
+    assert set(registered) == {"audit", "company_scope"}
 
 
 def test_cli_dry_run_then_apply_then_points_at_the_sales_type_backfill(db, scenario, tmp_path, monkeypatch, capsys):
