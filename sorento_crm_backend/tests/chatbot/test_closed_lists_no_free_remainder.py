@@ -46,3 +46,35 @@ def test_gate_off_the_leftover_word_still_describes_the_set(session_factory, see
     [(r, calls)] = run_turns(session_factory, stub_access, monkeypatch, [("Request ZZBRAND cert", _ask())], w, gate=False)
 
     assert "Couldn't find" in text_of(r), (text_of(r), calls)
+
+
+def _spy_bodies(monkeypatch) -> list[dict]:
+    from app.services.chatbot.lanes.business import resolve_gate
+
+    bodies: list[dict] = []
+    real = resolve_gate.resolve_entity_body
+
+    def spy(*args, **kwargs):
+        out = real(*args, **kwargs)
+        bodies.append(out)
+        return out
+
+    monkeypatch.setattr(resolve_gate, "resolve_entity_body", spy)
+    return bodies
+
+
+def test_a_spec_domain_set_ask_keeps_its_remainder(session_factory, seeded, stub_access, monkeypatch):
+    """Reviewer guard: the same leftover-word shape on a product-search (spec slice) domain is not a
+    file ask, so `no_free_remainder` is not set and the resolve body is built as before."""
+    w = _world(session_factory)
+    bodies = _spy_bodies(monkeypatch)
+    spec_ask = real_parse(
+        [entity("ZZBRAND", "brand", canonical="ZZBRAND"), entity("zz", "category")],
+        domain_hint="inventory", intent_hint="check_stock", scope_intent="specific",
+    )
+
+    run_turns(session_factory, stub_access, monkeypatch, [("Request ZZBRAND zz stock", spec_ask)], w)
+    spec_bodies = [b for b in bodies if "require" in b]
+
+    assert spec_bodies, "the spec-domain ask must reach the set path (a `require` body)"
+    assert not any(b.get("no_free_remainder") for b in spec_bodies), spec_bodies
