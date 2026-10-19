@@ -1,6 +1,6 @@
 # PLAN: Agent field access as a multi-select without duplicates (AGENT-FIELD-MULTI)
 
-Status: Plan (S, small fix track: no migration, no auth/RBAC change, no new ingest). Mock v1 filed to crew.
+Status: Review (S, small fix track: no migration, no auth/RBAC change, no new ingest). Mock v1 approved by owner 20 Oct with option (a) Allow + Deny. PR #1790: red 6e410a7916, fix 0edf8b53bd; hand test filed (laneboard/scripts/1790.md).
 
 UAC: `agent-field-multi-20oct-acceptance-criteria.md` (alongside).
 
