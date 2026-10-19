@@ -5,7 +5,11 @@
  */
 import React from 'react';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+}));
 
 import { LineSplitInfo, OrderSplitsDialog } from './LineSplitInfo';
 import type { LineSplitView } from '../types/orderInquiry.types';
