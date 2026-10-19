@@ -55,6 +55,12 @@ own, 236 @ 20/11/2026 New line, 167 @ 20/11/2026 New line (AutoCount 417 @ 20/10
   REMAIN and 68 ORDER 68 included). A Confirm that names only OTHER lines never fails because of such a
   line (main answers 200, so must this). Known older gap, not this lane: on main that batch Confirm does
   not move the edited 32 row either (follow-up ticket).
+- A11 **A held-back line stays held back** (reviewer round 2). When the server holds back a named line
+  whose breakdown it refuses (e.g. 608 "components add up to 532 and the line is open for 632"), that
+  line is not confirmed, not emailed and not in `lines_confirmed`, even if it is split-edited; it is in
+  `lines_held_back` only, as on main. A split-edited line the press did not name is added BEFORE the
+  hold-back runs, so the hold-back can drop it like any named line; a Confirm of the order's other lines
+  never answers 422 because of it.
 - A10 **The pre-confirm list cannot leave a split-edited line out.** Its row shows no untick box: the
   server applies every split-edited line of an order it confirms.
 - A8 **Whole-Buy lines only** (known limit carried from #1749: the split plan logic covers lines the
@@ -85,9 +91,13 @@ own, 236 @ 20/11/2026 New line, 167 @ 20/11/2026 New line (AutoCount 417 @ 20/10
   - 752: rows 37 / 20/11/2026 / ADVANCE / line 752; 467 / 02/01/2027 / DELAY / New line; 145 /
     02/01/2027 / ORDER 145 / line 752 (AutoCount extra); total 649.
 - B3 **Plan status**, one per line: "Confirmed" with "revision <r>, <dd/mm/yyyy>" when the saved
-  plan equals the applied plan; "Saved, not confirmed" exactly when the line is split-edited (A1, the same
-  membership the board flag reads; a partly-from-stock line right after its Confirm reads "Confirmed",
-  nothing highlighted);
+  plan equals the applied plan; "Saved, not confirmed" when the line is split-edited (A1, the same
+  membership the board flag reads) and also when a whole-Buy line with a pending AutoCount change (A9)
+  has a saved plan that differs from its applied plan (lead ruling, reviewer round 2: e.g. 608's 32 moved
+  to 20/01/2027 while AutoCount 632 -> 700 waits; its rows are highlighted as in B4, and the board
+  counts the line once, for its AutoCount change); a partly-from-stock line right after its Confirm
+  reads "Confirmed", nothing highlighted. Precedence: "AutoCount changed" over "Saved, not confirmed"
+  over "Confirmed";
   "AutoCount changed" when the plan is stale (`split_state` stale).
 - B4 **What changed, only when exact.** In "Saved, not confirmed", a split row whose
   (qty, date, sits on, cancel) is not in the applied plan is highlighted. When the saved plan and
@@ -119,7 +129,7 @@ own, 236 @ 20/11/2026 New line, 167 @ 20/11/2026 New line (AutoCount 417 @ 20/10
   - Sales Order page gear ("Sales order options"): "View splits".
   - Order Inquiry page gear ("Order inquiry options"): "View splits", for the inquiry's lines.
   The popup's title is "<SO number>: splits" (on the OI page "<OI number>: splits", with the SO
-  number under it), then "<n> split lines", then one grid: Qty | Delivery date | Change | Sits on |
+  number under it), then "<n> split lines" ("1 split line" for one), then one grid: Qty | Delivery date | Change | Sits on |
   Remark, with a group row per split line (in line number order) reading "Line <n> <item>", its plan
   status badge (B3) and "AutoCount <base> @ <date>, now <now> @ <date>", followed by that line's
   rows exactly as in B2 (incl. the AutoCount extra row and B4's highlight and "was").
