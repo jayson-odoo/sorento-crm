@@ -9,6 +9,11 @@ tests/chatbot finds only the round 6 plan/UAC); the semantics below are taken fr
   * R6-3 / AC-S3-3: a message whose ops make a class its subject (`new_subject`, or `set` on the
     class axis) is about that class: held-family narrowing does not run, the scheme index does not
     index the held products, an open task does not resume over the old products.
+Lead decision, 20 Oct, CHAT-STATE r6 S3 (class membership comes from the data): `new_subject` means
+the message is about the new class. A `set` on the class axis is a REFINE: held explicit products
+that ARE members of that class stay the subject; held products of another class drop, and the
+subject becomes the class predicate with the other held axes (brand / spec) kept.
+
 Driven as in the closed-lists suites (`closed_lists` gate, dry-run mock emissions carrying
 `state_changes`, so the state path is on); a counter proves `apply_changes` ran every turn.
 """
@@ -118,16 +123,48 @@ def test_r6_s3_a_type_only_follow_up_keeps_the_held_product(session_factory, see
 CLASS_OPS = [([_op("new_subject")], "new_subject"), ([_op("set", "category")], "set-category")]
 
 
-@pytest.mark.parametrize("ops", [c[0] for c in CLASS_OPS], ids=[c[1] for c in CLASS_OPS])
-def test_r6_s3_a_message_naming_its_own_class_is_not_about_the_held_products_scheme_seam(
-    session_factory, seeded, stub_access, monkeypatch, applied, ops
-):
+def _label_class(session_factory, ids, label="Water Closet"):
+    """The held product's category carries the class label the data decides membership by."""
+    from sqlalchemy import text
+
+    db = session_factory()
+    db.execute(text("UPDATE product_categories SET class_label = :l WHERE id = "
+                    "(SELECT category_id FROM products WHERE id = :p)"), {"l": label, "p": ids["product"]})
+    db.commit()
+
+
+def _scheme_turn(session_factory, stub_access, monkeypatch, class_word, ops, ids_label="Water Closet"):
     ids = _seed(session_factory)
-    ask = _file_ask(_ent("water closet", "category"), _scheme("zzpps", "ZZPPS"))
+    _label_class(session_factory, ids, ids_label)
+    ask = _file_ask(_ent(class_word, "category"), _scheme("zzpps", "ZZPPS"))
     ask["state_changes"] = ops
-    (_r1, _c1), (_r2, calls) = _turns(session_factory, stub_access, monkeypatch, [(CODE, _stock_first()), ("zzpps certificate for water closets", ask)])
+    (_r1, _c1), (_r2, calls) = _turns(session_factory, stub_access, monkeypatch,
+                                      [(CODE, _stock_first()), (f"zzpps certificate {class_word}", ask)])
+    return ids, _file_fetches(calls), calls
+
+
+def test_r6_s3_new_subject_naming_a_class_is_not_about_the_held_products_scheme_seam(
+    session_factory, seeded, stub_access, monkeypatch, applied
+):
+    ids, fetches, calls = _scheme_turn(session_factory, stub_access, monkeypatch, "water closet", [_op("new_subject")])
     assert len(applied) >= 2
-    assert all(f.get("product_ids") != [ids["product"]] for f in _file_fetches(calls)), ("the held product was indexed", calls)
+    assert all(f.get("product_ids") != [ids["product"]] for f in fetches), ("the held product was indexed", calls)
+
+
+def test_r6_s3_a_class_set_over_a_held_member_of_that_class_is_a_refine_and_keeps_it(
+    session_factory, seeded, stub_access, monkeypatch, applied
+):
+    ids, fetches, calls = _scheme_turn(session_factory, stub_access, monkeypatch, "water closet", [_op("set", "category")])
+    assert len(applied) >= 2
+    assert fetches and fetches[0].get("product_ids") == [ids["product"]], ("the held member was dropped", calls)
+
+
+def test_r6_s3_a_class_set_over_a_held_product_of_another_class_drops_it(
+    session_factory, seeded, stub_access, monkeypatch, applied
+):
+    ids, fetches, calls = _scheme_turn(session_factory, stub_access, monkeypatch, "basin", [_op("set", "category")])
+    assert len(applied) >= 2
+    assert all(f.get("product_ids") != [ids["product"]] for f in fetches), ("the held WC was indexed for a basin ask", calls)
 
 
 @pytest.mark.parametrize("ops", [c[0] for c in CLASS_OPS], ids=[c[1] for c in CLASS_OPS])
