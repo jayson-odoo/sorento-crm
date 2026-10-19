@@ -4936,6 +4936,11 @@ def _run_stages_body(  # noqa: PLR0915
             family_note = None
         if family_note:
             verdict = chat_state.carry_onto_family(verdict, family_note.get("matched") or [])
+            if family_note.get("matched"):
+                # The narrowing named exact members (full codes): the resolver's prefix probe
+                # must not widen them again ("SRTWC286-SH-P" also placed SRTWC286-SH-PP), so
+                # the turn reads exact codes only (`_exact_codes_only`, `family: false`).
+                verdict = {**verdict, "family": False}
             turn_trace.add("held_family", family_note)
             if family_note.get("none_match"):
                 held_none_match = {
