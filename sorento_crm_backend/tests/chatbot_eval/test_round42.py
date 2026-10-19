@@ -44,3 +44,10 @@ def test_guard_d_a_missing_value_still_fails_and_a_class_only_gold_needs_no_key(
     cls = [{"key": "product_type", "value": "water closet"}]
     ents = [{"hint": "category", "raw": "water closet", "canonical_code": "water closet"}]
     assert _spec(ents, cls) is True
+
+
+def test_guard_e_a_key_is_acceptable_only_for_the_value_the_gold_gives_it():
+    gold = [{"key": "trap_length", "value": "300"}, {"key": "dim_width", "value": "250"}]
+    ents = [_ent("dim_width", 300, "300mm"), _ent("dim_width", 250, "250mm")]   # 300 sits on dim_width, which the gold gives 250
+    assert _spec(ents, gold) is False
+    assert _spec([_ent("trap_length"), _ent("dim_width", 250, "250mm")], gold) is True
