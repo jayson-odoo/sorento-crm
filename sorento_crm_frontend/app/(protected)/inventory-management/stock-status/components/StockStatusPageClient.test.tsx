@@ -3,6 +3,7 @@
  * same stock table, built from the AutoCount read alone.
  */
 import React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -65,5 +66,35 @@ describe('Stock status page, round 6', () => {
     render(<StockStatusPageClient />);
     expect(screen.queryByTestId('cell-stock-table')).not.toBeInTheDocument();
     expect(screen.getByText('Pick an item')).toBeInTheDocument();
+  });
+});
+
+describe('STOCK-GROUPBY (AC-20): the stand-alone page carries the Group by bar', () => {
+  it('AC-20 the table the page draws, given the AutoCount read, shows the group-by-bar', async () => {
+    const status = {
+  product_id: 'prod-1',
+  item_code: 'ITEM-1',
+  locations: [{ warehouse_id: 'wh-BRW-BB', warehouse_code: 'BRW-BB', warehouse_name: 'BRW-BB', is_active: true, on_hand: 5, so_qty: 0, po_qty: 0, spo_qty: 0, forecast: 5 }],
+  totals: { on_hand: 5, so_qty: 0, po_qty: 0, spo_qty: 0, forecast: 5, incoming_pl: 0, forecast_incl_pl: 5 },
+  incoming_pl: [],
+  sales_orders: [],
+  purchase_orders: [],
+  spos: [],
+};
+    useStockStatusMock.mockReturnValue({ data: status, isLoading: false });
+    render(<StockStatusPageClient />);
+    const props = cellStockTableSpy.mock.calls.at(-1)?.[0] as React.ComponentProps<
+      typeof import('../../../project-sales/fulfilment-planning/components/CellStockTable').CellStockTable
+    >;
+    expect(props.autoCount).toBe(status);
+    const actual = await vi.importActual<
+      typeof import('../../../project-sales/fulfilment-planning/components/CellStockTable')
+    >('../../../project-sales/fulfilment-planning/components/CellStockTable');
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <actual.CellStockTable {...props} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByTestId('group-by-bar')).toBeInTheDocument();
   });
 });

@@ -140,7 +140,8 @@ drawing items.
   names, filled from the DB when items are built) is what a leak is looked for, since recorded tool rows carry no
   customer names. Trace locations (checked on 2,500 real rows): positions in `apply.verdict.reference_positions` /
   `open_question_answer` and the `engine_pick` event; open question before = `state.open_question`, after =
-  `memory.open_question`; sent attachment types = tool envelope `attachments[*].attachmentType`.
+  `memory.open_question`; sent attachment types = `attachments[*].attachmentType` from the full tool results when the
+  row carries them (round 38), else the tool envelope.
   Made-up rule: every product-code-like token, quantity, date and container number in the reply must appear in the
   turn's tool envelopes or the user's message; list ordinals ("1.", "2.") are not facts; numbers and dates are
   compared after normalising (`1,200` = `1200`, `6 Sep 2026` = `2026-09-06`); a truncated envelope makes the
@@ -215,11 +216,12 @@ Grader v1 read `apply.verdict.entities[*].canonical_code`; real product entities
 | refine | verdict entities (`spec_key`/`spec_value`; brand `canonical_code`) + `memory.focus.after.extra.specification` / `brands`; subject kept = after products |
 | switch | `memory.focus.before` vs `after` products / domains (not set equality with gold) |
 | spec | verdict entities with `hint == specification` (`spec_key`, `spec_value`, `raw`) + `memory.focus.after.extra.specification`; match on value strings, key may be empty |
-| attachment | verdict entity `hint == attachment_type` (`canonical_code`), `memory.focus.after.extra.attachment_type`, attachment tool `attachment_type_ids`, envelope `attachments[].attachmentType` |
+| attachment | verdict entity `hint == attachment_type` (`canonical_code`), `memory.focus.after.extra.attachment_type`, attachment tool `attachment_type_ids`, full tool results `attachments[].attachmentType` (envelope when absent, round 38) |
 | made-up | sources = user message + bot's previous message + every tool envelope + every `looked_up` envelope field + state/memory product codes + the `prompt_text` event; any `truncated: true` envelope -> `unverifiable`, never a failure |
 
 Every check tolerates a missing `apply` payload (omitted at 32 KB) and falls back to memory / looked_up. The live runner
-additionally records full tool results (no 8 KB cap) beside the turn, crew-only, for the made-up check.
+additionally records full tool results (no 8 KB cap) beside the turn, crew-only, for the made-up check and (round 38)
+the attachment check.
 Acceptance: re-grade the 723 recorded prod turns; the lead hand-checks 20 random verdicts against the conversation
 before any baseline number is posted.
 
@@ -465,3 +467,43 @@ catalogue items; (k) 2 items where "square" is a customer name excluded (cp0 gol
   code after a product-info answer is graded as product info, not stock.
 - G3 (CHAT-CODE-LOOKUP, crew gold): the eval-sets copy gets the round 35 (a) list_all rule (5 code lookups + 3 staff
   follow-ups). Both gold rebuilds reproduce byte for byte. Opus review READY.
+
+## Round 38 (19 Oct, G1 from the CHAT-CLOSED-LISTS-L round 4 root cause; TRAIN evidence only)
+
+- G1: the attachment check read the files from the capped trace envelope, so a reply that sent files graded files=[]
+  whenever the envelope was truncated. `_sent_files` (targets.py) now reads `attachments` from the full tool results
+  when the row carries them and keeps the envelope read otherwise, and also when the engine announced 0 files (the
+  round 15 honest-none path). It returns the files the tools found (probe and pre-brand_guard results included), so
+  the extra data can only fail `type` / `scheme`, never pass them; `sent` stays the engine's count.
+- Red test pins the live shape (`facts.files` an int above 0); kill-proof on main's envelope read and on the guard
+  mutation `announced is None`.
+- TRAIN g1755c attachment: lane 33 -> 36, main 27 -> 34. Held-out re-grade at $0 went to crew only.
+
+## Round 40 (19 Oct, grader misfires found by the held-out layer attribution; crew order)
+
+The 19 Oct layer attribution tagged 6 held-out failures as grader misfires and a trace-cap class on `asked_type`.
+Each check now reads what the bot did, or returns unknown (None) when the evidence cannot tell; none can turn a real
+failure into a pass:
+- `no_picker`: a did-you-mean for a held code that is not on file passes, but only when the picker's options are within
+  that code's own `unresolved_suggestions` (a needless picker for another held code still fails).
+- `tool_target`: a picked customer is matched by the uuids of the option at the gold position, not by a name fragment
+  (on real rows the fragment matched every option); a turn that fetched nothing because it asked the owner-ruled period
+  question (`do_range`) is unknown, not a failure.
+- `applied`: a brand narrowing over the held family (`held_family` with brands, a match looked up) counts as applied.
+- Trace cap: a capped memory event reads the open question from the post-turn state; when that is unreadable too and
+  the bot asked the tier question, the item is unknown, unless a leak was found (the leak stays the failure reason).
+  A capped apply event reads the parser's derived entities only when a tool carried `attachment_type_ids`, else unknown.
+- `which_one` (attachment, gold `ambiguous`): a which-one picker over the codes the customer typed passes with no file owed
+  when each option carries the has / no stamp of the asked type, as the domain setting says (owner 5 Oct PHOTO-PICKER,
+  restated 19 Oct): `Profile.stock_availability_only` (an availability-only contact, a dealer) gets a bare list, everyone
+  else is stamped (`lanes/business/answer.py` gates it, `turn_runtime._stock_availability_only` resolves it). The stamp is
+  read from each option's `stamp`; an unstamped list for a stamped contact, a stamped list for a dealer, another type's
+  stamp and a list over other codes still fail. The trace carries no profile flag, so the grader INFERS the setting
+  from the item's asker audience (dealer / linked_dealer = bare, else stamped). Measured read-only against
+  `stock_visibility.resolve_policy` for every attachment asker in the held-out and TRAIN gate sets: 79 of 79 agree.
+  Trigger for an exact source (the gold carrying the asker's policy at build time): an asker whose policy differs
+  from their audience.
+- Gold (crew files): the AI-blocked contact's item leaves the set (manual exclusions).
+Red-first per item, kill-proof per hunk, two Opus review rounds (the first found a wrong-option pass, a leak turned
+unknown and an `asked_type` fallback that passed 11 of 34 real failures; all closed). TRAIN gate rows: no verdict
+changes. Held-out re-grade at $0 went to crew only.

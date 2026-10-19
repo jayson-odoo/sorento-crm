@@ -54,6 +54,13 @@ from pathlib import Path
 
 import pytest
 
+
+# setup-python on the self-hosted Mac runner links python3 to libpython through
+# LD_LIBRARY_PATH, so a subprocess env built from PATH alone drops it and python3
+# exits 127 ("libpython3.12.so.1.0: cannot open shared object file", PR gate run
+# 39138107134). Every such env carries it through.
+PY_ENV = {k: os.environ[k] for k in ("LD_LIBRARY_PATH",) if k in os.environ}
+
 REPO = Path(__file__).resolve().parents[2]
 WORKFLOW = REPO / ".github" / "workflows" / "deploy.yml"
 TEST_TREES = [REPO / "sorento_crm_backend" / "tests", REPO / "sorento_crm_mcp" / "tests"]
@@ -125,7 +132,7 @@ def _run_shell(tmp_path: Path, script: str, env: dict, fixtures: dict, *, gh_fai
     output = tmp_path / "output.txt"
     output.write_text("")
     full_env = {
-        "PATH": f"{stub_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+        "PATH": f"{stub_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}", **PY_ENV,
         "GITHUB_OUTPUT": str(output),
         "GITHUB_REPOSITORY": "jayson-odoo/sorento-crm",
         "GH_TOKEN": "stub",
@@ -611,7 +618,7 @@ def test_the_pr_gate_runs_whatever_the_fast_gates_did_and_fails_with_them(tmp_pa
     def run(needs, event):
         return subprocess.run(
             ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
-            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "EVENT": event,
+            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **PY_ENV, "EVENT": event,
                  "NEEDS": json.dumps({k: {"result": v, "outputs": {}} for k, v in needs.items()})},
             capture_output=True, text=True,
         )
@@ -755,7 +762,7 @@ def run_select(
     result = subprocess.run(
         ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", _step_script("Select the changed test files to run")],
         cwd=checkout,
-        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GITHUB_OUTPUT": str(output), "BACKEND_TESTS": backend_tests},
+        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **PY_ENV, "GITHUB_OUTPUT": str(output), "BACKEND_TESTS": backend_tests},
         capture_output=True,
         text=True,
     )
@@ -1187,7 +1194,7 @@ def _run_decide(tmp_path: Path, *, existing: list[str], rebuild_all: str = "fals
     result = subprocess.run(
         ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", _step_script("Decide which images to build")],
         cwd=repo,
-        env={"PATH": f"{bin_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}", "GITHUB_OUTPUT": str(output),
+        env={"PATH": f"{bin_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}", **PY_ENV, "GITHUB_OUTPUT": str(output),
              "GITHUB_SHA": SHA, "IMAGE_REPO": "jayson1004/sorento-crm", "REBUILD_ALL": rebuild_all,
              "DOCKER_LOG": str(log), "DOCKER_EXISTING": str(existing_file)},
         capture_output=True, text=True,
@@ -1352,7 +1359,7 @@ def test_ci_gate_runs_on_every_gated_event_and_on_nothing_else():
 def _run_gate(tmp_path: Path, needs: dict[str, str]) -> tuple[int, str]:
     result = subprocess.run(
         ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", _step_script("Fail when a needed job failed or was cancelled")],
-        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "NEEDS": json.dumps({k: {"result": v, "outputs": {}} for k, v in needs.items()})},
+        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **PY_ENV, "NEEDS": json.dumps({k: {"result": v, "outputs": {}} for k, v in needs.items()})},
         capture_output=True,
         text=True,
     )
@@ -1611,7 +1618,7 @@ def test_select_step_on_pr_1411_runs_the_test_that_broke_the_release(tmp_path):
         ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", _step_script("Select backend tests by import")],
         cwd=REPO,
         env={
-            "PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GITHUB_OUTPUT": str(output),
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"), **PY_ENV, "GITHUB_OUTPUT": str(output),
             "BACKEND_CODE": filtered["backend_code"], "BACKEND_TESTS": filtered["backend_tests"], "SCM": filtered["scm"],
         },
         capture_output=True,
@@ -1669,7 +1676,14 @@ def _run_changed_step(tmp_path: Path, files: str, **env) -> tuple[int, list[str]
     log.write_text("")
     result = subprocess.run(
         ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", _step_script("Run the changed test files (executing gate)")],
-        env={"PATH": f"{stub}:{os.environ.get('PATH', '/usr/bin:/bin')}", "FILES": files, "PY_LOG": str(log), **env},
+        # XDIST_WORKERS as the step's env sets it on GitHub-hosted (`auto`; 2 on the Mac).
+        env={
+            "PATH": f"{stub}:{os.environ.get('PATH', '/usr/bin:/bin')}", **PY_ENV,
+            "FILES": files,
+            "PY_LOG": str(log),
+            "XDIST_WORKERS": "auto",
+            **env,
+        },
         capture_output=True,
         text=True,
     )
@@ -1800,7 +1814,7 @@ def test_a_lean_release_over_the_budget_runs_core_tier_and_changed_tests_in_one_
     result = subprocess.run(
         ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", _step_script("Select backend tests by import")],
         cwd=REPO,
-        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GITHUB_OUTPUT": str(output),
+        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **PY_ENV, "GITHUB_OUTPUT": str(output),
              "BACKEND_CODE": "sorento_crm_backend/app/models/__init__.py", "BACKEND_TESTS": changed_test,
              "LEAN": "true"},
         capture_output=True, text=True,
@@ -1850,7 +1864,7 @@ def test_the_select_step_adds_the_core_tier_on_a_lean_release(tmp_path):
     result = subprocess.run(
         ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", _step_script("Select backend tests by import")],
         cwd=REPO,
-        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GITHUB_OUTPUT": str(output),
+        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **PY_ENV, "GITHUB_OUTPUT": str(output),
              "BACKEND_CODE": "", "BACKEND_TESTS": "", "LEAN": "true"},
         capture_output=True, text=True,
     )

@@ -616,10 +616,12 @@ def test_every_company_id_table_is_registered():
     # + 2 (STOCK-DEBT-SNAPSHOT): `stock_debt_snapshots` and `stock_debt_snapshot_rows`, one
     #   company's frozen Stock Debt view and its rows (customer demand, OI numbers and
     #   decisions); every read is by snapshot within the company = 164.
-    # + 1 (SR-CORE #1718): `sample_requests`, one company's sample requests = 165.
+    # + 1 (OI-LINE-SPLIT): `so_line_splits`, one company's own delivery splits of an SO line;
+    #   read by order within the company = 165.
+    # + 1 (SR-CORE #1718): `sample_requests`, one company's sample requests = 166.
     # + 1 (NEW-PRODUCT-APP): `new_product_applications`, one company's applications; the lines
-    #   are scoped through the parent = 166.
-    expected_owned = 166
+    #   are scoped through the parent = 167.
+    expected_owned = 167
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )
