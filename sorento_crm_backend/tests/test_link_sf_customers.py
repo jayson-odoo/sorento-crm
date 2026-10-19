@@ -284,8 +284,21 @@ def test_apply_refuses_a_row_the_owner_hand_marked_link(db, scenario, tmp_path):
             r["customer_id"] = str(scenario["alpha"].id)
         if r["sf_id"] == ids["link_spaced"]:  # a LINK row pointed at another customer
             r["customer_id"] = str(scenario["beta"].id)
-    # A Purchase Request id typed in as a LINK row, with the customer its name matches.
-    rows.append(dict(rows[0], status="LINK", sf_id=ids["purchase_request"], customer_id=str(scenario["alpha"].id)))
+    # A Purchase Request typed in as a LINK row exactly as the proposal would show it (its name
+    # matches alpha): only Sponsorship Forms are ever linked.
+    pr_number = db.execute(
+        text("SELECT request_number FROM purchase_requests WHERE id = :i"), {"i": ids["purchase_request"]}
+    ).scalar()
+    alpha_row = next(r for r in rows if r["sf_id"] == ids["link_spaced"])
+    rows.append(
+        dict(
+            alpha_row,
+            customer_id=str(scenario["alpha"].id),
+            sf_id=ids["purchase_request"],
+            form_number=pr_number,
+            typed_customer="ZZT ALPHA SDN BHD",
+        )
+    )
     _rewrite_csv(path, rows)
 
     result = apply_csv(db, str(path), DEFAULT_COMPANY_ID)

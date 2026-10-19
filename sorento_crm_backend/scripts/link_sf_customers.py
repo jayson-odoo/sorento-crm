@@ -16,10 +16,12 @@ Run from sorento_crm_backend/ (the owner runs it on prod; the PR changes no data
     python scripts/link_sf_customers.py --apply --from-csv proposal.csv    # links the LINK rows
     python scripts/backfill_sf_sales_type.py                               # then the sales type
 
-`--apply` links only rows still marked LINK in the file (delete a row to skip it), re-checks each
-against the database first (a row whose SF or match changed since the dry run is skipped), never
-overwrites a customer link, and commits all links in one transaction. Idempotent: a second
-`--apply` links nothing.
+`--apply` links only rows still marked LINK in the file (delete a row to skip it). Each is re-run
+against the database first and linked only when the whole row is still what the owner reviewed
+(an edited row, or an SF or match that changed since the dry run, is skipped and counted). It never
+overwrites a customer link and commits all links in one transaction. Idempotent: a second
+`--apply` links nothing. The CSV holds real customer names: by default it goes to the temp
+directory, never the working directory.
 """
 from __future__ import annotations
 
@@ -27,6 +29,7 @@ import argparse
 import csv
 import os
 import sys
+import tempfile
 from collections import Counter
 
 # Allow `from app.*` imports when invoked from the backend directory.
@@ -36,7 +39,8 @@ from app.database import SessionLocal
 from app.models.base import set_company_scope
 from app.models.order import Customer
 from app.models.procurement import PurchaseRequestHeader
-from app.services.company_scope import DEFAULT_COMPANY_ID
+from app.services.audit_service import register_audit_listeners
+from app.services.company_scope import DEFAULT_COMPANY_ID, register_company_scope_listeners
 from app.services.debtor_type import SALES_TYPE_FOR_DEBTOR_TYPE, link_customer
 
 LINK = "LINK"
@@ -56,6 +60,10 @@ CSV_FIELDS = (
     "sf_id",
     "customer_id",
 )
+DEFAULT_CSV = os.path.join(tempfile.gettempdir(), "sf_customer_link_proposal.csv")
+# A cell starting with one of these runs as a formula when the CSV is opened in a spreadsheet, and
+# typed_customer is free text (portal SFs): such a cell is written with a leading apostrophe.
+_FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
 
 
 def _key(name) -> str:
@@ -128,56 +136,82 @@ def propose(db, company_id) -> list[dict]:
     return [_propose_one(db, h, by_name) for h in headers]
 
 
+def _cell(value) -> str:
+    value = value or ""
+    return "'" + value if value.startswith(_FORMULA_START) else value
+
+
+def _uncell(value) -> str:
+    """A CSV cell back to its value, whether the spreadsheet kept the guard apostrophe or not."""
+    value = value or ""
+    if value.startswith("'") and value[1:].startswith(_FORMULA_START):
+        value = value[1:]
+    return value.strip()
+
+
 def write_csv(rows, path) -> None:
     with open(path, "w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=CSV_FIELDS)
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows({k: _cell(v) for k, v in r.items()} for r in rows)
 
 
 def _reviewed_links(path) -> dict:
-    """sf_id -> customer_id for every row the reviewed CSV still marks LINK."""
+    """sf_id -> row for every row the reviewed CSV still marks LINK. A form listed twice is refused."""
     with open(path, newline="", encoding="utf-8-sig") as fh:
         reader = csv.DictReader(fh)
-        missing = {"status", "sf_id", "customer_id"} - set(reader.fieldnames or ())
+        missing = set(CSV_FIELDS) - set(reader.fieldnames or ())
         if missing:
             raise ValueError(f"{path} is not a proposal CSV from this script: no {', '.join(sorted(missing))} column")
-        return {
-            (r["sf_id"] or "").strip(): (r["customer_id"] or "").strip()
-            for r in reader
-            if (r["status"] or "").strip() == LINK and (r["sf_id"] or "").strip()
-        }
+        seen, links = set(), {}
+        for r in reader:
+            sf_id = _uncell(r["sf_id"])
+            if not sf_id:
+                continue
+            if sf_id in seen:
+                raise ValueError(f"{path} lists sponsorship form {_uncell(r['form_number']) or sf_id} twice")
+            seen.add(sf_id)
+            if _uncell(r["status"]) == LINK:
+                links[sf_id] = r
+        return links
 
 
 def apply_csv(db, path, company_id) -> dict:
     """Link the reviewed CSV's LINK rows, each re-checked now. One transaction.
 
-    A row is linked only when the SF is still unlinked and the match, run again now, is still LINK
-    to the customer the CSV names. Returns `{"reviewed", "linked", "skipped_already_linked",
+    A row is linked only when the SF is still unlinked and the proposal, run again now, is still
+    LINK with every column equal to the reviewed row (so a row edited to another customer, or a
+    match that changed, is skipped). Returns `{"reviewed", "linked", "skipped_already_linked",
     "skipped_changed"}`.
     """
     reviewed = _reviewed_links(path)
     by_name = _active_by_name(db, company_id)
     counts = Counter()
     try:
+        # Locked: a staff link saved meanwhile waits for this commit instead of being overwritten.
         headers = (
-            _sponsorship_forms(db).filter(PurchaseRequestHeader.id.in_(list(reviewed))).all()
+            _sponsorship_forms(db)
+            .filter(PurchaseRequestHeader.id.in_(list(reviewed)))
+            .with_for_update(of=PurchaseRequestHeader)
+            .all()
             if reviewed
             else []
         )
         found = {str(h.id): h for h in headers}
-        for sf_id, customer_id in reviewed.items():
+        for sf_id, row in reviewed.items():
             header = found.get(sf_id)
             now = _propose_one(db, header, by_name) if header is not None else None
             if now is not None and now["status"] == ALREADY_LINKED:
                 counts["skipped_already_linked"] += 1
                 continue
-            if now is None or now["status"] != LINK or now["customer_id"] != customer_id:
+            if now is None or now["status"] != LINK or any(
+                _uncell(row[f]) != (now[f] or "").strip() for f in CSV_FIELDS if f != "status"
+            ):
                 counts["skipped_changed"] += 1
                 continue
             # The staff form's link path: active + company-visible, and the customer's own name
             # becomes customer_name (procurement_service._apply_customer_link).
-            header.customer_id, header.customer_name = link_customer(db, customer_id)
+            header.customer_id, header.customer_name = link_customer(db, now["customer_id"])
             counts["linked"] += 1
         db.commit()
     except Exception:
@@ -193,7 +227,7 @@ def apply_csv(db, path, company_id) -> dict:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--csv", default="sf_customer_link_proposal.csv", help="Dry run: where to write the proposal.")
+    parser.add_argument("--csv", default=DEFAULT_CSV, help="Dry run: where to write the proposal (default: temp dir).")
     parser.add_argument("--apply", action="store_true", help="Link the LINK rows of --from-csv. Default is dry-run.")
     parser.add_argument("--from-csv", help="The reviewed proposal CSV (required with --apply).")
     parser.add_argument("--company-id", default=DEFAULT_COMPANY_ID, help="Match this company's customers only.")
@@ -201,6 +235,10 @@ def main(argv=None) -> int:
     if args.apply and not args.from_csv:
         parser.error("--apply needs --from-csv <the reviewed proposal CSV>")
 
+    # A script process has no app startup: without these the company scope below is a no-op and
+    # the links write no audit rows (PurchaseRequestHeader is __audit_track__).
+    register_company_scope_listeners()
+    register_audit_listeners()
     db = SessionLocal()
     # Scoped to the one company whose customers it matches: purchase_requests has no company of its
     # own, and link_customer then refuses any other company's customer.

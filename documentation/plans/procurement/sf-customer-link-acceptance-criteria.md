@@ -12,9 +12,13 @@ Plan: `PLAN-sf-customer-link-19oct.md`.
 - CL5 Status ALREADY LINKED: the SF already has a customer link. Never changed.
 - CL6 An inactive customer is never matched. Another company's customer is never matched.
 - CL7 `--apply --from-csv FILE` links only rows marked LINK in that file; a row the owner deleted is
-  not linked. A row whose match changed since the dry run is skipped and counted.
+  not linked. A row whose match changed since the dry run, or that was edited (another customer's
+  code, name or id typed in), is skipped and counted; a file listing one form twice is refused.
+  Only Sponsorship Forms are linked, whatever ids the file carries.
 - CL8 A linked SF gets the customer's id and the customer's own name (as the staff form stores it).
   An existing customer link is never overwritten.
 - CL9 A second `--apply` with the same file links nothing.
 - CL10 All links commit together or not at all; the output prints the counts and tells the operator
   to run `scripts/backfill_sf_sales_type.py` next.
+- CL11 The CSV goes to the temp directory unless a path is given, and no cell starts a spreadsheet
+  formula. Each link writes an audit row.
