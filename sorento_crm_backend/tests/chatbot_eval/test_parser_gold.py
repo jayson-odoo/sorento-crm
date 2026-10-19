@@ -507,6 +507,22 @@ def test_grade_attributes_include_and_attachment_types():
     assert not ok and len(reasons) == 2
 
 
+@pytest.mark.parametrize(
+    "entity",
+    [
+        {"hint": "attachment_type", "canonical_code": "photo", "listed_item": "photo", "confident": False},
+        {"hint": "attachment_type", "canonical_code": "photo", "listed_item": "none of these", "confident": True},
+    ],
+)
+def test_grade_attachment_types_ignores_entities_downstream_drops(entity):
+    """S3: head/grounding drops an unconfident entity and a NOT_LISTED one, so they name no type."""
+    from app.services.chatbot.head.closed_lists_prompt import NOT_LISTED
+
+    assert entity.get("listed_item") != "none of these" or NOT_LISTED == "none of these"
+    ok, reasons = pg.grade_parse({"entities": [entity]}, {"attachment_types": ["photo"]})
+    assert not ok and reasons, reasons
+
+
 def test_conflict_pairs_gold_file():
     rows = pg.load_gold(CONFLICT_PAIRS)
     ids = [r["id"] for r in rows]

@@ -352,16 +352,34 @@ def test_template_file_word_defers_to_file_rule():
     assert re.search(r"video", file_rule, re.I), "R-P2-06 has no meaning rule for videos"
 
 
-def test_template_certificate_ask_always_carries_kind_plus_scheme():
-    """D2: a certificate ask always has the kind entity; a listed scheme is one MORE entity."""
+def test_template_listed_scheme_alone_is_the_whole_certificate_ask():
+    """S1 (#1755 F3-b B-5): a listed scheme named is ONE attachment_type entity (listed_item the
+    scheme, no separate kind entity beside it; code adds the parent kind); a certificate ask with
+    no listed scheme is the kind entity."""
     block = _block("R-P2-06")
-    assert re.search(r"always", block, re.I) and "Certificate kind" in block, (
-        "R-P2-06 does not say a certificate ask ALWAYS carries the kind entity"
+    assert not re.search(r"\balways\b[^.\n]{0,80}kind", block, re.I), (
+        "R-P2-06 still says a certificate ask always carries the kind entity"
     )
-    assert re.search(r"two entities|both|and one more", block, re.I), (
-        "R-P2-06 has no worked example naming the kind and the scheme as two entities"
+    assert re.search(r"(one|a single|the only|the whole) (attachment_type )?(entity|certificate ask)", block, re.I), (
+        "R-P2-06 does not say a listed scheme is one entity"
     )
-    assert "pps cert" in block, "R-P2-06 has no 'pps cert' example"
+    assert re.search(r"no (separate )?kind entity|without (a |the )?(separate )?kind entity|kind entity (beside|next to)|not (also )?(a |the )?(separate )?kind", block, re.I), (
+        "R-P2-06 does not say no separate kind entity stands beside a listed scheme"
+    )
+    assert re.search(r"no (listed )?scheme|not (a )?listed scheme|scheme (is|are) not listed", block, re.I) and "Certificate kind" in block, (
+        "R-P2-06 does not say a certificate ask with no listed scheme is the kind entity"
+    )
+
+
+def test_template_quantity_only_message_defers_to_stock_rule():
+    """S6: R-X-03's quantity sentence must not claim the held domain repeats; after a
+    master_products / attachment / promotion answer R-P1-03 makes it a stock ask."""
+    block = _block("R-X-03")
+    found = [s for s in _sentences(block) if "quantity" in s]
+    assert found, "R-X-03 has no quantity sentence"
+    for sentence in found:
+        assert re.search(r"see (R-P1-0\d, )*R-P1-03", sentence), "quantity sentence does not defer: " + sentence[:200]
+        assert not re.search(r"repeat", sentence, re.I), "quantity sentence still says the held fields repeat: " + sentence[:200]
 
 
 def test_template_attribute_phrase_unprimed_and_still_sold_is_discontinued():
