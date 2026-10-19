@@ -141,6 +141,26 @@ describe('Agent field access, edit', () => {
     expect(sent).toHaveLength(2);
   });
 
+  it('a field stored as Deny and Allow collapses to Deny, as the server applies it', async () => {
+    // The server ANDs one tag's entries for a field (contact_tag_settings.evaluate, _m_and): Deny wins.
+    render({ agent_fields: [entry('estimated_arrival_date', false), entry('estimated_arrival_date')] }, true);
+    const deny = await list('deny');
+    await within(deny).findByRole('button', { name: 'Remove Incoming Stock Enquiries: ETA' });
+    expect(
+      within(await list('allow')).queryByRole('button', { name: 'Remove Incoming Stock Enquiries: ETA' }),
+    ).toBeNull();
+    expect(await savedFields()).toEqual([entry('estimated_arrival_date', false)]);
+  });
+
+  it('a stored field the catalog no longer offers reads as removed, never as its key, and can be removed', async () => {
+    render({ agent_fields: [entry('estimated_arrival_date'), entry('dropped_date')] }, true);
+    const allow = await list('allow');
+    const x = await within(allow).findByRole('button', { name: 'Remove Incoming Stock Enquiries: Removed field' });
+    expect(document.body.textContent).not.toMatch(/dropped_date|incoming_stock_enquiries/);
+    fireEvent.pointerDown(x);
+    expect(await savedFields()).toEqual([entry('estimated_arrival_date')]);
+  });
+
   it('a field picked under Allow is not offered under Deny; picking one there saves it as denied', async () => {
     render({ agent_fields: STORED }, true);
     const deny = await list('deny');
