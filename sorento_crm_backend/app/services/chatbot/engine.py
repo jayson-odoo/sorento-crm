@@ -5390,10 +5390,10 @@ def _run_stages_body(  # noqa: PLR0915
             )
 
         # V1-DOC-SCOPE slice 3: an unlinked contact that is not document staff owns no
-        # customer (`_customer_scope_gate`, `resolve_kinds(hide_customers=...)`). Crew ruling
-        # 15 Oct, keeping the owner's CA-3 Q5(a): a GRANTED report turn is exempt, picker
-        # included: the chat report under `chatbot.analytics`, and the sales report (every
-        # SALES_FIGURE_STATUSES ask, top selling and the ranking included) under
+        # customer (`resolve_kinds(hide_customers=...)` and the typed-word refusal below).
+        # Crew ruling 15 Oct, keeping the owner's CA-3 Q5(a): a GRANTED report turn is exempt,
+        # picker included: the chat report under `chatbot.analytics`, and the sales report
+        # (every SALES_FIGURE_STATUSES ask, top selling and the ranking included) under
         # `sales_orders.sales_report`, each granted per contact by the owner.
         from app.services.chatbot.lanes.business.chat_report import GRANT as _CHAT_REPORT_GRANT
 

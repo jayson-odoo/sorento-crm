@@ -88,7 +88,9 @@ treats an unlinked contact that is not document staff (`unlinked_held`: not the 
 access type, not a salesperson) as owning no customer: a customer word it typed this message
 refuses the turn before the resolver, with the existing no-link line, the same path an
 enforced dealer's word outside its links takes. No picker, no probe, no resolver call for the
-word. Document staff are unchanged. AC-CS-03 ("unlinked contact unchanged: the picker") is
+word. (Superseded by V1-DOC-SCOPE-R, 19 Oct: the gate no longer refuses on the parser's tag;
+the resolver's `hide_customers` drop and the typed-word refusal below hold the contact.)
+Document staff are unchanged. AC-CS-03 ("unlinked contact unchanged: the picker") is
 flipped under the owner rule unlinked != customer.
 
 Security review round 2: under `order` the resolver reads a brand, category, product or order
