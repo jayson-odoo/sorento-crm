@@ -67,7 +67,7 @@ def _offer(member: dict) -> list[dict]:
 
 def _set_page(member: dict) -> dict:
     return {"set_key": {"require": {}, "scope_terms": [], "domain": "inventory", "set_noun": member["noun"],
-                        "access_levels": [], "total": member["total"], "shown": 20,
+                        "access_levels": [], "total": member.get("set_total") or len(_held_codes(member)), "shown": 20,
                         "other_brands": _offer(member)}}
 
 
@@ -84,9 +84,10 @@ def _seed(seam: Seam, member: dict) -> None:
     for name in list(member["held"]) + ["Sorento"] + [b for b, _n in member["offer"]] + ["Grohe"]:
         if name in brands:
             continue
-        row = db.query(Brand).filter(Brand.brand_code == name.upper(), Brand.company_id == SORENTO).first()
+        code = member.get("codes", {}).get(name, name.upper())
+        row = db.query(Brand).filter(Brand.brand_code == code, Brand.company_id == SORENTO).first()
         if row is None:
-            row = Brand(id=str(uuid.uuid4()), brand_code=name.upper(), brand_name=name, company_id=SORENTO)
+            row = Brand(id=str(uuid.uuid4()), brand_code=code, brand_name=name, company_id=SORENTO)
             db.add(row)
             db.flush()
         brands[name] = row.id
@@ -319,3 +320,114 @@ def test_r4a_r_nothing_held_of_the_brand_never_yields_an_empty_set(seam, member,
     seam.say(message, _brand_pick(brand), previous=prev)
     held = {p["canonical_code"] for p in (seam.state["focus"].get("products") or [])}
     assert held or "set_brand_chosen" in seam.rules_fired, (held, seam.rules_fired)
+
+
+# --------------------------------------------------------------------------- #
+# Round 3
+# --------------------------------------------------------------------------- #
+
+def _plans(monkeypatch) -> list:
+    """Every Plan `turn_apply` returned (the seam wraps it for the trace; this wraps that)."""
+    from app.services.chatbot import engine as engine_mod
+
+    seen: list = []
+    inner = engine_mod.turn_apply
+
+    def spy(*a, **k):
+        out = inner(*a, **k)
+        seen.append(out[1])
+        return out
+
+    monkeypatch.setattr(engine_mod, "turn_apply", spy)
+    return seen
+
+
+def _set_keys(plans: list) -> list[dict]:
+    return [
+        ((f.filters or {}).get("set_page") or {}).get("set_key") or {}
+        for p in plans for f in (p.fetch or []) if (f.filters or {}).get("set_page")
+    ]
+
+
+# 1. state OFF: no state_changes key, no State block. Main's path stays (task resumed).
+
+def _plain_brand(raw: str) -> dict:
+    v = _brand_pick(raw)
+    v.pop("state_changes", None)
+    return v
+
+
+STATE_OFF = [("en", "only sorento", "sorento"), ("en_please", "sorento only please", "Sorento")]  # "Sorento je" parks the task on the plain path (a new subject); not pinned
+
+
+@pytest.mark.parametrize("message,raw", [c[1:] for c in STATE_OFF], ids=[c[0] for c in STATE_OFF])
+def test_r4a_r3_state_off_an_open_stock_task_is_resumed_as_on_main(seam, message, raw):
+    prev = _held_state(seam, E9)
+    seam.say(message, _plain_brand(raw), previous=prev)
+    assert "task_resumed_stock_qty" in seam.rules_fired, seam.rules_fired
+    assert "set_brand_chosen" not in seam.rules_fired, seam.rules_fired
+
+
+# 2. real shape: the narrowing cases hold total == held (set_total unset -> len(held)); done in _set_page.
+
+def test_r4a_r3_fixture_totals_match_the_held_count():
+    assert _set_page(E9)["set_key"]["total"] == len(_held_codes(E9))
+    assert _set_page(M242)["set_key"]["total"] == len(_held_codes(M242))
+
+
+# 3. a capped set: held cut at SET_ID_CAP (200), total > 200, held rows include the named brand
+
+def _capped(real: dict, total: int) -> dict:
+    pad = [f"ZZTCAP-{i:03d}" for i in range(200 - len(real["held"]["Sorento"]))]
+    return {**real, "held": {"Sorento": real["held"]["Sorento"], "Cabana": pad}, "set_total": total}
+
+
+CAPPED = [("242_en", M242, 230, "Sorento", "Sorento"), ("e9_en", E9, 260, "only sorento", "sorento"),
+          ("242_bm", M242, 230, "Sorento je", "Sorento"), ("e9_zh", E9, 260, "只要Sorento", "Sorento")]
+
+
+@pytest.mark.parametrize("member,total,message,raw", [c[1:] for c in CAPPED], ids=[c[0] for c in CAPPED])
+def test_r4a_r3_a_capped_set_reruns_instead_of_a_partial_narrow(seam, member, total, message, raw):
+    capped = _capped(member, total)
+    assert len(_held_codes(capped)) == 200 and capped["set_total"] > 200
+    prev = _held_state(seam, capped)
+    seam.say(message, _brand_pick(raw), previous=prev)
+    assert "set_brand_chosen" in seam.rules_fired, seam.rules_fired
+
+
+# 4. mixed brands: every named brand reaches the ONE re-run
+
+MIXED = [
+    ("242_en_held_plus_offered", M242, "sorento and iborn", ("sorento", "iborn"), ("Sorento", "Iborn")),
+    ("242_bm", M242, "sorento dan iborn", ("sorento", "iborn"), ("Sorento", "Iborn")),
+    ("242_zh", M242, "sorento和iborn", ("sorento", "iborn"), ("Sorento", "Iborn")),
+    ("e9_en_two_offered_not_held", DEFAULT_HELD_E9, "cabana and mocha", ("cabana", "mocha"), ("Cabana", "Mocha")),
+    ("e9_bm_two_offered_not_held", DEFAULT_HELD_E9, "cabana dan mocha", ("cabana", "mocha"), ("Cabana", "Mocha")),
+    ("e9_zh_two_offered_not_held", DEFAULT_HELD_E9, "cabana和mocha", ("cabana", "mocha"), ("Cabana", "Mocha")),
+]
+
+
+@pytest.mark.parametrize("member,message,raws,names", [c[1:] for c in MIXED], ids=[c[0] for c in MIXED])
+def test_r4a_r3_mixed_brands_rerun_the_set_once_with_every_named_brand(seam, monkeypatch, member, message, raws, names):
+    plans = _plans(monkeypatch)
+    prev = _held_state(seam, member)
+    seam.say(message, _brand_pick(raws[0], None, None, True, raws[1]), previous=prev)
+    assert "set_brand_chosen" in seam.rules_fired, seam.rules_fired
+    keys = _set_keys(plans)
+    assert len(keys) == 1, (keys, seam.rules_fired)
+    blob = json.dumps(keys[0], default=str).lower()
+    for name in names:
+        assert name.lower() in blob, (name, keys[0])
+
+
+# 5. guard: an entity carrying only a brand CODE that differs from its name still picks the offer
+
+def test_r4a_r3_guard_a_brand_code_picks_the_offered_brand(seam):
+    member = {**E9, "codes": {"Sorento": "SRTX"}}
+    prev = _held_state(seam, member)
+    ent = entity("SRTX", "brand", canonical_code="SRTX")
+    seam.say("only sorento", _emit(domain_hint="inventory", intent_hint="check_stock", entities=[ent],
+                                   state_changes=[_op("set", "brand")]), previous=prev)
+    want = {seam.uuid_of[c] for c in member["held"]["Sorento"]}
+    ids = _ids_in_calls(seam.turn_calls[-1])
+    assert ids and ids <= want, (seam.turn_calls[-1], seam.rules_fired)
