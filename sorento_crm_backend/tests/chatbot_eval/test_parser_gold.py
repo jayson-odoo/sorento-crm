@@ -533,9 +533,11 @@ def test_conflict_pairs_gold_file():
     by_id = {r["id"]: r for r in rows}
     assert all("context" in r for r in rows if r["id"].startswith(("cp2-c1-0", "cp2-c6-0")) and r["id"] not in
                ("cp2-c1-10", "cp2-c6-03", "cp2-c6-04"))
-    # C1, both directions of the count rule: a stock answer and an ETA answer give different domains.
+    # C1, owner ruling 20 Oct: a stated quantity with no ask word is a stock ask after ANY answer
+    # (stock or ETA); a message whose own words name another ask (c1-07 "ETA ...") keeps it.
     assert by_id["cp2-c1-01"]["expect"]["domain_hint"] == "inventory"
-    assert by_id["cp2-c1-02"]["expect"]["domain_hint"] == "incoming"
+    assert by_id["cp2-c1-02"]["expect"]["domain_hint"] == "inventory"
+    assert by_id["cp2-c1-07"]["expect"]["domain_hint"] == "incoming"
     for r in rows:
         assert not r["expect"]["product"].upper().startswith("ZZ"), r["id"]  # real catalog codes only
         assert r["expect"]["product"].lower() in r["message"].lower(), r["id"]

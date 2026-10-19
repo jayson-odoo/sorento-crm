@@ -416,3 +416,19 @@ def test_template_bare_spec_has_worked_example_with_reason():
     assert "whole" in block and re.search(r"spec list|all of[^.\n]{0,30}spec", block, re.I), (
         "R-P3-05 does not give the reason (whole spec list)"
     )
+
+
+def test_template_stated_quantity_is_a_stock_ask_after_any_answer():
+    """F1-F (owner ruling 20 Oct): a stated quantity with no ask word of its own is a stock ask
+    (inventory / check_stock) whatever the last answer's domain."""
+    block = _block("R-P1-03")
+    assert not re.search(r"continues the last answer", block, re.I), (
+        "R-P1-03 still says a quantity continues the last answer's domain"
+    )
+    assert not re.search(r"takes no quantity|domain that takes a quantity|when that domain takes", block, re.I), (
+        "R-P1-03 still limits the rule to domains that take a quantity"
+    )
+    first = block.split("\n- ", 1)[0]
+    assert "inventory" in first and "check_stock" in first and re.search(r"whatever|any answer|every answer|regardless", first, re.I), (
+        "R-P1-03 does not say a stated quantity is a stock ask whatever the last answer"
+    )
