@@ -1,0 +1,30 @@
+{"id": "cp2-c1-01", "message": "ZZA100 x 5", "expect": {"domain_hint": "inventory", "product": "ZZA100"}, "context": {"previous_reply": "ZZA000: 40 pcs in stock at the main warehouse.", "subject": "domain inventory (answered); product ZZA000", "open_question": null}}
+{"id": "cp2-c1-02", "message": "ZZB100 x 5", "expect": {"domain_hint": "incoming", "product": "ZZB100"}, "context": {"previous_reply": "ZZB000 incoming: 200 pcs, arriving 12 Nov.", "subject": "domain incoming (answered); product ZZB000", "open_question": null}}
+{"id": "cp2-c1-03", "message": "ZZC100 5 units", "expect": {"domain_hint": "inventory", "product": "ZZC100"}, "context": {"previous_reply": "ZZC000 list price: RM 120.", "subject": "domain master_products (answered); product ZZC000", "open_question": null}}
+{"id": "cp2-c1-04", "message": "ZZD100 x 30", "expect": {"domain_hint": "inventory", "product": "ZZD100"}, "context": {"previous_reply": "Here is the photo of ZZD000.", "subject": "domain product_attachment (answered); product ZZD000", "open_question": null}}
+{"id": "cp2-c1-05", "message": "ZZE100", "expect": {"domain_hint": "incoming", "product": "ZZE100"}, "context": {"previous_reply": "ZZE000 incoming: 90 pcs, arriving 3 Dec.", "subject": "domain incoming (answered); product ZZE000", "open_question": null}}
+{"id": "cp2-c1-06", "message": "ZZF100 list price", "expect": {"domain_hint": "master_products", "product": "ZZF100"}, "context": {"previous_reply": "ZZF000 incoming: 60 pcs, arriving 8 Nov.", "subject": "domain incoming (answered); product ZZF000", "open_question": null}}
+{"id": "cp2-c1-07", "message": "ETA ZZG100 x 5", "expect": {"domain_hint": "incoming", "product": "ZZG100"}, "context": {"previous_reply": "ZZG000: 12 pcs in stock at the main warehouse.", "subject": "domain inventory (answered); product ZZG000", "open_question": null}}
+{"id": "cp2-c1-08", "message": "ZZH100 drawing", "expect": {"domain_hint": "product_attachment", "product": "ZZH100"}, "context": {"previous_reply": "ZZH000 incoming: 30 pcs, arriving 20 Nov.", "subject": "domain incoming (answered); product ZZH000", "open_question": null}}
+{"id": "cp2-c1-09", "message": "ZZI100 10 pcs", "expect": {"domain_hint": "order", "status": "outstanding", "product": "ZZI100"}, "context": {"previous_reply": "Outstanding orders for ZZI000: 2 orders, 40 pcs.", "subject": "domain order (answered); status outstanding; product ZZI000", "open_question": null}}
+{"id": "cp2-c1-10", "message": "ZZJ100 x 300", "expect": {"domain_hint": "inventory", "product": "ZZJ100"}}
+{"id": "cp2-wd-01", "message": "ZZK100 when does it get to the shop", "expect": {"status": "outstanding", "domain_hint": "order", "product": "ZZK100"}}
+{"id": "cp2-wd-02", "message": "when can ZZL100 reach ZZ Demo Trading", "expect": {"status": "outstanding", "domain_hint": "order", "product": "ZZL100", "customer": true}}
+{"id": "cp2-wd-03", "message": "how soon will ZZM100 be at ZZ Demo Trading's place", "expect": {"status": "outstanding", "domain_hint": "order", "product": "ZZM100", "customer": true}}
+{"id": "cp2-wd-04", "message": "ZZN100 什么时候到 ZZ Demo Trading", "expect": {"status": "outstanding", "domain_hint": "order", "product": "ZZN100", "customer": true}}
+{"id": "cp2-wd-05", "message": "when will ZZP100 arrive from the factory", "expect": {"domain_hint": "incoming", "product": "ZZP100"}}
+{"id": "cp2-wd-06", "message": "ETA of the ZZQ100 shipment", "expect": {"domain_hint": "incoming", "product": "ZZQ100"}}
+{"id": "cp2-wd-07", "message": "when is ZZR100 landing in our warehouse", "expect": {"domain_hint": "incoming", "product": "ZZR100"}}
+{"id": "cp2-c6-01", "message": "when will ZZS200 arrive", "expect": {"domain_hint": "order", "status": "outstanding", "product": "ZZS200"}, "context": {"previous_reply": "ZZS100: 20 pcs in stock.", "subject": "domain inventory (answered); customer ZZ Demo Trading; product ZZS100", "open_question": null}}
+{"id": "cp2-c6-02", "message": "ETA from factory for ZZT200", "expect": {"domain_hint": "incoming", "product": "ZZT200"}, "context": {"previous_reply": "ZZT100: 20 pcs in stock.", "subject": "domain inventory (answered); customer ZZ Demo Trading; product ZZT100", "open_question": null}}
+{"id": "cp2-c6-03", "message": "when will ZZU100 arrive", "expect": {"domain_hint": "incoming", "product": "ZZU100"}}
+{"id": "cp2-c6-04", "message": "wen deliverd ZZV200 to ZZ Demo Trading", "expect": {"domain_hint": "order", "status": "outstanding", "product": "ZZV200", "customer": true}}
+{"id": "cp2-c2-01", "message": "gambar ZZW100", "expect": {"product": "ZZW100", "attachment_types": ["photo"]}}
+{"id": "cp2-c2-02", "message": "video ZZX100", "expect": {"product": "ZZX100", "attachment_types": ["video"]}}
+{"id": "cp2-c2-03", "message": "pps cert ZZY100", "expect": {"product": "ZZY100", "attachment_types": ["certificate"]}}
+{"id": "cp2-c2-04", "message": "SPAN cert for ZZZ100", "expect": {"product": "ZZZ100", "attachment_types": ["certificate"]}}
+{"id": "cp2-c3-01", "message": "ZZA300 check weight ?", "expect": {"domain_hint": "master_products", "product": "ZZA300", "attributes_include": ["weight"]}}
+{"id": "cp2-c3-02", "message": "steel grade of ZZB300", "expect": {"product": "ZZB300", "attributes_include": ["steel grade"]}}
+{"id": "cp2-c3-03", "message": "ZZC300 spec", "expect": {"product": "ZZC300", "attributes_only": []}}
+{"id": "cp2-c3-04", "message": "ZZD300 P-trap set price", "expect": {"product": "ZZD300", "attributes_include": ["price"], "no_attribute": "p-trap"}}
+{"id": "cp2-c3-05", "message": "is ZZE300 still sold", "expect": {"product": "ZZE300", "attributes_include": ["discontinued"]}}

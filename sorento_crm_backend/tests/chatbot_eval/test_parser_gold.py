@@ -474,3 +474,130 @@ def test_run_live_rows_carry_the_resolved_prompt_version_number(session_factory,
 
     assert len(out) == 2 and calls
     assert [r.get("prompt_version") for r in out] == [7, 7], out
+
+
+# --- PARSER-TEMPLATE F1-B: context rows and the conflict-pair gold -------------------------------
+
+CONFLICT_PAIRS = BACKEND / "scripts" / "chatbot_eval" / "gold" / "parser_conflict_pairs.jsonl"
+CTX = {"previous_reply": "ZZA000: 40 pcs in stock.", "subject": "domain inventory (answered); product ZZA000",
+       "open_question": None}
+
+
+def test_load_gold_keeps_a_context_and_rows_without_one_stay_as_before(tmp_path):
+    with_ctx = json.dumps({"id": "c", "message": "ZZA100 x 5", "expect": {}, "context": CTX})
+    rows = pg.load_gold(_write(tmp_path, [_row("a"), with_ctx]))
+    assert "context" not in rows[0]
+    assert rows[1]["context"] == CTX
+
+
+@pytest.mark.parametrize("bad", ["text", ["x"], {"previous_reply": "a", "bogus": 1}, {"previous_reply": 5}])
+def test_load_gold_rejects_a_malformed_context(tmp_path, bad):
+    line = json.dumps({"id": "c", "message": "hi", "expect": {}, "context": bad})
+    with pytest.raises(ValueError):
+        pg.load_gold(_write(tmp_path, [line]))
+
+
+def test_grade_attributes_include_and_attachment_types():
+    v = {"requested_attributes": ["steel_grade"], "entities": [
+        {"hint": "attachment_type", "canonical_code": "certificate", "listed_item": "certificate"},
+        {"hint": "attachment_type", "canonical_code": "span", "listed_item": "span"}]}
+    assert pg.grade_parse(v, {"attributes_include": ["steel grade"], "attachment_types": ["certificate", "span"]}) == (True, [])
+    ok, reasons = pg.grade_parse({"requested_attributes": [], "entities": []},
+                                 {"attributes_include": ["weight"], "attachment_types": ["photo"]})
+    assert not ok and len(reasons) == 2
+
+
+def test_conflict_pairs_gold_file():
+    rows = pg.load_gold(CONFLICT_PAIRS)
+    ids = [r["id"] for r in rows]
+    assert len(ids) == len(set(ids))
+    for prefix in ("cp2-c1-", "cp2-wd-", "cp2-c2-", "cp2-c3-", "cp2-c6-"):
+        assert sum(i.startswith(prefix) for i in ids) >= 3, prefix
+    assert all(i.startswith("cp2-") for i in ids)
+    by_id = {r["id"]: r for r in rows}
+    assert all("context" in r for r in rows if r["id"].startswith(("cp2-c1-0", "cp2-c6-0")) and r["id"] not in
+               ("cp2-c1-10", "cp2-c6-03", "cp2-c6-04"))
+    # C1, both directions of the count rule: a stock answer and an ETA answer give different domains.
+    assert by_id["cp2-c1-01"]["expect"]["domain_hint"] == "inventory"
+    assert by_id["cp2-c1-02"]["expect"]["domain_hint"] == "incoming"
+    for r in rows:
+        assert "ZZ" in r["message"] or "ZZ" in json.dumps(r.get("context") or {}), r["id"]
+
+
+def _capture(monkeypatch, session_factory, config):
+    from app.services.chatbot import turn_runtime
+    from app.services.chatbot.head import parser as parser_mod
+
+    seen = {}
+    monkeypatch.setattr(parser_mod, "parse", lambda cfg, block: seen.setdefault("block", block) or {})
+    for fn in ("active_brands", "promotion_kind_rows", "product_type_names", "product_detail_values"):
+        monkeypatch.setattr(turn_runtime, fn, lambda db: None)
+    pg._parse_one("ZZA100 x 5", config, session_factory)
+    return seen["block"]
+
+
+def _config(**kw):
+    from app.services.chatbot.head import parser as parser_mod
+
+    return parser_mod.ParserConfig(system_prompt="x", prompt_version=1, provider="openai", model="m", api_key="k", **kw)
+
+
+def test_parse_one_without_a_context_builds_todays_block_byte_equal(session_factory, monkeypatch):
+    from app.services.chatbot.turn import context as context_mod
+
+    block = _capture(monkeypatch, session_factory, _config())
+    expected, _ = context_mod.assemble(context_mod.ContextLayers(
+        level="off", profile_facts=None, summaries=None, earlier_messages=None, previous_response=None,
+        current_subject=None, pending_kind=None, pending_options=None, settings_profile_line=None,
+        current_message="ZZA100 x 5", reply_to=None, media_line=None, brands=None, promotion_kinds=None,
+        product_types=None, product_details=None, candidate_lines=None,
+    ))
+    assert block == expected
+
+
+def test_parse_one_renders_a_context_through_the_legacy_lines(session_factory, monkeypatch):
+    from app.services.chatbot.head import parser as parser_mod
+
+    seen = {}
+    monkeypatch.setattr(parser_mod, "parse", lambda cfg, block: seen.setdefault("block", block) or {})
+    monkeypatch.setattr(pg, "_parse_one", pg._parse_one)
+    from app.services.chatbot import turn_runtime
+    for fn in ("active_brands", "promotion_kind_rows", "product_type_names", "product_detail_values"):
+        monkeypatch.setattr(turn_runtime, fn, lambda db: None)
+    ctx = {**CTX, "open_question": "Do you want the ETA as well?"}
+    pg._parse_one("ZZA100 x 5", _config(), session_factory, ctx)
+    lines = seen["block"].splitlines()
+    assert "Previous response: ZZA000: 40 pcs in stock." in lines
+    assert "Current user message: ZZA100 x 5" in lines
+    assert "Current subject: domain inventory (answered); product ZZA000" in lines
+    assert any(ln.startswith("Open question:") and "Do you want the ETA as well?" in ln for ln in lines)
+
+
+def test_parse_one_renders_a_context_as_the_state_block_when_the_config_has_one(session_factory, monkeypatch):
+    from app.services.chatbot import turn_runtime
+    from app.services.chatbot.head import parser as parser_mod
+
+    seen = {}
+    monkeypatch.setattr(parser_mod, "parse", lambda cfg, block: seen.setdefault("block", block) or {})
+    for fn in ("active_brands", "promotion_kind_rows", "product_type_names", "product_detail_values"):
+        monkeypatch.setattr(turn_runtime, fn, lambda db: None)
+    pg._parse_one("ZZA100 x 5", _config(state_block=True), session_factory, CTX)
+    block = seen["block"]
+    lines = block.splitlines()
+    assert "Previous response: ZZA000: 40 pcs in stock." in lines
+    assert "State:" in lines
+    assert "- subject: domain inventory (answered); product ZZA000" in lines
+    assert "- open question: none" in lines
+    assert not any(ln.startswith("Current subject:") for ln in lines)
+
+
+def test_run_live_hands_a_rows_context_to_the_parse(session_factory, monkeypatch):
+    from app.services import llm_provider
+    from app.services.chatbot.head import parser as parser_mod
+
+    got = []
+    monkeypatch.setattr(parser_mod, "resolve_config", lambda db, **kw: _config())
+    monkeypatch.setattr(pg, "_parse_one", lambda message, config, factory, context=None: got.append(context) or {"status": "ok"})
+    rows = [{"id": "a", "message": "m", "expect": {}, "context": CTX}, {"id": "b", "message": "m", "expect": {}}]
+    pg.run_live(rows, session_factory=session_factory, version_id="1", repeats=1, max_usd=5.0, require_key_last4="WXYZ")
+    assert got == [CTX, None]
