@@ -202,6 +202,8 @@ def test_seam4_a_quantity_in_a_class_ask_revises_the_held_check_under_the_state_
         entities=list(_CLASS_ASK), demand_qty=6, closed_lists=True,
         domain_in_message=False, entity_op="replace_combine", domain_hint="master_products", intent_hint="check_product",
         scope_intent="specific", message_type="business_query", continuation=False, topic_reset=False, match_mode="and",
+        # The engine's own flag on the lane's verdict (engine.py, the state path), as `closed_lists` is.
+        state_path=True,
     )
 
     _state2, plan = apply(state, v, build_policy())

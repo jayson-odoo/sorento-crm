@@ -1736,10 +1736,15 @@ def _stocked(db, code: str, name: str, description: str) -> Product:
     return product
 
 
-def _basin_and_decoy(db) -> tuple[Product, Product]:
+def _basin_and_decoys(db) -> tuple[Product, list[Product]]:
+    """The basin, and two water closets whose CODES hold "basin": inside the code (a substring row)
+    and at its start (a prefix row, entity_resolver `_prefix_probe_product`)."""
     return (
         _stocked(db, "ZZTWB01", "ZZT White Wash Basin", "ZZT WHITE WASH BASIN"),
-        _stocked(db, "ZZBASINWC7", "ZZT Close Coupled WC", "CLOSE COUPLED P-TRAP WATER CLOSET"),
+        [
+            _stocked(db, "ZZBASINWC7", "ZZT Close Coupled WC", "CLOSE COUPLED P-TRAP WATER CLOSET"),
+            _stocked(db, "BASINZZWC7", "ZZT Close Coupled WC", "CLOSE COUPLED P-TRAP WATER CLOSET"),
+        ],
     )
 
 
@@ -1753,9 +1758,9 @@ def _product_codes(payload: dict, *, tier: str | None = None) -> list[str]:
 
 
 def test_cs1_a_word_never_joins_a_described_set_by_a_code_substring(client, db):
-    """Shape B (`_collect_lookup_product_ids`): RED on HEAD, the resolver's prefix probe falls back
-    to ILIKE '%basin%' on codes (tier "substring") and the decoy joins the set."""
-    basin, decoy = _basin_and_decoy(db)
+    """Shape B (`_collect_lookup_product_ids`): the resolver's code probe reads "basin" inside a
+    code (tier "substring") or at its start (tier "prefix"); neither decoy joins the set."""
+    basin, decoys = _basin_and_decoys(db)
 
     response = client.post(
         ENDPOINT,
@@ -1767,13 +1772,13 @@ def test_cs1_a_word_never_joins_a_described_set_by_a_code_substring(client, db):
     assert response.status_code == 200
     payload = response.json()
     described = _product_codes(payload, tier="spec_search")
-    assert decoy.product_code not in described, payload.get("predicate")
+    assert not [d.product_code for d in decoys if d.product_code in described], payload.get("predicate")
     assert basin.product_code in described, payload.get("predicate")
 
 
 def test_cs1_the_spec_fallback_never_answers_a_word_with_a_code_substring_product(client, db):
-    """The spec fallback (no `require`): RED on HEAD, the word's code-substring row answers it."""
-    _basin, decoy = _basin_and_decoy(db)
+    """The spec fallback (no `require`): no code-substring or code-prefix row of the word answers it."""
+    _basin, decoys = _basin_and_decoys(db)
 
     response = client.post(
         ENDPOINT,
@@ -1783,4 +1788,84 @@ def test_cs1_the_spec_fallback_never_answers_a_word_with_a_code_substring_produc
         },
     )
     assert response.status_code == 200
-    assert decoy.product_code not in _product_codes(response.json()), response.json().get("resolutions")
+    answered = _product_codes(response.json())
+    assert not [d.product_code for d in decoys if d.product_code in answered], response.json().get("resolutions")
+
+
+# --- CODE-SUBSTRING review (T2 to T6) ---------------------------------------------------------
+
+
+def test_cs_t2_and_mode_by_entity_type_and_empty_agree_with_the_rows_left_after_the_drop(client, db):
+    """Security should-fix: a word token with one exact row (a warehouse coded ZZBASIN) plus a code
+    fragment row (QQZZBASINWC7, AND tier) in AND mode. The fragment row is dropped, the exact row
+    closes the fallback (`_every_caller_token_resolved`), and the response's `by_entity_type` and
+    `empty` must agree with the intersection left, never list the dropped product."""
+    db.add(Warehouse(id=str(uuid.uuid4()), warehouse_code="ZZBASIN", warehouse_name="ZZ Basin store"))
+    db.flush()
+    _stocked(db, "QQZZBASINWC7", "ZZT Close Coupled WC", "CLOSE COUPLED P-TRAP WATER CLOSET")
+
+    payload = client.post(
+        ENDPOINT,
+        json={
+            "query": "zzbasin", "tokens": ["zzbasin"], "raw_tokens": ["zzbasin"], "match_mode": "and", "spec_fallback": True,
+            "exact_match": True, "fallback_to_all_types": True, "understand_phrase": False,
+        },
+    ).json()
+
+    listed = {(t, m.get("canonical_code")) for t, rows in (payload.get("by_entity_type") or {}).items() for m in rows}
+    left = {(m.get("entity_type"), m.get("canonical_code")) for m in payload.get("intersection") or []}
+    assert ("product", "QQZZBASINWC7") not in listed, payload.get("by_entity_type")
+    assert listed == left, (payload.get("by_entity_type"), payload.get("intersection"))
+    assert payload.get("empty") == (not payload.get("intersection")), payload
+
+
+def test_cs_t3_a_zero_qualifying_set_carries_no_code_fragment_rows_of_the_word(client, db):
+    """Opus nit: "which zzbasin has cert" with no certificate anywhere. The zero set answers before
+    the fallback's drop; the response must still carry no code substring row of the word."""
+    _stocked(db, "QQZZBASINWC7", "ZZT Close Coupled WC", "CLOSE COUPLED P-TRAP WATER CLOSET")
+
+    payload = client.post(
+        ENDPOINT,
+        json={
+            "query": "which zzbasin has cert", "tokens": ["zzbasin"], "raw_tokens": ["zzbasin"], "require": {"certificate": True},
+            "predicate_words": ["cert"], "spec_fallback": True, "exact_match": True, "understand_phrase": False,
+        },
+    ).json()
+
+    assert (payload.get("predicate") or {}).get("qualifying_total") == 0, payload.get("predicate")
+    rows = [m for r in payload.get("resolutions") or [] for m in r.get("matches") or []]
+    rows += list(payload.get("intersection") or []) + [m for ms in (payload.get("by_entity_type") or {}).values() for m in ms]
+    assert "QQZZBASINWC7" not in [m.get("canonical_code") for m in rows if m.get("entity_type") == "product"], rows
+
+
+def test_cs_t4_and_mode_admits_fragment_rows_only_for_a_token_with_a_digit():
+    """Opus nit, pinned on the helper: in AND mode the intersection blends every caller token, so a
+    caller token with a digit admits its code fragment rows; digitless tokens do not."""
+    from app.api.v1.system.references import _collect_lookup_product_ids
+
+    rows = [{"entity_type": "product", "match_tier": "and", "uuid": "u-and"},
+            {"entity_type": "product", "match_tier": "substring", "uuid": "u-sub"}]
+
+    assert _collect_lookup_product_ids({"tokens": ["basin", "wc286"], "intersection": list(rows)}) == ["u-and", "u-sub"]
+    assert _collect_lookup_product_ids({"tokens": ["wall", "basin"], "intersection": list(rows)}) == []
+
+
+@pytest.mark.parametrize("token", ["zzbasin\u00b2", "zzbasin\u0663", "zz\u0661\u0662"])
+def test_cs_t5_only_an_ascii_digit_makes_a_code_fragment(token):
+    """Security nit: `str.isdigit` is true for "²" and Arabic-Indic digits; a token holding only
+    those is a word, never a code fragment (`_code_matched` already tests ASCII)."""
+    from app.api.v1.system.references import _has_digit
+
+    assert _has_digit(token) is False, token
+    assert _has_digit("zzwc286") is True
+
+
+@pytest.mark.parametrize("token,code", [("zz_1", "ZZA1"), ("zz%1", "ZZAB1")])
+def test_cs_t6_the_code_prefix_probe_escapes_like_wildcards(db, token, code):
+    """Security nit: `_prefix_probe_product` builds ILIKE '<token>%' / '%<token>%' unescaped, so
+    "_" and "%" in a token match any code character. `_code_candidates` uses `autoescape`."""
+    from app.services.entity_resolver import _prefix_probe_product
+
+    _stocked(db, code, f"ZZT {code}", "CLOSE COUPLED P-TRAP WATER CLOSET")
+
+    assert code not in [e.canonical_code for e in _prefix_probe_product(db, token)], token

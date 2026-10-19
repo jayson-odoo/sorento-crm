@@ -3,7 +3,8 @@
 Ported from CHAT-STATE's xfail(strict) reds (crew/chat-state-r2 929e4135da,
 tests/chatbot/test_chat_state_r6_s5b_reconcile_and_answer_ports.py:47-101), here as plain reds: a
 class word with no digit ("basin" in "ada basin?" / "basin有货吗") is a category, never a product hit on
-the codes that merely contain it (decoys ZZBASINWC1 / ZZMIXERWC1, water closets with stock). The
+the codes that merely contain it (decoys ZZBASINWC1 / ZZMIXERWC1 inside the code, BASINZZWC1 /
+MIXERZZWC1 at its start; water closets with stock). The
 English "any mixer in stock?" and a whole typed code are the guards. Round 7's world and chat (Leena),
 real resolver, class vocabulary, spec registry and brands; the parser verdict is stubbed. The state-on
 twin runs the CHAT-STATE path (`state_block`) as CHAT-STATE's `StateChat` does.
@@ -66,14 +67,15 @@ class StateChat(_Leena):
 
 
 def _decoys(db, world) -> set[str]:
-    """Two water closets with stock whose CODES hold a class word ("basin", "mixer") and whose
-    name and description say only what they are (a water closet)."""
+    """Water closets with stock whose CODES hold a class word ("basin", "mixer"), inside the code
+    (a substring row) or at its start (a prefix row), and whose name and description say only what
+    they are (a water closet)."""
     uom = world["srt_tubs"][0].base_uom_id
     wc = _class_category(db, "WC")
     made = [
         _make(db, code=code, name=f"Sorento WC {code}", description="CLOSE COUPLED P-TRAP WATER CLOSET",
               brand=world["sorento"], category_id=wc, uom_id=uom)
-        for code in ("ZZBASINWC1", "ZZMIXERWC1")
+        for code in ("ZZBASINWC1", "ZZMIXERWC1", "BASINZZWC1", "MIXERZZWC1")
     ]
     for p in made:
         _stock_for(db, product_id=p.id, warehouse_id=world["warehouse"].id)
