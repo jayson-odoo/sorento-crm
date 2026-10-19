@@ -3010,8 +3010,9 @@ def resolve_kinds(
             continue
         echoed = next((t for t in by_token if _token_key(t) == key), None)
         by_token[echoed if echoed is not None else word] = {"brand": 1}
-        # A live brand named exactly is an exact whole-token hit.
-        exact_by_token[echoed if echoed is not None else word] = {"brand": 1}
+        # A live brand named exactly is an exact whole-token hit (merged beside the token's
+        # other exact kinds, never replacing them).
+        exact_by_token.setdefault(echoed if echoed is not None else word, {})["brand"] = 1
         unplaced.pop(key, None)
         unplaced.pop(_token_key(jsc.nullish_str(e.get("raw")).strip()), None)
 

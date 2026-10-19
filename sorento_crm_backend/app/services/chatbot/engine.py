@@ -9131,7 +9131,7 @@ def _run_casual_lane(
     recalled: list[dict[str, Any]] | None = None,
     fallback: Any = None,
     chat_console: bool = False,
-    user_turn: Any = None,
+    user_turn: Any,
 ) -> TurnResult:
     """The `low_signal` lane, from the model call to the closed turn (AC-401, AC-403).
 
