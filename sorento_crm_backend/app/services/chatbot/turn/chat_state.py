@@ -739,7 +739,7 @@ def keep_class_members(state: State, members: set[str]) -> State:
     """Lead decision S3 (card R1; membership read from the data): a class said over the held
     explicit products filters them. The members of the said class stay the subject; the
     others drop, and with none left the subject is the class predicate with the other held
-    axes kept. A described set's members and a held token are not explicit products here."""
+    axes kept. A described set's members and a held token are not explicit products in this rule."""
     rows = [r for r in state.focus.products if isinstance(r, dict)]
     kept = [r for r in rows if not (r.get("uuid") and r.get("described_set") is not True) or str(r["uuid"]) in members]
     return state if len(kept) == len(rows) else _held_narrowed(state, kept)
