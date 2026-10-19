@@ -53,22 +53,16 @@ describe('addSplit on a pending, unsplit line', () => {
     expect(r.id).toBe(splits[1].id);
   });
 
-  it('line 752: qty above base is capped at base, the New line gets 0', () => {
-    const { r, splits } = rows([mk(752, 504, '2026-12-20', 649, '2027-01-02')], 'l752');
-    expect(splits.map(shape)).toEqual([
-      [504, '2027-01-02', 'l752'],
-      [0, '2026-12-20', null],
-    ]);
-    expect(r.id).toBe(splits[1].id);
+  it('line 752: qty above base is capped at base, only the first row and never a qty-0 row (AC-G20)', () => {
+    const { splits } = rows([mk(752, 504, '2026-12-20', 649, '2027-01-02')], 'l752');
+    expect(splits.map(shape)).toEqual([[504, '2027-01-02', 'l752']]);
+    expect(splits.some((s) => s.qty === 0)).toBe(false);
   });
 
-  it('date only: whole base qty on the new date, New line 0', () => {
-    const { r, splits } = rows([mk(608, 192, '2026-11-20', null, '2027-01-02')], 'l608');
-    expect(splits.map(shape)).toEqual([
-      [192, '2027-01-02', 'l608'],
-      [0, '2026-11-20', null],
-    ]);
-    expect(r.id).toBe(splits[1].id);
+  it('date only: whole base qty on the new date, only the first row and never a qty-0 row (AC-G20)', () => {
+    const { splits } = rows([mk(608, 192, '2026-11-20', null, '2027-01-02')], 'l608');
+    expect(splits.map(shape)).toEqual([[192, '2027-01-02', 'l608']]);
+    expect(splits.some((s) => s.qty === 0)).toBe(false);
   });
 
   it('qty only down: new qty at the base date, the rest on New line', () => {
