@@ -604,43 +604,6 @@ def _unsure_capture_as_codes(verdict: dict[str, Any]) -> dict[str, Any]:
     return {**verdict, "entities": out} if changed else verdict
 
 
-_SET_SUBJECT_KINDS = ("brand", "category", "product_type", "specification")
-
-
-def _with_held_set_axes(
-    parse_output: dict[str, Any], focus: Any, *, unsettled_only: bool
-) -> dict[str, Any]:
-    """CHAT-STATE r5 F1 (card R1): a refine that sets ONE axis of a held described set keeps
-    the held others. `with_carried_entities` hands the focus over only on a turn that names
-    nothing, so a message naming one class (or brand, or spec) dropped the rest from the
-    fetch. State path only (`state_led == "refine"`); the parser's ops already decided what
-    the focus holds (`chat_state.apply_changes`: a `set` replaced its axis, a `clear` emptied
-    it, `new_subject` is not a refine), so every set-subject kind this message did not name
-    rides beside its own entities, flagged `current_message: false`."""
-    own = [e for e in parse_output.get("entities") or [] if isinstance(e, dict)]
-    typed = {str(e.get("hint") or "").strip().lower() for e in own if e.get("current_message") is not False}
-    if not typed or not typed <= set(_SET_SUBJECT_KINDS):
-        return parse_output
-    held = turn_runtime.with_carried_entities({**parse_output, "entities": []}, focus, unsettled_only=unsettled_only)
-    carried = [
-        e for e in held.get("entities") or []
-        if isinstance(e, dict) and e.get("hint") in _SET_SUBJECT_KINDS and e.get("hint") not in typed
-    ]
-    if "brand" not in typed:
-        # A held brand lives on the focus as plain codes, not as rows.
-        carried = [
-            *(
-                {"raw": b, "hint": "brand", "canonical_code": b, "current_message": False, "confident": True}
-                for b in getattr(focus, "brands", None) or []
-                if isinstance(b, str) and b.strip()
-            ),
-            *carried,
-        ]
-    if not carried:
-        return parse_output
-    return {**parse_output, "entities": [*carried, *own]}
-
-
 def _exact_codes_only(
     parse_output: dict[str, Any],
     resolved_kinds: dict[str, dict[str, int]],
@@ -5674,10 +5637,6 @@ def _run_stages_body(  # noqa: PLR0915
                 state_out.focus,
                 unsettled_only=plan.ask is None,
             )
-            if state_out.state_led == "refine":
-                resolver_parse_output = _with_held_set_axes(
-                    resolver_parse_output, state_out.focus, unsettled_only=plan.ask is None
-                )
             resolver_parse_output = _without_carried_domain_on_a_roster_pick(
                 resolver_parse_output, plan.trace.rules_fired
             )
