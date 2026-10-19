@@ -285,9 +285,14 @@ def _fact_ok(row: dict[str, Any], fact: Any) -> bool:
     return fact in domains or any(str(fact) in str(t.get("name")) for t in _tools(row))
 
 
+def _omitted(payload: Any) -> bool:
+    """A trace payload that was capped out: the bare `{"note": "payload omitted: ..."}` replaces it."""
+    return isinstance(payload, dict) and str(payload.get("note") or "").startswith("payload omitted")
+
+
 def _memory_omitted(row: dict[str, Any]) -> bool:
     """The memory payload was capped out of the trace (the bare note replaces it)."""
-    return str(_kind(row, "memory").get("note") or "").startswith("payload omitted")
+    return _omitted(_kind(row, "memory"))
 
 
 def _oq_unreadable(row: dict[str, Any]) -> bool:
@@ -1486,7 +1491,8 @@ def parser_flips(runs_rows: list[list[dict[str, Any]]]) -> dict[str, Any]:
     live rows `{"item_id", "turn": {"trace": [...]}}`; the parse is the `understood` record's `raw.parser_raw`.
     Only items parsed in at least 2 runs count toward `items`. An item parsed in no run is `no_parse`; one parsed in
     some runs and not others is `partial_parse`, split into `parse_failed` (no parser output, or status failed) and
-    `parse_capped` (the raw was capped to a note or is not a dict); it is never a flip. A repeated item id inside
+    `parse_capped` (the raw or parser_raw is a capped note or not a dict) or `parse_missing` (no understood record at
+    all); capped outranks failed outranks missing for an item; it is never a flip. A repeated item id inside
     one run uses its first row (`dup_rows` counts the rest); rows without an id are skipped (`no_id`)."""
     def norm(v: Any) -> Any:
         return " ".join(v.casefold().split()) if isinstance(v, str) else v
@@ -1507,13 +1513,15 @@ def parser_flips(runs_rows: list[list[dict[str, Any]]]) -> dict[str, Any]:
         rec = _stage({"trace": (row.get("turn") or {}).get("trace")}, "understood")
         raw = rec.get("raw")
         if not rec:
-            return "failed", None
-        if not isinstance(raw, dict):
+            return "missing", None   # an empty recording, not a bot failure
+        if not isinstance(raw, dict) or _omitted(raw):
             return "capped", None
         pr = raw.get("parser_raw")
-        if isinstance(pr, dict) and pr and rec.get("status") != "failed":
+        if _omitted(pr) or (pr is not None and not isinstance(pr, dict)):
+            return "capped", None
+        if pr and rec.get("status") != "failed":
             return "ok", sig(pr)
-        return ("capped" if pr is not None and not isinstance(pr, dict) else "failed"), None
+        return "failed", None
 
     sigs: dict[Any, list[dict[str, Any]]] = {}
     misses: dict[Any, list[str]] = {}
@@ -1543,6 +1551,8 @@ def parser_flips(runs_rows: list[list[dict[str, Any]]]) -> dict[str, Any]:
             fields[f] = fields.get(f, 0) + 1
     partial = [kinds for i, kinds in misses.items() if i in sigs]
     capped = sum(1 for kinds in partial if "capped" in kinds)
+    failed = sum(1 for kinds in partial if "capped" not in kinds and "failed" in kinds)
     return {"items": len(multi), "flipped": flipped, "rate": flipped / len(multi) if multi else 0.0,
             "fields": fields, "no_parse": len([i for i in misses if i not in sigs]), "partial_parse": len(partial),
-            "parse_failed": len(partial) - capped, "parse_capped": capped, "no_id": no_id, "dup_rows": dup_rows}
+            "parse_failed": failed, "parse_capped": capped,
+            "parse_missing": len(partial) - capped - failed, "no_id": no_id, "dup_rows": dup_rows}
