@@ -1,8 +1,9 @@
 /**
  * ATTACH-ACCEPT: the portal file picker offers exactly the file types the
- * "Portal Submission" attachment type allows (read from `/me`), instead of a
- * hard-coded image/video/pdf/txt list that greyed out xlsx and csv. A file the
- * type does not allow is refused at once with the allowed types named.
+ * "Portal Submission" attachment type allows (the form hands down the list
+ * from its `/me`), instead of a hard-coded image/video/pdf/txt list that
+ * greyed out xlsx and csv. A file the type does not allow is refused at once
+ * with the allowed types named.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -15,25 +16,13 @@ vi.mock('../lib/portal-client', async (importOriginal) => {
   const original = await importOriginal<typeof import('../lib/portal-client')>();
   return {
     ...original,
-    fetchMe: vi.fn(),
     uploadAttachment: vi.fn(),
     deleteAttachment: vi.fn(),
   };
 });
 
-import { fetchMe, uploadAttachment, type PortalContact } from '../lib/portal-client';
+import { uploadAttachment } from '../lib/portal-client';
 import { AttachmentDropzone } from './AttachmentDropzone';
-
-function me(allowed: string[]): PortalContact {
-  return {
-    contact_id: 'c-1',
-    space_id: 's-1',
-    name: 'Contact',
-    phone_number: null,
-    expires_at: '2026-12-31T00:00:00',
-    attachment_allowed_extensions: allowed,
-  } as PortalContact;
-}
 
 function fileInput(container: HTMLElement): HTMLInputElement {
   const input = container.querySelector('input[type="file"]');
@@ -51,13 +40,13 @@ beforeEach(() => {
 
 describe('AttachmentDropzone accept list (portal)', () => {
   it('offers exactly the attachment type allowed extensions in the picker', async () => {
-    vi.mocked(fetchMe).mockResolvedValue(me(['csv', 'jpg', 'png', 'xlsx']));
     const { container } = render(
       <AttachmentDropzone
         kind="stock_inquiry"
         submissionId="sub-1"
         attachments={[]}
         onChange={vi.fn()}
+        allowedExtensions={['csv', 'jpg', 'png', 'xlsx']}
       />,
     );
 
@@ -67,7 +56,6 @@ describe('AttachmentDropzone accept list (portal)', () => {
   });
 
   it('uploads an xlsx and a csv the type allows', async () => {
-    vi.mocked(fetchMe).mockResolvedValue(me(['csv', 'jpg', 'png', 'xlsx']));
     vi.mocked(uploadAttachment).mockImplementation(async (_kind, _id, file) => ({
       link_id: `link-${file.name}`,
       attachment_id: `att-${file.name}`,
@@ -84,6 +72,7 @@ describe('AttachmentDropzone accept list (portal)', () => {
         submissionId="sub-1"
         attachments={[]}
         onChange={vi.fn()}
+        allowedExtensions={['csv', 'jpg', 'png', 'xlsx']}
       />,
     );
     await waitFor(() => expect(fileInput(container).getAttribute('accept')).toContain('.xlsx'));
@@ -98,13 +87,13 @@ describe('AttachmentDropzone accept list (portal)', () => {
   });
 
   it('refuses a file the type does not allow and names the allowed types', async () => {
-    vi.mocked(fetchMe).mockResolvedValue(me(['csv', 'jpg', 'png', 'xlsx']));
     const { container } = render(
       <AttachmentDropzone
         kind="stock_inquiry"
         submissionId="sub-1"
         attachments={[]}
         onChange={vi.fn()}
+        allowedExtensions={['csv', 'jpg', 'png', 'xlsx']}
       />,
     );
     await waitFor(() => expect(fileInput(container).getAttribute('accept')).toContain('.xlsx'));
@@ -119,7 +108,6 @@ describe('AttachmentDropzone accept list (portal)', () => {
   });
 
   it('does not buffer a refused file before the submission exists, but keeps the allowed one', async () => {
-    vi.mocked(fetchMe).mockResolvedValue(me(['csv', 'xlsx']));
     const onPendingFilesChange = vi.fn();
     const { container } = render(
       <AttachmentDropzone
@@ -129,6 +117,7 @@ describe('AttachmentDropzone accept list (portal)', () => {
         onChange={vi.fn()}
         pendingFiles={[]}
         onPendingFilesChange={onPendingFilesChange}
+        allowedExtensions={['csv', 'xlsx']}
       />,
     );
     await waitFor(() => expect(fileInput(container).getAttribute('accept')).toContain('.xlsx'));
@@ -140,18 +129,20 @@ describe('AttachmentDropzone accept list (portal)', () => {
     expect(String(toasts.error.mock.calls[0][0])).toContain('Allowed: csv, xlsx');
   });
 
-  it('leaves the picker open to every file while the list is unknown or empty', async () => {
-    vi.mocked(fetchMe).mockResolvedValue(me([]));
+  it.each([
+    ['not known yet', undefined],
+    ['empty (the type sets no limit)', []],
+  ])('leaves the picker open to every file when the list is %s', (_label, allowed) => {
     const { container } = render(
       <AttachmentDropzone
         kind="stock_inquiry"
         submissionId="sub-1"
         attachments={[]}
         onChange={vi.fn()}
+        allowedExtensions={allowed}
       />,
     );
 
-    await waitFor(() => expect(fetchMe).toHaveBeenCalled());
     // Never a guessed list: the server stays the authority when the type gives none.
     expect(fileInput(container).hasAttribute('accept')).toBe(false);
   });
