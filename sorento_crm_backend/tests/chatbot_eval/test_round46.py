@@ -223,3 +223,52 @@ def test_item_parsed_in_some_runs_is_not_no_parse():
     bare = {"item_id": "a", "turn": {"trace": []}}
     out = parser_flips([[bare], [prow("a", **BASE)], [prow("a", **BASE)]])
     assert out["items"] == 1 and out["no_parse"] == 0
+
+
+# ---------------------------------------------------------------- round 46 review fixes
+def test_parser_flips_skips_rows_without_an_id():
+    row = {"item_id": None, "turn": {"trace": []}}
+    out = parser_flips([[row, prow("a", **BASE)], [row, prow("a", **BASE)]])
+    assert out["no_id"] == 2 and out["items"] == 1 and out["no_parse"] == 0
+
+
+def test_repeated_item_id_in_a_run_counts_once_first_row_wins():
+    other = {**BASE, "domain_hint": "order"}
+    out = parser_flips([[prow("a", **BASE), prow("a", **other)], [prow("a", **BASE)]])
+    assert out["dup_rows"] == 1 and out["items"] == 1 and out["flipped"] == 0
+
+
+def _understood(item, rec):
+    return {"item_id": item, "turn": {"trace": [{"stage": "understood", **rec}]}}
+
+
+def test_partial_parse_is_split_into_failed_and_capped_and_not_flipped():
+    failed = _understood("f", {"status": "failed", "raw": {"parser_raw": None}})
+    capped = _understood("c", {"raw": "payload omitted: 9 bytes exceeds cap"})
+    out = parser_flips([[prow("f", **BASE), prow("c", **BASE)], [failed, capped], [prow("f", **BASE), prow("c", **BASE)]])
+    assert out["partial_parse"] == 2 and out["parse_failed"] == 1 and out["parse_capped"] == 1
+    assert out["no_parse"] == 0 and out["flipped"] == 0 and out["items"] == 2
+
+
+def test_entity_raw_is_normalised_and_spec_value_joins_the_tuple():
+    spaced = {**BASE, "entities": [{"raw": "  AB1 ", "hint": "product", "spec_key": None}]}
+    wide = {**BASE, "entities": [{"raw": "ab1", "hint": "product", "spec_key": None}]}
+    assert parser_flips([[prow("a", **wide)], [prow("a", **spaced)]])["flipped"] == 0
+    two = {**BASE, "entities": [{"raw": "ab  1", "hint": "product", "spec_key": None}]}
+    assert parser_flips([[prow("a", **spaced)], [prow("a", **two)]])["flipped"] == 1
+    v1 = {**BASE, "entities": [{"raw": "ab1", "hint": "product", "spec_key": "colour", "spec_value": "red"}]}
+    v2 = {**BASE, "entities": [{"raw": "ab1", "hint": "product", "spec_key": "colour", "spec_value": "blue"}]}
+    out = parser_flips([[prow("a", **v1)], [prow("a", **v2)]])
+    assert out["fields"] == {"entities": 1}
+
+
+def test_go_needs_a_known_verdict_in_every_run():
+    runs = [run("s", [True] * 10), run("s", [None] * 3)]
+    out = summarise(runs, {"s": 0.9})
+    assert out["slices"]["s"]["pooled"] == 1.0 and out["slices"]["s"]["go"] is False
+
+
+def test_stopped_slice_shows_no_rate_under_growth_either():
+    runs = [[g("a", True, "s"), {**g("b", True, "gs"), "growth": True}] for _ in range(3)]
+    out = summarise(runs, {"s": 0.9}, stopped={"gs": 0.4})
+    assert out["growth"]["gs"] == {"status": "stopped", "best_reachable": 0.4}
