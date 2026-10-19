@@ -75,6 +75,12 @@ def _scopes_class(row: Any, classes: set[str]) -> bool:
     return bool(classes) and any(str(c).casefold() in classes for c in scope)
 
 
+def _key_words(row: Any, merged_synonyms: Any) -> set[str]:
+    """The words a numeric key goes by: its registry synonyms and its label's words."""
+    text = [str(p) for p in (merged_synonyms(row).get("_self") or [])] + [str(getattr(row, "label", "") or "")]
+    return {w for t in text for w in t.casefold().split() if len(w) > 2}
+
+
 def ground_bare(
     db: "Session", entity: dict[str, Any], entities: list[dict[str, Any]], vocab: "Vocabulary", held_ids: list[str] | None
 ) -> "Grounded | None":
@@ -94,7 +100,11 @@ def ground_bare(
     classes = _classes(db, entities, held_ids)
     if key == RESERVED_KEY:
         units = {str(r.unit).casefold() for r in rows if getattr(r, "matches_bare_size", False) or _scopes_class(r, classes)}
-        unit = next(iter(sorted(units)), None) if len(units) == 1 else None
+        # More than one unit in play: the size word's own unit only (the parser's `spec_unit`).
+        own = str(entity.get("spec_unit") or "").strip().casefold()
+        unit = next(iter(units)) if len(units) == 1 else (own if own in units else None)
+        if unit is None and units:
+            return None
         same_unit = [r for r in rows if unit is None or str(r.unit).casefold() == unit]
         for row in same_unit:
             if _scopes_class(row, classes) and _holds(db, row.spec_key, number, classes):
@@ -106,10 +116,10 @@ def ground_bare(
     row = by_key.get(key)
     if row is None or not classes or _holds(db, key, number, classes):
         return None
-    phrases = {str(p).casefold() for p in (merged_synonyms(row).get("_self") or [])}
+    words = _key_words(row, merged_synonyms)
     for other in rows:
         if other.spec_key == key or not _scopes_class(other, classes) or str(other.unit).casefold() != str(row.unit).casefold():
             continue
-        if phrases & {str(p).casefold() for p in (merged_synonyms(other).get("_self") or [])} and _holds(db, other.spec_key, number, classes):
+        if words & _key_words(other, merged_synonyms) and _holds(db, other.spec_key, number, classes):
             return Grounded(other.spec_key, other.label, said, value, other.unit)
     return None
