@@ -139,3 +139,48 @@ def test_r6_s5b_the_state_block_shows_the_count_question_as_open():
                                                               "total": 9, "shown": 0, "access_levels": []}})
     view = chat_state.view(State(focus=focus, turn_no=3), None)
     assert view["open_question"], ("the count question is not in the State block the parser sees", view)
+
+
+# ----------------------------------------------------------------------- 2b. company pick through the answer op (state on)
+def _company_offer():
+    from app.services.chatbot.turn.pending import ask
+
+    options = [
+        {"position": i, "label": name, "code": None, "name": name, "entity_type": "company",
+         "payload": {"company": name, "company_id": f"00000000-0000-0000-0000-00000000000{i}", "brand_code": code}}
+        for i, (name, code) in enumerate([("Sorento", "SRT"), ("Mocha", "MCH")], start=1)
+    ]
+    return ask("company_pick", options, asked_at_turn=2, payload={"team": "warehouse"})
+
+
+@pytest.mark.parametrize("message", ["mocha", "yang mocha", "选mocha"])
+def test_r6_s5b_an_answer_naming_an_offered_company_accepts_the_offer_and_fills_the_company(message):
+    from app.services.chatbot.turn import chat_state, question as question_mod
+    from app.services.chatbot.turn.state import Focus, State
+
+    pending = _company_offer()
+    v = verdict(domain_hint=None, entities=[], state_changes=[_op("answer")], user_goal=message)
+    v["escalation"] = {"is_escalation_confirmation": False, "company_pick": "Mocha", "named_teams": None}
+    out = chat_state.apply_changes(
+        State(focus=Focus(domains=["inventory"]), pending=pending, turn_no=3), v,
+        open_question=question_mod.of_pending(pending), domains=["inventory"], kinds=["product"],
+        brands=[], positions_read_elsewhere=False,
+    )
+    assert out.valid, out.log
+    esc = out.verdict["escalation"]
+    assert esc["is_escalation_confirmation"] is True and esc["company_pick"] == "Mocha", esc
+    assert out.verdict["is_affirmative"] is True and not out.verdict["entities"], out.verdict
+    assert out.state.state_led == "answer"
+
+
+def test_r6_s5b_guard_a_company_the_offer_did_not_show_is_not_a_pick():
+    from app.services.chatbot.turn import chat_state, question as question_mod
+    from app.services.chatbot.turn.state import Focus, State
+
+    pending = _company_offer()
+    v = verdict(domain_hint=None, entities=[], state_changes=[_op("answer")])
+    v["escalation"] = {"is_escalation_confirmation": False, "company_pick": "Cabana", "named_teams": None}
+    out = chat_state.apply_changes(State(focus=Focus(domains=["inventory"]), pending=pending, turn_no=3), v,
+                                   open_question=question_mod.of_pending(pending), domains=["inventory"],
+                                   kinds=["product"], brands=[], positions_read_elsewhere=False)
+    assert (out.verdict.get("escalation") or {}).get("company_pick") != "Cabana" or not out.valid, out.verdict
