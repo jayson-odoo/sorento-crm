@@ -737,6 +737,19 @@ def _history_patches(stack: Any, history: dict[str, Any] | None) -> None:
     stack.enter_context(mock.patch.object(engine, "_memory_intake", intake))
 
 
+def _asker_profile(db: Any, envelope: Any) -> dict[str, Any] | None:
+    """The stock-visibility flag the bot used for this contact (`Profile.stock_availability_only`, which the engine fills
+    with this same call from `turn_runtime.load_profile(db, contact)`, so no space id). The engine does not hand its profile
+    back to the runner, so the call is made again on the turn's DB; None when the policy cannot be read."""
+    from app.services.chatbot import engine, turn_runtime
+
+    try:
+        flag = turn_runtime._stock_availability_only(db, engine._contact_respond_id(envelope), None)
+    except Exception:  # noqa: BLE001 - an unreadable policy leaves the grader's setting unknown, never guessed
+        return None
+    return {"stock_availability_only": bool(flag), "source": "turn_runtime._stock_availability_only"}
+
+
 def _live_one(item: dict[str, Any], row: dict[str, Any], factory: Callable[[], Any],
               total: dict[str, Any], prompt_version_id: str | None = None,
               carry: dict[str, Any] | None = None, sink: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -813,6 +826,9 @@ def _live_one(item: dict[str, Any], row: dict[str, Any], factory: Callable[[], A
               "response": copy.deepcopy(turn.response) if turn is not None else None,
               "branch_kind": result.branch_kind, "status": getattr(result, "status", None)},
     )
+    profile = _asker_profile(db, envelope)
+    if profile is not None:
+        out["asker_profile"] = profile
     if misses:
         out["misses"] = misses
     db.close()

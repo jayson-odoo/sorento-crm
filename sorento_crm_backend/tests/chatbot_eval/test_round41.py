@@ -64,7 +64,11 @@ def test_red_c_no_source_is_unknown_for_a_dealer_and_for_staff():
         for stamps in ([None] * 3, STAMPS):
             r = _which_one(MATCHING, stamps)
             assert _which(r, asker) is None, (asker, stamps)
-    res = grade_turn(_which_one(MATCHING, STAMPS), item("attachment", **GOLD_AMB))
+    r = _which_one(MATCHING, STAMPS)
+    for rec in r["trace"]:   # the asked type is read, so the setting is the only thing the bench cannot tell
+        if rec.get("kind") == "apply":
+            rec["verdict"]["entities"] = [{"raw": "photo", "hint": "attachment_type", "canonical_code": "product_photos"}]
+    res = grade_turn(r, item("attachment", **GOLD_AMB))
     assert res["passed"] is None, res
 
 

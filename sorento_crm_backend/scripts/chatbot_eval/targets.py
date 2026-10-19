@@ -1191,32 +1191,50 @@ def _sent_files(row: dict[str, Any], announced: Any = None) -> list[dict[str, An
             for f in (t["envelope"].get("attachments") or []) if isinstance(f, dict)]
 
 
-NO_STAMP_AUDIENCES = frozenset({"dealer", "linked_dealer"})   # an "Availability only" contact (Profile.stock_availability_only)
+def _stamp_setting(row: dict[str, Any]) -> bool | None:
+    """Is the contact availability-only (True: a bare which-one list) or not (False: stamped); None when no source says.
+    The bot's own chain: `stock_visibility.resolve_policy` (app/services/stock_visibility.py:229) ->
+    `turn_runtime._stock_availability_only` (turn_runtime.py:1014, called at :498) -> `Profile.stock_availability_only`
+    (turn/state.py:238) -> the stamp gate in `lanes/business/answer.py:5055`. Sources, in order: (a) the flag the live runner
+    recorded on the row (`asker_profile`, `replay._asker_profile`, the same call the engine makes); (b) a stock tool's
+    envelope `stock_visibility.mode` (the same `resolve_policy`: "availability" is the bare list). Never the audience."""
+    prof = row.get("asker_profile")
+    if isinstance(prof, dict) and isinstance(prof.get("stock_availability_only"), bool):
+        return prof["stock_availability_only"]
+    for t in _tools(row):
+        env = t.get("envelope")
+        vis = env.get("stock_visibility") if isinstance(env, dict) else None
+        if isinstance(vis, dict) and isinstance(vis.get("mode"), str):
+            return vis["mode"] == "availability"
+    return None
 
 
 def _which_one_check(row: dict[str, Any], item: dict[str, Any], gold: dict[str, Any],
-                     accepted: set[str]) -> tuple[str, bool, str] | None:
+                     accepted: set[str]) -> tuple[str, bool | None, str] | None:
     """An ambiguous attachment ask answered by the which-one picker. PHOTO-PICKER (owner 5 Oct): the picker lists every
-    matching code, stamped has / no for the asked type, unless the contact is availability-only (a dealer): then bare
-    (`lanes/business/answer.py` gates the stamp on `Profile.stock_availability_only`). The stamp is read from each
-    option's `stamp`, not the reply; the options must be codes holding a code-like word the customer typed."""
+    matching code, stamped has / no for the asked type, unless the contact is availability-only (`_stamp_setting`): then
+    bare. The stamp is read from each option's `stamp`, not the reply; the options must be codes holding a code-like word
+    the customer typed. Unknown (None) when no source names the setting."""
     after = _oq(row)[1]
     if not (gold.get("ambiguous") and isinstance(after, dict) and after.get("kind") == "product_pick"):
         return None
     options = [o for o in after.get("options") or [] if isinstance(o, dict)]
     typed = {_key(t) for t in _TOKEN_RE.findall(user_message(row)) if re.search(r"\d", t) and len(_key(t)) >= 3}
-    stamped = not (str((item.get("asker") or {}).get("audience") or "") in NO_STAMP_AUDIENCES)
+    msg = "The which-one list is not over the matching codes, stamped as the domain setting says."
+    if not (options and typed and all(any(t in _key(o.get("code") or o.get("label")) for t in typed) for o in options)):
+        return ("which_one", False, msg)
+    bare = _stamp_setting(row)
+    if bare is None:
+        return ("which_one", None, msg)
 
     def stamp_ok(o: dict[str, Any]) -> bool:
         st = _norm(o.get("stamp"))
-        if not stamped:
+        if bare:
             return not st
         m = re.fullmatch(r"(?:has|no)\s+(.+)", st)
         return bool(m) and _type_ok(_type_word(m.group(1)), accepted)
 
-    ok = bool(options and typed) and all(any(t in _key(o.get("code") or o.get("label")) for t in typed) and stamp_ok(o)
-                                         for o in options)
-    return ("which_one", ok, "The which-one list is not over the matching codes, stamped as the domain setting says.")
+    return ("which_one", all(stamp_ok(o) for o in options), msg)
 
 
 def _attachment(row, item):
@@ -1379,6 +1397,8 @@ def grade_turn(row: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
     elif passed is False and not leak_msg and _oq_unreadable(row) and (_stage(row, "replied").get("facts") or {}).get("asking") == "tier_pick":
         # the question after was capped out and nothing uncapped holds it: the tier ask cannot be ruled out
         passed, failed = None, "The bench could not read the question the bot asked (trace cap)."
+    elif passed and any(n == "which_one" and ok is None for n, ok, _ in checks):
+        passed, failed = None, "The bench could not tell which stamp setting applies to this contact."
     elif passed and checks and all(ok is None for _, ok, _ in checks):
         passed, failed = None, "The bench could not confirm what the bot understood."
     return {
