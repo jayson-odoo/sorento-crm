@@ -8,9 +8,10 @@ graph (`products.variant_of_id`, root and descendants) for hand-curated links.
 "How about p trap" after "SRTWC286-SH x 10: no stock" is about the SRTWC286 family's P-trap
 variant, which exists; the bot answered every P-trap WC. When a gated message names
 specification values and no product of its own, and the conversation holds products, the
-held products' family is filtered by the stored spec values, the parser's registry values compared exactly. The
-members that carry every named value become this turn's products. No member carries them:
-the verdict is left as it was. Data only: no word of the message is read.
+held products are filtered by the stored spec values (and a named brand), the parser's
+registry values compared exactly. Held products that carry every named value are the answer,
+with no siblings; only when none does, the same filter runs over their family. Those members
+become this turn's products. No member carries them: the held products stay the subject. Data only: no word of the message is read.
 """
 from __future__ import annotations
 
@@ -146,18 +147,26 @@ def narrow_held_family(
     held_ids = [str(p["uuid"]) for p in held_products if isinstance(p, dict) and p.get("uuid")]
     if not (specs or brands) or names_a_product or not held_ids or verdict.get("family") is True:
         return verdict, None
-    family = _family_ids(db, held_ids)
-    if not family:
-        return verdict, None
-    query = db.query(Product.id, Product.product_code).filter(Product.id.in_(list(family)))
-    if specs:
-        query = query.join(ProductSpecifications, ProductSpecifications.product_id == Product.id)
-    for key, value in specs:
-        query = query.filter(func.lower(ProductSpecifications.values[key]["value"].astext).in_(_value_texts(value)))
     brand_ids = _brand_ids(db, brands) if brands else None
-    if brand_ids is not None:
-        query = query.filter(Product.brand_id.in_(list(brand_ids) or [""]))
-    matched = sorted(query.all(), key=lambda row: row[1])
+
+    def narrowed(ids: set[str]) -> list[tuple[Any, Any]]:
+        query = db.query(Product.id, Product.product_code).filter(Product.id.in_(list(ids)))
+        if specs:
+            query = query.join(ProductSpecifications, ProductSpecifications.product_id == Product.id)
+        for key, value in specs:
+            query = query.filter(func.lower(ProductSpecifications.values[key]["value"].astext).in_(_value_texts(value)))
+        if brand_ids is not None:
+            query = query.filter(Product.brand_id.in_(list(brand_ids) or [""]))
+        return sorted(query.all(), key=lambda row: row[1])
+
+    # The held products answer first; their family only when none of them carries what was said.
+    matched = narrowed(set(held_ids))
+    family = set(held_ids)
+    if not matched:
+        family = _family_ids(db, held_ids)
+        if not family:
+            return verdict, None
+        matched = narrowed(family)
     note = {"held": len(held_ids), "family": len(family), "specs": specs, "brands": len(brands)}
     if not matched:
         # Held, none match: the subject is kept, and the filter beside it finds nothing.
