@@ -528,9 +528,11 @@ The rule (fixed before any run it is applied to):
 - `parser_flips(runs_rows)`: on identical inputs (the same item over the runs) the share of items whose parse
   signature differs (domain hint, routing team and agent, asks, entities with their raw text casefolded and spaces
   collapsed plus hint, spec key and spec value, state changes), with a per-field count. Reported beside every score; it
-  is the run-to-run parser variance, a class of its own. Items parsed in some runs only are `partial_parse` (split
-  `parse_failed` / `parse_capped`), items never parsed are `no_parse`, rows without an id are `no_id`, a repeated id in
-  one run counts once (`dup_rows`). Measured 20 Oct on the CP0 baseline runs 1 to 3: 101 of 457 items flip (entities
-  78, routing 30, domain hint 11).
+  is the run-to-run parser variance, a class of its own. Items parsed in some runs only are `partial_parse`, split
+  `parse_capped` (the trace cut the payload to its "payload omitted" note, or the parse is not a dict), `parse_failed`
+  (the understood record failed or holds no parse) and `parse_missing` (an empty recording: no understood record, not a
+  bot failure), in that order of precedence; items never parsed are `no_parse`, rows without an id are `no_id`, a
+  repeated id in one run counts once (`dup_rows`). Measured 20 Oct on the CP0 baseline runs 1 to 3: 93 of 457 items
+  flip (20.4%: entities 68, routing 30, domain hint 11); no_parse 6, partial_parse 3 (all parse_missing).
 - Fresh certification sets (>= 100 items per slice, dual-labelled with adjudication, from conversations after a cut
   date) are certified with this rule; the current held-out set is dev-heldout from 20 Oct.
