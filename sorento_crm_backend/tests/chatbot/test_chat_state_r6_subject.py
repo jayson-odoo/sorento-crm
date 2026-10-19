@@ -491,7 +491,7 @@ def test_r6_s1_a_held_product_without_a_uuid_stays_in_the_subject_as_a_token_key
 
     row = {"raw": "SRTWC286-SH", "canonical_code": "SRTWC286-SH", "hint": "product", "current_message": False}
     s = _subject(_apply(Focus(products=[row], domains=["inventory"]), verdict(state_changes=[_op("keep")])))
-    assert s.source != "unresolved", s
+    assert s.source == "unresolved", ("AC-S1-12: a token-only Subject is unresolved until settle places it", s)
     assert _tokens(dataclasses.asdict(s), "SRTWC286-SH"), ("no token row keyed by the held code", s)
 
 
@@ -522,3 +522,54 @@ def test_r6_s1_two_said_codes_one_placed_one_not_settles_to_ids_with_the_other_u
     s = tchat.state_log().get("subject")
     assert s and s["source"] == "ids" and str(placed.id) in s["product_ids"], s
     assert "zz-9981" in json.dumps(s.get("unplaced"), default=str).lower(), ("unplaced does not list the other token", s)
+
+
+# ----------------------------------------------------------------------- AC-S1-12 settled after the resolver
+def test_r6_s1_a_token_only_subject_is_ids_with_the_uuid_once_the_resolver_placed_it(seam):
+    from app.services.chatbot.turn.state import focus_to_wire
+    from tests.chatbot.test_chat_state_seam import _emit
+
+    code = "SRTWC286-SH"
+    row = {"raw": code, "canonical_code": code, "hint": "product", "current_message": False}
+    prev = {"focus": focus_to_wire(Focus(products=[row], domains=["inventory"])), "open_question": None}
+    out = seam.say("any promo?", _emit(domain_hint="inventory", intent_hint="check_stock", entities=[],
+                                       state_changes=[_op("keep")]), previous=prev)
+    subject = seam.memory(out).get("state", {}).get("subject")
+    assert subject and subject["source"] == "ids", subject
+    assert seam.uuid_of[code] in subject["product_ids"], subject
+
+
+# ----------------------------------------------------------------------- keep sets aside only its own words
+def _fetch(subject, entities, focus):
+    from app.services.chatbot.turn import chat_state
+
+    out = chat_state.fetch_entities(subject, {"entities": entities}, focus, unsettled_only=False)
+    return [e for e in out.get("entities") or [] if isinstance(e, dict)]
+
+
+def _current(ents, hint):
+    return {str(e.get("raw")).casefold() for e in ents if e.get("hint") == hint and e.get("current_message") is not False}
+
+
+def test_r6_s1_a_word_a_later_step_adds_on_a_held_axis_is_not_set_aside_on_a_clarify_answer():
+    """with_clarify_answer re-types the chosen option AFTER the applier (engine ~4937): the bot asked
+    which type, the user answered an option. The applier saw no typed word, so nothing is set aside."""
+    focus = Focus(brands=["SORENTO"], domains=["inventory"], extra={"category": [_row("Basin", "category")]},
+                  set_clarify={"term": "wc", "options": ["water closet", "wash basin"],
+                               "ask": {"entities": [], "intent_hint": "check_stock", "domain_hint": "inventory"}})
+    v = verdict(state_changes=[_op("answer")], entities=[])
+    v["open_question_answer"] = {"mode": "value", "picked": [], "items": [], "qty_for_all": None}
+    out = _apply(focus, v)
+    chosen = {"raw": "water closet", "hint": "product_type", "canonical_code": None, "current_message": True, "confident": True}
+    ents = _fetch(_subject(out), [*out.verdict.get("entities", []), chosen], out.state.focus)
+    assert "water closet" in _current(ents, "product_type"), ("the clarify's chosen type was set aside", ents)
+
+
+def test_r6_s1_keep_sets_aside_only_the_word_the_applier_saw_typed_on_the_held_axis():
+    focus = Focus(brands=["SORENTO"], domains=["inventory"], extra={"category": [_row("Basin", "category")]})
+    typed = entity("Basin", "category", canonical_code=None)
+    out = _apply(focus, verdict(state_changes=[_op("keep")], entities=[typed]))
+    late = {"raw": "water closet", "hint": "product_type", "canonical_code": None, "current_message": True, "confident": True}
+    ents = _fetch(_subject(out), [*out.verdict.get("entities", []), late], out.state.focus)
+    assert "basin" not in _current(ents, "category"), ("the restated held word rode as a change", ents)
+    assert "water closet" in _current(ents, "product_type"), ("a word the applier never saw was set aside too", ents)
