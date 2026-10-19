@@ -3689,18 +3689,27 @@ def _apply(
     # set to the brand, counted the same way the offer counted it, never a new set of
     # everything the brand has.
     chosen_brand = verdict.get("set_brand")
-    if carried_set and isinstance(chosen_brand, str) and chosen_brand:
+    # The state path carries a LIST (every brand the parser named, one re-run); main's path
+    # carries the one brand string it always did.
+    brand_names = [chosen_brand] if isinstance(chosen_brand, str) else list(chosen_brand) if isinstance(chosen_brand, list) else []
+    brand_names = [b for b in brand_names if isinstance(b, str) and b]
+    if carried_set and brand_names:
         key = dict(carried_set.get("set_key") or {})
         domain = key.get("domain")
         if domain:
-            offered = next(
-                (o for o in key.get("other_brands") or [] if str(o.get("brand") or "").lower() == chosen_brand.lower()),
-                {},
-            )
+            offered_rows = [
+                o for o in key.get("other_brands") or []
+                if isinstance(o, dict) and str(o.get("brand") or "").lower() in {b.lower() for b in brand_names}
+            ]
             for stale in ("offer_only", "other_brands"):
                 key.pop(stale, None)
             key.update(
-                {"brand": chosen_brand, "brand_default": False, "shown": 0, "total": int(offered.get("count") or 0)}
+                {
+                    "brand": chosen_brand if isinstance(chosen_brand, str) else brand_names,
+                    "brand_default": False,
+                    "shown": 0,
+                    "total": sum(int(o.get("count") or 0) for o in offered_rows),
+                }
             )
             trace.rules_fired.append("set_brand_chosen")
             return new_state, Plan(

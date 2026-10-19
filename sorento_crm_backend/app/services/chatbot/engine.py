@@ -4820,15 +4820,20 @@ def _run_stages_body(  # noqa: PLR0915
                             logger.warning("chatbot: offered brand narrowing failed; the turn goes on without it", exc_info=True)
                     held_brands = {v.strip().casefold() for v in brand_of.values()}
                     held_hits = [b for b in picked if b.casefold() in held_brands]
-                    if held_hits:
-                        # A named brand the held set lacks beside a held one is not dropped
-                        # silently: the answer is the held rows of the held brand(s), the rest
-                        # stays offered.
+                    set_total = int(((state_in.focus.set_page or {}).get("set_key") or {}).get("total") or 0)
+                    # Held rows are cut at the set cap: a set longer than its held rows is
+                    # not fully held, so a brand pick over it re-runs the set.
+                    capped = set_total > len(held_keys)
+                    if held_hits and len(held_hits) == len(picked) and not capped:
+                        # Every named brand is held and the held rows are the whole set:
+                        # the held set narrows to the union of those brands.
                         state_in = chat_state.narrow_held_to_brands(state_in, held_hits, brand_of)
                     else:
+                        # A named brand the held set lacks, or a capped set: one re-run of the
+                        # offered set with every named brand (`set_brand_chosen`).
                         verdict = {
                             **verdict,
-                            turn_runtime.SET_BRAND_KEY: picked[0],
+                            turn_runtime.SET_BRAND_KEY: list(picked),
                             "entities": [
                                 e for e in verdict.get("entities") or []
                                 if not (isinstance(e, dict) and e.get("current_message") is True)

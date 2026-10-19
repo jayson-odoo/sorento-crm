@@ -589,6 +589,12 @@ def _display_name(name: str) -> str:
     return name.title() if name.isupper() else name
 
 
+def _brand_clause(brand: "str | list[str]"):
+    """The brand filter: one name, or any of the names a state-led brand pick carried."""
+    names = [brand] if isinstance(brand, str) else list(brand)
+    return func.lower(Brand.brand_name).in_([n.strip().lower() for n in names if n and n.strip()])
+
+
 def _sentence_case(text: str) -> str:
     text = " ".join(str(text or "").replace("_", " ").split())
     return text[:1].upper() + text[1:].lower() if text else text
@@ -609,7 +615,7 @@ def describe_set(
     out: list[dict[str, str]] = []
     if brand:
         # Round 3 W4: no "(default)" - the reply's last line names the other brands.
-        out.append({"key": "brand", "label": "Brand", "value": _display_name(brand)})
+        out.append({"key": "brand", "label": "Brand", "value": _display_name(brand) if isinstance(brand, str) else " / ".join(_display_name(b) for b in brand)})
     classes = [c for c in membership.get("class") or [] if c]
     others = [k for k in membership if k not in ("class", "brand")]
     rows = (
@@ -746,9 +752,7 @@ def _near_miss(db: Session, *, membership: dict[str, list[str]], legs: list, bra
     if clause is not None:
         query = query.filter(clause)
     if brand:
-        query = query.join(Brand, Brand.id == Product.brand_id).filter(
-            func.lower(Brand.brand_name) == brand.strip().lower()
-        )
+        query = query.join(Brand, Brand.id == Product.brand_id).filter(_brand_clause(brand))
     members = query.subquery()
     per_value = db.query(members.c.value, func.count(func.distinct(members.c.family))).group_by(members.c.value).all()
     # A product with two other values is ONE product in the total, however many values
@@ -1033,9 +1037,7 @@ def resolve_product_set(
         if described:
             query = query.filter(and_(*described))
         if brand:
-            query = query.join(Brand, Brand.id == Product.brand_id).filter(
-                func.lower(Brand.brand_name) == brand.strip().lower()
-            )
+            query = query.join(Brand, Brand.id == Product.brand_id).filter(_brand_clause(brand))
         return query
 
     # R1 (owner ruling on PR #833, 27 Sep 2026: "weights as brand preference instead of
