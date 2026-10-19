@@ -91,3 +91,13 @@ def test_red_2e_a_non_dict_prompt_overrides_is_ignored_like_the_engine_does(monk
     row["envelope"]["prompt_overrides"] = "not-a-dict"
     out, calls = _run(monkeypatch, row, resolves=False)
     assert calls == [1] and out["skipped"] is None, out
+
+
+def test_red_1e_an_emission_without_state_changes_does_not_override_ctx():
+    row = _row(understood={"intent": "emission"}, ctx_raw={"intent": "ctx"})
+    assert replay_mod._recorded_parse(row) == {"intent": "ctx"}
+
+
+def test_red_1f_an_emission_with_empty_state_changes_does_not_override_ctx():
+    row = _row(understood={"intent": "emission", "state_changes": []}, ctx_raw={"intent": "ctx"})
+    assert replay_mod._recorded_parse(row) == {"intent": "ctx"}
