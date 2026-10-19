@@ -49,7 +49,7 @@ def _env(text=None, *, quoted=None, attachment=None):
     if quoted is not None:
         msg["replyTo"] = {"message": {"text": quoted}}
     env = _envelope()
-    env.message["message"]["message"] = msg
+    env.message["message"] = msg
     return env
 
 
@@ -66,6 +66,7 @@ MESSAGES = [
     ("quoted-reply", dict(text="how about this one", quoted="SRTWC286-SH 10 pcs\nin stock")),
     ("quoted-reply-bm", dict(text="yang ni?", quoted="Sorento WC")),
     ("media-caption", dict(text=None, attachment={"description": "photo of a basin"})),
+    ("blank-own-line-quoted-only", dict(text="", quoted="SRTWC286-SH 10 pcs")),
     ("multi-line-en", dict(text="stock please\nSRTWC286\nand SRTWB1086")),
     ("multi-line-zh", dict(text="有货吗\n马桶\n洗手盆")),
 ]
@@ -75,6 +76,7 @@ MESSAGES = [
 def test_r6_s6_the_user_turn_equals_what_the_first_line_reads_produced(kw):
     env = _env(**kw)
     latest = _old_latest(env)
+    assert latest.strip(), ("the fixture built an empty message text: the identity check would be vacuous", env.message)
     old_own = latest.split("\n", 1)[0]
     old_rest = latest.split("\n", 1)[1] if "\n" in latest else ""
     turn = _mod().from_envelope(env)
@@ -84,7 +86,9 @@ def test_r6_s6_the_user_turn_equals_what_the_first_line_reads_produced(kw):
 
 
 def test_r6_s6_a_media_message_carries_its_read_in_media():
-    turn = _mod().from_envelope(_env(text=None, attachment={"description": "photo of a basin"}))
+    env = _env(text=None, attachment={"description": "photo of a basin"})
+    assert "photo of a basin" in _old_latest(env), "the fixture did not nest the attachment where the engine reads it"
+    turn = _mod().from_envelope(env)
     assert any("photo of a basin" in str(m) for m in turn.media), turn
 
 
@@ -93,6 +97,7 @@ def test_r6_s6_direct_ingress_and_the_webhook_envelope_give_equal_user_turns():
 
     env = _env(text="how about this one", quoted="SRTWC286-SH")
     contact = {"id": "900000008", "firstName": "ZZT"}
+    assert "SRTWC286-SH" in _old_latest(env), "the fixture built no quoted text"
     direct = direct_ingress.envelope_for(env.message, contact)
     assert _mod().from_envelope(direct) == _mod().from_envelope(env)
 
