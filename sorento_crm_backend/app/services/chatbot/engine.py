@@ -1081,6 +1081,9 @@ def _contact_brand_scope(factory: SessionFactory, contact_respond_id: str) -> fr
         db.close()
 
 
+_ENGINE_ENTITY_KEYS = ("listed", "certificate_uuids", "parent_kind", "parent_kind_uuid", "parent_kind_name")
+
+
 def closed_lists_verdict(verdict: dict[str, Any], *, gate: bool) -> dict[str, Any]:
     """CHAT-CLOSED-LISTS: a verdict parsed by a CLOSED LISTS version says so, so the lanes
     read the parser's listed picks and none of the word fallbacks (card R2/R5). The key is
@@ -4699,13 +4702,13 @@ def _run_stages_body(  # noqa: PLR0915
             # because this is the seam that skipped it.
             parser.assert_emission(parser_raw)
         verdict: dict[str, Any] = dict(parser_raw)
-        # `listed` and `certificate_uuids` are the ENGINE's own entity keys (grounding and the
-        # scheme index set them). One the parser emitted (the Anthropic path does not enforce
+        # `listed`, `certificate_uuids` and the `parent_kind*` keys are the ENGINE's own entity keys
+        # (grounding and the scheme index set them). One the parser emitted (the Anthropic path does not enforce
         # additionalProperties) is dropped before any reader.
         verdict.pop("dropped_kinds", None)
         if isinstance(verdict.get("entities"), list):
             verdict["entities"] = [
-                {k: v for k, v in e.items() if k not in ("listed", "certificate_uuids")} if isinstance(e, dict) else e
+                {k: v for k, v in e.items() if k not in _ENGINE_ENTITY_KEYS} if isinstance(e, dict) else e
                 for e in verdict["entities"]
             ]
         # CHATBOT-EMPTY-ROUTE-PICK: a declared answer to a question that was never

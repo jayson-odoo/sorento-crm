@@ -569,7 +569,7 @@ def listed_scheme_resolutions(parser: dict[str, Any], resolved: dict[str, Any]) 
             "entity_type": "attachment_type", "canonical_code": kind_name, "uuid": e["parent_kind_uuid"],
             "match_field": "scheme_parent", "match_tier": "exact", "similarity": None,
             "company_id": None, "company_name": None, "company_code": None,
-            "display": {"type_name": kind_name},
+            "display": {"type_name": jsc.nullish_str(e.get("parent_kind_name")) or kind_name},
         }] if e.get("parent_kind_uuid") else []
         if "resolutions" in resolved:  # the OR shape: one row per token
             resolved["resolutions"].append(

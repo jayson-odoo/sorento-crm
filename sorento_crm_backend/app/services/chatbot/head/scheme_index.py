@@ -78,21 +78,33 @@ def _scheme_certificates(db: "Session", scheme: str) -> list[str]:
     return [str(cid) for (cid,) in rows]
 
 
-def _parent_kind(db: "Session", scheme: str, kinds: dict[str, str]) -> dict[str, str] | None:
+def _parent_kind(
+    db: "Session", scheme: str, kinds: dict[str, str], certificate_ids: list[str] | None = None
+) -> dict[str, str] | None:
     """The scheme's parent kind, from certificate data: the listed attachment type most of the
     scheme's active certificates are filed under (count first, type name only as a stable
-    tiebreak). A scheme no certificate carries has none. `{"parent_kind": the listed item,
-    "parent_kind_uuid": the type's id}`."""
+    tiebreak). Only certificate kinds count (`is_certificate`, the rows the lists print); a scheme
+    none of them carries has none. `certificate_ids` narrows the count to those certificates (the
+    ones the products hold). `{"parent_kind": the listed item, "parent_kind_uuid": the type's id,
+    "parent_kind_name": the type's name}`."""
     from sqlalchemy import func
 
     from app.models.certificate import Certificate
     from app.models.resources import AttachmentType
 
-    rows = (
+    query = (
         db.query(AttachmentType.id, AttachmentType.code, AttachmentType.type_name)
         .join(Certificate, Certificate.attachment_type_id == AttachmentType.id)
-        .filter(func.lower(Certificate.scheme) == scheme.casefold(), Certificate.status == "active")
-        .group_by(AttachmentType.id, AttachmentType.code, AttachmentType.type_name)
+        .filter(
+            func.lower(Certificate.scheme) == scheme.casefold(),
+            Certificate.status == "active",
+            AttachmentType.is_certificate.is_(True),
+        )
+    )
+    if certificate_ids is not None:
+        query = query.filter(Certificate.id.in_(certificate_ids))
+    rows = (
+        query.group_by(AttachmentType.id, AttachmentType.code, AttachmentType.type_name)
         .order_by(func.count(Certificate.id).desc(), AttachmentType.type_name)
         .all()
     )
@@ -100,7 +112,7 @@ def _parent_kind(db: "Session", scheme: str, kinds: dict[str, str]) -> dict[str,
         for key in (code, name):
             item = kinds.get(str(key or "").strip().casefold())
             if item:
-                return {"parent_kind": item, "parent_kind_uuid": str(type_id)}
+                return {"parent_kind": item, "parent_kind_uuid": str(type_id), "parent_kind_name": str(name)}
     return None
 
 
@@ -149,7 +161,8 @@ def index_scheme(
         # the file leg.
         scheme_entity = {**schemes[0], "hint": "certificate", "certificate_uuids": held}
         entities = [scheme_entity if e is schemes[0] else e for e in entities]
-        entities = _with_parent_kind(entities, scheme_entity, parent, kinds)
+        # What the products hold decides the parent, not the scheme's whole stock.
+        entities = _with_parent_kind(entities, scheme_entity, _parent_kind(db, scheme, kinds, held), kinds)
         carried = [] if named else [
             {"raw": p.get("canonical_code") or p.get("raw"), "hint": "product", "canonical_code": p.get("canonical_code"),
              "current_message": True, "confident": True}
