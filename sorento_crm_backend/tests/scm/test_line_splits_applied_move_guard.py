@@ -36,6 +36,7 @@ from tests.scm.test_line_splits_round3 import (
     _new_line_plan,
     _on,
     _owner_plan,
+    _reconfirm,
     _save,
     _seed,
 )
@@ -269,3 +270,74 @@ def test_a_plan_never_applied_can_drop_splits_onto_other_lines(api, emails):
     _assert_saved(s, _owner_plan(), "card plan, never applied")
     _assert_saved(s, {**_new_line_plan(), 752: [], 608: []}, "re-laid as the New-line plan")
     _assert_saved(s, _card_replan(), "re-laid as the card plan again")
+
+
+# ---------------------------------------------------------------------------
+# Two Saves in a row (reviewer on 9edaa60ae5): the guard compares with the plan the line's
+# last Confirm APPLIED, whatever the splits saved since say (UAC at 7ca862b1c9).
+# ---------------------------------------------------------------------------
+
+
+CARD_752 = [(37, D_608, 608, ""), (467, D_752_NEW, 752, "")]
+
+
+def test_qty_taken_off_another_line_cannot_come_back_on_new_line_through_a_cancel(api, emails):
+    """The card plan confirmed (480 = 14 own, 236 and 167 on 608). Save 1 turns the 236 on 608
+    into a cancel split ("Cancel this qty"): an explicit drop, accepted. Save 2 turns that
+    cancel into 236 on New line: against the applied plan, 236 taken off 608 comes back on
+    480's New-line rows, a move: 422, nothing stored. Both were accepted, and the next Confirm
+    bought the 236 twice (live 1531)."""
+    s = _card_plan_confirmed(api, emails)
+    _assert_saved(s, {
+        480: [(14, D_480_NEW, 480, ""), (236, None, "cancel", ""), (167, D_167, 608, "")],
+        752: CARD_752,
+        608: [],
+    }, "Save 1: 236 on 608 cancelled")
+    _assert_refused(s, {
+        480: [(14, D_480_NEW, 480, ""), (236, D_608, "new", ""), (167, D_167, 608, "")],
+        752: CARD_752,
+        608: [],
+    }, "Save 2: the cancelled 236 back on New line")
+
+
+def test_qty_cannot_go_onto_another_line_after_a_save_at_the_live_base(api, emails):
+    """The card plan confirmed. Save 1 re-plans 480 as 10 own + 4 on New line against its
+    current 14 (AC-G17, the 403 on 608 dropped): accepted. Save 2 puts the 4 onto 752: the
+    applied plan had nothing of 480 on 752, so it is a move: 422, nothing stored. It was
+    accepted, and the next Confirm left 480 at 18 against AutoCount's 14."""
+    s = _card_plan_confirmed(api, emails)
+    _assert_saved(s, {
+        480: [(10, D_480_NEW, 480, ""), (4, D_608, "new", "")],
+        752: CARD_752,
+        608: [],
+    }, "Save 1: 10 + 4 on New line")
+    _assert_refused(s, {
+        480: [(10, D_480_NEW, 480, ""), (4, D_608, 752, "")],
+        752: CARD_752,
+        608: [],
+    }, "Save 2: the 4 onto 752")
+
+
+def test_a_confirm_between_two_saves_makes_its_plan_the_baseline(api, emails):
+    """Guard: the card plan confirmed, Save 1 (480 = 10 own + 4 on New line), Confirm. The plan
+    that Confirm applied has nothing of 480 on 608, so Save 2 putting the 4 onto 608 adds qty
+    there: 422, nothing stored. Dropping the 4 instead is still allowed. A bare 480 = 10 cannot
+    be saved against the current 14 (the sum check), so the drop is the sheet's "Cancel this
+    qty" on the 4 (10 own + 4 cancelled)."""
+    s = _card_plan_confirmed(api, emails)
+    _assert_saved(s, {
+        480: [(10, D_480_NEW, 480, ""), (4, D_608, "new", "")],
+        752: CARD_752,
+        608: [],
+    }, "Save 1: 10 + 4 on New line")
+    _reconfirm(s)
+    _assert_refused(s, {
+        480: [(10, D_480_NEW, 480, ""), (4, D_608, 608, "")],
+        752: CARD_752,
+        608: [],
+    }, "Save 2 after the Confirm: the 4 onto 608")
+    _assert_saved(s, {
+        480: [(10, D_480_NEW, 480, ""), (4, None, "cancel", "")],
+        752: CARD_752,
+        608: [],
+    }, "the 4 dropped (cancelled)")
