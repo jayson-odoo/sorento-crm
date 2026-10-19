@@ -67,22 +67,20 @@ def _args_sha(args: Any) -> str:
 
 
 def _recorded_parse(row: dict[str, Any]) -> dict[str, Any] | None:
-    # The ctx verdict is the default: it is what the live turn acted on. The understood emission replaces it
-    # only when it carries state_changes (apply_changes strips those from the ctx verdict, so for such rows the
-    # emission is the only complete source). With no ctx verdict the emission is the fallback.
+    # The ctx verdict is the default: it is what the live turn acted on, and a row without one (a turn that
+    # failed live) is no_parse. The understood emission replaces it only when it carries state_changes
+    # (apply_changes strips those from the ctx verdict, so for such rows the emission is the complete source).
     ctx = ((row.get("response") or {}).get("ctx") or {})
     raw = (ctx.get("parse") or {}).get("_parser_raw")
-    ctx_raw = raw if isinstance(raw, dict) and raw else None
-    emission = None
+    if not (isinstance(raw, dict) and raw):
+        return None
     for rec in row.get("trace") or []:
         if isinstance(rec, dict) and rec.get("stage") == "understood":
             full = (rec.get("raw") or {}).get("parser_raw")
-            emission = full if isinstance(full, dict) and full else None
+            if isinstance(full, dict) and isinstance(full.get("state_changes"), list) and full["state_changes"]:
+                return full
             break
-    if emission is not None and (ctx_raw is None or (isinstance(emission.get("state_changes"), list)
-                                                     and emission["state_changes"])):
-        return emission
-    return ctx_raw
+    return raw
 
 
 def _recorded_memory(row: dict[str, Any]) -> dict[str, Any]:
