@@ -547,7 +547,7 @@ def _metered(usage: dict[str, Any], total: dict[str, Any]) -> Iterator[None]:
         def embed(chunks: Any) -> Any:  # counted, never capped: a query embedding is tiny next to a chat call
             from app.config import settings
 
-            if total.get("stop"):  # a refused key (or any other stop) ends the turn's embedding calls too
+            if total.get("stop") == "provider_refused":  # a refused key ends the turn's embedding calls too
                 raise _CapStop(total["stop"])
             if getattr(settings, "openai_api_key", ""):  # empty: the original raises before any request goes out
                 _check_key(total, settings.openai_api_key)
