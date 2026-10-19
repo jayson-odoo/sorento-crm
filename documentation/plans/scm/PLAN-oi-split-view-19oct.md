@@ -41,3 +41,48 @@ visualize the split from the sales order perspective, as well as the OI perspect
   (`project_order_inquiry_service.py:6028-6040`) and needs a pending AutoCount change on the line.
 - Applied plan stamp: `split_plan_key` (`project_order_inquiry_service.py:237`) on the decision
   snapshot; newest per line read by `_recorded_split_plans` (`project_line_split_service.py:1021`).
+
+## Phase 2 contract (tester and coder share this; UAC is the behaviour)
+
+Backend, one module-level function in `app/services/project_line_split_service.py`:
+`split_plan_edited(saved_splits, applied_plan) -> bool` (`split_plan_key(saved) != (applied or [])`,
+False when there are no saved splits). Every reader below calls it; none recomputes the compare.
+
+1. Board (UAC A2): `BoardContribution` (`app/schemas/project_board.py:574`) gains
+   `split_edited: bool = False`. GET `/fulfilment-planning/board` sets it per line.
+2. Confirm (UAC A4): POST `/sales-orders/{pso_id}/confirm` (`fulfilment_planning.py:1447`) and
+   POST `/fulfilment-planning/confirm-all` (`:446`) apply every split-edited line of each order they
+   confirm, even when the body names no line of it (body `lines: []` is accepted for an order that
+   has split edits; an order with nothing to confirm answers as today). POST
+   `/fulfilment-planning/simulate-confirm` (`:689`) does the same on its rolled-back session.
+3. Split view (UAC B): one serializer builds `split_view` for a mirror line, null when the line has
+   no splits:
+   `{status: "confirmed" | "saved" | "autocount_changed", revision_no: int | null,
+   confirmed_on: "YYYY-MM-DD" | null, base_qty: str, base_date: str | null, now_qty: str,
+   now_date: str | null, total_qty: str, rows: [{qty: str, delivery_date: str | null,
+   change: str, sits_on: "own" | "line" | "new" | "extra", sits_on_line_no: int | null,
+   remark: str, is_cancel: bool, changed: bool, was_qty: str | null, was_date: str | null}]}`.
+   Rows: the saved splits in `seq` order, then the AutoCount extra row (`sits_on: "extra"`,
+   `change: "ORDER <n>"`, date = the line's now date). `change` = `remark_for_row` word.
+   `sits_on_line_no` = AutoCount line number (core `line_no`). It rides on:
+   - the OI header-lines rows: `OrderInquiryRowOut.split_view` (`app/schemas/project_order_inquiry.py:212`)
+     and the worklist row (`:552`), beside the existing `splits`;
+   - the SCM sales order read: `SalesOrderLine.split_view` (`app/schemas/scm_orders.py:151`), GET
+     `/scm/sales-orders/{id}` (core line -> mirror line by `core_sales_order_line_id`).
+
+Frontend:
+4. `_shared/lib/fulfilmentBoard.ts`: `confirmSummaryFor` counts a contribution with
+   `split_edited` once per line; the Confirm press posts each order that has a split-edited line
+   (body may carry no lines for it). Result card line "Split edits to confirm: line <n> <item>".
+5. One shared component `project-sales/_shared/components/LineSplitInfo.tsx` exporting
+   `LineSplitInfo` (props: `lineNo`, `itemCode`, `soNumber`, `oiNumber?`, `purchasingState?`,
+   `po?`, `view: LineSplitView | null`): renders nothing for a null view, else the "Split N" chip
+   and the (i) button (aria-label "Show the splits of line <n>") that opens the Dialog of UAC B2-B4.
+   Used in the OI header-lines Product cell (`orderInquiryHeaderLinesColumns.tsx`, beside today's
+   `SplitChip`, which it replaces) and the SO Lines Product cell (`SalesOrderDetail.tsx`).
+   Type `LineSplitView` mirrors item 3 (in `_shared` types next to `OrderInquiryLineSplit`).
+
+Test files (tester): `tests/scm/test_split_view_board.py` (A), `tests/scm/test_split_view_read.py`
+(B data on both reads); vitest beside `fulfilmentBoard.ts`, `LineSplitInfo.tsx`,
+`SalesOrderDetail.tsx` and the OI columns. Throwaway DB `sorento_oisv_throwaway` (lead-made; run with
+`SORENTO_ENV_FILE=<scratchpad>/env.throwaway`), pytest `-n 2`, touched files only.
