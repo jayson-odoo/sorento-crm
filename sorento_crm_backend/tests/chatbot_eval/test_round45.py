@@ -82,5 +82,12 @@ def test_guard_2c_no_override_runs_without_asking_the_db(monkeypatch):
 def test_guard_2d_prompt_missing_counts_as_a_skip_in_the_diff():
     skipped = {"case_id": "c1", "turn_id": "t1", "skipped": "prompt_missing", "misses": [], "stages": {}}
     res = replay_mod.diff_rows([skipped], [dict(skipped)])
-    assert res["counts"]["skipped"] == {"prompt_missing": 2 - 1}
+    assert res["counts"]["skipped"] == {"prompt_missing": 1}
     assert res["compared"] == 0 and res["broken"] == []
+
+
+def test_red_2e_a_non_dict_prompt_overrides_is_ignored_like_the_engine_does(monkeypatch):
+    row = _row(ctx_raw={"intent": "a"})
+    row["envelope"]["prompt_overrides"] = "not-a-dict"
+    out, calls = _run(monkeypatch, row, resolves=False)
+    assert calls == [1] and out["skipped"] is None, out
