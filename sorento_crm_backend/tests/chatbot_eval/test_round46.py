@@ -273,3 +273,9 @@ def test_stopped_slice_shows_no_rate_under_growth_either():
     runs = [[g("a", True, "s"), {**g("b", True, "gs"), "growth": True}] for _ in range(3)]
     out = summarise(runs, {"s": 0.9}, stopped={"gs": 0.4})
     assert out["growth"]["gs"] == {"status": "stopped", "best_reachable": 0.4}
+
+
+def test_status_failed_record_is_a_failed_parse_even_with_parser_raw():
+    failed = _understood("a", {"status": "failed", "raw": {"parser_raw": BASE}})
+    out = parser_flips([[prow("a", **BASE)], [failed], [prow("a", **BASE)]])
+    assert out["parse_failed"] == 1 and out["partial_parse"] == 1
