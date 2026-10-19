@@ -60,3 +60,10 @@ def test_guard_f_no_class_key_none_on_record_or_no_held_product_adds_no_check():
     assert _check(_row(), none_on_record=True)[0] == "absent"
     assert _check(_row(held=False))[0] == "absent"
     assert _check(_row(), spec_products=[])[0] == "absent"
+
+
+def test_guard_g_answering_only_a_variant_of_the_held_product_is_still_held_only():
+    tool_v = {"name": "crm_inventory_list", "args": {"product_ids": [UB]}}
+    row = _row(tools=[tool_v], reply="SRTA100-BL has 3 pcs.", after=[prod("SRTA100", UA), prod("SRTA100-BL", UB)])
+    state, _ = _check(row)
+    assert state is False, state
