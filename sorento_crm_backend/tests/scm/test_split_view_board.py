@@ -419,7 +419,7 @@ def _rows_of(s, no):
 
     s.db.expire_all()
     return sorted(
-        (str(r.id), r.verb, str(r.qty), r.delivery_date)
+        (str(r.id), r.verb, str(r.qty), r.delivery_date, r.state)
         for r in s.db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == s.line[no].id).all()
     )
 
@@ -448,12 +448,27 @@ def test_r2_a11_an_unnamed_split_edited_line_that_fails_the_check_never_makes_th
     # no longer adds up and the line is not A9-pending.
     s.core[608].qty_ordered, s.line[608].qty = Decimal("640"), Decimal("640")
     s.db.commit()
-    before = _rows_of(s, 608)
     r = _confirm(s.client, s.order.id, [_line_payload(s.line[752].id, buy_qty="649")])
     assert r.status_code == 200, ("the other line confirms", r.status_code, r.text)
     body = r.json()
     assert 752 in _line_nos(s, body.get("lines_confirmed")), body.get("lines_confirmed")
     assert 608 in [h.get("line_no") for h in body.get("lines_held_back") or []], body.get("lines_held_back")
     assert 608 not in _line_nos(s, body.get("lines_confirmed"))
+    # UAC A11 exception: a carried line (as on main) may have its rows touched, so no row-equality
+    # claim for 608 here; it is held back and not confirmed, which is asserted above.
+
+
+def test_r2_a11_a_confirm_naming_only_752_leaves_an_applied_split_plan_on_608_alone(api, emails):
+    s, _po = _new_line_plan_applied(api, emails)
+    _save(s, {608: [(600, D_608, 608, ""), (32, D_32, "new", "")]})
+    _reconfirm(s)
+    assert _board_flag(s, 608) is False, "premise: applied, no edit"
+    before = _rows_of(s, 608)
+    assert before, "premise: 608 has OI rows"
+    start = len(emails)
+    r = _confirm(s.client, s.order.id, [_line_payload(s.line[752].id, buy_qty="649")])
+    assert r.status_code == 200, (r.status_code, r.text)
     s.db.commit()
-    assert _rows_of(s, 608) == before
+    assert _rows_of(s, 608) == before, "608's rows (state included) are untouched"
+    assert [ln for ln in _sent_since(emails, start) if ln["qty"] in ("600", "32", "632")] == [], (
+        "no email for 608", _sent_since(emails, start))
