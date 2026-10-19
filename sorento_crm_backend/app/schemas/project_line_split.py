@@ -13,6 +13,43 @@ from typing import List, Optional
 from pydantic import BaseModel, Field, condecimal
 
 
+class LineSplitViewRowOut(BaseModel):
+    """One row of a line's split popup (OI-SPLIT-VIEW, UAC B2): a saved split, or the
+    AutoCount extra (`sits_on` "extra"). Quantities and dates are plain strings, the same on
+    every read that carries the view."""
+
+    qty: str
+    delivery_date: Optional[str] = None
+    #: The email's REMARK word (`remark_for_row`): ADVANCE / REMAIN / DELAY / CANCEL BALANCE /
+    #: ORDER n.
+    change: str
+    #: "own" / "line" / "new" / "extra"; `sits_on_line_no` is the AutoCount line number.
+    sits_on: str
+    sits_on_line_no: Optional[int] = None
+    remark: str = ""
+    is_cancel: bool = False
+    #: Not in the applied plan while the edit waits (UAC B4); `was_*` only when exact.
+    changed: bool = False
+    was_qty: Optional[str] = None
+    was_date: Optional[str] = None
+
+
+class LineSplitViewOut(BaseModel):
+    """A split line as the split popup reads it (OI-SPLIT-VIEW, UAC B2 to B4), built by the one
+    serializer `LineSplitService.split_views`; null on a line with no splits."""
+
+    #: "confirmed" / "saved" / "autocount_changed" (UAC B3).
+    status: str
+    revision_no: Optional[int] = None
+    confirmed_on: Optional[str] = None
+    base_qty: str
+    base_date: Optional[str] = None
+    now_qty: str
+    now_date: Optional[str] = None
+    total_qty: str
+    rows: List[LineSplitViewRowOut] = []
+
+
 class LineSplitOut(BaseModel):
     id: str
     qty: float
@@ -59,6 +96,9 @@ class LineSplitLineOut(BaseModel):
     #: The REMARK the email prints for the line's own row (`remark_for_row`, AC-G9).
     remark_generated: str = ""
     splits: List[LineSplitOut] = []
+    #: OI-SPLIT-VIEW (UAC D1): the line's split popup, the same value the SO and OI reads
+    #: carry; null on a line with no splits.
+    split_view: Optional[LineSplitViewOut] = None
 
 
 class LineSplitsOut(BaseModel):

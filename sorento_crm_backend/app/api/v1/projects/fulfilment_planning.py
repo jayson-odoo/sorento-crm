@@ -21,6 +21,7 @@ import logging
 import uuid
 from datetime import date
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any, Dict, Literal, Optional, Tuple
 
 from fastapi import APIRouter, Depends, Query
@@ -1279,6 +1280,62 @@ def _withdrawn_entries(db: Session, service: ProjectSupplyService, order, line_i
     ]
 
 
+def _with_split_edits(db: Session, service: ProjectSupplyService, order, payload: Any) -> Any:
+    """OI-SPLIT-VIEW (UAC A4, A5): the payload plus every line of the order whose saved split
+    edit a Confirm applies (`LineSplitService.split_edited_line_ids`, the set the board's
+    `split_edited` flag reads) and that the body does not already name, withdraw, cancel or
+    scope out (`only_line_ids`). Each is re-posted with its active decision's composition (a
+    whole Buy: only such a line's plan becomes purchasing's rows), so the engine acts on the
+    edited plan exactly as for a named line (#1749 AC-G15). Confirm, Confirm all and Simulate
+    all reach this through `_confirm_with_possible_rejects`."""
+    from app.schemas.project_supply import ConfirmLine
+    from app.services.project_line_split_service import LineSplitService
+
+    lines = list(getattr(payload, "lines", None) or [])
+    taken = {str(line.project_line_id) for line in lines}
+    taken |= {str(x) for x in (getattr(payload, "rejected_line_ids", None) or [])}
+    taken |= {
+        str(x.project_line_id) for x in (getattr(payload, "cancelled_lines", None) or [])
+    }
+    edited = LineSplitService(db).split_edited_line_ids(
+        str(line.id) for line in service.lines_of(str(order.id))
+    ) - taken
+    only = getattr(payload, "only_line_ids", None)
+    if only is not None:
+        edited &= {str(x) for x in only}
+    if not edited:
+        return payload
+    active = service.active_decision(str(order.id))
+    snapshots = {
+        str(snapshot.get("project_line_id") or ""): snapshot
+        for snapshot in ((active.line_snapshots if active is not None else None) or [])
+    }
+    added = []
+    for line_id in sorted(edited):
+        snapshot = snapshots.get(line_id)
+        if snapshot is None:
+            continue
+        added.append(
+            ConfirmLine(
+                project_line_id=line_id,
+                buy_qty=sum(
+                    (
+                        Decimal(str(component.get("qty") or 0))
+                        for component in snapshot.get("components") or []
+                        if component.get("kind") == "buy"
+                    ),
+                    Decimal("0"),
+                ),
+                buy_reason=snapshot.get("buy_reason"),
+                amend_reason=snapshot.get("amend_reason"),
+                suspected_system_issue=bool(snapshot.get("suspected_system_issue")),
+            )
+        )
+    if not added:
+        return payload
+    return payload.model_copy(update={"lines": lines + added})
+
+
 def _confirm_with_possible_rejects(
     db: Session,
     service: ProjectSupplyService,
@@ -1314,6 +1371,9 @@ def _confirm_with_possible_rejects(
     THROUGH `confirm()`'s own `uncover_line_ids` parameter instead, which stays inside the
     journal exactly as an ordinary reconfirm does - undoable, as the plan states.
     """
+    if not batch_id:
+        # OI-SPLIT-VIEW (UAC A4): every saved split edit of the order rides along, named or not.
+        payload = _with_split_edits(db, service, order, payload)
     named = {str(entry.project_line_id) for entry in getattr(payload, "lines", []) or []}
     # DEDUPED (nit, fix round, review): a line named twice in `rejected_line_ids` is one
     # withdrawal, not two - `dict.fromkeys` keeps the FIRST occurrence's order, which

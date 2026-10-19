@@ -1640,6 +1640,10 @@ class OrderInquiryWorklistService:
         splits_by_line = ProjectOrderInquiryService(self.db).splits_for_lines(
             [row.so_line_id for row in rows]
         )
+        # OI-SPLIT-VIEW (UAC B1 to B5): every page row's line split popup, in one read.
+        split_views = ProjectOrderInquiryService(self.db).split_views_for_lines(
+            [row.so_line_id for row in rows]
+        )
         # AC-RR-6: one query for every PO line on the page that has an open SPO chained from it.
         blocked = ProjectOrderInquiryService(self.db).po_lines_with_open_chained_spo(
             [
@@ -1664,6 +1668,7 @@ class OrderInquiryWorklistService:
                     raise_events_by_row,
                     blocked,
                     splits_by_line,
+                    split_views,
                 )
                 for row in rows
             ],
@@ -2287,6 +2292,7 @@ class OrderInquiryWorklistService:
         raise_events_by_row: Optional[Dict[str, Dict[str, Any]]] = None,
         blocked: Optional[set] = None,
         splits_by_line: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+        split_views: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         line_flow = (flow or {}).get(row.so_line_id, {})
         row_links = (links or {}).get(row.id, [])
@@ -2454,6 +2460,11 @@ class OrderInquiryWorklistService:
             # read-only expand, the same keys `serialize_rows` carries. `[]` when unsplit.
             "splits": (
                 (splits_by_line or {}).get(str(row.so_line_id), []) if row.so_line_id else []
+            ),
+            # OI-SPLIT-VIEW (UAC B1 to B5): the line's split popup, the same value
+            # `serialize_rows` carries. Null when unsplit.
+            "split_view": (
+                (split_views or {}).get(str(row.so_line_id)) if row.so_line_id else None
             ),
             "verb": row.verb,
             "note": row.note,

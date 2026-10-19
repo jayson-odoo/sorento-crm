@@ -174,6 +174,10 @@ SPLIT_MOVED_KEY = "oi_split_moved_by_origin"
 #: OI-LINE-SPLIT: per sales order, the lines the running Confirm moved to their split plan
 #: (`_kept_split_needs`); `_tell_splits` tells their plan rows.
 SPLIT_ACTED_KEY = "oi_split_acted_by_order"
+#: OI-SPLIT-VIEW (UAC A4): per sales order, the acted lines whose saved plan is an edit of the
+#: plan an earlier Confirm applied (same base) -> that applied plan (`split_plan_key`);
+#: `_tell_splits` tells only the splits the applied plan does not hold.
+SPLIT_EDITED_KEY = "oi_split_edited_by_order"
 
 
 def whole_buy_line_ids(
@@ -4639,8 +4643,32 @@ class ProjectOrderInquiryService:
         if not told:
             return
         queue[:] = kept
+        edits = (self.db.info.get(SPLIT_EDITED_KEY) or {}).get(str(pso_id)) or {}
         for line_id, items in told.items():
             plan = plans[line_id]
+            applied = edits.get(line_id)
+            if applied is not None:
+                # OI-SPLIT-VIEW (UAC A4): an edit of an applied plan tells one row per changed
+                # split (not in the applied plan); the rows that stand are not told again.
+                from collections import Counter
+
+                left = Counter(applied[1:])
+                changed = []
+                for row in plan.rows:
+                    if row.split is None:
+                        continue
+                    entry = split_plan_key([row.split])[1]
+                    if left[entry] > 0:
+                        left[entry] -= 1
+                        continue
+                    changed.append(row)
+                if changed:
+                    self._queue_plan_rows(
+                        dataclasses.replace(plan, rows=changed),
+                        items[0],
+                        actor_user_id=actor_user_id,
+                    )
+                continue
             dropped = self.dropped_split_qty(line_id, plan.facts.splits)
             if dropped > _ZERO:
                 # AC-G17: what a re-plan dropped is told as its CANCEL BALANCE row.
@@ -5826,6 +5854,8 @@ class ProjectOrderInquiryService:
 
         acted_by_order = self.db.info.setdefault(SPLIT_ACTED_KEY, {})
         acted_by_order[str(decision.project_sales_order_id)] = set()
+        edited_by_order = self.db.info.setdefault(SPLIT_EDITED_KEY, {})
+        edited_by_order[str(decision.project_sales_order_id)] = {}
         named = {
             str(entry["line"].id): entry
             for entry in buy_lines
@@ -5989,7 +6019,32 @@ class ProjectOrderInquiryService:
         acted_by_order[str(decision.project_sales_order_id)] = {
             line_id for line_id, plan in acted.items() if not plan["own_rows"]
         } | told
+        edited_by_order[str(decision.project_sales_order_id)] = self._applied_plan_edits(
+            decision,
+            {line_id: facts[line_id] for line_id, plan in acted.items() if not plan["own_rows"]},
+        )
         return acted, needs, standing
+
+    def _applied_plan_edits(self, decision: Any, facts: Mapping[str, Any]) -> Dict[str, List[str]]:
+        """OI-SPLIT-VIEW (UAC A4): `line id -> applied plan` for those of these acted lines whose
+        saved plan edits the plan an earlier Confirm of the order applied against the same
+        base (`split_plan_edited`): purchasing is told only the splits that changed. A plan
+        made against a new base (a pending change, a re-plan) is told whole, as before."""
+        if not facts:
+            return {}
+        from app.services.project_line_split_service import LineSplitService, split_plan_edited
+
+        recorded = LineSplitService(self.db).recorded_split_plans(
+            [str(decision.project_sales_order_id)], before_revision=decision.revision_no
+        )
+        out: Dict[str, List[str]] = {}
+        for line_id, f in facts.items():
+            applied = list((recorded.get(line_id) or {}).get("plan") or [])
+            if not applied or not f.splits:
+                continue
+            if split_plan_key(f.splits)[0] == applied[0] and split_plan_edited(f.splits, applied):
+                out[line_id] = applied
+        return out
 
     def _later_change_lines(self, buy_lines: Sequence[Dict[str, Any]], decision: Any) -> set:
         """OI-LINE-SPLIT (AC-G16): the whole-Buy split lines of this Confirm whose pending change
@@ -6236,6 +6291,9 @@ class ProjectOrderInquiryService:
                 if first_date is not None and source.delivery_date != first_date:
                     source.previous_delivery_date = source.delivery_date
                     source.delivery_date = first_date
+                    # OI-SPLIT-VIEW (UAC A5): filed under this revision like a moved qty, so
+                    # the Confirm's preview (and Simulate) lists the row it moved.
+                    source.supply_decision_id = decision.id
                     if source.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
                         source.changed_at = datetime.utcnow()
                         source.ack_state = ACK_CHANGED
@@ -7579,6 +7637,8 @@ class ProjectOrderInquiryService:
         linked_by_row = self._linked_qty_by_row([row.id for row in rows])
         # OI-LINE-SPLIT (UAC D3): the splits of each row's line (origin view), one read.
         splits_by_line = self.splits_for_lines([row.so_line_id for row in rows])
+        # OI-SPLIT-VIEW (UAC B1 to B5): each row's line split popup, one batched read.
+        split_views = self.split_views_for_lines([row.so_line_id for row in rows])
         # PLAN-scm-supplied-with-companions.md S5: the anchor's own item code, for the
         # rows that carry a bundle - one query for the whole page rather than one per row.
         anchor_ids = {row.bundled_with_row_id for row in rows if row.bundled_with_row_id}
@@ -7696,9 +7756,22 @@ class ProjectOrderInquiryService:
                     "splits": splits_by_line.get(str(row.so_line_id), [])
                     if row.so_line_id
                     else [],
+                    "split_view": split_views.get(str(row.so_line_id))
+                    if row.so_line_id
+                    else None,
                 }
             )
         return out
+
+    def split_views_for_lines(
+        self, line_ids: Sequence[Optional[str]]
+    ) -> Dict[str, Dict[str, Any]]:
+        """OI-SPLIT-VIEW (UAC B5): `line id -> split_view` for the lines with saved splits,
+        off the one serializer (`LineSplitService.split_views`); the OI rows and the
+        worklist both read it."""
+        from app.services.project_line_split_service import LineSplitService
+
+        return LineSplitService(self.db).split_views([str(i) for i in line_ids if i])
 
     def splits_for_lines(self, line_ids: Sequence[Optional[str]]) -> Dict[str, List[Dict[str, Any]]]:
         """OI-LINE-SPLIT (UAC D3): each line's own splits as the OI Lines tab's read-only
@@ -14297,6 +14370,7 @@ def register_order_inquiry_post_commit_dispatch() -> None:
         if previous_transaction.parent is None and not previous_transaction.nested:
             session.info.pop(SPLIT_MOVED_KEY, None)
             session.info.pop(SPLIT_ACTED_KEY, None)
+            session.info.pop(SPLIT_EDITED_KEY, None)
         # A write that never landed has nothing to tell purchasing about either - but ONLY
         # that write. This fires on a nested rollback too, and a batch apply gives each
         # order its own savepoint, so popping the whole queue let a failing order discard a

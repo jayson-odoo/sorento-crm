@@ -14,6 +14,7 @@ from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.planning_change import PlanningChangeFromTo
+from app.schemas.project_line_split import LineSplitViewOut
 
 
 # --- sales orders -----------------------------------------------------------
@@ -198,6 +199,10 @@ class SalesOrderLine(BaseModel):
     #: Sent on the SINGLE order read only. The list has no column for it and would pay two
     #: more queries a page for a fact nothing there prints.
     order_inquiry: Optional[SalesOrderLineInquiry] = None
+    #: OI-SPLIT-VIEW (UAC B1, B7): the split popup of this line's planning mirror, the same
+    #: value the OI reads carry; null on a line with no splits or no project order. Single
+    #: order read only, like `order_inquiry`.
+    split_view: Optional[LineSplitViewOut] = None
     #: Which confirmed revision decided supply for this line: the ACTIVE decision's
     #: `revision_no` when its `line_snapshots` name this core line, `None` otherwise.
     #:
