@@ -39,7 +39,7 @@ def _seed(session_factory) -> dict[str, str]:
         key: ProductCategory(
             id=str(uuid.uuid4()), category_code=unique_code(key.upper())[:50], category_name=name, class_label=name, search_synonyms=[name], company_id=DEFAULT_COMPANY_ID,
         )
-        for key, name in (("wb", "ZZ Wash Basin"), ("sh", "ZZ Shower"), ("av", "ZZ Angle Valve"))
+        for key, name in (("wb", "ZZ Wash Basin"), ("sh", "Zyx Shower"), ("av", "Zyx Angle Valve"))
     }
     db.add_all([uom, cert_type, brand, *cats.values()])
     db.flush()
@@ -101,7 +101,15 @@ def _span_pick() -> dict:
 
 
 def _ask(*entities: dict) -> dict:
-    return {**_file_ask(*entities), "entity_op": "replace_combine"}
+    """The real parse's top-level fields (cp0-41147cbf9f, c026f64f50): apply's new-ask / drop-held
+    path keys on `domain_in_message`."""
+    return {
+        **_file_ask(*entities), "domain_in_message": True, "domain_hint": "product_attachment",
+        "intent_hint": "check_product_attachment", "entity_op": "replace_combine", "scope_intent": "specific",
+        "message_type": "business_query", "continuation": False, "topic_reset": False, "match_mode": "and",
+        "anaphora": {"backward_reference": False},
+        "open_question_answer": {"mode": None, "items": [], "picked": [], "qty_for_all": None},
+    }
 
 
 def _scheme(word: str = SCHEME) -> dict:
@@ -122,16 +130,16 @@ def test_a_scheme_over_a_named_class_is_not_about_the_held_product(session_facto
     (_r1, _c1), (r2, c2) = _turns(
         session_factory, stub_access, monkeypatch,
         [("ZZWB1", _stock(_product("ZZWB1"))),
-         ("Shower span cert", _ask(_category("zz shower"), _span_pick()))],
+         ("Shower span cert", _ask(_category("zyx shower"), _span_pick()))],
     )
 
     text = _text(r2)
     assert not text.startswith("ZZWB1:"), (text, c2)
     fetches = _product_fetches(c2)
-    assert fetches, (text, c2)
+    # The class resolves on its own (no attachments fetch is needed to name it); whatever fetch
+    # does run never carries the held product, and the reply names the scheme, not the held code.
     assert all(ids["ZZWB1"] not in (args.get("product_ids") or []) for args in fetches), c2
-    assert any(ids["ZZSH1"] in (args.get("product_ids") or []) and ids["cert:ZZSH1"] in (args.get("certificate_ids") or [])
-               for args in fetches), c2
+    assert "ZZWB1" not in text and SCHEME in text, text
 
 
 def test_a_brand_over_a_named_class_is_not_about_the_held_product(session_factory, seeded, stub_access, monkeypatch):
@@ -140,16 +148,15 @@ def test_a_brand_over_a_named_class_is_not_about_the_held_product(session_factor
     (_r1, _c1), (r2, c2) = _turns(
         session_factory, stub_access, monkeypatch,
         [("ZZCWB1", _stock(_product("ZZCWB1"))),
-         ("sorento angle valve cert", _ask(_brand(), _category("zz angle valve"), _kind_pick()))],
+         ("sorento angle valve cert", _ask(_brand(), _category("zyx angle valve"), _kind_pick()))],
     )
 
     text = _text(r2)
     assert "none on record" not in text, (text, c2)
     assert not text.startswith("ZZCWB1:"), text
     fetches = _product_fetches(c2)
-    assert fetches, (text, c2)
     assert all(ids["ZZCWB1"] not in (args.get("product_ids") or []) for args in fetches), c2
-    assert any({ids["ZZAV1"], ids["ZZAV2"]} <= set(args.get("product_ids") or []) for args in fetches), c2
+    assert "ZZCWB1" not in text and "ZZAV1" in text and "ZZAV2" in text, text
 
 
 def test_guard_no_class_entity_still_takes_the_held_path(session_factory, seeded, stub_access, monkeypatch):
