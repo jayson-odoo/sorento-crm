@@ -365,7 +365,8 @@ def _replay_one(row: dict[str, Any], factory: Callable[[], Any], stage: str | No
     payload = copy.deepcopy(row.get("envelope") or {})
     # get_prompt (ai_prompt_registry.py:1463) falls back to the hardcoded template when an override id is
     # missing, so a pin this DB lacks would silently measure other code: skip the row instead.
-    pinned = (payload.get("prompt_overrides") or {}).get(PARSER_PROMPT_KEY)
+    overrides = payload.get("prompt_overrides")
+    pinned = overrides.get(PARSER_PROMPT_KEY) if isinstance(overrides, dict) else None  # the engine ignores a non-dict
     if pinned and not _pin_resolves(factory, pinned):
         out["skipped"] = "prompt_missing"
         return out
