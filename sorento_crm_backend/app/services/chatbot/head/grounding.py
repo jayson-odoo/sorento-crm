@@ -847,7 +847,11 @@ def ground(
                 # PROMO-SUBJECT-FILTER AC-24: the words name two types, but the whole phrase
                 # is one value of a registry key, said word for word ("basin cabinet",
                 # furniture_type basin_cabinet): that value is what was asked for.
+                size = len(out)
                 add([whole], entity)
+                if len(out) > size:
+                    # The parser named a class; the spec this makes still says so (`names_own_class`).
+                    out[-1] = {**out[-1], "class_hint": hint}
                 notes.append({"from": hint, "raw": raw, "to": [whole.__dict__]})
                 continue
             # Fix round 10 on PR #833: "water tap basin" holds two product types word for
