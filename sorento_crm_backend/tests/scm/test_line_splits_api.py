@@ -199,12 +199,13 @@ def test_get_a_saved_split_keeps_the_base_it_was_made_against(api):
     assert l200["acting"] is False
 
 
-def test_get_requires_the_view_permission(api, monkeypatch):
+def test_get_requires_the_view_permission(api):
     from app.services.user_service import UserPermissionService
 
     s = _seed(api)
-    monkeypatch.setattr(UserPermissionService, "check_user_has_permission",
-                        lambda self, uid, slug: False)
+    # Assigned, not monkeypatched: `api` swapped in a stub and restores the real method itself;
+    # monkeypatch tears down after it and would put that always-true stub back for the worker.
+    UserPermissionService.check_user_has_permission = lambda self, uid, slug: False
     assert s.client.get(_url(s.order.id)).status_code == 403
 
 
@@ -404,12 +405,11 @@ def test_a_split_sitting_on_a_cancelled_line_reads_back_as_a_new_line(api):
     assert on[D_NEW.isoformat()] == str(s.l400.id)
 
 
-def test_put_without_the_edit_permission_is_403_and_saves_nothing(api, monkeypatch):
+def test_put_without_the_edit_permission_is_403_and_saves_nothing(api):
     from app.services.user_service import UserPermissionService
 
     s = _seed(api)
-    monkeypatch.setattr(UserPermissionService, "check_user_has_permission",
-                        lambda self, uid, slug: slug != EDIT)
+    UserPermissionService.check_user_has_permission = lambda self, uid, slug: slug != EDIT
     r = _put(s, [_valid_200(s)])
     assert r.status_code == 403, r.text
     assert s.client.get(_url(s.order.id)).status_code == 200  # view still allowed
