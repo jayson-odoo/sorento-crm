@@ -598,14 +598,19 @@ def _quantity_check(row: dict[str, Any], gold: dict[str, Any] | None = None,
     return ("qty_ask_ok", True, "The bot asked how many instead of giving the answer.")
 
 
-def _unresolved_held(row: dict[str, Any]) -> bool:
-    """A code held before the turn is one the lookup could not resolve (the looked_up envelopes list it as unresolved)."""
+def _unresolved_held_suggestions(row: dict[str, Any]) -> set[str] | None:
+    """The did-you-mean codes the lookup offered for the codes held before the turn that it could not resolve (the
+    looked_up envelopes list them as unresolved, with `unresolved_suggestions` rows); None when no held code is unresolved."""
     held = _codes_of(_mem_focus(row, "before").get("products"))
-    gone: set[str] = set()
+    out: set[str] | None = None
     for env in (_stage(row, "looked_up").get("raw") or {}).get("envelopes") or []:
-        if isinstance(env, dict):
-            gone |= {_key(c) for c in env.get("unresolved") or []}
-    return bool(held & gone)
+        if not isinstance(env, dict):
+            continue
+        sug = env.get("unresolved_suggestions") if isinstance(env.get("unresolved_suggestions"), dict) else {}
+        for c in env.get("unresolved") or []:
+            if _key(c) in held:
+                out = (out or set()) | {_key(r.get("code")) for r in ((sug.get(c) or {}).get("rows") or []) if isinstance(r, dict)}
+    return out
 
 
 def _picker_check(row: dict[str, Any], gold: dict[str, Any] | None = None) -> tuple[str, bool, str] | None:
@@ -620,7 +625,8 @@ def _picker_check(row: dict[str, Any], gold: dict[str, Any] | None = None) -> tu
     def codes(q: Any) -> set[str]:
         return {_key(o.get("code") or o.get("label")) for o in (q.get("options") or []) if isinstance(o, dict)} if isinstance(q, dict) else set()
 
-    if _unresolved_held(row):   # a did-you-mean for a held code that is not on file is an honest answer, not a picker
+    sug = _unresolved_held_suggestions(row)
+    if sug and codes(after) and codes(after) <= sug:   # a did-you-mean for a held code not on file, built from ITS suggestions
         return ("no_picker", True, "The bot left a list of products open to pick from instead of answering.")
     same_list = isinstance(before, dict) and before.get("kind") == "product_pick" and codes(before) == codes(after)
     return ("no_picker", same_list, "The bot left a list of products open to pick from instead of answering.")
@@ -742,25 +748,22 @@ def _subject_check(want: set[str], after: set[str]) -> tuple[str, bool | None, s
     return ("new_subject", (want <= after) if want else None, "The new subject was not picked up.")
 
 
-def _customer_targeted(row: dict[str, Any], fragment: Any) -> bool:
-    """A gold that names a customer by a fragment: the tool's customer ids are mapped to names through the options of the
-    questions before and after (each option names its ids). True when at least one id resolves and every resolved id is
-    a customer whose name or code holds the fragment; an id no option names resolves to nothing."""
+def _customer_targeted(row: dict[str, Any], fragment: Any, position: Any) -> bool:
+    """A gold that names a customer by a fragment and the option position picked: the fragment can match every option
+    (same-name accounts), so the tool's customer ids must all be ids of the option AT that position in the question
+    before the turn, and that option must hold the fragment."""
     want = _squash(fragment)
-    if not want:
+    before = _oq(row)[0]
+    options = [o for o in (before.get("options") or []) if isinstance(o, dict)] if isinstance(before, dict) else []
+    if not want or not isinstance(position, int) or not 0 < position <= len(options):
         return False
-    names: dict[str, str] = {}
-    for q in _oq(row):
-        for o in (q.get("options") or []) if isinstance(q, dict) else []:
-            if isinstance(o, dict):
-                label = _squash(" ".join(str(o.get(k) or "") for k in ("name", "label", "code")))
-                for u in [o.get("uuid"), *(o.get("uuids") or [])]:
-                    if u:
-                        names[str(u).lower()] = label
+    opt = options[position - 1]
+    if want not in _squash(" ".join(str(opt.get(k) or "") for k in ("name", "label", "code"))):
+        return False
+    allowed = {str(u).lower() for u in [opt.get("uuid"), *(opt.get("uuids") or [])] if u}
     ids = [x.lower() for t in _tools(row) for k in ("customer_ids", "customer_id")
            for x in _strings((t.get("args") or {}).get(k)) if UUID_RE.fullmatch(x)]
-    resolved = [names[i] for i in ids if i in names]
-    return bool(resolved) and all(want in n for n in resolved)
+    return bool(ids) and set(ids) <= allowed
 
 
 def _followup(row, item):
@@ -860,7 +863,7 @@ def _followup_checks(row, item, kind, gold):
             code = _key(gold["code"])
             # no named tool ran (the bot asked its next question): the target is unknown, not wrong
             targeted = (code in _tool_targets(row) or any(_mentions(_dump(t.get("args")), gold["code"]) for t in _tools(row))
-                        or _customer_targeted(row, gold["code"]))
+                        or _customer_targeted(row, gold["code"], gold.get("position")))
             # the bot asked its next question (a clarify, or the period question of a DO list ask, which fetches nothing)
             unknown = not _tools(row) and (bool(_asking(row)) or bool(_kind(row, "do_range")))
             checks.append(("tool_target", None if unknown else targeted, "The lookup tool did not target the chosen item."))
@@ -1199,7 +1202,9 @@ def _attachment(row, item):
     if _apply_omitted(row) and not ents:   # the apply payload was capped: the parser's own entities are the uncapped source
         derived = (_stage(row, "understood").get("raw") or {}).get("derived")
         listed = derived.get("entities") if isinstance(derived, dict) else None
-        ents, readable = [e for e in listed or [] if isinstance(e, dict)], isinstance(listed, list)
+        # counted only when a tool carried the type ids (the bot acted on the type); otherwise the apply may have dropped it
+        carried = any((t.get("args") or {}).get("attachment_type_ids") for t in _tools(row))
+        ents, readable = [e for e in listed or [] if isinstance(e, dict)] if carried else [], carried and isinstance(listed, list)
     asked = [_type_word(e.get("canonical_code") or e.get("raw")) for e in ents if e.get("hint") == "attachment_type"]
     from_memory = (_mem_focus(row, "after").get("extra") or {}).get("attachment_type")
     if isinstance(from_memory, (str, dict)):
@@ -1338,7 +1343,7 @@ def grade_turn(row: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
         passed, failed = False, tier_spec[2]
     elif tier:
         passed, failed = None, "The bot asked an access question (price tier); the bench cannot judge it."
-    elif passed is False and _oq_unreadable(row) and (_stage(row, "replied").get("facts") or {}).get("asking") == "tier_pick":
+    elif passed is False and not leak_msg and _oq_unreadable(row) and (_stage(row, "replied").get("facts") or {}).get("asking") == "tier_pick":
         # the question after was capped out and nothing uncapped holds it: the tier ask cannot be ruled out
         passed, failed = None, "The bench could not read the question the bot asked (trace cap)."
     elif passed and checks and all(ok is None for _, ok, _ in checks):

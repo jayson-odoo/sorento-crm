@@ -203,7 +203,7 @@ def test_red_4a_a_leak_beside_an_unreadable_tier_ask_stays_a_failure():
     r = _tier_row()
     r["response"]["reply"]["text"] = f"Which access level for {UA}?"
     res = grade_turn(r, item("code_lookup", **GOLD_CODE))
-    assert res["passed"] is False and "internal id" in res["reason"], (res["passed"], res["reason"])
+    assert res["passed"] is False and any(x.startswith("internal id") for x in res["leaks"]), (res["passed"], res["leaks"])
 
 
 def test_guard_4a_a_readable_state_with_no_question_stays_a_failure_even_with_a_tier_ask_flag():
