@@ -26,12 +26,16 @@ TIER = {"kind": "tier_pick", "expects": "choice", "payload": {}, "asked_at_turn"
         "options": [{"label": "Dealer"}, {"label": "End user"}]}
 
 
-def _dym_row(unresolved=("SRTZ99",), held="SRTZ99"):
-    held_rec = {"raw": held, "hint": "product", "uuid": None, "canonical_code": None}
-    r = row2(reply="Did you mean one of these?", mem_before=[held_rec], mem_after=[held_rec],
-             oq={"before": TIER, "after": DYM, "writer": "engine"},
+SUGGEST = {"head": "Did you mean:", "rows": [{"code": "SRTZ90-A", "entity_type": "product"},
+                                              {"code": "SRTZ90-B", "entity_type": "product"}]}
+
+
+def _dym_row(unresolved=("SRTZ99",), held=("SRTZ99",), after=DYM):
+    held_recs = [{"raw": h, "hint": "product", "uuid": None, "canonical_code": None} for h in held]
+    r = row2(reply="Did you mean one of these?", mem_before=held_recs, mem_after=held_recs,
+             oq={"before": TIER, "after": after, "writer": "engine"},
              looked=[{"tool": None, "unresolved": list(unresolved), "product_codes": list(unresolved),
-                      "unresolved_suggestions": {c: {} for c in unresolved}}])
+                      "unresolved_suggestions": {c: SUGGEST for c in unresolved}}])
     return r
 
 
@@ -46,6 +50,14 @@ def test_red_1_a_did_you_mean_for_an_unresolved_held_code_is_not_a_picker_failur
 def test_guard_1_a_picker_with_nothing_unresolved_still_fails():
     res = grade_turn(_dym_row(unresolved=()), item("followup", "answer", **GOLD_ANS))
     assert res["checks"]["no_picker"] is False, res["checks"]
+
+
+def test_red_1_a_picker_for_the_other_held_code_still_fails():
+    other = dict(DYM, options=[{"label": "SRTY10-A", "code": "SRTY10-A"}, {"label": "SRTY10-B", "code": "SRTY10-B"}])
+    res = grade_turn(_dym_row(held=("SRTZ99", "SRTY10"), after=other), item("followup", "answer", **GOLD_ANS))
+    assert res["checks"]["no_picker"] is False, res["checks"]
+    ok = grade_turn(_dym_row(held=("SRTZ99", "SRTY10")), item("followup", "answer", **GOLD_ANS))
+    assert ok["checks"]["no_picker"] is True, ok["checks"]
 
 
 def test_guard_1_an_unresolved_code_that_was_not_held_still_fails():
@@ -68,6 +80,25 @@ def _cust_row(ids):
 def test_red_2a_a_picked_customer_is_seen_through_the_options_that_name_its_ids():
     res = grade_turn(_cust_row([U1, U2]), item("followup", "pick", **GOLD_PICK))
     assert res["checks"]["tool_target"] is True, res["checks"]
+
+
+SAME_NAME_Q = {"kind": "customer_pick", "expects": "choice", "payload": {}, "asked_at_turn": 3,
+               "options": [{"label": "Acmeco Sdn Bhd", "name": "Acmeco Sdn Bhd", "code": "300-A1", "uuid": U1, "uuids": [U1]},
+                           {"label": "Acmeco Holdings", "name": "Acmeco Holdings", "code": "300-A2", "uuid": U2, "uuids": [U2]}]}
+
+
+def _same_name_row(ids):
+    return row2(reply="Nothing outstanding.", oq={"before": SAME_NAME_Q, "after": None, "writer": "engine"}, pick=[1],
+                tools=[{"name": "crm_outstanding_report", "args": {"customer_ids": list(ids), "view": "render"}}])
+
+
+def test_red_2a_a_lookup_to_another_option_that_matches_the_fragment_fails():
+    wrong = grade_turn(_same_name_row([U2]), item("followup", "pick", **GOLD_PICK))
+    assert wrong["checks"]["tool_target"] is False, wrong["checks"]
+    right = grade_turn(_same_name_row([U1]), item("followup", "pick", **GOLD_PICK))
+    assert right["checks"]["tool_target"] is True, right["checks"]
+    both = grade_turn(_same_name_row([U1, U2]), item("followup", "pick", **GOLD_PICK))
+    assert both["checks"]["tool_target"] is False, both["checks"]
 
 
 def test_guard_2a_ids_of_another_customer_still_fail():
@@ -168,6 +199,28 @@ def test_guard_4a_capped_memory_and_no_ask_still_fails():
     assert res["passed"] is False, (res["passed"], res["checks"])
 
 
+def test_red_4a_a_leak_beside_an_unreadable_tier_ask_stays_a_failure():
+    r = _tier_row()
+    r["response"]["reply"]["text"] = f"Which access level for {UA}?"
+    res = grade_turn(r, item("code_lookup", **GOLD_CODE))
+    assert res["passed"] is False and "internal id" in res["reason"], (res["passed"], res["reason"])
+
+
+def test_guard_4a_a_readable_state_with_no_question_stays_a_failure_even_with_a_tier_ask_flag():
+    res = grade_turn(_tier_row(state_oq=None, asking="tier_pick"), item("code_lookup", **GOLD_CODE))
+    assert res["passed"] is False, (res["passed"], res["checks"])
+
+
+def test_guard_4a_an_uncapped_memory_with_a_tier_ask_flag_stays_a_failure():
+    r = row2(message="stock of srta100", reply="Which access level do you need?", mem_after=[], tools=[],
+             oq={"before": None, "after": None, "writer": None})
+    for rec in r["trace"]:
+        if rec.get("stage") == "replied":
+            rec["facts"]["asking"] = "tier_pick"
+    res = grade_turn(r, item("code_lookup", **GOLD_CODE))
+    assert res["passed"] is False, (res["passed"], res["checks"])
+
+
 def test_guard_4a_an_uncapped_state_with_no_question_still_fails():
     res = grade_turn(_tier_row(state_oq=None, asking=None), item("code_lookup", **GOLD_CODE))
     assert res["passed"] is False, (res["passed"], res["checks"])
@@ -188,6 +241,24 @@ TYPE_ENT = {"raw": "drawing", "hint": "attachment_type", "canonical_code": "tech
 
 def test_red_4b_asked_type_is_read_from_the_parser_entities_when_apply_is_capped():
     r = _capped_apply(_att([_file("Technical Specifications")]), [TYPE_ENT])
+    res = grade_turn(r, item("attachment", **GOLD_TS))
+    assert res["checks"]["asked_type"] is True, res["checks"]
+
+
+def test_red_4b_derived_entities_without_a_tool_carrying_the_type_ids_are_unknown():
+    r = _capped_apply(_att([_file("Technical Specifications")]), [TYPE_ENT])
+    for rec in r["trace"]:
+        if rec.get("kind") == "tool":
+            rec["args"] = {"product_ids": ["x"]}
+    res = grade_turn(r, item("attachment", **GOLD_TS))
+    assert res["checks"]["asked_type"] is None, res["checks"]
+
+
+def test_guard_4b_a_readable_apply_needs_no_tool_ids():
+    r = _att([_file("Technical Specifications")])
+    for rec in r["trace"]:
+        if rec.get("kind") == "tool":
+            rec["args"] = {"product_ids": ["x"]}
     res = grade_turn(r, item("attachment", **GOLD_TS))
     assert res["checks"]["asked_type"] is True, res["checks"]
 
