@@ -1,6 +1,6 @@
 # PLAN: fix forward the 20 Oct release failures from #1749 (RELEASE-FIX-1749)
 
-Status: implemented (PR #1791). Small fix track: tests plus one service call (`_record_cancel` in
+Status: in review (PR #1791). Small fix track: tests plus one service call (`_record_cancel` in
 `_keep_split_rows`), no migration, no RBAC change in product code.
 
 ## Problem
