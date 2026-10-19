@@ -3393,7 +3393,6 @@ def resolve_reference_post(
         # R6 (round 4 on PR #833, "why it match s trap?"): a value the registry does not
         # know ("t trap") is said back with the ones it does; the set is never counted
         # with it dropped or read as its nearest neighbour.
-        from app.services.product_spec_registry import active_registry
         from app.services.product_spec_search import unknown_spec_values
 
         # H1b: the contact's hidden keys, read ONCE at this entry: a hidden key is never said
@@ -3402,11 +3401,7 @@ def resolve_reference_post(
         unknown = [
             u
             for u in _with_grounded_unknowns(
-                unknown_spec_values(
-                    db,
-                    " ".join([payload.query or "", *(payload.scope_terms or [])]),
-                    registry_rows=[row for row in active_registry(db) if row.spec_key not in hidden] if hidden else None,
-                ),
+                unknown_spec_values(db, " ".join([payload.query or "", *(payload.scope_terms or [])])),
                 payload.unknown_values,
             )
             if u.get("key") not in hidden
@@ -3674,10 +3669,17 @@ def resolve_reference_post(
         # never searched for as its nearest neighbour, so no spec candidate is offered.
         from app.services.product_spec_search import unknown_spec_values
 
-        unknown = _with_grounded_unknowns(
-            unknown_spec_values(db, payload.query or "", registry_rows=registry_rows),
-            payload.unknown_values,
-        )
+        # H1b: the contact's hidden keys, read once here (the later spec drops reuse the set); a
+        # hidden key is never said back as an unknown value.
+        hidden_spec_keys = _contact_hidden_spec_keys(db, payload)
+        unknown = [
+            u
+            for u in _with_grounded_unknowns(
+                unknown_spec_values(db, payload.query or "", registry_rows=registry_rows),
+                payload.unknown_values,
+            )
+            if u.get("key") not in hidden_spec_keys
+        ]
         if unknown:
             result["unknown_spec_values"] = unknown
             return _stamp_brand_on_products(db, result)
@@ -3732,7 +3734,6 @@ def resolve_reference_post(
         # pair `check_access` uses) and UNIONS it in. The caller-supplied list
         # only ever narrows further; it can never widen past the server's own
         # answer for that contact.
-        hidden_spec_keys = _contact_hidden_spec_keys(db, payload)
         if hidden_spec_keys:
             specs = [s for s in specs if s.get("key") not in hidden_spec_keys]
 

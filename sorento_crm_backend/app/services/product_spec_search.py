@@ -982,6 +982,7 @@ def filter_specs(
     specs: list[dict] | None = None,
     free_terms: list[str] | None = None,
     scope_terms: list[str] | None = None,
+    hidden_keys: frozenset[str] = frozenset(),
 ) -> dict:
     """The described set as a MEMBERSHIP clause - shape B's filter leg.
 
@@ -1040,7 +1041,7 @@ def filter_specs(
     def _join(key: Any, value: Any) -> None:
         # A yes-or-no value defines membership like a named choice (chat fix PR-A,
         # AC-A9: "intelligent closet" is is_smart yes, and dropping it answered every WC).
-        if key and (isinstance(value, bool) or isinstance(value, str) and value.strip()):
+        if key and key not in hidden_keys and (isinstance(value, bool) or isinstance(value, str) and value.strip()):
             membership.setdefault(str(key), set()).add(value)
 
     for entry in specs or []:
