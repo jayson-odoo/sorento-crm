@@ -63,3 +63,30 @@ in engine.py `_as_a_stock_ask_by_its_own_words`.
   (parser_gold.py:90-93) that the parser can only take from DB candidates (:171-175), so each product check failed on
   both arms. c92b993a3a swaps in real catalog codes (each an exact single candidate on eval_base, active on both DBs),
   as the when-deliver and code-picks gold already do.
+- 20 Oct gate run 1 (eval_base, gpt-5.4-mini, USD 2.5): conflict gold N=3 OLD 95/126, NEW 87/126: FAIL, early stop.
+  NEW better on c1 (27 vs 24/30) and dq (33 vs 30/36; dealer no-context "code x qty" dq-01..06 all 3/3, so the
+  a33610208 bar holds). NEW worse on c2 attachments (0 vs 8/12: no attachment_type entity for a plain file-type word;
+  a cert scheme gets canonical PPS, not certificate) and c3 attributes (8 vs 15/15: free-form requested_attributes).
+  Both come from deleting the closed vocabularies. When-deliver positives OLD 31/42, NEW 29/42, negatives 30/30 both;
+  code picks 9/27 on both, row for row.
+
+## F1-D (gate run 1 fixes)
+
+Diagnosis on the rendered v78 (eval_base, $0): `{{attachment_types}}` renders (13 File type lines, 11 certificate
+lines). The defects are precedence and priming, not missing data:
+- D1 file word: R-P2-02 says file types are closed lists that "carry no word of their own" (name an item exactly
+  as listed, or nothing), R-P2-06 says a file word in any language names the item that holds that kind. The DB
+  Words lines are sparse (product_videos: "Product Videos by Marketing", no "video"), so the absolute rule wins and
+  "gambar X" / "video X" get no attachment_type entity. Two absolute rules over one field, no "see R-x".
+- D2 certificate: R-P2-06 asks for the kind entity plus one more entity per listed scheme; the model emits the
+  scheme alone ("pps cert X" -> listed_item PPS only).
+- D3 attribute phrase: R-P3-05's example "list price" primes the model to add a word the user never typed
+  ("P-trap set price" -> "list price"); "is X still sold" is not tied to "discontinued" (old v249-252 said it;
+  `_asks_discontinued` needs exactly "discontinued", lanes/business/fetch.py:1912-1916).
+
+ARCHITECTURE: layer = prompt design (rule precedence). Shared mechanism: the closed-list rule in R-P2-02 scopes to
+the values it owns (specification values, certificate schemes) and defers file types to R-P2-06 by "see R-P2-06",
+so one rule decides each field. Other classes it should fix (UNVERIFIED until measured): every file word missing
+from a DB Words line (drawing, manual, video in other languages). Removes: the conflicting absolute sentence. No
+word list returns; meaning rules only, within the lint (MAX_LIST_ITEMS 8).
+Gate rerun: conflict gold N=3 on NEW only (OLD v77 stands), USD <= 0.7.
