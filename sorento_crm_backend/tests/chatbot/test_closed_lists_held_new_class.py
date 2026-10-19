@@ -47,16 +47,28 @@ def _revised(plan) -> bool:
     return "task_revised_stock_qty" in plan.trace.rules_fired
 
 
-def test_a_quantity_in_a_class_ask_is_not_a_revision_of_the_held_product():
-    ents = [
-        {"raw": "zzbrand", "hint": "brand", "canonical_code": "ZZBRAND", "current_message": True, "confident": True},
-        {"raw": "zz basin", "hint": "category", "canonical_code": None, "current_message": True, "confident": True},
-    ]
+_CLASS_ASK = [
+    {"raw": "zzbrand", "hint": "brand", "canonical_code": "ZZBRAND", "current_message": True, "confident": True},
+    {"raw": "zz basin", "hint": "category", "canonical_code": None, "current_message": True, "confident": True},
+]
 
-    _state2, plan = apply(_answered_ten(), verdict(entities=ents, demand_qty=6, domain_hint="inventory"), build_policy())
+
+def test_a_quantity_in_a_class_ask_is_not_a_revision_of_the_held_product():
+    """The lane's real verdict carries `closed_lists` (engine.closed_lists_verdict)."""
+    v = verdict(entities=list(_CLASS_ASK), demand_qty=6, domain_hint="inventory", closed_lists=True)
+
+    _state2, plan = apply(_answered_ten(), v, build_policy())
 
     assert not _revised(plan), plan.trace.rules_fired
     assert all(ht.uuid_of("ZZKT10") not in [e.get("uuid") for e in spec.entities] for spec in ht.inventory_specs(plan)), plan.fetch
+
+
+def test_guard_gate_off_the_quantity_still_revises_the_held_check():
+    v = verdict(entities=list(_CLASS_ASK), demand_qty=6, domain_hint="inventory")
+
+    _state2, plan = apply(_answered_ten(), v, build_policy())
+
+    assert _revised(plan), plan.trace.rules_fired
 
 
 def test_guard_a_bare_number_still_revises_the_answered_check():
