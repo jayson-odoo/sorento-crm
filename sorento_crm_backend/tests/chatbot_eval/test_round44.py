@@ -124,3 +124,39 @@ def test_red_p_a_line_naming_only_one_of_two_gold_keys_does_not_meet_the_spec_wo
 def test_guard_q_products_with_no_such_line_stay_no_honest_none():
     checks, _ = _none("1. *Product Code:* SRTG100")
     assert checks["none_on_record"] is False and checks["spec_set"] is False, checks
+
+
+def _stock_page(codes):
+    block = "{i}. *Product Code:* {c}\n*Material:* SUS304\n*DC1-SMC:* 0\n*WH3-IB:* 4"
+    return "\n".join(block.format(i=i, c=c) for i, c in enumerate(codes, 1))
+
+
+def test_red_r_a_fifty_product_stock_page_with_warehouse_rows_and_the_more_line_passes():
+    state, res = _check(_stock_page(EXPECTED[:50]) + MORE)
+    assert state is True and res["passed"] is True, (state, res["checks"])
+
+
+def test_red_s_a_set_of_forty_nine_listed_whole_with_warehouse_rows_is_not_a_dump():
+    assert _check(_stock_page(EXPECTED[:49]), spec_products=EXPECTED[:49])[0] == "absent"
+
+
+def test_guard_t_sixty_products_with_warehouse_rows_are_still_a_dump():
+    assert _check(_stock_page(EXPECTED))[0] is False
+
+
+def test_guard_u_a_bullet_or_plain_code_row_is_a_product_row():
+    rows = "\n".join(f"- {c} 4 pcs" for c in EXPECTED[:50]) + MORE
+    assert _check(rows)[0] is True
+    assert _check("\n".join(f"{c} 4 pcs" for c in EXPECTED))[0] is False
+
+
+def test_red_v_a_gold_value_shown_on_one_product_refuses_the_honest_none():
+    reply = ("1. *Product Code:* SRTG100\n*Steel grade:* 201\n2. *Product Code:* SRTG200\n\n"
+             "*steel_grade:* not recorded for SRTG200")
+    checks, res = _none(reply)
+    assert checks["none_on_record"] is False and checks["spec_set"] is False and res["passed"] is False, checks
+
+
+def test_guard_w_a_line_for_another_value_of_the_key_is_no_refusal_to_a_value_not_asked():
+    reply = ("1. *Product Code:* SRTG100\n*Steel grade:* 316\n\n*steel_grade:* not recorded for SRTG200")
+    assert _none(reply)[0]["none_on_record"] is True
