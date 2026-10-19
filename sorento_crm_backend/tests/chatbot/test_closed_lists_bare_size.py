@@ -206,3 +206,21 @@ def test_the_candidate_line_offers_the_bare_size_first(session_factory, seeded):
 
     line = next(ln for ln in lines if ln.startswith('- "600mm"'))
     assert line.startswith('- "600mm": size 600 mm (no dimension named); spec '), lines
+
+
+# --- R6-5 S2: a contact that hides dim_width ----------------------------------------------------
+
+
+def test_a_hidden_dim_width_leaves_dim_length_alone_in_the_bare_size_or(session_factory, seeded, stub_access, monkeypatch):
+    """The hidden-key drop compared the entry key ("size" / "any:...") only, so a hidden dimension
+    stayed a leg of the OR and the contact saw a product that matches only through it."""
+    from app.services import spec_visibility
+
+    ids = _seed(session_factory, BASINS)
+    real = spec_visibility.hidden_keys
+    monkeypatch.setattr(spec_visibility, "hidden_keys", lambda policy, registry_keys: real(policy, registry_keys) | frozenset({"dim_width"}))
+
+    r, calls = _ask(session_factory, stub_access, monkeypatch, "need a 600mm zzbasin", _ent("zzbasin", "category"), _spec("600mm", "size", 600))
+
+    assert ids["ZZBS-W"] not in _fetched(calls), (r.reply, calls)
+    assert _fetched(calls) == [ids["ZZBS-L"]], (r.reply, calls)
