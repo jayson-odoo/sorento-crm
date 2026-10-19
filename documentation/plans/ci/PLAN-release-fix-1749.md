@@ -1,6 +1,6 @@
 # PLAN: fix forward the 20 Oct release failures from #1749 (RELEASE-FIX-1749)
 
-Status: in progress. Small fix track: tests plus one service call (`_record_cancel` in
+Status: implemented (PR #1791). Small fix track: tests plus one service call (`_record_cancel` in
 `_keep_split_rows`), no migration, no RBAC change in product code.
 
 ## Problem
@@ -31,8 +31,11 @@ Release run 39288462357 (full_suite, main 9e97c340c6) failed in three places.
 ## Fix
 
 1. The two tests assign `UserPermissionService.check_user_has_permission` directly; the `api`
-   fixture's restore puts the real method back. Backstop in `tests/conftest.py`: the autouse
-   `_restore_stubbed_module_symbols` also snapshots and restores that class attribute, so the
+   fixture's restore puts the real method back. Backstop in `tests/conftest.py`: the
+   `_STUBBABLE_SYMBOLS` backstop also restores that class attribute, and it moves from an autouse
+   fixture to `pytest_runtest_setup`/`pytest_runtest_teardown` wrappers: as a fixture it tore down
+   before `monkeypatch` (conftest fixtures register in name order), so it could not catch this
+   leak (kill run 2 showed the RBAC tests still failing with only the backstop in place). The
    next leaked stub of it cannot reach another file.
 2. `_keep_split_rows` takes the caller's `actor_user_id` (from `refresh_for_decision`) and
    records each folded row: `_record_cancel(self.db, other, "superseded", actor_user_id=...,

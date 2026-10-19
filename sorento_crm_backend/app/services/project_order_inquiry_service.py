@@ -6178,7 +6178,7 @@ class ProjectOrderInquiryService:
         decision: Any,
         acted: Mapping[str, Dict[str, Any]],
         *,
-        actor_user_id: Optional[str] = None,
+        actor_user_id: Optional[str],
     ) -> None:
         """OI-LINE-SPLIT (UAC AC-G10, AC-G15, AC-G16): after the netting settled each acted
         line to its plan's total, its rows are moved to the plan. A row already at a plan
