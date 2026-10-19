@@ -1,6 +1,6 @@
 # PLAN: CHAT-CLOSED-LISTS - chatbot step 2, closed candidate lists
 
-Status: Build, ROUND 4 (owner 19 Oct): attachments only, measured on the 27 real TRAIN attachment conversations; $0 root cause per class first. Round 18 Oct merged into the PR at 0665fa0d (CI green, EVAL-BENCH gate #3: spec +30.4, attachment +7.4). Track: full (size L, LEAD pattern).
+Status: Review, round 4 part 1 pushed (crew priority C2 family by family_code + HELD-OVER-NAMED-CLASS; reviewer READY both); attachments round continues (SCHEME-NO-PRODUCT-RETYPED, DROPPED-TYPE-CARRIES-OLD, CERT-NUMBER-AS-SET, lane-section wording). Track: full (size L, LEAD pattern).
 Branch `claude/chat-closed-lists-x6ymb5` (the sandbox cannot push `crew/chat-closed-lists`), PR #1755.
 
 Design source: CHATBOT-SCALE-DESIGN-16oct section 8 step 2 + D2 (crew-only): code only SHORTLISTS
@@ -177,3 +177,15 @@ Steps:
    MODEL LIMIT vs CODE per class (crew may try a stronger parser model separately).
 2. Red-first fixes per CODE class, reviewer (+ security-reviewer if scope/ingest is touched).
 3. Paired TRAIN x1 (lane vs main) under the owner's early-stop rule (checkpoints, stop on regression), cap 3 USD.
+
+### Round 4 part 1 (19 Oct)
+
+| Class | Red | Green | Notes |
+|---|---|---|---|
+| C2 FAMILY-BY-FAMILY-CODE (crew priority) | f49d099c | 3c8810c6 | a held product's family = same company + same non-null `family_code`, chat-searchable, plus the variant graph; dev copy: variant_of_id on 2 of 15,439 products, family_code on 13,983, largest family 16 |
+| HELD-OVER-NAMED-CLASS (TRAIN 41147cbf9f, 7a655af8fa, c026f64f50) | fa67869f | f6eb1165 | a current-message category / product_type entity names its own subject: no held carry, no held_none_match, the scheme's certificates filter; fixture made real in c0c43178, 1546db61, 4df5178d, 6665f100 (parse fields, class_label, certificate_products rows); a harness-only apply rule was removed |
+
+Root cause of the 27 real attachment conversations (gate #3): crew-note 6256793867; grader artefact G1 (trace cap)
+goes to EVAL-BENCH; gold calls to the owner; MODEL classes to the gpt-5.4 parser run (CHAT-CODE-LOOKUP).
+Residual (reviewer): a refine that repeats the held product's own class ("p trap wc?") would drop the held subject; not
+seen in g1755c (114 held turns) or train_followups (56).
