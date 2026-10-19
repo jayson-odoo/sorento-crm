@@ -323,3 +323,14 @@ crew/state/reports/EVAL-BENCH-train-classes-19oct.md. Track: small fix (< ~300 l
   category / product / product_type / none): no reply carries the miss line, so the live turn needs the real
   resolver to list the word unresolved while the class fallback narrows. Draft kept uncommitted; asked crew
   a22180003 for the held-out turn's structural trace fields (or a 0.05 USD live probe).
+- Crew rulings: a22153683 -> (d) no change now (bar met; flips change 4 of 108 grades); the evidence above and
+  the (b) design stay here for later, not an owner question until stability becomes a bar. a22180003 -> (b) live
+  TRAIN probe; held-out structure stays crew-only.
+- Live probe (8 calls, 0.078 USD, lane d45781dbfb + v168, scratchpad probe/cw): 4 fresh asks (empty memory), 2
+  follow-ups on TRAIN turns es-c9bbf5941c / es-66c50eada8, one 2-turn chain; all fresh wording, EN / BM / ZH. No
+  reply carries "I could not find" -> CLASS-WORD-NOT-FOUND PARKED (crew rule). Seen instead:
+  - F1 (lane, refine): chain "stock for sorento basin and wc" (ops set brand + set category) then "wc only" (ops
+    set category = Water Closet, close_question; brand untouched) lists Cabana CWC codes: the held brand is dropped
+    when one other axis is set.
+  - F2 (unattributed): "sorento wc any stock?", "ada stok wc cabana tak", "sorento wc only" over es-c9bbf5941c
+    answer "How many units for each?" over a list headed by ACC-SRT1023..1026; main not run on these.
