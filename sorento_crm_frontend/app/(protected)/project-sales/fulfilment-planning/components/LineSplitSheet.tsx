@@ -345,6 +345,8 @@ function RemarkCell({
 interface LineBlockProps {
   line: SplitLine;
   incomingRows: IncomingRow[];
+  /** The draft changed this line's splits or the splits dropped on it: AutoCount's extra is stale. */
+  extraStale: boolean;
   soNumber: string;
   soDate: string;
   /** More than one location on the SO: the phone shows it under the item code. */
@@ -362,6 +364,7 @@ interface LineBlockProps {
 const LineBlock = React.memo(function LineBlock({
   line,
   incomingRows,
+  extraStale,
   soNumber,
   soDate,
   multiLocation,
@@ -390,7 +393,8 @@ const LineBlock = React.memo(function LineBlock({
       split.sitsOnLineId === line.lineId,
   );
   // ... then other lines' splits sitting on it, then AutoCount's extra (AC-G3).
-  const extraQty = !delivered && line.extraQty ? line.extraQty : null;
+  const extraQty =
+    !delivered && !extraStale && line.extraQty ? line.extraQty : null;
   const ownRows = remain || readOnly ? 1 : Math.max(1, splits.length);
   const rows =
     ownRows + (delivered ? 0 : incomingRows.length) + (extraQty ? 1 : 0);
@@ -834,6 +838,7 @@ function incomingRowsByLine(lines: SplitLine[]): Map<string, IncomingRow[]> {
 export function LineSplitSheet({
   lines,
   allLines,
+  savedLines,
   soNumber,
   soDate,
   openLineIds,
@@ -846,6 +851,8 @@ export function LineSplitSheet({
   lines: SplitLine[];
   /** Every line, in sheet order ("+N from line M"). */
   allLines: SplitLine[];
+  /** The plan as loaded, to tell which lines the draft has changed. */
+  savedLines: SplitLine[];
   soNumber: string;
   soDate: string;
   openLineIds: ReadonlySet<string>;
@@ -911,6 +918,26 @@ export function LineSplitSheet({
     focusCell(next);
   };
   const incomingRows = React.useMemo(() => incomingRowsByLine(allLines), [allLines]);
+  const staleExtra = React.useMemo(() => {
+    const sig = (line: SplitLine, rows: IncomingRow[]) =>
+      JSON.stringify([
+        line.splits,
+        rows.map((row) => [row.origin.lineId, row.split]),
+      ]);
+    const savedIncoming = incomingRowsByLine(savedLines);
+    const saved = new Map(
+      savedLines.map((line) => [
+        line.lineId,
+        sig(line, savedIncoming.get(line.lineId) ?? NO_ROWS),
+      ]),
+    );
+    const stale = new Set<string>();
+    for (const line of allLines) {
+      if (saved.get(line.lineId) !== sig(line, incomingRows.get(line.lineId) ?? NO_ROWS))
+        stale.add(line.lineId);
+    }
+    return stale;
+  }, [allLines, savedLines, incomingRows]);
   const multiLocation = React.useMemo(
     () => new Set(allLines.map((line) => line.location)).size > 1,
     [allLines],
@@ -962,6 +989,7 @@ export function LineSplitSheet({
             <LineBlock
               line={line}
               incomingRows={incomingRows.get(line.lineId) ?? NO_ROWS}
+              extraStale={staleExtra.has(line.lineId)}
               soNumber={soNumber}
               soDate={soDate}
               multiLocation={multiLocation}

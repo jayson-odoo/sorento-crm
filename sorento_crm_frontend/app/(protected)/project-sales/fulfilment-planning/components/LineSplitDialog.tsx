@@ -221,6 +221,8 @@ export function LineSplitDialog({
   const [draft, setDraft] = React.useState<Draft | null>(null);
   const draftRef = React.useRef<Draft | null>(null);
   const initialRef = React.useRef('');
+  // The loaded plan, so the sheet can tell which lines the draft has changed (AC-G20).
+  const [savedLines, setSavedLines] = React.useState<SplitLine[]>([]);
   const containerRef = React.useRef<HTMLDivElement | null>(null);
   // The page's own node, as state: Radix mounts the portalled content after the first
   // render, so an effect keyed on it attaches once it exists.
@@ -307,6 +309,7 @@ export function LineSplitDialog({
     if (query.data && !query.isFetching && !draftRef.current) {
       const lines = fromPayload(query.data);
       initialRef.current = JSON.stringify(toPayload(lines));
+      setSavedLines(lines);
       commit({ lines, history: [] });
       // Opened from a board line: that line is scrolled to and flashed (UAC A1).
       if (focusLineId && lines.some((line) => line.lineId === focusLineId)) {
@@ -865,6 +868,7 @@ export function LineSplitDialog({
                 <LineSplitSheet
                   lines={visible}
                   allLines={sorted}
+                  savedLines={savedLines}
                   soNumber={query.data?.so_number ?? ''}
                   soDate={soDate}
                   openLineIds={openLineIds}

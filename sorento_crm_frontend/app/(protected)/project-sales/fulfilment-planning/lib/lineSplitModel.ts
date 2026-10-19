@@ -417,17 +417,22 @@ export function addSplit(
     (line.newQty != null || line.newDate != null)
   ) {
     const kept = Math.min(line.newQty ?? line.baseQty, line.baseQty);
+    const first = (splits: SplitDraft[]): SplitDraft => ({
+      ...splits[0],
+      qty: kept,
+      deliveryDate: line.newDate ?? line.baseDate,
+    });
+    // NEW QTY is not below QTY: the first row only, never a split of qty 0.
+    if (line.newQty != null && kept >= line.baseQty) {
+      return { id, lines: editLine(lines, lineId, (splits) => [first(splits)]) };
+    }
     return {
       id,
       lines: editLine(lines, lineId, (splits) => [
-        {
-          ...splits[0],
-          qty: kept,
-          deliveryDate: line.newDate ?? line.baseDate,
-        },
+        first(splits),
         {
           id,
-          qty: Math.max(0, line.baseQty - kept),
+          qty: line.baseQty - kept,
           deliveryDate: line.baseDate,
           isCancel: false,
           sitsOnLineId: null,
@@ -454,8 +459,8 @@ export function addSplit(
 }
 
 /**
- * What is left on a line becomes a split at `target` (the "N left" chip, UAC A9), merged
- * into a split of the line already there. Nothing left: the lines come back unchanged.
+ * What is left on a line becomes its own split at `target` (the "N left" chip, UAC A9),
+ * never merged into a split of the line already there (AC-G20). Nothing left: the lines come back unchanged.
  * An empty target date is a split with no date yet ("New date": staff type it).
  */
 export function placeRest(
@@ -469,20 +474,6 @@ export function placeRest(
     const isCancel = target.date === 'cancel';
     const date = isCancel ? null : target.date || null;
     const on = isCancel ? lineId : target.sitsOnLineId;
-    const existing = date
-      ? splits.find(
-          (candidate) =>
-            candidate.isCancel === isCancel &&
-            candidate.deliveryDate === date &&
-            candidate.sitsOnLineId === on,
-        )
-      : isCancel
-        ? splits.find((candidate) => candidate.isCancel)
-        : undefined;
-    if (existing) {
-      existing.qty += left;
-      return splits;
-    }
     splits.push({
       id: nextSplitId(lineId, splits),
       qty: left,
