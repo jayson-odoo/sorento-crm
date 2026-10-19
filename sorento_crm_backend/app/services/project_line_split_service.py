@@ -303,6 +303,8 @@ class PlanRow:
     split: Optional[SOLineSplit] = None
     is_cancel: bool = False
     extra: bool = False
+    #: Of a split dropped on another line, what its origin still holds (a declined move).
+    held: Decimal = _ZERO
 
 
 @dataclass
@@ -323,12 +325,20 @@ class LinePlan:
 
 
 def line_plans(
-    facts: Dict[str, LineFacts], sits: Dict[str, Optional[str]], sitting_on: set
+    facts: Dict[str, LineFacts],
+    sits: Dict[str, Optional[str]],
+    sitting_on: set,
+    declined: Optional[Dict[str, Decimal]] = None,
 ) -> Dict[str, LinePlan]:
     """Every line's `LinePlan` off its facts and where each split sits (`effective_sits_on`):
     the one place the rows, the AutoCount extra (AC-G3) and every generated REMARK
-    (`remark_for_row`) are worked out, for the sheet, the email and the Excel alike."""
+    (`remark_for_row`) are worked out, for the sheet, the email and the Excel alike.
+
+    `declined` (AC-G19, the email and the Excel): per split, the qty of a declined move its
+    origin still holds. That qty never reached its target, so the target's row prints its
+    ask less it (the Confirm cut it), with no extra row."""
     incoming: Dict[str, Decimal] = {}
+    held_back: Dict[str, Decimal] = {}
     for f in facts.values():
         if f.split_state == SPLIT_STALE:
             continue
@@ -336,7 +346,10 @@ def line_plans(
             target = sits.get(str(split.id))
             if split.is_cancel or not target or target == f.line_id:
                 continue
-            incoming[target] = incoming.get(target, _ZERO) + _dec(split.qty)
+            back = min(_dec((declined or {}).get(str(split.id))), _dec(split.qty))
+            incoming[target] = incoming.get(target, _ZERO) + _dec(split.qty) - back
+            if back > _ZERO:
+                held_back[target] = held_back.get(target, _ZERO) + back
     out: Dict[str, LinePlan] = {}
     for line_id, f in facts.items():
         base_qty, base_date = f.base()
@@ -350,7 +363,8 @@ def line_plans(
         new_date = f.now_date if "delivery_date" in moves else None
         own = [] if f.split_state == SPLIT_STALE else list(f.splits)
         moved_in = incoming.get(line_id, _ZERO)
-        involved = bool(own) or moved_in > _ZERO
+        cut = held_back.get(line_id, _ZERO)
+        involved = bool(own) or moved_in > _ZERO or cut > _ZERO
         # What the plan puts on the line: its own splits that stay on it, or on New line
         # (AC-G14: a New-line split is its own line's plan, never AutoCount extra), an
         # explicit cancel split (AC-G3), what others dropped on it, or its base when it is
@@ -368,9 +382,12 @@ def line_plans(
             else base_qty
         )
         extra = f.now_qty - on_line if involved and not in_full else _ZERO
+        if cut > _ZERO and not own:
+            # Its ask was cut by what declined moves left on their origins: one row of it.
+            new_qty, extra = f.now_qty - cut, _ZERO
         shown_from = (f.pending_from if f.pending else f.applied_from) or {}
         generated = remark_for_row(
-            qty=f.now_qty,
+            qty=new_qty if cut > _ZERO and not own else f.now_qty,
             delivery_date=new_date or base_date,
             base_qty=base_qty,
             base_date=base_date,
@@ -410,6 +427,7 @@ def line_plans(
                         generated=text,
                         split=split,
                         is_cancel=bool(split.is_cancel),
+                        held=min(_dec((declined or {}).get(str(split.id))), _dec(split.qty)),
                     )
                 )
         else:

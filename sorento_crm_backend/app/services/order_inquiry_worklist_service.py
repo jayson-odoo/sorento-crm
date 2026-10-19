@@ -3440,8 +3440,11 @@ class OrderInquiryWorklistService:
         prints as today, REMARK empty."""
         import dataclasses
 
-        from app.services.project_line_split_service import LineSplitService, line_plans
-        from app.services.project_order_inquiry_service import whole_buy_line_ids
+        from app.services.project_line_split_service import LineSplitService
+        from app.services.project_order_inquiry_service import (
+            ProjectOrderInquiryService,
+            whole_buy_line_ids,
+        )
 
         line_ids = sorted({str(row["so_line_id"]) for row in rows if row.get("so_line_id")})
         if not line_ids:
@@ -3467,7 +3470,8 @@ class OrderInquiryWorklistService:
         if not stored:
             return rows
         sits = service.effective_sits_on(stored)
-        plans = line_plans(facts, sits, {target for target in sits.values() if target})
+        # AC-G19: what declined moves left on their origins prints as the worklist holds it.
+        plans = ProjectOrderInquiryService(self.db).output_line_plans(facts, sits)
         out: List[Dict[str, Any]] = []
         printed: set = set()
         for row in rows:
@@ -3506,11 +3510,13 @@ class OrderInquiryWorklistService:
                     target is not None
                     and str(split.sits_on_line_id) != line_id
                     and not any(r.split is not None for r in target.rows)
+                    # AC-G19: a declined move's qty stayed on its origin's rows.
+                    and not plan_row.held
                 )
                 live = (
                     _ZERO
                     if plan_row.is_cancel or (split is not None and inside)
-                    else row_qty
+                    else plan_row.held or row_qty
                 )
                 out.append(
                     {
