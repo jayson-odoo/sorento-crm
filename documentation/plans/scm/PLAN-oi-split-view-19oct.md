@@ -1,9 +1,10 @@
 # PLAN: split follow-ups after #1749 (OI-SPLIT-VIEW)
 
-Status: Plan. Behaviour card being drafted (crew ask), then a Lavish mock of the SO and OI Lines
-tabs on SO417636; build only after the owner OKs both. Track: M (new rule on the board, UI on two
-existing screens; no migration expected). Lead pattern: tester red tests, one coder, reviewer,
-browser pass 1280/375 on the crew test copy.
+Status: Plan. Card answered (crew Q1 a, Q2 a; owner Q3 b, Q5 = (i) popup per line, crew ruling
+a14761180); Q4 open with the owner. Mock v2 filed (`documentation/mockups/OI-SPLIT-VIEW/index.html`);
+build after the owner OKs it. Track: M (new rule on the board, UI on two existing screens, no
+migration). Lead pattern: tester red tests, one coder, reviewer, browser pass 1280/375 on the crew
+test copy.
 
 Card: `oi-split-view-behaviour-card.md` (alongside; filed as crew ask 19 Oct). UAC:
 `oi-split-view-19oct-acceptance-criteria.md` (after the card is answered). Mock:

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OI-SPLIT-VIEW mock v1</title>
+<title>OI-SPLIT-VIEW mock v2</title>
 <style>
 /* Tokens copied from sorento_crm_frontend/css/config.reui.css (light theme), same set as documentation/mockups/OI-LINE-SPLIT */
 :root{--background:#fff;--foreground:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#e4e4e7;--input:#e4e4e7;--primary:#3b82f6;--primary-soft:#eff6ff;--destructive:#dc2626;--success:#15803d;--success-soft:#f0fdf4;--success-line:#bbf7d0;--warning:#a16207;--warning-soft:#fefce8;--warning-line:#fde68a;--info:#1d4ed8;--info-soft:#eff6ff;--info-line:#bfdbfe;--page:#f7f7f8;--ease:cubic-bezier(.2,0,0,1)}
@@ -21,9 +21,10 @@ section>.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 12px;max-width:10
 .nb{display:inline-block;min-width:18px;height:18px;border-radius:9px;background:var(--foreground);color:#fff;font-size:11px;line-height:18px;text-align:center;margin-right:6px}
 .mut{color:var(--muted-fg)}
 .num{font-variant-numeric:tabular-nums;text-align:right}
-.desk{width:1280px;max-width:100%;background:#fff;border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.desk{width:1280px;max-width:100%;background:#fff;border:1px solid var(--border);border-radius:12px;overflow:hidden;position:relative}
 .main{padding:20px 24px;overflow:hidden}
-.phone{width:375px;flex:none;background:#fff;border:1px solid var(--border);border-radius:16px;overflow:hidden}
+.row2{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
+.phone{width:375px;flex:none;background:#fff;border:1px solid var(--border);border-radius:16px;overflow:hidden;position:relative}
 .cap{font-size:11px;color:var(--muted-fg);text-align:center;padding:6px;border-top:1px solid var(--border);background:#fff}
 /* components/ui/button.tsx */
 .btn{display:inline-flex;align-items:center;gap:5px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--input);background:#fff;font:500 13px Inter,ui-sans-serif,system-ui,sans-serif;white-space:nowrap;color:var(--foreground);cursor:pointer}
@@ -31,6 +32,10 @@ section>.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 12px;max-width:10
 .btn[aria-disabled=true]{opacity:.5;cursor:not-allowed}
 .btn.icon{width:32px;padding:0;justify-content:center}
 .btn svg{width:15px;height:15px}
+.ib{display:inline-flex;width:22px;height:22px;align-items:center;justify-content:center;border-radius:5px;border:0;background:transparent;color:var(--muted-fg);cursor:pointer;padding:0;vertical-align:middle}
+.ib:hover{background:var(--muted);color:var(--foreground)}
+.ib:focus-visible,.btn:focus-visible,.seg button:focus-visible{outline:2px solid var(--primary);outline-offset:1px}
+.ib svg{width:15px;height:15px}
 .seg{display:inline-flex;border:1px solid var(--input);border-radius:6px;overflow:hidden;background:#fff}
 .seg button{height:28px;padding:0 10px;font:500 12.5px Inter,ui-sans-serif,system-ui,sans-serif;border:0;background:#fff;color:var(--foreground);cursor:pointer}
 .seg button+button{border-left:1px solid var(--input)}
@@ -40,9 +45,7 @@ section>.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 12px;max-width:10
 .badge.sec{background:var(--muted);color:#3f3f46}
 .badge.ok{background:var(--success-soft);color:var(--success);border-color:var(--success-line)}
 .badge.warn{background:var(--warning-soft);color:var(--warning);border-color:var(--warning-line)}
-.badge.info{background:var(--info-soft);color:var(--info);border-color:var(--info-line)}
 .pill{display:inline-flex;align-items:center;border-radius:999px;padding:0 8px;font-size:11px;line-height:19px;font-weight:500;white-space:nowrap;border:1px solid transparent}
-.pill.REMAIN{background:var(--muted);color:#3f3f46}
 .pill.DELAY{background:var(--warning-soft);color:var(--warning);border-color:var(--warning-line)}
 .pill.ADVANCE,.pill.ORDER{background:var(--info-soft);color:var(--info);border-color:var(--info-line)}
 .pill.TOBUY{background:var(--warning-soft);color:var(--warning)}
@@ -65,19 +68,24 @@ section>.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 12px;max-width:10
 table.g{border-collapse:collapse;table-layout:fixed;font-size:13px;width:100%}
 table.g th{font-weight:500;color:var(--muted-fg);text-align:left;padding:9px 10px;border-bottom:1px solid var(--border);background:#fafafa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 table.g td{padding:9px 10px;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-table.g tr.split>td{background:#fcfcfd}
-.chev{display:inline-flex;width:24px;height:24px;padding:0;align-items:center;justify-content:center;border-radius:5px;cursor:pointer;color:var(--muted-fg);border:0;background:transparent;transition:transform .15s var(--ease)}
-.chev.open{transform:rotate(90deg)}
+.chev{display:inline-flex;width:24px;height:24px;align-items:center;justify-content:center;color:var(--muted-fg)}
 .chev svg{width:16px;height:16px}
-.sub td{padding:0 10px 12px 52px;background:#fcfcfd;white-space:normal}
-.subwrap{max-width:820px}
-.subhd{display:flex;align-items:center;gap:8px;padding:10px 0 6px;font-size:12.5px}
-table.s{border-collapse:collapse;table-layout:fixed;font-size:12.5px;width:100%;background:#fff;border:1px solid var(--border);border-radius:8px}
-table.s th{font-weight:500;color:var(--muted-fg);text-align:left;padding:6px 10px;border-bottom:1px solid var(--border);background:#fafafa}
-table.s td{padding:6px 10px;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-table.s tr:last-child td{border-bottom:0}
-table.s tfoot td{font-weight:500;background:#fafafa;border-top:1px solid var(--border)}
+/* Popup: components/ui/dialog.tsx, same size as the Email Outbox body view (EmailOutboxList.tsx:354, max-w-3xl, max-h 85vh) */
+.scrim{position:absolute;inset:0;background:rgba(9,9,11,.4);display:flex;align-items:flex-start;justify-content:center;padding-top:70px;z-index:20;animation:fade .15s var(--ease)}
+.scrim[hidden]{display:none}
+.dlg{width:768px;max-width:calc(100% - 32px);max-height:85%;overflow:auto;background:#fff;border-radius:12px;border:1px solid var(--border);box-shadow:0 20px 50px rgba(0,0,0,.2);padding:20px 22px;position:relative;animation:pop .18s var(--ease)}
+.dlg h3{font-size:16px;margin:0 0 2px;padding-right:30px}
+.dlg .sub{color:var(--muted-fg);font-size:12.5px;margin:0 0 12px}
+.dlg .x{position:absolute;right:12px;top:12px}
+.dlg .meta{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;font-size:12.5px;margin:0 0 12px}
+@keyframes fade{from{opacity:0}}
+@keyframes pop{from{opacity:0;transform:translateY(6px) scale(.98)}}
+table.s{border-collapse:collapse;table-layout:fixed;font-size:12.5px;width:100%;background:#fff;border:1px solid var(--border)}
+table.s th{font-weight:500;color:var(--muted-fg);text-align:left;padding:7px 10px;border-bottom:1px solid var(--border);background:#fafafa}
+table.s td{padding:7px 10px;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+table.s tfoot td{font-weight:500;background:#fafafa}
 .was{display:block;font-size:11px;color:var(--warning)}
+.on2{display:block;font-size:11px;color:var(--muted-fg)}
 .chg td{background:var(--warning-soft)}
 /* Board strip: FulfilmentBoardPanel summary bar + result card */
 .strip{border:1px solid var(--border);border-radius:12px;padding:12px 16px;display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--muted-fg)}
@@ -89,15 +97,13 @@ table.s tfoot td{font-weight:500;background:#fafafa;border-top:1px solid var(--b
 .map code{font-size:11.5px}
 .qs{font-size:13px;max-width:1040px}
 .qs li{margin:0 0 6px}
-.phone .subwrap{max-width:318px;position:sticky;left:0}
-.phone .subhd{flex-wrap:wrap}
-@media (prefers-reduced-motion:reduce){.chev{transition:none}}
+@media (prefers-reduced-motion:reduce){.scrim,.dlg{animation:none}}
 </style>
 </head>
 <body>
 <div class="doc">
-<h1>OI-SPLIT-VIEW mock v1: confirm saved split edits, see the split on the SO and the OI</h1>
-<p class="intro">Owner's case (sales order masked as SO-XXXX01; real line numbers, items, qty and dates from the dev DB, board revision 3 confirmed 19/10/2026 8:32 pm). Built on the recommended answers: split rows open under their line (Q3 a), a split is listed under its own line (Q4 a), purchasing State and PO stay on the line (Q5 b). Press <b>After saving</b> to see the owner's date fix: line 480's 167 moved from 20/11/2026 to 20/11/2029 on the split sheet and Saved, not yet confirmed.</p>
+<h1>OI-SPLIT-VIEW mock v2: confirm saved split edits, see a line's split from the SO and the OI</h1>
+<p class="intro">Owner's case (sales order masked as SO-XXXX01; real line numbers, items, qty and dates from the dev DB, board revision 3 confirmed 19/10/2026 8:32 pm). v2 follows the owner's answers: nothing extra shows by default (Q3 b); no database change, so the split is shown per LINE through an <b>(i)</b> button next to "Split N" that opens one popup like the email view (Q5, option 2: a split cannot be tied exactly to one OI row without a migration). Press <b>(i)</b> on line 480 or 752. Use <b>After saving</b> to see the owner's date fix: 167 moved from 20/11/2026 to 20/11/2029 on the split sheet and Saved, not yet confirmed.</p>
 <div class="nav">
   <a href="#board">1 Planning board</a><a href="#so">2 Sales order Lines</a><a href="#oi">3 Order inquiry Lines</a><a href="#phone">4 Phone 375</a><a href="#map">Element map</a><a href="#qs">Open questions</a>
   <span class="sp"></span>
@@ -107,71 +113,73 @@ table.s tfoot td{font-weight:500;background:#fafafa;border-top:1px solid var(--b
 
 <section id="board">
 <h2><span class="nb">1</span>Planning board: a saved split edit is counted and can be confirmed</h2>
-<p class="why">Only lines whose saved split plan differs from what the last Confirm applied count (qty, date, line it sits on, cancel; never a remark). Confirm sends that line's changed split rows only: the OI row, the email and the Excel each get one row (167, 20/11/2026 to 20/11/2029, DELAY). No CANCEL. Nothing else on the order is touched.</p>
+<p class="why">Only lines whose saved split plan differs from what the last Confirm applied count (qty, date, line it sits on, cancel; never a remark). Confirm sends that line's changed split rows only: the OI row, the email and the Excel each get one row (167, 20/11/2026 to 20/11/2029, DELAY). No CANCEL. Nothing else on the order is touched. Unchanged from v1.</p>
 <div class="desk"><div class="main">
   <div style="display:flex;align-items:center;gap:10px;margin:0 0 14px"><div style="font-size:20px;font-weight:600">Planning 1 sales orders together</div><div style="margin-left:auto" class="mut">Rows&nbsp;&nbsp;<span class="btn">Product</span> <span class="btn">By date</span></div></div>
   <div class="strip">
     <span><span data-b="count">0</span> to confirm · 0 rejected</span>
     <span>Revision 3 · confirmed by A. Staff, 19/10/2026, 8:32 pm · 4 lines</span>
-    <span class="r"><span class="btn">Save all suggested (95)</span><span class="btn icon" aria-label="More"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></span><span class="btn pri" data-b="confirm" aria-disabled="true">Confirm (0)</span></span>
+    <span class="r"><span class="btn">Save all suggested (95)</span><span class="btn icon" aria-label="More">⚙</span><span class="btn pri" data-b="confirm" aria-disabled="true">Confirm (0)</span></span>
   </div>
   <div class="result">
     <div><b>1 of 1 orders confirmed</b></div>
     <div class="ok">SO-XXXX01: confirmed as revision 3 (1 purchase row handed over)</div>
-    <div>Confirmed: line 480 CSK14B · line 608 CSK14B · line 752 CSK14B · line 768 CSK11A</div>
+    <div>Confirmed: line 560 CSK14B · line 640 CSK14B · line 720 CSK14B · line 768 CSK11A</div>
     <div data-b="todo" hidden><b>Split edits to confirm:</b> line 480 CSK14B (167 now 20/11/2029)</div>
   </div>
-  <p class="mut" style="font-size:12px;margin:10px 0 0">Today this card prints the mirror line numbers (line 560 / 640 / 720); the mock uses the AutoCount numbers the split sheet, the SO page and the OI page show. Changing the existing text is NOT in this lane unless asked.</p>
+  <p class="mut" style="font-size:12px;margin:10px 0 0">The "Confirmed:" text is today's, unchanged (it prints the board's own line numbers 560 / 640 / 720). The new "Split edits to confirm" line uses the AutoCount number the split sheet, the SO page and the OI page show.</p>
 </div></div>
 </section>
 
 <section id="so">
-<h2><span class="nb">2</span>Sales order page &gt; Lines: each split line shows its split under it</h2>
-<p class="why">"Split N" chip next to the product (the OI page's chip). The split rows are open by default; the chevron closes them. Rows: Qty, Delivery date, Change (the email's REMARK word), Sits on (the OI line the split rides on), Remark; the AutoCount extra row makes the rows add up to the line. One status per plan: Confirmed / Saved, not confirmed / AutoCount changed.</p>
-<div class="desk"><div class="main">
+<h2><span class="nb">2</span>Sales order page &gt; Lines: "Split N" + (i) on the line, nothing open by default</h2>
+<p class="why">The grid is today's grid plus the "Split 3" chip (the OI page's chip) and an (i) button. (i) opens the line's split in a popup: Qty, Delivery date, Change (the email's REMARK word), Sits on (the OI line it rides on), Remark, the AutoCount extra row, the total, and one status for the plan.</p>
+<div class="desk" data-frame="so"><div class="main">
   <div class="crumb">Dashboards › Project Sales Admin › Sales Orders › Sales Order</div>
   <div class="ph"><span class="t">SO-XXXX01</span><span class="badge ok">Outstanding</span><span class="badge warn">Partly 191/286</span><span class="s" style="margin-left:6px">Project (masked)</span><span class="r"><span class="btn icon" aria-label="More">⚙</span><span class="btn pri">Plan</span></span></div>
   <div class="tabs"><span>General</span><span class="on">Lines</span><span>Delivery</span><span>Invoices</span><span>Transfers</span></div>
   <div class="card">
     <div class="hd"><b>Order lines</b><span class="search">Search product...</span><span class="btn">Columns</span></div>
     <div class="scroll"><table class="g" style="min-width:1180px">
-      <colgroup><col style="width:36px"><col style="width:40px"><col style="width:64px"><col style="width:200px"><col style="width:92px"><col style="width:92px"><col style="width:92px"><col style="width:110px"><col style="width:110px"><col style="width:90px"><col style="width:112px"><col style="width:70px"><col style="width:110px"></colgroup>
-      <thead><tr><th></th><th></th><th class="num">No.</th><th>Product</th><th class="num">Qty ordered</th><th class="num">Qty delivered</th><th class="num">Qty cancelled</th><th class="num">Outstanding qty</th><th>Linked to</th><th>Location</th><th>Delivery date</th><th>UoM</th><th>Status</th></tr></thead>
+      <colgroup><col style="width:44px"><col style="width:64px"><col style="width:220px"><col style="width:92px"><col style="width:92px"><col style="width:92px"><col style="width:110px"><col style="width:100px"><col style="width:90px"><col style="width:112px"><col style="width:70px"><col style="width:110px"></colgroup>
+      <thead><tr><th></th><th class="num">No.</th><th>Product</th><th class="num">Qty ordered</th><th class="num">Qty delivered</th><th class="num">Qty cancelled</th><th class="num">Outstanding qty</th><th>Linked to</th><th>Location</th><th>Delivery date</th><th>UoM</th><th>Status</th></tr></thead>
       <tbody data-grid="so"></tbody>
     </table></div>
   </div>
-</div></div>
+</div><div class="scrim" data-scrim="so" hidden></div></div>
 </section>
 
 <section id="oi">
-<h2><span class="nb">3</span>Order inquiry page &gt; Lines: the same split rows, open at line level</h2>
-<p class="why">Same rows and same status as the SO page, from the same read. Today they sit behind a closed chevron, so only "Split 3" shows. State and PO stay on the line (Q5 b); "Sits on line 480" is OI-2609-0578 line 480.</p>
-<div class="desk"><div class="main">
+<h2><span class="nb">3</span>Order inquiry page &gt; Lines: the same (i) and the same popup</h2>
+<p class="why">Today's grid plus (i) next to "Split 3". The chevron keeps what it shows today. State and PO stay on the line; "Sits on line 480" is OI-2609-0578 line 480.</p>
+<div class="desk" data-frame="oi"><div class="main">
   <div class="ph"><span class="t">OI-2609-0578</span><span class="badge warn">Outstanding</span><span class="s">Raised by A. Staff on 20/09/2026, 11:19 am</span><span class="r"><span class="btn icon" aria-label="More">⚙</span><span class="btn pri">Confirm</span></span></div>
   <div class="tabs"><span class="on">Lines</span><span>General</span><span>Related PO</span><span>Related SPO</span></div>
   <div class="card">
     <div class="hd"><span class="search">Search product...</span><span class="btn">State ▾</span><span class="btn">Columns</span><b></b></div>
     <div class="scroll"><table class="g" style="min-width:1000px">
-      <colgroup><col style="width:36px"><col style="width:36px"><col style="width:64px"><col style="width:220px"><col style="width:40px"><col style="width:90px"><col style="width:100px"><col style="width:170px"><col style="width:150px"></colgroup>
+      <colgroup><col style="width:40px"><col style="width:36px"><col style="width:64px"><col style="width:240px"><col style="width:40px"><col style="width:90px"><col style="width:100px"><col style="width:170px"><col style="width:150px"></colgroup>
       <thead><tr><th></th><th><input type="checkbox" aria-label="Select all"></th><th class="num">No.</th><th>Product</th><th></th><th class="num">SO Qty</th><th class="num">Requested</th><th>State</th><th>PO</th></tr></thead>
       <tbody data-grid="oi"></tbody>
     </table></div>
   </div>
-</div></div>
+</div><div class="scrim" data-scrim="oi" hidden></div></div>
 </section>
 
 <section id="phone">
-<h2><span class="nb">4</span>Phone 375: same grid, scrolls sideways; the split rows sit under the line</h2>
-<div class="phone"><div style="padding:14px 16px">
+<h2><span class="nb">4</span>Phone 375: the same (i), the popup fills the width</h2>
+<div class="row2">
+<div class="phone" data-frame="ph"><div style="padding:14px 16px;height:640px">
   <div style="display:flex;gap:8px;align-items:center;margin:0 0 10px"><b style="font-size:17px">SO-XXXX01</b><span class="badge ok">Outstanding</span></div>
   <div class="tabs" style="gap:14px;font-size:13px;overflow:hidden"><span>General</span><span class="on">Lines</span><span>Delivery</span><span>Invoices</span></div>
   <div class="card"><div class="hd" style="padding:10px"><span class="search" style="width:auto;flex:1">Search product...</span><span class="btn">Columns</span></div>
-  <div class="scroll"><table class="g" style="min-width:520px;font-size:12.5px">
-    <colgroup><col style="width:32px"><col style="width:52px"><col style="width:150px"><col style="width:86px"><col style="width:100px"><col style="width:100px"></colgroup>
-    <thead><tr><th></th><th class="num">No.</th><th>Product</th><th class="num">Qty ordered</th><th class="num">Outstanding</th><th>Delivery date</th></tr></thead>
-    <tbody data-grid="phone"></tbody>
+  <div class="scroll"><table class="g" style="min-width:470px;font-size:12.5px">
+    <colgroup><col style="width:46px"><col style="width:168px"><col style="width:86px"><col style="width:100px"><col style="width:100px"></colgroup>
+    <thead><tr><th class="num">No.</th><th>Product</th><th class="num">Qty ordered</th><th class="num">Outstanding</th><th>Delivery date</th></tr></thead>
+    <tbody data-grid="ph"></tbody>
   </table></div></div>
-</div><div class="cap">375 px: the split rows are their own small grid under the line, pinned to the screen; Sits on is the small line under Change, Remark is on the desk view only.</div></div>
+</div><div class="scrim" data-scrim="ph" hidden style="padding-top:40px"></div><div class="cap">375 px: press (i) on line 480. The popup keeps Qty, Date and Change in view; Sits on is the small line under Change.</div></div>
+</div>
 </section>
 
 <section id="map">
@@ -180,43 +188,57 @@ table.s tfoot td{font-weight:500;background:#fafafa;border-top:1px solid var(--b
 <tr><th>Element</th><th>Existing component / format</th></tr>
 <tr><td>Board "N to confirm", Confirm (N)</td><td><code>project-sales/fulfilment-planning/components/FulfilmentBoardPanel.tsx:2312</code>, <code>:2498-2505</code>; count from <code>_shared/lib/fulfilmentBoard.ts:861 confirmSummaryFor</code> plus a server flag per line</td></tr>
 <tr><td>"Split edits to confirm" line in the result card</td><td>same card as "Confirmed: line ..." (FulfilmentBoardPanel result card), one more text line</td></tr>
-<tr><td>SO Order lines grid, Columns toggle</td><td><code>scm/sales-orders/[id]/components/SalesOrderDetail.tsx:2167</code>, <code>DataGridColumnVisibility :2194</code>; fixed layout, resizable</td></tr>
-<tr><td>Row chevron + expanded row</td><td>OI grid <code>expand</code> column and <code>expandedContent</code>, <code>order-inquiries/[id]/components/orderInquiryHeaderLinesColumns.tsx:571</code>, <code>:603-617</code></td></tr>
-<tr><td>"Split N" chip</td><td><code>SplitChip</code>, <code>orderInquiryHeaderLinesColumns.tsx:223</code> (Badge secondary light)</td></tr>
-<tr><td>Split rows grid (Qty, Delivery date, Change, Sits on, Remark)</td><td><code>LineSplitsGrid</code> / <code>SPLIT_COLUMNS</code>, <code>orderInquiryHeaderLinesColumns.tsx:241-345</code>, moved to <code>_shared</code> and used by both pages</td></tr>
+<tr><td>SO Order lines grid, Columns toggle</td><td><code>scm/sales-orders/[id]/components/SalesOrderDetail.tsx:2167</code>, <code>DataGridColumnVisibility :2194</code>; unchanged apart from the Product cell</td></tr>
+<tr><td>"Split N" chip</td><td><code>SplitChip</code>, <code>order-inquiries/[id]/components/orderInquiryHeaderLinesColumns.tsx:223</code> (Badge secondary light), moved to <code>_shared</code></td></tr>
+<tr><td>(i) button</td><td>icon <code>Button</code> (<code>components/ui/button.tsx</code>, variant ghost, size icon, lucide <code>Info</code>), labelled "Show the splits of line 480"</td></tr>
+<tr><td>Popup</td><td><code>components/ui/dialog.tsx</code> Dialog, same size as the Email Outbox body view (<code>system-management/email-outbox/components/EmailOutboxList.tsx:354</code>, max-w-3xl, max-h 85vh)</td></tr>
+<tr><td>Split rows grid in the popup (Qty, Delivery date, Change, Sits on, Remark)</td><td><code>LineSplitsGrid</code> / <code>SPLIT_COLUMNS</code>, <code>orderInquiryHeaderLinesColumns.tsx:241-345</code>, moved to <code>_shared</code>; one copy for both pages</td></tr>
 <tr><td>Change word pill</td><td><code>OrderInquiryVerbPill</code> (ADVANCE / REMAIN / DELAY / ORDER n), words from <code>project_line_split_service.py:69 change_word</code>, <code>:78 remark_for_row</code></td></tr>
 <tr><td>AutoCount extra row (752: 145, ORDER 145)</td><td><code>LineSplitService.read extra_qty / extra_remark</code>, <code>project_line_split_service.py:419-429, :769-772</code> (date = the line's AutoCount date)</td></tr>
 <tr><td>Plan status (Confirmed / Saved, not confirmed / AutoCount changed)</td><td><code>components/ui/badge.tsx</code> Badge (success / warning / secondary); from <code>split_state</code> <code>project_line_split_service.py:243</code> + the one "edited" function</td></tr>
-<tr><td>"was 20/11/2026" under a changed date</td><td>the split sheet's NEW-date format from #1749 (<code>handover_moves</code>), same muted warning text</td></tr>
-<tr><td>Status column, header badges</td><td><code>scm/lib/salesOrderStatus.ts</code> (open = Outstanding, closed = Completed)</td></tr>
+<tr><td>"was 20/11/2026" under a changed date</td><td>the split sheet's NEW-date format from #1749 (<code>handover_moves</code>)</td></tr>
+<tr><td>Line State / PO in the popup header</td><td>the OI line's own State pill and PO (<code>orderInquiryLineFold.ts:139-153</code>), not per split (no exact link, Q5)</td></tr>
 </table>
 </section>
 
 <section id="qs">
-<h2>Open questions (owner)</h2>
-<ol class="qs">
-<li><b>Q3</b> SO page split rows: (a) open under the line by default, chevron closes [shown]; (b) closed by default.</li>
-<li><b>Q4</b> A split sitting on another line (possible before the first Confirm): (a) under its own line, Sits on "line 608" [shown]; (b) under line 608.</li>
-<li><b>Q5</b> Purchasing state per split row: (a) per row (needs a migration: OI rows carry no split link today); (b) State and PO stay on the line, Sits on names the OI line [shown].</li>
-</ol>
+<h2>Open choice Q4 (owner): a split delivered with ANOTHER line</h2>
+<p class="why">Example (not stored today): before the first Confirm, line 480's 403 is planned to go out with line 608 (same item, 20/11/2026). Whose popup lists that 403? The mock is built on (a); (b) is shown for comparison.</p>
+<div class="row2">
+  <div class="dlg" style="animation:none;box-shadow:none;max-width:620px">
+    <h3>(a) [built] Line 480 CSK14B: split</h3>
+    <div class="sub">SO-XXXX01 · OI-2609-0578 line 480 · line 608 shows only its own qty, no chip</div>
+    <table class="s"><colgroup><col style="width:70px"><col style="width:110px"><col style="width:110px"><col></colgroup><thead><tr><th class="num">Qty</th><th>Delivery date</th><th>Change</th><th>Sits on</th></tr></thead>
+    <tbody><tr><td class="num">14</td><td>20/09/2026</td><td><span class="pill ADVANCE">ADVANCE</span></td><td>line 480</td></tr><tr><td class="num">403</td><td>20/11/2026</td><td><span class="pill DELAY">DELAY</span></td><td>line 608</td></tr></tbody>
+    <tfoot><tr><td class="num">417</td><td colspan="3" class="mut">AutoCount 417 @ 20/10/2026, now 14 @ 20/09/2026</td></tr></tfoot></table>
+  </div>
+  <div class="dlg" style="animation:none;box-shadow:none;max-width:620px;opacity:.8">
+    <h3>(b) Line 608 CSK14B: split</h3>
+    <div class="sub">SO-XXXX01 · OI-2609-0578 line 608 · line 480's popup shows only its 14</div>
+    <table class="s"><colgroup><col style="width:70px"><col style="width:110px"><col style="width:110px"><col></colgroup><thead><tr><th class="num">Qty</th><th>Delivery date</th><th>Change</th><th>From</th></tr></thead>
+    <tbody><tr><td class="num">632</td><td>20/11/2026</td><td><span class="pill ORDER">ORDER 440</span></td><td>line 608</td></tr><tr><td class="num">403</td><td>20/11/2026</td><td><span class="pill DELAY">DELAY</span></td><td>line 480</td></tr></tbody>
+    <tfoot><tr><td class="num">1035</td><td colspan="3" class="mut">delivered together on 20/11/2026</td></tr></tfoot></table>
+  </div>
+</div>
 </section>
 </div>
 
 <script>
 const chev = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>';
+const info = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>';
 const truck = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" style="color:#71717a"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18H9"/><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.62L18.3 9.38a1 1 0 0 0-.78-.38H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg>';
 // Dev DB sorento_cagent_stack, so_line_splits + LineSplitService.read, 19 Oct (owner's revision 3).
 const SPLITS = {
-  480: {rows: [
+  480: {item: 'CSK14B', rows: [
     {qty: 14, date: '20/09/2026', word: 'ADVANCE', on: 'line 480', remark: ''},
     {qty: 236, date: '20/11/2026', word: 'DELAY', on: 'New line (not in AutoCount yet)', remark: ''},
     {qty: 167, date: '20/11/2026', word: 'DELAY', on: 'New line (not in AutoCount yet)', remark: '', after: '20/11/2029'},
-  ], total: 417, was: 'AutoCount 417 @ 20/10/2026, now 14 @ 20/09/2026'},
-  752: {rows: [
+  ], total: 417, was: 'AutoCount 417 @ 20/10/2026, now 14 @ 20/09/2026', st: 'To Buy', po: '-'},
+  752: {item: 'CSK14B', rows: [
     {qty: 37, date: '20/11/2026', word: 'ADVANCE', on: 'line 752', remark: ''},
     {qty: 467, date: '02/01/2027', word: 'DELAY', on: 'New line (not in AutoCount yet)', remark: ''},
     {qty: 145, date: '02/01/2027', word: 'ORDER', label: 'ORDER 145', on: 'line 752 (AutoCount extra)', remark: ''},
-  ], total: 649, was: 'AutoCount 504 @ 20/12/2026, now 649 @ 02/01/2027'},
+  ], total: 649, was: 'AutoCount 504 @ 20/12/2026, now 649 @ 02/01/2027', st: 'To Buy', po: '-'},
 };
 const SO = [
   {no: 16, item: 'SRTWT5815', q: 203, d: 203, c: 0, os: 0, date: '24/08/2026', st: 'closed'},
@@ -236,52 +258,50 @@ const OI = [
   {no: 768, item: 'CSK11A', so: 335, req: 335, st: 'To Buy', po: '-'},
 ];
 let state = 'before';
-const open = {};
-function key(grid, no) { return grid + no; }
-function isOpen(grid, no) { return open[key(grid, no)] !== false; }
-function chip(no) { const s = SPLITS[no]; return s ? ` <span class="badge sec">Split ${s.rows.filter(r => !r.label).length}</span>` : ''; }
+let opened = null; // {frame, no, from}
+function chip(frame, no) {
+  const s = SPLITS[no];
+  if (!s) return '';
+  return ` <span class="badge sec">Split ${s.rows.filter(r => !r.label).length}</span><button type="button" class="ib" data-i="${frame}:${no}" aria-label="Show the splits of line ${no}" aria-haspopup="dialog">${info}</button>`;
+}
 function status(no) {
-  if (no === 480 && state === 'after') return '<span class="badge warn">Saved, not confirmed</span> <span class="mut">Confirm on the planning board sends it to purchasing</span>';
-  return '<span class="badge ok">Confirmed</span> <span class="mut">revision 3, 19/10/2026</span>';
+  if (no === 480 && state === 'after') return '<span class="badge warn">Saved, not confirmed</span><span class="mut">Confirm on the planning board sends it to purchasing</span>';
+  return '<span class="badge ok">Confirmed</span><span class="mut">revision 3, 19/10/2026</span>';
 }
 function splitTable(no, compact) {
   const s = SPLITS[no];
   const rows = s.rows.map(r => {
     const changed = state === 'after' && r.after;
     const date = changed ? `${r.after}<span class="was">was ${r.date}</span>` : r.date;
-    const pill = `<span class="pill ${r.word}">${r.label || r.word}</span>`;
-    return `<tr class="${changed ? 'chg' : ''}"><td class="num">${r.qty}</td><td>${date}</td><td>${pill}${compact ? `<span class="was" style="color:var(--muted-fg)">${r.on}</span>` : ''}</td>${compact ? '' : `<td title="${r.on}">${r.on}</td><td>${r.remark}</td>`}</tr>`;
+    const pill = `<span class="pill ${r.word}">${r.label || r.word}</span>${compact ? `<span class="on2">${r.on}</span>` : ''}`;
+    return `<tr class="${changed ? 'chg' : ''}"><td class="num">${r.qty}</td><td>${date}</td><td style="${compact ? 'white-space:normal' : ''}">${pill}</td>${compact ? '' : `<td title="${r.on}">${r.on}</td><td>${r.remark}</td>`}</tr>`;
   }).join('');
-  const head = compact ? '<col style="width:52px"><col style="width:104px"><col style="width:110px">' : '<col style="width:80px"><col style="width:130px"><col style="width:150px"><col style="width:220px"><col style="width:240px">';
+  const cols = compact ? '<col style="width:52px"><col style="width:104px"><col>' : '<col style="width:80px"><col style="width:130px"><col style="width:150px"><col style="width:220px"><col>';
   const th = compact ? '<th class="num">Qty</th><th>Delivery date</th><th>Change</th>' : '<th class="num">Qty</th><th>Delivery date</th><th>Change</th><th>Sits on</th><th>Remark</th>';
-  return `<div class="subwrap"><div class="subhd">${status(no)}</div><table class="s"><colgroup>${head}</colgroup><thead><tr>${th}</tr></thead><tbody>${rows}</tbody><tfoot><tr><td class="num">${s.total}</td><td colspan="${compact ? 2 : 4}" class="mut">${s.was}</td></tr></tfoot></table></div>`;
+  return `<table class="s"><colgroup>${cols}</colgroup><thead><tr>${th}</tr></thead><tbody>${rows}</tbody><tfoot><tr><td class="num">${s.total}</td><td colspan="${compact ? 2 : 4}" class="mut" style="white-space:normal">${s.was}</td></tr></tfoot></table>`;
 }
-function toggleBtn(grid, no) {
-  if (!SPLITS[no]) return '';
-  return `<button type="button" class="chev ${isOpen(grid, no) ? 'open' : ''}" data-t="${key(grid, no)}" aria-label="${isOpen(grid, no) ? 'Hide' : 'Show'} the splits of line ${no}" aria-expanded="${isOpen(grid, no)}">${chev}</button>`;
+function dialog(frame, no) {
+  const s = SPLITS[no];
+  const compact = frame === 'ph';
+  const st = s.st === 'To Buy' ? 'TOBUY' : 'ONPO';
+  return `<div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dlg-t"><button type="button" class="ib x" data-close aria-label="Close">✕</button>
+    <h3 id="dlg-t">Line ${no} ${s.item}: split</h3>
+    <div class="sub">SO-XXXX01 · OI-2609-0578 line ${no}</div>
+    <div class="meta">${status(no)}<span>Purchasing <span class="pill ${st}">${s.st}</span></span><span class="mut">PO ${s.po}</span></div>
+    ${splitTable(no, compact)}</div>`;
 }
 function renderSO() {
   const label = {open: '<span class="badge ok">Outstanding</span>', closed: '<span class="badge sec">Completed</span>'};
-  document.querySelector('[data-grid=so]').innerHTML = SO.map(l => {
-    const row = `<tr class="${SPLITS[l.no] ? 'split' : ''}"><td>${toggleBtn('so', l.no)}</td><td>${truck}</td><td class="num">${l.no}</td><td>${l.item}${chip(l.no)}</td><td class="num">${l.q}</td><td class="num">${l.d}</td><td class="num">${l.c}</td><td class="num">${l.os}</td><td>${l.link ? `<a href="#oi" style="color:var(--primary);text-decoration:none">${l.link}</a>` : '-'}</td><td>BRW-BB</td><td>${l.date}</td><td>UNIT</td><td>${label[l.st]}</td></tr>`;
-    const sub = SPLITS[l.no] && isOpen('so', l.no) ? `<tr class="sub"><td colspan="13">${splitTable(l.no)}</td></tr>` : '';
-    return row + sub;
-  }).join('');
+  document.querySelector('[data-grid=so]').innerHTML = SO.map(l => `<tr><td>${truck}</td><td class="num">${l.no}</td><td>${l.item}${chip('so', l.no)}</td><td class="num">${l.q}</td><td class="num">${l.d}</td><td class="num">${l.c}</td><td class="num">${l.os}</td><td>-</td><td>BRW-BB</td><td>${l.date}</td><td>UNIT</td><td>${label[l.st]}</td></tr>`).join('');
 }
 function renderOI() {
   document.querySelector('[data-grid=oi]').innerHTML = OI.map(l => {
     const st = l.st === 'To Buy' ? 'TOBUY' : 'ONPO';
-    const row = `<tr class="${SPLITS[l.no] ? 'split' : ''}"><td>${toggleBtn('oi', l.no)}</td><td><input type="checkbox" aria-label="Select line ${l.no}"></td><td class="num">${l.no}</td><td>${l.item}${chip(l.no)}</td><td></td><td class="num">${l.so}</td><td class="num">${l.req}</td><td><span class="pill ${st}">${l.st}</span></td><td>${l.po === '-' ? '-' : `<span style="color:var(--primary)">${l.po}</span>`}</td></tr>`;
-    const sub = SPLITS[l.no] && isOpen('oi', l.no) ? `<tr class="sub"><td colspan="9">${splitTable(l.no)}</td></tr>` : '';
-    return row + sub;
+    return `<tr><td><span class="chev">${chev}</span></td><td><input type="checkbox" aria-label="Select line ${l.no}"></td><td class="num">${l.no}</td><td>${l.item}${chip('oi', l.no)}</td><td></td><td class="num">${l.so}</td><td class="num">${l.req}</td><td><span class="pill ${st}">${l.st}</span></td><td>${l.po === '-' ? '-' : `<span style="color:var(--primary)">${l.po}</span>`}</td></tr>`;
   }).join('');
 }
 function renderPhone() {
-  document.querySelector('[data-grid=phone]').innerHTML = SO.filter(l => l.st === 'open').map(l => {
-    const row = `<tr class="${SPLITS[l.no] ? 'split' : ''}"><td>${toggleBtn('ph', l.no)}</td><td class="num">${l.no}</td><td>${l.item}${chip(l.no)}</td><td class="num">${l.q}</td><td class="num">${l.os}</td><td>${l.date}</td></tr>`;
-    const sub = SPLITS[l.no] && isOpen('ph', l.no) ? `<tr class="sub"><td colspan="6" style="padding-left:10px">${splitTable(l.no, true)}</td></tr>` : '';
-    return row + sub;
-  }).join('');
+  document.querySelector('[data-grid=ph]').innerHTML = SO.filter(l => l.st === 'open').map(l => `<tr><td class="num">${l.no}</td><td>${l.item}${chip('ph', l.no)}</td><td class="num">${l.q}</td><td class="num">${l.os}</td><td>${l.date}</td></tr>`).join('');
 }
 function renderBoard() {
   const n = state === 'after' ? 1 : 0;
@@ -291,10 +311,27 @@ function renderBoard() {
   c.setAttribute('aria-disabled', n ? 'false' : 'true');
   document.querySelector('[data-b=todo]').hidden = !n;
 }
-function render() { renderBoard(); renderSO(); renderOI(); renderPhone(); }
+function renderDialog() {
+  document.querySelectorAll('[data-scrim]').forEach(el => {
+    const show = opened && opened.frame === el.dataset.scrim;
+    el.hidden = !show;
+    el.innerHTML = show ? dialog(opened.frame, opened.no) : '';
+  });
+  if (opened) document.querySelector(`[data-scrim=${opened.frame}] [data-close]`).focus();
+}
+function render() { renderBoard(); renderSO(); renderOI(); renderPhone(); renderDialog(); }
+function closeDialog() {
+  if (!opened) return;
+  const back = opened.from;
+  opened = null;
+  renderDialog();
+  const btn = document.querySelector(`[data-i="${back}"]`);
+  if (btn) btn.focus();
+}
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-t]');
-  if (t) { open[t.dataset.t] = !isOpen(t.dataset.t.slice(0, 2), Number(t.dataset.t.slice(2))); render(); return; }
+  const i = e.target.closest('[data-i]');
+  if (i) { const [frame, no] = i.dataset.i.split(':'); opened = {frame, no: Number(no), from: i.dataset.i}; renderDialog(); return; }
+  if (e.target.closest('[data-close]') || e.target.matches('[data-scrim]')) { closeDialog(); return; }
   const s = e.target.closest('[data-state]');
   if (s) {
     state = s.dataset.state;
@@ -302,6 +339,7 @@ document.addEventListener('click', e => {
     render();
   }
 });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDialog(); });
 render();
 </script>
 </body>

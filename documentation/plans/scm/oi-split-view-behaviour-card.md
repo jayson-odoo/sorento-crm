@@ -44,13 +44,14 @@ Data: dev DB `sorento_cagent_stack`, SO417636 (pso bc94d914), board revision 3 c
    splits; only an explicit Cancel row on the sheet is a CANCEL BALANCE (as in #1749).
 4. **Save guard stays.** After a Confirm, a split still cannot move onto another SO line (#1749
    AC-G19 deferred, Save answers "Line <n>: a confirmed split cannot move to another line.").
-5. **SO page shows the split under its line.** A split SO line carries the "Split N" chip and its
-   split rows under it: Qty, Delivery date, REMARK word, Sits on (own line / line n / New line;
+5. **SO page shows the split behind (i).** A split SO line carries the "Split N" chip and an (i)
+   button; (i) opens one popup (like the email view) with the line's split rows: Qty, Delivery date, REMARK word, Sits on (own line / line n / New line;
    the OI line the split rides on), Remark, plus the AutoCount extra row ("ORDER 145") so the rows
    add up to the line's qty, and one status for the plan: Confirmed / Saved, not confirmed /
    AutoCount changed.
-6. **OI page shows the same rows, open.** The OI Lines tab shows the same split rows under the
-   line without a click (the chevron still closes them), with the same plan status.
+6. **OI page: the same (i) and popup.** The OI Lines tab gets the same (i) next to "Split N" and the
+   same popup; the chevron keeps what it shows today. State and PO stay on the line (no per-row
+   guess).
 7. **Same component both pages.** One read-only split grid, fed by the one split read, on the SO
    page and the OI page; no second copy of the words.
 
@@ -106,7 +107,13 @@ it rides on (Sits on line 480 = OI-2609-0578 line 480; a New-line split rides on
 
 - Crew on ask a14412763 (19 Oct): Q1 (a), the owner's own words ("based on those that are saved
   only, not all the lines"); Q2 (a), AC-G19 stays deferred, the Save guard keeps refusing, the lane
-  stays M. Q3, Q4, Q5 went to the owner with the recommendations; mock v1 is built on them.
+  stays M. Q3, Q4, Q5 went to the owner with the recommendations; mock v1 (`v1.html`) was built on them.
+- Owner 19 Oct ~21:05: Q3 (b) hide by default ("informational fatigue"); Q5 no database change,
+  split on each OI row if exact, else an (i) button per line, else a header gear popup. Per-row is not
+  exact (engine pairs split and OI row by qty + date, `project_order_inquiry_service.py:6189`; line
+  752's own OI row is 182 = split 37 + extra 145). Crew ruling a14761180: pick (2), "Split N" chip + (i)
+  on the line on both the OI and SO Lines tabs, one popup like the email view. Q4 still with the
+  owner; mock v2 (`index.html`) is built on Q4 (a) and marks it open.
 
 ## Build notes (for the plan, not for the owner)
 
