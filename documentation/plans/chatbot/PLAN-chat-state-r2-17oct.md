@@ -1,7 +1,7 @@
 # PLAN: CHAT-STATE round 2 - the weak follow-up kinds
 
-**Status:** Build (r2-A..D green after 2 rounds, reviewer READY, L1 replay 0 unintended; origin/main 63f4fe47c merged
-in after #1747 merged as e9ef7b416; live TRAIN next). Track: L, LEAD pattern. Branch `crew/chat-state-r2`.
+**Status:** Build, round 4 (refine on REAL conversations): R4-A + #1755 C2/C2b merge + held-family exact read
+reviewer READY, L1 gate 0 unintended; paired real x1 next. Track: L, LEAD pattern. Branch `crew/chat-state-r2`.
 **Base design:** `PLAN-chat-state-16oct.md`, `chat-state-behaviour-card.md` (R1-R16), `chat-state-seam-design.md`.
 
 ## Goal (crew, 17 Oct, owner "run as much parallel as possible")
@@ -218,6 +218,23 @@ notes only if a rule is the owner's, red-first fixes, reviewer, paired TRAIN rea
   Lesson: seed the shape real data has (here family_code), never a link the data lacks.
 - Red 6156c918af (local): 9 seam cases on the real family_code shape (3 real cp0 items x 3 phrasings) + the R3-A
   family group re-seeded to family_code (5 fail, assertions unchanged); waits for #1755's C2.
+  Reordered onto the R4-A push as 07a492daa3 (14 red). Crew 19 Oct (a88607088): one head, one ci label.
+- Merge 0563d38525 = #1755 head ad78e1e738 (C2 family_code + C2b held-first, CI green). Conflicts: engine.py and
+  turn/context.py field / keyword order (took #1755's; every call passes keywords); parser.py took #1755's
+  `closed_lists_schema(items, *, state=)` and dropped the lane's `_closed_lists_state_schema` (same JSON for 3 items
+  and for none, reviewer-checked; only its lru_cache is lost), so parser.py equals ad78e1e738. After the merge 11 of
+  14 reds green; cp0-665ba3e897 x3 still fetched 3 products: the narrowing matched the right 2 (SRTWC286-SH-P,
+  SRTWC286-SH-NEW-P), then the entity resolver's prefix probe (`entity_resolver._prefix_probe_product`) also placed
+  SRTWC286-SH-PP (an s_trap sibling) because `_exact_codes_only` (engine.py ~5705) runs only on `family: false`.
+- Fix 558b3fc56d (engine.py ~4939): a non-empty held-family match sets `family: false`, so the turn reads the
+  narrowed members exactly. Scope: closed_lists + held products + a match, on BOTH the state path and the
+  closed_lists-on state-off path (#1755's seam; main's production prompt has no CLOSED LISTS section, so main is
+  unchanged). Doctrine: the narrowing fires only when the message names no product (held_family.py:146-149), so
+  the parser's null `family` said nothing about these rows; an execution detail, not a meaning rewrite (reviewer).
+  Kill: fix reverted 3 failed, restored 9 passed. L1 gate vs ad78e1e738: grounding 0/1506, turn 0/585 (585 of
+  585 replayed). Reviewer READY; should-fix done: state-off guard 9666d3884c (3 phrasings, no `state_changes`;
+  fetch exactly SH-P + SH-NEW-P; fix reverted -> fails on the extra -PP; the state-off path carries no quantity,
+  so none is asserted). #1755's own fixtures have no -PP-style sibling; crew-note on #1755 6260819707.
 - EVAL-BENCH real refine set `eval-sets/train2_refine` (8 real TRAIN items, round 36 grader; recorded prod 1/8).
   Baseline x1 (scoped): lane 4cdd3f37fd 0/8, main 0f5c6537e 0/8 ($0.162). `filter` fails 8/8 on both arms
   (rootcause-r4.md section 2):
