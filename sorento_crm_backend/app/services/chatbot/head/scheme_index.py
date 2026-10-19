@@ -189,4 +189,12 @@ def scheme_without_product(db: "Session", verdict: dict[str, Any]) -> tuple[dict
     # `certificate` it would read as the set "which products have this certificate". A product
     # carried from an open pick is added later and skipped there (`with_carried_entities`).
     out = [{**e, "certificate_uuids": certificates} if e is schemes[0] else e for e in entities]
+    # The certificate kind beside the scheme, as `index_scheme` adds it: without it the
+    # reconciler retypes the scheme's own row to a certificate and the file ask is lost.
+    if not any(e.get("listed") == "cert_kind" for e in said):
+        from app.services.chatbot_prompt_vars import closed_list_items
+
+        kind = _kind_item(db, scheme, closed_list_items(db).get("cert_kind", {}))
+        if kind is not None:
+            out.append({**schemes[0], "raw": kind, "canonical_code": kind, "listed_item": kind, "listed": "cert_kind"})
     return {**verdict, "entities": out}, {"scheme": scheme, "held_by_products": False, "products": 0, "certificates": len(certificates)}
