@@ -300,6 +300,29 @@ Scope ruled by crew: land round 6 as is (done, head 18e9760e7d), freeze new seam
   (rule + field). A parser.py schema field change is announced to crew before it is made.
 - Spend: $0 root cause + red tests; L1 replay per slice (crew run); one paired TRAIN x1 at the end via EVAL-BENCH.
 
+### F3-a acceptance (crew ruling a30139843 (a): candidates.py only, behaviour-preserving, all keys neutral when 2+ hold the value)
+
+Order changed by a30139843: F3-a, F3-b, F3-d; F3-c only after a $0 TRAIN count of unconfident / tied spec and type picks
+(then the id field + rule text go to crew). The cp0-6240dc53f8 call (keep a confident=false attachment pick that is
+exactly a listed item) waits for the owner; neither side is built.
+
+- A1 ONE value index. Every spec line under a message word (enum value / label / synonym, boolean phrase, number + a
+  registry unit, a numeric key's own words) comes from one registry-driven index of (key, value) pairs; each pair
+  carries its data support: how many chat-searchable products in the contact's scope hold it, and how many of the held
+  family do. One scoped count query per message for all pairs (today: one per size word).
+- A2 Rank by data. Under one word, the spec lines of different keys are ordered: a key the held family holds first,
+  then by products holding it (most first), then by key name only as a stable tiebreak. This now also applies to enum
+  phrases two keys share (today they keep registry name order). Exact before near and product type before spec stay.
+- A3 No cut of holding keys. When 2+ keys hold the value, every holding key has its line, in the same neutral wording
+  (`spec K = V (label)`); the per-word cap (`CAP_PER_WORD`) no longer cuts spec lines. Code / near-code rows keep the
+  cap and are untouched (ruling a29691875 (2)(a): they are #1761's). `CAP_LINES` per message stays.
+- A4 A size no key holds. Every key of the unit is offered (today: name order, cut to 5), ranked as A2 (all zero, so
+  name order), uncut.
+- A5 Unchanged (existing tests are the guards): the bare-size line and its flag (R6-1), boolean phrases (R6-2), size
+  keys by data (R5-1), SIZE-AS-CODE spanned words, numeric key words ("4 in 1"), hidden keys (H1, R6-6), gate off.
+- Removes: `_keys_holding`, `_bare_size_keys` and `_unit_keys` as separate per-key readers (folded into the index),
+  the `or keys` name-order fallback, the spec-line cut in `shortlist`.
+
 ### Round 7 results
 
 | Slice | Red | Green | Notes |
