@@ -1160,7 +1160,18 @@ def _attribute_none(reply: str, gold_spec: list[dict[str, Any]], every: bool = F
 
 # a PRODUCT row: a code at the start of a line (after a number or bullet), or the code of a "*Product Code:*" line. A code in a label
 # ("*DC1-SMC:* 0", a warehouse) or in a value ("*Material:* SUS304") is no product, so a stock page's warehouse rows never count.
-PRODUCT_ROW_RE = re.compile(r"^(?:\d+\.\s+|[\u2022-]\s+)?(?:\*?Product Code:\*?\s*)?(?=[A-Z0-9-]*\d)(?=[A-Z0-9-]*[A-Z])([A-Z][A-Z0-9-]{3,})\b", re.M)
+PRODUCT_ROW_RE = re.compile(r"^(?:\d+\.\s+|[\u2022-]\s+)?(?:\*?(?:Product Code|Kod Produk|\u4ea7\u54c1\u4ee3\u7801):\*?\s*)?(?=[A-Z0-9-]*\d)(?=[A-Z0-9-]*[A-Z])([A-Z][A-Z0-9-]{3,})\b", re.M)
+# the row label is translated by the app (label_catalog.py:35: ms "Kod Produk", zh "产品代码"); the grader is stdlib-only, so the three are listed here
+# a comma-run of codes on one line ("A100, B200, C300") is one row per code
+CODE_RUN_RE = re.compile(r"(?<![A-Z0-9-])(?=[A-Z0-9-]*\d)(?=[A-Z0-9-]*[A-Z])[A-Z][A-Z0-9-]{3,}(?:\s*,\s*(?=[A-Z0-9-]*\d)(?=[A-Z0-9-]*[A-Z])[A-Z][A-Z0-9-]{3,})+")
+
+
+def _listed_products(reply: str) -> set[str]:
+    """The product codes a reply lists: product rows plus every code of a comma-run line. Label and value codes never count."""
+    listed = {_raw(c) for c in PRODUCT_ROW_RE.findall(reply)}
+    for run in CODE_RUN_RE.findall(reply):
+        listed |= {_raw(c) for c in CODE_RE.findall(run)}
+    return listed
 
 
 def _capped_list_check(row: dict[str, Any], item: dict[str, Any]) -> tuple[str, bool | None, str] | None:
@@ -1172,7 +1183,7 @@ def _capped_list_check(row: dict[str, Any], item: dict[str, Any]) -> tuple[str, 
     expected = {_raw(c) for c in gold.get("spec_products") or [] if c}
     if gold.get("none_on_record"):
         return None
-    listed = {_raw(c) for c in PRODUCT_ROW_RE.findall(reply_text(row))}
+    listed = _listed_products(reply_text(row))
     if not listed:
         return None
     msg = "The reply listed more than a page of the set instead of a capped page with a way to see more."
