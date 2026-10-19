@@ -221,3 +221,48 @@ def test_publisher_publishes_unlabelled_and_is_idempotent():
         assert db.query(AIPromptVersion).filter(AIPromptVersion.name == KEY).count() == 2
         labels = db.query(AIPromptLabel).filter(AIPromptLabel.name == KEY).all()
         assert [lb.version_id for lb in labels] == [db.query(AIPromptVersion).filter_by(name=KEY, version=1).one().id]
+
+
+# --- contract gaps from the rule map (B7, B2, B4) ------------------------------------------------
+
+
+def test_template_turns_on_the_state_block(monkeypatch):
+    """B7: the CHAT-STATE heading is a gate marker the code reads off the raw template
+    (`chat_state_prompt.HEADING`, present on this branch), so a version published from TEMPLATE
+    must turn every gate on."""
+    from app.services.chatbot.head.chat_state_prompt import HEADING
+
+    template = _pt().TEMPLATE
+    assert HEADING in [ln.strip() for ln in template.splitlines()]
+    _stub_resolve(monkeypatch)
+    with blank_session() as db:
+        row = _version(db, template)
+        cfg = parser_mod.resolve_config(db, current_date="2026-10-20", override_version_id=row.id)
+        assert cfg.state_block is True
+        assert cfg.closed_lists is True
+        assert cfg.code_lookup is True
+        assert cfg.template is True
+
+
+def test_template_keeps_the_names_find_rule_cites():
+    """B2: FIND_RULE is rendered into production through {{find_filters}} and names a section
+    of the parser prompt; the template must still carry that name."""
+    import re
+
+    from app.services.product_find import FIND_RULE
+
+    cited = set(re.findall(r"[A-Z]{3,}(?: [A-Z]{3,}){2,}", FIND_RULE))
+    assert "BARE ENTITY CONTINUATION" in cited
+    for name in cited:
+        assert name in _pt().TEMPLATE, name
+
+
+def test_template_uses_the_registry_variables():
+    """B4: no literal registry list (the drift test's own check) and the placeholders in place."""
+    from app.services import chatbot_prompt_vars as pv
+
+    template = _pt().TEMPLATE
+    assert pv.literal_lists(template) == []
+    for name in pv.LITERAL_LIST_PATTERNS:
+        assert name in pv.VARIABLE_NAMES
+        assert "{{" + name + "}}" in template, name
