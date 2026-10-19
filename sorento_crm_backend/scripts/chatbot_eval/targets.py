@@ -1117,7 +1117,8 @@ def _honest_none(row: dict[str, Any], accepted: set[str], sent: int, code: Any =
 def _sent_files(row: dict[str, Any], announced: Any = None) -> list[dict[str, Any]]:
     """The files the tools returned. The trace caps a big result to {head, bytes, truncated}, so the uncapped
     `tool_results` of the live runner are read when present; the trace envelope is the fallback. A full result
-    is what the tool FOUND: when the reply announced it sent nothing, none of it was sent, so the envelope stands."""
+    is what the tool FOUND: when the reply announced it sent nothing, none of it was sent, so the envelope stands.
+    Either way these are files found, which can include probe and pre-brand_guard results, not strictly sent."""
     full = [t for t in row.get("tool_results") or [] if isinstance(t, dict)]
     if full and announced != 0:
         out: list[dict[str, Any]] = []
