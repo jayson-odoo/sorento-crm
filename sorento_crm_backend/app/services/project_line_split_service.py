@@ -164,19 +164,27 @@ def splits_not_in_plan(
 
 
 def _split_edited_among(
-    facts: Dict[str, "LineFacts"], whole: Iterable[str], recorded: Dict[str, Dict[str, Any]]
+    facts: Dict[str, "LineFacts"],
+    whole: Iterable[str],
+    recorded: Dict[str, Dict[str, Any]],
+    *,
+    with_pending: bool = False,
 ) -> set:
     """OI-SPLIT-VIEW (UAC A1, A8, A9): of these whole-Buy lines (`whole`, read off facts already
     read), the split-edited ones: still open, nothing pending from AutoCount (such a line goes
     the AutoCount way: its change is what the board counts and the Confirm applies) and
-    `split_plan_edited` against the applied plan (`recorded`)."""
+    `split_plan_edited` against the applied plan (`recorded`).
+
+    `with_pending` (the split view only, UAC B3 lead ruling): also the lines with a pending
+    AutoCount change whose saved plan differs from the applied one; they read "Saved, not
+    confirmed" in the popup while the board and the Confirm still leave them alone."""
     out: set = set()
     for line_id in whole:
         f = facts.get(str(line_id))
         if (
             f is not None
             and not f.cancelled
-            and not f.pending
+            and (with_pending or not f.pending)
             and not (f.now_qty == _ZERO and f.delivered_qty > _ZERO)
             and split_plan_edited(f.splits, (recorded.get(f.line_id) or {}).get("plan"))
         ):
@@ -1174,7 +1182,8 @@ class LineSplitService:
     ) -> Dict[str, Dict[str, Any]]:
         """`split_views` off facts already read for every line of the orders (`facts`). The
         status reads `_split_edited_among`, the rule the board flag and the Confirm read (UAC
-        B3): a line partly from stock or with a pending AutoCount change is never "saved"."""
+        B3): a line partly from stock is never "saved"; a line with a pending AutoCount change
+        is, when its saved plan differs from the applied one (`with_pending`)."""
         from app.services.project_order_inquiry_service import whole_buy_line_ids
 
         stored = [split for f in facts.values() for split in f.splits]
@@ -1183,7 +1192,9 @@ class LineSplitService:
         split_lines = [
             f.line_id for f in (facts.get(str(i)) for i in line_ids) if f is not None and f.splits
         ]
-        edited = _split_edited_among(facts, whole_buy_line_ids(self.db, split_lines), recorded)
+        edited = _split_edited_among(
+            facts, whole_buy_line_ids(self.db, split_lines), recorded, with_pending=True
+        )
         out: Dict[str, Dict[str, Any]] = {}
         for line_id in split_lines:
             f = facts[line_id]
@@ -1303,8 +1314,9 @@ def _split_view(
 ) -> Dict[str, Any]:
     """One split line as the split popup reads it (UAC B2 to B4, plan "Phase 2 contract" item
     3): status, base and now, the saved splits in `seq` order then the AutoCount extra row,
-    and the total. `edited` is the line's membership of the split-edited set (UAC A1, B3).
-    Plain JSON values only, so every read carries the same value."""
+    and the total. `edited` is the line's membership of the split-edited set, pending lines
+    included (UAC A1, B3). Precedence: "AutoCount changed" (stale) over "saved" over
+    "confirmed". Plain JSON values only, so every read carries the same value."""
     applied = (recorded or {}).get("plan")
     if f.split_state == SPLIT_STALE:
         status = VIEW_AUTOCOUNT_CHANGED
