@@ -42,7 +42,7 @@ def _registry(db, *, wc_scoped: bool = True) -> None:
             )
             for key, label, words in (
                 ("dim_width", "Width", ["width", "wide"]), ("dim_length", "Length", ["length", "long"]),
-                ("dim_height", "Height", ["height", "tall"]), ("trap_length", "Trap outlet length", ["trap", "length"]),
+                ("dim_height", "Height", ["height", "tall"]), ("trap_length", "Trap outlet length", ["trap"]),
             )
         ],
     ])
