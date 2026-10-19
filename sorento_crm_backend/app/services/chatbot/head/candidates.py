@@ -235,7 +235,7 @@ def _value_candidates(db: "Session", tokens: list[str]) -> list[WordCandidates]:
     return list(by_gram.values()) + numbered
 
 
-def _code_label(code: str, name: str | None, holds: bool) -> str:
+def _code_label(code: str, name: str | None, holds: bool, holding: str | None = None) -> str:
     from app.services.chatbot_prompt_vars import candidate_text
 
     # Product rows are staff / import text: one line each and free of the line's own
@@ -243,6 +243,9 @@ def _code_label(code: str, name: str | None, holds: bool) -> str:
     # (security review, 17 Oct 2026) and a name or code can never add an item to the line.
     code, name = candidate_text(code), candidate_text(name or "")
     label = f"code {code} ({name})" if name else f"code {code}"
+    if holding:
+        # R5-2: a code that only CONTAINS the word is not the word's own code; it says so.
+        label += f', holding "{candidate_text(holding)}"'
     return label if holds else f"near {label}"
 
 
@@ -279,7 +282,12 @@ def _code_candidates(db: "Session", tokens: list[str]) -> list[WordCandidates]:
         if position in coded:
             sim = func.similarity(norm, word)
             rows = (
-                db.query(Product.product_code, Product.product_name, norm.contains(word, autoescape=True).label("holds"))
+                db.query(
+                    Product.product_code,
+                    Product.product_name,
+                    norm.contains(word, autoescape=True).label("holds"),
+                    (norm == word).label("whole"),
+                )
                 .filter(chat_searchable_products(), or_(norm.contains(word, autoescape=True), sim >= NEAR_CODE))
                 .order_by(
                     case((norm == word, 0), (norm.startswith(word, autoescape=True), 1),
@@ -290,7 +298,7 @@ def _code_candidates(db: "Session", tokens: list[str]) -> list[WordCandidates]:
                 .limit(CAP_PER_WORD)
                 .all()
             )
-            items = [_code_label(code, name, holds) for code, name, holds in rows]
+            items = [_code_label(code, name, holds, token if holds and not whole else None) for code, name, holds, whole in rows]
         else:
             items = [_code_label(code, name, True) for code, name in by_word.get(word, [])]
         if items:
