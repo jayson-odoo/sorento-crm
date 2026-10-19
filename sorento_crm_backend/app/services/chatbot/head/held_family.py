@@ -117,7 +117,7 @@ def _brand_ids(db: "Session", brands: list[dict[str, Any]]) -> set[str] | None:
 
 
 def narrow_held_family(
-    db: "Session", verdict: dict[str, Any], held_products: list[dict[str, Any]]
+    db: "Session", verdict: dict[str, Any], held_products: list[dict[str, Any]], hidden_keys: frozenset[str] = frozenset()
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """The verdict with the held family's matching members as its products, and a trace
     note; the verdict unchanged (and no note) when the rule does not apply.
@@ -140,6 +140,12 @@ def narrow_held_family(
         and e.get("spec_key")
         and e.get("spec_value") is not None
         and str(e.get("spec_value")) != ""
+    ]
+    # A contact-hidden key never narrows: it leaves the OR, and an entry with none left is dropped.
+    specs = [
+        (key, value, [k for k in any_keys if k not in hidden_keys])
+        for key, value, any_keys in specs
+        if (any_keys and any(k not in hidden_keys for k in any_keys)) or (not any_keys and key not in hidden_keys)
     ]
     brands = [e for e in said if str(e.get("hint") or "").strip().lower() == "brand"]
     # A message naming its own class is not about the held products either.

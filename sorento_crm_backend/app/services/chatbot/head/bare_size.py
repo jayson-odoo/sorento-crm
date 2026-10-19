@@ -82,7 +82,12 @@ def _key_words(row: Any, merged_synonyms: Any) -> set[str]:
 
 
 def ground_bare(
-    db: "Session", entity: dict[str, Any], entities: list[dict[str, Any]], vocab: "Vocabulary", held_ids: list[str] | None
+    db: "Session",
+    entity: dict[str, Any],
+    entities: list[dict[str, Any]],
+    vocab: "Vocabulary",
+    held_ids: list[str] | None,
+    hidden_keys: frozenset[str] = frozenset(),
 ) -> "Grounded | None":
     """The strict class key, or the OR over the bare-size keys, for the reserved "size" pick;
     the class's own key for a named dimension no class member holds; else None (unchanged)."""
@@ -95,7 +100,11 @@ def ground_bare(
         return None
     value: int | float = int(number) if number.is_integer() else number
     said = str(entity.get("raw") or "").strip() or str(entity.get("spec_value"))
-    rows = [r for r in active_registry(db) if (r.data_type or "").lower() == "numeric" and getattr(r, "unit", None)]
+    # A key the contact may not see is never chosen, as the class key, a swap or an OR leg.
+    rows = [
+        r for r in active_registry(db)
+        if (r.data_type or "").lower() == "numeric" and getattr(r, "unit", None) and r.spec_key not in hidden_keys
+    ]
     by_key = {r.spec_key: r for r in rows}
     classes = _classes(db, entities, held_ids)
     if key == RESERVED_KEY:

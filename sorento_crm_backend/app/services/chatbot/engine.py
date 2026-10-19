@@ -59,6 +59,7 @@ from app.services.error_handler import AppException
 from app.utils.build_info import GIT_SHA
 from app.services.ledger_family import customer_groups
 from app.services.chatbot.head import candidates as candidates_mod, grounding, held_family, parser, scheme_index
+from app.services.chatbot.head import access as access_mod
 from app.services.chatbot.head.access import check_access, default_space_id
 from app.services.chatbot.head.build_ctx import build_ctx
 from app.services.chatbot.lanes import business, canned as canned_lanes, casual
@@ -4876,12 +4877,20 @@ def _run_stages_body(  # noqa: PLR0915
 
     verdict, _ranking_words = _report_ask.hold_words(verdict)
     with _session(session_factory) as grounding_db:
+        # The contact's hidden spec keys (the real policy, `head/access`), read once for the
+        # CLOSED LISTS size path and the held family: a hidden key never filters or narrows.
+        hidden_spec = (
+            frozenset(access_mod._hidden_spec_keys(grounding_db, contact_id=str(contact_respond_id), space_id=default_space_id(grounding_db)))
+            if parser_config.closed_lists
+            else frozenset()
+        )
         verdict, grounding_notes = grounding.ground(
             grounding_db,
             verdict,
             message=latest_user_message.split("\n", 1)[0] if isinstance(latest_user_message, str) else None,
             closed_lists=parser_config.closed_lists,
             held_ids=[str(p["uuid"]) for p in state_in.focus.products if isinstance(p, dict) and p.get("uuid")],
+            hidden_keys=hidden_spec,
         )
     verdict = closed_lists_verdict(verdict, gate=parser_config.closed_lists)
     held_none_match: dict[str, Any] | None = None
@@ -4891,7 +4900,7 @@ def _run_stages_body(  # noqa: PLR0915
         # (`head/held_family.py`). A read failure leaves the verdict as it was.
         try:
             with _session(session_factory) as family_db:
-                verdict, family_note = held_family.narrow_held_family(family_db, verdict, list(state_in.focus.products))
+                verdict, family_note = held_family.narrow_held_family(family_db, verdict, list(state_in.focus.products), hidden_keys=hidden_spec)
         except Exception:  # noqa: BLE001 - an advisory narrowing, never a failed turn
             logger.warning("chatbot: held family narrowing failed; the turn goes on without it", exc_info=True)
             family_note = None

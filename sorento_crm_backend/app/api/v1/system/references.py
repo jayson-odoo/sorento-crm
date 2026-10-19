@@ -3424,14 +3424,16 @@ def resolve_reference_post(
             log_usage=not payload.dry_run,
         )
         specs = _with_parser_brand(specs, payload.brand_tokens)
-        if any(e.get("any_keys") for e in specs):
-            # A bare size's OR never keeps a dimension this contact may not see (R6-5 S2).
+        if specs:
+            # A contact-hidden key never filters the set: out of a bare size's OR (R6-5 S2), and a
+            # strict entry on it is dropped, the rule the spec fallback applies (R6-6).
             hidden = _contact_hidden_spec_keys(db, payload)
-            specs = [
-                {**e, "any_keys": [k for k in e["any_keys"] if k not in hidden]} if e.get("any_keys") else e
-                for e in specs
-            ]
-            specs = [e for e in specs if "any_keys" not in e or e["any_keys"]]
+            if hidden:
+                specs = [
+                    {**e, "any_keys": [k for k in e["any_keys"] if k not in hidden]} if e.get("any_keys") else e
+                    for e in specs
+                ]
+                specs = [e for e in specs if ("any_keys" in e and e["any_keys"]) or ("any_keys" not in e and e.get("key") not in hidden)]
         if understanding is None and not specs and not payload.scope_terms and not payload.free_terms:
             # Nothing describes a set: the message held only predicate words ("Stock") and
             # no spec, brand or class word grounded. A set built off the looked-up ids

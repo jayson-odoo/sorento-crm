@@ -744,6 +744,7 @@ def ground(
     message: str | None = None,
     closed_lists: bool = False,
     held_ids: list[str] | None = None,
+    hidden_keys: frozenset[str] = frozenset(),
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """The verdict with every descriptor grounded, and a note per change for the trace.
 
@@ -833,7 +834,7 @@ def ground(
         if hint in _SPEC_HINTS and closed_lists:
             from app.services.chatbot.head.bare_size import ground_bare
 
-            bare = ground_bare(db, entity, [e for e in entities if isinstance(e, dict)], vocab, held_ids)
+            bare = ground_bare(db, entity, [e for e in entities if isinstance(e, dict)], vocab, held_ids, hidden_keys)
             if bare is not None:
                 add([bare], entity)
                 notes.append({"from": hint, "raw": raw, "to": [bare.__dict__]})
