@@ -1,6 +1,6 @@
 # PLAN: CHAT-CLOSED-LISTS - chatbot step 2, closed candidate lists
 
-Status: Review, round 4 part 2 pushed (R4-2..R4-5, reviewer READY); next the paired TRAIN x1 (crew bench, early stop, 3 USD cap). Track: full (size L, LEAD pattern).
+Status: Review, round 4 part 2 + C2b pushed (reviewer READY); next the paired TRAIN x1 (crew bench, early stop, 3 USD cap). Track: full (size L, LEAD pattern).
 Branch `claude/chat-closed-lists-x6ymb5` (the sandbox cannot push `crew/chat-closed-lists`), PR #1755.
 
 Design source: CHATBOT-SCALE-DESIGN-16oct section 8 step 2 + D2 (crew-only): code only SHORTLISTS
@@ -202,3 +202,13 @@ seen in g1755c (114 held turns) or train_followups (56).
 Shared test helper `tests/chatbot/_attach_world.py` carries the real parse fields and the real certificate link chain
 (certificate_products included). Watch item (reviewer): a class word the parser hints as `product` on a file ask is no
 longer scoped by the leftover remainder.
+
+### C2b HELD-FIRST (19 Oct, CHAT-STATE correction)
+
+| Class | Red | Green | Notes |
+|---|---|---|---|
+| C2b HELD-FIRST | f1628123 | 4b11b5d1 | one filter applied twice: held products first; family_code siblings (+ variant graph) only when no held product matches; none line only when both are empty. Keeps es-e9d2507a71 / es-242b332bca / es-f173186e97 within the shown set, still fixes cp0-665ba3e897; old C2 brand test re-seeded so the held product lacks the filter (9ac7e39d) |
+
+Open (CHAT-STATE, UNVERIFIED): es-0db8cf0a48 "150" is `trap_length` on file while the parser emits `dim_width`; a
+numeric-key candidate line is this lane's (candidates.py). Reviewer nits kept: the held pass has no
+`chat_searchable_products()` filter (held came from a searchable resolution).
