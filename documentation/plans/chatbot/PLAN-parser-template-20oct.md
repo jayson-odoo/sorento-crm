@@ -54,3 +54,12 @@ in engine.py `_as_a_stock_ask_by_its_own_words`.
   the old no-state "code x qty" misread join the conflict gold; the gate fails if gpt-5.4-mini misreads >= 1/3 at N=3.
   Behaviour shift for the owner: a dealer's "CODE x 10" right after an ETA answer continues the incoming question.
 - Open with CHAT-STATE (B1): an op to drop one item; whether an own ask closes a hand-over offer; the op `value` field.
+- 20 Oct: first gate run on sorento_cagent_stack invalid (schema behind: UndefinedColumn matches_bare_size, USD 0).
+  Crew a34333719: no shared-DB writes there; gate moves to sorento_eval_base (EVAL-BENCH upgraded it to
+  spec_bare_size_0001, no row writes). Published there, unlabelled: OLD v77 448ebc81 (v74, same text as cagent v63,
+  through the closed-lists, code-lookup and state publishers; = cagent v179 plus #1755's R6-1a bare-size line, which
+  NEW carries too) and NEW v78 65cb02d4 (same md5 as cagent v180).
+- 20 Oct: conflict gold defect: every row named a synthetic ZZ code, but the grader needs a canonical_code
+  (parser_gold.py:90-93) that the parser can only take from DB candidates (:171-175), so each product check failed on
+  both arms. c92b993a3a swaps in real catalog codes (each an exact single candidate on eval_base, active on both DBs),
+  as the when-deliver and code-picks gold already do.
