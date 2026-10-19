@@ -1506,7 +1506,9 @@ def run_fetch(
                     looked,
                     refusal=_scope_refusal(customer_scope),
                     kind_word="Sales order" if parse_output.get("so_placed") is True else None,
-                )
+                ),
+                # A reply that is nothing but the scope refusal is sent as it is (AC-23).
+                refused=looked.refused and not looked.cards and not looked.missing,
             )
             # The reply names its own missing numbers, so the resolver's own `not_found`
             # exit (nothing placed the SO words) is not a second miss to compose
