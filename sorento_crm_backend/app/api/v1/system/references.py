@@ -1413,6 +1413,13 @@ class ResolveReferenceRequest(BaseModel):
             "the known choices before anything is counted or searched."
         ),
     )
+    no_free_remainder: bool = Field(
+        default=False,
+        description=(
+            "CLOSED LISTS: on a file ask the described set comes only from the caller's "
+            "entities, never from the leftover words of the message."
+        ),
+    )
     cert_number_is_code: bool = Field(
         default=False,
         description=(
@@ -3434,7 +3441,11 @@ def resolve_reference_post(
         scope_terms = (
             list(payload.scope_terms)
             if payload.scope_terms
-            else (None if payload.free_terms else _has_turn_free_terms(payload, result, query_text))
+            else (
+                None
+                if payload.free_terms
+                else ([] if payload.no_free_remainder else _has_turn_free_terms(payload, result, query_text))
+            )
         )
 
         # The counted set lists off the QUALIFYING ids themselves, capped at
