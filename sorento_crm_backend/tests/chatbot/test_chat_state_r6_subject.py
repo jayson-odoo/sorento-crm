@@ -7,9 +7,11 @@ The CONTRACT these tests hold the coder to (names are the contract):
     (None until a state-led turn applied; `apply_changes` returns it on `Applied.state.subject`).
   * `Subject.source`      : "ids" | "predicate" | "unresolved".
   * `Subject.product_ids` : tuple[str, ...] of explicit product uuids (source "ids"), else ().
-  * `Subject.predicate`   : dict axis -> list[str], axes from {"brand", "class", "spec", "family"}.
+  * `Subject.predicate`   : dict axis -> list of TYPED ROWS, axes from {"brand", "class", "spec", "family"}.
+                            A row is a dict `{"value": <word or code>, "key": <registry key or uuid>}`
+                            (AC-S1-7: never a bare string, so the fetch never re-reads the focus).
                             "class" is ONE axis (category + product_type together); an absent
-                            axis has no key. Values are the entity's code or raw word.
+                            axis has no key.
   * `Subject.scope`       : frozenset of company ids; `Subject.hidden`: frozenset of hidden keys
                             (both default empty at the unit level, the engine fills them).
   * `Subject.provenance`  : dict axis -> "held" | "said" | "offer"; axes are the predicate axes
@@ -20,7 +22,6 @@ Only `turn/chat_state.py` constructs or assigns a Subject (AC-S1-2).
 """
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any
 
@@ -46,7 +47,7 @@ from tests.chatbot.test_chat_state_r5_set_axis_keeps_held import (  # noqa: F401
 )
 from tests.chatbot.test_attribute_asks_round3 import _entity
 from tests.chatbot.test_attribute_asks_round7 import _brand_word
-from tests.chatbot.test_chat_state_seam import _op
+from tests.chatbot.test_chat_state_seam import Seam, _op, seam  # noqa: F401 - fixture used by name
 
 BRANDS = ["SORENTO", "MOCHA", "CABANA"]
 
@@ -70,8 +71,8 @@ def _subject(out):
 
 def _vals(subject, axis: str) -> set[str]:
     raw = (getattr(subject, "predicate", None) or {}).get(axis) or []
-    raw = [raw] if isinstance(raw, str) else raw
-    return {str(v).casefold() for v in raw}
+    raw = [raw] if isinstance(raw, (str, dict)) else raw
+    return {str(v.get("value") if isinstance(v, dict) else v).casefold() for v in raw}
 
 
 def _row(raw: str, hint: str, **extra) -> dict[str, Any]:
@@ -170,27 +171,57 @@ def test_r6_s1_a_said_product_token_nothing_resolved_is_unresolved(token):
     assert _subject(out).source == "unresolved"
 
 
-# ----------------------------------------------------------------------- AC-S1-2
+# ----------------------------------------------------------------------- AC-S1-2 (AST)
 ALLOWED = "app/services/chatbot/turn/chat_state.py"
-# The type itself lives in turn/state.py; construction and assignment only in ALLOWED.
-BUILDS = re.compile(r"(?<![\w.])Subject\(|\.subject\s*=(?!=)|\bsubject\s*=\s*(?:Subject|_subject)\b")
+_REPLACERS = {"replace", "dataclasses_replace"}
+
+
+def _writes_subject(tree) -> list[int]:
+    """Line numbers of: a `Subject(...)` call, a `subject=` keyword to a replace / dataclasses.replace
+    / dataclasses_replace call, a `.subject =` assignment, a `setattr(x, "subject", ...)`. A plain local
+    variable named subject matches none of these."""
+    import ast
+
+    def name(node):
+        return node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None
+
+    hits = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            fn = name(node.func)
+            if fn == "Subject":
+                hits.append(node.lineno)
+            elif fn in _REPLACERS and any(k.arg == "subject" for k in node.keywords):
+                hits.append(node.lineno)
+            elif fn == "setattr" and len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) and node.args[1].value == "subject":
+                hits.append(node.lineno)
+        elif isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            hits += [node.lineno for t in targets if isinstance(t, ast.Attribute) and t.attr == "subject"]
+    return hits
+
+
+def test_r6_s1_the_ast_check_ignores_a_plain_local_named_subject():
+    import ast
+
+    assert _writes_subject(ast.parse("subject = 1\nx = f(subject)\ndef g(subject): return subject")) == []
+    assert len(_writes_subject(ast.parse("Subject()\nreplace(s, subject=1)\nx.subject = 2\nsetattr(x, 'subject', 1)"))) == 4
 
 
 def test_r6_s1_only_the_applier_builds_or_assigns_the_subject():
+    import ast
+
     root = Path(__file__).resolve().parents[2] / "app" / "services" / "chatbot"
     offenders, applier_builds = [], False
     for path in root.rglob("*.py"):
         rel = "app/services/chatbot/" + path.relative_to(root).as_posix()
-        for n, line in enumerate(path.read_text().splitlines(), 1):
-            code = line.split("#", 1)[0]
-            if "class Subject" in code or not BUILDS.search(code):
-                continue
-            if rel == ALLOWED:
-                applier_builds = True
-            else:
-                offenders.append(f"{rel}:{n}: {line.strip()}")
+        lines = _writes_subject(ast.parse(path.read_text()))
+        if rel == ALLOWED:
+            applier_builds = applier_builds or bool(lines)
+        else:
+            offenders += [f"{rel}:{n}" for n in lines]
     assert applier_builds, f"{ALLOWED} builds no Subject yet"
-    assert not offenders, "Subject written outside the applier:\n" + "\n".join(offenders)
+    assert not offenders, "Subject written outside the applier: " + ", ".join(offenders)
 
 
 # ----------------------------------------------------------------------- AC-S1-6
@@ -248,11 +279,12 @@ def test_r6_s1_the_trace_shadow_logs_the_subject_and_the_fetch_is_today_s(tchat,
 
 # ----------------------------------------------------------------------- S2: the fetch reads the Subject
 def _spy_patches(monkeypatch):
-    """Count the legacy carry patches (AC-S2-4)."""
+    """Count the legacy carry patches under every name (AC-S2-4)."""
     from app.services.chatbot import turn_runtime
     from app.services.chatbot.turn import chat_state
 
-    seen: dict[str, int] = {"with_carried_entities": 0, "carry_onto_family": 0, "narrow_held_to_brands": 0}
+    seen: dict[str, int] = {"with_carried_entities": 0, "carried_entities_except": 0,
+                            "carry_onto_family": 0, "narrow_held_to_brands": 0}
 
     def wrap(mod, name):
         real = getattr(mod, name)
@@ -264,6 +296,7 @@ def _spy_patches(monkeypatch):
         monkeypatch.setattr(mod, name, spy)
 
     wrap(turn_runtime, "with_carried_entities")
+    wrap(turn_runtime, "carried_entities_except")
     wrap(chat_state, "carry_onto_family")
     wrap(chat_state, "narrow_held_to_brands")
     return seen
@@ -280,12 +313,30 @@ def _f1_two_turns(chat, world, state_changes=True):
     return n
 
 
-def test_r6_s2_the_legacy_carry_patches_are_not_called_on_a_state_led_refine_turn(tchat, world, monkeypatch):
-    _f1_two_turns(tchat, world)  # warm: turn 1 builds the held set
+def _turn2_variants(world):
+    wc = lambda: _entity("water closet", "category")  # noqa: E731
+    code = world["close_couple"]["sorento"][0].product_code
+    cabana = _brand_word(world, "cabana")
+    return {
+        "refine-set-class": ([wc()], [_op("set", "category")]),
+        "keep-restating-a-typed-class": ([wc()], [_op("keep")]),
+        "answer": ([wc()], [_op("answer")]),
+        "new-subject-brand-and-class": ([_entity(cabana, "brand"), wc()], [_op("new_subject")]),
+        "typed-product-code": ([_entity(code, "product")], [_op("set", "product")]),
+    }
+
+
+@pytest.mark.parametrize("variant", ["refine-set-class", "keep-restating-a-typed-class", "answer",
+                                     "new-subject-brand-and-class", "typed-product-code"])
+def test_r6_s2_no_legacy_carry_rule_runs_under_any_name_on_a_state_led_turn(tchat, world, monkeypatch, variant):
+    brand = _brand_word(world, "sorento")
+    tchat.say("t1", _ask_with([_entity(brand, "brand"), _entity("basin", "category"), _entity("water closet", "category")],
+                              [_op("set", "brand"), _op("set", "category")], "t1"))
     seen = _spy_patches(monkeypatch)
-    tchat.say("tandas sahaja", _ask_with([_entity("water closet", "category")],
-                                          [_op("set", "category"), _op("close_question")], "t3"))
-    assert seen == {"with_carried_entities": 0, "carry_onto_family": 0, "narrow_held_to_brands": 0}, seen
+    entities, ops = _turn2_variants(world)[variant]
+    tchat.say("t2", _ask_with(entities, ops, "t2"))
+    assert seen == {"with_carried_entities": 0, "carried_entities_except": 0,
+                    "carry_onto_family": 0, "narrow_held_to_brands": 0}, (variant, seen)
 
 
 def test_r6_s2_guard_state_off_still_calls_with_carried_entities(session_factory, monkeypatch, stub_parser, stub_access, world):
@@ -311,3 +362,69 @@ def test_r6_s2_the_fetch_input_is_exactly_what_the_subject_says(tchat, world):
     fetched = {by_id[i] for i in ids if i in by_id}
     assert fetched, tchat.calls[n:]
     assert fetched <= g["srt_wc"], ("the fetch holds more than the Subject (brand + class)", sorted(fetched - g["srt_wc"]))
+
+
+# ----------------------------------------------------------------------- AC-S1-7: said under any op
+@pytest.mark.parametrize("message", ["cabana water closets", "tandas duduk cabana", "cabana的马桶"])
+def test_r6_s1_a_value_typed_this_message_is_said_under_new_subject_and_never_the_held_one(message):
+    focus = Focus(brands=["SORENTO"], domains=["inventory"], extra={"category": [_row("Basin", "category")]})
+    ents = [entity("cabana", "brand", canonical_code="CABANA"), entity("Water Closet", "category", canonical_code="WC")]
+    s = _subject(_apply(focus, verdict(state_changes=[_op("new_subject")], entities=ents, user_goal=message)))
+    assert _vals(s, "brand") == {"cabana"}, ("held Sorento kept beside the said Cabana", s.predicate)
+    assert _vals(s, "class") == {"water closet"}, s.predicate
+    assert s.provenance["brand"] == "said" and s.provenance["class"] == "said", s.provenance
+
+
+def test_r6_s1_predicate_values_are_typed_rows_with_the_value_and_its_key():
+    focus = Focus(brands=["SORENTO"], domains=["inventory"])
+    ents = [entity("cabana", "brand", canonical_code="CABANA"), entity("Water Closet", "category", canonical_code="WC")]
+    s = _subject(_apply(focus, verdict(state_changes=[_op("set", "brand"), _op("set", "category")], entities=ents)))
+    for axis, key in (("brand", "CABANA"), ("class", "WC")):
+        rows = s.predicate[axis]
+        assert rows and all(isinstance(r, dict) for r in rows), (axis, rows)
+        assert rows[0]["value"] and (rows[0].get("key") or rows[0].get("uuid")), (axis, rows)
+        assert key in (rows[0].get("key"), rows[0].get("uuid")), (axis, rows)
+    held = _subject(_apply(focus, verdict(state_changes=[_op("keep")])))
+    assert all(isinstance(r, dict) and r.get("value") for r in held.predicate["brand"]), held.predicate
+
+
+# ----------------------------------------------------------------------- AC-S1-8: settle after resolve
+def test_r6_s1_a_typed_code_the_resolver_places_settles_the_final_subject_to_ids(tchat, world):
+    brand = _brand_word(world, "sorento")
+    tchat.say("t1", _ask_with([_entity(brand, "brand"), _entity("water closet", "category")],
+                              [_op("set", "brand"), _op("set", "category")], "t1"))
+    product = world["close_couple"]["sorento"][0]
+    tchat.say(product.product_code, _ask_with([_entity(product.product_code, "product")], [_op("set", "product")], "t2"))
+    s = tchat.state_log().get("subject")
+    assert s and s["source"] == "ids" and str(product.id) in s["product_ids"], s
+    assert {"brand", "class"} <= set(s["predicate"]), ("the held predicate was lost because a product was said", s)
+
+
+def test_r6_s1_a_typed_token_the_resolver_cannot_place_settles_to_unresolved(tchat, world):
+    brand = _brand_word(world, "sorento")
+    tchat.say("t1", _ask_with([_entity(brand, "brand"), _entity("water closet", "category")],
+                              [_op("set", "brand"), _op("set", "category")], "t1"))
+    tchat.say("ZZ-9981", _ask_with([_entity("ZZ-9981", "product")], [_op("set", "product")], "t2"))
+    s = tchat.state_log().get("subject")
+    assert s and s["source"] == "unresolved", s
+
+
+# ----------------------------------------------------------------------- AC-S2-5: R4-A answer pick
+def test_r6_s2_an_answer_naming_an_offered_brand_is_offer_and_the_fetch_holds_that_brand_only(seam, monkeypatch):
+    from tests.chatbot.test_chat_state_r4a_brand_offer import (
+        DEFAULT_HELD_E9, _brand_pick, _held_state, _plans, _set_keys,
+    )
+
+    plans = _plans(monkeypatch)
+    prev = _held_state(seam, DEFAULT_HELD_E9)
+    key = prev["focus"]["set_page"]["set_key"]
+    key.update({"brand": "Sorento", "brand_default": True})
+    out = seam.say("cabana", _brand_pick("cabana", changes=[_op("answer")]), previous=prev)
+    subject = seam.memory(out).get("state", {}).get("subject")
+    assert subject and subject["provenance"].get("brand") == "offer", subject
+    keys = _set_keys(plans)
+    assert len(keys) == 1, (keys, seam.rules_fired)
+    import json as _json
+
+    blob = _json.dumps(keys[0], default=str).lower()
+    assert "cabana" in blob and "sorento" not in blob, ("the held brand rides beside the offered one", keys[0])
