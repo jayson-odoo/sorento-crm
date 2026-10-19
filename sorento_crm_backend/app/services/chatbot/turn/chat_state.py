@@ -19,7 +19,7 @@ from app.services.chatbot.turn import task as task_mod
 from app.services.chatbot.turn.pending import ESCALATION_OFFER_KINDS
 from app.services.chatbot.turn.pending import ask as pending_ask
 from app.services.chatbot.turn.pending import option_entities
-from app.services.chatbot.turn.state import Focus, State
+from app.services.chatbot.turn.state import Focus, State, Subject
 
 OPS: tuple[str, ...] = (
     "keep", "new_subject", "set", "clear", "pick", "answer", "switch_domain", "close_question",
@@ -651,6 +651,78 @@ def restored(state: State) -> State:
     return replace(state, focus=focus, held_aside=None)
 
 
+_CLASS_HINTS = ("category", "product_type")
+_SUBJECT_AXIS = {"brand": "brand", "category": "class", "product_type": "class", "specification": "spec"}
+
+
+def _word(row: dict[str, Any]) -> str:
+    return str(row.get("canonical_code") or row.get("raw") or "").strip()
+
+
+def _build_subject(
+    state: State, focus: Focus, out: dict[str, Any], set_axes: list[str], brands: list[Any]
+) -> Subject:
+    """The Subject of this turn: the focus the ops left (held) plus the values this message
+    states for the axes the parser `set` (said, or offer when the brand is one the last answer
+    offered). A shadow in S1: nothing reads it. `scope` and `hidden` stay empty here; the
+    engine owns company scope and hidden keys and fills them when the fetch reads the Subject."""
+    said_axes = {_SUBJECT_AXIS.get(a, a) for a in set_axes}
+    said_rows = [e for e in _entities(out) if e.get("current_message") is not False]
+    predicate: dict[str, list[str]] = {}
+    provenance: dict[str, str] = {}
+
+    def add(axis: str, values: list[str], how: str) -> None:
+        values = [v for v in dict.fromkeys(values) if v]
+        if values:
+            predicate[axis] = values
+            provenance[axis] = how
+
+    held_class = [_word(r) for h in _CLASS_HINTS for r in (focus.extra or {}).get(h) or [] if isinstance(r, dict)]
+    held = {
+        "brand": [str(b).strip() for b in focus.brands if isinstance(b, str)],
+        "class": held_class,
+        "spec": [_word(r) for r in (focus.extra or {}).get("specification") or [] if isinstance(r, dict)],
+    }
+    offered = bool(offered_brand_picks(state, out, brands))
+    for axis in ("brand", "class", "spec"):
+        if axis in said_axes:
+            hints = {k for k, v in _SUBJECT_AXIS.items() if v == axis}
+            add(axis, [_word(e) for e in said_rows if e.get("hint") in hints], "offer" if axis == "brand" and offered else "said")
+        else:
+            add(axis, held[axis], "held")
+
+    rows = [r for r in focus.products if isinstance(r, dict) and r.get("uuid")]
+    if "product" in said_axes:
+        # A said product token nothing resolved has no uuid yet: the Subject is unresolved.
+        said_ids = [str(e.get("uuid")) for e in said_rows if e.get("hint") == "product" and e.get("uuid")]
+        if not said_ids:
+            return Subject(source="unresolved", provenance={"product": "said"})
+        return Subject(source="ids", product_ids=tuple(said_ids), predicate=predicate,
+                       provenance={**provenance, "product": "said"})
+    members = [r for r in rows if r.get("described_set") is True]
+    ids = [str(r["uuid"]) for r in rows if r.get("described_set") is not True]
+    if ids:
+        provenance["product"] = "held"
+        return Subject(source="ids", product_ids=tuple(ids), predicate=predicate, provenance=provenance)
+    if predicate:
+        if members:
+            provenance["product"] = "held"
+        return Subject(source="predicate", predicate=predicate, provenance=provenance)
+    return Subject(source="unresolved")
+
+
+def subject_wire(subject: Subject) -> dict[str, Any]:
+    """The Subject as the trace's JSON dict (same field names)."""
+    return {
+        "source": subject.source,
+        "product_ids": list(subject.product_ids),
+        "predicate": {k: list(v) for k, v in subject.predicate.items()},
+        "scope": sorted(subject.scope),
+        "hidden": sorted(subject.hidden),
+        "provenance": dict(subject.provenance),
+    }
+
+
 def apply_changes(
     state: State,
     verdict: dict[str, Any],
@@ -677,7 +749,13 @@ def apply_changes(
     }
     if log["shown"] is None:
         # Nothing shown, nothing to carry: a first ask runs exactly as it does without the key.
-        return Applied(True, state, {k: v for k, v in verdict.items() if k != "state_changes"}, log)
+        out = {k: v for k, v in verdict.items() if k != "state_changes"}
+        first_sets = [
+            c["axis"] for c in changes or [] if isinstance(c, dict) and c.get("op") == "set" and c.get("axis")
+        ] if isinstance(changes, list) else []
+        subject = _build_subject(state, state.focus, out, first_sets, brands)
+        log["subject"] = subject_wire(subject)
+        return Applied(True, replace(state, subject=subject), out, log)
     if isinstance(changes, list) and not changes:
         # Nothing declared (a retyped code, a bare re-ask): the state is not led, but the held
         # quantity still joins by the product's own code at the fetch; nothing else moves.
@@ -992,6 +1070,8 @@ def apply_changes(
     log["slots"] = slots
     log["ignored"] = ignored
     log["dropped_entities"] = dropped_entities
+    subject = _build_subject(state, focus, out, set_axes, brands)
+    log["subject"] = subject_wire(subject)
     return Applied(
-        True, replace(state, focus=focus, pending=pending, state_led=led, slot_ask=slot_ask), out, log
+        True, replace(state, focus=focus, pending=pending, state_led=led, slot_ask=slot_ask, subject=subject), out, log
     )
