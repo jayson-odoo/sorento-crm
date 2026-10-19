@@ -519,8 +519,10 @@ listing) does not read keys and is untouched.
 ## Round 43 (19 Oct, answering only the held product over a class ask; crew a6854478)
 
 Owner: "answering only the held product when the ask is over a class is a bot fail". A spec item whose gold names a class and
-expects products (not none-on-record), asked while a product is held, now carries a `class_set` check: it fails when everything
-the bot answered (the tool's product ids, the full tool results, the codes in the reply) is the held product or one of its own
-variants while the expected set holds others; it passes when the held product is the whole set or any expected member beyond
-the held one is reached; unknown when nothing shows what was answered. A refine narrowing to the held item is not a spec item
-and is untouched.
+expects products (not none-on-record), asked while products were held, carries a `class_set` check. It reads what the bot
+answered (the tool's product ids, the full tool results, the codes in the reply). A variant of a held code is that code or
+CODE-xxx on a dash boundary of the raw code (SRTA100-BL is one, SRTA1000 is another model). It fails when everything answered
+is a held product or a variant AND either exactly one product (with its variants) was held, or nothing answered is in the
+expected set; so a held list narrowed to expected members passes, and a held list re-answered with no expected member fails.
+It passes when the held product (with variants) is the whole expected set, and is unknown when nothing shows what was answered.
+Refine items (a filter over a held set) are not spec items and are untouched.
