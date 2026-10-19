@@ -485,16 +485,19 @@ def test_s4_two_picks_on_a_data_list_give_two_entities():
     assert sorted(e["canonical_code"] for e in out.verdict["entities"]) == ["SRT1", "SRT3"]
 
 
-def test_s5_only_product_rows_of_the_last_list_are_pickable():
-    ok = _apply(State(focus=Focus(last_list=_list_rows()), turn_no=3), verdict(state_changes=[_op("pick", position=2)]))
-    assert ok.valid is True
-    for kind in ("spec_bucket", None):
-        out = _apply(
-            State(focus=Focus(last_list=_list_rows(kind)), turn_no=3),
-            verdict(state_changes=[_op("pick", position=2)]),
+def test_s5_every_keyed_row_of_the_last_list_is_pickable_a_keyless_row_is_not():
+    # CHAT-STATE r7 AC-R7-8 (owner rule 20 Oct 07:04, crew a51605376): a list the bot showed stays
+    # open and every row kind is pickable (product, file / attachment, promotion, order); only a row
+    # with no key fails the pick. This pin used to say "only product rows".
+    for kind in ("product", "promotion", "attachment", "order"):
+        ok = _apply(
+            State(focus=Focus(last_list=_list_rows(kind)), turn_no=3), verdict(state_changes=[_op("pick", position=2)])
         )
-        assert out.valid is False, kind
-        assert out.log["rejected"]
+        assert ok.valid is True, (kind, ok.log.get("rejected"))
+    keyless = [{"position": 2, "label": "SRT2", "code": None, "entity_type": "promotion"}]
+    out = _apply(State(focus=Focus(last_list=keyless), turn_no=3), verdict(state_changes=[_op("pick", position=2)]))
+    assert out.valid is False
+    assert out.log["rejected"]
 
 
 def test_s6_new_subject_on_an_empty_shown_state_changes_nothing():
