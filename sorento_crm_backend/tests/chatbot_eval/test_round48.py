@@ -145,7 +145,7 @@ def test_cli_exits_non_zero_on_a_provider_refusal(tmp_path, session_factory, rec
     rc = replay_mod.main(["live", "--items", str(items), "--recorded", str(rec), "--out", str(out),
                           "--max-calls", "10", "--max-usd", "5", "--require-key-last4", LAST4])
     cap = capsys.readouterr()
-    assert rc not in (0, 2)
+    assert rc == 4
     assert "provider_refused" in cap.out
     assert "no credits" not in (cap.out + cap.err)
 
