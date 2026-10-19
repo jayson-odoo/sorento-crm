@@ -55,7 +55,12 @@ _CLASS_ASK = [
 
 def test_a_quantity_in_a_class_ask_is_not_a_revision_of_the_held_product():
     """The lane's real verdict carries `closed_lists` (engine.closed_lists_verdict)."""
-    v = verdict(entities=list(_CLASS_ASK), demand_qty=6, domain_hint="inventory", closed_lists=True)
+    v = verdict(
+        entities=list(_CLASS_ASK), demand_qty=6, closed_lists=True,
+        # the real top-level fields of cp0-12bd74671a (g1755c, understood stage)
+        domain_in_message=False, entity_op="replace_combine", domain_hint="master_products", intent_hint="check_product",
+        scope_intent="specific", message_type="business_query", continuation=False, topic_reset=False, match_mode="and",
+    )
 
     _state2, plan = apply(_answered_ten(), v, build_policy())
 
@@ -96,8 +101,15 @@ def _furniture_world(session_factory) -> World:
         allowed_values=["zz_basin_cabinet"], synonyms={"zz_basin_cabinet": ["zzbasin zzcabinet"]},
     ))
     db.flush()
+    from app.models.inventory import Stock, Warehouse
+    from tests._pg_fixture import unique_code
+
+    wh = Warehouse(id=str(uuid.uuid4()), warehouse_code=unique_code("WH")[:20], warehouse_name="ZZT WH", company_id=DEFAULT_COMPANY_ID)
+    db.add(wh)
+    db.flush()
     for code in ("ZZBF100", "ZZBC200", "ZZBC300"):
         p = w.product(code, category="ZZ Cabinet")
+        db.add(Stock(id=str(uuid.uuid4()), product_id=p.id, warehouse_id=wh.id, quantity_on_hand=5, company_id=DEFAULT_COMPANY_ID))
         db.add(ProductSpecifications(
             id=str(uuid.uuid4()), product_id=p.id, values={"class": {"value": "ZZ Cabinet"}, "furniture_type": {"value": "zz_basin_cabinet"}},
         ))
