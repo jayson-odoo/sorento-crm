@@ -332,11 +332,21 @@ SO417636 CSK14B BRW-BB, with the owner's plan:
     (reviewer B5).
   - A split re-landed from one target onto another (608 to 752) moves its links from the target that holds
     them, even when none of the origin's own rows still hold a link of that PO (reviewer nit).
-  - A kept row that moves whole leaves no live row behind on the origin at its date, of any qty (its qty is
-    cancelled there, not raised twice), also when the origin otherwise stands.
+  - A kept row that moves whole leaves no live row behind on the origin at its date, of any qty (nothing is
+    raised twice).
   - After any declined move, the email and the Excel print exactly the rows purchasing's worklist holds, and
     never a CANCEL or an ORDER the worklist does not hold (AC-G10; owner rule: no CANCEL from splits). A
     target whose row is only RAISED (not yet placed) has that ask cut by the declined qty, since nothing was
     bought: in the B5 example 608's ask is 396 (192 + 167 + 37), the email and Excel print 608's rows as that
     396, and the declined 236 stays printed under 480 at its own date. No "632 REMAIN", no "ORDER 403", no
     "CANCEL 236" (reviewer B6, lead 19 Oct: flooring at a raised ask would buy the 236 twice).
+  - This holds on every Confirm, whatever caused the decline (the origin's row, or the target) and whether
+    the plan is new, re-planned or standing:
+    - a plain re-Confirm after any declined move changes nothing: no row grows back, no ORDER for the
+      declined qty, no email (reviewer B8: the 236 must not be ordered again while 480 holds it);
+    - a target that holds a placed or received row prints what the worklist holds (608 at 632), never a cut
+      the worklist did not make (reviewer B9);
+    - a decline at the FIRST Confirm of a plan (480's 417 row on a PO received in full, then the card plan)
+      prints in the email the same rows the worklist and Excel hold (608 at 229), never "632 REMAIN"
+      (reviewer B10).
+    The engine, the email and the Excel read the declined qty from one function, called the same way.
