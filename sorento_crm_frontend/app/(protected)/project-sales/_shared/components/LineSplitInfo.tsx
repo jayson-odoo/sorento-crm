@@ -3,8 +3,16 @@
 import * as React from 'react';
 import { flushSync } from 'react-dom';
 import { Info } from 'lucide-react';
+import {
+  type ColumnDef,
+  getCoreRowModel,
+  useReactTable,
+} from '@tanstack/react-table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { DataGrid, DataGridContainer } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridTable } from '@/components/ui/data-grid-table';
 import {
   Dialog,
   DialogContent,
@@ -12,7 +20,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { cn } from '@/lib/utils';
 import { formatInquiryQty } from '../lib/orderInquiryWorklist';
 import type {
   LineSplitView,
@@ -104,86 +111,169 @@ function ChangePill({ change }: { change: string }) {
   );
 }
 
-/** The split rows of one line: one per saved split, then the AutoCount extra row. */
-function SplitRows({ view }: { view: LineSplitView }) {
-  return (
-    <>
-      {view.rows.map((row, index) => {
-        const sitsOn = sitsOnText(row);
-        const was = wasText(row);
-        return (
-          <tr
-            key={index}
-            className={cn(
-              'border-b border-border',
-              row.changed && 'bg-amber-50 dark:bg-amber-950/40',
-            )}
-          >
-            <td className="px-2 py-1.5 text-right align-top tabular-nums">
-              {formatInquiryQty(row.qty)}
-            </td>
-            <td className="px-2 py-1.5 align-top">
-              <span className="block">{splitDateText(row.delivery_date)}</span>
+/** Tailwind's `sm` is 640px: below it Sits on folds under Change (UAC B8). */
+const BELOW_SM_QUERY = '(max-width: 639px)';
+
+function useBelowSm(): boolean {
+  const [below, setBelow] = React.useState(false);
+  React.useEffect(() => {
+    const mql = window.matchMedia(BELOW_SM_QUERY);
+    const update = () => setBelow(mql.matches);
+    update();
+    mql.addEventListener?.('change', update);
+    return () => mql.removeEventListener?.('change', update);
+  }, []);
+  return below;
+}
+
+/** The chip's N (UAC B1, B7a): the line's split rows, the AutoCount extra row not counted. */
+export function splitCount(view: LineSplitView | null | undefined): number {
+  return view ? view.rows.filter((row) => row.sits_on !== 'extra').length : 0;
+}
+
+const CHANGED_ROW = 'bg-amber-50 dark:bg-amber-950/40';
+
+/**
+ * The split rows of one line on the shared DataGrid (UAC B2, B5a): one per saved split in
+ * the saved order, then the AutoCount extra row. Not sortable (the saved order is the
+ * plan's), no column persistence (`listingKey={null}`: a popup's columns are not a personal
+ * preference), unbounded so the dialog body owns the scroll.
+ */
+function SplitGrid({ view }: { view: LineSplitView }) {
+  const narrow = useBelowSm();
+  const columns = React.useMemo<ColumnDef<LineSplitViewRow>[]>(
+    () => [
+      {
+        id: 'qty',
+        accessorFn: (row) => Number(row.qty),
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Qty" column={column} />
+        ),
+        cell: ({ row }) => formatInquiryQty(row.original.qty),
+        size: 72,
+        enableSorting: false,
+        meta: { headerTitle: 'Qty', cellClassName: 'text-right' },
+      },
+      {
+        id: 'delivery_date',
+        accessorFn: (row) => row.delivery_date ?? '',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Delivery date" column={column} />
+        ),
+        cell: ({ row }) => {
+          const was = wasText(row.original);
+          return (
+            <>
+              <span className="block">
+                {splitDateText(row.original.delivery_date)}
+              </span>
               {was ? (
-                <span className="block text-xs text-muted-foreground">
+                <span
+                  className="block truncate text-xs text-muted-foreground"
+                  title={was}
+                >
                   {was}
                 </span>
               ) : null}
-            </td>
-            <td className="px-2 py-1.5 align-top">
-              <ChangePill change={row.change} />
+            </>
+          );
+        },
+        size: 130,
+        enableSorting: false,
+        meta: { headerTitle: 'Delivery date' },
+      },
+      {
+        id: 'change',
+        accessorFn: (row) => row.change,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Change" column={column} />
+        ),
+        cell: ({ row }) => {
+          const sitsOn = narrow ? sitsOnText(row.original) : '';
+          return (
+            <>
+              <ChangePill change={row.original.change} />
               {/* B8: at 375 the Sits on column folds under Change. */}
               {sitsOn ? (
-                <span className="block text-xs text-muted-foreground sm:hidden">
+                <span
+                  className="block truncate text-xs text-muted-foreground"
+                  title={sitsOn}
+                >
                   {sitsOn}
                 </span>
               ) : null}
-            </td>
-            <td className="hidden px-2 py-1.5 align-top sm:table-cell">
-              <span
-                className="block truncate text-muted-foreground"
-                title={sitsOn}
-              >
-                {sitsOn}
-              </span>
-            </td>
-            <td className="px-2 py-1.5 align-top">
-              <span className="block truncate" title={row.remark}>
-                {row.remark}
-              </span>
-            </td>
-          </tr>
-        );
-      })}
-    </>
+            </>
+          );
+        },
+        size: 150,
+        enableSorting: false,
+        meta: { headerTitle: 'Change' },
+      },
+      {
+        id: 'sits_on',
+        accessorFn: (row) => sitsOnText(row),
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Sits on" column={column} />
+        ),
+        cell: ({ row }) => {
+          const sitsOn = sitsOnText(row.original);
+          return (
+            <span
+              className="block truncate text-muted-foreground"
+              title={sitsOn}
+            >
+              {sitsOn}
+            </span>
+          );
+        },
+        size: 210,
+        enableSorting: false,
+        meta: { headerTitle: 'Sits on' },
+      },
+      {
+        id: 'remark',
+        accessorFn: (row) => row.remark,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Remark" column={column} />
+        ),
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.remark}>
+            {row.original.remark}
+          </span>
+        ),
+        size: 180,
+        enableSorting: false,
+        meta: { headerTitle: 'Remark' },
+      },
+    ],
+    [narrow],
   );
-}
-
-function SplitTable({ children }: { children: React.ReactNode }) {
+  const table = useReactTable({
+    columns,
+    data: view.rows,
+    getRowId: (_row, index) => String(index),
+    getCoreRowModel: getCoreRowModel(),
+    state: { columnVisibility: { sits_on: !narrow } },
+    columnResizeMode: 'onChange',
+  });
   return (
-    <div className="min-h-0 flex-1 overflow-auto">
-      <table className="w-full table-fixed border-collapse text-sm">
-        <colgroup>
-          <col className="w-16 sm:w-20" />
-          <col className="w-28 sm:w-32" />
-          <col className="w-32 sm:w-40" />
-          <col className="hidden sm:table-column sm:w-52" />
-          <col className="w-32 sm:w-auto" />
-        </colgroup>
-        <thead>
-          <tr className="border-b border-border text-left text-xs text-muted-foreground">
-            <th className="px-2 py-1.5 text-right font-medium">Qty</th>
-            <th className="px-2 py-1.5 font-medium">Delivery date</th>
-            <th className="px-2 py-1.5 font-medium">Change</th>
-            <th className="hidden px-2 py-1.5 font-medium sm:table-cell">
-              Sits on
-            </th>
-            <th className="px-2 py-1.5 font-medium">Remark</th>
-          </tr>
-        </thead>
-        {children}
-      </table>
-    </div>
+    <DataGridContainer>
+      <DataGrid
+        table={table}
+        recordCount={view.rows.length}
+        isLoading={false}
+        listingKey={null}
+        rowClassName={(row) => (row.changed ? CHANGED_ROW : undefined)}
+        tableLayout={{
+          width: 'fixed',
+          columnsResizable: true,
+          dense: true,
+          scrollerMaxHeight: false,
+        }}
+      >
+        <DataGridTable />
+      </DataGrid>
+    </DataGridContainer>
   );
 }
 
@@ -219,7 +309,7 @@ export function LineSplitInfo({
     triggerRef.current?.focus();
   }, []);
   if (!view) return null;
-  const count = view.rows.filter((row) => row.sits_on !== 'extra').length;
+  const count = splitCount(view);
   const confirmed = confirmedText(view);
   const sub = [
     soNumber,
@@ -260,36 +350,28 @@ export function LineSplitInfo({
               <DialogTitle>{`Line ${lineNo ?? ''} ${itemCode ?? ''}: split`}</DialogTitle>
               {sub ? <DialogDescription>{sub}</DialogDescription> : null}
             </DialogHeader>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-              <StatusBadge view={view} />
-              {confirmed ? (
-                <span className="text-muted-foreground">{confirmed}</span>
-              ) : null}
-              {purchasingState ? (
-                <span className="inline-flex items-center gap-1">
-                  <span className="text-muted-foreground">Purchasing</span>
-                  {purchasingState}
-                </span>
-              ) : null}
-              {po ? (
-                <span className="text-muted-foreground">{`PO ${po}`}</span>
-              ) : null}
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                <StatusBadge view={view} />
+                {confirmed ? (
+                  <span className="text-muted-foreground">{confirmed}</span>
+                ) : null}
+                {purchasingState ? (
+                  <span className="inline-flex items-center gap-1">
+                    <span className="text-muted-foreground">Purchasing</span>
+                    {purchasingState}
+                  </span>
+                ) : null}
+                {po ? (
+                  <span className="text-muted-foreground">{`PO ${po}`}</span>
+                ) : null}
+              </div>
+              <SplitGrid view={view} />
+              {/* B5a: the total is a line of text under the grid, never a table row. */}
+              <p className="text-sm text-muted-foreground">
+                {`Total ${formatInquiryQty(view.total_qty)} · ${baseText(view)}`}
+              </p>
             </div>
-            <SplitTable>
-              <tbody>
-                <SplitRows view={view} />
-              </tbody>
-              <tfoot>
-                <tr className="text-sm">
-                  <td className="px-2 py-1.5 text-right font-medium tabular-nums">
-                    {formatInquiryQty(view.total_qty)}
-                  </td>
-                  <td colSpan={4} className="px-2 py-1.5 text-muted-foreground">
-                    {baseText(view)}
-                  </td>
-                </tr>
-              </tfoot>
-            </SplitTable>
           </DialogContent>
         </Dialog>
       ) : null}
@@ -347,31 +429,29 @@ export function OrderSplitsDialog({
             </p>
           </div>
         ) : (
-          <SplitTable>
-            {sorted.map((line, index) => (
-              <tbody key={`${line.lineNo ?? ''}-${index}`}>
-                <tr
-                  className="border-b border-border bg-muted/50"
-                  aria-label={`Line ${line.lineNo ?? ''} ${line.itemCode ?? ''}`}
+          <div className="flex flex-col gap-5">
+            {sorted.map((line, index) => {
+              const heading =
+                `Line ${line.lineNo ?? ''} ${line.itemCode ?? ''}`.trim();
+              return (
+                // B5a: one section per split line, its heading above its own DataGrid.
+                <section
+                  key={`${line.lineNo ?? ''}-${index}`}
+                  aria-label={heading}
+                  className="flex flex-col gap-2"
                 >
-                  <th
-                    scope="rowgroup"
-                    colSpan={5}
-                    className="px-2 py-1.5 text-left font-normal"
-                  >
-                    <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <span className="font-medium">{`Line ${line.lineNo ?? ''} ${line.itemCode ?? ''}`}</span>
-                      <StatusBadge view={line.view} />
-                      <span className="text-xs text-muted-foreground">
-                        {baseText(line.view)}
-                      </span>
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <h3 className="text-sm font-medium">{heading}</h3>
+                    <StatusBadge view={line.view} />
+                    <span className="text-xs text-muted-foreground">
+                      {baseText(line.view)}
                     </span>
-                  </th>
-                </tr>
-                <SplitRows view={line.view} />
-              </tbody>
-            ))}
-          </SplitTable>
+                  </div>
+                  <SplitGrid view={line.view} />
+                </section>
+              );
+            })}
+          </div>
         )}
       </DialogContent>
     </Dialog>
