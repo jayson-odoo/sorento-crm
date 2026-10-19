@@ -148,3 +148,9 @@ def test_cli_exits_non_zero_on_a_provider_refusal(tmp_path, session_factory, rec
     assert rc not in (0, 2)
     assert "provider_refused" in cap.out
     assert "no credits" not in (cap.out + cap.err)
+
+
+def test_every_stopped_row_names_the_refusal_kind(session_factory, recorded, live_env, monkeypatch):
+    _refuse(live_env, monkeypatch, quota_error())
+    out = _run(session_factory, recorded)
+    assert [r.get("kind") for r in out] == ["insufficient_quota"] * 3
