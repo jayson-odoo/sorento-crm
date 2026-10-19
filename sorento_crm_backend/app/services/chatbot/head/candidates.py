@@ -470,9 +470,10 @@ def shortlist(
     for entry in ordered:
         exact = [i for i in entry.items if not i.startswith("near ")]
         rows = exact + [i for i in entry.items if i.startswith("near ")]
-        # Only a code / near-code row is cut; a spec line is never (every holding key keeps its line).
-        coded = [i for i in rows if i.startswith(("code ", "near code "))][:CAP_PER_WORD]
-        entry.items = [i for i in rows if not i.startswith(("code ", "near code ")) or i in coded]
+        # Only an exact spec line is never cut (every holding key keeps its line); every code
+        # and near row shares the cap.
+        capped = [i for i in rows if i.startswith(("code ", "near "))][:CAP_PER_WORD]
+        entry.items = [i for i in rows if not i.startswith(("code ", "near ")) or i in capped]
     return ordered
 
 
