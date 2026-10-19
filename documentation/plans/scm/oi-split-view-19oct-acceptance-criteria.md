@@ -1,9 +1,10 @@
 # UAC: OI-SPLIT-VIEW (split follow-ups after #1749)
 
-Status: DRAFT, waiting for the owner's OK on mock v3 and Q4 (v2 note 21:44: the chip goes in its own column). Card:
+Status: APPROVED for build (owner, Lavish 21:54: mock v3 OK, Q4 = (a), plus the gear items of section D, recorded as
+mock v4). v2 note 21:44: the chip goes in its own column. Card:
 `oi-split-view-behaviour-card.md`. Mock: `documentation/mockups/OI-SPLIT-VIEW/index.html`.
 Rulings: Q1 (a), Q2 (a) (crew, ask a14412763); Q3 (b) and Q5 = (i) popup per line (owner + crew
-ruling a14761180); Q4 open, built on (a).
+ruling a14761180); Q4 (a) (owner, 21:54).
 
 Words: the **applied plan** of a line is the `split_plan` stamp on the newest decision of its order
 that names the line (`_recorded_split_plans`, `project_line_split_service.py:1021`). A line is
@@ -81,13 +82,36 @@ own, 236 @ 20/11/2026 New line, 167 @ 20/11/2026 New line (AutoCount 417 @ 20/10
 - B5 **Same data, same component.** Both pages get the popup's data from one backend read (the same
   function feeds the OI rows and the SO lines) and render one shared component. Opening the popup
   makes no extra request beyond the page's own read.
-- B6 **Q4 (a), open with the owner.** A split sitting on another SO line is listed in its own line's
+- B6 **Q4 (a) (owner, 21:54).** A split sitting on another SO line is listed in its own line's
   popup with Sits on "line <n>"; the landing line shows only its own splits.
 - B7 **Access.** The SO page shows splits to anyone who can open that sales order (scoped by its
   company, as the page's lines are); no new permission. An SO with no project order shows no chip.
 - B8 **Layout.** Unclipped at 1280 and 375; at 375 the popup fills the width and keeps Qty, Date and
   Change in view, with Sits on as a small line under Change. Escape and Close return focus to the
   (i) button.
+
+## D. Gear items (owner, Lavish 21:54)
+
+- D1 **View splits, whole order.** A gear item "View splits" opens one popup (the same Dialog as B2)
+  listing every split line of the order:
+  - Planning board gear: one "View splits <SO number>" per order on the board, beside that order's
+    other per-order items (like "Undo <SO number> confirm (rev n)").
+  - Sales Order page gear ("Sales order options"): "View splits".
+  - Order Inquiry page gear ("Order inquiry options"): "View splits", for the inquiry's lines.
+  The popup's title is "<SO number>: splits" (on the OI page "<OI number>: splits", with the SO
+  number under it), then "<n> split lines", then one grid: Qty | Delivery date | Change | Sits on |
+  Remark, with a group row per split line (in line number order) reading "Line <n> <item>", its plan
+  status badge (B3) and "AutoCount <base> @ <date>, now <now> @ <date>", followed by that line's
+  rows exactly as in B2 (incl. the AutoCount extra row and B4's highlight and "was").
+  SO417636: group "Line 480 CSK14B" with 14 / 236 / 167, then "Line 752 CSK14B" with 37 / 467 / 145.
+  With no split line the popup shows the heading "No split lines" and the hint "Every line ships as
+  AutoCount has it.". Escape and Close return focus to the gear button.
+- D2 **Split delivery moves to the board gear.** The planning board gear gets "Split delivery <SO
+  number>" per order (only for planners who may split today); it opens the same split sheet
+  (`LineSplitDialog`) for that order. The Decide dropdown no longer lists "Split delivery..."
+  (`BoardDecideControl.tsx:572-581`). The cell breakdown's Split delivery button
+  (`BoardCellBreakdownDialog.tsx:1019`) and the AutoCount change table's (`BoardChangeTable.tsx:136`)
+  stay.
 
 ## C. Out of scope
 

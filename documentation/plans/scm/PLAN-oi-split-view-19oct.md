@@ -1,8 +1,8 @@
 # PLAN: split follow-ups after #1749 (OI-SPLIT-VIEW)
 
-Status: Plan. Card answered (crew Q1 a, Q2 a; owner Q3 b, Q5 = (i) popup per line, crew ruling
-a14761180); Q4 open with the owner. Mock v3 filed (`documentation/mockups/OI-SPLIT-VIEW/index.html`, own Split column per the owner's v2 note);
-build after the owner OKs it. Track: M (new rule on the board, UI on two existing screens, no
+Status: Build (owner approved mock v3 at Lavish 21:54 with Q4 = (a) and the gear items of UAC D,
+recorded as mock v4 `documentation/mockups/OI-SPLIT-VIEW/index.html`). Card answered (crew Q1 a,
+Q2 a; owner Q3 b, Q5 = (i) popup per line, crew ruling a14761180). Track: M (new rule on the board, UI on two existing screens, no
 migration). Lead pattern: tester red tests, one coder, reviewer, browser pass 1280/375 on the crew
 test copy.
 
@@ -82,6 +82,21 @@ Frontend:
    header-lines columns (`orderInquiryHeaderLinesColumns.tsx`; today's `SplitChip` leaves the Product
    cell) and in the SO Lines columns (`SalesOrderDetail.tsx`); both Columns menus list it.
    Type `LineSplitView` mirrors item 3 (in `_shared` types next to `OrderInquiryLineSplit`).
+
+6. Whole-order popup (UAC D1): `OrderSplitsDialog` exported from the same `LineSplitInfo.tsx`
+   (props: `title`, `subtitle?`, `lines: {lineNo, itemCode, view: LineSplitView}[]`, `open`,
+   `onOpenChange`), split lines only, line number order, empty state. Data, no new endpoint:
+   - SO page: the lines' `split_view` from the SO read (item 3);
+   - OI page: the OI rows' `split_view`, one group per SO line;
+   - board: GET `/project-sales/sales-orders/{pso}/line-splits` (`LineSplitService.read`) gains
+     `split_view` on each `LineSplitLineOut` (`app/schemas/project_line_split.py:25`), from the same
+     serializer as item 3.
+   Gear items: board gear in `FulfilmentBoardPanel.tsx` (~2370-2440, per order like the undo items),
+   SO `useSalesOrderActions` (`scm/sales-orders/actions`), OI `DetailActionsMenu`
+   (`OrderInquiryDetail.tsx:751`).
+7. Split delivery (UAC D2): remove the item at `BoardDecideControl.tsx:572-581`; add "Split delivery
+   <SO>" per order to the board gear, opening `LineSplitDialog` (`FulfilmentBoardPanel.tsx:3209`)
+   for that order, shown only where the Decide item showed (the `splitOpener` permission).
 
 Test files (tester): `tests/scm/test_split_view_board.py` (A), `tests/scm/test_split_view_read.py`
 (B data on both reads); vitest beside `fulfilmentBoard.ts`, `LineSplitInfo.tsx`,
