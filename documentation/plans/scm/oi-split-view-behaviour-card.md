@@ -102,6 +102,12 @@ or a date moves); (b) keep State and PO on the line as today, and each split row
 it rides on (Sits on line 480 = OI-2609-0578 line 480; a New-line split rides on its own line).
 **Rec (b)**: no migration, no guessed match; the line's State and PO stay exact.
 
+## Answers
+
+- Crew on ask a14412763 (19 Oct): Q1 (a), the owner's own words ("based on those that are saved
+  only, not all the lines"); Q2 (a), AC-G19 stays deferred, the Save guard keeps refusing, the lane
+  stays M. Q3, Q4, Q5 went to the owner with the recommendations; mock v1 is built on them.
+
 ## Build notes (for the plan, not for the owner)
 
 - One function `split_plan_edited(line)` = saved `split_plan_key` != newest recorded stamp
