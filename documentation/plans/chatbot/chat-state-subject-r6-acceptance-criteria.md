@@ -14,6 +14,14 @@ trace is byte-identical to today unless a line says otherwise.
 - AC-S1-5 Empty subject (no ids, no predicate axis) or a said product token nothing resolved -> `unresolved`.
 - AC-S1-6 The turn trace logs the Subject beside today's fetch input; no reply, fetch or ask changes (L1 gate 0).
 
+- AC-S1-7 (review round 1) Predicate values are typed rows (the value plus its registry key / uuid), never bare
+  strings, so the fetch never re-reads the focus. Provenance is per axis value: a value typed in THIS message is
+  `said` under any op (set, new_subject, keep, answer), as the R16 period rule already does (chat_state.py ~941).
+- AC-S1-8 (review round 1) `unresolved` is decided AFTER the resolver ran, by one settle step that lives in
+  turn/chat_state.py (the single writer): a said product token the resolver placed makes `source` ids; only a token it
+  could not place makes the Subject unresolved. Any later change to the State (offer narrowing, held-family) rebuilds
+  the Subject through the same module, so the Subject never goes stale.
+
 ## S2 The fetch reads the Subject
 - AC-S2-1 On a state-led turn the resolver / tool input is built from the Subject by one function.
 - AC-S2-2 Setting one axis keeps every other held axis; `new_subject` or an explicit `clear` drops it (the 10
@@ -21,14 +29,20 @@ trace is byte-identical to today unless a line says otherwise.
 - AC-S2-3 R3-A held quantity, R4-A offer picks (held brand narrows, offered-not-held brand re-runs the set) and
   #1755 held-family narrowing (held matches first, family_code siblings only when none match) behave as their suites
   pin today.
-- AC-S2-4 with_carried_entities' "names nothing" rule, carry_onto_family and narrow_held_to_brands are not called on
-  a state-led turn.
+- AC-S2-4 On a state-led turn no legacy carry rule runs under any name: with_carried_entities and
+  carried_entities_except (its body) are not called, whatever the op (refine, keep, answer, new_subject) and whether the
+  message typed a product code. The fetch reads only the Subject (source, product_ids, predicate rows).
+- AC-S2-5 R4-A answer pick: an `answer` to the bot's brand offer gives the brand provenance `offer`, and the fetch holds
+  the offered brand, not the held one beside it.
 
 ## S3 Decisions read the ops
 - AC-S3-1 held-family narrowing, scheme-index and "names its own class" decide from the State ops, not entity-hint
   heuristics; names_own_class is deleted at task.py:735, scheme_index.py:35, held_family.py:152, engine.py:4986.
 - AC-S3-2 A type-only follow-up keeps the held product (TYPE-ONLY-EMPTY-SET; #1755 R6-4 semantics).
 - AC-S3-3 A message naming its own class is about that class, at every seam (#1755 R6-3 semantics), via the op.
+
+- AC-S3-4 (moved from S2) carry_onto_family (R3-A held qty onto family members) and narrow_held_to_brands (R4-A) are
+  expressed through the Subject (applier module) and not called from the engine on a state-led turn.
 
 ## S4 Unresolved asks
 - AC-S4-1 An unresolved Subject never reaches a fetch; the turn asks (fetch.py:665-675, gate.py:172 on the state path).
