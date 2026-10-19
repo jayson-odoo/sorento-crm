@@ -3351,8 +3351,6 @@ def _apply(
     could not place (`turn_runtime.unplaced_tokens`, folded). It is read at one seam
     only: a roster is never built out of a word that matched nothing."""
     trace = Trace()
-    if state.state_path:
-        verdict["state_path"] = True  # the engine's own flag; a unit caller's state carries it too
     # PR #1247 round 8: the parser's declared answer to the open stock question comes
     # first. The two shape rules below are the fallback, for a verdict that declares
     # none (a recorded emission, or a parser that left mode null).
