@@ -158,3 +158,14 @@ Classes from crew/state/reports/EVAL-BENCH-train-classes-19oct.md, root-caused o
 Per class: card ask only for a new rule, red-first tester (fresh synthetic shapes, never TRAIN text), coder, kill-proof,
 reviewer; a prompt change is measured with parser gold N=3; L1 vs #1755; one TRAIN live x1 on the touched slices paired
 vs main.
+
+### Round 3 result (19 Oct, crew ruling a22769454: no build)
+
+- FIRST-LINE not confirmed on TRAIN: 29 of 685 items carry code words on their own lines 2+, none with a quote; in all
+  18 with stored runs the later-line codes reached the parser, and the 2 failures fail the same way on main. Untested
+  risk: a media turn renders one image-read code per line (engine.py media path), which first-line-only would drop.
+- SET-CODE-NO-MEMBERS already passes on the lane head (live x1, head 40009ba497 + v178, main grader 3e2666c5e3:
+  es-2a6f9f1618 and es-b67110187c PASS); the attribution ran on main and CHAT-STATE, which lack the round 1 set expansion.
+- CODE-SEGMENT-AS-FILTER splits into two single-item causes: es-02332dd6a1 (a dash part over a held list read as a bare
+  product token; a held-family dash-part narrowing would fix it) and es-d2692e6c09 (finish synonyms bl / gm, owner
+  registry data; crew files the ask). Below the 2-item bar, so nothing is built. Spend USD 0.05.
