@@ -79,6 +79,8 @@ import {
   bucketLabelText,
   pressPostsContribution,
   pressAppliesSplitEdit,
+  excludedFromPress,
+  splitEditsToConfirm,
   contributionMatchesSearch,
   confirmSummaryFor,
   decisionHeaderText,
@@ -1328,15 +1330,16 @@ export function FulfilmentBoardPanel({
     [board.data],
   );
   // OI-SPLIT-VIEW (UAC A3): per order, the lines whose saved split edit the next Confirm
-  // applies, as "line <AutoCount no> <item>". A pending planning change carries none.
+  // applies, as "line <AutoCount no> <item>": exactly the split-edited lines the count above
+  // includes (`splitEditsToConfirm` reads `confirmSummaryFor`'s own rule and draft).
   const splitEditsByOrder = React.useMemo(() => {
     const out = new Map<string, string[]>();
-    const seen = new Set<string>();
-    for (const contribution of allContributions) {
-      if (!contribution.split_edited || !contribution.project_line_id) continue;
-      if (pendingBatchSalesOrderIds.has(contribution.sales_order_id)) continue;
-      if (seen.has(contribution.project_line_id)) continue;
-      seen.add(contribution.project_line_id);
+    for (const contribution of splitEditsToConfirm(
+      allContributions,
+      draftWithoutPreMark,
+      pendingBatchSalesOrderIds,
+      { unadoptedSalesOrderIds, batchNamedKeys },
+    )) {
       const labels = out.get(contribution.sales_order_id) ?? [];
       labels.push(
         `line ${contribution.so_line_no ?? contribution.line_no} ${contribution.item_code}`,
@@ -1344,7 +1347,13 @@ export function FulfilmentBoardPanel({
       out.set(contribution.sales_order_id, labels);
     }
     return out;
-  }, [allContributions, pendingBatchSalesOrderIds]);
+  }, [
+    allContributions,
+    draftWithoutPreMark,
+    pendingBatchSalesOrderIds,
+    unadoptedSalesOrderIds,
+    batchNamedKeys,
+  ]);
 
   const confirmMany = useConfirmManyMutation();
   const previewConfirmMany = usePreviewConfirmManyMutation();
@@ -1401,7 +1410,8 @@ export function FulfilmentBoardPanel({
         contributions
           .filter((contribution) => {
             if (contribution.unplannable) return false;
-            if (excludeKeys.has(contribution.key)) return false;
+            // OI-SPLIT-VIEW (UAC A10): a split-edited line cannot be unticked.
+            if (excludedFromPress(contribution, excludeKeys)) return false;
             const decision = draftWithoutPreMark[contribution.key];
             // OI-SPLIT-VIEW (UAC A4): a saved split edit confirms its order on its own.
             if (
@@ -1651,7 +1661,7 @@ export function FulfilmentBoardPanel({
         const splitEdited = contributions.some(
           (contribution) =>
             contribution.sales_order_id === salesOrderId &&
-            !excludeKeys.has(contribution.key) &&
+            !excludedFromPress(contribution, excludeKeys) &&
             pressAppliesSplitEdit(
               contribution,
               draftWithoutPreMark[contribution.key],
