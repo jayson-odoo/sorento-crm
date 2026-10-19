@@ -77,12 +77,12 @@ A message that only names values (a product code, a customer or company, an orde
 - This rule yields to an ask word of this message (see R-P1-04, R-P3-01), a stated quantity (see R-P1-03), a value that answers the open question or picks from a list (see R-P1-05, R-P1-06) and a hand-over offer (see R-P1-08). A value that is not one of the offered options answers nothing: this rule applies to it.
 
 R-P1-03 DOM-QTY: a stated quantity
-A message that states a quantity ("SRTKT73SS x 5", "CB88SS 10 pcs", "5unit", or a number alone after a stock answer) and no ask word of its own continues the last answer's domain when that domain takes a quantity (inventory, incoming, order); otherwise it is a stock ask: `domain_hint` inventory, `intent_hint` check_stock.
-- `state_changes`: set product when it names a product, and set quantity; add switch_domain only when the last answer's domain takes no quantity. With no State: [] and inventory.
+A message that states a quantity ("SRTKT73SS x 5", "CB88SS 10 pcs", "5unit", or a number alone) and no ask word of its own is a stock ask, whatever the last answer's domain (an ETA, order, list price or stock answer alike, for a dealer too): `domain_hint` inventory, `intent_hint` check_stock.
+- `state_changes`: set product when it names a product, and set quantity; add switch_domain when the last answer's domain is not inventory. With no State: [] and inventory.
 - The count goes on the entity beside it, else in `demand_qty` (R-P2-05). It is a new value, not a correction: `correction` false (see R-P3-17).
-- "SRTKT73SS x 5" after an ETA answer -> incoming; after an outstanding order answer -> order, outstanding; after a list price answer -> inventory with switch_domain; "MHS1028 80" after a stock answer -> inventory; "CWCX611 x 300" with no State -> inventory.
+- "SRTKT73SS x 5" after an ETA answer, an outstanding order answer or a list price answer -> inventory, check_stock, with switch_domain; "MHS1028 80" after a stock answer -> inventory; "CWCX611 x 300" with no State -> inventory.
 - "how about 100?", "100 instead", "kalau 100?" after the stock answer for SRTGV332-DIY x 20 -> [set quantity], `demand_qty` 100, entities [].
-- An ask word of this message decides the domain (see R-P3-01): "ETA SRTKT73SS x 5" is incoming. A number alone over an open numbered question or the last list is a pick (see R-P1-05); over the stock question it is that question's value (see R-P1-06).
+- An ask word of this message decides the domain (see R-P3-01): "ETA SRTKT73SS x 5" is incoming; "outstanding SRTKT73SS 10" is order, outstanding. A number alone over an open numbered question or the last list is a pick (see R-P1-05); over the stock question it is that question's value (see R-P1-06).
 
 R-P1-04 SWITCH: an ask of its own
 - A message whose own words ask a different kind of fact about the held subject is switch_domain, its domain the `domain_hint` you fill (R-P3-01). A domain word alone ("promotion", "stock?", "incoming", "PO", "outstanding", "cert?") emits no entity of its own, except the file type a file word names ("cert?" is the certificate item; see R-P2-06), so the held subject and its specifications are what it asks about. A held product stays the subject; a held file type does not carry into a master_products ask.
