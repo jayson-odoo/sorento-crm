@@ -12,13 +12,13 @@ Additive only and idempotent (`IF NOT EXISTS`) so the shared dev DB, which conve
 Plan: documentation/plans/chatbot/PLAN-chat-speed-ingress.md.
 
 Revision ID: chs_0001_direct_ingress
-Revises: sr_0001_sample_requests
+Revises: oihr_0009_split_rows
 """
 from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "chs_0001_direct_ingress"
-down_revision = "sr_0001_sample_requests"
+down_revision = "oihr_0009_split_rows"
 branch_labels = None
 depends_on = None
 
