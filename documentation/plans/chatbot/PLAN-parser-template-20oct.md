@@ -1,7 +1,8 @@
 # PLAN: PARSER-TEMPLATE (F1, one consolidated parser prompt)
 
-Status: Build, F1-E fix round after review (NOT READY: B1, B2 test gaps); TRAIN x1 attachment + spec paired is a merge
-gate item waiting for dev-key credits (crew a38627742). Track L. Owner:
+Status: Review READY (code) on e61181663e after the F1-E round; merge gate items waiting for dev-key credits (crew
+a38627742): conflict gold N=3 on v82 01c2e25b, TRAIN x1 attachment + spec paired; no label before #1772 merges.
+Track L. Owner:
 CHAT-CODE-LOOKUP (crew architecture review, 20 Oct, crew/state/reports/CHAT-ARCH-REVIEW-20oct.md M1 + F1 + section 3).
 Track: L, LEAD pattern. Owner 20 Oct: keep the bars, fix at the architecture layer.
 
@@ -122,3 +123,9 @@ Label rule (S4): "(answered)" in the template's State lines is printed only by #
 version gets a label before #1772 merges.
 Routed to CHAT-STATE F2 (S5): the template asks for state ops skip / unclear that the strict schema's op enum lacks
 (parser.py:702-704), a gap #1772 shares.
+
+Progress (20 Oct): guards 7e22715aea (kill proofs), red 25e94928e5, fix e61181663e (68,865 chars, 124 passed);
+reviewer re-check READY (code): B1/B2 kills K6/K4 now red, the four fix tests red on revert, no new rule pair.
+Published v82 01c2e25b, unmeasured: the dev key (bG4A) answers 429 no credits. Stored v77/v80 re-graded with the S3
+grader: 98 / 106 unchanged. Spend USD 4.96 (cap 7.1; 7.7 asked to fit the v82 rerun plus TRAIN).
+Open nit: two listed schemes in one message is unspecified; downstream reads the first only.
