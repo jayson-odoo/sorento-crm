@@ -167,3 +167,80 @@ def test_guard_a_value_no_family_member_carries_still_gets_the_plain_none_line(s
 
     assert set(_fetched(calls)) <= {ids["ZZWC286-UF"]}, calls
     assert "ZZWC286-UF" in _text(r) and "900" in _text(r), _text(r)
+
+
+# --- C2b HELD-FIRST (CHAT-STATE correction 19 Oct) --------------------------------------------
+# The real refine sets are large held sets the customer already saw (es-e9d2507a71: 37 held, "only
+# sorento"; es-f173186e97: 114 held, "140mm"). Rule: filter the HELD products first; some held
+# product matches -> exactly those, no sibling added; none matches -> widen to the family_code
+# siblings; still none -> the plain none line.
+
+
+def _seed_held_set(session_factory, rows) -> dict[str, str]:
+    """rows: (code, brand, height | None, held). family_code from the ORM listener, variant_of_id NULL,
+    brand via brand_id, dim_height a JSON number. Every `-A` code is held; every `-B` is its sibling."""
+    db = session_factory()
+    db.add(ProductSpecRegistry(id=str(uuid.uuid4()), spec_key="dim_height", label="Height", data_type="numeric", unit="mm"))
+    cat = ProductCategory(
+        id=str(uuid.uuid4()), category_code=unique_code("BS")[:50], category_name="ZZT Basin", class_label="Counter Top Basin",
+        company_id=DEFAULT_COMPANY_ID,
+    )
+    uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code=unique_code("UOM")[:50], uom_name="Each", company_id=DEFAULT_COMPANY_ID)
+    brands = {
+        name: Brand(id=str(uuid.uuid4()), brand_code=name, brand_name=name, company_id=DEFAULT_COMPANY_ID)
+        for name in {b for _c, b, _h in rows}
+    }
+    db.add_all([cat, uom, *brands.values()])
+    db.flush()
+    ids: dict[str, str] = {}
+    for code, brand, height in rows:
+        p = Product(
+            id=str(uuid.uuid4()), product_code=code, product_name=f"Name {code}", category_id=cat.id, base_uom_id=uom.id,
+            list_price=1, company_id=DEFAULT_COMPANY_ID, brand_id=brands[brand].id,
+        )
+        db.add(p)
+        db.flush()
+        ids[code] = p.id
+        values = {"class": {"value": "Counter Top Basin"}}
+        if height is not None:
+            values["dim_height"] = {"value": height}
+        db.add(ProductSpecifications(id=str(uuid.uuid4()), product_id=p.id, values=values))
+    db.commit()
+    return ids
+
+
+def _hold_then_refine(session_factory, stub_access, monkeypatch, held_codes, text, *entities):
+    held = [{"raw": c, "hint": "product", "canonical_code": c, "current_message": True, "confident": True} for c in held_codes]
+    (_r1, _c1), (r2, c2) = _turns(
+        session_factory, stub_access, monkeypatch, [("the basins", _stock_ask(*held)), (text, _stock_ask(*entities))], gate=True,
+    )
+    return r2, c2
+
+
+def test_a_brand_over_a_held_set_answers_with_the_held_members_only(session_factory, seeded, stub_access, monkeypatch):
+    rows = []
+    for n, brand in enumerate(("ZZSORENTO", "ZZSORENTO", "ZZCABANA", "ZZCABANA", "ZZMOCHA", "ZZMOCHA"), start=1):
+        rows += [(f"ZZBS{n}-A", brand, None), (f"ZZBS{n}-B", brand, None)]  # -B: same brand, same family_code, NOT held
+    ids = _seed_held_set(session_factory, rows)
+    brand = {"raw": "only zzsorento", "hint": "brand", "canonical_code": "ZZSORENTO", "current_message": True, "confident": True}
+
+    r, calls = _hold_then_refine(
+        session_factory, stub_access, monkeypatch, [f"ZZBS{n}-A" for n in range(1, 7)], "only zzsorento", brand,
+    )
+
+    assert _fetched(calls) == sorted([ids["ZZBS1-A"], ids["ZZBS2-A"]]), (_text(r), calls)
+
+
+def test_a_numeric_value_over_a_held_set_answers_with_the_held_matches_only(session_factory, seeded, stub_access, monkeypatch):
+    heights = {1: 140, 2: 140, 3: 120, 4: 160, 5: 100}
+    rows = []
+    for n, h in heights.items():
+        rows += [(f"ZZBS{n}-A", "ZZSORENTO", h), (f"ZZBS{n}-B", "ZZSORENTO", 140)]  # siblings also carry 140, not held
+    ids = _seed_held_set(session_factory, rows)
+
+    r, calls = _hold_then_refine(
+        session_factory, stub_access, monkeypatch, [f"ZZBS{n}-A" for n in heights], "140mm",
+        _spec("140mm", "dim_height", 140),
+    )
+
+    assert _fetched(calls) == sorted([ids["ZZBS1-A"], ids["ZZBS2-A"]]), (_text(r), calls)
