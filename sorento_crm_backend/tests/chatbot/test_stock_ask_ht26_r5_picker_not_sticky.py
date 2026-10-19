@@ -98,13 +98,9 @@ def test_the_task_and_trace_keep_no_list_to_point_into():
     assert "spent_pick_options" not in {f.name for f in fields(Trace)}
 
 
-def test_a_no_with_a_number_after_the_pick_is_the_quantity_the_newest_referent_wins():
-    """"no, 2" after SRTWC286-SH x 10 is the quantity, never SRTWC286-SH-150.
-
-    CHAT-STATE r7 AC-R7-8 (owner rule 20 Oct 07:04, crew a51605376): the list is no longer
-    "forgotten" (a shown list stays open); the number is the quantity because the how-many the
-    pick opened is NEWER than the list, i.e. recency, not type. Same replies as before.
-    """
+def test_a_no_with_a_number_after_the_pick_never_picks_off_the_old_list():
+    """"no, 2" after SRTWC286-SH x 10: the old list is forgotten, so the number is the
+    quantity, never SRTWC286-SH-150."""
     console = Console()
     console.first_ask("check stock srtwc286")
     console.say("1", _as_position(1))
