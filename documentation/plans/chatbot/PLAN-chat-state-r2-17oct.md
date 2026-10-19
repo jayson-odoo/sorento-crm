@@ -1,7 +1,8 @@
 # PLAN: CHAT-STATE round 2 - the weak follow-up kinds
 
-**Status:** Build, round 4 (refine on REAL conversations): R4-A + #1755 C2/C2b merge + held-family exact read
-reviewer READY, L1 gate 0 unintended; paired real x1 next. Track: L, LEAD pattern. Branch `crew/chat-state-r2`.
+**Status:** Build, round 5 (TRAIN only, small fix track): class-word "could not find" wording + op-margin
+determinism probe. Round 4 closed (CI green d45781dbfb; held-out follow-ups 91.4 vs bar 90). LEAD pattern. Branch
+`crew/chat-state-r2`.
 **Base design:** `PLAN-chat-state-16oct.md`, `chat-state-behaviour-card.md` (R1-R16), `chat-state-seam-design.md`.
 
 ## Goal (crew, 17 Oct, owner "run as much parallel as possible")
@@ -285,3 +286,29 @@ returns the vocabulary line + the State block uncut (context.py:394-396; engine.
 rows carry the State subject line, which holds every L2 subject field and more. Crew 18 Oct (a): no R4 slice here; the
 subject reaches main when the state section's prompt version is labelled after the owner's hand test; crew raises the
 main-side L2 budget fix with the owner as its own lane.
+
+## Round 5 (crew 19 Oct a21120313): small round, TRAIN only
+
+Context: follow-ups met the bar on crew's combined3 held-out (91.4 vs 90). Classes from
+crew/state/reports/EVAL-BENCH-train-classes-19oct.md. Track: small fix (< ~300 lines, no migration, no auth).
+- 7 HN-LANE: closed at d45781dbfb by the #1755 merge 0563d38525 + 558b3fc56d (held_family.py reads family_code,
+  numbers :83-90, brands :94-158; none-match says "none on record"). Live 19 Oct at d45781dbfb: cp0-665ba3e897,
+  cp0-253d58ba8b, cp0-fcd44fe521, es-f173186e97 pass. The fifth item is held-out: EVAL-BENCH replays it at 0 USD
+  on the head and reports to crew.
+- 17 STATE-VIEW-BRAND-OFFER: closed by R4-A; es-e9d2507a71 passes live at d45781dbfb; es-242b332bca is G (gold
+  misses a product created after the turn), EVAL-BENCH's.
+- CLASS-WORD-NOT-FOUND (seen live on a held-out turn, crew-only): a reply ends "I could not find wc." although
+  "wc" narrowed the set. Emitted at turn/compose.py:790-794 (+ :462 / :486) from env["unresolved"]
+  (turn_runtime.py:5730), built by `named_unplaced` (turn_runtime.py:2809) minus PO / SO words (:3906-3928).
+  Hypothesis (UNVERIFIED): nothing removes a word the set narrowing used. Red tests from fresh paraphrases of the
+  shape (a class word wc / basin / tap narrows a held or a fresh set; EN / BM / ZH), unless EVAL-BENCH finds a TRAIN
+  item of the same shape. Then coder, kill-proof, reviewer, L1 gate vs d45781dbfb, one push, one ci label.
+- OP-VARIANCE (proposal, no build): 68 of 166 identical-input items flip state ops run to run. The parse is one
+  call at temperature 0.0 (head/parser.py:1136), each op a free pick from an 8-value enum (parser.py:694-698), no
+  confidence. Proposal "op margin": token logprobs on the parser call; under a fixed margin between the chosen op
+  and the runner-up, one card rule decides (smaller state change wins: keep < set / clear < pick / answer /
+  close_question < new_subject < switch_domain). Steps approved: one logprob probe (< 0.01 USD) that gpt-5.4-mini
+  returns logprobs under the strict json_schema; a 0 USD read of recorded op pairs on the lane's TRAIN x3 runs;
+  then the tie-break order goes to the owner as a card question before any code. Fallback without logprobs: k=3
+  parses with an op majority (3x parser cost).
+- Budget: replays 0 USD; one paired TRAIN x1 on the class-word items after the fix (< 0.3 USD); probe < 0.01 USD.
