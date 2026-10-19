@@ -4650,18 +4650,11 @@ class ProjectOrderInquiryService:
             if applied is not None:
                 # OI-SPLIT-VIEW (UAC A4): an edit of an applied plan tells one row per changed
                 # split (not in the applied plan); the rows that stand are not told again.
-                from collections import Counter
+                from app.services.project_line_split_service import splits_not_in_plan
 
-                left = Counter(applied[1:])
-                changed = []
-                for row in plan.rows:
-                    if row.split is None:
-                        continue
-                    entry = split_plan_key([row.split])[1]
-                    if left[entry] > 0:
-                        left[entry] -= 1
-                        continue
-                    changed.append(row)
+                split_rows = [row for row in plan.rows if row.split is not None]
+                marks, _removed = splits_not_in_plan([row.split for row in split_rows], applied)
+                changed = [row for row, mark in zip(split_rows, marks) if mark]
                 if changed:
                     self._queue_plan_rows(
                         dataclasses.replace(plan, rows=changed),
@@ -6029,7 +6022,8 @@ class ProjectOrderInquiryService:
         """OI-SPLIT-VIEW (UAC A4): `line id -> applied plan` for those of these acted lines whose
         saved plan edits the plan an earlier Confirm of the order applied against the same
         base (`split_plan_edited`): purchasing is told only the splits that changed. A plan
-        made against a new base (a pending change, a re-plan) is told whole, as before."""
+        made against a new base (a re-plan) is told whole, as before, and so is a line with a
+        pending AutoCount change (A9: it is never split-edited and goes the AutoCount way)."""
         if not facts:
             return {}
         from app.services.project_line_split_service import LineSplitService, split_plan_edited
@@ -6040,7 +6034,7 @@ class ProjectOrderInquiryService:
         out: Dict[str, List[str]] = {}
         for line_id, f in facts.items():
             applied = list((recorded.get(line_id) or {}).get("plan") or [])
-            if not applied or not f.splits:
+            if not applied or not f.splits or f.pending:
                 continue
             if split_plan_key(f.splits)[0] == applied[0] and split_plan_edited(f.splits, applied):
                 out[line_id] = applied

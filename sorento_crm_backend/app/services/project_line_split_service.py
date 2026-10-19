@@ -139,6 +139,51 @@ def split_plan_edited(saved_splits: Sequence[Any], applied_plan: Optional[Sequen
         return False
     return split_plan_key(saved_splits) != list(applied_plan or [])
 
+
+def splits_not_in_plan(
+    splits: Sequence[Any], applied_plan: Optional[Sequence[str]]
+) -> Tuple[List[bool], List[str]]:
+    """OI-SPLIT-VIEW (UAC A4, B4): per split, in order, whether its (qty, date, sits on,
+    cancel) is NOT in the applied plan (`split_plan_key` spelling, counted: two equal splits
+    need two equal entries), and the applied plan's entries no split matched (the rows the
+    edit removed). The one compare the Confirm's "tell only the changed splits" and the split
+    view's highlight both read."""
+    from collections import Counter
+
+    left = Counter(list(applied_plan or [])[1:])
+    marks: List[bool] = []
+    for split in splits:
+        entry = split_plan_key([split])[1]
+        if left[entry] > 0:
+            left[entry] -= 1
+            marks.append(False)
+        else:
+            marks.append(True)
+    removed = [entry for entry, count in left.items() for _ in range(count)]
+    return marks, removed
+
+
+def _split_edited_among(
+    facts: Dict[str, "LineFacts"], whole: Iterable[str], recorded: Dict[str, Dict[str, Any]]
+) -> set:
+    """OI-SPLIT-VIEW (UAC A1, A8, A9): of these whole-Buy lines (`whole`, read off facts already
+    read), the split-edited ones: still open, nothing pending from AutoCount (such a line goes
+    the AutoCount way: its change is what the board counts and the Confirm applies) and
+    `split_plan_edited` against the applied plan (`recorded`)."""
+    out: set = set()
+    for line_id in whole:
+        f = facts.get(str(line_id))
+        if (
+            f is not None
+            and not f.cancelled
+            and not f.pending
+            and not (f.now_qty == _ZERO and f.delivered_qty > _ZERO)
+            and split_plan_edited(f.splits, (recorded.get(f.line_id) or {}).get("plan"))
+        ):
+            out.add(f.line_id)
+    return out
+
+
 #: A split line's state (`LineFacts.split_state`).
 SPLIT_ACTING = "acting"
 SPLIT_APPLIED = "applied"
@@ -1077,9 +1122,10 @@ class LineSplitService:
     def split_edited_line_ids(self, line_ids: Iterable[str]) -> set:
         """OI-SPLIT-VIEW (UAC A2, A4): which of these mirror lines carry a saved split edit a
         Confirm applies: the active decision buys the line whole (`whole_buy_line_ids`, the
-        only lines whose plan becomes purchasing's rows), it is still open, and
-        `split_plan_edited`. The board's `split_edited` flag and the Confirm read this one set,
-        so what the board counts is what Confirm acts on."""
+        only lines whose plan becomes purchasing's rows), it is still open, no AutoCount change
+        is pending on it (A9), and `split_plan_edited` (`_split_edited_among`). The board's
+        `split_edited` flag, the Confirm and the split view's status read this one rule, so
+        what the board counts is what Confirm acts on."""
         wanted = sorted({str(i) for i in line_ids if i})
         if not wanted:
             return set()
@@ -1094,13 +1140,7 @@ class LineSplitService:
         orders = {str(s.project_sales_order_id) for line_id in whole for s in splits[line_id]}
         recorded = self.recorded_split_plans(orders)
         facts = self._facts_for(ProjectSalesOrderLine.id.in_(sorted(whole)))
-        return {
-            line_id
-            for line_id, f in facts.items()
-            if not f.cancelled
-            and not (f.now_qty == _ZERO and f.delivered_qty > _ZERO)
-            and split_plan_edited(f.splits, (recorded.get(line_id) or {}).get("plan"))
-        }
+        return _split_edited_among(facts, whole, recorded)
 
     # ------------------------------------------------------------ split view
 
@@ -1132,16 +1172,24 @@ class LineSplitService:
         line_ids: Iterable[str],
         recorded: Dict[str, Dict[str, Any]],
     ) -> Dict[str, Dict[str, Any]]:
-        """`split_views` off facts already read for every line of the orders (`facts`)."""
+        """`split_views` off facts already read for every line of the orders (`facts`). The
+        status reads `_split_edited_among`, the rule the board flag and the Confirm read (UAC
+        B3): a line partly from stock or with a pending AutoCount change is never "saved"."""
+        from app.services.project_order_inquiry_service import whole_buy_line_ids
+
         stored = [split for f in facts.values() for split in f.splits]
         sits = self.effective_sits_on(stored)
         plans = line_plans(facts, sits, {target for target in sits.values() if target})
+        split_lines = [
+            f.line_id for f in (facts.get(str(i)) for i in line_ids) if f is not None and f.splits
+        ]
+        edited = _split_edited_among(facts, whole_buy_line_ids(self.db, split_lines), recorded)
         out: Dict[str, Dict[str, Any]] = {}
-        for line_id in line_ids:
-            f = facts.get(str(line_id))
-            if f is None or not f.splits:
-                continue
-            out[f.line_id] = _split_view(f, plans[f.line_id], sits, facts, recorded.get(f.line_id))
+        for line_id in split_lines:
+            f = facts[line_id]
+            out[line_id] = _split_view(
+                f, plans[line_id], sits, facts, recorded.get(line_id), edited=line_id in edited
+            )
         return out
 
     def _moves_a_confirmed_split(
@@ -1250,31 +1298,24 @@ def _split_view(
     sits: Dict[str, Optional[str]],
     facts: Dict[str, LineFacts],
     recorded: Optional[Dict[str, Any]],
+    *,
+    edited: bool,
 ) -> Dict[str, Any]:
     """One split line as the split popup reads it (UAC B2 to B4, plan "Phase 2 contract" item
     3): status, base and now, the saved splits in `seq` order then the AutoCount extra row,
-    and the total. Plain JSON values only, so every read carries the same value."""
-    from collections import Counter
-
+    and the total. `edited` is the line's membership of the split-edited set (UAC A1, B3).
+    Plain JSON values only, so every read carries the same value."""
     applied = (recorded or {}).get("plan")
     if f.split_state == SPLIT_STALE:
         status = VIEW_AUTOCOUNT_CHANGED
-    elif split_plan_edited(f.splits, applied):
+    elif edited:
         status = VIEW_SAVED
     else:
         status = VIEW_CONFIRMED
-    # B4: a split whose (qty, date, sits on, cancel) is not in the applied plan, read in the
-    # applied plan's own spelling (`split_plan_key`), only while the edit waits.
-    left = Counter(list(applied or [])[1:])
-    marks: List[bool] = []
-    for split in f.splits:
-        entry = split_plan_key([split])[1]
-        if left[entry] > 0:
-            left[entry] -= 1
-            marks.append(False)
-        else:
-            marks.append(status == VIEW_SAVED)
-    removed = [entry for entry, count in left.items() for _ in range(count)]
+    # B4: a split whose (qty, date, sits on, cancel) is not in the applied plan, only while
+    # the edit waits.
+    not_in_plan, removed = splits_not_in_plan(f.splits, applied)
+    marks = [mark and status == VIEW_SAVED for mark in not_in_plan]
     was: Optional[Tuple[Decimal, str]] = None
     if status == VIEW_SAVED and sum(marks) == 1 and len(removed) == 1:
         # Exactly one row removed and one added: the added row names what it was. Never a
