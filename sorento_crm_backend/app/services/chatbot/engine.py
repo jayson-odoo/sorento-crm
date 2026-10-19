@@ -5032,6 +5032,9 @@ def _run_stages_body(  # noqa: PLR0915
                 scheme_none_in_scope = scheme_note["scheme"]
             if scheme_note.get("none_match") and scheme_note.get("products"):
                 held_none_match = {"held": list(scheme_note["products"]), "said": [], "scheme": scheme_note["scheme"]}
+    # The words a `keep` set aside were read by the seams above; they are not a change, so they
+    # leave the verdict here with their mark (no later step, store or session sees either).
+    verdict = chat_state.without_kept_aside(verdict)
     if _ranking_words:
         verdict = {**verdict, "entities": [*(verdict.get("entities") or []), *_ranking_words]}
     if grounding_notes:

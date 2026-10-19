@@ -459,7 +459,7 @@ def _reject(
     held, and what this message typed is said on its axis (the same Subject a `keep` gives)."""
     log["rejected"] = reasons
     out = {k: v for k, v in verdict.items() if k != "state_changes"}
-    _mark_kept_aside(_entities(out), [])
+    _unmarked(out)
     subject = _build_subject(state, state.focus, out, brands, None)
     log["subject"] = subject_wire(subject)
     return Applied(False, replace(state, subject=subject), out, log)
@@ -613,16 +613,25 @@ def narrow_held_to_brands(state: State, wanted: list[str], brand_of: dict[str, s
     return _held_narrowed(state, kept)
 
 
+def _tasks_over(tasks: Any, kept: list[dict[str, Any]]) -> tuple[Any, ...]:
+    """The tasks with the slots they still collect narrowed to the `kept` product rows (by key,
+    or by code for a row the resolver has not placed yet)."""
+    from app.services.chatbot.turn.state import token_key
+
+    keys = {str(r.get("uuid")) for r in kept if r.get("uuid")}
+    codes = {token_key(r.get("canonical_code") or r.get("raw")) for r in kept} - {""}
+    return tuple(
+        replace(t, slots=tuple(sl for sl in t.slots if str(sl.key) in keys or token_key(sl.label) in codes))
+        if t.slots else t
+        for t in tasks or ()
+    )
+
+
 def _held_narrowed(state: State, kept: list[dict[str, Any]]) -> State:
     """The State with only the `kept` held product rows, the slots a task still collects
     narrowed with them, and the Subject's held products read again off that focus (AC-S1-8:
     a later change to the State rebuilds the Subject here, so it never goes stale)."""
-    keys = {str(r.get("uuid")) for r in kept if r.get("uuid")}
-    tasks = tuple(
-        replace(t, slots=tuple(sl for sl in t.slots if str(sl.key) in keys)) if t.slots else t
-        for t in state.focus.tasks or ()
-    )
-    focus = replace(state.focus, products=kept, tasks=tasks)
+    focus = replace(state.focus, products=kept, tasks=_tasks_over(state.focus.tasks, kept))
     subject = state.subject
     if subject is not None and subject.provenance.get("product") == "held":
         ids = tuple(str(r["uuid"]) for r in kept if r.get("uuid") and r.get("described_set") is not True)
@@ -710,16 +719,28 @@ def held_family_landed(state: State, verdict: dict[str, Any], matched: list[str]
     subject = state.subject
     if subject is None or not matched:
         return state, verdict
+    from app.services.chatbot.turn.state import token_key
+
+    # A member that is itself a held product keeps its key; the others are tokens until placed.
+    keyed = {
+        token_key(r.get("canonical_code") or r.get("raw")): str(r["uuid"])
+        for r in state.focus.products if isinstance(r, dict) and r.get("uuid")
+    }
     codes = list(dict.fromkeys(matched))
-    tokens = tuple({"value": c, "key": c, "hint": "product"} for c in codes)
+    rows = [
+        {"raw": c, "canonical_code": c, "hint": "product", "current_message": False,
+         **({"uuid": keyed[token_key(c)]} if token_key(c) in keyed else {})}
+        for c in codes
+    ]
+    ids = tuple(r["uuid"] for r in rows if r.get("uuid"))
+    tokens = tuple({"value": r["raw"], "key": r["raw"], "hint": "product"} for r in rows if not r.get("uuid"))
     subject = replace(
-        subject, source="unresolved", product_ids=(), product_tokens=tokens,
+        subject, source="ids" if ids else "unresolved", product_ids=ids, product_tokens=tokens,
         provenance={**subject.provenance, "product": "held"},
     )
-    # One write: the focus holds the same members as the Subject, so no earlier held row (a
-    # described set's member) rides beside them.
-    rows = [{"raw": c, "canonical_code": c, "hint": "product", "current_message": False} for c in codes]
-    focus = replace(state.focus, products=rows)
+    # One write: the focus and its open tasks hold the same members as the Subject, so no
+    # earlier held row (a described set's member) rides beside them.
+    focus = replace(state.focus, products=rows, tasks=_tasks_over(state.focus.tasks, rows))
     return replace(state, focus=focus, subject=subject), carry_onto_family(verdict, matched)
 
 
@@ -779,13 +800,38 @@ KEPT_ASIDE = "_kept_aside"
 
 
 def _mark_kept_aside(entities: list[dict[str, Any]], aside: list[dict[str, Any]]) -> None:
-    """Mark exactly the `aside` rows; a mark on any other row (one the parser emitted) goes."""
+    """Mark exactly the `aside` rows of the applier's own copies; a mark on any other row (one
+    the parser emitted) goes."""
     marked = {id(e) for e in aside}
     for e in entities:
         if id(e) in marked:
             e[KEPT_ASIDE] = True
         else:
             e.pop(KEPT_ASIDE, None)
+
+
+def _unmarked(out: dict[str, Any]) -> None:
+    """`out` (a copy of the verdict) with no `KEPT_ASIDE` mark on its entities; the rows are
+    copied only when one carries a mark, so the input verdict is never touched."""
+    rows = out.get("entities")
+    if isinstance(rows, list) and any(isinstance(e, dict) and KEPT_ASIDE in e for e in rows):
+        out["entities"] = [without_mark(e) if isinstance(e, dict) else e for e in rows]
+
+
+def without_mark(entity: dict[str, Any]) -> dict[str, Any]:
+    """A copy of the entity with no `KEPT_ASIDE` mark (what a store keeps of it)."""
+    return {k: v for k, v in entity.items() if k != KEPT_ASIDE}
+
+
+def without_kept_aside(verdict: dict[str, Any]) -> dict[str, Any]:
+    """The verdict with the words a `keep` set aside taken out, once the seams that read the
+    message's own words (held-family narrowing, scheme index) have run: they are not a change,
+    so nothing after this point (APPLY, the fetch, a stored clarify, the session) sees them
+    or their mark. The verdict itself when nothing was set aside."""
+    rows = [e for e in verdict.get("entities") or [] if isinstance(e, dict)]
+    if not any(e.get(KEPT_ASIDE) for e in rows):
+        return verdict
+    return {**verdict, "entities": [e for e in verdict.get("entities") or [] if not (isinstance(e, dict) and e.get(KEPT_ASIDE))]}
 
 
 def _typed_row(entity: dict[str, Any], hint: str) -> dict[str, Any] | None:
@@ -1039,7 +1085,7 @@ def apply_changes(
     if log["shown"] is None:
         # Nothing shown, nothing to carry: a first ask runs exactly as it does without the key.
         out = {k: v for k, v in verdict.items() if k != "state_changes"}
-        _mark_kept_aside(_entities(out), [])
+        _unmarked(out)
         subject = _build_subject(state, state.focus, out, brands, None)
         log["subject"] = subject_wire(subject)
         return Applied(True, replace(state, subject=subject), out, log)
@@ -1291,15 +1337,14 @@ def apply_changes(
         answering or new_subject or set_axes or "clear" in ops or data_picks or period_answer
     )
     held_axes = {axis for axis, rows in _held_rows(focus).items() if rows}
-    # AC-S1-9: `keep` changes nothing. A brand / class / spec word typed on an axis the State
-    # holds is set aside: marked on the parse's own row, before anything copies it.
-    _mark_kept_aside(_entities(out), [
-        e for e in _entities(out)
-        if keeping and e.get("current_message") is not False and _SUBJECT_AXIS.get(str(e.get("hint") or "")) in held_axes
-    ])
     # Values come from the parse as stated; a restated held row (current_message false) goes.
     dropped_entities = [{"kind": e.get("hint")} for e in _entities(out) if e.get("current_message") is False]
     entities = [copy.deepcopy(e) for e in _entities(out) if e.get("current_message") is not False]
+    # AC-S1-9: `keep` changes nothing. A brand / class / spec word typed on an axis the State
+    # holds is set aside: marked on the applied copy (the input verdict is never touched).
+    _mark_kept_aside(entities, [
+        e for e in entities if keeping and _SUBJECT_AXIS.get(str(e.get("hint") or "")) in held_axes
+    ])
     # The quantity of the answered check (or of the held row) carries onto the refined, kept
     # or swapped item when the message states none; a stated quantity wins.
     qty_by_code, shared_qty = _held_quantity(state.focus)

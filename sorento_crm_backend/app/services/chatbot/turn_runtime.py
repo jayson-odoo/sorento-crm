@@ -1398,9 +1398,12 @@ def set_clarify_carry(verdict: dict[str, Any], predicate: Any, resolved: Any) ->
     options = [o for o in options if o]
     if not term or not options:
         return None
+    from app.services.chatbot.turn.chat_state import without_mark
+
     ask = {key: verdict.get(key) for key in _CLARIFY_ASK_KEYS}
+    # Stored in the session: the State applier's internal mark (`KEPT_ASIDE`) never is.
     ask["entities"] = [
-        dict(e)
+        without_mark(e)
         for e in (verdict.get("entities") or [])
         if isinstance(e, dict) and e.get("current_message") is True
     ]
