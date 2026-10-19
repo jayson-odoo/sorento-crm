@@ -23,7 +23,6 @@ import pytest
 
 import app.main  # noqa: F401  isort:skip
 from app.models.product import Product, ProductCategory, UnitOfMeasure
-from app.models.product_spec import ProductSpecifications, ProductSpecRegistry
 from app.services.ai_assistant_service import MCPRuntimeClient
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.head import parser as parser_mod

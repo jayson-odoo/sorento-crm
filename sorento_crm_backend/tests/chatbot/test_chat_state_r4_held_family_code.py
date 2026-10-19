@@ -12,9 +12,8 @@ from __future__ import annotations
 import pytest
 
 from tests.chatbot._family_code_seed import seed_rows
-from tests.chatbot._turn_helpers import entity  # noqa: F401
 from tests.chatbot.test_chat_state_r3a_fetch_quantity import _family_turn, _fetched, _reply, _wanted
-from tests.chatbot.test_chat_state_seam import _op  # noqa: F401
+from tests.chatbot.test_chat_state_seam import _op
 from tests.chatbot.test_engine import _parser_output, seeded, stub_access  # noqa: F401
 
 NONE_PHRASES = ("none on record", "tiada rekod", "没有记录")
@@ -62,6 +61,22 @@ def test_r4_cp0_665ba3e897_p_trap_narrows_the_held_family_code_siblings_and_carr
     assert _fetched(calls) == landed, (calls, _reply(out))
     assert _wanted(calls) == {pid: 10 for pid in landed}, (calls, _reply(out))
     assert "how many" not in _reply(out)
+    assert not (_fetched(calls) & {ids[c[0]] for c in DECOYS})
+
+
+@pytest.mark.parametrize("message,raw", [c[1:] for c in P_TRAP_PHRASINGS], ids=[c[0] for c in P_TRAP_PHRASINGS])
+def test_r4_cp0_665ba3e897_state_off_held_family_exact_members_are_not_widened_to_the_pp_sibling(
+    session_factory, seeded, stub_access, monkeypatch, message, raw
+):
+    """Reviewer guard on 558b3fc56d: no `state_changes` (State path off), the held-family narrowing alone
+    keeps the read on exact codes, so the prefix probe does not add SRTWC286-SH-PP."""
+    ids = seed_rows(session_factory, SRTWC286_ROWS + DECOYS, registry=TRAP_REG)
+    verdict = _parser_output(intent_hint="check_stock", domain_hint="inventory", user_goal="spec of the held product",
+                             entities=[_spec(raw, "trap_type", "p_trap")])
+    assert not verdict.get("state_changes")
+    out, calls = _family_turn(session_factory, stub_access, monkeypatch, message, ids, "SRTWC286-SH", 10, verdict)
+    landed = {ids["SRTWC286-SH-P"], ids["SRTWC286-SH-NEW-P"]}
+    assert _fetched(calls) == landed, (calls, _reply(out))
     assert not (_fetched(calls) & {ids[c[0]] for c in DECOYS})
 
 
