@@ -150,7 +150,9 @@ def _uncell(value) -> str:
 
 
 def write_csv(rows, path) -> None:
-    with open(path, "w", newline="", encoding="utf-8") as fh:
+    """UTF-8 with a BOM (a spreadsheet then reads it as UTF-8), readable by its owner only (real names)."""
+    with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", newline="", encoding="utf-8-sig") as fh:
+        os.chmod(path, 0o600)  # an existing file keeps its old mode through O_CREAT
         writer = csv.DictWriter(fh, fieldnames=CSV_FIELDS)
         writer.writeheader()
         writer.writerows({k: _cell(v) for k, v in r.items()} for r in rows)
@@ -165,7 +167,7 @@ def _reviewed_links(path) -> dict:
             raise ValueError(f"{path} is not a proposal CSV from this script: no {', '.join(sorted(missing))} column")
         seen, links = set(), {}
         for r in reader:
-            sf_id = _uncell(r["sf_id"])
+            sf_id = _uncell(r["sf_id"]).lower()
             if not sf_id:
                 continue
             if sf_id in seen:
@@ -182,11 +184,12 @@ def apply_csv(db, path, company_id) -> dict:
     A row is linked only when the SF is still unlinked and the proposal, run again now, is still
     LINK with every column equal to the reviewed row (so a row edited to another customer, or a
     match that changed, is skipped). Returns `{"reviewed", "linked", "skipped_already_linked",
-    "skipped_changed"}`.
+    "skipped_changed", "skipped_forms"}`; `skipped_forms` names each skipped row by form number.
     """
     reviewed = _reviewed_links(path)
     by_name = _active_by_name(db, company_id)
     counts = Counter()
+    skipped_forms: list = []
     try:
         # Locked: a staff link saved meanwhile waits for this commit instead of being overwritten.
         headers = (
@@ -203,11 +206,13 @@ def apply_csv(db, path, company_id) -> dict:
             now = _propose_one(db, header, by_name) if header is not None else None
             if now is not None and now["status"] == ALREADY_LINKED:
                 counts["skipped_already_linked"] += 1
+                skipped_forms.append(_uncell(row["form_number"]) or sf_id)
                 continue
             if now is None or now["status"] != LINK or any(
                 _uncell(row[f]) != (now[f] or "").strip() for f in CSV_FIELDS if f != "status"
             ):
                 counts["skipped_changed"] += 1
+                skipped_forms.append(_uncell(row["form_number"]) or sf_id)
                 continue
             # The staff form's link path: active + company-visible, and the customer's own name
             # becomes customer_name (procurement_service._apply_customer_link).
@@ -222,6 +227,7 @@ def apply_csv(db, path, company_id) -> dict:
         "linked": counts["linked"],
         "skipped_already_linked": counts["skipped_already_linked"],
         "skipped_changed": counts["skipped_changed"],
+        "skipped_forms": skipped_forms,
     }
 
 
@@ -251,6 +257,7 @@ def main(argv=None) -> int:
                 f"Skipped, already linked: {result['skipped_already_linked']}. "
                 f"Skipped, changed since the dry run: {result['skipped_changed']}."
             )
+            print(f"Not linked: {', '.join(result['skipped_forms']) or 'none'}.")
             print("Next: python scripts/backfill_sf_sales_type.py (dry run), then --apply, to fill Sales Type.")
             return 0
         rows = propose(db, args.company_id)

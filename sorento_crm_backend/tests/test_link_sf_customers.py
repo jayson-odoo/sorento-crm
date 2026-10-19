@@ -126,7 +126,7 @@ def _write(path, rows):
 
 
 def _read_csv(path) -> list[dict]:
-    with open(path, newline="", encoding="utf-8") as fh:
+    with open(path, newline="", encoding="utf-8-sig") as fh:  # the proposal carries a BOM
         return list(csv.DictReader(fh))
 
 
