@@ -195,13 +195,30 @@ def test_a_new_line_split_dropped_onto_another_line_is_refused(api, emails):
 
 
 def test_a_split_taken_back_off_another_line_is_refused(api, emails):
-    """(b) The card plan confirmed from scratch; 608's 167 is taken back to New line: refused."""
+    """(b) The card plan confirmed from scratch; 608's 167 is taken back to New line: refused.
+    The 167 taken off 608 comes back on 480's New-line rows (480 still 417: 14 own + 167 on
+    New line + 236 on 608), so it is a move, not a drop (UAC at 7ca862b1c9)."""
     s = _card_plan_confirmed(api, emails)
     _assert_refused(s, {
         480: [(14, D_480_NEW, 480, ""), (236, D_608, 608, ""), (167, D_167, "new", "")],
         752: [(37, D_608, 608, ""), (467, D_752_NEW, 752, "")],
         608: [],
     }, "608 -> New line")
+
+
+def test_kept_rows_on_another_line_can_be_dropped_from_an_applied_plan(api, emails):
+    """AC-G17, still allowed (UAC at 7ca862b1c9; round 3's 10 + 4,
+    `test_line_splits_round3.py` ~:878): the card plan confirmed from scratch, then 480
+    re-planned as 10 own + 4 on New line against its current 14, so the 403 on 608 leaves the
+    plan (an explicit drop, not a move: 480's own-line and New-line rows still add up to 14).
+    752's applied part is sent as it stands, 608 with no splits, as the sheet sends every
+    line."""
+    s = _card_plan_confirmed(api, emails)
+    _assert_saved(s, {
+        480: [(10, D_480_NEW, 480, ""), (4, D_608, "new", "")],
+        752: [(37, D_608, 608, ""), (467, D_752_NEW, 752, "")],
+        608: [],
+    }, "card plan re-planned as 10 + 4")
 
 
 def test_a_split_moved_between_other_lines_is_refused(api, emails):

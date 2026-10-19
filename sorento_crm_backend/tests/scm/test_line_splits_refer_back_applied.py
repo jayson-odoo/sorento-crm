@@ -775,6 +775,7 @@ def _rows_480(s):
     }
 
 
+@pytest.mark.xfail(strict=True, reason="AC-G19 re-plan moves deferred to a follow-up lane (crew ruling a71847692 (b))")
 def test_g19_a_re_plan_whose_split_row_is_received_is_declined_and_moves_nothing_else(
     api, emails
 ):
