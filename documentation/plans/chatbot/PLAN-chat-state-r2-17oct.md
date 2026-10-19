@@ -334,3 +334,15 @@ crew/state/reports/EVAL-BENCH-train-classes-19oct.md. Track: small fix (< ~300 l
     when one other axis is set.
   - F2 (unattributed): "sorento wc any stock?", "ada stok wc cabana tak", "sorento wc only" over es-c9bbf5941c
     answer "How many units for each?" over a list headed by ACC-SRT1023..1026; main not run on these.
+- F1 slice (crew a22812000 (a)): red 5f6d6c869e, harness red 6cee074035 (the first harness re-stubbed the parser
+  config and ran state-OFF; a guard now counts chat_state.apply_changes per turn), fix 5ad7d8294e
+  (`_with_held_set_axes`, engine.py), review guards 1f8c579f68 (refine-only, product code, typed brand, class
+  buckets), G4 fix 176deedb92 (`_write_set`: a set on category or product_type clears both class buckets). Merged
+  origin/main 32b0eefd1e (ee18464a29) and #1755 1e10fc261c (300274f3ba) per crew a26398115. Reviewer READY; kill-
+  proofs; L1 gate (merged head minus F1 vs head) 0/1506 + 0/585.
+- ARCHITECTURE (owner rule 20 Oct 00:55). Layer: code after parse, before the tool (what the fetch reads). Shared
+  mechanism: on the state path apply_changes updates the State, but the fetch still reads this message's entities
+  plus carry patches (with_carried_entities "names nothing" turn_runtime.py ~4921, R3-A carry_onto_family, R4-A
+  narrow_held_to_brands, F1 `_with_held_set_axes`). F1 is general across axes but a second carry path; G4 is
+  layer-level (the class is one axis in the State model, two-bucket conflict removed). Layer re-plan proposed
+  (crew a29101220): one State-to-fetch function for every state-led turn, retiring the three carry patches there.
