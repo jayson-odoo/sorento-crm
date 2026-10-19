@@ -69,7 +69,7 @@ class WordCandidates:
 
 @dataclass(frozen=True)
 class _Value:
-    kind: str  # "product type" | "spec"
+    kind: str  # "product type" | "spec" | "flag" (a boolean key, printed as a spec)
     spec_key: str
     value: str
     display: str
@@ -132,6 +132,18 @@ def _vocabulary(db: "Session") -> tuple[dict[str, list[_Value]], dict[str, list[
                 key = _phrase(said)
                 if key and row.spec_key not in numeric.setdefault(key, []):
                     numeric[key].append(row.spec_key)
+            continue
+        if data_type == "boolean":
+            # R6-2: a boolean key's registry phrases per value (`{"true": [phrases]}`); only a value
+            # the registry holds phrases for is offered, so no false line is ever invented.
+            for value, said in synonyms.items():
+                if value == "_self":
+                    continue
+                entry = _Value("flag", row.spec_key, str(value), str(row.label or row.spec_key))
+                for word in said or []:
+                    key = _phrase(word)
+                    if key and entry not in phrases.setdefault(key, []):
+                        phrases[key].append(entry)
             continue
         if data_type != "enum":
             continue
@@ -207,7 +219,8 @@ def _value_candidates(db: "Session", tokens: list[str]) -> list[WordCandidates]:
     # A word inside a longer phrase that is on file exactly is that phrase's word ("flexible"
     # in "double flexible", "basin" in "basin mixer"): the longer phrase is what was said, so
     # neither the shorter exact reading nor a near spelling of it is listed.
-    exact_spans = [(p, p + len(g.split())) for _, (e, _s, p, g) in best.items() if e]
+    # A boolean flag's phrase never hides a product type's word ("toilet" in "smart toilet").
+    exact_spans = [(p, p + len(g.split())) for v, (e, _s, p, g) in best.items() if e and v.kind != "flag"]
 
     def inside_longer(position: int, gram: str) -> bool:
         end = position + len(gram.split())
@@ -436,6 +449,20 @@ def _unit_keys(db: "Session") -> dict[str, list[str]]:
     return {unit: sorted(set(keys)) for unit, keys in units.items()}
 
 
+def _bare_size_keys(db: "Session") -> dict[str, list[str]]:
+    """The numeric keys a size given alone can mean, per unit: the registry's own
+    `matches_bare_size` flag, or a key a class scopes (`applies_when.class`). Data only."""
+    from app.services.product_spec_registry import active_registry
+
+    out: dict[str, list[str]] = {}
+    for row in active_registry(db):
+        unit = str(getattr(row, "unit", None) or "").strip().casefold()
+        scoped = bool((getattr(row, "applies_when", None) or {}).get("class"))
+        if (row.data_type or "").lower() == "numeric" and unit and (getattr(row, "matches_bare_size", False) or scoped):
+            out.setdefault(unit, []).append(row.spec_key)
+    return out
+
+
 def _keys_holding(db: "Session", keys: list[str], number: str, family: set[str]) -> list[str]:
     """The unit's keys that hold `number` in product_specifications (an exact numeric match on
     the stored JSON value), the held family's keys first, then the most held, then by name.
@@ -500,8 +527,15 @@ def _size_candidates(
             from app.services.chatbot.head.held_family import _family_ids
 
             family = _family_ids(db, held_ids) if held_ids else set()
+        unit_name = shown.split()[-1] if " " in shown else _SIZE_RE.fullmatch(shown).group(2)
+        bare = _bare_size_keys(db).get(unit_name, [])
+        bare_held = _keys_holding(db, bare, number, family) if bare else []
         keys = _keys_holding(db, keys, number, family) or keys
-        out.append(WordCandidates(gram=shown, position=position, items=[f"spec {key} = {number}" for key in keys]))
+        items = [f"spec {key} = {number}" for key in keys]
+        if bare_held:
+            # R6-1: a size given alone (no dimension named); the parser picks the reserved key "size".
+            items.insert(0, f"size {number} {unit_name} (no dimension named)")
+        out.append(WordCandidates(gram=shown, position=position, items=items))
         spanned |= span
     return out, spanned
 

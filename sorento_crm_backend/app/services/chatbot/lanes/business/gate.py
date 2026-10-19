@@ -523,7 +523,16 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
             intent = jsc.js_string(parser.get("intent_hint") or "")
             intent_allows_empty = intent in INTENTS_ALLOWING_EMPTY
             gate_passed = ALLOWS_EMPTY.get(domain) is True or intent_allows_empty
-            if intent_allows_empty and ALLOWS_EMPTY.get(domain) is not True:
+            # CLOSED LISTS: a spec that grounding made out of the parser's class (`class_hint`)
+            # names a class, so the described set is the scope and the ask is never refused as
+            # "search every <domain>". A parser-emitted spec without it keeps the refusal.
+            names_class = bool(parser.get("closed_lists")) and predicate_bypass and any(
+                isinstance(e, dict) and e.get("class_hint") for e in jsc.array(parser.get("entities"))
+            )
+            if names_class and not gate_passed:
+                gate_passed = True
+                gate_reason = "no entities; the ask names a class, so the described set is the scope"
+            elif intent_allows_empty and ALLOWS_EMPTY.get(domain) is not True:
                 # Its own reason string, so a trace says WHY a domain that normally
                 # demands a filter let this one through.
                 gate_reason = f"no entities; intent '{intent}' permits broad query"

@@ -1135,6 +1135,10 @@ def _focus_rules(
             # Per KIND, not per row: every settled row of that kind stays (an echo of a
             # few of fifty listed products keeps the fifty, as ATTACH-SET round 2 wants).
             kept_kinds = set(by_kind) | restated_kinds(verdict)
+            if verdict.get("closed_lists") and set(by_kind) == {"attachment_type"}:
+                # CLOSED LISTS: a message whose only entities are file types says what to
+                # answer, not about what, so the held product stays its subject.
+                kept_kinds.add("product")
             for kind, attr in KIND_FIELD_MAP.items():
                 if kind in kept_kinds:
                     continue

@@ -1,6 +1,6 @@
 # PLAN: CHAT-CLOSED-LISTS - chatbot step 2, closed candidate lists
 
-Status: Review, round 5 pushed (R5-1 size keys by data, R5-2 contains-is-not-the-code; reviewer READY); the lane prompt template changed (R5-2), so crew republishes an unlabelled CLOSED LISTS version before the next live / combined held-out run. Track: full (size L, LEAD pattern).
+Status: Review, round 6 pushed (R6-1..R6-6; reviewer READY, security-reviewer PASS); next: crew republishes the lane prompt (R5-2 + R6-1 template lines), owner OK for the dev data SQL, paired TRAIN x1; architecture consolidation proposed to crew (owner 20 Oct). Track: full (size L, LEAD pattern).
 Branch `claude/chat-closed-lists-x6ymb5` (the sandbox cannot push `crew/chat-closed-lists`), PR #1755.
 
 Design source: CHATBOT-SCALE-DESIGN-16oct section 8 step 2 + D2 (crew-only): code only SHORTLISTS
@@ -224,3 +224,54 @@ Not built (root cause rc5-downflips.md): cp0-362022362a TYPE-OMITTED (MODEL, bot
 pick (MODEL, single; owner call on keeping an unsure pick). Bench notes for EVAL-BENCH: the spec grader compares values,
 never keys (3 of the lane's 5 spec up flips are wrong-key passes). Reviewer nits kept: `_keys_holding` skips
 string-stored values (all 17 numeric keys are JSON numbers on the dev copy); the family reader is linear in the held set.
+
+## Round 6 (19 Oct): TRAIN classes from EVAL-BENCH-train-classes-19oct.md
+
+combined3 held-out (crew): attachments 53.8 (bar 95), spec 73.7 (bar 90), leaks 0. Plan approved by crew:
+1. SIZE-WRONG-KEY (9 items): owner rule, crew ruling (a), data only: a bare size (the customer names no dimension; the
+   parser picks a `size N <unit>` candidate) matches dim_width OR dim_length; trap_length where the registry says it
+   applies to the class and holds N there (WC 200 / 300); a named dimension stays strict.
+2. SPEC-DROPPED-FRESH (5): piece_count / finish phrases get candidate lines from registry data.
+3. HELD-OVER-NEW-CLASS (2 left): a grounded class-key spec counts as naming the class; owner rule: a class ask
+   answered with only the held product is a fail.
+4. TYPE-ONLY-EMPTY-SET (2): a type-only follow-up over held products fetches their files, never a described set (R4-5).
+5. SIZE-AS-CODE (4): check that R5-1 / R5-2 cover it; build only a gap.
+Not this lane: COUNT-ONLY-SET (CHAT-COMPOSER #1771/#1776), SIZE-AS-QTY (CHAT-STATE prompt), TYPE-WORD-DROPPED (MODEL;
+owner call on unconfident picks); classes 1, 4, 14 fixed on #1755 per the report. Spend: $0 root cause and tests, one
+paired TRAIN x1 by EVAL-BENCH at the end (~0.9 USD, cap 3).
+
+### Round 6 results (19-20 Oct)
+
+| Class | Red | Green | Notes |
+|---|---|---|---|
+| R6-1 BARE-SIZE-BY-DATA (SIZE-WRONG-KEY) | 09fc569b | f8f15b79, c894458f | migration spec_bare_size_0001 (`matches_bare_size`), `size N <unit> (no dimension named)` line + one CLOSED LISTS line, head/bare_size.py grounding (class key by applies_when, else OR over flagged keys; Q3 named-dimension fallback by registry phrases + counts), OR carried through resolver, predicate, paging, held_family |
+| R6-2 BOOLEAN-SPEC-PHRASE (SPEC-DROPPED-FRESH) | 55d122e0 | a28c93ca | boolean registry phrases get `spec K = true (<label>)`; S2 test updated (09a883ed) |
+| R6-3 NAMES-OWN-CLASS-AT-EVERY-SEAM (HELD-OVER-NEW-CLASS) | beef226c | f7915900, d7917e24, 85562511, 9277505b | task revise + grounding class_hint + class-hinted spec is gate scope; a stub-only apply rule removed |
+| R6-4 TYPE-ONLY-KEEPS-HELD (TYPE-ONLY-EMPTY-SET) | 51e45ba7 | a5deac2c | a follow-up naming only a file type keeps the held product |
+| R6-5 review fixes | fdb9e4f2, 550f1a9c, 4d3f6aeb, e8f53573, 16b912c8 | 13a924f1, ca707012, d56e05ae, 995f18f7 | Q3 reads label words (real seed), registry API field, hidden keys in the OR, gated class_hint, unit in the miss line, CASE cast, one unit |
+| R6-6 HIDDEN-KEYS-EVERYWHERE (security) | 28ac75c3 | 658cbdfa | contact-hidden keys never filter, narrow or print (bare_size, held_family, Shape B strict + OR) |
+
+Data (dev): crew/state/migrations/CHAT-CLOSED-LISTS-L.sql (matches_bare_size true for dim_width / dim_length;
+trap_length applies_when class Water Closet); UPDATEs need owner OK. Prod (crew ruling a25130034 (a)): the owner runs the same idempotent SQL from the PR
+runbook after the migration deploys; a registry UI toggle for `matches_bare_size` is a later follow-up lane. Staff cannot
+edit `applies_when` in the UI today either: the update service accepts it
+(sorento_crm_frontend/app/(protected)/master-data-management/product-specifications/services/productSpecService.ts:462)
+but no screen component reads or writes it (code check, not a browser check), so trap_length's applies_when also goes
+through the owner SQL.
+
+## ARCHITECTURE (owner 20 Oct: layer, shared mechanism, other classes fixed, special cases removed)
+
+1. Spec key choice (R5-1, R6-1, R6-2), layer DATA -> candidates / grounding. Shared mechanism: the key a word can mean
+   is read from the registry (values held, matches_bare_size flag, applies_when.class, label words and synonyms), not
+   from key-name order or key type. Also fixes SIZE-AS-CODE, the es-0db8cf0a48 refine, the cp0-caafdcebea header and
+   the boolean phrases. Removes: the name-sorted cut-at-5 and the "boolean keys get no candidate line" special case.
+   No class or key list in code.
+2. Subject decision (R6-3, R6-4, HELD-OVER-NAMED-CLASS, FILTER-OVER-HELD), layer ROUTING. Today one rule (a message
+   naming its own class or product replaces the held subject; a refine fragment on any axis keeps it) is applied at
+   several seams (scheme_index, held_family, task revise, gate scope, apply kept_kinds). Crew ruling a29310107 (2): the subject decision moves to
+   CHAT-STATE's Subject resolver; this lane does not extend R6-3 / R6-4 and adds no new seam guards (frozen).
+3. Contact-hidden spec keys (R6-5 S2, R6-6), layer ACCESS. Today enforced per consumer (bare_size, held_family,
+   Shape B); the candidate line can still show a hidden key name to the parser (security nit, no customer leak).
+   Crew ruling a29310107 (3)(a): read hidden keys once before the parse and strip them at the two entries
+   (candidate block, grounding output), keeping downstream drops as a safety net. Next slice.
+4. No round-6 fix is a special case for one message shape.

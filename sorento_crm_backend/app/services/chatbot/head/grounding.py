@@ -260,6 +260,8 @@ class Grounded:
     known: list[str] = field(default_factory=list)
     #: the registry's own words for the value ("gunmetal" for a typed "gunmetl")
     words: str | None = None
+    #: a bare size's OR (R6-1): the keys the number may be under (`head/bare_size.py`)
+    any_keys: list[str] | None = None
 
     def entity(self, template: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -273,6 +275,7 @@ class Grounded:
             "spec_label": self.label,
             "spec_words": self.words,
             "spec_known": list(self.known) if self.value is None else [],
+            **({"spec_any_keys": list(self.any_keys)} if self.any_keys else {}),
         }
 
 
@@ -742,6 +745,8 @@ def ground(
     closed_lists: bool = False,
     listed_codes: frozenset[str] | None = None,
     pick_info: dict[str, dict[str, Any]] | None = None,
+    held_ids: list[str] | None = None,
+    hidden_keys: frozenset[str] = frozenset(),
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """The verdict with every descriptor grounded, and a note per change for the trace.
 
@@ -861,6 +866,14 @@ def ground(
             entity = {**entity, "hint": "category"}
             hint = "category"
             notes.append({"from": _PRODUCT_HINT, "raw": raw, "to": "category"})
+        if hint in _SPEC_HINTS and closed_lists:
+            from app.services.chatbot.head.bare_size import ground_bare
+
+            bare = ground_bare(db, entity, [e for e in entities if isinstance(e, dict)], vocab, held_ids, hidden_keys)
+            if bare is not None:
+                add([bare], entity)
+                notes.append({"from": hint, "raw": raw, "to": [bare.__dict__]})
+                continue
         if hint in _SPEC_HINTS:
             others = [
                 str(e.get("raw") or "")
@@ -882,7 +895,11 @@ def ground(
                 # PROMO-SUBJECT-FILTER AC-24: the words name two types, but the whole phrase
                 # is one value of a registry key, said word for word ("basin cabinet",
                 # furniture_type basin_cabinet): that value is what was asked for.
+                size = len(out)
                 add([whole], entity)
+                if closed_lists and len(out) > size:
+                    # The parser named a class; the spec this makes still says so (`names_own_class`).
+                    out[-1] = {**out[-1], "class_hint": hint}
                 notes.append({"from": hint, "raw": raw, "to": [whole.__dict__]})
                 continue
             # Fix round 10 on PR #833: "water tap basin" holds two product types word for

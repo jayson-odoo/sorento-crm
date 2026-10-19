@@ -150,11 +150,15 @@ def test_a_word_alone_is_never_read_for_a_code_inside_a_longer_code(db):
     ]
 
 
-def test_a_boolean_key_is_left_to_the_parser_and_a_numeric_key_word_lists_its_number(db):
+def test_a_boolean_key_phrase_gets_its_line_and_a_numeric_key_word_lists_its_number(db):
     _registry(db, "width_mm", "Width", [], {"_self": ["width"]}, data_type="numeric")
     _registry(db, "has_massage", "Massage jets", [], {"true": ["jacuzzi"]}, data_type="boolean")
 
-    assert _lines(db, "width 600 jacuzzi") == [candidates.HEADER, '- "width 600": spec width_mm = 600']
+    assert _lines(db, "width 600 jacuzzi") == [
+        candidates.HEADER,
+        '- "width 600": spec width_mm = 600',
+        '- "jacuzzi": spec has_massage = true (Massage jets)',
+    ]
 
 
 # --- the registry's real shapes (crew CP0 cards, masked; synthetic codes) ------------------------
@@ -442,3 +446,63 @@ def test_the_closed_lists_section_says_a_held_word_code_is_that_product_only_whe
     from app.services.chatbot.head import closed_lists_prompt as clp
 
     assert 'holding "W"' in clp.SECTION, clp.SECTION
+
+
+# --- R6-2 BOOLEAN-SPEC-PHRASE (19 Oct; TRAIN cp0-d310f2e8a9 "high basin", es-4925e67621 "without
+# overflow", cp0-75e516bd40 "intelligent toilet") ---------------------------------------------------
+# A boolean registry key's phrases gave no candidate line. The registry stores them as
+# `{"true": [phrases]}` with an empty value_labels (dev copy: is_high_basin, no_overflow, is_smart),
+# so the line is `spec K = true (<label>)`; a false line only where the registry holds a false phrase.
+
+
+def _boolean(db, key: str, label: str, phrases: list[str]) -> None:
+    db.add(ProductSpecRegistry(
+        id=str(uuid.uuid4()), spec_key=key, label=label, data_type="boolean", allowed_values=[],
+        synonyms={"true": phrases}, value_labels={},
+    ))
+    db.flush()
+
+
+def test_a_boolean_spec_phrase_gets_a_candidate_line(db):
+    _boolean(db, "zz_is_tall", "Tall bowl", ["zz tall bowl", "tall bowl"])
+
+    lines = _lines(db, "do you have a zz tall bowl basin")
+
+    assert any("spec zz_is_tall = true (Tall bowl)" in ln for ln in lines), lines
+
+
+def test_a_without_phrase_the_registry_holds_is_offered_and_no_false_line_is_invented(db):
+    _boolean(db, "zz_no_spill", "Without spill", ["without zz spill", "no zz spill"])
+
+    lines = _lines(db, "any basin without zz spill?")
+
+    assert any("spec zz_no_spill = true (Without spill)" in ln for ln in lines), lines
+    assert not any("= false" in ln for ln in lines), lines
+
+
+def test_a_boolean_phrase_beside_a_type_word_keeps_both_lines(db):
+    _registry(db, "class", "Product class", [], {"Water Closet": ["toilet"]})
+    _boolean(db, "zz_is_smart", "Smart toilet", ["zz smart toilet"])
+
+    lines = _lines(db, "any zz smart toilet?")
+
+    assert any("spec zz_is_smart = true (Smart toilet)" in ln for ln in lines), lines
+    assert any(ln.startswith('- "toilet"') and "product type Water Closet" in ln for ln in lines), lines
+
+
+def test_guard_the_type_line_stays_beside_a_boolean_key(db):
+    _registry(db, "class", "Product class", [], {"Water Closet": ["toilet"]})
+    _boolean(db, "zz_is_smart", "Smart toilet", ["zz smart toilet"])
+
+    lines = _lines(db, "any zz smart toilet?")
+
+    assert any(ln.startswith('- "toilet"') and "product type Water Closet" in ln for ln in lines), lines
+
+
+def test_guard_the_numeric_a_number_line_stays_beside_a_boolean_key(db):
+    _registry(db, "dim_height", "Height", [], {"_self": ["high"]}, data_type="numeric")
+    _boolean(db, "zz_is_high", "High basin", ["zz high basin"])
+
+    lines = _lines(db, "do you have a zz high basin")
+
+    assert '- "high": spec dim_height (a number)' in lines, lines

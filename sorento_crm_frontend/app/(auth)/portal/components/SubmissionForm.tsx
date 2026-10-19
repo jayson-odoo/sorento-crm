@@ -2095,6 +2095,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
             disabled={!editing}
             pendingFiles={pendingFiles}
             onPendingFilesChange={setPendingFiles}
+            allowedExtensions={contact?.attachment_allowed_extensions}
           />
         </CardContent>
       </Card>

@@ -11,6 +11,7 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 import { NumberInput } from '@/components/ui/number-input';
 import { numberFieldError } from '@/lib/number-field';
 import { Switch } from '@/components/ui/switch';
@@ -221,9 +222,10 @@ function Labelled({ label, children }: { label: string; children: ReactNode }) {
 function Pills({ labels }: { labels: string[] }) {
   return labels.length ? (
     <div className="flex flex-wrap gap-1">
-      {labels.map((l) => (
+      {/* By position: two ids can share a label (Removed), and a shared key leaves stale badges. */}
+      {labels.map((l, i) => (
         <Badge
-          key={l}
+          key={i}
           variant="secondary"
           appearance="light"
           className="font-normal"
@@ -747,6 +749,20 @@ const NEEDS_CATALOG: Record<string, keyof SettingsCatalog> = {
   stock_visibility: 'warehouses',
 };
 
+/** Groups the view names from the catalog: before it arrives an id has no name, not a removed one. */
+const NAMED_FROM_CATALOG = new Set([
+  'access_types',
+  'brands',
+  'companies',
+  'market_segments',
+  'field_reveals',
+  'agents',
+  'agent_fields',
+  'attachment_types',
+  'stock_visibility',
+  'spec_visibility',
+]);
+
 export default function ContactTagSettings({
   tag,
   editing,
@@ -762,13 +778,19 @@ export default function ContactTagSettings({
   const [draft, setDraft] = useState<S>(() => ({ ...(tag.settings ?? {}) }));
   const [error, setError] = useState<string | null>(null);
   const [showNumberErrors, setShowNumberErrors] = useState(false);
-  const { catalog, data: loadedCatalog } = useSettingsCatalog();
+  const {
+    catalog,
+    data: loadedCatalog,
+    error: catalogError,
+  } = useSettingsCatalog();
   const s: S = editing ? draft : (tag.settings ?? {});
   const save = useSaveTagSettings(tag.id, onDone);
   const notVisible = (id: string) =>
     !!loadedCatalog &&
     NEEDS_CATALOG[id] !== undefined &&
     catalog[NEEDS_CATALOG[id]] === undefined;
+  const namesPending = (id: string) =>
+    !editing && !loadedCatalog && NAMED_FROM_CATALOG.has(id);
 
   const setSection = (section: string, v: unknown) =>
     setDraft((d) => {
@@ -836,14 +858,24 @@ export default function ContactTagSettings({
                 </p>
               ) : on ? (
                 <div className="mt-2">
-                  <GroupBody
-                    id={g.id}
-                    s={s}
-                    set={setSection}
-                    editing={editing}
-                    catalog={catalog}
-                    showNumberErrors={showNumberErrors}
-                  />
+                  {namesPending(g.id) ? (
+                    catalogError ? (
+                      <p className="text-sm text-destructive">
+                        {(catalogError as Error).message}
+                      </p>
+                    ) : (
+                      <Skeleton className="h-5 w-40" />
+                    )
+                  ) : (
+                    <GroupBody
+                      id={g.id}
+                      s={s}
+                      set={setSection}
+                      editing={editing}
+                      catalog={catalog}
+                      showNumberErrors={showNumberErrors}
+                    />
+                  )}
                 </div>
               ) : !editing ? (
                 <p className="mt-1 text-sm text-muted-foreground">Not set</p>
