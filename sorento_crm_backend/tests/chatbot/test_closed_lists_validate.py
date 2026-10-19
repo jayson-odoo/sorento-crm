@@ -176,8 +176,13 @@ def test_a_pick_off_the_lists_is_dropped_whatever_the_customer_typed(db):
     assert _ground(db, _file_entity("TD", None)) == []
 
 
-def test_an_unconfident_pick_is_dropped(db):
+def test_an_unconfident_pick_not_exactly_a_listed_item_is_dropped(db):
+    """Owner ruling 20 Oct 2026 on cp0-6240dc53f8 (KEEP, lead sign-off): an unconfident pick whose
+    `listed_item` is EXACTLY a listed item is kept (tests/chatbot/test_closed_lists_unconfident_
+    listed_pick.py); one that reaches an item only through its canonical_code or an alias keyword
+    is still dropped."""
     assert _ground(db, _file_entity("TD", "technical_specifications", confident=False)) == []
+    assert _ground(db, {**_file_entity("TD", None, confident=False), "listed_item": "TD"}) == []
 
 
 def test_gate_off_no_entity_is_tagged(db):

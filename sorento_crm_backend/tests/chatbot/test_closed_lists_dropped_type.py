@@ -1,7 +1,7 @@
 """R4-3 DROPPED-TYPE-CARRIES-OLD (TRAIN cp0-6240dc53f8, 3 of 9 pooled; synthetic ZZ data).
 
 The previous turn left the file type "ZZ Videos" on the focus. The next message's attachment_type
-entity (listed_item "ZZ Drawings" with confident false, or "none of these") is dropped by grounding,
+entity (an unsure pick naming no listed item, or "none of these") is dropped by grounding,
 and the old type stayed alive and was fetched. Rule: a current-message attachment_type entity that
 grounding drops still REPLACES the type axis with nothing for the turn, so the turn takes the
 which-file ask over the product's own types. Gate off: unchanged.
@@ -30,12 +30,15 @@ def _turns(w: World, second: dict):
 
 
 DROPPED = [
-    entity("pdf", "attachment_type", canonical="technical drawing", listed="ZZ Drawings", confident=False),
+    # Owner ruling 20 Oct 2026 on cp0-6240dc53f8 (KEEP, lead sign-off): an unconfident pick whose
+    # listed_item is EXACTLY a listed item is kept now, so the unsure case here names no listed item
+    # (its canonical_code alone hits one).
+    entity("pdf", "attachment_type", canonical="ZZ Drawings", listed=None, confident=False),
     entity("pdf", "attachment_type", canonical="technical drawing", listed="none of these"),
 ]
 
 
-@pytest.mark.parametrize("pick", DROPPED, ids=["not confident", "none of these"])
+@pytest.mark.parametrize("pick", DROPPED, ids=["not confident, not exactly listed", "none of these"])
 def test_a_dropped_type_pick_never_answers_with_the_old_type(pick, session_factory, seeded, stub_access, monkeypatch):
     w = _world(session_factory)
 
