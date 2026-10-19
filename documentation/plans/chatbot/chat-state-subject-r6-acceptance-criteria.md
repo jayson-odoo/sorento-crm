@@ -22,6 +22,15 @@ trace is byte-identical to today unless a line says otherwise.
   could not place makes the Subject unresolved. Any later change to the State (offer narrowing, held-family) rebuilds
   the Subject through the same module, so the Subject never goes stale.
 
+- AC-S1-9 (review round 2, lead decision per card R1 / R4 / R5) The op decides the other held axes: `set` (refine)
+  keeps every held axis it does not set; `keep` changes nothing (a restated held value keeps every axis; a value typed
+  under keep is not a change); `answer` fills ONLY the asked slot and keeps the others (card R5); `new_subject` drops
+  every held axis, the product axis included (card R4); a rejected change set leaves the held Subject as it was.
+- AC-S1-10 (review round 2) A held product without a uuid stays in the Subject as a token (key = its code) and the
+  fetch hands it over, as the browser-pass-6 promo turn 0bd47e62 needs (never a fetch scoped to no product).
+- AC-S1-11 (review round 2) Settle keeps the said tokens it could not place in `unplaced`; a Subject with placed ids
+  and a non-empty `unplaced` stays visible to S4, which decides the ask.
+
 ## S2 The fetch reads the Subject
 - AC-S2-1 On a state-led turn the resolver / tool input is built from the Subject by one function.
 - AC-S2-2 Setting one axis keeps every other held axis; `new_subject` or an explicit `clear` drops it (the 10
@@ -31,7 +40,8 @@ trace is byte-identical to today unless a line says otherwise.
   pin today.
 - AC-S2-4 On a state-led turn no legacy carry rule runs under any name: with_carried_entities and
   carried_entities_except (its body) are not called, whatever the op (refine, keep, answer, new_subject) and whether the
-  message typed a product code. The fetch reads only the Subject (source, product_ids, predicate rows).
+  message typed a product code. The fetch reads the Subject (source, product_ids, predicate rows) for every Subject axis; customer, warehouse,
+  document type and order rows, which are not Subject axes, still come from the focus per kind.
 - AC-S2-5 R4-A answer pick: an `answer` to the bot's brand offer gives the brand provenance `offer`, and the fetch holds
   the offered brand, not the held one beside it.
 
