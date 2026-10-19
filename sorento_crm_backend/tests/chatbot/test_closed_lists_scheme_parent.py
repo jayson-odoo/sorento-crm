@@ -205,3 +205,50 @@ def test_guard_gate_off_the_scheme_turn_is_unchanged(session_factory, seeded, st
     # Ungated, the scheme word is no listed document type and grounding drops it, as today.
     assert not [e for e in entities if e.get("certificate_uuids") or e.get("listed")], entities
     assert _file_entities(entities) == [], entities
+
+
+# --- F3-b review (R2, R3) --------------------------------------------------------------------
+
+
+def test_r2_a_miss_names_the_schemes_kind_by_its_type_name(session_factory, seeded, stub_access, monkeypatch):
+    """The parent kind's display is its type name, as the resolver's own attachment-type row shows
+    it: the miss reply said "attachment type: ZZ Test report" before F3-b, and says the code now."""
+    w = _world(session_factory)
+    w.files = [f for f in w.files if f["code"] != "ZZIK201"]  # the files tool finds nothing: the miss reply
+
+    [(r, _calls)], _entities = _turns(
+        session_factory, stub_access, monkeypatch,
+        [("zzik201 zzikr certificate", real_parse([_product("ZZIK201"), _scheme("zzikr", "ZZIKR")]))], w,
+    )
+
+    text = text_of(r)
+    assert "attachment type: ZZ Test report" in text, text
+    assert CODES[REPORT] not in text, text
+
+
+def test_r3_a_held_certificate_under_a_minority_kind_still_gets_its_file(session_factory, seeded, stub_access, monkeypatch):
+    """In the held branch the parent is counted over the HELD certificates: ZZSP104's ZZSPAN
+    certificate is filed as ZZ Certificate though the scheme-wide majority is ZZ Test report."""
+    w = _world(session_factory)
+
+    [(r, calls)], _entities = _turns(
+        session_factory, stub_access, monkeypatch,
+        [("zzsp104 zzspan certificate", real_parse([_product("ZZSP104"), _scheme("zzspan", "ZZSPAN")]))], w,
+    )
+
+    sent = fetches(calls)
+    assert sent and sent[0].get("attachment_type_ids") == _type_ids(w, CERT), (text_of(r), sent)
+    assert "ZZSP104_ZZSPAN.pdf" in text_of(r), text_of(r)
+
+
+def test_guard_a_held_certificate_under_the_majority_kind_gets_the_test_report(session_factory, seeded, stub_access, monkeypatch):
+    w = _world(session_factory)
+
+    [(r, calls)], _entities = _turns(
+        session_factory, stub_access, monkeypatch,
+        [("zzsp101 zzspan certificate", real_parse([_product("ZZSP101"), _scheme("zzspan", "ZZSPAN")]))], w,
+    )
+
+    sent = fetches(calls)
+    assert sent and sent[0].get("attachment_type_ids") == _type_ids(w, REPORT), (text_of(r), sent)
+    assert "ZZSP101_ZZSPAN.pdf" in text_of(r), text_of(r)
