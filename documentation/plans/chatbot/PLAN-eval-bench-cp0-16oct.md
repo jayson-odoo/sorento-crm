@@ -478,3 +478,32 @@ catalogue items; (k) 2 items where "square" is a customer name excluded (cp0 gol
 - Red test pins the live shape (`facts.files` an int above 0); kill-proof on main's envelope read and on the guard
   mutation `announced is None`.
 - TRAIN g1755c attachment: lane 33 -> 36, main 27 -> 34. Held-out re-grade at $0 went to crew only.
+
+## Round 40 (19 Oct, grader misfires found by the held-out layer attribution; crew order)
+
+The 19 Oct layer attribution tagged 6 held-out failures as grader misfires and a trace-cap class on `asked_type`.
+Each check now reads what the bot did, or returns unknown (None) when the evidence cannot tell; none can turn a real
+failure into a pass:
+- `no_picker`: a did-you-mean for a held code that is not on file passes, but only when the picker's options are within
+  that code's own `unresolved_suggestions` (a needless picker for another held code still fails).
+- `tool_target`: a picked customer is matched by the uuids of the option at the gold position, not by a name fragment
+  (on real rows the fragment matched every option); a turn that fetched nothing because it asked the owner-ruled period
+  question (`do_range`) is unknown, not a failure.
+- `applied`: a brand narrowing over the held family (`held_family` with brands, a match looked up) counts as applied.
+- Trace cap: a capped memory event reads the open question from the post-turn state; when that is unreadable too and
+  the bot asked the tier question, the item is unknown, unless a leak was found (the leak stays the failure reason).
+  A capped apply event reads the parser's derived entities only when a tool carried `attachment_type_ids`, else unknown.
+- `which_one` (attachment, gold `ambiguous`): a which-one picker over the codes the customer typed passes with no file owed
+  when each option carries the has / no stamp of the asked type, as the domain setting says (owner 5 Oct PHOTO-PICKER,
+  restated 19 Oct): `Profile.stock_availability_only` (an availability-only contact, a dealer) gets a bare list, everyone
+  else is stamped (`lanes/business/answer.py` gates it, `turn_runtime._stock_availability_only` resolves it). The stamp is
+  read from each option's `stamp`; an unstamped list for a stamped contact, a stamped list for a dealer, another type's
+  stamp and a list over other codes still fail. The trace carries no profile flag, so the grader INFERS the setting
+  from the item's asker audience (dealer / linked_dealer = bare, else stamped). Measured read-only against
+  `stock_visibility.resolve_policy` for every attachment asker in the held-out and TRAIN gate sets: 79 of 79 agree.
+  Trigger for an exact source (the gold carrying the asker's policy at build time): an asker whose policy differs
+  from their audience.
+- Gold (crew files): the AI-blocked contact's item leaves the set (manual exclusions).
+Red-first per item, kill-proof per hunk, two Opus review rounds (the first found a wrong-option pass, a leak turned
+unknown and an `asked_type` fallback that passed 11 of 34 real failures; all closed). TRAIN gate rows: no verdict
+changes. Held-out re-grade at $0 went to crew only.
