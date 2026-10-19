@@ -5,7 +5,7 @@ tabs on SO417636; build only after the owner OKs both. Track: M (new rule on the
 existing screens; no migration expected). Lead pattern: tester red tests, one coder, reviewer,
 browser pass 1280/375 on the crew test copy.
 
-Card: `oi-split-view-behaviour-card.md` (alongside, after discovery). UAC:
+Card: `oi-split-view-behaviour-card.md` (alongside; filed as crew ask 19 Oct). UAC:
 `oi-split-view-19oct-acceptance-criteria.md` (after the card is answered). Mock:
 `documentation/mockups/OI-SPLIT-VIEW/index.html`.
 
