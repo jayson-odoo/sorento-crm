@@ -431,3 +431,29 @@ def test_r4a_r3_guard_a_brand_code_picks_the_offered_brand(seam):
     want = {seam.uuid_of[c] for c in member["held"]["Sorento"]}
     ids = _ids_in_calls(seam.turn_calls[-1])
     assert ids and ids <= want, (seam.turn_calls[-1], seam.rules_fired)
+
+
+# --------------------------------------------------------------------------- #
+# Round 4: the set's own (default) brand is a pickable name
+# --------------------------------------------------------------------------- #
+
+DEFAULT_BRAND_SET = {**DEFAULT_HELD_E9, "default_brand": "Sorento"}
+
+OWN_BRAND = [("en", "sorento and cabana"), ("bm", "sorento dan cabana"), ("zh", "sorento和cabana")]
+
+
+@pytest.mark.parametrize("message", [c[1] for c in OWN_BRAND], ids=[c[0] for c in OWN_BRAND])
+def test_r4a_r4_the_sets_own_brand_is_kept_beside_an_offered_one(seam, monkeypatch, message):
+    plans = _plans(monkeypatch)
+    prev = _held_state(seam, DEFAULT_BRAND_SET)
+    key = prev["focus"]["set_page"]["set_key"]
+    key.update({"brand": "Sorento", "brand_default": True})
+    default_total = key["total"]
+    cabana = dict(DEFAULT_BRAND_SET["offer"])["Cabana"]
+    seam.say(message, _brand_pick("sorento", None, None, True, "cabana"), previous=prev)
+    assert "set_brand_chosen" in seam.rules_fired, seam.rules_fired
+    keys = _set_keys(plans)
+    assert len(keys) == 1, keys
+    blob = json.dumps(keys[0], default=str).lower()
+    assert "sorento" in blob and "cabana" in blob, keys[0]
+    assert keys[0]["total"] == default_total + cabana, keys[0]
