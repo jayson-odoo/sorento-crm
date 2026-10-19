@@ -952,6 +952,12 @@ class LineSplitService:
                     ),
                     code="line_split_sum_mismatch",
                 )
+            if self._moves_a_confirmed_split(f, rows):
+                raise AppException(
+                    status_code=422,
+                    message=f"{label}: a confirmed split cannot move to another line.",
+                    code="line_split_applied_move",
+                )
             plans.append((f, base_qty, base_date, rows))
 
         changes: List[Tuple[LineFacts, Dict[str, Any], Dict[str, Any]]] = []
@@ -1010,6 +1016,39 @@ class LineSplitService:
                 root_entity_type="project_sales_orders",
                 root_entity_id=str(order.id),
             )
+
+    def _moves_a_confirmed_split(self, f: LineFacts, rows: List[Dict[str, Any]]) -> bool:
+        """Until the AC-G19 lane ships (UAC AC-G19 "DEFERRED", "Until that lane ships"): would
+        this save move qty of a plan a Confirm applied between lines? It may not put more of
+        the line on any other line than the applied plan had there, and qty it takes off
+        another line must leave the plan, not come back on its own-line or New-line rows."""
+        if not f.splits or f.split_state != SPLIT_APPLIED:
+            return False
+        sits = self.effective_sits_on(f.splits)
+        before: Dict[str, Decimal] = {}
+        before_home = _ZERO
+        for split in f.splits:
+            on = sits.get(str(split.id))
+            if split.is_cancel:
+                continue
+            if on and on != f.line_id:
+                before[on] = before.get(on, _ZERO) + _dec(split.qty)
+            else:
+                before_home += _dec(split.qty)
+        after: Dict[str, Decimal] = {}
+        after_home = _ZERO
+        for row in rows:
+            on = row["sits_on_line_id"]
+            if row["is_cancel"]:
+                continue
+            if on and on != f.line_id:
+                after[on] = after.get(on, _ZERO) + row["qty"]
+            else:
+                after_home += row["qty"]
+        if any(qty > before.get(on, _ZERO) for on, qty in after.items()):
+            return True
+        taken_off = any(after.get(on, _ZERO) < qty for on, qty in before.items())
+        return taken_off and after_home > before_home
 
     @staticmethod
     def _is_unsplit(
