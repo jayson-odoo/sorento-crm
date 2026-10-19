@@ -1,7 +1,9 @@
 # PLAN: CHAT-STATE round 6 - one typed Subject between parse and tools (F2 / M2)
 
-**Status:** Build, S1 next. Track: L (cross-cutting; company scope + hidden keys move to one boundary, so
-security-reviewer joins). LEAD pattern. Branch `crew/chat-state-r2`, PR #1772. Approved: crew a29999356 (20 Oct).
+**Status:** Build: S1..S5 done locally (reviewer READY on S1..S3, security PASS on S1..S4, L1 gate 0/1506 + 0/585 on
+S1..S5); S6 next. Track: L (cross-cutting; the Subject CARRIES company scope + hidden keys this round, while enforcement stays at the
+existing gates: _readable_customers, doc scope, customer_docs_hidden, hide_customers / scope_linked. S5 / S6 never
+remove those gates; the one-boundary enforcement move is a named follow-up (crew review F2). security-reviewer joins). LEAD pattern. Branch `crew/chat-state-r2`, PR #1772. Approved: crew a29999356 (20 Oct).
 **UAC:** `chat-state-subject-r6-acceptance-criteria.md` (alongside). **Source:** crew/state/reports/
 CHAT-ARCH-REVIEW-20oct.md section 2 F2 (M2); owner rule 20 Oct 00:55 (ARCHITECTURE section on every plan).
 
@@ -46,3 +48,12 @@ seven first-line reads. State-off stays byte-identical.
   combined4 is crew's.
 - Lessons carried: fixtures carry the real data shape; never revert app files while a gate or live run reads the tree;
   a harness must prove the state path ran (apply_changes counter).
+
+## Round log
+- S5 deviations (coder, lead-accepted): `State.state_gate` (written only by apply_changes) is the gate, so a first ask
+  over an empty State runs as before; decide()'s standing-subject rows under the gate become REFINE of what was typed
+  (CARRY if nothing), per card R1 / R5; reconcile's resolver kind pick is gone on the state path, so the parser's entity
+  kind stands (no op equivalent; crew review listed reconcile.py:110-121 for deletion). Watch it in the TRAIN run.
+- L1 gate S1..S5 vs 2d2d2c0e79: grounding 0/1506, turn 0/585, no errors either arm (eval_base got chs_0001). The replay
+  corpus is mostly state-off parses, so it proves first asks / state-off unchanged; the state-path effect needs the
+  paired TRAIN x1 (DEV key out of credits until the owner tops it up).
