@@ -512,5 +512,7 @@ changes. Held-out re-grade at $0 went to crew only.
 
 The `which_one` check no longer guesses the stamp setting from the asker's audience. It reads the bot's own value:
 `stock_visibility.resolve_policy` -> `turn_runtime._stock_availability_only` -> `Profile.stock_availability_only` -> the stamp
-gate (`lanes/business/answer.py`). The live runner records it on each row (`asker_profile`); a stock tool envelope's
+gate (`lanes/business/answer.py`). The live runner wraps `turn_runtime.load_profile` for the turn and records the
+`stock_availability_only` of the profile the engine loaded on each row (`asker_profile`, source `turn_runtime.load_profile
+(captured)`; nothing when no profile was loaded); a stock tool envelope's
 `stock_visibility.mode` is the fallback; with neither the check is unknown (None), never inferred.
