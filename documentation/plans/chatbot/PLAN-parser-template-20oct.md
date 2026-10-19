@@ -43,3 +43,14 @@ in engine.py `_as_a_stock_ask_by_its_own_words`.
 - Size: <= 90 KB (stretch 75 KB).
 - Parser gold N=3 on fresh conflict-pair shapes, old (v178 + STATE) vs new; when-deliver gold must stay >= 31/42.
 - L1 replay; TRAIN x1 paired (code, follow-ups, attachment, spec) on a combined build. Spend <= USD 4.
+
+## Decisions and progress
+
+- 20 Oct: rule map 4d0f87d602 (176 blocks -> 50 rules). F1-A template 128aeb1716 (66,143 chars, lint clean), F1-B
+  parser-gold context rows 1bf98f34f8, dash-pattern fix b56b01fc7e. Nothing published yet.
+- Read-only risk check: ranking_drill must be explained (not null); a value-only narrowing reply keeps domain_hint
+  null (decide.py R24); no hint_confident-false instruction (dealer word drop). Fixed red-first as F1-C.
+- Crew a33610208: R-DOM-QTY applies to dealers (stock_availability_only) too, no code backstop. Dealer C1 shapes and
+  the old no-state "code x qty" misread join the conflict gold; the gate fails if gpt-5.4-mini misreads >= 1/3 at N=3.
+  Behaviour shift for the owner: a dealer's "CODE x 10" right after an ETA answer continues the incoming question.
+- Open with CHAT-STATE (B1): an op to drop one item; whether an own ask closes a hand-over offer; the op `value` field.
