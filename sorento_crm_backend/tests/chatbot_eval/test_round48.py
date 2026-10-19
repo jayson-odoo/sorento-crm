@@ -154,3 +154,33 @@ def test_every_stopped_row_names_the_refusal_kind(session_factory, recorded, liv
     _refuse(live_env, monkeypatch, quota_error())
     out = _run(session_factory, recorded)
     assert [r.get("kind") for r in out] == ["insufficient_quota"] * 3
+
+
+def test_a_second_call_in_the_refused_turn_stops_with_the_kind(session_factory, recorded, live_env, monkeypatch):
+    from app.services.chatbot.head import parser as parser_mod
+    from tests.chatbot.test_engine import _parser_output
+
+    def parse_swallowing(config, user_block):
+        for _ in range(2):
+            try:
+                llm_provider.OpenAIProvider.chat(_Keyed(), [{"role": "user", "content": "x"}], model="gpt-5.4-mini")
+            except Exception:  # noqa: BLE001 - the engine swallows a provider error the same way
+                pass
+        return _parser_output()
+
+    monkeypatch.setattr(parser_mod, "parse", parse_swallowing)
+    _refuse(live_env, monkeypatch, quota_error())
+    out = _run(session_factory, recorded, n=1)
+    assert out[0].get("stopped") == "provider_refused" and out[0].get("kind") == "insufficient_quota", out
+
+
+def test_an_embed_call_after_a_refusal_never_reaches_the_original(monkeypatch):
+    reached = []
+    monkeypatch.setattr(embedding_worker, "_embed_text_chunks", lambda chunks: reached.append(1) or [[0.0]])
+    monkeypatch.setattr("app.config.settings.openai_api_key", "")
+    total = _total()
+    total.update(stop="provider_refused", stop_kind="auth")
+    with replay_mod._metered(replay_mod._new_usage(), total):
+        with pytest.raises(BaseException) as info:
+            embedding_worker._embed_text_chunks(["x"])
+    assert not reached and getattr(info.value, "reason", None) == "provider_refused"
