@@ -191,18 +191,18 @@ def test_guard_ab_a_comma_line_of_three_codes_is_not_a_dump():
     assert _check("Water closets with stock: " + ", ".join(EXPECTED[:3]))[0] is not False
 
 
-def _fifty_nine_rows_and(line):
-    return _rows(EXPECTED[:48], "Product Code") + "\n" + line
+def _forty_nine_rows_and(line):
+    return _rows(EXPECTED[:49], "Product Code") + "\n" + line
 
 
 def test_red_ac_a_spec_value_line_with_code_shaped_values_is_no_comma_run():
-    page = _fifty_nine_rows_and("*Material:* SUS304, SUS316")
+    page = _forty_nine_rows_and("*Material:* SUS304, SUS316")
     assert _check(page + MORE)[0] is True
-    assert _check(page, spec_products=EXPECTED[:48])[0] == "absent"
+    assert _check(page, spec_products=EXPECTED[:49])[0] == "absent"
 
 
 def test_red_ad_a_warehouse_sentence_is_no_comma_run():
-    page = _fifty_nine_rows_and("Stock sits at DC1-SMC, WH3-IB.")
+    page = _forty_nine_rows_and("Stock sits at DC1-SMC, WH3-IB.")
     assert _check(page + MORE)[0] is True
     assert _check(_rows(EXPECTED[:49], "Product Code") + "\nStock sits at DC1-SMC, WH3-IB.", spec_products=EXPECTED[:49])[0] == "absent"
 
