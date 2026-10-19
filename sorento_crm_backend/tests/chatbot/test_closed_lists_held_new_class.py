@@ -137,3 +137,31 @@ def test_guard_a_parser_emitted_spec_is_a_refine_of_the_held_subject(session_fac
 
     sent = {pid for a in _stock_fetches(c2) for pid in a.get("product_ids") or []}
     assert w.products["ZZBF100"].id in sent, (text_of(r2), c2)
+
+
+# --- R6-5 N2: the class_hint rides the gate only ------------------------------------------------
+
+
+def _ground(session_factory, closed_lists: bool):
+    from app.models.base import set_company_scope
+    from app.services.chatbot.head import grounding
+
+    _furniture_world(session_factory)
+    db = session_factory()
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    verdict = {"entities": [entity("zzbasin zzcabinet", "category")]}
+    out, _notes = grounding.ground(db, verdict, message="any zzbasin zzcabinet?", closed_lists=closed_lists)
+    return out["entities"]
+
+
+def test_gate_on_the_grounded_class_spec_keeps_the_parsers_class_hint(session_factory):
+    ents = _ground(session_factory, True)
+
+    assert any(e.get("class_hint") == "category" for e in ents), ents
+
+
+def test_gate_off_grounding_output_carries_no_class_hint(session_factory):
+    ents = _ground(session_factory, False)
+
+    assert ents, "the category still grounds to the furniture_type spec"
+    assert not any("class_hint" in e for e in ents), ents
