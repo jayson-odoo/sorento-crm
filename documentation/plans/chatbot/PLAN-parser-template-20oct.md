@@ -147,3 +147,13 @@ stock check is newest; after a newer numbered list it is a position, state_chang
 mirrored per R-X-05). Red 74e457e8c1, fix 57f5defb95 (69,410 chars, 99 passed), published v84 5f289272.
 Next, when the dev key has credits: ONE full conflict gold N=3 run on v84 (~USD 0.62; measures F1-E and the owner's
 quantity pairs together), then TRAIN x1 attachment + spec paired v77 vs v84.
+
+## F1-H / F1-H2 (owner quantity rows after a held answer)
+
+Full gold on v84 (F1-G, gold 71a9b33c48, USD 0.61): NEW 103 vs OLD v77 86/126 (v80 94). Held-answer rows N=3
+(c1-02 "x 5" after ETA / dq-09 "x 15" after ETA / dq-10 "70 pcs" after ETA / c1-09 "10 pcs" after outstanding orders):
+v84 3, 3, 0, 3; v85 (F1-H 1cf14e9eb5, an extra R-P1-02 sentence "a quantity is not a new value of the held ask") 3, 0,
+0, 0; v86 (F1-H2 2265ca5a40, the R-P1-02 code sentence scoped at its source to a code with no quantity, see R-P1-03)
+3, 3, 1, 0; control "ETA CODE x 5" incoming 3/3. The same rule text flips rows between versions: gpt-5.4-mini follows
+this boundary unreliably under one rule. Asked crew: c1-09 scope (a quantity after an ORDER answer) and whether to
+accept dq-10 at 1/3 and let TRAIN decide (a code backstop was ruled out by the owner). Spend about USD 6.01.
