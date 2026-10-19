@@ -318,22 +318,22 @@ def test_red_5_an_unstamped_which_one_picker_passes_for_a_dealer_whose_setting_s
     assert res["checks"]["which_one"] is True and "files" not in res["checks"], res["checks"]
 
 
-def test_guard_5_an_unstamped_picker_still_fails_when_the_setting_stamps():
+def test_red_5_an_unstamped_picker_still_fails_when_the_setting_stamps():
     res = grade_turn(_which_one(MATCHING, [None] * 3, bare=False), item("attachment", **GOLD_AMB))
     assert res["checks"]["which_one"] is False, res["checks"]
 
 
-def test_guard_5_a_stamped_picker_still_fails_for_a_dealer_whose_setting_stamps_nothing():
+def test_red_5_a_stamped_picker_still_fails_for_a_dealer_whose_setting_stamps_nothing():
     res = grade_turn(_which_one(MATCHING, STAMPS, bare=True), item("attachment", asker=DEALER_ASKER, **GOLD_AMB))
     assert res["checks"]["which_one"] is False, res["checks"]
 
 
-def test_guard_5_a_stamped_picker_over_the_wrong_codes_still_fails():
+def test_red_5_a_stamped_picker_over_the_wrong_codes_still_fails():
     res = grade_turn(_which_one(["XY-1", "XY-2"], STAMPS[:2], bare=False), item("attachment", **GOLD_AMB))
     assert res["checks"]["which_one"] is False, res["checks"]
 
 
-def test_guard_5_a_stamp_for_another_type_still_fails():
+def test_red_5_a_stamp_for_another_type_still_fails():
     res = grade_turn(_which_one(MATCHING, ["has Product Videos"] * 3, bare=False), item("attachment", **GOLD_AMB))
     assert res["checks"]["which_one"] is False, res["checks"]
 
