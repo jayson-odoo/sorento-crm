@@ -1268,6 +1268,62 @@ class TestGrantedReportsKeepQ5a:
         assert probes == [] and _calls(captured, ORDERS) == [], (probes, captured)
 
 
+class TestAndModeCustomerName:
+    """V1-DOC-SCOPE-R (security re-review): the live default match mode is AND, whose answer
+    has no per-token resolutions. A customer name an unlinked non-staff contact typed still gets
+    the no-link line (AC-11 / AC-12), through the REAL resolver."""
+
+    @pytest.mark.parametrize("domain,intent", [("inventory", "check_stock"), ("order", "check_order")])
+    def test_a_typed_customer_name_gets_the_no_link_line(self, session_factory, monkeypatch, domain, intent) -> None:
+        _seed_contact(session_factory, variables={})
+        _other_customer(session_factory, FOREIGN)
+        word = "ZZT FOREIGN DOCS"
+        qf = _parser_output(
+            domain_hint=domain, intent_hint=intent, order_status=None, match_mode="and",
+            entities=[{"raw": word, "hint": "customer", "canonical_code": None, "current_message": True, "confident": True}],
+        )
+
+        reply, captured = _turn(session_factory, monkeypatch, qf, f"{word} please", attributes=())
+
+        assert reply.strip() == NO_LINK_REFUSAL, reply
+        assert _calls(captured, ORDERS) == [], captured
+
+    def test_an_and_answer_of_only_customers_names_its_tokens_hidden(self) -> None:
+        from app.services.chatbot.lanes.business import resolve_gate
+
+        customer = {"entity_type": "customer", "uuid": "c1", "canonical_code": "ZZT"}
+        resolved = {
+            "match_mode": "and",
+            "tokens": ["ZZT FOREIGN DOCS"],
+            "intersection": [customer],
+            "by_entity_type": {"customer": [customer]},
+            "alternatives": [],
+        }
+
+        resolve_gate._without_customer_rows(resolved)
+
+        assert resolved["intersection"] == [] and resolved["by_entity_type"] == {}, resolved
+        assert resolved.get("hidden_customer_tokens") == ["ZZT FOREIGN DOCS"], resolved
+
+    def test_an_and_answer_keeps_its_other_rows_and_drops_customer_alternatives(self) -> None:
+        from app.services.chatbot.lanes.business import resolve_gate
+
+        brand = {"entity_type": "brand", "uuid": "b1", "canonical_code": "CABANA"}
+        customer = {"entity_type": "customer", "uuid": "c1", "canonical_code": "CABANA TRADING"}
+        resolved = {
+            "match_mode": "and",
+            "tokens": ["cabana"],
+            "intersection": [brand, customer],
+            "by_entity_type": {"brand": [brand], "customer": [customer]},
+            "alternatives": [customer],
+        }
+
+        resolve_gate._without_customer_rows(resolved)
+
+        assert resolved["intersection"] == [brand] and resolved["alternatives"] == [], resolved
+        assert "hidden_customer_tokens" not in resolved, resolved
+
+
 class TestSlice3Edges:
     def test_a_carried_word_the_resolver_reads_as_a_customer_is_not_refused(self, session_factory, monkeypatch) -> None:
         _seed_contact(session_factory, variables={})
