@@ -59,7 +59,7 @@ class WordCandidates:
 
 @dataclass(frozen=True)
 class _Value:
-    kind: str  # "product type" | "spec"
+    kind: str  # "product type" | "spec" | "flag" (a boolean key, printed as a spec)
     spec_key: str
     value: str
     display: str
@@ -122,6 +122,18 @@ def _vocabulary(db: "Session") -> tuple[dict[str, list[_Value]], dict[str, list[
                 key = _phrase(said)
                 if key and row.spec_key not in numeric.setdefault(key, []):
                     numeric[key].append(row.spec_key)
+            continue
+        if data_type == "boolean":
+            # R6-2: a boolean key's registry phrases per value (`{"true": [phrases]}`); only a value
+            # the registry holds phrases for is offered, so no false line is ever invented.
+            for value, said in synonyms.items():
+                if value == "_self":
+                    continue
+                entry = _Value("flag", row.spec_key, str(value), str(row.label or row.spec_key))
+                for word in said or []:
+                    key = _phrase(word)
+                    if key and entry not in phrases.setdefault(key, []):
+                        phrases[key].append(entry)
             continue
         if data_type != "enum":
             continue
@@ -197,7 +209,8 @@ def _value_candidates(db: "Session", tokens: list[str]) -> list[WordCandidates]:
     # A word inside a longer phrase that is on file exactly is that phrase's word ("flexible"
     # in "double flexible", "basin" in "basin mixer"): the longer phrase is what was said, so
     # neither the shorter exact reading nor a near spelling of it is listed.
-    exact_spans = [(p, p + len(g.split())) for _, (e, _s, p, g) in best.items() if e]
+    # A boolean flag's phrase never hides a product type's word ("toilet" in "smart toilet").
+    exact_spans = [(p, p + len(g.split())) for v, (e, _s, p, g) in best.items() if e and v.kind != "flag"]
 
     def inside_longer(position: int, gram: str) -> bool:
         end = position + len(gram.split())
