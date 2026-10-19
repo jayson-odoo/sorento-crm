@@ -1406,11 +1406,45 @@ def _stats(runs: list[list[dict[str, Any]]]) -> dict[str, Any]:
             "passed": round(sum(sum(1 for x in r if x["passed"]) for r in runs) / len(runs)) if runs else 0,
             "unknown": round(sum(len(r) - len(known(r)) for r in runs) / len(runs)) if runs else 0,
             "runs": len(rates),
-            "rate": sum(rates) / len(rates) if rates else 0.0, "lowest": min(rates) if rates else 0.0}
+            "rate": sum(rates) / len(rates) if rates else 0.0, "lowest": min(rates) if rates else 0.0,
+            "pooled": _pooled(runs), **_item_stats(runs)}
 
 
-def summarise(results: list[list[dict[str, Any]]], bars: dict[str, float]) -> dict[str, Any]:
-    """Growth items are reported under `growth` and stay out of slice n/rate and `meets`; their leaks and
+def _pooled(runs: list[list[dict[str, Any]]]) -> float:
+    """Round 46 (A): total passes over total known turns across every run, not the mean of per-run rates."""
+    rows = [x for r in runs for x in r if x["passed"] is not None]
+    return sum(1 for x in rows if x["passed"]) / len(rows) if rows else 0.0
+
+
+def _item_stats(runs: list[list[dict[str, Any]]]) -> dict[str, Any]:
+    """Round 46 (B, C): per-item verdicts by `item_id` (grade_turn's key). An item's verdict in one run is a pass only
+    when every known row it has in that run passed. Items known in fewer than 2 runs count in neither
+    majority nor flips; rows without an id are skipped and counted in `no_id`."""
+    verdicts: dict[Any, list[bool]] = {}
+    no_id = 0
+    for run in runs:
+        seen: dict[Any, list[bool]] = {}
+        for x in run:
+            if x.get("item_id") is None:
+                no_id += 1
+            elif x["passed"] is not None:
+                seen.setdefault(x["item_id"], []).append(bool(x["passed"]))
+        for item, v in seen.items():
+            verdicts.setdefault(item, []).append(all(v))
+    multi = [v for v in verdicts.values() if len(v) >= 2]
+    flips = sum(1 for v in multi if len(set(v)) > 1)
+    return {"majority_pass": sum(1 for v in multi if 2 * sum(v) > len(v)), "majority_n": len(multi),
+            "flips": flips, "flip_rate": flips / len(multi) if multi else 0.0, "no_id": no_id}
+
+
+def summarise(results: list[list[dict[str, Any]]], bars: dict[str, float],
+              stopped: dict[str, float] | None = None) -> dict[str, Any]:
+    """Round 46 certification rule: a slice meets its bar on `pooled` (total passes over total known turns), with
+    at least 3 runs. With fewer, each barred slice only reports `go` (pooled >= bar) and `meets` stays False.
+    A slice in `stopped` ({slice: best reachable fraction}) shows status and best_reachable only, never a
+    percentage, and fails `meets` if it is barred.
+
+    Growth items are reported under `growth` and stay out of slice n/rate and `meets`; their leaks and
     made-up facts still count, since those bars are zero-tolerance."""
     core = [[x for x in run if not x.get("growth")] for run in results]
     grow = [[x for x in run if x.get("growth")] for run in results]
@@ -1426,13 +1460,60 @@ def summarise(results: list[list[dict[str, Any]]], bars: dict[str, float]) -> di
         return out
 
     slices, growth = by_slice(core), by_slice(grow)
+    stopped = stopped or {}
+    for name, best in stopped.items():
+        slices[name] = {"status": "stopped", "best_reachable": best}
     leaks_per_run = [sum(len(x["leaks"]) for x in run) for run in results]
     made_per_run = [sum(1 for x in run for m in x["made_up"] if not str(m).startswith("unverifiable")) for run in results]
     unverifiable = sum(1 for run in results for x in run for m in x["made_up"] if str(m).startswith("unverifiable"))
     meets = (all(n == 0 for n in leaks_per_run) and all(n == 0 for n in made_per_run)
-             and all(name in slices and slices[name]["runs"] == len(results) and slices[name]["rate"] >= bar for name, bar in bars.items()))
+             and all(name in slices and name not in stopped and slices[name]["runs"] == len(results)
+                     and slices[name]["pooled"] >= bar for name, bar in bars.items()))
     out = {"slices": slices, "growth": growth, "leaks": sum(leaks_per_run), "made_up": sum(made_per_run),
            "unverifiable": unverifiable, "meets": meets}
     if len(results) < 3:
         out.update(meets=False, reason=f"needs at least 3 runs, got {len(results)}")
+        for name, bar in bars.items():
+            if name in slices and name not in stopped:
+                slices[name]["go"] = slices[name]["pooled"] >= bar
     return out
+
+
+def parser_flips(runs_rows: list[list[dict[str, Any]]]) -> dict[str, Any]:
+    """Round 46 (F): how often the parser reads the same item differently across runs. Input is per run the recorded
+    live rows `{"item_id", "turn": {"trace": [...]}}`; the parse is the `understood` record's `raw.parser_raw`.
+    Only items parsed in at least 2 runs count; an item with no understood record is counted in `no_parse`."""
+    def sig(row: dict[str, Any]) -> dict[str, Any] | None:
+        rec = _stage({"trace": (row.get("turn") or {}).get("trace")}, "understood")
+        pr = (rec.get("raw") or {}).get("parser_raw") if isinstance(rec.get("raw"), dict) else None
+        if not isinstance(pr, dict):
+            return None
+        route = pr.get("routing") if isinstance(pr.get("routing"), dict) else {}
+        key = lambda d: json.dumps(d, sort_keys=True, default=str)  # noqa: E731
+        ents = [e for e in pr.get("entities") or [] if isinstance(e, dict)]
+        return {"domain_hint": pr.get("domain_hint"),
+                "routing": (route.get("suggested_team"), route.get("suggested_agent")),
+                "asks": sorted(key(a) for a in pr.get("asks") or []),
+                "entities": sorted(key([e.get("raw"), e.get("hint"), e.get("spec_key")]) for e in ents),
+                "state_changes": sorted(key([c.get("op"), c.get("axis"), c.get("position")])
+                                        for c in pr.get("state_changes") or [] if isinstance(c, dict))}
+
+    sigs: dict[Any, list[dict[str, Any]]] = {}
+    no_parse: set[Any] = set()
+    for rows in runs_rows:
+        for row in rows:
+            got = sig(row)
+            if got is None:
+                no_parse.add(row.get("item_id"))
+            else:
+                sigs.setdefault(row.get("item_id"), []).append(got)
+    multi = {i: v for i, v in sigs.items() if len(v) >= 2}
+    fields: dict[str, int] = {}
+    flipped = 0
+    for v in multi.values():
+        diff = [f for f in v[0] if any(x[f] != v[0][f] for x in v[1:])]
+        flipped += bool(diff)
+        for f in diff:
+            fields[f] = fields.get(f, 0) + 1
+    return {"items": len(multi), "flipped": flipped, "rate": flipped / len(multi) if multi else 0.0,
+            "fields": fields, "no_parse": len(no_parse - set(sigs))}
