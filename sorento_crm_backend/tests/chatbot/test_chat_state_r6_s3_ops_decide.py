@@ -277,7 +277,11 @@ def test_r6_s3_a_word_set_aside_under_keep_stays_set_aside_after_grounding_rewri
                                    positions_read_elsewhere=False)
     assert out.valid, out.log
     # grounding (head/grounding.py ~806 / ~819) replaces the typed name with the listed / canonical one
-    grounded = {**typed, "raw": "Wash Basin", "canonical_code": None}
+    from app.services.chatbot.turn.chat_state import KEPT_ASIDE
+
+    assert all(KEPT_ASIDE not in e for e in (typed,)), "the applier mutated its INPUT verdict's entity"
+    applied_entity = out.verdict["entities"][0]
+    grounded = {**applied_entity, "raw": "Wash Basin", "canonical_code": None}
     ents = chat_state.fetch_entities(out.state.subject, {"entities": [grounded]}, out.state.focus, unsettled_only=False)["entities"]
     riding = [e for e in ents if e.get("current_message") is not False and e.get("hint") == "product_type"]
     assert not riding, ("the keep's word rode along after grounding rewrote it", riding)
@@ -327,3 +331,55 @@ def test_r6_s3_after_a_held_family_landing_the_next_fetch_holds_only_the_matched
     ents = chat_state.fetch_entities(landed.subject, {"entities": []}, landed.focus, unsettled_only=False)["entities"]
     codes = {str(e.get("canonical_code") or e.get("raw")) for e in ents if e.get("hint") == "product"}
     assert codes == {"SRTWC286-SH-P", "SRTWC286-SH-NEW-P"}, ("old described_set rows ride beside the matched tokens", codes)
+
+
+# --------------------------------------------------------------------------- review round 5
+def _keep_applied():
+    from app.services.chatbot.turn import chat_state
+    from app.services.chatbot.turn.state import Focus, State
+
+    held = {"raw": "Wash Basin", "canonical_code": None, "hint": "product_type", "current_message": False, "confident": True}
+    typed = {"raw": "washbasin", "hint": "product_type", "canonical_code": "wash_basin", "current_message": True, "confident": True}
+    inp = {"state_changes": [_op("keep")], "entities": [typed], "domain_hint": "inventory", "intent_hint": "check_stock"}
+    out = chat_state.apply_changes(State(focus=Focus(domains=["inventory"], extra={"product_type": [held]}), turn_no=3), inp,
+                                   open_question=None, domains=["inventory"], kinds=["product_type"], brands=[],
+                                   positions_read_elsewhere=False)
+    assert out.valid, out.log
+    return inp, out
+
+
+def test_r6_s3_the_applier_never_mutates_its_input_verdict():
+    from app.services.chatbot.turn.chat_state import KEPT_ASIDE
+
+    inp, out = _keep_applied()
+    assert not any(KEPT_ASIDE in e for e in inp["entities"]), ("input entity marked in place", inp["entities"])
+
+
+def test_r6_s3_no_internal_mark_reaches_the_stored_clarify_session():
+    from app.services.chatbot import turn_runtime
+    from app.services.chatbot.turn.chat_state import KEPT_ASIDE
+
+    _inp, out = _keep_applied()
+    carried = turn_runtime.set_clarify_carry(out.verdict, {"unknown_values": [{"said": "zz", "known": ["a", "b"]}]}, None)
+    assert carried and carried["ask"]["entities"], carried
+    assert not any(KEPT_ASIDE in e for e in carried["ask"]["entities"]), ("the mark leaks into the session", carried)
+    assert KEPT_ASIDE not in json.dumps(out.state.focus.__dict__, default=str)
+
+
+def test_r6_s3_after_a_held_family_landing_the_open_stock_task_points_only_at_the_matched_members():
+    from app.services.chatbot.turn import chat_state, task as task_mod
+    from app.services.chatbot.turn.state import Focus, State
+
+    rows = [{"raw": f"OLD{i}", "canonical_code": f"OLD{i}", "hint": "product", "uuid": f"0000000{i}-0000-0000-0000-000000000000",
+             "current_message": False} for i in range(2)]
+    task = task_mod.Task(kind="stock_qty", domain="inventory", status=task_mod.OPEN,
+                         slots=tuple(task_mod.Slot(r["uuid"], r["canonical_code"], None) for r in rows))
+    out = chat_state.apply_changes(State(focus=Focus(products=rows, domains=["inventory"], tasks=(task,)), turn_no=3),
+                                   {"state_changes": [_op("keep")], "entities": [], "domain_hint": "inventory",
+                                    "intent_hint": "check_stock"}, open_question=None, domains=["inventory"],
+                                   kinds=["product"], brands=[], positions_read_elsewhere=False)
+    assert out.valid, out.log
+    matched = ["SRTWC286-SH-P", "SRTWC286-SH-NEW-P"]
+    landed, _v = chat_state.held_family_landed(out.state, out.verdict, matched)
+    labels = {sl.label for t in landed.focus.tasks for sl in t.slots}
+    assert labels <= set(matched), ("the open task still points at the old held products", labels)
