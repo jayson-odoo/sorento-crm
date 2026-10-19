@@ -478,6 +478,42 @@ class TestScopeRefusalsAreMarkedRefused:
         assert fragment.get("refused") is True, fragment
 
 
+class TestSoNumberRefusalIsMarkedRefused:
+    """V1-DOC-SCOPE-R (reviewer): the SO number arm refuses every SO to an unlinked contact
+    that is not staff; a reply that is nothing but that refusal is marked `refused` (AC-23), a
+    reply carrying a card is not."""
+
+    @staticmethod
+    def _so_turn(session_factory, monkeypatch, *, staff: bool) -> tuple[str, list[tuple[str, bool]]]:
+        from app.services.chatbot.lanes import business
+
+        made: list[tuple[str, bool]] = []
+        real = business._fixed_reply
+
+        def spy(text, **kwargs):
+            made.append((text, bool(kwargs.get("refused"))))
+            return real(text, **kwargs)
+
+        monkeypatch.setattr(business, "_fixed_reply", spy)
+        _seed_contact(session_factory, variables={})
+        if staff:
+            make_office_access_type(session_factory, CONTACT_ID)
+        foreign = _other_customer(session_factory, FOREIGN)
+        _seed_so(session_factory, SO_NO, customer_id=foreign, debtor_name=FOREIGN, lines=[(10, 10)])
+        reply, _captured = _turn(session_factory, monkeypatch, _number_ask(SO_NO, "sales_order"), f"status of {SO_NO}")
+        return reply, made
+
+    def test_a_refusal_alone_is_marked_refused(self, session_factory, monkeypatch) -> None:
+        reply, made = self._so_turn(session_factory, monkeypatch, staff=False)
+        assert reply.strip() == NO_LINK_REFUSAL, reply
+        assert (NO_LINK_REFUSAL, True) in made, made
+
+    def test_a_card_is_not_marked_refused(self, session_factory, monkeypatch) -> None:
+        reply, made = self._so_turn(session_factory, monkeypatch, staff=True)
+        assert SO_NO in reply and FOREIGN in reply, reply
+        assert [m for m in made if SO_NO in m[0]] and not [m for m in made if SO_NO in m[0] and m[1]], made
+
+
 class TestDidYouMeanAlternatives:
     def test_a_foreign_do_alternative_is_dropped(self, session_factory) -> None:
         """A mistyped DO number's trigram alternatives are offered as "did you mean"; another
