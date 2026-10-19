@@ -78,7 +78,7 @@ def _span(start: date, end: date, days: int) -> str:
     return f"{days} days"
 
 
-def _ask_subject(entities: list[Any]) -> str | None:
+def _subject(entities: list[Any]) -> str | None:
     names = [
         jsc.js_string(e.get("display_name") or e.get("title") or "")
         for e in entities
@@ -123,7 +123,7 @@ def range_reply(
     if start is None and end is None:
         this_month = today.replace(day=1)
         last_month = (this_month - timedelta(days=1)).replace(day=1)
-        subject = _ask_subject(entities)
+        subject = _subject(entities)
         return (
             f"Which period for {subject}?\n" if subject else "Which period?\n"
         ) + (

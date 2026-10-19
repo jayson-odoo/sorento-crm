@@ -4910,6 +4910,9 @@ def _run_stages_body(  # noqa: PLR0915
                             "reference_positions": [],
                         }
             else:
+                # A rejected change set changes nothing, but the turn is still on the state
+                # path: the input State with its Subject (held axes, this message's said values).
+                state_in = applied.state
                 verdict = applied.verdict
         remembered_before["_chat_state"] = state_log
     state_led = state_in.state_led is not None
@@ -5641,8 +5644,9 @@ def _run_stages_body(  # noqa: PLR0915
             # product lookup. That rule lives where the predicate is attached to a fetch
             # (`turn_runtime.make_tool_runner`: a fetch already scoped to a resolved
             # product takes no set predicate), not here.
-            if state_in.state_led is not None:
-                # CHAT-STATE r6 S2: a state-led turn's fetch input is the Subject's, one mapping.
+            if state_in.subject is not None:
+                # CHAT-STATE r6 S2: on the state path the fetch input is the Subject's, one
+                # mapping; no carried-entities rule runs (AC-S2-4).
                 resolver_parse_output = chat_state.fetch_entities(
                     state_in.subject,
                     (ctx.get("parse") or {}).get("output") or {},
@@ -6078,6 +6082,14 @@ def _run_stages_body(  # noqa: PLR0915
                     for cid, name, code in customer_scope["linked"]
                     if cid in scope_ids
                 ]
+
+        if state_in.subject is not None:
+            # CHAT-STATE r6 AC-S1-8: the one settle step, after the resolver and its re-entry:
+            # a said product it placed makes the Subject `ids`, only one it could not place
+            # leaves it `unresolved` (the trace logs the settled Subject).
+            state_out = chat_state.settle_subject(
+                state_out, state_in.subject, log=remembered_before.get("_chat_state")
+            )
 
         # D ROUTE. Two facts outrank the plan and neither is IN one: a refused access
         # agent (contract 58, fail closed) and the stock-denial switch, which is decided

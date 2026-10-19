@@ -284,12 +284,15 @@ class Subject:
 
     `source`: "ids" (explicit product uuids), "predicate" (a described set over brand /
     class / spec / family) or "unresolved" (nothing to fetch by). `predicate` maps an axis to
-    the entity codes or words; the class is ONE axis. `provenance` maps an axis (the
-    predicate axes plus "product") to "held" / "said" / "offer"; a cleared axis is absent."""
+    typed rows, `{"value", "key", "hint", ...}`: the word as said or held, its registry key
+    (uuid, else code; None for a bare word), the entity kind, and a grounded spec's own
+    fields, so the fetch never re-reads the focus. The class is ONE axis. `provenance` maps
+    an axis (the predicate axes plus "product") to "held" / "said" / "offer"; a cleared axis
+    is absent."""
 
     source: str = "unresolved"
     product_ids: tuple[str, ...] = ()
-    predicate: dict[str, list[str]] = field(default_factory=dict)
+    predicate: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     scope: frozenset[str] = frozenset()
     hidden: frozenset[str] = frozenset()
     provenance: dict[str, str] = field(default_factory=dict)
@@ -326,8 +329,9 @@ class State:
     # engine asks it instead of fetching. Never serialised.
     slot_ask: Any = None
     # CHAT-STATE r6: the typed subject the applier built from the focus and this turn's ops
-    # (`chat_state.apply_changes`, its only writer); None until a state-led turn applied.
-    # Shadow only in S1: nothing reads it. Never serialised.
+    # (`chat_state.py` is its only writer: `apply_changes`, `narrow_held_to_brands`,
+    # `settle_subject`); None off the state path. The fetch reads it (`fetch_entities`).
+    # Never serialised.
     subject: "Subject | None" = None
 
 

@@ -4963,7 +4963,6 @@ def focus_entities(
     *,
     unsettled_only: bool = False,
     skip_kinds: frozenset[str] = frozenset(),
-    only_kinds: frozenset[str] | None = None,
     scheme_pick: bool = False,
 ) -> tuple[list[dict[str, Any]], bool]:
     """The focus's rows as carried entities (`current_message: false`), kinds in `skip_kinds`
@@ -4987,7 +4986,7 @@ def focus_entities(
     product_scoped = unsettled_only and _holds_a_resolved_product_outside_a_set(focus)
     settled_products = False
     for kind, rows in by_kind:
-        if kind in skip_kinds or (only_kinds is not None and kind not in only_kinds):
+        if kind in skip_kinds:
             # This turn's own words of the kind replace the carried ones.
             continue
         for row in rows:
@@ -5025,6 +5024,8 @@ def focus_entities(
 def with_carried_entities(
     parse_output: dict[str, Any], focus: Focus, *, unsettled_only: bool = False
 ) -> dict[str, Any]:
+    """The carry off the state path (its body is `carried_entities_except`). A turn on the
+    state path never runs either: its fetch reads the Subject (`chat_state.fetch_entities`)."""
     return carried_entities_except(parse_output, focus, unsettled_only=unsettled_only)
 
 
@@ -5033,7 +5034,6 @@ def carried_entities_except(
     focus: Focus,
     *,
     unsettled_only: bool = False,
-    skip_kinds: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """What the RESOLVER is asked about on a turn that named nothing (contract 33, 35).
 
@@ -5082,7 +5082,7 @@ def carried_entities_except(
     carried, settled_products = focus_entities(
         focus,
         unsettled_only=unsettled_only,
-        skip_kinds=skip_kinds | (frozenset({"attachment_type"}) if domain_word_only else frozenset()),
+        skip_kinds=frozenset({"attachment_type"}) if domain_word_only else frozenset(),
         scheme_pick=scheme_pick,
     )
     if domain_word_only and settled_products:
