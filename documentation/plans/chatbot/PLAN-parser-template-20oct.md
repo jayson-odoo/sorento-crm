@@ -129,3 +129,15 @@ reviewer re-check READY (code): B1/B2 kills K6/K4 now red, the four fix tests re
 Published v82 01c2e25b, unmeasured: the dev key (bG4A) answers 429 no credits. Stored v77/v80 re-graded with the S3
 grader: 98 / 106 unchanged. Spend USD 4.96 (cap 7.1; 7.7 asked to fit the v82 rerun plus TRAIN).
 Open nit: two listed schemes in one message is unspecified; downstream reads the first only.
+
+## F1-F (owner ruling, 20 Oct ~07:15)
+
+Owner, verbatim: "It should actually be stock for the code x10". R-P1-03 DOM-QTY is now: a stated quantity with no ask
+word of its own is a stock ask (inventory, check_stock) whatever the last answer's domain, dealers included; an own
+ask word ("ETA CODE x 5", "outstanding CODE 10") keeps its ask; switch_domain when the last answer was not inventory.
+One rule, no code backstop. This reverses the a33610208 behaviour shift above. Red 71a9b33c48 (with gold: c1-02,
+dq-09, dq-10 incoming -> inventory; c1-09 order/outstanding -> inventory, the lead's reading of "after any answer",
+flagged to crew), fix 54f17dc6f6 (68,849 chars, 96 passed), published v83 023f836c. Stored outputs on the new gold,
+19 quantity pairs: OLD v77 33/57, v80 39/57 (both still follow the old continuation rule on the changed rows).
+Next, when the dev key has credits: ONE full conflict gold N=3 run on v83 (~USD 0.62; measures F1-E and the owner's
+quantity pairs together), then TRAIN x1 attachment + spec paired v77 vs v83.
