@@ -4797,21 +4797,44 @@ def _run_stages_body(  # noqa: PLR0915
                 # tail puts it back, so the stored focus keeps it.
                 state_in = chat_state.set_aside(applied.state, applied.log.get("slots") or {})
                 verdict = applied.verdict
-                picked_brand = chat_state.offered_brand_pick(state_in, verdict)
-                if picked_brand and state_in.focus.products:
-                    # R4-A: the brand the offer listed narrows the HELD set, never the catalogue.
-                    from app.models.product import Brand, Product
-
+                picked = chat_state.offered_brand_picks(state_in, verdict, brands)
+                if picked:
+                    # R4-A: a brand the held set holds narrows the HELD set (the union when two
+                    # are named); an offered brand it lacks is the answer to the offer and
+                    # re-runs the set with that brand (`set_brand_chosen`). One parser-led route.
+                    brand_of: dict[str, str] = {}
                     held_keys = [str(r.get("uuid")) for r in state_in.focus.products if isinstance(r, dict) and r.get("uuid")]
-                    with _session(session_factory) as brand_db:
-                        brand_of = {
-                            str(pid): name
-                            for pid, name in brand_db.query(Product.id, Brand.brand_name)
-                            .join(Brand, Brand.id == Product.brand_id)
-                            .filter(Product.id.in_(held_keys))
-                            .all()
+                    if held_keys:
+                        from app.models.product import Brand, Product
+
+                        try:
+                            with _session(session_factory) as brand_db:
+                                brand_of = {
+                                    str(pid): name
+                                    for pid, name in brand_db.query(Product.id, Brand.brand_name)
+                                    .join(Brand, Brand.id == Product.brand_id)
+                                    .filter(Product.id.in_(held_keys))
+                                    .all()
+                                }
+                        except Exception:  # noqa: BLE001 - an advisory narrowing, never a failed turn
+                            logger.warning("chatbot: offered brand narrowing failed; the turn goes on without it", exc_info=True)
+                    held_brands = {v.strip().casefold() for v in brand_of.values()}
+                    held_hits = [b for b in picked if b.casefold() in held_brands]
+                    if held_hits:
+                        # A named brand the held set lacks beside a held one is not dropped
+                        # silently: the answer is the held rows of the held brand(s), the rest
+                        # stays offered.
+                        state_in = chat_state.narrow_held_to_brands(state_in, held_hits, brand_of)
+                    else:
+                        verdict = {
+                            **verdict,
+                            turn_runtime.SET_BRAND_KEY: picked[0],
+                            "entities": [
+                                e for e in verdict.get("entities") or []
+                                if not (isinstance(e, dict) and e.get("current_message") is True)
+                            ],
+                            "reference_positions": [],
                         }
-                    state_in = chat_state.narrow_held_to_brand(state_in, picked_brand, brand_of)
             else:
                 verdict = applied.verdict
         remembered_before["_chat_state"] = state_log
@@ -4853,9 +4876,10 @@ def _run_stages_body(  # noqa: PLR0915
             )
         # Round 7 on PR #833 (owner hand test, item 6): a brand the last set answer offered
         # narrows that set.
-        verdict = turn_runtime.with_brand_from_offer(
-            verdict, latest_user_message, carried=state_in.focus.set_page
-        )
+        if not state_led:
+            verdict = turn_runtime.with_brand_from_offer(
+                verdict, latest_user_message, carried=state_in.focus.set_page
+            )
     # ATTACH-SET-BRAND-FOLLOWUP round 2 (live console pass, 7 Oct 2026): an echo of a row
     # the focus already holds settled is the carry restated, not an axis to rewrite with
     # an unsettled copy.

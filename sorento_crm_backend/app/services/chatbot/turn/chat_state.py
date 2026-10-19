@@ -552,9 +552,10 @@ def _offered_brands(focus: Focus) -> list[Any]:
     return list(key.get("other_brands") or []) if isinstance(key, dict) else []
 
 
-def offered_brand_pick(state: State, verdict: dict[str, Any]) -> str | None:
-    """The offered brand the parser's own brand entity names, else None. The entity's code
-    or raw is compared to the offer's registry values; no word of the message is read."""
+def offered_brand_picks(state: State, verdict: dict[str, Any], brands: list[Any] | None = None) -> list[str]:
+    """Every offered brand the parser's own brand entities name, in order. An entity's code or
+    raw is compared to the offer's registry values (a code maps through `brands` to its name
+    first); no word of the message is read."""
     offered = {
         str(o.get("brand") or "").strip().casefold(): str(o.get("brand") or "").strip()
         for o in _offered_brands(state.focus)
@@ -562,23 +563,32 @@ def offered_brand_pick(state: State, verdict: dict[str, Any]) -> str | None:
     }
     offered.pop("", None)
     if not offered:
-        return None
+        return []
+    name_of_code = {
+        str(b.get("brand_code")).strip().casefold(): str(b.get("brand_name")).strip().casefold()
+        for b in brands or ()
+        if isinstance(b, dict) and b.get("brand_code") and b.get("brand_name")
+    }
+    picks: list[str] = []
     for e in _entities(verdict):
         if e.get("hint") != "brand" or e.get("current_message") is False:
             continue
         for value in (e.get("canonical_code"), e.get("raw")):
-            hit = offered.get(str(value or "").strip().casefold())
+            key = str(value or "").strip().casefold()
+            hit = offered.get(key) or offered.get(name_of_code.get(key, ""))
             if hit:
-                return hit
-    return None
+                if hit not in picks:
+                    picks.append(hit)
+                break
+    return picks
 
 
-def narrow_held_to_brand(state: State, brand: str, brand_of: dict[str, str]) -> State:
+def narrow_held_to_brands(state: State, wanted: list[str], brand_of: dict[str, str]) -> State:
     """The state with the held products (and the slots a task still collects for them) kept
-    only where `brand_of[uuid]` is `brand`; a row whose brand is unknown goes with the rest.
-    Nothing held, or nothing of that brand held: the state is returned unchanged."""
-    want = brand.strip().casefold()
-    keep = lambda row: brand_of.get(str(row.get("uuid") or ""), "").strip().casefold() == want  # noqa: E731
+    only where `brand_of[uuid]` is one of `wanted` (the union); a row whose brand is unknown
+    goes with the rest. Nothing held, or nothing of those brands held: unchanged."""
+    want = {w.strip().casefold() for w in wanted}
+    keep = lambda row: brand_of.get(str(row.get("uuid") or ""), "").strip().casefold() in want  # noqa: E731
     rows = [r for r in state.focus.products if isinstance(r, dict)]
     kept = [r for r in rows if keep(r)]
     if not rows or not kept:
@@ -754,7 +764,8 @@ def apply_changes(
             mode = (verdict.get("open_question_answer") or {}).get("mode")
             if open_question is None and not _focus_questions(focus):
                 fail(op, "no open question to answer")
-            elif mode is None:
+            elif mode is None and not offered_brand_picks(state, verdict, brands):
+                # The parser's own brand entity naming an offered brand IS the answer to the offer.
                 fail(op, "no answer declared")
         elif op == "switch_domain":
             target = _message_domains(verdict)
