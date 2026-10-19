@@ -1,6 +1,6 @@
 # PLAN: CHAT-CLOSED-LISTS - chatbot step 2, closed candidate lists
 
-Status: Review, round 4 part 1 pushed (crew priority C2 family by family_code + HELD-OVER-NAMED-CLASS; reviewer READY both); attachments round continues (SCHEME-NO-PRODUCT-RETYPED, DROPPED-TYPE-CARRIES-OLD, CERT-NUMBER-AS-SET, lane-section wording). Track: full (size L, LEAD pattern).
+Status: Review, round 4 part 2 pushed (R4-2..R4-5, reviewer READY); next the paired TRAIN x1 (crew bench, early stop, 3 USD cap). Track: full (size L, LEAD pattern).
 Branch `claude/chat-closed-lists-x6ymb5` (the sandbox cannot push `crew/chat-closed-lists`), PR #1755.
 
 Design source: CHATBOT-SCALE-DESIGN-16oct section 8 step 2 + D2 (crew-only): code only SHORTLISTS
@@ -189,3 +189,16 @@ Root cause of the 27 real attachment conversations (gate #3): crew-note 62567938
 goes to EVAL-BENCH; gold calls to the owner; MODEL classes to the gpt-5.4 parser run (CHAT-CODE-LOOKUP).
 Residual (reviewer): a refine that repeats the held product's own class ("p trap wc?") would drop the held subject; not
 seen in g1755c (114 held turns) or train_followups (56).
+
+### Round 4 part 2 (19 Oct)
+
+| Class | Red | Green | Notes |
+|---|---|---|---|
+| R4-2 SCHEME-NO-PRODUCT-RETYPED (cp0-fce51f2811) | 026863c6 | fd246a88 | `scheme_without_product` adds the certificate kind beside the scheme, as `index_scheme` does; the reconciler's retype can no longer empty the type slot |
+| R4-3 DROPPED-TYPE-CARRIES-OLD (cp0-6240dc53f8) | 55b6d27e | 7e8b2a37 | grounding records an engine-owned `dropped_kinds` (popped from parser output); apply clears that axis so the old type never answers |
+| R4-4 CERT-NUMBER-AS-SET (cp0-5b20fdfe69) | f71eaaa4 | fe9f1b92 | an exact certificate match is a typed code for the Shape B skip (`cert_number_is_code`); narrowed to a listed scheme when picked |
+| R4-5 NO-FREE-REMAINDER-ON-FILE-ASK (cp0-5c93483505) | d1cc720b | ac91fd9b | on a file ask under the gate the set is described by parser entities only; spec and other domains keep their remainder (guard test) |
+
+Shared test helper `tests/chatbot/_attach_world.py` carries the real parse fields and the real certificate link chain
+(certificate_products included). Watch item (reviewer): a class word the parser hints as `product` on a file ask is no
+longer scoped by the leftover remainder.
