@@ -1895,6 +1895,7 @@ def _unknown_value_members(
         access_levels=payload.access_levels,
         breakdown_key=key,
         breakdown_over=None if key else 0,
+        hidden_keys=frozenset(hidden),
     )
     if not outcome.get("qualifying_total"):
         return None
@@ -3541,6 +3542,7 @@ def resolve_reference_post(
             # long for one message is broken down by brand instead (`breakdown`).
             prefer_weighted_brand=False,
             breakdown_over=payload.set_list_max,
+            hidden_keys=frozenset(hidden),
         )
         # One nested block, not top-level scalars: n8n item-mutation chains
         # persist top-level keys across nodes. And never inside `by_entity_type`,

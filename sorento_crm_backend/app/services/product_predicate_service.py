@@ -784,7 +784,13 @@ def _near_miss(db: Session, *, membership: dict[str, list[str]], legs: list, bra
 
 
 def _set_breakdown(
-    db: Session, members_query, *, membership: dict[str, list[str]], brand: str | None, key: str | None = None
+    db: Session,
+    members_query,
+    *,
+    membership: dict[str, list[str]],
+    brand: str | None,
+    key: str | None = None,
+    hidden_keys: frozenset[str] = frozenset(),
 ) -> dict | None:
     """A set counted by the next attribute that splits it: `{key, label, rows: [{value,
     count}]}`, largest first, each count in distinct variant families as the set's own
@@ -797,7 +803,8 @@ def _set_breakdown(
     the ask did not already bind; the first that splits the set in two or more is used.
     `key` forces one (the key of a value the registry does not know: "pink water
     closets" is said beside the finishes water closets come in). One query over the
-    members' brand and specification row; `_near_miss` counts the same way."""
+    members' brand and specification row; `_near_miss` counts the same way. A key in
+    `hidden_keys` (the contact's hidden spec keys) is never the attribute, forced or not."""
     from app.services.product_spec_registry import active_registry, display_spec_value
 
     members = members_query.subquery()
@@ -818,7 +825,7 @@ def _set_breakdown(
         *(["class"] if len(membership.get("class") or []) != 1 else []),
         *[row.spec_key for row in registry if row.spec_key not in membership and row.spec_key not in ("brand", "class")],
     ]
-    for name in order:
+    for name in [n for n in order if n not in hidden_keys]:
         counts: dict[str, set[str]] = {}
         row = by_key.get(name)
         labels = dict(getattr(row, "value_labels", None) or {})
@@ -868,6 +875,7 @@ def resolve_product_set(
     brand_is_default: bool = False,
     breakdown_over: int | None = None,
     breakdown_key: str | None = None,
+    hidden_keys: frozenset[str] = frozenset(),
 ) -> dict:
     """(described set) ∩ (require legs), with an honest count.
 
@@ -877,7 +885,8 @@ def resolve_product_set(
     (`_set_breakdown`), and a set that qualifies nothing carries ``members``, the
     described products without the require legs, so the miss can say what matched.
     ``breakdown_key`` names the key to break the set down by (a value the registry does
-    not know is said back beside the values the set does hold).
+    not know is said back beside the values the set does hold). ``hidden_keys`` are the
+    contact's hidden spec keys: a breakdown never splits the set by one.
 
     The described set is ``product_ids`` (ids LOOKUP already matched by name or
     code prefix) and the ``class`` / ``product_type`` / ``brand`` membership
@@ -1275,7 +1284,8 @@ def resolve_product_set(
     membership = verdict.get("membership") or {}
     if breakdown_key or (breakdown_over is not None and int(qualifying_total) > breakdown_over):
         broken = _set_breakdown(
-            db, _base(db.query(Product.id.label("pid"), family.label("family"))), membership=membership, brand=brand, key=breakdown_key
+            db, _base(db.query(Product.id.label("pid"), family.label("family"))), membership=membership, brand=brand, key=breakdown_key,
+            hidden_keys=hidden_keys,
         )
         if broken:
             outcome["breakdown"] = broken
@@ -1287,7 +1297,8 @@ def resolve_product_set(
             members: dict[str, Any] = {"total": members_total}
             if members_total > breakdown_over:
                 broken = _set_breakdown(
-                    db, _base(db.query(Product.id.label("pid"), family.label("family")), with_legs=False), membership=membership, brand=brand
+                    db, _base(db.query(Product.id.label("pid"), family.label("family")), with_legs=False), membership=membership, brand=brand,
+                    hidden_keys=hidden_keys,
                 )
                 if broken:
                     members["breakdown"] = broken
