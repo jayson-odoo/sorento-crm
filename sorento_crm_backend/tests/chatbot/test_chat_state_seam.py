@@ -784,6 +784,7 @@ def _order_keep(seam: Seam, prev: dict[str, Any]) -> Any:
 
 
 def test_s7_a_held_customer_whose_company_link_was_removed_is_dropped(seam):
+    _as_office_staff(seam)
     cid = _seed_real_customer(seam)
     prev = _held_real_customer_state(cid, _code_of(seam, cid))
     _swap_company(seam, add_b=False)
@@ -793,6 +794,7 @@ def test_s7_a_held_customer_whose_company_link_was_removed_is_dropped(seam):
 
 
 def test_s7_a_contact_moved_to_another_company_loses_the_held_customer_of_the_old_one(seam):
+    _as_office_staff(seam)
     cid = _seed_real_customer(seam)
     prev = _held_real_customer_state(cid, _code_of(seam, cid))
     _swap_company(seam, add_b=True)
