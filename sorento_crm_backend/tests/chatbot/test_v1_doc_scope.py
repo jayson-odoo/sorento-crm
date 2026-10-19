@@ -1094,9 +1094,10 @@ class TestPoRefKeepsTheTierRule:
 # resolver: its customer picker listed other customers' names, and the picker's DO probe
 # (`resolve_gate.CUSTOMER_PROBE_TOOL`, outside `run_fetch`'s guard) told it which of them have
 # delivery orders. Owner rule (unlinked != customer): such a word is another customer's, so
-# the turn is refused before the resolver, exactly as an enforced dealer's word outside its
-# links is (`engine._customer_scope_gate`), with the existing no-link line. Document staff
-# (tier, office access type, salesperson) are unchanged.
+# the resolver drops every customer row (`resolve_kinds(hide_customers=...)`) and a word typed
+# this message that matched only customers refuses the turn with the existing no-link line.
+# Not on the parser's tag alone (V1-DOC-SCOPE-R): a brand tagged a customer stays the brand.
+# Document staff (tier, office access type, staff CRM user) are unchanged.
 
 
 def _picker_turn(
@@ -1152,13 +1153,14 @@ class TestCustomerPickerUnlinked:
     def test_unlinked_non_staff_gets_no_picker_names_and_no_probe(self, session_factory, monkeypatch) -> None:
         _seed_contact(session_factory, variables={})
 
-        reply, captured, probes, asked = _picker_turn(session_factory, monkeypatch)
+        reply, captured, probes, _asked = _picker_turn(session_factory, monkeypatch)
 
         assert "HANLIM" not in reply.upper(), reply
         assert reply.strip() == NO_LINK_REFUSAL, reply
         assert probes == [], probes
         assert _calls(captured, ORDERS) == [], captured
-        assert not any("hanlim" in t.lower() for tokens in asked for t in tokens), asked
+        # V1-DOC-SCOPE-R: the resolver may read the word (a brand the parser tagged a customer
+        # stays the brand, owner Q1); its customer rows are dropped before any picker or probe.
 
     @pytest.mark.parametrize(
         "make_staff",
@@ -1267,24 +1269,6 @@ class TestGrantedReportsKeepQ5a:
 
 
 class TestSlice3Edges:
-    def test_a_carried_customer_word_is_dropped_not_refused(self) -> None:
-        """A word carried from an earlier turn never refuses (a refusal must not lock the turns
-        after it); for a held contact it is dropped from the resolver's input all the same."""
-        from types import SimpleNamespace
-
-        from app.services.chatbot import engine
-
-        carried = {"raw": "hanlim", "hint": "customer", "canonical_code": None, "current_message": False}
-        product = {"raw": "SRTWT7445", "hint": "product", "canonical_code": None, "current_message": True}
-        parse_output = {"entities": [carried, product]}
-
-        out, ids, refused, line = engine._customer_scope_gate(
-            None, {}, SimpleNamespace(status=None), parse_output, ["order"], unlinked_held=True
-        )
-
-        assert refused is False and line is None and ids is None
-        assert out["entities"] == [product], out
-
     def test_a_carried_word_the_resolver_reads_as_a_customer_is_not_refused(self, session_factory, monkeypatch) -> None:
         _seed_contact(session_factory, variables={})
 

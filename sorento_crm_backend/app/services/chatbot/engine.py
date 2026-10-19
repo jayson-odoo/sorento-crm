@@ -2121,8 +2121,6 @@ def _customer_scope_gate(
     focus: Any,
     parse_output: dict[str, Any],
     domains: Any,
-    *,
-    unlinked_held: bool = False,
 ) -> tuple[dict[str, Any], list[str] | None, bool, str | None]:
     """PLAN-chatbot-customer-scope-29sep.md D3: the upstream block, run BEFORE the
     resolver. Returns `(the resolver's input, the linked customer ids the turn is
@@ -2137,17 +2135,24 @@ def _customer_scope_gate(
     turn's customers: the matched ones, or all of them for a message naming none
     (`self_reference` and a bare ask alike). Words carried from an earlier turn are never
     matched, so a refusal cannot lock the turns after it. `self_reference` ("my", "me",
-    "our") means the links for staff too. Staff without "my" and a linked contact's top
+    "our") means the links for staff too. Unlinked contacts, staff without "my" and top
     selling (its own block, `_top_selling_dealer_scope`) are untouched.
 
     V1-DOC-SCOPE slice 3 (owner rule: unlinked != customer): an unlinked contact that is not
-    document staff (`unlinked_held`: not the tier, no office access type, no staff CRM user)
-    owns no customer, so a customer word it typed THIS message names another customer and
-    refuses the turn the same way, with the no-link line, top selling included; any other
-    unlinked contact is untouched. Before the resolver, so its customer picker never lists
-    other customers' names and its DO probe never runs. A word the parser did not tag as a
-    customer is held by the resolver itself (`resolve_kinds(hide_customers=...)`)."""
-
+    document staff owns no customer, but it is held AFTER the resolver, not here on the
+    parser's tag: `resolve_kinds(hide_customers=...)` drops every customer row before the
+    picker or its DO probe, and a word typed this message that only matched customers refuses
+    the turn with the no-link line. A brand the parser tagged a customer ("cabana stock",
+    owner Q1) is still the brand."""
+    if not scope or focus.status == "top_selling":
+        return parse_output, None, False, None
+    self_reference = verdict.get("self_reference") is True
+    enforced = bool(scope.get("enforced"))
+    # R7 (PLAN-prompt-dynamic-30sep D9): "my sales" is the `sales` domain now, and scopes
+    # to the links exactly as it did under `order`.
+    in_order = bool(ORDER_OR_SALES_DOMAINS & set(domains or ()))
+    if not (enforced or (self_reference and in_order)):
+        return parse_output, None, False, None
     entities = [e for e in (parse_output.get("entities") or []) if isinstance(e, dict)]
 
     def _is_customer(e: dict[str, Any]) -> bool:
@@ -2158,24 +2163,6 @@ def _customer_scope_gate(
         for e in entities
         if _is_customer(e) and e.get("current_message") is True and jsc.truthy(e.get("raw"))
     ]
-    from app.services import contact_customer_scope as scope_mod
-
-    without_customers = {**parse_output, "entities": [e for e in entities if not _is_customer(e)]}
-    if not scope:
-        if unlinked_held:
-            # A word carried from an earlier turn is dropped, never refused, so a refusal
-            # cannot lock the turns after it.
-            return without_customers, None, bool(named), (_no_link_refusal() if named else None)
-        return parse_output, None, False, None
-    if focus.status == "top_selling":
-        return parse_output, None, False, None
-    self_reference = verdict.get("self_reference") is True
-    enforced = bool(scope.get("enforced"))
-    # R7 (PLAN-prompt-dynamic-30sep D9): "my sales" is the `sales` domain now, and scopes
-    # to the links exactly as it did under `order`.
-    in_order = bool(ORDER_OR_SALES_DOMAINS & set(domains or ()))
-    if not (enforced or (self_reference and in_order)):
-        return parse_output, None, False, None
     words = [jsc.js_string(e.get("raw")) for e in named]
     # ACCOUNT-LEDGER: the numbered account a word names, parallel to `words`; "my account 2"
     # names no customer (raw null) and narrows the links themselves.
@@ -2184,11 +2171,14 @@ def _customer_scope_gate(
         (a for e in entities if _is_customer(e) and not jsc.truthy(e.get("raw")) and (a := _account_of(e))),
         None,
     )
+    from app.services import contact_customer_scope as scope_mod
+
     links = scope_mod.ContactCustomerScope(
         linked=tuple((c, n, k) for c, n, k in scope["linked"]),
         staff=False,
         levels=dict(scope.get("levels") or {}),
     )
+    without_customers = {**parse_output, "entities": [e for e in entities if not _is_customer(e)]}
     if not enforced:
         # Staff: "my" alone means the links; naming a customer is unscoped as today.
         if words:
@@ -5555,8 +5545,7 @@ def _run_stages_body(  # noqa: PLR0915
             else:
                 gate_input = resolver_parse_output  # the strict re-gate after a re-plan reads the words as typed
                 resolver_parse_output, scope_ids, scope_refused, gate_refusal = _customer_scope_gate(
-                    gate_scope, verdict, state_out.focus, resolver_parse_output, plan.domains,
-                    unlinked_held=unlinked_held,
+                    gate_scope, verdict, state_out.focus, resolver_parse_output, plan.domains
                 )
             scope_ids = _drill_offer_subject(scope_ids, state_out.focus, plan.trace)
             if (
