@@ -132,7 +132,7 @@ BASE = dict(domain_hint="inventory", routing={"suggested_team": "warehouse", "su
 def test_identical_signatures_do_not_flip():
     out = parser_flips([[prow("a", **BASE)], [prow("a", **BASE)], [prow("a", **BASE)]])
     assert out == {"items": 1, "flipped": 0, "rate": 0.0, "fields": {}, "no_parse": 0, "no_id": 0, "dup_rows": 0,
-                   "partial_parse": 0, "parse_failed": 0, "parse_capped": 0}
+                   "partial_parse": 0, "parse_failed": 0, "parse_capped": 0, "parse_missing": 0}
 
 
 def test_state_change_op_difference_flips_that_field():
@@ -279,3 +279,22 @@ def test_status_failed_record_is_a_failed_parse_even_with_parser_raw():
     failed = _understood("a", {"status": "failed", "raw": {"parser_raw": BASE}})
     out = parser_flips([[prow("a", **BASE)], [failed], [prow("a", **BASE)]])
     assert out["parse_failed"] == 1 and out["partial_parse"] == 1
+
+
+# ---------------------------------------------------------------- round 46 fix round 2
+def test_a_real_capped_record_is_parse_capped():
+    from app.services.chatbot.trace import _cap
+    big = {"parser_raw": {"pad": "x" * 40000}, "derived": {}}
+    capped = _cap(big)
+    assert isinstance(capped, dict) and capped["note"].startswith("payload omitted")
+    whole = {"item_id": "a", "turn": {"trace": [{"stage": "understood", "status": "ok", "raw": capped}]}}
+    inner = {"item_id": "b", "turn": {"trace": [{"stage": "understood", "raw": {"parser_raw": _cap({"pad": "x" * 40000})}}]}}
+    out = parser_flips([[prow("a", **BASE), prow("b", **BASE)], [whole, inner], [prow("a", **BASE), prow("b", **BASE)]])
+    assert out["parse_capped"] == 2 and out["parse_failed"] == 0 and out["partial_parse"] == 2
+
+
+def test_an_empty_recording_is_parse_missing_not_parse_failed():
+    empty = {"item_id": "a", "turn": {"trace": []}}
+    out = parser_flips([[prow("a", **BASE)], [empty], [prow("a", **BASE)]])
+    assert out["parse_missing"] == 1 and out["parse_failed"] == 0 and out["parse_capped"] == 0
+    assert out["partial_parse"] == 1
