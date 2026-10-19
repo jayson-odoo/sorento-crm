@@ -1,6 +1,6 @@
 # PLAN: CHAT-CLOSED-LISTS - chatbot step 2, closed candidate lists
 
-Status: Review, round 6 pushed (R6-1..R6-6; reviewer READY, security-reviewer PASS); next: crew republishes the lane prompt (R5-2 + R6-1 template lines), owner OK for the dev data SQL, paired TRAIN x1; architecture consolidation proposed to crew (owner 20 Oct). Track: full (size L, LEAD pattern).
+Status: Build, round 7 (H1 hidden keys at the entries, then F3-c, F3-a, F3-b, F3-d per crew rulings a29310107 + a29691875); round 6 pushed at 18e9760e7d (reviewer READY, security PASS). Track: full (size L, LEAD pattern).
 Branch `claude/chat-closed-lists-x6ymb5` (the sandbox cannot push `crew/chat-closed-lists`), PR #1755.
 
 Design source: CHATBOT-SCALE-DESIGN-16oct section 8 step 2 + D2 (crew-only): code only SHORTLISTS
@@ -275,3 +275,33 @@ through the owner SQL.
    Crew ruling a29310107 (3)(a): read hidden keys once before the parse and strip them at the two entries
    (candidate block, grounding output), keeping downstream drops as a safety net. Next slice.
 4. No round-6 fix is a special case for one message shape.
+
+## Round 7 (20 Oct): H1 + F3 (CHAT-ARCH-REVIEW-20oct F3 / M3; crew rulings a29310107, a29691875)
+
+Scope ruled by crew: land round 6 as is (done, head 18e9760e7d), freeze new seam guards, then:
+- **H1 HIDDEN-KEYS-AT-THE-ENTRIES** (a29310107 (3)(a)), layer ACCESS: the policy is read once before the parse;
+  hidden keys are stripped from the candidate block and from the parse output; the R6-6 drops stay as a safety net.
+- **F3**, layer DATA -> candidates -> grounding. Shared mechanism: the spec registry is the single value-to-key
+  source; candidates.py is one generic index (value -> keys holding it, scoped, held family first, ranked by data
+  count, all keys shown neutrally when 2+ hold it); the parser returns a listed candidate id; grounding validates ids
+  and ASKS when a pick is unconfident or tied. Order (ruling (3)(a)): F3-c, then F3-a, F3-b, F3-d.
+  - F3-c grounding validates candidate ids; unconfident or 2+ equally supported -> ask (generalises #1761 R2-4, rank
+    by data not trigram). Removes the grounding scheme-word drop and the unconfident-pick drop.
+  - F3-a generic value index for spec / type / cert candidates only (ruling (2)(a)); code / near / set-code rows stay
+    #1761's. Removes CAP_PER_WORD name cut, `_size_candidates` / `_keys_holding` / `_bare_size_keys` / boolean branch,
+    unit-regex special cases.
+  - F3-b one parented closed list: attachment type / cert kind / scheme (scheme -> kind parent); the parser picks ONE
+    item; scheme_index reads the parent. Removes R4-2 added_kind and R4-3 dropped_kinds patches.
+  - F3-d registry fields (ruling (1)(a)): JSON columns on product_spec_registry (unit_conversions, short_forms) plus
+    `is_piece_count` bool, one additive migration. Removes v63 trap_length words.
+- **R5-2**: EVAL-BENCH x3-per-arm A/B (~0.035 USD); the `holding "W"` label goes if harmful.
+- **Prompt freeze** (a29691875): CHAT-CODE-LOOKUP owns the parser prompt (F1 consolidated template, #1761). This lane
+  does not edit head/closed_lists_prompt.py or base sections; any F3-b / F3-c wording goes to crew as exact rule text
+  (rule + field). A parser.py schema field change is announced to crew before it is made.
+- Spend: $0 root cause + red tests; L1 replay per slice (crew run); one paired TRAIN x1 at the end via EVAL-BENCH.
+
+### Round 7 results
+
+| Slice | Red | Green | Notes |
+|---|---|---|---|
+| H1 HIDDEN-KEYS-AT-THE-ENTRIES | f6e8c02d | 426eb3b4 | 3 red / 3 guards; red-proof crew-note 6272825925 |
