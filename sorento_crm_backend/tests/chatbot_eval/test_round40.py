@@ -283,3 +283,59 @@ def test_guard_4b_a_readable_apply_with_no_type_entity_still_fails():
             rec["verdict"]["entities"] = []
     res = grade_turn(r, item("attachment", **GOLD_TS))
     assert res["checks"]["asked_type"] is False, res["checks"]
+
+
+# ------------------------------------------------------------------ 5. an ambiguous attachment ask: the which-one picker, stamped per the domain setting
+# PHOTO-PICKER (owner 5 Oct): `Profile.stock_availability_only` (a dealer) turns the has / no stamp off, everyone else is stamped
+# (app/services/chatbot/lanes/business/answer.py:5055). The stamp rides each option of the open question as `stamp`.
+GOLD_AMB = dict(attachment_type="product_photos", attachment_type_name="Product Photos",
+                attachment_type_names=["product_photos", "Product Photos", "photo"], ambiguous=True)
+DEALER_ASKER = {"audience": "dealer", "linked_customer_ids": ["c1"], "linked_customer_names": ["Acme"], "hidden_fields": []}
+
+
+def _which_one(codes, stamps, message="77001 photo"):
+    opts = [{"code": c, "label": c, "uuid": None, "uuids": [], "payload": {}, "position": i + 1, "entity_type": "product",
+             **({"stamp": st} if st else {})} for i, (c, st) in enumerate(zip(codes, stamps))]
+    q = {"kind": "product_pick", "expects": "choice", "payload": {"domain": "product_attachment"}, "asked_at_turn": 4,
+         "options": opts}
+    return row2(message=message, reply="Which product do you mean?", oq={"before": None, "after": q, "writer": "engine"})
+
+
+MATCHING = ["AB-77001", "CD77001", "EF77001-AL"]
+STAMPS = ["no Product Photos", "has Product Photos", "no Product Photos"]
+
+
+def test_red_5_a_stamped_which_one_picker_over_the_matching_codes_passes_without_a_file_for_staff():
+    res = grade_turn(_which_one(MATCHING, STAMPS), item("attachment", **GOLD_AMB))
+    assert res["checks"]["which_one"] is True and "files" not in res["checks"], res["checks"]
+
+
+def test_red_5_an_unstamped_which_one_picker_passes_for_a_dealer_whose_setting_stamps_nothing():
+    res = grade_turn(_which_one(MATCHING, [None] * 3), item("attachment", asker=DEALER_ASKER, **GOLD_AMB))
+    assert res["checks"]["which_one"] is True and "files" not in res["checks"], res["checks"]
+
+
+def test_guard_5_an_unstamped_picker_still_fails_when_the_setting_stamps():
+    res = grade_turn(_which_one(MATCHING, [None] * 3), item("attachment", **GOLD_AMB))
+    assert res["checks"]["which_one"] is False, res["checks"]
+
+
+def test_guard_5_a_stamped_picker_still_fails_for_a_dealer_whose_setting_stamps_nothing():
+    res = grade_turn(_which_one(MATCHING, STAMPS), item("attachment", asker=DEALER_ASKER, **GOLD_AMB))
+    assert res["checks"]["which_one"] is False, res["checks"]
+
+
+def test_guard_5_a_stamped_picker_over_the_wrong_codes_still_fails():
+    res = grade_turn(_which_one(["XY-1", "XY-2"], STAMPS[:2]), item("attachment", **GOLD_AMB))
+    assert res["checks"]["which_one"] is False, res["checks"]
+
+
+def test_guard_5_a_stamp_for_another_type_still_fails():
+    res = grade_turn(_which_one(MATCHING, ["has Product Videos"] * 3), item("attachment", **GOLD_AMB))
+    assert res["checks"]["which_one"] is False, res["checks"]
+
+
+def test_guard_5_an_ambiguous_attachment_with_no_picker_and_no_file_still_fails():
+    r = row2(message="77001 photo", reply="Nothing found.")
+    res = grade_turn(r, item("attachment", **GOLD_AMB))
+    assert res["checks"]["files"] is False, res["checks"]
