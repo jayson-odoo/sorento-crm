@@ -115,3 +115,32 @@ def test_r6_s4_a_staff_contact_has_no_hidden_keys(tchat, world, session_factory)
     make_office_tier(session_factory, tchat.contact_id)
     _text, subject = _stock_turn(tchat, world)
     assert subject["hidden"] == [], subject
+
+
+# ----------------------------------------------------------------------- security pins
+def test_r6_s4_a_held_customer_token_outside_the_links_never_surfaces_on_a_product_ask(seam):
+    """A non-staff contact linked to customer A only; the prior State holds a customer TOKEN (no uuid, no
+    code) naming customer B, outside the links. A state-path stock ask for a product must show no customer
+    list, never print B, and send no tool call carrying B."""
+    from tests.chatbot.test_customer_scope_lane import _link_customers, _other_customer
+    from app.services.chatbot.turn.state import focus_to_wire
+
+    own, foreign = "ZZT S4 OWN SDN BHD", "ZZT S4 FOREIGN SDN BHD"
+    _link_customers(seam.session_factory, own)
+    foreign_id = _other_customer(seam.session_factory, foreign)
+    code = "SRTWC286-SH"
+    if code not in seam.uuid_of:
+        from tests.chatbot.test_chat_state_r3a_fetch_quantity import _seed_more
+
+        _seed_more(seam, [code])
+    token = {"raw": foreign, "name": foreign, "hint": "customer", "current_message": False}
+    prev = {"focus": focus_to_wire(Focus(customers=[token], domains=["inventory"])), "open_question": None}
+    out = seam.say(f"stock {code}", _emit(domain_hint="inventory", intent_hint="check_stock",
+                                          entities=[_entity(code, "product")], state_changes=[_op("set", "product")]),
+                   previous=prev)
+    text = ((out.reply or {}).get("text") or "").lower()
+    assert foreign.lower() not in text and "foreign" not in text, text
+    blob = json.dumps(seam.turn_calls[-1], default=str).lower()
+    assert foreign_id.lower() not in blob and foreign.lower() not in blob, ("customer B reached a tool call", blob[:300])
+    ids = {pid for _n, a in seam.turn_calls[-1] for pid in a.get("product_ids") or []}
+    assert ids == {seam.uuid_of[code]}, ("the product ask did not run, so the pin proves nothing", seam.turn_calls[-1])
