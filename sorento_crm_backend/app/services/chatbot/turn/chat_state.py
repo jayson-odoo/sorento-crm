@@ -629,7 +629,7 @@ def _held_narrowed(state: State, kept: list[dict[str, Any]]) -> State:
         provenance = dict(subject.provenance)
         if not (ids or tokens or any(r.get("uuid") for r in kept)):
             provenance.pop("product")
-        source = "ids" if ids or tokens else "predicate" if subject.predicate else "unresolved"
+        source = "ids" if ids else "unresolved" if tokens else "predicate" if subject.predicate else "unresolved"
         subject = replace(subject, source=source, product_ids=ids, product_tokens=tokens, provenance=provenance)
     return replace(state, focus=focus, subject=subject)
 
@@ -710,7 +710,8 @@ def held_family_landed(state: State, verdict: dict[str, Any], matched: list[str]
         return state, verdict
     tokens = tuple({"value": c, "key": c, "hint": "product"} for c in dict.fromkeys(matched))
     subject = replace(
-        subject, source="ids", product_ids=(), product_tokens=tokens, provenance={**subject.provenance, "product": "held"}
+        subject, source="unresolved", product_ids=(), product_tokens=tokens,
+        provenance={**subject.provenance, "product": "held"},
     )
     return replace(state, subject=subject), carry_onto_family(verdict, matched)
 
@@ -813,8 +814,12 @@ def _build_subject(
             said.setdefault(axis, []).append(row)
     fresh = led == "new_ask"
     held = {axis: [] for axis in _PREDICATE_AXES} if fresh else _held_rows(focus)
+    kept_aside: tuple[dict[str, Any], ...] = ()
     if led == "keep":
-        # `keep` changes nothing: a value typed on an axis the State holds is not a change.
+        # `keep` changes nothing: a value typed on an axis the State holds is not a change. The
+        # words set aside are recorded, so the fetch drops exactly those and nothing a later
+        # step adds (a clarify answer's chosen type, review round 3).
+        kept_aside = tuple(r for axis, rows in said.items() if held[axis] for r in rows)
         said = {axis: rows for axis, rows in said.items() if not held[axis]}
     offered = bool(offered_brand_picks(state, out, brands))
     predicate: dict[str, list[dict[str, Any]]] = {}
@@ -831,19 +836,21 @@ def _build_subject(
         said_ids = tuple(dict.fromkeys(str(e["uuid"]) for e in said_products if e.get("uuid")))
         tokens = tuple(t for t in (_token_row(e) for e in said_products if not e.get("uuid")) if t)
         return Subject(source="ids" if said_ids else "unresolved", product_ids=said_ids, product_tokens=tokens,
-                       predicate=predicate, provenance=provenance)
+                       predicate=predicate, provenance=provenance, kept_aside=kept_aside)
     rows = [] if fresh else [r for r in focus.products if isinstance(r, dict)]
     members = [r for r in rows if r.get("uuid") and r.get("described_set") is True]
     ids = tuple(str(r["uuid"]) for r in rows if r.get("uuid") and r.get("described_set") is not True)
     tokens = tuple(t for t in (_token_row(r) for r in rows if not r.get("uuid")) if t)
     if ids or tokens:
+        # `ids` means explicit keys; a token-only Subject is unresolved until settled (AC-S1-12).
         provenance["product"] = "held"
-        return Subject(source="ids", product_ids=ids, product_tokens=tokens, predicate=predicate, provenance=provenance)
+        return Subject(source="ids" if ids else "unresolved", product_ids=ids, product_tokens=tokens,
+                       predicate=predicate, provenance=provenance, kept_aside=kept_aside)
     if predicate:
         if members:
             provenance["product"] = "held"
-        return Subject(source="predicate", predicate=predicate, provenance=provenance)
-    return Subject(source="unresolved")
+        return Subject(source="predicate", predicate=predicate, provenance=provenance, kept_aside=kept_aside)
+    return Subject(source="unresolved", kept_aside=kept_aside)
 
 
 def settle_subject(
@@ -889,6 +896,7 @@ def subject_wire(subject: Subject) -> dict[str, Any]:
         "product_ids": list(subject.product_ids),
         "product_tokens": [t.get("value") for t in subject.product_tokens],
         "unplaced": [t.get("value") for t in subject.unplaced],
+        "kept_aside": [t.get("value") for t in subject.kept_aside],
         "predicate": {k: [r.get("value") for r in v] for k, v in subject.predicate.items()},
         "scope": sorted(subject.scope),
         "hidden": sorted(subject.hidden),
@@ -930,13 +938,19 @@ def fetch_entities(
     replaces the held one, every other held row is kept, as the ops left the focus."""
     from app.services.chatbot import turn_runtime
 
-    # A word this message typed on an axis the Subject HOLDS was not a change (`keep`): the held
-    # rows answer for that axis and the typed word does not ride.
+    # The words a `keep` set aside (typed on a held axis, recorded by the applier) were not a
+    # change: the held rows answer for that axis and exactly those words do not ride. Nothing
+    # else is dropped, whatever step added it.
+    aside = {
+        (_SUBJECT_AXIS.get(str(r.get("hint") or "")), str(r.get("value") or "").strip().casefold())
+        for r in subject.kept_aside
+    }
     stated = [e for e in parse_output.get("entities") or [] if isinstance(e, dict)]
     own = [
         e for e in stated
-        if not (e.get("current_message") is not False
-                and subject.provenance.get(_SUBJECT_AXIS.get(str(e.get("hint") or ""), "")) == "held")
+        if not (e.get("current_message") is not False and (
+            _SUBJECT_AXIS.get(str(e.get("hint") or "")), str(e.get("raw") or e.get("canonical_code") or "").strip().casefold()
+        ) in aside)
     ]
     typed = {str(e.get("hint") or "").strip().lower() for e in own if e.get("current_message") is not False}
     product_scoped = unsettled_only and bool(subject.product_ids or subject.product_tokens) and (

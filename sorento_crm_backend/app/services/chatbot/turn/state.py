@@ -290,12 +290,15 @@ class Subject:
     an axis (the predicate axes plus "product") to "held" / "said" / "offer"; a cleared axis
     is absent. `product_tokens` are the named products with no key yet, `{"value", "key":
     <code>, "hint": "product"}` (a held one stays a token until the resolver places it);
-    `unplaced` are the tokens the resolver could not place (set by `settle_subject`)."""
+    `unplaced` are the tokens the resolver could not place (set by `settle_subject`).
+    `kept_aside` are the words the applier saw this message type on a held axis under `keep`
+    (written only under keep): not a change, so the fetch drops exactly these."""
 
     source: str = "unresolved"
     product_ids: tuple[str, ...] = ()
     product_tokens: tuple[dict[str, Any], ...] = ()
     unplaced: tuple[dict[str, Any], ...] = ()
+    kept_aside: tuple[dict[str, Any], ...] = ()
     predicate: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     scope: frozenset[str] = frozenset()
     hidden: frozenset[str] = frozenset()
