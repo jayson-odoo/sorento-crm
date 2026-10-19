@@ -62,15 +62,20 @@ trace is byte-identical to today unless a line says otherwise.
 
 ## S4 Unresolved asks
 - AC-S4-1 An unresolved Subject never reaches a fetch; the turn asks (fetch.py:665-675, gate.py:172 on the state path).
+- AC-S4-2 (review round 5 carry) The ask covers Subject.unplaced tokens and a token-only `unresolved` Subject after
+  settle; scope and hidden keys are filled through the applier only (single writer), from the contact's company scope.
 
 ## S5 Legacy rewriters stand down
 - AC-S5-1 Under the state gate none of: with_set_count_from_text, with_brand_from_offer, with_company_pick,
   with_new_set_words, the stock-ask regex, decide.py's refine-of-standing-subject branch, reconcile.py:110-121 runs;
   each is ported to an op semantic or deleted, and each has a test pin. Under the state gate they stand down on reject turns too
   (state_led None), so the fetch never reads a Subject a rewriter changed behind it; one reject turn pins it (lead
-  decision, review round 3).
+  decision, review round 3). Also on state-led ANSWER turns (engine.py ~4937 `if not state_led or answering`:
+  with_company_pick, with_clarify_answer, with_set_count_from_text), and _top_selling_verdict / order_list_verdict,
+  which can replace state_in (engine.py ~5156, ~5181), stand down under the state gate (review round 5 carry).
 
 ## S6 UserTurn at ingress
 - AC-S6-1 One UserTurn (own_text, quoted_text, media reads) is built at ingress for the webhook path and #1766's
   direct-ingress path; the seven first-line reads (`split("\n", 1)[0]`) read it instead.
 - AC-S6-2 Off the state path every value the old first-line reads produced is identical.
+- AC-S6-3 (review round 5 carry) Grounding's `latest_user_message.split("\n", 1)[0]` (engine.py ~4973) reads UserTurn.
