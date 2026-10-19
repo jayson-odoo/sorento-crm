@@ -290,7 +290,13 @@ SO417636 CSK14B BRW-BB, with the owner's plan:
     (REMARK "ORDER 145"); 608 has nothing dropped on it, so its REMARK is "ORDER 440"; 480 and 608 show no
     extra row. "Confirmed <date>" stays hidden while any line of the order is still pending (CSK11A).
   - A second Confirm with nothing changed still sends nothing (AC-G13).
-- AC-G19 **Re-plan a confirmed New-line plan into the card plan** (the owner's path in the hand test). From
+- AC-G19 **DEFERRED to a follow-up lane** (crew ruling a71847692 (b), 19 Oct: the decisive reviewer re-check of
+  a0336632b5 was NOT READY). Not shipped in this PR; its tests stay in
+  `tests/scm/test_line_splits_refer_back_applied.py` as strict xfail, and the round-3 confirm tests keep their
+  round-3 email expectations. Kept in this PR from this section: only the two Reject refile bullets (a line that
+  stands at a re-Confirm, and AC-G16 kept New-line rows, have their live rows filed under the new decision),
+  which fix round-3 paths. The full text below is the follow-up lane's contract.
+  **Re-plan a confirmed New-line plan into the card plan** (the owner's path in the hand test). From
   the stored plan above, staff drag 236 and 167 (date fixed to 20/11/2029) and 752's 37 onto line 608, Save,
   Confirm. Then purchasing's live OI rows equal the card plan confirmed from scratch (AC-G6 / AC-G10: live OI
   total 1295, 608 totals 632, 752 extra 182 "ORDER 182", 608 REMARK "REMAIN"), the moved rows keep their
