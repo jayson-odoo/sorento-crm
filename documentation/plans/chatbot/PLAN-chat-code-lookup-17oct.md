@@ -144,3 +144,17 @@ branch). EVAL-BENCH's answer.py clash patch with #1760 is applied when crew rela
   true ties and partials. The csk11b class (one near code scores higher) stays red. Crew raises the parser-model
   choice with the owner.
 - The dead "Several listed codes" pick-none sentences were dropped (d422b3afce, v172).
+
+## Round 3 (crew, 19 Oct: combined3 held-out code lookups 89.2, bar 97; TRAIN only, gpt-5.4-mini, spend <= USD 3)
+
+Classes from crew/state/reports/EVAL-BENCH-train-classes-19oct.md, root-caused on TRAIN before any fix:
+- FIRST-LINE (crew attribution): `engine._candidate_lines` reads only the message's first line (#1755's S1 rule, the
+  quoted reply is not this message's words). Confirm on TRAIN items first; build only if >= 2 fail on it; a fix reads
+  every line of the user's own text and still drops the quoted block.
+- SET-CODE-NO-MEMBERS (16; es-2a6f9f1618, es-b67110187c): a set code on a stock ask reaches the fetch with no member
+  ids (entity_resolver.py `_probe_product_set`, gate ALLOWED inventory without product_set).
+- CODE-SEGMENT-AS-FILTER (19; es-02332dd6a1, es-d2692e6c09): a code segment said over a held family is read as a
+  product token or nothing. Finish short-form synonyms are owner registry data, out of scope.
+Per class: card ask only for a new rule, red-first tester (fresh synthetic shapes, never TRAIN text), coder, kill-proof,
+reviewer; a prompt change is measured with parser gold N=3; L1 vs #1755; one TRAIN live x1 on the touched slices paired
+vs main.
