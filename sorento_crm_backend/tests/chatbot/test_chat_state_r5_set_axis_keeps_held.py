@@ -225,3 +225,59 @@ def test_r5_f1_guard_new_subject_with_a_new_class_drops_the_held_class(chat, wor
     listed = _codes_in(t2, world)
     assert listed, t2[:300]
     assert not listed & (g["srt_wc"] | g["cabana_wc"] | g["mocha_wc"]), ("the old class carried", sorted(listed))
+
+
+# --------------------------------------------------------------------------- #
+# Guards from review: the carry is refine-only, off for a product code, never a union,
+# and a newly set class replaces the held one whichever bucket it sits in.
+# --------------------------------------------------------------------------- #
+
+def _held_srt_wc(chat, world, class_entities=None):
+    brand = _brand_word(world, "sorento")
+    return _held_set(chat, world, [_entity(brand, "brand"), *(class_entities or [_entity("water closet", "category")])],
+                     [_op("set", "brand"), _op("set", "category")], f"{brand} water closets")
+
+
+@pytest.mark.parametrize("ops", [[_op("keep")], [_op("answer")]], ids=["carry", "answer"])
+def test_r5_f1_guard_a_turn_that_is_not_a_refine_does_not_pick_up_the_held_brand(chat, world, ops):
+    g = _groups(world)
+    _held_srt_wc(chat, world)
+    t2 = chat.say("toilets", _ask_with([_entity("water closet", "category")], ops, "toilets"))
+    listed = _codes_in(t2, world)
+    assert listed & (g["cabana_wc"] | g["mocha_wc"]), ("the held brand was carried on a non-refine turn", sorted(listed), t2[:200])
+
+
+def test_r5_f1_guard_a_typed_product_code_turn_carries_no_held_brand(chat, world):
+    g = _groups(world)
+    _held_srt_wc(chat, world)
+    code = world["close_couple"]["cabana"][0].product_code
+    t2 = chat.say(f"{code} water closet", _ask_with(
+        [_entity(code, "product"), _entity("water closet", "category")], [_op("set", "product"), _op("set", "category")],
+        f"{code} water closet"))
+    listed = _codes_in(t2, world)
+    assert code in listed, (sorted(listed), t2[:200])
+    assert listed & g["mocha_wc"], ("the held brand was carried beside a typed code (other brands cut)", sorted(listed))
+
+
+def test_r5_f1_guard_a_typed_brand_is_never_unioned_with_the_held_brand(chat, world):
+    g = _groups(world)
+    _held_srt_wc(chat, world)
+    t2 = chat.say("cabana toilets", _ask_with(
+        [_entity(_brand_word(world, "cabana"), "brand"), _entity("water closet", "category")],
+        [_op("set", "category")], "cabana toilets"))
+    listed = _codes_in(t2, world)
+    assert listed, t2[:200]
+    assert not listed & (g["srt_wc"] | g["mocha_wc"]), ("held brand unioned with the typed one", sorted(listed))
+    assert listed <= g["cabana_wc"], sorted(listed)
+
+
+def test_r5_f1_a_newly_set_class_replaces_the_held_class_in_the_other_bucket(chat, world):
+    """Held class sits as product_type (basin); setting category = water closet replaces it."""
+    g = _groups(world)
+    _held_srt_wc(chat, world, [_entity("basin", "product_type")])
+    t2 = chat.say("toilets only", _ask_with(
+        [_entity("water closet", "category")], [_op("set", "category")], "toilets only"))
+    listed = _codes_in(t2, world)
+    assert listed, t2[:200]
+    assert not listed & (g["srt_basin"] | g["other_basin"]), ("the held class (other bucket) was kept", sorted(listed))
+    assert listed <= g["srt_wc"], ("brand lost or class wrong", sorted(listed))
