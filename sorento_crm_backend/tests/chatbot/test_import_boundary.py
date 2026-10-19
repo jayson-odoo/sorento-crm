@@ -72,6 +72,8 @@ ALLOWED = {
     "tests/chatbot_eval/test_replay_failfast.py",
     # Bench tooling, not core, not on a request path: it reads the engine's scope helpers to pin the grounding tier's scope.
     "tests/chatbot_eval/test_replay_scope.py",
+    # Bench tooling, not core, not on a request path: it stubs the engine's run_turn to pin the prompt-pin skip and the parse source.
+    "tests/chatbot_eval/test_round45.py",
     # Chatbot memory lane A S2 (contract section 4/5): the contact's memory/facts
     # surface is a `user_management.contacts` route, so it cannot live under
     # `app/services/chatbot/`, yet its vocabulary, precedence and row-lock rules

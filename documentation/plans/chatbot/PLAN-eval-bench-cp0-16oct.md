@@ -507,3 +507,26 @@ failure into a pass:
 Red-first per item, kill-proof per hunk, two Opus review rounds (the first found a wrong-option pass, a leak turned
 unknown and an `asked_type` fallback that passed 11 of 34 real failures; all closed). TRAIN gate rows: no verdict
 changes. Held-out re-grade at $0 went to crew only.
+
+## Round 45 (20 Oct, L1 replay input; crew ruling a26519786)
+
+ARCHITECTURE: (1) layer: measurement (the L1 replay, `scripts/chatbot_eval/replay.py`). (2) Shared mechanism: what the
+replay feeds at the parser seam (`mock_reformulator_output`) and which prompt the replayed turn runs on. (3) Other
+classes it fixes: every CHAT-STATE state-change class in $0 replays (they replayed with the state path off and failed
+where the live turn passed), and every row pinned to a prompt version the replay DB lacks (CLOSED LISTS, CODE LOOKUP and
+STATE gates read as off). (4) Removes: the silent fallback to the hardcoded template in replays
+(`ai_prompt_registry.get_prompt`, the override branch returns `_fallback(name)` for an unknown id).
+- Parse source: the ctx verdict stays the default; the trace's `understood` emission replaces it only when it carries a
+  non-empty `state_changes` list, because `chat_state.apply_changes` strips that key from the verdict (grafting it back
+  onto the verdict would apply the changes twice). A row without a ctx verdict (a turn that failed live) stays
+  `no_parse`. Evidence for keeping ctx as the default ($0 A/B, 299 dev gate rows, same app code): the two sources differ
+  on 4 rows and the ctx verdict matches the recorded turn on all 4, the emission on none (the replay's rebuilt starting
+  focus holds no settled customer rows, so `without_restated_rows` cannot fire on the emission); 0 of the 10,650 gate
+  rows carry `state_changes`, so the gate does not move.
+- Prompt: a row whose envelope pins a parser prompt version the replay DB does not hold is skipped `prompt_missing` and
+  counted with the other skip kinds; a non-dict `prompt_overrides` is ignored, as the engine ignores it.
+- Named triggers: feed the emission for every row once the replay rebuilds the full starting focus; revisit
+  `state_changes: []` (valid by the schema; the verdict loses the key, so a replay of such a row runs with the state path
+  off) when state-change rows join the gate set.
+- Known gap, not from this round: the CLI log-leak test stays green with `logging.disable` removed (also on main); the
+  in-process probe guards the disable.

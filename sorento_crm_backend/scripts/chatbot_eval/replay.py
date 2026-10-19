@@ -67,9 +67,20 @@ def _args_sha(args: Any) -> str:
 
 
 def _recorded_parse(row: dict[str, Any]) -> dict[str, Any] | None:
+    # The ctx verdict is the default: it is what the live turn acted on, and a row without one (a turn that
+    # failed live) is no_parse. The understood emission replaces it only when it carries state_changes
+    # (apply_changes strips those from the ctx verdict, so for such rows the emission is the complete source).
     ctx = ((row.get("response") or {}).get("ctx") or {})
     raw = (ctx.get("parse") or {}).get("_parser_raw")
-    return raw if isinstance(raw, dict) and raw else None
+    if not (isinstance(raw, dict) and raw):
+        return None
+    for rec in row.get("trace") or []:
+        if isinstance(rec, dict) and rec.get("stage") == "understood":
+            full = (rec.get("raw") or {}).get("parser_raw")
+            if isinstance(full, dict) and isinstance(full.get("state_changes"), list) and full["state_changes"]:
+                return full
+            break
+    return raw
 
 
 def _recorded_memory(row: dict[str, Any]) -> dict[str, Any]:
@@ -355,6 +366,13 @@ def _replay_one(row: dict[str, Any], factory: Callable[[], Any], stage: str | No
         out["misses"] = g_misses
         return out
     payload = copy.deepcopy(row.get("envelope") or {})
+    # get_prompt (ai_prompt_registry.py:1463) falls back to the hardcoded template when an override id is
+    # missing, so a pin this DB lacks would silently measure other code: skip the row instead.
+    overrides = payload.get("prompt_overrides")
+    pinned = overrides.get(PARSER_PROMPT_KEY) if isinstance(overrides, dict) else None  # the engine ignores a non-dict
+    if pinned and not _pin_resolves(factory, pinned):
+        out["skipped"] = "prompt_missing"
+        return out
     payload.update(is_test=True, mock_reformulator_output=parse,
                    previous_conversation_state=_recorded_memory(row))
     # A fresh respond message id (deterministic per row, so base and head agree): the engine's

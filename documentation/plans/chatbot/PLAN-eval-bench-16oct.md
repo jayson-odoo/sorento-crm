@@ -110,8 +110,10 @@ the SAME file under each worktree's own venv with that worktree's backend as cwd
 
 - `run --traces FILE... --out OUT.jsonl [--workers N]`: each input line is a recorded `chatbot.turns` row (+
   `case_id`). For each row, call the real `engine.run_turn(envelope, session_factory=...)` with:
-  - `dry_run=True` and `mock_reformulator_output` = recorded `response.ctx.parse._parser_raw`
-    (`engine.py:1296-1301, 4543-4547`); recorded session vars (`trace[received].raw.session_vars`) and
+  - `dry_run=True` and `mock_reformulator_output` = recorded `response.ctx.parse._parser_raw`, or the trace's
+    `understood` emission (`raw.parser_raw`) when that carries a non-empty `state_changes` list (round 45, CP0 plan)
+    (`engine.py:1296-1301, 4543-4547`); a row pinning a prompt version the replay DB lacks is skipped
+    `prompt_missing`; recorded session vars (`trace[received].raw.session_vars`) and
     `previous_conversation_state` passed through the existing harness keys where the engine supports them;
   - `MCPRuntimeClient.call_tool` patched: return the recorded envelope of the trace event with the same tool
     name and the same canonical args (volatile keys such as `_diagnostics` ignored); otherwise record a miss and
