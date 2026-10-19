@@ -697,9 +697,7 @@ def row_labels(db: Session, candidates: list[dict]) -> dict[str, dict[str, Any]]
 _SET_NOUN_KEYS = frozenset({"class", "brand", "product_type"})
 
 
-def _near_miss(
-    db: Session, *, membership: dict[str, list[str]], legs: list, brand: str | None, hidden_keys: frozenset[str] = frozenset()
-) -> dict | None:
+def _near_miss(db: Session, *, membership: dict[str, list[str]], legs: list, brand: str | None) -> dict | None:
     """The zero set recounted without its one spec value, by that key's other values.
 
     Round 4 R4 (owner console test on PR #833: "the ask about gunmetal wash basin means
@@ -720,8 +718,6 @@ def _near_miss(
     if not classes or len(props) != 1 or len(membership[props[0]]) != 1:
         return None
     key = props[0]
-    if key in hidden_keys:
-        return None  # a contact-hidden key is never recounted or named
     value = membership[key][0]
     if not isinstance(value, str):
         # A grounded number (fix round 8) has no other choices to recount by.
@@ -1283,7 +1279,7 @@ def resolve_product_set(
     # R4 (round 4 on PR #833): a set that qualifies nothing says what it looked for and
     # how many qualify in the key's other values.
     if not qualifying_total and not product_ids:
-        near = _near_miss(db, membership=verdict.get("membership") or {}, legs=legs, brand=brand, hidden_keys=hidden_keys)
+        near = _near_miss(db, membership=verdict.get("membership") or {}, legs=legs, brand=brand)
         if near:
             outcome["near_miss"] = near
     membership = verdict.get("membership") or {}
