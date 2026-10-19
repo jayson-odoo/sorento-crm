@@ -453,6 +453,7 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     gate_passed = True
     gate_reason = "ok"
     gate_clarification = ""
+    picker_lines: list[dict[str, Any]] = []
     customer_picker = False
     compatible_entities: list[dict[str, Any]] = entities
     # D10 (owner console pass, 8 Sep 2026, turn 69d9900e "srtwc8610-sh hav incoming?"):
@@ -931,44 +932,42 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
             require_specific = True
             gate_passed = False
             gate_reason = f"'{domain}' ambiguous (no single exact match); user must pick"
-            # F16 (RS-9 round 4+5): append the company to ONLY the duplicated-code lines,
-            # and ONLY on product_attachment. `incoming`'s annotator re-joins the rendered
-            # lines to the probe BY EXACT CODE TEXT, so a suffixed line would miss that
-            # set and render a confident FALSE "- no incoming" (measured 2/2).
-            if domain == "product_attachment":
-                code_companies: dict[str, list[Any]] = {}
-                for o in specific_options:
-                    for c in o["candidates"]:
-                        ck = jsc.lower_or_empty(c.get("label")).strip()
-                        if not ck:
-                            continue
-                        bucket = code_companies.setdefault(ck, [])
-                        if c.get("company") and c["company"] not in bucket:
-                            bucket.append(c["company"])
-                specific_options = [
-                    {
-                        **o,
-                        "candidates": [
-                            (
-                                {**c, "label": f"{c['label']} ({c['company']})"}
-                                if (
-                                    c.get("company")
-                                    and code_companies.get(
-                                        jsc.lower_or_empty(c.get("label")).strip()
-                                    )
-                                    is not None
-                                    and len(
-                                        code_companies[jsc.lower_or_empty(c.get("label")).strip()]
-                                    )
-                                    > 1
+            # F16 / DUP-CODE-LABEL: append the company to ONLY the lines whose code two or more
+            # rows share, on every domain. The incoming annotator keys each line on its product
+            # id (`picker_lines`), never on the rendered code text, so a suffixed line is safe.
+            code_companies: dict[str, list[Any]] = {}
+            for o in specific_options:
+                for c in o["candidates"]:
+                    ck = jsc.lower_or_empty(c.get("label")).strip()
+                    if not ck:
+                        continue
+                    bucket = code_companies.setdefault(ck, [])
+                    if c.get("company") and c["company"] not in bucket:
+                        bucket.append(c["company"])
+            specific_options = [
+                {
+                    **o,
+                    "candidates": [
+                        (
+                            {**c, "label": f"{c['label']} ({c['company']})", "code": c["label"]}
+                            if (
+                                c.get("company")
+                                and code_companies.get(
+                                    jsc.lower_or_empty(c.get("label")).strip()
                                 )
-                                else c
+                                is not None
+                                and len(
+                                    code_companies[jsc.lower_or_empty(c.get("label")).strip()]
+                                )
+                                > 1
                             )
-                            for c in o["candidates"]
-                        ],
-                    }
-                    for o in specific_options
-                ]
+                            else c
+                        )
+                        for c in o["candidates"]
+                    ],
+                }
+                for o in specific_options
+            ]
             # Roster cap (owner ruling 20 Sep 2026): trimmed HERE, on `specific_options`
             # itself, so the printed roster and the `compatible_entities` the FIX A block
             # below derives from the SAME `specific_options` never disagree on which
@@ -987,6 +986,13 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                     capped_options.append({**o, "candidates": candidates})
                 specific_options = capped_options
             flat_labels = [c["label"] for o in specific_options for c in o["candidates"]]
+            # One entry per numbered line, in line order: the product each line stands for, so an
+            # annotator keys on the product and never re-joins the rendered text.
+            picker_lines = [
+                {"uuid": c.get("uuid"), "code": c.get("code") or c["label"], "company": c.get("company")}
+                for o in specific_options
+                for c in o["candidates"]
+            ]
             numbered = "\n".join(f"{i + 1}. {label}" for i, label in enumerate(flat_labels))
             # mc-prefix-collapse: say what DID resolve. A header line, never a numbered
             # one - downstream annotators key on /^\d+\.\s/ and must not see it as a pick.
@@ -1858,6 +1864,8 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
 
     out["gate_reason"] = gate_reason
     out["gate_clarification"] = gate_clarification  # '' when nothing to ask
+    if picker_lines:
+        out["picker_lines"] = picker_lines
     out["compatible_entities"] = compatible_entities
     if cust_probe_entities and len(cust_probe_entities) > 0:
         out["customer_probe_entities"] = cust_probe_entities

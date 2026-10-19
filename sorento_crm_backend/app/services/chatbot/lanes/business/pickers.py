@@ -69,14 +69,17 @@ def probe_rows(probe: Any) -> list[Any] | None:
 
 
 def _annotate_lines(source: str, suffix_for) -> str:
-    """Map the numbered lines through `suffix_for`; header lines pass through untouched."""
+    """Map the numbered lines through `suffix_for(label, ordinal)`; header lines pass through
+    untouched. `ordinal` is the line's place among the numbered lines, from 0."""
     out_lines = []
+    ordinal = 0
     for line in source.split("\n"):
         match = _NUMBERED_LINE.match(line)
         if not match:
             out_lines.append(line)  # header / non-item line
             continue
-        out_lines.append(line + suffix_for(match.group(1)))
+        out_lines.append(line + suffix_for(match.group(1), ordinal))
+        ordinal += 1
     return "\n".join(out_lines)
 
 
@@ -100,6 +103,10 @@ def annotate_incoming(gate: dict[str, Any] | None, *, probe: Any) -> dict[str, A
         out["incoming_by_code"] = {}
         return out
     has_incoming: set[str] = set()
+    # DUP-CODE-LABEL: the products the probe found incoming for, by id; a row without one is
+    # matched by its code (and its company, when it names one).
+    incoming_ids: set[str] = set()
+    incoming_rows: list[tuple[str, str]] = []
     for a in answers:
         code = jsc.get(a, "title") if jsc.truthy(a) else a
         if jsc.get(jsc.get(a, "flags"), "dealer_view") is True and isinstance(code, str):
@@ -116,12 +123,32 @@ def annotate_incoming(gate: dict[str, Any] | None, *, probe: Any) -> dict[str, A
             code = jsc.get(field, "value") if jsc.truthy(field) else field
         if jsc.truthy(code):
             has_incoming.add(_norm(code))
+            if jsc.truthy(a) and jsc.truthy(jsc.get(a, "entity_id")):
+                incoming_ids.add(jsc.js_string(jsc.get(a, "entity_id")))
+            else:
+                company_field = (
+                    jsc.find(jsc.get(a, "fields"), lambda x: _norm(jsc.get(x, "label")) == "company")
+                    if jsc.truthy(a) and isinstance(jsc.get(a, "fields"), list)
+                    else None
+                )
+                incoming_rows.append((_norm(code), _norm(jsc.get(company_field, "value")) if jsc.truthy(company_field) else ""))
 
     clarification = jsc.get(out, "gate_clarification")
     source = jsc.js_string(clarification) if jsc.truthy(clarification) else ""
-    annotated = _annotate_lines(
-        source, lambda label: " - has incoming" if _norm(label) in has_incoming else " - no incoming"
-    )
+    lines = [ln for ln in jsc.array(out.get("picker_lines")) if isinstance(ln, dict)]
+
+    numbered_count = sum(1 for ln in source.split("\n") if _NUMBERED_LINE.match(ln))
+
+    def has_it(label: str, ordinal: int) -> bool:
+        if len(lines) != numbered_count:
+            return _norm(label) in has_incoming  # no per-line products to key on
+        line = lines[ordinal]
+        if jsc.js_string(line.get("uuid")) in incoming_ids:
+            return True
+        code, company = _norm(line.get("code")), _norm(line.get("company"))
+        return any(c == code and (not co or not company or co == company) for c, co in incoming_rows)
+
+    annotated = _annotate_lines(source, lambda label, ordinal: " - has incoming" if has_it(label, ordinal) else " - no incoming")
     message = annotated
     if len(has_incoming) == 0:
         message += "\n\nNone of these have incoming stock right now."
