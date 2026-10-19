@@ -36,7 +36,7 @@ def test_a_leftover_word_never_describes_the_set_on_a_file_ask(session_factory, 
     text = text_of(r)
     assert "Couldn't find" not in text, (text, calls)
     assert fetches(calls), (text, calls)
-    assert "ZZB1P1_ZZT_Certification.pdf" in text and "ZZB1P2_ZZT_Certification.pdf" in text, text
+    assert "ZZB1P1_ZZSIRIM.pdf" in text and "ZZB1P2_ZZSIRIM.pdf" in text, text
     assert "ZZOTHER1" not in text, text
 
 
