@@ -139,5 +139,11 @@ One rule, no code backstop. This reverses the a33610208 behaviour shift above. R
 dq-09, dq-10 incoming -> inventory; c1-09 order/outstanding -> inventory, the lead's reading of "after any answer",
 flagged to crew), fix 54f17dc6f6 (68,849 chars, 96 passed), published v83 023f836c. Stored outputs on the new gold,
 19 quantity pairs: OLD v77 33/57, v80 39/57 (both still follow the old continuation rule on the changed rows).
-Next, when the dev key has credits: ONE full conflict gold N=3 run on v83 (~USD 0.62; measures F1-E and the owner's
-quantity pairs together), then TRAIN x1 attachment + spec paired v77 vs v83.
+F1-G (CHAT-STATE R7 LAST-REFERENT, owner rule 20 Oct, crew/state/files/r7/prompt-lines.txt): rule edits, ids kept:
+P3 -> R-P1-05 (any row of the last list can be picked: product, file, promotion, order; its stock-question 'not a
+pick' clause now holds only while no numbered list came after); P2 -> R-P1-06 (a bare number over the stock question
+is a position when a numbered list came after it); P1 -> R-P1-03 (a number alone is the stock quantity only while the
+stock check is newest; after a newer numbered list it is a position, state_changes pick n, reference_positions [n]
+mirrored per R-X-05). Red 74e457e8c1, fix 57f5defb95 (69,410 chars, 99 passed), published v84 5f289272.
+Next, when the dev key has credits: ONE full conflict gold N=3 run on v84 (~USD 0.62; measures F1-E and the owner's
+quantity pairs together), then TRAIN x1 attachment + spec paired v77 vs v84.
