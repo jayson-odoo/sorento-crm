@@ -1634,6 +1634,39 @@ class ResolveReferenceRequest(BaseModel):
 _CODE_MATCH_TIERS = frozenset({"exact", "prefix", "substring", "head_code", "and"})
 
 
+def _contact_hidden_spec_keys(db: Session, payload: "ResolveReferenceRequest") -> set[str]:
+    """The spec keys this contact may not be told about: the caller's list UNIONED with the
+    contact's own policy (see the AC-18 / B/S2 notes at the spec fallback)."""
+    hidden_spec_keys = {str(k) for k in (payload.hidden_spec_keys or [])}
+    if payload.contact_id:
+        from app.services.field_access import (
+            resolve_contact_with_null_workspace_fallback,
+        )
+        from app.services.spec_visibility import (
+            full_registry_rows,
+            hidden_keys as _hidden_keys,
+            resolve_policy as _resolve_spec_policy,
+        )
+
+        # SF-1 (security re-verify): resolved through the SAME NULL-
+        # workspace fallback `check_access` uses, not the bare
+        # `resolve_contact_id` `resolve_policy` calls internally - a
+        # contact with `workspace_id IS NULL` (16 measured) resolves to
+        # nothing through the plain path, so this route would have handed
+        # such a contact the closed DEFAULT policy while `check_access`
+        # gives them their real one. Once resolved to the internal id,
+        # `resolve_policy` re-resolving it is a same-id no-op.
+        resolved_contact_id = resolve_contact_with_null_workspace_fallback(
+            db, contact_id=payload.contact_id, space_id=payload.space_id
+        )
+        contact_policy = _resolve_spec_policy(
+            db, resolved_contact_id or payload.contact_id, payload.space_id
+        )
+        registry_keys = {key for key, _label in full_registry_rows(db)}
+        hidden_spec_keys |= _hidden_keys(contact_policy, registry_keys)
+    return hidden_spec_keys
+
+
 def _code_matched(result: dict[str, Any], tokens: list[str] | None = None, *, certificates: bool = False) -> bool:
     """Code first (fix round 13 on PR #833, owner 28 Sep 2026: "if found by product code
     -> forward asking, if cannot find product code, fallback to spec search -> reverse
@@ -3391,6 +3424,14 @@ def resolve_reference_post(
             log_usage=not payload.dry_run,
         )
         specs = _with_parser_brand(specs, payload.brand_tokens)
+        if any(e.get("any_keys") for e in specs):
+            # A bare size's OR never keeps a dimension this contact may not see (R6-5 S2).
+            hidden = _contact_hidden_spec_keys(db, payload)
+            specs = [
+                {**e, "any_keys": [k for k in e["any_keys"] if k not in hidden]} if e.get("any_keys") else e
+                for e in specs
+            ]
+            specs = [e for e in specs if "any_keys" not in e or e["any_keys"]]
         if understanding is None and not specs and not payload.scope_terms and not payload.free_terms:
             # Nothing describes a set: the message held only predicate words ("Stock") and
             # no spec, brand or class word grounded. A set built off the looked-up ids
@@ -3670,33 +3711,7 @@ def resolve_reference_post(
         # pair `check_access` uses) and UNIONS it in. The caller-supplied list
         # only ever narrows further; it can never widen past the server's own
         # answer for that contact.
-        hidden_spec_keys = {str(k) for k in (payload.hidden_spec_keys or [])}
-        if payload.contact_id:
-            from app.services.field_access import (
-                resolve_contact_with_null_workspace_fallback,
-            )
-            from app.services.spec_visibility import (
-                full_registry_rows,
-                hidden_keys as _hidden_keys,
-                resolve_policy as _resolve_spec_policy,
-            )
-
-            # SF-1 (security re-verify): resolved through the SAME NULL-
-            # workspace fallback `check_access` uses, not the bare
-            # `resolve_contact_id` `resolve_policy` calls internally - a
-            # contact with `workspace_id IS NULL` (16 measured) resolves to
-            # nothing through the plain path, so this route would have handed
-            # such a contact the closed DEFAULT policy while `check_access`
-            # gives them their real one. Once resolved to the internal id,
-            # `resolve_policy` re-resolving it is a same-id no-op.
-            resolved_contact_id = resolve_contact_with_null_workspace_fallback(
-                db, contact_id=payload.contact_id, space_id=payload.space_id
-            )
-            contact_policy = _resolve_spec_policy(
-                db, resolved_contact_id or payload.contact_id, payload.space_id
-            )
-            registry_keys = {key for key, _label in full_registry_rows(db)}
-            hidden_spec_keys |= _hidden_keys(contact_policy, registry_keys)
+        hidden_spec_keys = _contact_hidden_spec_keys(db, payload)
         if hidden_spec_keys:
             specs = [s for s in specs if s.get("key") not in hidden_spec_keys]
 
