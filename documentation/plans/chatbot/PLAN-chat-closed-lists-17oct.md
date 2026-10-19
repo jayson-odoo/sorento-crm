@@ -327,4 +327,12 @@ exactly a listed item) waits for the owner; neither side is built.
 
 | Slice | Red | Green | Notes |
 |---|---|---|---|
-| H1 HIDDEN-KEYS-AT-THE-ENTRIES | f6e8c02d | 426eb3b4 | 3 red / 3 guards; red-proof crew-note 6272825925 |
+| H1 HIDDEN-KEYS-AT-THE-ENTRIES | f6e8c02d | 426eb3b4, 32971002 (+ stub 90bc48e9, lead sign-off) | candidate block filtered in one place (`_registry`); parse output stripped once; kill-proof 3 red; security PASS with should-fixes -> H1b |
+| H1b HIDDEN-KEYS-AT-EVERY-ENTRY (security should-fixes) | f95faa7d, 9329f07b | d4272502, 1a6cc876 (B4), (B5 carried-set replay in progress) | grounding output stripped too (raw-word re-derive); Shape B reads the hidden set once before the unknown-value branch; a set breakdown never splits by a hidden key (B4); `.strip()` on spec_key; kill-proof 5 red |
+| F3-a ONE VALUE INDEX | 3fffdd4b, f1f1645d | 5cd73ded, 8ff8ef7d | one registry index + one scoped count query; spec lines ranked held family / count / name; holding keys never cut; near rows keep CAP_PER_WORD; removed `_keys_holding`, `_bare_size_keys`, `_unit_keys`, `or keys`; kill-proof 5 red + 1 red |
+
+Dev data for F3-a (sorento_cagent_stack, read-only, searchable, not company-scoped): 5 numbers held by 6+ of the 9 mm
+keys (250: trap_length 329, dim_height 107, dim_length 43, dim_width 20, thickness 8, diameter 7, depth 6; the old cut
+dropped diameter and depth and the bare-size line took a slot). The 3 enum phrases two keys share whose name order
+differs from data order ("urinal", "mixer", "mixer tap") all pair a type line with another line, and type stays ahead,
+so A2's enum ranking changes none of them today.
