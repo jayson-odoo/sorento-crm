@@ -58,7 +58,10 @@ own, 236 @ 20/11/2026 New line, 167 @ 20/11/2026 New line (AutoCount 417 @ 20/10
 - A11 **A held-back line stays held back** (reviewer round 2). When the server holds back a named line
   whose breakdown it refuses (e.g. 608 "components add up to 532 and the line is open for 632"), that
   line is not confirmed, not emailed and not in `lines_confirmed`, even if it is split-edited; it is in
-  `lines_held_back` only, as on main. A split-edited line the press did not name is added BEFORE the
+  `lines_held_back` only, its OI rows stay as they were and its plan is not stamped (so it stays
+  split-edited). This goes past main: on main a held-back line whose saved split plan still acts got a
+  new ORDER row and an email line (3e2666c5e3: "632 ADVANCE, ORDER 600"); fixed here in
+  `_kept_split_needs` (d8438ef1af). A split-edited line the press did not name is added BEFORE the
   hold-back runs, so the hold-back can drop it like any named line; a Confirm of the order's other lines
   never answers 422 because of it.
 - A10 **The pre-confirm list cannot leave a split-edited line out.** Its row shows no untick box: the
