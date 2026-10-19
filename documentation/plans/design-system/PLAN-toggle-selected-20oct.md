@@ -1,6 +1,6 @@
 # PLAN: TOGGLE-SELECTED - the selected toggle option is the primary colour app-wide
 
-Status: Plan (small fix track: FE-only, no migration, no auth/RBAC change, expected diff under 300 lines)
+Status: Implemented, in review #1789 (small fix track: FE-only, no migration, no auth/RBAC change, expected diff under 300 lines)
 
 ## Owner's words (20 Oct 2026)
 
@@ -32,6 +32,20 @@ grey and reads the same as the unselected ones; the Switches above it are alread
 
 Out of scope: `Tabs` (navigation, not a choice control; line tabs are the design-language standard) unless the audit
 finds a `TabsList` used as a value picker.
+
+## Acceptance criteria
+
+- AC-1: a selected `Toggle` / `ToggleGroupItem` (default and outline) is `bg-primary` with `text-primary-foreground`;
+  unselected options keep their plain style. Contact Tag settings' Not set | On | Off is the reference screen.
+- AC-2: hovering a selected option keeps it primary (`bg-primary/90`) with white text; hovering an unselected one shows
+  the existing grey. Focus ring unchanged; a disabled selected option is still dimmed (`disabled:opacity-50`).
+- AC-3: a pill (`variant="default"`) or `button` tab strip shows its active option primary with white text and icon;
+  line tabs keep the primary underline and no fill.
+- AC-4: no call site overrides the selected fill with a non-primary colour or a faint tint; every hand-rolled toggle in
+  the audit selects with the same tokens (or Button `variant="primary"`). Content inside a selected option (the
+  quotation scope chip's $ button) stays readable at rest, on hover and while open.
+- AC-5: keyboard and ARIA unchanged (`data-state`, `aria-pressed` / `aria-checked`, roving focus); no layout change and
+  no horizontal scroll at 375 on the verified screens.
 
 ## Tests (red first)
 

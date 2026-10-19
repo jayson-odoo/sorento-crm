@@ -37,7 +37,7 @@ function ScopeValueButton({ scope }: { scope: QuotationScope }) {
         type="button"
         aria-label={`Show the value of ${scope.scope_label}`}
         title={`Show the value of ${scope.scope_label}`}
-        className="me-0.5 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:text-primary group-has-[[data-state=active]]/scope:text-primary-foreground"
+        className="me-0.5 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:text-primary group-has-[[data-state=active]]/scope:text-primary-foreground group-has-[[data-state=active]]/scope:hover:text-primary-foreground group-has-[[data-state=active]]/scope:data-[state=open]:text-primary-foreground"
       >
         <DollarSign className="size-3.5" aria-hidden />
       </PopoverTrigger>
