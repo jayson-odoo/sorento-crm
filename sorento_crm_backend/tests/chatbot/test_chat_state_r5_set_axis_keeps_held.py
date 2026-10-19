@@ -250,13 +250,30 @@ def _held_srt_wc(chat, world, class_entities=None):
                      [_op("set", "brand"), _op("set", "category")], f"{brand} water closets")
 
 
-@pytest.mark.parametrize("ops", [[_op("keep")], [_op("answer")]], ids=["carry", "answer"])
-def test_r5_f1_guard_a_turn_that_is_not_a_refine_does_not_pick_up_the_held_brand(chat, world, ops):
+def test_r5_f1_guard_keep_with_a_different_typed_class_is_not_a_change_the_held_subject_stays(chat, world):
+    """Lead decision (review round 2, card R1 / R4 / R5; replaces the old "carry|answer" pin that held the
+    opposite): under `keep`, a typed class DIFFERENT from the held one is not a change, so the held
+    subject (brand + class) stays and the typed class is not applied."""
     g = _groups(world)
     _held_srt_wc(chat, world)
-    t2 = chat.say("toilets", _ask_with([_entity("water closet", "category")], ops, "toilets"))
+    t2 = chat.say("basins", _ask_with([_entity("basin", "category")], [_op("keep")], "basins"))
     listed = _codes_in(t2, world)
-    assert listed & (g["cabana_wc"] | g["mocha_wc"]), ("the held brand was carried on a non-refine turn", sorted(listed), t2[:200])
+    assert listed, t2[:200]
+    assert listed <= g["srt_wc"], ("the held brand + class did not stay under keep", sorted(listed))
+    assert not listed & (g["srt_basin"] | g["other_basin"]), ("the typed class was applied under keep", sorted(listed))
+
+
+def test_r5_f1_guard_answer_naming_a_class_replaces_only_the_answered_slot_and_keeps_the_brand(chat, world):
+    """Lead decision (review round 2, card R5): `answer` fills ONLY the asked slot (the class) and keeps the
+    held brand."""
+    g = _groups(world)
+    _held_srt_wc(chat, world)
+    v = _ask_with([_entity("basin", "category")], [_op("answer")], "basins")
+    v["open_question_answer"] = {"mode": "value", "picked": [], "items": [], "qty_for_all": None}
+    t2 = chat.say("basins", v)
+    listed = _codes_in(t2, world)
+    assert listed, t2[:200]
+    assert listed <= g["srt_basin"], ("the answered class slot, brand kept", sorted(listed))
 
 
 def test_r5_f1_guard_a_typed_product_code_turn_carries_no_held_brand(chat, world):

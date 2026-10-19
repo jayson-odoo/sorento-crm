@@ -22,6 +22,7 @@ Only `turn/chat_state.py` constructs or assigns a Subject (AC-S1-2).
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -191,7 +192,7 @@ def _writes_subject(tree) -> list[int]:
             fn = name(node.func)
             if fn == "Subject":
                 hits.append(node.lineno)
-            elif fn in _REPLACERS and any(k.arg == "subject" for k in node.keywords):
+            elif fn in _REPLACERS | {"State"} and any(k.arg == "subject" for k in node.keywords):
                 hits.append(node.lineno)
             elif fn == "setattr" and len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) and node.args[1].value == "subject":
                 hits.append(node.lineno)
@@ -205,7 +206,7 @@ def test_r6_s1_the_ast_check_ignores_a_plain_local_named_subject():
     import ast
 
     assert _writes_subject(ast.parse("subject = 1\nx = f(subject)\ndef g(subject): return subject")) == []
-    assert len(_writes_subject(ast.parse("Subject()\nreplace(s, subject=1)\nx.subject = 2\nsetattr(x, 'subject', 1)"))) == 4
+    assert len(_writes_subject(ast.parse("Subject()\nreplace(s, subject=1)\nx.subject = 2\nsetattr(x, 'subject', 1)\nState(focus=f, subject=s)"))) == 5
 
 
 def test_r6_s1_only_the_applier_builds_or_assigns_the_subject():
@@ -428,3 +429,96 @@ def test_r6_s2_an_answer_naming_an_offered_brand_is_offer_and_the_fetch_holds_th
 
     blob = _json.dumps(keys[0], default=str).lower()
     assert "cabana" in blob and "sorento" not in blob, ("the held brand rides beside the offered one", keys[0])
+
+
+# ----------------------------------------------------------------------- AC-S1-9 (card R1 / R4 / R5, lead decision)
+def test_r6_s1_keep_restating_the_same_held_class_keeps_the_held_brand():
+    focus = Focus(brands=["SORENTO"], domains=["inventory"], extra={"category": [_row("Water Closet", "category")]})
+    s = _subject(_apply(focus, verdict(state_changes=[_op("keep")], entities=[_cat("Water Closet")])))
+    assert _vals(s, "brand") == {"sorento"} and _vals(s, "class") == {"water closet"}, s.predicate
+    assert s.provenance["brand"] == "held", s.provenance
+
+
+def test_r6_s1_answer_naming_a_class_fills_only_the_asked_slot_and_keeps_the_brand():
+    focus = Focus(brands=["SORENTO"], domains=["inventory"], extra={"category": [_row("Basin", "category")]})
+    v = verdict(state_changes=[_op("answer")], entities=[_cat("Water Closet")])
+    v["open_question_answer"] = {"mode": "value", "picked": [], "items": [], "qty_for_all": None}
+    oq = {"kind": "class_pick", "options": [{"position": 1, "label": "Water Closet"}]}
+    s = _subject(_apply(focus, v, open_question=oq))
+    assert _vals(s, "class") == {"water closet"} and s.provenance["class"] == "said", s
+    assert _vals(s, "brand") == {"sorento"} and s.provenance["brand"] == "held", s
+
+
+def test_r6_s1_new_subject_naming_only_a_product_drops_the_held_brand():
+    uid = "33333333-3333-3333-3333-333333333333"
+    focus = Focus(brands=["SORENTO"], domains=["inventory"], extra={"category": [_row("Basin", "category")]})
+    ent = entity("SRTWC286", "product", canonical_code="SRTWC286", uuid=uid)
+    s = _subject(_apply(focus, verdict(state_changes=[_op("new_subject")], entities=[ent])))
+    assert s.provenance.get("brand") != "held" and "brand" not in (s.predicate or {}), s
+    assert "class" not in (s.predicate or {}), s
+
+
+def test_r6_s1_a_rejected_change_set_leaves_the_held_subject_and_the_engine_does_not_crash(chat, world):
+    g = _groups(world)
+    brand = _brand_word(world, "sorento")
+    chat.say("t1", _ask_with([_entity(brand, "brand"), _entity("water closet", "category")],
+                             [_op("set", "brand"), _op("set", "category")], "t1"))
+    # an unknown axis rejects the whole change set (`state_led` stays None on it); `say` asserts the turn is done
+    t2 = chat.say("ok", _ask_with([], [_op("set", "no_such_axis")], "ok"))
+    listed = _codes_in(t2, world)
+    assert listed and listed <= g["srt_wc"], ("the held subject was not fetched after a rejected change set", t2[:200])
+
+
+# ----------------------------------------------------------------------- AC-S1-10 held token without uuid
+def _tokens(obj, code):
+    """Rows (anywhere in the Subject) whose key is the held code."""
+    out = []
+    def walk(v):
+        if isinstance(v, dict):
+            if v.get("key") == code:
+                out.append(v)
+            for x in v.values():
+                walk(x)
+        elif isinstance(v, (list, tuple)):
+            for x in v:
+                walk(x)
+    walk(obj)
+    return out
+
+
+def test_r6_s1_a_held_product_without_a_uuid_stays_in_the_subject_as_a_token_keyed_by_its_code():
+    import dataclasses
+
+    row = {"raw": "SRTWC286-SH", "canonical_code": "SRTWC286-SH", "hint": "product", "current_message": False}
+    s = _subject(_apply(Focus(products=[row], domains=["inventory"]), verdict(state_changes=[_op("keep")])))
+    assert s.source != "unresolved", s
+    assert _tokens(dataclasses.asdict(s), "SRTWC286-SH"), ("no token row keyed by the held code", s)
+
+
+@pytest.mark.parametrize("message", ["any promo?", "ada promosi tak", "有促销吗"])
+def test_r6_s1_a_keep_turn_over_a_held_code_with_no_uuid_fetches_that_product(seam, message):
+    from tests.chatbot.test_chat_state_r3a_fetch_quantity import _seed_more
+    from tests.chatbot.test_chat_state_r4a_brand_offer import _ids_in_calls
+    from tests.chatbot.test_chat_state_seam import _emit
+
+    code = "SRTWC286-SH"
+    if code not in seam.uuid_of:
+        _seed_more(seam, [code])
+    row = {"raw": code, "canonical_code": code, "hint": "product", "current_message": False}
+    from app.services.chatbot.turn.state import focus_to_wire
+
+    prev = {"focus": focus_to_wire(Focus(products=[row], domains=["inventory"])), "open_question": None}
+    seam.say(message, _emit(domain_hint="inventory", intent_hint="check_stock", entities=[],
+                            state_changes=[_op("keep")]), previous=prev)
+    ids = _ids_in_calls(seam.turn_calls[-1])
+    assert ids == {seam.uuid_of[code]}, ("the held token did not reach the fetch (or an unscoped fetch ran)", seam.turn_calls[-1], seam.rules_fired)
+
+
+# ----------------------------------------------------------------------- AC-S1-11 unplaced tokens
+def test_r6_s1_two_said_codes_one_placed_one_not_settles_to_ids_with_the_other_unplaced(tchat, world):
+    placed = world["close_couple"]["sorento"][0]
+    tchat.say("two codes", _ask_with(
+        [_entity(placed.product_code, "product"), _entity("ZZ-9981", "product")], [_op("set", "product")], "two codes"))
+    s = tchat.state_log().get("subject")
+    assert s and s["source"] == "ids" and str(placed.id) in s["product_ids"], s
+    assert "zz-9981" in json.dumps(s.get("unplaced"), default=str).lower(), ("unplaced does not list the other token", s)
