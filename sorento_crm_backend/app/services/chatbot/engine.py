@@ -5641,11 +5641,20 @@ def _run_stages_body(  # noqa: PLR0915
             # product lookup. That rule lives where the predicate is attached to a fetch
             # (`turn_runtime.make_tool_runner`: a fetch already scoped to a resolved
             # product takes no set predicate), not here.
-            resolver_parse_output = turn_runtime.with_carried_entities(
-                (ctx.get("parse") or {}).get("output") or {},
-                state_out.focus,
-                unsettled_only=plan.ask is None,
-            )
+            if state_in.state_led is not None:
+                # CHAT-STATE r6 S2: a state-led turn's fetch input is the Subject's, one mapping.
+                resolver_parse_output = chat_state.fetch_entities(
+                    state_in.subject,
+                    (ctx.get("parse") or {}).get("output") or {},
+                    state_out.focus,
+                    unsettled_only=plan.ask is None,
+                )
+            else:
+                resolver_parse_output = turn_runtime.with_carried_entities(
+                    (ctx.get("parse") or {}).get("output") or {},
+                    state_out.focus,
+                    unsettled_only=plan.ask is None,
+                )
             resolver_parse_output = _without_carried_domain_on_a_roster_pick(
                 resolver_parse_output, plan.trace.rules_fired
             )

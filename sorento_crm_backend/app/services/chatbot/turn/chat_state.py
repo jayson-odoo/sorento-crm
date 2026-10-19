@@ -723,6 +723,52 @@ def subject_wire(subject: Subject) -> dict[str, Any]:
     }
 
 
+SUBJECT_KINDS = frozenset({"brand", "category", "product_type", "specification"})
+
+
+def fetch_entities(
+    subject: Subject | None, parse_output: dict[str, Any], focus: Focus, *, unsettled_only: bool
+) -> dict[str, Any]:
+    """The ONE State-to-fetch mapping: the resolver / fetch input of a state-led turn.
+
+    The Subject's axes (brand, class, spec) always ride, whatever this message typed: a held
+    axis the message did not restate is kept, a restated one is replaced by what was said
+    (the applier already cleared the replaced axis from the focus, so `held` here is exactly
+    what the ops left). The brand is read from the Subject's predicate, the class and spec
+    rows (which carry their registry keys) from the focus. Every other kind (customer,
+    warehouse, document type, ...) keeps the carried-entities rule it had."""
+    from app.services.chatbot import turn_runtime
+
+    own = [e for e in parse_output.get("entities") or [] if isinstance(e, dict)]
+    typed = {str(e.get("hint") or "").strip().lower() for e in own if e.get("current_message") is not False}
+    declared = bool(subject) and all(
+        subject.provenance.get(_SUBJECT_AXIS[k]) in ("said", "offer") for k in typed & SUBJECT_KINDS
+    )
+    if subject is None or not declared or (subject.source == "unresolved" and not subject.predicate):
+        # Words typed on an axis the ops did not `set`: the message states its own ask, which
+        # the carried-entities rule reads as it always did (retired with the other rewriters in S5).
+        return turn_runtime.carried_entities_except(parse_output, focus, unsettled_only=unsettled_only)
+    base = turn_runtime.carried_entities_except(
+        parse_output, focus, unsettled_only=unsettled_only, skip_kinds=SUBJECT_KINDS
+    )
+    held: list[dict[str, Any]] = []
+    if "brand" not in typed:
+        held += [
+            {"raw": b, "hint": "brand", "canonical_code": b, "current_message": False, "confident": True}
+            for b in (subject.predicate.get("brand") or [])
+        ]
+    keep_kinds = frozenset(
+        k for k, axis in (("category", "class"), ("product_type", "class"), ("specification", "spec"))
+        if axis in subject.predicate and not ({"category", "product_type"} & typed if axis == "class" else k in typed)
+    )
+    if keep_kinds:
+        rows, _ = turn_runtime.focus_entities(focus, unsettled_only=unsettled_only, only_kinds=keep_kinds)
+        held += rows
+    if not held:
+        return base
+    return {**base, "entities": [*held, *[e for e in base.get("entities") or [] if e not in held]]}
+
+
 def apply_changes(
     state: State,
     verdict: dict[str, Any],

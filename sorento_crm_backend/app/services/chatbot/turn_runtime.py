@@ -4958,8 +4958,82 @@ def _restates_a_settled_row(entity: dict[str, Any], focus: Focus) -> bool:
     return False
 
 
+def focus_entities(
+    focus: Focus,
+    *,
+    unsettled_only: bool = False,
+    skip_kinds: frozenset[str] = frozenset(),
+    only_kinds: frozenset[str] | None = None,
+    scheme_pick: bool = False,
+) -> tuple[list[dict[str, Any]], bool]:
+    """The focus's rows as carried entities (`current_message: false`), kinds in `skip_kinds`
+    left out, and whether a settled product was passed over. The one row-to-entity mapping
+    both `with_carried_entities` and the state path's `chat_state.fetch_entities` use."""
+    carried: list[dict[str, Any]] = []
+    # Every kind the focus holds, `extra` included. `KIND_FIELD_MAP` names four kinds
+    # and the rest of them live in the catch-all, so an `attachment_type` carried from
+    # "photos for srtwc286" was never handed to the resolver, never became an
+    # `attachment_type_ids` argument, and the answer to the product pick that followed
+    # listed Certification PDFs under a header that said "photo" (turns d77231ed /
+    # 2b9aaa96, 16 Sep 2026).
+    by_kind: list[tuple[str, list[Any]]] = [
+        (kind, getattr(focus, attr, []) or []) for kind, attr in KIND_FIELD_MAP.items()
+    ]
+    by_kind += [
+        (kind, rows or [])
+        for kind, rows in (getattr(focus, "extra", {}) or {}).items()
+        if isinstance(rows, list)
+    ]
+    product_scoped = unsettled_only and _holds_a_resolved_product_outside_a_set(focus)
+    settled_products = False
+    for kind, rows in by_kind:
+        if kind in skip_kinds or (only_kinds is not None and kind not in only_kinds):
+            # This turn's own words of the kind replace the carried ones.
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if scheme_pick and kind == "product" and not row.get("uuid"):
+                continue
+            if unsettled_only and row.get("uuid"):
+                settled_products = settled_products or kind == "product"
+                continue
+            if product_scoped and _is_a_bare_class_word(kind, row):
+                continue
+            code = row.get("canonical_code") or row.get("raw")
+            if not jsc.truthy(code):
+                continue
+            entity: dict[str, Any] = {
+                "raw": row.get("raw") or code,
+                "hint": kind,
+                "canonical_code": code,
+                "current_message": False,
+                "confident": True,
+            }
+            if row.get("uuid"):
+                entity["uuid"] = row["uuid"]
+            # Fix round 8 on PR #833: a grounded specification keeps its registry key and
+            # value, so "cert?" after "any gunmetal basin has incoming?" asks about the
+            # SAME gunmetal basins.
+            for name in ("spec_key", "spec_value", "spec_unit", "spec_label", "spec_words", "spec_known"):
+                if name in row:
+                    entity[name] = row[name]
+            carried.append(entity)
+    return carried, settled_products
+
+
 def with_carried_entities(
     parse_output: dict[str, Any], focus: Focus, *, unsettled_only: bool = False
+) -> dict[str, Any]:
+    return carried_entities_except(parse_output, focus, unsettled_only=unsettled_only)
+
+
+def carried_entities_except(
+    parse_output: dict[str, Any],
+    focus: Focus,
+    *,
+    unsettled_only: bool = False,
+    skip_kinds: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """What the RESOLVER is asked about on a turn that named nothing (contract 33, 35).
 
@@ -5004,59 +5078,13 @@ def with_carried_entities(
     )
     if parse_output.get("entities") and not domain_word_only:
         return _with_carried_document_types(parse_output, focus) if unsettled_only else parse_output
-    carried: list[dict[str, Any]] = []
-    # Every kind the focus holds, `extra` included. `KIND_FIELD_MAP` names four kinds
-    # and the rest of them live in the catch-all, so an `attachment_type` carried from
-    # "photos for srtwc286" was never handed to the resolver, never became an
-    # `attachment_type_ids` argument, and the answer to the product pick that followed
-    # listed Certification PDFs under a header that said "photo" (turns d77231ed /
-    # 2b9aaa96, 16 Sep 2026).
-    by_kind: list[tuple[str, list[Any]]] = [
-        (kind, getattr(focus, attr, []) or []) for kind, attr in KIND_FIELD_MAP.items()
-    ]
-    by_kind += [
-        (kind, rows or [])
-        for kind, rows in (getattr(focus, "extra", {}) or {}).items()
-        if isinstance(rows, list)
-    ]
-    product_scoped = unsettled_only and _holds_a_resolved_product_outside_a_set(focus)
-    # CLOSED LISTS SCHEME-NO-PRODUCT: a listed scheme pick does not answer an open product
-    # pick, so a product token no pick settled is not carried beside it.
     scheme_pick = bool(parse_output.get("closed_lists")) and any(e.get("listed") == "cert_scheme" for e in own)
-    settled_products = False
-    for kind, rows in by_kind:
-        if domain_word_only and kind == "attachment_type":
-            # This turn's own document word replaces the carried one.
-            continue
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            if scheme_pick and kind == "product" and not row.get("uuid"):
-                continue
-            if unsettled_only and row.get("uuid"):
-                settled_products = settled_products or kind == "product"
-                continue
-            if product_scoped and _is_a_bare_class_word(kind, row):
-                continue
-            code = row.get("canonical_code") or row.get("raw")
-            if not jsc.truthy(code):
-                continue
-            entity: dict[str, Any] = {
-                "raw": row.get("raw") or code,
-                "hint": kind,
-                "canonical_code": code,
-                "current_message": False,
-                "confident": True,
-            }
-            if row.get("uuid"):
-                entity["uuid"] = row["uuid"]
-            # Fix round 8 on PR #833: a grounded specification keeps its registry key and
-            # value, so "cert?" after "any gunmetal basin has incoming?" asks about the
-            # SAME gunmetal basins.
-            for name in ("spec_key", "spec_value", "spec_unit", "spec_label", "spec_words", "spec_known"):
-                if name in row:
-                    entity[name] = row[name]
-            carried.append(entity)
+    carried, settled_products = focus_entities(
+        focus,
+        unsettled_only=unsettled_only,
+        skip_kinds=skip_kinds | (frozenset({"attachment_type"}) if domain_word_only else frozenset()),
+        scheme_pick=scheme_pick,
+    )
     if domain_word_only and settled_products:
         # ATTACH-SET-BRAND-FOLLOWUP round 2 (owner hand test on the local copy, 7 Oct
         # 2026): the document word's subject is the SETTLED products the plan already
