@@ -507,3 +507,18 @@ failure into a pass:
 Red-first per item, kill-proof per hunk, two Opus review rounds (the first found a wrong-option pass, a leak turned
 unknown and an `asked_type` fallback that passed 11 of 34 real failures; all closed). TRAIN gate rows: no verdict
 changes. Held-out re-grade at $0 went to crew only.
+
+## Round 48 (20 Oct): a refused provider key stops the live run
+
+Observed 20 Oct: with the dev key out of credits every provider call failed with HTTP 429 `insufficient_quota`, yet
+`replay.py live` exited 0 with no stopped row and 0 calls counted; the engine caught the error, so each item read as a
+bot failure and would have been graded. The error-rate stop never fires on a short list.
+ARCHITECTURE: (1) layer: measurement. (2) Shared mechanism: the metered provider wrapper `_metered` (`chat` and
+`embed`), which every model call in a live run passes through. (3) Fixes every live run: x1 / x3 gates, A/B runs,
+held-out runs. (4) Removes graded rows from turns where the provider refused the key.
+- A refusal (codes `insufficient_quota`, `billing_not_active`, `billing_hard_limit_reached`, or status 401 / 403, read
+  from the SDK exception's status and code, never its message) sets the run's stop to `provider_refused` with its kind;
+  the current item and every later item get a stopped row naming the kind, no later call goes out, and the CLI exits 4
+  (error_rate stays 3). A transient 429 without such a code is an ordinary error under the error-rate stop.
+- Named trigger: map the Anthropic and Gemini refusal shapes when a bench run uses those providers (today every bench
+  run is on gpt-5.4-mini; Gemini surfaces as a RuntimeError).
