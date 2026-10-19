@@ -497,7 +497,9 @@ _ETA_WORDS = re.compile(
 )
 
 
-def _as_a_stock_ask_by_its_own_words(verdict: dict[str, Any], message: str) -> dict[str, Any]:
+def _as_a_stock_ask_by_its_own_words(
+    verdict: dict[str, Any], message: str, template: bool = False
+) -> dict[str, Any]:
     """AVAIL-MODE-REPLIES (tester re-run on 2eb2a00ef): the live parser intermittently read
     a plain "CWCX611 x 300" as `check_incoming` and the dealer was told "ETA not confirmed
     yet". A message whose own words name a product WITH a quantity and no ETA word is a
@@ -506,7 +508,12 @@ def _as_a_stock_ask_by_its_own_words(verdict: dict[str, Any], message: str) -> d
 
     The cloud live-parser pass at 2ff7f5e9 saw the same misread the other way: "srt5764 xx
     10" read as a product-info ask (`check_product` / `master_products`), which answered
-    with the staff did-you-mean and an escalation offer. That reading is put back too."""
+    with the staff did-you-mean and an escalation offer. That reading is put back too.
+
+    PARSER-TEMPLATE F1-A: under the consolidated template (`template`) the prompt's own
+    R-P1-03 decides the domain of a stated quantity, so the parser's verdict stands."""
+    if template:
+        return verdict
     misread = {"incoming", "master_products"}
     incoming = (
         verdict.get("intent_hint") in ("check_incoming", "check_product")
@@ -5240,7 +5247,7 @@ def _run_stages_body(  # noqa: PLR0915
 
         if getattr(getattr(state_in, "profile", None), "stock_availability_only", False):
             typed = jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
-            stock_ask = _as_a_stock_ask_by_its_own_words(verdict, typed)
+            stock_ask = _as_a_stock_ask_by_its_own_words(verdict, typed, template=parser_config.template)
             if stock_ask is not verdict:
                 turn_trace.add("stock_ask_by_its_own_words", {"parser_intent": verdict.get("intent_hint")})
                 verdict = stock_ask

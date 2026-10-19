@@ -92,6 +92,9 @@ class ParserConfig:
     json_schema: dict[str, Any] | None = None
     # CHAT-STATE: the prompt in use asks for `state_changes` (set by `resolve_config` in S5).
     state_block: bool = False
+    # PARSER-TEMPLATE F1-A: the version is the consolidated template (`head/parser_template`),
+    # whose rules decide what the engine's own re-readings of the message used to.
+    template: bool = False
 
 
 def _build_base_json_schema() -> dict[str, Any]:
@@ -848,6 +851,7 @@ def resolve_config(
     if not api_key:
         raise ParserError(f"no API key configured for provider {provider!r}")
     from app.services.chatbot.head.closed_lists_prompt import gate_on
+    from app.services.chatbot.head.parser_template import MARKER as TEMPLATE_MARKER
 
     # The same one read as the state gate (#1747 R6): both gates and the text, one version.
     closed_lists = gate_on(raw_template)
@@ -868,6 +872,7 @@ def resolve_config(
         code_lookup=closed_lists and uses_code_lookup(db, override_version_id=override_version_id),
         json_schema=json_schema,
         state_block=state_block,
+        template=TEMPLATE_MARKER in (raw_template or ""),
     )
 
 
