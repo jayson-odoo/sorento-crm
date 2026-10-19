@@ -375,3 +375,26 @@ def test_template_attribute_phrase_unprimed_and_still_sold_is_discontinued():
     assert "still sold" in block and "discontinued" in block, (
         "R-P3-05 does not tie 'still sold' to discontinued"
     )
+
+
+# --- F1-D round 2 --------------------------------------------------------------------------------
+
+
+def test_template_procedure_line_defers_file_types_to_file_rule():
+    """D4: the R-X-01 P2 line must not say every entity is picked from the candidates block;
+    file types and certificates are never in it, so R-P2-06 decides them."""
+    block = _block("R-X-01")
+    lines = [ln for ln in block.splitlines() if ln.lstrip().startswith("P2.")]
+    assert lines, "R-X-01 has no P2 line"
+    assert "R-P2-06" in lines[0], "R-X-01 P2 line has no carve-out for R-P2-06: " + lines[0][:200]
+
+
+def test_template_bare_spec_has_worked_example_with_reason():
+    """D3b: 'SRTKT73SS spec' is a request for the whole spec list, not a property called spec."""
+    block = _block("R-P3-05")
+    assert re.search(r'"[A-Za-z0-9]+ spec"[^\n]{0,40}?(->|is|:)\s*\[\]', block), (
+        "R-P3-05 has no worked example of a product code followed by spec mapped to []"
+    )
+    assert "whole" in block and re.search(r"spec list|all of[^.\n]{0,30}spec", block, re.I), (
+        "R-P3-05 does not give the reason (whole spec list)"
+    )
