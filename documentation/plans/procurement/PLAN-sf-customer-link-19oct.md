@@ -1,6 +1,6 @@
 # PLAN: SF-CUSTOMER-LINK, one-off reviewed script linking old Sponsorship Forms to their customer
 
-Status: in review, PR #1788 (standard track by size: ~900 lines, mostly tests; no migration, no API/RBAC change; reviewer + security-reviewer because it writes prod data; owner runs it on prod)
+Status: review done, PR #1788 (reviewer READY + security-reviewer PASS at 91ed1aff47; waiting CI, then the owner runs the runbook on prod; standard track by size: ~900 lines, mostly tests; no migration, no API/RBAC change; reviewer + security-reviewer because it writes prod data; owner runs it on prod)
 
 UAC: `sf-customer-link-acceptance-criteria.md` (beside this file).
 
