@@ -467,12 +467,18 @@ def test_template_number_alone_is_stock_only_when_stock_is_the_newest_thing():
 
 
 def test_template_held_subject_rule_defers_a_stated_quantity_to_stock_rule():
+    """F1-H2: the 'After an ETA answer a bare code ...' sentence is itself scoped to a code with
+    no quantity and points a stated quantity to R-P1-03 inline."""
     block = _block("R-P1-02")
-    paragraph = next((ln for ln in block.splitlines() if "After an ETA answer" in ln), None)
-    assert paragraph, "R-P1-02 has no 'After an ETA answer' paragraph"
-    assert "see R-P1-03" in paragraph, (
-        "R-P1-02's new-value / bare-code paragraph does not defer a stated quantity to R-P1-03"
+    assert "not a new value of the held ask" not in block, (
+        "R-P1-02 still carries the separate 'not a new value of the held ask' sentence"
     )
+    sentence = next((s for s in _sentences(block) if s.lstrip("- ").startswith("After an ETA answer")), None)
+    assert sentence, "R-P1-02 has no sentence starting 'After an ETA answer'"
+    assert re.search(r"no quantity|without a quantity", sentence, re.I), (
+        "the 'After an ETA answer' sentence is not scoped to a code with no quantity: " + sentence[:200]
+    )
+    assert "see R-P1-03" in sentence, "the 'After an ETA answer' sentence does not point a quantity to R-P1-03"
 
 
 def test_template_stated_quantity_form_of_the_count_does_not_matter():
