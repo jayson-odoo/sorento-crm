@@ -323,6 +323,25 @@ exactly a listed item) waits for the owner; neither side is built.
 - Removes: `_keys_holding`, `_bare_size_keys` and `_unit_keys` as separate per-key readers (folded into the index)
   and the spec-line cut in `shortlist`; the no-holder fallback (every key of the unit) stays per A4, uncut.
 
+### F3-b acceptance (one parented list: file type / certificate kind / scheme; crew a29691875, order a30139843)
+
+Facts (read-only): no scheme table and no parent column; the only scheme -> kind link is per certificate
+(`certificates.scheme` + `attachment_type_id`, app/models/certificate.py:89-94). Today `_kind_item`
+(head/scheme_index.py:81-101) picks the first kind by type_name, else the alphabetically first listed kind; R4-2 appends
+a separate kind entity (scheme_index.py:124-127, :141, :155, :186-191). The frozen prompt asks for two entities (kind +
+scheme, head/closed_lists_prompt.py:41-47).
+
+- B-1 Parent from data: a scheme's kind is the attachment type most of its active certificates carry (count first, type
+  name only as a stable tiebreak). A scheme no certificate carries has no kind. The alphabetical-first-kind fallback goes.
+- B-2 One entity: a scheme pick carries its parent kind on the SAME entity; no separate kind entity is appended (R4-2's
+  appends removed). The fetch is unchanged: the parent kind's id and the scheme's certificate ids.
+- B-3 A kind said beside its scheme (what today's prompt makes the parser emit) folds into the scheme entity when it is
+  the scheme's parent; a different kind beside a scheme stays as today (both kept).
+- B-4 Unchanged: R4-3 `dropped_kinds` (tied to the owner call cp0-6240dc53f8 and F3-c), held-none ("no SPAN certificate
+  on record"), scheme with no product (its own certificates, bounded), predicate order, the listed_item enum.
+- B-5 Template (not built here; rule text to crew for CHAT-CODE-LOOKUP's F1 template): the scheme line names its kind,
+  and a listed scheme alone is the whole certificate ask (one entity).
+
 ### Round 7 results
 
 | Slice | Red | Green | Notes |
