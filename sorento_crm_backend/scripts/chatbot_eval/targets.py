@@ -1077,6 +1077,31 @@ NO_MATCH_RE = re.compile(r"\bnone matched\b|\bbut no\b[^\n.]{0,80}?\bmatched the
                          r"|Couldn.?t find: [^\"“”\s][^\n(]*\([^)\n]+\)", re.I)   # the value-miss line has an unquoted value and a label
 
 
+def _class_set_check(row: dict[str, Any], item: dict[str, Any]) -> tuple[str, bool | None, str] | None:
+    """Owner (19 Oct): answering only the held product when the ask is over a class is a bot fail. The ask is over a class when
+    the gold spec names one and expects products (and is not a none-on-record gold); a product was held before the turn. What
+    the bot answered is read from the tool args (product ids), the full tool results and the codes in the reply: when every one
+    is the held product or one of its own variants while the expected set holds others, the class was not answered. Unknown
+    (None) when nothing shows what was answered; absent when the gold is no class ask or the held product is the whole set."""
+    gold = item.get("gold") or {}
+    expected = {_key(c) for c in gold.get("spec_products") or [] if c}
+    held = _codes_of(_mem_focus(row, "before").get("products"))
+    if (not expected or not held or gold.get("none_on_record")
+            or not any(sp.get("key") in CLASS_KEYS for sp in gold.get("spec") or [])):
+        return None
+
+    def related(code: str) -> bool:
+        return any(code == h or code.startswith(h) or h.startswith(code) for h in held)
+
+    if all(related(c) for c in expected):   # the held product (with its variants) is the whole set
+        return ("class_set", True, "Only the held product was answered although the ask is over a class.")
+    answered = _tool_subjects(row) | {_item_code(i) for i in _result_items(row)} | {_key(c) for c in CODE_RE.findall(reply_text(row))}
+    answered.discard("")
+    if not answered:
+        return ("class_set", None, "Only the held product was answered although the ask is over a class.")
+    return ("class_set", not all(related(a) for a in answered), "Only the held product was answered although the ask is over a class.")
+
+
 def _spec_key_state(row: dict[str, Any], gold_spec: list[dict[str, Any]]) -> bool | None:
     """Was every gold value grounded on a gold KEY? Per value, the acceptable keys are the gold's own keys carrying that value
     (there is no other alias table). An entity (this turn's, or the memory's specification slot) with the value and one of
@@ -1122,6 +1147,9 @@ def _spec(row, item):
         grounded = None if keyed is None else keyed
     checks = [("spec_set", grounded, "The spec words were not grounded to the expected set."),
               answer, *_needless(row, {}, shown=shown, slice_name="spec")]
+    class_set = _class_set_check(row, item)
+    if class_set:
+        checks.append(class_set)
     if class_want:  # reported, not part of `passed`: the bot records class words as category entities
         checks.append(("class", all(any(set(v.split()) <= w for w in words) for v in class_want),
                        "The product class was read differently from the one asked."))
