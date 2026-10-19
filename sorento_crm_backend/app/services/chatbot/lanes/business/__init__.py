@@ -1604,7 +1604,7 @@ def run_fetch(
             # it named is another customer.
             if trace is not None:
                 trace.add("so_list", {"refused": "no_links"})
-            return _fixed_reply(_scope_refusal(customer_scope))
+            return _fixed_reply(_scope_refusal(customer_scope), refused=True)
         access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
         granted_raw = access_ctx.get("attributes")
         granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
@@ -2269,7 +2269,7 @@ def run_fetch(
     ):
         if trace is not None:
             trace.add("customer_scope", {"refused": "no_links", "tool": tool_name})
-        return _fixed_reply(_scope_refusal(customer_scope))
+        return _fixed_reply(_scope_refusal(customer_scope), refused=True)
 
     # DO-ASK-SIMPLIFY security S1 (PR #1433): a transporter named on a DO list ask would
     # filter the rows by it, telling the contact who carried each one. Without the
