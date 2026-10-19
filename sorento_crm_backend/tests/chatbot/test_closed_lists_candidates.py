@@ -99,7 +99,7 @@ def test_a_code_token_lists_the_codes_that_hold_it_exact_first(db):
     lines = _lines(db, "stock srtwc8517")
     assert lines == [
         candidates.HEADER,
-        '- "srtwc8517": code SRTWC8517 (Name of SRTWC8517); code SRTWC8517-WH (Name of SRTWC8517-WH)',
+        '- "srtwc8517": code SRTWC8517 (Name of SRTWC8517); code SRTWC8517-WH (Name of SRTWC8517-WH), holding "srtwc8517"',
     ]
 
 
@@ -404,3 +404,41 @@ def test_guard_a_number_no_key_holds_still_offers_the_unit_keys(db):
 
     line = next(line for line in lines if line.startswith('- "777 mm"'))
     assert "spec dim_length = 777" in line and "spec depth = 777" in line, lines
+
+
+# --- R5-2 CONTAINS-IS-NOT-THE-CODE (19 Oct; TRAIN cp0-75be0b79cf, cp0-cd3328e3f1) ---------------
+# A code that merely CONTAINS the word was labelled like a whole-code match, so the parser read a
+# bare number ("2400") as an unsure product. A code equal to the word keeps its label; a code that
+# only holds the word says so.
+
+
+def test_a_code_that_only_holds_the_word_says_so(db):
+    _products(db, "ZZKB2400", "ZZTB-2400-L")
+
+    lines = _lines(db, "zz basin 2400 how many in stock")
+
+    line = next(ln for ln in lines if ln.startswith('- "2400"'))
+    assert 'code ZZKB2400 (Name of ZZKB2400), holding "2400"' in line, lines
+    assert 'code ZZTB-2400-L (Name of ZZTB-2400-L), holding "2400"' in line, lines
+
+
+def test_guard_a_whole_code_match_keeps_its_plain_label(db):
+    _products(db, "ZZKB2400", "ZZTB-2400-L")
+
+    lines = _lines(db, "zzkb2400 stock")
+
+    assert '- "zzkb2400": code ZZKB2400 (Name of ZZKB2400)' in lines, lines
+
+
+def test_guard_a_split_code_word_still_offers_the_code(db):
+    _products(db, "ZZKB2400", "ZZTB-2400-L")
+
+    lines = _lines(db, "zzkb 2400")
+
+    assert any("code ZZKB2400 (Name of ZZKB2400)" in ln for ln in lines), lines
+
+
+def test_the_closed_lists_section_says_a_held_word_code_is_that_product_only_when_named():
+    from app.services.chatbot.head import closed_lists_prompt as clp
+
+    assert 'holding "W"' in clp.SECTION, clp.SECTION
