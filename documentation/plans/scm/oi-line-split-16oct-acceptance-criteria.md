@@ -298,11 +298,13 @@ SO417636 CSK14B BRW-BB, with the owner's plan:
   which fix round-3 paths. The full text below is the follow-up lane's contract.
   Until that lane ships, Save refuses the deferred action (lead, 19 Oct: the reviewer found the round-3 engine
   gives an id-order-dependent, sometimes bought-twice result for it): for a line whose plan a Confirm applied, a
-  Save may not change how much of that line sits on any OTHER SO line (dropping a split onto another line,
-  taking one off, or moving it between other lines). The Save answers 422 "Line <n>: a confirmed split cannot
-  move to another line." and stores nothing. The line's own-line and New-line rows can still be edited (qty,
-  date, remark), added or dropped, so AC-G15, AC-G16 and AC-G17 keep working. A plan never applied (pending, or
-  saved before any Confirm) can still be laid out freely.
+  Save may not move qty between lines. It may not put more of the line on any OTHER SO line than the applied
+  plan had there, and qty it takes off another line must leave the plan (an explicit drop, AC-G17), not come
+  back on the line's own-line or New-line rows. The Save answers 422 "Line <n>: a confirmed split cannot move
+  to another line." and stores nothing. The line's own-line and New-line rows can still be edited (qty, date,
+  remark), added or dropped, and kept rows on other lines can be dropped, so AC-G15, AC-G16 and AC-G17 keep
+  working (e.g. the confirmed card plan re-planned as 10 + 4, round 3). A plan never applied (pending, or saved
+  before any Confirm) can still be laid out freely.
   **Re-plan a confirmed New-line plan into the card plan** (the owner's path in the hand test). From
   the stored plan above, staff drag 236 and 167 (date fixed to 20/11/2029) and 752's 37 onto line 608, Save,
   Confirm. Then purchasing's live OI rows equal the card plan confirmed from scratch (AC-G6 / AC-G10: live OI
