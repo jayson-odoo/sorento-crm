@@ -385,3 +385,27 @@ The test stub now returns `hidden_spec_keys` like the real check_access (6f09cf2
 - Trigger to build: F3-d when a graded TRAIN or held-out failure is caused by an inch size or a finish short code the
   registry does not hold; F3-c when the paired TRAIN run on the new head shows a tie or unconfident pick class of 2+
   failing items.
+
+## CODE-SUBSTRING (20 Oct; crew a43940036, plan a44428307 ruled (a))
+
+ARCHITECTURE: layer RESOLVER, the shared /system/references/resolve route (Shape B membership). One rule where a
+described set is built, `_collect_lookup_product_ids` (app/api/v1/system/references.py:1723-1755, today it keeps every
+`_CODE_MATCH_TIERS` row :1634 whatever the token): a code-tier row joins only when its token holds a digit (the test
+`_code_matched` already applies, :1670-1701; head/candidates.py:292-303 the same); a word token joins only through
+registry / class / name data (filter_specs). Path today: "basin" misses as category, the cross-type rerun
+(references.py:2730) reaches `_prefix_probe_product` ILIKE '%basin%' (entity_resolver.py:2070-2092) or
+`_and_probe_product` (:3829), resolve_product_set ORs the ids in (product_predicate_service.py:1042-1044),
+`_emit_spec_matches` emits them (:3616). Also fixes the spec-fallback word substring rows. Removes the "a code with TAP
+in it, or a class-Tap product" OR (product_predicate_service.py:895-898) and `_strip_word_token_product_matches`
+(:3623) if made redundant. Kept: exact, head_code, exact-hit prefix siblings (entity_resolver.py:849-883, :5501-5516),
+digit fragments (owner 28 Sep "7820"; test_hotfix_code_fragment_product_ask.py:232/308,
+test_avail_picker_substring.py:46/128).
+
+- CS-1 A word token (no digit) never adds a product to a described set by a code substring or AND-contains hit, in
+  Shape B and in the spec fallback ("ada basin?", "basin有货吗", "which bidet has cert").
+- CS-2 Kept: a whole typed code, its head code and prefix siblings of an exact hit; a token with a digit still reads
+  as a code fragment ("7820", "wc286", "286").
+- CS-3 tests/test_resolve_predicate.py:248 / :291 ("bidet") move to class / name data (ruling (a)); a code-only BIDET
+  product no longer joins.
+- CS-4 Before merge: the DATA GAP read-only on the dev DB (active products a class word reaches today only through a
+  code substring, with no class / name data that matches), posted for the owner's catalogue fix.
