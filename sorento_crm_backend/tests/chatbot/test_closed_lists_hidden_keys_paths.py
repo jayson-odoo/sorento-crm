@@ -303,3 +303,28 @@ def test_guard_a_keyless_unknown_for_a_contact_with_no_policy_breaks_down_by_fin
     members = (result.get("predicate") or {}).get("members") or {}
     assert members.get("total") == 4, result.get("predicate")
     assert (members.get("breakdown") or {}).get("key") == "finish", members
+
+
+# --- B5: the carried product-set replay (turn_runtime.page_the_set) ---------------------------
+
+
+def test_b5_a_carried_set_replay_never_splits_by_a_hidden_key(split_db):
+    """The runner's recount of a carried set ("more", "how many") under a contact whose policy hides
+    finish: the replayed predicate names neither finish nor its values. Green on HEAD by
+    construction: `page_the_set` asks `resolve_product_set` for no breakdown (no `breakdown_over`,
+    no `breakdown_key`) and copies only description / row_labels / brand / other_brands."""
+    from sqlalchemy import text
+
+    from app.services.chatbot import turn_runtime
+
+    split_db.execute(
+        text("INSERT INTO spec_visibility_policies (id, spec_keys, excluded_spec_keys) VALUES (gen_random_uuid(), NULL, :ex)"),
+        {"ex": ["finish"]},
+    )
+    carry = {"set_key": {"require": {}, "specs": [{"key": "class", "value": "Water Closet"}], "set_noun": "water closets"}}
+
+    predicate, ids = turn_runtime.page_the_set(split_db, carry)
+
+    assert predicate.get("qualifying_total") == 4 and len(ids) == 4, predicate  # the replay ran over the set
+    said = json.dumps(predicate, default=str)
+    assert not [w for w in HIDDEN_FINISH_WORDS if w in said], said
