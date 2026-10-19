@@ -133,6 +133,20 @@ customer's debtor name, products, qty, driver, lorry plate, dates. The bar is 0.
    first, then the fix, then a kill-proof.
 3. Gates: $0 L1 replay (EVAL-BENCH), reviewer and security-reviewer on the head, then `ci please`.
 
+Found this round (no document path was open; crew's two held-out classes are pinned in
+`TestHeldOutLeakClasses`, red on main's code):
+
+- The three no-link refusals (orders read `_DOC_TOOLS`, SO list, SO number arm) are marked
+  `refused`, so CHAT-FIT-LINE (AC-23) puts no fit line above them.
+- Slice 3's gate refused any word the PARSER tagged a customer, before the resolver, so an end
+  user's "cabana stock" with cabana mis-tagged got the no-link line instead of the brand stock
+  answer (owner Q1, `test_class_hint_kind_pick`). The gate is back to main's shape; the contact
+  is held after the resolver only (`resolve_kinds(hide_customers=...)` drops customer rows before
+  any picker or DO probe, a word typed this message that matched only customers gets the no-link
+  line), and run_fetch still refuses every orders, outstanding and SO read.
+- Owner ruling 19 Oct: the sales report's Delivery orders drill stays open to a contact granted
+  `sales_orders.sales_report`, unlinked included (AC-13); no follow-up.
+
 ## Open before merge
 
 The owner runs `crew/state/reports/V1-DOC-SCOPE-salesperson-check.sql` (read-only) on production
