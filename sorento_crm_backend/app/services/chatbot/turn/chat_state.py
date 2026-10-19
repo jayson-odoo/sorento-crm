@@ -609,16 +609,110 @@ def narrow_held_to_brands(state: State, wanted: list[str], brand_of: dict[str, s
     kept = [r for r in rows if keep(r)]
     if not rows or not kept:
         return state
-    keys = {str(r.get("uuid")) for r in kept}
+    return _held_narrowed(state, kept)
+
+
+def _held_narrowed(state: State, kept: list[dict[str, Any]]) -> State:
+    """The State with only the `kept` held product rows, the slots a task still collects
+    narrowed with them, and the Subject's held products read again off that focus (AC-S1-8:
+    a later change to the State rebuilds the Subject here, so it never goes stale)."""
+    keys = {str(r.get("uuid")) for r in kept if r.get("uuid")}
     tasks = tuple(
         replace(t, slots=tuple(sl for sl in t.slots if str(sl.key) in keys)) if t.slots else t
         for t in state.focus.tasks or ()
     )
+    focus = replace(state.focus, products=kept, tasks=tasks)
     subject = state.subject
     if subject is not None and subject.provenance.get("product") == "held":
-        # The State changed after the applier: the Subject's held ids narrow with it.
-        subject = replace(subject, product_ids=tuple(i for i in subject.product_ids if i in keys))
-    return replace(state, focus=replace(state.focus, products=kept, tasks=tasks), subject=subject)
+        ids = tuple(str(r["uuid"]) for r in kept if r.get("uuid") and r.get("described_set") is not True)
+        tokens = tuple(t for t in (_token_row(r) for r in kept if not r.get("uuid")) if t)
+        provenance = dict(subject.provenance)
+        if not (ids or tokens or any(r.get("uuid") for r in kept)):
+            provenance.pop("product")
+        source = "ids" if ids or tokens else "predicate" if subject.predicate else "unresolved"
+        subject = replace(subject, source=source, product_ids=ids, product_tokens=tokens, provenance=provenance)
+    return replace(state, focus=focus, subject=subject)
+
+
+def pick_offered_brands(
+    state: State, verdict: dict[str, Any], picked: list[str], brand_of: dict[str, str]
+) -> tuple[State, dict[str, Any]]:
+    """R4-A through the Subject (AC-S3-4): brands picked off the last answer's offer, with
+    `brand_of` the brand of each held product (read by the engine). Every named brand the held
+    set holds, and the held rows are the whole set: the held products narrow to the union of
+    those brands, the Subject with them. Otherwise (a named brand the held set lacks, or a set
+    longer than its held rows) one re-run of the offered set with every named brand
+    (`set_brand_chosen`), the message's own words off the verdict."""
+    from app.services.chatbot.turn_runtime import SET_BRAND_KEY
+
+    held_keys = [str(r["uuid"]) for r in held_products(state)]
+    held_brands = {v.strip().casefold() for v in brand_of.values()}
+    hits = [b for b in picked if b.casefold() in held_brands]
+    total = int(((state.focus.set_page or {}).get("set_key") or {}).get("total") or 0)
+    if hits and len(hits) == len(picked) and not total > len(held_keys):
+        return narrow_held_to_brands(state, hits, brand_of), verdict
+    return state, {
+        **verdict,
+        SET_BRAND_KEY: list(picked),
+        "entities": [
+            e for e in verdict.get("entities") or [] if not (isinstance(e, dict) and e.get("current_message") is True)
+        ],
+        "reference_positions": [],
+    }
+
+
+def class_set_over_held(state: State) -> list[dict[str, Any]]:
+    """The class rows a refine `set` over held explicit products (lead decision, S3): the engine
+    reads which held products are members of that class. Empty when the rule does not apply."""
+    subject = state.subject
+    if (
+        subject is None or state.state_led != "refine" or subject.provenance.get("class") != "said"
+        or subject.provenance.get("product") != "held" or not subject.product_ids
+    ):
+        return []
+    return list(subject.predicate.get("class") or [])
+
+
+def keep_class_members(state: State, members: set[str]) -> State:
+    """Lead decision S3 (card R1; membership read from the data): a `set` on the class axis is a
+    refine over the held explicit products. The members of the said class stay the subject;
+    the others drop, and with none left the subject is the class predicate with the other held
+    axes kept. A described set's members and a held token are not explicit products here."""
+    rows = [r for r in state.focus.products if isinstance(r, dict)]
+    kept = [r for r in rows if not (r.get("uuid") and r.get("described_set") is not True) or str(r["uuid"]) in members]
+    return state if len(kept) == len(rows) else _held_narrowed(state, kept)
+
+
+def held_products(state: State, *, for_family: bool = False) -> list[dict[str, Any]]:
+    """The focus rows the Subject holds as its products (its held ids and a described set's
+    members): what the held-family narrowing and the scheme index read on the state path. None
+    when the product axis is not held (said, or dropped by `new_subject` / a class set over
+    other classes). The held-family narrowing (`for_family`) never runs when the class axis
+    was said: a message naming its own class is about that class (AC-S3-3)."""
+    subject = state.subject
+    if subject is None or subject.provenance.get("product") != "held":
+        return []
+    if for_family and subject.provenance.get("class") == "said":
+        return []
+    keys = set(subject.product_ids)
+    return [
+        r for r in state.focus.products
+        if isinstance(r, dict) and r.get("uuid") and (str(r["uuid"]) in keys or r.get("described_set") is True)
+    ]
+
+
+def held_family_landed(state: State, verdict: dict[str, Any], matched: list[str]) -> tuple[State, dict[str, Any]]:
+    """SPEC-OVER-HELD on the state path (AC-S3-4): the family members a said spec landed on are
+    the held subject now (tokens keyed by their codes, placed by the settle step), and the one
+    held quantity rides onto each (R3-A, `carry_onto_family`)."""
+    subject = state.subject
+    if subject is None or not matched:
+        return state, verdict
+    tokens = tuple({"value": c, "key": c, "hint": "product"} for c in dict.fromkeys(matched))
+    subject = replace(
+        subject, source="ids", product_ids=(), product_tokens=tokens, provenance={**subject.provenance, "product": "held"}
+    )
+    return replace(state, subject=subject), carry_onto_family(verdict, matched)
 
 
 def _focus_questions(focus: Focus) -> bool:
@@ -845,7 +939,9 @@ def fetch_entities(
                 and subject.provenance.get(_SUBJECT_AXIS.get(str(e.get("hint") or ""), "")) == "held")
     ]
     typed = {str(e.get("hint") or "").strip().lower() for e in own if e.get("current_message") is not False}
-    product_scoped = unsettled_only and bool(subject.product_ids) and subject.provenance.get("product") == "held"
+    product_scoped = unsettled_only and bool(subject.product_ids or subject.product_tokens) and (
+        subject.provenance.get("product") == "held"
+    )
     # A said product is the fetch's subject: the held predicate stays on the Subject as context
     # and never gates or widens the lookup of what was said.
     by_ids = subject.provenance.get("product") == "said"
@@ -869,10 +965,15 @@ def fetch_entities(
     scheme_pick = bool(parse_output.get("closed_lists")) and any(e.get("listed") == "cert_scheme" for e in own)
     if subject.provenance.get("product") == "held" and not scheme_pick:
         # A held product with no key is a token every turn hands over until the resolver places
-        # it (AC-S1-10); a listed scheme pick does not answer an open product pick.
+        # it (AC-S1-10); a listed scheme pick does not answer an open product pick. A token the
+        # verdict already names (a held family's members) is not handed over twice.
+        from app.services.chatbot.turn.state import token_key
+
+        named = {token_key(e.get("canonical_code") or e.get("raw")) for e in own if e.get("hint") == "product"}
         held += [
             {"raw": t["value"], "hint": "product", "canonical_code": t["key"], "current_message": False, "confident": True}
             for t in subject.product_tokens
+            if token_key(t["key"]) not in named
         ]
     held += turn_runtime.focus_entities(
         focus, unsettled_only=unsettled_only, skip_kinds=SUBJECT_KINDS | {"product"} | typed, scheme_pick=scheme_pick,

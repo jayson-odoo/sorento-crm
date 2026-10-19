@@ -4868,11 +4868,10 @@ def _run_stages_body(  # noqa: PLR0915
                 verdict = applied.verdict
                 picked = chat_state.offered_brand_picks(state_in, verdict, brands)
                 if picked:
-                    # R4-A: a brand the held set holds narrows the HELD set (the union when two
-                    # are named); an offered brand it lacks is the answer to the offer and
-                    # re-runs the set with that brand (`set_brand_chosen`). One parser-led route.
+                    # R4-A: the held products' brands are read here; the narrow-or-re-run decision
+                    # and the Subject it leaves are the applier module's (`pick_offered_brands`).
                     brand_of: dict[str, str] = {}
-                    held_keys = [str(r.get("uuid")) for r in state_in.focus.products if isinstance(r, dict) and r.get("uuid")]
+                    held_keys = [str(r["uuid"]) for r in chat_state.held_products(state_in)]
                     if held_keys:
                         from app.models.product import Brand, Product
 
@@ -4887,28 +4886,18 @@ def _run_stages_body(  # noqa: PLR0915
                                 }
                         except Exception:  # noqa: BLE001 - an advisory narrowing, never a failed turn
                             logger.warning("chatbot: offered brand narrowing failed; the turn goes on without it", exc_info=True)
-                    held_brands = {v.strip().casefold() for v in brand_of.values()}
-                    held_hits = [b for b in picked if b.casefold() in held_brands]
-                    set_total = int(((state_in.focus.set_page or {}).get("set_key") or {}).get("total") or 0)
-                    # Held rows are cut at the set cap: a set longer than its held rows is
-                    # not fully held, so a brand pick over it re-runs the set.
-                    capped = set_total > len(held_keys)
-                    if held_hits and len(held_hits) == len(picked) and not capped:
-                        # Every named brand is held and the held rows are the whole set:
-                        # the held set narrows to the union of those brands.
-                        state_in = chat_state.narrow_held_to_brands(state_in, held_hits, brand_of)
-                    else:
-                        # A named brand the held set lacks, or a capped set: one re-run of the
-                        # offered set with every named brand (`set_brand_chosen`).
-                        verdict = {
-                            **verdict,
-                            turn_runtime.SET_BRAND_KEY: list(picked),
-                            "entities": [
-                                e for e in verdict.get("entities") or []
-                                if not (isinstance(e, dict) and e.get("current_message") is True)
-                            ],
-                            "reference_positions": [],
-                        }
+                    state_in, verdict = chat_state.pick_offered_brands(state_in, verdict, picked, brand_of)
+                class_rows = chat_state.class_set_over_held(state_in)
+                if class_rows:
+                    # Lead decision S3: a class `set` over held products keeps the members of that
+                    # class (read from the data here) and drops the others (`keep_class_members`).
+                    try:
+                        with _session(session_factory) as class_db:
+                            members = _class_members(class_db, class_rows, list(state_in.subject.product_ids))
+                    except Exception:  # noqa: BLE001 - an advisory narrowing, never a failed turn
+                        logger.warning("chatbot: class membership read failed; the held products stay", exc_info=True)
+                        members = set(state_in.subject.product_ids)
+                    state_in = chat_state.keep_class_members(state_in, members)
             else:
                 # A rejected change set changes nothing, but the turn is still on the state
                 # path: the input State with its Subject (held axes, this message's said values).
@@ -4988,17 +4977,23 @@ def _run_stages_body(  # noqa: PLR0915
     verdict = closed_lists_verdict(verdict, gate=parser_config.closed_lists)
     held_none_match: dict[str, Any] | None = None
     scheme_none_in_scope: str | None = None
-    if parser_config.closed_lists and state_in.focus.products:
+    # The held products the two seams below read, taken once before either changes the verdict.
+    held_for_family = _held_for_the_seams(state_in, verdict, for_family=True)
+    held_for_scheme = _held_for_the_seams(state_in, verdict, for_family=False)
+    if parser_config.closed_lists and held_for_family:
         # SPEC-OVER-HELD: a spec said about a held product narrows that product's family
         # (`head/held_family.py`). A read failure leaves the verdict as it was.
         try:
             with _session(session_factory) as family_db:
-                verdict, family_note = held_family.narrow_held_family(family_db, verdict, list(state_in.focus.products))
+                verdict, family_note = held_family.narrow_held_family(family_db, verdict, held_for_family)
         except Exception:  # noqa: BLE001 - an advisory narrowing, never a failed turn
             logger.warning("chatbot: held family narrowing failed; the turn goes on without it", exc_info=True)
             family_note = None
         if family_note:
-            verdict = chat_state.carry_onto_family(verdict, family_note.get("matched") or [])
+            if state_in.subject is not None:
+                # The members it landed on are the held subject now, the held quantity on each
+                # (AC-S3-4, the applier module). Off the state path nothing carries a quantity.
+                state_in, verdict = chat_state.held_family_landed(state_in, verdict, family_note.get("matched") or [])
             if family_note.get("matched"):
                 # The narrowing named exact members (full codes): the resolver's prefix probe
                 # must not widen them again ("SRTWC286-SH-P" also placed SRTWC286-SH-PP), so
@@ -5022,13 +5017,10 @@ def _run_stages_body(  # noqa: PLR0915
         # empties the answer (`head/scheme_index.py`). A read failure leaves the verdict.
         try:
             with _session(session_factory) as scheme_db:
-                verdict, scheme_note = scheme_index.index_scheme(scheme_db, verdict, list(state_in.focus.products))
+                verdict, scheme_note = scheme_index.index_scheme(scheme_db, verdict, held_for_scheme)
                 # Held products are only added to the verdict later, so a held one (a uuid) is
                 # read here: the scheme path with no product never runs over a held subject.
-                if scheme_note is None and (
-                    scheme_index.names_own_class(verdict.get("entities") or [])
-                    or not any(isinstance(p, dict) and p.get("uuid") for p in state_in.focus.products)
-                ):
+                if scheme_note is None and not any(isinstance(p, dict) and p.get("uuid") for p in held_for_scheme):
                     verdict, scheme_note = scheme_index.scheme_without_product(scheme_db, verdict)
         except Exception:  # noqa: BLE001 - an advisory reading, never a failed turn
             logger.warning("chatbot: scheme index failed; the turn goes on without it", exc_info=True)
@@ -8847,6 +8839,50 @@ def _readable_customers(db: Any, rows: Any, contact_respond_id: Any, has_company
             continue
         kept.append(row)
     return kept
+
+
+def _held_for_the_seams(state_in: Any, verdict: dict[str, Any], *, for_family: bool) -> list[dict[str, Any]]:
+    """The held products the held-family narrowing and the scheme index read. On the state path
+    the Subject's, as the ops left them (`chat_state.held_products`). Off the state path the rule
+    those seams always had, unchanged (state-off is byte-identical): a message whose own entity
+    the parser hinted `category` / `product_type` is about that class, so no held product."""
+    if state_in.subject is not None:
+        return chat_state.held_products(state_in, for_family=for_family)
+    names_a_class = any(
+        isinstance(e, dict) and e.get("current_message") is not False
+        and str(e.get("hint") or "").strip().lower() in ("category", "product_type")
+        for e in verdict.get("entities") or []
+    )
+    return [] if names_a_class else list(state_in.focus.products)
+
+
+def _class_members(db: Session, class_rows: list[dict[str, Any]], held_ids: list[str]) -> set[str]:
+    """The held products whose category is of the class the rows name, through the catalogue's
+    class vocabulary (`services.resolve_category_class`, the stock ask's own); a row carrying a
+    category key counts it directly. Data only: membership is never read off the word itself."""
+    from sqlalchemy import func, or_
+
+    from app.models.product import Product, ProductCategory
+
+    category_ids: set[str] = {str(r["uuid"]) for r in class_rows if r.get("uuid")}
+    labels: set[str] = set()
+    for row in class_rows:
+        ids, names = business_services.resolve_category_class(db, str(row.get("value") or ""))
+        category_ids.update(ids)
+        labels.update(n.casefold() for n in names)
+    if not (category_ids or labels) or not held_ids:
+        return set()
+    member_of = [
+        *([Product.category_id.in_(sorted(category_ids))] if category_ids else []),
+        *([func.lower(ProductCategory.class_label).in_(sorted(labels))] if labels else []),
+    ]
+    rows = (
+        db.query(Product.id)
+        .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
+        .filter(Product.id.in_(held_ids), or_(*member_of))
+        .all()
+    )
+    return {str(pid) for (pid,) in rows}
 
 
 def _state_log(before: dict[str, Any], state: Any, answer: Any) -> dict[str, Any]:

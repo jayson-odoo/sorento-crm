@@ -17,8 +17,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from app.services.chatbot.head.scheme_index import names_own_class
-
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -142,8 +140,9 @@ def narrow_held_family(
         and str(e.get("spec_value")) != ""
     ]
     brands = [e for e in said if str(e.get("hint") or "").strip().lower() == "brand"]
-    # A message naming its own class is not about the held products either.
-    names_a_product = any(str(e.get("hint") or "").strip().lower() == "product" for e in said) or names_own_class(said)
+    # A message naming its own class is not about the held products either: the caller passes
+    # none then (`engine._held_for_the_seams`).
+    names_a_product = any(str(e.get("hint") or "").strip().lower() == "product" for e in said)
     held_ids = [str(p["uuid"]) for p in held_products if isinstance(p, dict) and p.get("uuid")]
     if not (specs or brands) or names_a_product or not held_ids or verdict.get("family") is True:
         return verdict, None
