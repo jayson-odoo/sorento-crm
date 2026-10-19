@@ -521,7 +521,7 @@ def test_conflict_pairs_gold_file():
     assert by_id["cp2-c1-01"]["expect"]["domain_hint"] == "inventory"
     assert by_id["cp2-c1-02"]["expect"]["domain_hint"] == "incoming"
     for r in rows:
-        assert "ZZ" in r["message"] or "ZZ" in json.dumps(r.get("context") or {}), r["id"]
+        assert "ZZ" in r["message"].upper() or "ZZ" in json.dumps(r.get("context") or {}), r["id"]
 
 
 def _capture(monkeypatch, session_factory, config):

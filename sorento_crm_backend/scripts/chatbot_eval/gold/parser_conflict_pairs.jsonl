@@ -28,3 +28,15 @@
 {"id": "cp2-c3-03", "message": "ZZC300 spec", "expect": {"product": "ZZC300", "attributes_only": []}}
 {"id": "cp2-c3-04", "message": "ZZD300 P-trap set price", "expect": {"product": "ZZD300", "attributes_include": ["price"], "no_attribute": "p-trap"}}
 {"id": "cp2-c3-05", "message": "is ZZE300 still sold", "expect": {"product": "ZZE300", "attributes_include": ["discontinued"]}}
+{"id": "cp2-dq-01", "message": "ZZDQ11 x 120", "expect": {"domain_hint": "inventory", "product": "ZZDQ11"}}
+{"id": "cp2-dq-02", "message": "zzdq12 xx 40", "expect": {"domain_hint": "inventory", "product": "ZZDQ12"}}
+{"id": "cp2-dq-03", "message": "ZZDQ13 60 pcs", "expect": {"domain_hint": "inventory", "product": "ZZDQ13"}}
+{"id": "cp2-dq-04", "message": "ZZDQ14 80 unit ada?", "expect": {"domain_hint": "inventory", "product": "ZZDQ14"}}
+{"id": "cp2-dq-05", "message": "zzdq15 x 25", "expect": {"domain_hint": "inventory", "product": "ZZDQ15"}}
+{"id": "cp2-dq-06", "message": "ZZDQ16 200 unit ada tak", "expect": {"domain_hint": "inventory", "product": "ZZDQ16"}}
+{"id": "cp2-dq-07", "message": "ZZDQ21 x 15", "expect": {"domain_hint": "inventory", "product": "ZZDQ21"}, "context": {"previous_reply": "ZZDQ20: 35 pcs in stock.", "subject": "domain inventory (answered); product ZZDQ20", "open_question": null}}
+{"id": "cp2-dq-08", "message": "zzdq22 xx 90", "expect": {"domain_hint": "inventory", "product": "ZZDQ22"}, "context": {"previous_reply": "ZZDQ20: 35 pcs in stock.", "subject": "domain inventory (answered); product ZZDQ20", "open_question": null}}
+{"id": "cp2-dq-09", "message": "ZZDQ31 x 15", "expect": {"domain_hint": "incoming", "product": "ZZDQ31"}, "context": {"previous_reply": "ZZDQ30 incoming: 150 pcs, arriving 5 Dec.", "subject": "domain incoming (answered); product ZZDQ30", "open_question": null}}
+{"id": "cp2-dq-10", "message": "ZZDQ32 70 pcs", "expect": {"domain_hint": "incoming", "product": "ZZDQ32"}, "context": {"previous_reply": "ZZDQ30 incoming: 150 pcs, arriving 5 Dec.", "subject": "domain incoming (answered); product ZZDQ30", "open_question": null}}
+{"id": "cp2-dq-11", "message": "ZZDQ41 x 15", "expect": {"domain_hint": "inventory", "product": "ZZDQ41"}, "context": {"previous_reply": "ZZDQ40 list price: RM 75.", "subject": "domain master_products (answered); product ZZDQ40", "open_question": null}}
+{"id": "cp2-dq-12", "message": "ZZDQ42 50 pcs", "expect": {"domain_hint": "inventory", "product": "ZZDQ42"}, "context": {"previous_reply": "ZZDQ40 list price: RM 75.", "subject": "domain master_products (answered); product ZZDQ40", "open_question": null}}
