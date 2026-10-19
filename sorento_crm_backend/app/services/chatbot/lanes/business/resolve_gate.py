@@ -1613,7 +1613,13 @@ def _without_customer_rows(resolved: dict[str, Any]) -> None:
         if "alternatives" in resolution:
             resolution["alternatives"] = _kept(resolution.get("alternatives"))
     if isinstance(resolved.get("intersection"), list):
+        # An AND answer (the live default) has no per-token resolutions: when every row it
+        # found is a customer, the typed words together named only customers.
+        if "resolutions" not in resolved and resolved["intersection"] and not _kept(resolved["intersection"]):
+            hidden.extend(t for t in jsc.array(resolved.get("tokens")) if isinstance(t, str))
         resolved["intersection"] = _kept(resolved["intersection"])
+    if isinstance(resolved.get("alternatives"), list):
+        resolved["alternatives"] = _kept(resolved["alternatives"])
     by_type = resolved.get("by_entity_type")
     if isinstance(by_type, dict):
         resolved["by_entity_type"] = {
