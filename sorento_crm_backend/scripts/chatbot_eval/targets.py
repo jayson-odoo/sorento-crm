@@ -1114,13 +1114,33 @@ def _honest_none(row: dict[str, Any], accepted: set[str], sent: int, code: Any =
             and not any(_result_has_type(t.get("result"), accepted) for t in results))
 
 
+def _sent_files(row: dict[str, Any], announced: Any = None) -> list[dict[str, Any]]:
+    """The files the tools returned. The trace caps a big result to {head, bytes, truncated}, so the uncapped
+    `tool_results` of the live runner are read when present; the trace envelope is the fallback. A full result
+    is what the tool FOUND: when the reply announced it sent nothing, none of it was sent, so the envelope stands."""
+    full = [t for t in row.get("tool_results") or [] if isinstance(t, dict)]
+    if full and announced != 0:
+        out: list[dict[str, Any]] = []
+        for t in full:
+            res = t.get("result")
+            if isinstance(res, str):
+                try:
+                    res = json.loads(res)
+                except ValueError:
+                    continue
+            if isinstance(res, dict):
+                out += [f for f in (res.get("attachments") or []) if isinstance(f, dict)]
+        return out
+    return [f for t in _tools(row) if isinstance(t.get("envelope"), dict)
+            for f in (t["envelope"].get("attachments") or []) if isinstance(f, dict)]
+
+
 def _attachment(row, item):
     gold = item.get("gold") or {}
     accepted = {_type_word(x) for x in [gold.get("attachment_type"), gold.get("attachment_type_name"),
                                         *(gold.get("attachment_type_names") or [])] if x}
-    files = [f for t in _tools(row) if isinstance(t.get("envelope"), dict)
-             for f in (t["envelope"].get("attachments") or []) if isinstance(f, dict)]
     announced = (_stage(row, "replied").get("facts") or {}).get("files")
+    files = _sent_files(row, announced)
     sent = announced if isinstance(announced, int) else len(files)
     asked = [_type_word(e.get("canonical_code") or e.get("raw")) for e in _entities(row) if e.get("hint") == "attachment_type"]
     from_memory = (_mem_focus(row, "after").get("extra") or {}).get("attachment_type")
