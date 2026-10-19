@@ -2450,6 +2450,10 @@ class ResolveOutcome:
     # this message named that the resolver cut at its ceiling and never looked up
     # (`not_checked_tokens`). Empty on the two early returns, like `unplaced_tokens`.
     not_checked: dict[str, str] = field(default_factory=dict)
+    # Review M2 (CHAT-STATE r6 S5 review): `resolved_kinds` counting only the resolver's EXACT
+    # whole-token hits (the token IS that row's code or name), what reconciliation's hint
+    # narrowing and single-kind retype need (`turn/reconcile.apply_reconciliation`'s `exact`).
+    exact_kinds: dict[str, dict[str, int]] = field(default_factory=dict)
 
 
 _CUSTOMER_OWNED_SO_KINDS = frozenset({"sales_order"})
@@ -2560,6 +2564,23 @@ def _without_foreign_sales_orders(
             ],
         }
     return out
+
+
+def _whole_token_hit(token: str, match: Any) -> bool:
+    """Is this resolver match an EXACT whole-token hit: the resolver's own exact tier, or the
+    token, folded, IS the row's code or one of its names / codes / numbers as a whole, never a
+    substring or prefix of one (review M2: "basin" inside the code ZZBASINWC1 is not a product)."""
+    key = _token_key(token)
+    if not key:
+        return False
+    if jsc.nullish_str(jsc.get(match, "match_tier")).strip().lower() == "exact":
+        return True
+    display = jsc.get(match, "display")
+    values = [jsc.get(match, "canonical_code")] + [
+        v for k, v in (display.items() if isinstance(display, dict) else ())
+        if isinstance(k, str) and k.endswith(("name", "code", "number", "_no", "ref"))
+    ]
+    return any(isinstance(v, str) and _token_key(v) == key for v in values)
 
 
 def resolve_kinds(
@@ -2830,6 +2851,7 @@ def resolve_kinds(
         if key and hint:
             hint_by_key.setdefault(key, hint)
     by_token: dict[str, dict[str, int]] = {}
+    exact_by_token: dict[str, dict[str, int]] = {}
     for resolution in jsc.array(jsc.get(resolved, "resolutions")):
         token = jsc.nullish_str(jsc.get(resolution, "token")).strip()
         if not token:
@@ -2845,6 +2867,9 @@ def resolve_kinds(
             if hinted and (kind in fan_out or brand_word):
                 kind = hinted
             hits[kind] = hits.get(kind, 0) + 1
+            if _whole_token_hit(token, match):
+                exact = exact_by_token.setdefault(token, {})
+                exact[kind] = exact.get(kind, 0) + 1
 
     gate = payload.get("gate") if isinstance(payload.get("gate"), dict) else {}
     compatible = [e for e in jsc.array(gate.get("compatible_entities")) if isinstance(e, dict)]
@@ -2985,6 +3010,8 @@ def resolve_kinds(
             continue
         echoed = next((t for t in by_token if _token_key(t) == key), None)
         by_token[echoed if echoed is not None else word] = {"brand": 1}
+        # A live brand named exactly is an exact whole-token hit.
+        exact_by_token[echoed if echoed is not None else word] = {"brand": 1}
         unplaced.pop(key, None)
         unplaced.pop(_token_key(jsc.nullish_str(e.get("raw")).strip()), None)
 
@@ -3007,6 +3034,7 @@ def resolve_kinds(
         spec_tier_matched(resolved),
         payload,
         not_checked=not_checked_tokens(entities, resolved),
+        exact_kinds=exact_by_token,
     )
 
 

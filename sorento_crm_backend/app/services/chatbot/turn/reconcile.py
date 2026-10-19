@@ -80,8 +80,14 @@ class ReconcileResult:
 
 
 def apply_reconciliation(
-    entities: list[dict[str, Any]], resolved: dict[str, dict[str, int]] | None
+    entities: list[dict[str, Any]],
+    resolved: dict[str, dict[str, int]] | None,
+    exact: dict[str, dict[str, int]] | None = None,
 ) -> ReconcileResult:
+    """`exact` is the same map counting only the resolver's EXACT whole-token hits (the token
+    IS that row's code or name, `turn_runtime.resolve_kinds`); None treats every hit as one (a
+    hand-built map). The hint narrowing and the single-kind retype need such a hit: "basin"
+    inside the code ZZBASINWC1 is never a product (review M2). The kind pick reads every hit."""
     result = ReconcileResult()
     if not resolved:
         result.entities = list(entities)
@@ -93,6 +99,7 @@ def apply_reconciliation(
         if not hits:
             result.entities.append(e)
             continue
+        whole = hits if exact is None else (hits_for_token(exact, raw) or {})
         matched = [k for k, count in hits.items() if count and count > 0]
         # #1262 slice 7 (F1b): the resolver's own hit-dict order is an accident of
         # however its callers happened to run, not a contract - the SAME ambiguity
@@ -107,7 +114,7 @@ def apply_reconciliation(
         # (the named kind first), so a number that is also another kind is not asked about.
         narrow = REFERENCE_NARROW.get(e.get("hint"))
         if narrow is not None:
-            inside = [k for k in matched if k in narrow]
+            inside = [k for k in matched if k in narrow and whole.get(k)]
             if inside:
                 hint_kind = e.get("hint")
                 matched = sorted(inside, key=lambda k: (k != hint_kind, -hits[k], k))
@@ -116,7 +123,7 @@ def apply_reconciliation(
         elif len(matched) == 1:
             new_kind = matched[0]
             old_kind = e.get("hint")
-            if new_kind != old_kind:
+            if new_kind != old_kind and whole.get(new_kind):
                 result.reconciled.append((raw, old_kind, new_kind))
                 rewritten = dict(e)
                 rewritten["hint"] = new_kind

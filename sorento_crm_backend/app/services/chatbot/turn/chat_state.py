@@ -18,7 +18,7 @@ from app.services.chatbot.turn import question as question_mod
 from app.services.chatbot.turn import task as task_mod
 from app.services.chatbot.turn.pending import ESCALATION_OFFER_KINDS
 from app.services.chatbot.turn.pending import ask as pending_ask
-from app.services.chatbot.turn.pending import option_entities
+from app.services.chatbot.turn.pending import offered_companies, option_entities
 from app.services.chatbot.turn.state import Focus, State, Subject
 
 OPS: tuple[str, ...] = (
@@ -229,6 +229,8 @@ def _open_question(focus: Focus, oq: dict[str, Any] | None, pending: Any = None,
     extras: dict[str, Any] = {}
     if focus.set_clarify:
         extras["clarify"] = _plain(focus.set_clarify)
+    if _count_question(focus):
+        extras["how_many"] = _count_question(focus)
     if _offered_brands(focus):
         extras["other_brands"] = _plain(_offered_brands(focus))
     asked = (focus.top_selling or {}).get("asked") if isinstance(focus.top_selling, dict) else None
@@ -560,6 +562,50 @@ def _hand_over(state: State) -> Any:
     )
 
 
+def _count_question(focus: Focus) -> dict[str, Any] | None:
+    """The count question the last answer asked ("how many should I show?"): a set too long
+    to list is carried with nothing shown (`engine`'s `withheld` carry, `shown` 0), not a set
+    carried only for its brand offer. None when no count is owed."""
+    page = focus.set_page if isinstance(focus.set_page, dict) else {}
+    key = page.get("set_key")
+    if not isinstance(key, dict) or key.get("offer_only") or int(key.get("shown") or 0) != 0:
+        return None
+    return {"set": key.get("set_noun"), "total": key.get("total"), "owed": "count"}
+
+
+def _answered_count(verdict: dict[str, Any]) -> int | None:
+    """The count an `answer` to the count question declared: the parse's own `top_n`, else
+    the one whole number its `open_question_answer` carries (a value or a picked number)."""
+    from app.services.chatbot.contracts import named_count
+
+    if named_count(verdict.get("top_n")) is not None:
+        return named_count(verdict.get("top_n"))
+    answer = verdict.get(question_mod.ANSWER_KEY) or {}
+    values = [*(answer.get("items") or []), *(answer.get("picked") or [])]
+    numbers = [
+        int(v) for v in values
+        if (isinstance(v, int) and not isinstance(v, bool)) or (isinstance(v, str) and v.strip().isdigit())
+    ]
+    return named_count(numbers[0]) if len(numbers) == 1 else None
+
+
+def _answered_company(pending: Any, verdict: dict[str, Any]) -> str | None:
+    """The company an `answer` to an open escalation offer names: the parse's own
+    `escalation.company_pick`, taken only when it is exactly one of the companies the offer
+    showed (by name or alias, the escalation lane's own pool rule). None otherwise."""
+    from app.services.chatbot.lanes.escalation import CO_ALIASES
+
+    raw = (verdict.get("escalation") or {}).get("company_pick") if isinstance(verdict.get("escalation"), dict) else None
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    wanted = raw.strip().casefold()
+    hits = [
+        row["company_name"] for row in offered_companies(pending)
+        if wanted in {row["company_name"].casefold(), *CO_ALIASES.get(row["company_name"].casefold(), [])}
+    ]
+    return hits[0] if len(hits) == 1 else None
+
+
 def _offered_brands(focus: Focus) -> list[Any]:
     """The brands the last set answer offered. The writer stores the offer at
     `set_page["set_key"]["other_brands"]` (`turn_runtime`, the set page writer)."""
@@ -750,11 +796,12 @@ def held_family_landed(state: State, verdict: dict[str, Any], matched: list[str]
 
 
 def _focus_questions(focus: Focus) -> bool:
-    """A question the focus itself holds for one turn: a clarify, the other-brands offer, a
-    top selling question."""
+    """A question the focus itself holds for one turn: a clarify, the other-brands offer, the
+    count question, a top selling question."""
     return bool(
         focus.set_clarify
         or _offered_brands(focus)
+        or _count_question(focus)
         or (isinstance(focus.top_selling, dict) and focus.top_selling.get("asked"))
     )
 
@@ -1192,8 +1239,12 @@ def apply_changes(
             mode = (verdict.get("open_question_answer") or {}).get("mode")
             if open_question is None and not _focus_questions(focus):
                 fail(op, "no open question to answer")
-            elif mode is None and not offered_brand_picks(state, verdict, brands):
-                # The parser's own brand entity naming an offered brand IS the answer to the offer.
+            elif mode is None and not offered_brand_picks(state, verdict, brands) and not (
+                open_question is None and _count_question(focus) and _answered_count(verdict) is not None
+            ) and _answered_company(state.pending, verdict) is None:
+                # The parser's own brand entity naming an offered brand IS the answer to the
+                # offer; a count it read IS the answer to the count question; a company the
+                # escalation offer showed IS the answer to that offer.
                 fail(op, "no answer declared")
         elif op == "switch_domain":
             target = _message_domains(verdict)
@@ -1304,6 +1355,30 @@ def apply_changes(
         out, _ = question_mod.without_phantom_answer(
             out, open_question=None, positions_read_elsewhere=positions_read_elsewhere, focus_has_product=False
         )
+    company = _answered_company(state.pending, verdict) if answering else None
+    if company is not None:
+        # An `answer` naming one of the companies the escalation offer showed accepts the
+        # offer and fills its company slot (S5: what `with_company_pick` read off the text).
+        out["escalation"] = {
+            **(out.get("escalation") or {}),
+            "is_escalation_confirmation": True,
+            "escalation_declined": False,
+            "company_pick": company,
+            "company_pick_by": "answer",
+        }
+        out["is_affirmative"] = True
+        # The company IS the answer: no word of it is a new ask (as the reply tier did).
+        out["domain_hint"], out["entities"] = None, []
+    if (
+        "answer" in ops and not roster_picks and open_question is None
+        and _count_question(state.focus) and _answered_count(verdict) is not None
+    ):
+        # The answer to "how many should I show?" (when it is THE open question: a roster
+        # asked beside it takes its own picks) fills the count (`top_n`): that many of the
+        # same set (`apply`'s `set_count_answered`), never a row pick of a list never sent.
+        out["top_n"] = _answered_count(verdict)
+        out[question_mod.ANSWER_KEY] = dict(question_mod.NO_ANSWER)
+        out[question_mod.POSITIONS_KEY] = []
     if roster_picks:
         out[question_mod.ANSWER_KEY] = {
             **question_mod.NO_ANSWER,

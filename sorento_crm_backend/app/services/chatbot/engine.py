@@ -5610,6 +5610,7 @@ def _run_stages_body(  # noqa: PLR0915
         gate_input: dict[str, Any] | None = None
         account_question: str | None = None
         resolved_kinds: dict[str, dict[str, int]] = {}
+        exact_kinds: dict[str, dict[str, int]] = {}
         compatible_entities: list[dict[str, Any]] = []
         predicate: dict[str, Any] | None = None
         resolved_candidates: dict[str, list[dict[str, Any]]] = {}
@@ -5818,6 +5819,7 @@ def _run_stages_body(  # noqa: PLR0915
                 )
             )
             resolved_kinds = resolve_outcome.resolved_kinds
+            exact_kinds = resolve_outcome.exact_kinds
             compatible_entities = resolve_outcome.compatible_entities
             predicate = resolve_outcome.predicate
             resolved_candidates = resolve_outcome.resolved_candidates
@@ -6028,6 +6030,7 @@ def _run_stages_body(  # noqa: PLR0915
                     resolved_kinds,
                     resolved_candidates,
                     frozenset(unplaced_tokens),
+                    exact=exact_kinds,
                 )
                 state_out.focus.relation = seat_relation
             if (
@@ -6085,6 +6088,7 @@ def _run_stages_body(  # noqa: PLR0915
                     resolved_kinds,
                     resolved_candidates,
                     frozenset(unplaced_tokens),
+                    exact=exact_kinds,
                 )
                 state_out.focus.relation = seat_relation
             # Round 4 R5: a clarify this turn is about to ask keeps the ask, so its answer
