@@ -1,6 +1,6 @@
 # PLAN: contact tag view shows phantom "Removed" values (TAG-VIEW-BUG)
 
-Status: in progress (small fix track: FE only, under 100 lines, no migration, no auth change)
+Status: in progress, reviewer READY on a567a105a5, browser pass next. Track: small fix (FE only, under 100 lines, no migration, no auth change)
 
 ## Owner report (19 Oct)
 
