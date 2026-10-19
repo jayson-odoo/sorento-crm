@@ -1,0 +1,92 @@
+# UAC: OI-SPLIT-VIEW (split follow-ups after #1749)
+
+Status: DRAFT, waiting for the owner's OK on mock v2 and Q4. Card:
+`oi-split-view-behaviour-card.md`. Mock: `documentation/mockups/OI-SPLIT-VIEW/index.html`.
+Rulings: Q1 (a), Q2 (a) (crew, ask a14412763); Q3 (b) and Q5 = (i) popup per line (owner + crew
+ruling a14761180); Q4 open, built on (a).
+
+Words: the **applied plan** of a line is the `split_plan` stamp on the newest decision of its order
+that names the line (`_recorded_split_plans`, `project_line_split_service.py:1021`). A line is
+**split-edited** when it has saved splits and `split_plan_key(saved splits)`
+(`project_order_inquiry_service.py:237`) differs from its applied plan (none counts as different).
+
+Examples use the owner's SO417636 as stored on the dev DB (revision 3): line 480 = 14 @ 20/09/2026
+own, 236 @ 20/11/2026 New line, 167 @ 20/11/2026 New line (AutoCount 417 @ 20/10/2026, now 14 @
+20/09/2026); line 752 = 37 @ 20/11/2026 own, 467 @ 02/01/2027 New line, AutoCount extra 145 (504
+@ 20/12/2026, now 649 @ 02/01/2027); line 608 has no splits (192 -> 632, ORDER 440).
+
+## A. Planning board: saved split edits are confirmed
+
+- A1 **One function.** One backend function answers "split-edited" for a line. The board row, the
+  Confirm, Simulate confirm and the split popup (B) all read it; nothing else recomputes it.
+- A2 **Counted on the board.** The board payload marks each split-edited line (a flag on the
+  line's board row). The browser adds those lines to "N to confirm" and "Confirm (N)", once per line:
+  a line that also has a pending AutoCount change or a staged verdict counts once.
+  - Saving 480 with 167 @ 20/11/2029 (rest unchanged) gives "1 to confirm" and Confirm (1).
+  - A remark-only edit (236 "SITE HOLD") counts 0. Editing 167 back to 20/11/2026 counts 0.
+  - A first split saved on a confirmed unsplit line (608: 600 @ 20/11/2026 own + 32 @ 20/12/2026 New
+    line) counts 1 (Q1 a).
+  - A line delivered in full never counts.
+- A3 **Listed in the result card.** While split edits wait, the board's order card shows one line
+  "Split edits to confirm: line 480 CSK14B", AutoCount line numbers, comma-separated items for
+  several lines.
+- A4 **Confirm acts on every split-edited line of the order.** Pressing Confirm (N) confirms the
+  order even when nothing else on it changed, and the server applies every split-edited line of that
+  order (A1), whether or not the browser named it. The engine path is #1749's AC-G15: purchasing's
+  rows move with their links, one email row and one Excel row per changed split, no CANCEL from
+  splits, no second ORDER. The new decision's stamp equals the saved plan, so the next board load
+  counts 0 for it.
+  - E2: after the 167 edit, Confirm moves OI row 167 to 20/11/2029 (link kept); the email has
+    exactly one row for 167 with NEW DATE 20/11/2029 and REMARK starting DELAY; the Excel reads 167 @
+    20/11/2029; 14 and 236 rows are unchanged and are not in the email.
+  - A qty edit 236 -> 200 + new 36 @ 20/01/2030 (total 417) writes rows 200 and 36, each linked for
+    its own qty, both in the email and the Excel; the 236 is gone; no CANCEL row anywhere.
+  - A second Confirm right after sends nothing and writes no rows (AC-G13).
+- A5 **Simulate confirm** (admin) shows the same rows and email as A4 for the same board state.
+- A6 **Save guard unchanged** (Q2 a). Moving a confirmed split onto another SO line still answers 422
+  "Line <n>: a confirmed split cannot move to another line." and stores nothing (#1749 AC-G19).
+- A7 **Never stuck.** If the Confirm fails, the board shows the server's message, the count stays,
+  and nothing is half-applied (the order's Confirm is one transaction, as today).
+
+## B. "Split N" + (i) popup on the SO and OI Lines tabs
+
+- B1 **Chip and (i).** On the Sales Order page > Lines tab and on the Order Inquiry page > Lines tab,
+  a line with saved splits shows "Split N" (N = its split rows; the AutoCount extra row is not
+  counted) and an (i) icon button labelled "Show the splits of line <n>". A line without splits
+  shows neither. Nothing opens by default (Q3 b). The OI chevron keeps what it shows today.
+- B2 **The popup** (a Dialog the size of the Email Outbox body view). Title "Line <n> <item>:
+  split"; under it the SO number and, when the line has an OI row, "<OI number> line <n>". Then the
+  plan status (B3), the line's purchasing State (and PO on the OI page), and one grid:
+  Qty | Delivery date | Change | Sits on | Remark, one row per split in the saved order, then the
+  AutoCount extra row when there is one, then a total row "<sum>" with "AutoCount <base qty> @
+  <base date>, now <now qty> @ <now date>". Change is the email's REMARK word from
+  `remark_for_row` (ADVANCE / REMAIN / DELAY / CANCEL BALANCE / ORDER n); Sits on reads "line <n>"
+  (AutoCount number), "New line (not in AutoCount yet)" or "line <n> (AutoCount extra)".
+  - 480: rows 14 / 20/09/2026 / ADVANCE / line 480; 236 / 20/11/2026 / DELAY / New line; 167 /
+    20/11/2026 / DELAY / New line; total 417.
+  - 752: rows 37 / 20/11/2026 / ADVANCE / line 752; 467 / 02/01/2027 / DELAY / New line; 145 /
+    02/01/2027 / ORDER 145 / line 752 (AutoCount extra); total 649.
+- B3 **Plan status**, one per line: "Confirmed" with "revision <r>, <dd/mm/yyyy>" when the saved
+  plan equals the applied plan; "Saved, not confirmed" when the line is split-edited (A1);
+  "AutoCount changed" when the plan is stale (`split_state` stale).
+- B4 **What changed, only when exact.** In "Saved, not confirmed", a split row whose
+  (qty, date, sits on, cancel) is not in the applied plan is highlighted. When the saved plan and
+  the applied plan differ by exactly one row removed and one row added, the added row also shows
+  "was <qty>" or "was <date>" (the removed row's values) and the board card (A3) adds "(167 now
+  20/11/2029)". Otherwise no "was" is shown. Never a guess.
+- B5 **Same data, same component.** Both pages get the popup's data from one backend read (the same
+  function feeds the OI rows and the SO lines) and render one shared component. Opening the popup
+  makes no extra request beyond the page's own read.
+- B6 **Q4 (a), open with the owner.** A split sitting on another SO line is listed in its own line's
+  popup with Sits on "line <n>"; the landing line shows only its own splits.
+- B7 **Access.** The SO page shows splits to anyone who can open that sales order (scoped by its
+  company, as the page's lines are); no new permission. An SO with no project order shows no chip.
+- B8 **Layout.** Unclipped at 1280 and 375; at 375 the popup fills the width and keeps Qty, Date and
+  Change in view, with Sits on as a small line under Change. Escape and Close return focus to the
+  (i) button.
+
+## C. Out of scope
+
+- AC-G19 (moving a confirmed split onto another line) stays deferred (Q2 a).
+- Purchasing state per split row (needs a stored OI-row-to-split link, a migration; Q5).
+- The "Confirmed: line 560 ..." text on the board card keeps its current numbers.
