@@ -1088,14 +1088,14 @@ def closed_lists_verdict(verdict: dict[str, Any], *, gate: bool) -> dict[str, An
     return {k: v for k, v in verdict.items() if k != "closed_lists"} if "closed_lists" in verdict else verdict
 
 
-def _candidate_lines(db: Session, latest_user_message: str) -> list[str] | None:
+def _candidate_lines(db: Session, latest_user_message: str, held_ids: list[str] | None = None) -> list[str] | None:
     """The candidate block for the message's OWN first line (the quoted reply under it is
     not this message's words, the line grounding reads too). It only advises the parser,
     so a failure leaves it out and the turn goes on (savepoint: the session stays usable)."""
     message = latest_user_message.split("\n", 1)[0]
     try:
         with db.begin_nested():
-            return candidates_mod.candidate_lines(candidates_mod.shortlist(db, message))
+            return candidates_mod.candidate_lines(candidates_mod.shortlist(db, message, held_ids))
     except Exception:  # noqa: BLE001 - advisory block, never a failed turn
         logger.warning("chatbot: candidate shortlist failed; parsing without it", exc_info=True)
         return None
@@ -4537,7 +4537,11 @@ def _run_stages_body(  # noqa: PLR0915
         # CHAT-CLOSED-LISTS: what is on file under the words of this message, for a
         # version carrying the CLOSED LISTS section only (code shortlists, the parser picks).
         candidate_lines = (
-            _candidate_lines(db, latest_user_message)
+            _candidate_lines(
+                db,
+                latest_user_message,
+                [str(p["uuid"]) for p in state_in.focus.products if isinstance(p, dict) and p.get("uuid")],
+            )
             if parser_config.closed_lists and isinstance(latest_user_message, str)
             else None
         )
