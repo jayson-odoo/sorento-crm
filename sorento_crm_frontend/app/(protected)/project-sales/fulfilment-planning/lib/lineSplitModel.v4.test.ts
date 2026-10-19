@@ -118,7 +118,7 @@ describe('placeRest (the "N left" chip)', () => {
     expect(by(lines, 'l480').splits).toHaveLength(1);
   });
 
-  it('merges into a split of that line already on the same date and sits-on', () => {
+  it('makes its own split next to one already on the same date and sits-on (AC-G20)', () => {
     const l480 = mk('l480', 480, 417, '2026-10-20', {
       splits: [
         sp('a', 14, '2026-09-20', 'l480'),
@@ -130,8 +130,11 @@ describe('placeRest (the "N left" chip)', () => {
       sitsOnLineId: 'l608',
     });
     const splits = by(next, 'l480').splits;
-    expect(splits).toHaveLength(2);
-    expect(splits.find((s) => s.id === 'b')).toMatchObject({ qty: 403, remark: 'x' });
+    expect(splits).toHaveLength(3);
+    expect(splits.find((s) => s.id === 'b')).toMatchObject({ qty: 236, remark: 'x' });
+    expect(splits.filter((s) => s.id !== 'a' && s.id !== 'b')).toMatchObject([
+      { qty: 167, deliveryDate: '2026-11-20', sitsOnLineId: 'l608' },
+    ]);
   });
 
   it('a cancel target makes a cancel split on its own line with no date', () => {

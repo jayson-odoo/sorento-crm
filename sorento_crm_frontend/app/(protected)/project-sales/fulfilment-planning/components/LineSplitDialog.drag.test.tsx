@@ -239,7 +239,7 @@ describe('AC-A9 drops move ALL of it at once', () => {
     expect(balance(480).textContent).not.toMatch(/left|over/);
   });
 
-  it('the chip merges the same way into an existing split on that line and date', async () => {
+  it('the chip makes its own split next to an existing one on that line and date (AC-G20)', async () => {
     const p = ownerCase();
     p.lines.find((l) => l.line_id === 'L480')!.splits = [
       wireSplit('a', 14, '2026-09-20', 'L480'),
@@ -251,8 +251,8 @@ describe('AC-A9 drops move ALL of it at once', () => {
     await pickUp(chip(480, 167));
     press('ArrowDown');
     await dropIt();
-    expect(queryQty(480, 3)).toBeNull();
-    expect(qty(480, 2).value).toBe('403');
+    expect(qty(480, 2).value).toBe('236');
+    expect(qty(480, 3).value).toBe('167');
   });
 
   it('dropping a REMAIN line moves the whole line', async () => {
