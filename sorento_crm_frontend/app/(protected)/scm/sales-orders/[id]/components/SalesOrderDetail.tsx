@@ -55,6 +55,11 @@ import { DEMAND_CLASS_OPTIONS } from '@/app/(protected)/master-data-management/s
 // The SAME pill the order-inquiry worklist reads, not a second one worded differently:
 // "Placed" has to mean the same thing on both screens or the two disagree in a glance.
 import { OrderInquiryStatePill } from '@/app/(protected)/project-sales/_shared/components/OrderInquiryVerbPill';
+import {
+  LineSplitInfo,
+  OrderSplitsDialog,
+  type OrderSplitLine,
+} from '@/app/(protected)/project-sales/_shared/components/LineSplitInfo';
 import { OrderInquiryRejectedBadge } from '@/app/(protected)/project-sales/_shared/components/OrderInquiryRejectedBadge';
 import {
   formatMyrExact,
@@ -603,9 +608,12 @@ export function SalesOrderDetail({
   // list and nothing at all here, so a record could only be removed by finding it again in
   // the list. Edit moved in here too (S2, R3): the header's primary slot is now Plan, and
   // the list surface calls this same hook with no `onEdit`, so its row menu shows no Edit.
+  // OI-SPLIT-VIEW (UAC D1): the gear's "View splits", every split line of this order.
+  const [viewSplitsOpen, setViewSplitsOpen] = useState(false);
   const { actions, pending: deletionPending } = useSalesOrderActions(data, {
     onDeleted: () => router.push(backHref),
     onEdit: () => beginEdit(data as SalesOrder),
+    onViewSplits: () => setViewSplitsOpen(true),
   });
 
   const cancelEdit = () => {
@@ -950,6 +958,24 @@ export function SalesOrderDetail({
         },
         size: 260,
         meta: { headerTitle: 'Product' },
+      },
+      // OI-SPLIT-VIEW (UAC B1): "Split N" and the (i) popup in their own column right after
+      // Product, on Columns like the rest; empty for a line with no splits.
+      {
+        id: 'split',
+        accessorFn: (line) => (line.split_view ? `Split ${line.split_view.rows.length}` : ''),
+        header: ({ column }) => <DataGridColumnHeader title="Split" column={column} />,
+        cell: ({ row }) => (
+          <LineSplitInfo
+            lineNo={row.original.line_no}
+            itemCode={row.original.sku}
+            soNumber={soNumber}
+            view={row.original.split_view}
+          />
+        ),
+        size: 110,
+        enableSorting: false,
+        meta: { headerTitle: 'Split' },
       },
       {
         id: 'qty_ordered',
@@ -1543,6 +1569,10 @@ export function SalesOrderDetail({
   // How far the order has been planned, in the same chip the list carries.
   const plannedBadge = salesOrderPlannedBadge(so.planned_lines, so.plannable_lines);
   const deliveriesLine = deliveriesLineId ? (lines.find((l) => l.id === deliveriesLineId) ?? null) : null;
+  // Not a hook: this sits below the page's early returns.
+  const splitLines: OrderSplitLine[] = (data?.lines ?? []).flatMap((line) =>
+    line.split_view ? [{ lineNo: line.line_no, itemCode: line.sku, view: line.split_view }] : [],
+  );
   const linksLine = linksLineId ? (lines.find((l) => l.id === linksLineId) ?? null) : null;
 
   const handleSave = async () => {
@@ -2303,6 +2333,13 @@ export function SalesOrderDetail({
           />
         </PlanRowDialog>
       ) : null}
+
+      <OrderSplitsDialog
+        title={`${soNumber}: splits`}
+        lines={splitLines}
+        open={viewSplitsOpen}
+        onOpenChange={setViewSplitsOpen}
+      />
     </div>
     </QtyDraftContext.Provider>
   );

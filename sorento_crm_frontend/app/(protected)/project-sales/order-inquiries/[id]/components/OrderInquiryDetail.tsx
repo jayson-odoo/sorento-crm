@@ -14,6 +14,7 @@ import {
   Send,
   ShoppingCart,
   Ship,
+  Split,
   Unlink,
   Undo2,
   Wand2,
@@ -35,6 +36,7 @@ import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { LinkDocumentDialog } from '../../../_shared/components/LinkDocumentDialog';
+import { OrderSplitsDialog, type OrderSplitLine } from '../../../_shared/components/LineSplitInfo';
 import { BulkRejectOrderInquiryDialog } from '../../../_shared/components/BulkRejectOrderInquiryDialog';
 import { HandoverResendDialog } from '../../../_shared/components/HandoverResendDialog';
 import {
@@ -158,6 +160,8 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   const reserveHistoryRow = historyLine ? reserveHistoryRowOf(historyLine) : null;
   const historyRow = reserveHistoryRow ?? historyLine?.primary ?? null;
   const [downloadsOpen, setDownloadsOpen] = useState(false);
+  // OI-SPLIT-VIEW (UAC D1): the gear's "View splits", one group per split SO line.
+  const [viewSplitsOpen, setViewSplitsOpen] = useState(false);
   const [resendIds, setResendIds] = useState<string[] | null>(null);
   const closeResend = useCallback(() => setResendIds(null), []);
   // Unlink selected (AC-DP-06, fix round UL): a server-deferred pending action
@@ -194,6 +198,22 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   }
 
   const lines = useMemo(() => linesQuery.data ?? [], [linesQuery.data]);
+  const splitLines = useMemo<OrderSplitLine[]>(() => {
+    const seen = new Set<string>();
+    const out: OrderSplitLine[] = [];
+    for (const row of lines) {
+      if (!row.split_view) continue;
+      const key = row.so_line_id ?? row.id;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        lineNo: row.so_line_no ?? row.line_no ?? null,
+        itemCode: row.item_code,
+        view: row.split_view,
+      });
+    }
+    return out;
+  }, [lines]);
   // S0 (`PLAN-oi-no-double-count-25sep.md`, G1/G6): a used row is history now, so it is
   // never ticked, linked, unlinked or rejected from this page - only swept by Confirm.
   const activeLines = useMemo(() => lines.filter(isLiveInquiryRow), [lines]);
@@ -873,6 +893,15 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                     <Printer className="size-4" aria-hidden />
                     Download history
                   </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={(e) => {
+                      e.preventDefault();
+                      setViewSplitsOpen(true);
+                    }}
+                  >
+                    <Split className="size-4" aria-hidden />
+                    View splits
+                  </DropdownMenuItem>
                 </DetailActionsMenu>
               }
               primary={
@@ -1093,6 +1122,13 @@ export function OrderInquiryDetail({ id }: { id: string }) {
 
       <HandoverResendDialog inquiryIds={resendIds} onClose={closeResend} />
 
+      <OrderSplitsDialog
+        title={`${header.inquiry_no}: splits`}
+        subtitle={header.so_number}
+        lines={splitLines}
+        open={viewSplitsOpen}
+        onOpenChange={setViewSplitsOpen}
+      />
       <EntityDownloadsButton
         entityType="order_inquiry"
         entityId={id}
