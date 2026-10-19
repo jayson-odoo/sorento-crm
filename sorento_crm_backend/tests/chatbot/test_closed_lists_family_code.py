@@ -27,7 +27,7 @@ OTHER_COMPANY = "00000000-0000-0000-0000-000000000002"
 
 ROWS = (
     # code, trap, brand
-    ("ZZWC286-UF", "s_trap", "ZZB1"),  # the held product: no other code starts with it, so only itself is held
+    ("ZZWC286-UF", "s_trap", "ZZB2"),  # the held product (brand ZZB2, so it lacks a ZZB1 filter); no other code starts with it
     ("ZZWC286-SH", "s_trap", "ZZB1"),
     ("ZZWC286-SH-P", "p_trap", "ZZB1"),
     ("ZZWC286-SH-NEW-P", "p_trap", "ZZB1"),
@@ -126,13 +126,13 @@ def test_a_spec_over_the_held_product_narrows_its_family_code_siblings(session_f
     assert "none on record" not in _text(r), _text(r)
 
 
-def test_a_brand_over_the_held_product_keeps_the_family_codes_members_of_that_brand(session_factory, seeded, stub_access, monkeypatch):
+def test_a_brand_over_the_held_product_widens_to_the_family_codes_members_of_that_brand_when_the_held_product_lacks_it(session_factory, seeded, stub_access, monkeypatch):
     ids = _seed(session_factory)
     brand = {"raw": "ZZB1", "hint": "brand", "canonical_code": ids["brand:ZZB1"], "current_message": True, "confident": True}
 
     r, calls = _refine(session_factory, stub_access, monkeypatch, "zzb1 one?", brand, _spec("600mm", "dim_width", 600))
 
-    assert _fetched(calls) == sorted(ids[c] for c in ("ZZWC286-UF", "ZZWC286-SH", "ZZWC286-SH-P", "ZZWC286-SH-NEW-P", "ZZWC286-SH-150")), (_text(r), calls)
+    assert _fetched(calls) == sorted(ids[c] for c in ("ZZWC286-SH", "ZZWC286-SH-P", "ZZWC286-SH-NEW-P", "ZZWC286-SH-150")), (_text(r), calls)
 
 
 def test_guard_the_same_family_code_in_another_company_never_joins_the_family(session_factory, seeded, stub_access, monkeypatch):
