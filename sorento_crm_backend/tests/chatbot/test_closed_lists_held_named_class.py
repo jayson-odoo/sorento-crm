@@ -8,22 +8,27 @@ record." / "<held>: none on record with <brand>", and the correct files were thr
 """
 from __future__ import annotations
 
+import json
 import uuid
 
 import pytest
 
 import app.main  # noqa: F401  isort:skip
-from app.models.certificate import Certificate, CertificateRevision
+from app.models.certificate import Certificate, CertificateProduct, CertificateRevision
 from app.models.product import Brand, Product, ProductAttachment, ProductCategory, UnitOfMeasure
 from app.models.resources import Attachment, AttachmentType
+from app.services.ai_assistant_service import MCPRuntimeClient
+from app.services.chatbot import engine as engine_mod
+from app.services.chatbot.head import parser as parser_mod
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.services.product_class_signal import backfill_category_signals
 from app.services.product_spec_derivation import derive_for_code
 from app.services.product_spec_registry import seed_spec_registry
 from tests._pg_fixture import unique_code
 from tests.chatbot.conftest import session_factory  # noqa: F401
+from tests.chatbot.test_engine import _envelope
 from tests.chatbot.test_closed_lists_scheme_held_none import (  # noqa: F401
-    SCHEME, _file_ask, _kind, _product, _scheme as _scheme_pick, _stock, _text, _turns, seeded, stub_access,
+    SCHEME, _file_ask, _kind, _message, _product, _scheme as _scheme_pick, _stock, _text, _turns, seeded, stub_access,
 )
 
 
@@ -39,7 +44,7 @@ def _seed(session_factory) -> dict[str, str]:
         key: ProductCategory(
             id=str(uuid.uuid4()), category_code=unique_code(key.upper())[:50], category_name=name, class_label=name, search_synonyms=[name], company_id=DEFAULT_COMPANY_ID,
         )
-        for key, name in (("wb", "ZZ Wash Basin"), ("sh", "Zyx Shower"), ("av", "Zyx Angle Valve"))
+        for key, name in (("wb", "ZZ Wash Basin"), ("sh", "Shower"), ("av", "Zyx Angle Valve"))
     }
     db.add_all([uom, cert_type, brand, *cats.values()])
     db.flush()
@@ -72,6 +77,8 @@ def _seed(session_factory) -> dict[str, str]:
         db.add(c)
         db.flush()
         db.add(CertificateRevision(id=str(uuid.uuid4()), certificate_id=c.id, revision_no=1, attachment_id=att.id, is_current=True))
+        db.add(CertificateProduct(id=str(uuid.uuid4()), certificate_id=c.id, product_id=p.id, source="manual"))
+        db.flush()
         ids[f"cert:{code}"] = c.id
 
     product("ZZWB1", "wb")
@@ -120,6 +127,48 @@ def _brand() -> dict:
     return {"raw": "ZZSORENTO", "hint": "brand", "canonical_code": "ZZSORENTO", "current_message": True, "confident": True}
 
 
+def _turns_with_files(session_factory, stub_access, monkeypatch, turns, ids):
+    """As `_turns`, but the attachments fetch answers with one certificate file per asked product
+    that holds one (the envelope shape the MCP presenter returns)."""
+    def fake_resolve_config(db, *, current_date, override_version_id=None):
+        return parser_mod.ParserConfig(
+            system_prompt="stub", prompt_version=1, provider="openai", model="m", api_key="k", closed_lists=True,
+        )
+
+    queue = [verdict for _text_, verdict in turns]
+    monkeypatch.setattr(parser_mod, "resolve_config", fake_resolve_config)
+    monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: queue.pop(0))
+    monkeypatch.setattr(engine_mod, "_contact_company_scope", lambda f, c: frozenset({DEFAULT_COMPANY_ID}))
+    calls: list[tuple[str, dict]] = []
+    holders = {ids[code]: code for code in ("ZZSH1", "ZZAV1", "ZZAV2")}
+
+    def call_tool(self, name, args):
+        calls.append((name, args))
+        if name != "crm_master_product_attachments_list":
+            return json.dumps({"ok": True, "items": []})
+        rows = [(holders[pid], f"{holders[pid]}_{SCHEME}.pdf") for pid in args.get("product_ids") or [] if pid in holders]
+        return json.dumps({
+            "result_type": "product_attachments", "intro": "I have attached the file(s) below.", "ok": True,
+            "items": [
+                {"title": code, "flags": {"discontinued": False, "expired": False, "expiring_soon": False}, "fields": [
+                    {"label": "Product Code", "value": code}, {"label": "Attachment Type", "value": "ZZT Certification"},
+                    {"label": "File Name", "value": name},
+                ]} for code, name in rows
+            ],
+            "attachments": [{"url": f"https://example.invalid/{name}", "filename": name, "mimeType": "application/pdf",
+                             "attachmentType": "ZZT Certification"} for _code, name in rows],
+            "action_links": [], "last_updated_at": None, "has_result": bool(rows),
+        })
+
+    monkeypatch.setattr(MCPRuntimeClient, "call_tool", call_tool)
+    stub_access()
+    out = []
+    for n, (text, _verdict) in enumerate(turns):
+        calls.clear()
+        out.append((engine_mod.run_turn(_envelope(message=_message(text, n)), session_factory=session_factory), list(calls)))
+    return out
+
+
 def _product_fetches(calls) -> list[dict]:
     return [a for n, a in calls if n == "crm_master_product_attachments_list"]
 
@@ -127,28 +176,32 @@ def _product_fetches(calls) -> list[dict]:
 def test_a_scheme_over_a_named_class_is_not_about_the_held_product(session_factory, seeded, stub_access, monkeypatch):
     ids = _seed(session_factory)
 
-    (_r1, _c1), (r2, c2) = _turns(
+    (_r1, _c1), (r2, c2) = _turns_with_files(
         session_factory, stub_access, monkeypatch,
         [("ZZWB1", _stock(_product("ZZWB1"))),
-         ("Shower span cert", _ask(_category("zyx shower"), _span_pick()))],
+         ("Shower span cert", _ask(_category("shower"), _span_pick()))],
+        ids,
     )
 
     text = _text(r2)
     assert not text.startswith("ZZWB1:"), (text, c2)
     fetches = _product_fetches(c2)
-    # The class resolves on its own (no attachments fetch is needed to name it); whatever fetch
-    # does run never carries the held product, and the reply names the scheme, not the held code.
     assert all(ids["ZZWB1"] not in (args.get("product_ids") or []) for args in fetches), c2
-    assert "ZZWB1" not in text and SCHEME in text, text
+    assert any(
+        ids["ZZSH1"] in (args.get("product_ids") or []) and ids["cert:ZZSH1"] in (args.get("certificate_ids") or [])
+        for args in fetches
+    ), (text, c2)
+    assert "ZZWB1" not in text, text
 
 
 def test_a_brand_over_a_named_class_is_not_about_the_held_product(session_factory, seeded, stub_access, monkeypatch):
     ids = _seed(session_factory)
 
-    (_r1, _c1), (r2, c2) = _turns(
+    (_r1, _c1), (r2, c2) = _turns_with_files(
         session_factory, stub_access, monkeypatch,
         [("ZZCWB1", _stock(_product("ZZCWB1"))),
          ("sorento angle valve cert", _ask(_brand(), _category("zyx angle valve"), _kind_pick()))],
+        ids,
     )
 
     text = _text(r2)
@@ -156,7 +209,8 @@ def test_a_brand_over_a_named_class_is_not_about_the_held_product(session_factor
     assert not text.startswith("ZZCWB1:"), text
     fetches = _product_fetches(c2)
     assert all(ids["ZZCWB1"] not in (args.get("product_ids") or []) for args in fetches), c2
-    assert "ZZCWB1" not in text and "ZZAV1" in text and "ZZAV2" in text, text
+    assert any({ids["ZZAV1"], ids["ZZAV2"]} <= set(args.get("product_ids") or []) for args in fetches), (text, c2)
+    assert "ZZCWB1" not in text, text
 
 
 def test_guard_no_class_entity_still_takes_the_held_path(session_factory, seeded, stub_access, monkeypatch):
