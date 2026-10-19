@@ -328,3 +328,83 @@ def test_b5_a_carried_set_replay_never_splits_by_a_hidden_key(split_db):
     assert predicate.get("qualifying_total") == 4 and len(ids) == 4, predicate  # the replay ran over the set
     said = json.dumps(predicate, default=str)
     assert not [w for w in HIDDEN_FINISH_WORDS if w in said], said
+
+
+# --- B6: a scope term on a hidden key; B7: the spec fallback's unknown-value read ---------------
+
+
+def _black_in_stock(db) -> None:
+    """Stock for the two black closets only, so "white water closets with stock" is a zero set."""
+    from app.models.inventory import Stock, Warehouse
+
+    wh = Warehouse(id=str(uuid.uuid4()), warehouse_code=unique_code("WH")[:20], warehouse_name="ZZ WH")
+    db.add(wh)
+    db.flush()
+    for (pid,) in db.query(Product.id).filter(Product.product_code.in_(["ZZHX-P2", "ZZHX-S2"])).all():
+        db.add(Stock(
+            id=str(uuid.uuid4()), product_id=pid, warehouse_id=wh.id, quantity_on_hand=5, quantity_reserved=0, quantity_damaged=0,
+        ))
+    db.flush()
+
+
+def _set_fields(result: dict) -> dict:
+    """What a set reply prints or replays: near miss, breakdown, members, description, the page key."""
+    predicate = result.get("predicate") or {}
+    return {k: predicate.get(k) for k in ("near_miss", "breakdown", "members", "description", "set_key")}
+
+
+def test_b6_a_scope_term_only_a_hidden_key_holds_never_binds_or_names_that_key(split_db):
+    """`filter_specs` binds a scope term on ANY registry key ("white" -> finish), so the hidden finish
+    narrows the set to zero and `_near_miss` recounts it by finish's other values ("Black 2")."""
+    _black_in_stock(split_db)
+    unfiltered = _resolve(split_db, "which water closet has stock", ["finish", "thickness", "board_thickness"])
+
+    result = _resolve(
+        split_db, "which white water closet has stock", ["finish", "thickness", "board_thickness"],
+        scope_terms=["water closet", "white"],
+    )
+
+    said = json.dumps(_set_fields(result), default=str)
+    assert not [w for w in HIDDEN_FINISH_WORDS if w in said], said
+    assert (result.get("predicate") or {}).get("qualifying_total") == (unfiltered.get("predicate") or {}).get("qualifying_total") == 2, (
+        result.get("predicate"), unfiltered.get("predicate"),
+    )
+
+
+def test_guard_a_scope_term_on_a_visible_finish_gives_the_near_miss_by_finish(split_db):
+    _black_in_stock(split_db)
+
+    result = _resolve(
+        split_db, "which white water closet has stock", ["thickness", "board_thickness"], scope_terms=["water closet", "white"],
+    )
+
+    near = (result.get("predicate") or {}).get("near_miss") or {}
+    assert near.get("key") == "finish" and near.get("other_values") == [{"value": "Black", "count": 2}], result.get("predicate")
+
+
+def _fallback(db, query: str, token: str, hidden: list[str]) -> dict:
+    """The product route's spec fallback (no `require`), as the lane's body has it."""
+    from app.api.v1.system.references import ResolveReferenceRequest, resolve_reference_post
+    from app.config import settings
+
+    body = {
+        "query": query, "tokens": [token], "raw_tokens": [token], "spec_fallback": True, "exact_match": True,
+        "fallback_to_all_types": True, "hidden_spec_keys": hidden, "understand_phrase": False,
+    }
+    principal = {"id": getattr(settings, "external_api_key_act_as_user_id", None)}
+    return resolve_reference_post(ResolveReferenceRequest(**body), current_user=principal, db=db)
+
+
+def test_b7_the_spec_fallbacks_unknown_value_never_names_a_hidden_key(split_db):
+    """references.py's spec fallback reads `unknown_spec_values` over the full registry: "t trap" is
+    said back as a trap (label "Trap", known P trap / S trap) though trap_type is hidden."""
+    result = _fallback(split_db, "any water clost t trap?", "water clost t trap", ["trap_type", "thickness", "board_thickness"])
+
+    said = json.dumps(result.get("unknown_spec_values") or [], default=str)
+    assert not [w for w in HIDDEN_TRAP_WORDS if w in said], said
+
+
+def test_guard_the_spec_fallbacks_unknown_value_on_a_visible_key_keeps_its_label(split_db):
+    result = _fallback(split_db, "any water clost t trap?", "water clost t trap", ["thickness", "board_thickness"])
+
+    assert [(u.get("key"), u.get("label")) for u in result.get("unknown_spec_values") or []] == [("trap_type", "Trap")], result
