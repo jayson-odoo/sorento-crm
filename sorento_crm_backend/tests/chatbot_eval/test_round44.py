@@ -160,3 +160,32 @@ def test_red_v_a_gold_value_shown_on_one_product_refuses_the_honest_none():
 def test_guard_w_a_line_for_another_value_of_the_key_is_no_refusal_to_a_value_not_asked():
     reply = ("1. *Product Code:* SRTG100\n*Steel grade:* 316\n\n*steel_grade:* not recorded for SRTG200")
     assert _none(reply)[0]["none_on_record"] is True
+
+
+def _rows(codes, label):
+    return "\n".join(f"{i}. *{label}:* {c}\n*DC1-SMC:* 0" for i, c in enumerate(codes, 1))
+
+
+MS_MORE = '\nBalas "more" untuk lihat 10 seterusnya.'
+ZH_MORE = '\n回复 "more" 查看接下来的 10 个。'
+
+
+def test_red_x_a_fifty_row_malay_page_with_its_more_line_passes():
+    assert _check(_rows(EXPECTED[:50], "Kod Produk") + MS_MORE)[0] is True
+
+
+def test_red_y_a_fifty_row_chinese_page_with_its_more_line_passes():
+    assert _check(_rows(EXPECTED[:50], "产品代码") + ZH_MORE)[0] is True
+
+
+def test_red_z_a_sixty_row_malay_or_chinese_dump_fails():
+    assert _check(_rows(EXPECTED, "Kod Produk"))[0] is False
+    assert _check(_rows(EXPECTED, "产品代码"))[0] is False
+
+
+def test_red_aa_one_comma_line_of_sixty_codes_is_a_dump():
+    assert _check("Water closets with stock: " + ", ".join(EXPECTED))[0] is False
+
+
+def test_guard_ab_a_comma_line_of_three_codes_is_not_a_dump():
+    assert _check("Water closets with stock: " + ", ".join(EXPECTED[:3]))[0] is not False
