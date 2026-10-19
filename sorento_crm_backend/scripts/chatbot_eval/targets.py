@@ -1463,6 +1463,8 @@ def summarise(results: list[list[dict[str, Any]]], bars: dict[str, float],
     stopped = stopped or {}
     for name, best in stopped.items():
         slices[name] = {"status": "stopped", "best_reachable": best}
+        if name in growth:
+            growth[name] = {"status": "stopped", "best_reachable": best}
     leaks_per_run = [sum(len(x["leaks"]) for x in run) for run in results]
     made_per_run = [sum(1 for x in run for m in x["made_up"] if not str(m).startswith("unverifiable")) for run in results]
     unverifiable = sum(1 for run in results for x in run for m in x["made_up"] if str(m).startswith("unverifiable"))
@@ -1475,38 +1477,62 @@ def summarise(results: list[list[dict[str, Any]]], bars: dict[str, float],
         out.update(meets=False, reason=f"needs at least 3 runs, got {len(results)}")
         for name, bar in bars.items():
             if name in slices and name not in stopped:
-                slices[name]["go"] = slices[name]["pooled"] >= bar
+                slices[name]["go"] = slices[name]["runs"] == len(results) and slices[name]["pooled"] >= bar
     return out
 
 
 def parser_flips(runs_rows: list[list[dict[str, Any]]]) -> dict[str, Any]:
     """Round 46 (F): how often the parser reads the same item differently across runs. Input is per run the recorded
     live rows `{"item_id", "turn": {"trace": [...]}}`; the parse is the `understood` record's `raw.parser_raw`.
-    Only items parsed in at least 2 runs count; an item with no understood record is counted in `no_parse`."""
-    def sig(row: dict[str, Any]) -> dict[str, Any] | None:
-        rec = _stage({"trace": (row.get("turn") or {}).get("trace")}, "understood")
-        pr = (rec.get("raw") or {}).get("parser_raw") if isinstance(rec.get("raw"), dict) else None
-        if not isinstance(pr, dict):
-            return None
+    Only items parsed in at least 2 runs count toward `items`. An item parsed in no run is `no_parse`; one parsed in
+    some runs and not others is `partial_parse`, split into `parse_failed` (no parser output, or status failed) and
+    `parse_capped` (the raw was capped to a note or is not a dict); it is never a flip. A repeated item id inside
+    one run uses its first row (`dup_rows` counts the rest); rows without an id are skipped (`no_id`)."""
+    def norm(v: Any) -> Any:
+        return " ".join(v.casefold().split()) if isinstance(v, str) else v
+
+    def sig(pr: dict[str, Any]) -> dict[str, Any]:
         route = pr.get("routing") if isinstance(pr.get("routing"), dict) else {}
         key = lambda d: json.dumps(d, sort_keys=True, default=str)  # noqa: E731
         ents = [e for e in pr.get("entities") or [] if isinstance(e, dict)]
         return {"domain_hint": pr.get("domain_hint"),
                 "routing": (route.get("suggested_team"), route.get("suggested_agent")),
                 "asks": sorted(key(a) for a in pr.get("asks") or []),
-                "entities": sorted(key([e.get("raw"), e.get("hint"), e.get("spec_key")]) for e in ents),
+                "entities": sorted(key([norm(e.get("raw")), e.get("hint"), e.get("spec_key"), norm(e.get("spec_value"))])
+                                   for e in ents),
                 "state_changes": sorted(key([c.get("op"), c.get("axis"), c.get("position")])
                                         for c in pr.get("state_changes") or [] if isinstance(c, dict))}
 
+    def read(row: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
+        rec = _stage({"trace": (row.get("turn") or {}).get("trace")}, "understood")
+        raw = rec.get("raw")
+        if not rec:
+            return "failed", None
+        if not isinstance(raw, dict):
+            return "capped", None
+        pr = raw.get("parser_raw")
+        if isinstance(pr, dict) and pr and rec.get("status") != "failed":
+            return "ok", sig(pr)
+        return ("capped" if pr is not None and not isinstance(pr, dict) else "failed"), None
+
     sigs: dict[Any, list[dict[str, Any]]] = {}
-    no_parse: set[Any] = set()
+    misses: dict[Any, list[str]] = {}
+    no_id = dup_rows = 0
     for rows in runs_rows:
+        seen: set[Any] = set()
         for row in rows:
-            got = sig(row)
-            if got is None:
-                no_parse.add(row.get("item_id"))
+            item = row.get("item_id")
+            if item is None:
+                no_id += 1
+            elif item in seen:
+                dup_rows += 1
             else:
-                sigs.setdefault(row.get("item_id"), []).append(got)
+                seen.add(item)
+                kind, got = read(row)
+                if got is None:
+                    misses.setdefault(item, []).append(kind)
+                else:
+                    sigs.setdefault(item, []).append(got)
     multi = {i: v for i, v in sigs.items() if len(v) >= 2}
     fields: dict[str, int] = {}
     flipped = 0
@@ -1515,5 +1541,8 @@ def parser_flips(runs_rows: list[list[dict[str, Any]]]) -> dict[str, Any]:
         flipped += bool(diff)
         for f in diff:
             fields[f] = fields.get(f, 0) + 1
+    partial = [kinds for i, kinds in misses.items() if i in sigs]
+    capped = sum(1 for kinds in partial if "capped" in kinds)
     return {"items": len(multi), "flipped": flipped, "rate": flipped / len(multi) if multi else 0.0,
-            "fields": fields, "no_parse": len(no_parse - set(sigs))}
+            "fields": fields, "no_parse": len([i for i in misses if i not in sigs]), "partial_parse": len(partial),
+            "parse_failed": len(partial) - capped, "parse_capped": capped, "no_id": no_id, "dup_rows": dup_rows}
