@@ -4619,6 +4619,7 @@ def _run_stages_body(  # noqa: PLR0915
         # `listed` and `certificate_uuids` are the ENGINE's own entity keys (grounding and the
         # scheme index set them). One the parser emitted (the Anthropic path does not enforce
         # additionalProperties) is dropped before any reader.
+        verdict.pop("dropped_kinds", None)
         if isinstance(verdict.get("entities"), list):
             verdict["entities"] = [
                 {k: v for k, v in e.items() if k not in ("listed", "certificate_uuids")} if isinstance(e, dict) else e
