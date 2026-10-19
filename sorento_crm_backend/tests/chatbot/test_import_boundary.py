@@ -70,6 +70,8 @@ ALLOWED = {
     "tests/chatbot_eval/test_replay_guard.py",
     # Bench tooling, not core, not on a request path: it stubs the engine's run_turn to return a failed-status turn.
     "tests/chatbot_eval/test_replay_failfast.py",
+    # Bench tooling, not core, not on a request path: it patches the parser's model call to raise a provider refusal.
+    "tests/chatbot_eval/test_round48.py",
     # Bench tooling, not core, not on a request path: it reads the engine's scope helpers to pin the grounding tier's scope.
     "tests/chatbot_eval/test_replay_scope.py",
     # Chatbot memory lane A S2 (contract section 4/5): the contact's memory/facts
