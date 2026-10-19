@@ -1021,20 +1021,54 @@ class LineSplitService:
         """Until the AC-G19 lane ships (UAC AC-G19 "DEFERRED", "Until that lane ships"): would
         this save move qty of a plan a Confirm applied between lines? It may not put more of
         the line on any other line than the applied plan had there, and qty it takes off
-        another line must leave the plan, not come back on its own-line or New-line rows."""
-        if not f.splits or f.split_state != SPLIT_APPLIED:
+        another line must leave the plan, not come back on its own-line or New-line rows.
+
+        The applied plan is the one the line's last Confirm recorded on the active decision
+        (`split_plan`), whatever the splits saved since; without that record (plans applied
+        before it existed, dev data only), the saved splits while they read applied."""
+        from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision
+
+        decision = (
+            self.db.query(SOSupplyDecision)
+            .filter(
+                SOSupplyDecision.project_sales_order_id == f.line.project_sales_order_id,
+                SOSupplyDecision.state == DECISION_ACTIVE,
+            )
+            .order_by(SOSupplyDecision.revision_no.desc())
+            .first()
+        )
+        recorded = next(
+            (
+                snapshot.get("split_plan")
+                for snapshot in (decision.line_snapshots if decision is not None else None) or []
+                if str(snapshot.get("project_line_id") or "") == f.line_id
+            ),
+            None,
+        )
+        if recorded:
+            # `split_plan_key`: the base, then "qty@date@sits on@cancel" per split.
+            applied = [
+                (_dec(qty), on or None, bool(cancel))
+                for qty, _when, on, cancel in (
+                    (part.split("@") + ["", "", "", ""])[:4] for part in recorded[1:]
+                )
+            ]
+        elif f.splits and f.split_state == SPLIT_APPLIED:
+            sits = self.effective_sits_on(f.splits)
+            applied = [
+                (_dec(s.qty), sits.get(str(s.id)), bool(s.is_cancel)) for s in f.splits
+            ]
+        else:
             return False
-        sits = self.effective_sits_on(f.splits)
         before: Dict[str, Decimal] = {}
         before_home = _ZERO
-        for split in f.splits:
-            on = sits.get(str(split.id))
-            if split.is_cancel:
+        for qty, on, is_cancel in applied:
+            if is_cancel:
                 continue
             if on and on != f.line_id:
-                before[on] = before.get(on, _ZERO) + _dec(split.qty)
+                before[on] = before.get(on, _ZERO) + qty
             else:
-                before_home += _dec(split.qty)
+                before_home += qty
         after: Dict[str, Decimal] = {}
         after_home = _ZERO
         for row in rows:
