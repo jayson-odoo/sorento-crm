@@ -493,6 +493,12 @@ failure into a pass:
 - Trace cap: a capped memory event reads the open question from the post-turn state; when that is unreadable too and
   the bot asked the tier question, the item is unknown, unless a leak was found (the leak stays the failure reason).
   A capped apply event reads the parser's derived entities only when a tool carried `attachment_type_ids`, else unknown.
+- `which_one` (attachment, gold `ambiguous`): a which-one picker over the codes the customer typed passes with no file owed
+  when each option carries the has / no stamp of the asked type, as the domain setting says (owner 5 Oct PHOTO-PICKER,
+  restated 19 Oct): `Profile.stock_availability_only` (an availability-only contact, a dealer) gets a bare list, everyone
+  else is stamped (`lanes/business/answer.py` gates it, `turn_runtime._stock_availability_only` resolves it). The stamp is
+  read from each option's `stamp`; an unstamped list for a stamped contact, a stamped list for a dealer, another type's
+  stamp and a list over other codes still fail.
 - Gold (crew files): the AI-blocked contact's item leaves the set (manual exclusions).
 Red-first per item, kill-proof per hunk, two Opus review rounds (the first found a wrong-option pass, a leak turned
 unknown and an `asked_type` fallback that passed 11 of 34 real failures; all closed). TRAIN gate rows: no verdict
