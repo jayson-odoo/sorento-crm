@@ -2,10 +2,12 @@
  * OI-LINE-SPLIT AC-G20 F2: the extra row comes from the saved plan, so a line whose splits
  * the draft has changed shows none. Customer is a placeholder.
  */
-import { waitFor } from '@testing-library/react';
+import { fireEvent, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  addBtn,
   block,
+  qty,
   ownerCase,
   renderDialog,
   sheet,
@@ -73,5 +75,35 @@ describe('AC-G20 F2 no stale extra row while drafting', () => {
       ).toBe('400'),
     );
     expect(extraRow(752)).toBeNull();
+  });
+});
+
+describe('AC-G20 review', () => {
+  it('+ Split on 752 (new 649 vs 504) makes one row and focuses its qty', async () => {
+    getLineSplits.mockResolvedValue(ownerCase());
+    await renderDialog({}, 'pso-417636');
+    await sheet();
+    fireEvent.click(addBtn(752));
+    expect(qty(752, 1).value).toBe('504');
+    expect(document.activeElement).toBe(qty(752, 1));
+  });
+
+  it('changing only 752 split that sits on 608 removes 608 extra row', async () => {
+    const p = saved();
+    Object.assign(p.lines.find((l) => l.line_id === 'L608')!, {
+      extra_qty: 20,
+      extra_remark: 'ORDER 20',
+    });
+    getLineSplits.mockResolvedValue(p);
+    await renderDialog({}, 'pso-417636');
+    await sheet();
+    expect(extraRow(608)?.textContent).toMatch(/20/);
+    typeQty(752, 2, '30');
+    await waitFor(() =>
+      expect(
+        (document.querySelector('[data-qty-split="s37"]') as HTMLInputElement).value,
+      ).toBe('30'),
+    );
+    expect(extraRow(608)).toBeNull();
   });
 });

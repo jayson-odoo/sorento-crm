@@ -130,3 +130,27 @@ describe('AC-G20 F3 + Split never makes a qty-0 row', () => {
     expect(splits.map((s) => s.qty)).toEqual([14, 403]);
   });
 });
+
+describe('AC-G20 review: focus lands on the single row', () => {
+  it('addSplit on 752 returns the id of its only split', () => {
+    const r = m.addSplit(owner(), 'L752');
+    const splits = by(r.lines, 'L752').splits;
+    expect(splits).toHaveLength(1);
+    expect(r.id).toBe(splits[0].id);
+  });
+});
+
+describe('AC-G20 review: the chip dropped on Cancel still merges', () => {
+  it('a CANCEL 50 split plus 20 left gives ONE cancel split of 70', () => {
+    const l480 = mk(480, 120, '2026-10-20', null, null, {
+      splits: [
+        { id: 'a', qty: 50, deliveryDate: '2026-10-20', isCancel: false, sitsOnLineId: 'L480', remark: '' },
+        { id: 'c', qty: 50, deliveryDate: null, isCancel: true, sitsOnLineId: 'L480', remark: '' },
+      ],
+    });
+    expect(m.gapOf(l480)).toBe(20);
+    const next = m.placeRest([l480], 'L480', { date: 'cancel', sitsOnLineId: null });
+    const cancels = by(next, 'L480').splits.filter((s) => s.isCancel);
+    expect(cancels.map((s) => s.qty)).toEqual([70]);
+  });
+});
