@@ -90,3 +90,14 @@ so one rule decides each field. Other classes it should fix (UNVERIFIED until me
 from a DB Words line (drawing, manual, video in other languages). Removes: the conflicting absolute sentence. No
 word list returns; meaning rules only, within the lint (MAX_LIST_ITEMS 8).
 Gate rerun: conflict gold N=3 on NEW only (OLD v77 stands), USD <= 0.7.
+
+Progress (20 Oct): dac39a4605 moves the c2 gold to the item downstream grounds (grounding.py:717-736 reads
+listed_item then canonical_code against closed_list_items; on eval_base the keys are product_photos /
+product_videos / certification / schemes, never photo / video / certificate); OLD v77 re-graded 98/126.
+Round 1 (red a4f4621a67, fix 6b2d878289, v79 8a244142): 99/126. Round 2 adds D4 (the R-X-01 procedure line said
+every P2 entity comes from the candidates block, which never holds file types) and D3b (bare "spec" worked
+example and reason from the old text): red e5920a71fe, fix a6d4009aab, v80 cfabaac9, 68,564 chars: 106/126.
+Only regressing pair: c2-01 "gambar X" (3 -> 0); a USD 0.06 probe shows a word quirk ("photo X", "foto X" 0/2,
+"picture X", "X 图片" 2/2), not a language or rule gap, so no one-shape text. L1 (base chat-state-r2 d29ad44928,
+head combined fbc49b0b3d): unintended 0 on grounding (5,584) and turn (1,095 of 1,480). TRAIN x1 attempt 1 invalid
+(no MCP stack listening; USD 1.12); waiting on crew for a stack and cap. Spend USD 4.96.
