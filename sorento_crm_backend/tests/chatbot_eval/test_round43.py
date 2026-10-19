@@ -108,3 +108,26 @@ def test_guard_i_a_dash_suffix_is_a_variant_of_the_held_code():
                after=[prod("SRTA100", UA), prod("SRTA100-BL", UB)])
     state, _ = _check(row)
     assert state is False, state
+
+
+def test_guard_j_one_product_held_with_its_own_variant_is_a_single_held_product():
+    held = [prod("SRTA100", UA), prod("SRTA100-BL", UB)]
+    row = row2(message="which water closet 200mm got stock", reply="Here you go.", verdict={"entities": ENTS, "reference_positions": []},
+               mem_before=held, mem_after=held, tools=[{"name": "crm_inventory_list", "args": {"product_ids": [UB]}}])
+    state, _ = _check(row, spec_products=["SRTA100-BL", "SRTB200", "SRTC300"])
+    assert state is False, state
+
+
+def test_guard_k_a_product_id_mapped_only_by_the_runner_s_uuid_codes_counts_as_answered():
+    row = _row(tools=[{"name": "crm_inventory_list", "args": {"product_ids": [UC]}}], reply="Here you go.")
+    row["uuid_codes"] = {UC: "SRTA100"}
+    state, _ = _check(row)
+    assert state is False, state
+
+
+def test_guard_k_a_product_found_only_in_the_full_tool_results_counts_as_answered():
+    row = _row(tools=[TOOL_A], reply="Here you go.")
+    row["tool_results"] = [{"name": "crm_inventory_list", "args": {}, "result": {"items": [
+        {"fields": [{"label": "Product Code", "value": "SRTB200"}]}]}}]
+    state, _ = _check(row)
+    assert state is True, state
