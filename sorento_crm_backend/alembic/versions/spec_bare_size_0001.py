@@ -5,13 +5,13 @@ data, set in the registry, never in code). Additive and idempotent (`IF NOT EXIS
 shared dev DB, which converges through `create_all`, can take it in any order.
 
 Revision ID: spec_bare_size_0001
-Revises: oihr_0009_split_rows
+Revises: chs_0001_direct_ingress
 """
 from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "spec_bare_size_0001"
-down_revision = "oihr_0009_split_rows"
+down_revision = "chs_0001_direct_ingress"
 branch_labels = None
 depends_on = None
 
