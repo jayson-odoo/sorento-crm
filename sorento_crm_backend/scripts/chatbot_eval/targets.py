@@ -1077,29 +1077,55 @@ NO_MATCH_RE = re.compile(r"\bnone matched\b|\bbut no\b[^\n.]{0,80}?\bmatched the
                          r"|Couldn.?t find: [^\"“”\s][^\n(]*\([^)\n]+\)", re.I)   # the value-miss line has an unquoted value and a label
 
 
+def _raw(code: Any) -> str:
+    return str(code).strip().upper() if code is not None else ""
+
+
 def _class_set_check(row: dict[str, Any], item: dict[str, Any]) -> tuple[str, bool | None, str] | None:
     """Owner (19 Oct): answering only the held product when the ask is over a class is a bot fail. The ask is over a class when
-    the gold spec names one and expects products (and is not a none-on-record gold); a product was held before the turn. What
-    the bot answered is read from the tool args (product ids), the full tool results and the codes in the reply: when every one
-    is the held product or one of its own variants while the expected set holds others, the class was not answered. Unknown
-    (None) when nothing shows what was answered; absent when the gold is no class ask or the held product is the whole set."""
+    the gold spec names one and expects products (and is not a none-on-record gold); products were held before the turn. What
+    the bot answered is read from the tool args (product ids), the full tool results and the codes in the reply. A "variant" of
+    a held code is that code or CODE-xxx (a dash boundary on the raw code: SRTA100-BL is one, SRTA1000 is another model).
+    It fails when everything answered is a held product or a variant AND (exactly one product, with its variants, was held, OR
+    nothing answered is in the expected set): a held list narrowed to expected members passes. Passes when the held product
+    (with variants) is the whole set. Unknown (None) when nothing shows what was answered; absent when the gold is no class ask."""
     gold = item.get("gold") or {}
-    expected = {_key(c) for c in gold.get("spec_products") or [] if c}
-    held = _codes_of(_mem_focus(row, "before").get("products"))
+    expected = {_raw(c) for c in gold.get("spec_products") or [] if c}
+    held_products = [p for p in _product_list(_mem_focus(row, "before").get("products")) if p.get("canonical_code") or p.get("raw")]
+    held = {_raw(p.get("canonical_code") or p.get("raw")) for p in held_products}
     if (not expected or not held or gold.get("none_on_record")
             or not any(sp.get("key") in CLASS_KEYS for sp in gold.get("spec") or [])):
         return None
+    msg = "Only the held product was answered although the ask is over a class."
 
-    def related(code: str) -> bool:
-        return any(code == h or code.startswith(h) or h.startswith(code) for h in held)
+    def variant(code: str, of: set[str]) -> bool:
+        return any(code == h or code.startswith(h + "-") for h in of)
 
-    if all(related(c) for c in expected):   # the held product (with its variants) is the whole set
-        return ("class_set", True, "Only the held product was answered although the ask is over a class.")
-    answered = _tool_subjects(row) | {_item_code(i) for i in _result_items(row)} | {_key(c) for c in CODE_RE.findall(reply_text(row))}
+    if all(variant(c, held) for c in expected):   # the held product (with its variants) is the whole set
+        return ("class_set", True, msg)
+    ids = {str(p["uuid"]).lower(): _raw(p.get("canonical_code") or p.get("raw")) for p in
+           _product_list((_kind(row, "state").get("focus") or {}).get("products")) + held_products
+           + _product_list(_mem_focus(row, "after").get("products")) if p.get("uuid") and (p.get("canonical_code") or p.get("raw"))}
+    ids.update({str(u).lower(): _raw(c) for u, c in (row.get("uuid_codes") or {}).items()})
+    answered: set[str] = set()
+    for t in _tools(row):
+        for name in ("product_ids", "product_id", "scope_terms", "product_code", "product_codes"):
+            for text in _strings((t.get("args") or {}).get(name)):
+                if text.lower() in ids:
+                    answered.add(ids[text.lower()])
+                elif re.search(r"\d", text) and not UUID_RE.fullmatch(text):
+                    answered.add(_raw(text))
+    for i in _result_items(row):
+        for f in i.get("fields") or []:
+            if isinstance(f, dict) and (_norm(f.get("label")) == "product code" or f.get("key") == "product_code"):
+                answered.add(_raw(f.get("value")))
+    answered |= {_raw(c) for c in CODE_RE.findall(reply_text(row))}
     answered.discard("")
     if not answered:
-        return ("class_set", None, "Only the held product was answered although the ask is over a class.")
-    return ("class_set", not all(related(a) for a in answered), "Only the held product was answered although the ask is over a class.")
+        return ("class_set", None, msg)
+    roots = {h for h in held if not any(h != o and h.startswith(o + "-") for o in held)}
+    held_only = all(variant(a, held) for a in answered) and (len(roots) == 1 or not (answered & expected))
+    return ("class_set", not held_only, msg)
 
 
 def _spec_key_state(row: dict[str, Any], gold_spec: list[dict[str, Any]]) -> bool | None:
