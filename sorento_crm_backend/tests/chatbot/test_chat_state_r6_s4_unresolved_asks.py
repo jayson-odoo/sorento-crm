@@ -90,3 +90,28 @@ def test_r6_s4_state_off_twin_an_unplaced_token_behaves_as_today(session_factory
     plain = _Leena(session_factory, monkeypatch, stub_parser, stub_access, world)
     text = plain.say("stock ZZ-9981?", _ask_with([_entity("ZZ-9981", "product")], None, "x"))
     assert "zz-9981" in text.lower() and not _fetched(plain.calls), (text, plain.calls)
+
+
+# ----------------------------------------------------------------------- hidden keys (lead decision)
+def _stock_turn(chat, world):
+    placed = world["close_couple"]["sorento"][0]
+    text = chat.say(placed.product_code, _ask_with([_entity(placed.product_code, "product")], [_op("set", "product")], "x"))
+    return text, chat.state_log()["subject"]
+
+
+def test_r6_s4_an_unlinked_non_staff_contact_gets_hidden_customer_and_no_customer_rows(tchat, world):
+    """V1-DOC-SCOPE: a contact who may not see other customers' rows or documents (unlinked, not staff)
+    has Subject.hidden == ["customer"]; the fetch is the same as today (product-scoped, no customer tool)."""
+    text, subject = _stock_turn(tchat, world)
+    assert subject["hidden"] == ["customer"], subject
+    assert not [c for c in tchat.calls if "customer" in c["name"]], tchat.calls
+    ids = {pid for c in _fetched(tchat.calls) for pid in c["args"].get("product_ids") or []}
+    assert ids == {str(world["close_couple"]["sorento"][0].id)}, tchat.calls
+
+
+def test_r6_s4_a_staff_contact_has_no_hidden_keys(tchat, world, session_factory):
+    from tests.chatbot._turn_helpers import make_office_tier
+
+    make_office_tier(session_factory, tchat.contact_id)
+    _text, subject = _stock_turn(tchat, world)
+    assert subject["hidden"] == [], subject
