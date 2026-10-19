@@ -331,8 +331,11 @@ Facts (read-only): no scheme table and no parent column; the only scheme -> kind
 a separate kind entity (scheme_index.py:124-127, :141, :155, :186-191). The frozen prompt asks for two entities (kind +
 scheme, head/closed_lists_prompt.py:41-47).
 
-- B-1 Parent from data: a scheme's kind is the attachment type most of its active certificates carry (count first, type
-  name only as a stable tiebreak). A scheme no certificate carries has no kind. The alphabetical-first-kind fallback goes.
+- B-1 Parent from data: a scheme's kind is the CERTIFICATE KIND (`attachment_types.is_certificate`) most of its active
+  certificates carry (count first, type name only as a stable tiebreak); when the asked products hold certificates of
+  the scheme, the count runs over those held certificates (review R3). A scheme no certificate kind carries has no kind.
+  The alphabetical-first-kind fallback goes. `parent_kind` / `parent_kind_uuid` are engine-owned: stripped from the
+  parse like `listed` (review R1). The reply names the kind by its name, not its code (review R2).
 - B-2 One entity: a scheme pick carries its parent kind on the SAME entity; no separate kind entity is appended (R4-2's
   appends removed). The fetch is unchanged: the parent kind's id and the scheme's certificate ids.
 - B-3 A kind said beside its scheme (what today's prompt makes the parser emit) folds into the scheme entity when it is
@@ -349,6 +352,7 @@ scheme, head/closed_lists_prompt.py:41-47).
 | H1 HIDDEN-KEYS-AT-THE-ENTRIES | f6e8c02d | 426eb3b4, 32971002 (+ stub 90bc48e9, lead sign-off) | candidate block filtered in one place (`_registry`); parse output stripped once; kill-proof 3 red; security PASS with should-fixes -> H1b |
 | H1b HIDDEN-KEYS-AT-EVERY-ENTRY (security should-fixes) | f95faa7d, 9329f07b | d4272502, 1a6cc876 (B4); B5 guard 9f2118af (the carried-set replay asks no breakdown, turn_runtime.py:4627); B6/B7 red 2b795073, fix 05da2ecd (no registry_rows filter: a hidden value word stays known); coverage + B8 guards 0cfb36c5 (written after the fixes, proved by revert); one strip after grounding 56ecab11 | grounding output stripped too (raw-word re-derive); Shape B reads the hidden set once before the unknown-value branch; a set breakdown never splits by a hidden key (B4); `.strip()` on spec_key; kill-proof 5 red |
 | F3-a ONE VALUE INDEX | 3fffdd4b, f1f1645d, 40cb920e | 5cd73ded, 8ff8ef7d, b82fe597 (list-valued specs count via membership_clause), 56ecab11 (cap by source) | one registry index + one scoped count query; spec lines ranked held family / count / name; holding keys never cut; near rows keep CAP_PER_WORD; removed `_keys_holding`, `_bare_size_keys`, `_unit_keys` (the no-holder fallback to every unit key stays, as A4 says, now uncut); kill-proof 5 red + 1 red |
+| F3-b ONE PARENTED LIST | 5fd85b65, ed4686be | 5be0c55f, 674177de (review R1-R3) | parent kind from certificate data, one entity, R4-2 appends removed; resolve_gate emits the kind in its own resolutions row (gate.py:653-664 keeps a row's exact matches only under one canonical_code); kill-proof 4 red; review NOT READY round 1 (R1 forged parent keys, R2 kind by code, R3 held minority kind) |
 
 Dev data for F3-a (sorento_cagent_stack, read-only, searchable, not company-scoped): 5 numbers held by 6+ of the 9 mm
 keys (250: trap_length 329, dim_height 107, dim_length 43, dim_width 20, thickness 8, diameter 7, depth 6; the old cut
