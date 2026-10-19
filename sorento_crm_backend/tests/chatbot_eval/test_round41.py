@@ -104,3 +104,21 @@ def test_red_d_an_unreadable_policy_stores_no_flag(monkeypatch):
     monkeypatch.setattr(turn_runtime, "_stock_availability_only", boom)
     monkeypatch.setattr(engine, "_contact_respond_id", lambda envelope: "c-1")
     assert replay_mod._asker_profile(object(), SimpleNamespace()) is None
+
+
+def test_red_d_the_live_row_gets_the_flag_beside_the_turn(monkeypatch):
+    from app.services.chatbot import engine, turn_runtime
+
+    monkeypatch.setattr(turn_runtime, "_stock_availability_only", lambda db, contact, space_id: False)
+    monkeypatch.setattr(engine, "_contact_respond_id", lambda envelope: "c-1")
+    out = {"item_id": "it-1"}
+    replay_mod._record_asker_profile(out, object(), SimpleNamespace())
+    assert out["asker_profile"] == {"stock_availability_only": False, "source": "turn_runtime._stock_availability_only"}, out
+
+    def boom(db, contact, space_id):
+        raise RuntimeError("unreadable")
+
+    monkeypatch.setattr(turn_runtime, "_stock_availability_only", boom)
+    bare = {"item_id": "it-2"}
+    replay_mod._record_asker_profile(bare, object(), SimpleNamespace())
+    assert "asker_profile" not in bare, bare
