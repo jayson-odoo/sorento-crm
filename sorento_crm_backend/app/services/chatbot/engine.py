@@ -4881,6 +4881,7 @@ def _run_stages_body(  # noqa: PLR0915
             verdict,
             message=latest_user_message.split("\n", 1)[0] if isinstance(latest_user_message, str) else None,
             closed_lists=parser_config.closed_lists,
+            held_ids=[str(p["uuid"]) for p in state_in.focus.products if isinstance(p, dict) and p.get("uuid")],
         )
     verdict = closed_lists_verdict(verdict, gate=parser_config.closed_lists)
     held_none_match: dict[str, Any] | None = None

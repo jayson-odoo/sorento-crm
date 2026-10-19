@@ -334,6 +334,20 @@ def _unit_keys(db: "Session") -> dict[str, list[str]]:
     return {unit: sorted(set(keys)) for unit, keys in units.items()}
 
 
+def _bare_size_keys(db: "Session") -> dict[str, list[str]]:
+    """The numeric keys a size given alone can mean, per unit: the registry's own
+    `matches_bare_size` flag, or a key a class scopes (`applies_when.class`). Data only."""
+    from app.services.product_spec_registry import active_registry
+
+    out: dict[str, list[str]] = {}
+    for row in active_registry(db):
+        unit = str(getattr(row, "unit", None) or "").strip().casefold()
+        scoped = bool((getattr(row, "applies_when", None) or {}).get("class"))
+        if (row.data_type or "").lower() == "numeric" and unit and (getattr(row, "matches_bare_size", False) or scoped):
+            out.setdefault(unit, []).append(row.spec_key)
+    return out
+
+
 def _keys_holding(db: "Session", keys: list[str], number: str, family: set[str]) -> list[str]:
     """The unit's keys that hold `number` in product_specifications (an exact numeric match on
     the stored JSON value), the held family's keys first, then the most held, then by name.
@@ -398,8 +412,15 @@ def _size_candidates(
             from app.services.chatbot.head.held_family import _family_ids
 
             family = _family_ids(db, held_ids) if held_ids else set()
+        unit_name = shown.split()[-1] if " " in shown else _SIZE_RE.fullmatch(shown).group(2)
+        bare = _bare_size_keys(db).get(unit_name, [])
+        bare_held = _keys_holding(db, bare, number, family) if bare else []
         keys = _keys_holding(db, keys, number, family) or keys
-        out.append(WordCandidates(gram=shown, position=position, items=[f"spec {key} = {number}" for key in keys]))
+        items = [f"spec {key} = {number}" for key in keys]
+        if bare_held:
+            # R6-1: a size given alone (no dimension named); the parser picks the reserved key "size".
+            items.insert(0, f"size {number} {unit_name} (no dimension named)")
+        out.append(WordCandidates(gram=shown, position=position, items=items))
         spanned |= span
     return out, spanned
 

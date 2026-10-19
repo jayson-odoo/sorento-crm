@@ -260,6 +260,8 @@ class Grounded:
     known: list[str] = field(default_factory=list)
     #: the registry's own words for the value ("gunmetal" for a typed "gunmetl")
     words: str | None = None
+    #: a bare size's OR (R6-1): the keys the number may be under (`head/bare_size.py`)
+    any_keys: list[str] | None = None
 
     def entity(self, template: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -273,6 +275,7 @@ class Grounded:
             "spec_label": self.label,
             "spec_words": self.words,
             "spec_known": list(self.known) if self.value is None else [],
+            **({"spec_any_keys": list(self.any_keys)} if self.any_keys else {}),
         }
 
 
@@ -740,6 +743,7 @@ def ground(
     vocab: Vocabulary | None = None,
     message: str | None = None,
     closed_lists: bool = False,
+    held_ids: list[str] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """The verdict with every descriptor grounded, and a note per change for the trace.
 
@@ -826,6 +830,14 @@ def ground(
             entity = {**entity, "hint": "category"}
             hint = "category"
             notes.append({"from": _PRODUCT_HINT, "raw": raw, "to": "category"})
+        if hint in _SPEC_HINTS and closed_lists:
+            from app.services.chatbot.head.bare_size import ground_bare
+
+            bare = ground_bare(db, entity, [e for e in entities if isinstance(e, dict)], vocab, held_ids)
+            if bare is not None:
+                add([bare], entity)
+                notes.append({"from": hint, "raw": raw, "to": [bare.__dict__]})
+                continue
         if hint in _SPEC_HINTS:
             others = [
                 str(e.get("raw") or "")
