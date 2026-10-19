@@ -1910,8 +1910,8 @@ def _names_a_base_property(norm: str) -> bool:
 
 
 def _asks_discontinued(req_attrs: list[Any]) -> bool:
-    """DISCONTINUED-ASK: the parser's closed `requested_attributes` vocabulary carries
-    "discontinued" for a status question (`chatbot_parser_prompt.py`, REQUESTED ATTRIBUTES).
+    """DISCONTINUED-ASK: the parser emits the attribute "discontinued" for a status question
+    (whether a product is still sold, still made or discontinued; parser_template.py R-P3-05).
     A parsed field, compared as emitted; nothing here reads the user's message."""
     return any(_normalize_spec_word(a) == "discontinued" for a in req_attrs)
 

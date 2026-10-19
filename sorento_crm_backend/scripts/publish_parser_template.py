@@ -44,7 +44,7 @@ def publish(session: Session) -> int | None:
             type="text",
             template=TEMPLATE,
             variables=["current_date"],
-            commit_message="PARSER-TEMPLATE F1-A: the consolidated parser template",
+            commit_message="PARSER-TEMPLATE: the consolidated parser template",
         )
     )
     session.commit()

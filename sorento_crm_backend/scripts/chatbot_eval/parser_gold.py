@@ -109,10 +109,15 @@ def grade_parse(verdict: dict[str, Any], expect: dict[str, Any]) -> tuple[bool, 
         if missing:
             reasons.append(f"attributes not requested: {missing}")
     if "attachment_types" in expect:
-        named = {
-            _fold(e.get(k)) for e in entities if e.get("hint") == "attachment_type"
-            for k in ("canonical_code", "listed_item") if e.get(k)
-        }
+        from app.services.chatbot.head.closed_lists_prompt import NOT_LISTED
+
+        # Only an entity downstream grounds names a type: head/grounding drops an unconfident
+        # pick and a NOT_LISTED one (grounding._on_closed_lists).
+        grounded = [
+            e for e in entities if e.get("hint") == "attachment_type"
+            and e.get("confident") is not False and e.get("listed_item") != NOT_LISTED
+        ]
+        named = {_fold(e.get(k)) for e in grounded for k in ("canonical_code", "listed_item") if e.get(k)}
         missing = [t for t in expect["attachment_types"] or [] if _fold(t) not in named]
         if missing:
             reasons.append(f"no attachment_type entity for {missing}")
