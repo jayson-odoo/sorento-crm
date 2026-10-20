@@ -2418,8 +2418,8 @@ def _without_guesses(
         phrase = bool(asked) and token not in asked and not set_answered
         # CHAT-CLOSED-LISTS F3-b: a listed scheme and its parent kind never reach the resolver,
         # so their rows (`resolve_gate.listed_scheme_resolutions`) sit under tokens it was not
-        # asked; on the state path (`listed_scheme_placed`) they are the engine's data read, not
-        # a phrase guess. Off it the rule stays #1755's.
+        # asked; under the state gate (`listed_scheme_placed`) they are the engine's data read,
+        # not a phrase guess. Off it the rule stays #1755's.
         listed = listed_scheme_placed and bool(jsc.array(jsc.get(resolution, "matches"))) and all(
             jsc.get(m, "match_field") in LISTED_SCHEME_FIELDS for m in jsc.array(jsc.get(resolution, "matches"))
         )

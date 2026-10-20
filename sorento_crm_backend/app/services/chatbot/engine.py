@@ -5887,9 +5887,9 @@ def _run_stages_body(  # noqa: PLR0915
                     skip_customer_probe=customer_docs_hidden,
                     scope_linked=_reference_scope(doc_scope, state_out.profile, doc_staff=doc_staff),
                     po_ref_scope_linked=_reference_scope(doc_scope, state_out.profile),
-                    # The state path keeps a listed scheme's rows beside an unplaced word: the
+                    # Under the state gate a listed scheme's rows stay beside an unplaced word: the
                     # Subject (round 6) says what the fetch is about, the guess rule does not.
-                    listed_scheme_placed=state_in.subject is not None,
+                    listed_scheme_placed=state_in.state_gate,
                 )
             )
             resolved_kinds = resolve_outcome.resolved_kinds
@@ -9017,14 +9017,9 @@ def _held_for_the_seams(state_in: Any, verdict: dict[str, Any], *, for_family: b
     keeps it as `class_hint`, so it names the class too."""
     if state_in.subject is not None:
         return chat_state.held_products(state_in, for_family=for_family)
-    names_a_class = any(
-        isinstance(e, dict) and e.get("current_message") is not False
-        and (
-            str(e.get("hint") or "").strip().lower() in ("category", "product_type")
-            or str(e.get("class_hint") or "").strip().lower() in ("category", "product_type")
-        )
-        for e in verdict.get("entities") or []
-    )
+    from app.services.chatbot import class_named
+
+    names_a_class = class_named.names_own_class(verdict.get("entities") or [])
     return [] if names_a_class else list(state_in.focus.products)
 
 

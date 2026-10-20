@@ -1556,7 +1556,6 @@ def run(
 
     if parser.get("closed_lists") and isinstance(resolved, dict):
         listed_scheme_resolutions(parser, resolved)
-
     if hide_customers and isinstance(resolved, dict):
         _without_customer_rows(resolved)
 
