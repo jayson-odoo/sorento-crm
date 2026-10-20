@@ -7,7 +7,7 @@ import { Toggle as TogglePrimitive } from 'radix-ui';
 import { PRESSED_CLASS } from '@/components/ui/primitive-classes';
 
 const toggleVariants = cva(
-  'cursor-pointer inline-flex items-center justify-center rounded-md shrink-0 font-medium ring-offset-background hover:bg-muted hover:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=on]:bg-accent data-[state=on]:text-accent-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 ' +
+  'cursor-pointer inline-flex items-center justify-center rounded-md shrink-0 font-medium ring-offset-background hover:bg-muted hover:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:hover:bg-primary/90 data-[state=on]:hover:text-primary-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 ' +
     PRESSED_CLASS,
   {
     variants: {
