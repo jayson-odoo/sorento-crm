@@ -53,6 +53,11 @@ decision draft in `lines`, `rejected_line_ids`, `cancelled_lines`) or a saved sp
   cancelled, reads CANCEL), and its `transfers` (kind, qty, from, to) when there are any. An order with no
   row says "Nothing to send to purchasing". (No "new qty"/"new date" columns: the dry run row has one qty
   and one date, tester finding 20 Oct.)
+- C2a. The line number in Review (rows and transfers) and in admin Simulate's "Would write" list is
+  AutoCount's line number, the one the board and the split sheet print (SO417636: 480), never the
+  planning address (560). The dry run rows and transfers carry `so_line_no` (core line's number, else the
+  mirror's: `display_line_nos`, project_line_split_service.py:1420); the browser prints
+  `so_line_no ?? line_no`, the board's own rule (browser pass 1 finding, 20 Oct).
 - C3. Every row Confirm will send is listed, INCLUDING rows from lines nobody saved: a line the AutoCount
   book cancelled (counted with no decision, `fulfilmentBoard.ts:1017-1019`; batch orders auto-accept it,
   `planning_change_service.py:4428-4433`), and a covered line whose AutoCount qty or date drifted (dropped
