@@ -633,3 +633,14 @@ def test_portal_inquiry_attachments_route_is_gone(portal):
     assert _as(portal, portal.granted).get(f"{NPA}/inquiries").status_code == 200
     res = _as(portal, portal.granted).get(f"{NPA}/inquiry-attachments", params={"stock_inquiry_id": portal.mine.id})
     assert res.status_code in (404, 405)
+
+
+def test_portal_file_download_is_own_application_only(portal, store):
+    d = _create(portal)
+    up = _portal_upload(portal, d["id"], name="spec.pdf", data=b"%PDF-1.4 zzt-bytes")
+    assert up.status_code in (200, 201), up.text
+    att = up.json()["attachment_id"]
+    own = _as(portal, portal.granted).get(f"{ATT}/{att}/download")
+    assert own.status_code == 200, own.text
+    assert own.content == b"%PDF-1.4 zzt-bytes"
+    assert _as(portal, portal.granted_b).get(f"{ATT}/{att}/download").status_code == 404

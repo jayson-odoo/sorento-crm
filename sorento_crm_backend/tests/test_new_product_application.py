@@ -1805,3 +1805,36 @@ def test_ac83_an_original_over_10mb_without_a_thumbnail_is_not_downloaded(world,
     assert len(ws._images) == 0
     assert "huge.png" in text_of(sheet_values(ws)["IMAGE:"])
     assert key not in store.fetched
+
+
+# ------------------------------------------------------------------ the generic unlink route must not bypass the rules
+
+GENERIC_UNLINK = "/api/v1/resource-management/attachments/links"
+
+
+def test_the_generic_unlink_route_refuses_application_attachments_for_everyone(world, store):
+    d, _att, link = _linked_draft(world, store)
+    # Control: the same route still unlinks another entity type's link.
+    _att2, other_link = seed_attachment(
+        world.db, store, "stock_inquiry", world.inquiry.id, "site.png", image_bytes(), "image/png"
+    )
+    world.db.commit()
+    ok = world.api.as_(world.sales).delete(f"{GENERIC_UNLINK}/{other_link}", params={"entity_type": "stock_inquiry"})
+    assert ok.status_code == 200, ok.text
+
+    for user in (world.sales_b, world.sales):  # a non-owner, then the owner
+        res = world.api.as_(user).delete(f"{GENERIC_UNLINK}/{link}", params={"entity_type": "new_product_application"})
+        assert res.status_code in (403, 409, 422), res.text
+        assert "unlink" in res.text.lower()  # the message points to the application's own unlink
+        assert len(_atts(world, d["id"])) == 1
+
+
+def test_deferred_unlink_is_rechecked_at_commit_after_the_application_was_submitted(world, store):
+    d, _att, link = _linked_draft(world, store)
+    parked = _park_unlink(world, link, world.sales)
+    assert parked.status_code == 202, parked.text  # allowed while a Draft
+    assert _act(world, d["id"], "submit", world.sales).status_code == 200  # locked inside the window
+    out = _lapse_unlink(world, parked.json()["id"], link, world.sales).json()
+    assert out["last_outcome"]["status"] != "committed", out["last_outcome"]
+    assert len(_atts(world, d["id"])) == 1
+    assert len(_links(world, d["id"])) == 1
