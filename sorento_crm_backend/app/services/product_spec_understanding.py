@@ -85,6 +85,11 @@ _NEGATION_WINDOW = 15
 # message, so it is on the latency path of a WhatsApp reply.
 _MAX_OUTPUT_TOKENS = 700
 _TEMPERATURE = 0.0
+# The resolver code reader's own budget (`resolver_code_reader.BUDGET_SECONDS`), which runs
+# just before this on the same reply. Without it the SDK default applied: 600 s and two
+# silent retries (CHAT-LATENCY-SCOUT). A timeout takes the provider-failure arm below, so the
+# turn goes on with the literal reading instead of waiting.
+_MODEL_TIMEOUT_SECONDS = 3.0
 
 # The prompt lives in the AI prompt registry under the agent name below, so it is
 # editable and versioned in the UI alongside every other agent's. The hardcoded copy
@@ -637,6 +642,7 @@ def understand_phrase(
             temperature=_TEMPERATURE,
             max_tokens=_MAX_OUTPUT_TOKENS,
             response_format={"type": "json_object"},
+            timeout=_MODEL_TIMEOUT_SECONDS,
         )
         payload = json.loads(result.content or "{}")
     except Exception as exc:  # noqa: BLE001 - any provider failure degrades, never raises

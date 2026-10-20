@@ -67,6 +67,10 @@ ALLOWED = {
     "scripts/chatbot_eval/replay.py",
     "scripts/chatbot_eval/parser_gold.py",
     "tests/chatbot_eval/test_replay.py",
+    # CHAT-LATENCY-SCOUT (#1801): times one turn stage by stage on synthetic data. It stubs
+    # `head.parser` and the engine's access check and wraps `trace.TurnTrace.record`, none of
+    # which `/chat/turn` exposes. A developer tool, not core, not on any request path.
+    "scripts/chat_latency_probe.py",
     # EVAL-BENCH (#1745) live replay test: drives `replay.py live` through the real engine and
     # patches `engine`, `head.parser` and `lanes.ideate` directly to block the network and the
     # ideation offload; `/chat/turn` has no seam for those. Bench tooling, not core, not on a
