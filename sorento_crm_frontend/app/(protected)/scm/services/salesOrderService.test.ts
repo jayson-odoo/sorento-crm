@@ -15,7 +15,7 @@ beforeEach(() => apiFetch.mockReset());
 describe('salesOrderService', () => {
   // SO-DETAIL-DUP-BACK: the detail page tells a 404 from a refusal or a fault by the
   // error's status, so the read must carry it, not just the message.
-  it('the detail read gives up after 15 s, so a hung read ends on the error state well inside the 30 s default', async () => {
+  it('the detail read gives up after 15 s, so a hung read ends on the error state well inside 30 s', async () => {
     apiFetch.mockResolvedValue(ok({ id: 'so-1' }));
     await getSalesOrder('so-1');
     expect(apiFetch.mock.calls[0][1]).toEqual({ timeoutMs: 15_000 });

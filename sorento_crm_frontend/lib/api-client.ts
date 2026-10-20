@@ -186,8 +186,8 @@ export function isTimedOut(error: unknown): boolean {
 }
 
 /** React Query `retry` for a record read: one retry for a fault, none for an answer
- *  that will not change (a refusal or a missing record), and none for a timeout, which
- *  already cost the user a full budget (a second one doubled the skeleton). */
+ *  that will not change (a refusal or a missing record), and none for a timeout. Matches
+ *  the provider's `isRefused` guard, for callers outside `AppQueryClient`. */
 export function retryUnlessRefused(failureCount: number, error: unknown): boolean {
   return failureCount < 1 && !isAccessDenied(error) && !isNotFound(error) && !isTimedOut(error);
 }

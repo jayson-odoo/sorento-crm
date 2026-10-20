@@ -116,7 +116,7 @@ describe('retryUnlessRefused (record reads)', () => {
   it('never retries a refusal, a missing record or a timeout', () => {
     expect(retryUnlessRefused(0, withStatus('Forbidden', 403))).toBe(false);
     expect(retryUnlessRefused(0, withStatus('Not found', 404))).toBe(false);
-    // SO-DETAIL-DUP-BACK: a second full budget doubled the skeleton before the error.
+    // Matches the provider's isRefused guard, for callers outside AppQueryClient.
     expect(retryUnlessRefused(0, err(REQUEST_TIMED_OUT_MESSAGE))).toBe(false);
   });
 });
