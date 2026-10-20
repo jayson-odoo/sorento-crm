@@ -188,6 +188,22 @@ def test_r2_each_shared_code_line_carries_its_own_products_incoming(console):
         assert line.endswith(expected), (position, line, text)
 
 
+def test_r3_a_re_asked_roster_still_names_the_shared_code_with_its_company(console):
+    """A reply that answers nothing on the roster (a position past its end) re-prints the stored
+    roster (`turn/compose.compose_question`, from the stored options' labels). Measured on
+    6b8986ed7a: the re-asked lines read the bare code twice ("2. ZZDUP881SS", "3. ZZDUP881SS")."""
+    console.say("zzdup881 incoming", _ask("incoming"))
+
+    text = console.say("7", verdict(
+        message_type="business_query", domain_hint="incoming", domain_in_message=False,
+        reference_positions=[7], open_question_answer=answer("pick", picked=[7]),
+    ))
+
+    named = [line.split(" - ")[0] for line in _lines(text).values()]
+    assert len(named) == 3, text
+    assert console.suffixed(SORENTO) in named and console.suffixed(MOCHA) in named, text
+
+
 # --- guards (pass on HEAD) --------------------------------------------------------------------
 
 
