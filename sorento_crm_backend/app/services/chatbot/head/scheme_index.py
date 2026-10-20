@@ -14,8 +14,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from app.services.chatbot.class_named import names_own_class  # noqa: F401  (re-exported)
-
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 

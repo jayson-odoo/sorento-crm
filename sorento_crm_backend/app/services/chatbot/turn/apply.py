@@ -3467,6 +3467,8 @@ def _apply(
     # read the subject - and its result is written back onto the focus AFTER
     # `_focus_rules`, which empties every other axis on a topic reset and would take
     # the tasks with it.
+    from app.services.chatbot.class_named import names_own_class
+
     task_outcome = task_mod.run(
         tuple(state.focus.tasks or ()),
         verdict,
@@ -3474,6 +3476,13 @@ def _apply(
         positions=list(decision.positions) if decision.answers else [],
         pending=state.pending,
         turn_no=state.turn_no,
+        # CHAT-CLOSED-LISTS R6-3 (a class ask is not the held product at a new number), read off
+        # the state gate only: under it the ops decide, as decide()'s table stands down above.
+        class_ask=(
+            not getattr(state, "state_gate", False)
+            and bool(verdict.get("closed_lists"))
+            and names_own_class(verdict.get("entities") or [])
+        ),
     )
     trace.rules_fired.extend(task_outcome.rules)
 
