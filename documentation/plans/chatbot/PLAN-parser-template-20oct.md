@@ -157,3 +157,16 @@ v84 3, 3, 0, 3; v85 (F1-H 1cf14e9eb5, an extra R-P1-02 sentence "a quantity is n
 3, 3, 1, 0; control "ETA CODE x 5" incoming 3/3. The same rule text flips rows between versions: gpt-5.4-mini follows
 this boundary unreliably under one rule. Asked crew: c1-09 scope (a quantity after an ORDER answer) and whether to
 accept dq-10 at 1/3 and let TRAIN decide (a code backstop was ruled out by the owner). Spend about USD 6.01.
+
+## TRAIN x1 attachment (20 Oct, crew a54067515: v86 frozen, cap 7.7)
+
+Stack 8192/8292 per a38211499 (egress block, scheduler off, no worker, dev key bG4A; AI_ASSISTANT_MCP_URL needs the
+/mcp path, config.py:333). Combined build sorento_crm-ccl-s1 9517384485. Paired attachment set (83 real items):
+OLD v77 REAL 52/83 (63%), 83 run, USD 0.70; NEW v86 REAL 14/70 (20%), stopped at the error-rate guard after 73 (one
+"out of shared memory" on eval_base with both arms in parallel), USD 0.38. Cause, measured: v86 emits an
+attachment_type entity on 22 of 73 items, v77 on 70 of 83; without it the fetch never narrows (tool results 34 vs 78).
+Same class as gold c2 (file words): the consolidated R-P2-06 does not make gpt-5.4-mini emit the file entity that the
+old ATTACHMENT TYPE EXTRACTION section did. EARLY STOP: no full gold, no spec set. Spend about USD 7.13.
+Known misses kept (crew a54067515): c1-09 0/3, dq-10 1/3 (a quantity after an order / ETA answer). Layer that would fix
+them: code routing on the parsed quantity the parser already emits (entities carry quantity 10 / 70), not more prompt
+text; the owner ruled a backstop out, so only if TRAIN shows the shape matters.
