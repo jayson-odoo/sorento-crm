@@ -1,4 +1,6 @@
 -- Synthetic volume for the CHAT-LATENCY-SCOUT timing run. No real data.
+-- THROWAWAY DATABASES ONLY: it inserts thousands of rows. Never run it against the shared
+-- local database (a prod copy), staging or production.
 -- 1 company (SRT, pre-seeded), 40 warehouses, 6 brands, 60 categories, 8000 products,
 -- ~64k stock rows (8 warehouses per product), ~640k ledger rows, 40k open SO lines, 15k PO lines.
 \set ON_ERROR_STOP on

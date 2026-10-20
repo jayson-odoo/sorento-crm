@@ -372,6 +372,10 @@ def _unsupported_param(message: str) -> str | None:
 _OPENAI_CLIENTS: dict[tuple, Any] = {}
 _OPENAI_CLIENTS_LOCK = threading.Lock()
 _OPENAI_CLIENTS_MAX = 32
+# A forked child (an RQ work-horse, a gunicorn worker) must not share its parent's open TLS
+# connection, so it starts with no clients (the same rule worker.py applies to DB sockets).
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_OPENAI_CLIENTS.clear)
 
 
 class OpenAIProvider:

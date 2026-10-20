@@ -197,7 +197,7 @@ def main() -> None:
               f"{sum(c['ms'] for c in LLM):.0f} ms")
         for c in LLM:
             print(f"    {c['ms']:>7} ms  {c['url']}")
-        reply = getattr(result, "reply", None) or (result.item or {}).get("reply") if hasattr(result, "item") else None
+        reply = getattr(result, "reply", None) or (getattr(result, "item", None) or {}).get("reply")
         print(f"  reply: {str(reply)[:300]}")
 
 

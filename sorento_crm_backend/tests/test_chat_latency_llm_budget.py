@@ -246,7 +246,12 @@ def _ask(
     return references.resolve_reference_post(payload, current_user={"id": None}, db=db), spec_calls
 
 
-@pytest.mark.parametrize("match_mode", ["or", "and"])  # "and" + require stock: a guard (predicate branch, no spec read)
+@pytest.mark.parametrize(
+    "match_mode",
+    # "and" + require stock takes the counted-set (predicate) branch and never reaches the spec
+    # reading: kept as a regression guard on that shape, not as coverage of the gate.
+    ["or", pytest.param("and", id="and-predicate-branch-guard")],
+)
 def test_a_read_out_code_the_catalogue_lacks_makes_one_model_call_not_two(catalogue, monkeypatch, match_mode):
     """The scout's `SRT1001-BK` miss: the reader reads the code, the catalogue has no such
     row, and the spec model reading the same code could only find nothing (sandbox: 13 of
@@ -296,3 +301,55 @@ def test_a_dead_code_beside_a_found_code_makes_one_model_call_not_two(catalogue,
 
     assert [len(r["matches"]) > 0 for r in result["resolutions"]] == [True, False]
     assert reader.calls + len(spec_calls) <= 1, (reader.calls, spec_calls)
+
+
+# The gate's shape guards (reviewer kill test): each case has an open token the reader read
+# as a dead code, plus one more thing that leaves words for the spec model, so it must NOT skip.
+_DEAD_OPEN = {"token": "ZZTNOPE1001BK", "matches": [], "fallback": {"asked": True, "kind": "code", "matched": 0}}
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        pytest.param({"intersection": [], "resolutions": [_DEAD_OPEN]}, id="and-shape"),
+        pytest.param(
+            {
+                "resolutions": [_DEAD_OPEN],
+                "token_coverage": [{"coverage": [{"entity_type": "product", "unmatched_words": ["matt"]}]}],
+            },
+            id="product-words-unanswered",
+        ),
+        pytest.param(
+            {"resolutions": [_DEAD_OPEN, {"token": "basintap", "matches": [{"entity_type": "promotion"}]}]},
+            id="token-answered-by-non-product-rows-only",
+        ),
+    ],
+)
+def test_the_gate_keeps_the_model_reading_when_more_than_a_dead_code_is_open(result):
+    from app.api.v1.system.references import _open_tokens_are_codes_the_catalogue_lacks
+
+    assert _open_tokens_are_codes_the_catalogue_lacks(result) is False
+
+
+def test_the_gate_skips_only_on_the_readers_dead_code_verdict():
+    from app.api.v1.system.references import _open_tokens_are_codes_the_catalogue_lacks
+
+    found = {"token": "ZZTWT5608", "matches": [{"entity_type": "product"}]}
+    assert _open_tokens_are_codes_the_catalogue_lacks({"resolutions": [found, _DEAD_OPEN]}) is True
+
+
+def test_a_forked_child_starts_without_the_parents_clients(monkeypatch):
+    import os
+
+    built = _counting_openai(monkeypatch)
+    llm_provider.OpenAIProvider("sk-a").chat([{"role": "user", "content": "x"}], timeout=3.0)
+    read, write = os.pipe()
+    pid = os.fork()
+    if pid == 0:  # child
+        os.close(read)
+        os.write(write, str(len(llm_provider._OPENAI_CLIENTS)).encode())
+        os._exit(0)
+    os.close(write)
+    child_count = int(os.read(read, 16).decode())
+    os.waitpid(pid, 0)
+    assert len(built) == 1 and child_count == 0

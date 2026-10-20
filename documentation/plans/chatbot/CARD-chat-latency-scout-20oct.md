@@ -107,7 +107,7 @@ Not measurable in a sandbox, but readable from the prod trace:
 
 | # | fix | where | expected saving | red-first test |
 |---|---|---|---|---|
-| A | Skip the spec reading's MODEL call when every unanswered token is code-shaped (letters+digits, no spaces) and the code reader already ran on it. The deterministic word read stays. | `references.py:3606-3618` (`allow_model=payload.understand_phrase and not all_code_shaped`) | 2-3 s on every code-miss turn | a miss on `SRT1001-BK` makes at most 1 non-parser chat call (2 today) |
+| A | SUPERSEDED by the Build section below (owner rule: no code-shaped pattern; the gate reads the code reader's own verdict). Original idea: skip the spec reading's MODEL call for code-shaped unanswered tokens. | `references.py:3606-3618` (`allow_model=payload.understand_phrase and not all_code_shaped`) | 2-3 s on every code-miss turn | a miss on `SRT1001-BK` makes at most 1 non-parser chat call (2 today) |
 | B | Give the spec reading the code reader's budget: `timeout=3.0` (which also turns SDK retries off). | `product_spec_understanding.py:635` | caps the tail: no 600 s wait, no 3 attempts | `provider.chat` is called with a non-None timeout |
 | C | Reuse one `OpenAI` client per (key, timeout, base_url). | `llm_provider.py:378-390` | ~0.1-0.3 s per LLM call, 3-4 per miss turn, the parser included (estimate) | two `chat()` calls construct the client once |
 | D | (later) keep-alive on both MCP legs. | `ai_assistant_service.py:352`, `sorento_crm_mcp/http_client.py:54` | tens of ms per tool call | - |
@@ -177,3 +177,18 @@ Measured on the real engine (sandbox, gpt-4o, parser stubbed):
 | code miss `SRT1001-BK` | 2 model calls, routed 2,016 ms, wall 2,269 ms | 1 call, routed 1,353 ms, wall 1,631 ms, same reply |
 | 5 found codes + 1 dead code | 2 calls, wall 2,720 ms | 1 call, wall 1,556 ms |
 | found code `MWT1005-CR` | 0 calls, wall 418 ms | 0 calls, wall 400 ms |
+
+Accepted risks (reviewer, 20 Oct), for crew and EVAL-BENCH to weigh:
+
+- **B's budget is near the typical call, not only the tail.** The card puts prod `spec_search` at 2-3 s, so
+  3.0 s (crew-set) will cut some description readings short; those turns then answer from the deterministic
+  reading. Prod query 2 above (p90 / max `response_time_ms` for `spec_search`) measures the share; raise
+  `_MODEL_TIMEOUT_SECONDS` above the p95 if it is large. The staff Product Specifications preview
+  (`app/api/v1/master_data/product_specifications.py:590`, through `derive_search_inputs`) gets the same
+  budget, which matches its "run exactly as the chatbot would" contract.
+- **A looks at tokens; the model reads the whole `query`.** If the parser emits only the dead code as an
+  entity and leaves other words of the message un-tokenised ("SRT9999 matt blk wall hung basin" with one
+  entity `SRT9999`), the gate skips the model and those words get only the deterministic read. This is the
+  crew rule as written ("every still-unanswered token"); the EVAL-BENCH spec replay is where it would show.
+- **C is fork-safe:** a forked child clears the inherited clients (`os.register_at_fork`), the same rule
+  `worker.py` applies to DB sockets.
