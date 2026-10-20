@@ -150,16 +150,16 @@ describe('AC-A8 while dragging', () => {
     press('Escape');
   });
 
-  it('the overlay shows the qty, item, "from line N" and the target', async () => {
+  it('the overlay shows the qty, item and the target date, never a line number', async () => {
     await renderDialog();
     await sheet();
     await pickUp(lineGrip(480));
     press('ArrowDown');
     await waitFor(() =>
-      expect(document.body.textContent).toMatch(/→\s*20\/11\/2026 · line 608/),
+      expect(document.body.textContent).toMatch(/→\s*20\/11\/2026/),
     );
     expect(document.body.textContent).toMatch(/417/);
-    expect(document.body.textContent).toMatch(/from line 480/);
+    expect(document.body.textContent).not.toMatch(/\bline \d+\b/);
     moveTo(2);
     await waitFor(() => expect(document.body.textContent).toMatch(/→\s*New date/));
     press('ArrowDown');
@@ -197,8 +197,8 @@ describe('AC-A9 drops move ALL of it at once', () => {
     // variant B (AC-G2): the 403 row is drawn under 608 no label, no line number
     expect(drawnUnder(608, 480, 2)).toEqual({ inBlock: true });
     expect(balance(608).closest('tbody')!.textContent).not.toMatch(FROM_LINE_LABEL);
-    const moved = toasts().find((t) => /^Moved 403 to 20\/11\/2026 · line 608/.test(t.msg));
-    expect(moved, 'toast Moved 403 to 20/11/2026 · line 608').toBeDefined();
+    const moved = toasts().find((t) => /^Moved 403 to 20\/11\/2026(?!.*\bline \d)/.test(t.msg));
+    expect(moved, 'toast Moved 403 to 20/11/2026, no line number').toBeDefined();
     expect(moved!.opts?.action?.label).toBe('Undo');
   });
 
@@ -266,7 +266,7 @@ describe('AC-A9 drops move ALL of it at once', () => {
     expect(drawnUnder(608, 480, 1)).toEqual({ inBlock: true });
     expect(block(608).textContent).not.toMatch(FROM_LINE_LABEL);
     expect(screen.queryByRole('button', { name: 'Split line 480 quantity' })).toBeNull();
-    expect(toasts().some((t) => /^Moved 417 to 20\/11\/2026 · line 608/.test(t.msg))).toBe(true);
+    expect(toasts().some((t) => /^Moved 417 to 20\/11\/2026(?!.*\bline \d)/.test(t.msg))).toBe(true);
   });
 
   it('a line AutoCount moved takes AutoCount\'s current date on the drop', async () => {
@@ -288,7 +288,7 @@ describe('AC-A9 drops move ALL of it at once', () => {
     expect(d.value).toBe('');
     await waitFor(() => expect(document.activeElement).toBe(d));
     expect(saveButton()).toBeDisabled();
-    expect(screen.getByRole('status', { name: /split status/i }).textContent).toMatch(/CSK14B line 480: date to fill/);
+    expect(screen.getByRole('status', { name: /split status/i }).textContent).toMatch(/CSK14B: date to fill/);
     typeDate(480, 1, '20/11/2029');
     await waitFor(() => expect(saveButton()).toBeEnabled());
   });

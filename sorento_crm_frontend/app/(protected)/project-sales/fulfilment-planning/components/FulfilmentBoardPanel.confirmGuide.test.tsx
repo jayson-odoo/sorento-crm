@@ -849,8 +849,20 @@ describe('T-FE6 (F18 F19 F21): the guide page is the editable split sheet', () =
     expect(within(page).getByTestId('split-line-3')).toHaveTextContent('USE BRW 522 & ORDER 294');
   });
 
-  it('F18: the page has its own Save; it saves the scoped lines through the split service and the page stays and re-reads', async () => {
-    const page = await openEditablePage();
+  it('F18/F22: the page has its own Save; it sends EVERY line of the order, the edited line carries the edit, and the page stays and re-reads', async () => {
+    const withHidden = () => {
+      const read = LINE3_READ();
+      read.lines = [
+        ...splitRead('pso-so-1', 'SO000001', [{ id: 'pl-1-2', no: 2, item: 'ZZT-ITEM-1B' }]).lines,
+        ...read.lines,
+      ];
+      return read;
+    };
+    serveSplits({ 'pso-so-1': withHidden() });
+    await mountWith(oneDraftBoard(), ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
     await editLine3();
     serveSplits({ 'pso-so-1': LINE3_SPLIT_READ() });
     saveLineSplits.mockImplementation(() => Promise.resolve(LINE3_SPLIT_READ()));
@@ -858,8 +870,9 @@ describe('T-FE6 (F18 F19 F21): the guide page is the editable split sheet', () =
     await waitFor(() => expect(saveLineSplits).toHaveBeenCalledTimes(1));
     const [psoId, body] = saveLineSplits.mock.calls[0];
     expect(psoId).toBe('pso-so-1');
-    expect(body.lines.map((l: { line_id: string }) => l.line_id)).toEqual(['pl-1-3']);
-    expect(body.lines[0].splits).toHaveLength(2);
+    // F22: the scope limits what is drawn, never what is saved
+    expect(body.lines.map((l: { line_id: string }) => l.line_id).sort()).toEqual(['pl-1-2', 'pl-1-3']);
+    expect(body.lines.find((l: { line_id: string }) => l.line_id === 'pl-1-3').splits).toHaveLength(2);
     // still on the page, now showing the saved split rows
     expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000001');
     await waitFor(() => expect((screen.getByLabelText('Date, line 3 split 2') as HTMLInputElement).value).toBe('20/10/2026'));
@@ -934,5 +947,39 @@ describe('T-FE6 (F18 F19 F21): the guide page is the editable split sheet', () =
     expect(page.textContent).not.toMatch(/\bline \d+\b/i);
     // identity stays internal: the block is still addressable
     expect(within(page).getByTestId('split-line-3')).toBeInTheDocument();
+  });
+
+  it('F24: the problems bar names the item and the qty left, never a line number', async () => {
+    const page = await openEditablePage();
+    await splitLine(3);
+    typeQty(3, 1, '6'); // 4 of 10 left
+    await waitFor(() => expect(page.textContent).toMatch(/ZZT-ITEM-1C: 4 left/));
+    expect(page.textContent).not.toMatch(/\bline \d+\b/i);
+  });
+
+  it('F23: Escape never closes the guide while the page has unsaved edits, Cancel does and posts nothing', async () => {
+    const page = await openEditablePage();
+    await editLine3();
+    fireEvent.keyDown(screen.getByTestId('confirm-guide'), { key: 'Escape' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByTestId('confirm-guide')).toBeInTheDocument();
+    expect(screen.getByText('Save or undo your split changes first')).toBeInTheDocument();
+    expect(within(page).getByLabelText('Quantity, line 3 split 1')).toBeInTheDocument();
+    click('confirm-guide-cancel');
+    await waitFor(() => expect(screen.queryByTestId('confirm-guide')).not.toBeInTheDocument());
+    expect(saveLineSplits).not.toHaveBeenCalled();
+    expect(confirmMany).not.toHaveBeenCalled();
+    expect(previewConfirmMany).not.toHaveBeenCalled();
+  });
+
+  it('F23: Escape during a keyboard drag does not close the guide', async () => {
+    await openEditablePage();
+    const grip = screen.getByRole('button', { name: /^Drag line \d+$/ });
+    act(() => grip.focus());
+    fireEvent.keyDown(grip, { key: ' ', code: 'Space' });
+    await screen.findByTestId('drop-cancel');
+    fireEvent.keyDown(document.activeElement ?? grip, { key: 'Escape', code: 'Escape' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByTestId('confirm-guide')).toBeInTheDocument();
   });
 });

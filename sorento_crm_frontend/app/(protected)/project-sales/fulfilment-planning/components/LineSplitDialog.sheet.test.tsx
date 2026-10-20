@@ -532,7 +532,7 @@ describe('AC-A12 header, search, split-only switch and the status line', () => {
     typeQty(480, 1, '14');
     leaveSheet();
     const status = screen.getByRole('status', { name: /split status/i });
-    expect(status.textContent).toMatch(/CSK14B line 480: 403 left/);
+    expect(status.textContent).toMatch(/CSK14B: 403 left/);
 
     // hide the line, then Show brings it back
     fireEvent.change(screen.getByPlaceholderText(/item code/i), { target: { value: 'CSK11A' } });
@@ -548,11 +548,11 @@ describe('AC-A12 header, search, split-only switch and the status line', () => {
     await sheet();
     await splitLine(480);
     typeQty(480, 1, '500');
-    expect(screen.getByRole('status', { name: /split status/i }).textContent).toMatch(/CSK14B line 480: 83 over/);
+    expect(screen.getByRole('status', { name: /split status/i }).textContent).toMatch(/CSK14B: 83 over/);
     typeQty(480, 1, '417');
     typeDate(480, 1, '');
     await waitFor(() =>
-      expect(screen.getByRole('status', { name: /split status/i }).textContent).toMatch(/CSK14B line 480: date to fill/),
+      expect(screen.getByRole('status', { name: /split status/i }).textContent).toMatch(/CSK14B: date to fill/),
     );
   });
 });

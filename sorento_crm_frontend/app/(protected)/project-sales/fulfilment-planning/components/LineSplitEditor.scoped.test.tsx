@@ -1,0 +1,135 @@
+/**
+ * OI-SPLIT-GUIDE F13 / F22: `LineSplitEditor` with `onlyLineIds` (the guide page's scope) draws
+ * only the covered lines plus the lines their saved splits sit on, with no search or toggle, and
+ * its Save still sends EVERY line of the order. The board's dialog (unscoped) is unchanged
+ * (regression pins, via `LineSplitDialog`).
+ */
+import React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  blockIds,
+  renderDialog,
+  savedCase,
+  sheet,
+  typeDate,
+  wireSplit,
+} from '@/test-mocks/lineSplitSheetKit';
+import { LineSplitEditor } from './LineSplitEditor';
+
+const { getLineSplits, saveLineSplits } = vi.hoisted(() => ({
+  getLineSplits: vi.fn(),
+  saveLineSplits: vi.fn(),
+}));
+vi.mock('@/app/(protected)/project-sales/_shared/services/lineSplitService', () => ({
+  getLineSplits: (...a: unknown[]) => getLineSplits(...a),
+  saveLineSplits: (...a: unknown[]) => saveLineSplits(...a),
+}));
+vi.mock('@/lib/toast', () => ({
+  toast: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn(), warning: vi.fn() }),
+}));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  getLineSplits.mockResolvedValue(structuredClone(savedCase()));
+  saveLineSplits.mockResolvedValue(structuredClone(savedCase()));
+});
+
+/** The editor as the guide hosts it: scoped, with a header that offers Save and the search slot. */
+function renderEditor(ids?: string[]) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <LineSplitEditor
+        psoId="pso-417636"
+        active
+        onlyLineIds={ids ? new Set(ids) : undefined}
+        renderHeader={(c) => (
+          <div>
+            <span data-testid="search-slot">{c.searchControls ? 'has-search' : 'no-search'}</span>
+            <button type="button" disabled={!c.canSave} onClick={c.save}>
+              Save
+            </button>
+          </div>
+        )}
+      />
+    </QueryClientProvider>,
+  );
+}
+
+describe('F13: the scoped editor', () => {
+  it('lists only the covered line and the line its saved split sits on, never the rest of the order', async () => {
+    renderEditor(['L480']);
+    await sheet();
+    expect(blockIds()).toEqual(['split-line-480', 'split-line-608']);
+  });
+
+  it('a covered line with no split lists just itself', async () => {
+    renderEditor(['L752']);
+    await sheet();
+    expect(blockIds()).toEqual(['split-line-752']);
+  });
+
+  it('draws no search box and no "Split lines only" toggle, and hands the host no search controls', async () => {
+    renderEditor(['L480']);
+    await sheet();
+    expect(screen.queryByText('Split lines only')).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/item code/i)).not.toBeInTheDocument();
+    expect(screen.getByTestId('search-slot')).toHaveTextContent('no-search');
+  });
+});
+
+describe('F22: Save sends every line, so an edit on a hidden line\'s row is never dropped', () => {
+  it('editing the hidden 480\'s 236 split drawn under the shown 608 reaches the PUT body', async () => {
+    renderEditor(['L608']);
+    await sheet();
+    expect(blockIds()).toContain('split-line-608');
+    expect(blockIds()).not.toContain('split-line-480');
+    // 480's 236 sits on 608: its row is drawn under 608; move its date.
+    typeDate(480, 2, '25/11/2026');
+    const save = screen.getByRole('button', { name: 'Save' });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+    await waitFor(() => expect(saveLineSplits).toHaveBeenCalledTimes(1));
+    const [, body] = saveLineSplits.mock.calls[0];
+    const ids = body.lines.map((l: { line_id: string }) => l.line_id).sort();
+    expect(ids).toEqual(['L480', 'L608', 'L752', 'L768', 'L900']);
+    const l480 = body.lines.find((l: { line_id: string }) => l.line_id === 'L480');
+    expect(l480.splits.map((s: { delivery_date: string }) => s.delivery_date)).toContain('2026-11-25');
+  });
+});
+
+describe('board dialog pins (unscoped, unchanged)', () => {
+  it('lists every line and carries the toggle and the search box', async () => {
+    await renderDialog();
+    await sheet();
+    expect(blockIds()).toHaveLength(5);
+    expect(screen.getByText('Split lines only')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/item code/i)).toBeInTheDocument();
+  });
+
+  it('the header counts every line', async () => {
+    await renderDialog();
+    await sheet();
+    expect(screen.getByText(/^5 lines · /)).toBeInTheDocument();
+  });
+
+  it('a problem on any line is named by item and qty left, never a line number', async () => {
+    const p = structuredClone(savedCase());
+    p.lines.find((l) => l.line_id === 'L900')!.splits = [wireSplit('h1', 20, '2026-10-01', 'L900')];
+    getLineSplits.mockResolvedValue(p);
+    await renderDialog();
+    await sheet();
+    expect(screen.getByText(/CSK14B: 30 left/)).toBeInTheDocument();
+    expect(screen.queryByText(/line 900/)).not.toBeInTheDocument();
+  });
+
+  it('F21 (owner ruling): shows no Line column and no "line N" sub-label', async () => {
+    await renderDialog();
+    const table = await sheet();
+    expect(screen.queryByRole('columnheader', { name: /^line$/i })).not.toBeInTheDocument();
+    expect(table.textContent).not.toMatch(/\bline \d+/i);
+    expect(blockIds()).toContain('split-line-480');
+  });
+});

@@ -70,8 +70,9 @@ describe('planned date of a line', () => {
     press('ArrowDown');
     press('ArrowDown'); // 608, 752
     await waitFor(() =>
-      expect(document.body.textContent).toMatch(/→\s*20\/09\/2026 · line 752/),
+      expect(document.body.textContent).toMatch(/→\s*20\/09\/2026/),
     );
+    expect(document.body.textContent).not.toMatch(/\bline \d+\b/);
     await dropIt();
     expect(dateIn(480, 1).value).toBe('20/09/2026');
     // variant B (AC-G2): 480's row is drawn under 752 no label, no line number
@@ -109,7 +110,7 @@ describe('planned date of a line', () => {
 describe('dropping on another line shows the drop toast', () => {
   const moved = (re: RegExp) => toasts().find((t) => re.test(t.msg));
 
-  it('"Moved 403 to 20/11/2026 · line 608" with Undo, and Undo restores the row', async () => {
+  it('"Moved 403 to 20/11/2026" (no line number) with Undo, and Undo restores the row', async () => {
     getLineSplits.mockResolvedValue(ownerCase());
     await renderDialog();
     await sheet();
@@ -120,7 +121,7 @@ describe('dropping on another line shows the drop toast', () => {
     press('ArrowDown');
     await dropIt();
     await waitFor(() => expect(dateIn(480, 2).value).toBe('20/11/2026'));
-    const t = moved(/^Moved 403 to 20\/11\/2026 · line 608/);
+    const t = moved(/^Moved 403 to 20\/11\/2026(?!.*\bline \d)/);
     expect(t, 'pick toast').toBeDefined();
     expect(t!.opts?.action?.label).toBe('Undo');
     act(() => t!.opts!.action!.onClick());
@@ -144,7 +145,7 @@ describe('dropping on another line shows the drop toast', () => {
     await dropIt();
     await waitFor(() => expect(queryQty(480, 3)).toBeNull());
     expect(qty(480, 2).value).toBe('403');
-    const t = moved(/^Moved 167 to 20\/11\/2026 · line 608/);
+    const t = moved(/^Moved 167 to 20\/11\/2026(?!.*\bline \d)/);
     expect(t, 'pick toast on a merge').toBeDefined();
     act(() => t!.opts!.action!.onClick());
     await waitFor(() => expect(qty(480, 3).value).toBe('167'));
@@ -183,8 +184,9 @@ describe('planned date is order-free (review round 2)', () => {
     await pickUp(screen.getByRole('button', { name: 'Drag split 3 of line 480' }));
     press('ArrowDown');
     await waitFor(() =>
-      expect(document.body.textContent).toMatch(/→\s*25\/11\/2026 · line 608/),
+      expect(document.body.textContent).toMatch(/→\s*25\/11\/2026/),
     );
+    expect(document.body.textContent).not.toMatch(/\bline \d+\b/);
     await dropIt();
     expect(dateIn(480, 3).value).toBe('25/11/2026');
   });
