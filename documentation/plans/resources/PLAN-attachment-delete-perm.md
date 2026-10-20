@@ -1,6 +1,6 @@
 # PLAN: attachment delete follows `resource.attachments.delete`
 
-Status: in progress (small fix track: backend only, under 300 lines, no migration, permission gate on one route)
+Status: review done, awaiting CI (small fix track: backend only, under 300 lines, no migration, permission gate on one route)
 
 ## Journey
 
@@ -18,6 +18,16 @@ shared `require_permission` dependency (`app/dependencies.py:414`).
   (`app/rbac/permission_registry.py:333`, `_crud("resource", "attachments", ...)`), so no
   registry or migration change. superadmin and admin keep their bypass inside
   `check_user_has_permission`.
+
+## Callers affected
+
+- Files screen single delete (`sorento_crm_frontend/app/(protected)/resource-management/attachments/services/attachmentService.ts:413`).
+- Project Documents tab delete (`sorento_crm_frontend/app/(protected)/project-sales/_shared/services/projectDocumentService.ts:128`)
+  calls the same route. Its trash button checks only `project.can_edit`
+  (`ProjectDocumentsPanel.tsx:184`), so a project editor whose role lacks
+  `resource.attachments.delete` now gets a 403 toast there. That tab's upload already needs
+  `resource.attachments.upload`, so this matches. Hiding the button by permission is an FE
+  follow-up, not this lane.
 
 ## Out of scope (named, not built)
 
