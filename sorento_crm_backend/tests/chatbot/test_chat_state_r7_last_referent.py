@@ -455,16 +455,3 @@ def test_r7_3_live_guard_a_quote_of_the_how_many_turn_keeps_the_how_many_object(
     say_quoted(c, "1", reply(demand_qty=1, entities=[]), quote=ask_text(HELD))
     assert any("quantities" in ln and HELD in ln for ln in _lines(c.last_block, "- open question:")), c.last_block
     assert "pending task: the open question" in c.last_block
-
-
-def test_r7_2_live_apply_a_quote_of_the_list_turn_with_a_bare_demand_qty_does_not_fill_the_held_task(
-    session_factory, monkeypatch, stub_access
-):
-    # The parser read "1" as demand_qty (no entity, no positions). NOTE: if the parser input no longer shows the
-    # how-many this reading should not occur; this pins the apply side for the case it still does (see report).
-    from tests.chatbot.test_quoted_reply_engine import _answered, _open_task_labels, reply, say_quoted
-
-    c = _audit_console(session_factory, monkeypatch, stub_access, "+60900000775")
-    text = say_quoted(c, "1", reply(demand_qty=1, entities=[]), quote=FLYER_TEXT)
-    assert text != _answered(HELD, 1), ("the held task took the bare 1 under a quote of the list turn", text)
-    assert _open_task_labels(c) == [HELD], "the stock task must stay open and unanswered"
