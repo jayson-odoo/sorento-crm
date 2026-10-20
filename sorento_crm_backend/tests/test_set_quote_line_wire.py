@@ -118,6 +118,8 @@ def _so_chain(db, env, product_set, *, po_qty: str, po_code: str | None = None):
         po_version_id=po_version.id,
         extraction_state="done",
         schedule_date=date(2026, 3, 4),
+        # D3: sales orders build only from a confirmed schedule.
+        confirmed_at=date.today(),
     )
     db.add(schedule_version)
     db.flush()
