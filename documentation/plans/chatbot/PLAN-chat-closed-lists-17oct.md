@@ -461,3 +461,18 @@ and dropped_type tests amended to the ruling, lead sign-off), fix 7b9d0e47 (kill
 - MIXED-ASK-TO-STOCK: no TRAIN item of the shape; parked until a real non-held-out example exists.
 - combined4 resolution branches (crew-note 6280096668): crew/combined4-res-1760-on-1761 = 23b7f89a24,
   crew/combined4-res-1776-on-main = 5b9bd914a4.
+
+## Round 9 (20 Oct): AND-ROW-REGISTRY (CODE-SUBSTRING residual; local, push on crew go)
+
+ARCHITECTURE: layer RESOLVER, the same single gate `_drop_word_code_fragments` (app/api/v1/system/references.py:1800).
+The AND probe matches product_code only (app/services/entity_resolver.py:3836-3837), so every token of an AND row
+reached that row through its code. Today the gate checks the registry over ALL tokens on the prefix branch (:1843)
+but only over the whole-segment tokens on the segment branch (:1838-1840), so a registry word sitting inside the code
+("basin" in ZZBASIN-BIDET) rides on a non-registry segment ("bidet") and the row stays. Shared mechanism: one
+registry check over every token of the row for both code branches ("a registry word is never a code hit", CS-1).
+Single-token resolutions are unchanged (one token: the two checks are the same). Removes the asymmetric per-branch
+token list. No word list in code.
+
+- R9-1 AND tokens ["basin", "bidet"], registry knows "basin" and not "bidet", code ZZBASIN-BIDET: the row is dropped.
+- R9-2 Kept (guards): ["qams", "bidet"] on QAMS-BIDET with neither word in the registry; "bidet" alone on ACC-BIDET;
+  a whole typed code; a token with a digit.
