@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type {
   NewProductApplicationDetail as Detail,
@@ -597,5 +597,31 @@ describe('attachments panel', () => {
     state.data = detail({ attachments: [FILE] } as never);
     render(<Page />);
     expect(screen.queryByRole('button', { name: /link attachment/i })).toBeNull();
+  });
+});
+
+describe('attachments list is the shared PanelDataGrid', () => {
+  it('renders the files through PanelDataGrid', () => {
+    state.perms = new Set(['procurement.new_product_applications.create']);
+    state.data = detail({
+      attachments: [
+        {
+          link_id: 'k-1',
+          attachment_id: 'at-1',
+          filename: 'sample-doc.pdf',
+          url: '/files/1',
+          content_type: 'application/pdf',
+        },
+      ],
+    } as never);
+    render(<Page />);
+    // PRINCIPLES: the attachments list is the shared PanelDataGrid, not a hand-rolled table
+    const cell = screen.getByText('sample-doc.pdf');
+    expect(cell.closest('table')).toHaveAttribute('data-slot', 'data-grid-table');
+    const panel = cell.closest('[data-slot="data-grid"]');
+    expect(panel).not.toBeNull();
+    expect(
+      within(panel as HTMLElement).getByRole('button', { name: /link attachment/i }),
+    ).toBeInTheDocument();
   });
 });

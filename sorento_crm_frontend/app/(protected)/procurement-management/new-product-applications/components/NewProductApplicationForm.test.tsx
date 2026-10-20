@@ -6,7 +6,7 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { toast } from '@/lib/toast';
 import type { NewProductApplicationPrefill } from '@/types/newProductApplication';
 
@@ -27,6 +27,7 @@ const mock = vi.hoisted(() => ({
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: mock.push, replace: vi.fn(), back: vi.fn() }),
   useSearchParams: () => new URLSearchParams(''),
+  usePathname: () => '/procurement-management/new-product-applications/npa-1',
 }));
 vi.mock('@/lib/toast', () => ({
   toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() },
@@ -398,5 +399,21 @@ describe('products by id after a save', () => {
         (l) => l.id,
       ),
     ).toEqual(['l-2', 'l-new']);
+  });
+});
+
+describe('attachments list is the shared PanelDataGrid', () => {
+  it('renders the saved draft files through PanelDataGrid', async () => {
+    mock.existing = savedDraft();
+    renderForm({ applicationId: 'npa-1' });
+    await screen.findByText('sample-doc.pdf');
+    // PRINCIPLES: the attachments list is the shared PanelDataGrid, not a hand-rolled table
+    const cell = screen.getByText('sample-doc.pdf');
+    expect(cell.closest('table')).toHaveAttribute('data-slot', 'data-grid-table');
+    const panel = cell.closest('[data-slot="data-grid"]');
+    expect(panel).not.toBeNull();
+    expect(
+      within(panel as HTMLElement).getByRole('button', { name: /link attachment/i }),
+    ).toBeInTheDocument();
   });
 });
