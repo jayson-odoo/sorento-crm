@@ -22,16 +22,20 @@ from app.database import get_db
 from app.dependencies import require_permission
 from app.schemas.common import ListResponse
 from app.schemas.project_schedule import (
+    AreaDateChange,
+    AreaDateChangeResponse,
     DeliveryScheduleDeleteResponse,
     DeliveryScheduleListRow,
     DeliveryScheduleUploadResponse,
     DeliveryScheduleVersionListRow,
     DeliveryScheduleVersionResponse,
+    POProgressResponse,
     ScheduleCellsUpdate,
     ScheduleColumnDismiss,
     ScheduleConfirmRequest,
     ScheduleProductResolve,
 )
+from app.services import project_po_progress_service as progress_svc
 from app.services import project_po_service as po_svc
 from app.services import project_service as projects
 from app.services.error_handler import AppException, handle_internal_error
@@ -492,6 +496,67 @@ async def delete_delivery_schedule_version(
         deleted = service.delete_schedule_version(version.id)
         db.commit()
         return {"success": True, "deleted": deleted}
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+# ------------------------------------------------------------- PM-SIMPLIFY progress
+
+
+@router.get(
+    "/purchase-orders/{po_id}/progress",
+    response_model=POProgressResponse,
+)
+async def get_purchase_order_progress(
+    po_id: str,
+    _user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Per PO line: ordered, scheduled, delivered (AutoCount), outstanding; per area of
+    the confirmed schedule: date, units, delivered, sales orders (AC-L1, AC-D1)."""
+    try:
+        validate_uuid_path(po_id, resource="Purchase order")
+        po = po_svc.get_po(db, po_id)
+        projects.get_project_or_404(db, po.project_id)
+        return progress_svc.po_progress(db, po)
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.put(
+    "/delivery-phases/{phase_id}/date",
+    response_model=AreaDateChangeResponse,
+)
+async def change_delivery_area_date(
+    phase_id: str,
+    payload: AreaDateChange,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Move one area's delivery date (Q2a). Draft sales order lines on the area follow in
+    the same transaction; a published order gets an amendment proposed, never a rewrite.
+    `restore_lines` is Undo."""
+    try:
+        validate_uuid_path(phase_id, resource="Delivery area")
+        phase = progress_svc.get_phase(db, phase_id)
+        project = projects.get_project_or_404(db, phase.project_id)
+        projects.assert_can_edit_project(
+            db, project, current_user["id"], permission_slugs(db, current_user["id"])
+        )
+        body = progress_svc.change_area_date(
+            db,
+            phase,
+            delivery_date=payload.delivery_date,
+            actor_user_id=current_user["id"],
+            restore_lines=(
+                [row.model_dump() for row in payload.restore_lines]
+                if payload.restore_lines is not None
+                else None
+            ),
+        )
+        db.commit()
+        return body
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

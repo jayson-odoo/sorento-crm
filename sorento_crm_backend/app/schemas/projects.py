@@ -1591,6 +1591,11 @@ class ProjectPurchaseOrderResponse(BaseModel):
     # True only on the response to the create that actually moved the funnel (AC-F10).
     status_moved_to_po_received: bool = False
 
+    # PM-SIMPLIFY AC-O3: units ordered and delivered (AutoCount), next delivery.
+    ordered_units: Decimal = Decimal("0")
+    delivered_units: Decimal = Decimal("0")
+    next_delivery_date: Optional[date] = None
+
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

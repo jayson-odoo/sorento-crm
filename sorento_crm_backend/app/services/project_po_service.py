@@ -445,6 +445,29 @@ def replace_lines(
     return written
 
 
+def assert_hand_lines_editable(db: Session, *, po: ProjectPurchaseOrder) -> None:
+    """D1 (PM-SIMPLIFY): a PO that came from a scan has ONE set of lines, the document's.
+    The build reads the confirmed version's lines and confirming the next version rewrites
+    these, so a hand edit here never reached a sales order. It is refused instead of lost."""
+    from app.models.project_so import ProjectPOVersion
+
+    scanned = (
+        db.query(ProjectPOVersion.id)
+        .filter(ProjectPOVersion.purchase_order_id == po.id)
+        .first()
+    )
+    if scanned is not None:
+        raise AppException(
+            status_code=409,
+            message=(
+                "This purchase order came from an uploaded document, so its lines are the "
+                "document's. Correct them on the PO's Lines tab before confirming, or "
+                "upload a new PO version."
+            ),
+            code="po_lines_from_document",
+        )
+
+
 def save_po_document(
     db: Session, *, po: ProjectPurchaseOrder, payload: Dict[str, Any]
 ) -> List[ProjectPurchaseOrderLine]:
@@ -460,6 +483,8 @@ def save_po_document(
     real intent (the user removed every line) and does clear them.
     """
     header = {key: value for key, value in payload.items() if key != "lines"}
+    if payload.get("lines") is not None:
+        assert_hand_lines_editable(db, po=po)
     update_po(db, po=po, payload=header)
     if payload.get("lines") is None:
         return list_lines(db, po_id=str(po.id))
@@ -691,6 +716,10 @@ def serialize_pos(
         .all()
     } if quotation_ids else {}
 
+    from app.services.project_po_progress_service import po_totals
+
+    progress = po_totals(db, purchase_orders)
+
     out: List[Dict[str, Any]] = []
     for po in purchase_orders:
         version = versions.get(po.quotation_version_id or "")
@@ -727,6 +756,7 @@ def serialize_pos(
                 "v1_total": drift["v1_total"],
                 "drift_delta": drift["delta"],
                 "drift_percent": drift["percent"],
+                **progress.get(str(po.id), {}),
                 "created_at": po.created_at,
                 "updated_at": po.updated_at,
             }
