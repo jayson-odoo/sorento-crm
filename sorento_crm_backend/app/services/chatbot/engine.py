@@ -1189,6 +1189,13 @@ def _reply_to_message_id(envelope: Envelope) -> str | None:
     return str(value) if value not in (None, "") else None
 
 
+def _typed_keys(message: Any) -> frozenset[str]:
+    """Folded keys of the words of the message's own first line (what `_candidate_lines` reads)."""
+    if not isinstance(message, str):
+        return frozenset()
+    return frozenset(k for w in message.split("\n", 1)[0].split() if (k := turn_state.token_key(w)))
+
+
 def turn_apply(state_in: Any, *args: Any, **kwargs: Any) -> Any:
     """APPLY, keeping the QUOTED-REPLY live-question aside (R4) on the state it returns:
     APPLY builds a fresh `State`, which would otherwise drop it."""
@@ -6035,6 +6042,7 @@ def _run_stages_body(  # noqa: PLR0915
                     resolved_candidates,
                     frozenset(unplaced_tokens),
                     exact=exact_kinds,
+                    typed=_typed_keys(latest_user_message),
                 )
                 state_out.focus.relation = seat_relation
             if (
@@ -6093,6 +6101,7 @@ def _run_stages_body(  # noqa: PLR0915
                     resolved_candidates,
                     frozenset(unplaced_tokens),
                     exact=exact_kinds,
+                    typed=_typed_keys(latest_user_message),
                 )
                 state_out.focus.relation = seat_relation
             # Round 4 R5: a clarify this turn is about to ask keeps the ask, so its answer
