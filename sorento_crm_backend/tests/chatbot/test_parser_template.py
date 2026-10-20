@@ -506,3 +506,30 @@ def test_template_file_ask_always_carries_one_entity_per_file_word():
     )
     examples = re.findall(r'"[A-Za-z ]+ [A-Z]{3,}[A-Z0-9-]*"', block)
     assert len(examples) <= 3, f"R-P2-06 has {len(examples)} word-plus-code worked examples: {examples}"
+
+
+# --- F1-J: the file step covers the audit classes; the domain line carries the entity ------------
+
+
+def test_template_file_step_covers_the_audit_classes():
+    block = _block("R-P2-06")
+    step = block.split("Then the pick", 1)[0]
+    assert re.search(r"digits|a number|a year|a page", step, re.I) and re.search(r"\bnot\b", step) and re.search(r"code", step, re.I), (
+        "step 1 does not say digits beside a document word are not a product code pick"
+    )
+    assert re.search(r"one file word", step, re.I) and re.search(r"several words|words naming one file", step, re.I), (
+        "step 1 does not say several words naming one file are one file word, one entity"
+    )
+    assert re.search(r"whatever stands beside|beside the file word", step, re.I), (
+        "step 1 does not say the entity stands whatever stands beside the file word"
+    )
+    assert len(re.findall(r'"[A-Za-z ]+ [A-Z]{3,}[A-Z0-9-]*"', block)) <= 3
+
+
+def test_template_product_attachment_domain_line_carries_the_file_entity():
+    lines = [ln for ln in _pt().TEMPLATE.splitlines() if ln.startswith("- product_attachment / check_product_attachment")]
+    assert lines, "no product_attachment domain line"
+    assert "attachment_type entity" in lines[0] and "see R-P2-06" in lines[0], (
+        "the product_attachment domain line does not say the ask carries the attachment_type entity of each file word: "
+        + lines[0][:200]
+    )
