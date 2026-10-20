@@ -219,6 +219,12 @@ or use own location, just like our email to purchasing". Plan crew-note 62883955
 - F31. Remark box: clearing keeps it empty while focused; the default returns on blur when left empty; typing
   exactly the default back stores nothing; max 500 characters; the box grows with its text (not only CSS
   field-sizing, so iOS Safari wraps too).
+- F32. Crew audit 98b5490248 (email risk blocker): a remark confirmed for a line lives in the confirmed revision
+  once the draft is gone (project_supply_service.py:7425). The board's confirmed-line data (PSS:5183-5206) and
+  the split read (LSS:480-493) return that confirmed remark, the Remark box shows it (with the "edited"
+  marker) instead of the default, and re-approving the confirmed line unchanged carries the same remark, so it
+  is NOT a change and purchasing gets nothing (as before this PR). Test: confirm with an edited remark ->
+  reopen -> remark shown -> re-approve unchanged -> no email row.
 
 ## G. Out of scope
 - Making Confirm never touch unsaved lines (crew option b).
