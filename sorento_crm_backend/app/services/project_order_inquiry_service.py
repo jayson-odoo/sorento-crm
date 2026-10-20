@@ -574,6 +574,65 @@ def saved_line_remark(snapshot: Mapping[str, Any]) -> Tuple[str, Optional[str]]:
     return remark, parts[0][1]
 
 
+def saved_draft_remark(
+    decision: Optional[Mapping[str, Any]],
+    *,
+    location: Optional[str] = None,
+    codes: Optional[Mapping[str, str]] = None,
+) -> Optional[str]:
+    """OI-SPLIT-GUIDE (UAC F3): what the purchasing email will say for a line whose decision
+    is SAVED but not confirmed yet, in the email's own words (`saved_line_remark`, one
+    function): the board's draft (`so_supply_decision_drafts.decision`) laid out the way
+    `ProjectSupplyService._snapshot` freezes a confirmed line's composition (reserve, incoming,
+    borrow, buy, in that order). `codes` names a reserve's or borrow's warehouse by id when the
+    draft carries no code. A saved Cancel SO reads CANCEL, as the email's cancelled-line line
+    does; a rejection, or a draft with nothing composed, has no words (`None`)."""
+    if not decision:
+        return None
+    verdict = decision.get("verdict")
+    if verdict == "cancelled":
+        return "CANCEL"
+    if verdict == "rejected":
+        return None
+    codes = codes or {}
+
+    def code_of(item: Mapping[str, Any], key: str) -> Optional[str]:
+        return item.get(key) or codes.get(str(item.get("warehouse_id") or "")) or None
+
+    components: List[Dict[str, Any]] = [
+        {
+            "kind": "reserve",
+            "qty": item.get("qty"),
+            "rung": item.get("rung"),
+            "source_location": code_of(item, "location"),
+        }
+        for item in decision.get("reserve") or []
+    ]
+    if _dec(decision.get("timely_spo_qty")) > _ZERO:
+        components.append({"kind": "timely_spo", "qty": decision.get("timely_spo_qty")})
+    components.extend(
+        {
+            "kind": "borrow",
+            "qty": item.get("qty"),
+            "rung": "supply_borrow" if item.get("supply_key") else None,
+            "supply_document": item.get("supply_document"),
+            "source_location": code_of(item, "warehouse_code"),
+        }
+        for item in decision.get("borrow") or []
+    )
+    if _dec(decision.get("buy_qty")) > _ZERO:
+        components.append({"kind": "buy", "qty": decision.get("buy_qty")})
+    remark, _location = saved_line_remark(
+        {
+            "components": components,
+            "order_back": bool(decision.get("order_back")),
+            "buy_origin": decision.get("buy_origin"),
+            "location": location,
+        }
+    )
+    return remark or None
+
+
 def _saved_line_parts(
     snapshot: Mapping[str, Any],
 ) -> List[Tuple[str, Optional[str], Decimal, str]]:

@@ -787,18 +787,24 @@ class LineSplitService:
         for target in sits.values():
             if target:
                 sitting_on.add(target)
+        # OI-SPLIT-GUIDE (UAC F3): each line's saved, unconfirmed decision in the purchasing
+        # email's words; a line with one is listed even when the book cancelled it.
+        saved_remarks = self._saved_remarks(lines.values())
         listed = [
             f
             for f in lines.values()
-            if not f.cancelled
-            and (
-                f.base()[0] > _ZERO
-                or f.pending
-                or f.splits
-                or f.line_id in sitting_on
-                # Every line, like the staff Excel: one delivered in full reads read-only.
-                or f.delivered_in_full(sitting_on)
+            if (
+                not f.cancelled
+                and (
+                    f.base()[0] > _ZERO
+                    or f.pending
+                    or f.splits
+                    or f.line_id in sitting_on
+                    # Every line, like the staff Excel: one delivered in full reads read-only.
+                    or f.delivered_in_full(sitting_on)
+                )
             )
+            or f.line_id in saved_remarks
         ]
         listed.sort(key=lambda f: (f.item_code, f.location, f.line_no or 0))
         plans = line_plans(lines, sits, sitting_on)
@@ -861,6 +867,7 @@ class LineSplitService:
                         for s in f.splits
                     ],
                     "split_view": views.get(f.line_id),
+                    "saved_remark": saved_remarks.get(f.line_id),
                 }
             )
         return {
@@ -878,6 +885,44 @@ class LineSplitService:
                 None if any(f.pending for f in listed) else self._last_confirmed_on(order)
             ),
             "lines": out_lines,
+        }
+
+    def _saved_remarks(self, lines: Iterable[LineFacts]) -> Dict[str, Optional[str]]:
+        """`mirror line id -> the email's words for its saved draft` (`saved_draft_remark`),
+        for every line with a saved decision draft (the words are `None` for a rejection)."""
+        from app.models.inventory import Warehouse
+        from app.models.project_so import SOSupplyDecisionDraft
+        from app.services.project_order_inquiry_service import saved_draft_remark
+
+        by_core = {str(f.core.id): f for f in lines if f.core is not None}
+        if not by_core:
+            return {}
+        drafts = {
+            str(row.core_line_id): row.decision
+            for row in self.db.query(SOSupplyDecisionDraft).filter(
+                SOSupplyDecisionDraft.core_line_id.in_(list(by_core))
+            )
+        }
+        warehouse_ids = {
+            str(item.get("warehouse_id"))
+            for decision in drafts.values()
+            for item in [*((decision or {}).get("reserve") or []), *((decision or {}).get("borrow") or [])]
+            if item.get("warehouse_id")
+        }
+        codes = (
+            {
+                str(w.id): w.warehouse_code
+                for w in self.db.query(Warehouse).filter(Warehouse.id.in_(list(warehouse_ids)))
+            }
+            if warehouse_ids
+            else {}
+        )
+        return {
+            by_core[core_id].line_id: saved_draft_remark(
+                decision, location=by_core[core_id].location or None, codes=codes
+            )
+            for core_id, decision in drafts.items()
+            if core_id in by_core
         }
 
     def _last_confirmed_on(self, order: ProjectSalesOrder) -> Optional[date]:
