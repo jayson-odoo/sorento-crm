@@ -1550,7 +1550,13 @@ class ProjectOrderInquiryService:
                 # split). They are filed under this revision and `_keep_split_rows` moves the
                 # ones the edit changed (one DELAY for a moved date). The netting below would
                 # supersede every raised row it cannot settle as one (SO417636 480: CANCEL
-                # 14 / 236 / 167 and an unsplit ORDER 417).
+                # 14 / 236 / 167 and an unsplit ORDER 417). A product AutoCount swapped still
+                # follows on every row, as on the declined-settle path.
+                product_move = self._restate_product(
+                    inquiry, self._split_line_rows(str(line.id)), entry
+                )
+                if product_move:
+                    product_moves.append(product_move)
                 self._refile_rows(inquiry, line, decision)
                 if str(line.id) in settle_in_place:
                     settled_in_place.append(str(line.id))
@@ -6224,7 +6230,10 @@ class ProjectOrderInquiryService:
         they still ask for exactly `need`."""
         rows = self._split_line_rows(str(line.id))
         if len(rows) < 2 or any(
-            row.ack_state == ACK_REJECTED or row.rejected_at is not None for row in rows
+            row.ack_state == ACK_REJECTED
+            or row.rejected_by is not None
+            or row.rejected_at is not None
+            for row in rows
         ):
             return False
         return self._asked_qty(str(line.id)) == need

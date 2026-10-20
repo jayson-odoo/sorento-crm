@@ -1,6 +1,7 @@
 # PLAN: kept-split Confirm on all-raised unlinked rows sends one DELAY (OI-SPLIT-SUPERSEDE-FIX)
 
-Status: Build. Track: small fix (server-only, no UI, no migration, no auth change). Lead pattern:
+Status: PR #1803, reviewer READY (S1 product follow, S2 refile assertion, N1 folded in); waiting
+on CI. Track: small fix (server-only, no UI, no migration, no auth change). Lead pattern:
 red test first, one fix, reviewer, touched tests only.
 
 ## Defect
@@ -22,3 +23,9 @@ plus a fresh ORDER instead of one DELAY on the moved row.
 ## Fix
 
 See the PR body for the cause analysis with file:line evidence.
+
+1. A split line `_kept_split_needs` acts on whose live plan rows (two or more, none refused)
+   already ask for the new plan's total is re-filed, its product follows AutoCount, and
+   `_keep_split_rows` moves only the rows the edit changed; the netting is not run for it.
+2. `db.flush()` before `_keep_split_rows`: the session does not autoflush, so a fresh row the
+   netting added for the last line read was invisible to it.

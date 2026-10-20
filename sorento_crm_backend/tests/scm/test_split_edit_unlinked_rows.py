@@ -84,6 +84,17 @@ def test_editing_one_date_of_an_all_raised_unlinked_split_sends_one_delay(api, e
     assert _live(_worklist(s, s.line[480])) == sorted(
         [(_d("14"), D_480_NEW), (_d("236"), D_608), (_d("167"), D_167_EDIT)]
     ), ("only the 167 row moves, to 20/12/2029", _worklist(s, s.line[480]))
+    from app.models.project_so import SOSupplyDecision
+
+    latest = (
+        s.db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == s.order.id)
+        .order_by(SOSupplyDecision.revision_no.desc())
+        .first()
+    )
+    assert {str(row.supply_decision_id) for row in after.values() if row.state != INQUIRY_CANCELLED} == {
+        str(latest.id)
+    }, ("every live 480 row is filed under this Confirm, so a later Reject retires it")
     moved = [row for row in after.values() if row.delivery_date == D_167_EDIT]
     assert len(moved) == 1 and moved[0].previous_delivery_date == D_167, (
         "the moved row keeps its old date as its Was", [(r.qty, r.previous_delivery_date) for r in moved])
