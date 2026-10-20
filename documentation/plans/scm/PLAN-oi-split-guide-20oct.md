@@ -1,10 +1,10 @@
 # PLAN: guided Confirm on the Fulfilment planning board (OI-SPLIT-GUIDE)
 
-Status: Reviewer READY on 095208a49d (PR #1799 draft); browser pass 1 PASS on 27feec5a4c with two
-findings: Review line number (fixed, UAC C2a) and a main press defect (confirming a split edit cancels
-raised unlinked split rows) handed to lane OI-SPLIT-SUPERSEDE-FIX (crew ruling). Next: that lane merges,
-merge main here, browser re-check SO417636, clean head + ready for ci, --handtest (laneboard/scripts/1799.md).
-Track M.
+Status: Owner hand test 1 (20 Oct, c024bf4056) = REWORK: the review is the split view (UAC F). Rework
+built in rounds 3-4 (red 7b7d0a1f87, 4bb00be5d0; product 42d1bd9d36 22c8d751ea ff468ae078 e5b0a2a0d3
+608d5deb10 754b38de0d; kill held each round); reviewer READY on 754b38de0d. Main defect found on the way
+fixed by #1803 (merged in). Next: browser pass 1280/375 on the final head, laneboard/scripts/1799.md,
+--handtest. Track M.
 
 Card: `oi-split-guide-behaviour-card.md`. UAC: `oi-split-guide-20oct-acceptance-criteria.md` (the
 behaviour; this plan does not restate it). Mock: `documentation/mockups/OI-SPLIT-GUIDE/index.html`.
