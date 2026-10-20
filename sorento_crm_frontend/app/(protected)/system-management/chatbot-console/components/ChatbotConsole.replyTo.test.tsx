@@ -1,6 +1,6 @@
 /**
- * QUOTED-REPLY AC-QR-19: the console's "Reply to" control. Red until the picker, the
- * `reply_to` request field and the quoted user bubble exist.
+ * QUOTED-REPLY AC-QR-19: the console's reply control. Since CHAT-CONSOLE-UX it is the bubble's
+ * own menu (and swipe) rather than a dropdown; the `reply_to` payload is unchanged.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -64,21 +64,24 @@ async function send(text: string) {
   fireEvent.keyDown(textarea(), { key: 'Enter' });
 }
 
-/** The "Reply to" SearchableSelect trigger: found by its accessible name or visible text. */
-function replyTrigger(): HTMLElement | null {
-  const triggers = Array.from(
-    document.querySelectorAll<HTMLElement>('[data-slot="searchable-select-trigger"]'),
-  );
-  return (
-    triggers.find((t) => /reply to/i.test(`${t.getAttribute('aria-label') ?? ''} ${t.textContent ?? ''}`)) ?? null
-  );
+/** The bubble's own menu (right-click; long-press on a phone) - the reply action since
+ * CHAT-CONSOLE-UX replaced the "Reply to" dropdown. */
+function bubbleOf(text: string): HTMLElement {
+  return screen.getAllByText(text)[0].closest('[data-testid="message-bubble"]') as HTMLElement;
 }
 
-async function openReplyOptions(): Promise<HTMLElement[]> {
-  const trigger = replyTrigger();
-  expect(trigger, 'a "Reply to" SearchableSelect trigger').not.toBeNull();
-  fireEvent.click(trigger!);
-  return screen.findAllByRole('option');
+async function menuItemsOf(text: string): Promise<string[]> {
+  fireEvent.contextMenu(bubbleOf(text), { clientX: 20, clientY: 20 });
+  const items = (await screen.findAllByRole('menuitem')).map((i) => i.textContent ?? '');
+  fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+  await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
+  return items;
+}
+
+async function replyTo(text: string) {
+  fireEvent.contextMenu(bubbleOf(text), { clientX: 20, clientY: 20 });
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Reply' }));
+  await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
 }
 
 beforeEach(() => {
@@ -95,7 +98,7 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('ChatbotConsole - Reply to control (AC-QR-19)', () => {
-  it('renders a Reply to picker once a bot reply exists, listing bot bubbles only, newest first', async () => {
+  it('offers Reply on every bot bubble of a turn, never on a greeting or an unacknowledged send', async () => {
     postConsoleTurn
       .mockResolvedValueOnce(turn('t1', 'Which product do you mean?'))
       .mockResolvedValueOnce(turn('t2', 'Stock is 12 on hand.', ['Anything else?']));
@@ -105,19 +108,15 @@ describe('ChatbotConsole - Reply to control (AC-QR-19)', () => {
     await send('second');
     await screen.findByText('Anything else?');
 
-    const options = await openReplyOptions();
-    const labels = options.map((o) => o.textContent ?? '');
+    for (const text of ['Anything else?', 'Stock is 12 on hand.', 'Which product do you mean?']) {
+      expect(await menuItemsOf(text)).toContain('Reply');
+    }
     // Greeting lines are never quotable.
     for (const greeting of CONSOLE_GREETING_MESSAGES) {
-      expect(labels.some((l) => l.includes(greeting))).toBe(false);
+      expect(await menuItemsOf(greeting)).not.toContain('Reply');
     }
-    // User bubbles are never quotable.
-    expect(labels.some((l) => l.includes('first') && !l.includes('Which'))).toBe(false);
-    // Newest first: turn 2's last bubble, its first bubble, then turn 1's reply.
-    expect(labels).toHaveLength(3);
-    expect(labels[0]).toContain('Anything else?');
-    expect(labels[1]).toContain('Stock is 12 on hand.');
-    expect(labels[2]).toContain('Which product do you mean?');
+    // A user bubble the server did not acknowledge (no message_id) has nothing to quote.
+    expect(await menuItemsOf('first')).not.toContain('Reply');
   });
 
   it('sending after choosing a bubble posts reply_to {id, text} with the typed text', async () => {
@@ -128,8 +127,7 @@ describe('ChatbotConsole - Reply to control (AC-QR-19)', () => {
     await send('price?');
     await screen.findByText('Which product do you mean?');
 
-    const options = await openReplyOptions();
-    fireEvent.click(options[0]);
+    await replyTo('Which product do you mean?');
     await send('1 unit');
 
     await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(2));
@@ -146,8 +144,7 @@ describe('ChatbotConsole - Reply to control (AC-QR-19)', () => {
     await send('price?');
     await screen.findByText('Which product do you mean?');
 
-    const options = await openReplyOptions();
-    fireEvent.click(options[0]);
+    await replyTo('Which product do you mean?');
     await send('1 unit');
 
     const typed = await screen.findByText('1 unit');
@@ -167,7 +164,7 @@ describe('ChatbotConsole - Reply to control (AC-QR-19)', () => {
     expect(found).toBe(true);
   });
 
-  it('clears the picker after the send, so the next send carries no reply_to', async () => {
+  it('clears the reply after the send, so the next send carries no reply_to', async () => {
     postConsoleTurn
       .mockResolvedValueOnce(turn('t1', 'Which product do you mean?'))
       .mockResolvedValueOnce(turn('t2', 'Noted.'))
@@ -176,15 +173,12 @@ describe('ChatbotConsole - Reply to control (AC-QR-19)', () => {
     await send('price?');
     await screen.findByText('Which product do you mean?');
 
-    const options = await openReplyOptions();
-    fireEvent.click(options[0]);
+    await replyTo('Which product do you mean?');
     await send('1 unit');
     await screen.findByText('Noted.');
 
-    // Picker is back to its empty state: it no longer shows the quoted bubble's text.
-    const trigger = replyTrigger();
-    expect(trigger).not.toBeNull();
-    expect(trigger!.textContent).not.toContain('Which product do you mean?');
+    // The "Replying to" bar is gone.
+    expect(screen.queryByTestId('chatbot-console-reply-to')).not.toBeInTheDocument();
 
     await send('and 2 units');
     await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(3));

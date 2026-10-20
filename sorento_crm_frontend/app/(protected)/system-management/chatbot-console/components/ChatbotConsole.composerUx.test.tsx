@@ -97,6 +97,7 @@ function touch(el: HTMLElement, type: 'pointerDown' | 'pointerMove' | 'pointerUp
 async function replyViaMenu(text: string) {
   fireEvent.contextMenu(bubbleOf(text), { clientX: 20, clientY: 20 });
   fireEvent.click(await screen.findByRole('menuitem', { name: 'Reply' }));
+  await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
 }
 
 function fileInput(): HTMLInputElement {
@@ -301,10 +302,11 @@ describe('voice (AC-CX-7..10)', () => {
     installRecordingStack();
     postConsoleTurn.mockResolvedValueOnce(mediaDone());
     renderConsole();
-    fireEvent.pointerDown(mic(), { pointerId: 1, button: 0, clientX: 300 });
+    const button = mic();
+    fireEvent.pointerDown(button, { pointerId: 1, button: 0, clientX: 300 });
     await screen.findByTestId('chatbot-console-recording');
     await act(() => new Promise((r) => setTimeout(r, 450)));
-    fireEvent.pointerUp(mic(), { pointerId: 1, button: 0, clientX: 300 });
+    fireEvent.pointerUp(button, { pointerId: 1, button: 0, clientX: 300 });
     await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(1));
     expect(postConsoleTurn.mock.calls[0][0].media).toMatchObject({ kind: 'audio' });
   });
@@ -312,11 +314,12 @@ describe('voice (AC-CX-7..10)', () => {
   it('AC-CX-9: hold and slide left cancels', async () => {
     installRecordingStack();
     renderConsole();
-    fireEvent.pointerDown(mic(), { pointerId: 1, button: 0, clientX: 300 });
+    const button = mic();
+    fireEvent.pointerDown(button, { pointerId: 1, button: 0, clientX: 300 });
     await screen.findByTestId('chatbot-console-recording');
     await act(() => new Promise((r) => setTimeout(r, 450)));
-    fireEvent.pointerMove(mic(), { pointerId: 1, clientX: 180 });
-    fireEvent.pointerUp(mic(), { pointerId: 1, button: 0, clientX: 180 });
+    fireEvent.pointerMove(button, { pointerId: 1, clientX: 180 });
+    fireEvent.pointerUp(button, { pointerId: 1, button: 0, clientX: 180 });
     await waitFor(() => expect(screen.queryByTestId('chatbot-console-recording')).not.toBeInTheDocument());
     expect(postConsoleTurn).not.toHaveBeenCalled();
     expect(tracks[0].stop).toHaveBeenCalled();
@@ -392,5 +395,46 @@ describe('paste and staged attachments (AC-CX-11..15)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
     await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(1));
     expect(postConsoleTurn.mock.calls[0][0].media).toMatchObject({ kind: 'image', filename: 'photo.png' });
+  });
+});
+
+describe('a quote rides a voice note or image too (Q2 (b), crew 20 Oct)', () => {
+  it('a pasted image sent with a quote posts the same reply_to and shows the quote', async () => {
+    postConsoleTurn.mockResolvedValueOnce(turn('t1', 'Which one?')).mockResolvedValueOnce(mediaDone());
+    renderConsole();
+    await send('any WC?');
+    await screen.findByText('Which one?');
+    await replyViaMenu('Which one?');
+    fireEvent.paste(textarea(), { clipboardData: { files: [png()] } });
+    await screen.findByTestId('chatbot-console-staged');
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+    await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(2));
+    expect(postConsoleTurn.mock.calls[1][0]).toMatchObject({
+      media: { kind: 'image' },
+      reply_to: { id: 'bot-t1-0', text: 'Which one?', source: 'n8n' },
+    });
+    expect(screen.queryByTestId('chatbot-console-reply-to')).not.toBeInTheDocument();
+    // The quote shows on the sent image bubble as well as the bot's own bubble.
+    await waitFor(() => expect(screen.getAllByText('Which one?')).toHaveLength(2));
+  });
+
+  it('a voice note sent with a quote posts reply_to', async () => {
+    installRecordingStack();
+    postConsoleTurn.mockResolvedValueOnce(turn('t1', 'Which one?')).mockResolvedValueOnce(mediaDone());
+    renderConsole();
+    await send('any WC?');
+    await screen.findByText('Which one?');
+    await replyViaMenu('Which one?');
+    fireEvent.pointerDown(mic(), { pointerId: 1, button: 0 });
+    fireEvent.pointerUp(mic(), { pointerId: 1, button: 0 });
+    await screen.findByTestId('chatbot-console-recording');
+    fireEvent.click(screen.getByRole('button', { name: 'Send voice message' }));
+
+    await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(2));
+    expect(postConsoleTurn.mock.calls[1][0]).toMatchObject({
+      media: { kind: 'audio' },
+      reply_to: { id: 'bot-t1-0', source: 'n8n' },
+    });
   });
 });
