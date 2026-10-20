@@ -21,7 +21,7 @@ from __future__ import annotations
 import io
 import re
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from decimal import Decimal
 from typing import Dict, List, Optional, Tuple
@@ -66,6 +66,15 @@ _ADDITIONAL = re.compile(r"\+?\s*\badd(?:itional|'?l)?\b\.?", re.IGNORECASE)
 
 class CellError(ValueError):
     """A cell this reader cannot turn into tiers; the message quotes it."""
+
+
+class AccountPick(CellError):
+    """A rate names an account no row of the dealer has ("A/C 9", SRT 57-59): the rows wait on
+    the user picking which of the dealer's accounts it means, never on a guess (round 10)."""
+
+    def __init__(self, message: str, pick_key: str, label: str, choices: List[str]):
+        super().__init__(message)
+        self.pick_key, self.label, self.choices = pick_key, label, choices
 
 
 @dataclass
@@ -220,6 +229,9 @@ class SchemeTier:
     is_additional: bool
     #: customer code -> rate
     account_rates: Optional[Dict[str, Decimal]]
+    #: A fixed amount paid once per period when the tier is reached ("A/C I- 15,000" in an
+    #: incentive column, round 10).
+    bonus: Optional[Decimal] = None
 
 
 @dataclass
@@ -268,6 +280,8 @@ class RowResult:
     match: Optional[str] = None
     #: Up to 3 customers to pick from, for a row with no exact name match (set by `run`).
     suggestions: List[dict] = field(default_factory=list)
+    #: {pick_key, label, choices}: a rate's account label waiting on the user's pick (round 10).
+    account_pick: Optional[dict] = None
 
 
 @dataclass
@@ -646,6 +660,8 @@ class RateEntry:
     label: Optional[str]
     rate: Decimal
     is_additional: bool = False
+    #: An account and an amount where a rate belongs, read as a fixed bonus (round 10).
+    bonus: Optional[Decimal] = None
 
 
 def _is_nil(value) -> bool:
@@ -668,10 +684,16 @@ def _fraction(n: Decimal, percent_format: bool) -> Decimal:
     return n * 100 if percent_format or n < 1 else n
 
 
-def parse_rate_cell(value, *, percent_format: bool = False) -> List[RateEntry]:
+def parse_rate_cell(
+    value, *, percent_format: bool = False, threshold: Optional[Decimal] = None
+) -> List[RateEntry]:
     """The rates one incentive cell holds: `0.02`, `2%`, `3`, `A/C I- 3%`, `Deluxe 2% / Mastile
     3%`, `+ Additional 1%`, `3% + Additional 1%`. `[]` for an empty or dash cell; a NIL word
-    raises (its caller decides whether the threshold beside it makes that an error)."""
+    raises (its caller decides whether the threshold beside it makes that an error).
+
+    `A/C I- 15,000` (an account and an amount, SRT 15-17) is a fixed bonus on the tier when the
+    amount is at most `RATE_LIMIT_PCT` of the tier's `threshold`; a larger amount, or an amount
+    with no account, stays "not a rate" (round 10)."""
     if _is_dash(value):
         return []
     if _is_number(value):
@@ -708,9 +730,19 @@ def parse_rate_cell(value, *, percent_format: bool = False) -> List[RateEntry]:
             if not m:
                 raise CellError(f'cannot read the rate "{line}"')
             n = Decimal(m.group("num").replace(",", ""))
+            label = _clean_label(m.group("label"))
             if n > 100:
+                if label and threshold and not additional and n <= threshold * RATE_LIMIT_PCT / 100:
+                    out.append(RateEntry(label, Decimal(0), False, bonus=n))
+                    continue
+                if threshold:
+                    share = f"{(n * 100 / threshold).quantize(Decimal('1')):f}"
+                    raise CellError(
+                        f'"{line}" is not a rate: {n:,.0f} is {share}% of the threshold {threshold:,.0f}, '
+                        f"more than a bonus of up to {RATE_LIMIT_PCT}%"
+                    )
                 raise CellError(f'"{line}" is not a rate')
-            out.append(RateEntry(_clean_label(m.group("label")), _fraction(n, False), additional))
+            out.append(RateEntry(label, _fraction(n, False), additional))
     if not out:
         raise CellError(f'cannot read the rate "{text}"')
     return out
@@ -718,7 +750,7 @@ def parse_rate_cell(value, *, percent_format: bool = False) -> List[RateEntry]:
 
 
 
-def parse_workbook(data: bytes, *, year: int) -> ParsedWorkbook:
+def parse_workbook(data: bytes, *, year: int, label_picks: Optional[Dict[str, str]] = None) -> ParsedWorkbook:
     import zipfile
 
     from openpyxl import load_workbook
@@ -769,7 +801,7 @@ def parse_workbook(data: bytes, *, year: int) -> ParsedWorkbook:
                 res.status, res.reason = "not_representable", reason
                 rows.append(res)
             continue
-        sheet_rows, sheet_schemes = _parse_sheet(grid, ws.title, header, year, notes)
+        sheet_rows, sheet_schemes = _parse_sheet(grid, ws.title, header, year, notes, label_picks or {})
         rows.extend(sheet_rows)
         schemes.extend(sheet_schemes)
     return ParsedWorkbook(rows, schemes, notes)
@@ -796,7 +828,9 @@ def _row_key(sheet: str, row: int, code: Optional[str]) -> str:
     return code or f"{sheet}!{row}"
 
 
-def _parse_sheet(grid: _Grid, sheet: str, header: Tuple[int, int], year: int, notes: List[str]):
+def _parse_sheet(
+    grid: _Grid, sheet: str, header: Tuple[int, int], year: int, notes: List[str], label_picks: Dict[str, str]
+):
     first_header, last_header = header
     cols = _columns(grid, first_header, last_header, year)
     by_role: Dict[str, Optional[_Column]] = {
@@ -867,8 +901,14 @@ def _parse_sheet(grid: _Grid, sheet: str, header: Tuple[int, int], year: int, no
             dealer_of[r] = ("row", r)
         previous = (r, name_key)
     labels_of: Dict[Tuple, Dict[str, str]] = {}
-    for r, res in results.items():
+    #: The dealer's first row (where an account pick is keyed) and its accounts as written.
+    first_of: Dict[Tuple, int] = {}
+    accounts_of: Dict[Tuple, Dict[str, str]] = {}
+    for r, res in sorted(results.items()):
         labels = labels_of.setdefault(dealer_of[r], {})
+        first_of.setdefault(dealer_of[r], r)
+        if res.account_in_file:
+            accounts_of.setdefault(dealer_of[r], {}).setdefault(_label_key(res.account_in_file), res.account_in_file)
         for text in (res.account_in_file, res.code):
             if text:
                 labels.setdefault(_label_key(text), res.key)
@@ -906,9 +946,19 @@ def _parse_sheet(grid: _Grid, sheet: str, header: Tuple[int, int], year: int, no
                 members.setdefault(_root(groups, r), []).append(r)
             for _root_row, group_rows in sorted(members.items()):
                 group_rows.sort()
-                ctx = _Ctx(grid, sheet, group_rows, results, labels_of[dealer_of[group_rows[0]]], year)
+                dealer = dealer_of[group_rows[0]]
+                ctx = _Ctx(
+                    grid, sheet, group_rows, results, labels_of[dealer], year,
+                    dealer_row=first_of[dealer],
+                    dealer_accounts=list(accounts_of.get(dealer, {}).values()),
+                    label_picks=label_picks,
+                )
                 try:
                     schemes.extend(_group_schemes(ctx, kind, points, kind_cols, window_col, by_role))
+                except AccountPick as exc:
+                    for r in group_rows:
+                        results[r].status, results[r].reason = "needs_pick", str(exc)
+                        results[r].account_pick = {"pick_key": exc.pick_key, "label": exc.label, "choices": exc.choices}
                 except CellError as exc:
                     for r in group_rows:
                         results[r].status, results[r].reason = "not_representable", str(exc)
@@ -942,6 +992,11 @@ class _Ctx:
     #: label key -> row key, over the whole dealer (not only this target's rows).
     dealer_labels: Dict[str, str]
     year: int
+    #: The dealer's first row, and its accounts as the file writes them (an account pick's choices).
+    dealer_row: int = 0
+    dealer_accounts: List[str] = field(default_factory=list)
+    #: "<sheet>!<dealer row>~<label as written>" -> the dealer account the user picked for it.
+    label_picks: Dict[str, str] = field(default_factory=dict)
 
     @property
     def keys(self) -> List[str]:
@@ -999,12 +1054,12 @@ def _group_schemes(
                 # tiers as its own target, never dropped (gate 8).
                 out = []
                 for r in ctx.rows:
-                    single = _Ctx(grid, ctx.sheet, [r], results, ctx.dealer_labels, ctx.year)
+                    single = replace(ctx, rows=[r])
                     out.extend(_group_schemes(single, kind, points, per_account, window_col, by_role))
                 return out
             out = list(dealer)
             for r in ctx.rows:
-                single = _Ctx(grid, ctx.sheet, [r], results, ctx.dealer_labels, ctx.year)
+                single = replace(ctx, rows=[r])
                 own_schemes = _group_schemes(
                     single, kind, points, per_account, window_col, by_role,
                     inherit_window=(dealer[0].start, dealer[0].end),
@@ -1088,7 +1143,9 @@ def _group_schemes(
     # the repeat check does not depend on the order of the columns.
     written: set = set()
     for t in tiers:
-        shape = (t.period_start, t.threshold, t.is_additional, t.rate, frozenset((t.account_rates or {}).items()))
+        shape = (
+            t.period_start, t.threshold, t.is_additional, t.rate, frozenset((t.account_rates or {}).items()), t.bonus
+        )
         if shape in written:
             # The same threshold and rate written twice in one period is one tier (gate 5:
             # "A/C I 9% | A/C I 9%"), said on the row so it is never silent.
@@ -1227,7 +1284,14 @@ def _period_tiers(ctx: _Ctx, cols, period_start, kind, shared_rates=()) -> Tuple
             # dealer's name and that account in the CRM when the import runs (gate 3).
             dealer = ctx.results[ctx.rows[0]].name_in_file or ""
             return ByName(dealer, split_account_suffix("x " + label)[1] or label), False
-        raise CellError(f'{name}: the rate names "{label}", which is not an account of this dealer')
+        message = f'{name}: the rate names "{label}", which is not an account of this dealer'
+        pick_key = f"{ctx.sheet}!{ctx.dealer_row}~{label}"
+        if not ctx.dealer_accounts or len(pick_key) > MAX_PICK_KEY:
+            raise CellError(message)
+        chosen = ctx.label_picks.get(pick_key)
+        if chosen is not None and any(_label_key(chosen) == _label_key(a) for a in ctx.dealer_accounts):
+            return resolve(chosen)
+        raise AccountPick(f"{message}; pick the account it means", pick_key, label, list(ctx.dealer_accounts))
 
     def shared(col: _Column, *, every_row: bool) -> Tuple[object, Dict[int, object]]:
         """The value the target reads (a merge over the rows, or the same value on each), or the
@@ -1320,10 +1384,16 @@ def _period_tiers(ctx: _Ctx, cols, period_start, kind, shared_rates=()) -> Tuple
         try:
             if rate_rows:
                 for r, v in rate_rows.items():
-                    entries.extend((r, e) for e in parse_rate_cell(v, percent_format=pct_format(rate_col, r)))
+                    entries.extend(
+                        (r, e)
+                        for e in parse_rate_cell(v, percent_format=pct_format(rate_col, r), threshold=threshold)
+                    )
             elif rate_value is not None:
                 entries.extend(
-                    (None, e) for e in parse_rate_cell(rate_value, percent_format=pct_format(rate_col, ctx.rows[0]))
+                    (None, e)
+                    for e in parse_rate_cell(
+                        rate_value, percent_format=pct_format(rate_col, ctx.rows[0]), threshold=threshold
+                    )
                 )
         except CellError as exc:
             if threshold is not None:
@@ -1343,8 +1413,16 @@ def _period_tiers(ctx: _Ctx, cols, period_start, kind, shared_rates=()) -> Tuple
                 raise CellError(f"{name}: the threshold {threshold:,.0f} has no incentive")
         main: Dict[str, Decimal] = {}
         main_rate: Optional[Decimal] = None
+        bonus: Optional[Decimal] = None
         extras: List[Tuple[Optional[Dict[str, Decimal]], Optional[Decimal]]] = []
         for r, e in entries:
+            if e.bonus is not None:
+                # Paid once the tier is reached, to the account the cell names.
+                if bonus is not None:
+                    raise CellError(f"{name}: two bonus amounts for the threshold {threshold:,.0f}")
+                payees.append(resolve(e.label)[0])
+                bonus = e.bonus
+                continue
             additional = e.is_additional
             target_key = None
             rate_for_all = None
@@ -1365,10 +1443,12 @@ def _period_tiers(ctx: _Ctx, cols, period_start, kind, shared_rates=()) -> Tuple
                 main[target_key] = e.rate
             else:
                 main_rate = rate_for_all
+        if bonus is not None and not main and main_rate is None:
+            main_rate = Decimal(0)
         if main or main_rate is not None:
             if main and main_rate is not None:
                 raise CellError(f"{name}: one tier pays both every account and named accounts")
-            out.append(SchemeTier(period_start, threshold, main_rate, False, main or None))
+            out.append(SchemeTier(period_start, threshold, main_rate, False, main or None, bonus))
         for rates, rate in extras:
             out.append(SchemeTier(period_start, threshold, rate, True, rates))
         previous_threshold = threshold
@@ -1400,6 +1480,10 @@ ACCOUNT_LABEL_LEDGERS: Dict[str, Dict[str, str]] = {"MCH": {"A/C II": "CERAMIC",
 MAX_FUZZY_LOOKUPS = 300
 #: A pick names a customer per row; more than the bounded sheets can hold is not a real form.
 MAX_PICKS = MAX_SHEETS * MAX_SHEET_ROWS
+#: The longest pick key `_parse_picks` takes.
+MAX_PICK_KEY = 200
+#: "<sheet>!<dealer row>~<label>": an account pick's key, never a row's ("<sheet>!<row>").
+_ACCOUNT_PICK_KEY = re.compile(r"!\d+~", re.DOTALL)
 
 
 #: Possessive quantifiers and no leading class: linear on any text (security review gate 2 B1:
@@ -1663,7 +1747,7 @@ def _parse_picks(picks: Optional[dict]) -> Dict[str, str]:
     if picks is None:
         return {}
     if not isinstance(picks, dict) or len(picks) > MAX_PICKS or not all(
-        isinstance(k, str) and isinstance(v, str) and len(k) <= 200 and len(v) <= 64 for k, v in picks.items()
+        isinstance(k, str) and isinstance(v, str) and len(k) <= MAX_PICK_KEY and len(v) <= 64 for k, v in picks.items()
     ):
         raise AppException(
             status_code=422,
@@ -1706,7 +1790,9 @@ def run(
 
     company_id = _acting_company(db)
     picks = _parse_picks(picks)
-    parsed = parse_workbook(data, year=year)
+    label_picks = {k: v for k, v in picks.items() if _ACCOUNT_PICK_KEY.search(k)}
+    picks = {k: v for k, v in picks.items() if k not in label_picks}
+    parsed = parse_workbook(data, year=year, label_picks=label_picks)
     rows_by_key = {(r.sheet, r.row): r for r in parsed.rows}
 
     # Codes the file names (a CUSTOMER CODE column, a PAY TO code), matched without regard to
@@ -1911,6 +1997,9 @@ def run(
         problem = None
         for scheme in schemes:
             ids = [customer_of(code).id for code in scheme.codes]
+            # account_rates per tier, by CRM customer: rows of one target on one ledger are one
+            # account (owner 20 Oct, MCH 82-84: "it is all for A/C I").
+            tier_rates: List[Optional[Dict[str, Decimal]]] = []
             if len(set(ids)) < len(ids):
                 # Several rows of one target name the same ledger (three "A/C I" rows, gate 6).
                 # By position: rows sharing a CUSTOMER CODE share one row key (review B1).
@@ -1922,8 +2011,29 @@ def run(
                     if customer_of(code) is not None and customer_of(code).id == twice
                 })
                 listed = ", ".join(str(n) for n in numbers[:-1]) + f" and {numbers[-1]}"
-                problem = f"rows {listed} are one CRM customer; a target lists each account once"
+            for t in scheme.tiers:
+                if not t.account_rates:
+                    tier_rates.append(None)
+                    continue
+                by_customer: Dict[str, Decimal] = {}
+                for code, rate in t.account_rates.items():
+                    cid = customer_of(code).id
+                    if cid in by_customer and by_customer[cid] != rate:
+                        shown = " and ".join(f"{v.normalize():f}%" for v in sorted({by_customer[cid], rate}))
+                        problem = f"rows {listed} are one CRM customer but give it different rates ({shown})"
+                        break
+                    by_customer[cid] = rate
+                if problem:
+                    break
+                tier_rates.append(by_customer)
+            if problem:
                 break
+            if len(set(ids)) < len(ids):
+                note = f"rows {listed} are one CRM customer: read as one account"
+                for r in all_rows:
+                    if r.row in numbers and note not in r.warnings:
+                        r.warnings.append(note)
+                ids = list(dict.fromkeys(ids))
             if scheme.payout_by_name is not None:
                 payout = by_name_customer.get(scheme.payout_by_name)
                 if payout is None:
@@ -1956,13 +2066,13 @@ def run(
                     "rate": float(t.rate or 0),
                     "is_additional": t.is_additional,
                     "account_rates": (
-                        [{"customer_id": customer_of(code).id, "rate": float(rate)}
-                         for code, rate in t.account_rates.items()]
-                        if t.account_rates
+                        [{"customer_id": cid, "rate": float(rate)} for cid, rate in rates.items()]
+                        if rates
                         else None
                     ),
+                    "bonus_amount": float(t.bonus) if t.bonus is not None else None,
                 }
-                for t in scheme.tiers
+                for t, rates in zip(scheme.tiers, tier_rates)
             ]
             fields = {
                 "commission_method": "retroactive",
@@ -2048,6 +2158,7 @@ def run(
                 "customer": res.customer if res.status in ("mapped", "not_representable") else None,
                 "match": res.match,
                 "suggestions": res.suggestions,
+                "account_pick": res.account_pick if res.status == "needs_pick" else None,
                 "status": res.status,
                 "reason": res.reason,
                 "warnings": res.warnings,

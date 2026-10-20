@@ -170,7 +170,10 @@ def test_one_code_on_two_rows_names_both_rows(api):
         ws["B2"], ws["B3"], ws["B4"] = c1.customer_code, c2.customer_code, c1.customer_code
 
     rows = _post(client, db, _bytes(fill))["rows"]
-    assert all("rows 2 and 4 are one CRM customer: read as one account" in r["warnings"] for r in rows), rows
+    note = "rows 2 and 4 are one CRM customer: read as one account"
+    assert [r["status"] for r in rows] == ["mapped"] * 3, rows
+    # Only the rows on that ledger say so; row 3 is the other ledger.
+    assert [note in r["warnings"] for r in rows] == [True, False, True], rows
 
 
 def test_a_paren_that_is_the_matched_account_is_not_a_branch(api):

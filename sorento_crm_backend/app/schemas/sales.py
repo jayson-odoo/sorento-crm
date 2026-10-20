@@ -823,6 +823,15 @@ class SalesTargetImportSuggestion(BaseModel):
     name: str
 
 
+class SalesTargetImportAccountPick(BaseModel):
+    #: "<sheet>!<dealer row>~<label>": the key the chosen account is sent under in `picks`.
+    pick_key: str
+    #: The account label as the file writes it ("A/C 9").
+    label: str
+    #: The dealer's accounts as the file writes them; the pick is one of these.
+    choices: List[str]
+
+
 class SalesTargetImportRow(BaseModel):
     sheet: str
     row: int
@@ -837,6 +846,8 @@ class SalesTargetImportRow(BaseModel):
     match: Optional[str] = None
     #: Up to 3 customers to pick from, on a `needs_pick` row.
     suggestions: List[SalesTargetImportSuggestion] = Field(default_factory=list)
+    #: A rate naming an account none of the dealer's rows has, waiting on an account pick.
+    account_pick: Optional[SalesTargetImportAccountPick] = None
     #: `mapped`, `needs_pick`, `skipped` or `not_representable`.
     status: str
     reason: Optional[str] = None

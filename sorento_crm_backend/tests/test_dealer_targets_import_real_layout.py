@@ -191,8 +191,10 @@ def test_dec_to_nov_yearly_window_does_not_shift_the_quarters():
 def test_typos_fail_their_row_with_a_reason():
     parsed, s_rows, _ = _parse()
     foxtrot = _row(parsed, S, s_rows["FOXTROT:A/C I"])
-    assert foxtrot.status == "not_representable"
+    # "A/C 1" is never read as A/C I on its own: it waits on an account pick (round 10).
+    assert foxtrot.status == "needs_pick"
     assert "A/C 1" in foxtrot.reason and "not an account" in foxtrot.reason
+    assert foxtrot.account_pick["label"] == "A/C 1"
     golf = _row(parsed, S, s_rows["GOLF:A/C I"])
     assert golf.status == "not_representable"
     assert "not a rate" in golf.reason
@@ -316,8 +318,8 @@ def test_dry_run_matches_by_name_and_account_and_lists_the_rest(api):
 
     summary = body["summary"]
     assert summary["auto_mapped"] == 13
-    assert summary["needs_pick"] == 1
-    assert summary["not_representable"] == 3                # the three typo rows
+    assert summary["needs_pick"] == 2                       # INDIA, and FOXTROT's "A/C 1" account pick
+    assert summary["not_representable"] == 2                # the GOLF and HOTEL typo rows
     assert summary["rows"] == len(s_rows) + len(m_rows)
 
 
