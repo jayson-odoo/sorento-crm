@@ -18,13 +18,13 @@ function handlers(): SheetHandlers {
   };
 }
 
-function renderSheet(payload: ReturnType<typeof ownerSavedCase>, only: number[]) {
+function renderSheet(payload: ReturnType<typeof ownerSavedCase>, only: number[], readOnly = true) {
   const all = sortLines(fromPayload(payload as never));
   const lines = all.filter((l) => only.includes(l.lineNo as number));
   const h = handlers();
   const utils = render(
     <LineSplitSheet
-      readOnly
+      readOnly={readOnly}
       lines={lines}
       allLines={all}
       savedLines={all}
@@ -103,5 +103,36 @@ describe('LineSplitSheet readOnly: same sheet, no controls (E1, E2)', () => {
     const moved = rows.find((r) => (r.textContent ?? '').includes('236'));
     expect(moved, under608.textContent ?? '').toBeDefined();
     expect(Array.from((moved as HTMLTableRowElement).cells).some((td) => (td.textContent ?? '').trim() === '480')).toBe(true);
+  });
+});
+
+/** UAC E6: at 375 the item column sticks; its body cells must stick where its header does. */
+function leftTokens(el: Element): string[] {
+  return (el.getAttribute('class') ?? '').split(/\s+/).filter((t) => t.includes('left-'));
+}
+function itemStickyOffsets(table: HTMLElement) {
+  const heads = Array.from(table.querySelectorAll('thead th'));
+  const index = heads.findIndex((th) => (th.textContent ?? '').trim() === 'Item code');
+  // The first row of each line block carries the item code cell.
+  const body = Array.from(table.querySelectorAll('tbody')).map(
+    (tbody) => tbody.querySelector('tr')!.cells[index] as Element,
+  );
+  return { head: leftTokens(heads[index]), body: body.map(leftTokens) };
+}
+
+describe('LineSplitSheet readOnly: the item column sticks at one offset (E6)', () => {
+  it('every sticky body cell carries the same left class as the Item code header', () => {
+    const { table } = renderSheet(ownerSavedCase(), [480, 752]);
+    const { head, body } = itemStickyOffsets(table);
+    expect(head.length).toBeGreaterThan(0);
+    expect(body.length).toBeGreaterThan(0);
+    for (const tokens of body) expect(tokens).toEqual(head);
+  });
+
+  it('the edit sheet still sticks header and body at the same offset (pins today)', () => {
+    const { table } = renderSheet(ownerSavedCase(), [480, 752], false);
+    const { head, body } = itemStickyOffsets(table);
+    expect(head).toContain('max-md:left-[28px]');
+    for (const tokens of body) expect(tokens).toContain('max-md:left-[28px]');
   });
 });
