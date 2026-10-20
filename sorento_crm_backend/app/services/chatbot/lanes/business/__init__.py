@@ -2399,6 +2399,17 @@ def run_fetch(
             getattr(ctx.get("localizer"), "language", None),
         )
     predicate = gate.get("predicate")
+    if (
+        tool_name == fetch_mod.TIER_PROBE_TOOL
+        and semantic_input.get("brand_subject")
+        and isinstance(predicate, dict)
+        and set((predicate.get("require") or {}).keys()) <= {"promotion"}
+    ):
+        # CHAT-PROMO-BRAND-FLYER: "Sorento A3 flyer" reads as the described set "Sorento
+        # products that have a promotion", which IS the question the promotions read answers
+        # by brand and kind (`promo_filter`): not a filter, and its count is not the answer.
+        predicate = None
+        trigger["predicate"] = None
     if isinstance(predicate, dict) and not predicate.get("qualifying_total"):
         # Reviewer B2 on PR #833: a described set with nothing in it has no product to
         # send, and the tool called without one answers about every product. The miss
