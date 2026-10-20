@@ -461,3 +461,48 @@ def test_template_number_alone_is_stock_only_when_stock_is_the_newest_thing():
     assert re.search(r"numbered list", block, re.I) and re.search(r"position", block, re.I), (
         "R-P1-03 does not say a number alone after a numbered list is a position"
     )
+
+
+# --- F1-H: a stated quantity leaves R-P1-02 for R-P1-03 in any count form ------------------------
+
+
+def test_template_held_subject_rule_defers_a_stated_quantity_to_stock_rule():
+    """F1-H2: the 'After an ETA answer a bare code ...' sentence is itself scoped to a code with
+    no quantity and points a stated quantity to R-P1-03 inline."""
+    block = _block("R-P1-02")
+    assert "not a new value of the held ask" not in block, (
+        "R-P1-02 still carries the separate 'not a new value of the held ask' sentence"
+    )
+    sentence = next((s for s in _sentences(block) if s.lstrip("- ").startswith("After an ETA answer")), None)
+    assert sentence, "R-P1-02 has no sentence starting 'After an ETA answer'"
+    assert re.search(r"no quantity|without a quantity", sentence, re.I), (
+        "the 'After an ETA answer' sentence is not scoped to a code with no quantity: " + sentence[:200]
+    )
+    assert "see R-P1-03" in sentence, "the 'After an ETA answer' sentence does not point a quantity to R-P1-03"
+
+
+def test_template_stated_quantity_form_of_the_count_does_not_matter():
+    block = _block("R-P1-03")
+    assert re.search(
+        r"(form|shape|way)[^.\n]{0,60}(does not|doesn't|never|no) matter|any form|any count form|same stated quantity|same quantity",
+        block, re.I,
+    ), "R-P1-03 does not say the form of the count does not matter"
+    assert re.search(r"x ?\d|x N", block) and re.search(r"\d+ ?pcs|N pcs|units?", block, re.I), (
+        "R-P1-03 does not name both 'x N' and 'N pcs' forms"
+    )
+
+
+# --- F1-I: a file ask always carries one attachment_type entity per file word --------------------
+
+
+def test_template_file_ask_always_carries_one_entity_per_file_word():
+    block = _block("R-P2-06")
+    first = block.split("\n", 2)[1]
+    assert re.search(r"\balways\b", first, re.I) and re.search(
+        r"one attachment_type entity per (file )?(word|item)", first, re.I
+    ) and re.search(r"file word", first, re.I), (
+        "the first sentence of R-P2-06 does not say a file ask always carries one attachment_type entity per file word: "
+        + first[:200]
+    )
+    examples = re.findall(r'"[A-Za-z ]+ [A-Z]{3,}[A-Z0-9-]*"', block)
+    assert len(examples) <= 3, f"R-P2-06 has {len(examples)} word-plus-code worked examples: {examples}"

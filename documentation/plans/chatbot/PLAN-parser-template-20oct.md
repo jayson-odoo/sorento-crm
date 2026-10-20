@@ -147,3 +147,39 @@ stock check is newest; after a newer numbered list it is a position, state_chang
 mirrored per R-X-05). Red 74e457e8c1, fix 57f5defb95 (69,410 chars, 99 passed), published v84 5f289272.
 Next, when the dev key has credits: ONE full conflict gold N=3 run on v84 (~USD 0.62; measures F1-E and the owner's
 quantity pairs together), then TRAIN x1 attachment + spec paired v77 vs v84.
+
+## F1-H / F1-H2 (owner quantity rows after a held answer)
+
+Full gold on v84 (F1-G, gold 71a9b33c48, USD 0.61): NEW 103 vs OLD v77 86/126 (v80 94). Held-answer rows N=3
+(c1-02 "x 5" after ETA / dq-09 "x 15" after ETA / dq-10 "70 pcs" after ETA / c1-09 "10 pcs" after outstanding orders):
+v84 3, 3, 0, 3; v85 (F1-H 1cf14e9eb5, an extra R-P1-02 sentence "a quantity is not a new value of the held ask") 3, 0,
+0, 0; v86 (F1-H2 2265ca5a40, the R-P1-02 code sentence scoped at its source to a code with no quantity, see R-P1-03)
+3, 3, 1, 0; control "ETA CODE x 5" incoming 3/3. The same rule text flips rows between versions: gpt-5.4-mini follows
+this boundary unreliably under one rule. Asked crew: c1-09 scope (a quantity after an ORDER answer) and whether to
+accept dq-10 at 1/3 and let TRAIN decide (a code backstop was ruled out by the owner). Spend about USD 6.01.
+
+## TRAIN x1 attachment (20 Oct, crew a54067515: v86 frozen, cap 7.7)
+
+Stack 8192/8292 per a38211499 (egress block, scheduler off, no worker, dev key bG4A; AI_ASSISTANT_MCP_URL needs the
+/mcp path, config.py:333). Combined build sorento_crm-ccl-s1 9517384485. Paired attachment set (83 real items):
+OLD v77 REAL 52/83 (63%), 83 run, USD 0.70; NEW v86 REAL 14/70 (20%), stopped at the error-rate guard after 73 (one
+"out of shared memory" on eval_base with both arms in parallel), USD 0.38. Cause, measured: v86 emits an
+attachment_type entity on 22 of 73 items, v77 on 70 of 83; without it the fetch never narrows (tool results 34 vs 78).
+Same class as gold c2 (file words): the consolidated R-P2-06 does not make gpt-5.4-mini emit the file entity that the
+old ATTACHMENT TYPE EXTRACTION section did. EARLY STOP: no full gold, no spec set. Spend about USD 7.13.
+Known misses kept (crew a54067515): c1-09 0/3, dq-10 1/3 (a quantity after an order / ETA answer). Layer that would fix
+them: code routing on the parsed quantity the parser already emits (entities carry quantity 10 / 70), not more prompt
+text; the owner ruled a backstop out, so only if TRAIN shows the shape matters.
+
+## F1-I (crew a54889127) and the stop
+
+R-P2-06 first step "a file ask always carries one attachment_type entity per file word ... whatever the word" (red
+5378fccc03, fix 43db077de7, 69,984 chars, 102 passed), published v87 3d375694. Gold c2 N=3: 11/12 (v86 7/12). TRAIN
+attachment NEW arm alone (stored v77 baseline): v87 REAL 32/80 (40%) vs v77 52/83 (63%); attachment_type entity on
+43/83 items (v86 22/73, v77 70/83); tool results 53 vs 78. Still under v77, so per crew a54889127: STOP, no further
+wording. Spend about USD 7.65 of 8.5. The file-entity gap stands as the open blocker for the consolidated template.
+Crew attachment audit (v77 TRAIN parser faults besides the entity drop), for the next R-P2-06 step-1 fix, as classes
+(no per-word rules): (1) a bare number beside a document word (a catalogue year "2025") taken as a product code
+(SRTJC2025): digits alone are not a code pick (R-P2-02 / CODE LOOKUP near-code rule); (2) a compound file phrase
+("DRAWING PICTURE") split into two file types: words naming one file are one file word, one entity; (3) a file word
+beside a code fragment ("8609 cert") gives no file entity: step 1 holds whatever stands beside the file word.
