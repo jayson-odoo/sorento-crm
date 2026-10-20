@@ -111,6 +111,19 @@ const COLUMNS: Array<{
   { key: 'remove', label: '', width: 34, aria: 'Remove' },
 ];
 
+/**
+ * OI-SPLIT-VIEW (UAC E1, E2): the read-only sheet the split popups draw. The same columns in the
+ * same order, less the drag grip, Balance and the remove column; with no grip the item column
+ * pins at the left edge on a phone.
+ */
+const READ_ONLY_DROPPED = new Set(['grip', 'balance', 'remove']);
+const READ_ONLY_ITEM_STICKY = 'max-md:sticky max-md:left-0';
+const READ_ONLY_COLUMNS = COLUMNS.filter(
+  (column) => !READ_ONLY_DROPPED.has(column.key),
+).map((column) =>
+  column.key === 'item' ? { ...column, className: READ_ONLY_ITEM_STICKY } : column,
+);
+
 const CELL =
   'h-9 border-b border-e border-border bg-background px-1.5 py-1 text-center align-middle text-xs';
 const BASE_CELL = cn(CELL, 'text-foreground');
@@ -342,8 +355,23 @@ function RemarkCell({
   );
 }
 
+/** A REMARK as the read-only sheet prints it: the typed remark, else the generated one muted. */
+function RemarkText({ value, generated }: { value: string; generated: string }) {
+  const text = value || generated;
+  return (
+    <span
+      className={cn('block truncate ps-2 text-start', !value && 'text-muted-foreground')}
+      title={text || undefined}
+    >
+      {text}
+    </span>
+  );
+}
+
 interface LineBlockProps {
   line: SplitLine;
+  /** OI-SPLIT-VIEW (UAC E2): values as text, no grip, Balance, + Split, remove or click-to-edit. */
+  readOnly: boolean;
   incomingRows: IncomingRow[];
   /** The draft changed this line's splits or the splits dropped on it: AutoCount's extra is stale. */
   extraStale: boolean;
@@ -363,6 +391,7 @@ interface LineBlockProps {
 
 const LineBlock = React.memo(function LineBlock({
   line,
+  readOnly: sheetReadOnly,
   incomingRows,
   extraStale,
   soNumber,
@@ -381,9 +410,9 @@ const LineBlock = React.memo(function LineBlock({
   // Read-only rows: a line AutoCount added (it only receives) or delivered in full (UAC A3).
   const delivered = Boolean(line.deliveredInFull);
   const added = isAddedLine(line);
-  const readOnly = added || delivered;
-  const remain = !readOnly && !open && readsRemain(line);
-  const allOwn = readOnly ? [] : splitsOf(line);
+  const locked = added || delivered;
+  const remain = !locked && !open && readsRemain(line);
+  const allOwn = locked ? [] : splitsOf(line);
   // Variant B (AC-G2): a split dropped on another line is drawn under that line, so this
   // block holds the splits that stay on it (or on a new line, or cancel) ...
   const splits = allOwn.filter(
@@ -395,7 +424,7 @@ const LineBlock = React.memo(function LineBlock({
   // ... then other lines' splits sitting on it, then AutoCount's extra (AC-G3).
   const extraQty =
     !delivered && !extraStale && line.extraQty ? line.extraQty : null;
-  const ownRows = remain || readOnly ? 1 : Math.max(1, splits.length);
+  const ownRows = remain || locked ? 1 : Math.max(1, splits.length);
   const rows =
     ownRows + (delivered ? 0 : incomingRows.length) + (extraQty ? 1 : 0);
   const span = rows > 1 ? rows : undefined;
@@ -423,7 +452,12 @@ const LineBlock = React.memo(function LineBlock({
       <TableCell
         rowSpan={span}
         data-pinned=""
-        className={cn(BASE_CELL, top, ITEM_STICKY, 'max-md:z-[1]')}
+        className={cn(
+          BASE_CELL,
+          top,
+          sheetReadOnly ? READ_ONLY_ITEM_STICKY : ITEM_STICKY,
+          'max-md:z-[1]',
+        )}
       >
         <span className="font-semibold">{line.itemCode}</span>
         <span className="block text-2xs text-muted-foreground md:hidden">
@@ -468,7 +502,7 @@ const LineBlock = React.memo(function LineBlock({
     </>
   );
 
-  const addButton = readOnly ? null : (
+  const addButton = locked || sheetReadOnly ? null : (
     <Button
       type="button"
       variant="outline"
@@ -482,13 +516,13 @@ const LineBlock = React.memo(function LineBlock({
     </Button>
   );
 
-  const balance = (
+  const balance = sheetReadOnly ? null : (
     <TableCell
       rowSpan={span}
       data-testid={`balance-${no}`}
       className={cn(baseCell)}
     >
-      {readOnly ? null : (
+      {locked ? null : (
         <div className="flex flex-col items-center gap-1">
           {remain ? null : gap === 0 ? (
             <span className="inline-flex items-center gap-0.5 font-semibold tabular-nums text-success">
@@ -518,12 +552,17 @@ const LineBlock = React.memo(function LineBlock({
 
   const gripCell = cn(CELL, top, GRIP_STICKY, 'max-md:z-[1] px-0');
   const changeCell = cn(CELL, top);
+  // The grip and remove columns are the edit sheet's; the read-only sheet has neither.
+  const emptyGrip = sheetReadOnly ? null : (
+    <TableCell data-pinned="" className={gripCell} />
+  );
+  const emptyRemove = sheetReadOnly ? null : <TableCell className={changeCell} />;
 
   let body: React.ReactNode;
   if (delivered) {
     body = (
       <TableRow className="border-0 hover:bg-transparent">
-        <TableCell data-pinned="" className={gripCell} />
+        {emptyGrip}
         {baseCells}
         <TableCell colSpan={2} className={cn(changeCell, 'ps-2 text-start')}>
           <span className="text-2xs text-muted-foreground">
@@ -532,18 +571,33 @@ const LineBlock = React.memo(function LineBlock({
         </TableCell>
         <TableCell className={changeCell} />
         {balance}
-        <TableCell className={changeCell} />
+        {emptyRemove}
       </TableRow>
     );
   } else if (added) {
     body = (
       <TableRow className="border-0 hover:bg-transparent">
-        <TableCell data-pinned="" className={gripCell} />
+        {emptyGrip}
         {baseCells}
         <TableCell colSpan={2} className={changeCell} />
         <TableCell className={changeCell} />
         {balance}
-        <TableCell className={changeCell} />
+        {emptyRemove}
+      </TableRow>
+    );
+  } else if (remain && sheetReadOnly) {
+    const only = splits[0];
+    body = (
+      <TableRow className="border-0 hover:bg-transparent">
+        {baseCells}
+        <TableCell className={cn(changeCell, 'tabular-nums')}>{line.baseQty}</TableCell>
+        <TableCell className={changeCell}>{formatSplitDate(line.baseDate) || '-'}</TableCell>
+        <TableCell className={changeCell}>
+          <RemarkText
+            value={only?.remark ?? ''}
+            generated={line.remarkGenerated ?? ''}
+          />
+        </TableCell>
       </TableRow>
     );
   } else if (remain) {
@@ -597,12 +651,12 @@ const LineBlock = React.memo(function LineBlock({
     // Every split of the line sits on another line: its own row keeps the base cells.
     body = (
       <TableRow className="border-0 hover:bg-transparent">
-        <TableCell data-pinned="" className={gripCell} />
+        {emptyGrip}
         {baseCells}
         <TableCell colSpan={2} className={changeCell} />
         <TableCell className={changeCell} />
         {balance}
-        <TableCell className={changeCell} />
+        {emptyRemove}
       </TableRow>
     );
   } else {
@@ -625,6 +679,47 @@ const LineBlock = React.memo(function LineBlock({
     const originNo = origin.lineNo ?? '';
     const cell = cn(CELL, first && top);
     const word = changeOf(split, origin);
+    if (sheetReadOnly) {
+      return (
+        <TableRow
+          key={split.id}
+          data-split-id={split.id}
+          data-origin-line-id={origin.lineId}
+          className="border-0 hover:bg-transparent"
+        >
+          {first ? baseCells : null}
+          {incomingRow ? (
+            <TableCell
+              className={cn(cell, DESKTOP_ONLY, 'tabular-nums text-muted-foreground')}
+            >
+              {originNo}
+            </TableCell>
+          ) : null}
+          <TableCell className={cn(cell, 'font-semibold tabular-nums')}>
+            {split.qty}
+          </TableCell>
+          <TableCell className={cell}>
+            {split.isCancel ? (
+              <ChangePill word="CANCEL" />
+            ) : (
+              <div className="flex items-center justify-center gap-1">
+                <span className="tabular-nums">
+                  {formatSplitDate(split.deliveryDate)}
+                </span>
+                {split.deliveryDate ? (
+                  <span className="shrink-0">
+                    <ChangePill word={word} />
+                  </span>
+                ) : null}
+              </div>
+            )}
+          </TableCell>
+          <TableCell className={cell}>
+            <RemarkText value={split.remark} generated={split.remarkGenerated ?? ''} />
+          </TableCell>
+        </TableRow>
+      );
+    }
     return (
       <TableRow
         key={split.id}
@@ -725,7 +820,9 @@ const LineBlock = React.memo(function LineBlock({
           data-extra-row=""
           className="border-0 hover:bg-transparent"
         >
-          <TableCell data-pinned="" className={cn(CELL, GRIP_STICKY, 'max-md:z-[1] px-0')} />
+          {sheetReadOnly ? null : (
+            <TableCell data-pinned="" className={cn(CELL, GRIP_STICKY, 'max-md:z-[1] px-0')} />
+          )}
           <TableCell className={cn(CELL, DESKTOP_ONLY)} />
           <TableCell className={cn(CELL, 'tabular-nums font-semibold')}>
             {extraQty}
@@ -736,11 +833,24 @@ const LineBlock = React.memo(function LineBlock({
               {line.extraRemark ?? ''}
             </span>
           </TableCell>
-          <TableCell className={CELL} />
+          {sheetReadOnly ? null : <TableCell className={CELL} />}
         </TableRow>
       ) : null}
     </>
   );
+
+  if (sheetReadOnly) {
+    // Nothing is dropped on a read-only sheet: a plain block, no drop target.
+    return (
+      <tbody
+        data-testid={`split-line-${line.lineNo ?? line.lineId}`}
+        data-line-id={line.lineId}
+      >
+        {body}
+        {tail}
+      </tbody>
+    );
+  }
 
   return (
     <DropBody
@@ -846,6 +956,7 @@ export function LineSplitSheet({
   overTarget,
   flashLineId,
   handlers,
+  readOnly = false,
 }: {
   /** The lines on screen (search and filter applied), in sheet order. */
   lines: SplitLine[];
@@ -860,6 +971,12 @@ export function LineSplitSheet({
   overTarget: string | null;
   flashLineId: string | null;
   handlers: SheetHandlers;
+  /**
+   * OI-SPLIT-VIEW (UAC E1, E2): the split popups' read-only sheet. Same columns (less the grip,
+   * Balance and remove), same blocks, words and extra row; values as text, no grip, "N left",
+   * "+ Split", remove, click-to-edit cell or keyboard editing. The handlers are never called.
+   */
+  readOnly?: boolean;
 }) {
   const lineById = React.useMemo(
     () => new Map(allLines.map((line) => [line.lineId, line])),
@@ -942,6 +1059,7 @@ export function LineSplitSheet({
     () => new Set(allLines.map((line) => line.location)).size > 1,
     [allLines],
   );
+  const columns = readOnly ? READ_ONLY_COLUMNS : COLUMNS;
   const lastOfDragGroup = drag
     ? lines.reduce(
         (last, line, index) =>
@@ -954,12 +1072,18 @@ export function LineSplitSheet({
     <Table
       aria-label="Split delivery sheet"
       data-split-sheet=""
-      onKeyDown={onKeyDown}
-      className="min-w-[1180px] table-fixed border-separate border-spacing-0 text-xs max-md:min-w-[1000px]"
+      data-read-only={readOnly ? 'true' : undefined}
+      onKeyDown={readOnly ? undefined : onKeyDown}
+      className={cn(
+        'table-fixed border-separate border-spacing-0 text-xs',
+        readOnly
+          ? 'min-w-[1030px] max-md:min-w-[850px]'
+          : 'min-w-[1180px] max-md:min-w-[1000px]',
+      )}
     >
       <TableHeader className="[&_tr]:border-0">
         <TableRow className="border-0 hover:bg-transparent">
-          {COLUMNS.map((column) => (
+          {columns.map((column) => (
             <TableHead
               key={column.key}
               aria-label={column.aria}
@@ -988,6 +1112,7 @@ export function LineSplitSheet({
           <React.Fragment key={line.lineId}>
             <LineBlock
               line={line}
+              readOnly={readOnly}
               incomingRows={incomingRows.get(line.lineId) ?? NO_ROWS}
               extraStale={staleExtra.has(line.lineId)}
               soNumber={soNumber}
@@ -1032,7 +1157,7 @@ export function LineSplitSheet({
         <TableBody>
           <TableRow className="border-0 hover:bg-transparent">
             <TableCell
-              colSpan={COLUMNS.length}
+              colSpan={columns.length}
               className="py-10 text-center text-sm text-muted-foreground"
             >
               No lines match

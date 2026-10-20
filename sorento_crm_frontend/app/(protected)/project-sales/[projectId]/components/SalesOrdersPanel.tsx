@@ -86,7 +86,20 @@ export function salesOrderDeleteRefusal(
  * before it can be run again - which is why the rows tick and the delete is one call rather
  * than twelve.
  */
-export function SalesOrdersPanel({ project }: { project: Project }) {
+export function SalesOrdersPanel({
+  project,
+  purchaseOrderId,
+  withoutPurchaseOrder,
+}: {
+  project: Project;
+  /** PM-SIMPLIFY: on the PO page, only that PO's orders; building is the page's header step. */
+  purchaseOrderId?: string;
+  /**
+   * PM-SIMPLIFY: on the Orders tab, the orders no PO row carries (sponsorship drafts, adopted
+   * orders). Renders nothing when there are none.
+   */
+  withoutPurchaseOrder?: boolean;
+}) {
   const router = useRouter();
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
@@ -98,8 +111,13 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
   const [confirmBulkDelete, setConfirmBulkDelete] = React.useState(false);
 
   const params = React.useMemo(
-    () => ({ page: pagination.pageIndex + 1, limit: pagination.pageSize }),
-    [pagination.pageIndex, pagination.pageSize],
+    () => ({
+      page: pagination.pageIndex + 1,
+      limit: pagination.pageSize,
+      ...(purchaseOrderId ? { purchase_order_id: purchaseOrderId } : {}),
+      ...(withoutPurchaseOrder ? { without_purchase_order: true } : {}),
+    }),
+    [pagination.pageIndex, pagination.pageSize, purchaseOrderId, withoutPurchaseOrder],
   );
   const salesOrders = useProjectSalesOrders(project.id, params);
   const build = useSalesOrderBuild(project.id);
@@ -405,6 +423,10 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
   // refetch, a page change) cannot leave its id behind in the request.
   const selectedIds = selectedRowIds(table);
 
+  if (withoutPurchaseOrder && !salesOrders.isLoading && !salesOrders.isError && total === 0) {
+    return null;
+  }
+
   return (
     <>
       <DataGrid
@@ -418,7 +440,9 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
           router.push(
             withReviewOrigin(
               `/project-sales/${project.id}/sales-orders/${row.id}`,
-              projectTabOriginHref(project.id, 'sales-orders'),
+              purchaseOrderId
+                ? `/project-sales/${project.id}/pos/${purchaseOrderId}?tab=sales-orders`
+                : projectTabOriginHref(project.id, 'orders'),
             ),
           )
         }
@@ -427,7 +451,9 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
           <CardHeader className="block space-y-3">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0 break-words">
-                <p className="text-sm font-medium">Sales orders</p>
+                <p className="text-sm font-medium">
+                  {withoutPurchaseOrder ? 'Sales orders not from a PO' : 'Sales orders'}
+                </p>
               </div>
               <div className="flex flex-wrap gap-2">
                 {/* Publishing raises the order inquiry, so the way to what purchasing
@@ -438,7 +464,7 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
                     Order inquiry
                   </Link>
                 </Button>
-                {project.can_edit && (
+                {project.can_edit && !purchaseOrderId && !withoutPurchaseOrder && (
                   <Button type="button" size="sm" onClick={() => setBuilding(true)}>
                     <Hammer className="size-4" aria-hidden />
                     Build drafts

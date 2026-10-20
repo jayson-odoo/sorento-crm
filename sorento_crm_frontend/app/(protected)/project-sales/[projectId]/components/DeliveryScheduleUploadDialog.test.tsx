@@ -354,3 +354,67 @@ describe('DeliveryScheduleUploadDialog', () => {
     );
   });
 });
+
+describe('DeliveryScheduleUploadDialog from the PO page (PM-SIMPLIFY AC-D4)', () => {
+  const thePo = {
+    id: 'po1',
+    project_id: 'p1',
+    po_source: 'contractor_direct',
+    po_number: 'HQ/26/01/121',
+    issuing_party_id: 'party-buimaco',
+    issuing_party_name: 'Buimaco Sdn Bhd',
+    line_count: 52,
+    line_total: '1810640.62',
+    model_mismatch_count: 0,
+    price_mismatch_count: 0,
+  };
+
+  function renderForPo(schedules: DeliverySchedule[]) {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    return render(
+      <QueryClientProvider client={client}>
+        <DeliveryScheduleUploadDialog
+          project={project}
+          schedules={schedules}
+          purchaseOrder={thePo}
+          onDone={vi.fn()}
+          originHref="/project-sales/p1/pos/po1?tab=deliveries"
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('asks only for the file, and uploads it as the next version of the PO schedule', async () => {
+    renderForPo([existing]);
+
+    expect(screen.getByText('Upload revised schedule')).toBeInTheDocument();
+    expect(screen.getByText(/For HQ\/26\/01\/121/)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Purchase order/i)).toBeNull();
+    expect(screen.queryByLabelText(/Revision of/i)).toBeNull();
+    expect(screen.queryByLabelText(/Issued by/i)).toBeNull();
+    expect(screen.queryByLabelText(/Revision label/i)).toBeNull();
+
+    fireEvent.change(screen.getByLabelText(/^File/i), { target: { files: [pdf()] } });
+    fireEvent.click(screen.getByRole('button', { name: /^Upload$/ }));
+
+    await waitFor(() => expect(uploadDeliverySchedule).toHaveBeenCalled());
+    const [poId, body] = uploadDeliverySchedule.mock.calls[0];
+    expect(poId).toBe('po1');
+    expect(body.delivery_schedule_id).toBe('s1');
+    expect(body.issuer_party_id).toBe('party-buimaco');
+    expect(body.revision_label).toBeNull();
+  });
+
+  it('starts a first schedule when the PO has none yet', async () => {
+    renderForPo([]);
+
+    expect(screen.getByText('Upload a delivery schedule')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/^File/i), { target: { files: [pdf()] } });
+    fireEvent.click(screen.getByRole('button', { name: /^Upload$/ }));
+
+    await waitFor(() => expect(uploadDeliverySchedule).toHaveBeenCalled());
+    expect(uploadDeliverySchedule.mock.calls[0][1].delivery_schedule_id).toBeNull();
+  });
+});

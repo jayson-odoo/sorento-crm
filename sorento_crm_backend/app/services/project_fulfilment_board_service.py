@@ -651,6 +651,7 @@ class FulfilmentBoardService:
         }
         self._locations_by_row = {}
         self._buy_origin: Dict[str, Optional[str]] = {}
+        self._split_edited: set = set()
         if granularity not in GRANULARITIES:
             raise AppException(
                 status_code=422,
@@ -763,6 +764,13 @@ class FulfilmentBoardService:
         self._buy_origin = buy_origin_by_product(
             self.db, {row.product_id for row in rows if row.product_id}
         )
+        # OI-SPLIT-VIEW (UAC A2): the lines whose saved split edit the next Confirm applies,
+        # one read for the whole board. A never-adopted board has no mirror line to ask about.
+        mirror_ids = {row.project_line_id for row in rows if row.project_line_id}
+        if mirror_ids:
+            from app.services.project_line_split_service import LineSplitService
+
+            self._split_edited = LineSplitService(self.db).split_edited_line_ids(mirror_ids)
         if self._exclude_covered_line_ids:
             for row in rows:
                 if row.project_line_id and row.project_line_id in self._exclude_covered_line_ids:
@@ -5425,6 +5433,11 @@ class FulfilmentBoardService:
             #: An active decision already covers this line, and what it froze. A covered line
             #: is not proposed for again: everything above states what was DECIDED.
             "covered": row.covered,
+            #: OI-SPLIT-VIEW (UAC A2): a saved split edit the next Confirm applies.
+            "split_edited": bool(
+                row.project_line_id
+                and str(row.project_line_id) in getattr(self, "_split_edited", set())
+            ),
             "decision": row.decision,
             #: AC-DT-2 (`PLAN-oi-decision-trail-ui.md`): the same three facts flattened
             #: onto the line itself - the Confirmed chip's tooltip reads these rather

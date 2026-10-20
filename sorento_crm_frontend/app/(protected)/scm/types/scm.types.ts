@@ -7,6 +7,8 @@
  */
 
 import type { PlanningChangeFromTo } from '@/app/(protected)/project-sales/_shared/types/planningChange.types';
+import type { LineSplitView } from '@/app/(protected)/project-sales/_shared/types/orderInquiry.types';
+import type { LineSplitsPayload } from '@/app/(protected)/project-sales/_shared/types/lineSplit.types';
 import type { CancelSource } from '../lib/autocountCancel';
 
 /** Health-state vocabulary. Backend-real: stockout (rendered "Out of stock"), dead,
@@ -317,6 +319,9 @@ export interface SalesOrderLine {
    * more queries a page for a fact nothing there prints.
    */
   order_inquiry?: SalesOrderLineInquiry | null;
+  /** OI-SPLIT-VIEW (UAC B1): the split popup of this line's planning mirror; null when the
+   * line has no splits or no project order. Single order read only. */
+  split_view?: LineSplitView | null;
   /**
    * Which confirmed revision decided supply for this line: the ACTIVE decision's
    * `revision_no` when its frozen snapshots cover the line, `null` otherwise. A line
@@ -500,6 +505,11 @@ export interface SalesOrder {
   line_count?: number;
   open_line_count?: number;
   lines: SalesOrderLine[];
+  /**
+   * OI-SPLIT-VIEW (UAC E5): the order's split sheet (`GET .../line-splits` payload) for the
+   * read-only split popups; null when no line is split. Single read only.
+   */
+  line_splits?: LineSplitsPayload | null;
   /** Where the order came from - it decides who may edit its figures. `inquiry` = the Order
    *  Inquiry sheet created it, `upload` = CS's outstanding extract, `manual` = keyed in. */
   source?: SalesOrderSource;

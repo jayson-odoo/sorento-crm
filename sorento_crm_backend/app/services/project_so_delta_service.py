@@ -622,6 +622,89 @@ class ProjectSODeltaService:
             row["row_key"] = str(index)
 
         kind = "schedule" if schedule_version_id else "po"
+        return self._persist_amendment(
+            order,
+            delta,
+            kind=kind,
+            source_document_kind="revised_schedule" if kind == "schedule" else "revised_po",
+            reason=reason,
+            actor_user_id=actor_user_id,
+        )
+
+    def create_area_date_amendment(
+        self,
+        pso_id: str,
+        *,
+        phase: ProjectDeliveryPhase,
+        delivery_date: Optional[date],
+        actor_user_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """PM-SIMPLIFY Q2a: an area's date was moved by hand (no revised document), and this
+        published order has lines on that area. Propose the same DELAY / ADVANCE rows a
+        revised schedule would, so the order goes through the one amendment flow and the
+        OCN tells AutoCount. None when no line on the area carries another date.
+        """
+        order = self._order_or_404(pso_id)
+        if order.status not in AUTHORED_LIVE_STATUSES:
+            return None
+        from app.services.project_so_divergence_service import ProjectSODivergenceService
+
+        ProjectSODivergenceService(self.db).assert_amendable(order.id)
+        rows: List[Dict[str, Any]] = []
+        for line in self._lines_of(order.id):
+            if line.phase_id != phase.id or line.delivery_date == delivery_date:
+                continue
+            if line.delivery_date and delivery_date:
+                verb = VERB_DELAY if delivery_date > line.delivery_date else VERB_ADVANCE
+            else:
+                verb = VERB_DELAY if delivery_date else VERB_ADVANCE
+            row = self._row(
+                order=order,
+                line=line,
+                product_id=line.product_id,
+                verb=verb,
+                field_name="delivery_date",
+                from_value=_iso(line.delivery_date),
+                to_value=_iso(delivery_date),
+                qty=_dec(line.qty),
+            )
+            row["area_group"] = phase.area_group
+            row["sequence"] = phase.sequence
+            row["phase_label_from"] = row["phase_label_to"] = phase.label
+            rows.append(row)
+        if not rows:
+            return None
+        ref = {
+            "kind": "area_date",
+            "id": phase.id,
+            "version_no": None,
+            "label": f"{phase.area_group} {phase.label or phase.sequence}",
+        }
+        delta = self._envelope(
+            from_ref=ref, to_ref=ref, rows=rows, phase_summary=[], unmatched=[]
+        )
+        for index, row in enumerate(delta["rows"]):
+            row["row_key"] = str(index)
+        when = delivery_date.strftime("%d %b %Y") if delivery_date else "no date"
+        return self._persist_amendment(
+            order,
+            delta,
+            kind="area_date",
+            source_document_kind="none",
+            reason=f"{ref['label']} moved to {when}.",
+            actor_user_id=actor_user_id,
+        )
+
+    def _persist_amendment(
+        self,
+        order: ProjectSalesOrder,
+        delta: Dict[str, Any],
+        *,
+        kind: str,
+        source_document_kind: str,
+        reason: str,
+        actor_user_id: str,
+    ) -> Dict[str, Any]:
         amendment = SOAmendment(
             company_id=order.company_id,
             project_sales_order_id=order.id,
@@ -642,7 +725,7 @@ class ProjectSODeltaService:
             purchase_order_id=order.purchase_order_id,
             project_sales_order_id=order.id,
             reason=reason,
-            source_document_kind="revised_schedule" if kind == "schedule" else "revised_po",
+            source_document_kind=source_document_kind,
             source_document_id=delta["to"]["id"],
             change_table_json={
                 "rows": delta["rows"],
