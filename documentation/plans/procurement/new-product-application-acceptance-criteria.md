@@ -125,8 +125,8 @@ component) or by the browser pass (B).
 ## v5: table form like Stock Inquiry (owner hand test 20 Oct; supersedes AC-NPA-73 and AC-NPA-79)
 
 - **AC-NPA-80** (B + vitest) Staff create, edit and view and the portal form and view: the header is Stock Inquiry's
-  bordered table rows under the title NEW PRODUCT APPLICATION (REFF, DATE, SALES PERSON, STOCK INQUIRY, CUSTOMER,
-  PROJECT, TARGET DELIVERY, REMARK); the products are ONE line table, one row per product (No., Product code,
+  bordered table rows under the title NEW PRODUCT APPLICATION (REFF, DATE, SALES PERSON on staff only, as the v4 portal
+  frame, STOCK INQUIRY, CUSTOMER, PROJECT, TARGET DELIVERY, REMARK, LEADTIME); the products are ONE line table, one row per product (No., Product code,
   Product type *, Dimension, Material, Thickness, Packing, Brand, Qty) with "Add row" and a remove control per row; no
   per-product cards. PURCHASING FEEDBACK shows LEADTIME as a row and COST as a per-row column: read-only for the
   applicant ("Purchasing fills this after approval." while empty), editable in place with "Save feedback" for
@@ -135,8 +135,8 @@ component) or by the browser pass (B).
   the page never scrolls sideways at 375.
 - **AC-NPA-81** Attachments belong to the application (`entity_type new_product_application`), any type the shared
   attachment flow accepts. Staff: the applicant links an attachment of the caller's company from the attachment
-  library on a saved Draft / Rejected application and unlinks it (unlink drops the link only), same behaviour as the
-  Stock Inquiry attachments section; locked (422) while Submitted / Approved; another user 403. Portal: the contact
+  library on a saved Draft / Rejected application and unlinks it through the deferred action (countdown with Cancel,
+  re-checked when it commits; unlink drops the link only; the generic resources unlink route refuses this entity type); locked (422) while Submitted / Approved; another user 403. Portal: the contact
   adds files with the shared dropzone (also while creating: uploaded right after the first save) and removes them,
   on its own application only (another contact's 404). The detail lists the attachments (name, url, link id).
 - **AC-NPA-82** The per-product image routes, the inquiry-attachments routes and the copy-from-inquiry picker are gone

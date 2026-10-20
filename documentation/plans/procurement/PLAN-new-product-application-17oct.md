@@ -231,15 +231,18 @@ Component map: PR #1769 crew-note 6280058877. UAC: AC-NPA-80..83 (supersede AC-N
 
 - Header: Stock Inquiry's `ProductInquiryFormLayout` + `InquiryFormTableRow` + `InquiryReadValue`
   (`stock-inquiries/components/ProductInquiryFormLayout.tsx:5,29,60`), title NEW PRODUCT APPLICATION.
-- Products: one line table shared by staff and portal (`components/common/NewProductApplicationLines.tsx`, built on
-  `components/ui/data-grid*.tsx` like the PR/SF lines, read view `PanelDataGrid`); columns No., Product code,
-  Product type *, Dimension, Material, Thickness, Packing, Brand, Qty; staff detail adds Cost (MYR) (feedback) and
-  Opened as (+ From AutoCount). Phone: sideways scroll inside the card, as PR/SF.
+- Products: one line table shared by staff and portal (`components/common/NewProductApplicationLines.tsx`), a plain
+  bordered table like `components/common/SampleRequestLines.tsx` and the portal PR/SF lines (`SubmissionForm.tsx:1853`),
+  not the staff DataGrid (its column-preference store is a staff API); columns No., Product code, Product type *,
+  Dimension, Material, Thickness, Packing, Brand, Qty; staff detail adds Cost (MYR) (feedback) and Opened as
+  (+ From AutoCount). Phone: sideways scroll inside the card, as PR/SF.
 - PURCHASING FEEDBACK: LEADTIME as a table row under the header rows; COST is the per-row Cost column; editable in
   place for `open_code` on Approved / Completed with Save feedback (rules of AC-NPA-74 unchanged).
 - Attachments per application, `entity_type = "new_product_application"`:
   staff `POST /{id}/attachments {attachment_id}` (link from the attachment library through
-  `LinkAttachmentBrowserDialog`, as Stock Inquiry) and `DELETE /attachments/{link_id}`; portal through the generic
+  `LinkAttachmentBrowserDialog`, listed in a `PanelDataGrid` as Stock Inquiry) and unlink through the deferred pending
+  action `new_product_application_attachment.unlink` (5 s, Cancel; the generic
+  `DELETE /resources/attachments/links/{id}` refuses this entity type); portal through the generic
   `POST /public/portal/attachments` with kind `new_product_application` (`AttachmentDropzone`, pending files on create,
   as Price Tag Request), list and delete via the generic portal routes, own application only. Detail carries
   `attachments[]`.
