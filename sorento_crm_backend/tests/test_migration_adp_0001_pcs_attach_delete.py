@@ -119,6 +119,13 @@ def test_downgrade_removes_only_that_link(seeded):
     assert _links(db, ids["bystander"], SLUG) == 1
 
 
+def test_trashed_role_is_skipped(seeded):
+    db, ids = seeded
+    db.execute(text("UPDATE user_roles SET is_trashed = true WHERE id = :r"), {"r": ids["pcs"]})
+    _run(db, "upgrade")
+    assert _links(db, ids["pcs"], SLUG) == 0
+
+
 def test_missing_role_or_permission_is_a_no_op():
     with blank_session() as db:
         _run(db, "upgrade")

@@ -8,8 +8,9 @@ project-scoped rule).
 
 Data only, additive and idempotent: the link is inserted only when the role and the permission
 both exist and the link is missing, so a fresh install without the role, and a database where
-the role was already granted by hand, both upgrade cleanly. Downgrade removes only that one
-link.
+the role was already granted by hand, both upgrade cleanly. A trashed role is skipped. Downgrade
+removes only that one role-permission pair, including a link that was granted by hand before
+this migration ran (it cannot tell the two apart).
 
 Revision ID: adp_0001_pcs_attach_delete
 Revises: chs_0001_direct_ingress
@@ -32,7 +33,7 @@ def upgrade() -> None:
             "INSERT INTO user_role_permissions (id, role_id, permission_id, assigned_at) "
             "SELECT gen_random_uuid()::text, r.id, p.id, now() "
             "FROM user_roles r, user_permissions p "
-            "WHERE r.slug = :role AND p.slug = :perm "
+            "WHERE r.slug = :role AND p.slug = :perm AND r.is_trashed = false "
             "AND NOT EXISTS ("
             "  SELECT 1 FROM user_role_permissions urp "
             "  WHERE urp.role_id = r.id AND urp.permission_id = p.id"
