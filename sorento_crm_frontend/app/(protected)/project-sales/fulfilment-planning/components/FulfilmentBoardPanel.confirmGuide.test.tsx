@@ -1071,7 +1071,9 @@ describe('T-FE6 (F18 F19 F21): the guide page is the editable split sheet', () =
       entry.project_line_id === 'pl-1-3'
         ? {
             ...entry,
-            saved_remark: remark ?? 'USE BRW 522 & ORDER 294',
+            // the backend's saved_remark is always the email's default words; a stored override
+            // lives only in the draft decision's `remark`
+            saved_remark: 'USE BRW 522 & ORDER 294',
             draft: {
               decision: { verdict: 'approved', ...(remark ? { remark } : {}) },
               saved_by: 'Test Planner',
