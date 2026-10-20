@@ -132,16 +132,29 @@ def _with_parent_kind(
     return [{**e, **parent} if e is scheme_entity else e for e in entities if e not in kind_entities]
 
 
+#: The keys this module derives onto a scheme entity from (scheme, products): never trusted on a
+#: held row, re-derived for the products of the turn that reads it.
+_DERIVED_KEYS = ("certificate_uuids", "parent_kind", "parent_kind_uuid", "parent_kind_name")
+
+
 def index_scheme(
-    db: "Session", verdict: dict[str, Any], held_products: list[dict[str, Any]]
+    db: "Session", verdict: dict[str, Any], held_products: list[dict[str, Any]],
+    held_scheme: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """The verdict with its scheme pick read as an index, and a trace note; the verdict
-    unchanged (and no note) when the rule does not apply."""
+    unchanged (and no note) when the rule does not apply. `held_scheme` is a listed scheme an
+    earlier turn left on the focus (the caller passes it under the state gate): with none said
+    this turn, it is indexed again for the products asked now, its derived keys dropped first."""
     from app.services.chatbot_prompt_vars import closed_list_items
 
     entities = [e for e in verdict.get("entities") or [] if isinstance(e, dict)]
     said = [e for e in entities if e.get("current_message") is not False]
     schemes = [e for e in said if e.get("listed") == "cert_scheme" and str(e.get("canonical_code") or "").strip()]
+    if not schemes and isinstance(held_scheme, dict) and str(held_scheme.get("canonical_code") or "").strip():
+        # This turn's scheme leg: what the held scheme names for the products asked now, the
+        # held row's own ids (read for an earlier turn's products) never reused.
+        schemes = [{**{k: v for k, v in held_scheme.items() if k not in _DERIVED_KEYS}, "current_message": True}]
+        entities = [*entities, schemes[0]]
     if not schemes:
         return verdict, None
     product_ids, named = _asked_product_ids(db, said, held_products)
