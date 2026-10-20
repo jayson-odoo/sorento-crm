@@ -48,6 +48,8 @@ _SPEC_HINTS = frozenset({SPECIFICATION_HINT, "spec"})
 #: The kinds whose raw can hold a descriptor glued to what the thing is.
 _CLASS_HINTS = frozenset({"category", "product_type"})
 _ATTACHMENT_HINT = "attachment_type"
+#: CLOSED-LISTS-INDEX-MODE: checked only in index mode, where a warehouse is one on file.
+_WAREHOUSE_HINT = "warehouse"
 
 #: Registry keys that are not descriptors: the class and the type are what the thing IS
 #: (they stay in the category token), and the brand is its own entity kind.
@@ -743,6 +745,7 @@ def ground(
     vocab: Vocabulary | None = None,
     message: str | None = None,
     closed_lists: bool = False,
+    closed_lists_index: bool = False,
     listed_codes: frozenset[str] | None = None,
     pick_info: dict[str, dict[str, Any]] | None = None,
     held_ids: list[str] | None = None,
@@ -758,6 +761,11 @@ def ground(
     section): a document type is kept only when its pick is an item of the lists the
     prompt rendered, and is tagged with that list (`_on_closed_lists`).
 
+    `closed_lists_index` (CLOSED-LISTS-INDEX-MODE, `ParserConfig.closed_lists_index`): a warehouse
+    this message names is kept only when `resolve_warehouse_token` resolves it (its code, or the
+    part of codes after their last `-`); else it is dropped like an unlisted file type, and
+    `dropped_kinds` says so, so the held warehouse is cleared too.
+
     `listed_codes` (CHAT-CODE-LOOKUP, the version also carries the CODE LOOKUP section): a
     product pick that is not the typed word, an extension or a family of it, and not a code
     the candidate block listed, is dropped and the raw kept. None is today.
@@ -769,12 +777,10 @@ def ground(
     entities = verdict.get("entities")
     if not isinstance(entities, list) or not entities:
         return verdict, []
-    touched = [
-        e
-        for e in entities
-        if isinstance(e, dict)
-        and str(e.get("hint") or "").strip().lower() in (_CLASS_HINTS | _SPEC_HINTS | {_ATTACHMENT_HINT, _PRODUCT_HINT})
-    ]
+    kinds = _CLASS_HINTS | _SPEC_HINTS | {_ATTACHMENT_HINT, _PRODUCT_HINT}
+    if closed_lists_index:
+        kinds = kinds | {_WAREHOUSE_HINT}
+    touched = [e for e in entities if isinstance(e, dict) and str(e.get("hint") or "").strip().lower() in kinds]
     if not touched:
         return verdict, []
     vocab = vocab or load_vocabulary(db)
@@ -791,6 +797,7 @@ def ground(
     notes: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     dropped_types = False
+    dropped_warehouse = False
     closed_items: dict[str, dict[str, str]] | None = None
     listed_types: dict[str, str] | None = None
 
@@ -963,6 +970,13 @@ def ground(
             add(grounded, entity)
             notes.append({"from": hint, "raw": raw, "to": [rest, *[g.__dict__ for g in grounded]]})
             continue
+        if hint == _WAREHOUSE_HINT and closed_lists_index and entity.get("current_message") is not False:
+            from app.services.chatbot.lanes.business.services import resolve_warehouse_token
+
+            if not any(resolve_warehouse_token(db, token) for token in dict.fromkeys((canonical, raw)) if token):
+                notes.append({"from": hint, "raw": raw, "to": "dropped: not a warehouse on file"})
+                dropped_warehouse = True
+                continue
         if hint == _ATTACHMENT_HINT and closed_lists:
             if closed_items is None:
                 from app.services.chatbot_prompt_vars import closed_list_items
@@ -990,13 +1004,22 @@ def ground(
     if not notes:
         return verdict, []
     grounded_verdict = {**verdict, "entities": out}
-    if dropped_types and not any(
-        isinstance(e, dict) and str(e.get("hint") or "").strip().lower() == _ATTACHMENT_HINT and e.get("current_message") is not False
-        for e in out
-    ):
-        # R4-3: a file type this message named and the lists dropped still replaces the type
-        # axis (with nothing), so a type from an earlier turn never answers it.
-        grounded_verdict["dropped_kinds"] = [_ATTACHMENT_HINT]
+
+    def kept(kind: str) -> bool:
+        return any(
+            isinstance(e, dict)
+            and str(e.get("hint") or "").strip().lower() == kind
+            and e.get("current_message") is not False
+            for e in out
+        )
+
+    # R4-3: a file type this message named and the lists dropped still replaces the type
+    # axis (with nothing), so a type from an earlier turn never answers it. Index mode: the
+    # same for a warehouse this message named that is not on file.
+    gone = ((_ATTACHMENT_HINT, dropped_types), (_WAREHOUSE_HINT, dropped_warehouse))
+    dropped = [kind for kind, was_dropped in gone if was_dropped and not kept(kind)]
+    if dropped:
+        grounded_verdict["dropped_kinds"] = dropped
     return grounded_verdict, notes
 
 

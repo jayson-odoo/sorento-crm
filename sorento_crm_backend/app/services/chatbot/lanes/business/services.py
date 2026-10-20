@@ -529,8 +529,15 @@ def resolve_warehouse_token(db: Session, token: str) -> list[str]:
     return [
         code
         for (code,) in db.query(Warehouse.warehouse_code).all()
-        if "-" in code and code.rsplit("-", 1)[-1].lower() == suffix
+        if (warehouse_code_suffix(code) or "").lower() == suffix
     ]
+
+
+def warehouse_code_suffix(code: str) -> str | None:
+    """The part of a `warehouse_code` after its LAST `-` (`BRW-IB` -> `IB`), None for a code
+    with no `-`: the suffix `resolve_warehouse_token` resolves a token by, and the one the
+    CLOSED LISTS index lists a warehouse under (`head/closed_lists_index.warehouse_lines`)."""
+    return code.rsplit("-", 1)[-1] if "-" in (code or "") else None
 
 
 def _visible_sets(db: Session) -> Callable[[list[str]], set[str]]:
