@@ -70,3 +70,19 @@ warehouse hint relative to block, never add one. Removes: name matching and near
   the "index lists" condition; byte-equal across turns.
 Gold (index arms only, block unchanged): word codes "for project only", "sample", "showroom", "penang" never become
 warehouses; the 6 order rows and 7 location rows stay 6/6 and 7/7.
+
+## Round 2c: option B (crew a11138672, measured)
+
+Parser gold (crew/state cap USD 1.0; rows: 10 TRAIN finish short forms beside codes, 7 synthetic location, 6 synthetic
+order-shaped, 5 synthetic word-code; explore DB codes): W1 listing made the parser hint word codes as warehouses
+("outstanding SO for project SRTWC286" -> PROJECT on v81-index and v88-index, "penang ..." on v81-index; block 5/5
+clean), and on the copy's legacy prompt family (v81 ~ v77) W1 added 0 passes. The frg / RG fixes come from W3 and W2.
+
+ARCHITECTURE: the warehouse closed list lives at the GROUNDING layer, not in the parser prompt. Kept: W3 (finish
+short-form lines from the registry's code-suffix rules), the one-reading helper services.warehouse_codes_for
+(lanes + grounding). Removed: W1 Warehouse lines and the index-mode replacement sentence (the warehouse rule of the
+template is unchanged in index mode). W2 narrowed after the Opus review (AC-38, grounding.py:891-895: an unknown
+filter word is said back, never dropped to answer unfiltered): in index mode a warehouse hint warehouse_codes_for
+cannot resolve is dropped ONLY when its word is a registry finish short form (W3's data), and that drop does not
+clear the held warehouse (the customer named a finish, not a warehouse). A resolvable code always wins ("wh" ->
+MOCHA-WH / NEW-WH). Any other unknown warehouse word is kept and said back, as in block mode.
