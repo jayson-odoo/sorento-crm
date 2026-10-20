@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
@@ -162,6 +162,8 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   const [downloadsOpen, setDownloadsOpen] = useState(false);
   // OI-SPLIT-VIEW (UAC D1): the gear's "View splits", one group per split SO line.
   const [viewSplitsOpen, setViewSplitsOpen] = useState(false);
+  // UAC B8: the gear, where the View splits popup hands focus back on close.
+  const gearRef = useRef<HTMLButtonElement | null>(null);
   const [resendIds, setResendIds] = useState<string[] | null>(null);
   const closeResend = useCallback(() => setResendIds(null), []);
   // Unlink selected (AC-DP-06, fix round UL): a server-deferred pending action
@@ -769,7 +771,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                 ariaLabel: 'order inquiry',
               }}
               gear={
-                <DetailActionsMenu ariaLabel="Order inquiry options">
+                <DetailActionsMenu ariaLabel="Order inquiry options" triggerRef={gearRef}>
                   {canAct ? (
                     <>
                       <DropdownMenuItem onSelect={runAutoLink}>
@@ -1125,6 +1127,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
         lines={splitLines}
         open={viewSplitsOpen}
         onOpenChange={setViewSplitsOpen}
+        returnFocusRef={gearRef}
       />
       <EntityDownloadsButton
         entityType="order_inquiry"

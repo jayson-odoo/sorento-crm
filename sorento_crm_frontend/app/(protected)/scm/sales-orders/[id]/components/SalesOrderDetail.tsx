@@ -611,6 +611,8 @@ export function SalesOrderDetail({
   // the list surface calls this same hook with no `onEdit`, so its row menu shows no Edit.
   // OI-SPLIT-VIEW (UAC D1): the gear's "View splits", every split line of this order.
   const [viewSplitsOpen, setViewSplitsOpen] = useState(false);
+  // UAC B8: the gear, where the View splits popup hands focus back on close.
+  const gearRef = useRef<HTMLButtonElement | null>(null);
   const { actions, pending: deletionPending } = useSalesOrderActions(data, {
     onDeleted: () => router.push(backHref),
     onEdit: () => beginEdit(data as SalesOrder),
@@ -1756,6 +1758,7 @@ export function SalesOrderDetail({
                 actions={actions}
                 pendingAction={deletionPending}
                 gearLabel="Sales order options"
+                gearRef={gearRef}
                 // The main action on this page is now PLAN, not Edit (S2, R3): this is the
                 // same board the list's "Plan selected" opens, on this one order, and it
                 // wears the main colour for the same reason an Add does on every list. Edit
@@ -2340,6 +2343,7 @@ export function SalesOrderDetail({
         lines={splitLines}
         open={viewSplitsOpen}
         onOpenChange={setViewSplitsOpen}
+        returnFocusRef={gearRef}
       />
     </div>
     </QtyDraftContext.Provider>

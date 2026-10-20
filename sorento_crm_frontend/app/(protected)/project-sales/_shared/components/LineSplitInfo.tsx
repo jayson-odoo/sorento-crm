@@ -392,12 +392,19 @@ export function OrderSplitsDialog({
   lines,
   open,
   onOpenChange,
+  returnFocusRef,
 }: {
   title: string;
   subtitle?: string | null;
   lines: OrderSplitLine[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * UAC B8: the control that opened the popup (the gear button). A gear menu item that
+   * opens a dialog leaves Radix nothing to return focus to, so Escape and Close hand it
+   * back here.
+   */
+  returnFocusRef?: React.RefObject<HTMLElement | null>;
 }) {
   const sorted = React.useMemo(
     () =>
@@ -418,7 +425,15 @@ export function OrderSplitsDialog({
     .join(' · ');
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[85vh] max-w-3xl flex-col">
+      <DialogContent
+        className="flex max-h-[85vh] max-w-3xl flex-col"
+        onCloseAutoFocus={(event) => {
+          const opener = returnFocusRef?.current;
+          if (!opener || !opener.isConnected) return;
+          event.preventDefault();
+          opener.focus();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           {sub ? <DialogDescription>{sub}</DialogDescription> : null}

@@ -17,10 +17,13 @@ export function BoardOrderSplitsDialog({
   psoId,
   soNumber,
   onClose,
+  returnFocusRef,
 }: {
   psoId: string;
   soNumber: string;
   onClose: () => void;
+  /** UAC B8: the board gear, which Escape and Close hand focus back to. */
+  returnFocusRef?: React.RefObject<HTMLElement | null>;
 }) {
   const { query } = useLineSplits(psoId);
   const lines = React.useMemo<OrderSplitLine[]>(
@@ -56,6 +59,7 @@ export function BoardOrderSplitsDialog({
       onOpenChange={(next) => {
         if (!next) onClose();
       }}
+      returnFocusRef={returnFocusRef}
     />
   );
 }

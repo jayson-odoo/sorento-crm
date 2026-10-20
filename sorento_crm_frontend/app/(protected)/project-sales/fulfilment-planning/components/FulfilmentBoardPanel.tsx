@@ -567,6 +567,8 @@ export function FulfilmentBoardPanel({
     null,
   );
   const closeViewSplits = React.useCallback(() => setViewSplits(null), []);
+  /** UAC B8: the board gear, where the View splits popup hands focus back on close. */
+  const boardActionsRef = React.useRef<HTMLButtonElement | null>(null);
   const psoIdBySalesOrder = React.useMemo(
     () =>
       new Map(
@@ -2433,6 +2435,7 @@ export function FulfilmentBoardPanel({
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
+                ref={boardActionsRef}
                 type="button"
                 size="sm"
                 variant="outline"
@@ -3338,6 +3341,7 @@ export function FulfilmentBoardPanel({
           psoId={viewSplits.psoId}
           soNumber={viewSplits.soNumber}
           onClose={closeViewSplits}
+          returnFocusRef={boardActionsRef}
         />
       ) : null}
       {lineSplit ? (
