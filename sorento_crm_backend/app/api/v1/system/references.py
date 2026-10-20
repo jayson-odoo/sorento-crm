@@ -1807,7 +1807,8 @@ def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
     the word INSIDE the code, and rows that start with it (prefix, or AND tier) when the registry
     knows the word (`vocabulary`, a set or a callable read only when such a row needs it: a code
     family such as "QAMS" or a brand word keeps its prefix rows). A token with a digit keeps them
-    all (a code fragment). Runs once, early, so every reader of the result sees the same rows."""
+    all (a code fragment). A row with SEVERAL tokens (the AND row) loses its whole-code-word keep
+    when ANY of its tokens is a registry word. Runs once, early, so every reader of the result sees the same rows."""
     words: list[frozenset[str]] = []
 
     def known(tokens: list[str]) -> bool:
@@ -1831,9 +1832,8 @@ def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
         code = _fold_code(match.get("canonical_code"))
         if code in {_fold_code(t) for t in tokens}:
             return True
-        segment_tokens = [t for t in tokens if whole_segments(match.get("canonical_code"), t)]
-        if segment_tokens:
-            return not known(segment_tokens)  # whole code words: a code hit unless a registry word
+        if any(whole_segments(match.get("canonical_code"), t) for t in tokens):
+            return not known(tokens)  # whole code words: a code hit unless a registry word in ANY token
         if tier == "substring" or not any(code.startswith(_fold_code(t)) for t in tokens):
             return False  # the word sits inside the code, not at its start
         return not known(tokens)  # a code that STARTS with the word: a family sibling unless it is a registry word
