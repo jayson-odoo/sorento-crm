@@ -36,7 +36,8 @@ from app.services.chatbot.head import parser as parser_mod
 
 SQL: dict[str, list[float]] = defaultdict(list)
 HTTP: list[dict[str, Any]] = []
-LLM: list[str] = []
+LLM: list[dict[str, Any]] = []
+STMTS: list[tuple[float, str, str]] = []
 _current = {"label": "pre"}
 
 
@@ -48,7 +49,9 @@ def _install_sql_counter() -> None:
     @event.listens_for(db_engine, "after_cursor_execute")
     def _after(conn, cursor, statement, params, context, executemany):  # noqa: ANN001
         t0 = conn.info["t0"].pop()
-        SQL[_current["label"]].append((time.perf_counter() - t0) * 1000)
+        ms = (time.perf_counter() - t0) * 1000
+        SQL[_current["label"]].append(ms)
+        STMTS.append((ms, _current["label"], " ".join(statement.split())[:220]))
 
 
 def _install_http_counter(live_llm: bool) -> None:
@@ -134,6 +137,7 @@ def _ensure_contact(contact_id: int) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--code", default="SRT1001-BK", help="product code; comma-separate for a multi-product ask")
+    ap.add_argument("--top-sql", type=int, default=0, help="print the N slowest statements")
     ap.add_argument("--qty", type=int, default=None, help="demand_qty the parser reports")
     ap.add_argument("--text", default=None)
     ap.add_argument("--runs", type=int, default=3)
@@ -163,7 +167,7 @@ def main() -> None:
     trace_mod.TurnTrace.record = record  # type: ignore[assignment]
 
     for run in range(args.runs):
-        SQL.clear(); HTTP.clear(); LLM.clear(); _current["label"] = "pre"
+        SQL.clear(); HTTP.clear(); LLM.clear(); STMTS.clear(); _current["label"] = "pre"
         t0 = time.perf_counter()
         result = engine_mod.run_turn(_envelope(args.contact, msg), session_factory=SessionLocal)
         wall = (time.perf_counter() - t0) * 1000
@@ -187,6 +191,8 @@ def main() -> None:
         for label, times in SQL.items():
             print(f"    {label:<20} {len(times):>5} / {sum(times):8.1f}")
         print(f"  sql total {sum(len(v) for v in SQL.values())} stmts / {sum(sum(v) for v in SQL.values()):.0f} ms")
+        for ms, label, stmt in sorted(STMTS, reverse=True)[: args.top_sql]:
+            print(f"    {ms:7.1f} ms [{label}] {stmt}")
         print(f"  non-parser llm calls ({'live' if args.live_llm else 'blocked'}): {len(LLM)}, "
               f"{sum(c['ms'] for c in LLM):.0f} ms")
         for c in LLM:
