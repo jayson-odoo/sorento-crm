@@ -362,6 +362,19 @@ describe('SalesOrderDetail - states', () => {
     expect(refetch).toHaveBeenCalledTimes(1);
   });
 
+  it('a failed background refetch keeps the order already on screen', () => {
+    useSalesOrder.mockReturnValue({
+      data: so(),
+      isLoading: false,
+      isError: true,
+      error: Object.assign(new Error('Internal server error'), { status: 500 }),
+      refetch: vi.fn(),
+    });
+    renderDetail();
+    expect(screen.getByText('SO-2026/07-0042')).toBeInTheDocument();
+    expect(screen.queryByText('Could not load this sales order')).toBeNull();
+  });
+
   it('a refusal renders the access-denied state, not "not found"', () => {
     useSalesOrder.mockReturnValue({
       data: undefined,

@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const apiFetch = vi.fn();
 vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
 
-import { createSalesOrder, getSalesOrders } from './salesOrderService';
+import { createSalesOrder, getSalesOrder, getSalesOrders } from './salesOrderService';
 import type { SalesOrderFormData } from '../types/scm.types';
 
 function ok(body: unknown, status = 200) {
@@ -13,6 +13,22 @@ function ok(body: unknown, status = 200) {
 beforeEach(() => apiFetch.mockReset());
 
 describe('salesOrderService', () => {
+  // SO-DETAIL-DUP-BACK: the detail page tells a 404 from a refusal or a fault by the
+  // error's status, so the read must carry it, not just the message.
+  it.each([
+    [404, 'Sales order not found'],
+    [403, 'Permission required: scm.dashboard.view'],
+    [500, 'Internal server error'],
+  ])('the detail read rejects a %s with its status and the server message', async (status, message) => {
+    apiFetch.mockResolvedValue(
+      new Response(JSON.stringify({ message }), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    await expect(getSalesOrder('so-1')).rejects.toMatchObject({ status, message });
+  });
+
   it('list forwards status + priority filters', async () => {
     apiFetch.mockResolvedValue(ok({ data: [], empty: true, pagination: { total: 0, page: 1 } }));
     await getSalesOrders({

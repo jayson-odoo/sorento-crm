@@ -1553,8 +1553,8 @@ export function SalesOrderDetail({
 
   // Every failure ends in a state that says which one it is (NEVER-STUCK-UI): only a 404
   // reads "not found"; a refusal is AccessDenied; a fault or a timeout carries its reason
-  // and a Retry.
-  if (isError || !data) {
+  // and a Retry. A background refetch that fails over an order already shown keeps it.
+  if (!data) {
     if (!isError || isNotFound(loadError)) {
       return (
         <Card className="flex flex-col items-center gap-3 p-10 text-center">
