@@ -15,7 +15,7 @@ import pytest
 
 from app.services.project_order_inquiry_service import saved_line_remark
 from tests.scm.test_line_splits_api import _put, _sp, _url
-from tests.scm.test_line_splits_round3 import api, world  # noqa: F401 - fixtures reused
+from tests.scm.test_line_splits_round3 import _excel_rows, api, emails, world  # noqa: F401 - fixtures reused
 from tests.test_planning_changes import BASE, _core_line, _core_so, _project_line, _project_so
 
 D = date(2026, 11, 20)
@@ -354,3 +354,106 @@ def test_f20_a_saved_reject_on_a_placed_linkless_row_has_no_words(api):
     _placed_row(s, 10, with_link=False)
     _save_draft(s, 10, {"verdict": "rejected", "reason": "wrong site"})
     assert _words(s, 10) is None
+
+
+# ---------------------------------------------------------------------------
+# F25 to F27 (round 9): an editable remark on an unsplit saved line, stored and emailed
+# ---------------------------------------------------------------------------
+
+REMARK = "ORDER BACK URGENT"
+
+
+def _confirm_with(s, no, *, remark=None, buy="10"):
+    """The real Confirm of line `no` as Buy, optionally carrying the planner's own remark
+    (`ConfirmLine.remark`)."""
+    from tests.test_planning_changes import _line_payload
+
+    line = _line_payload(s.line[no].id, buy_qty=buy)
+    if remark is not None:
+        line["remark"] = remark
+    r = s.client.post(f"{BASE}/sales-orders/{s.order.id}/confirm", json={"lines": [line]})
+    assert r.status_code == 200, r.text
+    s.db.commit()
+    s.db.expire_all()
+    return r
+
+
+def _sent(emails, start=0):
+    return [ln for h in emails[start:] for ln in h.get("lines") or []]
+
+
+def _snapshot_of(s, no):
+    from app.models.project_so import SOSupplyDecision
+
+    decision = (
+        s.db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == str(s.order.id))
+        .order_by(SOSupplyDecision.revision_no.desc())
+        .first()
+    )
+    return next(x for x in decision.line_snapshots if x["project_line_id"] == str(s.line[no].id))
+
+
+def test_f26_the_confirmed_revision_snapshot_keeps_the_remark(api, emails):
+    s = _seed(api)
+    _confirm_with(s, 10, remark=REMARK)
+    assert _snapshot_of(s, 10).get("remark") == REMARK
+
+
+def test_f27_the_email_prints_the_edited_remark_instead_of_the_default_words(api, emails):
+    s = _seed(api)
+    start = len(emails)
+    _confirm_with(s, 10, remark=REMARK)
+    assert [ln["remark"] for ln in _sent(emails, start)] == [REMARK], _sent(emails, start)
+
+
+def test_f27_the_excel_remark_of_the_unsplit_row_reads_the_same_text(api, emails):
+    s = _seed(api)
+    _confirm_with(s, 10, remark=REMARK)
+    remarks = [row[4] for row in _excel_rows(s)]
+    assert REMARK in remarks, remarks
+
+
+def test_f27_a_remark_only_change_on_a_confirmed_line_is_told_again(api, emails):
+    s = _seed(api)
+    _confirm_with(s, 10)
+    start = len(emails)
+    _confirm_with(s, 10, remark=REMARK)
+    assert [ln["remark"] for ln in _sent(emails, start)] == [REMARK], _sent(emails, start)
+
+
+def test_f27_pin_no_remark_prints_todays_words_and_an_unchanged_reconfirm_tells_nothing(api, emails):
+    s = _seed(api)
+    start = len(emails)
+    _confirm_with(s, 10)
+    assert [ln["remark"] for ln in _sent(emails, start)] == ["ORDER"], _sent(emails, start)
+    start = len(emails)
+    _confirm_with(s, 10)
+    assert _sent(emails, start) == []
+
+
+def test_f26_pin_a_remark_in_the_saved_draft_never_turns_the_line_into_a_split_edit(api):
+    """Typing a remark on an unsplit row is stored in the draft decision, not as a one-row split:
+    the board's `split_edited` flag stays false."""
+    s = _seed(api)
+    _save_draft(s, 10, {**_amend([_own(s, 10)]), "remark": REMARK})
+    got = _board(s)[str(s.line[10].id)]
+    assert got.get("split_edited") is False, got.get("split_edited")
+
+
+def test_f27_a_remark_only_edit_of_an_applied_split_plan_is_told_again(api, emails):
+    """`split_plan_key` includes the remark, so after the plan was applied a remark-only split
+    edit is a change the next Confirm tells purchasing."""
+    from tests.scm.test_line_splits_round3 import D_167, D_480_NEW, D_608, _new_line_plan_applied
+    from tests.scm.test_split_view_board import _edit_480
+
+    s, _po_line = _new_line_plan_applied(api, emails)
+    start = len(emails)
+    _edit_480(s, [(14, D_480_NEW, "own", ""), (236, D_608, "new", "SITE HOLD"), (167, D_167, "new", "")])
+    r = s.client.post(
+        f"{BASE}/fulfilment-planning/confirm-all",
+        json={"orders": [{"pso_id": str(s.order.id), "lines": []}]},
+    )
+    assert r.status_code == 200, r.text
+    s.db.commit()
+    assert "SITE HOLD" in [ln["remark"] for ln in _sent(emails, start)], _sent(emails, start)

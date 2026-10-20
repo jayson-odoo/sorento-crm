@@ -30,6 +30,7 @@ const getPlanningBoard = vi.fn();
 const confirmSupply = vi.fn();
 const confirmMany = vi.fn();
 const previewConfirmMany = vi.fn();
+const putLineDraft = vi.fn();
 
 vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   getPlanningBoard: (...args: unknown[]) => getPlanningBoard(...args),
@@ -41,11 +42,7 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   confirmSupply: (...args: unknown[]) => confirmSupply(...args),
   confirmMany: (...args: unknown[]) => confirmMany(...args),
   previewConfirmMany: (...args: unknown[]) => previewConfirmMany(...args),
-  putLineDraft: vi.fn().mockResolvedValue({
-    decision: { verdict: 'approved' },
-    saved_by: 'Test Planner',
-    saved_at: '2026-09-03T00:00:00Z',
-  }),
+  putLineDraft: (...args: unknown[]) => putLineDraft(...args),
   deleteLineDraft: vi.fn().mockResolvedValue(undefined),
   ConfirmSupplyError: class ConfirmSupplyError extends Error {
     readonly failingLines: unknown[] = [];
@@ -396,6 +393,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   serveSplits();
   saveLineSplits.mockImplementation(() => Promise.resolve(SO1_READ()));
+  putLineDraft.mockResolvedValue({
+    decision: { verdict: 'approved' },
+    saved_by: 'Test Planner',
+    saved_at: '2026-09-03T00:00:00Z',
+  });
   dryRunAnswers();
   confirmAnswers();
 });
@@ -981,5 +983,84 @@ describe('T-FE6 (F18 F19 F21): the guide page is the editable split sheet', () =
     fireEvent.keyDown(document.activeElement ?? grip, { key: 'Escape', code: 'Escape' });
     await new Promise((r) => setTimeout(r, 50));
     expect(screen.getByTestId('confirm-guide')).toBeInTheDocument();
+  });
+
+  it('F25: an unsplit saved line\'s Remark is a text box whose VALUE is the email\'s words', async () => {
+    await openEditablePage();
+    expect((screen.getByLabelText('Remark, line 3') as HTMLInputElement).value).toBe('USE BRW 522 & ORDER 294');
+  });
+
+  it('F25: editing it shows an "edited" marker; clearing restores the default value and removes the marker', async () => {
+    const page = await openEditablePage();
+    const box = screen.getByLabelText('Remark, line 3') as HTMLInputElement;
+    expect(within(page).queryByText('edited')).not.toBeInTheDocument();
+    fireEvent.change(box, { target: { value: 'ORDER BACK URGENT' } });
+    expect((screen.getByLabelText('Remark, line 3') as HTMLInputElement).value).toBe('ORDER BACK URGENT');
+    expect(within(page).getByText('edited')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Remark, line 3'), { target: { value: '' } });
+    await waitFor(() =>
+      expect((screen.getByLabelText('Remark, line 3') as HTMLInputElement).value).toBe('USE BRW 522 & ORDER 294'),
+    );
+    expect(within(page).queryByText('edited')).not.toBeInTheDocument();
+  });
+
+  it('F25/F26: saving an edited remark on an unsplit saved line writes the draft decision remark and adds NO split row', async () => {
+    const board = oneDraftBoard();
+    const key = (board.contributions as unknown as { key: string; project_line_id: string }[]).find(
+      (c) => c.project_line_id === 'pl-1-3',
+    )!.key;
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    await mountWith(board, ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    fireEvent.change(screen.getByLabelText('Remark, line 3'), { target: { value: 'ORDER BACK URGENT' } });
+    expect(screen.getByTestId('confirm-guide-next')).toBeDisabled();
+    fireEvent.click(within(page).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(putLineDraft).toHaveBeenCalled());
+    const [draftKey, decision] = putLineDraft.mock.calls[0];
+    expect(draftKey).toBe(key);
+    expect(decision.remark).toBe('ORDER BACK URGENT');
+    // a remark on an unsplit row never becomes a one-row split
+    for (const [, body] of saveLineSplits.mock.calls) {
+      for (const l of body.lines) {
+        if (l.line_id === 'pl-1-3') expect(l.splits).toHaveLength(0);
+      }
+    }
+  });
+
+  it('F25: saving an untouched default sends no remark: the split body carries empty remarks, no draft remark', async () => {
+    const page = await openEditablePage();
+    await editLine3();
+    saveLineSplits.mockImplementation(() => Promise.resolve(LINE3_SPLIT_READ()));
+    serveSplits({ 'pso-so-1': LINE3_SPLIT_READ() });
+    fireEvent.click(within(page).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(saveLineSplits).toHaveBeenCalledTimes(1));
+    const l3 = saveLineSplits.mock.calls[0][1].lines.find((l: { line_id: string }) => l.line_id === 'pl-1-3');
+    expect(l3.splits.map((s: { remark: string }) => s.remark ?? '')).toEqual(['', '']);
+    for (const [, decision] of putLineDraft.mock.calls) expect(decision.remark ?? '').toBe('');
+  });
+
+  it('F28: a covered line delivered in full has a read-only Remark and says nothing goes to purchasing', async () => {
+    const read = LINE3_READ();
+    read.lines = [
+      {
+        ...wireLine(3, 'ZZT-ITEM-1C', 10, '2026-09-20', {
+          line_id: 'pl-1-3',
+          delivered_qty: 10,
+          now_qty: 0,
+          split_state: 'applied',
+          split_view: { status: 'confirmed' },
+        }),
+        delivered_in_full: true,
+      } as never,
+    ];
+    serveSplits({ 'pso-so-1': read });
+    await mountWith(oneDraftBoard(), ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    const block = await within(page).findByTestId('split-line-3');
+    expect(block).toHaveTextContent('Delivered in full: nothing goes to purchasing');
+    expect(block.querySelectorAll('input')).toHaveLength(0);
   });
 });

@@ -10,7 +10,9 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   blockIds,
+  remarkIn,
   renderDialog,
+  saveButton,
   savedCase,
   sheet,
   typeDate,
@@ -131,5 +133,70 @@ describe('board dialog pins (unscoped, unchanged)', () => {
     expect(screen.queryByRole('columnheader', { name: /^line$/i })).not.toBeInTheDocument();
     expect(table.textContent).not.toMatch(/\bline \d+/i);
     expect(blockIds()).toContain('split-line-480');
+  });
+});
+
+describe('F25: every row\'s Remark is an editable box prefilled with the default words (board dialog)', () => {
+  const withDefaults = () => {
+    const p = structuredClone(savedCase());
+    const l480 = p.lines.find((l) => l.line_id === 'L480')!;
+    l480.splits = [
+      wireSplit('s14', 14, '2026-09-20', 'L480', { remark_generated: 'ADVANCE' }),
+      wireSplit('s236', 236, '2026-11-20', 'L608', { remark_generated: 'DELAY' }),
+      wireSplit('s167', 167, '2029-11-20', null, { remark_generated: 'DELAY' }),
+    ];
+    return p;
+  };
+
+  it('a split row\'s Remark VALUE is its default words', async () => {
+    getLineSplits.mockResolvedValue(withDefaults());
+    await renderDialog();
+    await sheet();
+    expect(remarkIn(480, 2).value).toBe('DELAY');
+    expect(remarkIn(480, 1).value).toBe('ADVANCE');
+  });
+
+  it('editing shows an "edited" marker; clearing restores the default and removes it', async () => {
+    getLineSplits.mockResolvedValue(withDefaults());
+    await renderDialog();
+    await sheet();
+    const cell = () => remarkIn(480, 2).closest('td') as HTMLElement;
+    expect(cell().textContent).not.toMatch(/edited/);
+    fireEvent.change(remarkIn(480, 2), { target: { value: 'SITE HOLD' } });
+    expect(remarkIn(480, 2).value).toBe('SITE HOLD');
+    expect(cell().textContent).toMatch(/edited/);
+    fireEvent.change(remarkIn(480, 2), { target: { value: '' } });
+    await waitFor(() => expect(remarkIn(480, 2).value).toBe('DELAY'));
+    expect(cell().textContent).not.toMatch(/edited/);
+  });
+
+  it('saving an untouched default stores nothing: the body carries an empty remark', async () => {
+    getLineSplits.mockResolvedValue(withDefaults());
+    await renderDialog();
+    await sheet();
+    typeDate(480, 3, '21/11/2029'); // a real edit so Save is on; the remarks stay default
+    const save = saveButton();
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+    await waitFor(() => expect(saveLineSplits).toHaveBeenCalledTimes(1));
+    const l480 = saveLineSplits.mock.calls[0][1].lines.find((l: { line_id: string }) => l.line_id === 'L480');
+    expect(l480.splits.map((s: { remark: string }) => s.remark ?? '')).toEqual(['', '', '']);
+  });
+});
+
+describe('F29: the Remark cell wraps, it never truncates', () => {
+  it('no truncating element inside any Remark cell of the editor', async () => {
+    await renderDialog();
+    await sheet();
+    const table = screen.getByRole('table', { name: 'Split delivery sheet' });
+    const index = Array.from(table.querySelectorAll('thead th')).findIndex(
+      (th) => (th.textContent ?? '').trim().toLowerCase() === 'remark',
+    );
+    expect(index).toBeGreaterThan(-1);
+    const cells = Array.from(table.querySelectorAll('tbody tr')).map((tr) => (tr as HTMLTableRowElement).cells[index]);
+    for (const td of cells.filter(Boolean)) {
+      expect(td.querySelector('.truncate'), 'remark cell must wrap').toBeNull();
+      expect(td.className).not.toMatch(/\btruncate\b/);
+    }
   });
 });

@@ -56,6 +56,14 @@ describe('LineSplitSheet readOnly: same sheet, no controls (E1, E2)', () => {
     expect(Array.from(table.querySelectorAll('thead th')).map((th) => (th.textContent ?? '').trim())).not.toContain('Line');
   });
 
+  it('F29: the Remark cell wraps, no truncating element', () => {
+    const { table } = renderSheet(ownerSavedCase(), [480, 752]);
+    const index = Array.from(table.querySelectorAll('thead th')).findIndex((th) => (th.textContent ?? '').trim() === 'Remark');
+    const cells = Array.from(table.querySelectorAll('tbody tr')).map((tr) => (tr as HTMLTableRowElement).cells[index]).filter(Boolean);
+    expect(cells.length).toBeGreaterThan(0);
+    for (const td of cells) expect(td.querySelector('.truncate'), 'remark cell must wrap').toBeNull();
+  });
+
   it('draws one tbody per listed line', () => {
     renderSheet(ownerSavedCase(), [480, 752]);
     expect(screen.getAllByTestId(/^split-line-/).map((el) => el.getAttribute('data-testid'))).toEqual([

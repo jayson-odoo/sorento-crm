@@ -110,11 +110,12 @@ describe('LineSplitInfo - the popup is the read-only split sheet (E)', () => {
   const ids = (dialog: HTMLElement) =>
     within(dialog).getAllByTestId(/^split-line-/).map((el) => el.getAttribute('data-testid'));
 
-  it('is titled "Line 480 CSK14B: split" with the SO number and the OI line under it', () => {
+  it('is titled "CSK14B: split" (no line number) with the SO number under it', () => {
     const { dialog } = open(ownerSavedCase(), { oiNumber: 'OI-2609-0578' });
-    expect(within(dialog).getByText('Line 480 CSK14B: split')).toBeInTheDocument();
+    expect(within(dialog).getByText('CSK14B: split')).toBeInTheDocument();
     expect(dialog.textContent).toContain('SO417636');
-    expect(dialog.textContent).toContain('OI-2609-0578 line 480');
+    expect(dialog.textContent).toContain('OI-2609-0578');
+    expect(dialog.textContent).not.toMatch(/\bline 480\b/i);
   });
 
   it('renders the sheet for that one line only: one block, line 480', () => {
