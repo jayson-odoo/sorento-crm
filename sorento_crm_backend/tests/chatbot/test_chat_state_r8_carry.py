@@ -532,3 +532,163 @@ def test_r8_b2_an_answer_op_with_a_typed_product_and_a_domain_change_never_rebui
 def test_r8_b2_guard_explicit_new_subject_still_rebuilds():
     a, _plan = _roster_turn([_op("new_subject")])
     assert a.state.focus.tier == [] and a.state.pending is None
+
+
+# ---------------------------------------------------------------- C5: a file-kind change drops the held scheme
+# Smoke EXPLORE-1020: "<scheme> cert for <code>" then "drawing also". The scheme is held on
+# focus.extra["certificate"] (row hint certificate, listed cert_scheme, certificate_uuids), the file
+# kind on focus.extra["attachment_type"]. The scheme qualified the OLD file kind, so a follow-up that
+# changes the kind keeps the product and drops the scheme. Reproduced on fb96100fb0: the drawing fetch
+# carried the certificate_ids and the reply said "But no ZZT Drawing matched these".
+from tests.chatbot.test_chat_state_r6_s3_ops_decide import _turns as _c5_turns, applied  # noqa: E402,F401
+from tests.chatbot.test_closed_lists_scheme_index import (  # noqa: E402,F401 - fixtures used by name
+    CODE as C5_CODE, PRODUCT as C5_PRODUCT, _file_ask, _file_fetches, _scheme, _seed, seeded, session_factory,
+)
+
+SCHEME_ROW = {"raw": "span", "hint": "certificate", "listed": "cert_scheme", "listed_item": "SPAN", "canonical_code": "SPAN",
+              "current_message": False, "certificate_uuids": ["c-span"]}
+CERT_KIND_ROW = {"raw": "ZZT Certification", "hint": "attachment_type", "listed": "cert_kind", "listed_item": "ZZT Certification",
+                 "canonical_code": "ZZT Certification", "current_message": False}
+DRAWING = {"raw": "drawing", "hint": "attachment_type", "canonical_code": "ZZT Drawing", "listed_item": "ZZT Drawing",
+           "current_message": True, "confident": True}
+KIND_OPS = {
+    "set": [_op("set", "attachment_type")],
+    "keep+set": [_op("keep"), _op("set", "attachment_type")],
+    "switch+set": [_op("switch_domain"), _op("set", "attachment_type")],
+}
+
+
+def _c5_focus():
+    return Focus(products=[_held("SRTFC2043")], domains=["product_attachment"],
+                 extra={"certificate": [dict(SCHEME_ROW)], "attachment_type": [dict(CERT_KIND_ROW)]})
+
+
+@pytest.mark.parametrize("name", sorted(KIND_OPS))
+def test_r8_c5_apply_a_file_kind_change_keeps_the_product_and_drops_the_scheme(name):
+    v = verdict(domain_hint="product_attachment", entities=[dict(DRAWING)])
+    out = _apply(_c5_focus(), verdict_with(v, list(KIND_OPS[name])))
+    f = out.state.focus
+    assert [p["canonical_code"] for p in f.products] == ["SRTFC2043"], "the held product must stay"
+    assert not (f.extra or {}).get("certificate"), f"the held scheme rode a file-kind change: {f.extra}"
+    assert out.state.subject.provenance.get("product") == "held"
+
+
+def test_r8_c5_apply_the_same_result_with_and_without_switch_domain():
+    shapes = []
+    for name in ("set", "switch+set"):
+        v = verdict(domain_hint="product_attachment", entities=[dict(DRAWING)])
+        out = _apply(_c5_focus(), verdict_with(v, list(KIND_OPS[name])))
+        f = out.state.focus
+        shapes.append(([p["canonical_code"] for p in f.products], bool((f.extra or {}).get("certificate"))))
+    assert shapes[0] == shapes[1], shapes
+
+
+def test_r8_c5_apply_guard_a_follow_up_that_keeps_the_file_kind_keeps_the_scheme():
+    """"and srtfc2044?": a new product, no file kind named."""
+    v = verdict(domain_hint="product_attachment", entities=[_product("SRTFC2044")])
+    out = _apply(_c5_focus(), verdict_with(v, [_op("set", "product")]))
+    assert (out.state.focus.extra or {}).get("certificate"), "the scheme must stay when the file kind does not change"
+
+
+def test_r8_c5_apply_guard_restating_the_same_file_kind_keeps_the_scheme():
+    same = {**CERT_KIND_ROW, "current_message": True}
+    v = verdict(domain_hint="product_attachment", entities=[same])
+    out = _apply(_c5_focus(), verdict_with(v, [_op("set", "attachment_type")]))
+    assert (out.state.focus.extra or {}).get("certificate"), "the same file kind restated is not a kind change"
+
+
+def _c5_seed_drawing(session_factory, product_id):
+    from app.models.product import ProductAttachment
+    from app.models.resources import Attachment, AttachmentType
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+
+    db = session_factory()
+    t = AttachmentType(id=str(uuid.uuid4()), type_name="ZZT Drawing", description="d", allowed_extensions="pdf", is_certificate=False)
+    db.add(t)
+    db.flush()
+    a = Attachment(id=str(uuid.uuid4()), original_filename=f"{C5_CODE}_DWG.pdf", stored_filename=uuid.uuid4().hex,
+                   file_path="https://cdn.test/d.pdf", attachment_type_id=t.id, is_deleted=False, company_id=DEFAULT_COMPANY_ID)
+    db.add(a)
+    db.flush()
+    db.add(ProductAttachment(id=str(uuid.uuid4()), product_id=product_id, attachment_id=a.id, company_id=DEFAULT_COMPANY_ID))
+    db.commit()
+
+
+import uuid  # noqa: E402
+
+
+def _c5_two_turns(session_factory, stub_access, monkeypatch, ops, turn2_entities=None):
+    ids = _seed(session_factory)
+    _c5_seed_drawing(session_factory, ids["product"])
+    a1 = _file_ask(C5_PRODUCT, _scheme("zzspan", "ZZSPAN"))
+    a1["state_changes"] = [_op("set", "product"), _op("set", "attachment_type")]
+    a2 = _file_ask(*(turn2_entities if turn2_entities is not None else [dict(DRAWING)]))
+    a2["state_changes"] = ops
+    (_r1, _c1), (r2, c2) = _c5_turns(session_factory, stub_access, monkeypatch, [(f"zzspan cert for {C5_CODE}", a1), ("drawing also", a2)])
+    return ids, (r2.reply or {}).get("text") or "", _file_fetches(c2)
+
+
+@pytest.mark.parametrize("name", sorted(KIND_OPS))
+def test_r8_c5_engine_drawing_also_fetches_the_drawing_without_the_scheme(session_factory, seeded, stub_access, monkeypatch, applied, name):
+    ids, text, fetches = _c5_two_turns(session_factory, stub_access, monkeypatch, list(KIND_OPS[name]))
+    assert len(applied) >= 2, "the state path did not run"
+    assert fetches, "no attachment fetch on the drawing turn"
+    assert fetches[0].get("product_ids") == [ids["product"]], fetches
+    assert not fetches[0].get("certificate_ids"), ("the scheme rode the drawing fetch", fetches[0])
+    assert fetches[0].get("attachment_type_ids"), fetches
+    # The harness stubs every MCP row, so "no ZZT Drawing matched" always shows; the scheme must not.
+    # fb96100fb0's reply headed the ask with "certificate: <number>" (the held scheme's certificate).
+    assert "certificate" not in text.lower() and "zzspan" not in text.lower() and "span" not in text.lower(), text
+
+
+def test_r8_c5_engine_guard_a_follow_up_that_keeps_the_file_kind_keeps_the_scheme(session_factory, seeded, stub_access, monkeypatch, applied):
+    ids, _text, fetches = _c5_two_turns(session_factory, stub_access, monkeypatch, [_op("keep")], turn2_entities=[dict(C5_PRODUCT)])
+    assert fetches and ids["ZZSPAN"] in (fetches[0].get("certificate_ids") or []), fetches
+
+
+def test_r8_c5_state_off_the_drawing_fetch_is_unchanged(session_factory, seeded, stub_access, monkeypatch):
+    """State off (no state block, no state_changes): today's behaviour, pinned: the scheme still rides."""
+    import json
+
+    from app.services.ai_assistant_service import MCPRuntimeClient
+    from app.services.chatbot import engine as engine_mod
+    from app.services.chatbot.head import parser as parser_mod
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from tests.chatbot.test_closed_lists_scheme_index import _message
+    from tests.chatbot.test_engine import _envelope
+
+    ids = _seed(session_factory)
+    _c5_seed_drawing(session_factory, ids["product"])
+    queue = [_file_ask(C5_PRODUCT, _scheme("zzspan", "ZZSPAN")), _file_ask(dict(DRAWING))]
+    monkeypatch.setattr(parser_mod, "resolve_config", lambda db, *, current_date, override_version_id=None: parser_mod.ParserConfig(
+        system_prompt="stub", prompt_version=1, provider="openai", model="m", api_key="k", closed_lists=True))
+    monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: queue.pop(0))
+    monkeypatch.setattr(engine_mod, "_contact_company_scope", lambda f, c: frozenset({DEFAULT_COMPANY_ID}))
+    calls = []
+    monkeypatch.setattr(MCPRuntimeClient, "call_tool", lambda self, name, args: calls.append((name, args)) or json.dumps({"ok": True, "items": []}))
+    stub_access()
+    engine_mod.run_turn(_envelope(message=_message("zzspan cert", 0)), session_factory=session_factory)
+    calls.clear()
+    engine_mod.run_turn(_envelope(message=_message("drawing also", 1)), session_factory=session_factory)
+    fetches = _file_fetches(calls)
+    assert fetches and fetches[0].get("certificate_ids"), ("state-off behaviour changed", fetches)
+
+
+# ---------------------------------------------------------------- C5 review round
+def test_r8_c5_review_restating_the_held_kind_beside_a_new_one_keeps_the_scheme():
+    """"drawing and the cert too": the message names the new kind AND the held certificate kind, so the
+    file kind is not dropped and the scheme that qualified it stays (else the fetch widens to every certificate)."""
+    restated = {**CERT_KIND_ROW, "current_message": True}
+    v = verdict(domain_hint="product_attachment", entities=[dict(DRAWING), restated])
+    out = _apply(_c5_focus(), verdict_with(v, [_op("set", "attachment_type")]))
+    assert (out.state.focus.extra or {}).get("certificate"), f"the scheme was dropped: {out.state.focus.extra}"
+
+
+def test_r8_c5_review_pin_an_unlisted_extra_row_stays_while_the_listed_scheme_drops():
+    focus = _c5_focus()
+    focus.extra["order"] = [{"raw": "SO0001", "hint": "order", "current_message": False}]
+    v = verdict(domain_hint="product_attachment", entities=[dict(DRAWING)])
+    out = _apply(focus, verdict_with(v, [_op("set", "attachment_type")]))
+    extra = out.state.focus.extra or {}
+    assert extra.get("order"), f"an unlisted extra row was dropped with the scheme: {extra}"
+    assert not extra.get("certificate"), f"the listed scheme must drop on a file-kind change: {extra}"

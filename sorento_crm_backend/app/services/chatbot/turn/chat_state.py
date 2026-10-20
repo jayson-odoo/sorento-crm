@@ -433,6 +433,33 @@ def _clear_axis(focus: Focus, axis: str) -> None:
         focus.extra.pop(axis, None)
 
 
+def _listed_key(row: dict[str, Any]) -> str:
+    return str(row.get("listed_item") or row.get("canonical_code") or row.get("raw") or "").strip().casefold()
+
+
+def _drop_listed_qualifiers(focus: Focus, axis: str, verdict: dict[str, Any]) -> None:
+    """CHAT-STATE r8 C5: a `set` that replaces a held closed-list pick (a row grounding marked
+    `listed`: a file type, certificate kind or scheme, `head/grounding.py` / `head/scheme_index.py`)
+    with a DIFFERENT value drops the held closed-list picks on the other axes too: one listing
+    produced them together as the file ask's qualifiers, so they qualified the old value. The
+    subject (products) and every unlisted row stay; the same value restated changes nothing."""
+    extra = focus.extra or {}
+    held = [r for r in extra.get(axis) or [] if isinstance(r, dict)]
+    if not any(r.get("listed") for r in held):
+        return
+    said = {_listed_key(e) for e in _entities(verdict) if e.get("hint") == axis and e.get("current_message") is not False}
+    said.discard("")
+    if not said or {_listed_key(r) for r in held} <= said:
+        # The held value restated (alone, or beside a new one) still stands: so do its qualifiers.
+        return
+    for kind in [k for k in extra if k != axis]:
+        kept = [r for r in extra[kind] if not (isinstance(r, dict) and r.get("listed"))]
+        if kept:
+            extra[kind] = kept
+        else:
+            extra.pop(kind)
+
+
 def _write_set(focus: Focus, axis: str, verdict: dict[str, Any]) -> None:
     """The scalar axes a `set` writes onto the focus; entity axes are written by the
     existing kind rules from the parse's entities."""
@@ -442,6 +469,7 @@ def _write_set(focus: Focus, axis: str, verdict: dict[str, Any]) -> None:
         _clear_axis(focus, "product_type")
     elif axis in ("product", "customer", "warehouse", "brand") or axis in (focus.extra or {}):
         # The stated entities replace the held value of this axis; the kind rules write them.
+        _drop_listed_qualifiers(focus, axis, verdict)
         _clear_axis(focus, axis)
     elif axis == "channel":
         focus.sales_channel = verdict.get("sales_channel")

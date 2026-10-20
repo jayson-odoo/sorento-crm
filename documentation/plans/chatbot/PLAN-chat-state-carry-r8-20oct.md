@@ -56,6 +56,17 @@ old vs new apply_changes, listing every item whose held axes change, checked aga
 follow-up bars). No paid E2E without crew's cap.
 
 ## Round log
+- Addendum C5 (crew, EXPLORE-1020 smoke T8; reproduced on #1772 alone at fb96100fb0): "span cert for srtfc2043" then
+  "drawing also" kept the listed scheme on focus.extra["certificate"] because `set attachment_type` cleared only its
+  own axis; the drawing fetch carried certificate_ids. Reds ca6a4046b2 -> fix b65688fccd (`_drop_listed_qualifiers`,
+  turn/chat_state.py:436-458, one call where `set` clears an axis: a changed `listed` axis drops the other held `listed`
+  rows; the link is grounding's closed-file-list `listed` mark, head/grounding.py:729-735, no hand table; the product
+  and unlisted rows stay); lead-signed test change 0d6351c4d2 (engine check asserts the scheme is not in the reply; the
+  harness stubs MCP rows; fetch-args asserts unchanged); kill-proof 6 fail / restored 193/193. Review READY with one
+  should-fix: "drawing and the cert too" (held kind restated beside the new one) dropped the scheme -> reds a29b480f0f
+  -> fix 743f6221d8 (`held_keys <= said`); kill-proof 1 fail / restored 195/195; re-check READY (K3 K4 caught). L1 gate
+  vs fb96100fb0 0/1506 + 0/585. Follow-up noted (pre-C5): "and srtfc2044?" keeps a scheme row whose certificate_uuids
+  belong to SRTFC2043 (resolve_gate.py:552 may trust them).
 - Build (20 Oct): reds 171f0f906b + 0f8e2661df (apply-level owner shapes T8 / T9 / T10 / T15, stale "frg", chains, engine
   T8 / T9 promotions-fetch product_ids, behavioural state-off pins) -> lead-signed test changes bcd1f019fa (T9 engine
   assert = no promotion call carries a held id whether or not one runs: a brand + flyer ask with nothing held has no
