@@ -318,11 +318,27 @@ interface IncomingRow {
   n: number;
 }
 
+/** The API's cap on one remark (`MAX_REMARK_LENGTH`). */
+const REMARK_MAX = 500;
+
 /**
- * REMARK cell (OI-SPLIT-GUIDE UAC F25, F29): a wrapping text box whose VALUE is the row's
- * remark, else its default words (`generated`: the change word, or the purchasing email's
- * words for a saved line). Typing over it stores the new text; clearing it, or typing the
- * default back, stores nothing and shows the default again. An edited remark is marked.
+ * How many rows a remark box needs: one per line of its text, a long line wrapping onto more
+ * (about 32 characters to a row), at most 8. Set as `rows` so the box grows on every browser,
+ * not only where CSS field-sizing works (UAC F31: iOS Safari).
+ */
+function remarkRows(text: string): number {
+  const rows = text
+    .split('\n')
+    .reduce((total, line) => total + Math.max(1, Math.ceil(line.length / 32)), 0);
+  return Math.min(8, Math.max(1, rows));
+}
+
+/**
+ * REMARK cell (OI-SPLIT-GUIDE UAC F25, F29, F31): a wrapping text box whose VALUE is the
+ * row's remark, else its default words (`generated`: the change word, or the purchasing
+ * email's words for a saved line). Typing over it stores the new text and marks it edited;
+ * clearing it, or typing the default back, stores nothing. A box cleared while focused stays
+ * empty for fresh text, and shows the default again once left empty. At most 500 characters.
  */
 function RemarkCell({
   value,
@@ -337,23 +353,31 @@ function RemarkCell({
   onValue: (remark: string) => void;
   onBlur: () => void;
 }) {
+  // What the focused box holds while the planner types (it may be empty); null otherwise.
+  const [typing, setTyping] = React.useState<string | null>(null);
   const edited = Boolean(value.trim()) && value !== generated;
+  const text = typing ?? (value || generated);
   // Showing the default words (nothing stored): marked, and read muted (AC-G5).
-  const showsDefault = !value && Boolean(generated);
+  const showsDefault = typing === null && !value && Boolean(generated);
   return (
     <div className="flex flex-col items-stretch gap-0.5">
       <Textarea
         variant="sm"
-        rows={1}
+        rows={remarkRows(text)}
+        maxLength={REMARK_MAX}
         data-nav-col="remark"
         data-remark-generated={showsDefault ? 'true' : undefined}
         aria-label={label}
-        value={value || generated}
+        value={text}
         onChange={(event) => {
-          const next = event.target.value.replace(/\r?\n/g, ' ');
+          const next = event.target.value;
+          if (event.target === document.activeElement) setTyping(next);
           onValue(!next.trim() || next === generated ? '' : next);
         }}
-        onBlur={onBlur}
+        onBlur={() => {
+          setTyping(null);
+          onBlur();
+        }}
         className={cn(
           'min-h-7 resize-none px-2 py-1 text-start break-words whitespace-pre-wrap [field-sizing:content]',
           showsDefault && 'text-muted-foreground',
