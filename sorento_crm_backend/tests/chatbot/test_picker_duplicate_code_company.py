@@ -52,7 +52,7 @@ class Console:
         db = _db(session_factory, scope=both)
         db.add(Company(id=MOCHA, name="ZZT Mocha Co", code=unique_code("ZZMOC")[:20]))
         db.commit()
-        _seed_contact(session_factory, phone="+60900008811")
+        _seed_contact(session_factory, phone="+60100000811")
         _link_contact_company(session_factory, company_id=SORENTO)
         _link_contact_company(session_factory, company_id=MOCHA)
         db = _db(session_factory, scope=both)
