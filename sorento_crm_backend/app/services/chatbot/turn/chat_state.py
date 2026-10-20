@@ -247,14 +247,16 @@ def _open_question(focus: Focus, oq: dict[str, Any] | None, pending: Any = None,
 def view(state: State, open_question: dict[str, Any] | None) -> dict[str, Any]:
     """The state as one plain, key-free dict: what the parser is shown and what the trace logs."""
     focus = state.focus
-    if quotes_the_list(state) and question_mod.is_the_stock_question(open_question):
-        # r7: a reply quoting the message that showed the list points at the list; the owed stock
-        # task is held (printed as the pending task, not as the open question).
+    # r7 (owner r40 case 12, 20 Oct): a reply quoting the message that showed the list points at
+    # that list, so the owed stock task is held out of what the parser reads: not the open
+    # question, and no `pending task` object either (its owed lines would read "1" as a quantity).
+    quoted_list = quotes_the_list(state)
+    if quoted_list and question_mod.is_the_stock_question(open_question):
         open_question = None
     oq = _open_question(focus, open_question, state.pending, state.turn_no)
     items = [i for i in (_list_item(r) for r in (focus.last_list or []) if isinstance(r, dict)) if i]
     stock_is_question = question_mod.is_the_stock_question(open_question)
-    task = None if stock_is_question else task_mod.open_question(focus.tasks)
+    task = None if stock_is_question or quoted_list else task_mod.open_question(focus.tasks)
     return {
         "subject": _subject(focus),
         "open_question": oq,
