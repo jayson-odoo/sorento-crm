@@ -581,6 +581,7 @@ def saved_draft_remark(
     codes: Optional[Mapping[str, str]] = None,
     spo_numbers: Sequence[str] = (),
     buy_origin: Optional[str] = None,
+    confirmed: bool = False,
 ) -> Optional[str]:
     """OI-SPLIT-GUIDE (UAC F3, F11): what the purchasing email will say for a line whose
     decision is SAVED but not confirmed yet, in the email's own words (`saved_line_remark`,
@@ -590,15 +591,17 @@ def saved_draft_remark(
     draft carries no code; `spo_numbers` are the SPOs arriving in time at the line's own
     location (`_facts_for`'s timely rule), which the email prints for incoming stock; a
     `local` `buy_origin` reads LOCAL BUY, as the email marks it. A saved Cancel SO reads
-    CANCEL, as the email's cancelled-line line does; a rejection, or a draft with nothing
-    composed, has no words (`None`)."""
+    CANCEL, as the email's cancelled-line line does. A saved Reject on a `confirmed` line is a
+    withdrawal: the press retires its raised rows with a `cancelled` handover, whose word is
+    `handover_remark("cancelled", ...)` (UAC F15); a Reject on a line nothing confirmed, or a
+    draft with nothing composed, has no words (`None`)."""
     if not decision:
         return None
     verdict = decision.get("verdict")
     if verdict == "cancelled":
         return "CANCEL"
     if verdict == "rejected":
-        return None
+        return handover_remark("cancelled", None, None) if confirmed else None
     codes = codes or {}
 
     def code_of(item: Mapping[str, Any], key: str) -> Optional[str]:
