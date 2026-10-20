@@ -180,7 +180,7 @@ import {
   putLineDraft,
 } from '../../_shared/services/fulfilmentPlanningService';
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
-import { walkConfirmGuide } from '@/test-mocks/confirmGuide';
+import { openConfirmGuide, walkConfirmGuide } from '@/test-mocks/confirmGuide';
 import { unpostableNotices } from '../../_shared/lib/unpostableNotices';
 import {
   buildBoard,
@@ -4692,7 +4692,9 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     previewConfirmMany.mockRejectedValue(new Error('Network down'));
 
     renderPanel(['SO403340']);
-    await walkConfirmGuide();
+    // UAC C6: a failed dry run keeps the guide open on Review with Retry, no Next or Confirm.
+    await openConfirmGuide();
+    await screen.findByTestId('confirm-guide-review-error');
 
     await waitFor(() => expect(previewConfirmMany).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
