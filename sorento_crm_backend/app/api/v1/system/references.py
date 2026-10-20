@@ -1809,11 +1809,12 @@ def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
     knows the word (`vocabulary`, a set or a callable read only when such a row needs it: a code
     family such as "QAMS" or a brand word keeps its prefix rows). A token with a digit keeps them
     all (a code fragment). A row with SEVERAL tokens (the AND row) loses its whole-code-word keep
-    when ANY of its tokens is a registry word, read in the forms the probe matched it by
-    (`_word_variants`). Runs once, early, so every reader of the result sees the same rows."""
+    when ANY of its tokens is a registry word, read in the AND probe's own word forms
+    (`_word_variants`; a one-word row reads each word as typed). Runs once, early, so every reader of
+    the result sees the same rows."""
     words: list[frozenset[str]] = []
 
-    def known(tokens: list[str]) -> bool:
+    def known(tokens: list[str], variants: bool = False) -> bool:
         if not words:
             words.append(vocabulary() if callable(vocabulary) else vocabulary)
         return any(
@@ -1821,7 +1822,7 @@ def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
             for t in tokens
             for w in re.split(r"[^a-z0-9]+", str(t or "").lower())
             if w
-            for v in _word_variants(w)
+            for v in (_word_variants(w) if variants else [w])
         )
 
     def whole_segments(code: Any, token: Any) -> bool:
@@ -1840,11 +1841,13 @@ def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
         code = _fold_code(match.get("canonical_code"))
         if code in {_fold_code(t) for t in tokens}:
             return True
+        and_row = tier == "and"
         if any(whole_segments(match.get("canonical_code"), t) for t in tokens):
-            return not known(tokens)  # whole code words: a code hit unless a registry word in ANY token
+            return not known(tokens, and_row)  # whole code words: a code hit unless a registry word in ANY token
         if tier == "substring" or not any(code.startswith(_fold_code(t)) for t in tokens):
             return False  # the word sits inside the code, not at its start
-        return not known(tokens)  # a code that STARTS with the word: a family sibling unless it is a registry word
+        # a code that STARTS with the word: a family sibling unless it is a registry word
+        return not known(tokens, and_row)
 
     for resolution in result.get("resolutions") or []:
         if not isinstance(resolution, dict) or _has_digit(resolution.get("token")):
