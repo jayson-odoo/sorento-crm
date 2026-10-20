@@ -561,13 +561,28 @@ def listed_scheme_resolutions(parser: dict[str, Any], resolved: dict[str, Any]) 
             }
             for uid in e["certificate_uuids"]
         ]
+        # F3-b: the scheme's parent kind rides on the scheme's own entity (`head/scheme_index`),
+        # resolved here as the attachment type the fetch narrows the files by, in its own row
+        # (the gate reads one entity type per row).
+        kind_name = jsc.nullish_str(e.get("parent_kind"))
+        kind_matches = [{
+            "entity_type": "attachment_type", "canonical_code": kind_name, "uuid": e["parent_kind_uuid"],
+            "match_field": "scheme_parent", "match_tier": "exact", "similarity": None,
+            "company_id": None, "company_name": None, "company_code": None,
+            "display": {"type_name": jsc.nullish_str(e.get("parent_kind_name")) or kind_name},
+        }] if e.get("parent_kind_uuid") else []
         if "resolutions" in resolved:  # the OR shape: one row per token
             resolved["resolutions"].append(
                 {"token": _token_of(e), "resolved": True, "ambiguous": False, "matches": matches, "alternatives": []}
             )
+            if kind_matches:
+                resolved["resolutions"].append(
+                    {"token": kind_name, "resolved": True, "ambiguous": False, "matches": kind_matches, "alternatives": []}
+                )
         else:  # the AND shape: the intersection, by entity type
-            resolved.setdefault("intersection", []).extend(matches)
-            resolved.setdefault("by_entity_type", {}).setdefault("certificate", []).extend(matches)
+            for match in [*matches, *kind_matches]:
+                resolved.setdefault("intersection", []).append(match)
+                resolved.setdefault("by_entity_type", {}).setdefault(match["entity_type"], []).append(match)
 
 
 def hint_locked_tokens(
@@ -786,7 +801,10 @@ def resolve_entity_body(
     if brands:
         body["brand_tokens"] = brands
     grounded_specs = [
-        {"key": g.get("spec_key"), "value": g.get("spec_value"), "evidence": g.get("raw"), "grounded": True}
+        {
+            "key": g.get("spec_key"), "value": g.get("spec_value"), "evidence": g.get("raw"), "grounded": True,
+            **({"any_keys": list(g["spec_any_keys"])} if g.get("spec_any_keys") else {}),
+        }
         for g in grounded
         if g.get("spec_key") and g.get("spec_value") is not None
     ]
@@ -1400,6 +1418,24 @@ def _no_such_account(
 # --------------------------------------------------------------------------- #
 
 
+def _product_set_ids(resolved: Any) -> set[str]:
+    """The uuids of every `product_set` match in a resolver payload."""
+    found: set[str] = set()
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            if node.get("entity_type") == "product_set" and node.get("uuid"):
+                found.add(str(node["uuid"]))
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(resolved)
+    return found
+
+
 def run(
     ctx: dict[str, Any],
     entry: Any,
@@ -1545,6 +1581,12 @@ def run(
     #    it - so the gate gets its own copy and `resolved` keeps the pre-gate snapshot,
     #    which is what `$('resolve-entity')` returns downstream.
     gate_input = _snapshot(resolved)
+    if parser.get("code_lookup") is True and services.visible_sets is not None:
+        # CHAT-CODE-LOOKUP R2: which product sets the contact may be told about, read on the
+        # scoped session; the gate expands only those (an unseen one stays today's miss).
+        gate_input["visible_set_ids"] = sorted(
+            services.visible_sets(sorted(_product_set_ids(gate_input)))
+        )
     gate_item = run_gate(
         gate_input,
         parser=parser,

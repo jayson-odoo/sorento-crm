@@ -25,7 +25,7 @@ import json
 import re
 from decimal import Decimal
 
-from sqlalchemy import Float, and_, cast, func, literal, or_, select
+from sqlalchemy import Float, and_, case, cast, func, literal, or_, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session, joinedload
 
@@ -888,6 +888,10 @@ def unknown_spec_values(db: Session, text: str, *, registry_rows=None) -> list[d
     return out
 
 
+#: A membership key naming several keys (one number under any of them): `any:k1|k2`.
+ANY_PREFIX = "any:"
+
+
 def membership_clause(membership: dict[str, Any]):
     """The described set's predicate over `ProductSpecifications.values`: one clause per
     key, ANDed; the values of one key ORed. None when nothing named a member.
@@ -898,6 +902,22 @@ def membership_clause(membership: dict[str, Any]):
     key_clauses = []
     for key, values in membership.items():
         if not values:
+            continue
+        if key.startswith(ANY_PREFIX):
+            numbers = sorted(v for v in values if isinstance(v, (int, float)) and not isinstance(v, bool))
+            key_clauses.append(or_(*[
+                # CASE, not AND: the cast to Float must only ever see a JSON number (no reliance
+                # on the planner short-circuiting).
+                cast(
+                    case(
+                        (func.jsonb_typeof(ProductSpecifications.values[k]["value"]) == "number", ProductSpecifications.values[k]["value"].astext),
+                        else_=None,
+                    ),
+                    Float,
+                ).between(n - 1e-6, n + 1e-6)
+                for k in key[len(ANY_PREFIX):].split("|")
+                for n in numbers
+            ]))
             continue
         if key == BRAND_KEY:
             # The product's own brand field, never a stored value (#1286, D2 / R3).
@@ -962,6 +982,7 @@ def filter_specs(
     specs: list[dict] | None = None,
     free_terms: list[str] | None = None,
     scope_terms: list[str] | None = None,
+    hidden_keys: frozenset[str] = frozenset(),
 ) -> dict:
     """The described set as a MEMBERSHIP clause - shape B's filter leg.
 
@@ -1020,7 +1041,7 @@ def filter_specs(
     def _join(key: Any, value: Any) -> None:
         # A yes-or-no value defines membership like a named choice (chat fix PR-A,
         # AC-A9: "intelligent closet" is is_smart yes, and dropping it answered every WC).
-        if key and (isinstance(value, bool) or isinstance(value, str) and value.strip()):
+        if key and key not in hidden_keys and (isinstance(value, bool) or isinstance(value, str) and value.strip()):
             membership.setdefault(str(key), set()).add(value)
 
     for entry in specs or []:
@@ -1030,7 +1051,10 @@ def filter_specs(
         # membership like a named choice does. A number the reader only bound by
         # proximity stays a ranking boost (R27/AC-1352).
         if entry.get("grounded") and isinstance(value, (int, float)) and not isinstance(value, bool) and entry.get("key"):
-            membership.setdefault(str(entry["key"]), set()).add(value)
+            # A bare size (CLOSED LISTS R6-1): the number under ANY of these keys, one OR clause.
+            any_keys = [str(k) for k in entry.get("any_keys") or [] if k]
+            name = ANY_PREFIX + "|".join(sorted(any_keys)) if any_keys else str(entry["key"])
+            membership.setdefault(name, set()).add(value)
             continue
         _join(entry.get("key"), value)
 

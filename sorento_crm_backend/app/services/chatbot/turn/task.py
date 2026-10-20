@@ -735,6 +735,11 @@ def _revised(task: Task, verdict: dict[str, Any], turn_no: int) -> Task | None:
         return replace(task, status=OPEN, touched_at_turn=turn_no, slots=slots)
     if len(task.slots) != 1:
         return None
+    from app.services.chatbot.class_named import names_own_class
+
+    if verdict.get("closed_lists") and names_own_class(verdict.get("entities") or []):
+        # A message naming its own class is a new ask, not the held product at a new number.
+        return None
     bare = _number(verdict.get("demand_qty"))
     if bare is None:
         return None

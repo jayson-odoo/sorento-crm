@@ -9,8 +9,9 @@ none and the bot asks. Nothing here decides what a word means, and nothing downs
 on a candidate: the parser's pick is validated against the lists, never against this
 module's scores.
 
-Bounded: at most `CAP_PER_WORD` candidates per word and `CAP_LINES` lines per message; one
-whole-code query for the message plus one query per word with a digit (at most
+Bounded: at most `CAP_PER_WORD` code rows per word and `CAP_LINES` lines per message (a spec
+line is never cut: every key that holds a value has its line, ranked by data, F3-a); one
+scoped count query for the message's spec and size pairs; one whole-code query for the message plus one query per word with a digit (at most
 `CODE_WORDS_PER_MESSAGE`); the registry read once per call. Runs in the
 session-held phase before the parse; a product read goes through the ORM so the contact's
 company and brand scope and `chat_searchable_products` apply as on every other chat read.
@@ -19,7 +20,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -36,6 +37,10 @@ MAX_PHRASE_WORDS = 3
 #: Near spellings, as pg_trgm scores them: a spec phrase from 4 characters, a code from 3.
 NEAR_PHRASE = 0.55
 NEAR_CODE = 0.5
+#: CHAT-CODE-LOOKUP R1: under the gate a coded word with no exact code on file lists codes
+#: from this similarity up (the resolver's floor, `entity_resolver.ENTITY_MISS_SUGGEST_FLOOR`),
+#: not holding the word; the parser still chooses.
+NEAR_CODE_NO_EXACT = 0.30
 MIN_NEAR_CHARS = 4
 MIN_CODE_CHARS = 3
 
@@ -55,11 +60,21 @@ class WordCandidates:
     gram: str
     position: int
     items: list[str] = field(default_factory=list)
+    #: Candidate line text -> the product code it lists (code lines only).
+    codes: dict[str, str] = field(default_factory=dict)
+    #: CHAT-CODE-LOOKUP R2-4, code lines of a coded word: code -> its folded similarity to the
+    #: typed word, and the codes that HOLD the word. What grounding checks a pick against.
+    scores: dict[str, float] = field(default_factory=dict)
+    holds: list[str] = field(default_factory=list)
+    #: F3-a: item -> (key, value, "num" | "text") for the spec lines the value index counts.
+    pairs: dict[str, tuple[str, str, str]] = field(default_factory=dict)
+    #: F3-a: a number + unit word, resolved against the counts: (number, unit, keys, bare keys).
+    size: tuple[str, str, list[str], set[str]] | None = None
 
 
 @dataclass(frozen=True)
 class _Value:
-    kind: str  # "product type" | "spec"
+    kind: str  # "product type" | "spec" | "flag" (a boolean key, printed as a spec)
     spec_key: str
     value: str
     display: str
@@ -97,14 +112,23 @@ def _phrase(text: str) -> str:
     return " ".join(_WORD_RE.findall(str(text).casefold().replace("_", " ")))
 
 
-def _vocabulary(db: "Session") -> tuple[dict[str, list[_Value]], dict[str, list[str]]]:
+def _registry(db: "Session", hidden: frozenset[str]) -> list:
+    """The active registry rows minus the contact's hidden spec keys: the ONE place a hidden
+    key leaves the candidate LINES (value, size and boolean lines all read through it). The
+    other things the parser sees (the {{specs}} vocabulary, the Product details line) list
+    registry names only."""
+    from app.services.product_spec_registry import active_registry
+
+    return [row for row in active_registry(db) if row.spec_key not in hidden]
+
+
+def _vocabulary(db: "Session", hidden: frozenset[str] = frozenset()) -> tuple[dict[str, list[_Value]], dict[str, list[str]]]:
     """Every enum registry value under each of its phrases (value, label, synonyms), and
     every numeric key under the words that name it ("in 1" for `piece_count`). The class
     key is an open vocabulary: its values are its worded labels plus every class label a
     category carries."""
     from app.models.product import ProductCategory
     from app.services.product_spec_registry import (
-        active_registry,
         display_spec_value,
         merged_allowed_values,
         merged_synonyms,
@@ -112,7 +136,7 @@ def _vocabulary(db: "Session") -> tuple[dict[str, list[_Value]], dict[str, list[
 
     phrases: dict[str, list[_Value]] = {}
     numeric: dict[str, list[str]] = {}
-    for row in active_registry(db):
+    for row in _registry(db, hidden):
         data_type = (row.data_type or "").lower()
         if row.spec_key in SKIP_KEYS:
             continue
@@ -122,6 +146,18 @@ def _vocabulary(db: "Session") -> tuple[dict[str, list[_Value]], dict[str, list[
                 key = _phrase(said)
                 if key and row.spec_key not in numeric.setdefault(key, []):
                     numeric[key].append(row.spec_key)
+            continue
+        if data_type == "boolean":
+            # R6-2: a boolean key's registry phrases per value (`{"true": [phrases]}`); only a value
+            # the registry holds phrases for is offered, so no false line is ever invented.
+            for value, said in synonyms.items():
+                if value == "_self":
+                    continue
+                entry = _Value("flag", row.spec_key, str(value), str(row.label or row.spec_key))
+                for word in said or []:
+                    key = _phrase(word)
+                    if key and entry not in phrases.setdefault(key, []):
+                        phrases[key].append(entry)
             continue
         if data_type != "enum":
             continue
@@ -176,8 +212,8 @@ def _numeric_candidates(numeric: dict[str, list[str]], grams: list[tuple[int, st
     return out
 
 
-def _value_candidates(db: "Session", tokens: list[str]) -> list[WordCandidates]:
-    vocab, numeric = _vocabulary(db)
+def _value_candidates(db: "Session", tokens: list[str], hidden: frozenset[str] = frozenset()) -> list[WordCandidates]:
+    vocab, numeric = _vocabulary(db, hidden)
     if not vocab and not numeric:
         return []
     words = [_phrase(t) for t in tokens]
@@ -197,7 +233,8 @@ def _value_candidates(db: "Session", tokens: list[str]) -> list[WordCandidates]:
     # A word inside a longer phrase that is on file exactly is that phrase's word ("flexible"
     # in "double flexible", "basin" in "basin mixer"): the longer phrase is what was said, so
     # neither the shorter exact reading nor a near spelling of it is listed.
-    exact_spans = [(p, p + len(g.split())) for _, (e, _s, p, g) in best.items() if e]
+    # A boolean flag's phrase never hides a product type's word ("toilet" in "smart toilet").
+    exact_spans = [(p, p + len(g.split())) for v, (e, _s, p, g) in best.items() if e and v.kind != "flag"]
 
     def inside_longer(position: int, gram: str) -> bool:
         end = position + len(gram.split())
@@ -232,27 +269,101 @@ def _value_candidates(db: "Session", tokens: list[str]) -> list[WordCandidates]:
     ):
         entry = by_gram.setdefault(gram, WordCandidates(gram=gram, position=position))
         entry.items.append(value.text() if exact else f"near {value.text()}")
+        if exact and value.kind != "product type":
+            entry.pairs[value.text()] = (value.spec_key, value.value, "flag" if value.kind == "flag" else "text")
     return list(by_gram.values()) + numbered
 
 
-def _code_label(code: str, name: str | None, holds: bool, holding: str | None = None) -> str:
+def _code_label(code: str, name: str | None, holds: bool, kind: str = "code", *, holding: str | None = None) -> str:
     from app.services.chatbot_prompt_vars import candidate_text
 
     # Product rows are staff / import text: one line each and free of the line's own
     # delimiters, so a stored newline can never start a line of its own in the user turn
     # (security review, 17 Oct 2026) and a name or code can never add an item to the line.
     code, name = candidate_text(code), candidate_text(name or "")
-    label = f"code {code} ({name})" if name else f"code {code}"
+    label = f"{kind} {code} ({name})" if name else f"{kind} {code}"
     if holding:
         # R5-2: a code that only CONTAINS the word is not the word's own code; it says so.
         label += f', holding "{candidate_text(holding)}"'
     return label if holds else f"near {label}"
 
 
-def _code_candidates(db: "Session", tokens: list[str]) -> list[WordCandidates]:
+def _fold_code(code: str) -> str:
+    return re.sub(r"[-\s]+", "", code).casefold()
+
+
+def _visible_set_clauses(db: "Session") -> list:
+    """The filters that leave only the product sets this contact may be told about: active,
+    with members, and EVERY member id among the products they may see (chat-searchable, the
+    set's own company, brand scope through the ORM listener). Checked positively, so a member
+    the scope hides fails the set instead of dropping out of a "hidden" read."""
+    from sqlalchemy import not_
+
+    from app.models.product import Product, chat_searchable_products
+    from app.models.product_set import ProductSet, ProductSetMember
+
+    members = db.query(ProductSetMember.id).filter(ProductSetMember.product_set_id == ProductSet.id)
+    visible = (
+        db.query(Product.id)
+        .filter(chat_searchable_products(), Product.company_id == ProductSet.company_id)
+        .correlate(ProductSet)
+    )
+    unseen = members.filter(not_(ProductSetMember.product_id.in_(visible.scalar_subquery())))
+    return [ProductSet.is_active.is_(True), members.exists(), not_(unseen.exists())]
+
+
+def visible_set_ids(db: "Session", set_ids: list[str]) -> set[str]:
+    """Which of `set_ids` pass `_visible_set_clauses` for the contact the session is scoped to."""
+    from app.models.product_set import ProductSet
+
+    if not set_ids:
+        return set()
+    rows = db.query(ProductSet.id).filter(ProductSet.id.in_(set_ids), *_visible_set_clauses(db)).all()
+    return {str(row[0]) for row in rows}
+
+
+def _set_rows(db: "Session", word: str) -> list[tuple[str, str | None]]:
+    """CHAT-CODE-LOOKUP R2: the visible product sets (`_visible_set_clauses`) whose code holds
+    `word` or is spelt near it. `NEAR_CODE_NO_EXACT` is the widest floor the caller uses."""
+    from sqlalchemy import func, or_
+
+    from app.models.product_set import ProductSet
+
+    norm = func.lower(func.regexp_replace(ProductSet.set_code, r"[-\s]+", "", "g"))
+    return [
+        (code, name)
+        for code, name in db.query(ProductSet.set_code, ProductSet.name)
+        .filter(
+            or_(norm.contains(word, autoescape=True), func.similarity(norm, word) >= NEAR_CODE_NO_EXACT),
+            *_visible_set_clauses(db),
+        )
+        .order_by(ProductSet.set_code)
+        .limit(CAP_PER_WORD * 4)
+        .all()
+    ]
+
+
+def _ranked(word: str, rows: list[tuple[str, str | None, str]], floor: float) -> list[tuple[str, str | None, bool, str]]:
+    """Product and set rows ranked together (exact, prefix, contains, near by similarity;
+    a set before a product on an exact tie), the near ones kept from `floor` up, capped."""
+    typed = trigrams(word)
+    keyed = []
+    for code, name, kind in rows:
+        folded = _fold_code(code)
+        score = similarity(typed, trigrams(folded))
+        rank = 0 if folded == word else 1 if folded.startswith(word) else 2 if word in folded else 3
+        if rank == 3 and score < floor:
+            continue
+        keyed.append(((rank, -score, kind != "set code", code), (code, name, rank < 3, kind)))
+    return [row for _key, row in sorted(keyed)][:CAP_PER_WORD]
+
+
+def _code_candidates(db: "Session", tokens: list[str], *, code_lookup: bool = False) -> list[WordCandidates]:
     """Codes on file under each word: the whole code for any word, in ONE query for the
     whole message; for a word with a digit (the first `CODE_WORDS_PER_MESSAGE` of them) also
-    every code holding it and the codes spelt near it, one query each."""
+    every code holding it and the codes spelt near it, one query each. `code_lookup`
+    (CHAT-CODE-LOOKUP): such a word with no exact code on file also lists the codes spelt
+    near it from `NEAR_CODE_NO_EXACT` up."""
     from sqlalchemy import case, func, or_
 
     from app.models.product import Product, chat_searchable_products
@@ -286,7 +397,6 @@ def _code_candidates(db: "Session", tokens: list[str]) -> list[WordCandidates]:
                     Product.product_code,
                     Product.product_name,
                     norm.contains(word, autoescape=True).label("holds"),
-                    (norm == word).label("whole"),
                 )
                 .filter(chat_searchable_products(), or_(norm.contains(word, autoescape=True), sim >= NEAR_CODE))
                 .order_by(
@@ -298,53 +408,92 @@ def _code_candidates(db: "Session", tokens: list[str]) -> list[WordCandidates]:
                 .limit(CAP_PER_WORD)
                 .all()
             )
-            items = [_code_label(code, name, holds, token if holds and not whole else None) for code, name, holds, whole in rows]
+            sets = _set_rows(db, word) if code_lookup else []
+            set_exact = any(_fold_code(code) == word for code, _name in sets)
+            if code_lookup and not set_exact and not any(_fold_code(code) == word for code, _name, _holds in rows):
+                held = [(code, name, True) for code, name, holds in rows if holds]
+                rows = held + [
+                    (code, name, False)
+                    for code, name in db.query(Product.product_code, Product.product_name)
+                    .filter(chat_searchable_products(), ~norm.contains(word, autoescape=True), norm.op("%")(word), sim >= NEAR_CODE_NO_EXACT)
+                    .order_by(sim.desc(), Product.product_code)
+                    .limit(CAP_PER_WORD)
+                    .all()
+                ]
+            labelled = [
+                (_code_label(code, name, holds, holding=token if holds and _fold_code(code) != word else None), code)
+                for code, name, holds in rows
+            ]
+            meta = [(code, holds) for code, _name, holds in rows]
+            if sets:
+                exact = set_exact or any(_fold_code(code) == word for code, _name, _holds in rows)
+                merged = _ranked(
+                    word,
+                    [(code, name, "code") for code, name, _holds in rows] + [(code, name, "set code") for code, name in sets],
+                    NEAR_CODE if exact else NEAR_CODE_NO_EXACT,
+                )
+                labelled = [
+                    (_code_label(code, name, holds, kind, holding=token if holds and _fold_code(code) != word else None), code)
+                    for code, name, holds, kind in merged
+                ]
+                meta = [(code, holds) for code, _name, holds, _kind in merged]
         else:
-            items = [_code_label(code, name, True) for code, name in by_word.get(word, [])]
-        if items:
-            out.append(WordCandidates(gram=token, position=position, items=items))
+            labelled = [(_code_label(code, name, True), code) for code, name in by_word.get(word, [])]
+            meta = []
+        if labelled:
+            typed = trigrams(word)
+            out.append(WordCandidates(
+                gram=token, position=position, items=[text for text, _code in labelled], codes=dict(labelled),
+                scores={code: similarity(typed, trigrams(_fold_code(code))) for code, _holds in meta},
+                holds=[code for code, holds in meta if holds],
+            ))
     return out
 
 
 _SIZE_RE = re.compile(r"(\d+(?:\.\d+)?)([a-z]+)")
 
 
-def _unit_keys(db: "Session") -> dict[str, list[str]]:
-    """Every numeric registry key under its own unit (`{"mm": ["dim_length", ...]}`)."""
-    from app.services.product_spec_registry import active_registry
-
-    units: dict[str, list[str]] = {}
-    for row in active_registry(db):
+def _unit_index(db: "Session", hidden: frozenset[str] = frozenset()) -> dict[str, tuple[list[str], set[str]]]:
+    """Every numeric registry key under its own unit, in name order, with the keys a size given
+    alone can mean (the registry's `matches_bare_size` flag, or a key a class scopes):
+    `{"mm": (["dim_length", ...], {"dim_width", ...})}`. Data only."""
+    units: dict[str, tuple[list[str], set[str]]] = {}
+    for row in _registry(db, hidden):
         unit = str(getattr(row, "unit", None) or "").strip().casefold()
-        if (row.data_type or "").lower() == "numeric" and unit and row.spec_key not in SKIP_KEYS:
-            units.setdefault(unit, []).append(row.spec_key)
-    return {unit: sorted(set(keys)) for unit, keys in units.items()}
+        if (row.data_type or "").lower() != "numeric" or not unit or row.spec_key in SKIP_KEYS:
+            continue
+        keys, bare = units.setdefault(unit, ([], set()))
+        keys.append(row.spec_key)
+        if getattr(row, "matches_bare_size", False) or (getattr(row, "applies_when", None) or {}).get("class"):
+            bare.add(row.spec_key)
+    return {unit: (sorted(set(keys)), bare) for unit, (keys, bare) in units.items()}
 
 
-def _keys_holding(db: "Session", keys: list[str], number: str, family: set[str]) -> list[str]:
-    """The unit's keys that hold `number` in product_specifications (an exact numeric match on
-    the stored JSON value), the held family's keys first, then the most held, then by name.
-    ONE query for all the keys, through the scoped Product join; `[]` when no key holds it."""
-    from decimal import Decimal, InvalidOperation
-
-    from sqlalchemy import Numeric, case, cast, func
+def _support(
+    db: "Session", pairs: set[tuple[str, str, str]], held_ids: list[str] | None
+) -> dict[tuple[str, str, str], tuple[int, int]]:
+    """F3-a: for each (key, value, kind) pair, the chat-searchable products in the contact's
+    scope that hold it and how many of the held family do. ONE query for every pair, through
+    the scoped Product join; each pair holds the way the set search matches it
+    (`membership_clause`: a number as a number, a list-valued spec by containment, a yes as true)."""
+    if not pairs:
+        return {}
+    from sqlalchemy import case, func
 
     from app.models.product import Product, chat_searchable_products
     from app.models.product_spec import ProductSpecifications
+    from app.services.chatbot.head.held_family import _family_ids
+    from app.services.product_spec_search import membership_clause
 
-    try:
-        wanted = Decimal(number)
-    except InvalidOperation:
-        return []
-    values = ProductSpecifications.values
+    family = _family_ids(db, held_ids) if held_ids else set()
+    in_family = ProductSpecifications.product_id.in_(list(family) or ["00000000-0000-0000-0000-000000000000"])
+    ordered = sorted(pairs)
     columns = []
-    for key in keys:
-        raw = values[key]["value"]
-        holds = cast(case((func.jsonb_typeof(raw) == "number", raw.astext), else_=None), Numeric) == wanted
+    for key, value, kind in ordered:
+        typed = float(value) if kind == "num" else (value.lower() == "true") if kind == "flag" else value
+        holds = membership_clause({key: [typed]})
         columns.append(func.coalesce(func.sum(case((holds, 1), else_=0)), 0))
-        columns.append(
-            func.coalesce(func.sum(case((holds & ProductSpecifications.product_id.in_(list(family) or ["00000000-0000-0000-0000-000000000000"]), 1), else_=0)), 0)
-        )
+        columns.append(func.coalesce(func.sum(case((holds & in_family, 1), else_=0)), 0))
     row = (
         db.query(*columns)
         .select_from(ProductSpecifications)
@@ -352,61 +501,128 @@ def _keys_holding(db: "Session", keys: list[str], number: str, family: set[str])
         .filter(chat_searchable_products())
         .one()
     )
-    counts = {key: (int(row[2 * i]), int(row[2 * i + 1])) for i, key in enumerate(keys)}
-    held = [k for k in keys if counts[k][0] > 0]
-    return sorted(held, key=lambda k: (-(counts[k][1] > 0), -counts[k][0], k))
+    return {pair: (int(row[2 * i]), int(row[2 * i + 1])) for i, pair in enumerate(ordered)}
+
+
+def _by_data(counts: dict, pair: tuple[str, str, str]) -> tuple[int, int, str]:
+    """The rank of a spec line among the keys of one word: the held family's key first, then
+    the most products holding it, then the key name as a stable tiebreak."""
+    total, in_family = counts.get(pair, (0, 0))
+    return (-(in_family > 0), -total, pair[0])
 
 
 def _size_candidates(
-    db: "Session", tokens: list[str], held_ids: list[str] | None = None
+    db: "Session", tokens: list[str], hidden: frozenset[str] = frozenset()
 ) -> tuple[list[WordCandidates], set[int]]:
     """SIZE-AS-CODE (crew, 18 Oct 2026): a number with a unit a numeric key carries ("600mm",
     "600 mm") is that key's value, offered as `spec K = N` for each such key, and the words
     it spans are never code words (a code merely holding "600mm" is not what was said). The
-    units are the registry's own (`product_spec_registry.unit`)."""
-    units = _unit_keys(db)
+    units are the registry's own (`product_spec_registry.unit`). The entries come back
+    unresolved (`size` set): which keys hold the number is the value index's count."""
+    units = _unit_index(db, hidden)
     if not units:
         return [], set()
     out: list[WordCandidates] = []
     spanned: set[int] = set()
-    family: set[str] | None = None
     for position, token in enumerate(tokens):
         joined = _SIZE_RE.fullmatch(token)
         if joined and joined.group(2) in units:
-            number, keys, shown, span = joined.group(1), units[joined.group(2)], token, {position}
+            number, unit_name, shown, span = joined.group(1), joined.group(2), token, {position}
         elif _is_number(token) and position + 1 < len(tokens) and tokens[position + 1] in units:
-            unit = tokens[position + 1]
-            number, keys, shown, span = token, units[unit], f"{token} {unit}", {position, position + 1}
+            unit_name = tokens[position + 1]
+            number, shown, span = token, f"{token} {unit_name}", {position, position + 1}
         else:
             continue
-        # R5-1: only the keys that hold this number (the held family's first); every key of
-        # the unit when none does.
-        if family is None:
-            from app.services.chatbot.head.held_family import _family_ids
-
-            family = _family_ids(db, held_ids) if held_ids else set()
-        keys = _keys_holding(db, keys, number, family) or keys
-        out.append(WordCandidates(gram=shown, position=position, items=[f"spec {key} = {number}" for key in keys]))
+        keys, bare = units[unit_name]
+        out.append(WordCandidates(gram=shown, position=position, size=(number, unit_name, keys, bare)))
         spanned |= span
     return out, spanned
 
 
-def shortlist(db: "Session", message: str, held_ids: list[str] | None = None) -> list[WordCandidates]:
-    """The candidates for every word of `message` that has any, in message order."""
+def _resolve(entries: list[WordCandidates], counts: dict) -> None:
+    """F3-a: a size's lines are the keys that hold the number, ranked by data (every key of the
+    unit, in name order, when none does), the bare-size line first when a flagged key holds it
+    (R6-1); a shared phrase's exact spec lines are ranked by data in the slots they hold."""
+    for entry in entries:
+        if entry.size:
+            number, unit_name, keys, bare = entry.size
+            holders = [k for k in keys if counts.get((k, number, "num"), (0, 0))[0] > 0]
+            ranked = sorted(holders, key=lambda k: _by_data(counts, (k, number, "num"))) or keys
+            entry.items = [f"spec {key} = {number}" for key in ranked]
+            if bare & set(holders):
+                entry.items.insert(0, f"size {number} {unit_name} (no dimension named)")
+            continue
+        slots = [n for n, item in enumerate(entry.items) if item in entry.pairs]
+        for slot, item in zip(slots, sorted((entry.items[n] for n in slots), key=lambda i: _by_data(counts, entry.pairs[i]))):
+            entry.items[slot] = item
+
+
+def shortlist(
+    db: "Session",
+    message: str,
+    held_ids: list[str] | None = None,
+    hidden: frozenset[str] = frozenset(),
+    *,
+    code_lookup: bool = False,
+) -> list[WordCandidates]:
+    """The candidates for every word of `message` that has any, in message order. A key in
+    `hidden` (the contact's hidden spec keys) is named by no line."""
     tokens = _tokens(message)
     if not tokens:
         return []
-    sizes, spanned = _size_candidates(db, tokens, held_ids)
+    sizes, spanned = _size_candidates(db, tokens, hidden)
+    values = _value_candidates(db, tokens, hidden)
+    # The pairs that need data: every size's keys, and the exact spec lines of a word two keys share.
+    wanted = {(k, n, "num") for e in sizes for n in [e.size[0]] for k in e.size[2]}
+    for entry in values:
+        if len({pair[0] for pair in entry.pairs.values()}) > 1:
+            wanted.update(entry.pairs.values())
+    _resolve(sizes + values, _support(db, wanted, held_ids))
     code_words = list(dict.fromkeys(t for position, t in enumerate(tokens) if position not in spanned))
     merged: dict[str, WordCandidates] = {}
-    for entry in sizes + _value_candidates(db, tokens) + _code_candidates(db, code_words):
+    # The exact lines the index made (product type, spec, size and numeric-word lines) are never cut.
+    index_lines = {i for e in sizes + values for i in e.items if not i.startswith("near ")}
+    for entry in sizes + values + _code_candidates(db, code_words, code_lookup=code_lookup):
         held = merged.setdefault(entry.gram, WordCandidates(gram=entry.gram, position=entry.position))
         held.items.extend(item for item in entry.items if item not in held.items)
+        held.codes.update(entry.codes)
+        held.scores.update(entry.scores)
+        held.holds.extend(code for code in entry.holds if code not in held.holds)
     ordered = sorted(merged.values(), key=lambda e: (e.position, -len(e.gram)))
     for entry in ordered:
         exact = [i for i in entry.items if not i.startswith("near ")]
-        entry.items = (exact + [i for i in entry.items if i.startswith("near ")])[:CAP_PER_WORD]
+        rows = exact + [i for i in entry.items if i.startswith("near ")]
+        # By source, not wording: the index's exact lines keep every holding key; every other row
+        # (code, near-code, near spelling) shares the cap.
+        capped = [i for i in rows if i not in index_lines][:CAP_PER_WORD]
+        entry.items = [i for i in rows if i in index_lines or i in capped]
     return ordered
+
+
+def listed_codes(entries: list[WordCandidates]) -> frozenset[str]:
+    """The folded codes of the code lines `candidate_lines` renders (the caps applied):
+    what grounding checks a product pick against under the gate."""
+    from app.services.chatbot.turn.state import token_key
+
+    shown = [entry for entry in entries if entry.items][:CAP_LINES]
+    return frozenset(token_key(entry.codes[item]) for entry in shown for item in entry.items if item in entry.codes)
+
+
+def pick_info(entries: list[WordCandidates]) -> dict[str, dict[str, Any]]:
+    """What grounding needs to refuse an unsafe product pick, per rendered word (keyed by the
+    word's folded key): the folded code -> similarity of each code line, and the folded codes
+    that hold the word."""
+    from app.services.chatbot.turn.state import token_key
+
+    shown = [entry for entry in entries if entry.items][:CAP_LINES]
+    out: dict[str, dict[str, Any]] = {}
+    for entry in shown:
+        listed = {code for item, code in entry.codes.items() if item in entry.items}
+        out[token_key(entry.gram)] = {
+            "scores": {token_key(c): s for c, s in entry.scores.items() if c in listed},
+            "holds": [token_key(c) for c in entry.holds if c in listed],
+        }
+    return out
 
 
 def candidate_lines(entries: list[WordCandidates]) -> list[str]:

@@ -260,6 +260,8 @@ class Grounded:
     known: list[str] = field(default_factory=list)
     #: the registry's own words for the value ("gunmetal" for a typed "gunmetl")
     words: str | None = None
+    #: a bare size's OR (R6-1): the keys the number may be under (`head/bare_size.py`)
+    any_keys: list[str] | None = None
 
     def entity(self, template: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -273,6 +275,7 @@ class Grounded:
             "spec_label": self.label,
             "spec_words": self.words,
             "spec_known": list(self.known) if self.value is None else [],
+            **({"spec_any_keys": list(self.any_keys)} if self.any_keys else {}),
         }
 
 
@@ -740,6 +743,10 @@ def ground(
     vocab: Vocabulary | None = None,
     message: str | None = None,
     closed_lists: bool = False,
+    listed_codes: frozenset[str] | None = None,
+    pick_info: dict[str, dict[str, Any]] | None = None,
+    held_ids: list[str] | None = None,
+    hidden_keys: frozenset[str] = frozenset(),
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """The verdict with every descriptor grounded, and a note per change for the trace.
 
@@ -749,7 +756,16 @@ def ground(
 
     `closed_lists` (CHAT-CLOSED-LISTS, the parser version carries the CLOSED LISTS
     section): a document type is kept only when its pick is an item of the lists the
-    prompt rendered, and is tagged with that list (`_on_closed_lists`)."""
+    prompt rendered, and is tagged with that list (`_on_closed_lists`).
+
+    `listed_codes` (CHAT-CODE-LOOKUP, the version also carries the CODE LOOKUP section): a
+    product pick that is not the typed word, an extension or a family of it, and not a code
+    the candidate block listed, is dropped and the raw kept. None is today.
+
+    `pick_info` (CHAT-CODE-LOOKUP R2-4, `candidates.pick_info`): a kept pick is still refused
+    (canonical dropped, raw kept, noted) on a TRUE TIE (another near code on the word's line
+    has the pick's exact score) or SEVERAL HOLDERS (two or more listed codes hold the word and
+    none equals it). The scores are the shortlist's own; nothing here compares spellings."""
     entities = verdict.get("entities")
     if not isinstance(entities, list) or not entities:
         return verdict, []
@@ -818,6 +834,30 @@ def ground(
             notes.append({"from": hint, "raw": raw, "to": canonical})
             entity = {**entity, "raw": canonical, "canonical_code": None}
             raw = canonical
+        if listed_codes is not None and hint == _PRODUCT_HINT and canonical and entity.get("current_message") is not False:
+            from app.services.chatbot.turn.state import token_key
+
+            picked, typed = token_key(canonical), token_key(raw)
+            if picked != typed and picked not in typed and typed not in picked and picked not in {token_key(c) for c in listed_codes}:
+                notes.append({"from": hint, "raw": raw, "to": "canonical dropped: not on the candidate block"})
+                entity = {**entity, "canonical_code": None}
+                canonical = ""
+            elif pick_info and picked != typed and (info := pick_info.get(typed)):
+                scores, holds = info.get("scores") or {}, info.get("holds") or []
+                # The typed word is itself a listed code (an exact code with a spec word variant
+                # picked): it is on file, so nothing is refused.
+                on_file = typed in holds or typed in scores
+                tie = not on_file and picked in scores and picked not in holds and any(
+                    other != picked and other not in holds and score == scores[picked] for other, score in scores.items()
+                )
+                several = len(holds) >= 2 and typed not in holds and picked in holds
+                if tie or several:
+                    notes.append({
+                        "from": hint, "raw": raw,
+                        "to": "canonical refused: " + ("tied near codes" if tie else "several codes hold the word"),
+                    })
+                    entity = {**entity, "canonical_code": None}
+                    canonical = ""
         if hint == _PRODUCT_HINT and _names_a_class_not_a_code(raw, vocab):
             # Fix round 10 on PR #833 (owner, 28 Sep 2026: "i tried to search like gunmetal
             # basin, there is no such thing and it gives me flexible trap"): words with no
@@ -826,6 +866,14 @@ def ground(
             entity = {**entity, "hint": "category"}
             hint = "category"
             notes.append({"from": _PRODUCT_HINT, "raw": raw, "to": "category"})
+        if hint in _SPEC_HINTS and closed_lists:
+            from app.services.chatbot.head.bare_size import ground_bare
+
+            bare = ground_bare(db, entity, [e for e in entities if isinstance(e, dict)], vocab, held_ids, hidden_keys)
+            if bare is not None:
+                add([bare], entity)
+                notes.append({"from": hint, "raw": raw, "to": [bare.__dict__]})
+                continue
         if hint in _SPEC_HINTS:
             others = [
                 str(e.get("raw") or "")
@@ -847,7 +895,11 @@ def ground(
                 # PROMO-SUBJECT-FILTER AC-24: the words name two types, but the whole phrase
                 # is one value of a registry key, said word for word ("basin cabinet",
                 # furniture_type basin_cabinet): that value is what was asked for.
+                size = len(out)
                 add([whole], entity)
+                if closed_lists and len(out) > size:
+                    # The parser named a class; the spec this makes still says so (`names_own_class`).
+                    out[-1] = {**out[-1], "class_hint": hint}
                 notes.append({"from": hint, "raw": raw, "to": [whole.__dict__]})
                 continue
             # Fix round 10 on PR #833: "water tap basin" holds two product types word for

@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from app.services.chatbot.class_named import names_own_class  # noqa: F401  (re-exported)
+
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -75,27 +77,61 @@ def _scheme_certificates(db: "Session", scheme: str) -> list[str]:
     return [str(cid) for (cid,) in rows]
 
 
-def _kind_item(db: "Session", scheme: str, kinds: dict[str, str]) -> str | None:
-    """The certificate kind the scheme's own certificates are filed under, else the only
-    (or first) kind listed."""
+def _parent_kind(
+    db: "Session", scheme: str, kinds: dict[str, str], certificate_ids: list[str] | None = None
+) -> dict[str, str] | None:
+    """The scheme's parent kind, from certificate data: the listed attachment type most of the
+    scheme's active certificates are filed under (count first, type name only as a stable
+    tiebreak). Only certificate kinds count (`is_certificate`, the rows the lists print); a scheme
+    none of them carries has none. `certificate_ids` narrows the count to those certificates (the
+    ones the products hold). `{"parent_kind": the listed item, "parent_kind_uuid": the type's id,
+    "parent_kind_name": the type's name}`."""
     from sqlalchemy import func
 
     from app.models.certificate import Certificate
     from app.models.resources import AttachmentType
 
-    for code, name in (
-        db.query(AttachmentType.code, AttachmentType.type_name)
+    query = (
+        db.query(AttachmentType.id, AttachmentType.code, AttachmentType.type_name)
         .join(Certificate, Certificate.attachment_type_id == AttachmentType.id)
-        .filter(func.lower(Certificate.scheme) == scheme.casefold())
-        .order_by(AttachmentType.type_name)
+        .filter(
+            func.lower(Certificate.scheme) == scheme.casefold(),
+            Certificate.status == "active",
+            AttachmentType.is_certificate.is_(True),
+        )
+    )
+    if certificate_ids is not None:
+        query = query.filter(Certificate.id.in_(certificate_ids))
+    rows = (
+        query.group_by(AttachmentType.id, AttachmentType.code, AttachmentType.type_name)
+        .order_by(func.count(Certificate.id).desc(), AttachmentType.type_name)
         .all()
-    ):
+    )
+    for type_id, code, name in rows:
         for key in (code, name):
             item = kinds.get(str(key or "").strip().casefold())
             if item:
-                return item
-    listed = sorted(set(kinds.values()))
-    return listed[0] if listed else None
+                return {"parent_kind": item, "parent_kind_uuid": str(type_id), "parent_kind_name": str(name)}
+    return None
+
+
+def _with_parent_kind(
+    entities: list[dict[str, Any]], scheme_entity: dict[str, Any], parent: dict[str, str] | None, kinds: dict[str, str]
+) -> list[dict[str, Any]]:
+    """B-2 / B-3: the scheme entity carries its parent kind itself, so it is ONE entity. A kind
+    the parser said beside it that IS the parent folds into it; a different kind stays beside the
+    scheme as said, and the scheme then carries no parent of its own."""
+    kind_entities = [e for e in entities if e.get("listed") == "cert_kind"]
+    if parent is None:
+        return entities
+
+    def is_parent(e: dict[str, Any]) -> bool:
+        said = (str(e.get("listed_item") or "").strip(), str(e.get("canonical_code") or "").strip())
+        return any(kinds.get(k.casefold()) == parent["parent_kind"] for k in said if k)
+
+    if any(not is_parent(e) for e in kind_entities):
+        return entities
+    return [{**e, **parent} if e is scheme_entity else e for e in entities if e not in kind_entities]
 
 
 def index_scheme(
@@ -114,42 +150,39 @@ def index_scheme(
     if not product_ids:
         return verdict, None
     scheme = str(schemes[0]["canonical_code"]).strip()
-    kind = _kind_item(db, scheme, closed_list_items(db).get("cert_kind", {}))
-    # With no certificate kind listed there is none to add beside the scheme; the held
-    # products still stay the subject.
-    has_kind = kind is None or any(e.get("listed") == "cert_kind" for e in said)
-    kind_entity = {**schemes[0], "canonical_code": kind, "listed_item": kind, "listed": "cert_kind"}
-    # Added beside a kept scheme, the kind is its own entity: reconciliation keys on `raw`,
-    # so it must not share the scheme's word (or it is retyped with it).
-    added_kind = {**kind_entity, "raw": kind}
+    kinds = closed_list_items(db).get("cert_kind", {})
     held = _held_certificates(db, product_ids, scheme)
     if held:
         # The certificates the scheme names for these products, read here through the link,
         # are the scheme's resolution (`resolve_gate`): its word is never a record lookup.
         # Typed `certificate`, the kind its rows are; the certificate kind beside it stays
         # the file leg.
-        entities = [{**e, "hint": "certificate", "certificate_uuids": held} if e is schemes[0] else e for e in entities]
+        scheme_entity = {**schemes[0], "hint": "certificate", "certificate_uuids": held}
+        entities = [scheme_entity if e is schemes[0] else e for e in entities]
+        # What the products hold decides the parent, not the scheme's whole stock.
+        entities = _with_parent_kind(entities, scheme_entity, _parent_kind(db, scheme, kinds, held), kinds)
         carried = [] if named else [
             {"raw": p.get("canonical_code") or p.get("raw"), "hint": "product", "canonical_code": p.get("canonical_code"),
              "current_message": True, "confident": True}
             for p in held_products
             if isinstance(p, dict) and p.get("uuid") and p.get("canonical_code")
         ]
-        out = [*carried, *entities, *([] if has_kind else [added_kind])]
+        out = [*carried, *entities]
         note = {"scheme": scheme, "held_by_products": True, "carried": len(carried)}
     else:
         # HELD-WITHOUT-SCHEME (crew ruling (b)): the products stay the subject and the scheme's
         # certificates the filter; the engine says plainly that none is on record.
         certificates = _scheme_certificates(db, scheme)
-        if certificates:
-            entities = [{**e, "hint": "certificate", "certificate_uuids": certificates} if e is schemes[0] else e for e in entities]
+        scheme_entity = {**schemes[0], "hint": "certificate", "certificate_uuids": certificates} if certificates else schemes[0]
+        entities = [scheme_entity if e is schemes[0] else e for e in entities]
+        entities = _with_parent_kind(entities, scheme_entity, _parent_kind(db, scheme, kinds), kinds)
         carried = [] if named else [
             {"raw": p.get("canonical_code") or p.get("raw"), "hint": "product", "canonical_code": p.get("canonical_code"),
              "current_message": True, "confident": True}
             for p in held_products
             if isinstance(p, dict) and p.get("uuid") and p.get("canonical_code")
         ]
-        out = [*carried, *entities, *([] if has_kind else [added_kind])]
+        out = [*carried, *entities]
         codes = [str(e.get("canonical_code")).strip() for e in [*carried, *said] if str(e.get("hint") or "").strip().lower() == "product" and str(e.get("canonical_code") or "").strip()]
         note = {"scheme": scheme, "held_by_products": False, "none_match": True, "products": list(dict.fromkeys(codes))}
     return {**verdict, "entities": out}, note
@@ -177,13 +210,11 @@ def scheme_without_product(db: "Session", verdict: dict[str, Any]) -> tuple[dict
     # Left typed as the attachment-type pick it is, so the ask stays a file ask: typed
     # `certificate` it would read as the set "which products have this certificate". A product
     # carried from an open pick is added later and skipped there (`with_carried_entities`).
-    out = [{**e, "certificate_uuids": certificates} if e is schemes[0] else e for e in entities]
-    # The certificate kind beside the scheme, as `index_scheme` adds it: without it the
-    # reconciler retypes the scheme's own row to a certificate and the file ask is lost.
-    if not any(e.get("listed") == "cert_kind" for e in said):
-        from app.services.chatbot_prompt_vars import closed_list_items
+    from app.services.chatbot_prompt_vars import closed_list_items
 
-        kind = _kind_item(db, scheme, closed_list_items(db).get("cert_kind", {}))
-        if kind is not None:
-            out.append({**schemes[0], "raw": kind, "canonical_code": kind, "listed_item": kind, "listed": "cert_kind"})
+    kinds = closed_list_items(db).get("cert_kind", {})
+    scheme_entity = {**schemes[0], "certificate_uuids": certificates}
+    out = [scheme_entity if e is schemes[0] else e for e in entities]
+    # The parent kind rides on the scheme's own entity (B-2), never a second entity.
+    out = _with_parent_kind(out, scheme_entity, _parent_kind(db, scheme, kinds), kinds)
     return {**verdict, "entities": out}, {"scheme": scheme, "held_by_products": False, "products": 0, "certificates": len(certificates)}

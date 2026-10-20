@@ -1,6 +1,6 @@
 # PLAN: CHAT-CLOSED-LISTS - chatbot step 2, closed candidate lists
 
-Status: Review, round 5 pushed (R5-1 size keys by data, R5-2 contains-is-not-the-code; reviewer READY); the lane prompt template changed (R5-2), so crew republishes an unlabelled CLOSED LISTS version before the next live / combined held-out run. Track: full (size L, LEAD pattern).
+Status: Review, round 7 (H1, H1b, F3-a) fix round 1 done, re-review next; ci HOLD (crew a35818889: owner rules whether a contact-hidden key the customer names may narrow a list; R6-6 broke main tests round8/round9, owner case #833); order F3-a, F3-b, F3-d per crew a30139843, F3-c only after the $0 TRAIN count; cp0-6240dc53f8 held for the owner. Track: full (size L, LEAD pattern).
 Branch `claude/chat-closed-lists-x6ymb5` (the sandbox cannot push `crew/chat-closed-lists`), PR #1755.
 
 Design source: CHATBOT-SCALE-DESIGN-16oct section 8 step 2 + D2 (crew-only): code only SHORTLISTS
@@ -224,3 +224,149 @@ Not built (root cause rc5-downflips.md): cp0-362022362a TYPE-OMITTED (MODEL, bot
 pick (MODEL, single; owner call on keeping an unsure pick). Bench notes for EVAL-BENCH: the spec grader compares values,
 never keys (3 of the lane's 5 spec up flips are wrong-key passes). Reviewer nits kept: `_keys_holding` skips
 string-stored values (all 17 numeric keys are JSON numbers on the dev copy); the family reader is linear in the held set.
+
+## Round 6 (19 Oct): TRAIN classes from EVAL-BENCH-train-classes-19oct.md
+
+combined3 held-out (crew): attachments 53.8 (bar 95), spec 73.7 (bar 90), leaks 0. Plan approved by crew:
+1. SIZE-WRONG-KEY (9 items): owner rule, crew ruling (a), data only: a bare size (the customer names no dimension; the
+   parser picks a `size N <unit>` candidate) matches dim_width OR dim_length; trap_length where the registry says it
+   applies to the class and holds N there (WC 200 / 300); a named dimension stays strict.
+2. SPEC-DROPPED-FRESH (5): piece_count / finish phrases get candidate lines from registry data.
+3. HELD-OVER-NEW-CLASS (2 left): a grounded class-key spec counts as naming the class; owner rule: a class ask
+   answered with only the held product is a fail.
+4. TYPE-ONLY-EMPTY-SET (2): a type-only follow-up over held products fetches their files, never a described set (R4-5).
+5. SIZE-AS-CODE (4): check that R5-1 / R5-2 cover it; build only a gap.
+Not this lane: COUNT-ONLY-SET (CHAT-COMPOSER #1771/#1776), SIZE-AS-QTY (CHAT-STATE prompt), TYPE-WORD-DROPPED (MODEL;
+owner call on unconfident picks); classes 1, 4, 14 fixed on #1755 per the report. Spend: $0 root cause and tests, one
+paired TRAIN x1 by EVAL-BENCH at the end (~0.9 USD, cap 3).
+
+### Round 6 results (19-20 Oct)
+
+| Class | Red | Green | Notes |
+|---|---|---|---|
+| R6-1 BARE-SIZE-BY-DATA (SIZE-WRONG-KEY) | 09fc569b | f8f15b79, c894458f | migration spec_bare_size_0001 (`matches_bare_size`), `size N <unit> (no dimension named)` line + one CLOSED LISTS line, head/bare_size.py grounding (class key by applies_when, else OR over flagged keys; Q3 named-dimension fallback by registry phrases + counts), OR carried through resolver, predicate, paging, held_family |
+| R6-2 BOOLEAN-SPEC-PHRASE (SPEC-DROPPED-FRESH) | 55d122e0 | a28c93ca | boolean registry phrases get `spec K = true (<label>)`; S2 test updated (09a883ed) |
+| R6-3 NAMES-OWN-CLASS-AT-EVERY-SEAM (HELD-OVER-NEW-CLASS) | beef226c | f7915900, d7917e24, 85562511, 9277505b | task revise + grounding class_hint + class-hinted spec is gate scope; a stub-only apply rule removed |
+| R6-4 TYPE-ONLY-KEEPS-HELD (TYPE-ONLY-EMPTY-SET) | 51e45ba7 | a5deac2c | a follow-up naming only a file type keeps the held product |
+| R6-5 review fixes | fdb9e4f2, 550f1a9c, 4d3f6aeb, e8f53573, 16b912c8 | 13a924f1, ca707012, d56e05ae, 995f18f7 | Q3 reads label words (real seed), registry API field, hidden keys in the OR, gated class_hint, unit in the miss line, CASE cast, one unit |
+| R6-6 HIDDEN-KEYS-EVERYWHERE (security) | 28ac75c3 | 658cbdfa | contact-hidden keys never filter, narrow or print (bare_size, held_family, Shape B strict + OR) |
+
+Data (dev): crew/state/migrations/CHAT-CLOSED-LISTS-L.sql (matches_bare_size true for dim_width / dim_length;
+trap_length applies_when class Water Closet); UPDATEs need owner OK. Prod (crew ruling a25130034 (a)): the owner runs the same idempotent SQL from the PR
+runbook after the migration deploys; a registry UI toggle for `matches_bare_size` is a later follow-up lane. Staff cannot
+edit `applies_when` in the UI today either: the update service accepts it
+(sorento_crm_frontend/app/(protected)/master-data-management/product-specifications/services/productSpecService.ts:462)
+but no screen component reads or writes it (code check, not a browser check), so trap_length's applies_when also goes
+through the owner SQL.
+
+## ARCHITECTURE (owner 20 Oct: layer, shared mechanism, other classes fixed, special cases removed)
+
+1. Spec key choice (R5-1, R6-1, R6-2), layer DATA -> candidates / grounding. Shared mechanism: the key a word can mean
+   is read from the registry (values held, matches_bare_size flag, applies_when.class, label words and synonyms), not
+   from key-name order or key type. Also fixes SIZE-AS-CODE, the es-0db8cf0a48 refine, the cp0-caafdcebea header and
+   the boolean phrases. Removes: the name-sorted cut-at-5 and the "boolean keys get no candidate line" special case.
+   No class or key list in code.
+2. Subject decision (R6-3, R6-4, HELD-OVER-NAMED-CLASS, FILTER-OVER-HELD), layer ROUTING. Today one rule (a message
+   naming its own class or product replaces the held subject; a refine fragment on any axis keeps it) is applied at
+   several seams (scheme_index, held_family, task revise, gate scope, apply kept_kinds). Crew ruling a29310107 (2): the subject decision moves to
+   CHAT-STATE's Subject resolver; this lane does not extend R6-3 / R6-4 and adds no new seam guards (frozen).
+3. Contact-hidden spec keys (R6-5 S2, R6-6), layer ACCESS. Today enforced per consumer (bare_size, held_family,
+   Shape B); the candidate line can still show a hidden key name to the parser (security nit, no customer leak).
+   Crew ruling a29310107 (3)(a): read hidden keys once before the parse and strip them at the two entries
+   (candidate block, grounding output), keeping downstream drops as a safety net. Next slice.
+4. No round-6 fix is a special case for one message shape.
+
+## Round 7 (20 Oct): H1 + F3 (CHAT-ARCH-REVIEW-20oct F3 / M3; crew rulings a29310107, a29691875)
+
+Scope ruled by crew: land round 6 as is (done, head 18e9760e7d), freeze new seam guards, then:
+- **H1 HIDDEN-KEYS-AT-THE-ENTRIES** (a29310107 (3)(a)), layer ACCESS: the policy is read once before the parse;
+  hidden keys are stripped from the candidate block and from the parse output; the R6-6 drops stay as a safety net.
+- **F3**, layer DATA -> candidates -> grounding. Shared mechanism: the spec registry is the single value-to-key
+  source; candidates.py is one generic index (value -> keys holding it, scoped, held family first, ranked by data
+  count, all keys shown neutrally when 2+ hold it); the parser returns a listed candidate id; grounding validates ids
+  and ASKS when a pick is unconfident or tied. Order (ruling (3)(a)): F3-c, then F3-a, F3-b, F3-d.
+  - F3-c grounding validates candidate ids; unconfident or 2+ equally supported -> ask (generalises #1761 R2-4, rank
+    by data not trigram). Removes the grounding scheme-word drop and the unconfident-pick drop.
+  - F3-a generic value index for spec / type / cert candidates only (ruling (2)(a)); code / near / set-code rows stay
+    #1761's. Removes CAP_PER_WORD name cut, `_size_candidates` / `_keys_holding` / `_bare_size_keys` / boolean branch,
+    unit-regex special cases.
+  - F3-b one parented closed list: attachment type / cert kind / scheme (scheme -> kind parent); the parser picks ONE
+    item; scheme_index reads the parent. Removes R4-2 added_kind and R4-3 dropped_kinds patches.
+  - F3-d registry fields (ruling (1)(a)): JSON columns on product_spec_registry (unit_conversions, short_forms) plus
+    `is_piece_count` bool, one additive migration. Removes v63 trap_length words.
+- **R5-2**: EVAL-BENCH x3-per-arm A/B (~0.035 USD); the `holding "W"` label goes if harmful.
+- **Prompt freeze** (a29691875): CHAT-CODE-LOOKUP owns the parser prompt (F1 consolidated template, #1761). This lane
+  does not edit head/closed_lists_prompt.py or base sections; any F3-b / F3-c wording goes to crew as exact rule text
+  (rule + field). A parser.py schema field change is announced to crew before it is made.
+- Spend: $0 root cause + red tests; L1 replay per slice (crew run); one paired TRAIN x1 at the end via EVAL-BENCH.
+
+### F3-a acceptance (crew ruling a30139843 (a): candidates.py only, behaviour-preserving, all keys neutral when 2+ hold the value)
+
+Order changed by a30139843: F3-a, F3-b, F3-d; F3-c only after a $0 TRAIN count of unconfident / tied spec and type picks
+(then the id field + rule text go to crew). The cp0-6240dc53f8 call (keep a confident=false attachment pick that is
+exactly a listed item) waits for the owner; neither side is built.
+
+- A1 ONE value index. Every spec line under a message word (enum value / label / synonym, boolean phrase, number + a
+  registry unit, a numeric key's own words) comes from one registry-driven index of (key, value) pairs; each pair
+  carries its data support: how many chat-searchable products in the contact's scope hold it, and how many of the held
+  family do. One scoped count query per message for all pairs (today: one per size word).
+- A2 Rank by data. Under one word, the spec lines of different keys are ordered: a key the held family holds first,
+  then by products holding it (most first), then by key name only as a stable tiebreak. This now also applies to enum
+  phrases two keys share (today they keep registry name order). Exact before near and product type before spec stay.
+- A3 No cut of holding keys. When 2+ keys hold the value, every holding key has its line, in the same neutral wording
+  (`spec K = V (label)`); the per-word cap (`CAP_PER_WORD`) no longer cuts spec lines. Code / near-code rows keep the
+  cap and are untouched (ruling a29691875 (2)(a): they are #1761's). `CAP_LINES` per message stays.
+- A4 A size no key holds. Every key of the unit is offered (today: name order, cut to 5), ranked as A2 (all zero, so
+  name order), uncut.
+- A5 Unchanged (existing tests are the guards): the bare-size line and its flag (R6-1), boolean phrases (R6-2), size
+  keys by data (R5-1), SIZE-AS-CODE spanned words, numeric key words ("4 in 1"), hidden keys (H1, R6-6), gate off.
+- Removes: `_keys_holding`, `_bare_size_keys` and `_unit_keys` as separate per-key readers (folded into the index)
+  and the spec-line cut in `shortlist`; the no-holder fallback (every key of the unit) stays per A4, uncut.
+
+### F3-b acceptance (one parented list: file type / certificate kind / scheme; crew a29691875, order a30139843)
+
+Facts (read-only): no scheme table and no parent column; the only scheme -> kind link is per certificate
+(`certificates.scheme` + `attachment_type_id`, app/models/certificate.py:89-94). Today `_kind_item`
+(head/scheme_index.py:81-101) picks the first kind by type_name, else the alphabetically first listed kind; R4-2 appends
+a separate kind entity (scheme_index.py:124-127, :141, :155, :186-191). The frozen prompt asks for two entities (kind +
+scheme, head/closed_lists_prompt.py:41-47).
+
+- B-1 Parent from data: a scheme's kind is the CERTIFICATE KIND (`attachment_types.is_certificate`) most of its active
+  certificates carry (count first, type name only as a stable tiebreak); when the asked products hold certificates of
+  the scheme, the count runs over those held certificates (review R3). A scheme no certificate kind carries has no kind.
+  The alphabetical-first-kind fallback goes. `parent_kind` / `parent_kind_uuid` are engine-owned: stripped from the
+  parse like `listed` (review R1). The reply names the kind by its name, not its code (review R2).
+- B-2 One entity: a scheme pick carries its parent kind on the SAME entity; no separate kind entity is appended (R4-2's
+  appends removed). The fetch is unchanged: the parent kind's id and the scheme's certificate ids.
+- B-3 A kind said beside its scheme (what today's prompt makes the parser emit) folds into the scheme entity when it is
+  the scheme's parent; a different kind beside a scheme stays as today (both kept).
+- B-4 Unchanged: R4-3 `dropped_kinds` (tied to the owner call cp0-6240dc53f8 and F3-c), held-none ("no SPAN certificate
+  on record"), scheme with no product (its own certificates, bounded), predicate order, the listed_item enum.
+- B-5 Template (not built here; rule text to crew for CHAT-CODE-LOOKUP's F1 template): the scheme line names its kind,
+  and a listed scheme alone is the whole certificate ask (one entity).
+
+### Round 7 results
+
+| Slice | Red | Green | Notes |
+|---|---|---|---|
+| H1 HIDDEN-KEYS-AT-THE-ENTRIES | f6e8c02d | 426eb3b4, 32971002 (+ stub 90bc48e9, lead sign-off) | candidate block filtered in one place (`_registry`); parse output stripped once; kill-proof 3 red; security PASS with should-fixes -> H1b |
+| H1b HIDDEN-KEYS-AT-EVERY-ENTRY (security should-fixes) | f95faa7d, 9329f07b | d4272502, 1a6cc876 (B4); B5 guard 9f2118af (the carried-set replay asks no breakdown, turn_runtime.py:4627); B6/B7 red 2b795073, fix 05da2ecd (no registry_rows filter: a hidden value word stays known); coverage + B8 guards 0cfb36c5 (written after the fixes, proved by revert); one strip after grounding 56ecab11 | grounding output stripped too (raw-word re-derive); Shape B reads the hidden set once before the unknown-value branch; a set breakdown never splits by a hidden key (B4); `.strip()` on spec_key; kill-proof 5 red |
+| F3-a ONE VALUE INDEX | 3fffdd4b, f1f1645d, 40cb920e | 5cd73ded, 8ff8ef7d, b82fe597 (list-valued specs count via membership_clause), 56ecab11 (cap by source) | one registry index + one scoped count query; spec lines ranked held family / count / name; holding keys never cut; near rows keep CAP_PER_WORD; removed `_keys_holding`, `_bare_size_keys`, `_unit_keys` (the no-holder fallback to every unit key stays, as A4 says, now uncut); kill-proof 5 red + 1 red |
+| F3-b ONE PARENTED LIST | 5fd85b65, ed4686be | 5be0c55f, 674177de (review R1-R3) | parent kind from certificate data, one entity, R4-2 appends removed; resolve_gate emits the kind in its own resolutions row (gate.py:653-664 keeps a row's exact matches only under one canonical_code); kill-proof 4 red; review NOT READY round 1 (R1 forged parent keys, R2 kind by code, R3 held minority kind) |
+
+Dev data for F3-a (sorento_cagent_stack, read-only, searchable, not company-scoped): 5 numbers held by 6+ of the 9 mm
+keys (250: trap_length 329, dim_height 107, dim_length 43, dim_width 20, thickness 8, diameter 7, depth 6; the old cut
+dropped diameter and depth and the bare-size line took a slot). The 3 enum phrases two keys share whose name order
+differs from data order ("urinal", "mixer", "mixer tap") all pair a type line with another line, and type stays ahead,
+so A2's enum ranking changes none of them today.
+
+### Round 7 open: hidden key named by the customer (crew a35818889, owner call)
+
+tests/chatbot/test_attribute_asks_round8.py (3) and round9.py (2), owner case #833 "kitchen sink 1.2mm thickness",
+pass on main 359abb5682 and fail on the pushed head 18e9760e7d; bisected to R6-6 658cbdfa. The default policy hides
+thickness (app/services/spec_visibility.py:43); main's Shape B set path never applied hidden keys, so the thickness
+filter narrowed. R6-6 and H1b B2/B6 make a hidden key never narrow. PR CI runs only changed test files, so this would
+first fail at release. Options sent: (a) a named hidden key still narrows, prints stay hidden; (b) never narrows, the
+policy's "not available" line; recommendation (b). The engine keeps its single pre-parse policy read (engine.py ~:4613):
+`check_access` keys on the parser's routing and runs after grounding, so its snapshot cannot serve the candidate block.
+The test stub now returns `hidden_spec_keys` like the real check_access (6f09cf2d).

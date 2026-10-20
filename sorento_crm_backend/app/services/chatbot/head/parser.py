@@ -84,11 +84,17 @@ class ParserConfig:
     # CHAT-CLOSED-LISTS: the version carries the CLOSED LISTS section, so the user turn
     # carries the candidate block and grounding validates picks against the lists.
     closed_lists: bool = False
+    # CHAT-CODE-LOOKUP: the version also carries the CODE LOOKUP section (near codes are
+    # listed and a product pick is checked against the block). Only with closed_lists.
+    code_lookup: bool = False
     # CHAT-CLOSED-LISTS S4b-v2: the gated version's own strict schema (`closed_lists_schema`),
     # None for the production one.
     json_schema: dict[str, Any] | None = None
     # CHAT-STATE: the prompt in use asks for `state_changes` (set by `resolve_config` in S5).
     state_block: bool = False
+    # PARSER-TEMPLATE F1-A: the version is the consolidated template (`head/parser_template`),
+    # whose rules decide what the engine's own re-readings of the message used to.
+    template: bool = False
 
 
 def _build_base_json_schema() -> dict[str, Any]:
@@ -845,6 +851,7 @@ def resolve_config(
     if not api_key:
         raise ParserError(f"no API key configured for provider {provider!r}")
     from app.services.chatbot.head.closed_lists_prompt import gate_on
+    from app.services.chatbot.head.parser_template import MARKER as TEMPLATE_MARKER
 
     # The same one read as the state gate (#1747 R6): both gates and the text, one version.
     closed_lists = gate_on(raw_template)
@@ -862,8 +869,10 @@ def resolve_config(
         model=model,
         api_key=api_key,
         closed_lists=closed_lists,
+        code_lookup=closed_lists and uses_code_lookup(db, override_version_id=override_version_id),
         json_schema=json_schema,
         state_block=state_block,
+        template=TEMPLATE_MARKER in (raw_template or ""),
     )
 
 
@@ -873,6 +882,15 @@ def uses_closed_lists(db: Session, *, override_version_id: str | None = None) ->
     rendered list value can switch it on."""
     from app.services import ai_prompt_registry
     from app.services.chatbot.head.closed_lists_prompt import gate_on
+
+    return gate_on(ai_prompt_registry.get_prompt(db, PROMPT_KEY, override_version_id=override_version_id).text)
+
+
+def uses_code_lookup(db: Session, *, override_version_id: str | None = None) -> bool:
+    """CHAT-CODE-LOOKUP gate: does the version this turn runs carry the CODE LOOKUP section
+    beside the CLOSED LISTS one? Read off the RAW template, like `uses_closed_lists`."""
+    from app.services import ai_prompt_registry
+    from app.services.chatbot.head.code_lookup_prompt import gate_on
 
     return gate_on(ai_prompt_registry.get_prompt(db, PROMPT_KEY, override_version_id=override_version_id).text)
 
