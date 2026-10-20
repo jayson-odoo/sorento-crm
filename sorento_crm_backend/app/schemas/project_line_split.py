@@ -99,9 +99,6 @@ class LineSplitLineOut(BaseModel):
     #: OI-SPLIT-VIEW (UAC D1): the line's split popup, the same value the SO and OI reads
     #: carry; null on a line with no splits.
     split_view: Optional[LineSplitViewOut] = None
-    #: OI-SPLIT-GUIDE (UAC F3): the purchasing email's words for the line's SAVED, not yet
-    #: confirmed decision (`saved_draft_remark`); null when the line has no saved draft.
-    saved_remark: Optional[str] = None
 
 
 class LineSplitsOut(BaseModel):

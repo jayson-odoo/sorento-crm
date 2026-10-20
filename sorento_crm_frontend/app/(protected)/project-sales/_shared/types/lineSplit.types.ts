@@ -53,11 +53,6 @@ export interface LineSplitLine {
   splits: LineSplit[];
   /** OI-SPLIT-VIEW (UAC D1): the line's split popup; null when the line has no splits. */
   split_view?: LineSplitView | null;
-  /**
-   * OI-SPLIT-GUIDE (UAC F3): the purchasing email's words for the line's saved, not yet
-   * confirmed decision (server `saved_draft_remark`); null when nothing is saved.
-   */
-  saved_remark?: string | null;
 }
 
 export interface LineSplitsPayload {
