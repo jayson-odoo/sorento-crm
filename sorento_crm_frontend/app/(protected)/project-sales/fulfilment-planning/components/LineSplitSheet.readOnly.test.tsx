@@ -45,9 +45,15 @@ describe('LineSplitSheet readOnly: same sheet, no controls (E1, E2)', () => {
     const { table } = renderSheet(ownerSavedCase(), [480, 752]);
     const heads = Array.from(table.querySelectorAll('thead th')).map((th) => (th.textContent ?? '').trim());
     expect(heads).toEqual([
-      'Line', 'SO date', 'S/O no', 'Item code', 'Location', 'Qty', 'New qty',
+      'SO date', 'S/O no', 'Item code', 'Location', 'Qty', 'New qty',
       'Delivery date', 'New date', 'Change quantity', 'Change date', 'Remark',
     ]);
+  });
+
+  it('shows no line number: no Line column, no "line N" sub-label (owner ruling)', () => {
+    const { table } = renderSheet(ownerSavedCase(), [480, 752]);
+    expect(table.textContent).not.toMatch(/\bline \d+/i);
+    expect(Array.from(table.querySelectorAll('thead th')).map((th) => (th.textContent ?? '').trim())).not.toContain('Line');
   });
 
   it('draws one tbody per listed line', () => {

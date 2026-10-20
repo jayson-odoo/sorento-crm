@@ -69,7 +69,7 @@ describe('AC-A2 one table, columns and line sort', () => {
     ]);
   });
 
-  it('lists the columns in order: LINE ... BALANCE, NEW QTY / NEW DATE beside QTY / DELIVERY DATE, no AUTOCOUNT LINE', async () => {
+  it('lists the columns in order: SO DATE ... BALANCE, no LINE column (owner ruling), NEW QTY / NEW DATE beside QTY / DELIVERY DATE, no AUTOCOUNT LINE', async () => {
     await renderDialog();
     const table = await sheet();
     const heads = within(table)
@@ -77,7 +77,6 @@ describe('AC-A2 one table, columns and line sort', () => {
       .map((h) => (h.textContent ?? '').trim().toLowerCase())
       .filter(Boolean);
     expect(heads).toEqual([
-      'line',
       'so date',
       's/o no',
       'item code',

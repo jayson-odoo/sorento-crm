@@ -90,10 +90,12 @@ describe('F13: the scoped edit sheet', () => {
     expect(screen.getByText(/line 900: 30 left/)).toBeInTheDocument();
   });
 
-  it('F21 pin: the board dialog keeps its Line column and the "line N" sub-label', async () => {
+  it('F21 (owner ruling): the board dialog shows no Line column and no "line N" sub-label either', async () => {
     await renderDialog();
-    await sheet();
-    expect(screen.getByRole('columnheader', { name: /^line$/i })).toBeInTheDocument();
-    expect(document.body.textContent).toMatch(/line 480/);
+    const table = await sheet();
+    expect(screen.queryByRole('columnheader', { name: /^line$/i })).not.toBeInTheDocument();
+    expect(table.textContent).not.toMatch(/\bline \d+/i);
+    // identity stays internal
+    expect(blockIds()).toContain('split-line-480');
   });
 });

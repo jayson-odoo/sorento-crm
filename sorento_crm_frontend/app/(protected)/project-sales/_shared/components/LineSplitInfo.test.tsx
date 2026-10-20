@@ -126,6 +126,8 @@ describe('LineSplitInfo - the popup is the read-only split sheet (E)', () => {
   it('shows the change words in the REMARK column and the same column headers as the edit sheet', () => {
     const { dialog } = open(ownerSavedCase());
     const heads = Array.from(dialog.querySelectorAll('thead th')).map((th) => (th.textContent ?? '').trim());
+    expect(heads).not.toContain('Line');
+    expect(within(dialog).getByRole('table', { name: 'Split delivery sheet' }).textContent).not.toMatch(/\bline \d+/i);
     expect(heads).toContain('Change quantity');
     expect(heads).toContain('New date');
     expect(heads).not.toContain('Balance');
