@@ -2623,7 +2623,10 @@ export interface ConfirmManyBody {
 
 /** One order inquiry row a previewed press would raise. */
 export interface PreviewInquiryRow {
+  /** The planning address (the mirror line's number). */
   line_no?: number | null;
+  /** OI-SPLIT-GUIDE (UAC C2a): AutoCount's line number, the one the board prints. */
+  so_line_no?: number | null;
   item_code?: string | null;
   verb: string;
   /** False: the row already exists and is only settled by this press. */
@@ -2647,6 +2650,8 @@ export type AutocountChange = 'cancelled' | 'qty' | 'date' | 'qty_date';
 /** One stock transfer a previewed press would propose. */
 export interface PreviewTransfer {
   line_no?: number | null;
+  /** As `PreviewInquiryRow.so_line_no`. */
+  so_line_no?: number | null;
   kind: string;
   is_new?: boolean;
   qty: string | number;

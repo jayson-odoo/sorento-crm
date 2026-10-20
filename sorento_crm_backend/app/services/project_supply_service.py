@@ -11746,6 +11746,7 @@ class ProjectSupplyService:
         (`named_line_ids`) carries what the AutoCount book did to that line
         (`_autocount_change_of`, against the snapshot of the revision active before it)."""
         from app.models.stock_transfer import StockTransfer
+        from app.services.project_line_split_service import display_line_nos
 
         decision = self.active_decision(str(order.id))
         if decision is None:
@@ -11754,6 +11755,14 @@ class ProjectSupplyService:
         line_no_of = {str(line.id): line.line_no for line in lines}
         line_no_by_core = {
             str(line.core_sales_order_line_id): line.line_no
+            for line in lines
+            if line.core_sales_order_line_id
+        }
+        # OI-SPLIT-GUIDE (UAC C2a): the number staff know a line by (AutoCount's core line
+        # number, the mirror's without a core), beside `line_no`, the planning address.
+        so_line_no_of = display_line_nos(self.db, line_no_of)
+        mirror_by_core = {
+            str(line.core_sales_order_line_id): str(line.id)
             for line in lines
             if line.core_sales_order_line_id
         }
@@ -11778,6 +11787,7 @@ class ProjectSupplyService:
         inquiry_rows = [
             {
                 "line_no": line_no_of.get(str(row.so_line_id or "")),
+                "so_line_no": so_line_no_of.get(str(row.so_line_id or "")),
                 "item_code": row.item_code,
                 "verb": row.verb,
                 "is_new": str(row.id) not in before_rows,
@@ -11813,6 +11823,7 @@ class ProjectSupplyService:
         transfers = [
             {
                 "line_no": line_no_by_core.get(str(move.so_line_id or "")),
+                "so_line_no": so_line_no_of.get(mirror_by_core.get(str(move.so_line_id or ""), "")),
                 "is_new": str(move.id) not in before_moves,
                 "kind": move.kind,
                 "qty": move.qty,

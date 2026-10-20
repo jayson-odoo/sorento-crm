@@ -173,7 +173,7 @@ function ReviewOrder({ order }: { order: ConfirmGuideReviewOrder }) {
                   : null;
                 return (
                   <tr key={`${row.line_no ?? ''}-${index}`} data-testid="confirm-guide-review-row">
-                    <td className={`${TD} tabular-nums`}>{row.line_no ?? ''}</td>
+                    <td className={`${TD} tabular-nums`}>{row.so_line_no ?? row.line_no ?? ''}</td>
                     <td className={`${TD} font-medium`}>{row.item_code ?? ''}</td>
                     <td className={TD}>{row.stock_location ?? ''}</td>
                     <td className={`${TD} text-end tabular-nums`}>{formatQty(String(row.qty))}</td>
@@ -215,7 +215,7 @@ function ReviewOrder({ order }: { order: ConfirmGuideReviewOrder }) {
             <tbody>
               {order.transfers.map((move, index) => (
                 <tr key={`${move.line_no ?? ''}-${index}`}>
-                  <td className={`${TD} tabular-nums`}>{move.line_no ?? ''}</td>
+                  <td className={`${TD} tabular-nums`}>{move.so_line_no ?? move.line_no ?? ''}</td>
                   <td className={TD}>{move.kind}</td>
                   <td className={`${TD} text-end tabular-nums`}>{formatQty(String(move.qty))}</td>
                   <td className={TD}>{move.from_location ?? ''}</td>

@@ -2894,7 +2894,7 @@ export function FulfilmentBoardPanel({
                       <li className="text-sm font-medium">Would write</li>
                       {(result.inquiry_rows ?? []).map((row, index) => (
                         <li key={`row-${index}`} className="text-sm break-words">
-                          {`line ${row.line_no ?? '?'} ${row.item_code ?? ''}: ${previewRowRemark(row)} ${formatQty(String(row.qty))}${
+                          {`line ${row.so_line_no ?? row.line_no ?? '?'} ${row.item_code ?? ''}: ${previewRowRemark(row)} ${formatQty(String(row.qty))}${
                             row.stock_location ? ` at ${row.stock_location}` : ''
                           }${
                             // A row the press retires is a CANCEL, not a settle (UAC E1).
@@ -2906,7 +2906,7 @@ export function FulfilmentBoardPanel({
                       ))}
                       {(result.transfers ?? []).map((move, index) => (
                         <li key={`move-${index}`} className="text-sm break-words">
-                          {`line ${move.line_no ?? '?'}: ${move.kind} ${formatQty(String(move.qty))} ${
+                          {`line ${move.so_line_no ?? move.line_no ?? '?'}: ${move.kind} ${formatQty(String(move.qty))} ${
                             move.from_location ?? '?'
                           } -> ${move.to_location ?? '?'}`}
                         </li>

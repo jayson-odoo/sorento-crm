@@ -620,7 +620,11 @@ class ConfirmManyBody(BaseModel):
 
 
 class PreviewInquiryRow(BaseModel):
+    #: The planning address (the mirror line's number).
     line_no: Optional[int] = None
+    #: OI-SPLIT-GUIDE (UAC C2a): the number staff know the line by: AutoCount's core line
+    #: number, the mirror's without a core (`display_line_nos`).
+    so_line_no: Optional[int] = None
     item_code: Optional[str] = None
     verb: str
     #: True when this press raised the row; False when it only settles a row an earlier
@@ -640,6 +644,8 @@ class PreviewInquiryRow(BaseModel):
 
 class PreviewTransfer(BaseModel):
     line_no: Optional[int] = None
+    #: As `PreviewInquiryRow.so_line_no`.
+    so_line_no: Optional[int] = None
     is_new: bool = True
     kind: str
     qty: Decimal
