@@ -180,6 +180,7 @@ import {
   putLineDraft,
 } from '../../_shared/services/fulfilmentPlanningService';
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
+import { walkConfirmGuide } from '@/test-mocks/confirmGuide';
 import { unpostableNotices } from '../../_shared/lib/unpostableNotices';
 import {
   buildBoard,
@@ -343,7 +344,7 @@ function defaultPreview(body: {
 
 async function pressPreviewThenConfirm() {
   await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
-  fireEvent.click(screen.getByTestId('board-confirm'));
+  await walkConfirmGuide();
 }
 
 beforeEach(() => {
@@ -1638,7 +1639,7 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
 
   async function openConfirmDialog() {
     await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
-    fireEvent.click(screen.getByTestId('board-confirm'));
+    await walkConfirmGuide();
   }
 
   it('posts every plannable line as the engine’s own suggestion, in one confirmMany call (D2)', async () => {
@@ -2128,7 +2129,7 @@ describe('FulfilmentBoardPanel: Confirm adopts first when it has to', () => {
 
   async function openConfirmDialog() {
     await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
-    fireEvent.click(screen.getByTestId('board-confirm'));
+    await walkConfirmGuide();
   }
 
   it('offers Confirm on an order nobody has adopted, and never says planning has not started', async () => {
@@ -2201,7 +2202,7 @@ describe('FulfilmentBoardPanel: Confirm adopts first when it has to', () => {
     );
 
     renderPanel(['SO403340']);
-    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await walkConfirmGuide();
 
     await waitFor(() => expect(adoptSalesOrder).toHaveBeenCalledWith('so-a'));
     expect(previewConfirmMany).not.toHaveBeenCalled();
@@ -2273,7 +2274,7 @@ describe('FulfilmentBoardPanel: Confirm posts against the id adopt itself return
 
   async function openConfirmDialog() {
     await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
-    fireEvent.click(screen.getByTestId('board-confirm'));
+    await walkConfirmGuide();
   }
 
   it('posts against the id the adopt call returned, even though the refetched board still names none', async () => {
@@ -2321,7 +2322,7 @@ describe('FulfilmentBoardPanel: Confirm posts against the id adopt itself return
     renderPanel(['SO419851']);
     expect(screen.queryByText(/SO419851/)).not.toBeInTheDocument();
 
-    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await walkConfirmGuide();
 
     await waitFor(() =>
       expect(adoptSalesOrder).toHaveBeenCalledWith('so-419851'),
@@ -3542,7 +3543,7 @@ describe('FulfilmentBoardPanel: an order whose change is already applied is not 
     await screen.findByTestId('fulfilment-board-matrix');
 
     // The applied order is left out at Preview already, and said so in the results.
-    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await walkConfirmGuide();
 
     expect(
       await screen.findByText(
@@ -4520,7 +4521,7 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     });
 
     renderPanel(['SO403340']);
-    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await walkConfirmGuide();
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole('alertdialog')).toBeNull();
@@ -4550,7 +4551,7 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     });
 
     renderPanel(['SO403340']);
-    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await walkConfirmGuide();
 
     const block = await screen.findByTestId('board-confirm-results');
     expect(block).toHaveTextContent('Nothing was written');
@@ -4591,7 +4592,7 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     });
 
     renderPanel(['SO403340', 'SO398322']);
-    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await walkConfirmGuide();
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     const [body] = confirmMany.mock.calls[0] as [{ orders: { pso_id: string }[] }];
@@ -4617,7 +4618,7 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     });
 
     renderPanel(['SO403340', 'SO398322']);
-    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await walkConfirmGuide();
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     const [body] = confirmMany.mock.calls[0] as [{ orders: { pso_id: string }[] }];
@@ -4654,7 +4655,7 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     });
 
     renderPanel(['SO403340']);
-    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await walkConfirmGuide();
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     const block = await screen.findByTestId('board-confirm-results');
@@ -4679,7 +4680,7 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     });
 
     renderPanel(['SO403340']);
-    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await walkConfirmGuide();
 
     const block = await screen.findByTestId('board-confirm-results');
     expect(block).toHaveTextContent('SO403340: has nothing to confirm');
@@ -4691,7 +4692,7 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     previewConfirmMany.mockRejectedValue(new Error('Network down'));
 
     renderPanel(['SO403340']);
-    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await walkConfirmGuide();
 
     await waitFor(() => expect(previewConfirmMany).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
@@ -4726,7 +4727,7 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     });
 
     renderPanel(['SO403340']);
-    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await walkConfirmGuide();
 
     const block = await screen.findByTestId('board-confirm-results');
     expect(block).toHaveTextContent('only 3 free');
@@ -4876,7 +4877,7 @@ describe('FulfilmentBoardPanel: Saved | All toggle, carried-over behaviour (owne
     await screen.findByTestId('fulfilment-board-matrix');
     await userEvent.click(segment(/^Saved/));
 
-    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await walkConfirmGuide();
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     await screen.findByTestId('board-confirm-results');
 

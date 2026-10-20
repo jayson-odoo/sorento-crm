@@ -116,6 +116,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 }));
 
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
+import { walkConfirmGuide } from '@/test-mocks/confirmGuide';
 import {
   buildBoard,
   type BoardDemandLine,
@@ -255,7 +256,7 @@ function defaultPreview(body: {
 
 async function pressPreviewThenConfirm() {
   await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
-  fireEvent.click(screen.getByTestId('board-confirm'));
+  await walkConfirmGuide();
 }
 
 beforeEach(() => {
