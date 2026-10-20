@@ -1190,9 +1190,14 @@ def _reply_to_message_id(envelope: Envelope) -> str | None:
 
 
 def _typed_text(user_turn: Any) -> str:
-    """The folded text the customer typed this turn: their own line and the codes read from the
-    turn's media, never the reply-to block."""
-    return turn_state.token_key(" ".join([user_turn.own_text, *user_turn.media]))
+    """The folded text the customer typed this turn: every line of their own text up to the
+    `reply to:` block `build_latest_user_message` appends, plus the codes read from the media."""
+    own = [user_turn.own_text]
+    for line in user_turn.quoted_text.split("\n"):
+        if line.lstrip().lower().startswith("reply to:"):
+            break
+        own.append(line)
+    return turn_state.token_key(" ".join([*own, *user_turn.media]))
 
 
 def turn_apply(state_in: Any, *args: Any, **kwargs: Any) -> Any:
