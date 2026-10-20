@@ -5,12 +5,13 @@ closed lists. `block` (the default, today) renders every full list into the syst
 `index` renders each full list variable as ONE fixed pointer line (`SYSTEM_BLANKS`), so the
 system prompt stays byte-identical across turns and its cache holds, and the per-turn CLOSED
 LISTS block (the candidate lines, `head/candidates.py`) also carries, in the lines the rules
-already read (`index_lines`):
+already read (`block`):
 
-- the file types, certificate kinds and schemes the message's own words name (their code,
-  name, own words or a lookup keyword the owner linked: the data `closed_list_items` reads);
-- the held products' own spec values, one line per visible key that holds one;
-- the file types, certificate kinds and schemes the held products have on record.
+- under the candidates' own heading, the file types, certificate kinds and schemes the
+  message's own words name (their code, name, own words or a lookup keyword the owner linked:
+  the data `closed_list_items` reads);
+- under `HELD_HEADER`, the file types, certificate kinds and schemes the held products have on
+  record, and their own spec values (one line per visible key that holds one).
 
 A word nothing matches gets no line; the existing ask paths handle it. Data only: no word is
 special-cased. Product reads go through the scoped session and `chat_searchable_products`.
@@ -42,6 +43,9 @@ SYSTEM_BLANKS: dict[str, str] = {
         "message (the ones its words name and the held products have)."
     ),
 }
+
+#: The one heading over the held products' own lines: they are on record, not said this turn.
+HELD_HEADER = "On record for the held products (their own values, not words of this message):"
 
 #: Held products read per turn, spec keys printed for them, values per key, and file /
 #: certificate lines in all: the per-turn text is not cached, so it stays lean.
@@ -225,10 +229,10 @@ def _named(grams: set[str], keys: list[str]) -> bool:
     return False
 
 
-def file_lines(db: "Session", message: str, held_ids: list[str]) -> list[str]:
+def file_lines(db: "Session", message: str, held_ids: list[str]) -> tuple[list[str], list[str]]:
     """The File type, Certificate kind and Certificate scheme lines (the `{{attachment_types}}`
-    / `{{certification_types}}` wording) for the items the message's words name and the items
-    the held products have on record, in list order."""
+    / `{{certification_types}}` wording), in list order: those for the items the message's words
+    name, and those for the items the held products have on record. An item can be in both."""
     from app.services import chatbot_prompt_vars as pv
 
     grams = _grams(message)
@@ -239,24 +243,42 @@ def file_lines(db: "Session", message: str, held_ids: list[str]) -> list[str]:
     def type_keys(row: dict) -> list[str]:
         return [pv._item(row), str(row.get("type_name") or ""), *pv._type_words(row, aliases)]
 
-    lines: list[str] = []
+    named: list[str] = []
+    held: list[str] = []
     for row in pv._file_type_rows(db):
-        if pv._item(row).casefold() in held_types or _named(grams, type_keys(row)):
-            lines.append(pv.file_type_line(row, aliases))
+        line = pv.file_type_line(row, aliases)
+        named += [line] if _named(grams, type_keys(row)) else []
+        held += [line] if pv._item(row).casefold() in held_types else []
     for row in pv._cert_kind_rows(db):
-        if pv._item(row).casefold() in held_types or _named(grams, type_keys(row)):
-            lines.append(pv.cert_kind_line(row, aliases))
+        line = pv.cert_kind_line(row, aliases)
+        named += [line] if _named(grams, type_keys(row)) else []
+        held += [line] if pv._item(row).casefold() in held_types else []
     for name, words in pv._cert_schemes(db):
-        if name.casefold() in held_schemes or _named(grams, [name, *words]):
-            lines.append(pv.cert_scheme_line(name, words))
-    return list(dict.fromkeys(lines))[:CAP_FILE_LINES]
+        line = pv.cert_scheme_line(name, words)
+        named += [line] if _named(grams, [name, *words]) else []
+        held += [line] if name.casefold() in held_schemes else []
+    return list(dict.fromkeys(named))[:CAP_FILE_LINES], list(dict.fromkeys(held))[:CAP_FILE_LINES]
 
 
-def index_lines(
-    db: "Session", message: str, held_ids: list[str] | None, hidden: frozenset[str] = frozenset()
+def block(
+    db: "Session",
+    candidate_lines: list[str],
+    message: str,
+    held_ids: list[str] | None,
+    hidden: frozenset[str] = frozenset(),
 ) -> list[str]:
-    """What index mode adds to the CLOSED LISTS block: the held products' spec lines, then the
-    file type / certificate lines the words name or the held products have. Empty when nothing
-    matches (a word matching nothing gets no line)."""
+    """The CLOSED LISTS block in index mode: the candidate lines, with the file type / certificate
+    lines the message's words name under the same `candidates.HEADER`; then, under `HELD_HEADER`,
+    the file types / certificates the held products have on record and their own spec lines.
+    Each heading only when it has a line under it (a word matching nothing gets no line)."""
+    from app.services.chatbot.head.candidates import HEADER
+
     held = list(dict.fromkeys(str(h) for h in held_ids or [] if h))[:CAP_HELD_PRODUCTS]
-    return [*held_spec_lines(db, held, hidden), *file_lines(db, message, held)]
+    named, on_record = file_lines(db, message, held)
+    out = list(candidate_lines)
+    if named:
+        out = [*(out or [HEADER]), *named]
+    held_lines = [*on_record, *held_spec_lines(db, held, hidden)]
+    if held_lines:
+        out += [HELD_HEADER, *held_lines]
+    return out

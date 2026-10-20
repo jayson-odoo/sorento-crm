@@ -1142,9 +1142,9 @@ def _candidate_lines(
     parser, so a failure leaves it out and the turn goes on (savepoint: the session stays usable).
     Also the codes the block lists, for grounding's product pick check under CODE LOOKUP.
 
-    `index` (CLOSED-LISTS-INDEX-MODE): the block also carries the index lines
-    (`head/closed_lists_index.index_lines`), in their own savepoint so a failure there keeps the
-    candidate lines."""
+    `index` (CLOSED-LISTS-INDEX-MODE): the block is `head/closed_lists_index.block` (the word
+    matches beside the candidate lines, the held products' own lines under their own heading),
+    built in its own savepoint so a failure there keeps the candidate lines."""
     message = user_turn.own_text
     try:
         with db.begin_nested():
@@ -1165,11 +1165,11 @@ def _candidate_lines(
         return lines, codes, picks
     try:
         with db.begin_nested():
-            extra = closed_lists_index.index_lines(db, message, held_ids, hidden)
+            indexed = closed_lists_index.block(db, lines or [], message, held_ids, hidden)
     except Exception:  # noqa: BLE001 - advisory block, never a failed turn
         logger.warning("chatbot: closed lists index lines failed; parsing without them", exc_info=True)
-        extra = []
-    return ([*(lines or []), *extra] or lines), codes, picks
+        indexed = []
+    return (indexed or lines), codes, picks
 
 
 def _scoped_factory(
