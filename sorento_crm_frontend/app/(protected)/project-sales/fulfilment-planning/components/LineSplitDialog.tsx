@@ -210,11 +210,18 @@ export function LineSplitDialog({
   open,
   psoId,
   focusLineId,
+  onlyLineIds,
   onOpenChange,
 }: {
   open: boolean;
   psoId: string;
   focusLineId?: string;
+  /**
+   * OI-SPLIT-GUIDE (UAC F13): opened from the guided Confirm, the sheet lists only these
+   * lines (the ones that Confirm covers) and the lines their splits sit on, with no search
+   * and no "Split lines only" toggle. Absent (the board gear): every line, as before.
+   */
+  onlyLineIds?: ReadonlySet<string>;
   onOpenChange: (open: boolean) => void;
 }) {
   const { query, save } = useLineSplits(psoId, open);
@@ -322,13 +329,23 @@ export function LineSplitDialog({
   const lines = draft?.lines ?? null;
   const sorted = React.useMemo(() => (lines ? sortLines(lines) : []), [lines]);
   const visible = React.useMemo(() => {
+    if (onlyLineIds) {
+      const landing = new Set<string>();
+      for (const line of sorted) {
+        if (!onlyLineIds.has(line.lineId)) continue;
+        for (const split of line.splits) {
+          if (!split.isCancel && split.sitsOnLineId) landing.add(split.sitsOnLineId);
+        }
+      }
+      return sorted.filter((line) => onlyLineIds.has(line.lineId) || landing.has(line.lineId));
+    }
     const needle = search.trim().toLowerCase();
     return sorted.filter(
       (line) =>
         (!needle || line.itemCode.toLowerCase().includes(needle)) &&
         (!splitOnly || !readsRemain(line) || openLineIds.has(line.lineId)),
     );
-  }, [sorted, search, splitOnly, openLineIds]);
+  }, [sorted, search, splitOnly, openLineIds, onlyLineIds]);
 
   // ---- history: one change, one Undo step
   const undo = React.useCallback(() => {
@@ -755,26 +772,30 @@ export function LineSplitDialog({
               ) : null}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <ListSearchInput
-                value={search}
-                onChange={setSearch}
-                placeholder="Search item code"
-                className="w-full sm:w-56"
-              />
-              <div className="flex items-center gap-2 text-xs">
-                <Switch
-                  id={switchId}
-                  size="sm"
-                  checked={splitOnly}
-                  onCheckedChange={setSplitOnly}
-                />
-                <label
-                  htmlFor={switchId}
-                  className="cursor-pointer select-none"
-                >
-                  Split lines only
-                </label>
-              </div>
+              {onlyLineIds ? null : (
+                <>
+                  <ListSearchInput
+                    value={search}
+                    onChange={setSearch}
+                    placeholder="Search item code"
+                    className="w-full sm:w-56"
+                  />
+                  <div className="flex items-center gap-2 text-xs">
+                    <Switch
+                      id={switchId}
+                      size="sm"
+                      checked={splitOnly}
+                      onCheckedChange={setSplitOnly}
+                    />
+                    <label
+                      htmlFor={switchId}
+                      className="cursor-pointer select-none"
+                    >
+                      Split lines only
+                    </label>
+                  </div>
+                </>
+              )}
               <div className="ms-auto flex items-center gap-2">
                 {/* ONE secondary button (UAC A12): Close, or Cancel once there is
                     something to discard. Escape still refuses while dirty. */}

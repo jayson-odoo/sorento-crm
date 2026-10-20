@@ -68,7 +68,12 @@ export function ConfirmGuideDialog({
   );
   const [posting, setPosting] = React.useState(false);
   /** The order whose edit sheet is open on top of the guide (UAC B4). */
-  const [editing, setEditing] = React.useState<{ psoId: string; open: boolean } | null>(null);
+  const [editing, setEditing] = React.useState<{
+    psoId: string;
+    open: boolean;
+    /** UAC F13: the page's covered lines, the only ones the edit sheet lists. */
+    lineIds: ReadonlySet<string>;
+  } | null>(null);
 
   const page = step.kind === 'review' ? pages[step.index] : undefined;
   const { query: splitRead } = useLineSplits(page?.psoId, Boolean(page?.psoId));
@@ -176,7 +181,14 @@ export function ConfirmGuideDialog({
                       className="max-md:w-full md:ms-auto"
                       data-testid="confirm-guide-split-edit"
                       onClick={() =>
-                        page.psoId && setEditing({ psoId: page.psoId, open: true })
+                        page.psoId &&
+                        setEditing({
+                          psoId: page.psoId,
+                          open: true,
+                          lineIds: new Set(
+                            page.covered.flatMap((line) => (line.lineId ? [line.lineId] : [])),
+                          ),
+                        })
                       }
                     >
                       <Split className="size-4" aria-hidden />
@@ -275,6 +287,7 @@ export function ConfirmGuideDialog({
         <LineSplitDialog
           open={editing.open}
           psoId={editing.psoId}
+          onlyLineIds={editing.lineIds}
           onOpenChange={(open) =>
             setEditing((current) => (current ? { ...current, open } : current))
           }
