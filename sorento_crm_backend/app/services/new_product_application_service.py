@@ -33,7 +33,6 @@ from app.models.order import Customer
 from app.models.procurement import ProductSupplier, StockInquiry, Supplier
 from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from app.models.entity_attachment import EntityAttachmentLink
-from app.models.resources import Attachment
 from app.models.user import User
 from app.services.error_handler import AppException, handle_not_found
 
@@ -75,10 +74,6 @@ LINE_NUMBERS = ("expected_qty",)
 #: What a refusal calls each field (never the raw key).
 FIELD_WORDS = {"brand_id": "brand"}
 
-#: The entity type a product's images are linked under.
-LINE_ENTITY = "new_product_application_line"
-IMAGE_TYPES = ("image/jpeg", "image/png", "image/webp")
-IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
 
 
 @dataclass
@@ -245,9 +240,6 @@ def _apply_lines(db: Session, app: NewProductApplication, body: List[Dict[str, A
 
 
 def _drop_line(db: Session, app: NewProductApplication, row: NewProductApplicationLine) -> None:
-    from app.services.entity_attachment_service import EntityAttachmentService
-
-    EntityAttachmentService(db).delete_links_for_entity(LINE_ENTITY, str(row.id))
     app.lines.remove(row)
 
 
@@ -332,6 +324,9 @@ def delete_draft(db: Session, application_id: str, user_id: Optional[str]) -> No
     """Hard delete (the lines and their image links go with it). Runs when the pending-action
     window lapses."""
     app = assert_deletable(db, application_id, user_id)
+    from app.services.entity_attachment_service import EntityAttachmentService
+
+    EntityAttachmentService(db).delete_links_for_entity(ENTITY, str(app.id))
     for row in list(app.lines):
         _drop_line(db, app, row)
     db.delete(app)
@@ -563,182 +558,68 @@ def save_feedback(db: Session, app: NewProductApplication, *, actor: Actor, data
     db.flush()
 
 
-# ------------------------------------------------------------------ images
+# ------------------------------------------------------------------ attachments
 
 
-def _image_line(app: NewProductApplication, line_id: str, actor: Actor) -> NewProductApplicationLine:
-    """Only the applicant, and only while the application is editable (AC-NPA-73)."""
-    line = _line(app, line_id)
+def _assert_attachments_editable(app: NewProductApplication, actor: Actor) -> None:
+    """Only the applicant, and only while the application is editable (AC-NPA-81)."""
     if not is_owner(app, actor):
-        raise _forbidden("Only the applicant can change the images of this application.")
+        raise _forbidden("Only the applicant can change the attachments of this application.")
     _assert_staff_may_edit(app, actor)
     assert_unlocked(app)
-    return line
 
 
-MAX_IMAGE_BYTES = 10 * 1024 * 1024
-MAX_IMAGE_PIXELS = 40_000_000
-_PIL_FORMAT = {"image/jpeg": "JPEG", "image/png": "PNG", "image/webp": "WEBP"}
-
-
-def _check_image(contents: bytes, kind: str) -> None:
-    """Refuse before anything is stored: too big, not really an image of the declared type, or
-    so many pixels that decoding it later (thumbnail, Excel) would cost real memory."""
-    import io
-
-    from PIL import Image
-
-    if len(contents) > MAX_IMAGE_BYTES:
-        raise _invalid("file", "The image is larger than 10 MB.")
-    try:
-        with Image.open(io.BytesIO(contents), formats=tuple(_PIL_FORMAT.values())) as image:
-            format_, pixels = image.format, image.width * image.height
-    except Exception:  # noqa: BLE001 - any decode failure means it is not an image we take
-        raise _invalid("file", "Upload a JPEG, PNG or WebP image.") from None
-    if format_ != _PIL_FORMAT[kind]:
-        raise _invalid("file", "The file is not the image type it claims to be.")
-    if pixels > MAX_IMAGE_PIXELS:
-        raise _invalid("file", "The image has too many pixels (over 40 megapixels).")
-
-
-def add_image(
-    db: Session,
-    app: NewProductApplication,
-    line_id: str,
-    *,
-    actor: Actor,
-    contents: bytes,
-    filename: Optional[str],
-    content_type: Optional[str],
+def link_attachment(
+    db: Session, app: NewProductApplication, *, actor: Actor, attachment_id: str
 ) -> None:
-    from app.services.entity_attachment_service import create_response_attachment
-
-    line = _image_line(app, line_id, actor)
-    kind = (content_type or "").split(";", 1)[0].strip().lower()
-    if kind not in IMAGE_TYPES or not (filename or "").lower().endswith(IMAGE_EXTENSIONS):
-        raise _invalid("file", "Upload a JPEG, PNG or WebP image.")
-    _check_image(contents, kind)
-    create_response_attachment(
-        db,
-        entity_type=LINE_ENTITY,
-        entity_id=str(line.id),
-        contents=contents,
-        filename=filename,
-        content_type=kind,
-        uploaded_by=actor.user_id,
-        commit=False,
-        uploader_kind="contact" if actor.contact_id else "user",
-        uploaded_by_contact_id=actor.contact_id,
-    )
-
-
-def copy_image(
-    db: Session, app: NewProductApplication, line_id: str, *, actor: Actor, attachment_id: str
-) -> None:
-    """Link a file already attached to the application's own stock inquiry (no second upload)."""
+    """Link a file from the attachment library, as the Stock Inquiry does (no second upload)."""
     from app.services.entity_attachment_service import EntityAttachmentService
 
-    line = _image_line(app, line_id, actor)
-    on_inquiry = (
-        db.query(Attachment.id, Attachment.file_size_bytes)
-        .join(EntityAttachmentLink, EntityAttachmentLink.attachment_id == Attachment.id)
-        .filter(
-            EntityAttachmentLink.entity_type == "stock_inquiry",
-            EntityAttachmentLink.entity_id == str(app.stock_inquiry_id),
-            Attachment.id == attachment_id,
-            Attachment.mime_type.in_(IMAGE_TYPES),
-        )
-        .first()
-        if app.stock_inquiry_id and _is_uuid(attachment_id)
-        else None
-    )
-    if on_inquiry is None:
-        raise _invalid("attachment_id", "Pick an image attached to the stock inquiry.")
-    if (on_inquiry[1] or 0) > MAX_IMAGE_BYTES:
-        raise _invalid("attachment_id", "The image is larger than 10 MB.")
+    _assert_attachments_editable(app, actor)
+    if not _is_uuid(attachment_id):
+        raise _invalid("attachment_id", "Pick a file from the attachment library.")
     EntityAttachmentService(db).link_existing_attachment(
-        LINE_ENTITY,
-        str(line.id),
+        ENTITY,
+        str(app.id),
         attachment_id,
         created_by=actor.user_id if _is_uuid(actor.user_id) else None,
     )
 
 
-def remove_image(db: Session, app: NewProductApplication, line_id: str, link_id: str, *, actor: Actor) -> None:
-    """Unlink only: the file row stays, as on the stock inquiry."""
-    from app.services.entity_attachment_service import EntityAttachmentService
-
-    line = _image_line(app, line_id, actor)
-    exists_ = (
-        db.query(EntityAttachmentLink.id)
-        .filter(
-            EntityAttachmentLink.id == link_id,
-            EntityAttachmentLink.entity_type == LINE_ENTITY,
-            EntityAttachmentLink.entity_id == str(line.id),
-        )
+def _own_link(db: Session, link_id: str) -> EntityAttachmentLink:
+    link = (
+        db.query(EntityAttachmentLink)
+        .filter(EntityAttachmentLink.id == link_id, EntityAttachmentLink.entity_type == ENTITY)
         .first()
         if _is_uuid(link_id)
         else None
     )
-    if exists_ is None:
-        raise handle_not_found("Image", link_id)
-    EntityAttachmentService(db).delete_link(link_id, LINE_ENTITY)
+    if link is None:
+        raise handle_not_found("Attachment", link_id)
+    return link
 
 
-def _images_by_line(db: Session, line_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
-    from app.services.entity_attachment_service import _safe_presigned_url
-
-    if not line_ids:
-        return {}
-    rows = (
-        db.query(EntityAttachmentLink, Attachment)
-        .join(Attachment, Attachment.id == EntityAttachmentLink.attachment_id)
-        .filter(EntityAttachmentLink.entity_type == LINE_ENTITY, EntityAttachmentLink.entity_id.in_(line_ids))
-        .order_by(EntityAttachmentLink.sort_order.asc().nulls_last(), EntityAttachmentLink.created_at.asc())
-        .all()
-    )
-    out: Dict[str, List[Dict[str, Any]]] = {}
-    for link, att in rows:
-        out.setdefault(str(link.entity_id), []).append(
-            {
-                "link_id": str(link.id),
-                "attachment_id": str(att.id),
-                "filename": att.original_filename,
-                "url": _safe_presigned_url(att.file_path, getattr(att, "storage_provider", None)) or att.file_path,
-                "content_type": att.mime_type,
-            }
-        )
-    return out
+def assert_attachment_unlinkable(db: Session, link_id: str, user_id: Optional[str]) -> NewProductApplication:
+    """Unlink pre-check: the applicant's own link on an application that is still editable."""
+    link = _own_link(db, link_id)
+    app = get_for(db, str(link.entity_id))
+    _assert_attachments_editable(app, Actor(user_id=user_id))
+    return app
 
 
-def inquiry_images(
-    db: Session, stock_inquiry_id: str, *, contact_id: Optional[str] = None, space_id: Optional[str] = None
-) -> List[Dict[str, Any]]:
-    """The copy picker: image files attached to the inquiry. A portal contact only sees its
-    OWN responded inquiry (404 otherwise), the same rule as `prefill`."""
-    from app.services.entity_attachment_service import _safe_presigned_url
+def unlink_attachment(db: Session, link_id: str, user_id: Optional[str]) -> None:
+    """Drop the link only; the file row stays. Runs when the pending-action window lapses."""
+    from app.services.entity_attachment_service import EntityAttachmentService
 
-    inquiry = _inquiry_for(db, stock_inquiry_id, contact_id=contact_id, space_id=space_id)
-    rows = (
-        db.query(EntityAttachmentLink, Attachment)
-        .join(Attachment, Attachment.id == EntityAttachmentLink.attachment_id)
-        .filter(
-            EntityAttachmentLink.entity_type == "stock_inquiry",
-            EntityAttachmentLink.entity_id == str(inquiry.id),
-            Attachment.mime_type.in_(IMAGE_TYPES),
-        )
-        .order_by(EntityAttachmentLink.sort_order.asc().nulls_last(), EntityAttachmentLink.created_at.asc())
-        .all()
-    )
-    return [
-        {
-            "attachment_id": str(att.id),
-            "filename": att.original_filename,
-            "url": _safe_presigned_url(att.file_path, getattr(att, "storage_provider", None)) or att.file_path,
-            "content_type": att.mime_type,
-        }
-        for _link, att in rows
-    ]
+    assert_attachment_unlinkable(db, link_id, user_id)
+    EntityAttachmentService(db).delete_link(link_id, ENTITY)
+    db.commit()
+
+
+def _attachments(db: Session, application_id: str) -> List[Dict[str, Any]]:
+    from app.services.entity_attachment_service import list_attachments_for_entity
+
+    return list_attachments_for_entity(db, ENTITY, application_id)
 
 
 # ------------------------------------------------------------------ prefill
@@ -1038,7 +919,6 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
         db, Product, [l.opened_product_id for l in lines], Product.product_code, Product.product_name, Product.is_active
     )
     facts = _linked_product_facts(db, [l.opened_product_id for l in lines])
-    images = _images_by_line(db, [str(l.id) for l in lines])
     users = _user_names(db, [app.decided_by, app.applicant_id, app.feedback_by, *[l.resolved_by for l in lines]])
     customer = (
         db.query(Customer.customer_code, Customer.customer_name).filter(Customer.id == app.customer_id).first()
@@ -1068,7 +948,6 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
             "brand_name": brands.get(str(l.brand_id), (None,))[0],
             "expected_qty": _num(l.expected_qty),
             "cost_price": _money(l.cost_price),
-            "images": images.get(str(l.id), []),
             "opened_product_id": l.opened_product_id,
             "opened_product_code": prod[0],
             "opened_product_name": prod[1],
@@ -1107,6 +986,7 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
         "cancel_reason": app.cancel_reason,
         "completed_at": _iso(app.completed_at),
         "updated_at": _iso(app.updated_at),
+        "attachments": _attachments(db, str(app.id)),
         "lines": [line_out(l) for l in lines],
     }
     if portal:

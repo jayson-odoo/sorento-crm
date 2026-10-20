@@ -57,7 +57,7 @@ class FeedbackIn(BaseModel):
     lines: Optional[List[FeedbackLineIn]] = Field(None, max_length=100)
 
 
-class ImageCopyIn(BaseModel):
+class AttachmentLinkIn(BaseModel):
     attachment_id: str
 
 

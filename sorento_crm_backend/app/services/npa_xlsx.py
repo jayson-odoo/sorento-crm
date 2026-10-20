@@ -25,6 +25,8 @@ from app.services.scm.proforma_invoice_service import _xlsx_safe_text
 
 #: Larger images show their file name instead (memory, and Pillow's own bomb guard sits higher).
 MAX_IMAGE_PIXELS = 40_000_000
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+_IMAGE_MIME = ("image/jpeg", "image/png", "image/webp")
 _THUMB_PX = 200
 _NAME_CAP = 200
 _CUSTOMER_CAP = 60
@@ -99,15 +101,13 @@ def _thumbnail_or_original(backend, row) -> bytes:
     try:
         return backend.download_file(thumbnail_key_for(row.file_path))
     except Exception:  # noqa: BLE001 - no thumbnail stored
-        from app.services.new_product_application_service import MAX_IMAGE_BYTES
-
         if (row.file_size_bytes or 0) > MAX_IMAGE_BYTES:
             raise ValueError("original too large to embed")  # caller shows the file name
         return backend.download_file(row.file_path)
 
 
-def _first_image(db: Session, line: NewProductApplicationLine) -> Optional[Tuple[str, Optional[bytes]]]:
-    """(file name, thumbnail PNG bytes or None) of the product's first image."""
+def _first_image(db: Session, app: NewProductApplication) -> Optional[Tuple[str, Optional[bytes]]]:
+    """(file name, thumbnail PNG bytes or None) of the application's first image attachment."""
     from PIL import Image
 
     from app.services import storage_router
@@ -116,8 +116,9 @@ def _first_image(db: Session, line: NewProductApplicationLine) -> Optional[Tuple
         db.query(Attachment)
         .join(EntityAttachmentLink, EntityAttachmentLink.attachment_id == Attachment.id)
         .filter(
-            EntityAttachmentLink.entity_type == "new_product_application_line",
-            EntityAttachmentLink.entity_id == str(line.id),
+            EntityAttachmentLink.entity_type == "new_product_application",
+            EntityAttachmentLink.entity_id == str(app.id),
+            Attachment.mime_type.in_(_IMAGE_MIME),
         )
         .order_by(EntityAttachmentLink.sort_order.asc().nulls_last(), EntityAttachmentLink.created_at.asc())
         .first()
@@ -170,6 +171,7 @@ def to_xlsx(db: Session, app: NewProductApplication) -> Tuple[bytes, str]:
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
 
+    image = _first_image(db, app)  # one picture for the application, shown on every sheet
     lines: List[Optional[NewProductApplicationLine]] = list(app.lines) or [None]
     for number, line in enumerate(lines, start=1):
         ws = wb.create_sheet(f"Product {number}")
@@ -198,7 +200,6 @@ def to_xlsx(db: Session, app: NewProductApplication) -> Tuple[bytes, str]:
             head.border = box
             body.border = box
 
-        image = _first_image(db, line) if line is not None else None
         heading(1, "NEW PRODUCT APPLICATION")
         field(2, "REFF:", stem)
         field(3, "DATE:", date_text)

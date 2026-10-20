@@ -2,14 +2,14 @@
 
 Rules live in `new_product_application_service`; this module resolves who is asking and maps
 the HTTP shape. Every move commits first and notifies after (`svc.notify`), so a notification
-failure never undoes the move. Literal paths (`/prefill`, `/products`, `/inquiry-attachments`) are
+failure never undoes the move. Literal paths (`/prefill`, `/products`) are
 declared before `/{application_id}`.
 """
 from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
@@ -17,7 +17,7 @@ from app.database import get_db
 from app.dependencies import get_current_user, require_permission
 from app.schemas.new_product_application import (
     FeedbackIn,
-    ImageCopyIn,
+    AttachmentLinkIn,
     LinkIn,
     NewProductApplicationWrite,
     ReasonIn,
@@ -80,16 +80,6 @@ def search_products(
     db: Session = Depends(get_db),
 ):
     return svc.search_products(db, q)
-
-
-@router.get("/inquiry-attachments")
-def inquiry_attachments(
-    stock_inquiry_id: str = Query(...),
-    _user: dict = Depends(require_permission(svc.CREATE)),
-    db: Session = Depends(get_db),
-):
-    """The image files on a stock inquiry: the "Copy from the inquiry" picker."""
-    return svc.inquiry_images(db, stock_inquiry_id)
 
 
 @router.get("")
@@ -284,45 +274,18 @@ def save_feedback(
     return _move(db, user, application_id, svc.save_feedback, data=payload.model_dump(exclude_unset=True))
 
 
-def _image_move(db: Session, user: dict, application_id: str, line_id: str, fn, **kw):
-    # No explicit rollback: every refusal precedes a write, and get_db's close() rolls back whatever is left.
-    app = _load(db, application_id, for_update=True)
-    fn(db, app, validate_uuid_path(line_id, resource="Line"), actor=_actor(db, user), **kw)
-    return _done(db, app)
-
-
-@router.post("/{application_id}/lines/{line_id}/images", status_code=status.HTTP_201_CREATED)
-async def upload_image(
+@router.post("/{application_id}/attachments", status_code=status.HTTP_201_CREATED)
+def link_attachment(
     application_id: str,
-    line_id: str,
-    file: UploadFile = File(...),
+    payload: AttachmentLinkIn,
     user: dict = Depends(require_permission(svc.CREATE)),
     db: Session = Depends(get_db),
 ):
-    contents = await file.read(svc.MAX_IMAGE_BYTES + 1)
-    return _image_move(
-        db, user, application_id, line_id, svc.add_image,
-        contents=contents, filename=file.filename, content_type=file.content_type,
-    )
-
-
-@router.post("/{application_id}/lines/{line_id}/images/copy", status_code=status.HTTP_201_CREATED)
-def copy_image(
-    application_id: str,
-    line_id: str,
-    payload: ImageCopyIn,
-    user: dict = Depends(require_permission(svc.CREATE)),
-    db: Session = Depends(get_db),
-):
-    return _image_move(db, user, application_id, line_id, svc.copy_image, attachment_id=payload.attachment_id)
-
-
-@router.delete("/{application_id}/lines/{line_id}/images/{link_id}")
-def remove_image(
-    application_id: str,
-    line_id: str,
-    link_id: str,
-    user: dict = Depends(require_permission(svc.CREATE)),
-    db: Session = Depends(get_db),
-):
-    return _image_move(db, user, application_id, line_id, svc.remove_image, link_id=link_id)
+    """Link a file from the attachment library (the Stock Inquiry flow); unlink is a pending action."""
+    try:
+        app = _load(db, application_id, for_update=True)
+        svc.link_attachment(db, app, actor=_actor(db, user), attachment_id=payload.attachment_id)
+        return _done(db, app)
+    except Exception:
+        db.rollback()
+        raise

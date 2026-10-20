@@ -2204,6 +2204,29 @@ register(
 )
 
 
+def _unlink_new_product_application_attachment(db: Session, payload: dict):
+    from app.services import new_product_application_service
+
+    # The applicant's own link on an editable application; re-checked here because the state
+    # can change inside the window. Only the link goes: the file stays in the library.
+    new_product_application_service.unlink_attachment(
+        db, _entity_id(payload), str(payload.get("requested_by_id") or "")
+    )
+    return {"message": "Unlinked"}
+
+
+register(
+    FormAction(
+        key="new_product_application_attachment.unlink",
+        entity_types=("new_product_application_attachment",),
+        execute=_unlink_new_product_application_attachment,
+        window=WINDOW_REVERSIBLE,
+        permission=OWN_RECORD,
+        label="Unlink attachment",
+    )
+)
+
+
 def _void_price_tag_request(db: Session, payload: dict):
     from app.services.price_tag_request_service import (
         PriceTagRequestService,

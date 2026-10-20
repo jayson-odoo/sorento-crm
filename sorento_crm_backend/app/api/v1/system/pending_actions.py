@@ -212,6 +212,10 @@ def _assert_entity_visible(db: Session, action_key: str, entity_id: str, actor_i
         from app.services import new_product_application_service
 
         new_product_application_service.assert_deletable(db, entity_id, actor_id)
+    elif action_key == "new_product_application_attachment.unlink":
+        from app.services import new_product_application_service
+
+        new_product_application_service.assert_attachment_unlinkable(db, entity_id, actor_id)
     elif action_key in ("customer.unassign_sales_agent", "customer.remove_from_group"):
         from app.services.contact_customer_service import get_customer_in_scope
 

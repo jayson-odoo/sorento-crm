@@ -787,7 +787,7 @@ def _check_kind(kind: str, db: Session, token: PortalToken) -> str:
 # PortalService's generic CRUD) but shares this generic attachments plumbing
 # (D3) - so only the kind check and the ownership check below widen for it;
 # `_check_kind` above stays exactly as it was for the generic submissions routes.
-_ATTACHMENT_ONLY_KINDS = ("price_tag_request",)
+_ATTACHMENT_ONLY_KINDS = ("price_tag_request", "new_product_application")
 
 
 def _check_revisable_kind(kind: str, db: Session, token: PortalToken) -> str:
@@ -840,6 +840,30 @@ def _check_attachment_kind(kind: str, db: Session, token: PortalToken) -> str:
         raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
     require_form_visible(db, token.contact_id, k)
     return k
+
+
+def _require_own_npa(
+    db: Session,
+    token: PortalToken,
+    submission_id: str,
+    *,
+    require_editable: bool = False,
+    check_visibility: bool = True,
+) -> None:
+    """The contact's own new product application, or a 404. The attachment WRITES pass
+    ``require_editable`` so a Submitted / Approved one refuses them (locked, 422); reading
+    does not. ``check_visibility=False`` is for the row-derived lookups that gate it later."""
+    from app.api.v1.public.portal_price_tag import _resolve_company
+    from app.models.base import company_scope
+    from app.services import new_product_application_service as npa
+
+    submission_id = validate_uuid_path(submission_id, resource="New product application")
+    if check_visibility:
+        require_form_visible(db, token.contact_id, "new_product_application")
+    with company_scope(db, frozenset({_resolve_company(db, token)})):
+        row = npa.get_for(db, submission_id, contact_id=str(token.contact_id))
+        if require_editable:
+            npa.assert_unlocked(row)
 
 
 def _require_own_price_tag_request(
@@ -1306,6 +1330,8 @@ def portal_list_attachments(
     # Ensures the contact owns this submission.
     if k == "price_tag_request":
         _require_own_price_tag_request(db, token, submission_id)
+    elif k == "new_product_application":
+        _require_own_npa(db, token, submission_id)
     else:
         PortalService(db).get_submission(token, k, submission_id)
     return {"items": _list_attachments_for(db, _entity_type_for(k), submission_id)}
@@ -1347,6 +1373,8 @@ def _attachment_is_on_own_submission(
                     _require_own_price_tag_request(
                         db, token, entity_id, check_visibility=False
                     )
+                elif kind == "new_product_application":
+                    _require_own_npa(db, token, entity_id, check_visibility=False)
                 else:
                     portal.get_submission(token, kind, entity_id)
             except HTTPException:
@@ -1483,6 +1511,8 @@ async def portal_upload_attachment(
     k = _check_attachment_kind(kind, db, token)
     if k == "price_tag_request":
         _require_own_price_tag_request(db, token, submission_id, require_editable=True)
+    elif k == "new_product_application":
+        _require_own_npa(db, token, submission_id, require_editable=True)
     else:
         portal.get_submission(token, k, submission_id)  # ownership check
     attachment_type = portal.get_portal_attachment_type()
@@ -1720,6 +1750,9 @@ def portal_delete_attachment(
             db, token, link.entity_id, require_editable=True, check_visibility=False
         )
         require_form_visible(db, token.contact_id, "price_tag_request")
+    elif raw_kind == "new_product_application":
+        _require_own_npa(db, token, link.entity_id, require_editable=True, check_visibility=False)
+        require_form_visible(db, token.contact_id, "new_product_application")
     else:
         portal.get_submission(token, raw_kind, link.entity_id)
         require_form_visible(db, token.contact_id, raw_kind)

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
 from app.api.v1.public.portal import get_portal_token
@@ -24,7 +24,7 @@ from app.models.base import company_scope
 from app.models.portal import PortalToken
 from app.models.procurement import StockInquiry
 from app.models.user import User
-from app.schemas.new_product_application import ImageCopyIn, NewProductApplicationWrite, ReasonIn
+from app.schemas.new_product_application import NewProductApplicationWrite, ReasonIn
 from app.services import new_product_application_service as svc
 from app.services import npa_xlsx
 from app.services import sample_request_service
@@ -130,19 +130,6 @@ def portal_prefill(
 ):
     _assert_visible(db, token.contact_id)
     return svc.prefill(
-        db, stock_inquiry_id, contact_id=str(token.contact_id), space_id=token.space_id
-    )
-
-
-@router.get(f"{OWN}/inquiry-attachments")
-def portal_inquiry_attachments(
-    stock_inquiry_id: str = Query(...),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    """Image files on the contact's own responded inquiry: the "Copy from the inquiry" picker."""
-    _assert_visible(db, token.contact_id)
-    return svc.inquiry_images(
         db, stock_inquiry_id, contact_id=str(token.contact_id), space_id=token.space_id
     )
 
@@ -305,49 +292,3 @@ def portal_download(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": content_disposition(filename)},
     )
-
-
-def _image_move(db: Session, token: PortalToken, application_id: str, line_id: str, fn, **kw):
-    _assert_visible(db, token.contact_id)
-    # No explicit rollback: every refusal precedes a write, and get_db's close() rolls back whatever is left.
-    with company_scope(db, frozenset({_resolve_company(db, token)})):
-        app = _own(db, token, application_id, for_update=True)
-        fn(db, app, validate_uuid_path(line_id, resource="Line"), actor=_actor(token), **kw)
-        return _done(db, app)
-
-
-@router.post(f"{BASE}/{{application_id}}/lines/{{line_id}}/images", status_code=201)
-async def portal_upload_image(
-    application_id: str,
-    line_id: str,
-    file: UploadFile = File(...),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    contents = await file.read(svc.MAX_IMAGE_BYTES + 1)
-    return _image_move(
-        db, token, application_id, line_id, svc.add_image,
-        contents=contents, filename=file.filename, content_type=file.content_type,
-    )
-
-
-@router.post(f"{BASE}/{{application_id}}/lines/{{line_id}}/images/copy", status_code=201)
-def portal_copy_image(
-    application_id: str,
-    line_id: str,
-    payload: ImageCopyIn,
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    return _image_move(db, token, application_id, line_id, svc.copy_image, attachment_id=payload.attachment_id)
-
-
-@router.delete(f"{BASE}/{{application_id}}/lines/{{line_id}}/images/{{link_id}}")
-def portal_remove_image(
-    application_id: str,
-    line_id: str,
-    link_id: str,
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    return _image_move(db, token, application_id, line_id, svc.remove_image, link_id=link_id)
