@@ -1544,8 +1544,13 @@ class ProjectOrderInquiryService:
                     settled_in_place.append(str(line.id))
                 continue
             need = split_needs.get(str(line.id), _dec(entry.get("buy_qty")))
-            if str(line.id) in kept_splits and self._rows_hold_plan_total(
-                line, need + _dec(kept_splits[str(line.id)].get("cancels"))
+            kept_plan = kept_splits.get(str(line.id))
+            if kept_plan is not None and self._rows_hold_plan_total(
+                line,
+                # A cancel split an earlier Confirm already told (its CANCEL BALANCE is live) is
+                # no longer asked of the rows.
+                need
+                + max(_dec(kept_plan.get("cancels")) - _dec(kept_plan.get("held_cancel")), _ZERO),
             ):
                 # OI-SPLIT-SUPERSEDE-FIX: the line's rows are already cut to a plan and still
                 # ask for exactly the new plan's total with its cancel splits (an edit of a
@@ -6391,10 +6396,12 @@ class ProjectOrderInquiryService:
     ) -> bool:
         """OI-SPLIT-SUPERSEDE-FIX: when each of a split line's unmatched `rows` has exactly one
         unmatched plan row at its own date, no larger than it, each row keeps its date and is
-        cut to that qty in place (NEW QTY, links trimmed, purchasing's acknowledgement turned
-        CHANGED), so nothing is joined, cancelled or raised again. False, touching nothing,
-        for any other shape (a new split, a moved date, a grown row)."""
+        cut to that qty in place (NEW QTY, purchasing's acknowledgement turned CHANGED), so nothing is joined, cancelled or raised again. False, touching nothing,
+        for any other shape (a new split, a moved date, a grown row) or a linked row: the join
+        keeps a linked row's cover on the line, where a cut on its own would give it back."""
         if not rows or len(rows) != len(want):
+            return False
+        if any(self._links_of(row.id) for row in rows):
             return False
         by_date = {when: (qty, when) for qty, when in want}
         if len(by_date) != len(want) or len({row.delivery_date for row in rows}) != len(rows):
@@ -6404,8 +6411,7 @@ class ProjectOrderInquiryService:
             return False
         for row, (qty, _when) in pairs:
             # Purchasing placed it: a cut never sends it back to raised.
-            placed = row.state == INQUIRY_PLACED and not self._links_of(row.id)
-            self._trim_links(row, qty)
+            placed = row.state == INQUIRY_PLACED
             row.previous_qty = row.qty
             row.qty = qty
             row.supply_decision_id = decision.id
