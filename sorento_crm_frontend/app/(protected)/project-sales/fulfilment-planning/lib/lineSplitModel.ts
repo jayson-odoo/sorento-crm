@@ -56,6 +56,13 @@ export interface SplitLine {
    * unmuted, as the Remark of the line's own single row.
    */
   savedRemark?: string | null;
+  /**
+   * OI-SPLIT-GUIDE (UAC F25, F26): set only by the guided Confirm's editor on a saved line
+   * whose REMARK lives in its saved decision draft (never a one-row split): the planner's own
+   * remark (`ownRemark`, '' = the default words) and that it is edited there.
+   */
+  remarkInDraft?: boolean;
+  ownRemark?: string | null;
   /** Stored splits; empty = not split (one implicit split, `splitsOf`). */
   splits: SplitDraft[];
 }

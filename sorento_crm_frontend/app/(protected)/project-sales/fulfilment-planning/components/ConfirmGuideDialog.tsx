@@ -19,14 +19,28 @@ import {
 import { useLineSplitsReads } from '../../_shared/hooks/useLineSplits';
 import { LineSplitEditor, type LineSplitEditorHandle } from './LineSplitEditor';
 
+/** One line this Confirm covers, as the board states it, with its editable remark (UAC F25). */
+export type ConfirmGuideLine = CoveredSheetLine & {
+  /** The planner's own remark kept in the line's saved decision; null = the default words. */
+  ownRemark: string | null;
+  /** The line's remark can be kept in a saved decision (an Approve or Amend draft). */
+  remarkEditable: boolean;
+};
+
 /** One page of the guide (UAC F2): an order this Confirm covers, and the lines it covers. */
 export interface ConfirmGuidePage {
   /** The order's planning record; null until the press adopts it (nothing to read yet). */
   psoId: string | null;
   soNumber: string;
   /** The lines this Confirm covers on the order, as the board states them (UAC F2, F10). */
-  covered: CoveredSheetLine[];
+  covered: ConfirmGuideLine[];
 }
+
+/** A read-only row prints the planner's own remark, else the default words (UAC F25). */
+const readOnlyWords = (line: ConfirmGuideLine): CoveredSheetLine => ({
+  ...line,
+  savedRemark: line.ownRemark || line.savedRemark,
+});
 
 /** UAC F1: the two steps. */
 const STEPS: readonly WizardStep[] = [
@@ -57,11 +71,17 @@ const plural = (count: number, one: string, many = `${one}s`) =>
 export function ConfirmGuideDialog({
   pages,
   runConfirm,
+  saveRemarks,
   onClose,
 }: {
   /** The orders of this Confirm, in board order; re-read live, so a page drops once saved away. */
   pages: ConfirmGuidePage[];
   runConfirm: () => Promise<boolean>;
+  /**
+   * UAC F26: keeps saved lines' remarks in their saved decisions (board line key -> remark,
+   * '' = the default words); rejects when one could not be saved.
+   */
+  saveRemarks: (changes: ReadonlyMap<string, string>) => Promise<void>;
   onClose: () => void;
 }) {
   const [step, setStep] = React.useState<Step>(() =>
@@ -83,7 +103,7 @@ export function ConfirmGuideDialog({
   const sheet = React.useMemo(
     () =>
       page && !reading && !readFailed
-        ? coveredSheetLines(splitRead?.data ?? null, page.covered)
+        ? coveredSheetLines(splitRead?.data ?? null, page.covered.map(readOnlyWords))
         : null,
     [page, reading, readFailed, splitRead?.data],
   );
@@ -98,14 +118,26 @@ export function ConfirmGuideDialog({
     return {
       psoId: page.psoId,
       onlyLineIds: new Set(inRead.map((line) => line.lineId as string)) as ReadonlySet<string>,
-      words: new Map(
+      remarks: new Map(
         page.covered.flatMap((line) =>
-          line.lineId ? [[line.lineId, line.savedRemark] as const] : [],
+          line.lineId
+            ? [
+                [
+                  line.lineId,
+                  { words: line.savedRemark, own: line.ownRemark, editable: line.remarkEditable },
+                ] as const,
+              ]
+            : [],
         ),
-      ) as ReadonlyMap<string, string | null>,
+      ) as ReadonlyMap<string, { words: string | null; own: string | null; editable: boolean }>,
+      keyOf: new Map(
+        page.covered.flatMap((line) => (line.lineId ? [[line.lineId, line.key] as const] : [])),
+      ) as ReadonlyMap<string, string>,
       rest: coveredSheetLines(
         null,
-        page.covered.filter((line) => !line.lineId || !read.has(line.lineId)),
+        page.covered
+          .filter((line) => !line.lineId || !read.has(line.lineId))
+          .map(readOnlyWords),
       ),
     };
   }, [page, reading, readFailed, splitRead?.data]);
@@ -238,7 +270,17 @@ export function ConfirmGuideDialog({
                       psoId={editable.psoId}
                       active
                       onlyLineIds={editable.onlyLineIds}
-                      savedRemarks={editable.words}
+                      lineRemarks={editable.remarks}
+                      onSaveRemarks={(changes) =>
+                        saveRemarks(
+                          new Map(
+                            [...changes].flatMap(([lineId, remark]) => {
+                              const key = editable.keyOf.get(lineId);
+                              return key ? [[key, remark] as const] : [];
+                            }),
+                          ),
+                        )
+                      }
                       readLoaded
                       stayAfterSave
                       onDirtyChange={setDirty}

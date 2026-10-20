@@ -6,7 +6,7 @@ import { Check, CirclePlus, GripVertical, Plus, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DatePicker, parseDateInput } from '@/components/ui/date-picker';
-import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import {
   COARSE_HIT_TARGET_CLASS,
   PRESSED_CLASS,
@@ -72,6 +72,11 @@ export interface SheetHandlers {
   add: (line: SplitLine) => void;
   remove: (line: SplitLine, splitId: string) => void;
   fieldBlur: () => void;
+  /**
+   * OI-SPLIT-GUIDE (UAC F26): the REMARK of a saved line whose remark lives in its saved
+   * decision (`SplitLine.remarkInDraft`), never as a one-row split.
+   */
+  lineRemark?: (line: SplitLine, remark: string) => void;
 }
 
 type DataAttributes = { [key: `data-${string}`]: string | undefined };
@@ -314,8 +319,10 @@ interface IncomingRow {
 }
 
 /**
- * REMARK cell: the typed remark, or the server's generated one shown muted over the empty
- * input (AC-G5). Typing replaces it; clearing brings it back.
+ * REMARK cell (OI-SPLIT-GUIDE UAC F25, F29): a wrapping text box whose VALUE is the row's
+ * remark, else its default words (`generated`: the change word, or the purchasing email's
+ * words for a saved line). Typing over it stores the new text; clearing it, or typing the
+ * default back, stores nothing and shows the default again. An edited remark is marked.
  */
 function RemarkCell({
   value,
@@ -330,37 +337,45 @@ function RemarkCell({
   onValue: (remark: string) => void;
   onBlur: () => void;
 }) {
-  const showGenerated = !value && Boolean(generated);
+  const edited = Boolean(value.trim()) && value !== generated;
+  // Showing the default words (nothing stored): marked, and read muted (AC-G5).
+  const showsDefault = !value && Boolean(generated);
   return (
-    <div className="relative">
-      <Input
+    <div className="flex flex-col items-stretch gap-0.5">
+      <Textarea
         variant="sm"
+        rows={1}
         data-nav-col="remark"
+        data-remark-generated={showsDefault ? 'true' : undefined}
         aria-label={label}
-        value={value}
-        title={value || generated || undefined}
-        onChange={(event) => onValue(event.target.value)}
+        value={value || generated}
+        onChange={(event) => {
+          const next = event.target.value.replace(/\r?\n/g, ' ');
+          onValue(!next.trim() || next === generated ? '' : next);
+        }}
         onBlur={onBlur}
+        className={cn(
+          'min-h-7 resize-none px-2 py-1 text-start break-words whitespace-pre-wrap [field-sizing:content]',
+          showsDefault && 'text-muted-foreground',
+        )}
       />
-      {showGenerated ? (
-        <span
-          data-remark-generated="true"
-          aria-hidden
-          className="pointer-events-none absolute inset-y-0 start-2 end-2 flex items-center truncate text-xs text-muted-foreground"
-        >
-          {generated}
-        </span>
+      {edited ? (
+        <span className="text-start text-2xs text-muted-foreground">edited</span>
       ) : null}
     </div>
   );
 }
 
-/** A REMARK as the read-only sheet prints it: the typed remark, else the generated one muted. */
+/** A REMARK as the read-only sheet prints it, wrapping: the typed remark, else the generated
+ * one muted. */
 function RemarkText({ value, generated }: { value: string; generated: string }) {
   const text = value || generated;
   return (
     <span
-      className={cn('block truncate ps-2 text-start', !value && 'text-muted-foreground')}
+      className={cn(
+        'block ps-2 text-start break-words whitespace-normal',
+        !value && 'text-muted-foreground',
+      )}
       title={text || undefined}
     >
       {text}
@@ -551,11 +566,31 @@ const LineBlock = React.memo(function LineBlock({
   );
   const emptyRemove = sheetReadOnly ? null : <TableCell className={changeCell} />;
 
-  // OI-SPLIT-GUIDE (UAC F3, F18): the guided Confirm's words for the line's saved decision
-  // (only the guide sets them).
+  // OI-SPLIT-GUIDE (UAC F3, F18, F25): the guided Confirm's words for the line's saved
+  // decision (only the guide sets them), and the planner's own remark over them.
   const savedRemark = line.savedRemark || null;
+  const ownRemark = line.ownRemark || '';
   let body: React.ReactNode;
-  if (delivered && !savedRemark) {
+  if (delivered && line.remarkInDraft) {
+    // UAC F28: Confirm drops a line delivered in full, so nothing of it reaches purchasing:
+    // its remark stays read-only and the row says why.
+    body = (
+      <TableRow className="border-0 hover:bg-transparent">
+        {emptyGrip}
+        {baseCells}
+        <TableCell colSpan={2} className={cn(changeCell, 'ps-2 text-start')}>
+          <span className="text-2xs text-muted-foreground">
+            Delivered in full: nothing goes to purchasing
+          </span>
+        </TableCell>
+        <TableCell className={changeCell}>
+          <RemarkText value={ownRemark} generated={savedRemark ?? ''} />
+        </TableCell>
+        {balance}
+        {emptyRemove}
+      </TableRow>
+    );
+  } else if (delivered && !savedRemark) {
     body = (
       <TableRow className="border-0 hover:bg-transparent">
         {emptyGrip}
@@ -577,7 +612,9 @@ const LineBlock = React.memo(function LineBlock({
         {baseCells}
         <TableCell colSpan={2} className={changeCell} />
         <TableCell className={changeCell}>
-          {savedRemark ? <RemarkText value={savedRemark} generated="" /> : null}
+          {savedRemark || ownRemark ? (
+            <RemarkText value={ownRemark || savedRemark || ''} generated="" />
+          ) : null}
         </TableCell>
         {balance}
         {emptyRemove}
@@ -592,7 +629,7 @@ const LineBlock = React.memo(function LineBlock({
         <TableCell className={changeCell}>{formatSplitDate(line.baseDate) || '-'}</TableCell>
         <TableCell className={changeCell}>
           <RemarkText
-            value={savedRemark ?? only?.remark ?? ''}
+            value={ownRemark || savedRemark || only?.remark || ''}
             generated={line.remarkGenerated ?? ''}
           />
         </TableCell>
@@ -633,13 +670,24 @@ const LineBlock = React.memo(function LineBlock({
           />
         </TableCell>
         <TableCell className={changeCell}>
-          <RemarkCell
-            label={`Remark, line ${no}`}
-            value={only?.remark ?? ''}
-            generated={savedRemark ?? line.remarkGenerated ?? ''}
-            onValue={(remark) => only && handlers.remark(line, only.id, remark)}
-            onBlur={handlers.fieldBlur}
-          />
+          {line.remarkInDraft && handlers.lineRemark ? (
+            // UAC F26: a saved line's remark is kept in its saved decision, never a split.
+            <RemarkCell
+              label={`Remark, line ${no}`}
+              value={ownRemark}
+              generated={savedRemark ?? line.remarkGenerated ?? ''}
+              onValue={(remark) => handlers.lineRemark?.(line, remark)}
+              onBlur={handlers.fieldBlur}
+            />
+          ) : (
+            <RemarkCell
+              label={`Remark, line ${no}`}
+              value={only?.remark ?? ''}
+              generated={savedRemark ?? line.remarkGenerated ?? ''}
+              onValue={(remark) => only && handlers.remark(line, only.id, remark)}
+              onBlur={handlers.fieldBlur}
+            />
+          )}
         </TableCell>
         {balance}
         <TableCell className={changeCell} />
@@ -806,7 +854,10 @@ const LineBlock = React.memo(function LineBlock({
           </TableCell>
           <TableCell className={cn(CELL, 'tabular-nums')}>{extraDate}</TableCell>
           <TableCell className={cn(CELL, 'text-start text-muted-foreground')}>
-            <span className="block truncate ps-2" title={line.extraRemark ?? undefined}>
+            <span
+              className="block ps-2 break-words whitespace-normal"
+              title={line.extraRemark ?? undefined}
+            >
               {line.extraRemark ?? ''}
             </span>
           </TableCell>
@@ -895,13 +946,13 @@ function DropRow({
 export function focusCell(cell: Element | null): boolean {
   if (!cell) return false;
   const el = (
-    cell.matches('input, button')
+    cell.matches('input, button, textarea')
       ? cell
-      : cell.querySelector('input, button, [role="combobox"]')
+      : cell.querySelector('input, button, textarea, [role="combobox"]')
   ) as HTMLElement | null;
   if (!el) return false;
   el.focus();
-  if (el instanceof HTMLInputElement) el.select();
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.select();
   return document.activeElement === el;
 }
 

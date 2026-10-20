@@ -234,7 +234,8 @@ export function LineSplitEditor({
   active,
   focusLineId,
   onlyLineIds,
-  savedRemarks,
+  lineRemarks,
+  onSaveRemarks,
   readLoaded = false,
   stayAfterSave = false,
   onSaved,
@@ -254,8 +255,17 @@ export function LineSplitEditor({
    * still sends every line. Absent (the board gear): every line drawn, as before.
    */
   onlyLineIds?: ReadonlySet<string>;
-  /** OI-SPLIT-GUIDE (UAC F18): the purchasing email's words for an unsplit line's Remark. */
-  savedRemarks?: ReadonlyMap<string, string | null>;
+  /**
+   * OI-SPLIT-GUIDE (UAC F18, F25, F26): per saved line, the purchasing email's words for its
+   * Remark (`words`), the planner's own remark kept in its saved decision (`own`), and whether
+   * that remark is edited here (`editable`: a saved decision draft to keep it in).
+   */
+  lineRemarks?: ReadonlyMap<
+    string,
+    { words: string | null; own: string | null; editable: boolean }
+  >;
+  /** Saves the edited remarks of `lineRemarks` lines (line id -> remark, '' = the default). */
+  onSaveRemarks?: (changes: ReadonlyMap<string, string>) => Promise<void>;
   /**
    * The host has just read this order's split plan and shows it loaded: start from that read
    * instead of waiting for the editor's own refetch (no skeleton flash on the guide page).
@@ -301,6 +311,11 @@ export function LineSplitEditor({
   // ids); the status line says what is moving where instead.
   const [liveHost, setLiveHost] = React.useState<HTMLDivElement | null>(null);
   const switchId = React.useId();
+  // OI-SPLIT-GUIDE (UAC F25, F26): remarks typed this session on `lineRemarks` lines (line id
+  // -> remark, '' = the default words), saved through `onSaveRemarks`, never as splits.
+  const [remarkEdits, setRemarkEdits] = React.useState<ReadonlyMap<string, string>>(
+    () => new Map(),
+  );
 
   const commit = React.useCallback((next: Draft | null) => {
     draftRef.current = next;
@@ -575,6 +590,8 @@ export function LineSplitEditor({
       fieldBlur: () => {
         typingRef.current = null;
       },
+      lineRemark: (line, remark) =>
+        setRemarkEdits((current) => new Map(current).set(line.lineId, remark)),
     }),
     [apply, liveLine, requestFocus],
   );
@@ -740,9 +757,21 @@ export function LineSplitEditor({
   );
   const splitCount = counted.filter((line) => !readsRemain(line)).length;
   const products = new Set(counted.map((line) => line.itemCode)).size;
-  const dirty =
+  const splitsDirty =
     Boolean(lines) &&
     JSON.stringify(toPayload(lines as SplitLine[])) !== initialRef.current;
+  /** The remarks typed this session that differ from what the saved decisions hold. */
+  const remarkChanges = React.useMemo(() => {
+    const out = new Map<string, string>();
+    for (const [lineId, remark] of remarkEdits) {
+      const entry = lineRemarks?.get(lineId);
+      if (entry?.editable && remark.trim() !== (entry.own ?? '').trim()) out.set(lineId, remark.trim());
+    }
+    return out;
+  }, [remarkEdits, lineRemarks]);
+  const dirty = splitsDirty || remarkChanges.size > 0;
+  const dirtyRef = React.useRef(false);
+  dirtyRef.current = dirty;
 
   const show = (lineId: string) => {
     setSearch('');
@@ -759,18 +788,31 @@ export function LineSplitEditor({
       cleaned = dropEmpty(cleaned, line.lineId) ?? cleaned;
     if (cleaned !== current.lines)
       commit({ lines: cleaned, history: [...current.history, current.lines] });
+    const remarks = remarkChanges;
+    const finish = () => {
+      if (stayAfterSave) {
+        // The saved plan is the read now: start again from it (the page stays).
+        commit(null);
+        setOpenLineIds(new Set());
+        setRemarkEdits(new Map());
+      }
+      onSaved?.();
+    };
+    // OI-SPLIT-GUIDE (UAC F26): the saved lines' remarks go to their saved decisions; a
+    // failure keeps every edit (the saving call says why).
+    const saveRemarks = () =>
+      remarks.size > 0 && onSaveRemarks ? onSaveRemarks(remarks) : Promise.resolve();
+    if (remarks.size > 0 && !splitsDirty) {
+      saveRemarks().then(finish, () => undefined);
+      return;
+    }
     // OI-SPLIT-GUIDE (UAC F22): every line of the order, scoped or not; the scope only limits
     // what is drawn, so an edit on a hidden line's row drawn under a shown line is never lost.
     save.mutate(
       toPayload(cleaned),
       {
         onSuccess: () => {
-          if (stayAfterSave) {
-            // The saved plan is the read now: start again from it (the page stays).
-            commit(null);
-            setOpenLineIds(new Set());
-          }
-          onSaved?.();
+          saveRemarks().then(finish, () => undefined);
         },
       },
     );
@@ -780,6 +822,7 @@ export function LineSplitEditor({
   const discard = () => {
     endDrag();
     setOpenLineIds(new Set());
+    setRemarkEdits(new Map());
     commit({ lines: savedLines, history: [] });
   };
 
@@ -790,8 +833,9 @@ export function LineSplitEditor({
 
   React.useImperativeHandle(handleRef, () => ({
     isDirty: () =>
-      Boolean(draftRef.current) &&
-      JSON.stringify(toPayload(draftRef.current?.lines ?? [])) !== initialRef.current,
+      (Boolean(draftRef.current) &&
+        JSON.stringify(toPayload(draftRef.current?.lines ?? [])) !== initialRef.current) ||
+      (dirtyRef.current && remarkChanges.size > 0),
     isDragging: () => Boolean(dragRef.current),
   }));
 
@@ -803,17 +847,25 @@ export function LineSplitEditor({
     .filter(Boolean)
     .join(', ');
 
-  // OI-SPLIT-GUIDE (UAC F18): a host's words for an unsplit line's Remark (display only).
+  // OI-SPLIT-GUIDE (UAC F18, F25): a host's words for a saved line's Remark, and the
+  // planner's own remark over them (display only; the lines themselves stay as read).
   const shownLines = React.useMemo(
     () =>
-      savedRemarks
-        ? visible.map((line) =>
-            savedRemarks.has(line.lineId)
-              ? { ...line, savedRemark: savedRemarks.get(line.lineId) ?? null }
-              : line,
-          )
+      lineRemarks
+        ? visible.map((line) => {
+            const entry = lineRemarks.get(line.lineId);
+            if (!entry) return line;
+            return {
+              ...line,
+              savedRemark: entry.words,
+              remarkInDraft: entry.editable,
+              ownRemark: remarkEdits.has(line.lineId)
+                ? remarkEdits.get(line.lineId)
+                : (entry.own ?? ''),
+            };
+          })
         : visible,
-    [visible, savedRemarks],
+    [visible, lineRemarks, remarkEdits],
   );
 
   const searchControls = onlyLineIds ? null : (

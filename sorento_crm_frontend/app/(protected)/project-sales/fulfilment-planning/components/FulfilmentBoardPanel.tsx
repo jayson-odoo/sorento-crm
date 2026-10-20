@@ -2013,6 +2013,24 @@ export function FulfilmentBoardPanel({
   ]);
 
   /**
+   * OI-SPLIT-GUIDE (UAC F26): a saved line's own remark is kept in its saved decision (the
+   * same save every decision on the board takes), never as a one-row split.
+   */
+  const saveLineRemarks = React.useCallback(
+    async (changes: ReadonlyMap<string, string>) => {
+      for (const [key, remark] of changes) {
+        const current =
+          draftWithoutPreMark[key] ??
+          allContributions.find((contribution) => contribution.key === key)?.draft?.decision;
+        if (!current) continue;
+        const ok = await decide(key, { ...current, remark: remark || undefined }, { quiet: true });
+        if (!ok) throw new Error('The remark could not be saved.');
+      }
+    },
+    [draftWithoutPreMark, allContributions, decide],
+  );
+
+  /**
    * OI-SPLIT-GUIDE: Confirm (N) opens the guided Confirm (UAC A1), one page per order this
    * press covers, in board order, listing the lines it covers (UAC F2, F4).
    */
@@ -2032,16 +2050,23 @@ export function FulfilmentBoardPanel({
         {
           psoId: order.project_sales_order_id ?? null,
           soNumber: order.so_number,
-          covered: lines.map((line) => ({
-            lineId: line.project_line_id ?? null,
-            key: line.key,
-            lineNo: line.so_line_no ?? line.line_no,
-            itemCode: line.item_code,
-            location: line.fulfilment_location ?? '',
-            qty: Number(line.qty) || 0,
-            date: line.required_date ?? null,
-            savedRemark: line.saved_remark ?? null,
-          })),
+          covered: lines.map((line) => {
+            // UAC F25, F26: the planner's own remark lives in the line's saved decision.
+            const decision = draftWithoutPreMark[line.key] ?? line.draft?.decision;
+            return {
+              lineId: line.project_line_id ?? null,
+              key: line.key,
+              lineNo: line.so_line_no ?? line.line_no,
+              itemCode: line.item_code,
+              location: line.fulfilment_location ?? '',
+              qty: Number(line.qty) || 0,
+              date: line.required_date ?? null,
+              savedRemark: line.saved_remark ?? null,
+              ownRemark: decision?.remark?.trim() || null,
+              remarkEditable:
+                decision?.verdict === 'approved' || decision?.verdict === 'amended',
+            };
+          }),
         },
       ];
     });
@@ -3410,7 +3435,12 @@ export function FulfilmentBoardPanel({
         />
       ) : null}
       {guideOpen ? (
-        <ConfirmGuideDialog pages={guidePages} runConfirm={runConfirmAll} onClose={closeGuide} />
+        <ConfirmGuideDialog
+          pages={guidePages}
+          runConfirm={runConfirmAll}
+          saveRemarks={saveLineRemarks}
+          onClose={closeGuide}
+        />
       ) : null}
       {lineSplit ? (
         <LineSplitDialog
