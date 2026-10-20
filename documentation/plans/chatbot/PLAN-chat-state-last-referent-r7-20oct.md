@@ -1,6 +1,6 @@
 # PLAN: CHAT-STATE round 7 - the referent of a bare number: the quote first, then today's rule (LAST-REFERENT v2)
 
-**Status:** Build v2, approved: owner 20 Oct ~07:55 ("oh ok yeah correct") on crew's three rules; crew un-HOLD. v1
+**Status:** Build v2 complete, reviewer READY + security PASS + L1 gate clean, pushing to #1772; approved: owner 20 Oct ~07:55 ("oh ok yeah correct") on crew's three rules; crew un-HOLD. v1
 (recency: the newest of list / question / task wins) is withdrawn (owner 20 Oct ~07:40 "how many outranks a newer
 list"). Lands on #1772 (`crew/chat-state-r2`). Track: inside the L lane, LEAD pattern (tester red -> coder -> lead
 kill-proof -> reviewer + security-reviewer (MCP presenter + fetch ids) -> L1 gate -> ONE push).
@@ -62,6 +62,16 @@ reused only for the writer stamp + row kind/key; its `open_referent` recency is 
 L1 replay gate (base 7f299b4cc8); state-path effect rides the paired TRAIN x1 (cap 0.3 USD).
 
 ## Round log
+- Review round 1 (20 Oct): security-reviewer PASS (picked ids scoped server-side by the live contact on every fetch;
+  quote lookup confined to the same contact + is_test, quoted.py:86-131; no id printed). Reviewer NOT READY: B1 quoting
+  the live roster counted as quoting a list (options stamped asked_at_turn), B2 apply.py early return unpinned; should-fix
+  listed-first unpinned, one file replaced a numbered list, fetched-by-id unproven. Tests 26c11f7b44 (B1 + single-file
+  red; B2 / listed-first / 2+ files / fetched-by-id x2 at the promotions tool call / unlinked-contact guards) -> fix
+  3b1b2e1427 (quotes_the_list false when the quoted turn's own question is open; files become the list only when 2+,
+  lead-accepted: one file with no earlier list is still recorded; logged next view drops quoted_turn_no); kill-proof
+  2 fail / restored 37/37. Re-check READY (kills K1 K6 K8 K9 each caught). L1 gate vs 7f299b4cc8: grounding 0/1506,
+  turn 0/585 (two earlier runs flagged 2 turns each: the same fallback reply swapped between arms, 13 per arm every run,
+  harness ordering noise; re-runs 0/585).
 - v2 build: reds b117944fe5 (10 backend + 3 MCP) -> fix 10ef73a84e (tail rows keyed by id + shown_at_turn; State.quoted_turn_no
   set in engine._quoted_context; quote of the list turn picks from it; promo / file / order rows pickable only with
   nothing open; MCP presenters carry promo / attachment / order ids); kill-proof: fix files reverted -> 10 + 3 fail,
