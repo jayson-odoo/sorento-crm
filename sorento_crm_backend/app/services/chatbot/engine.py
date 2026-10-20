@@ -5887,6 +5887,9 @@ def _run_stages_body(  # noqa: PLR0915
                     skip_customer_probe=customer_docs_hidden,
                     scope_linked=_reference_scope(doc_scope, state_out.profile, doc_staff=doc_staff),
                     po_ref_scope_linked=_reference_scope(doc_scope, state_out.profile),
+                    # The state path keeps a listed scheme's rows beside an unplaced word: the
+                    # Subject (round 6) says what the fetch is about, the guess rule does not.
+                    listed_scheme_placed=state_in.subject is not None,
                 )
             )
             resolved_kinds = resolve_outcome.resolved_kinds

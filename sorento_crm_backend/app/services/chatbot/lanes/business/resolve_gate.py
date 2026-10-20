@@ -543,6 +543,11 @@ def _token_of(entity: Any) -> Any:
 HINT_LOCKED_KINDS = frozenset({"product_type", "category", "product", "brand"})
 
 
+#: The `match_field` of the rows `listed_scheme_resolutions` writes: data the engine read through
+#: the certificate link, never the resolve route's phrase guess (`turn_runtime._without_guesses`).
+LISTED_SCHEME_FIELDS = frozenset({"scheme", "scheme_parent"})
+
+
 def listed_scheme_resolutions(parser: dict[str, Any], resolved: dict[str, Any]) -> None:
     """CHAT-CLOSED-LISTS: a listed scheme never reaches the resolver (`resolve_entity_body`).
     When `head/scheme_index` read the products' certificates of that scheme through the

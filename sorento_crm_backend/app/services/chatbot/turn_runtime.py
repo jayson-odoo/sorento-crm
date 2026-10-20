@@ -2370,7 +2370,7 @@ def company_names_by_uuid(resolved: Any) -> dict[str, str]:
 
 
 def _without_guesses(
-    compatible: list[dict[str, Any]], resolved: Any, unplaced: dict[str, str]
+    compatible: list[dict[str, Any]], resolved: Any, unplaced: dict[str, str], *, listed_scheme_placed: bool = False
 ) -> list[dict[str, Any]]:
     """`compatible` minus the rows that ONLY a guess matched.
 
@@ -2402,6 +2402,8 @@ def _without_guesses(
     """
     if not unplaced:
         return compatible
+    from app.services.chatbot.lanes.business.resolve_gate import LISTED_SCHEME_FIELDS
+
     described = jsc.get(resolved, "predicate")
     qualifying = jsc.get(described, "qualifying_total") if isinstance(described, dict) else None
     set_answered = isinstance(qualifying, int) and not isinstance(qualifying, bool) and qualifying > 0
@@ -2414,7 +2416,14 @@ def _without_guesses(
         # recording that lists no `tokens` at all must not turn every resolution it
         # DOES carry into a guess.
         phrase = bool(asked) and token not in asked and not set_answered
-        bucket = guessed if (token in unplaced or phrase) else placed
+        # CHAT-CLOSED-LISTS F3-b: a listed scheme and its parent kind never reach the resolver,
+        # so their rows (`resolve_gate.listed_scheme_resolutions`) sit under tokens it was not
+        # asked; on the state path (`listed_scheme_placed`) they are the engine's data read, not
+        # a phrase guess. Off it the rule stays #1755's.
+        listed = listed_scheme_placed and bool(jsc.array(jsc.get(resolution, "matches"))) and all(
+            jsc.get(m, "match_field") in LISTED_SCHEME_FIELDS for m in jsc.array(jsc.get(resolution, "matches"))
+        )
+        bucket = guessed if (token in unplaced or (phrase and not listed)) else placed
         for match in jsc.array(jsc.get(resolution, "matches")):
             uuid = jsc.nullish_str(jsc.get(match, "uuid")).strip()
             if uuid:
@@ -2600,6 +2609,7 @@ def resolve_kinds(
     po_ref_scope_linked: Any = _SAME_AS_LINKED,
     hide_customers: bool = False,
     skip_customer_probe: bool = False,
+    listed_scheme_placed: bool = False,
 ) -> ResolveOutcome:
     """Ask the resolver what each named token actually IS (AC-1527).
 
@@ -2874,7 +2884,7 @@ def resolve_kinds(
     gate = payload.get("gate") if isinstance(payload.get("gate"), dict) else {}
     compatible = [e for e in jsc.array(gate.get("compatible_entities")) if isinstance(e, dict)]
     unplaced = named_unplaced(entities, resolved)
-    compatible = _without_guesses(compatible, resolved, unplaced)
+    compatible = _without_guesses(compatible, resolved, unplaced, listed_scheme_placed=listed_scheme_placed)
     if is_order_domain and live_brands_read:
         # #1262 fix lane round 3, S5: a brand word that is NOT on the live list, typed
         # beside one that is ("Sorento and XYZ"), must be said back like any other
