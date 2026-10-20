@@ -244,10 +244,8 @@ export function LineSplitInfo({
   }, [open, payload, lineNo]);
   if (!view) return null;
   const count = splitCount(view);
-  const sub = [
-    soNumber,
-    oiNumber ? `${oiNumber} line ${lineNo ?? ''}`.trim() : null,
-  ]
+  // OI-SPLIT-GUIDE (UAC F29): no line number on the popup (its (i) button's label keeps it).
+  const sub = [soNumber, oiNumber || null]
     .filter(Boolean)
     .join(' · ');
   return (
@@ -280,7 +278,7 @@ export function LineSplitInfo({
         <Dialog open onOpenChange={close}>
           <DialogContent variant="fullscreen" className={SHEET_DIALOG_CLASS}>
             <DialogHeader className="mb-0 space-y-0 border-b border-border px-4 py-3 pe-12 text-start sm:text-start">
-              <DialogTitle className="truncate">{`Line ${lineNo ?? ''} ${itemCode ?? ''}: split`}</DialogTitle>
+              <DialogTitle className="truncate">{`${itemCode ?? ''}: split`}</DialogTitle>
               {sub ? (
                 <DialogDescription className="truncate text-xs">
                   {sub}
