@@ -69,3 +69,8 @@ seven first-line reads. State-off stays byte-identical.
   (class_named.py); crew asks CHAT-CLOSED-LISTS-L to make them state-OFF only; when #1755 lands, merge main and verify
   no seam fires under the state gate.
 - Local env, not lane: test_direct_ingress (4) + test_queue_fix_1oct (2) fail identically at d29ad44928 (CI green there).
+- Paired TRAIN x1 (20 Oct, DEV key, 0.192 USD incl. smokes): round 6 7f299b4cc8 vs pre-round d29ad44928, both v168:
+  train2_refine 1/8 -> 4/8, cp0 refine 5/5 -> 5/5; 3 gained, 0 lost (x1, direction only); crew-note 6279905878. The 4
+  remaining train2 fails grade "new filter not applied".
+- Guard sweep after CI (PR CI runs changed files only): purity guard tripped by an S3 docstring ("here." reads as `re.`)
+  -> 24afbbe23a; ResolveOutcome field-order pin lacked exact_kinds (2f34e1076a) -> caf9e2ebc0.

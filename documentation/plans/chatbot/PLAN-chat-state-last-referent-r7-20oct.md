@@ -62,6 +62,14 @@ reused only for the writer stamp + row kind/key; its `open_referent` recency is 
 L1 replay gate (base 7f299b4cc8); state-path effect rides the paired TRAIN x1 (cap 0.3 USD).
 
 ## Round log
+- v2 build: reds b117944fe5 (10 backend + 3 MCP) -> fix 10ef73a84e (tail rows keyed by id + shown_at_turn; State.quoted_turn_no
+  set in engine._quoted_context; quote of the list turn picks from it; promo / file / order rows pickable only with
+  nothing open; MCP presenters carry promo / attachment / order ids); kill-proof: fix files reverted -> 10 + 3 fail,
+  restored 25/25. Live-shape red 6bc744bb61 (parser input under a quote of the list turn) -> fix 4ee31faff6 (view hides
+  the held how-many, one predicate `quotes_the_list`); kill-proof 1 fail / restored 29/29. The post-parser demand_qty
+  red was dropped (40427e6b5b): fix at the parser input only. Deviation: a files-only section records its files as the
+  list (replaces an earlier list). Open for review: an id row's uuid reaches the fetch without re-resolution (scoping
+  rests on the scoped MCP tools); clarify / company-pick variants of AC-R7-5 untested (shapes unverified).
 - v2 approved by the owner 20 Oct ~07:55; crew un-HOLD. Prompt: only chat_state_prompt.py:34 changes (sent to crew).
 - v1 (recency) planned + reds a77e5d8b9d + coder WIP (all reds green) 20 Oct; HELD by crew, withdrawn by owner ruling
   20 Oct ~07:40. v1 finding kept: the promo pick could not fetch the file (gap 3).
