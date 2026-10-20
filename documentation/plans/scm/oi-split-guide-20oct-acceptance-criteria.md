@@ -211,6 +211,14 @@ or use own location, just like our email to purchasing". Plan crew-note 62883955
 - F29. Phone: the Remark cell wraps in both the editor and the read-only views (no "..." truncation); the
   qty / date / remark boxes are reachable inside the sheet's sideways scroll. The SO/OI split popup headers
   drop their line number too ("CSK14B: split", subtitle without "line N"; aria keeps it).
+- F30. Compat shim (reviewer round 9 blocker; crew ruling (d), drop it later): an applied plan stamped BEFORE
+  this change has no remarks in its key. Compare in both spellings: if the stored key equals the legacy
+  (remark-free) key of the current splits, an existing remark is NOT a split edit (no count, no "changed", no
+  re-tell). A remark edited after deploy on such a plan IS counted once and told; a plan stamped after this
+  change behaves as F27. No data migration, no rewrite of frozen revision snapshots.
+- F31. Remark box: clearing keeps it empty while focused; the default returns on blur when left empty; typing
+  exactly the default back stores nothing; max 500 characters; the box grows with its text (not only CSS
+  field-sizing, so iOS Safari wraps too).
 
 ## G. Out of scope
 - Making Confirm never touch unsaved lines (crew option b).
