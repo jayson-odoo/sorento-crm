@@ -1,6 +1,6 @@
 # PLAN - New product application (NEW-PRODUCT-APP)
 
-Lane NEW-PRODUCT-APP, size L. Status: Review (v4 paper layout built by local lane NEW-PRODUCT-APP-L, 18 Oct): reviewer
+Lane NEW-PRODUCT-APP, size L. Status: Build (v5 table form after the owner hand test FAIL on 20 Oct; v4 below). v4: reviewer
 READY, security findings fixed, browser pass on the crew test copy done, owner hand test next. v1-v3 flow built and reviewed
 earlier. Owner OKed card + mock v3 on 18 Oct (Q1 = portal too); crew PQ1 (b), PQ2 (a); owner then OKed mock v4 (18 Oct
 12:14) with D1-D4 = yes and PQ1 = yes. v4 was rebuilt from the PR head because the cloud lane's v4 commits never reached
@@ -221,3 +221,29 @@ vitest: sheet labels + order, Product N of M add/remove, PRODUCT TYPE required m
 applicant, feedback editable only for open_code on Approved/Completed, portal shows cost/lead time/supplier read-only,
 staged images on a new draft, Download Excel calls the service.
 Global guards: `test_schema_uuid_id_principle.py`, `test_list_pagination_limit.py`, `test_company_scope.py`.
+
+## v5: table form like Stock Inquiry, attachments like other forms (owner hand test FAIL, 20 Oct)
+
+Owner on 01cc94009f: "for the product fill in, i prefer it to look like stock inquiry, instead of cards form, it is
+like table form ... attachment also should be supported like other forms ... using shared components and logic, it is
+just another form with different fields". Flow, permissions, D2/D3/PQ1 rules, Excel layout and migration unchanged.
+Component map: PR #1769 crew-note 6280058877. UAC: AC-NPA-80..83 (supersede AC-NPA-73 and AC-NPA-79).
+
+- Header: Stock Inquiry's `ProductInquiryFormLayout` + `InquiryFormTableRow` + `InquiryReadValue`
+  (`stock-inquiries/components/ProductInquiryFormLayout.tsx:5,29,60`), title NEW PRODUCT APPLICATION.
+- Products: one line table shared by staff and portal (`components/common/NewProductApplicationLines.tsx`, built on
+  `components/ui/data-grid*.tsx` like the PR/SF lines, read view `PanelDataGrid`); columns No., Product code,
+  Product type *, Dimension, Material, Thickness, Packing, Brand, Qty; staff detail adds Cost (MYR) (feedback) and
+  Opened as (+ From AutoCount). Phone: sideways scroll inside the card, as PR/SF.
+- PURCHASING FEEDBACK: LEADTIME as a table row under the header rows; COST is the per-row Cost column; editable in
+  place for `open_code` on Approved / Completed with Save feedback (rules of AC-NPA-74 unchanged).
+- Attachments per application, `entity_type = "new_product_application"`:
+  staff `POST /{id}/attachments {attachment_id}` (link from the attachment library through
+  `LinkAttachmentBrowserDialog`, as Stock Inquiry) and `DELETE /attachments/{link_id}`; portal through the generic
+  `POST /public/portal/attachments` with kind `new_product_application` (`AttachmentDropzone`, pending files on create,
+  as Price Tag Request), list and delete via the generic portal routes, own application only. Detail carries
+  `attachments[]`.
+- Removed: `NewProductApplicationSheet.tsx`, per-product image routes (3 staff + 3 portal), inquiry-attachments routes,
+  copy-from-inquiry, per-line `images` in the payloads.
+- Excel: the IMAGE row of every product sheet embeds the application's first image attachment (thumbnail first, the
+  10 MB / 40 MP / formats rules unchanged); none -> empty.
