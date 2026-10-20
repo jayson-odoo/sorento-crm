@@ -507,3 +507,11 @@ failure into a pass:
 Red-first per item, kill-proof per hunk, two Opus review rounds (the first found a wrong-option pass, a leak turned
 unknown and an `asked_type` fallback that passed 11 of 34 real failures; all closed). TRAIN gate rows: no verdict
 changes. Held-out re-grade at $0 went to crew only.
+
+## Round 42 (19 Oct, a spec set is built on the gold's spec key; crew order)
+
+`spec_set` compared values only, so a size grounded on another dimension key (a 300 mm ask read as a length where the gold is the
+trap length) passed. The key the bot filtered on rides each specification entity (`spec_key`, and the memory specification slot).
+Each gold value now needs an entity with that value and one of the gold's own keys for it (no other alias table exists); a value
+on another key fails; entities holding the value but no key are unknown. Class words are unchanged. `set_list` (the shape of the
+listing) does not read keys and is untouched.

@@ -595,6 +595,18 @@ class SupplyLinesRefused(AppException):
         return list(self.detail.get("failing_lines") or [])
 
 
+def _confirm_line_remark(entry: Any, carried: Optional[str]) -> Optional[str]:
+    """OI-SPLIT-GUIDE (UAC F33): the REMARK one Confirm line freezes, one rule for every caller
+    (the board, the per-order planning sheet, split-edit re-posts, batch applies, the API): a
+    line that sends no `remark` (or a null one) keeps `carried` (the one its line was confirmed
+    with); one that sends `remark: ""` clears it; any other text replaces it."""
+    sent = getattr(entry, "model_fields_set", None)
+    remark = getattr(entry, "remark", None)
+    if (sent is not None and "remark" not in sent) or remark is None:
+        return carried
+    return remark.strip() or None
+
+
 def _preview_row_facts(row: Any) -> Tuple[Any, ...]:
     """What purchasing reads of one inquiry row: a simulated press that leaves all of it as
     it was only re-filed the row, and writes nothing for purchasing. The note is read too,
@@ -5203,6 +5215,9 @@ class ProjectSupplyService:
                 "buy_reason": snapshot.get("buy_reason"),
                 "order_back": bool(snapshot.get("order_back")),
                 "cited_document": snapshot.get("cited_document"),
+                # OI-SPLIT-GUIDE (UAC F32): the planner's own REMARK the revision froze, so a
+                # covered line hands it back and a re-approve carries it unchanged.
+                "remark": (snapshot.get("remark") or None),
             }
         return out
 
@@ -7266,6 +7281,12 @@ class ProjectSupplyService:
         line_changes: Optional[Mapping[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         previous = self.active_decision(str(order.id))
+        # OI-SPLIT-GUIDE (UAC F33): each line's remark as the revision being replaced froze it,
+        # carried by a Confirm line that sends no `remark` (`_snapshot`).
+        previous_remarks = {
+            str(snapshot.get("project_line_id") or ""): (snapshot.get("remark") or None)
+            for snapshot in ((previous.line_snapshots if previous is not None else None) or [])
+        }
         if previous is not None:
             previous.state = DECISION_SUPERSEDED
             previous.superseded_at = datetime.utcnow()
@@ -7295,7 +7316,11 @@ class ProjectSupplyService:
         # frozen (`confirm`): the same dicts, not a re-serialisation of them.
         snapshots = [
             self._snapshot(
-                line, entry, fact, proposed=proposals.get(str(line.id), ())
+                line,
+                entry,
+                fact,
+                proposed=proposals.get(str(line.id), ()),
+                carried_remark=previous_remarks.get(str(line.id)),
             )
             for line, entry, fact in checked
         ] + [entry.snapshot for entry in carried]
@@ -8286,6 +8311,7 @@ class ProjectSupplyService:
         fact: _LineFacts,
         *,
         proposed: Sequence[Component] = (),
+        carried_remark: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Freeze the line as it was decided, in the words it was decided in (AC-G01),
         AND what the engine had proposed for it at that moment (AC-D1).
@@ -8555,6 +8581,10 @@ class ProjectSupplyService:
             # sentence of the RULE that produced it, and on an amended line those sentences
             # explain a decision nobody took.
             "amend_reason": (getattr(entry, "amend_reason", None) or "").strip() or None,
+            # OI-SPLIT-GUIDE (UAC F26, F33): the planner's own REMARK for the purchasing email,
+            # in place of the default words; frozen so the email and Excel read what was
+            # decided. A line that sends no `remark` keeps the one it was confirmed with.
+            "remark": _confirm_line_remark(entry, carried_remark),
             # "This might be a system problem" (R10). Frozen for the same reason the reason
             # is: the board reads the decision back to draw its pill, and a flag that lived
             # only in the session's draft would say the doubt had been answered the moment
@@ -11433,6 +11463,7 @@ class ProjectSupplyService:
         assert_can_act: Callable[[Session, ProjectSalesOrder], None],
         write: Optional[Callable[[ProjectSalesOrder, Any], Dict[str, Any]]] = None,
         can_hold_back: Optional[Callable[[Any], bool]] = None,
+        prepare: Optional[Callable[[ProjectSalesOrder, Any], Any]] = None,
         preview: bool = False,
         raw_errors: bool = False,
         describe_writes: bool = False,
@@ -11471,6 +11502,9 @@ class ProjectSupplyService:
 
         An entry's `only_line_ids` scopes the order to exactly those lines BEFORE the write:
         a line outside the list is neither confirmed, held back nor echoed.
+
+        `prepare` (OI-SPLIT-VIEW A11) completes an order's entry once, after that scoping and
+        BEFORE the hold-back, so what it adds is held back like any named line.
         """
         write = write or (
             lambda order, entry: self.confirm(order, entry, actor_user_id=actor_user_id)
@@ -11521,6 +11555,8 @@ class ProjectSupplyService:
                             ],
                         }
                     )
+                if prepare is not None:
+                    entry = prepare(order, entry)
                 before_decision_id = None
                 before_rows: Dict[str, Tuple[Any, ...]] = {}
                 before_moves: Dict[str, Tuple[Any, ...]] = {}
@@ -11642,8 +11678,14 @@ class ProjectSupplyService:
 
         A row that existed and still reads exactly as it did (a carried line's row the press
         only re-filed under the new revision) is left out: nothing is written for purchasing
-        (owner hand test SO424764 line 416, 14 Oct 2026). A transfer is held to the same rule."""
+        (owner hand test SO424764 line 416, 14 Oct 2026). A transfer is held to the same rule.
+
+        OI-SPLIT-GUIDE (UAC C3): every row of the order whose facts this press changed is
+        listed, whichever revision raised it, so a row an OLDER revision raised and this press
+        retires (a drifted covered line, a book cancel, a batch auto-accept) reads CANCEL
+        (its `state`) beside the rows this revision raised; admin Simulate lists them."""
         from app.models.stock_transfer import StockTransfer
+        from app.services.project_line_split_service import display_line_nos
 
         decision = self.active_decision(str(order.id))
         if decision is None:
@@ -11655,9 +11697,27 @@ class ProjectSupplyService:
             for line in lines
             if line.core_sales_order_line_id
         }
+        # OI-SPLIT-GUIDE (UAC C2a): the number staff know a line by (AutoCount's core line
+        # number, the mirror's without a core), beside `line_no`, the planning address.
+        so_line_no_of = display_line_nos(self.db, line_no_of)
+        mirror_by_core = {
+            str(line.core_sales_order_line_id): str(line.id)
+            for line in lines
+            if line.core_sales_order_line_id
+        }
+        line_ids = list(line_no_of)
+        row_scope = OrderInquiryRow.supply_decision_id == str(decision.id)
+        if line_ids:
+            row_scope = or_(row_scope, OrderInquiryRow.so_line_id.in_(line_ids))
+        changed_rows = [
+            row
+            for row in self.db.query(OrderInquiryRow).filter(row_scope).all()
+            if before_rows.get(str(row.id)) != _preview_row_facts(row)
+        ]
         inquiry_rows = [
             {
                 "line_no": line_no_of.get(str(row.so_line_id or "")),
+                "so_line_no": so_line_no_of.get(str(row.so_line_id or "")),
                 "item_code": row.item_code,
                 "verb": row.verb,
                 "is_new": str(row.id) not in before_rows,
@@ -11665,11 +11725,9 @@ class ProjectSupplyService:
                 "delivery_date": row.delivery_date,
                 "stock_location": row.stock_location,
                 "note": row.note,
+                "state": row.state,
             }
-            for row in self.db.query(OrderInquiryRow)
-            .filter(OrderInquiryRow.supply_decision_id == str(decision.id))
-            .all()
-            if before_rows.get(str(row.id)) != _preview_row_facts(row)
+            for row in changed_rows
         ]
         inquiry_rows.sort(key=lambda entry: (entry["line_no"] is None, entry["line_no"] or 0))
         moves = (
@@ -11694,6 +11752,7 @@ class ProjectSupplyService:
         transfers = [
             {
                 "line_no": line_no_by_core.get(str(move.so_line_id or "")),
+                "so_line_no": so_line_no_of.get(mirror_by_core.get(str(move.so_line_id or ""), "")),
                 "is_new": str(move.id) not in before_moves,
                 "kind": move.kind,
                 "qty": move.qty,

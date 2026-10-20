@@ -46,14 +46,15 @@ export interface BillingDocumentLine {
   product_name: string | null;
   description: string | null;
   uom: string | null;
-  quantity: number;
-  unit_price: number;
-  discount_amount: number;
-  net_amount: number;
+  /** Null on an AutoCount charge line (freight, service) that carries money and no qty. */
+  quantity: number | null;
+  unit_price: number | null;
+  discount_amount: number | null;
+  net_amount: number | null;
   tax_code: string | null;
   tax_rate: number | null;
-  tax_amount: number;
-  line_total: number;
+  tax_amount: number | null;
+  line_total: number | null;
   from_doc_type: string | null;
   from_doc_no: string | null;
   sales_order: { id: string; doc_no: string } | null;
