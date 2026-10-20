@@ -850,6 +850,7 @@ def resolve_config(
     api_key = resolve_api_key(config, provider)
     if not api_key:
         raise ParserError(f"no API key configured for provider {provider!r}")
+    from app.services.chatbot.head import code_lookup_prompt
     from app.services.chatbot.head.closed_lists_prompt import gate_on
     from app.services.chatbot.head.parser_template import MARKER as TEMPLATE_MARKER
 
@@ -869,7 +870,7 @@ def resolve_config(
         model=model,
         api_key=api_key,
         closed_lists=closed_lists,
-        code_lookup=closed_lists and uses_code_lookup(db, override_version_id=override_version_id),
+        code_lookup=closed_lists and code_lookup_prompt.gate_on(raw_template),
         json_schema=json_schema,
         state_block=state_block,
         template=TEMPLATE_MARKER in (raw_template or ""),
