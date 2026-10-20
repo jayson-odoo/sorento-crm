@@ -460,3 +460,86 @@ def test_f27_a_remark_only_edit_of_an_applied_split_plan_is_told_again(api, emai
     assert r.status_code == 200, r.text
     s.db.commit()
     assert "SITE HOLD" in [ln["remark"] for ln in _sent(emails, start)], _sent(emails, start)
+
+
+# ---------------------------------------------------------------------------
+# F30: a plan stamped in the OLD remark-free spelling (before b140e1d1d6) stays compatible
+# ---------------------------------------------------------------------------
+
+
+def _legacy_stamp(s):
+    """Rewrite every stamped `split_plan` of the order's revisions into the spelling
+    `split_plan_key` produced before remarks counted: base, then "qty@date@sits on@cancel"
+    per split, sorted, no remark part."""
+    from app.models.project_so import SOSupplyDecision
+
+    for decision in s.db.query(SOSupplyDecision).filter(
+        SOSupplyDecision.project_sales_order_id == str(s.order.id)
+    ):
+        out = []
+        for snap in decision.line_snapshots or []:
+            snap = dict(snap)
+            plan = snap.get("split_plan")
+            if plan:
+                snap["split_plan"] = [plan[0]] + sorted("@".join(e.split("@")[:4]) for e in plan[1:])
+            out.append(snap)
+        decision.line_snapshots = out
+    s.db.commit()
+    s.db.expire_all()
+
+
+def _applied_with_remark(api, emails, remark="LEGACY WORDS"):
+    from tests.scm import test_line_splits_round3 as r3
+
+    s = r3._seed(api)
+    r3._save(s, r3._owner_plan(remark_14=remark))
+    r3._confirm_batch(s, emails)
+    return s
+
+
+def _confirm_order(s):
+    r = s.client.post(
+        f"{BASE}/fulfilment-planning/confirm-all",
+        json={"orders": [{"pso_id": str(s.order.id), "lines": []}]},
+    )
+    assert r.status_code == 200, r.text
+    s.db.commit()
+    s.db.expire_all()
+
+
+def test_f30_a_legacy_stamped_plan_that_already_carries_a_remark_is_not_a_split_edit(api, emails):
+    from tests.scm.test_split_view_board import _board_flag
+    from tests.scm.test_split_view_read import _one, _views
+
+    s = _applied_with_remark(api, emails)
+    _legacy_stamp(s)
+    assert _board_flag(s, 480) is False, "a remark the stamp never spelled is not a change"
+    assert _one(_views(s, 480))["status"] == "confirmed"
+    start = len(emails)
+    _confirm_order(s)
+    assert _sent(emails, start) == [], _sent(emails, start)
+
+
+def test_f30_editing_the_remark_after_a_legacy_stamp_counts_once_and_is_told_once(api, emails):
+    from tests.scm.test_line_splits_round3 import _applied_480, _put
+    from tests.scm.test_split_view_board import _board_flag
+
+    s = _applied_with_remark(api, emails)
+    _legacy_stamp(s)
+    r = _put(s, [_applied_480(s, remark_14="NEW WORDS")])
+    assert r.status_code == 200, r.text
+    assert _board_flag(s, 480) is True
+    start = len(emails)
+    _confirm_order(s)
+    assert "NEW WORDS" in [ln["remark"] for ln in _sent(emails, start)], _sent(emails, start)
+    assert _board_flag(s, 480) is False
+    start = len(emails)
+    _confirm_order(s)
+    assert _sent(emails, start) == [], "told once, not again"
+
+
+def test_f30_pin_a_new_stamped_plan_with_a_remark_is_not_a_split_edit_until_edited(api, emails):
+    from tests.scm.test_split_view_board import _board_flag
+
+    s = _applied_with_remark(api, emails)
+    assert _board_flag(s, 480) is False
