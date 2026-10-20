@@ -206,10 +206,10 @@ describe('S2-02 dark surface ramp', () => {
     expect(steps[1]).toBeGreaterThan(steps[2]);
   });
 
-  it('renders the active tab lighter than its track', () => {
+  it('renders the active tab in primary on its muted track', () => {
     const tabs = read('components/ui/tabs.tsx');
     expect(tabs).toContain("default: 'bg-muted p-1'");
-    expect(tabs).toContain('data-[state=active]:bg-popover');
+    expect(tabs).toContain('data-[state=active]:bg-primary');
     expect(step(darkVars['--popover'])).toBeLessThan(step(darkVars['--muted']));
   });
 });

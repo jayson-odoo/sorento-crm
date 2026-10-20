@@ -329,37 +329,39 @@ function LineDeliveries({ line }: { line: POProgressLine }) {
     );
   }
   return (
-    <table className="w-full text-sm" data-testid={`line-deliveries-${line.line_no}`}>
-      <thead>
-        <tr className="text-xs text-muted-foreground">
-          <th className="px-4 py-1.5 text-left font-medium">Delivery</th>
-          <th className="px-4 py-1.5 text-left font-medium">Area</th>
-          <th className="px-4 py-1.5 text-right font-medium">Units</th>
-          <th className="px-4 py-1.5 text-right font-medium">Delivered</th>
-          <th className="px-4 py-1.5 text-left font-medium">Sales order</th>
-        </tr>
-      </thead>
-      <tbody>
-        {line.deliveries.map((delivery, index) => (
-          <tr key={`${delivery.sales_order_id}-${index}`} className="border-t border-border/60">
-            <td className="px-4 py-1.5">
-              {delivery.delivery_date ? formatDateInMalaysia(delivery.delivery_date) : '-'}
-            </td>
-            <td className="px-4 py-1.5">
-              {[delivery.area_group, delivery.label].filter(Boolean).join(', ') || '-'}
-            </td>
-            <td className="px-4 py-1.5 text-right tabular-nums">{formatUnits(delivery.units)}</td>
-            <td className="px-4 py-1.5 text-right tabular-nums">
-              {formatUnits(delivery.delivered)}
-            </td>
-            <td className="px-4 py-1.5">
-              <span className="me-2">{delivery.provisional_ref}</span>
-              <SalesOrderStatusPill status={delivery.sales_order_status as SalesOrderStatus} />
-            </td>
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm" data-testid={`line-deliveries-${line.line_no}`}>
+        <thead>
+          <tr className="text-xs text-muted-foreground">
+            <th className="px-4 py-1.5 text-left font-medium">Delivery</th>
+            <th className="px-4 py-1.5 text-left font-medium">Area</th>
+            <th className="px-4 py-1.5 text-right font-medium">Units</th>
+            <th className="px-4 py-1.5 text-right font-medium">Delivered</th>
+            <th className="px-4 py-1.5 text-left font-medium">Sales order</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {line.deliveries.map((delivery, index) => (
+            <tr key={`${delivery.sales_order_id}-${index}`} className="border-t border-border/60">
+              <td className="px-4 py-1.5">
+                {delivery.delivery_date ? formatDateInMalaysia(delivery.delivery_date) : '-'}
+              </td>
+              <td className="px-4 py-1.5">
+                {[delivery.area_group, delivery.label].filter(Boolean).join(', ') || '-'}
+              </td>
+              <td className="px-4 py-1.5 text-right tabular-nums">{formatUnits(delivery.units)}</td>
+              <td className="px-4 py-1.5 text-right tabular-nums">
+                {formatUnits(delivery.delivered)}
+              </td>
+              <td className="px-4 py-1.5">
+                <span className="me-2">{delivery.provisional_ref}</span>
+                <SalesOrderStatusPill status={delivery.sales_order_status as SalesOrderStatus} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
