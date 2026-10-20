@@ -1,6 +1,6 @@
 # PLAN: CHAT-CLOSED-LISTS - chatbot step 2, closed candidate lists
 
-Status: Review, round 8 (CODE-SUBSTRING, CLASS-NAMED-OFF-UNDER-STATE, owner a35818889 (b) not-available, DUP-CODE-LABEL, owner cp0-6240dc53f8 KEEP) built red-first with kill-proofs; one Opus + security re-review next, then push, lift the ci hold, ci-full, bench on the new head. Track: full (size L, LEAD pattern).
+Status: Review, round 9 (AND-ROW-REGISTRY R9-1..R9-5) built red-first with kill-proofs, Opus READY; pushed, waiting for ci on the new head. Round 8 (CODE-SUBSTRING, CLASS-NAMED-OFF-UNDER-STATE, owner a35818889 (b), DUP-CODE-LABEL, KEEP) CI green on 0dfa72b07b. Track: full (size L, LEAD pattern).
 Branch `claude/chat-closed-lists-x6ymb5` (the sandbox cannot push `crew/chat-closed-lists`), PR #1755.
 
 Design source: CHATBOT-SCALE-DESIGN-16oct section 8 step 2 + D2 (crew-only): code only SHORTLISTS
@@ -499,3 +499,18 @@ token list. No word list in code.
   was matched as typed and is checked as typed; a word whose typed form is not in the code was matched by its
   `_word_variants` forms and is checked by them. Covers R9-3 (ZZBASIN-BIDET holds "basin", not "basins") and R9-4.
   Guards: AND-mode "tops" alone on TOPS-MIXER and ["tops", "bidet"] on TOPS-BIDET are kept.
+
+### Round 9 results (20 Oct)
+
+- Reds (test file only, each before its fix): 08636df963 (R9-1, R9-2), 1166ebaf7f (R9-3; R9-1 route world order-stable),
+  2af2c945b8 (R9-4), b5bcec8077 (R9-5). Fixes (references.py only): 83d697a768, b01b363750, 1dd6270383, d9d9651e53
+  (final rule: each word checked in the form the probe matched it by; R9-3's tier-wide plural read and R9-4's tier
+  flag are superseded by it).
+- Kill-proofs (scratch worktree rp2): R9-1 x2, R9-3 x2, R9-4 x3, R9-5 x4 red on revert; references.py at round 8
+  0dfa72b07b turns exactly R9-1 x2 + R9-3 x2 red with every guard green.
+- Opus review: NOT READY x3 (route world order; plural read leaking into one-word rows; one-word AND turns), then
+  READY on d9d9651e53: one-word rows 0 differences over 35,328 cases on every tier; several-token AND rows change
+  only kept -> dropped. Security review not run: resolver matching only, no auth / RBAC / ingest / upload change.
+- Tests on d9d9651e53: 91 resolver / resolve-route / closed-lists files, 1480 passed, 14 skipped, 4 xfailed, 0 failed.
+- Residual beside residual 3 (nit): a multi-word token that is not a run of whole code segments let a registry word
+  that IS a whole segment ride before ("basins" with "bidet gunmetal" on BASINS-GUNMETAL); now dropped, as CS-1 says.
