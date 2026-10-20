@@ -170,3 +170,11 @@ old ATTACHMENT TYPE EXTRACTION section did. EARLY STOP: no full gold, no spec se
 Known misses kept (crew a54067515): c1-09 0/3, dq-10 1/3 (a quantity after an order / ETA answer). Layer that would fix
 them: code routing on the parsed quantity the parser already emits (entities carry quantity 10 / 70), not more prompt
 text; the owner ruled a backstop out, so only if TRAIN shows the shape matters.
+
+## F1-I (crew a54889127) and the stop
+
+R-P2-06 first step "a file ask always carries one attachment_type entity per file word ... whatever the word" (red
+5378fccc03, fix 43db077de7, 69,984 chars, 102 passed), published v87 3d375694. Gold c2 N=3: 11/12 (v86 7/12). TRAIN
+attachment NEW arm alone (stored v77 baseline): v87 REAL 32/80 (40%) vs v77 52/83 (63%); attachment_type entity on
+43/83 items (v86 22/73, v77 70/83); tool results 53 vs 78. Still under v77, so per crew a54889127: STOP, no further
+wording. Spend about USD 7.65 of 8.5. The file-entity gap stands as the open blocker for the consolidated template.
