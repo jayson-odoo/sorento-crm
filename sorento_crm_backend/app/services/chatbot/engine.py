@@ -5110,6 +5110,7 @@ def _run_stages_body(  # noqa: PLR0915
             verdict,
             message=user_turn.own_text,
             closed_lists=parser_config.closed_lists,
+            closed_lists_index=parser_config.closed_lists_index,
             listed_codes=listed_codes if parser_config.code_lookup else None,
             pick_info=pick_info if parser_config.code_lookup else None,
             held_ids=[str(p["uuid"]) for p in state_in.focus.products if isinstance(p, dict) and p.get("uuid")],

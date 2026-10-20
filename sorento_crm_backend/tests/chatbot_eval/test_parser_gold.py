@@ -13,6 +13,7 @@ if str(BACKEND) not in sys.path:
 
 from scripts.chatbot_eval import parser_gold as pg  # noqa: E402
 from tests.chatbot.conftest import session_factory  # noqa: E402,F401
+from tests.chatbot.test_engine import seeded, stub_access  # noqa: E402,F401
 
 GOLD = BACKEND / "scripts" / "chatbot_eval" / "gold" / "parser_when_deliver.jsonl"
 
@@ -568,7 +569,8 @@ def test_parse_one_without_a_context_builds_todays_block_byte_equal(session_fact
     expected, _ = context_mod.assemble(context_mod.ContextLayers(
         level="off", profile_facts=None, summaries=None, earlier_messages=None, previous_response=None,
         current_subject=None, pending_kind=None, pending_options=None, settings_profile_line=None,
-        current_message="ZZA100 x 5", reply_to=None, media_line=None, brands=None, promotion_kinds=None,
+        # The engine's own `Current user message` text (`engine.build_latest_user_message`).
+        current_message="ZZA100 x 5\n\n", reply_to=None, media_line=None, brands=None, promotion_kinds=None,
         product_types=None, product_details=None, candidate_lines=None,
     ))
     assert block == expected
@@ -620,3 +622,248 @@ def test_run_live_hands_a_rows_context_to_the_parse(session_factory, monkeypatch
     rows = [{"id": "a", "message": "m", "expect": {}, "context": CTX}, {"id": "b", "message": "m", "expect": {}}]
     pg.run_live(rows, session_factory=session_factory, version_id="1", repeats=1, max_usd=5.0, require_key_last4="WXYZ")
     assert got == [CTX, None]
+
+
+# --- CLOSED-LISTS-INDEX-MODE eval harness: the engine's own user turn, a forced mode, a warehouse key ----------
+
+
+@pytest.fixture()
+def _fresh_prompt_caches():
+    from app.services import ai_prompt_registry
+    from app.services import chatbot_prompt_vars as pv
+
+    ai_prompt_registry.bust_cache()
+    pv.clear_cache()
+    yield
+    ai_prompt_registry.bust_cache()
+    pv.clear_cache()
+
+
+def _closed_lists_version(session_factory, monkeypatch) -> str:
+    """An UNLABELLED parser version carrying the CLOSED LISTS section (the index mode guards' template),
+    with the provider config stubbed so the REAL `resolve_config` runs."""
+    import types
+    import uuid
+
+    from app.models.ai_prompt import AIPromptVersion
+    from app.services import ai_assistant_service, llm_provider
+    from app.services.chatbot.head import parser as parser_mod
+    from tests.chatbot import test_closed_lists_index_mode as idx
+
+    db = session_factory()
+    vid = str(uuid.uuid4())
+    db.add(AIPromptVersion(id=vid, name=parser_mod.PROMPT_KEY, version=41, type="text", template=idx.TEMPLATE,
+                           variables=["current_date"]))
+    db.commit()
+    cfg = types.SimpleNamespace(provider="openai", model="gpt-test")
+    service = types.SimpleNamespace(get=lambda: cfg)
+    monkeypatch.setattr(ai_assistant_service, "AIAssistantConfigService", lambda d: service)
+    monkeypatch.setattr(llm_provider, "resolve_api_key", lambda config, provider: "sk-test")
+    return vid
+
+
+def _world(session_factory, warehouse: str = "ZZWQ") -> None:
+    import uuid
+
+    from app.models.inventory import Warehouse
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from tests.chatbot import test_closed_lists_index_mode as idx
+
+    idx._seed_world(session_factory)
+    db = session_factory()
+    db.add(Warehouse(id=str(uuid.uuid4()), warehouse_code=warehouse, warehouse_name=f"ZZ {warehouse}",
+                     company_id=DEFAULT_COMPANY_ID))
+    from app.models.product_spec import ProductSpecRegistry
+
+    row = db.query(ProductSpecRegistry).filter(ProductSpecRegistry.spec_key == "finish").first()
+    if row is None:
+        row = ProductSpecRegistry(id=str(uuid.uuid4()), spec_key="finish", label="Finish", data_type="enum")
+        db.add(row)
+    row.allowed_values = ["french_gold"]
+    row.synonyms = {"french_gold": ["french gold"]}
+    row.derivation_rules = [{"builder": {"kind": "code", "code_match": "ends_with", "texts": ["-FRG"], "value": "french_gold"}}]
+    db.commit()
+
+
+def _seen_parses(monkeypatch) -> list[tuple[str, str]]:
+    """Stub the provider call: every (system prompt, user block) the parser would be sent."""
+    from app.services.chatbot.head import parser as parser_mod
+
+    seen: list[tuple[str, str]] = []
+
+    def parse(config, user_block):
+        seen.append((config.system_prompt, str(user_block)))
+        return {"status": None, "entities": [], "requested_attributes": []}
+
+    monkeypatch.setattr(parser_mod, "parse", parse)
+    return seen
+
+
+def _gold_run(session_factory, vid, message, mode, **kw):
+    return pg.run_live([{"id": "r", "message": message, "expect": {}}], session_factory=session_factory,
+                       version_id=vid, repeats=1, max_usd=5.0, require_key_last4="WXYZ", closed_lists_mode=mode, **kw)
+
+
+def test_index_mode_renders_the_index_block_and_no_full_list(session_factory, monkeypatch, _fresh_prompt_caches):
+    from tests.chatbot import test_closed_lists_index_mode as idx
+
+    vid = _closed_lists_version(session_factory, monkeypatch)
+    _world(session_factory)
+    seen = _seen_parses(monkeypatch)
+    out = _gold_run(session_factory, vid, "frg", "index")
+    assert out[0]["reasons"] == [] and out[0]["closed_lists_mode"] == "index", out
+    system, block = seen[0]
+    lines = block.splitlines()
+    assert any("french_gold" in ln for ln in lines), block
+    assert not any(ln.startswith("Warehouse") for ln in lines), block
+    assert idx.SPEC_LINE not in system and idx.PHOTOS_LINE not in system, system
+    assert not any(ln.startswith(("Product types:", "Product details:")) for ln in lines), block
+
+
+def test_block_mode_renders_the_full_lists_even_when_the_db_says_index(session_factory, monkeypatch,
+                                                                      _fresh_prompt_caches):
+    from tests.chatbot import test_closed_lists_index_mode as idx
+
+    vid = _closed_lists_version(session_factory, monkeypatch)
+    _world(session_factory)
+    idx._set_mode(session_factory, "index")
+    seen = _seen_parses(monkeypatch)
+    out = _gold_run(session_factory, vid, "stock at ZZWQ", "block")
+    assert out[0]["reasons"] == [] and out[0]["closed_lists_mode"] == "block", out
+    system, block = seen[0]
+    assert idx.SPEC_LINE in system and idx.PHOTOS_LINE in system, system
+    assert not any(ln.startswith("Warehouse") for ln in block.splitlines()), block
+
+
+def test_without_the_flag_the_db_mode_is_used(session_factory, monkeypatch, _fresh_prompt_caches):
+    from tests.chatbot import test_closed_lists_index_mode as idx
+
+    vid = _closed_lists_version(session_factory, monkeypatch)
+    _world(session_factory)
+    idx._set_mode(session_factory, "index")
+    seen = _seen_parses(monkeypatch)
+    out = _gold_run(session_factory, vid, "stock at ZZWQ", None)
+    assert out[0]["closed_lists_mode"] == "index", out
+    assert idx.SPEC_LINE not in seen[0][0]
+
+
+@pytest.mark.parametrize("mode", ["index", "block"])
+def test_the_user_block_is_the_engines_own_for_a_fresh_turn(mode, session_factory, seeded, stub_access, monkeypatch,
+                                                           _fresh_prompt_caches):
+    """Byte-equal to the user block the engine sends the parser for the same message on a fresh turn."""
+    from app.models.ai_prompt import AIPromptVersion
+    from app.services.chatbot.head import parser as parser_mod
+    from tests.chatbot import test_closed_lists_index_mode as idx
+
+    _world(session_factory)
+    idx._set_mode(session_factory, mode)
+    [(engine_system, engine_block, _result)] = idx._turns(
+        session_factory, stub_access, monkeypatch, [("stock at ZZWQ", idx._quiet())])
+    vid = session_factory().query(AIPromptVersion.id).filter(AIPromptVersion.name == parser_mod.PROMPT_KEY).scalar()
+    seen = _seen_parses(monkeypatch)
+    _gold_run(session_factory, vid, "stock at ZZWQ", mode)
+    assert seen[0] == (engine_system, engine_block)
+
+
+def test_the_forced_mode_never_writes_system_settings_and_is_undone(session_factory, monkeypatch, _fresh_prompt_caches):
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session
+
+    from app.models.user import SystemSetting
+    from app.services.chatbot.head import closed_lists_index
+    from tests.chatbot import test_closed_lists_index_mode as idx
+
+    vid = _closed_lists_version(session_factory, monkeypatch)
+    _world(session_factory)
+    idx._set_mode(session_factory, "block")
+    real_read_mode = closed_lists_index.read_mode
+    _seen_parses(monkeypatch)
+    written: list[str] = []
+
+    def spy(session, _ctx, _instances):
+        written.extend(type(o).__name__ for o in [*session.new, *session.dirty] if isinstance(o, SystemSetting))
+
+    event.listen(Session, "before_flush", spy)
+    try:
+        out = _gold_run(session_factory, vid, "stock at ZZWQ", "index")
+    finally:
+        event.remove(Session, "before_flush", spy)
+    assert out[0]["closed_lists_mode"] == "index", out
+    assert written == [], written
+    assert closed_lists_index.read_mode is real_read_mode
+    assert closed_lists_index.read_mode(session_factory()) == "block"
+
+
+def test_an_unknown_forced_mode_is_refused():
+    with pytest.raises(ValueError):
+        pg.run_live([], session_factory=None, version_id="1", repeats=1, max_usd=1.0, require_key_last4="WXYZ",
+                    closed_lists_mode="lists")
+
+
+def test_cli_flag_reaches_the_run_and_the_header_names_the_mode(session_factory, monkeypatch, tmp_path, capsys,
+                                                               _fresh_prompt_caches):
+    import app.database
+
+    vid = _closed_lists_version(session_factory, monkeypatch)
+    _world(session_factory)
+    _seen_parses(monkeypatch)
+    monkeypatch.setattr(app.database, "SessionLocal", session_factory)
+    monkeypatch.chdir(BACKEND)
+    gold = tmp_path / "g.jsonl"
+    gold.write_text(json.dumps({"id": "r1", "message": "stock at ZZWQ", "expect": {}}) + "\n", encoding="utf-8")
+    out = tmp_path / "out.jsonl"
+    rc = pg.main([*_live_argv(gold, out, vid), "--closed-lists-mode", "index"])
+    printed = capsys.readouterr().out
+    assert rc == 0, printed
+    assert "closed_lists_mode index" in printed.splitlines()[0], printed
+    rows = [json.loads(ln) for ln in out.read_text().splitlines()]
+    assert [r["closed_lists_mode"] for r in rows] == ["index"], rows
+
+
+def test_cli_refuses_an_unknown_mode(tmp_path):
+    with pytest.raises(SystemExit):
+        pg.main([*_BASE, "--closed-lists-mode", "lists"])
+
+
+def _wh(*raws):
+    return {"entities": [{"hint": "warehouse", "raw": r, "canonical_code": None} for r in raws]}
+
+
+@pytest.mark.parametrize(
+    ("verdict", "expected", "ok"),
+    [
+        (_wh("BRW"), ["brw"], True),
+        (_wh("BRW-IB"), ["brwib"], True),
+        (_wh("ib", "Brw"), ["BRW", "IB"], True),
+        (_wh(), [], True),
+        ({"entities": [{"hint": "product", "raw": "BRW"}]}, [], True),
+        (_wh("frg"), [], False),
+        (_wh(), ["BRW"], False),
+        (_wh("BRW"), ["BRW", "IB"], False),
+        (_wh("BRW", "IB"), ["BRW"], False),
+    ],
+)
+def test_grade_warehouse_is_the_folded_raw_set(verdict, expected, ok):
+    passed, reasons = pg.grade_parse(verdict, {"warehouse": expected})
+    assert passed is ok, reasons
+    assert bool(reasons) is (not ok)
+
+
+def test_load_gold_accepts_a_warehouse_list_and_refuses_anything_else(tmp_path):
+    rows = pg.load_gold(_write(tmp_path, [_row("a", "stock at BRW", {"warehouse": ["BRW"]})]))
+    assert rows[0]["expect"] == {"warehouse": ["BRW"]}
+    for bad in ("BRW", [1], None):
+        with pytest.raises(ValueError):
+            pg.load_gold(_write(tmp_path, [_row("a", "stock at BRW", {"warehouse": bad})]))
+
+
+def test_run_live_rows_record_the_warehouse_raws(session_factory, monkeypatch):
+    from app.services.chatbot.head import parser as parser_mod
+
+    monkeypatch.setattr(parser_mod, "resolve_config", lambda db, **kw: _config())
+    verdict = {"entities": [{"hint": "warehouse", "raw": "BRW"}, {"hint": "product", "raw": "ZZA1"}]}
+    monkeypatch.setattr(pg, "_parse_one", lambda message, config, factory, context=None: dict(verdict))
+    out = pg.run_live([{"id": "a", "message": "m", "expect": {"warehouse": ["brw"]}}], session_factory=session_factory,
+                      version_id="1", repeats=1, max_usd=5.0, require_key_last4="WXYZ")
+    assert out[0]["passed"] is True and out[0]["warehouse"] == ["BRW"], out
+    assert out[0]["closed_lists_mode"] == "off", out

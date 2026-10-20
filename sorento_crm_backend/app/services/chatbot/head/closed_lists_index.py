@@ -9,12 +9,14 @@ already read (`block`):
 
 - under the candidates' own heading, the file types, certificate kinds and schemes the
   message's own words name (their code, name, own words or a lookup keyword the owner linked:
-  the data `closed_list_items` reads);
+  the data `closed_list_items` reads), and the spec values a word names as a registry code
+  suffix (`code_suffix_forms`: a derivation rule's `-FRG` typed as "frg");
 - under `HELD_HEADER`, the file types, certificate kinds and schemes the held products have on
   record, and their own spec values (one line per visible key that holds one).
 
 A word nothing matches gets no line; the existing ask paths handle it. Data only: no word is
 special-cased. Product reads go through the scoped session and `chat_searchable_products`.
+Warehouses are no index line: their closed list is checked at grounding (`head/grounding`).
 """
 from __future__ import annotations
 
@@ -260,6 +262,53 @@ def file_lines(db: "Session", message: str, held_ids: list[str]) -> tuple[list[s
     return list(dict.fromkeys(named))[:CAP_FILE_LINES], list(dict.fromkeys(held))[:CAP_FILE_LINES]
 
 
+# --------------------------------------------------------------------------- #
+# (a) Spec values a word names as a registry code suffix
+# --------------------------------------------------------------------------- #
+
+
+def code_suffix_forms(db: "Session", hidden: frozenset[str] = frozenset()) -> dict[str, list[tuple[Any, Any]]]:
+    """The registry's code-suffix short forms: for every visible key's own derivation rule of kind
+    `code`, `ends_with` a text `-X`, read the way derivation reads it (`stored_or_shipped_rules`,
+    suppressed values out), the folded X ("frg" for `-FRG`) -> the (registry row, value) pairs it
+    sets. The one reader the index lines (`code_suffix_lines`) and grounding's finish-word check
+    share."""
+    from app.services.chatbot.head.candidates import SKIP_KEYS, _phrase, _registry
+    from app.services.product_spec_derivation import stored_or_shipped_rules, without_suppressed
+    from app.services.product_spec_rules import builder_of
+
+    forms: dict[str, list[tuple[Any, Any]]] = {}
+    for row in _registry(db, hidden):
+        if row.spec_key in SKIP_KEYS:
+            continue
+        for rule in without_suppressed(stored_or_shipped_rules(row), row.suppressed_values):
+            builder = builder_of(rule)
+            if builder.get("kind") != "code" or builder.get("code_match") != "ends_with":
+                continue
+            for text in builder.get("texts") or []:
+                text = str(text).strip()
+                word = _phrase(text[1:]) if text.startswith("-") else ""
+                if word:
+                    forms.setdefault(word, []).append((row, builder.get("value")))
+    return forms
+
+
+def code_suffix_lines(db: "Session", grams: set[str], hidden: frozenset[str] = frozenset()) -> list[str]:
+    """The spec values a word of the message names exactly as a registry code-suffix short form
+    (`code_suffix_forms`), one candidate line per word in the candidate lines'
+    `- "word": spec K = V (label)` format."""
+    out: list[str] = []
+    for word, pairs in code_suffix_forms(db, hidden).items():
+        if word not in grams:
+            continue
+        items: list[str] = []
+        for row, value in pairs:
+            items += [item for item in _spec_items(row, value) if item not in items]
+        if items:
+            out.append(f'- "{word}": ' + "; ".join(items))
+    return out
+
+
 def block(
     db: "Session",
     candidate_lines: list[str],
@@ -267,15 +316,17 @@ def block(
     held_ids: list[str] | None,
     hidden: frozenset[str] = frozenset(),
 ) -> list[str]:
-    """The CLOSED LISTS block in index mode: the candidate lines, with the file type / certificate
-    lines the message's words name under the same `candidates.HEADER`; then, under `HELD_HEADER`,
-    the file types / certificates the held products have on record and their own spec lines.
-    Each heading only when it has a line under it (a word matching nothing gets no line)."""
+    """The CLOSED LISTS block in index mode: the candidate lines, with the code suffix and file type /
+    certificate lines the message's words name under the same `candidates.HEADER`; then, under
+    `HELD_HEADER`, the file types / certificates the held products have on record and their own spec
+    lines. Each heading only when it has a line under it (a word matching nothing gets no line)."""
     from app.services.chatbot.head.candidates import HEADER
 
     held = list(dict.fromkeys(str(h) for h in held_ids or [] if h))[:CAP_HELD_PRODUCTS]
     named, on_record = file_lines(db, message, held)
+    named = [*code_suffix_lines(db, _grams(message), hidden), *named]
     out = list(candidate_lines)
+    named = [line for line in named if line not in out]
     if named:
         out = [*(out or [HEADER]), *named]
     held_lines = [*on_record, *held_spec_lines(db, held, hidden)]

@@ -48,6 +48,8 @@ _SPEC_HINTS = frozenset({SPECIFICATION_HINT, "spec"})
 #: The kinds whose raw can hold a descriptor glued to what the thing is.
 _CLASS_HINTS = frozenset({"category", "product_type"})
 _ATTACHMENT_HINT = "attachment_type"
+#: CLOSED-LISTS-INDEX-MODE: checked only in index mode (a finish short form is not a warehouse).
+_WAREHOUSE_HINT = "warehouse"
 
 #: Registry keys that are not descriptors: the class and the type are what the thing IS
 #: (they stay in the category token), and the brand is its own entity kind.
@@ -743,6 +745,7 @@ def ground(
     vocab: Vocabulary | None = None,
     message: str | None = None,
     closed_lists: bool = False,
+    closed_lists_index: bool = False,
     listed_codes: frozenset[str] | None = None,
     pick_info: dict[str, dict[str, Any]] | None = None,
     held_ids: list[str] | None = None,
@@ -758,6 +761,12 @@ def ground(
     section): a document type is kept only when its pick is an item of the lists the
     prompt rendered, and is tagged with that list (`_on_closed_lists`).
 
+    `closed_lists_index` (CLOSED-LISTS-INDEX-MODE, `ParserConfig.closed_lists_index`): a warehouse
+    this message names that `resolve_warehouse_token` does not resolve, and whose word is a registry
+    code-suffix short form (`closed_lists_index.code_suffix_forms`: "frg" for `-FRG`), is dropped with
+    a note: the customer named a finish, not a warehouse, so the held warehouse stays (no
+    `dropped_kinds`). A resolved hint, and any other unknown word (said back, AC-38), is kept.
+
     `listed_codes` (CHAT-CODE-LOOKUP, the version also carries the CODE LOOKUP section): a
     product pick that is not the typed word, an extension or a family of it, and not a code
     the candidate block listed, is dropped and the raw kept. None is today.
@@ -769,11 +778,14 @@ def ground(
     entities = verdict.get("entities")
     if not isinstance(entities, list) or not entities:
         return verdict, []
+    kinds = _CLASS_HINTS | _SPEC_HINTS | {_ATTACHMENT_HINT, _PRODUCT_HINT}
+    if closed_lists_index:
+        kinds = kinds | {_WAREHOUSE_HINT}
     touched = [
         e
         for e in entities
         if isinstance(e, dict)
-        and str(e.get("hint") or "").strip().lower() in (_CLASS_HINTS | _SPEC_HINTS | {_ATTACHMENT_HINT, _PRODUCT_HINT})
+        and str(e.get("hint") or "").strip().lower() in kinds
     ]
     if not touched:
         return verdict, []
@@ -793,6 +805,7 @@ def ground(
     dropped_types = False
     closed_items: dict[str, dict[str, str]] | None = None
     listed_types: dict[str, str] | None = None
+    short_forms: dict[str, Any] | None = None
 
     def add(grounded: list[Grounded], template: dict[str, Any]) -> None:
         for g in grounded:
@@ -963,6 +976,16 @@ def ground(
             add(grounded, entity)
             notes.append({"from": hint, "raw": raw, "to": [rest, *[g.__dict__ for g in grounded]]})
             continue
+        if hint == _WAREHOUSE_HINT and closed_lists_index and entity.get("current_message") is not False:
+            from app.services.chatbot.head.candidates import _phrase
+            from app.services.chatbot.head.closed_lists_index import code_suffix_forms
+            from app.services.chatbot.lanes.business.services import resolve_warehouse_token
+
+            if not any(resolve_warehouse_token(db, token) for token in dict.fromkeys((canonical, raw)) if token):
+                short_forms = code_suffix_forms(db, hidden_keys) if short_forms is None else short_forms
+                if _phrase(raw) in short_forms:
+                    notes.append({"from": hint, "raw": raw, "to": "dropped: a finish short form, no warehouse on file"})
+                    continue
         if hint == _ATTACHMENT_HINT and closed_lists:
             if closed_items is None:
                 from app.services.chatbot_prompt_vars import closed_list_items

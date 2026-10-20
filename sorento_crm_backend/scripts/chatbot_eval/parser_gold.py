@@ -2,10 +2,13 @@
 
 usage (cwd = the backend dir of the checkout under test):
   python -m scripts.chatbot_eval.parser_gold live --gold F --out F --max-usd X --require-key-last4 XXXX \
-      --prompt-version-id ID --repeats N
-      (calls ONLY the parser, on the pinned prompt version, with the user turn the engine builds and the
-      candidate block when the version carries CLOSED LISTS; every DB session is rolled back; spend is capped
-      by --max-usd and only a provider key ending with --require-key-last4 may spend)
+      --prompt-version-id ID --repeats N [--closed-lists-mode block|index]
+      (calls ONLY the parser, on the pinned prompt version, with the user turn the engine builds for a fresh
+      turn and the candidate block when the version carries CLOSED LISTS; every DB session is rolled back; spend
+      is capped by --max-usd and only a provider key ending with --require-key-last4 may spend.
+      --closed-lists-mode forces `chatbot_closed_lists_mode` for this process only, never in the DB; without it
+      the DB value is used. The header line and every row name the mode the run used: off when the version
+      carries no CLOSED LISTS section)
 
 Imports only the stdlib at module level and `app.*` inside functions, like replay.py. Output rows carry ids,
 the pass flag, the reasons, the spend and the parse's own routing fields; each row's entities carry `raw`,
@@ -24,7 +27,7 @@ from typing import Any
 
 EXPECT_KEYS = frozenset({
     "status", "not_status", "domain_hint", "intent_hint", "product", "no_attribute", "customer", "canonical",
-    "attributes_only", "attributes_include", "attachment_types",
+    "attributes_only", "attributes_include", "attachment_types", "warehouse",
 })
 #: PARSER-TEMPLATE F1-B: what a gold row may say the conversation held before its message. Each
 #: value is the text as the user block shows it, or null.
@@ -61,6 +64,10 @@ def load_gold(path: Any) -> list[dict[str, Any]]:
             expect = row.get("expect", {})
             if not isinstance(expect, dict) or set(expect) - EXPECT_KEYS:
                 raise ValueError(f"line {n}: unknown expect key")
+            if "warehouse" in expect and not (
+                isinstance(expect["warehouse"], list) and all(isinstance(w, str) for w in expect["warehouse"])
+            ):
+                raise ValueError(f"line {n}: warehouse must be a list of warehouse words")
             if "context" in row and not _valid_context(row["context"]):
                 raise ValueError(f"line {n}: context must map {sorted(CONTEXT_KEYS)} to text or null")
             seen.add(row["id"])
@@ -73,6 +80,10 @@ def load_gold(path: Any) -> list[dict[str, Any]]:
 
 def _fold(value: Any) -> str:
     return re.sub(r"[^0-9a-z]", "", str(value or "").casefold())
+
+
+def _warehouse_raws(entities: list[dict[str, Any]]) -> list[Any]:
+    return [e.get("raw") for e in entities if e.get("hint") == "warehouse"]
 
 
 def grade_parse(verdict: dict[str, Any], expect: dict[str, Any]) -> tuple[bool, list[str]]:
@@ -129,6 +140,12 @@ def grade_parse(verdict: dict[str, Any], expect: dict[str, Any]) -> tuple[bool, 
         has = any(e.get("hint") == "customer" for e in entities)
         if has != bool(expect["customer"]):
             reasons.append("customer entity " + ("missing" if expect["customer"] else "present"))
+    if "warehouse" in expect:
+        # The parse's own warehouse words, folded, as a set: [] means no warehouse entity at all.
+        got = {_fold(raw) for raw in _warehouse_raws(entities)}
+        want = {_fold(w) for w in expect["warehouse"] or []}
+        if got != want:
+            reasons.append(f"warehouse raws {sorted(got)} != {sorted(want)}")
     return (not reasons, reasons)
 
 
@@ -155,26 +172,48 @@ def _state_block(context: dict[str, Any]) -> str:
     ])
 
 
+def _fresh_turn(message: str) -> tuple[Any, str]:
+    """A fresh text turn as the engine reads it: its UserTurn (`user_turn.from_envelope`) and the
+    `Current user message` text (`engine.build_latest_user_message`), both off a text envelope."""
+    from app.services.chatbot import engine
+    from app.services.chatbot import user_turn as user_turn_mod
+    from app.services.chatbot.contracts import Envelope
+
+    # The contact id only satisfies the envelope's schema: neither reader looks at it.
+    text_message = {"message": {"message": {"type": "text", "text": message}}}
+    envelope = Envelope(message=text_message, contact={"id": "parser-gold"})
+    return user_turn_mod.from_envelope(envelope), engine.build_latest_user_message(envelope)
+
+
+def _mode_used(config: Any) -> str:
+    """The closed lists mode the config renders: off when the version carries no CLOSED LISTS section."""
+    if not getattr(config, "closed_lists", False):
+        return "off"
+    return "index" if getattr(config, "closed_lists_index", False) else "block"
+
+
 def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] | None = None) -> Any:
     """The parser's emission for one message, with the user turn the engine builds: for a turn with no
-    history, or (F1-B) for a gold `context` rendered through the same ContextLayers, as the `State:`
-    block when the version asks for one and as the legacy Current subject / Open question lines
-    otherwise."""
+    history (no held product, so no held ids), or (F1-B) for a gold `context` rendered through the same
+    ContextLayers, as the `State:` block when the version asks for one and as the legacy Current subject /
+    Open question lines otherwise. Index mode renders as the engine does: the candidate block with the
+    index lines and no Product types / Product details lines."""
     from app.models.base import set_company_scope
     from app.services.chatbot import engine, turn_runtime
     from app.services.chatbot.head import parser
     from app.services.chatbot.turn import context as context_mod
     from app.services.company_scope import DEFAULT_COMPANY_ID
 
+    user_turn, latest_user_message = _fresh_turn(message)
     db = factory()
     try:
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
         brands = turn_runtime.active_brands(db)
         promotion_kinds = turn_runtime.promotion_kind_rows(db)
-        product_types = turn_runtime.product_type_names(db)
-        product_details = turn_runtime.product_detail_values(db)
+        product_types = None if config.closed_lists_index else turn_runtime.product_type_names(db)
+        product_details = None if config.closed_lists_index else turn_runtime.product_detail_values(db)
         lines, _listed, _picks = (
-            engine._candidate_lines(db, message, code_lookup=config.code_lookup)
+            engine._candidate_lines(db, user_turn, [], code_lookup=config.code_lookup, index=config.closed_lists_index)
             if config.closed_lists
             else (None, frozenset(), {})
         )
@@ -189,7 +228,8 @@ def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] 
         previous_response=held.get("previous_reply"),
         current_subject=None if state else held.get("subject"),
         pending_kind=None, pending_options=None, settings_profile_line=None,
-        current_message=message, reply_to=None, media_line=None, brands=brands, promotion_kinds=promotion_kinds,
+        current_message=latest_user_message, reply_to=None, media_line=None, brands=brands,
+        promotion_kinds=promotion_kinds,
         product_types=product_types, product_details=product_details, candidate_lines=lines,
         open_question_line=None if state else parser.open_question_line(held.get("open_question")),
         state_block=state,
@@ -218,15 +258,33 @@ def _pinned_version(session_factory: Any, version_id: str) -> int:
     return int(number)
 
 
-def run_live(rows: list[dict[str, Any]], *, session_factory: Any, version_id: str, repeats: int, max_usd: float,
-             require_key_last4: str, on_row: Any = None) -> list[dict[str, Any]]:
-    """Each gold message x `repeats` through the parser alone; stops cleanly at the spend cap or a wrong key."""
-    from datetime import date
+@contextlib.contextmanager
+def _forced_mode(mode: str | None) -> Any:
+    """`chatbot_closed_lists_mode` forced for this process while the run lasts (the reader the parser's
+    `resolve_config` calls answers `mode`); the database is never written. None leaves the DB value."""
+    if mode is None:
+        yield
+        return
+    from unittest import mock
 
-    from app.services.chatbot.head import parser
+    from app.services.chatbot.head import closed_lists_index
+
+    with mock.patch.object(closed_lists_index, "read_mode", lambda db: mode):
+        yield
+
+
+def run_live(rows: list[dict[str, Any]], *, session_factory: Any, version_id: str, repeats: int, max_usd: float,
+             require_key_last4: str, on_row: Any = None, closed_lists_mode: str | None = None,
+             on_start: Any = None) -> list[dict[str, Any]]:
+    """Each gold message x `repeats` through the parser alone; stops cleanly at the spend cap or a wrong key.
+    `closed_lists_mode` ("block" | "index") forces the mode in-process; `on_start` gets the run header."""
+    from app.services.chatbot import engine
+    from app.services.chatbot.head import closed_lists_index, parser
     from scripts.chatbot_eval import replay
     from app.services.company_scope import register_company_scope_listeners
 
+    if closed_lists_mode is not None and closed_lists_mode not in closed_lists_index.MODES:
+        raise ValueError(f"closed_lists_mode must be one of {sorted(closed_lists_index.MODES)}")
     register_company_scope_listeners()  # idempotent; without it set_company_scope filters nothing
 
     if not replay._valid_last4(require_key_last4):
@@ -239,24 +297,37 @@ def run_live(rows: list[dict[str, Any]], *, session_factory: Any, version_id: st
     try:
         with contextlib.ExitStack() as stack:
             replay._guard_network(stack, [], replay.MODEL_HOSTS)
+            stack.enter_context(_forced_mode(closed_lists_mode))
             usage = replay._new_usage()
             stack.enter_context(replay._metered(usage, total))
             with replay._rolled_back(session_factory) as factory:
                 db = factory()
                 try:
-                    config = parser.resolve_config(db, current_date=date.today().isoformat(), override_version_id=version_id)
+                    # The engine's own CURRENT DATE text (Malaysia time, its format), so the system prompt is its.
+                    config = parser.resolve_config(
+                        db, current_date=engine._current_date_directive(), override_version_id=version_id
+                    )
                 finally:
                     db.close()
+                mode = _mode_used(config)
+                if on_start is not None:
+                    on_start({"prompt_version": config.prompt_version, "closed_lists_mode": mode,
+                              "forced": closed_lists_mode is not None})
                 for case in rows:
                     for repeat in range(repeats):
                         before = total["usd"]
-                        row: dict[str, Any] = {"id": case["id"], "repeat": repeat, "prompt_version": config.prompt_version}
+                        row: dict[str, Any] = {
+                            "id": case["id"], "repeat": repeat, "prompt_version": config.prompt_version,
+                            "closed_lists_mode": mode,
+                        }
                         try:
                             verdict = dict(_parse_one(case["message"], config, factory, context=case.get("context")))
                             passed, reasons = grade_parse(verdict, case["expect"])
+                            entities = [e for e in verdict.get("entities") or [] if isinstance(e, dict)]
                             row.update(
                                 passed=passed, reasons=reasons,
                                 **{k: verdict.get(k) for k in ("status", "domain_hint", "intent_hint", "requested_attributes", "entities")},
+                                warehouse=_warehouse_raws(entities),
                             )
                         except replay._CapStop as stop:
                             total["stop"] = total.get("stop") or stop.reason
@@ -308,9 +379,15 @@ def _cmd_live(args: argparse.Namespace) -> int:
             fh.write(json.dumps(row) + "\n")
             fh.flush()
 
+        def header(info: dict[str, Any]) -> None:
+            forced = "forced" if info["forced"] else "from the db"
+            print(f"prompt_version {info['prompt_version']} closed_lists_mode {info['closed_lists_mode']} ({forced})",
+                  flush=True)
+
         results = run_live(
             rows, session_factory=SessionLocal, version_id=args.prompt_version_id, repeats=args.repeats,
-            max_usd=args.max_usd, require_key_last4=last4, on_row=write,
+            max_usd=args.max_usd, require_key_last4=last4, on_row=write, closed_lists_mode=args.closed_lists_mode,
+            on_start=header,
         )
     for case_id, cell in summarise(results).items():
         print(f"{case_id} {cell['passed']}/{cell['n']}")
@@ -329,6 +406,7 @@ def main(argv: list[str] | None = None) -> int:
     live.add_argument("--require-key-last4", default=None)
     live.add_argument("--prompt-version-id", default=None)
     live.add_argument("--repeats", type=int, default=None)
+    live.add_argument("--closed-lists-mode", choices=("block", "index"), default=None)
     args = ap.parse_args(argv)
     return _cmd_live(args)
 

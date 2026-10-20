@@ -510,27 +510,28 @@ def resolve_warehouse_token(db: Session, token: str) -> list[str]:
     contact's own company than there would be for widening the product lookup, and a
     contact with no `respond_contact_companies` row already gets zero rows there too -
     a genuinely UNMAPPED contact fails closed everywhere in the turn, not selectively.
-    """
-    from sqlalchemy import func
 
+    One `warehouses` read, ordered (code, company) so an exact match across companies is the same
+    code every time; the rule itself is `warehouse_codes_for`.
+    """
     from app.models.inventory import Warehouse
 
-    word = (token or "").strip()
+    if not (token or "").strip():
+        return []
+    rows = db.query(Warehouse.warehouse_code).order_by(Warehouse.warehouse_code, Warehouse.company_id).all()
+    return warehouse_codes_for(token, [code for (code,) in rows])
+
+
+def warehouse_codes_for(token: str, codes: list[str]) -> list[str]:
+    """D5's rule over `codes` (the `warehouses` rows read): the one code equal to `token`, case
+    aside; else every code whose part after its LAST `-` equals it; else nothing."""
+    word = (token or "").strip().lower()
     if not word:
         return []
-    exact = (
-        db.query(Warehouse.warehouse_code)
-        .filter(func.lower(Warehouse.warehouse_code) == word.lower())
-        .first()
-    )
+    exact = [code for code in codes if code and code.lower() == word]
     if exact:
-        return [exact[0]]
-    suffix = word.lower()
-    return [
-        code
-        for (code,) in db.query(Warehouse.warehouse_code).all()
-        if "-" in code and code.rsplit("-", 1)[-1].lower() == suffix
-    ]
+        return exact[:1]
+    return [code for code in codes if code and "-" in code and code.rsplit("-", 1)[-1].lower() == word]
 
 
 def _visible_sets(db: Session) -> Callable[[list[str]], set[str]]:
