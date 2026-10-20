@@ -15,6 +15,7 @@
 import { useState } from 'react';
 import { Download, Pencil, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
 import { toast } from '@/lib/toast';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { useQueryClient } from '@tanstack/react-query';
 
 import {
@@ -55,6 +56,8 @@ export function useAttachmentActions(
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState('');
+  // Permanent delete is the one the server gates (`resource.attachments.delete`).
+  const canDeletePermanently = useHasPermission('resource.attachments.delete');
 
   if (!attachment) return { actions: [] };
 
@@ -137,15 +140,17 @@ export function useAttachmentActions(
     });
   }
 
-  actions.push({
-    key: 'attachment.delete',
-    // A trashed file is deleted for good; a live one only goes to the trash, and
-    // the label has to say which, because one of the two cannot be undone.
-    label: attachment.is_deleted ? 'Permanently delete' : 'Move to trash',
-    icon: Trash2,
-    kind: 'destructive',
-    run: () => setDeleteOpen(true),
-  });
+  if (!attachment.is_deleted || canDeletePermanently) {
+    actions.push({
+      key: 'attachment.delete',
+      // A trashed file is deleted for good; a live one only goes to the trash, and
+      // the label has to say which, because one of the two cannot be undone.
+      label: attachment.is_deleted ? 'Permanently delete' : 'Move to trash',
+      icon: Trash2,
+      kind: 'destructive',
+      run: () => setDeleteOpen(true),
+    });
+  }
 
   const dialogs = (
     <>
