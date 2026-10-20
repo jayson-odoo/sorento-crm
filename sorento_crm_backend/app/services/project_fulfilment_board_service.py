@@ -68,6 +68,7 @@ from app.models.project_so import (
     ACK_REJECTED,
     DECISION_ACTIVE,
     INQUIRY_CANCELLED,
+    INQUIRY_RAISED,
     OrderInquiry,
     OrderInquiryRow,
     ProjectSalesOrder,
@@ -5345,8 +5346,10 @@ class FulfilmentBoardService:
                         or (ref.arrival_date is not None and ref.arrival_date <= row.required_date)
                     ],
                     buy_origin=self._buy_origin.get(str(row.product_id)) if row.product_id else None,
-                    # A Reject withdraws only from an ACTIVE decision (the board's own rule).
-                    confirmed=bool(row.decision),
+                    # UAC F15, F17: a Reject on a confirmed line is told only when the press
+                    # will retire a raised row for it (the line's live instruction).
+                    withdraws_raised=bool(row.decision)
+                    and (row.order_inquiry or {}).get("state") == INQUIRY_RAISED,
                 )
             elif row.cancelled and not row.cancelled_at:
                 row.saved_remark = handover_remark("cancelled", row, None)
