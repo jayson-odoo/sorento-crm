@@ -1945,3 +1945,59 @@ def test_cs_s2_a_separator_only_token_adds_no_product_to_a_described_set(client,
     rows = [m for r in payload.get("resolutions") or [] for m in r.get("matches") or []]
     assert not [m for m in rows if m.get("entity_type") == "product" and m.get("match_tier") in ("prefix", "substring")], rows
     assert not [c for c in _product_codes(payload, tier="spec_search") if c in ("ZZSEP01", "ZZSEP02")], payload.get("predicate")
+
+
+# --- CODE-SUBSTRING crew a59517206 (a): a registry word is never a code hit, segment or not -----
+
+
+def _registry_word(db, word: str, class_label: str = "Wash Basin") -> None:
+    """Make `word` a registry word, a class synonym as staff add one (user_synonyms)."""
+    from app.models.product_spec import ProductSpecRegistry
+    from app.services.product_spec_search import _search_vocabulary
+
+    row = db.query(ProductSpecRegistry).filter_by(spec_key="class").one()
+    added = dict(row.user_synonyms or {})
+    added[class_label] = [*added.get(class_label, []), word]
+    row.user_synonyms = added
+    db.flush()
+    assert word in _search_vocabulary(db, brands=[]), "precondition: the word is a registry word"
+
+
+def test_cs_w1_a_registry_word_as_a_whole_code_segment_never_joins_a_described_set(client, db):
+    """W1: "which zzbasin has stock"; ZZBASIN-ZZWC7 holds the word as a whole code segment (a
+    water closet by its own data). Today it joins as a prefix row."""
+    _registry_word(db, "zzbasin")
+    basin = _stocked(db, "ZZTWB02", "ZZT White Wash Basin", "ZZT WHITE WASH BASIN")
+    decoy = _stocked(db, "ZZBASIN-ZZWC7", "ZZT Close Coupled WC", "CLOSE COUPLED P-TRAP WATER CLOSET")
+
+    payload = client.post(
+        ENDPOINT,
+        json={
+            "query": "which zzbasin has stock", "tokens": ["zzbasin"], "scope_terms": ["zzbasin"],
+            "require": {"stock": True}, "predicate_words": ["stock"],
+        },
+    ).json()
+
+    described = _product_codes(payload, tier="spec_search")
+    assert decoy.product_code not in described, payload.get("predicate")
+    assert basin.product_code in described, payload.get("predicate")
+
+
+def test_cs_w2_the_spec_fallback_never_answers_a_registry_word_with_a_code_segment(client, db):
+    """W2: "any zzbasin?"; ZZX-ZZBASIN-WC7 and "ZZX ZZBASIN" hold the word as a code segment."""
+    _registry_word(db, "zzbasin")
+    decoys = [
+        _stocked(db, "ZZX-ZZBASIN-WC7", "ZZT Close Coupled WC", "CLOSE COUPLED P-TRAP WATER CLOSET"),
+        _stocked(db, "ZZX ZZBASIN", "ZZT Close Coupled WC", "CLOSE COUPLED P-TRAP WATER CLOSET"),
+    ]
+
+    payload = client.post(
+        ENDPOINT,
+        json={
+            "query": "any zzbasin?", "tokens": ["zzbasin"], "raw_tokens": ["zzbasin"], "spec_fallback": True,
+            "exact_match": True, "fallback_to_all_types": True, "understand_phrase": False,
+        },
+    ).json()
+
+    answered = _product_codes(payload)
+    assert not [d.product_code for d in decoys if d.product_code in answered], payload.get("resolutions")

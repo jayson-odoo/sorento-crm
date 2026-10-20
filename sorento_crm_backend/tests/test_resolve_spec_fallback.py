@@ -195,12 +195,13 @@ def test_partial_code_overlap_does_not_suppress_the_fallback(db, client):
         assert all(m.get("match_tier") == "spec_search" for m in body["intersection"])
 
 
-def test_full_code_coverage_still_suppresses_the_fallback(db, client):
-    """The counterweight: when a returned product row DOES cover every word, the
-    description was answered by codes and spec search must stay out of the way.
-    Same catalog quirk as above - the words all appear in the code - but this
-    time the overlap is COMPLETE, which is the case max-coverage is right about.
-    """
+def test_a_class_word_reaches_its_products_by_data_never_by_a_code_that_spells_it(db, client):
+    """CODE-SUBSTRING, crew a59517206 (a) (lead sign-off): "kitchen sink" is a registry / class
+    word, so it reaches the kitchen sinks through their class data, never through a code that
+    spells the words ("ZZT-KITCHEN SINK-BKT" holds them as whole code segments). Every seeded
+    product whose data says Kitchen Sink is answered, and the code-spelling row is no AND hit.
+    Was `test_full_code_coverage_still_suppresses_the_fallback` (SA-P1's counterweight); its other
+    intent stays below: a fully covering code WITH a digit still suppresses the fallback."""
     spare = Product(
         id=str(uuid.uuid4()),
         product_code="ZZT-KITCHEN SINK-BKT",
@@ -225,8 +226,18 @@ def test_full_code_coverage_still_suppresses_the_fallback(db, client):
         },
     ).json()
 
-    assert [m["canonical_code"] for m in body.get("intersection", [])] == ["ZZT-KITCHEN SINK-BKT"]
-    assert "spec_candidates" not in body
+    rows = [m for r in body.get("resolutions", []) for m in r.get("matches", [])] + list(body.get("intersection") or [])
+    answered = {m["canonical_code"] for m in rows if m.get("match_tier") == "spec_search"}
+    assert {"ZZTKS9001", "ZZT-KITCHEN SINK-BKT"} <= answered, body
+    assert not [m for m in body.get("intersection") or [] if m.get("match_tier") in ("and", "prefix", "substring")], body
+
+    # A typed code with a digit that covers the whole token is still a code answer.
+    coded = client.post(
+        ENDPOINT,
+        json={"query": "zztks9001", "tokens": ["zztks9001"], "match_mode": "and", "spec_fallback": True, "free_terms": []},
+    ).json()
+    assert [m["canonical_code"] for m in coded.get("intersection", [])] == ["ZZTKS9001"], coded
+    assert "spec_candidates" not in coded, coded
 
 
 def test_a_floor_miss_returns_no_candidates(client):
