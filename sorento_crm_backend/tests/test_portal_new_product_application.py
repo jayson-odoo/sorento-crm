@@ -16,9 +16,6 @@ from app.main import app  # noqa: F401  MUST be first app import (circular impor
 
 from ._pg_fixture import blank_session
 from ._npa_v4_support import (
-    BAD_UPLOAD_CASES,
-    IMAGE_FORMATS,
-    bad_upload,
     REFUSED_LINE_KEYS,
     refused_value,
     SHEET_LABELS,
@@ -201,8 +198,6 @@ ROUTES = [
     ("get", f"{NPA}/lookups/brands", None),
     ("get", f"{NPA}/customers?q=zzt", None),
     ("get", f"{BASE}/{{id}}/download", None),
-    ("post", f"{BASE}/{{id}}/lines/{{id}}/images/copy", {"attachment_id": "x"}),
-    ("delete", f"{BASE}/{{id}}/lines/{{id}}/images/{{id}}", None),
 ]
 
 
@@ -302,7 +297,7 @@ def test_portal_the_paper_fields_round_trip(portal):
     assert (got["dimension"], got["material"], got["thickness"], got["packing"]) == (
         "600 x 450 mm", "Steel", "1.2 mm", "1 per box",
     )
-    assert got["images"] == []
+    assert "images" not in got
 
 
 def _staff_fill(p, aid, *, cost="12.50", lead="3 weeks", link=None):
@@ -454,37 +449,18 @@ def test_review_portal_cannot_set_or_read_the_supplier_model_no(portal):
 
 @pytest.fixture
 def store(monkeypatch, portal):
+    from app.models.resources import AttachmentType
+    from app.services.portal_service import PORTAL_ATTACHMENT_TYPE_CODE
+
     seed_attachment_type(portal.db)
+    portal.db.add(
+        AttachmentType(
+            id=uid(), code=PORTAL_ATTACHMENT_TYPE_CODE, type_name="Portal Submission",
+            allowed_extensions="jpg,jpeg,png,webp,pdf,txt", max_file_size_mb=10,
+        )
+    )
+    portal.db.flush()
     return install_storage(monkeypatch)
-
-
-def _upload(p, aid, line_id, contact=None, name="photo.png", data=None, mime="image/png"):
-    return _as(p, contact or p.granted).post(
-        f"{BASE}/{aid}/lines/{line_id}/images",
-        files={"file": (name, data if data is not None else image_bytes(), mime)},
-    )
-
-
-def _images(p, aid, index=0):
-    res = _as(p, p.granted).get(f"{BASE}/{aid}")
-    assert res.status_code == 200, res.text
-    return res.json()["lines"][index]["images"]
-
-
-def test_portal_edit_keeps_the_line_id_and_its_image_and_removes_a_left_out_line(portal, store):
-    d = _create(portal, lines=[_line(portal), _line(portal, proposed_code="XY-1234-BG")])
-    first, second = [l["id"] for l in d["lines"]]
-    assert _upload(portal, d["id"], first).status_code in (200, 201)
-    link = _images(portal, d["id"])[0]["link_id"]
-
-    res = _as(portal, portal.granted).put(
-        f"{BASE}/{d['id']}", json={"lines": [_line(portal, id=first, description="Edited type")]}
-    )
-    assert res.status_code == 200, res.text
-    lines = res.json()["lines"]
-    assert [l["id"] for l in lines] == [first]
-    assert lines[0]["description"] == "Edited type"
-    assert [i["link_id"] for i in lines[0]["images"]] == [link]
 
 
 def test_portal_a_line_id_of_another_application_is_422(portal):
@@ -494,78 +470,6 @@ def test_portal_a_line_id_of_another_application_is_422(portal):
         f"{BASE}/{mine['id']}", json={"lines": [_line(portal, id=other["lines"][0]["id"])]}
     )
     assert res.status_code == 422, res.text
-
-
-@pytest.mark.parametrize("fmt, mime, name", IMAGE_FORMATS)
-def test_portal_contact_uploads_a_jpeg_png_or_webp_to_its_own_product(portal, store, fmt, mime, name):
-    d = _create(portal)
-    res = _upload(portal, d["id"], d["lines"][0]["id"], name=name, data=image_bytes(fmt), mime=mime)
-    assert res.status_code in (200, 201), res.text
-    images = _images(portal, d["id"])
-    assert len(images) == 1
-    assert images[0]["filename"] == name
-    assert images[0]["url"] and images[0]["link_id"] and images[0]["attachment_id"]
-
-
-@pytest.mark.parametrize(
-    "name, mime, data",
-    [("notes.txt", "text/plain", b"hello"), ("sheet.pdf", "application/pdf", b"%PDF-1.4 fake")],
-)
-def test_portal_anything_but_an_image_is_422(portal, store, name, mime, data):
-    d = _create(portal)
-    res = _upload(portal, d["id"], d["lines"][0]["id"], name=name, data=data, mime=mime)
-    assert res.status_code == 422, res.text
-    assert _images(portal, d["id"]) == []
-
-
-def test_portal_someone_elses_application_images_are_404(portal, store):
-    d = _create(portal)
-    line = d["lines"][0]["id"]
-    assert _upload(portal, d["id"], line).status_code in (200, 201)
-    image = _images(portal, d["id"])[0]
-    att, _ = seed_attachment(portal.db, store, "stock_inquiry", portal.mine.id, "s.png", image_bytes(), "image/png")
-    assert _upload(portal, d["id"], line, contact=portal.granted_b).status_code == 404
-    other = _as(portal, portal.granted_b)
-    assert other.post(f"{BASE}/{d['id']}/lines/{line}/images/copy", json={"attachment_id": att}).status_code == 404
-    assert other.delete(f"{BASE}/{d['id']}/lines/{line}/images/{image['link_id']}").status_code == 404
-    assert len(_images(portal, d["id"])) == 1
-
-
-def test_portal_images_are_locked_while_submitted(portal, store):
-    d = _create(portal)
-    line = d["lines"][0]["id"]
-    assert _upload(portal, d["id"], line).status_code in (200, 201)
-    link = _images(portal, d["id"])[0]["link_id"]
-    assert _as(portal, portal.granted).post(f"{BASE}/{d['id']}/submit").status_code == 200
-    up = _upload(portal, d["id"], line)
-    rm = _as(portal, portal.granted).delete(f"{BASE}/{d['id']}/lines/{line}/images/{link}")
-    for res in (up, rm):
-        assert res.status_code == 422, res.text
-        assert "new_product_application_locked" in res.text
-
-
-def test_portal_copy_only_from_its_own_stock_inquiry_and_unlink_keeps_the_file(portal, store):
-    from app.models.resources import Attachment
-
-    d = _create(portal)  # linked to portal.mine
-    line = d["lines"][0]["id"]
-    mine_att, _ = seed_attachment(portal.db, store, "stock_inquiry", portal.mine.id, "site.png", image_bytes(), "image/png")
-    other_att, _ = seed_attachment(portal.db, store, "stock_inquiry", portal.theirs.id, "x.png", image_bytes(), "image/png")
-    c = _as(portal, portal.granted)
-    before = portal.db.query(Attachment).count()
-
-    bad = c.post(f"{BASE}/{d['id']}/lines/{line}/images/copy", json={"attachment_id": other_att})
-    assert bad.status_code == 422, bad.text
-    ok = c.post(f"{BASE}/{d['id']}/lines/{line}/images/copy", json={"attachment_id": mine_att})
-    assert ok.status_code in (200, 201), ok.text
-    images = _images(portal, d["id"])
-    assert [i["attachment_id"] for i in images] == [mine_att]
-    assert portal.db.query(Attachment).count() == before
-
-    rm = c.delete(f"{BASE}/{d['id']}/lines/{line}/images/{images[0]['link_id']}")
-    assert rm.status_code in (200, 204), rm.text
-    assert _images(portal, d["id"]) == []
-    assert portal.db.query(Attachment).filter(Attachment.id == mine_att).count() == 1
 
 
 # ------------------------------------------------------------------ Download Excel, portal side
@@ -637,55 +541,95 @@ def test_portal_download_is_a4_portrait_fit_to_one_page(portal):
 # ------------------------------------------------------------------ inquiry attachments picker (portal)
 
 
-def _inq_atts(p, inquiry_id, contact=None):
-    return _as(p, contact or p.granted).get(f"{NPA}/inquiry-attachments", params={"stock_inquiry_id": inquiry_id})
+
+# ====================================================================================
+# v5: portal attachments through the generic routes (AC-NPA-81, 82)
+# ====================================================================================
+
+ATT = f"{PORTAL}/attachments"
 
 
-def test_portal_inquiry_attachments_lists_images_of_my_responded_inquiry(portal, store):
-    img, _ = seed_attachment(portal.db, store, "stock_inquiry", portal.mine.id, "site.png", image_bytes(), "image/png")
-    seed_attachment(portal.db, store, "stock_inquiry", portal.mine.id, "quote.pdf", b"%PDF-1.4 fake", "application/pdf")
-    res = _inq_atts(portal, portal.mine.id)
-    assert res.status_code == 200, res.text
-    rows = res.json()
-    assert [r["attachment_id"] for r in rows] == [img]
-    assert rows[0]["filename"] == "site.png" and rows[0]["content_type"] == "image/png" and rows[0]["url"]
+def _portal_upload(p, aid, contact=None, name="spec.pdf", data=b"%PDF-1.4 fake", mime="application/pdf"):
+    return _as(p, contact or p.granted).post(
+        ATT, data={"kind": KIND, "submission_id": aid}, files={"file": (name, data, mime)}
+    )
 
 
-@pytest.mark.parametrize("which", ["theirs", "mine_open"])
-def test_portal_inquiry_attachments_refuses_others_or_unanswered_inquiry(portal, store, which):
-    target = getattr(portal, which)
-    seed_attachment(portal.db, store, "stock_inquiry", target.id, "x.png", image_bytes(), "image/png")
-    assert _inq_atts(portal, portal.mine.id).status_code == 200  # the route exists for my own
-    assert _inq_atts(portal, target.id).status_code == 404
-
-
-@pytest.mark.parametrize("case", BAD_UPLOAD_CASES)
-def test_portal_upload_validation_refuses_oversize_fake_and_huge_images(portal, store, case):
-    name, mime, data = bad_upload(case)
+def test_portal_contact_attaches_a_file_to_its_own_application(portal, store):
     d = _create(portal)
-    res = _upload(portal, d["id"], d["lines"][0]["id"], name=name, data=data, mime=mime)
-    assert res.status_code == 422, res.text
-    assert _images(portal, d["id"]) == []
+    res = _portal_upload(portal, d["id"])
+    assert res.status_code in (200, 201), res.text
+    link = res.json()["link_id"]
+    got = _as(portal, portal.granted).get(f"{BASE}/{d['id']}").json()
+    assert [a["link_id"] for a in got["attachments"]] == [link]
+    item = got["attachments"][0]
+    assert item["filename"] == "spec.pdf" and item["url"] and item["attachment_id"]
+    assert all("images" not in l for l in got["lines"])
+    listed = _as(portal, portal.granted).get(ATT, params={"kind": KIND, "submission_id": d["id"]})
+    assert listed.status_code == 200, listed.text
+    assert [a["link_id"] for a in listed.json()["items"]] == [link]
 
 
-def test_portal_copy_refuses_an_inquiry_file_over_the_10mb_cap(portal, store):
+def test_portal_a_rejected_application_still_takes_files(portal, store):
     d = _create(portal)
-    line = d["lines"][0]["id"]
-    att, _ = seed_attachment(portal.db, store, "stock_inquiry", portal.mine.id, "big.png", image_bytes(),
-                             "image/png", size=10 * 1024 * 1024 + 1)
-    ok, _ = seed_attachment(portal.db, store, "stock_inquiry", portal.mine.id, "ok.png", image_bytes(), "image/png")
     c = _as(portal, portal.granted)
-    assert c.post(f"{BASE}/{d['id']}/lines/{line}/images/copy", json={"attachment_id": ok}).status_code in (200, 201)
-    res = c.post(f"{BASE}/{d['id']}/lines/{line}/images/copy", json={"attachment_id": att})
-    assert res.status_code == 422, res.text
-    assert [i["attachment_id"] for i in _images(portal, d["id"])] == [ok]
+    assert c.post(f"{BASE}/{d['id']}/submit").status_code == 200
+    from app.models.new_product_application import NewProductApplication
+
+    portal.db.get(NewProductApplication, d["id"]).status = "rejected"
+    portal.db.commit()
+    assert _portal_upload(portal, d["id"]).status_code in (200, 201)
 
 
-def test_portal_upload_reads_at_most_the_cap_plus_one_byte(portal, store, monkeypatch):
-    from ._npa_v4_support import record_upload_reads
-
-    sizes = record_upload_reads(monkeypatch)
+def test_portal_another_contacts_application_takes_no_file_and_lists_none(portal, store):
     d = _create(portal)
-    _upload(portal, d["id"], d["lines"][0]["id"])
-    assert sizes, "the route never read the upload"
-    assert all(isinstance(n, int) and 0 < n <= 10 * 1024 * 1024 + 1 for n in sizes), sizes
+    own = _portal_upload(portal, d["id"])
+    assert own.status_code in (200, 201), own.text
+    other = _as(portal, portal.granted_b)
+    assert _portal_upload(portal, d["id"], contact=portal.granted_b).status_code == 404
+    assert other.get(ATT, params={"kind": KIND, "submission_id": d["id"]}).status_code == 404
+    assert other.delete(f"{ATT}/{own.json()['link_id']}").status_code == 404
+    assert len(_as(portal, portal.granted).get(f"{BASE}/{d['id']}").json()["attachments"]) == 1
+
+
+def test_portal_attachments_are_locked_while_submitted(portal, store):
+    d = _create(portal)
+    link = _portal_upload(portal, d["id"]).json()["link_id"]
+    assert _as(portal, portal.granted).post(f"{BASE}/{d['id']}/submit").status_code == 200
+    up = _portal_upload(portal, d["id"])
+    rm = _as(portal, portal.granted).delete(f"{ATT}/{link}")
+    for res in (up, rm):
+        assert res.status_code in (409, 422), res.text
+    assert len(_as(portal, portal.granted).get(f"{BASE}/{d['id']}").json()["attachments"]) == 1
+
+
+def test_portal_contact_removes_its_own_file_and_the_row_stays(portal, store):
+    from app.models.resources import Attachment
+
+    d = _create(portal)
+    up = _portal_upload(portal, d["id"]).json()
+    rm = _as(portal, portal.granted).delete(f"{ATT}/{up['link_id']}")
+    assert rm.status_code in (200, 204), rm.text
+    assert _as(portal, portal.granted).get(f"{BASE}/{d['id']}").json()["attachments"] == []
+    assert portal.db.query(Attachment).filter(Attachment.id == up["attachment_id"]).count() == 1
+
+
+@pytest.mark.parametrize(
+    "method, path, body",
+    [
+        ("post", "/{id}/lines/{line}/images", None),
+        ("post", "/{id}/lines/{line}/images/copy", {"attachment_id": "x"}),
+        ("delete", "/{id}/lines/{line}/images/{link}", None),
+    ],
+)
+def test_portal_per_product_image_routes_are_gone(portal, method, path, body):
+    d = _create(portal)
+    url = BASE + path.format(id=d["id"], line=d["lines"][0]["id"], link=uid())
+    kwargs = {"json": body} if body is not None else {}
+    assert getattr(_as(portal, portal.granted), method)(url, **kwargs).status_code in (404, 405)
+
+
+def test_portal_inquiry_attachments_route_is_gone(portal):
+    assert _as(portal, portal.granted).get(f"{NPA}/inquiries").status_code == 200
+    res = _as(portal, portal.granted).get(f"{NPA}/inquiry-attachments", params={"stock_inquiry_id": portal.mine.id})
+    assert res.status_code in (404, 405)

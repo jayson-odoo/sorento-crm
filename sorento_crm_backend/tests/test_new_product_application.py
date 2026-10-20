@@ -883,9 +883,6 @@ from datetime import datetime  # noqa: E402
 from decimal import Decimal  # noqa: E402
 
 from ._npa_v4_support import (  # noqa: E402
-    BAD_UPLOAD_CASES,
-    IMAGE_FORMATS,
-    bad_upload,
     REFUSED_LINE_KEYS,
     refused_value,
     SHEET_LABELS,
@@ -914,20 +911,9 @@ def _put(w, aid, lines, user=None, **over):
     return w.api.as_(user or w.sales).put(f"{NPA}/{aid}", json=_body(w, lines=lines, **over))
 
 
-def _upload(w, aid, line_id, user=None, name="photo.png", data=None, mime="image/png"):
-    return w.api.as_(user or w.sales).post(
-        f"{NPA}/{aid}/lines/{line_id}/images",
-        files={"file": (name, data if data is not None else image_bytes(), mime)},
-    )
-
-
 def _ok(res):
     assert res.status_code in (200, 201), res.text
     return res
-
-
-def _images(w, aid, index=0):
-    return _get(w, aid)["lines"][index]["images"]
 
 
 def _feedback(w, aid, user=None, **body):
@@ -966,7 +952,7 @@ def test_ac70_the_paper_fields_round_trip(world):
         assert got["thickness"] == "1.2 mm"
         assert got["packing"] == "1 pc per carton"
         assert got["brand_id"] == world.refs.brand
-        assert got["images"] == []
+        assert "images" not in got
 
 
 @pytest.mark.parametrize("key", REFUSED_LINE_KEYS)
@@ -997,22 +983,22 @@ def test_ac70_an_unknown_header_key_is_422_naming_the_field(world, key):
 # ------------------------------------------------------------------ AC-NPA-71 products kept by id
 
 
-def test_ac71_an_edit_keeps_the_product_id_and_its_image(world, store):
+def test_ac71_an_edit_keeps_the_product_ids(world):
     d = _draft(world)
     first, second = [l["id"] for l in d["lines"]]
-    _ok(_upload(world, d["id"], first))
-    link_before = _images(world, d["id"])[0]["link_id"]
-
-    res = _put(
-        world,
-        d["id"],
-        [_line(world, id=first, description="Sink, now polished"), _line(world, id=second)],
-    )
+    res = _put(world, d["id"], [_line(world, id=first, description="Sink, now polished"), _line(world, id=second)])
     assert res.status_code == 200, res.text
     lines = res.json()["lines"]
     assert [l["id"] for l in lines] == [first, second]
     assert lines[0]["description"] == "Sink, now polished"
-    assert [i["link_id"] for i in lines[0]["images"]] == [link_before]
+
+
+def test_ac71_a_product_left_out_is_deleted(world):
+    d = _draft(world)
+    first, _second = [l["id"] for l in d["lines"]]
+    res = _put(world, d["id"], [_line(world, id=first)])
+    assert res.status_code == 200, res.text
+    assert [l["id"] for l in res.json()["lines"]] == [first]
 
 
 def test_ac71_a_product_without_an_id_is_added_in_body_order(world):
@@ -1029,18 +1015,6 @@ def test_ac71_a_product_without_an_id_is_added_in_body_order(world):
     assert lines[0]["proposed_code"] == "NEW-1"
     assert lines[0]["id"] not in (first, second)
     assert [l["id"] for l in lines[1:]] == [second, first]
-
-
-def test_ac71_a_product_left_out_is_deleted_with_its_image_links(world, store):
-    d = _draft(world)
-    first, second = [l["id"] for l in d["lines"]]
-    _ok(_upload(world, d["id"], second))
-    assert len(_rows_for(world, "new_product_application_line", second)) == 1
-
-    res = _put(world, d["id"], [_line(world, id=first)])
-    assert res.status_code == 200, res.text
-    assert [l["id"] for l in res.json()["lines"]] == [first]
-    assert _rows_for(world, "new_product_application_line", second) == []
 
 
 @pytest.mark.parametrize("which", ["other_application", "unknown"])
@@ -1080,119 +1054,6 @@ def test_ac72_submit_needs_at_least_one_product(world):
 
 
 # ------------------------------------------------------------------ AC-NPA-73 images
-
-
-@pytest.mark.parametrize("fmt, mime, name", IMAGE_FORMATS)
-def test_ac73_the_applicant_uploads_a_jpeg_png_or_webp(world, store, fmt, mime, name):
-    d = _draft(world)
-    res = _ok(_upload(world, d["id"], d["lines"][0]["id"], name=name, data=image_bytes(fmt), mime=mime))
-    assert res.status_code in (200, 201)
-    images = _images(world, d["id"])
-    assert len(images) == 1
-    image = images[0]
-    assert image["filename"] == name
-    assert image["content_type"] == mime
-    assert image["url"] and image["link_id"] and image["attachment_id"]
-    assert _images(world, d["id"], 1) == []
-
-
-@pytest.mark.parametrize(
-    "name, mime, data",
-    [("notes.txt", "text/plain", b"hello"), ("sheet.pdf", "application/pdf", b"%PDF-1.4 fake")],
-)
-def test_ac73_anything_but_an_image_is_422(world, store, name, mime, data):
-    d = _draft(world)
-    res = _upload(world, d["id"], d["lines"][0]["id"], name=name, data=data, mime=mime)
-    assert res.status_code == 422, res.text
-    assert _images(world, d["id"]) == []
-
-
-def test_ac73_upload_is_open_again_after_a_rejection(world, store):
-    d = _submitted(world)
-    assert _act(world, d["id"], "reject", world.manager, reason="Add a photo").status_code == 200
-    _ok(_upload(world, d["id"], d["lines"][0]["id"]))
-    assert len(_images(world, d["id"])) == 1
-
-
-@pytest.mark.parametrize("state", ["submitted", "approved"])
-def test_ac73_images_are_locked_while_submitted_or_approved(world, store, state):
-    d = _draft(world)
-    line = d["lines"][0]["id"]
-    _ok(_upload(world, d["id"], line))
-    link_id = _images(world, d["id"])[0]["link_id"]
-    att_id, _ = seed_attachment(world.db, store, "stock_inquiry", world.inquiry.id, "site.png", image_bytes(), "image/png")
-    assert _act(world, d["id"], "submit", world.sales).status_code == 200
-    if state == "approved":
-        assert _act(world, d["id"], "approve", world.manager).status_code == 200
-
-    up = _upload(world, d["id"], line)
-    cp = world.api.as_(world.sales).post(f"{NPA}/{d['id']}/lines/{line}/images/copy", json={"attachment_id": att_id})
-    rm = world.api.as_(world.sales).delete(f"{NPA}/{d['id']}/lines/{line}/images/{link_id}")
-    for res in (up, cp, rm):
-        assert res.status_code == 422, res.text
-        assert LOCKED_CODE in res.text
-    assert len(_images(world, d["id"])) == 1
-
-
-def test_ac73_only_the_owner_changes_images(world, store):
-    d = _draft(world)
-    line = d["lines"][0]["id"]
-    _ok(_upload(world, d["id"], line))
-    link_id = _images(world, d["id"])[0]["link_id"]
-    att_id, _ = seed_attachment(world.db, store, "stock_inquiry", world.inquiry.id, "site.png", image_bytes(), "image/png")
-
-    assert _upload(world, d["id"], line, user=world.sales_b).status_code == 403
-    cp = world.api.as_(world.sales_b).post(f"{NPA}/{d['id']}/lines/{line}/images/copy", json={"attachment_id": att_id})
-    assert cp.status_code == 403
-    rm = world.api.as_(world.sales_b).delete(f"{NPA}/{d['id']}/lines/{line}/images/{link_id}")
-    assert rm.status_code == 403
-    assert len(_images(world, d["id"])) == 1
-
-
-def test_ac73_copy_links_a_file_already_on_the_stock_inquiry(world, store):
-    from app.models.resources import Attachment
-
-    d = _draft(world)
-    line = d["lines"][0]["id"]
-    att_id, _ = seed_attachment(world.db, store, "stock_inquiry", world.inquiry.id, "site.png", image_bytes(), "image/png")
-    before = world.db.query(Attachment).count()
-    res = world.api.as_(world.sales).post(
-        f"{NPA}/{d['id']}/lines/{line}/images/copy", json={"attachment_id": att_id}
-    )
-    _ok(res)
-    images = _images(world, d["id"])
-    assert [i["attachment_id"] for i in images] == [att_id]
-    assert images[0]["filename"] == "site.png"
-    assert world.db.query(Attachment).count() == before  # linked, never uploaded twice
-
-
-@pytest.mark.parametrize("which", ["other_inquiry", "unknown"])
-def test_ac73_copy_refuses_a_file_not_on_this_inquiry(world, store, which):
-    d = _draft(world)
-    line = d["lines"][0]["id"]
-    if which == "other_inquiry":
-        other = _inquiry(world.db)
-        att_id, _ = seed_attachment(world.db, store, "stock_inquiry", other.id, "x.png", image_bytes(), "image/png")
-    else:
-        att_id = uid()
-    res = world.api.as_(world.sales).post(
-        f"{NPA}/{d['id']}/lines/{line}/images/copy", json={"attachment_id": att_id}
-    )
-    assert res.status_code == 422, res.text
-    assert _images(world, d["id"]) == []
-
-
-def test_ac73_unlink_removes_the_link_and_keeps_the_file_row(world, store):
-    from app.models.resources import Attachment
-
-    d = _draft(world)
-    line = d["lines"][0]["id"]
-    _ok(_upload(world, d["id"], line))
-    image = _images(world, d["id"])[0]
-    res = world.api.as_(world.sales).delete(f"{NPA}/{d['id']}/lines/{line}/images/{image['link_id']}")
-    assert res.status_code in (200, 204), res.text
-    assert _images(world, d["id"]) == []
-    assert world.db.query(Attachment).filter(Attachment.id == image["attachment_id"]).count() == 1
 
 
 # ------------------------------------------------------------------ AC-NPA-74 purchasing feedback
@@ -1534,46 +1395,6 @@ def test_ac77_a_value_starting_with_equals_is_text_not_a_formula(world):
         assert needle in text_of(cell), label
 
 
-def test_ac77_the_first_image_sits_in_the_image_row(world, store):
-    d = _xlsx_app(world)
-    first = d["lines"][0]["id"]
-    # The application is Approved (locked), so attach through the service the way an earlier
-    # draft would have left it.
-    seed_attachment(world.db, store, "new_product_application_line", first, "front.png", image_bytes(), "image/png")
-    world.db.commit()
-    _res, wb = _workbook(world, d["id"])
-    assert len(wb["Product 1"]._images) == 1
-    assert len(wb["Product 2"]._images) == 0
-
-
-def test_ac77_an_attachment_that_is_not_an_image_shows_its_file_name(world, store):
-    d = _xlsx_app(world)
-    first = d["lines"][0]["id"]
-    seed_attachment(world.db, store, "new_product_application_line", first, "broken.png", b"not an image at all", "image/png")
-    world.db.commit()
-    _res, wb = _workbook(world, d["id"])
-    ws = wb["Product 1"]
-    assert len(ws._images) == 0
-    assert "broken.png" in text_of(sheet_values(ws)["IMAGE:"])
-
-
-def test_ac77_an_image_over_40_megapixels_shows_its_file_name(world, store):
-    import io
-
-    from PIL import Image
-
-    d = _xlsx_app(world)
-    first = d["lines"][0]["id"]
-    buf = io.BytesIO()
-    Image.new("L", (7000, 6000), 128).save(buf, format="PNG")  # 42 MP
-    seed_attachment(world.db, store, "new_product_application_line", first, "huge.png", buf.getvalue(), "image/png")
-    world.db.commit()
-    _res, wb = _workbook(world, d["id"])
-    ws = wb["Product 1"]
-    assert len(ws._images) == 0
-    assert "huge.png" in text_of(sheet_values(ws)["IMAGE:"])
-
-
 def test_ac77_whoever_can_view_downloads_and_nobody_else(world):
     d = _draft(world)
     assert _download(world, d["id"], world.viewer).status_code == 200
@@ -1602,87 +1423,16 @@ def test_ac78_staff_detail_carries_cost_leadtime_and_the_opened_as_values(world)
     for key in ("lead_time", "feedback_by_name", "feedback_at"):
         assert key in got, key
     for key in ("cost_price", "opened_category_name", "opened_base_uom_name", "opened_list_price",
-                "opened_supplier_name", "images", "dimension", "material", "thickness", "packing"):
+                "opened_supplier_name", "dimension", "material", "thickness", "packing"):
         assert key in got["lines"][0], key
 
 
 # ------------------------------------------------------------------ inquiry attachments picker (staff)
 
 
-def _inq_atts(w, inquiry_id, user=None):
-    return w.api.as_(user or w.sales).get(f"{NPA}/inquiry-attachments", params={"stock_inquiry_id": inquiry_id})
-
-
-def test_inquiry_attachments_lists_only_images_of_that_inquiry(world, store):
-    img, _ = seed_attachment(world.db, store, "stock_inquiry", world.inquiry.id, "site.png", image_bytes(), "image/png")
-    seed_attachment(world.db, store, "stock_inquiry", world.inquiry.id, "quote.pdf", b"%PDF-1.4 fake", "application/pdf")
-    other = _inquiry(world.db)
-    seed_attachment(world.db, store, "stock_inquiry", other.id, "other.png", image_bytes(), "image/png")
-    res = _inq_atts(world, world.inquiry.id)
-    assert res.status_code == 200, res.text
-    rows = res.json()
-    assert [r["attachment_id"] for r in rows] == [img]
-    assert rows[0]["filename"] == "site.png"
-    assert rows[0]["content_type"] == "image/png"
-    assert rows[0]["url"]
-
-
-def test_inquiry_attachments_needs_create_and_a_known_inquiry(world, store):
-    assert _inq_atts(world, world.inquiry.id, user=world.stranger).status_code == 403
-    assert _inq_atts(world, world.inquiry.id, user=world.viewer).status_code == 403
-    assert _inq_atts(world, uid()).status_code == 404
-
-
 # ====================================================================================
 # fix round (review + security findings on 8a6793b9fb)
 # ====================================================================================
-
-
-def test_s2_deleting_a_draft_leaves_no_image_links_behind(world, store):
-    from app.services import new_product_application_service as svc
-
-    d = _draft(world)
-    lines = [l["id"] for l in d["lines"]]
-    for line in lines:
-        _ok(_upload(world, d["id"], line))
-        assert len(_rows_for(world, "new_product_application_line", line)) == 1
-    svc.delete_draft(world.db, d["id"], world.sales)
-    world.db.flush()
-    for line in lines:
-        assert _rows_for(world, "new_product_application_line", line) == []
-
-
-def test_staff_image_routes_are_refused_on_a_portal_raised_application(world, store):
-    from app.models.new_product_application import NewProductApplication
-
-    d = _draft(world)
-    line = d["lines"][0]["id"]
-    att, link = seed_attachment(world.db, store, "new_product_application_line", line, "a.png", image_bytes(), "image/png")
-    inq_att, _ = seed_attachment(world.db, store, "stock_inquiry", world.inquiry.id, "b.png", image_bytes(), "image/png")
-    row = world.db.get(NewProductApplication, d["id"])
-    row.source = "portal"
-    world.db.commit()
-    put = world.api.as_(world.sales).put(f"{NPA}/{d['id']}", json=_body(world, remark="x"))
-    assert put.status_code == 409, put.text
-    base = f"{NPA}/{d['id']}/lines/{line}/images"
-    api = world.api.as_(world.sales)
-    for res in (
-        _upload(world, d["id"], line),
-        api.post(f"{base}/copy", json={"attachment_id": inq_att}),
-        api.delete(f"{base}/{link}"),
-    ):
-        assert res.status_code == put.status_code, res.text
-        assert res.json().get("code") == put.json().get("code")
-    assert len(_rows_for(world, "new_product_application_line", line)) == 1
-
-
-@pytest.mark.parametrize("case", BAD_UPLOAD_CASES)
-def test_upload_validation_refuses_oversize_fake_and_huge_images(world, store, case):
-    name, mime, data = bad_upload(case)
-    d = _draft(world)
-    res = _upload(world, d["id"], d["lines"][0]["id"], name=name, data=data, mime=mime)
-    assert res.status_code == 422, res.text
-    assert _images(world, d["id"]) == []
 
 
 def test_xlsx_control_characters_are_removed_from_the_cells(world):
@@ -1697,7 +1447,319 @@ def test_xlsx_control_characters_are_removed_from_the_cells(world):
     assert text_of(values["PRODUCT TYPE:"]) == "Sink A"
 
 
-def _thumb_fixture(world, store, *, with_thumbnail):
+def _embedded_size(ws):
+    import io
+
+    from PIL import Image
+
+    return Image.open(io.BytesIO(ws._images[0]._data())).size
+
+
+# ------------------------------------------------------------------ security lows
+
+
+
+# ====================================================================================
+# v5: attachments per application, like other forms (AC-NPA-81..83). Supersedes the v4
+# per-product image routes (AC-NPA-73) and the v4 line-image Excel tests.
+# ====================================================================================
+
+UNLINK_KEY = "new_product_application_attachment.unlink"
+
+
+def _make_attachment(w, store, name="doc.pdf", data=b"%PDF-1.4 fake", mime="application/pdf", company=None):
+    """An attachment-library file linked to nothing yet (company-stamped from the scope)."""
+    from app.models.base import company_scope
+    from app.models.resources import Attachment, AttachmentType
+
+    atype = w.db.query(AttachmentType).filter(AttachmentType.code == "response_attachment").first()
+    key = f"library/{uid()}-{name}"
+    store.files[key] = data
+
+    def make():
+        row = Attachment(
+            id=uid(), attachment_type_id=atype.id, original_filename=name, stored_filename=name,
+            file_path=key, file_size_bytes=len(data), storage_provider="s3", mime_type=mime,
+        )
+        w.db.add(row)
+        w.db.flush()
+        return str(row.id)
+
+    if company is None:
+        return make()
+    with company_scope(w.db, frozenset({company})):
+        return make()
+
+
+def _link_att(w, aid, att, user=None):
+    return w.api.as_(user or w.sales).post(f"{NPA}/{aid}/attachments", json={"attachment_id": att})
+
+
+def _atts(w, aid):
+    return _get(w, aid)["attachments"]
+
+
+def _links(w, aid):
+    return _rows_for(w, "new_product_application", aid)
+
+
+def _seed_app_att(w, store, aid, name, data, mime, *, size=None, minute=0):
+    """A file linked to the application, with a distinct link created_at (the 'first' is by it)."""
+    from app.models.entity_attachment import EntityAttachmentLink
+
+    att, link = seed_attachment(w.db, store, "new_product_application", aid, name, data, mime, size=size)
+    w.db.query(EntityAttachmentLink).filter(EntityAttachmentLink.id == link).update(
+        {"created_at": datetime(2028, 1, 1, 9, minute)}
+    )
+    w.db.flush()
+    return att
+
+
+def test_ac81_the_applicant_links_a_library_file_and_the_detail_lists_it(world, store):
+    d = _draft(world)
+    att = _make_attachment(world, store, name="spec.pdf")
+    res = _link_att(world, d["id"], att)
+    assert res.status_code in (200, 201), res.text
+    got = _get(world, d["id"])
+    assert len(got["attachments"]) == 1
+    item = got["attachments"][0]
+    assert item["attachment_id"] == att
+    assert item["filename"] == "spec.pdf"
+    assert item["content_type"] == "application/pdf"
+    assert item["link_id"] and item["url"]
+    assert all("images" not in l for l in got["lines"])
+
+
+def test_ac81_linking_the_same_file_twice_keeps_one_link(world, store):
+    d = _draft(world)
+    att = _make_attachment(world, store)
+    assert _link_att(world, d["id"], att).status_code in (200, 201)
+    again = _link_att(world, d["id"], att)
+    assert again.status_code < 500, again.text
+    assert len(_links(world, d["id"])) == 1
+    assert len(_atts(world, d["id"])) == 1
+
+
+def test_ac81_only_the_applicant_links(world, store):
+    d = _draft(world)
+    att = _make_attachment(world, store)
+    assert _link_att(world, d["id"], att, user=world.sales_b).status_code == 403
+    assert _links(world, d["id"]) == []
+
+
+def test_ac81_a_rejected_application_can_be_given_a_file(world, store):
+    d = _submitted(world)
+    assert _act(world, d["id"], "reject", world.manager, reason="Add the drawing").status_code == 200
+    assert _link_att(world, d["id"], _make_attachment(world, store)).status_code in (200, 201)
+
+
+@pytest.mark.parametrize("state", ["submitted", "approved"])
+def test_ac81_linking_is_locked_while_submitted_or_approved(world, store, state):
+    d = _submitted(world) if state == "submitted" else _approved(world)
+    res = _link_att(world, d["id"], _make_attachment(world, store))
+    assert res.status_code == 422, res.text
+    assert LOCKED_CODE in res.text
+    assert _links(world, d["id"]) == []
+
+
+@pytest.mark.parametrize("which", ["unknown", "other_company"])
+def test_ac81_an_unknown_or_other_company_attachment_is_refused(world, store, which):
+    d = _draft(world)
+    good = _make_attachment(world, store)
+    assert _link_att(world, d["id"], good).status_code in (200, 201)  # the route exists and works
+    if which == "unknown":
+        att = uid()
+    else:
+        att = _make_attachment(world, store, company=second_company(world.db))
+    res = _link_att(world, d["id"], att)
+    assert res.status_code in (404, 422), res.text  # either refusal; nothing more may be linked
+    assert len(_links(world, d["id"])) == 1
+
+
+def test_ac81_linking_is_refused_on_a_portal_raised_application(world, store):
+    from app.models.new_product_application import NewProductApplication
+
+    d = _draft(world)
+    world.db.get(NewProductApplication, d["id"]).source = "portal"
+    world.db.commit()
+    put = world.api.as_(world.sales).put(f"{NPA}/{d['id']}", json=_body(world, remark="x"))
+    res = _link_att(world, d["id"], _make_attachment(world, store))
+    assert res.status_code == put.status_code == 409, res.text
+    assert _links(world, d["id"]) == []
+
+
+# ------------------------------------------------------------------ unlink = deferred pending action
+
+
+def _park_unlink(w, link_id, user):
+    from app.services.form_action_registry import REGISTRY
+
+    import app.services.record_actions  # noqa: F401
+
+    return w.api.as_(user).post(
+        "/api/v1/pending-actions",
+        json={
+            "action_key": UNLINK_KEY,
+            "entity_type": REGISTRY[UNLINK_KEY].entity_types[0],
+            "entity_id": link_id,
+            "payload": {},
+        },
+    )
+
+
+def _lapse_unlink(w, action_id, link_id, user):
+    from datetime import timedelta
+
+    from app.models.sla import SlaFormAction
+    from app.services.form_action_registry import REGISTRY
+
+    w.db.query(SlaFormAction).filter(SlaFormAction.id == action_id).update(
+        {"commit_at": datetime.utcnow() - timedelta(seconds=1)}, synchronize_session=False
+    )
+    w.db.commit()
+    return w.api.as_(user).get(
+        "/api/v1/pending-actions/current",
+        params={"entity_type": REGISTRY[UNLINK_KEY].entity_types[0], "entity_id": link_id},
+    )
+
+
+def _linked_draft(w, store):
+    d = _draft(w)
+    att = _make_attachment(w, store)
+    assert _link_att(w, d["id"], att).status_code in (200, 201)
+    w.db.commit()
+    return d, att, _atts(w, d["id"])[0]["link_id"]
+
+
+def test_ac81_unlink_is_a_registered_reversible_own_record_pending_action(world):
+    import app.services.record_actions  # noqa: F401
+    from app.services.form_action_grace import WINDOW_REVERSIBLE, window_class_for
+    from app.services.form_action_registry import REGISTRY
+
+    assert UNLINK_KEY in REGISTRY
+    assert window_class_for(REGISTRY[UNLINK_KEY]) == WINDOW_REVERSIBLE
+
+
+def test_ac81_unlink_commits_after_the_window_dropping_the_link_and_keeping_the_file(world, store):
+    from app.models.resources import Attachment
+
+    d, att, link = _linked_draft(world, store)
+    parked = _park_unlink(world, link, world.sales)
+    assert parked.status_code == 202, parked.text
+    out = _lapse_unlink(world, parked.json()["id"], link, world.sales).json()
+    assert out["last_outcome"]["status"] == "committed", out["last_outcome"]
+    assert _atts(world, d["id"]) == []
+    assert world.db.query(Attachment).filter(Attachment.id == att).count() == 1
+
+
+def test_ac81_unlink_is_refused_for_a_non_owner(world, store):
+    d, _att, link = _linked_draft(world, store)
+    assert _park_unlink(world, link, world.sales_b).status_code == 403
+    assert len(_atts(world, d["id"])) == 1
+
+
+@pytest.mark.parametrize("state", ["submitted", "approved"])
+def test_ac81_unlink_is_refused_while_locked(world, store, state):
+    d, _att, link = _linked_draft(world, store)
+    assert _act(world, d["id"], "submit", world.sales).status_code == 200
+    if state == "approved":
+        assert _act(world, d["id"], "approve", world.manager).status_code == 200
+    parked = _park_unlink(world, link, world.sales)
+    if parked.status_code == 202:  # parked: the re-check at commit time must still refuse it
+        out = _lapse_unlink(world, parked.json()["id"], link, world.sales).json()
+        assert out["last_outcome"]["status"] != "committed", out["last_outcome"]
+    else:
+        assert parked.status_code in (409, 422), parked.text
+    assert len(_atts(world, d["id"])) == 1
+
+
+# ------------------------------------------------------------------ AC-NPA-82 removed routes
+
+
+@pytest.mark.parametrize(
+    "method, path, body",
+    [
+        ("post", "/{id}/lines/{line}/images", None),
+        ("post", "/{id}/lines/{line}/images/copy", {"attachment_id": "x"}),
+        ("delete", "/{id}/lines/{line}/images/{link}", None),
+        ("get", "/inquiry-attachments?stock_inquiry_id={inq}", None),
+    ],
+)
+def test_ac82_the_per_product_image_and_inquiry_picker_routes_are_gone(world, method, path, body):
+    d = _draft(world)
+    url = NPA + path.format(id=d["id"], line=d["lines"][0]["id"], link=uid(), inq=world.inquiry.id)
+    kwargs = {"json": body} if body is not None else {}
+    res = getattr(world.api.as_(world.sales), method)(url, **kwargs)
+    allowed = (404, 405, 422) if method == "get" else (404, 405)  # GET may land on /{id} and 422 on a non-uuid
+    assert res.status_code in allowed, (url, res.status_code, res.text)
+
+
+# ------------------------------------------------------------------ delete draft
+
+
+def test_ac81_deleting_a_draft_removes_its_attachment_links_and_keeps_the_files(world, store):
+    from app.models.resources import Attachment
+    from app.services import new_product_application_service as svc
+
+    d, att, _link = _linked_draft(world, store)
+    svc.delete_draft(world.db, d["id"], world.sales)
+    world.db.flush()
+    assert _links(world, d["id"]) == []
+    assert world.db.query(Attachment).filter(Attachment.id == att).count() == 1
+
+
+# ------------------------------------------------------------------ AC-NPA-83 Excel
+
+
+def test_ac83_every_product_sheet_embeds_the_first_image_attachment(world, store):
+    d = _xlsx_app(world)
+    _seed_app_att(world, store, d["id"], "drawing.pdf", b"%PDF-1.4 fake", "application/pdf", minute=0)
+    _seed_app_att(world, store, d["id"], "front.png", image_bytes(size=(16, 12)), "image/png", minute=1)
+    _seed_app_att(world, store, d["id"], "side.jpg", image_bytes("JPEG", size=(5, 7)), "image/jpeg", minute=2)
+    world.db.commit()
+    _res, wb = _workbook(world, d["id"])
+    for ws in wb.worksheets:
+        assert len(ws._images) == 1, ws.title
+        assert _embedded_size(ws) == (16, 12), ws.title
+
+
+def test_ac83_with_no_image_attachment_the_image_cell_is_empty(world, store):
+    d = _xlsx_app(world)
+    _seed_app_att(world, store, d["id"], "drawing.pdf", b"%PDF-1.4 fake", "application/pdf")
+    world.db.commit()
+    _res, wb = _workbook(world, d["id"])
+    for ws in wb.worksheets:
+        assert len(ws._images) == 0
+        assert text_of(sheet_values(ws)["IMAGE:"]) == ""
+
+
+def test_ac83_an_image_attachment_that_cannot_be_read_shows_its_file_name(world, store):
+    d = _xlsx_app(world)
+    _seed_app_att(world, store, d["id"], "broken.png", b"not an image at all", "image/png")
+    world.db.commit()
+    _res, wb = _workbook(world, d["id"])
+    ws = wb["Product 1"]
+    assert len(ws._images) == 0
+    assert "broken.png" in text_of(sheet_values(ws)["IMAGE:"])
+
+
+def test_ac83_an_image_over_40_megapixels_shows_its_file_name(world, store):
+    import io
+
+    from PIL import Image
+
+    d = _xlsx_app(world)
+    buf = io.BytesIO()
+    Image.new("L", (7000, 6000), 128).save(buf, format="PNG")
+    _seed_app_att(world, store, d["id"], "huge.png", buf.getvalue(), "image/png")
+    world.db.commit()
+    _res, wb = _workbook(world, d["id"])
+    ws = wb["Product 1"]
+    assert len(ws._images) == 0
+    assert "huge.png" in text_of(sheet_values(ws)["IMAGE:"])
+
+
+def _thumb_for_app(world, store, *, with_thumbnail):
     import io
 
     from PIL import Image
@@ -1705,8 +1767,7 @@ def _thumb_fixture(world, store, *, with_thumbnail):
     from app.services.image_thumbnailer import thumbnail_key_for
 
     d = _xlsx_app(world)
-    first = d["lines"][0]["id"]
-    seed_attachment(world.db, store, "new_product_application_line", first, "front.png", image_bytes(size=(16, 12)), "image/png")
+    _seed_app_att(world, store, d["id"], "front.png", image_bytes(size=(16, 12)), "image/png")
     key = next(k for k in store.files if k.endswith("front.png"))
     if with_thumbnail:
         buf = io.BytesIO()
@@ -1717,50 +1778,23 @@ def _thumb_fixture(world, store, *, with_thumbnail):
     return d, key
 
 
-def _embedded_size(ws):
-    import io
-
-    from PIL import Image
-
-    return Image.open(io.BytesIO(ws._images[0]._data())).size
-
-
-def test_xlsx_embeds_the_stored_thumbnail_and_never_fetches_the_original(world, store):
-    d, key = _thumb_fixture(world, store, with_thumbnail=True)
+def test_ac83_the_stored_thumbnail_is_embedded_and_the_original_never_fetched(world, store):
+    d, key = _thumb_for_app(world, store, with_thumbnail=True)
     _res, wb = _workbook(world, d["id"])
-    assert len(wb["Product 1"]._images) == 1
     assert _embedded_size(wb["Product 1"]) == (5, 7)
     assert key not in store.fetched
 
 
-def test_xlsx_falls_back_to_the_original_when_there_is_no_thumbnail(world, store):
-    d, key = _thumb_fixture(world, store, with_thumbnail=False)
+def test_ac83_without_a_thumbnail_the_original_is_used(world, store):
+    d, key = _thumb_for_app(world, store, with_thumbnail=False)
     _res, wb = _workbook(world, d["id"])
     assert _embedded_size(wb["Product 1"]) == (16, 12)
     assert key in store.fetched
 
 
-# ------------------------------------------------------------------ security lows
-
-
-def test_copy_refuses_an_inquiry_file_over_the_10mb_cap(world, store):
-    d = _draft(world)
-    line = d["lines"][0]["id"]
-    att, _ = seed_attachment(world.db, store, "stock_inquiry", world.inquiry.id, "big.png", image_bytes(),
-                             "image/png", size=10 * 1024 * 1024 + 1)
-    ok, _ = seed_attachment(world.db, store, "stock_inquiry", world.inquiry.id, "ok.png", image_bytes(), "image/png")
-    api = world.api.as_(world.sales)
-    assert api.post(f"{NPA}/{d['id']}/lines/{line}/images/copy", json={"attachment_id": ok}).status_code in (200, 201)
-    res = api.post(f"{NPA}/{d['id']}/lines/{line}/images/copy", json={"attachment_id": att})
-    assert res.status_code == 422, res.text
-    assert [i["attachment_id"] for i in _images(world, d["id"])] == [ok]
-
-
-def test_xlsx_does_not_download_an_original_over_10mb_without_a_thumbnail(world, store):
+def test_ac83_an_original_over_10mb_without_a_thumbnail_is_not_downloaded(world, store):
     d = _xlsx_app(world)
-    first = d["lines"][0]["id"]
-    seed_attachment(world.db, store, "new_product_application_line", first, "huge.png", image_bytes(),
-                    "image/png", size=10 * 1024 * 1024 + 1)
+    _seed_app_att(world, store, d["id"], "huge.png", image_bytes(), "image/png", size=10 * 1024 * 1024 + 1)
     key = next(k for k in store.files if k.endswith("huge.png"))
     world.db.commit()
     store.fetched.clear()
@@ -1769,13 +1803,3 @@ def test_xlsx_does_not_download_an_original_over_10mb_without_a_thumbnail(world,
     assert len(ws._images) == 0
     assert "huge.png" in text_of(sheet_values(ws)["IMAGE:"])
     assert key not in store.fetched
-
-
-def test_staff_upload_reads_at_most_the_cap_plus_one_byte(world, store, monkeypatch):
-    from ._npa_v4_support import record_upload_reads
-
-    sizes = record_upload_reads(monkeypatch)
-    d = _draft(world)
-    _upload(world, d["id"], d["lines"][0]["id"])
-    assert sizes, "the route never read the upload"
-    assert all(isinstance(n, int) and 0 < n <= 10 * 1024 * 1024 + 1 for n in sizes), sizes

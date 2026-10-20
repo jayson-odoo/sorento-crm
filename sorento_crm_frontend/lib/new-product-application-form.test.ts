@@ -102,7 +102,7 @@ describe('payloadFromState (v4)', () => {
 });
 
 describe('stateFromDetail (v4)', () => {
-  it('reads the paper fields, the product images and purchasing feedback', () => {
+  it('reads the paper fields and purchasing feedback, no images', () => {
     const state = stateFromDetail({
       id: 'a-1',
       stock_inquiry_id: null,
@@ -121,15 +121,6 @@ describe('stateFromDetail (v4)', () => {
           brand_name: 'Example Brand',
           expected_qty: '55',
           cost_price: '12.50',
-          images: [
-            {
-              link_id: 'k-1',
-              attachment_id: 'at-1',
-              filename: 'sample-front.png',
-              url: '/files/1',
-              content_type: 'image/png',
-            },
-          ],
         },
       ],
     } as never);
@@ -140,8 +131,10 @@ describe('stateFromDetail (v4)', () => {
     expect(l.packing).toBe('Carton');
     expect(l.brand_label).toBe('Example Brand');
     expect(l.cost_price).toBe('12.50');
-    expect(l.images.map((i) => i.filename)).toEqual(['sample-front.png']);
-    expect(l.staged_images).toEqual([]);
+    // v5: no per-product images or staged files
+    expect(l).not.toHaveProperty('images');
+    expect(l).not.toHaveProperty('staged_images');
+    expect(l).not.toHaveProperty('removed_link_ids');
   });
 });
 

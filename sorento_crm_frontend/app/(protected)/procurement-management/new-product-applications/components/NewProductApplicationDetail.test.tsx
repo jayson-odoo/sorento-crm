@@ -20,6 +20,9 @@ const state = vi.hoisted(() => ({
   search: vi.fn(),
   feedback: vi.fn(),
   download: vi.fn(),
+  linkAtt: vi.fn(),
+  unlinkRun: vi.fn(),
+  unlinkInputs: [] as Record<string, unknown>[],
 }));
 
 vi.mock('next/navigation', () => ({
@@ -114,6 +117,29 @@ vi.mock('../hooks/useNewProductApplications', () => ({
 vi.mock('../services/newProductApplicationService', () => ({
   searchNewProductApplicationProducts: (q: string) => state.search(q),
   downloadNewProductApplicationExcel: (...a: unknown[]) => state.download(...a),
+  linkNewProductApplicationAttachment: (...a: unknown[]) => state.linkAtt(...a),
+}));
+
+vi.mock('@/components/common/LinkAttachmentBrowserDialog', () => ({
+  __esModule: true,
+  default: (props: {
+    open: boolean;
+    entityId?: string;
+    linkAttachment?: (e: string, a: string) => Promise<unknown>;
+  }) =>
+    props.open ? (
+      <div role="dialog" aria-label="Link attachment library">
+        <button onClick={() => void props.linkAttachment?.(props.entityId!, 'at-5')}>
+          Pick library file
+        </button>
+      </div>
+    ) : null,
+}));
+vi.mock('@/hooks/useDeferredRowAction', () => ({
+  useDeferredRowAction: (input: Record<string, unknown>) => {
+    state.unlinkInputs.push(input);
+    return { run: state.unlinkRun, targetId: null, isPending: false, countdown: null };
+  },
 }));
 
 import NewProductApplicationDetail from './NewProductApplicationDetail';
@@ -145,7 +171,6 @@ function line(
     brand_name: null,
     expected_qty: '55',
     cost_price: null,
-    images: [],
     opened_category_name: null,
     opened_base_uom_name: null,
     opened_list_price: null,
@@ -188,6 +213,7 @@ function detail(over: Partial<Detail> = {}): Detail {
     updated_at: null,
     remark: null,
     lead_time: null,
+    attachments: [],
     decided_at: null,
     decided_by: null,
     decided_by_name: null,
@@ -363,43 +389,33 @@ const OPEN = 'procurement.new_product_applications.open_code';
 const approved = (over: Partial<Detail> = {}) =>
   detail({ status: 'approved', status_label: 'Approved', ...over });
 
-describe('the paper sheet', () => {
-  it('shows the paper labels, REFF = the number, and Product N of M blocks', () => {
+describe('the table form', () => {
+  it('shows Stock Inquiry\'s rows under the title and the line table, no Product N of M cards', () => {
     render(<Page />);
+    expect(screen.getByText('NEW PRODUCT APPLICATION')).toBeInTheDocument();
+    expect(screen.queryByText(/PRODUCT INQUIRY FORM/)).toBeNull();
+    const text = document.body.textContent ?? '';
+    let at = -1;
     for (const l of [
       'REFF:',
       'DATE:',
       'SALES PERSON:',
-      'PRODUCT CODE:',
-      'PRODUCT TYPE:',
-      'PURCHASING FEEDBACK',
-      'COST:',
+      'STOCK INQUIRY:',
+      'CUSTOMER:',
+      'PROJECT:',
+      'TARGET DELIVERY:',
+      'REMARK:',
       'LEADTIME:',
-    ])
-      expect(screen.getAllByText(new RegExp(l))[0]).toBeInTheDocument();
+    ]) {
+      const i = text.indexOf(l, at + 1);
+      expect(i, `row ${l} after ${at}`).toBeGreaterThan(at);
+      at = i;
+    }
     expect(screen.getByText('NPA-000001')).toBeInTheDocument();
-    expect(screen.getByText('Product 1 of 2')).toBeInTheDocument();
-    expect(screen.getByText('Product 2 of 2')).toBeInTheDocument();
-  });
-
-  it('lists each product image by file name', () => {
-    state.data = detail({
-      lines: [
-        line({
-          images: [
-            {
-              link_id: 'k-1',
-              attachment_id: 'at-1',
-              filename: 'sample-front.png',
-              url: '/files/1',
-              content_type: 'image/png',
-            },
-          ],
-        } as never),
-      ],
-    });
-    render(<Page />);
-    expect(screen.getByText('sample-front.png')).toBeInTheDocument();
+    expect(screen.queryByText(/product \d+ of \d+/i)).toBeNull();
+    for (const h of [/product code/i, /product type/i, /dimension/i, /qty/i, /cost \(myr\)/i, /opened as/i])
+      expect(screen.getByRole('columnheader', { name: h })).toBeInTheDocument();
+    expect(screen.getAllByRole('row').length).toBeGreaterThanOrEqual(3);
   });
 });
 
@@ -527,5 +543,59 @@ describe('Cost inputs are uniquely named (S6)', () => {
     render(<Page />);
     expect(screen.getByLabelText('Cost for product 1')).toBeInTheDocument();
     expect(screen.getByLabelText('Cost for product 2')).toBeInTheDocument();
+  });
+});
+
+describe('attachments panel', () => {
+  const FILE = {
+    link_id: 'k-1',
+    attachment_id: 'at-1',
+    filename: 'sample-doc.pdf',
+    url: '/files/1',
+    content_type: 'application/pdf',
+  };
+
+  it('lists the files and lets the owner of a Draft link and unlink (deferred, no confirm)', async () => {
+    state.perms = new Set(['procurement.new_product_applications.create']);
+    state.data = detail({ attachments: [FILE] } as never);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<Page />);
+    expect(screen.getByText('sample-doc.pdf')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /link attachment/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /pick library file/i }));
+    await waitFor(() => expect(state.linkAtt).toHaveBeenCalledWith('a-1', 'at-5'));
+
+    fireEvent.click(screen.getByRole('button', { name: /unlink sample-doc\.pdf/i }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(state.unlinkRun).toHaveBeenCalledWith(expect.objectContaining({ id: 'k-1' }));
+    expect(
+      state.unlinkInputs.some(
+        (i) => i.actionKey === 'new_product_application_attachment.unlink',
+      ),
+    ).toBe(true);
+    confirmSpy.mockRestore();
+  });
+
+  it('lists the files but offers no Link or Unlink once the application is Submitted', () => {
+    state.perms = new Set(['procurement.new_product_applications.create']);
+    state.data = detail({
+      status: 'submitted',
+      status_label: 'Submitted',
+      attachments: [FILE],
+    } as never);
+    render(<Page />);
+    expect(screen.getByText('sample-doc.pdf')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /link attachment/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /unlink/i })).toBeNull();
+  });
+
+  it('offers no Link to someone who does not own the draft', () => {
+    state.userId = 'u-other';
+    state.perms = new Set(['procurement.new_product_applications.view']);
+    state.data = detail({ attachments: [FILE] } as never);
+    render(<Page />);
+    expect(screen.queryByRole('button', { name: /link attachment/i })).toBeNull();
   });
 });
