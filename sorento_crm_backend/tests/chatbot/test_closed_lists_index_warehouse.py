@@ -120,17 +120,19 @@ def test_iw1_frg_lists_the_finish_and_no_warehouse(session_factory, seeded, stub
 def test_iw1_a_warehouse_hint_frg_is_dropped_and_never_written(session_factory, seeded, stub_access, monkeypatch):
     _out, seen = _run(session_factory, stub_access, monkeypatch, [("frg stock", _verdict(_wh_entity("frg")))])
     verdict, warehouse, _rules = _last(seen)
-    assert "warehouse" in (verdict.get("dropped_kinds") or []) or not [
-        e for e in verdict.get("entities") or [] if e.get("hint") == "warehouse"], verdict
+    assert not [e for e in verdict.get("entities") or [] if e.get("hint") == "warehouse"], verdict
+    assert "warehouse" not in (verdict.get("dropped_kinds") or []), verdict
     assert "frg" not in _raws(warehouse), warehouse
 
 
-def test_iw1_a_held_warehouse_is_cleared_when_the_hint_is_dropped(session_factory, seeded, stub_access, monkeypatch):
+def test_iw1_a_held_warehouse_is_kept_when_a_finish_short_form_hint_is_dropped(session_factory, seeded, stub_access, monkeypatch):
     _out, seen = _run(session_factory, stub_access, monkeypatch, [
         ("stock at BRW", _verdict(_wh_entity("BRW"))), ("frg stock", _verdict(_wh_entity("frg")))])
-    _verdict_out, warehouse, rules = _last(seen)
-    assert warehouse == [], warehouse
-    assert "dropped_warehouse_clears_axis" in rules, rules
+    verdict, warehouse, rules = _last(seen)
+    assert "warehouse" not in (verdict.get("dropped_kinds") or []), verdict
+    assert "dropped_warehouse_clears_axis" not in rules, rules
+    assert "frg" not in _raws(warehouse), warehouse
+    assert "brw" in _raws(warehouse), warehouse
 
 
 # IW-2 (option B: no warehouse lines; the hint side stays)
@@ -157,14 +159,15 @@ def test_iw12_a_word_code_warehouse_is_neither_listed_nor_written(message, word,
     assert not [e for e in verdict.get("entities") or [] if e.get("hint") == "warehouse"], verdict
 
 
-# IW-3
-@pytest.mark.parametrize("word", ["stok", "ada"])
-def test_iw3_a_plain_short_word_gets_no_warehouse_line_and_its_hint_is_dropped(word, session_factory, seeded, stub_access, monkeypatch):
+# IW-3 (amended, lead sign-off): an unresolved non-finish word is KEPT, as in block mode
+@pytest.mark.parametrize("word", ["stok", "ada", "BRWW"])
+def test_iw3_an_unresolved_warehouse_hint_is_kept_and_no_line_is_listed(word, session_factory, seeded, stub_access, monkeypatch):
     out, seen = _run(session_factory, stub_access, monkeypatch, [(word, _verdict(_wh_entity(word)))])
     assert not _wh_lines(out[0][1]), out[0][1]
-    verdict, warehouse, _rules = _last(seen)
-    assert word not in _raws(warehouse), warehouse
-    assert "warehouse" in (verdict.get("dropped_kinds") or []), verdict
+    verdict, warehouse, rules = _last(seen)
+    assert word.lower() in _raws(warehouse), warehouse
+    assert "warehouse" not in (verdict.get("dropped_kinds") or []), verdict
+    assert "dropped_warehouse_clears_axis" not in rules, rules
 
 
 # IW-4 (option B): the code reading is the lane's (resolve_warehouse_token), not an index line
@@ -218,7 +221,7 @@ def test_iw10_wh_lists_the_finish_white_keeps_the_hint_and_lists_no_warehouse(se
     assert not _wh_lines(block), block
     verdict, warehouse, _rules = _last(seen)
     assert "warehouse" not in (verdict.get("dropped_kinds") or []), verdict
-    assert warehouse, warehouse
+    assert "wh" in _raws(warehouse), warehouse  # resolves as a suffix (MOCHA-WH, NEW-WH): a resolvable code beats the finish reading
 
 
 # IW-5 (GUARD, green today): block mode is unchanged.
