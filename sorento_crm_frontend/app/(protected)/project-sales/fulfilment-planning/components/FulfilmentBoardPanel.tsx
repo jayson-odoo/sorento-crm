@@ -1909,20 +1909,16 @@ export function FulfilmentBoardPanel({
           };
         });
       const body = built.body.batch_id ? { orders, batch_id: built.body.batch_id } : { orders };
-      // UAC C7: the dry run refused every order, so there is nothing to walk on to.
-      const refusedIds = new Set(
-        built.orders
-          .filter((order) => answer.get(order.pso_id)?.ok === false)
-          .map((order) => order.pso_id),
-      );
-      if (refusedIds.size === built.orders.length) {
+      // UAC C7: every order refused or left with nothing to confirm: nothing to walk on to.
+      if (orders.length === 0) {
         return settleWith([...skipped, ...refusals]);
       }
-      // UAC C2, C5: every order of the dry run with its rows, or the reason it refused; an
-      // order the press left out before the dry run is named too. An order the dry run took
-      // but has nothing for stays in (no rows): step 3 answers it as the one-step press did.
+      // UAC C2, C5: every order of the dry run with its rows, or, when the press leaves it out
+      // (refused, or nothing to confirm), the result card's words for why; an order the press
+      // left out before the dry run is named too.
       const soNumberOf = (psoId: string, fallback?: string) =>
         built.soNumberByPsoId.get(psoId) ?? fallback ?? '';
+      const postedIds = new Set(orders.map((order) => order.pso_id));
       const refusalOf = new Map(refusals.map((entry) => [entry.pso_id, entry]));
       const rank = [...built.soNumberByPsoId.keys()];
       const rankOf = (psoId: string) => {
@@ -1938,7 +1934,8 @@ export function FulfilmentBoardPanel({
             soNumber: soNumberOf(order.pso_id, refusal?.so_number),
             rows: dryRun?.inquiry_rows ?? [],
             transfers: dryRun?.transfers ?? [],
-            refusal: refusedIds.has(order.pso_id) ? (refusal?.error ?? 'refused') : null,
+            refusal: postedIds.has(order.pso_id) ? null : (refusal?.error ?? 'refused'),
+            heldBack: Boolean(refusal?.heldBack),
           };
         }),
         ...skipped
@@ -1972,10 +1969,6 @@ export function FulfilmentBoardPanel({
     setBatchResults(null);
     setSimulated(false);
     try {
-      if (orders.length === 0) {
-        setBatchResults([...skipped, ...refusals]);
-        return true;
-      }
       const posted = await confirmMany.mutateAsync(body);
       // Lines the dry run held back were never posted, so the real press cannot name them:
       // carry them into the displayed entry (union by line no) so the scope is never silent.

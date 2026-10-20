@@ -40,14 +40,20 @@ export interface ConfirmGuideReviewOrder {
   soNumber: string;
   rows: PreviewInquiryRow[];
   transfers: PreviewTransfer[];
-  /** Why the order is left out of step 3 (the dry run refused it); null when it goes on. */
+  /**
+   * Why step 3 leaves the order out, in the result card's words (refused, or "has nothing to
+   * confirm"); null when step 3 posts it.
+   */
   refusal: string | null;
+  /** Left out but not refused ("has nothing to confirm"): reads neutral, as on the card. */
+  heldBack?: boolean;
 }
 
 /**
- * What the board's dry run answered: the press step 3 hands over (`prepared`, given back to
- * `runPost` untouched) and the Review rows, or every order refused (UAC C7), in which case
- * `settle` puts today's result card up and the guide closes.
+ * What the board's dry run answered: the press step 3 posts (`prepared`, given back to
+ * `runPost` untouched) and the Review rows, or nothing to post (UAC C7: every order refused
+ * or left with nothing to confirm), in which case `settle` puts today's result card up and
+ * the guide closes.
  */
 export type ConfirmGuidePreview<P> =
   | { kind: 'ready'; prepared: P; review: ConfirmGuideReviewOrder[] }
@@ -133,8 +139,11 @@ function ReviewOrder({ order }: { order: ConfirmGuideReviewOrder }) {
         ) : null}
       </div>
       {order.refusal !== null ? (
-        <p data-testid="confirm-guide-refused" className="text-sm break-words text-destructive">
-          {order.refusal}
+        <p
+          data-testid="confirm-guide-refused"
+          className={`text-sm break-words ${order.heldBack ? 'text-muted-foreground' : 'text-destructive'}`}
+        >
+          {`${order.soNumber}: ${order.refusal}`}
         </p>
       ) : order.rows.length === 0 ? (
         <p data-testid="confirm-guide-nothing" className="text-sm text-muted-foreground">
@@ -352,7 +361,7 @@ export function ConfirmGuideDialog<P>({
         : null;
   const nextEnabled =
     step.kind === 'split' ? Boolean(page) && !splitRead.isError : review.status === 'ready';
-  // Step 3's orders: every order of the dry run it did not refuse (UAC C5, D1).
+  // Step 3's orders: every order the press posts (UAC C5, D1).
   const confirming =
     review.status === 'ready' ? review.orders.filter((order) => order.refusal === null) : [];
 
