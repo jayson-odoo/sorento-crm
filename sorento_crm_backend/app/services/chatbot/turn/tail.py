@@ -87,7 +87,13 @@ def _option_item(option: dict[str, Any]) -> dict[str, Any] | None:
     return item
 
 
-def _row_item(position: int, row: dict[str, Any]) -> dict[str, Any]:
+#: CHAT-STATE r7: the kind of a listed row that names no product, by its section's domain. Such a
+#: row's key is the presenter's own top-level row id (`_Builder.item(entity_id=...)`, never a
+#: printed field); a row of any other domain, or with no id, has no key and is never picked.
+_ROW_KIND_OF_DOMAIN: dict[str, str] = {"promotion": "promotion", "order": "order", "product_attachment": "attachment"}
+
+
+def _row_item(position: int, row: dict[str, Any], domain: Any = None) -> dict[str, Any]:
     fields = [f for f in row.get("fields") or [] if isinstance(f, dict)]
     code = next(
         (str(f["value"]).strip() for f in fields if f.get("label") == "Product Code" and f.get("value")), None
@@ -97,28 +103,64 @@ def _row_item(position: int, row: dict[str, Any]) -> dict[str, Any]:
     item: dict[str, Any] = {"position": position, "label": label, "code": code}
     if code:
         item["entity_type"] = "product"
+    elif _ROW_KIND_OF_DOMAIN.get(str(domain or "")):
+        item["entity_type"] = _ROW_KIND_OF_DOMAIN[str(domain)]
+        if row.get("id"):
+            item["uuid"] = str(row["id"])
     return item
 
 
-def last_list_after(previous: Any, *, question: Any, sections: Any) -> list[dict[str, Any]] | None:
+def _file_item(position: int, file: dict[str, Any]) -> dict[str, Any]:
+    """CHAT-STATE r7: one file of a section that listed files and no rows, keyed by its
+    attachment id (the presenter's `attach()` entry "id")."""
+    item: dict[str, Any] = {
+        "position": position, "label": file.get("filename") or str(position), "code": None, "entity_type": "attachment",
+    }
+    if file.get("id"):
+        item["uuid"] = str(file["id"])
+    return item
+
+
+def _stamped(items: list[dict[str, Any]], turn_no: Any) -> list[dict[str, Any]]:
+    if not isinstance(turn_no, int) or isinstance(turn_no, bool):
+        return items
+    return [{**item, "shown_at_turn": turn_no} for item in items]
+
+
+def last_list_after(
+    previous: Any, *, question: Any, sections: Any, turn_no: int | None = None
+) -> list[dict[str, Any]] | None:
     """The numbered list this turn showed, for `Focus.last_list`. Question options keep
     their position, label, code and keys; the rows of the one section that has rows are
-    numbered by their order. Options win a position clash; several sections with rows
-    record no list; nothing shown keeps `previous`."""
-    options = [
-        item
-        for item in (_option_item(o) for o in (getattr(question, "options", None) or []) if isinstance(o, dict))
-        if item is not None
-    ]
+    numbered by their order (a promotion, file or order row with its kind and id, CHAT-STATE
+    r7), else the files of the one section that listed only files. Options win a position
+    clash; several sections with rows record no list; nothing shown keeps `previous`, its
+    stamp included. Every row of a new list carries `shown_at_turn`: a data row the turn that
+    showed it (`turn_no`), a question's option the turn the question was asked (the same input
+    gives the same focus on every pass)."""
+    asked = getattr(question, "asked_at_turn", None)
+    options = _stamped(
+        [
+            item
+            for item in (_option_item(o) for o in (getattr(question, "options", None) or []) if isinstance(o, dict))
+            if item is not None
+        ],
+        asked if isinstance(asked, int) and not isinstance(asked, bool) else turn_no,
+    )
     with_rows = [s for s in (sections or []) if getattr(s, "figures", None)]
     if len(with_rows) > 1:
         return options or None
     rows: list[dict[str, Any]] = []
     if with_rows:
+        domain = getattr(with_rows[0], "domain", None)
         rows = [
-            _row_item(i, fig) for i, fig in enumerate(with_rows[0].figures, start=1) if isinstance(fig, dict)
+            _row_item(i, fig, domain) for i, fig in enumerate(with_rows[0].figures, start=1) if isinstance(fig, dict)
         ]
-    merged = {item["position"]: item for item in rows}
+    else:
+        with_files = [s for s in (sections or []) if getattr(s, "files", None)]
+        if len(with_files) == 1:
+            rows = [_file_item(i, f) for i, f in enumerate(with_files[0].files, start=1) if isinstance(f, dict)]
+    merged = {item["position"]: item for item in _stamped(rows, turn_no)}
     merged.update({item["position"]: item for item in options})
     if not merged:
         return previous
@@ -149,6 +191,7 @@ def session_payload(state: State, answer: Any, ctx: Any) -> dict[str, Any]:
                 focus.last_list,
                 question=getattr(answer, "question", None),
                 sections=getattr(answer, "sections", None) or [],
+                turn_no=state.turn_no,
             ),
         )
     return {

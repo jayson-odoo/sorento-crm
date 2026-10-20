@@ -361,6 +361,10 @@ class _Builder:
             "mimeType": a.get("mime_type") or a.get("mimeType"),
             "attachmentType": _att_type(a),
         }
+        # CHAT-STATE r7: the attachment's own id, so a numbered pick of this file fetches
+        # exactly it (`attachment_ids`). Machine identity: never printed. Absent when none.
+        if _filled(a.get("id")):
+            entry["id"] = a["id"]
         # When the file was uploaded, per FILE. A document class is re-uploaded
         # under the same name - six revisions of "Container Status 2026.xlsx" are
         # six identical-looking entries - so without this a consumer handing over
@@ -457,6 +461,8 @@ def _orders_list(rows: list[dict], b: _Builder) -> None:
                 ("warehouse", "Warehouse", wh),
                 ("products", "Products", prods),
             ],
+            # CHAT-STATE r7: a numbered pick of this row fetches it by id (`order_ids`).
+            entity_id=o.get("id"),
         )
     # DO-ASK-SIMPLIFY rule 2 (owner, 2 Oct 2026; every printed field since the 3 Oct hand
     # test): each DO field is a per-contact reveal, hidden from a contact without the grant.
@@ -670,6 +676,7 @@ def _orders_by_product(rows: list[dict], b: _Builder) -> None:
                 ("warehouse", "Warehouse", whs),
                 ("products", "Products", prods),
             ],
+            entity_id=o.get("id"),
         )
     b.restrict("order_number", "delivery_orders.order_number")
     b.restrict("debtor_name", "delivery_orders.customer")
@@ -1062,6 +1069,8 @@ def _promotions(rows: list[dict], b: _Builder) -> None:
                 ("End Date", promo.get("end_date")),
             ],
             expired=promo.get("is_expired") is True,
+            # CHAT-STATE r7: a numbered pick of this row fetches it by id (`promotion_ids`).
+            entity_id=promo.get("id"),
         )
         for a in promo.get("attachments") or []:
             b.attach(a.get("attachment") or a)

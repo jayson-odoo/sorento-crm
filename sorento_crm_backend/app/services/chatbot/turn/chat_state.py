@@ -247,6 +247,10 @@ def _open_question(focus: Focus, oq: dict[str, Any] | None, pending: Any = None,
 def view(state: State, open_question: dict[str, Any] | None) -> dict[str, Any]:
     """The state as one plain, key-free dict: what the parser is shown and what the trace logs."""
     focus = state.focus
+    if quotes_the_list(state) and question_mod.is_the_stock_question(open_question):
+        # r7: a reply quoting the message that showed the list points at the list; the owed stock
+        # task is held (printed as the pending task, not as the open question).
+        open_question = None
     oq = _open_question(focus, open_question, state.pending, state.turn_no)
     items = [i for i in (_list_item(r) for r in (focus.last_list or []) if isinstance(r, dict)) if i]
     stock_is_question = question_mod.is_the_stock_question(open_question)
@@ -806,10 +810,30 @@ def _focus_questions(focus: Focus) -> bool:
     )
 
 
-def _pickable(row: dict[str, Any]) -> bool:
-    # A stored row names its kind; only product rows are pickable (a row written before the
-    # kind was stored has none and reads as a product).
-    return bool(row.get("code")) and row.get("entity_type", "product") == "product"
+#: CHAT-STATE r7: the row kinds a pick fetches by the row's own id (`lanes/business/fetch.py`
+#: `TYPE_TO_PARAM`: promotion_ids, attachment_ids, order_ids).
+ID_ROW_KINDS: frozenset[str] = frozenset({"promotion", "attachment", "order"})
+
+
+def _pickable(row: dict[str, Any], nothing_open: bool) -> bool:
+    """A stored row names its kind. A product row is pickable by its code (a row written before
+    the kind was stored has none and reads as a product). CHAT-STATE r7 (owner 20 Oct): a
+    promotion, file or order row is pickable by its id, and only when no question is open
+    (`nothing_open`, or the reply quotes the message that showed the list)."""
+    kind = row.get("entity_type", "product")
+    if kind in ID_ROW_KINDS:
+        return nothing_open and bool(row.get("uuid"))
+    return bool(row.get("code")) and kind == "product"
+
+
+def quotes_the_list(state: State) -> bool:
+    """CHAT-STATE r7 (owner r40 case 12, 20 Oct): this reply quotes the bot message that showed
+    the stored list (`State.quoted_turn_no` is the list's `shown_at_turn`), so that list is what
+    a bare number points at: its rows are pickable and an owed stock task does not take it."""
+    quoted = getattr(state, "quoted_turn_no", None)
+    if not isinstance(quoted, int) or isinstance(quoted, bool):
+        return False
+    return any(isinstance(r, dict) and r.get("shown_at_turn") == quoted for r in state.focus.last_list or [])
 
 
 def set_aside(state: State, slots: dict[str, str]) -> State:
@@ -1267,12 +1291,18 @@ def apply_changes(
         o.get("position"): o for o in (open_question or {}).get("options") or [] if isinstance(o, dict)
     }
     rows = {r.get("position"): r for r in (focus.last_list or []) if isinstance(r, dict)}
+    # r7: the quoted list is the referent (its rows first, and pickable whatever is open); else a
+    # promotion / file / order row is pickable only when no question is open.
+    listed = quotes_the_list(state)
+    nothing_open = listed or (open_question is None and not _focus_questions(focus))
     roster_picks: list[int] = []
     data_picks: list[dict[str, Any]] = []
     for position in picks:
-        if position in options:
+        if listed and position in rows and _pickable(rows[position], True):
+            data_picks.append(rows[position])
+        elif position in options:
             roster_picks.append(position)
-        elif position in rows and _pickable(rows[position]):
+        elif position in rows and _pickable(rows[position], nothing_open):
             data_picks.append(rows[position])
         else:
             fail("pick", f"position {position} is not a pickable item of the list")
@@ -1449,7 +1479,7 @@ def apply_changes(
                 filled = qty_by_code.get(str(row.get("canonical_code") or row.get("raw") or "").casefold())
                 if filled is not None:
                     row["quantity"] = filled
-    picked_kinds = {"product" for _ in data_picks}
+    picked_kinds = {str(row.get("entity_type") or "product") for row in data_picks}
     if pending is not None or state.pending is not None:
         for position in roster_picks:
             option = next((o for o in (state.pending.options if state.pending else []) if o.get("position") == position), None)
@@ -1466,9 +1496,13 @@ def apply_changes(
                 kept_entities.append(e)
         entities = kept_entities
     for row in data_picks:
-        # The code only: a stored key is never trusted, the resolver settles the code fresh
-        # under the contact's current scope.
-        entities.extend(option_entities({k: v for k, v in row.items() if k not in ("uuid", "uuids")}))
+        # A product row: the code only, a stored key is never trusted, the resolver settles the
+        # code fresh under the contact's current scope. A promotion / file / order row has no
+        # code to settle: it enters with its id, and the fetch's id param reads exactly that row.
+        if row.get("entity_type") in ID_ROW_KINDS:
+            entities.extend(option_entities({k: v for k, v in row.items() if k != "uuids"}))
+        else:
+            entities.extend(option_entities({k: v for k, v in row.items() if k not in ("uuid", "uuids")}))
     if data_picks:
         out[question_mod.POSITIONS_KEY] = []
     named_products = {

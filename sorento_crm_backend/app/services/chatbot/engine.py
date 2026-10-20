@@ -1259,8 +1259,11 @@ def _quoted_context(
         "open_question"
     )
     facts.update(found=True, via=found.via, turn_id=found.turn_id, same_as_live=same)
+    # CHAT-STATE r7: which bot turn the quote names rides on the State, swapped or not (a quote of
+    # the newest turn swaps nothing), so the list that turn showed can be the referent.
+    quoted_turn_no = found.turn_no if isinstance(found.turn_no, int) else None
     if same:
-        return state_in, facts
+        return dataclasses_replace(state_in, quoted_turn_no=quoted_turn_no), facts
     pending = turn_runtime.tick_pending(turn_pending.from_wire(found.open_question))
     if (
         pending is not None
@@ -1273,6 +1276,7 @@ def _quoted_context(
             state_in,
             focus=turn_state.focus_from_wire(found.focus),
             pending=pending,
+            quoted_turn_no=quoted_turn_no,
             quoted_live={
                 "pending": state_in.pending,
                 "focus": state_in.focus,
@@ -8967,6 +8971,7 @@ def _state_log(before: dict[str, Any], state: Any, answer: Any) -> dict[str, Any
                 focus.last_list,
                 question=getattr(answer, "question", None),
                 sections=getattr(answer, "sections", None) or [],
+                turn_no=state.turn_no,
             ),
         )
     # The view as the NEXT turn's parser sees it: the turn counter has moved on by one.
@@ -10776,7 +10781,10 @@ def run_tail(
     if getattr(state, "state_path", False):
         # CHAT-STATE: a turn the parser's `state_changes` led records the list it showed.
         tail_focus = dataclasses_replace(
-            tail_focus, last_list=turn_tail.last_list_after(tail_focus.last_list, question=question, sections=[])
+            tail_focus,
+            last_list=turn_tail.last_list_after(
+                tail_focus.last_list, question=question, sections=[], turn_no=state.turn_no
+            ),
         )
     payload = {
         "focus": turn_state.focus_to_wire(tail_focus),
