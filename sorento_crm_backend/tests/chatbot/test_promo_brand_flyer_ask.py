@@ -59,6 +59,12 @@ def _world(session_factory, *, sorento_live_flyer: bool = True) -> dict[str, Any
     _promo(db, "SORENTO ZZT WC DEAL", flyer, held[1], levels=["sorento_dealer"],
            start=TODAY - timedelta(days=90), end=TODAY - timedelta(days=60), active=False)
     db.commit()
+    from app.models.marketing import Promotion
+
+    ids["held_ids"] = {p.product_code: str(p.id) for p in held}
+    ids["mocha_promotions"] = [
+        str(pid) for (pid,) in db.query(Promotion.id).filter(Promotion.description.like("ZZT MOCHA%")).all()
+    ]
     return ids
 
 
@@ -97,9 +103,11 @@ def _assert_brand_kind_calls(calls, ids, *, kind: str | None = "a3_flyer"):
 
 @pytest.mark.parametrize("entity_op", ["replace_combine", "reuse"])
 def test_brand_flyer_ask_with_products_held_looks_up_by_brand_and_kind(session_factory, monkeypatch, entity_op):
-    """Shape 1: Mocha products held from the turn before; the brand + kind ask is answered by
-    brand + kind + level, never by the held set or the brand word's promotion fan-out, and no
-    other brand's file reaches the reply."""
+    """Shape 1, end to end: Mocha products held from the turn before; the brand + kind ask is
+    answered by brand + kind + level, never by the brand word's promotion fan-out, and no other
+    brand's file reaches the reply. Whether the held set rides this turn's gate is the carry
+    rule's call (CHAT-STATE); the gate the owner's turn reached, with product ids on it, is
+    pinned at `run_fetch` by `test_owner_shape_product_and_promotion_ids_never_ride_a_brand_flyer_ask`."""
     ids = _world(session_factory)
     captured = _mcp(monkeypatch, session_factory)
     _turn(session_factory, monkeypatch, _held_qf(), "ZZTMHELD1 ZZTMHELD2", "zzt-pbf-held")
@@ -180,3 +188,66 @@ def test_brand_kind_ask_serves_the_rows_the_equivalent_product_ask_serves(sessio
     reply = _turn(session_factory, monkeypatch, _brand_flyer_qf(), "Sorento A3 flyer", "zzt-pbf-parity")
     listed = sorted({line.split("*Promotion:*", 1)[1].strip() for line in reply.splitlines() if "*Promotion:*" in line})
     assert listed == expected, reply
+
+
+TIER_GATE = {
+    "name": LEVELS, "tier_stated": [], "entitled_tiers": ["dealer"], "entitled_unknown": [],
+    "query_brands": ["sorento"], "pending_pick": False, "tier_ask": False, "tier_proceed": True,
+    "access_levels_recomposed": ["Sorento Dealer"], "tier_probe_plan": [], "brand_gate_empty": False,
+    "brand_unheld": False, "tier_pick_domain": None,
+}
+
+
+def _fetch_with_owner_shape(session_factory, ids, parse_output, resolutions=()):
+    """`run_fetch` on the gate the owner's shape-1 turn reached: product entities (the held /
+    described set) beside the brand word's promotion fan-out, under a "has a promotion" set
+    that qualifies them. Returns the promotions-list calls."""
+    from app.services.chatbot.lanes import business as business_lane
+    from app.services.chatbot.lanes.business.services import FetchServices
+    db = session_factory()
+    fan_out, held = ids["mocha_promotions"], list(ids["held_ids"].values())
+    assert fan_out and len(held) == len(HELD)
+    entities = [{"uuid": u, "entity_type": "product", "code": u} for u in held] + [
+        {"uuid": u, "entity_type": "promotion", "code": u} for u in fan_out
+    ]
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def _mcp_call(name, args):
+        calls.append((name, dict(args)))
+        return '{"has_result": false, "items": []}'
+
+    payload = {
+        "gate": {
+            "compatible_entities": entities,
+            "predicate": {"require": {"promotion": True}, "qualifying_total": len(held), "truncated": False},
+            "resolutions": list(resolutions),
+        },
+        "tier_gate": dict(TIER_GATE),
+        "ctx": {"parse": {"output": parse_output}, "contact": {"id": "900000008"}},
+    }
+    business_lane.run_fetch(payload, services=FetchServices(mcp_call=_mcp_call), space_id="364817", db=db)
+    # Only the fetch itself (built by `entity_ids_transformer`); an empty answer's AC-21
+    # "Other A3 flyers" read is by kind alone on purpose.
+    return [a for name, a in calls if name == PROMO_TOOL and "_diagnostics" in a], held
+
+
+def test_owner_shape_product_and_promotion_ids_never_ride_a_brand_flyer_ask(session_factory):
+    """The owner's shape-1 tool args (`product_ids` = the set, `promotion_ids` = the brand word's
+    fan-out) never go out on a brand + kind ask that named no product: brand + kind + level do."""
+    ids = _world(session_factory)
+    calls, _held = _fetch_with_owner_shape(session_factory, ids, _brand_flyer_qf())
+    _assert_brand_kind_calls(calls, ids)
+
+
+def test_a_product_named_this_turn_keeps_the_product_path(session_factory):
+    """Control: a product code the customer typed beside the brand and kind (placed by the
+    resolver this turn) is the narrower ask and keeps `product_ids` (AC-17)."""
+    ids = _world(session_factory)
+    held_id = ids["held_ids"][HELD[0]]
+    qf = _brand_flyer_qf()
+    qf["entities"] = qf["entities"] + [
+        {"raw": HELD[0], "hint": "product", "canonical_code": HELD[0], "current_message": True, "confident": True}
+    ]
+    resolutions = [{"token": HELD[0], "raw": HELD[0], "matches": [{"uuid": held_id, "entity_type": "product"}]}]
+    calls, held = _fetch_with_owner_shape(session_factory, ids, qf, resolutions)
+    assert calls and all(set(a.get("product_ids") or []) == set(held) for a in calls), calls
