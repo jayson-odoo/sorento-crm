@@ -236,3 +236,49 @@ def test_i8_index_mode_system_prompt_is_byte_equal_across_different_turns(sessio
     out = _turns(session_factory, stub_access, monkeypatch, [(HELD, _held_turn()), ("zzgambar", _quiet())])
     assert out[0][0] == out[1][0]
     assert out[0][1] != out[1][1]
+
+
+# I9: held lines sit under their own heading, never under the message's candidates HEADER.
+def _held_header() -> str:
+    from app.services.chatbot.head import closed_lists_index
+
+    header = getattr(closed_lists_index, "HELD_HEADER", None)
+    assert header, "closed_lists_index.HELD_HEADER does not exist yet (the held lines' own heading constant)"
+    return header
+
+
+def _nearest_heading(lines: list[str], idx: int, headings: set[str]) -> str | None:
+    for ln in reversed(lines[:idx]):
+        if ln in headings:
+            return ln
+    return None
+
+
+def test_i9a_held_lines_with_no_word_match_sit_under_their_own_heading(session_factory, seeded, stub_access, monkeypatch):
+    from app.services.chatbot.head import candidates
+
+    held_header = _held_header()
+    _seed_world(session_factory)
+    _set_mode(session_factory, "index")
+    out = _turns(session_factory, stub_access, monkeypatch, [(HELD, _held_turn()), ("zzqwerty", _quiet())])
+    lines = out[1][1].splitlines()
+    first = next((i for i, ln in enumerate(lines) if "zz_idxvis" in ln or DRAWING in ln or "ZZSCH" in ln), None)
+    assert first is not None, lines
+    assert held_header != candidates.HEADER
+    assert first > 0 and lines[first - 1] == held_header, lines
+
+
+def test_i9b_word_line_under_candidates_header_held_lines_under_held_header(session_factory, seeded, stub_access, monkeypatch):
+    from app.services.chatbot.head import candidates
+
+    held_header = _held_header()
+    _seed_world(session_factory, alias=True)
+    _set_mode(session_factory, "index")
+    out = _turns(session_factory, stub_access, monkeypatch, [(HELD, _held_turn()), ("zzgambar", _quiet())])
+    lines = out[1][1].splitlines()
+    headings = {candidates.HEADER, held_header}
+    word = next((i for i, ln in enumerate(lines) if ln.startswith(f"File type {DRAWING}:")), None)
+    spec = next((i for i, ln in enumerate(lines) if "zz_idxvis" in ln and "zzvisval" in ln), None)
+    assert word is not None and spec is not None, lines
+    assert _nearest_heading(lines, word, headings) == candidates.HEADER, lines
+    assert _nearest_heading(lines, spec, headings) == held_header, lines
