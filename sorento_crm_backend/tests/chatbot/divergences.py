@@ -642,15 +642,33 @@ DIVERGENCES: list[Divergence] = [
     # are rendered after the header, so `escalate_message` moves with it). It also carries
     # pass 4 item F's retype and AC-1526's stamp map (the group entry below), so those paths
     # are kept here: `find()` returns the first match.
+    #
+    # DUP-CODE-LABEL, owner ruling 20 Oct 2026 ~07:40 (2), "the fix stands" (lead sign-off):
+    # M90SS-BL-DIY is a code two companies share, so its two lines in this incoming picker now
+    # carry the company ("M90SS-BL-DIY (Mocha)" / "(Sorento)"; the annotator keys on the
+    # product, not the line text). The candidate labels move, each candidate gains its bare
+    # `code`, and the gate gains `picker_lines`, in every copy of the gate downstream. `strip`
+    # cannot reach one field of one candidate, so `specific_options` comes off whole there;
+    # tests/chatbot/test_picker_duplicate_code_company.py grades the lines, their order and the
+    # pick by position against real rows.
     Divergence(
         node="sub-resolve-and-gate",
         fixture="rg-15123789",
-        hazard="ATTACHMENT-MULTI picker header + owner console pass 4, item F + AC-1526",
+        hazard=(
+            "ATTACHMENT-MULTI picker header + owner console pass 4, item F + AC-1526 + "
+            "DUP-CODE-LABEL (owner ruling 20 Oct 2026 ~07:40 (2))"
+        ),
         reason=(
-            "the picker header is the owner's plain question now; every other byte of the "
+            "the picker header is the owner's plain question now, and the shared code "
+            "M90SS-BL-DIY is named with its company on both lines; every other byte of the "
             "sub's output is unchanged (pass 4 item F's and AC-1526's own paths as below)."
         ),
         strip_paths=(
+            *(
+                (*prefix, key)
+                for prefix in ((), ("gate",), ("ctx_resolved",), ("ctx_resolved", "ctx", "gate"), ("annotate_incoming",))
+                for key in ("specific_options", "picker_lines")
+            ),
             ("ctx_resolved", "ctx", "parse", "output", "entities"),
             ("ctx_resolved", "ctx", "parse", "output", "shipment_hint_retyped"),
             ("ctx_resolved", "ctx", "parse", "output", "domain_dropped_with_shipment_hint"),

@@ -79,12 +79,13 @@ class TestSpecificOptions:
             "Mocha",
         ]
 
-    def test_f16_suffixes_only_the_duplicated_code_and_only_on_product_attachment(self) -> None:
+    def test_f16_suffixes_only_the_duplicated_code_on_every_domain(self) -> None:
         """A same-code cross-company twin is two lines identical apart from their number.
 
-        F16 appends the company to ONLY those lines, and ONLY on `product_attachment`:
-        `incoming`'s annotator re-joins the rendered lines to its probe BY EXACT CODE TEXT,
-        so a suffixed line would miss that set and render a confident FALSE "- no incoming".
+        F16 appended the company to ONLY those lines, and only on `product_attachment`.
+        DUP-CODE-LABEL, owner ruling 20 Oct 2026 ~07:40 (2), "the fix stands" (lead sign-off):
+        the incoming annotator now keys on the product, so the duplicated-code lines carry the
+        company on EVERY domain, incoming included; a code no other row shares stays bare.
         """
         matches = [
             _match("u1", "ABC-1", company="Sorento"),
@@ -109,10 +110,7 @@ class TestSpecificOptions:
             resolver=_ambiguous_resolver(matches),
         )
         incoming_labels = [c["label"] for o in incoming["specific_options"] for c in o["candidates"]]
-        assert incoming_labels == ["ABC-1", "ABC-1", "ABC-2"], (
-            "the incoming picker's lines must stay byte-equal to the codes its probe "
-            "matches on"
-        )
+        assert incoming_labels == ["ABC-1 (Sorento)", "ABC-1 (Mocha)", "ABC-2"], incoming_labels
 
 
 class TestTierPickStamps:
