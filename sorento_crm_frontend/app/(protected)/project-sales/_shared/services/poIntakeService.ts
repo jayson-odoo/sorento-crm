@@ -153,22 +153,6 @@ export async function confirmPOVersion(versionId: string): Promise<POVersion | n
   return asVersionOrNull(await readJson(response));
 }
 
-export async function approvePurchaseOrder(poId: string): Promise<void> {
-  const response = await apiFetch(`${BASE}/purchase-orders/${poId}/approve`, {
-    method: 'POST',
-  });
-  if (!response.ok)
-    throw new Error(await extractApiError(response, 'Could not approve this PO'));
-}
-
-export async function countersignPurchaseOrder(poId: string): Promise<void> {
-  const response = await apiFetch(`${BASE}/purchase-orders/${poId}/countersign`, {
-    method: 'POST',
-  });
-  if (!response.ok)
-    throw new Error(await extractApiError(response, 'Could not countersign this PO'));
-}
-
 export async function acceptPOAnnotation(
   annotationId: string,
   note?: string | null,

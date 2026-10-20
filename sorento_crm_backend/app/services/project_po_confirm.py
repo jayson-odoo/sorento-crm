@@ -13,7 +13,6 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.project_so import (
@@ -21,7 +20,6 @@ from app.models.project_so import (
     ANNOTATION_EDITED,
     ANNOTATION_PROPOSED,
     ANNOTATION_REJECTED,
-    PO_STATUS_APPROVED,
     ProjectPOAnnotation,
     ProjectPOLine,
     ProjectPOVersion,
@@ -358,100 +356,4 @@ class POConfirmationMixin:
         self.db.flush()
         return version
 
-    # -------------------------------------------------------- approval handshake
-
-    def approve_po(
-        self, *, po: ProjectPurchaseOrder, actor_user_id: str
-    ) -> ProjectPurchaseOrder:
-        """AC-D8. CS cannot open the SO draft until this has happened (D21)."""
-        if po.approved_at is not None:
-            raise AppException(
-                status_code=409,
-                message=(
-                    "This purchase order was already approved by "
-                    f"{self._user_name(po.approved_by) or 'another user'}."
-                ),
-                code="po_already_approved",
-            )
-        # A PO that arrived as a document is approved only once somebody has agreed to
-        # what the document said. A PO keyed in by hand has no versions and keeps working
-        # on its lines alone, which is the phase-1 path and still legitimate.
-        versions = (
-            self.db.query(func.count(ProjectPOVersion.id))
-            .filter(ProjectPOVersion.purchase_order_id == po.id)
-            .scalar()
-            or 0
-        )
-        if versions:
-            confirmed = (
-                self.db.query(func.count(ProjectPOVersion.id))
-                .filter(
-                    ProjectPOVersion.purchase_order_id == po.id,
-                    ProjectPOVersion.confirmed_at.isnot(None),
-                )
-                .scalar()
-                or 0
-            )
-            if not confirmed:
-                raise AppException(
-                    status_code=409,
-                    message=(
-                        "Confirm the uploaded document first. Approving a purchase order "
-                        "nobody has checked against the scan is exactly what the confirm "
-                        "screen exists to prevent."
-                    ),
-                    code="po_version_not_confirmed",
-                )
-        has_lines = (
-            self.db.query(func.count(ProjectPurchaseOrderLine.id))
-            .filter(ProjectPurchaseOrderLine.po_id == po.id)
-            .scalar()
-            or 0
-        ) > 0
-        if not has_lines:
-            raise AppException(
-                status_code=409,
-                message=(
-                    "This purchase order has no lines yet. Confirm an uploaded document "
-                    "or enter the lines before approving it."
-                ),
-                code="po_nothing_to_approve",
-            )
-        po.approved_by = actor_user_id
-        po.approved_at = datetime.utcnow()
-        po.status = PO_STATUS_APPROVED
-        self.db.flush()
-        return po
-
-    def countersign_po(
-        self, *, po: ProjectPurchaseOrder, actor_user_id: str
-    ) -> ProjectPurchaseOrder:
-        if po.approved_at is None:
-            raise AppException(
-                status_code=409,
-                message="A purchase order has to be approved before it can be countersigned.",
-                code="po_not_approved",
-            )
-        if po.countersigned_at is not None:
-            raise AppException(
-                status_code=409,
-                message=(
-                    "This purchase order was already countersigned by "
-                    f"{self._user_name(po.countersigned_by) or 'another user'}."
-                ),
-                code="po_already_countersigned",
-            )
-        if po.approved_by and str(po.approved_by) == str(actor_user_id):
-            raise AppException(
-                status_code=409,
-                message=(
-                    "A countersignature has to come from a second person -- that is the "
-                    "whole point of it."
-                ),
-                code="po_countersign_same_user",
-            )
-        po.countersigned_by = actor_user_id
-        po.countersigned_at = datetime.utcnow()
-        self.db.flush()
-        return po
 

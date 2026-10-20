@@ -204,7 +204,6 @@ export interface POIntakeController {
   /** Annotation ids with a write in flight. */
   savingAnnotationIds: string[];
   isConfirming: boolean;
-  isStamping: boolean;
   isSavingHeader: boolean;
   /** True while a re-read has been asked for and the version has not come back queued. */
   isRetrying: boolean;
@@ -223,8 +222,6 @@ export interface POIntakeController {
   acceptAnnotation: (annotationId: string, note?: string | null) => Promise<void>;
   editAnnotation: (annotationId: string, body: POAnnotationEditBody) => Promise<void>;
   rejectAnnotation: (annotationId: string, note: string) => Promise<void>;
-  approve: () => Promise<void>;
-  countersign: () => Promise<void>;
 }
 
 export const PO_INTERPRETATION_LABELS: Record<POAnnotationInterpretation, string> = {

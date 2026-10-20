@@ -38,8 +38,6 @@ vi.mock('@/app/(protected)/master-data-management/products/services/productServi
 
 const getPOVersion = vi.fn();
 const confirmPOVersion = vi.fn();
-const approvePurchaseOrder = vi.fn();
-const countersignPurchaseOrder = vi.fn();
 
 vi.mock('../../_shared/services/poIntakeService', () => ({
   getPOVersion: (versionId: string) => getPOVersion(versionId),
@@ -48,8 +46,6 @@ vi.mock('../../_shared/services/poIntakeService', () => ({
   updatePOVersionLine: vi.fn(async () => null),
   updatePOVersionHeader: vi.fn(async () => null),
   confirmPOVersion: (versionId: string) => confirmPOVersion(versionId),
-  approvePurchaseOrder: (poId: string) => approvePurchaseOrder(poId),
-  countersignPurchaseOrder: (poId: string) => countersignPurchaseOrder(poId),
   acceptPOAnnotation: vi.fn(async () => {}),
   editPOAnnotation: vi.fn(async () => {}),
   rejectPOAnnotation: vi.fn(async () => {}),
@@ -598,81 +594,34 @@ describe('POIntakeConfirmClient', () => {
     expect(push).not.toHaveBeenCalled();
   });
 
-  it('shows confirm, approve and countersign as three stamps, absent ones included', async () => {
+  it('has one sign-off: no Approve or Countersign, even on an old approved PO (Q1a)', async () => {
     getPOVersion.mockResolvedValue(
       version({
         confirmed_at: '2026-05-15T03:02:00',
         confirmed_by_name: 'CONTACT AH Abdullah',
+        purchase_order: {
+          po_number: 'HQ/26/01/041',
+          status: 'approved',
+          approved_by_name: 'CONTACT AH Abdullah',
+          approved_at: '2026-05-15T03:05:00',
+          countersigned_by_name: null,
+          countersigned_at: null,
+        },
       }),
     );
 
     renderConfirm();
 
     expect(await screen.findByText(/CONTACT AH Abdullah/)).toBeInTheDocument();
-    // Approved and Countersigned are still rendered, as "Not yet" rather than hidden.
-    expect(screen.getByText('Approved')).toBeInTheDocument();
-    expect(screen.getByText('Countersigned')).toBeInTheDocument();
-    expect(screen.getAllByText('Not yet')).toHaveLength(2);
-    const approve = screen.getByRole('button', { name: /^Approve$/ });
-    expect(approve).toBeInTheDocument();
-    // S3: the next step is the one primary button, not an outline button.
-    expect(approve.className).not.toMatch(/\bborder-input\b/);
-  });
-
-  it('renders the status trail as Badge pills, not a hand-rolled coloured span (S4)', async () => {
-    getPOVersion.mockResolvedValue(
-      version({
-        confirmed_at: '2026-05-15T03:02:00',
-        confirmed_by_name: 'CONTACT AH Abdullah',
-        purchase_order: {
-          po_number: 'HQ/26/01/041',
-          status: 'approved',
-          approved_by_name: 'CONTACT AH Abdullah',
-          approved_at: '2026-05-15T03:05:00',
-          countersigned_by_name: null,
-          countersigned_at: null,
-        },
-      }),
-    );
-
-    renderConfirm();
-
-    // "Confirmed" appears twice - the header StatusPill and the trail - so the trail's
-    // own pill is the last one.
-    const confirmedPills = await screen.findAllByText('Confirmed');
+    expect(screen.queryByRole('button', { name: /Approve/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Countersign/i })).toBeNull();
+    expect(screen.queryByText('Approved')).toBeNull();
+    expect(screen.queryByText('Countersigned')).toBeNull();
+    // Confirmed is a Badge pill; it appears twice (header StatusPill and the trail).
+    const confirmedPills = screen.getAllByText('Confirmed');
     const confirmedBadge = confirmedPills[confirmedPills.length - 1].closest('[data-slot="badge"]');
     expect(confirmedBadge).not.toBeNull();
-    expect(confirmedBadge?.className).not.toMatch(/border-emerald/);
-
-    const approvedBadge = screen.getByText('Approved').closest('[data-slot="badge"]');
-    expect(approvedBadge).not.toBeNull();
-    expect(approvedBadge?.className).not.toMatch(/border-emerald/);
-  });
-
-  it('offers countersign only once the PO is approved, and stops editing after confirm', async () => {
-    getPOVersion.mockResolvedValue(
-      version({
-        confirmed_at: '2026-05-15T03:02:00',
-        confirmed_by_name: 'CONTACT AH Abdullah',
-        purchase_order: {
-          po_number: 'HQ/26/01/041',
-          status: 'approved',
-          approved_by_name: 'CONTACT AH Abdullah',
-          approved_at: '2026-05-15T03:05:00',
-          countersigned_by_name: null,
-          countersigned_at: null,
-        },
-      }),
-    );
-
-    renderConfirm();
-
-    const countersign = await screen.findByRole('button', { name: /Countersign/i });
-    // S3: the next step is the one primary button, not an outline button.
-    expect(countersign.className).not.toMatch(/\bborder-input\b/);
-    fireEvent.click(countersign);
-    await waitFor(() => expect(countersignPurchaseOrder).toHaveBeenCalledWith('po1'));
-
+    // Confirmed stops editing.
     expect(screen.queryByLabelText('Quantity on line 1')).toBeNull();
     expect(screen.queryByRole('button', { name: /Confirm this PO/i })).toBeNull();
   });

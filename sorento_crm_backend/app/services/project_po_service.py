@@ -445,6 +445,29 @@ def replace_lines(
     return written
 
 
+def assert_hand_lines_editable(db: Session, *, po: ProjectPurchaseOrder) -> None:
+    """D1 (PM-SIMPLIFY): a PO that came from a scan has ONE set of lines, the document's.
+    The build reads the confirmed version's lines and confirming the next version rewrites
+    these, so a hand edit here never reached a sales order. It is refused instead of lost."""
+    from app.models.project_so import ProjectPOVersion
+
+    scanned = (
+        db.query(ProjectPOVersion.id)
+        .filter(ProjectPOVersion.purchase_order_id == po.id)
+        .first()
+    )
+    if scanned is not None:
+        raise AppException(
+            status_code=409,
+            message=(
+                "This purchase order came from an uploaded document, so its lines are the "
+                "document's. Correct them on the PO's Lines tab before confirming, or "
+                "upload a new PO version."
+            ),
+            code="po_lines_from_document",
+        )
+
+
 def save_po_document(
     db: Session, *, po: ProjectPurchaseOrder, payload: Dict[str, Any]
 ) -> List[ProjectPurchaseOrderLine]:
@@ -460,6 +483,8 @@ def save_po_document(
     real intent (the user removed every line) and does clear them.
     """
     header = {key: value for key, value in payload.items() if key != "lines"}
+    if payload.get("lines") is not None:
+        assert_hand_lines_editable(db, po=po)
     update_po(db, po=po, payload=header)
     if payload.get("lines") is None:
         return list_lines(db, po_id=str(po.id))
@@ -617,6 +642,7 @@ def serialize_pos(
     # Which POs have been agreed, and which have a delivery programme agreed too. Two
     # set lookups rather than a query per row: this list renders every PO on a project.
     confirmed_po_ids: set = set()
+    scanned_po_ids: set = set()
     scheduled_po_ids: set = set()
     # How many sales orders are already OUT of each PO. Editing a PO stays allowed -- a
     # correction is the normal case -- but the screen has to be able to say this before
@@ -632,6 +658,12 @@ def serialize_pos(
             ProjectSalesOrder,
         )
 
+        scanned_po_ids = {
+            row[0]
+            for row in db.query(ProjectPOVersion.purchase_order_id)
+            .filter(ProjectPOVersion.purchase_order_id.in_(ids))
+            .all()
+        }
         confirmed_po_ids = {
             row[0]
             for row in db.query(ProjectPOVersion.purchase_order_id)
@@ -691,6 +723,10 @@ def serialize_pos(
         .all()
     } if quotation_ids else {}
 
+    from app.services.project_po_progress_service import po_totals
+
+    progress = po_totals(db, purchase_orders)
+
     out: List[Dict[str, Any]] = []
     for po in purchase_orders:
         version = versions.get(po.quotation_version_id or "")
@@ -720,6 +756,7 @@ def serialize_pos(
                 # out, and a next step that is wrong is worse than none.
                 "status": po.status,
                 "po_confirmed": bool(confirmed_po_ids and po.id in confirmed_po_ids),
+                "has_document": bool(scanned_po_ids and po.id in scanned_po_ids),
                 "schedule_confirmed": bool(scheduled_po_ids and po.id in scheduled_po_ids),
                 "published_sales_order_count": published_so_counts.get(str(po.id), 0),
                 "model_mismatch_count": model_flags.get(po.id, 0),
@@ -727,6 +764,7 @@ def serialize_pos(
                 "v1_total": drift["v1_total"],
                 "drift_delta": drift["delta"],
                 "drift_percent": drift["percent"],
+                **progress.get(str(po.id), {}),
                 "created_at": po.created_at,
                 "updated_at": po.updated_at,
             }
