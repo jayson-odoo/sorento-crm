@@ -22,17 +22,11 @@ export function LineSplitDialog({
   open,
   psoId,
   focusLineId,
-  onlyLineIds,
   onOpenChange,
 }: {
   open: boolean;
   psoId: string;
   focusLineId?: string;
-  /**
-   * OI-SPLIT-GUIDE (UAC F13): the sheet lists only these lines and the lines their splits sit
-   * on, with no search and no "Split lines only" toggle. Absent (the board gear): every line.
-   */
-  onlyLineIds?: ReadonlySet<string>;
   onOpenChange: (open: boolean) => void;
 }) {
   const editor = React.useRef<LineSplitEditorHandle | null>(null);
@@ -66,7 +60,6 @@ export function LineSplitDialog({
           psoId={psoId}
           active={open}
           focusLineId={focusLineId}
-          onlyLineIds={onlyLineIds}
           onSaved={() => onOpenChange(false)}
           handleRef={editor}
           testId="line-split-dialog"
