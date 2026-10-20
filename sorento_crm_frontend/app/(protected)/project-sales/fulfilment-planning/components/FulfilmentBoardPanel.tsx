@@ -82,6 +82,8 @@ import {
   excludedFromPress,
   splitEditsToConfirm,
   contributionMatchesSearch,
+  confirmLinesByOrder,
+  remarkFor,
   confirmSummaryFor,
   decisionHeaderText,
   orderListRows,
@@ -106,6 +108,7 @@ import type {
   BoardGranularity,
   BoardRowAxis,
   ConfirmManyOrderResult,
+  PreviewInquiryRow,
 } from '../../_shared/types/fulfilmentPlanning.types';
 import type {
   PlanningChangeBatch,
@@ -125,6 +128,8 @@ import { PlanningRefusalTable, hasReasonCode } from './PlanningRefusalTable';
 import { FulfilmentBoardListView } from './FulfilmentBoardListView';
 import { LineSplitDialog } from './LineSplitDialog';
 import { BoardOrderSplitsDialog } from './BoardOrderSplitsDialog';
+import { ConfirmGuideDialog, type ConfirmGuidePage } from './ConfirmGuideDialog';
+import { VERB_LABEL } from '../../_shared/components/OrderInquiryVerbPill';
 import { LineSplitOpenerContext, type LineSplitOpener } from './lineSplitOpener';
 import { FulfilmentBoardMatrix } from './FulfilmentBoardMatrix';
 import { DecisionStrip } from './DecisionStrip';
@@ -227,6 +232,15 @@ const ROW_AXIS_NOUNS: Record<BoardRowAxis, string> = {
 };
 
 const ROW_AXES: BoardRowAxis[] = ['product', 'sales_order', 'customer', 'project'];
+
+/**
+ * What one Simulate "Would write" row tells purchasing: its verb in the words the board
+ * prints, CANCEL for a row the press retires (`state` cancelled, UAC E1).
+ */
+function previewRowRemark(row: PreviewInquiryRow): string {
+  if (row.state === 'cancelled') return 'CANCEL';
+  return VERB_LABEL[row.verb] ?? row.verb;
+}
 
 /**
  * Whether an order's answer holds anything the press would act on: lines confirmed or
@@ -935,6 +949,11 @@ export function FulfilmentBoardPanel({
         // `saveLineDraft`'s own option carries, since this is nothing but a pass-through to it.
         silent?: boolean;
         onFailure?: (message: string) => void;
+        /**
+         * OI-SPLIT-GUIDE (UAC F26): keep the decision the server answered with as this line's
+         * local draft (a remark save reads back what was stored, not what was sent).
+         */
+        adoptSaved?: boolean;
       },
     ): Promise<boolean> => {
       let hadPrevious = false;
@@ -967,9 +986,12 @@ export function FulfilmentBoardPanel({
           // until Confirm freezes a revision.
           pendingSaves.current.add(key);
           try {
-            await saveLineDraft(key, decision, contribution?.sources, {
+            const saved = await saveLineDraft(key, decision, contribution?.sources, {
               silent: options?.silent,
             });
+            if (options?.adoptSaved && saved?.decision) {
+              setDraft((current) => ({ ...current, [key]: saved.decision }));
+            }
           } finally {
             pendingSaves.current.delete(key);
           }
@@ -1754,9 +1776,12 @@ export function FulfilmentBoardPanel({
    * throughout - a `Change proposed` line nobody has saved is the SAME "nothing to post" case
    * as a line nobody has touched, so its order never enters the batch on its account alone and
    * its batch row stays pending server-side.
+   *
+   * OI-SPLIT-GUIDE (UAC F6): the guided Confirm's last step runs this press unchanged. It
+   * resolves false when a call failed (the guide stays open), true once the press finished.
    */
-  const runConfirmAll = React.useCallback(async () => {
-    if (!board.data) return;
+  const runConfirmAll = React.useCallback(async (): Promise<boolean> => {
+    if (!board.data) return false;
     setConfirmingAll(true);
     setBatchResults(null);
     setSimulated(false);
@@ -1769,12 +1794,12 @@ export function FulfilmentBoardPanel({
       const built = await buildConfirmOrders(new Set());
       if (!built) {
         if (confirmSummary.toConfirm > 0) toast.error('Nothing could be sent for this press');
-        return;
+        return true;
       }
       const { skipped, contributions } = built;
       if (built.orders.length === 0) {
         if (skipped.length > 0) setBatchResults(skipped);
-        return;
+        return true;
       }
       // DRY RUN FIRST (FULFIL-CONFIRM-SCOPE): the server runs this very body and rolls it back,
       // answering per order which lines it would confirm or withdraw. The press then posts the
@@ -1832,7 +1857,7 @@ export function FulfilmentBoardPanel({
       const body = built.body.batch_id ? { orders, batch_id: built.body.batch_id } : { orders };
       if (orders.length === 0) {
         setBatchResults([...skipped, ...refusals]);
-        return;
+        return true;
       }
 
       const posted = await confirmMany.mutateAsync(body);
@@ -1979,9 +2004,11 @@ export function FulfilmentBoardPanel({
         }
         return next;
       });
+      return true;
     } catch {
       // The mutation's own `onError` already toasted the message; nothing here is left to say.
       // Caught only so the rejection does not float unhandled past this async click handler.
+      return false;
     } finally {
       setConfirmingAll(false);
     }
@@ -1993,6 +2020,130 @@ export function FulfilmentBoardPanel({
     previewConfirmMany,
     confirmSummary,
   ]);
+
+  /**
+   * OI-SPLIT-GUIDE (UAC F25, F26): one line's Remark facts, one rule for the guide's pages and
+   * the board's own Split delivery: the purchasing email's words (`saved_remark`), the
+   * planner's own remark kept in the line's saved decision, and whether it is kept there (an
+   * Approve or Amend draft; a line with none keeps its remark as a split, as before).
+   */
+  const remarkFactsOf = React.useCallback(
+    (contribution: BoardContribution) => {
+      const decision = draftWithoutPreMark[contribution.key] ?? contribution.draft?.decision;
+      return {
+        words: contribution.saved_remark ?? null,
+        // UAC F32: the saved decision's remark ('' = cleared), else the confirmed one.
+        own: remarkFor(contribution, decision) || null,
+        editable: decision?.verdict === 'approved' || decision?.verdict === 'amended',
+      };
+    },
+    [draftWithoutPreMark],
+  );
+
+  /**
+   * OI-SPLIT-GUIDE (UAC F26): a saved line's own remark is kept in its saved decision (the
+   * same save every decision on the board takes), never as a one-row split.
+   */
+  const saveLineRemarks = React.useCallback(
+    async (changes: ReadonlyMap<string, string>) => {
+      for (const [key, remark] of changes) {
+        const current =
+          draftWithoutPreMark[key] ??
+          allContributions.find((contribution) => contribution.key === key)?.draft?.decision;
+        if (!current) continue;
+        // '' is kept: a cleared remark must not fall back to the confirmed one (UAC F32).
+        const ok = await decide(key, { ...current, remark }, { quiet: true, adoptSaved: true });
+        if (!ok) throw new Error('The remark could not be saved.');
+      }
+      if (changes.size > 0) {
+        toast.success(changes.size === 1 ? 'Remark saved' : `${changes.size} remarks saved`);
+        // The email's words for the line follow what was stored: read the board again.
+        void board.refetch();
+      }
+    },
+    [draftWithoutPreMark, allContributions, decide, board],
+  );
+
+  /**
+   * OI-SPLIT-GUIDE: Confirm (N) opens the guided Confirm (UAC A1), one page per order this
+   * press covers, in board order, listing the lines it covers (UAC F2, F4).
+   */
+  const [guideOpen, setGuideOpen] = React.useState(false);
+  const closeGuide = React.useCallback(() => setGuideOpen(false), []);
+  const guidePages = React.useMemo<ConfirmGuidePage[]>(() => {
+    const covered = confirmLinesByOrder(
+      allContributions,
+      draftWithoutPreMark,
+      pendingBatchSalesOrderIds,
+      { unadoptedSalesOrderIds, batchNamedKeys },
+    );
+    return (board.data?.orders ?? []).flatMap((order) => {
+      const lines = covered.get(order.sales_order_id);
+      if (!lines) return [];
+      return [
+        {
+          psoId: order.project_sales_order_id ?? null,
+          soNumber: order.so_number,
+          covered: lines.map((line) => {
+            // UAC F25, F26: the planner's own remark lives in the line's saved decision.
+            const facts = remarkFactsOf(line);
+            return {
+              lineId: line.project_line_id ?? null,
+              key: line.key,
+              lineNo: line.so_line_no ?? line.line_no,
+              itemCode: line.item_code,
+              location: line.fulfilment_location ?? '',
+              qty: Number(line.qty) || 0,
+              date: line.required_date ?? null,
+              savedRemark: facts.words,
+              ownRemark: facts.own,
+              remarkEditable: facts.editable,
+            };
+          }),
+        },
+      ];
+    });
+  }, [
+    board.data,
+    allContributions,
+    draftWithoutPreMark,
+    pendingBatchSalesOrderIds,
+    unadoptedSalesOrderIds,
+    batchNamedKeys,
+    remarkFactsOf,
+  ]);
+
+  /**
+   * OI-SPLIT-GUIDE (UAC F26): the board's own Split delivery gets the same Remark facts for
+   * the open order's lines with a saved decision, so a saved line's remark is kept in its
+   * draft there too, never as a one-row split.
+   */
+  const dialogRemarks = React.useMemo(() => {
+    if (!lineSplit) return null;
+    const remarks = new Map<string, { words: string | null; own: string | null; editable: boolean }>();
+    const keys = new Map<string, string>();
+    for (const contribution of allContributions) {
+      const lineId = contribution.project_line_id;
+      if (!lineId || psoIdBySalesOrder.get(contribution.sales_order_id) !== lineSplit.psoId)
+        continue;
+      const facts = remarkFactsOf(contribution);
+      if (!facts.editable) continue;
+      remarks.set(lineId, facts);
+      keys.set(lineId, contribution.key);
+    }
+    return {
+      remarks: remarks as ReadonlyMap<string, { words: string | null; own: string | null; editable: boolean }>,
+      save: (changes: ReadonlyMap<string, string>) =>
+        saveLineRemarks(
+          new Map(
+            [...changes].flatMap(([lineId, remark]) => {
+              const key = keys.get(lineId);
+              return key ? [[key, remark] as const] : [];
+            }),
+          ),
+        ),
+    };
+  }, [lineSplit, allContributions, psoIdBySalesOrder, remarkFactsOf, saveLineRemarks]);
 
   /**
    * SIMULATE CONFIRM (admin): the body Confirm would post, sent to the server's dry run. A
@@ -2614,7 +2765,7 @@ export function FulfilmentBoardPanel({
                       Boolean(confirmBlockedReason)
                     }
                     title={confirmBlockedReason ?? undefined}
-                    onClick={() => void runConfirmAll()}
+                    onClick={() => setGuideOpen(true)}
                   >
                     {`Confirm (${confirmSummary.toConfirm})`}
                   </Button>
@@ -2764,14 +2915,19 @@ export function FulfilmentBoardPanel({
                       <li className="text-sm font-medium">Would write</li>
                       {(result.inquiry_rows ?? []).map((row, index) => (
                         <li key={`row-${index}`} className="text-sm break-words">
-                          {`line ${row.line_no ?? '?'} ${row.item_code ?? ''}: ${row.verb} ${formatQty(String(row.qty))}${
+                          {`line ${row.so_line_no ?? row.line_no ?? '?'} ${row.item_code ?? ''}: ${previewRowRemark(row)} ${formatQty(String(row.qty))}${
                             row.stock_location ? ` at ${row.stock_location}` : ''
-                          }${row.is_new === false ? ' (settles an existing row)' : ''}`}
+                          }${
+                            // A row the press retires is a CANCEL, not a settle (UAC E1).
+                            row.is_new === false && row.state !== 'cancelled'
+                              ? ' (settles an existing row)'
+                              : ''
+                          }`}
                         </li>
                       ))}
                       {(result.transfers ?? []).map((move, index) => (
                         <li key={`move-${index}`} className="text-sm break-words">
-                          {`line ${move.line_no ?? '?'}: ${move.kind} ${formatQty(String(move.qty))} ${
+                          {`line ${move.so_line_no ?? move.line_no ?? '?'}: ${move.kind} ${formatQty(String(move.qty))} ${
                             move.from_location ?? '?'
                           } -> ${move.to_location ?? '?'}`}
                         </li>
@@ -3344,11 +3500,21 @@ export function FulfilmentBoardPanel({
           returnFocusRef={boardActionsRef}
         />
       ) : null}
+      {guideOpen ? (
+        <ConfirmGuideDialog
+          pages={guidePages}
+          runConfirm={runConfirmAll}
+          saveRemarks={saveLineRemarks}
+          onClose={closeGuide}
+        />
+      ) : null}
       {lineSplit ? (
         <LineSplitDialog
           open={lineSplit.open}
           psoId={lineSplit.psoId}
           focusLineId={lineSplit.focusLineId}
+          lineRemarks={dialogRemarks?.remarks}
+          onSaveRemarks={dialogRemarks?.save}
           onOpenChange={(next) =>
             setLineSplit((current) => (current ? { ...current, open: next } : current))
           }

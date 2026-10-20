@@ -269,11 +269,11 @@ describe('SalesOrderDetail Lines: the Split column (B1)', () => {
     expect(await screen.findByRole('menuitemcheckbox', { name: 'Split' })).toBeInTheDocument();
   });
 
-  it('opens the line popup from the (i) button, titled "Line 480 CSK14B: split"', () => {
+  it('opens the line popup from the (i) button, titled "CSK14B: split"', () => {
     renderLines();
     fireEvent.click(screen.getByRole('button', { name: 'Show the splits of line 480' }));
     const dialog = screen.getByRole('dialog');
-    expect(within(dialog).getByText('Line 480 CSK14B: split')).toBeInTheDocument();
+    expect(within(dialog).getByText('CSK14B: split')).toBeInTheDocument();
     expect(dialog.textContent).toContain('SO417636');
     // UAC E: the body is the read-only split sheet, one block for line 480, no old note.
     expect(within(dialog).getAllByTestId(/^split-line-/).map((el) => el.getAttribute('data-testid'))).toEqual([

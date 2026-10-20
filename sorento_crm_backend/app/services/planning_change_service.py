@@ -3925,6 +3925,13 @@ def _oi_demand_rows(
     return out, counts
 
 
+#: The rows `_retire_inquiry_rows` tells purchasing about: the ones that asked them to get
+#: stock for the line (`_shift_links_off_retired_lines`'s own "still owes this line" verbs).
+#: A CANCEL BALANCE or a date-only row on the same line is part of that same instruction, so
+#: printing it too would read as a second CANCEL ALL for one line.
+_TOLD_ON_RETIRE = (IV_ORDER, IV_ORDER_BACK, IV_RESERVE_AND_ORDER)
+
+
 def _retire_inquiry_rows(
     db: Session, project_line_id: Optional[str], reason: str, actor: Optional[str] = None
 ) -> List[str]:
@@ -3943,9 +3950,20 @@ def _retire_inquiry_rows(
     purchasing dealt with it (`mark_rows` is its only writer), and a plan does not get to
     overrule it.
 
+    EVERY BUY ROW IT TOUCHES (`_TOLD_ON_RETIRE`) IS TOLD ON THE HANDOVER EMAIL as CANCEL ALL
+    (OI-RETIRE-CANCEL-EMAIL, owner case 20 Oct 2026: a line AutoCount deleted and replaced
+    printed only the new line's ORDER). This runs before the confirm on purpose (see the
+    caller), so the confirm's own `_retire_uncovered_rows`, which tells its retirements, never
+    sees these rows: the CANCEL has to be queued here, and rides the same commit's email. An
+    `actioned` row is told too: it stays live, but purchasing has to hear the line is gone to
+    undo what they placed.
+
     Returns THE ROWS IT CANCELLED, by id, and the shift below takes exactly those: a row
     somebody cancelled last month is not this apply's to move documents off."""
-    from app.services.project_order_inquiry_service import _record_cancel
+    from app.services.project_order_inquiry_service import (
+        ProjectOrderInquiryService,
+        _record_cancel,
+    )
 
     if not project_line_id:
         return []
@@ -3958,8 +3976,10 @@ def _retire_inquiry_rows(
         .all()
     )
     cancelled: List[str] = []
+    service = ProjectOrderInquiryService(db)
     for row in rows:
         note = f"{row.note}\n{reason}" if row.note else reason
+        was_qty = row.qty
         if row.state == INQUIRY_ACTIONED:
             row.note = note
         else:
@@ -3967,6 +3987,10 @@ def _retire_inquiry_rows(
             _record_cancel(db, row, "planning_change_retired", actor_user_id=actor)
             row.note = note
             cancelled.append(str(row.id))
+        if row.verb in _TOLD_ON_RETIRE:
+            service._record_handover(
+                row, kind="cancelled", was={"qty": was_qty}, actor_user_id=actor
+            )
     return cancelled
 
 

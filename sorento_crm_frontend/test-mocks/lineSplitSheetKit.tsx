@@ -254,15 +254,13 @@ export function blockOf(el: Element) {
 
 /**
  * Variant B (AC-G2): where split `n` of line `origin` is drawn. `inBlock` = it sits in line
- * `target`'s block; `lineCell` = its own LINE cell reads `origin`.
+ * `target`'s block. No line number is drawn anywhere (owner ruling, UAC F21), so identity is the
+ * block and the aria-labelled inputs only.
  */
 export function drawnUnder(target: number, origin: number, n: number) {
   const row = qty(origin, n).closest('tr') as HTMLTableRowElement;
   return {
     inBlock: block(target).contains(row),
-    lineCell: Array.from(row.cells).some(
-      (td) => (td.textContent ?? '').trim() === String(origin),
-    ),
   };
 }
 
