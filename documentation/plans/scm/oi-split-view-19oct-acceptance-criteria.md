@@ -178,8 +178,9 @@ position, fewer labels; moved splits sit under the line they landed on (mock v5 
   or date pickers (values as plain text), no click-to-edit cells, no keyboard editing, no Save. Nothing
   under a REMARK word, and no "Total ... AutoCount ... now ..." line.
 - E3 **Saved lines only.** The whole-order popup lists only the lines with saved splits (and a line that
-  only receives a moved split, so that split shows under it). The line popup lists that one line (and
-  splits moved onto it). SO417636: whole order = line 480 (14 / 236 / 167) and line 752 (37 / 467 / extra
+  only receives a moved split, so that split shows under it). The line popup lists that one line, splits
+  moved onto it, and the lines its own splits moved onto (so none of its splits is hidden; build call
+  2b2a7f9bac). SO417636: whole order = line 480 (14 / 236 / 167) and line 752 (37 / 467 / extra
   145); lines 608, 768 and the rest are not listed.
 - E4 **Header.** As the edit dialog's header (title with the SO number, "Confirmed dd/mm/yyyy" when the
   plan is applied), plus one status badge "Saved, not confirmed" when the line (line popup) or any listed
