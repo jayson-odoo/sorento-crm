@@ -98,9 +98,9 @@ decision draft in `lines`, `rejected_line_ids`, `cancelled_lines`) or a saved sp
   not their original verb.
 - E2. Permissions: the guide uses the same calls with the same permission as Confirm.
 
-## F. Layout
-- F1. 1280: dialog per the mock; the sheet scrolls inside its own box.
-- F2. 375: full-screen dialog, the stepper prints only the current label (`WizardSteps`), the sheet and
+## L. Layout (was F; renamed 20 Oct so F is the owner rework)
+- L1. 1280: dialog per the mock; the sheet scrolls inside its own box.
+- L2. 375: full-screen dialog, the stepper prints only the current label (`WizardSteps`), the sheet and
   review tables scroll horizontally inside their own box, footer buttons always visible, no page
   horizontal scroll.
 
@@ -135,6 +135,18 @@ or use own location, just like our email to purchasing". Plan crew-note 62883955
   edit saved, line 480 also shows (its split rows). Line 752 is not shown.
 - F9. Code: the unused `PreviewInquiryRow.autocount_change` is removed. The dry-run builder fixes stay
   because admin Simulate's "Would write" uses them (retired rows read CANCEL, AutoCount line numbers).
+- F10. Review round 3 (reviewer NOT READY on ff468ae078, lead ruling): the email words do NOT ride the shared
+  split read (`LineSplitService.read` stays exactly as on main, so the #1794 edit sheet and SO/OI popups never
+  see a book-cancelled line as editable). Each covered line's one-row remark comes from the server on the
+  board's own line data: a saved draft's words from `saved_line_remark` (the email's function), a covered
+  book-cancelled line with no draft reads the email's cancel word. Every covered line therefore gets its row,
+  including on an order not yet adopted (no split read) and for a book-cancelled line.
+- F11. Incoming stock prints the SPO number(s) the email prints (arrival on or before the required date at
+  the line's own location, the email's rule), not "INCOMING". Known difference kept: stock the email spreads
+  over sibling locations of a group reads as one part here (the email's group ladder is not rebuilt for the
+  preview).
+- F12. Test strength: at least one test saves a draft, confirms it for real, and compares the guide's words
+  with the words the confirmed revision's frozen snapshot gives the email.
 
 ## G. Out of scope
 - Making Confirm never touch unsaved lines (crew option b).
