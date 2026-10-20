@@ -170,6 +170,62 @@ describe('F25: every row\'s Remark is an editable box prefilled with the default
     expect(cell().textContent).not.toMatch(/edited/);
   });
 
+  it('clearing: backspacing to empty keeps the box EMPTY while focused; the default returns on blur and the marker goes', async () => {
+    getLineSplits.mockResolvedValue(withDefaults());
+    await renderDialog();
+    await sheet();
+    const cell = () => remarkIn(480, 2).closest('td') as HTMLElement;
+    act(() => remarkIn(480, 2).focus());
+    fireEvent.change(remarkIn(480, 2), { target: { value: 'SITE HOLD' } });
+    fireEvent.change(remarkIn(480, 2), { target: { value: '' } });
+    // still focused: a planner can type fresh text, so the box is NOT refilled with the default
+    expect(remarkIn(480, 2).value).toBe('');
+    fireEvent.change(remarkIn(480, 2), { target: { value: 'N' } });
+    expect(remarkIn(480, 2).value).toBe('N');
+    fireEvent.change(remarkIn(480, 2), { target: { value: '' } });
+    expect(remarkIn(480, 2).value).toBe('');
+    act(() => remarkIn(480, 2).blur());
+    await waitFor(() => expect(remarkIn(480, 2).value).toBe('DELAY'));
+    expect(cell().textContent).not.toMatch(/edited/);
+  });
+
+  it('typing exactly the default text back shows no edited marker and stores nothing', async () => {
+    getLineSplits.mockResolvedValue(withDefaults());
+    await renderDialog();
+    await sheet();
+    const cell = () => remarkIn(480, 2).closest('td') as HTMLElement;
+    fireEvent.change(remarkIn(480, 2), { target: { value: 'SITE HOLD' } });
+    expect(cell().textContent).toMatch(/edited/);
+    fireEvent.change(remarkIn(480, 2), { target: { value: 'DELAY' } });
+    expect(cell().textContent).not.toMatch(/edited/);
+    typeDate(480, 3, '21/11/2029'); // a real edit so Save is on
+    const save = saveButton();
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+    await waitFor(() => expect(saveLineSplits).toHaveBeenCalledTimes(1));
+    const l480 = saveLineSplits.mock.calls[0][1].lines.find((l: { line_id: string }) => l.line_id === 'L480');
+    expect(l480.splits.map((s: { remark: string }) => s.remark ?? '')).toEqual(['', '', '']);
+  });
+
+  it('the remark box caps at 500 characters (the API limit)', async () => {
+    getLineSplits.mockResolvedValue(withDefaults());
+    await renderDialog();
+    await sheet();
+    expect(remarkIn(480, 2).getAttribute('maxlength')).toBe('500');
+  });
+
+  it('the remark box grows with its content: more lines, more rows (not CSS field-sizing alone)', async () => {
+    getLineSplits.mockResolvedValue(withDefaults());
+    await renderDialog();
+    await sheet();
+    const rows = () => Number(remarkIn(480, 2).getAttribute('rows') ?? '1');
+    expect(rows()).toBe(1);
+    fireEvent.change(remarkIn(480, 2), { target: { value: 'one\ntwo\nthree\nfour' } });
+    expect(rows()).toBeGreaterThanOrEqual(4);
+    fireEvent.change(remarkIn(480, 2), { target: { value: 'short' } });
+    expect(rows()).toBe(1);
+  });
+
   it('saving an untouched default stores nothing: the body carries an empty remark', async () => {
     getLineSplits.mockResolvedValue(withDefaults());
     await renderDialog();
