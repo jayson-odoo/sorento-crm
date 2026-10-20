@@ -25,7 +25,6 @@ import {
   formatSplitDate,
   gapOf,
   groupKeyOf,
-  lineShort,
   readsRemain,
   splitsOf,
   type SplitDraft,
@@ -94,7 +93,8 @@ const COLUMNS: Array<{
   aria?: string;
 }> = [
   { key: 'grip', label: '', width: 28, className: GRIP_STICKY, aria: 'Drag' },
-  { key: 'line', label: 'Line', width: 44, className: DESKTOP_ONLY },
+  // No Line column (OI-SPLIT-GUIDE UAC F21, owner ruling): a line's number stays internal
+  // (keys, test ids, aria labels, the save body); the item and its rows tell lines apart.
   { key: 'soDate', label: 'SO date', width: 80, className: DESKTOP_ONLY },
   { key: 'soNo', label: 'S/O no', width: 76, className: DESKTOP_ONLY },
   { key: 'item', label: 'Item code', width: 112, className: ITEM_STICKY },
@@ -428,19 +428,12 @@ const LineBlock = React.memo(function LineBlock({
   const rows =
     ownRows + (delivered ? 0 : incomingRows.length) + (extraQty ? 1 : 0);
   const span = rows > 1 ? rows : undefined;
-  const lineSpan = ownRows > 1 ? ownRows : undefined;
   const gap = gapOf(line);
   const top = itemTop ? 'border-t-2 border-t-muted-foreground/40' : '';
   const baseCell = cn(BASE_CELL, top, flash && 'jump-flash');
 
   const baseCells = (
     <>
-      <TableCell
-        rowSpan={lineSpan}
-        className={cn(baseCell, DESKTOP_ONLY, 'tabular-nums')}
-      >
-        {no}
-      </TableCell>
       <TableCell rowSpan={span} className={cn(baseCell, DESKTOP_ONLY)}>
         {soDate}
       </TableCell>
@@ -460,11 +453,11 @@ const LineBlock = React.memo(function LineBlock({
         )}
       >
         <span className="font-semibold">{line.itemCode}</span>
-        <span className="block text-2xs text-muted-foreground md:hidden">
-          {multiLocation
-            ? `${lineShort(line)} · ${line.location}`
-            : lineShort(line)}
-        </span>
+        {multiLocation ? (
+          <span className="block text-2xs text-muted-foreground md:hidden">
+            {line.location}
+          </span>
+        ) : null}
       </TableCell>
       <TableCell rowSpan={span} className={cn(baseCell, DESKTOP_ONLY)}>
         {line.location}
@@ -665,21 +658,15 @@ const LineBlock = React.memo(function LineBlock({
     );
   } else {
     body = splits.map((split, index) =>
-      splitRow(line, split, allOwn.indexOf(split) + 1, index === 0, false),
+      splitRow(line, split, allOwn.indexOf(split) + 1, index === 0),
     );
   }
 
   /**
    * One split row. `origin` is the line the split belongs to (its labels, handlers and drag
-   * name it); `incomingRow` = drawn under the line it sits on, with its own muted LINE cell.
+   * name it); a split sitting on another line is drawn under that line.
    */
-  function splitRow(
-    origin: SplitLine,
-    split: SplitDraft,
-    n: number,
-    first: boolean,
-    incomingRow: boolean,
-  ) {
+  function splitRow(origin: SplitLine, split: SplitDraft, n: number, first: boolean) {
     const originNo = origin.lineNo ?? '';
     const cell = cn(CELL, first && top);
     const word = changeOf(split, origin);
@@ -692,13 +679,6 @@ const LineBlock = React.memo(function LineBlock({
           className="border-0 hover:bg-transparent"
         >
           {first ? baseCells : null}
-          {incomingRow ? (
-            <TableCell
-              className={cn(cell, DESKTOP_ONLY, 'tabular-nums text-muted-foreground')}
-            >
-              {originNo}
-            </TableCell>
-          ) : null}
           <TableCell className={cn(cell, 'font-semibold tabular-nums')}>
             {split.qty}
           </TableCell>
@@ -745,13 +725,6 @@ const LineBlock = React.memo(function LineBlock({
           />
         </TableCell>
         {first ? baseCells : null}
-        {incomingRow ? (
-          <TableCell
-            className={cn(cell, DESKTOP_ONLY, 'tabular-nums text-muted-foreground')}
-          >
-            {originNo}
-          </TableCell>
-        ) : null}
         <TableCell className={cell}>
           <QtyInput
             variant="sm"
@@ -817,7 +790,7 @@ const LineBlock = React.memo(function LineBlock({
       {delivered
         ? null
         : incomingRows.map(({ origin, split, n }) =>
-            splitRow(origin, split, n, false, true),
+            splitRow(origin, split, n, false),
           )}
       {extraQty ? (
         <TableRow
@@ -827,7 +800,6 @@ const LineBlock = React.memo(function LineBlock({
           {sheetReadOnly ? null : (
             <TableCell data-pinned="" className={cn(CELL, GRIP_STICKY, 'max-md:z-[1] px-0')} />
           )}
-          <TableCell className={cn(CELL, DESKTOP_ONLY)} />
           <TableCell className={cn(CELL, 'tabular-nums font-semibold')}>
             {extraQty}
           </TableCell>
