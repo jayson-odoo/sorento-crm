@@ -253,3 +253,35 @@ def test_be3_the_real_press_writes_the_same_rows_with_or_without_a_dry_run_befor
     line10 = [x for x in after if x[0] == 10]
     assert line10 and all(x[2] == INQUIRY_CANCELLED for x in line10), line10
     assert {x[0] for x in after} == {10, 20}
+
+
+# ---------------------------------------------------------------------------
+# C2a: the line number a person reads is AutoCount's, not the planning address
+# ---------------------------------------------------------------------------
+
+
+def test_c2a_preview_rows_carry_the_core_line_number_as_so_line_no(api):
+    """Mirror (planning) line 560 sits on core (AutoCount) line 480: the row keeps `line_no`
+    560 and says `so_line_no` 480. Transfers are not covered here: raising one needs seeded
+    stock, and rows share the one builder rule."""
+    s = _two_line_order(api)
+    s.line[10].line_no, s.core[10].line_no = 560, 480
+    s.db.commit()
+    s.db.expire_all()
+    _drift(s, "qty")
+    result = _result(_press(s, preview=True))
+    rows = _rows_of(result, 560)
+    assert rows, ("premise: line 10's retired row is listed under its planning line_no", result["inquiry_rows"])
+    assert all(x.get("so_line_no") == 480 for x in rows), rows
+
+
+def test_c2a_a_row_of_a_line_without_a_core_line_falls_back_to_the_mirror_number(api):
+    s = _two_line_order(api)
+    s.line[10].line_no = 560
+    s.line[10].core_sales_order_line_id = None
+    s.db.commit()
+    s.db.expire_all()
+    result = _result(_press_body(s, {}, named=(20,)))
+    rows = _rows_of(result, 560)
+    assert rows, ("premise: line 10's row is listed under its planning line_no", result["inquiry_rows"])
+    assert all(x.get("so_line_no") == 560 for x in rows), rows

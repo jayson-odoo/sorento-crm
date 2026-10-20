@@ -503,6 +503,25 @@ describe('fix round: simulated wording and number formatting (R7-R10)', () => {
     expect(within(writes).getByText('line 10: pool 50 BRW -> OWN')).toBeInTheDocument();
   });
 
+  it('C2a: Would write prints the AutoCount line number (so_line_no), not the planning line_no', async () => {
+    simulateConfirm.mockResolvedValue({
+      results: [
+        okSimulated({
+          inquiry_rows: [
+            { line_no: 560, so_line_no: 480, item_code: 'ITEM', verb: 'ORDER', qty: '5', stock_location: 'LOC', is_new: true },
+          ],
+          transfers: [],
+        }),
+      ],
+    });
+    renderPanel();
+
+    await pressSimulate();
+
+    const writes = await screen.findByTestId('board-simulate-writes-pso-so-a');
+    expect(within(writes).getByText('line 480 ITEM: ORDER 5 at LOC')).toBeInTheDocument();
+  });
+
   it('E1: a row the press retires (state cancelled) is listed as CANCEL, not its original verb', async () => {
     simulateConfirm.mockResolvedValue({
       results: [

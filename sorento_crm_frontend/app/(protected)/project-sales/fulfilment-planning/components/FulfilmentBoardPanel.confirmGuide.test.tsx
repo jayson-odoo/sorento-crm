@@ -857,6 +857,44 @@ describe('T-FE4 (C1 to C7): Review shows what purchasing will get', () => {
     expect(confirmMany).not.toHaveBeenCalled();
   });
 
+  it('C2a: Review prints so_line_no (AutoCount 480), not the planning line_no (560), for a row and a transfer', async () => {
+    dryRunAnswers({
+      'pso-so-1': {
+        rows: [row({ line_no: 560, so_line_no: 480, item_code: 'ZZT-ITEM-1' })],
+        transfers: [
+          { line_no: 560, so_line_no: 480, is_new: true, kind: 'pool', qty: '294', from_location: 'MWH', to_location: 'BRW-BB' },
+        ],
+      },
+    });
+    await mountWith(oneEditedBoard());
+    await openConfirmGuide();
+    await screen.findByTestId('confirm-guide-split-page');
+    click('confirm-guide-next');
+    const reviewed = await screen.findByTestId('confirm-guide-review-order');
+    const first = within(reviewed).getByTestId('confirm-guide-review-row');
+    expect(within(first).getAllByRole('cell')[0]).toHaveTextContent(/^480$/);
+    expect(reviewed).not.toHaveTextContent('560');
+    const rowsOfTransfer = within(reviewed).getAllByRole('row').find((el) => el.textContent?.includes('pool'))!;
+    expect(within(rowsOfTransfer).getAllByRole('cell')[0]).toHaveTextContent(/^480$/);
+  });
+
+  it('C2a: without so_line_no Review falls back to line_no', async () => {
+    dryRunAnswers({
+      'pso-so-1': {
+        rows: [row({ line_no: 7 })],
+        transfers: [{ line_no: 9, is_new: true, kind: 'pool', qty: '3', from_location: 'A', to_location: 'B' }],
+      },
+    });
+    await mountWith(oneEditedBoard());
+    await openConfirmGuide();
+    await screen.findByTestId('confirm-guide-split-page');
+    click('confirm-guide-next');
+    const reviewed = await screen.findByTestId('confirm-guide-review-order');
+    expect(within(within(reviewed).getByTestId('confirm-guide-review-row')).getAllByRole('cell')[0]).toHaveTextContent(/^7$/);
+    const rowsOfTransfer = within(reviewed).getAllByRole('row').find((el) => el.textContent?.includes('pool'))!;
+    expect(within(rowsOfTransfer).getAllByRole('cell')[0]).toHaveTextContent(/^9$/);
+  });
+
   it('a row whose state is cancelled shows CANCEL in its remark cell', async () => {
     dryRunAnswers({
       'pso-so-1': {
