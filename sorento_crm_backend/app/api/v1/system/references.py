@@ -32,6 +32,7 @@ from app.services.entity_resolver import (
     FREE_TEXT_CANDIDATES,
     EntityPinMismatch,
     _canonical_entity_type,
+    _word_variants,
     _with_resolve_memo,
     fetch_product_brands,
     resolve_references,
@@ -1808,13 +1809,20 @@ def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
     knows the word (`vocabulary`, a set or a callable read only when such a row needs it: a code
     family such as "QAMS" or a brand word keeps its prefix rows). A token with a digit keeps them
     all (a code fragment). A row with SEVERAL tokens (the AND row) loses its whole-code-word keep
-    when ANY of its tokens is a registry word. Runs once, early, so every reader of the result sees the same rows."""
+    when ANY of its tokens is a registry word, read in the forms the probe matched it by
+    (`_word_variants`). Runs once, early, so every reader of the result sees the same rows."""
     words: list[frozenset[str]] = []
 
     def known(tokens: list[str]) -> bool:
         if not words:
             words.append(vocabulary() if callable(vocabulary) else vocabulary)
-        return any(w in words[0] for t in tokens for w in re.split(r"[^a-z0-9]+", str(t or "").lower()) if w)
+        return any(
+            v in words[0]
+            for t in tokens
+            for w in re.split(r"[^a-z0-9]+", str(t or "").lower())
+            if w
+            for v in _word_variants(w)
+        )
 
     def whole_segments(code: Any, token: Any) -> bool:
         token_words = [w for w in re.split(r"[^a-z0-9]+", str(token or "").lower()) if w]
