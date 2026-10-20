@@ -891,14 +891,14 @@ def test_review_after_the_confirm_the_applied_plan_re_saves_and_a_14_plan_is_acc
     assert r.status_code == 200, ("a 14 plan is accepted", r.text)
 
 
-def test_review_a_remark_only_save_after_the_confirm_is_accepted_and_re_confirm_changes_nothing(
+def test_review_a_remark_only_save_after_the_confirm_is_accepted_and_re_confirm_tells_it_without_acting_again(
     api, emails
 ):
     """Re-check BLOCKING: after the owner's Confirm, staff only type a remark on 480 and Save.
     The FE sends every line (`lineSplitModel.ts` `toPayload`: split lines with their splits,
     608 with []), so the applied plans are re-saved as they stand: 200 (it was 422 "Line 480:
     the splits add up to 417, not 14"), the remark is stored, and a re-Confirm after that Save
-    still leaves live OI at 1295 with no email."""
+    still leaves live OI at 1295 and (owner hand test 4, UAC F27) emails the new remark."""
     s = _seed(api)
     _save(s, _owner_plan())
     _confirm_batch(s, emails)
@@ -916,7 +916,7 @@ def test_review_a_remark_only_save_after_the_confirm_is_accepted_and_re_confirm_
         "the re-saved applied plan does not act again",
         {no: _worklist(s, s.line[no]) for no in OWNER_CASE})
     resent = [(ln["qty"], ln["remark"]) for h in emails[start:] for ln in h.get("lines") or []]
-    assert resent == [], ("no email after a remark-only Save and re-Confirm", resent)
+    assert TYPED in [remark for _qty, remark in resent], ("the remark-only change is told", resent)
 
 
 def test_review_re_confirm_of_the_new_line_plan_changes_nothing(api, emails):
@@ -1477,9 +1477,9 @@ def test_p1_editing_a_split_qty_of_an_applied_plan_acts_on_the_next_confirm(api,
     assert not [r for r in xl if r[2] == _d("236")], ("the 236 is gone", xl)
 
 
-def test_p1_a_remark_only_edit_of_an_applied_plan_changes_nothing_on_confirm(api, emails):
+def test_p1_a_remark_only_edit_of_an_applied_plan_changes_no_row_but_is_told_on_confirm(api, emails):
     """P1 guard: only a remark typed on the 236 and saved; the next Confirm changes no row and
-    sends no email."""
+    emails the new remark (owner hand test 4, UAC F27)."""
     s, po_line = _new_line_plan_applied(api, emails)
     before = sorted(_worklist(s, s.line[480]), key=str)
     _edit_480(s, [(14, D_480_NEW, "own", ""), (236, D_608, "new", "SITE HOLD"),
@@ -1488,7 +1488,7 @@ def test_p1_a_remark_only_edit_of_an_applied_plan_changes_nothing_on_confirm(api
     _reconfirm(s)
     assert sorted(_worklist(s, s.line[480]), key=str) == before, _worklist(s, s.line[480])
     assert _rows_with_links(s, po_line)[(_d("236"), D_608)] == _d("236")
-    assert _sent_since(emails, start) == [], [
+    assert "SITE HOLD" in [l["remark"] for l in _sent_since(emails, start)], [
         (l["qty"], l["remark"]) for l in _sent_since(emails, start)]
 
 

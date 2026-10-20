@@ -443,13 +443,16 @@ def test_f26_pin_a_remark_in_the_saved_draft_never_turns_the_line_into_a_split_e
 
 def test_f27_a_remark_only_edit_of_an_applied_split_plan_is_told_again(api, emails):
     """`split_plan_key` includes the remark, so after the plan was applied a remark-only split
-    edit is a change the next Confirm tells purchasing."""
+    edit counts as a split edit AND the next Confirm tells purchasing."""
     from tests.scm.test_line_splits_round3 import D_167, D_480_NEW, D_608, _new_line_plan_applied
     from tests.scm.test_split_view_board import _edit_480
+
+    from tests.scm.test_split_view_board import _board_flag
 
     s, _po_line = _new_line_plan_applied(api, emails)
     start = len(emails)
     _edit_480(s, [(14, D_480_NEW, "own", ""), (236, D_608, "new", "SITE HOLD"), (167, D_167, "new", "")])
+    assert _board_flag(s, 480) is True, "a remark-only edit counts as a split edit (owner hand test 4)"
     r = s.client.post(
         f"{BASE}/fulfilment-planning/confirm-all",
         json={"orders": [{"pso_id": str(s.order.id), "lines": []}]},
