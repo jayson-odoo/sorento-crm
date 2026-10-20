@@ -1544,6 +1544,17 @@ class ProjectOrderInquiryService:
                     settled_in_place.append(str(line.id))
                 continue
             need = split_needs.get(str(line.id), _dec(entry.get("buy_qty")))
+            if str(line.id) in kept_splits and self._rows_hold_plan_total(line, need):
+                # OI-SPLIT-SUPERSEDE-FIX: the line's rows are already cut to a plan and still
+                # ask for exactly the new plan's total (an edit of a date or of how the qty is
+                # split). They are filed under this revision and `_keep_split_rows` moves the
+                # ones the edit changed (one DELAY for a moved date). The netting below would
+                # supersede every raised row it cannot settle as one (SO417636 480: CANCEL
+                # 14 / 236 / 167 and an unsplit ORDER 417).
+                self._refile_rows(inquiry, line, decision)
+                if str(line.id) in settle_in_place:
+                    settled_in_place.append(str(line.id))
+                continue
             carried = bool(entry.get("carried"))
             # Is THIS line's Buy an order back (part 2 section 4b)? Only then does this
             # loop own the line's `ORDER_BACK` rows; on any other line such a row is a
@@ -2269,6 +2280,9 @@ class ProjectOrderInquiryService:
                     }
                 )
 
+        # The session does not autoflush (`app.database.SessionLocal`): a row the netting only
+        # added or cancelled is invisible to `_keep_split_rows`' query until it is written.
+        self.db.flush()
         self._keep_split_rows(inquiry, decision, kept_splits, actor_user_id=actor_user_id)
         # AC-G16: this Confirm's decision records the plan each split line now stands on, the
         # marker `_later_change_lines` reads on the next Confirm.
@@ -6202,6 +6216,18 @@ class ProjectOrderInquiryService:
             ),
             _ZERO,
         )
+
+    def _rows_hold_plan_total(self, line: Any, need: Decimal) -> bool:
+        """OI-SPLIT-SUPERSEDE-FIX: an acted split line whose rows `_keep_split_rows` can move to
+        its plan as they stand: more than one live plan row (a single row settles in place as
+        before), none refused by purchasing (a refused row is re-raised, AC-H6), and together
+        they still ask for exactly `need`."""
+        rows = self._split_line_rows(str(line.id))
+        if len(rows) < 2 or any(
+            row.ack_state == ACK_REJECTED or row.rejected_at is not None for row in rows
+        ):
+            return False
+        return self._asked_qty(str(line.id)) == need
 
     def _qty_changes(
         self, line_ids: Sequence[str], line_changes: Mapping[str, Dict[str, Any]]
