@@ -127,11 +127,16 @@ vi.mock('./LineSplitDialog', () => ({
   LineSplitDialog: function MockLineSplitDialog(props: {
     open: boolean;
     psoId: string;
+    onlyLineIds?: ReadonlySet<string>;
     onOpenChange: (open: boolean) => void;
   }) {
     const client = useQueryClient();
     return props.open ? (
-      <div data-testid="line-split-dialog" data-pso={props.psoId}>
+      <div
+        data-testid="line-split-dialog"
+        data-pso={props.psoId}
+        data-only-lines={props.onlyLineIds ? [...props.onlyLineIds].sort().join(',') : ''}
+      >
         <button
           type="button"
           data-testid="line-split-dialog-save"
@@ -555,6 +560,49 @@ describe('T-FE2 (F2 F3 F4): a page for every order, listing every covered line a
     const shown = page.querySelectorAll('[data-testid^="split-line-"]').length;
     const count = Number(page.textContent?.match(/(\d+) lines?/)?.[1]);
     expect(count).toBe(shown);
+  });
+
+  it('F13: the CTA opens the edit sheet scoped to the page\'s covered lines only', async () => {
+    await mountWith(coveredBoard());
+    await openConfirmGuide();
+    await screen.findByTestId('confirm-guide-split-page');
+    click('confirm-guide-split-edit');
+    const edit = await screen.findByTestId('line-split-dialog');
+    // SO000001: line 1 (split edit) and line 3 (draft); line 2 is not covered.
+    expect(edit).toHaveAttribute('data-only-lines', 'pl-1-1,pl-1-3');
+  });
+
+  it('F13 pin: the board gear\'s "Split delivery" is not scoped', async () => {
+    await mountWith(coveredBoard());
+    const trigger = await screen.findByRole('button', { name: 'Board actions' });
+    fireEvent.keyDown(trigger, { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Split delivery SO000001' }));
+    const edit = await screen.findByTestId('line-split-dialog');
+    expect(edit).toHaveAttribute('data-only-lines', '');
+  });
+
+  it('F14: Next is disabled while the page is still reading, enabled once it has loaded', async () => {
+    let release: (value: unknown) => void = () => undefined;
+    getLineSplits.mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+    await mountWith(oneEditedBoard());
+    await openConfirmGuide();
+    await screen.findByTestId('confirm-guide-split-page');
+    const next = screen.getByTestId('confirm-guide-next') as HTMLButtonElement;
+    expect(next).toBeDisabled();
+    release(SO1_READ());
+    await within(screen.getByTestId('confirm-guide-split-page')).findByTestId('split-line-1');
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
+  });
+
+  it('F15: a saved Reject row shows the email\'s word for the withdrawal, not a blank Remark', async () => {
+    const board = withDraft(boardOf([SO1_L1]), ['pl-1-1'], { 'pl-1-1': 'CANCEL ALL' });
+    serveSplits({
+      'pso-so-1': splitRead('pso-so-1', 'SO000001', [{ id: 'pl-1-1', no: 1, item: 'ZZT-ITEM-1' }]),
+    });
+    await mountWith(board, ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    expect(await within(page).findByTestId('split-line-1')).toHaveTextContent('CANCEL ALL');
   });
 
   it('F4: the header names the order, the badge, the line count (singular for 1) and one CTA', async () => {

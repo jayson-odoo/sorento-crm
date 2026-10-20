@@ -258,3 +258,20 @@ def test_f12_the_guides_words_equal_the_emails_words_from_the_confirmed_snapshot
     )
     snap = next(x for x in decision.line_snapshots if x["project_line_id"] == str(s.line[10].id))
     assert guide == saved_line_remark(snap)[0], (guide, saved_line_remark(snap))
+
+
+def test_f15_a_saved_reject_on_a_confirmed_line_reads_the_emails_withdrawal_word(api):
+    """The press retires the withdrawn line's raised row with a handover of kind `cancelled`
+    (`project_order_inquiry_service.py` retire path, `_record_handover(row, kind="cancelled")`),
+    whose REMARK is `CANCEL ALL` (`handover_remark`, project_order_inquiry_service.py:776-777).
+    The guide's word for a saved Reject is that one, never blank."""
+    from app.services.project_order_inquiry_service import handover_remark
+
+    s = _seed(api)
+    _confirm_buy(s, 10)
+    _save_draft(s, 10, {"verdict": "rejected", "reason": "wrong site"})
+    word = _words(s, 10)
+    assert word, ("a saved Reject on a confirmed line is never blank", word)
+    assert word == handover_remark(
+        "cancelled", type("R", (), {"qty": Decimal("10")})(), {"qty": Decimal("10")}
+    ) == "CANCEL ALL"
