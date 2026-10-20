@@ -1544,6 +1544,31 @@ class ProjectOrderInquiryService:
                     settled_in_place.append(str(line.id))
                 continue
             need = split_needs.get(str(line.id), _dec(entry.get("buy_qty")))
+            kept_plan = kept_splits.get(str(line.id))
+            if kept_plan is not None and self._rows_hold_plan_total(
+                line,
+                # A cancel split an earlier Confirm already told (its CANCEL BALANCE is live) is
+                # no longer asked of the rows.
+                need
+                + max(_dec(kept_plan.get("cancels")) - _dec(kept_plan.get("held_cancel")), _ZERO),
+            ):
+                # OI-SPLIT-SUPERSEDE-FIX: the line's rows are already cut to a plan and still
+                # ask for exactly the new plan's total with its cancel splits (an edit of a
+                # date, of how the qty is split, or a "Cancel this qty"). They are filed under
+                # this revision and `_keep_split_rows` moves the ones the edit changed (one
+                # DELAY for a moved date, a cut row's NEW QTY and its CANCEL BALANCE). The
+                # netting below would supersede every raised row it cannot settle as one
+                # (dev SO417636 480: CANCEL 14 / 236 / 167 and an unsplit ORDER 417). A product
+                # AutoCount swapped still follows on every row, as on the declined-settle path.
+                product_move = self._restate_product(
+                    inquiry, self._split_line_rows(str(line.id)), entry
+                )
+                if product_move:
+                    product_moves.append(product_move)
+                self._refile_rows(inquiry, line, decision)
+                if str(line.id) in settle_in_place:
+                    settled_in_place.append(str(line.id))
+                continue
             carried = bool(entry.get("carried"))
             # Is THIS line's Buy an order back (part 2 section 4b)? Only then does this
             # loop own the line's `ORDER_BACK` rows; on any other line such a row is a
@@ -2269,6 +2294,9 @@ class ProjectOrderInquiryService:
                     }
                 )
 
+        # The session does not autoflush (`app.database.SessionLocal`): a row the netting only
+        # added or cancelled is invisible to `_keep_split_rows`' query until it is written.
+        self.db.flush()
         self._keep_split_rows(inquiry, decision, kept_splits, actor_user_id=actor_user_id)
         # AC-G16: this Confirm's decision records the plan each split line now stands on, the
         # marker `_later_change_lines` reads on the next Confirm.
@@ -6203,6 +6231,21 @@ class ProjectOrderInquiryService:
             _ZERO,
         )
 
+    def _rows_hold_plan_total(self, line: Any, need: Decimal) -> bool:
+        """OI-SPLIT-SUPERSEDE-FIX: an acted split line whose rows `_keep_split_rows` can move to
+        its plan as they stand: more than one live plan row (a single row settles in place as
+        before), none refused by purchasing (a refused row is re-raised, AC-H6), and together
+        they still ask for exactly `need`."""
+        rows = self._split_line_rows(str(line.id))
+        if len(rows) < 2 or any(
+            row.ack_state == ACK_REJECTED
+            or row.rejected_by is not None
+            or row.rejected_at is not None
+            for row in rows
+        ):
+            return False
+        return self._asked_qty(str(line.id)) == need
+
     def _qty_changes(
         self, line_ids: Sequence[str], line_changes: Mapping[str, Dict[str, Any]]
     ) -> Dict[str, Tuple[Optional[Decimal], Optional[Decimal]]]:
@@ -6253,6 +6296,10 @@ class ProjectOrderInquiryService:
                     want.remove(key)
                 else:
                     left.append(row)
+            if self._cut_rows_in_place(left, want, decision):
+                # OI-SPLIT-SUPERSEDE-FIX: a reduce (a "Cancel this qty" split) cuts each row at
+                # its own date to its plan qty; the cut is the CANCEL BALANCE below.
+                left, want = [], []
             if want and left:
                 left.sort(
                     key=lambda row: (
@@ -6340,6 +6387,38 @@ class ProjectOrderInquiryService:
                         )
                     )
             self.db.flush()
+
+    def _cut_rows_in_place(
+        self,
+        rows: Sequence[OrderInquiryRow],
+        want: Sequence[Tuple[Decimal, Optional[date]]],
+        decision: Any,
+    ) -> bool:
+        """OI-SPLIT-SUPERSEDE-FIX: when each of a split line's unmatched `rows` has exactly one
+        unmatched plan row at its own date, no larger than it, each row keeps its date and is
+        cut to that qty in place (NEW QTY, purchasing's acknowledgement turned CHANGED), so
+        nothing is joined, cancelled or raised again. False, touching nothing,
+        for any other shape (a new split, a moved date, a grown row) or a linked row: the join
+        keeps a linked row's cover on the line, where a cut on its own would give it back."""
+        if not rows or len(rows) != len(want):
+            return False
+        if any(self._links_of(row.id) for row in rows):
+            return False
+        by_date = {when: (qty, when) for qty, when in want}
+        if len(by_date) != len(want) or len({row.delivery_date for row in rows}) != len(rows):
+            return False
+        pairs = [(row, by_date.get(row.delivery_date)) for row in rows]
+        if any(plan is None or plan[0] > _dec(row.qty) for row, plan in pairs):
+            return False
+        for row, (qty, _when) in pairs:
+            # No links, so the row's state (raised, or placed by hand) stands as it is.
+            row.previous_qty = row.qty
+            row.qty = qty
+            row.supply_decision_id = decision.id
+            if row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
+                row.changed_at = datetime.utcnow()
+                row.ack_state = ACK_CHANGED
+        return True
 
     def _apply_pure_splits(
         self, inquiry: OrderInquiry, decision: Any, buy_lines: Sequence[Dict[str, Any]]
