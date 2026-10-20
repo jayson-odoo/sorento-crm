@@ -55,6 +55,13 @@ own, 236 @ 20/11/2026 New line, 167 @ 20/11/2026 New line (AutoCount 417 @ 20/10
   REMAIN and 68 ORDER 68 included). A Confirm that names only OTHER lines never fails because of such a
   line (main answers 200, so must this). Known older gap, not this lane: on main that batch Confirm does
   not move the edited 32 row either (follow-up ticket).
+- A12 **A pending AutoCount change on OTHER lines does not hold back a split edit** (browser pass 1 on the
+  owner's SO417636, crew ruling 20 Oct). SO417636 carries an unapplied AutoCount batch (2c7f9811: rows
+  for lines 544 and 4817 CSK11A and one CSK14B "added", pending since 13 Oct, no decision). With it, a
+  saved split edit on line 480 (not in that batch's pending rows) still counts ("1 to confirm", Confirm
+  (1), listed), and Confirm applies it exactly as A4 does. The batch's pending lines stay pending and
+  undecided: no OI row, no email row and no stamp for them, and the batch is not marked applied. The
+  lines the batch names pending are still never split-edited (A9).
 - A11 **A held-back line stays held back** (reviewer round 2). When the server holds back a named line
   whose breakdown it refuses (e.g. 608 "components add up to 532 and the line is open for 632"), that
   line is not confirmed, not emailed and not in `lines_confirmed`, even if it is split-edited; it is in
@@ -124,9 +131,10 @@ own, 236 @ 20/11/2026 New line, 167 @ 20/11/2026 New line (AutoCount 417 @ 20/10
 - B7a **Split column sorts by split count** (the chip's N, extra row not counted).
 - B7 **Access.** The SO page shows splits to anyone who can open that sales order (scoped by its
   company, as the page's lines are); no new permission. An SO with no project order shows no chip.
-- B8 **Layout.** Unclipped at 1280 and 375; at 375 the popup fills the width and keeps Qty, Date and
-  Change in view, with Sits on as a small line under Change. Escape and Close return focus to the
-  (i) button.
+- B8 **Layout.** Unclipped at 1280 and 375; at 375 the Lines grid scrolls sideways to the Split column
+  (as to any other column) and the popup fills the width, its grid scrolling sideways. Escape and
+  Close return focus to the control that opened the popup: the (i) button, or the gear button for a
+  View splits popup (board, SO and OI; browser pass 1 found focus left on the page body).
 
 ## D. Gear items (owner, Lavish 21:54)
 
