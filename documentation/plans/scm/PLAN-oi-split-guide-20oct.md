@@ -1,9 +1,9 @@
 # PLAN: guided Confirm on the Fulfilment planning board (OI-SPLIT-GUIDE)
 
-Status: Owner hand test 4 (20 Oct, e54d6f2701) = REWORK: editable remark on every row (UAC F25-F31).
-Rounds 9 / 9c reviewer READY on f113f02a88; browser pass found 3 issues -> round 9d (red 038af9d82c c9c99fe4c8,
-fixture 1225951200; fixes f19c3de86d remark-only save settles + toast, c15af0ba2c AutoCount-added rows editable;
-kill held). Next: reviewer glance, browser re-check 1280/375, script, --handtest. Track M (no migration).
+Status: Crew audit 98b5490248 blocker (email risk) fixed in round 10 (UAC F32: red 67d8d96c52; 5648dc5bf9
+confirmed_remark on board contributions, 501b532abc one remark rule incl. confirmed; kill held). Rounds 9-9d
+editable remark (UAC F25-F31). Next: reviewer, browser 1280/375 incl. SO417636 after the dev DB swap, script,
+--handtest. Track M (no migration).
 
 Card: `oi-split-guide-behaviour-card.md`. UAC: `oi-split-guide-20oct-acceptance-criteria.md` (the
 behaviour; this plan does not restate it). Mock: `documentation/mockups/OI-SPLIT-GUIDE/index.html`.
