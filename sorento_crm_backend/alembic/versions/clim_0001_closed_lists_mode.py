@@ -9,13 +9,13 @@ Additive only and idempotent (`IF NOT EXISTS`) so the shared dev DB, which conve
 `create_all`, can take it in any order. Default `block` keeps every install exactly as it was.
 
 Revision ID: clim_0001_closed_lists_mode
-Revises: exp1020_merge
+Revises: spec_bare_size_0001
 """
 from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "clim_0001_closed_lists_mode"
-down_revision = "exp1020_merge"
+down_revision = "spec_bare_size_0001"
 branch_labels = None
 depends_on = None
 
