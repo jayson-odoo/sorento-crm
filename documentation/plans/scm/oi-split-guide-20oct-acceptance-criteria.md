@@ -147,6 +147,16 @@ or use own location, just like our email to purchasing". Plan crew-note 62883955
   preview).
 - F12. Test strength: at least one test saves a draft, confirms it for real, and compares the guide's words
   with the words the confirmed revision's frozen snapshot gives the email.
+- F13. Owner hand test 2 (phone, ada23cbb92) = REWORK, verbatim: "I should be able to split here and it should
+  only show the one that are saved, so it is actually wrong to show all items in split delivery view, it is
+  expected only those that are saved appear here only". "Split delivery <SO>" opened from the guide shows ONLY
+  the lines this Confirm covers for that order, plus the lines their saved splits already sit on; never the
+  whole order. No "Split lines only" toggle and no search there, so no way to list other lines. Same edit
+  sheet (`LineSplitDialog`), same Save; after Save the guide page re-reads. The board's own "Split delivery"
+  (gear) is unchanged and still lists every line. Plan crew-note 6289817954.
+- F14. Next stays off while a page is still reading its split data (never "seen" before it has loaded).
+- F15. A covered saved Reject on an already-confirmed line shows the purchasing email's own word for that
+  withdrawal (server, the email's function), never a blank Remark.
 
 ## G. Out of scope
 - Making Confirm never touch unsaved lines (crew option b).
