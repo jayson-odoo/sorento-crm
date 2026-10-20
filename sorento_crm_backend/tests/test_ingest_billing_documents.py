@@ -786,6 +786,48 @@ class TestValidation:
         cn["lines"][0]["quantity"] = -1
         assert _record(env.push([cn]), f"{MARKER}:CN:NEG")["outcome"] == "created"
 
+    def test_charge_line_with_no_qty_lands_with_qty_null(self, env):
+        """BL-SS-306: an AutoCount freight / service line can carry NULL Qty (REF section 5,
+        gotcha 1). It has an amount, so it lands, and its qty stays NULL, never an invented 1."""
+        record = _minimal(f"{MARKER}:IV:C1", net_total=60, total=60, local_net_total=60)
+        record["lines"].append(
+            {
+                "source_ref": f"{MARKER}:IV:C1:2",
+                "line_number": 2,
+                "description": "Freight charges",
+                "quantity": None,
+                "net_amount": 50,
+                "tax_amount": 0,
+                "line_total": 50,
+            }
+        )
+        res = env.push([record])
+        assert _record(res, f"{MARKER}:IV:C1")["outcome"] == "created", res.json()
+        doc = env.doc(f"{MARKER}:IV:C1")
+        charge = next(x for x in env.lines(doc.id) if x.source_ref == f"{MARKER}:IV:C1:2")
+        assert charge.quantity is None
+        assert charge.net_amount == Decimal("50.00")
+        assert charge.line_total == Decimal("50.00")
+        # The replay compares NULL with NULL: unchanged, not updated.
+        assert _record(env.push([record]), f"{MARKER}:IV:C1")["outcome"] == "unchanged"
+
+    def test_omitted_qty_is_the_same_as_null(self, env):
+        record = _minimal(f"{MARKER}:DN:C2", document_type="debit_note")
+        del record["lines"][0]["quantity"]
+        assert _record(env.push([record]), f"{MARKER}:DN:C2")["outcome"] == "created"
+        doc = env.doc(f"{MARKER}:DN:C2", "debit_note")
+        assert env.lines(doc.id)[0].quantity is None
+
+    def test_line_with_no_qty_and_no_amount_fails_on_quantity(self, env):
+        record = _minimal(f"{MARKER}:IV:C3")
+        line = record["lines"][0]
+        for key in ("quantity", "net_amount", "line_total"):
+            line[key] = None
+        out = _record(env.push([record]), f"{MARKER}:IV:C3")
+        assert out["outcome"] == "failed", out
+        assert "lines.0.quantity" in out["errors"], out
+        assert env.doc(f"{MARKER}:IV:C3") is None
+
     def test_total_within_one_sen_is_accepted(self, env):
         record = _minimal(f"{MARKER}:IV:R1", net_total=10.00, tax_total=0.60, total=10.61)
         assert _record(env.push([record]), f"{MARKER}:IV:R1")["outcome"] == "created"
