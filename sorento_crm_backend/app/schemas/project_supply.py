@@ -630,6 +630,12 @@ class PreviewInquiryRow(BaseModel):
     delivery_date: Optional[date] = None
     stock_location: Optional[str] = None
     note: Optional[str] = None
+    #: The row's state after the press (`INQUIRY_*`): `cancelled` on a row the press retires.
+    state: Optional[str] = None
+    #: OI-SPLIT-GUIDE (UAC C4): on a row of a line the press did NOT name (not in `lines`,
+    #: `rejected_line_ids`, `cancelled_lines`, nor a saved split edit), what the AutoCount
+    #: book did to that line: `cancelled` | `qty` | `date` | `qty_date`. Null otherwise.
+    autocount_change: Optional[str] = None
 
 
 class PreviewTransfer(BaseModel):
