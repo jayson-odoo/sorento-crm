@@ -533,3 +533,23 @@ def test_template_product_attachment_domain_line_carries_the_file_entity():
         "the product_attachment domain line does not say the ask carries the attachment_type entity of each file word: "
         + lines[0][:200]
     )
+
+
+# --- F1-K: canonical_code is the kind of file (DOCUMENT_TYPE_CODES), apart from the listed pick ---
+
+
+def test_template_canonical_code_is_the_kind_of_file_from_the_taxonomy():
+    from app.services.chatbot.head.grounding import DOCUMENT_TYPE_CODES
+
+    block = _block("R-P2-06")
+    assert not re.search(r"canonical_code repeats", block), "R-P2-06 still says canonical_code repeats listed_item"
+    sentence = next(
+        (s for s in _sentences(block) if "canonical_code" in s and re.search(r"kind of file", s, re.I)), None
+    )
+    assert sentence, "R-P2-06 has no sentence saying canonical_code is the kind of file"
+    quoted = {q.casefold() for q in re.findall(r'"([^"]+)"', sentence)}
+    assert quoted == {c.casefold() for c in DOCUMENT_TYPE_CODES}, (
+        f"quoted kinds {sorted(quoted)} != DOCUMENT_TYPE_CODES {sorted(DOCUMENT_TYPE_CODES)}"
+    )
+    assert block.splitlines()[1].startswith("First the entity"), "step 1 is no longer first"
+    assert len(re.findall(r'"[A-Za-z ]+ [A-Z]{3,}[A-Z0-9-]*"', block)) <= 3
