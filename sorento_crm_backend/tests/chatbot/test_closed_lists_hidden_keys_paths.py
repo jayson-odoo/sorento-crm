@@ -242,7 +242,8 @@ def test_guard_an_unknown_value_on_a_visible_key_keeps_its_breakdown(route_db):
     predicate = result.get("predicate") or {}
     assert [u.get("key") for u in predicate.get("unknown_values") or []] == ["trap_type"], predicate
     assert (predicate.get("members") or {}).get("total") == 4, predicate
-    assert "P trap" in json.dumps(predicate.get("members") or {}, default=str), predicate
+    # A split, when the response carries one, is by the visible key the unknown value names.
+    assert all(b.get("key") == "trap_type" and "P trap" in json.dumps(b, default=str) for b in _splits(predicate)), predicate
 
 
 # --- B4: a keyless unknown value picks its own splitting attribute ---------------------------
@@ -287,6 +288,13 @@ KEYLESS = [{"key": "", "label": "", "said": "pnk", "known": []}]
 HIDDEN_FINISH_WORDS = ('"finish"', "Finish or colour", "White", "Black")
 
 
+def _splits(predicate: dict) -> list[dict]:
+    """Every breakdown the response carries (the set's, the members'). The owner's 16 Oct ruling
+    (#1744 SET-STOCK-RENDER, lead sign-off) means a long set may carry none, so the tests below
+    pin only that a split, when there is one, never names a hidden key."""
+    return [b for b in (predicate.get("breakdown"), (predicate.get("members") or {}).get("breakdown")) if isinstance(b, dict) and b]
+
+
 def test_b4_a_keyless_unknown_never_breaks_the_set_down_by_a_hidden_key(split_db):
     """`_unknown_value_members` calls `resolve_product_set(..., breakdown_over=0)` for a keyless
     unknown, and `_set_breakdown` takes the first registry key that splits the set: the hidden
@@ -300,9 +308,10 @@ def test_b4_a_keyless_unknown_never_breaks_the_set_down_by_a_hidden_key(split_db
 def test_guard_a_keyless_unknown_for_a_contact_with_no_policy_breaks_down_by_finish(split_db):
     result = _resolve(split_db, "which pnk water closet has stock", ["thickness", "board_thickness"], unknown_values=KEYLESS)
 
-    members = (result.get("predicate") or {}).get("members") or {}
-    assert members.get("total") == 4, result.get("predicate")
-    assert (members.get("breakdown") or {}).get("key") == "finish", members
+    predicate = result.get("predicate") or {}
+    assert (predicate.get("members") or {}).get("total") == 4, predicate
+    # The seed surfaces finish when it is visible: a split, when there is one, is by finish.
+    assert all(b.get("key") == "finish" for b in _splits(predicate)), predicate
 
 
 # --- B5: the carried product-set replay (turn_runtime.page_the_set) ---------------------------
@@ -422,25 +431,25 @@ HIDE_FINISH = ["finish", "thickness", "board_thickness"]
 
 def test_b9_a_set_longer_than_the_list_max_is_never_broken_down_by_a_hidden_key(split_db):
     """The main Shape B call (`breakdown_over=set_list_max`): four water closets with stock, a list
-    max of 2, so the set comes back broken down; finish is hidden, so the breakdown is by another key."""
+    max of 2, so the set may come back broken down; finish is hidden, so no breakdown names it."""
     _in_stock(split_db, ["ZZHX-P1", "ZZHX-P2", "ZZHX-S1", "ZZHX-S2"])
 
     result = _resolve(split_db, "which water closet has stock", HIDE_FINISH, set_list_max=2)
 
     predicate = result.get("predicate") or {}
-    assert predicate.get("qualifying_total") == 4 and predicate.get("breakdown"), predicate
+    assert predicate.get("qualifying_total") == 4, predicate
     said = json.dumps({k: predicate.get(k) for k in ("breakdown", "members")}, default=str)
     assert not [w for w in HIDDEN_FINISH_WORDS if w in said], said
 
 
 def test_b9_a_zero_set_with_more_members_than_the_list_max_never_breaks_them_down_by_a_hidden_key(split_db):
     """A set that qualifies nothing (no stock anywhere) with four members over a list max of 2:
-    `members.breakdown` (resolve_product_set's members branch); finish is hidden."""
+    any `members.breakdown` (resolve_product_set's members branch) never names the hidden finish."""
     result = _resolve(split_db, "which water closet has stock", HIDE_FINISH, set_list_max=2)
 
     predicate = result.get("predicate") or {}
     members = predicate.get("members") or {}
-    assert predicate.get("qualifying_total") == 0 and members.get("total") == 4 and members.get("breakdown"), predicate
+    assert predicate.get("qualifying_total") == 0 and members.get("total") == 4, predicate
     said = json.dumps({k: predicate.get(k) for k in ("breakdown", "members")}, default=str)
     assert not [w for w in HIDDEN_FINISH_WORDS if w in said], said
 
@@ -450,7 +459,8 @@ def test_guard_a_long_set_for_a_contact_with_no_policy_breaks_down_by_finish(spl
 
     result = _resolve(split_db, "which water closet has stock", ["thickness", "board_thickness"], set_list_max=2)
 
-    assert ((result.get("predicate") or {}).get("breakdown") or {}).get("key") == "finish", result.get("predicate")
+    # The seed surfaces finish when it is visible: a split, when there is one, is by finish.
+    assert all(b.get("key") == "finish" for b in _splits(result.get("predicate") or {})), result.get("predicate")
 
 
 # --- B8: what the turn stores for the next turn ----------------------------------------------
