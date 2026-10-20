@@ -190,7 +190,8 @@ class Settings(BaseSettings):
     chat_topic_labeller_enabled: bool = False
     # CHAT-COMPOSER: one reply composer per answer type. Off = main's reply text, byte for byte.
     # Read at call time through `chatbot.composers.enabled()`. CHAT_COMPOSER_ENABLED.
-    chat_composer_enabled: bool = False
+    # EXPLORE-1020 build only (DO NOT MERGE): the gate is on for the owner hand test copy.
+    chat_composer_enabled: bool = True
     # How long the request waits for the offloaded turn before giving up on it.
     # CHATBOT_TURN_WAIT_SECONDS.
     chatbot_turn_wait_seconds: int = 60
