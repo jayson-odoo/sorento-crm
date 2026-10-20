@@ -23,7 +23,11 @@ import logging
 import os
 import re
 import sys
+import time
 from typing import Any
+
+#: The parse's own cost, as the provider reported it on the result's `usage` (None when it reported none).
+USAGE_KEYS = ("prompt_tokens", "cached_tokens", "completion_tokens")
 
 EXPECT_KEYS = frozenset({
     "status", "not_status", "domain_hint", "intent_hint", "product", "no_attribute", "customer", "canonical",
@@ -235,7 +239,13 @@ def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] 
         state_block=state,
     )
     user_block, _report = context_mod.assemble(layers)
-    return parser.parse(config, user_block)
+    # The parser call alone is timed (the engine's own `parse_started` span), not the user turn build.
+    started = time.perf_counter()
+    out = parser.parse(config, user_block)
+    ms = round((time.perf_counter() - started) * 1000)
+    if not isinstance(out, dict):
+        return out  # not an emission: run_live records the error
+    return parser.ParsedOutput(dict(out), {**(getattr(out, "usage", None) or {}), "parser_ms": ms})
 
 
 def _pinned_version(session_factory: Any, version_id: str) -> int:
@@ -321,7 +331,10 @@ def run_live(rows: list[dict[str, Any]], *, session_factory: Any, version_id: st
                             "closed_lists_mode": mode,
                         }
                         try:
-                            verdict = dict(_parse_one(case["message"], config, factory, context=case.get("context")))
+                            parsed = _parse_one(case["message"], config, factory, context=case.get("context"))
+                            usage = getattr(parsed, "usage", None) or {}
+                            row.update({k: usage.get(k) for k in (*USAGE_KEYS, "parser_ms")})
+                            verdict = dict(parsed)
                             passed, reasons = grade_parse(verdict, case["expect"])
                             entities = [e for e in verdict.get("entities") or [] if isinstance(e, dict)]
                             row.update(
