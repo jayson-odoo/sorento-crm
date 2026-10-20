@@ -867,3 +867,47 @@ def test_run_live_rows_record_the_warehouse_raws(session_factory, monkeypatch):
                       version_id="1", repeats=1, max_usd=5.0, require_key_last4="WXYZ")
     assert out[0]["passed"] is True and out[0]["warehouse"] == ["BRW"], out
     assert out[0]["closed_lists_mode"] == "off", out
+
+
+# --- LEAN-INDEX M2: each row records what the parse cost (tokens) and how long the parser call took ----------
+
+USAGE_KEYS = ("prompt_tokens", "cached_tokens", "completion_tokens")
+
+
+def _usage_run(session_factory, monkeypatch, parse):
+    from app.services.chatbot.head import parser as parser_mod
+
+    monkeypatch.setattr(parser_mod, "resolve_config", lambda db, **kw: _config())
+    monkeypatch.setattr(parser_mod, "parse", parse)
+    return pg.run_live([{"id": "u", "message": "ZZA100 price", "expect": {}}], session_factory=session_factory,
+                       version_id="1", repeats=1, max_usd=5.0, require_key_last4="WXYZ")
+
+
+def test_rows_record_the_parse_tokens_the_provider_reported(session_factory, monkeypatch):
+    from app.services.chatbot.head import parser as parser_mod
+
+    usage = {"provider": "openai", "model": "m", "prompt_tokens": 18318, "cached_tokens": 17920,
+             "completion_tokens": 214, "total_tokens": 18532}
+    out = _usage_run(session_factory, monkeypatch,
+                     lambda config, block: parser_mod.ParsedOutput({"status": None, "entities": []}, usage))
+    assert out[0]["reasons"] == [], out
+    assert {k: out[0].get(k) for k in USAGE_KEYS} == {"prompt_tokens": 18318, "cached_tokens": 17920,
+                                                       "completion_tokens": 214}, out
+
+
+def test_rows_record_the_parser_call_ms(session_factory, monkeypatch):
+    import time
+
+    def slow(config, block):
+        time.sleep(0.05)
+        return {"status": None, "entities": []}
+
+    out = _usage_run(session_factory, monkeypatch, slow)
+    ms = out[0].get("parser_ms")
+    assert isinstance(ms, int) and 50 <= ms < 5000, out
+
+
+def test_a_parse_that_reports_no_usage_records_none_not_zero(session_factory, monkeypatch):
+    out = _usage_run(session_factory, monkeypatch, lambda config, block: {"status": None, "entities": []})
+    assert all(k in out[0] and out[0][k] is None for k in USAGE_KEYS), out
+    assert isinstance(out[0].get("parser_ms"), int), out
