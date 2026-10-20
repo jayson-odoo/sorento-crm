@@ -5818,42 +5818,22 @@ class ProjectSupplyService:
         """
         if fact is None:
             return True
+        if fact.core is not None and (fact.core.line_status or "open") == "cancelled":
+            return True
         frozen_core = snapshot.get("core_line_id")
         live_core = (
             str(line.core_sales_order_line_id) if line.core_sales_order_line_id else None
         )
         if frozen_core is not None and str(frozen_core) != (live_core or ""):
             return True
-        return ProjectSupplyService._autocount_change_of(snapshot, fact) is not None
-
-    @staticmethod
-    def _autocount_change_of(
-        snapshot: Optional[Dict[str, Any]],
-        fact: Optional[_LineFacts],
-    ) -> Optional[str]:
-        """What the AutoCount book did to a line since `snapshot` froze it: `cancelled` (the
-        book cancelled the line), `qty`, `date` or `qty_date` (its open qty and/or required
-        date moved), else None. The book-cancel, qty and date halves of
-        `_carry_snapshot_has_drifted`, kept in one place so the drift check and the Confirm
-        dry run's AutoCount label (OI-SPLIT-GUIDE, UAC C4) can never disagree."""
-        if fact is None:
-            return None
-        if fact.core is not None and (fact.core.line_status or "open") == "cancelled":
-            return "cancelled"
-        if snapshot is None:
-            return None
         frozen_open = snapshot.get("open_qty")
-        qty_moved = frozen_open is not None and _dec(frozen_open) != fact.open_qty
+        if frozen_open is not None and _dec(frozen_open) != fact.open_qty:
+            return True
         frozen_date = snapshot.get("required_date")
         live_date = fact.required_date.isoformat() if fact.required_date else ""
-        date_moved = frozen_date is not None and str(frozen_date) != live_date
-        if qty_moved and date_moved:
-            return "qty_date"
-        if qty_moved:
-            return "qty"
-        if date_moved:
-            return "date"
-        return None
+        if frozen_date is not None and str(frozen_date) != live_date:
+            return True
+        return False
 
     def _lock_stock(
         self,
@@ -11550,21 +11530,10 @@ class ProjectSupplyService:
                 before_decision_id = None
                 before_rows: Dict[str, Tuple[Any, ...]] = {}
                 before_moves: Dict[str, Tuple[Any, ...]] = {}
-                named_line_ids: Set[str] = set()
                 if observe:
                     active = self.active_decision(str(order.id))
                     before_decision_id = str(active.id) if active is not None else None
                     before_rows, before_moves = self._preview_baseline(order)
-                    # OI-SPLIT-GUIDE (UAC C4): the lines this press names, read AFTER
-                    # `prepare` added the saved split edits and BEFORE the hold-back.
-                    named_line_ids = (
-                        {str(line.project_line_id) for line in (entry.lines or [])}
-                        | {str(x) for x in (getattr(entry, "rejected_line_ids", None) or [])}
-                        | {
-                            str(x.project_line_id)
-                            for x in (getattr(entry, "cancelled_lines", None) or [])
-                        }
-                    )
                 body, entry, held_back = self._write_holding_back(
                     order, entry, write, can_hold_back(entry)
                 )
@@ -11573,13 +11542,7 @@ class ProjectSupplyService:
                     now_active = self.active_decision(str(order.id))
                     changed = now_active is not None and str(now_active.id) != before_decision_id
                     previewed = (
-                        self._preview_of(
-                            order,
-                            before_rows,
-                            before_moves,
-                            named_line_ids=named_line_ids,
-                            before_decision_id=before_decision_id,
-                        )
+                        self._preview_of(order, before_rows, before_moves)
                         if changed
                         else {"inquiry_rows": [], "transfers": []}
                     )
@@ -11672,63 +11635,11 @@ class ProjectSupplyService:
         }
         return rows, moves
 
-    def _autocount_changes(
-        self,
-        lines: Sequence[ProjectSalesOrderLine],
-        line_ids: Set[str],
-        before_decision_id: Optional[str],
-    ) -> Dict[str, str]:
-        """Per line id in `line_ids`, what the AutoCount book did to it since the revision
-        `before_decision_id` froze it (`_autocount_change_of`); a line it did nothing to is
-        left out. The facts are the drift check's own: open qty `plan_qty_of(core)` and the
-        required date `core.required_date or line.delivery_date`, as `_facts_for` reads them."""
-        if not line_ids:
-            return {}
-        wanted = [line for line in lines if str(line.id) in line_ids]
-        core_ids = [
-            str(line.core_sales_order_line_id) for line in wanted if line.core_sales_order_line_id
-        ]
-        cores = (
-            {
-                str(core.id): core
-                for core in self.db.query(SalesOrderLine).filter(SalesOrderLine.id.in_(core_ids))
-            }
-            if core_ids
-            else {}
-        )
-        previous = (
-            self.db.query(SOSupplyDecision)
-            .filter(SOSupplyDecision.id == before_decision_id)
-            .first()
-            if before_decision_id
-            else None
-        )
-        snapshots = {
-            str(snapshot.get("project_line_id") or ""): snapshot
-            for snapshot in ((previous.line_snapshots if previous is not None else None) or [])
-        }
-        out: Dict[str, str] = {}
-        for line in wanted:
-            core = cores.get(str(line.core_sales_order_line_id or ""))
-            fact = _LineFacts(
-                line=line,
-                core=core,
-                open_qty=plan_qty_of(core),
-                required_date=(core.required_date if core else None) or line.delivery_date,
-            )
-            change = self._autocount_change_of(snapshots.get(str(line.id)), fact)
-            if change is not None:
-                out[str(line.id)] = change
-        return out
-
     def _preview_of(
         self,
         order: ProjectSalesOrder,
         before_rows: Mapping[str, Tuple[Any, ...]],
         before_moves: Mapping[str, Tuple[Any, ...]],
-        *,
-        named_line_ids: Optional[Set[str]] = None,
-        before_decision_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """The order inquiry rows and stock transfers the press just wrote, read INSIDE its
         transaction (before the caller rolls it back). The new revision is the active one
@@ -11742,9 +11653,7 @@ class ProjectSupplyService:
         OI-SPLIT-GUIDE (UAC C3): every row of the order whose facts this press changed is
         listed, whichever revision raised it, so a row an OLDER revision raised and this press
         retires (a drifted covered line, a book cancel, a batch auto-accept) reads CANCEL
-        beside the rows this revision raised. UAC C4: a row of a line the press did not name
-        (`named_line_ids`) carries what the AutoCount book did to that line
-        (`_autocount_change_of`, against the snapshot of the revision active before it)."""
+        (its `state`) beside the rows this revision raised; admin Simulate lists them."""
         from app.models.stock_transfer import StockTransfer
         from app.services.project_line_split_service import display_line_nos
 
@@ -11775,15 +11684,6 @@ class ProjectSupplyService:
             for row in self.db.query(OrderInquiryRow).filter(row_scope).all()
             if before_rows.get(str(row.id)) != _preview_row_facts(row)
         ]
-        change_of = self._autocount_changes(
-            lines,
-            {
-                str(row.so_line_id)
-                for row in changed_rows
-                if row.so_line_id and str(row.so_line_id) not in (named_line_ids or set())
-            },
-            before_decision_id,
-        )
         inquiry_rows = [
             {
                 "line_no": line_no_of.get(str(row.so_line_id or "")),
@@ -11796,7 +11696,6 @@ class ProjectSupplyService:
                 "stock_location": row.stock_location,
                 "note": row.note,
                 "state": row.state,
-                "autocount_change": change_of.get(str(row.so_line_id or "")),
             }
             for row in changed_rows
         ]
