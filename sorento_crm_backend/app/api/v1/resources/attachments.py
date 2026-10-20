@@ -1588,7 +1588,7 @@ async def get_attachment_preview_url(
 @router.delete("/{attachment_id}", status_code=status.HTTP_200_OK)
 async def delete_attachment(
     attachment_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("resource.attachments.delete")),
     db: Session = Depends(get_db)
 ):
     """Delete an attachment permanently (hard delete). Use archive for retention."""

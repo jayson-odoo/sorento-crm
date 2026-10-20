@@ -49,10 +49,13 @@ export default function DriveRowActions({
   isTrashView,
   recursive,
   resubmitting,
+  canDeletePermanently,
   handlers,
 }: {
   item: DriveItem;
   isTrashView: boolean;
+  /** `resource.attachments.delete`: without it a trashed file offers no permanent delete. */
+  canDeletePermanently: boolean;
   recursive: boolean;
   resubmitting: boolean;
   handlers: DriveRowActionHandlers;
@@ -149,11 +152,15 @@ export default function DriveRowActions({
           </ContextMenuItem>
         </>
       )}
-      <ContextMenuSeparator />
-      <ContextMenuItem variant="destructive" onClick={() => handlers.onDelete(item)}>
-        <Trash2 className="size-4" />
-        {isTrashView ? 'Permanently delete' : 'Move to trash'}
-      </ContextMenuItem>
+      {(!isTrashView || canDeletePermanently) && (
+        <>
+          <ContextMenuSeparator />
+          <ContextMenuItem variant="destructive" onClick={() => handlers.onDelete(item)}>
+            <Trash2 className="size-4" />
+            {isTrashView ? 'Permanently delete' : 'Move to trash'}
+          </ContextMenuItem>
+        </>
+      )}
     </>
   );
 }
