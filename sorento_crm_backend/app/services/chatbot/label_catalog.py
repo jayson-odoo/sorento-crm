@@ -577,6 +577,9 @@ def refer_sentences(localizer: Any = None) -> tuple[str, ...]:
 #: so a gate-off table never holds them; `defaults()` and `resolve()` add them when the gate is on.
 #: `{noun}` is a lower-case spec word, so it never takes the official-type wording of `{what}`.
 LANE_LABELS: dict[str, dict[str, str]] = {
+    "Name one to see them.": {"ms": "Sebut satu untuk melihatnya.", "zh": "请指定一个品牌查看。"},
+    'Reply "more" to see the next {n}.': {"ms": 'Balas "more" untuk lihat {n} seterusnya.', "zh": '回复 "more" 查看接下来的 {n} 个。'},
+    "That is all {total}.": {"ms": "Itu sahaja, {total}.", "zh": "就这些，共 {total} 个。"},
     "But no stock matched these.": {"ms": 'Tiada stok yang sepadan.', "zh": '没有匹配的库存。'},
     "But no product matched these.": {"ms": 'Tiada produk yang sepadan.', "zh": '没有匹配的产品。'},
     "But no SPO line matched these.": {"ms": 'Tiada baris SPO yang sepadan.', "zh": '没有匹配的 SPO 行。'},
@@ -584,6 +587,18 @@ LANE_LABELS: dict[str, dict[str, str]] = {
     "No {noun} on record for {product}.": {"ms": 'Tiada {noun} direkodkan untuk {product}.', "zh": '没有 {product} 的{noun}记录。'},
     "No list price on record for {product}.": {"ms": 'Tiada harga senarai direkodkan untuk {product}.', "zh": '没有 {product} 的标价记录。'},
     "No dimensions on record for {product}.": {"ms": 'Tiada dimensi direkodkan untuk {product}.', "zh": '没有 {product} 的尺寸记录。'},
+    # Lists L5: the tail `_named` counts the names it left off; filled into the `{names}` value only.
+    " and {n} others": {"ms": " dan {n} lagi", "zh": " 等另外 {n} 个"},
+    # Lists L1: the range a cut code-lookup list adds to its intro; it states no total (the probe
+    # behind such a list may have stopped short of its end).
+    "(showing {first} to {last})": {
+        "ms": "(menunjukkan {first} hingga {last})",
+        "zh": "（显示第 {first} 至 {last} 个）",
+    },
+    "Those are the first {n} matches. Send more of the code to narrow it.": {
+        "ms": "Itulah {n} padanan pertama. Hantar lebih banyak kod untuk mengecilkan carian.",
+        "zh": "以上是前 {n} 个匹配项。请发送更完整的编码以缩小范围。",
+    },
 }
 
 
@@ -669,6 +684,8 @@ INLINE = frozenset(
         "But no product matched these.",
         "But no SPO line matched these.",
         "No {what} on record for {product}.",
+        "That is all {total}.",
+        "Name one to see them.",
         'What would you like me to know?',
         "Sorry, we don't support direct goods receive & SPO at the moment. You may ask about incoming stock for a specific product or container",
         'Do you mean customer {customer} or sales agent {agent}? Reply 1 for the customer, 2 for the sales agent.',
@@ -793,7 +810,20 @@ _SUB_ASK_KEYS = frozenset(
         "{date} ({qty}, {spo})", "{qty}, ETA {date}",
     }
 )
-DIRECT_ONLY = frozenset({"I have {names}.", "{code} has no {types}."}) | _SUB_ASK_KEYS | _find_fit_keys()
+DIRECT_ONLY = (
+    frozenset(
+        {
+            "I have {names}.",
+            "{code} has no {types}.",
+            " and {n} others",
+            "(showing {first} to {last})",
+        }
+    )
+    | _SUB_ASK_KEYS
+    | _find_fit_keys()
+)
+_NAMES_TAIL = " and {n} others"
+_OTHERS = re.compile(r"(.*) and (\d[\d,]*) others")
 
 #: Report value words `Localizer.lines` translates after a catalogued label. An explicit set, never
 #: "any catalog key", so data that happens to read like a label (a status named "Status") is safe.
@@ -935,7 +965,7 @@ class Localizer:
                 best = (fixed, m.groupdict(), target)
         if best is None:
             return s
-        values = best[1]
+        values = self._names(best[1])
         return _TOKEN.sub(lambda t: values.get(t.group(1), t.group(0)), best[2])
 
     def lines(self, text: str) -> str:
@@ -967,11 +997,18 @@ class Localizer:
             line if len(line) > _INLINE_LINE_MAX else self._inline_line(line) for line in text.split("\n")
         )
 
+    def _names(self, values: dict[str, str]) -> dict[str, str]:
+        """`values` with a `{names}` tail "... and 3 others" said in the table's wording, when it has one."""
+        tail, m = self.table.get(_NAMES_TAIL), _OTHERS.fullmatch(values.get("names") or "")
+        if tail is None or m is None:
+            return values
+        return {**values, "names": m.group(1) + tail.replace("{n}", m.group(2))}
+
     def _inline_line(self, text: str) -> str:
         found: list[tuple[int, int, int, str]] = []
         for regex, target, fixed, names in self._inline:
             for m in regex.finditer(text):
-                values = m.groupdict()
+                values = self._names(m.groupdict())
                 if target in self._generic_targets and self._is_find_none(m.group(0)):
                     continue
                 found.append((m.start(), m.end(), fixed, _TOKEN.sub(lambda t: values.get(t.group(1), t.group(0)), target)))

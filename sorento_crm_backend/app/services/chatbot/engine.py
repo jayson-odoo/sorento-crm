@@ -75,6 +75,7 @@ from app.services.chatbot.usage import CLARIFIER_FEATURE, record_parser_usage, r
 # is everything that has to touch a database or a tool on its behalf.
 from app.services.chatbot import label_catalog, language as language_mod, session_state, turn_runtime
 from app.services.chatbot import quick_reply_guard
+from app.services.chatbot.composers import sets as composers_sets
 from app.services.chatbot.turn import pending as turn_pending
 from app.services.chatbot.turn import chat_state
 from app.services.chatbot.turn import question as turn_question
@@ -183,7 +184,7 @@ def split_marked_message(text: str) -> list[str]:
 
 #: WhatsApp's per-message ceiling as the MCP presenter keeps it
 #: (`sorento_crm_mcp.presenters.WHATSAPP_MESSAGE_MAX_CHARS`, under WhatsApp's own 4096).
-WHATSAPP_MESSAGE_MAX_CHARS = 3900
+WHATSAPP_MESSAGE_MAX_CHARS = composers_sets.MESSAGE_MAX_CHARS
 
 
 def _product_family(db: Any, code: str) -> list[dict[str, str]]:
@@ -5045,6 +5046,8 @@ def _run_stages_body(  # noqa: PLR0915
             verdict = turn_runtime.with_brand_from_offer(
                 verdict, latest_user_message, carried=state_in.focus.set_page
             )
+    # CHAT-COMPOSER: a "more" pages the set the last reply listed, on a state-led turn too.
+    verdict = turn_runtime.with_set_more(verdict, carried=state_in.focus.set_page)
     # ATTACH-SET-BRAND-FOLLOWUP round 2 (live console pass, 7 Oct 2026): an echo of a row
     # the focus already holds settled is the carry restated, not an axis to rewrite with
     # an unsettled copy.
@@ -7397,23 +7400,15 @@ def _run_stages_body(  # noqa: PLR0915
                 class_terms = turn_runtime.class_scope_terms(verdict)
                 qualifying = int((predicate or {}).get("qualifying_total") or 0)
                 asked = named_count(verdict.get("top_n"))
-                withheld = (
-                    predicate is not None
-                    and plan.fetch
-                    and spec_tier
-                    and qualifying > business_answer.SET_LIST_MAX
-                    and asked is None
-                    and bool((predicate or {}).get("breakdown"))
-                )
-                # Fix round 9 on PR #833: a long set nothing splits lists what fits, and
-                # is carried like a named count so "another N" continues it.
+                # Fix round 9 on PR #833: a long set lists what fits, and is carried like
+                # a named count so "another N" continues it (SET-STOCK-RENDER, owner 16
+                # Oct 2026: every long set, never withheld for a breakdown).
                 listed_to_the_limit = (
                     predicate is not None
                     and plan.fetch
                     and spec_tier
                     and qualifying > business_answer.SET_LIST_MAX
                     and asked is None
-                    and not withheld
                 )
                 # W4 (owner hand test round 2): a set listed only in part (the customer
                 # named fewer than qualify) is carried too, so their own "another N"
@@ -7425,6 +7420,33 @@ def _run_stages_body(  # noqa: PLR0915
                     and asked is not None
                     and min(asked, business_answer.SET_LIST_MAX) < qualifying
                 )
+                # CHAT-COMPOSER: a page cut by the one-message budget leaves products unlisted even
+                # in a set of 50 or fewer; a described set whose leg qualifies nothing names the
+                # first page of its matching products. Both are carried so a bare "more" pages.
+                from app.services.chatbot import composers
+
+                window = envelopes[0].get("set_window") if envelopes else None
+                window_last = (
+                    int(window["last"]) if isinstance(window, dict) and window.get("last") else None
+                )
+                members = (predicate or {}).get("members") if isinstance(predicate, dict) else None
+                members_total = int((members or {}).get("total") or 0) if isinstance(members, dict) else 0
+                members_listed = len((members or {}).get("codes") or []) if isinstance(members, dict) else 0
+                cut_small = bool(
+                    predicate is not None
+                    and plan.fetch
+                    and spec_tier
+                    and window_last is not None
+                    and window_last < qualifying
+                    and not (listed_to_the_limit or partly_listed)
+                )
+                members_paged = bool(
+                    composers.enabled()
+                    and predicate is not None
+                    and plan.fetch
+                    and not qualifying
+                    and members_total > members_listed > 0
+                )
                 paged = bool(plan.fetch) and isinstance(plan.fetch[0].filters.get("set_page"), dict)
                 # ROGUE-CONVO-REVIEW (owner ruling Q4): a set the spec tier read off the
                 # words INSIDE an unplaced product token is not what the customer asked
@@ -7435,9 +7457,19 @@ def _run_stages_body(  # noqa: PLR0915
                 # has cert ZZQ9917") is listed by the reply and stays carried, so the
                 # follow-up count continues it; only the missed code is named beside it.
                 # `miss_on_typed_product` is the one computation beside the resolve outcome.
-                if paged:
+                # CHAT-COMPOSER: a page cut to one message listed fewer than the limit; the carry
+                # moves past what was actually printed.
+                lane_carry = window.get("carry") if isinstance(window, dict) else None
+                if composers.enabled() and plan.fetch and isinstance(lane_carry, dict):
+                    # CHAT-COMPOSER Lists: the lane that printed the "more" line wrote its own carry.
+                    state_out.focus.set_page = {"set_key": {**lane_carry, "domain": plan.fetch[0].domain}}
+                elif paged:
                     # A page of a carried set: the runner hands back where it stopped.
                     state_out.focus.set_page = envelopes[0].get("set_carry") if envelopes else None
+                    if window_last is not None and isinstance(state_out.focus.set_page, dict):
+                        key = state_out.focus.set_page.get("set_key")
+                        if isinstance(key, dict) and int(key.get("shown") or 0) > window_last:
+                            state_out.focus.set_page = {"set_key": {**key, "shown": window_last}}
                     # ATTACH-SET-BRAND-FOLLOWUP round 2 (owner hand test on the local
                     # copy, 7 Oct 2026): the rows the page LISTED are the subject now.
                     # The page turn never ran the resolver, so nothing settled the focus
@@ -7455,7 +7487,22 @@ def _run_stages_body(  # noqa: PLR0915
                             state_out.focus.extra.pop(kind, None)
                 elif miss_on_typed_product and not class_terms:
                     state_out.focus.set_page = None
-                elif withheld or partly_listed or listed_to_the_limit:
+                elif members_paged:
+                    state_out.focus.set_page = turn_runtime.set_page_carry(
+                        {**predicate, "qualifying_total": members_total},
+                        plan.fetch[0],
+                        class_terms,
+                        access_levels=(envelopes[0].get("access_levels_used") if envelopes else None),
+                        shown=members_listed,
+                    )
+                    if isinstance(state_out.focus.set_page, dict):
+                        # The leg stays in the key: the next page is this miss list's next members.
+                        state_out.focus.set_page["set_key"]["miss_list"] = True
+                        # ...and the offer's team is the first page's, not the "more" message's.
+                        first_team = (verdict.get("routing") or {}).get("suggested_team")
+                        if first_team:
+                            state_out.focus.set_page["set_key"]["offer_team"] = first_team
+                elif partly_listed or listed_to_the_limit or cut_small:
                     state_out.focus.set_page = turn_runtime.set_page_carry(
                         predicate,
                         plan.fetch[0],
@@ -7464,8 +7511,8 @@ def _run_stages_body(  # noqa: PLR0915
                             envelopes[0].get("access_levels_used") if envelopes else None
                         ),
                         shown=(
-                            0
-                            if withheld
+                            window_last
+                            if window_last is not None
                             else business_answer.SET_LIST_MAX
                             if listed_to_the_limit
                             else min(asked, business_answer.SET_LIST_MAX)
