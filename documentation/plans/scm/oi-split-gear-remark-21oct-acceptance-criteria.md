@@ -40,8 +40,20 @@ Words: "confirmed remark" = the planner's own REMARK the line's active revision 
 - H8 (reviewer round 1). Typing exactly X back into the box of a no-draft line with no stored split remark
   stores nothing: the dialog is not dirty and Save sends no split for the line. Emptying the box keeps it empty
   while focused; on blur X shows again, nothing is stored and Save stays disabled.
+- H9 (reviewer round 2). Typing X over a split remark Y STORED for the line (as loaded, not the live draft)
+  stores X, as on main: Save sends the split remark X, it is a split edit and purchasing is told X. Only a line
+  with no stored split remark maps X back to nothing (H8).
+- H10 (reviewer round 2). A line with a saved Reject or Cancel draft never hands its confirmed remark to the
+  sheet, also where the server sends no words for it (a reserve-only Reject) and on the guide's read-only rows
+  (an order not yet adopted, `ConfirmGuideDialog.tsx:42`).
 
 ## Out of scope
 
 - Clearing a confirmed remark from gear "Split delivery" on a line with no draft (needs a draft made from the
   frozen decision; today a re-approve does it).
+- Recorded limit (reviewer round 2): a line still unsplit that another line's split was dropped onto prints the
+  generated words in the email (`project_line_split_service.py:524-525`) while its row shows X. A line with its
+  own real split edit draws split rows with the change word, which the email prints too (`:517`), so the two
+  agree there.
+- Clearing a stored split remark Y to empty is not told to purchasing (`split_plan_edited`,
+  `project_line_split_service.py:160-161`); same on main, not this lane.
