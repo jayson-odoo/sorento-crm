@@ -579,14 +579,19 @@ def saved_draft_remark(
     *,
     location: Optional[str] = None,
     codes: Optional[Mapping[str, str]] = None,
+    spo_numbers: Sequence[str] = (),
+    buy_origin: Optional[str] = None,
 ) -> Optional[str]:
-    """OI-SPLIT-GUIDE (UAC F3): what the purchasing email will say for a line whose decision
-    is SAVED but not confirmed yet, in the email's own words (`saved_line_remark`, one
-    function): the board's draft (`so_supply_decision_drafts.decision`) laid out the way
+    """OI-SPLIT-GUIDE (UAC F3, F11): what the purchasing email will say for a line whose
+    decision is SAVED but not confirmed yet, in the email's own words (`saved_line_remark`,
+    one function): the board's draft (`so_supply_decision_drafts.decision`) laid out the way
     `ProjectSupplyService._snapshot` freezes a confirmed line's composition (reserve, incoming,
     borrow, buy, in that order). `codes` names a reserve's or borrow's warehouse by id when the
-    draft carries no code. A saved Cancel SO reads CANCEL, as the email's cancelled-line line
-    does; a rejection, or a draft with nothing composed, has no words (`None`)."""
+    draft carries no code; `spo_numbers` are the SPOs arriving in time at the line's own
+    location (`_facts_for`'s timely rule), which the email prints for incoming stock; a
+    `local` `buy_origin` reads LOCAL BUY, as the email marks it. A saved Cancel SO reads
+    CANCEL, as the email's cancelled-line line does; a rejection, or a draft with nothing
+    composed, has no words (`None`)."""
     if not decision:
         return None
     verdict = decision.get("verdict")
@@ -626,8 +631,9 @@ def saved_draft_remark(
         {
             "components": components,
             "order_back": bool(decision.get("order_back")),
-            "buy_origin": decision.get("buy_origin"),
+            "buy_origin": "local" if buy_origin == "local" else None,
             "location": location,
+            "timely_spo_refs": [{"spo_number": number} for number in spo_numbers],
         }
     )
     return remark or None

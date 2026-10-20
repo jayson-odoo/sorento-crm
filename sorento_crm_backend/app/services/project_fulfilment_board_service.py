@@ -430,6 +430,9 @@ class _Row:
         #: `_LineFacts` (`ProjectSupplyService.demand_facts`) so the own-arrival credit's
         #: prefetch never pays a second query for a row this one already carries.
         "source_ref", "company_id",
+        #: OI-SPLIT-GUIDE (UAC F3, F10): the purchasing email's words for what the next
+        #: Confirm sends for this line (`_attach_saved_remarks`). `None` when it sends nothing.
+        "saved_remark",
     )
 
     def __init__(self, **kw: Any) -> None:
@@ -857,6 +860,7 @@ class FulfilmentBoardService:
         self._attach_drafts(
             [*rows, *(row for row in cancelled_rows if row.cancel_open_oi_rows)]
         )
+        self._attach_saved_remarks([*rows, *cancelled_rows])
 
         cells: List[Dict[str, Any]] = []
         for bucket in buckets:
@@ -5278,6 +5282,73 @@ class FulfilmentBoardService:
                 "proposed": entry.get("proposed"),
             }
 
+    def _attach_saved_remarks(self, rows: Sequence[_Row]) -> None:
+        """OI-SPLIT-GUIDE (UAC F3, F10, F11): what the purchasing email will say for each line
+        the next Confirm sends, read by the guided Confirm's review: a saved draft's words
+        (`saved_draft_remark`, the email's own `saved_line_remark`), and the email's cancel
+        word (`handover_remark("cancelled", ...)`) for a line the book cancelled with no
+        draft. Incoming stock names the SPOs arriving in time at the line's own location
+        (`_facts_for`'s rule). No extra statement on a board with no saved draft."""
+        from app.services.project_order_inquiry_service import (
+            handover_remark,
+            saved_draft_remark,
+        )
+
+        decisions = {
+            id(row): (row.draft or {}).get("decision") for row in rows if row.draft
+        }
+        missing = {
+            str(item.get("warehouse_id"))
+            for decision in decisions.values()
+            for item in [
+                *((decision or {}).get("reserve") or []),
+                *((decision or {}).get("borrow") or []),
+            ]
+            if item.get("warehouse_id")
+            and not (item.get("location") or item.get("warehouse_code"))
+        }
+        codes = (
+            {
+                str(w_id): code
+                for w_id, code in self.db.query(Warehouse.id, Warehouse.warehouse_code).filter(
+                    Warehouse.id.in_(list(missing))
+                )
+            }
+            if missing
+            else {}
+        )
+        incoming = [
+            row
+            for row in rows
+            if _dec((decisions.get(id(row)) or {}).get("timely_spo_qty")) > _ZERO
+        ]
+        spo = (
+            self.supply._spo_rows(
+                {str(row.product_id) for row in incoming if row.product_id},
+                {str(row.warehouse_id) for row in incoming if row.warehouse_id},
+            )
+            if incoming
+            else {}
+        )
+        for row in rows:
+            decision = decisions.get(id(row))
+            if decision:
+                key = (str(row.product_id or ""), str(row.warehouse_id or ""))
+                row.saved_remark = saved_draft_remark(
+                    decision,
+                    location=row.location,
+                    codes=codes,
+                    spo_numbers=[
+                        ref.spo_number
+                        for ref in spo.get(key, [])
+                        if row.required_date is None
+                        or (ref.arrival_date is not None and ref.arrival_date <= row.required_date)
+                    ],
+                    buy_origin=self._buy_origin.get(str(row.product_id)) if row.product_id else None,
+                )
+            elif row.cancelled and not row.cancelled_at:
+                row.saved_remark = handover_remark("cancelled", row, None)
+
     def _contribution(self, row: _Row) -> Dict[str, Any]:
         return {
             #: THIS LINE's own location table (R1/B1): the same rows the cell's drawer shows,
@@ -5451,6 +5522,8 @@ class FulfilmentBoardService:
             #: this is what somebody has settled but not committed, and a line can carry
             #: either, both or neither. Null when nobody has saved one.
             "draft": row.draft,
+            #: OI-SPLIT-GUIDE (UAC F3, F10): the email's words for what Confirm sends.
+            "saved_remark": row.saved_remark,
             #: The same saver facts flattened, for the tooltip (AC-DT-2) - `row.draft`
             #: already carries `saved_by`/`saved_at`, in the shape the draft PUT/GET
             #: round-trips; these are the same values under the trail's own names.
