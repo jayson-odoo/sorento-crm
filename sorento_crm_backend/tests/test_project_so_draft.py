@@ -293,7 +293,9 @@ def _po_version(db, po, *, lines, extracted_total=None, version_no=1, confirmed=
     return version
 
 
-def _schedule(db, project, po, *, po_version=None, revision_label=None, version_no=1):
+def _schedule(
+    db, project, po, *, po_version=None, revision_label=None, version_no=1, confirmed=True
+):
     schedule = DeliverySchedule(
         id=_uid(),
         company_id=project.company_id,
@@ -312,6 +314,8 @@ def _schedule(db, project, po, *, po_version=None, revision_label=None, version_
         po_version_id=po_version.id if po_version else None,
         extraction_state="done",
         schedule_date=date(2026, 3, 4),
+        # D3: sales orders build only from a confirmed schedule.
+        confirmed_at=date.today() if confirmed else None,
     )
     db.add(version)
     db.flush()

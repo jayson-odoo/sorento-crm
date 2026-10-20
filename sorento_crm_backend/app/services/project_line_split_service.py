@@ -126,7 +126,71 @@ def remark_for_row(
 from app.services.project_order_inquiry_service import (  # noqa: E402
     handover_moves,
     handover_remark,
+    split_plan_key,
 )
+
+
+def split_plan_edited(saved_splits: Sequence[Any], applied_plan: Optional[Sequence[str]]) -> bool:
+    """OI-SPLIT-VIEW (UAC A1): is a line's saved split plan not the one its last Confirm
+    applied (`applied_plan`, the `split_plan` stamp `_recorded_split_plans` reads; none counts
+    as different)? False for a line with no saved splits. The one compare the board flag, the
+    Confirm, Simulate and the split view all read; a remark-only edit is the same plan."""
+    if not saved_splits:
+        return False
+    return split_plan_key(saved_splits) != list(applied_plan or [])
+
+
+def splits_not_in_plan(
+    splits: Sequence[Any], applied_plan: Optional[Sequence[str]]
+) -> Tuple[List[bool], List[str]]:
+    """OI-SPLIT-VIEW (UAC A4, B4): per split, in order, whether its (qty, date, sits on,
+    cancel) is NOT in the applied plan (`split_plan_key` spelling, counted: two equal splits
+    need two equal entries), and the applied plan's entries no split matched (the rows the
+    edit removed). The one compare the Confirm's "tell only the changed splits" and the split
+    view's highlight both read."""
+    from collections import Counter
+
+    left = Counter(list(applied_plan or [])[1:])
+    marks: List[bool] = []
+    for split in splits:
+        entry = split_plan_key([split])[1]
+        if left[entry] > 0:
+            left[entry] -= 1
+            marks.append(False)
+        else:
+            marks.append(True)
+    removed = [entry for entry, count in left.items() for _ in range(count)]
+    return marks, removed
+
+
+def _split_edited_among(
+    facts: Dict[str, "LineFacts"],
+    whole: Iterable[str],
+    recorded: Dict[str, Dict[str, Any]],
+    *,
+    with_pending: bool = False,
+) -> set:
+    """OI-SPLIT-VIEW (UAC A1, A8, A9): of these whole-Buy lines (`whole`, read off facts already
+    read), the split-edited ones: still open, nothing pending from AutoCount (such a line goes
+    the AutoCount way: its change is what the board counts and the Confirm applies) and
+    `split_plan_edited` against the applied plan (`recorded`).
+
+    `with_pending` (the split view only, UAC B3 lead ruling): also the lines with a pending
+    AutoCount change whose saved plan differs from the applied one; they read "Saved, not
+    confirmed" in the popup while the board and the Confirm still leave them alone."""
+    out: set = set()
+    for line_id in whole:
+        f = facts.get(str(line_id))
+        if (
+            f is not None
+            and not f.cancelled
+            and (with_pending or not f.pending)
+            and not (f.now_qty == _ZERO and f.delivered_qty > _ZERO)
+            and split_plan_edited(f.splits, (recorded.get(f.line_id) or {}).get("plan"))
+        ):
+            out.add(f.line_id)
+    return out
+
 
 #: A split line's state (`LineFacts.split_state`).
 SPLIT_ACTING = "acting"
@@ -738,6 +802,11 @@ class LineSplitService:
         ]
         listed.sort(key=lambda f: (f.item_code, f.location, f.line_no or 0))
         plans = line_plans(lines, sits, sitting_on)
+        # OI-SPLIT-VIEW (UAC D1): the board's whole-order popup reads the same view the SO and
+        # OI pages do.
+        views = self._split_views(
+            lines, [f.line_id for f in listed], self.recorded_split_plans([str(order.id)])
+        )
         out_lines = []
         for f in listed:
             plan = plans[f.line_id]
@@ -791,6 +860,7 @@ class LineSplitService:
                         }
                         for s in f.splits
                     ],
+                    "split_view": views.get(f.line_id),
                 }
             )
         return {
@@ -821,13 +891,7 @@ class LineSplitService:
             .filter(SOSupplyDecision.project_sales_order_id == str(order.id))
             .scalar()
         )
-        if when is None:
-            return None
-        from datetime import timezone
-        from zoneinfo import ZoneInfo
-
-        # Stored as naive UTC; the status line reads the Malaysia day (AC-G13).
-        return when.replace(tzinfo=timezone.utc).astimezone(ZoneInfo("Asia/Kuala_Lumpur")).date()
+        return _malaysia_day(when)
 
     def _core_order_date(self, order: ProjectSalesOrder) -> Optional[date]:
         if not order.so_id:
@@ -1022,18 +1086,121 @@ class LineSplitService:
         """`line id -> split_plan` from the newest decision of the order whose snapshot names
         the line (a board Reject re-issues the active decision without it), `None` where that
         snapshot recorded none. One query per save."""
+        return {
+            line_id: recorded["plan"]
+            for line_id, recorded in self.recorded_split_plans([str(order.id)]).items()
+        }
+
+    def recorded_split_plans(
+        self, order_ids: Iterable[str], *, before_revision: Optional[int] = None
+    ) -> Dict[str, Dict[str, Any]]:
+        """`line id -> {"plan", "revision_no", "confirmed_at"}` for every line of these orders:
+        the `split_plan` stamp of the newest decision of its order whose snapshot names the
+        line (the applied plan, UAC words), and that decision's revision and time. One query
+        for all the orders; `before_revision` reads only the decisions older than it (what
+        stood before the Confirm writing that revision)."""
         from app.models.project_so import SOSupplyDecision
 
-        out: Dict[str, Any] = {}
-        for (snapshots,) in (
-            self.db.query(SOSupplyDecision.line_snapshots)
-            .filter(SOSupplyDecision.project_sales_order_id == str(order.id))
-            .order_by(SOSupplyDecision.revision_no.desc())
-            .all()
+        wanted = sorted({str(i) for i in order_ids if i})
+        if not wanted:
+            return {}
+        query = self.db.query(
+            SOSupplyDecision.line_snapshots,
+            SOSupplyDecision.revision_no,
+            SOSupplyDecision.confirmed_at,
+        ).filter(SOSupplyDecision.project_sales_order_id.in_(wanted))
+        if before_revision is not None:
+            query = query.filter(SOSupplyDecision.revision_no < before_revision)
+        out: Dict[str, Dict[str, Any]] = {}
+        for snapshots, revision_no, confirmed_at in (
+            query.order_by(SOSupplyDecision.revision_no.desc()).all()
         ):
             for snapshot in snapshots or []:
                 line_id = str(snapshot.get("project_line_id") or "")
-                out.setdefault(line_id, snapshot.get("split_plan"))
+                out.setdefault(
+                    line_id,
+                    {
+                        "plan": snapshot.get("split_plan"),
+                        "revision_no": revision_no,
+                        "confirmed_at": confirmed_at,
+                    },
+                )
+        return out
+
+    def split_edited_line_ids(self, line_ids: Iterable[str]) -> set:
+        """OI-SPLIT-VIEW (UAC A2, A4): which of these mirror lines carry a saved split edit a
+        Confirm applies: the active decision buys the line whole (`whole_buy_line_ids`, the
+        only lines whose plan becomes purchasing's rows), it is still open, no AutoCount change
+        is pending on it (A9), and `split_plan_edited` (`_split_edited_among`). The board's
+        `split_edited` flag, the Confirm and the split view's status read this one rule, so
+        what the board counts is what Confirm acts on."""
+        wanted = sorted({str(i) for i in line_ids if i})
+        if not wanted:
+            return set()
+        splits = self.splits_of_lines(wanted)
+        if not splits:
+            return set()
+        from app.services.project_order_inquiry_service import whole_buy_line_ids
+
+        whole = whole_buy_line_ids(self.db, list(splits))
+        if not whole:
+            return set()
+        orders = {str(s.project_sales_order_id) for line_id in whole for s in splits[line_id]}
+        recorded = self.recorded_split_plans(orders)
+        facts = self._facts_for(ProjectSalesOrderLine.id.in_(sorted(whole)))
+        return _split_edited_among(facts, whole, recorded)
+
+    # ------------------------------------------------------------ split view
+
+    def split_views(self, line_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
+        """OI-SPLIT-VIEW (UAC B2 to B6): `mirror line id -> split_view` for those of these lines
+        that have saved splits (a line absent from the result has none: null on the wire).
+        The one serializer the OI rows, the OI worklist, the SCM sales order and the split
+        sheet read; a fixed handful of queries for the whole set, never one per line."""
+        wanted = sorted({str(i) for i in line_ids if i})
+        if not wanted:
+            return {}
+        orders = sorted(
+            {
+                str(order_id)
+                for (order_id,) in self.db.query(SOLineSplit.project_sales_order_id)
+                .filter(SOLineSplit.so_line_id.in_(wanted))
+                .distinct()
+                .all()
+            }
+        )
+        if not orders:
+            return {}
+        facts = self._facts_for(ProjectSalesOrderLine.project_sales_order_id.in_(orders))
+        return self._split_views(facts, wanted, self.recorded_split_plans(orders))
+
+    def _split_views(
+        self,
+        facts: Dict[str, LineFacts],
+        line_ids: Iterable[str],
+        recorded: Dict[str, Dict[str, Any]],
+    ) -> Dict[str, Dict[str, Any]]:
+        """`split_views` off facts already read for every line of the orders (`facts`). The
+        status reads `_split_edited_among`, the rule the board flag and the Confirm read (UAC
+        B3): a line partly from stock is never "saved"; a line with a pending AutoCount change
+        is, when its saved plan differs from the applied one (`with_pending`)."""
+        from app.services.project_order_inquiry_service import whole_buy_line_ids
+
+        stored = [split for f in facts.values() for split in f.splits]
+        sits = self.effective_sits_on(stored)
+        plans = line_plans(facts, sits, {target for target in sits.values() if target})
+        split_lines = [
+            f.line_id for f in (facts.get(str(i)) for i in line_ids) if f is not None and f.splits
+        ]
+        edited = _split_edited_among(
+            facts, whole_buy_line_ids(self.db, split_lines), recorded, with_pending=True
+        )
+        out: Dict[str, Dict[str, Any]] = {}
+        for line_id in split_lines:
+            f = facts[line_id]
+            out[line_id] = _split_view(
+                f, plans[line_id], sits, facts, recorded.get(line_id), edited=line_id in edited
+            )
         return out
 
     def _moves_a_confirmed_split(
@@ -1113,6 +1280,122 @@ def _audit_line(
         "base_qty": qty_text(base_qty) if base_qty is not None else None,
         "base_date": base_date.isoformat() if base_date else None,
         "splits": splits,
+    }
+
+
+def _malaysia_day(when: Any) -> Optional[date]:
+    """The Malaysia day of a decision's `confirmed_at` (stored as naive UTC, AC-G13)."""
+    if when is None:
+        return None
+    from datetime import timezone
+    from zoneinfo import ZoneInfo
+
+    return when.replace(tzinfo=timezone.utc).astimezone(ZoneInfo("Asia/Kuala_Lumpur")).date()
+
+
+def _iso(value: Optional[date]) -> Optional[str]:
+    return value.isoformat() if value else None
+
+
+#: `split_view.status` (UAC B3).
+VIEW_CONFIRMED = "confirmed"
+VIEW_SAVED = "saved"
+VIEW_AUTOCOUNT_CHANGED = "autocount_changed"
+
+
+def _split_view(
+    f: LineFacts,
+    plan: LinePlan,
+    sits: Dict[str, Optional[str]],
+    facts: Dict[str, LineFacts],
+    recorded: Optional[Dict[str, Any]],
+    *,
+    edited: bool,
+) -> Dict[str, Any]:
+    """One split line as the split popup reads it (UAC B2 to B4, plan "Phase 2 contract" item
+    3): status, base and now, the saved splits in `seq` order then the AutoCount extra row,
+    and the total. `edited` is the line's membership of the split-edited set, pending lines
+    included (UAC A1, B3). Precedence: "AutoCount changed" (stale) over "saved" over
+    "confirmed". Plain JSON values only, so every read carries the same value."""
+    applied = (recorded or {}).get("plan")
+    if f.split_state == SPLIT_STALE:
+        status = VIEW_AUTOCOUNT_CHANGED
+    elif edited:
+        status = VIEW_SAVED
+    else:
+        status = VIEW_CONFIRMED
+    # B4: a split whose (qty, date, sits on, cancel) is not in the applied plan, only while
+    # the edit waits.
+    not_in_plan, removed = splits_not_in_plan(f.splits, applied)
+    marks = [mark and status == VIEW_SAVED for mark in not_in_plan]
+    was: Optional[Tuple[Decimal, str]] = None
+    if status == VIEW_SAVED and sum(marks) == 1 and len(removed) == 1:
+        # Exactly one row removed and one added: the added row names what it was. Never a
+        # guess otherwise.
+        parts = (removed[0].split("@") + ["", ""])[:2]
+        was = (_dec(parts[0]), parts[1])
+
+    rows: List[Dict[str, Any]] = []
+    for split, changed in zip(f.splits, marks):
+        target = sits.get(str(split.id))
+        if split.is_cancel or target == f.line_id:
+            sits_on, sits_on_line_no = "own", f.line_no
+        elif target is None:
+            sits_on, sits_on_line_no = "new", None
+        else:
+            other = facts.get(target)
+            sits_on, sits_on_line_no = "line", other.line_no if other is not None else None
+        was_qty = was_date = None
+        if changed and was is not None:
+            if was[0] != _dec(split.qty):
+                was_qty = qty_text(was[0])
+            if was[1] and was[1] != (_iso(split.delivery_date) or ""):
+                was_date = was[1]
+        rows.append(
+            {
+                "qty": qty_text(split.qty),
+                "delivery_date": _iso(split.delivery_date),
+                "change": remark_for_row(
+                    qty=split.qty,
+                    delivery_date=split.delivery_date,
+                    base_date=split.base_date,
+                    is_cancel=bool(split.is_cancel),
+                ),
+                "sits_on": sits_on,
+                "sits_on_line_no": sits_on_line_no,
+                "remark": split.remark or "",
+                "is_cancel": bool(split.is_cancel),
+                "changed": changed,
+                "was_qty": was_qty,
+                "was_date": was_date,
+            }
+        )
+    if plan.extra_qty is not None:
+        rows.append(
+            {
+                "qty": qty_text(plan.extra_qty),
+                "delivery_date": _iso(f.now_date),
+                "change": remark_for_row(qty=plan.extra_qty, extra=True),
+                "sits_on": "extra",
+                "sits_on_line_no": f.line_no,
+                "remark": "",
+                "is_cancel": False,
+                "changed": False,
+                "was_qty": None,
+                "was_date": None,
+            }
+        )
+    confirmed = status == VIEW_CONFIRMED and recorded is not None
+    return {
+        "status": status,
+        "revision_no": recorded.get("revision_no") if confirmed else None,
+        "confirmed_on": _iso(_malaysia_day(recorded.get("confirmed_at"))) if confirmed else None,
+        "base_qty": qty_text(plan.base_qty),
+        "base_date": _iso(plan.base_date),
+        "now_qty": qty_text(f.now_qty),
+        "now_date": _iso(f.now_date),
+        "total_qty": qty_text(sum((_dec(row["qty"]) for row in rows), _ZERO)),
+        "rows": rows,
     }
 
 

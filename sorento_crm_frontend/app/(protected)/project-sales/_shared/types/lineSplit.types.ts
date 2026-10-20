@@ -1,3 +1,5 @@
+import type { LineSplitView } from './orderInquiry.types';
+
 /**
  * OI-LINE-SPLIT: the whole-SO split view's wire shapes
  * (`GET|PUT /api/v1/project-sales/sales-orders/{pso_id}/line-splits`,
@@ -49,6 +51,8 @@ export interface LineSplitLine {
   /** What the email prints for the line's own row (server `remark_for_row`). */
   remark_generated?: string;
   splits: LineSplit[];
+  /** OI-SPLIT-VIEW (UAC D1): the line's split popup; null when the line has no splits. */
+  split_view?: LineSplitView | null;
 }
 
 export interface LineSplitsPayload {

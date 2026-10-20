@@ -3,12 +3,12 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { SquarePen, Trash2, Upload } from 'lucide-react';
+import { ArrowRight, SquarePen, Trash2, Upload } from 'lucide-react';
 import { numberFieldError } from '@/lib/number-field';
 import { toast } from '@/lib/toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -35,9 +35,22 @@ import type {
   ProjectPurchaseOrder,
   ProjectPurchaseOrderSaveBody,
 } from '../../../../_shared/types/project.types';
+import {
+  usePoVersions,
+  useProjectSalesOrders,
+  useSalesOrderBuild,
+  useScheduleVersions,
+} from '../../../../_shared/hooks/useProjectSalesOrders';
+import { usePurchaseOrderProgress } from '../../../../_shared/hooks/usePoProgress';
+import { withReviewOrigin } from '../../../../_shared/lib/reviewOrigin';
+import { DeliveryScheduleUploadDialog } from '../../../components/DeliveryScheduleUploadDialog';
+import { PODeliveriesPanel } from '../../../components/PODeliveriesPanel';
 import { POIntakeUploadDialog } from '../../../components/POIntakeUploadDialog';
 import { POIntakeVersionsStrip } from '../../../components/POIntakeVersionsStrip';
-import { POToSalesOrderStep } from '../../../components/POToSalesOrderStep';
+import { POLinesProgressGrid } from '../../../components/POLinesProgressGrid';
+import { SalesOrderBuildDialog } from '../../../components/SalesOrderBuildDialog';
+import { SalesOrdersPanel } from '../../../components/SalesOrdersPanel';
+import { poNextStep } from '../../../components/poNextStep';
 import { PurchaseOrderHeaderCard, PO_AMOUNT_RULES } from '../../../components/PurchaseOrderHeaderCard';
 import {
   PurchaseOrderLinesEditor,
@@ -49,8 +62,13 @@ import { SOURCE_LABELS, describeDrift } from '../../../components/PurchaseOrders
 import { formatMyr } from '../../../components/QuotationsPanel';
 import { usePurchaseOrderEditSession } from './usePurchaseOrderEditSession';
 
+const PO_TABS = ['lines', 'deliveries', 'sales-orders', 'documents'] as const;
+type POTab = (typeof PO_TABS)[number];
+
 /**
- * One customer PO, on its own page.
+ * One customer PO, on its own page: the one place for everything about it (PM-SIMPLIFY Q3).
+ * Four line tabs, Lines, Deliveries, Sales orders, Documents, and one header button that is
+ * always the next step (Confirm PO, Upload or Confirm schedule, Build, Publish).
  *
  * The POs tab used to render the list AND the selected PO's documents, readiness step and
  * ninety-odd lines beneath it. The client's words: "seeing everything in 1 page is very
@@ -83,6 +101,31 @@ export function PurchaseOrderDetailClient({
   const poIndex = (purchaseOrders.data ?? []).findIndex((row) => row.id === poId);
 
   const [uploading, setUploading] = React.useState(false);
+  const [uploadingSchedule, setUploadingSchedule] = React.useState(false);
+  const [building, setBuilding] = React.useState(false);
+  const poVersions = usePoVersions(poId);
+  const scheduleVersions = useScheduleVersions(poId);
+  const progress = usePurchaseOrderProgress(poId);
+  const poSalesOrders = useProjectSalesOrders(projectId, {
+    page: 1,
+    limit: 1000,
+    purchase_order_id: poId,
+  });
+  const build = useSalesOrderBuild(projectId);
+  const requestedTab = searchParams.get('tab');
+  const activeTab: POTab = PO_TABS.includes(requestedTab as POTab)
+    ? (requestedTab as POTab)
+    : 'lines';
+  function selectTab(tab: POTab) {
+    const next = new URLSearchParams(searchParams.toString());
+    if (tab === 'lines') next.delete('tab');
+    else next.set('tab', tab);
+    next.delete('edit');
+    const query = next.toString();
+    router.replace(`/project-sales/${projectId}/pos/${poId}${query ? `?${query}` : ''}`, {
+      scroll: false,
+    });
+  }
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [confirmRemovals, setConfirmRemovals] = React.useState(false);
   const [isSaving, setIsSaving] = React.useState(false);
@@ -142,7 +185,7 @@ export function PurchaseOrderDetailClient({
             : 'It may have been deleted.'}
         </p>
         <Button asChild variant="outline" className="mt-4">
-          <Link href={`/project-sales/${projectId}?tab=pos`}>Back to POs</Link>
+          <Link href={`/project-sales/${projectId}?tab=orders`}>Back to orders</Link>
         </Button>
       </div>
     );
@@ -162,6 +205,39 @@ export function PurchaseOrderDetailClient({
   const liveTotal = edit.staged ? stagedPoLinesTotal(edit.staged) : null;
   const drift = describeDrift(po);
   const publishedOrders = po.published_sales_order_count ?? 0;
+  // D1: a PO that came from a document has one set of lines, the document's. Edit then
+  // covers the header only; the lines are corrected on the version before it is confirmed.
+  const scanned = (poVersions.data ?? []).length > 0;
+  const pageHref = `/project-sales/${projectId}/pos/${poId}`;
+  const step = poNextStep({
+    poVersions: poVersions.data ?? [],
+    scheduleVersions: scheduleVersions.data ?? [],
+    salesOrderStatuses: (poSalesOrders.data?.data ?? []).map((row) => row.status),
+    hasLines: (po.line_count ?? 0) > 0,
+  });
+  const stepsLoading =
+    poVersions.isLoading || scheduleVersions.isLoading || poSalesOrders.isLoading;
+
+  function runStep() {
+    if (step.kind === 'confirm-po') {
+      router.push(
+        withReviewOrigin(`/project-sales/${projectId}/purchase-orders/${step.versionId}`, pageHref),
+      );
+    } else if (step.kind === 'confirm-schedule') {
+      router.push(
+        withReviewOrigin(
+          `/project-sales/${projectId}/delivery-schedules/${step.versionId}`,
+          `${pageHref}?tab=deliveries`,
+        ),
+      );
+    } else if (step.kind === 'upload-schedule') {
+      setUploadingSchedule(true);
+    } else if (step.kind === 'build') {
+      setBuilding(true);
+    } else if (step.kind === 'publish') {
+      selectTab('sales-orders');
+    }
+  }
 
   /**
    * Why the screen is in the state it is in, and what to do about it, in one sentence each.
@@ -171,6 +247,11 @@ export function PurchaseOrderDetailClient({
   const headerHints: string[] = [];
   if (isEditing) {
     headerHints.push('Nothing is written until you press Save.');
+    if (scanned) {
+      headerHints.push(
+        'The lines come from the uploaded document: upload a new PO version to change them.',
+      );
+    }
     if (publishedOrders > 0) {
       headerHints.push(
         `${publishedOrders} sales order${publishedOrders === 1 ? '' : 's'} already went out from this PO. Changing it here does not change ${publishedOrders === 1 ? 'it' : 'them'}.`,
@@ -298,12 +379,23 @@ export function PurchaseOrderDetailClient({
                 rendered for somebody who may act: a reader has nothing to put in it. */
               canEdit && (
                 <DetailActionsMenu ariaLabel="Purchase order actions">
+                  <DropdownMenuItem disabled={isEditing} onSelect={() => edit.begin()}>
+                    <SquarePen className="size-4" aria-hidden />
+                    Edit the PO
+                  </DropdownMenuItem>
                   <DropdownMenuItem
                     disabled={isEditing}
                     onSelect={() => setUploading(true)}
                   >
                     <Upload className="size-4" aria-hidden />
-                    Upload a document
+                    Upload a new PO version
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={isEditing}
+                    onSelect={() => setUploadingSchedule(true)}
+                  >
+                    <Upload className="size-4" aria-hidden />
+                    Upload delivery schedule
                   </DropdownMenuItem>
                   {/* Destructive last, and behind a separator. */}
                   <DropdownMenuSeparator />
@@ -343,10 +435,16 @@ export function PurchaseOrderDetailClient({
                     {isSaving ? 'Saving...' : 'Save purchase order'}
                   </Button>
                 </>
-              ) : canEdit ? (
-                <Button type="button" size="sm" onClick={() => edit.begin()}>
-                  <SquarePen className="size-4" aria-hidden />
-                  Edit the PO
+              ) : canEdit && !stepsLoading && step.kind !== 'none' ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  data-testid="po-next-step"
+                  data-step={step.kind}
+                  onClick={runStep}
+                >
+                  {step.label}
+                  <ArrowRight className="size-4" aria-hidden />
                 </Button>
               ) : null
             }
@@ -361,17 +459,6 @@ export function PurchaseOrderDetailClient({
         </div>
       </header>
 
-      {canEdit && (
-        <POToSalesOrderStep
-          projectId={projectId}
-          purchaseOrder={po}
-          readiness={{
-            poConfirmed: Boolean(po.po_confirmed),
-            scheduleConfirmed: Boolean(po.schedule_confirmed),
-          }}
-        />
-      )}
-
       <PurchaseOrderHeaderCard
         projectId={projectId}
         po={shown}
@@ -380,43 +467,89 @@ export function PurchaseOrderDetailClient({
         onChange={isEditing ? edit.stageHeader : undefined}
       />
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Documents</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <Tabs value={activeTab} onValueChange={(value) => selectTab(value as POTab)}>
+        <TabsList variant="line" aria-label="Purchase order sections">
+          <TabsTrigger value="lines">{`Lines (${progress.data?.lines.length ?? po.line_count ?? 0})`}</TabsTrigger>
+          <TabsTrigger value="deliveries">
+            {`Deliveries (${progress.data?.areas.length ?? 0})`}
+          </TabsTrigger>
+          <TabsTrigger value="sales-orders">
+            {`Sales orders (${poSalesOrders.data?.total ?? 0})`}
+          </TabsTrigger>
+          <TabsTrigger value="documents">{`Documents (${(poVersions.data ?? []).length})`}</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="lines">
+          {isEditing && !scanned ? (
+            <PurchaseOrderLinesEditor
+              project={project.data}
+              // The STAGED row, so clearing the bound version in the header immediately says
+              // "no price is checked" over the lines it stops checking.
+              po={shown}
+              edit={{
+                staged: edit.staged,
+                seed: edit.seed,
+                stage: edit.stage,
+                toggleRemoved: edit.toggleRemoved,
+              }}
+            />
+          ) : (
+            <POLinesProgressGrid
+              progress={progress.data}
+              isLoading={progress.isLoading}
+              error={progress.isError ? progress.error : undefined}
+            />
+          )}
+        </TabsContent>
+
+        <TabsContent value="deliveries">
+          <PODeliveriesPanel
+            projectId={projectId}
+            poId={po.id}
+            progress={progress.data}
+            isLoading={progress.isLoading}
+            error={progress.isError ? progress.error : undefined}
+            canEdit={canEdit}
+            onUpload={() => setUploadingSchedule(true)}
+          />
+        </TabsContent>
+
+        <TabsContent value="sales-orders">
+          <SalesOrdersPanel project={project.data} purchaseOrderId={po.id} />
+        </TabsContent>
+
+        <TabsContent value="documents">
           <POIntakeVersionsStrip
             projectId={projectId}
             poId={po.id}
             canEdit={canEdit}
             onUpload={() => setUploading(true)}
           />
-        </CardContent>
-      </Card>
+        </TabsContent>
+      </Tabs>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Lines</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <PurchaseOrderLinesEditor
-            project={project.data}
-            // The STAGED row, so clearing the bound version in the header immediately says
-            // "no price is checked" over the lines it stops checking.
-            po={shown}
-            edit={
-              isEditing
-                ? {
-                    staged: edit.staged,
-                    seed: edit.seed,
-                    stage: edit.stage,
-                    toggleRemoved: edit.toggleRemoved,
-                  }
-                : null
-            }
-          />
-        </CardContent>
-      </Card>
+      {uploadingSchedule && (
+        <DeliveryScheduleUploadDialog
+          project={project.data}
+          purchaseOrder={po}
+          onDone={() => setUploadingSchedule(false)}
+          originHref={`${pageHref}?tab=deliveries`}
+        />
+      )}
+
+      {building && step.kind === 'build' && (
+        <SalesOrderBuildDialog
+          projectId={projectId}
+          poId={po.id}
+          scheduleVersionId={step.scheduleVersionId}
+          onDone={() => setBuilding(false)}
+          building={build.isPending}
+          onBuild={async (input) => {
+            await build.mutateAsync(input);
+            selectTab('sales-orders');
+          }}
+        />
+      )}
 
       {uploading && (
         <POIntakeUploadDialog
@@ -467,7 +600,7 @@ export function PurchaseOrderDetailClient({
         onDelete={async () => {
           await remove.mutateAsync(po.id);
         }}
-        onSuccess={() => router.push(`/project-sales/${projectId}?tab=pos`)}
+        onSuccess={() => router.push(`/project-sales/${projectId}?tab=orders`)}
         successMessage="Purchase order deleted"
       />
     </div>

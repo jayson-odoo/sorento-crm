@@ -713,6 +713,10 @@ class BoardContribution(BaseModel):
     #: queue rightly left it out. A covered line is not re-planned: it states what was frozen
     #: and offers Amend, which is the only decision left to take about it.
     covered: bool = False
+    #: OI-SPLIT-VIEW (UAC A2): the line's saved split plan differs from the one its last
+    #: Confirm applied (`LineSplitService.split_edited_line_ids`), so the next Confirm applies
+    #: it whether or not the body names the line. Counted once per line in "N to confirm".
+    split_edited: bool = False
     #: What was frozen, when the line is covered. Null otherwise, and never an empty object:
     #: "nobody decided this" and "decided, to nothing" are different answers.
     decision: Optional[BoardLineDecision] = None

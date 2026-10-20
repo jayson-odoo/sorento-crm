@@ -89,8 +89,9 @@ Billing line cut (differs from SO): keep any line whose `SubTotal` is non-zero; 
 8. A CN cannot be transferred from a CS; a CN against a CS has only `OurInvoiceNo` text.
 9. Line-only edits do not bump the header `LastModified` (proven on SO): keep the line-fingerprint sweep.
 10. Drafts (2.2) have no AR entry; exclude them and send a deletion if a pushed draft disappears.
-11. IV line -> DO line -> SO line needs `DODTL`, which the read-only login cannot read: a DO-sourced IV line
-    carries `from_doc_type = 'DO'` + `from_doc_no` and no SO line ref.
+11. IV line -> DO line -> SO line needs `DODTL`, which the read-only login could not read when this was
+    written: the backfill runbook (section 0.1) now asks for that grant, and the shared service links the
+    DO line exactly by `FromDocDtlKey` (PR #127) and fails at Preview when `DODTL` is unreadable.
 
 ## 6. First checks once access is granted (read-only)
 

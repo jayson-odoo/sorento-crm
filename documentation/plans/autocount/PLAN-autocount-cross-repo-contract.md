@@ -503,11 +503,14 @@ three slugs the doors need to every role holding `scm.sales_orders.edit` (Q16, b
 
 Required: `source_ref`, `document_type` (`invoice`, `cash_sale`, `credit_note`, `debit_note`),
 `doc_no`, `doc_date`, `status` (`posted`, `cancelled`), `net_total`, `tax_total`, `total`,
-`local_net_total`; per line `source_ref` and `quantity`. `currency_code` defaults to `MYR` and
+`local_net_total`; per line `source_ref`. A line's `quantity` may be null or omitted on a charge
+line (freight, service; AutoCount NULL `Qty`, BL-SS-306) that carries `net_amount` or
+`line_total`: it is stored null, never defaulted to 1. `currency_code` defaults to `MYR` and
 `currency_rate` to 1. Money and quantities are JSON numbers. A record fails, with the field
 named in `errors`, when: a key is unknown; `total` is not `net_total + tax_total` within 0.01
 (`errors.total`); a line on an `invoice` or `cash_sale` has a negative quantity
-(`errors["lines.N.quantity"]`); two lines share a `source_ref` or there are more than 2000
+(`errors["lines.N.quantity"]`); a line has no `quantity` and neither `net_amount` nor
+`line_total` (`errors["lines.N.quantity"]`); two lines share a `source_ref` or there are more than 2000
 (`errors.lines`); the type or status is outside its list. The rest of the batch lands.
 
 **Idempotency key.** `(company, document_type, source_ref)`: the `integration_references` row

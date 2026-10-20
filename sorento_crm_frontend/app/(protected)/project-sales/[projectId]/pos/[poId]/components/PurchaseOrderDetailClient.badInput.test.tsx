@@ -59,6 +59,66 @@ vi.mock('../../../../_shared/services/poIntakeService', async (importOriginal) =
   return { ...actual, listPOVersions: vi.fn(async () => []) };
 });
 
+// PM-SIMPLIFY: the next-step button reads the PO's versions, its schedule versions and its
+// sales orders; the Lines tab reads the PO's progress.
+const listPoVersions = vi.fn();
+const listScheduleVersions = vi.fn();
+const listProjectSalesOrders = vi.fn();
+const buildSalesOrders = vi.fn();
+vi.mock('../../../../_shared/services/projectSalesOrderService', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('../../../../_shared/services/projectSalesOrderService')
+  >();
+  return {
+    ...actual,
+    listPoVersions: (...args: unknown[]) => listPoVersions(...args),
+    listScheduleVersions: (...args: unknown[]) => listScheduleVersions(...args),
+    listProjectSalesOrders: (...args: unknown[]) => listProjectSalesOrders(...args),
+    buildSalesOrders: (...args: unknown[]) => buildSalesOrders(...args),
+  };
+});
+
+const getPurchaseOrderProgress = vi.fn();
+vi.mock('../../../../_shared/services/poProgressService', () => ({
+  getPurchaseOrderProgress: (...args: unknown[]) => getPurchaseOrderProgress(...args),
+  changeAreaDate: vi.fn(),
+}));
+
+function progressWith(description = 'Wall-hung WC') {
+  return {
+    purchase_order_id: 'po1',
+    schedule_version_id: null,
+    lines: [
+      {
+        key: 'pl1',
+        po_line_id: null,
+        line_no: 1,
+        product_id: null,
+        product_code: 'SRT-WC-01',
+        description,
+        uom: 'PCS',
+        ordered: '10',
+        scheduled: '0',
+        schedule_gap: '-10',
+        delivered: '0',
+        outstanding: '10',
+        next_delivery_date: null,
+        deliveries: [],
+      },
+    ],
+    areas: [],
+    totals: {
+      ordered: '10',
+      scheduled: '0',
+      delivered: '0',
+      outstanding: '10',
+      next_delivery_date: null,
+      schedule_short_lines: 1,
+      schedule_over_lines: 0,
+    },
+  };
+}
+
 vi.mock('@/app/(protected)/master-data-management/products/services/productService', () => ({
   getProductsForVariantSelect: vi.fn(async () => []),
 }));
@@ -149,7 +209,12 @@ async function openEditor() {
   // The lines have to be on screen first: the session seeds itself from them, and a Save
   // pressed before that seeding would carry a set the user never saw.
   await screen.findByText('Wall-hung WC');
-  fireEvent.click(await screen.findByRole('button', { name: /Edit the PO/i }));
+  // Edit lives behind the gear now: the header button is the next step (PM-SIMPLIFY AC-P2).
+  fireEvent.pointerDown(
+    await screen.findByRole('button', { name: 'Purchase order actions' }),
+    { button: 0, ctrlKey: false },
+  );
+  fireEvent.click(await screen.findByRole('menuitem', { name: /Edit the PO/i }));
   const save = await screen.findByRole('button', { name: 'Save purchase order' });
   await screen.findByRole('textbox', { name: 'Code on the PO on SRT-WC-01' });
   return save;
@@ -157,6 +222,10 @@ async function openEditor() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  listPoVersions.mockResolvedValue([]);
+  listScheduleVersions.mockResolvedValue([]);
+  listProjectSalesOrders.mockResolvedValue({ data: [], total: 0, page: 1, limit: 1000 });
+  getPurchaseOrderProgress.mockResolvedValue(progressWith());
   searchParams = new URLSearchParams();
   getProject.mockResolvedValue(project());
   listPurchaseOrders.mockResolvedValue([po()]);

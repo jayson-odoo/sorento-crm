@@ -12,7 +12,6 @@ import {
   X,
 } from 'lucide-react';
 import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
@@ -56,7 +55,13 @@ import type {
 } from '../../../_shared/types/orderInquiry.types';
 import { OrderInquiryDocumentLink, ViaSpoPoNumber } from '../../components/OrderInquiryDocumentDialog';
 import { SoLineAttachmentsButton } from '../../../_shared/components/SoLineAttachmentsButton';
+import {
+  LineSplitInfo,
+  splitCount,
+  splitDateText,
+} from '../../../_shared/components/LineSplitInfo';
 import type { SoLineAttachmentsByLine } from '../../../_shared/services/soLineAttachmentService';
+import type { LineSplitsPayload } from '../../../_shared/types/lineSplit.types';
 
 /**
  * The Lines tab's own columns (AC-DP-03): Expand, Product, SO line, Qty, Taken,
@@ -214,22 +219,6 @@ function DocumentCell({
   );
 }
 
-/** `20/10/2026`. */
-function splitDate(iso: string | null): string {
-  return iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : '';
-}
-
-/** OI-LINE-SPLIT (UAC D3): the row of a split line carries "Split N". */
-function SplitChip({ row }: { row: OrderInquiryWorklistRow }) {
-  const count = row.splits?.length ?? 0;
-  if (count === 0) return null;
-  return (
-    <Badge variant="secondary" appearance="light" size="sm" className="shrink-0">
-      {`Split ${count}`}
-    </Badge>
-  );
-}
-
 /** Where a split sits, in words: a numbered line, an unnumbered one, or a new line. */
 function sitsOnText(split: OrderInquiryLineSplit, itemCode: string | null | undefined): string {
   if (split.is_cancel) return '';
@@ -254,7 +243,7 @@ const SPLIT_COLUMNS = (itemCode: string | null | undefined): ColumnDef<OrderInqu
     // dd/mm/yyyy plus the header's own grip and padding, unclipped at 1280.
     size: 130,
     meta: { headerTitle: 'Date' },
-    cell: ({ row }) => splitDate(row.original.delivery_date),
+    cell: ({ row }) => splitDateText(row.original.delivery_date),
   },
   {
     accessorKey: 'change',
@@ -531,6 +520,7 @@ export function useOrderInquiryHeaderLinesColumns({
   onUndoStaged,
   attachmentsByLine,
   canEditAttachments = false,
+  splitSheet,
 }: {
   /** AC-RS-83/83c: gates the reserve icons inside the State cell - a viewer without
    * `projects.order_inquiries.reserve` sees the pills only. */
@@ -562,6 +552,15 @@ export function useOrderInquiryHeaderLinesColumns({
   attachmentsByLine?: SoLineAttachmentsByLine;
   /** #1312 (Q6): `projects.projects.edit` - gates the lightbox's own upload/remove. */
   canEditAttachments?: boolean;
+  /**
+   * OI-SPLIT-VIEW (UAC E5): the order's split sheet (`useLineSplits`, owned by the caller)
+   * the line popups draw read-only; `payload` undefined while it loads.
+   */
+  splitSheet?: {
+    payload: LineSplitsPayload | null | undefined;
+    error?: unknown;
+    onRetry?: () => void;
+  };
 } = {}): ColumnDef<OrderInquiryLineRow>[] {
   return React.useMemo<ColumnDef<OrderInquiryLineRow>[]>(() => {
     const columns: ColumnDef<OrderInquiryLineRow>[] = [
@@ -644,15 +643,36 @@ export function useOrderInquiryHeaderLinesColumns({
         meta: { headerTitle: 'Product', skeleton: <Skeleton className="h-4 w-32" /> },
         // AC-DP-03, owner ruling 21 Sep: code only, one line - never the second
         // `product_name` line the worklist's own cell prints for a real row.
-        // OI-LINE-SPLIT (UAC D3): a split line reads "Split N" beside its code.
         cell: ({ row }) => (
-          <span className="flex min-w-0 items-center gap-1.5">
-            <span className="min-w-0 truncate">
-              <ItemCodeCell row={row.original} codeOnly />
-            </span>
-            <SplitChip row={row.original} />
+          <span className="block min-w-0 truncate">
+            <ItemCodeCell row={row.original} codeOnly />
           </span>
         ),
+      },
+      // OI-SPLIT-VIEW (UAC B1): "Split N" and the (i) popup in their own column right after
+      // Product (the Product cell stays the product only), on Columns like the rest.
+      {
+        id: 'split',
+        // B7a: sorts by the chip's N (the AutoCount extra row not counted).
+        accessorFn: (row) => splitCount(row.split_view),
+        header: ({ column }) => <DataGridColumnHeader title="Split" column={column} />,
+        size: 110,
+        meta: { headerTitle: 'Split' },
+        cell: ({ row }) => {
+          const line = lineOf(row.original);
+          return (
+            <LineSplitInfo
+              lineNo={line.lineNo}
+              itemCode={row.original.item_code}
+              soNumber={row.original.so_number}
+              oiNumber={row.original.inquiry_no}
+              view={row.original.split_view}
+              payload={splitSheet?.payload}
+              loadError={splitSheet?.error}
+              onRetry={splitSheet?.onRetry}
+            />
+          );
+        },
       },
       // W1 (PR #1266, owner hand test 26 Sep): the line's own confirmed mark, in the gap
       // the owner boxed between Product and SO Qty. Not sortable: no other icon column on
@@ -878,5 +898,6 @@ export function useOrderInquiryHeaderLinesColumns({
     onUndoStaged,
     attachmentsByLine,
     canEditAttachments,
+    splitSheet,
   ]);
 }
