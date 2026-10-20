@@ -196,8 +196,9 @@ def test_typos_fail_their_row_with_a_reason():
     assert "A/C 1" in foxtrot.reason and "not an account" in foxtrot.reason
     assert foxtrot.account_pick["label"] == "A/C 1"
     golf = _row(parsed, S, s_rows["GOLF:A/C I"])
-    assert golf.status == "not_representable"
-    assert "not a rate" in golf.reason
+    # Owner 20 Oct 10:11: a tier cell that is not a rate skips that tier, with a warning on the row.
+    assert golf.status == "mapped"
+    assert any("skipped" in w and "not a rate" in w for w in golf.warnings), golf.warnings
     hotel = _row(parsed, S, s_rows["HOTEL:A/C I"])
     assert hotel.status == "not_representable"
     assert "NIL" in hotel.reason
@@ -317,9 +318,9 @@ def test_dry_run_matches_by_name_and_account_and_lists_the_rest(api):
     assert all(s["customer_id"] and s["code"] for s in india["suggestions"])
 
     summary = body["summary"]
-    assert summary["auto_mapped"] == 13
+    assert summary["auto_mapped"] == 14                     # GOLF too: its typo tier is skipped, not the row
     assert summary["needs_pick"] == 2                       # INDIA, and FOXTROT's "A/C 1" account pick
-    assert summary["not_representable"] == 2                # the GOLF and HOTEL typo rows
+    assert summary["not_representable"] == 1                # the HOTEL typo row
     assert summary["rows"] == len(s_rows) + len(m_rows)
 
 

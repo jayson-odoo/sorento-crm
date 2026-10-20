@@ -68,6 +68,16 @@ class CellError(ValueError):
     """A cell this reader cannot turn into tiers; the message quotes it."""
 
 
+class NotARate(CellError):
+    """An incentive cell holding a figure where a rate belongs ("A/C I- 300,000", SRT 15-17).
+    Its tier is skipped with a warning on the rows and the rest of the target loads (owner
+    20 Oct 10:11: a typo, the corrected sheet adds the tier later)."""
+
+    def __init__(self, cell: str, why: str = ""):
+        super().__init__(f'"{cell}" is not a rate' + (f": {why}" if why else ""))
+        self.cell, self.why = cell, why
+
+
 class AccountPick(CellError):
     """A rate names an account no row of the dealer has ("A/C 9", SRT 57-59): the rows wait on
     the user picking which of the dealer's accounts it means, never on a guess (round 10)."""
@@ -721,7 +731,7 @@ def parse_rate_cell(
                     raise CellError(f'"{line}" holds two rates for one tier')
                 tail = part[[m for m in _PCT.finditer(part)][-1].end():]
                 if re.search(r"\d", tail):
-                    raise CellError(f'"{line}" is not a rate')
+                    raise NotARate(line)
                 out.extend(RateEntry(label, rate, additional) for label, rate in named)
                 if plain is not None:
                     out.append(RateEntry(None, plain, additional))
@@ -737,11 +747,12 @@ def parse_rate_cell(
                     continue
                 if threshold:
                     share = f"{(n * 100 / threshold).quantize(Decimal('1')):f}"
-                    raise CellError(
-                        f'"{line}" is not a rate: {n:,.0f} is {share}% of the threshold {threshold:,.0f}, '
-                        f"more than a bonus of up to {RATE_LIMIT_PCT}%"
+                    raise NotARate(
+                        line,
+                        f"{n:,.0f} is {share}% of the threshold {threshold:,.0f}, "
+                        f"more than a bonus of up to {RATE_LIMIT_PCT}%",
                     )
-                raise CellError(f'"{line}" is not a rate')
+                raise NotARate(line)
             out.append(RateEntry(label, _fraction(n, False), additional))
     if not out:
         raise CellError(f'cannot read the rate "{text}"')
@@ -1395,6 +1406,13 @@ def _period_tiers(ctx: _Ctx, cols, period_start, kind, shared_rates=()) -> Tuple
                         rate_value, percent_format=pct_format(rate_col, ctx.rows[0]), threshold=threshold
                     )
                 )
+        except NotARate as exc:
+            # Owner 20 Oct 10:11 (SRT 15-17): skip this tier, say so on the rows, load the rest.
+            note = f'{thr_col.header} skipped: cell reads "{exc.cell}"' + (f" (not a rate: {exc.why})" if exc.why else "")
+            for r in ctx.rows:
+                if note not in ctx.results[r].warnings:
+                    ctx.results[r].warnings.append(note)
+            continue
         except CellError as exc:
             if threshold is not None and "threshold" not in str(exc):
                 raise CellError(f"{rate_col.header}: {exc} for the threshold {threshold:,.0f}") from exc

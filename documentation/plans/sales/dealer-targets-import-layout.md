@@ -159,9 +159,13 @@ mapped and every sheet was read (`gate_passes`).
   roman numeral on its own; Skip skips the row.
 - An account and an amount in an incentive column ("A/C I- 15,000", SRT 15-17) is a fixed bonus
   on that tier, paid to that account, when the amount is at most `RATE_LIMIT_PCT` (20%) of the
-  tier's threshold; the tier's own rate is then 0 unless the cell also gives one. A larger amount,
-  or an amount with no account, stays "not a rate", and the reason states the amount as a share
-  of the threshold.
+  tier's threshold; the tier's own rate is then 0 unless the cell also gives one.
+- A tier cell that is not a rate (a larger amount, an amount with no account) skips THAT tier:
+  the rows warn `<column> skipped: cell reads "<cell>"` with the amount as a share of the
+  threshold, and the rest of the target loads (owner 20 Oct 10:11, SRT 15-17 is a typo: Q1 loads
+  Tiers 1-3, Tier 4 comes with a corrected sheet). Any other unreadable rate cell still fails
+  its rows.
 - Targets per customer BRANCH (SRT 49-51) are not built: sales orders and billing documents
   carry no branch, only delivery orders do (`orders.branch_code`), so a branch's achievement
-  cannot be measured on the ordered or invoiced basis. Those rows stay a pick (crew-note on #1715).
+  cannot be measured on the ordered or invoiced basis. Owner 20 Oct 10:11 chose (c): no branch
+  split; those rows stay a pick, skipped on import or loaded on the main account.
