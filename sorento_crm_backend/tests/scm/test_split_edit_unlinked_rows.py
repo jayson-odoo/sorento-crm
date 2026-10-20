@@ -137,3 +137,77 @@ def test_a_re_plan_netted_on_the_last_confirmed_line_still_reaches_its_plan(api,
     s.db.commit()
     s.db.expire_all()
     _assert_dropped_403_is_told(s, _sent_since(emails, start))
+
+
+# ---------------------------------------------------------------------------
+# Crew, 20 Oct: the REDUCE case staff are about to run. A 104 line split by date into two raised,
+# unlinked rows (52 + 52) is cut to 28 + 24 with a "Cancel this qty" split of 52. The two rows are
+# cut in place (QTY 52 -> NEW QTY 28 / 24) and the 52 is one CANCEL BALANCE; nothing is cancelled
+# and raised again, so purchasing's acknowledgement stays on the rows they read.
+# ---------------------------------------------------------------------------
+
+D_A = D_480_NEW
+D_B = D_608
+
+
+def _confirm_104(s):
+    from tests.scm.test_line_splits_round3 import _confirm, _line_payload
+
+    r = _confirm(s.client, s.order.id, [_line_payload(s.line[480].id, buy_qty="104")])
+    assert r.status_code == 200, r.text
+    s.db.commit()
+    s.db.expire_all()
+
+
+def test_a_cancel_split_cuts_the_unlinked_date_split_rows_in_place(api, emails):
+    from app.models.project_so import (
+        ACK_ACKNOWLEDGED,
+        INQUIRY_CANCELLED,
+        INQUIRY_RAISED,
+        IV_CANCEL_BALANCE,
+        IV_ORDER,
+    )
+    from app.services.project_line_split_service import LineSplitService, split_plan_edited
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+    from tests.scm.test_line_splits_round3 import _one_line
+
+    s = _one_line(api, 104, D_A)
+    _save(s, {480: [(52, D_A, 480, ""), (52, D_B, "new", "")]})
+    _confirm_104(s)
+    rows = [r for r in _rows_of_480(s) if r.state != INQUIRY_CANCELLED]
+    assert sorted((r.verb, r.state, r.qty, r.delivery_date) for r in rows) == [
+        (IV_ORDER, INQUIRY_RAISED, _d("52"), D_A), (IV_ORDER, INQUIRY_RAISED, _d("52"), D_B)
+    ], ("premise: two raised date-split rows", _worklist(s, s.line[480]))
+    svc = ProjectOrderInquiryService(s.db)
+    assert not [link for r in rows for link in svc._links_of(r.id)], "premise: unlinked"
+    for r in rows:
+        r.ack_state, r.acknowledged_by = ACK_ACKNOWLEDGED, s.world.actor
+    s.db.commit()
+    kept_ids = {str(r.id) for r in rows}
+    before_ids = {str(r.id) for r in _rows_of_480(s)}
+
+    _save(s, {480: [(28, D_A, 480, ""), (24, D_B, "new", ""), (52, None, "cancel", "")]})
+    start = len(emails)
+    _confirm_104(s)
+
+    after = _rows_of_480(s)
+    live = [r for r in after if r.state != INQUIRY_CANCELLED]
+    assert {str(r.id) for r in live if r.verb == IV_ORDER} == kept_ids, (
+        "the two rows are cut in place, none cancelled and raised again", _worklist(s, s.line[480]))
+    assert not [r for r in after if r.verb == IV_ORDER and str(r.id) not in before_ids], (
+        "no fresh ORDER row", _worklist(s, s.line[480]))
+    assert sorted((r.qty, r.delivery_date, r.previous_qty) for r in live if r.verb == IV_ORDER) == [
+        (_d("24"), D_B, _d("52")), (_d("28"), D_A, _d("52"))
+    ], ("QTY 52 -> NEW QTY 28 / 24", [(r.qty, r.delivery_date, r.previous_qty) for r in live])
+    assert sorted((r.qty for r in live if r.verb == IV_CANCEL_BALANCE)) == [_d("52")], (
+        "the cut is one CANCEL BALANCE of 52", _worklist(s, s.line[480]))
+
+    sent = _sent_since(emails, start)
+    told = [(l["qty"], l.get("new_qty"), l["delivery_date"], str(l["remark"])) for l in sent]
+    assert not [l for l in sent if str(l["remark"]).startswith("ORDER")], ("no fresh ORDER told", told)
+    assert [l for l in sent if "CANCEL" in str(l["remark"])], ("the CANCEL BALANCE is told", told)
+
+    service = LineSplitService(s.db)
+    recorded = service.recorded_split_plans([str(s.order.id)])
+    splits = service.splits_of_lines({str(s.line[480].id)})[str(s.line[480].id)]
+    assert not split_plan_edited(splits, (recorded.get(str(s.line[480].id)) or {}).get("plan"))
