@@ -227,21 +227,59 @@ def test_an_account_and_an_amount_in_an_incentive_column_is_a_bonus_on_that_tier
     assert target.payout_customer_id == ledger.id
 
 
-def test_an_amount_past_the_rate_limit_of_its_threshold_is_not_a_bonus(api):
+def test_an_amount_past_the_rate_limit_skips_that_tier_and_loads_the_rest(api):
+    """Owner 20 Oct 10:11 (SRT 15-17, a typo): the tier the cell cannot pay is skipped, with a
+    warning on the row; the row's other tiers load."""
     client, db, company_id = api
     _customer(db, company_id, "FOXTROT HOME SDN BHD [A/C I]", 1)
-    rows = _post(client, db, _bonus("A/C I- 300,000"))["rows"]
-    assert rows[0]["status"] == "not_representable", rows[0]
-    assert "is not a rate" in rows[0]["reason"], rows[0]["reason"]
-    assert "100% of the threshold 300,000" in rows[0]["reason"], rows[0]["reason"]
+    row = _post(client, db, _bonus("A/C I- 300,000"))["rows"][0]
+    assert row["status"] == "mapped", row["reason"]
+    warning = next(w for w in row["warnings"] if "skipped" in w)
+    assert warning.startswith('Q1 / Tier 4 skipped: cell reads "A/C I- 300,000"'), warning
+    assert "100% of the threshold 300,000" in warning, warning
+
+    done = _post(client, db, _bonus("A/C I- 300,000"), dry_run=False)
+    _target, tiers, _rates, _accounts = _tiers(db, done["rows"][0]["target_nos"][0])
+    assert [(t.threshold, t.rate, t.bonus_amount) for t in tiers] == [(Decimal("100000"), Decimal("2"), None)]
 
 
-def test_an_amount_with_no_account_is_still_not_a_rate(api):
+def test_an_amount_with_no_account_skips_that_tier_too(api):
     client, db, company_id = api
     _customer(db, company_id, "FOXTROT HOME SDN BHD [A/C I]", 1)
-    rows = _post(client, db, _bonus("15,000"))["rows"]
-    assert rows[0]["status"] == "not_representable", rows[0]
-    assert "is not a rate" in rows[0]["reason"], rows[0]["reason"]
+    row = _post(client, db, _bonus("15,000"))["rows"][0]
+    assert row["status"] == "mapped", row["reason"]
+    assert any(w.startswith('Q1 / Tier 4 skipped: cell reads "15,000"') for w in row["warnings"]), row["warnings"]
+
+
+def test_a_skipped_tier_warns_every_account_row_of_the_target(api):
+    client, db, company_id = api
+    _customer(db, company_id, "FOXTROT HOME SDN BHD [A/C I]", 1)
+    _customer(db, company_id, "FOXTROT HOME SDN BHD [A/C III]", 3)
+
+    def fill(ws):
+        ws["A1"], ws["B1"], ws["C1"] = "DEALER NAME", "ACCOUNT", "Q1"
+        for c in ("A1:A2", "B1:B2", "C1:F1"):
+            ws.merge_cells(c)
+        ws["C2"], ws["D2"], ws["E2"], ws["F2"] = "Tier 1", "Tier 1 Incentive", "Tier 4", "Tier 4 Incentive"
+        ws["A3"] = "FOXTROT HOME SDN BHD"
+        ws.merge_cells("A3:A4")
+        ws["B3"], ws["B4"] = "A/C I", "A/C III"
+        for col, value in (("C", 100000), ("D", 0.02), ("E", 300000), ("F", "A/C I- 300,000")):
+            ws[f"{col}3"] = value
+            ws.merge_cells(f"{col}3:{col}4")
+
+    rows = _post(client, db, _bytes(fill))["rows"]
+    assert [r["status"] for r in rows] == ["mapped"] * 2, [r["reason"] for r in rows]
+    assert all(any("Tier 4 skipped" in w for w in r["warnings"]) for r in rows), rows
+
+
+def test_other_unreadable_rate_cells_still_fail_their_row(api):
+    """Only a cell that is not a rate is skipped; text the reader cannot read at all still fails."""
+    client, db, company_id = api
+    _customer(db, company_id, "FOXTROT HOME SDN BHD [A/C I]", 1)
+    row = _post(client, db, _bonus("see note"))["rows"][0]
+    assert row["status"] == "not_representable", row
+    assert "cannot read the rate" in row["reason"], row["reason"]
 
 
 # --- crew nits on gate r10 ------------------------------------------------------------------
@@ -250,8 +288,9 @@ def test_an_amount_with_no_account_is_still_not_a_rate(api):
 def test_an_amount_past_the_rate_limit_names_its_threshold_once(api):
     client, db, company_id = api
     _customer(db, company_id, "FOXTROT HOME SDN BHD [A/C I]", 1)
-    reason = _post(client, db, _bonus("A/C I- 300,000"))["rows"][0]["reason"]
-    assert reason.count("threshold 300,000") == 1, reason
+    row = _post(client, db, _bonus("A/C I- 300,000"))["rows"][0]
+    warning = next(w for w in row["warnings"] if "skipped" in w)
+    assert warning.count("threshold 300,000") == 1, warning
 
 
 def test_the_masked_dry_run_prints_an_account_pick_with_its_choices():
