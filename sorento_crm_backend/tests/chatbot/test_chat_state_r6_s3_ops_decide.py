@@ -219,11 +219,25 @@ def test_r6_s3_the_same_spec_under_new_subject_does_not_narrow_the_held_family(
 
 # --------------------------------------------------------------------------- static
 def test_r6_s3_names_own_class_is_deleted_from_its_seams():
+    """Banned in task.py, scheme_index.py, held_family.py. engine.py may use it ONLY in the state-off
+    branch of `_held_for_the_seams` (after its `subject is not None` return); any other use fails."""
+    import ast
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[2] / "app" / "services" / "chatbot"
-    for rel in ("turn/task.py", "head/scheme_index.py", "head/held_family.py", "engine.py"):
+    for rel in ("turn/task.py", "head/scheme_index.py", "head/held_family.py"):
         assert "names_own_class" not in (root / rel).read_text(), f"{rel} still reads names_own_class"
+    src = (root / "engine.py").read_text()
+    tree = ast.parse(src)
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_held_for_the_seams")
+    guard = next((i for i, st in enumerate(fn.body) if isinstance(st, ast.If) and "subject" in ast.unparse(st.test)
+                  and any(isinstance(x, ast.Return) for x in st.body)), None)
+    assert guard is not None, "_held_for_the_seams lost its `subject is not None` return"
+    allowed = {id(n) for st in fn.body[guard + 1:] for n in ast.walk(st)}
+    stray = [n.lineno for n in ast.walk(tree)
+             if ((isinstance(n, ast.Name) and n.id == "names_own_class") or (isinstance(n, ast.Attribute) and n.attr == "names_own_class")
+                 or (isinstance(n, ast.alias) and n.name == "names_own_class")) and id(n) not in allowed]
+    assert not stray, f"engine.py uses names_own_class outside the state-off branch of _held_for_the_seams: lines {stray}"
 
 
 # --------------------------------------------------------------------------- review round 4 (lead decision):

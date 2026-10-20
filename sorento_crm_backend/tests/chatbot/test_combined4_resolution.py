@@ -2,7 +2,9 @@
 
 Under the CHAT-STATE gate (`State.state_gate`, written by `turn/chat_state.apply_changes`) round 6's typed
 Subject decides: #1755's `class_named.names_own_class` seams (task class_ask in `turn/apply.py`, the state-off
-class rule in `engine._held_for_the_seams`, and through it the scheme-without-product check) do NOT fire.
+class rule in `engine._held_for_the_seams`, and through it the scheme-without-product check) do NOT fire. The
+spy sits on `class_named.names_own_class` itself, so it sees every call site that goes through it (the engine's
+state-off branch must call it, not carry an inline copy). A first ask over nothing shown runs as state-off.
 State OFF, #1755 behaves as on its own branch. #1755's R6-1b `spec_any_keys` (a bare size held as width OR
 length) must survive the state path's typed rows. #1761's `code_lookup` reaches the candidate shortlist only
 when its own gate is on.
@@ -145,6 +147,11 @@ def test_guard_gate_off_the_class_rule_still_fires_on_a_class_named_held_ask(
     ids, seams, calls = _two_turns(session_factory, stub_access, monkeypatch, [], gate=False)
     assert not applied, "the state path ran with the gate off"
     assert seams.names_own_class >= 1, "#1755 names_own_class did not fire with the gate off (task class_ask)"
+    # the task seam once + the held seams twice (family, scheme): the engine's state-off branch must go
+    # through class_named.names_own_class, not an inline copy of its rule
+    assert seams.names_own_class >= 1 + len(seams.held_calls), (
+        "engine._held_for_the_seams state-off branch does not call class_named.names_own_class",
+        seams.names_own_class, len(seams.held_calls))
     assert seams.held_calls and all(not on_state_path for on_state_path, _h in seams.held_calls), seams.held_calls
     assert all(held == [] for _s, held in seams.held_calls), ("the state-off class rule kept a held product", seams.held_calls)
     assert seams.scheme_without_product >= 1, "no held product reached the scheme-without-product check"
@@ -289,3 +296,48 @@ def test_guard_code_lookup_off_under_the_state_gate_passes_no_kw_and_no_near_lin
     assert applied, "state path did not run"
     assert kws and not any(kws), kws
     assert "near code" not in block, block
+
+
+# =============================================================== 4. a first ask over nothing shown runs as state-off
+def _first_ask(session_factory, stub_access, monkeypatch, *, state_block: bool):
+    from sqlalchemy import text
+
+    from app.services.ai_assistant_service import MCPRuntimeClient
+    from app.services.chatbot import engine as engine_mod
+    from app.services.chatbot.head import parser as parser_mod
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from tests.chatbot.test_chat_state_r6_s3_ops_decide import _message
+    from tests.chatbot.test_engine import CONTACT_ID
+
+    db = session_factory()
+    db.execute(text("UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) WHERE respond_io_id = :c"),
+               {"sv": json.dumps({"variables": {}}), "c": str(CONTACT_ID)})
+    db.commit()
+    ask = _file_ask(_ent("qqzzbrandx", "brand"), _scheme("zzpps", "ZZPPS"))
+    if state_block:
+        ask["state_changes"] = [_op("set", "brand")]
+
+    def fake_resolve_config(db, *, current_date, override_version_id=None):
+        return parser_mod.ParserConfig(system_prompt="stub", prompt_version=1, provider="openai", model="m",
+                                       api_key="k", closed_lists=True, state_block=state_block)
+
+    calls: list[tuple[str, dict]] = []
+    monkeypatch.setattr(parser_mod, "resolve_config", fake_resolve_config)
+    monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: ask)
+    monkeypatch.setattr(engine_mod, "_contact_company_scope", lambda f, c: frozenset({DEFAULT_COMPANY_ID}))
+    monkeypatch.setattr(MCPRuntimeClient, "call_tool",
+                        lambda self, name, args: calls.append((name, args)) or json.dumps({"ok": True, "items": []}))
+    stub_access()
+    out = engine_mod.run_turn(_envelope(message=_message("zzpps certificate qqzzbrandx", 0)), session_factory=session_factory)
+    return ((out.reply or {}).get("text") or ""), list(calls)
+
+
+def test_red_a_first_ask_over_nothing_shown_with_the_state_block_on_replies_as_state_off(
+    session_factory, seeded, stub_access, monkeypatch
+):
+    _seed(session_factory)
+    off_text, off_calls = _first_ask(session_factory, stub_access, monkeypatch, state_block=False)
+    on_text, on_calls = _first_ask(session_factory, stub_access, monkeypatch, state_block=True)
+    assert on_text == off_text, ("first ask, state block on vs off (engine listed_scheme_placed reads subject, not state_gate)",
+                                 on_text[:200], off_text[:200])
+    assert on_calls == off_calls, (on_calls, off_calls)
