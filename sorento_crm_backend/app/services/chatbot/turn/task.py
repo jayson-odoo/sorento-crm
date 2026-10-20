@@ -670,7 +670,12 @@ def run(
                 question = impl.question(filled)
                 question_domain = filled.domain
             continue
-        if task.domain and task.domain == named_domain and _only_task_slots(task, verdict):
+        # A brand pick the state path made (`set_brand` as a list) re-runs the offered set; it is
+        # not the task's topic again. Main's own single-string `set_brand` is left as it was.
+        if (
+            task.domain and task.domain == named_domain and _only_task_slots(task, verdict)
+            and not isinstance(verdict.get("set_brand"), list)
+        ):
             # (3) resume: the task's own topic, named again with nothing new. Only
             # what is still missing is asked; nothing is asked twice.
             resumed = replace(task, status=OPEN, touched_at_turn=turn_no)

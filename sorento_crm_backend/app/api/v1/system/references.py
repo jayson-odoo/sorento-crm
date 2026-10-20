@@ -1413,6 +1413,20 @@ class ResolveReferenceRequest(BaseModel):
             "the known choices before anything is counted or searched."
         ),
     )
+    no_free_remainder: bool = Field(
+        default=False,
+        description=(
+            "CLOSED LISTS: on a file ask the described set comes only from the caller's "
+            "entities, never from the leftover words of the message."
+        ),
+    )
+    cert_number_is_code: bool = Field(
+        default=False,
+        description=(
+            "CLOSED LISTS: a token the resolver matched exactly as a certificate counts as a "
+            "typed code, so `require` does not describe a set over the leftover words."
+        ),
+    )
     set_list_max: int | None = Field(
         default=None,
         ge=1,
@@ -1620,7 +1634,7 @@ class ResolveReferenceRequest(BaseModel):
 _CODE_MATCH_TIERS = frozenset({"exact", "prefix", "substring", "head_code", "and"})
 
 
-def _code_matched(result: dict[str, Any], tokens: list[str] | None = None) -> bool:
+def _code_matched(result: dict[str, Any], tokens: list[str] | None = None, *, certificates: bool = False) -> bool:
     """Code first (fix round 13 on PR #833, owner 28 Sep 2026: "if found by product code
     -> forward asking, if cannot find product code, fallback to spec search -> reverse
     asking"): did the resolver match a caller token to a product BY ITS CODE?
@@ -1642,6 +1656,9 @@ def _code_matched(result: dict[str, Any], tokens: list[str] | None = None) -> bo
 
     def _hit(token: Any, match: Any) -> bool:
         fragment = _fold(token)
+        if certificates and isinstance(match, dict) and match.get("entity_type") == "certificate":
+            # CLOSED LISTS: a certificate matched exactly (by number, or scheme and number).
+            return any(ch.isdigit() for ch in fragment) and match.get("match_tier") == "exact"
         return (
             any(ch.isdigit() for ch in fragment)
             and isinstance(match, dict)
@@ -1942,8 +1959,11 @@ def _has_turn_free_terms(
 #: filename, a transporter's or a form's name. A token whose kind the caller has locked
 #: (`hint_locked_tokens`) is never given one of these; the resolver's product rows (code
 #: tiers and the spec tier) and every other kind are untouched.
+#: CHAT-CLOSED-LISTS S4a (owner CP0 card c06, "Why we cant identify WC ya"): the attachment
+#: TYPE is one too - its probe reads the type's description words, so a locked "WC" was
+#: handed the Certification type through "wcm" and the bot asked "WC (attachment type)?".
 _NAME_MATCHED_KINDS: frozenset[str] = frozenset(
-    {"promotion", "customer", "attachment", "transporter", "form"}
+    {"promotion", "customer", "attachment", "attachment_type", "transporter", "form"}
 )
 
 
@@ -1966,6 +1986,9 @@ def _name_kinds_dropped_for(domain_hint: str | None) -> frozenset[str]:
     own: set[str] = {canonical} if canonical else set()
     if domain in {"resource_attachment", "attachment"}:
         own.add("attachment")
+    if domain in {"product_attachment", "resource_attachment", "attachment"}:
+        # A file ask: the type a word names is that ask's own answer.
+        own.add("attachment_type")
     if canonical == "customer_order":
         # Order / sales (crew ruling Q4 on the lane card, 6 Oct 2026: out of scope): the
         # resolver's own domain expansion reads a brand or category word there as the
@@ -3288,7 +3311,7 @@ def resolve_reference_post(
     # UNLESS a caller token matched a product by code (`_code_matched`: code first,
     # spec search only when no code matched), so the response stays byte-identical to
     # the same request without `require`.
-    if payload.require and not _code_matched(result, payload.tokens):
+    if payload.require and not _code_matched(result, payload.tokens, certificates=payload.cert_number_is_code):
         from app.services.product_predicate_service import (
             recover_certificate_scheme,
             resolve_product_set,
@@ -3418,7 +3441,11 @@ def resolve_reference_post(
         scope_terms = (
             list(payload.scope_terms)
             if payload.scope_terms
-            else (None if payload.free_terms else _has_turn_free_terms(payload, result, query_text))
+            else (
+                None
+                if payload.free_terms
+                else ([] if payload.no_free_remainder else _has_turn_free_terms(payload, result, query_text))
+            )
         )
 
         # The counted set lists off the QUALIFYING ids themselves, capped at
