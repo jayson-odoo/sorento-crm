@@ -628,6 +628,8 @@ function lineFor(
       cited_document: decision.cited_document ?? undefined,
     });
     suggested.suspected_system_issue = decision.suspected_system_issue ?? false;
+    // OI-SPLIT-GUIDE (UAC F26): the planner's own REMARK rides with the approval too.
+    suggested.remark = decision.remark;
     if (!contribution.project_line_id) return 'no_mirror';
     return confirmLineFrom(contribution.project_line_id, suggested);
   }
@@ -683,6 +685,8 @@ function lineFor(
     buy_qty: fromMinor(buy),
     buy_reason: buyReason,
     cs_note: decision?.cs_note?.trim() || undefined,
+    // OI-SPLIT-GUIDE (UAC F26): the planner's own REMARK for the email, when they typed one.
+    remark: decision?.remark?.trim() || undefined,
     // Present only on the legacy single-number amendment, which is still an override.
     amend_reason: decision?.verdict === 'amended' ? decision.reason : undefined,
     // An approved or untouched line can still carry the flag (R10).
