@@ -15,11 +15,16 @@ injected with `current_message` true; the customer never typed it.
 
 ## Design
 
-- When the parser hinted a kind and the resolver has an EXACT whole-token hit on that kind (`exact`), that kind
-  wins: no kind pick (the REFERENCE_NARROW rule generalised to every hinted kind).
+- When the parser hinted a kind and that kind is the ONLY kind with an exact whole-token hit (`exact`; with
+  exact=None every hit counts as exact), that kind wins: no kind pick. Two exact kinds still ask (REF-PROBES AC-13
+  purchase_order vs customer_po_ref, the F1b "Sorento" customer / transporter pick); REFERENCE_NARROW is unchanged.
+  Measured: a promotion is never an exact whole-token hit (entity_resolver.py's promotion probes are prefix,
+  substring, trgm and and matches), so a typed product code linked to a promotion settles (T15).
 - The kind pick offers only tokens typed THIS message: `apply_reconciliation(..., typed=...)` receives the folded
-  keys (`turn.state.token_key`) of the words of the message's own first line, threaded engine -> `apply` ->
-  `_reconcile_step`; a held or carried token is never asked about. `typed=None` keeps today's behaviour.
+  own text (`turn.state.token_key` of the customer's own lines up to the `reply to:` block, plus the codes read from
+  the turn's media), built once per turn by `engine._typed_text(user_turn)` and threaded engine -> `apply` ->
+  `_reconcile_step`; a token is typed when its folded raw is inside it; a held or carried token is never asked
+  about. `typed=None` keeps today's behaviour.
 
 ARCHITECTURE: layer = reconcile (code after the parser, before the fetch). Shared mechanism: the hinted-kind rule
 reads the exact map for every kind, and the pick reads the message's own words instead of a seam-settable flag.
