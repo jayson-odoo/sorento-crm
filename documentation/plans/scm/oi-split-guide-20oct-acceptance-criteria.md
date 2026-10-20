@@ -64,10 +64,12 @@ decision draft in `lines`, `rejected_line_ids`, `cancelled_lines`) or a saved sp
   today.
 - C6. The dry run fails (network or server): Review shows the error with Retry and Back; the Confirm step
   cannot be reached.
-- C7. Every order refused: Review shows each refusal reason (the same words today's result card prints)
-  and that nothing can be confirmed; Confirm cannot be reached; Cancel closes the guide and nothing is
-  posted, so no result card appears (lead ruling 20 Oct: the reason moves from the result card into
-  Review). Some refused, some ok: Confirm is reachable and today's result card still lists the refusals.
+- C7. Every order refused: nothing is posted, the guide closes and today's result card shows the
+  refusals exactly as a refused press does now (same words, admin failing-lines table, Go to line, Reload,
+  History). Refusals render in ONE place (the result card), never rebuilt inside the dialog (lead ruling
+  20 Oct, revised after the tester found ~10 planningWhy specs on that card). Some refused, some ok: Review
+  names each refused order with its reason (C5), Confirm is reachable, and today's result card still lists
+  the refusals after the post.
 
 ## D. Step 3 Confirm
 - D1. A summary line ("2 orders: SO417636 (1 row), SO424910 (9 rows). Nothing has been sent yet.") and one
