@@ -3368,6 +3368,7 @@ class ProjectSODraftService:
         query: Optional[str] = None,
         status: Optional[Sequence[str]] = None,
         purchase_order_id: Optional[str] = None,
+        without_purchase_order: bool = False,
         page: int = 1,
         limit: int = 50,
         sort: str = "created_at",
@@ -3378,6 +3379,8 @@ class ProjectSODraftService:
         )
         if purchase_order_id:
             rows = rows.filter(ProjectSalesOrder.purchase_order_id == purchase_order_id)
+        if without_purchase_order:
+            rows = rows.filter(ProjectSalesOrder.purchase_order_id.is_(None))
         if status:
             rows = rows.filter(ProjectSalesOrder.status.in_(list(status)))
         if query:

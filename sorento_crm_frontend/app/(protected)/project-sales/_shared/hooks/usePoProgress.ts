@@ -69,16 +69,15 @@ export function useChangeAreaDate(projectId: string, poId: string) {
       toast.success(describeAreaDateChange(result), {
         duration: 10000,
         action:
-          result.previous_date || result.previous_lines.length > 0
+          result.previous_date !== result.delivery_date || result.previous_lines.length > 0
             ? {
                 label: 'Undo',
                 onClick: () =>
                   mutation.mutate({
                     phaseId: result.phase_id,
                     body: {
-                      // An area that had no date gets the new one back off its lines'
-                      // own dates; the API needs some date for the area itself.
-                      delivery_date: result.previous_date ?? (result.delivery_date as string),
+                      // Null gives an area that had no date its blank back.
+                      delivery_date: result.previous_date,
                       restore_lines: result.previous_lines,
                     },
                   }),

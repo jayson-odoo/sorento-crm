@@ -539,6 +539,12 @@ async def change_delivery_area_date(
     `restore_lines` is Undo."""
     try:
         validate_uuid_path(phase_id, resource="Delivery area")
+        if payload.delivery_date is None and payload.restore_lines is None:
+            raise AppException(
+                status_code=422,
+                message="Pick the new delivery date.",
+                code="area_date_required",
+            )
         phase = progress_svc.get_phase(db, phase_id)
         project = projects.get_project_or_404(db, phase.project_id)
         projects.assert_can_edit_project(

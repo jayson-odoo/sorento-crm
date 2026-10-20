@@ -206,3 +206,19 @@ Deviations, for the owner to accept or send back:
   instead. Rows on the sales order editor keep their drag sort.
 - **"Publish N sales orders"** opens the PO's Sales orders tab, where each order is published as
   today; there is no bulk publish endpoint and none was added.
+
+Review round 1 (20 Oct), fixed: delivered quantities follow a published order across PO versions
+(B1, matched by printed line number); a set line counts sets, not parts (B2); a newer move of an
+area replaces its still-proposed amendment, so Undo leaves none; Undo restores an area that had
+no date; adopted orders are named, not skipped; sales orders not built from a PO (sponsorship,
+adopted) get their own section under the Orders tab; the PO filter is UUID-checked; route-level
+tests for both new routes and the line guard.
+
+Decided in the build, for the owner to overrule:
+
+- **An area is the project's, not one PO's** (`delivery_phases` is unique per project). Moving
+  its date on one PO's page moves every draft line on that area, whichever PO built it, and
+  proposes amendments for every published order on it; the toast names each order. Limiting the
+  move to one PO would let two POs disagree about when the same floor is delivered.
+- A refused amendment (open AutoCount difference) is reported in the toast only; the order keeps
+  its old date until the difference is resolved and the date moved again.

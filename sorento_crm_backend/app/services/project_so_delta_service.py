@@ -636,7 +636,7 @@ class ProjectSODeltaService:
         pso_id: str,
         *,
         phase: ProjectDeliveryPhase,
-        delivery_date: date,
+        delivery_date: Optional[date],
         actor_user_id: str,
     ) -> Optional[Dict[str, Any]]:
         """PM-SIMPLIFY Q2a: an area's date was moved by hand (no revised document), and this

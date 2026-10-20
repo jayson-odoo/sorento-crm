@@ -407,3 +407,40 @@ describe('SalesOrdersPanel', () => {
     expect(screen.queryByText('Awaiting reconciliation')).not.toBeInTheDocument();
   });
 });
+
+describe('SalesOrdersPanel on the Orders tab (orders not from a PO)', () => {
+  it('asks only for orders with no PO and renders nothing when there are none', async () => {
+    listProjectSalesOrders.mockResolvedValue({ data: [], total: 0, page: 1, limit: 25 });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
+    });
+    const { container } = render(
+      <QueryClientProvider client={client}>
+        <SalesOrdersPanel project={project()} withoutPurchaseOrder />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(listProjectSalesOrders).toHaveBeenCalledWith(
+        'p1',
+        expect.objectContaining({ without_purchase_order: true }),
+      ),
+    );
+    await waitFor(() => expect(container).toBeEmptyDOMElement());
+  });
+
+  it('lists a sponsorship order under its own heading, with no build control', async () => {
+    listProjectSalesOrders.mockResolvedValue({ data: [row()], total: 1, page: 1, limit: 25 });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <SalesOrdersPanel project={project()} withoutPurchaseOrder />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('Sales orders not from a PO')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Build drafts/ })).not.toBeInTheDocument();
+  });
+});

@@ -407,7 +407,8 @@ class AreaDateRestoreLine(BaseModel):
 
 
 class AreaDateChange(BaseModel):
-    delivery_date: date
+    # Null only on Undo, to give back an area that had no date (`restore_lines` present).
+    delivery_date: Optional[date] = None
     # Undo only: the `previous_lines` the last change returned.
     restore_lines: Optional[List[AreaDateRestoreLine]] = Field(None, max_length=5000)
 

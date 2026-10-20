@@ -228,13 +228,32 @@ def po_progress(db: Session, po: ProjectPurchaseOrder) -> Dict[str, Any]:
     # own product counts. A hand-keyed PO has no line ids, so its product is the match.
     so_by_line: Dict[str, List[ProjectSalesOrderLine]] = defaultdict(list)
     keys_by_po_line = {line.po_line_id: line for line in lines if line.po_line_id}
+    # `source_po_line_id` names the PO line of the version the order was BUILT from, and a
+    # published order is never rebuilt, so once v2 is confirmed its lines still point at
+    # v1's ids. Map every stamped id to its printed line number, and the line number to
+    # the current version's line (review B1).
+    keys_by_line_no = {line.line_no: line for line in lines if line.po_line_id}
+    stamped = {str(row.source_po_line_id) for row in so_lines if row.source_po_line_id}
+    line_no_of: Dict[str, int] = (
+        {
+            str(row_id): line_no
+            for row_id, line_no in db.query(ProjectPOLine.id, ProjectPOLine.line_no)
+            .filter(ProjectPOLine.id.in_(list(stamped)))
+            .all()
+        }
+        if stamped
+        else {}
+    )
     hand_keyed_by_product = {
         str(line.product_id): line for line in lines if not line.po_line_id and line.product_id
     }
     for so_line in so_lines:
         owner: Optional[_Line] = None
         if so_line.source_po_line_id:
-            owner = keys_by_po_line.get(str(so_line.source_po_line_id))
+            source = str(so_line.source_po_line_id)
+            owner = keys_by_po_line.get(source)
+            if owner is None and source in line_no_of:
+                owner = keys_by_line_no.get(line_no_of[source])
             if owner is not None and owner.product_id and str(so_line.product_id) != str(
                 owner.product_id
             ):
@@ -244,12 +263,25 @@ def po_progress(db: Session, po: ProjectPurchaseOrder) -> Dict[str, Any]:
         if owner is not None:
             so_by_line[owner.key].append(so_line)
 
+    # Areas a sales order line sits on that the confirmed schedule no longer carries, in
+    # one query rather than one per line.
+    extra_phase_ids = {
+        str(row.phase_id) for row in so_lines if row.phase_id and str(row.phase_id) not in phases
+    }
+    other_phases: Dict[str, ProjectDeliveryPhase] = (
+        {
+            str(phase.id): phase
+            for phase in db.query(ProjectDeliveryPhase)
+            .filter(ProjectDeliveryPhase.id.in_(list(extra_phase_ids)))
+            .all()
+        }
+        if extra_phase_ids
+        else {}
+    )
+
     def _phase_bits(phase_id: Optional[str]) -> Dict[str, Any]:
-        phase = phases.get(str(phase_id or "")) or (
-            db.query(ProjectDeliveryPhase).filter(ProjectDeliveryPhase.id == phase_id).first()
-            if phase_id
-            else None
-        )
+        key = str(phase_id or "")
+        phase = phases.get(key) or other_phases.get(key)
         return {
             "phase_id": str(phase.id) if phase else None,
             "area_group": phase.area_group if phase else None,
@@ -278,6 +310,7 @@ def po_progress(db: Session, po: ProjectPurchaseOrder) -> Dict[str, Any]:
                     "sales_order_status": order.status,
                 }
             )
+        delivered = _po_line_units_delivered(line, so_by_line.get(line.key, []), _delivered)
         outstanding = max(line.ordered - delivered, _ZERO)
         upcoming = [
             row["delivery_date"]
@@ -379,6 +412,33 @@ def po_progress(db: Session, po: ProjectPurchaseOrder) -> Dict[str, Any]:
     }
 
 
+def _po_line_units_delivered(
+    line: _Line,
+    so_lines: Sequence[ProjectSalesOrderLine],
+    delivered_of,
+) -> Decimal:
+    """What went out, in the PO line's own units.
+
+    One product (the normal line): the delivered quantities add up. A SET line (no product
+    of its own) is drafted as one line per part, at that part's quantity per set, so adding
+    the parts would count a set once per part (review B2). A set is delivered as far as its
+    scarcest part: the PO line's units times the smallest delivered share over the parts.
+    """
+    if not so_lines:
+        return _ZERO
+    by_product: Dict[str, List[Decimal]] = defaultdict(lambda: [_ZERO, _ZERO])
+    for row in so_lines:
+        entry = by_product[str(row.product_id or "")]
+        entry[0] += _dec(row.qty)
+        entry[1] += delivered_of(row)
+    if line.product_id or len(by_product) == 1:
+        return sum((entry[1] for entry in by_product.values()), _ZERO)
+    share = min(
+        (got / drafted if drafted else _ZERO) for drafted, got in by_product.values()
+    )
+    return min(line.ordered * share, line.ordered)
+
+
 def po_totals(db: Session, purchase_orders: Sequence[ProjectPurchaseOrder]) -> Dict[str, Dict[str, Any]]:
     """AC-O3: ordered and delivered units and the next delivery date per PO, for the Orders
     tab. One `po_progress` per PO: a project carries a handful of POs, not hundreds."""
@@ -409,7 +469,7 @@ def change_area_date(
     db: Session,
     phase: ProjectDeliveryPhase,
     *,
-    delivery_date: date,
+    delivery_date: Optional[date],
     actor_user_id: str,
     restore_lines: Optional[Sequence[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:

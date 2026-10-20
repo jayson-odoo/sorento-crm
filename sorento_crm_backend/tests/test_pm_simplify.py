@@ -29,6 +29,17 @@ from .test_project_so_draft import (  # noqa: F401 - `seeded` is a fixture
 )
 
 
+def _new_user(db) -> str:
+    import uuid as _uuid
+
+    from app.models.user import User
+
+    user_id = str(_uuid.uuid4())
+    db.add(User(id=user_id, email=f"{user_id}@zzt.test", name="zzt-pm stranger"))
+    db.flush()
+    return user_id
+
+
 def _one_line_po(db, company_id, owner, *, po_confirmed=True, schedule_confirmed=True):
     project = _project(db, company_id, owner)
     product = _product(db, "SRTA-100")
@@ -424,6 +435,10 @@ def test_the_sales_order_list_narrows_to_one_po(seeded):
     assert total == len(_orders(db, po))
     assert {row.purchase_order_id for row in rows} == {po.id}
     assert all_total == total + 1
+    loose, loose_total = ProjectSODraftService(db).list_for_project(
+        project.id, without_purchase_order=True
+    )
+    assert loose_total == 0
 
 
 def test_an_adopted_order_on_the_area_is_named_not_rewritten(seeded):
@@ -507,3 +522,184 @@ def test_undo_on_a_published_area_leaves_no_amendment_behind(seeded):
         .count()
         == 0
     )
+
+
+def test_delivered_survives_a_second_confirmed_po_version(seeded):
+    """Review B1: published orders keep v1's line ids; confirming an unchanged v2 must not
+    reset what AutoCount says was delivered."""
+    from app.services.project_po_progress_service import po_progress
+
+    db, company_id, owner = seeded
+    po, phases, product_a, product_b = _two_line_po(db, company_id, owner)
+    _publish_all(db, po)
+    _deliver(db, _so_lines(db, po, phase=phases[0], product=product_a)[0], "40")
+    _po_version(
+        db,
+        po,
+        lines=[
+            (1, product_a, "SRTA-100", "300", "UNIT", "10.00", "3000.00", False),
+            (2, product_b, "SRTB-200", "60", "UNIT", "20.00", "1200.00", False),
+        ],
+        version_no=2,
+    )
+
+    progress = po_progress(db, po)
+
+    by_no = {line["line_no"]: line for line in progress["lines"]}
+    assert by_no[1]["delivered"] == Decimal("40")
+    assert len(by_no[1]["deliveries"]) == 3
+    assert progress["totals"]["delivered"] == Decimal("40")
+
+
+def test_a_set_line_counts_sets_delivered_not_parts(seeded):
+    """Review B2: 100 sets drafted as parts of 1, 1 and 2 per set; 10 sets delivered is 10,
+    not 40."""
+    import uuid as _uuid
+
+    from app.models.project_so import ProjectPOLine, ProjectSalesOrderLine
+    from app.services.project_po_progress_service import po_progress
+
+    db, company_id, owner = seeded
+    project = _project(db, company_id, owner)
+    po = _po(db, project, party=_party(db, company_id))
+    version = _po_version(db, po, lines=[(1, None, "SET-WC", "100", "SETS", "900", "90000", False)])
+    po_line = db.query(ProjectPOLine).filter(ProjectPOLine.po_version_id == version.id).one()
+    order = ProjectSalesOrder(
+        id=str(_uuid.uuid4()),
+        company_id=company_id,
+        project_id=project.id,
+        purchase_order_id=po.id,
+        provisional_ref=f"ZZT-{_uuid.uuid4().hex[:8]}",
+        status="published",
+    )
+    db.add(order)
+    db.flush()
+    for no, (code, per_set, sent) in enumerate(
+        [("PART-A", "1", "10"), ("PART-B", "1", "10"), ("PART-C", "2", "20")], start=1
+    ):
+        part = _product(db, code)
+        so_line = ProjectSalesOrderLine(
+            id=str(_uuid.uuid4()),
+            company_id=company_id,
+            project_sales_order_id=order.id,
+            line_no=no,
+            product_id=part.id,
+            qty=Decimal("100") * Decimal(per_set),
+            source_po_line_id=po_line.id,
+            delivery_date=date(2030, 7, 1),
+        )
+        db.add(so_line)
+        db.flush()
+        _deliver(db, so_line, sent)
+
+    line = po_progress(db, po)["lines"][0]
+
+    assert line["delivered"] == Decimal("10")
+    assert line["outstanding"] == Decimal("90")
+
+
+def test_undo_gives_an_undated_area_its_blank_date_back(seeded):
+    """Review should-fix 2: Undo restores an area that had no date."""
+    from app.services.project_po_progress_service import change_area_date
+
+    db, company_id, owner = seeded
+    po, phases, _a, _b = _two_line_po(db, company_id, owner)
+    area = phases[2]
+    area.delivery_date = None
+    db.flush()
+
+    moved = change_area_date(db, area, delivery_date=date(2030, 10, 1), actor_user_id=owner)
+    change_area_date(
+        db, area, delivery_date=moved["previous_date"], actor_user_id=owner,
+        restore_lines=moved["previous_lines"],
+    )
+
+    assert moved["previous_date"] is None
+    assert area.delivery_date is None
+
+
+# ------------------------------------------------------------------ routes (HTTP)
+
+
+@pytest.fixture()
+def http(seeded):
+    from app.models.base import company_scope
+
+    from .test_project_samples_pos_routes import _client, _restore
+
+    db, company_id, owner = seeded
+    po, phases, product_a, product_b = _two_line_po(db, company_id, owner)
+    db.commit()
+    client, originals = _client(db, owner)
+    try:
+        with company_scope(db, frozenset({company_id})):
+            yield client, db, company_id, owner, po, phases
+    finally:
+        _restore(originals)
+
+
+BASE = "/api/v1/project-sales"
+
+
+def test_route_progress_keeps_every_field(http):
+    client, _db, _c, _o, po, _phases = http
+
+    response = client.get(f"{BASE}/purchase-orders/{po.id}/progress")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    line = body["lines"][0]
+    for field in ("ordered", "scheduled", "schedule_gap", "delivered", "outstanding", "deliveries"):
+        assert field in line
+    assert body["areas"][0]["sales_orders"]
+    assert body["totals"]["schedule_short_lines"] == 1
+
+
+def test_route_moves_an_area_and_returns_what_undo_needs(http):
+    client, _db, _c, _o, _po, phases = http
+
+    response = client.put(
+        f"{BASE}/delivery-phases/{phases[0].id}/date", json={"delivery_date": "2030-07-15"}
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["delivery_date"] == "2030-07-15"
+    assert body["previous_date"] == "2030-07-01"
+    assert body["moved_lines"] > 0
+    assert len(body["previous_lines"]) == body["moved_lines"]
+    assert client.put(f"{BASE}/delivery-phases/{phases[0].id}/date", json={}).status_code == 422
+
+
+def test_route_refuses_someone_who_may_not_edit_the_project(http):
+    from app.services.user_service import UserPermissionService
+
+    client, db, _c, _o, _po, phases = http
+    from app.dependencies import get_current_user
+    from app.main import app
+
+    other_id = _new_user(db)
+    app.dependency_overrides[get_current_user] = lambda: {"id": other_id, "role": "salesperson"}
+    UserPermissionService.get_user_permission_slugs = lambda self, uid: [
+        "projects.projects.view",
+        "projects.projects.edit",
+    ]
+
+    response = client.put(
+        f"{BASE}/delivery-phases/{phases[0].id}/date", json={"delivery_date": "2030-07-15"}
+    )
+
+    assert response.status_code == 403, response.text
+    assert phases[0].delivery_date == date(2030, 7, 1)
+
+
+def test_route_po_line_writes_are_refused_on_a_scanned_po(http):
+    client, _db, _c, _o, po, _phases = http
+
+    response = client.post(
+        f"{BASE}/purchase-orders/{po.id}/lines",
+        json={"product_code": "SRTA-100", "unit_price": "1", "quantity": "1"},
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["code"] == "po_lines_from_document"

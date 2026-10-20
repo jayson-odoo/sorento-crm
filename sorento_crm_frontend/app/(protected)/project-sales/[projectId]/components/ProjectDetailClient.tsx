@@ -53,6 +53,7 @@ import { ProjectDocumentsPanel } from './ProjectDocumentsPanel';
 import { ProjectAccessPanel } from './ProjectAccessPanel';
 import { ReassignProjectDialog } from './ReassignProjectDialog';
 import { PurchaseOrdersPanel } from './PurchaseOrdersPanel';
+import { SalesOrdersPanel } from './SalesOrdersPanel';
 import { QuotationsPanel } from './QuotationsPanel';
 import { SampleRequestsPanel } from './SampleRequestsPanel';
 import { SamplesPanel } from './SamplesPanel';
@@ -399,8 +400,9 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
         <TabsContent value="sponsorships">
           <SponsorshipsPanel project={project} />
         </TabsContent>
-        <TabsContent value="orders">
+        <TabsContent value="orders" className="space-y-4">
           <PurchaseOrdersPanel project={project} />
+          <SalesOrdersPanel project={project} withoutPurchaseOrder />
         </TabsContent>
         <TabsContent value="activity">
           <ProjectActivityPanel project={project} />

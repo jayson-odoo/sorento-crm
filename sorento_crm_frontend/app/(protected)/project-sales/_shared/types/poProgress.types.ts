@@ -66,7 +66,8 @@ export interface AreaDateRestoreLine {
 }
 
 export interface AreaDateChangeBody {
-  delivery_date: string;
+  /** Null only on Undo, for an area that had no date. */
+  delivery_date: string | null;
   restore_lines?: AreaDateRestoreLine[];
 }
 

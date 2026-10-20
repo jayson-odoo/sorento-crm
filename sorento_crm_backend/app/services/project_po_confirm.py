@@ -13,7 +13,6 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.project_so import (
@@ -21,7 +20,6 @@ from app.models.project_so import (
     ANNOTATION_EDITED,
     ANNOTATION_PROPOSED,
     ANNOTATION_REJECTED,
-    PO_STATUS_APPROVED,
     ProjectPOAnnotation,
     ProjectPOLine,
     ProjectPOVersion,
