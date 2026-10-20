@@ -1,9 +1,9 @@
 # PLAN: guided Confirm on the Fulfilment planning board (OI-SPLIT-GUIDE)
 
-Status: Crew audit 98b5490248 blocker (email risk) fixed in round 10 (UAC F32: red 67d8d96c52; 5648dc5bf9
-confirmed_remark on board contributions, 501b532abc one remark rule incl. confirmed; kill held). Rounds 9-9d
-editable remark (UAC F25-F31). Next: reviewer, browser 1280/375 incl. SO417636 after the dev DB swap, script,
---handtest. Track M (no migration).
+Status: Crew audit 98b5490248 email risk closed in rounds 10-11 (UAC F32-F33: red 67d8d96c52 d34a2aca4e;
+5648dc5bf9 501b532abc confirmed_remark round-trip; 48b8883c22 aa72deb538 one server rule: a missing remark keeps
+the confirmed remark, "" clears; kill held). Next: reviewer, browser 1280/375 incl. SO417636 after the dev DB
+swap, script, --handtest. Track M (no migration).
 
 Card: `oi-split-guide-behaviour-card.md`. UAC: `oi-split-guide-20oct-acceptance-criteria.md` (the
 behaviour; this plan does not restate it). Mock: `documentation/mockups/OI-SPLIT-GUIDE/index.html`.
