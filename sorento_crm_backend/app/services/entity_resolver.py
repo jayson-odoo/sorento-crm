@@ -2070,6 +2070,8 @@ def _product_family_order():
 def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
     # Strip whitespace from both sides so 'cgb9032b- new' matches 'CGB9032B-NEW'.
     norm_token = _strip_all_ws(token)
+    if not re.sub(r"[^0-9A-Za-z]", "", norm_token):
+        return []  # separators only: nothing to probe a code with (an ILIKE '%' matches every code)
     # LIKE wildcards in the token are literal characters, as `_code_candidates` autoescapes them.
     escaped = norm_token.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     prefix = f"{escaped}%"

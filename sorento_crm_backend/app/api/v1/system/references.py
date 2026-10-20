@@ -1787,25 +1787,37 @@ def _rebuild_intersection_fields(result: dict[str, Any]) -> None:
         result["unresolved_tokens"] = list(result.get("tokens") or [])
 
 
-def _drop_word_code_fragments(result: dict[str, Any], vocabulary: frozenset[str]) -> None:
-    """CODE-SUBSTRING: a WORD token (no ASCII digit) gets no product from a code fragment read.
-    Kept: exact / head_code rows, a row whose code IS the token (separators aside, whatever its
-    tier: the AND probe has no exact tier), and prefix siblings of an exact hit. Dropped: the
-    rows with the word INSIDE the code ("basin" reaching ZZBASINWC7), and the rows that start with
-    it (prefix, or AND tier) when the registry knows the token as a word (`vocabulary`: "basin"
-    reaching BASINZZWC7; a code family such as "QAMS" or a brand word keeps its prefix rows). A token with a digit keeps
-    them all (a code fragment). Runs once, early, so every reader of the result (Shape B, the
-    spec fallback, the response) sees the same rows."""
+def _restate_resolution(result: dict[str, Any], tr: dict[str, Any], kept: list[Any]) -> None:
+    """A resolution's rows were cut to `kept`: its flags and the result's token lists say what the
+    rows left say (the resolver's own meaning, `_suppress_brand_prefix_junk`: resolved = exactly one
+    match, ambiguous = more than one)."""
+    tr["matches"] = kept
+    tr["resolved"] = len(kept) == 1
+    tr["ambiguous"] = len(kept) > 1
+    if not tr["ambiguous"] and "ambiguous_tokens" in result:
+        result["ambiguous_tokens"] = [t for t in result["ambiguous_tokens"] if t != tr.get("token")]
+    result["unresolved_tokens"] = [
+        r["token"] for r in result.get("resolutions") or [] if isinstance(r, dict) and not (r.get("matches") or [])
+    ]
+
+
+def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
+    """CODE-SUBSTRING (crew a59517206 (a)): a WORD token (no ASCII digit) gets no product from a
+    code fragment read. A registry word is never a code hit, as a substring or as whole code
+    segments. Kept: exact / head_code rows and a row whose code IS the token (separators aside,
+    whatever its tier: the AND probe has no exact tier). Dropped: rows with the word INSIDE the
+    code, and rows that start with it (prefix, or AND tier) when the registry knows the word
+    (`vocabulary`, a set or a callable read only when such a row needs it: a code family such as
+    "QAMS" or a brand word keeps its prefix rows). A token with a digit keeps them all (a code
+    fragment). Runs once, early, so every reader of the result sees the same rows."""
+    words: list[frozenset[str]] = []
 
     def known(tokens: list[str]) -> bool:
-        return any(w in vocabulary for t in tokens for w in re.split(r"[^a-z0-9]+", str(t or "").lower()) if w)
+        if not words:
+            words.append(vocabulary() if callable(vocabulary) else vocabulary)
+        return any(w in words[0] for t in tokens for w in re.split(r"[^a-z0-9]+", str(t or "").lower()) if w)
 
-    def whole_segments(code: Any, token: Any) -> bool:
-        words = [w for w in re.split(r"[^a-z0-9]+", str(token or "").lower()) if w]
-        segments = [w for w in re.split(r"[^a-z0-9]+", str(code or "").lower()) if w]
-        return bool(words) and any(segments[i : i + len(words)] == words for i in range(len(segments) - len(words) + 1))
-
-    def kept(match: Any, tokens: list[str], has_exact: bool) -> bool:
+    def kept(match: Any, tokens: list[str]) -> bool:
         if not isinstance(match, dict) or match.get("entity_type") != "product":
             return True
         tier = match.get("match_tier")
@@ -1814,36 +1826,21 @@ def _drop_word_code_fragments(result: dict[str, Any], vocabulary: frozenset[str]
         code = _fold_code(match.get("canonical_code"))
         if code in {_fold_code(t) for t in tokens}:
             return True
-        if any(whole_segments(match.get("canonical_code"), t) for t in tokens):
-            return True  # the token's words ARE whole words of the code ("kitchen sink" in ZZT-KITCHEN SINK-BKT)
         if tier == "substring" or not any(code.startswith(_fold_code(t)) for t in tokens):
             return False  # the word sits inside the code, not at its start
-        # A code that STARTS with the word is a family sibling: kept unless the registry knows
-        # the word (a class word) and no exact row answers it.
-        return has_exact or not known(tokens)
-
-    def exact_row(rows: Any) -> bool:
-        return any(isinstance(m, dict) and m.get("entity_type") == "product" and m.get("match_tier") == "exact" for m in rows or [])
+        return not known(tokens)  # a code that STARTS with the word: a family sibling unless it is a registry word
 
     for resolution in result.get("resolutions") or []:
         if not isinstance(resolution, dict) or _has_digit(resolution.get("token")):
             continue
         rows = resolution.get("matches") or []
-        keep = [m for m in rows if kept(m, [resolution.get("token")], exact_row(rows))]
-        if len(keep) == len(rows):
-            continue
-        resolution["matches"] = keep
-        resolution["ambiguous"] = len(keep) > 1
-        if not keep:
-            resolution["resolved"] = False
-            token = resolution.get("token")
-            unresolved = result.setdefault("unresolved_tokens", [])
-            if token and token not in unresolved:
-                unresolved.append(token)
+        keep = [m for m in rows if kept(m, [resolution.get("token")])]
+        if len(keep) != len(rows):
+            _restate_resolution(result, resolution, keep)
     tokens = [t for t in result.get("tokens") or []]
     if isinstance(result.get("intersection"), list) and not any(_has_digit(t) for t in tokens):
         rows = result["intersection"]
-        keep = [m for m in rows if kept(m, tokens, exact_row(rows))]
+        keep = [m for m in rows if kept(m, tokens)]
         if len(keep) != len(rows):
             result["intersection"] = keep
             _rebuild_intersection_fields(result)
@@ -2165,8 +2162,6 @@ def _strip_name_kinds_for_locked(
     resolutions = result.get("resolutions")
     if not isinstance(resolutions, list):
         return result
-    changed = False
-    ambiguous = list(result.get("ambiguous_tokens") or [])
     for tr in resolutions:
         if not isinstance(tr, dict) or _norm_locked_token(tr.get("token")) not in locked:
             continue
@@ -2176,18 +2171,7 @@ def _strip_name_kinds_for_locked(
             continue
         # The resolver's own meaning of the two flags (`_suppress_brand_prefix_junk`):
         # resolved = exactly one match, ambiguous = more than one.
-        tr["matches"] = kept_matches
-        tr["resolved"] = len(kept_matches) == 1
-        tr["ambiguous"] = len(kept_matches) > 1
-        if not tr["ambiguous"]:
-            ambiguous = [t for t in ambiguous if t != tr.get("token")]
-        changed = True
-    if changed:
-        result["unresolved_tokens"] = [
-            tr["token"] for tr in resolutions if isinstance(tr, dict) and not (tr.get("matches") or [])
-        ]
-        if "ambiguous_tokens" in result:
-            result["ambiguous_tokens"] = ambiguous
+        _restate_resolution(result, tr, kept_matches)
     return result
 
 
@@ -3440,7 +3424,7 @@ def resolve_reference_post(
         # CODE-SUBSTRING: before Shape B and the spec fallback read the rows.
         from app.services.product_spec_search import _search_vocabulary
 
-        _drop_word_code_fragments(result, _search_vocabulary(db, brands=[]))
+        _drop_word_code_fragments(result, lambda: _search_vocabulary(db, brands=[]))
 
     # Shape B: a domain predicate over the described set. This is NOT a fallback -
     # "what faucets have certs" is a different question from "find me a faucet",
@@ -3602,6 +3586,10 @@ def resolve_reference_post(
         # message down to 15.
         # Read BEFORE `_emit_spec_matches` adds the qualifying set to the resolutions.
         lookup_ids = _collect_lookup_product_ids(result)
+        if not (lookup_ids or specs or scope_terms or brand or payload.free_terms):
+            # Nothing is left to describe a set (a separator-only token, a word that was no code
+            # hit): a set built off no description would be the whole catalogue.
+            return _stamp_brand_on_products(db, result)
         outcome = resolve_product_set(
             db,
             # R14/AC-1338: the PROMOTED require (a bare `true` recovered a
