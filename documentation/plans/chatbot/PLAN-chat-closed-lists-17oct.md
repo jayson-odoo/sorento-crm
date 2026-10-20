@@ -486,3 +486,9 @@ token list. No word list in code.
   (entity_resolver.py:3786-3830), so a registry word in it drops the row as on the prefix branch; `token_coverage` is
   computed before the gate (references.py ~2734 / ~2754 vs ~3435) and still describes dropped rows
   (lanes/business/answer.py:2248 reads it; since CODE-SUBSTRING).
+- R9-4 (Opus re-review should-fix on b01b363750): `known()` is shared with the one-word rows, and the one-word prefix
+  probe matches the word as typed (`_prefix_probe_product`, entity_resolver.py:2072-2096, no `_word_variants`), so
+  reading plurals there dropped real code families ("tops" on TOPS-MIXER with "top" in the registry; 324 seeded
+  plurals newly read as registry words). The rule stays "the forms the probe matched it by": `_word_variants` forms
+  for an AND-tier row only; every other row reads the word as typed. Guard: "tops" alone on TOPS-MIXER (prefix tier,
+  vocabulary {"top"}) is kept. Lead call within the stated rule (reviewer option (a)); no owner question.
