@@ -34,7 +34,7 @@ from tests.chatbot.test_engine import _parser_output, seeded, stub_access  # noq
 RULE_SENTENCE = "at most 4 characters"
 WAREHOUSES = {
     "BRW": "ZZ BRW", "BRW-IB": "ZZ BRW-IB", "MWH-IB": "ZZ MWH-IB", "WH3": "ZZ WH3", "HQ": "HEADQUARTER",
-    "MKTG-HQ": "ZZ MKTG-HQ", "SD-HQ": "ZZ SD-HQ", "WH3-AM": "ZZ WH3-AM", "MOCHA-WH": "ZZ MOCHA-WH", "NEW-WH": "ZZ NEW-WH",
+    "MKTG-HQ": "ZZ MKTG-HQ", "SD-HQ": "ZZ SD-HQ", "WH3-AM": "ZZ WH3-AM", "MOCHA-WH": "ZZ MOCHA-WH", "PROJECT": "ZZ PROJECT", "PENANG": "ZZ PENANG", "NEW-WH": "ZZ NEW-WH",
 }
 
 
@@ -133,20 +133,28 @@ def test_iw1_a_held_warehouse_is_cleared_when_the_hint_is_dropped(session_factor
     assert "dropped_warehouse_clears_axis" in rules, rules
 
 
-# IW-2
-def test_iw2_a_real_code_is_listed_and_its_hint_survives(session_factory, seeded, stub_access, monkeypatch):
+# IW-2 (option B: no warehouse lines; the hint side stays)
+def test_iw2_a_real_code_hint_survives_and_no_warehouse_line_is_listed(session_factory, seeded, stub_access, monkeypatch):
     out, seen = _run(session_factory, stub_access, monkeypatch, [("stock at BRW", _verdict(_wh_entity("BRW")))])
-    lines = _wh_lines(out[0][1])
-    assert any("BRW" in ln for ln in lines), out[0][1]
+    assert not _wh_lines(out[0][1]), out[0][1]
     verdict, warehouse, rules = _last(seen)
     assert "brw" in _raws(warehouse), warehouse
     assert "dropped_warehouse_clears_axis" not in rules, rules
 
 
-def test_iw2_a_suffix_lists_every_code_it_ends(session_factory, seeded, stub_access, monkeypatch):
-    out, _seen = _run(session_factory, stub_access, monkeypatch, [("IB", idx._quiet())])
-    text = "\n".join(_wh_lines(out[0][1]))
-    assert "BRW-IB" in text and "MWH-IB" in text, out[0][1]
+# IW-12 (option B): a word-code warehouse in a normal sentence is never made a warehouse by our code
+@pytest.mark.parametrize("message,word", [
+    ("outstanding SO for project SRTWC286", "PROJECT"),
+    ("penang customer outstanding SO for SRTSC05", "PENANG"),
+])
+def test_iw12_a_word_code_warehouse_is_neither_listed_nor_written(message, word, session_factory, seeded, stub_access, monkeypatch):
+    out, seen = _run(session_factory, stub_access, monkeypatch, [(message, idx._quiet())])
+    block = out[0][1]
+    assert not _wh_lines(block), block
+    assert not [ln for ln in block.splitlines() if word.lower() in ln.lower() and "warehouse" in ln.lower()], block
+    verdict, warehouse, rules = _last(seen)
+    assert warehouse == [], warehouse
+    assert not [e for e in verdict.get("entities") or [] if e.get("hint") == "warehouse"], verdict
 
 
 # IW-3
@@ -159,10 +167,15 @@ def test_iw3_a_plain_short_word_gets_no_warehouse_line_and_its_hint_is_dropped(w
     assert "warehouse" in (verdict.get("dropped_kinds") or []), verdict
 
 
-# IW-4 (wh3 half; the "wh" half is IW-10)
-def test_iw4_wh3_lists_the_warehouse(session_factory, seeded, stub_access, monkeypatch):
-    out, _seen = _run(session_factory, stub_access, monkeypatch, [("wh3", idx._quiet())])
-    assert any("WH3" in ln for ln in _wh_lines(out[0][1])), out[0][1]
+# IW-4 (option B): the code reading is the lane's (resolve_warehouse_token), not an index line
+def test_iw4_wh3_hint_is_kept_and_resolves_to_wh3_only(session_factory, seeded, stub_access, monkeypatch):
+    from app.services.chatbot.lanes.business.services import resolve_warehouse_token
+
+    out, seen = _run(session_factory, stub_access, monkeypatch, [("at wh3", _verdict(_wh_entity("wh3")))])
+    assert not _wh_lines(out[0][1]), out[0][1]
+    verdict, warehouse, _rules = _last(seen)
+    assert "warehouse" not in (verdict.get("dropped_kinds") or []) and warehouse, verdict
+    assert resolve_warehouse_token(session_factory(), "wh3") == ["WH3"]
 
 
 def _has_code(text: str, code: str) -> bool:
@@ -175,19 +188,15 @@ def test_iw8_a_warehouse_name_is_not_listed(session_factory, seeded, stub_access
     assert not _wh_lines(out[0][1]), out[0][1]
 
 
-# IW-9
-def test_iw9_an_exact_code_wins_over_longer_codes_that_end_in_it(session_factory, seeded, stub_access, monkeypatch):
-    out, _seen = _run(session_factory, stub_access, monkeypatch, [("hq", idx._quiet())])
-    text = "\n".join(_wh_lines(out[0][1]))
-    assert _has_code(text, "HQ"), out[0][1]
-    assert "MKTG-HQ" not in text and "SD-HQ" not in text, out[0][1]
+# IW-9 (option B): "hq" resolves to HQ only; the hint is kept
+def test_iw9_hq_hint_is_kept_and_resolves_to_hq_only(session_factory, seeded, stub_access, monkeypatch):
+    from app.services.chatbot.lanes.business.services import resolve_warehouse_token
 
-
-def test_iw9_at_wh3_lists_wh3_and_not_wh3_am(session_factory, seeded, stub_access, monkeypatch):
-    out, _seen = _run(session_factory, stub_access, monkeypatch, [("at wh3", idx._quiet())])
-    text = "\n".join(_wh_lines(out[0][1]))
-    assert _has_code(text, "WH3"), out[0][1]
-    assert "WH3-AM" not in text, out[0][1]
+    out, seen = _run(session_factory, stub_access, monkeypatch, [("hq", _verdict(_wh_entity("hq")))])
+    assert not _wh_lines(out[0][1]), out[0][1]
+    verdict, warehouse, _rules = _last(seen)
+    assert "warehouse" not in (verdict.get("dropped_kinds") or []) and warehouse, verdict
+    assert resolve_warehouse_token(session_factory(), "hq") == ["HQ"]
 
 
 # IW-7 (guard)
@@ -201,13 +210,12 @@ def test_iw7_a_suffix_hint_is_kept(session_factory, seeded, stub_access, monkeyp
     assert "dropped_warehouse_clears_axis" not in rules, rules
 
 
-# IW-10
-def test_iw10_wh_lists_the_finish_and_the_wh_warehouses_and_keeps_the_hint(session_factory, seeded, stub_access, monkeypatch):
+# IW-10 (option B)
+def test_iw10_wh_lists_the_finish_white_keeps_the_hint_and_lists_no_warehouse(session_factory, seeded, stub_access, monkeypatch):
     out, seen = _run(session_factory, stub_access, monkeypatch, [("wh", _verdict(_wh_entity("wh")))])
     block = out[0][1]
     assert any("finish" in ln and "white" in ln for ln in block.splitlines()), block
-    text = "\n".join(_wh_lines(block))
-    assert "MOCHA-WH" in text and "NEW-WH" in text, block
+    assert not _wh_lines(block), block
     verdict, warehouse, _rules = _last(seen)
     assert "warehouse" not in (verdict.get("dropped_kinds") or []), verdict
     assert warehouse, warehouse
@@ -226,23 +234,12 @@ def test_iw5_block_mode_keeps_the_shape_rule_and_does_not_drop_the_hint(session_
     assert "dropped_warehouse_clears_axis" not in rules, rules
 
 
-# IW-6 (amended: the shape definition stays, the index condition is added)
-def test_iw6_index_system_prompt_is_byte_equal_keeps_the_shape_and_adds_the_index_condition(session_factory, seeded, stub_access, monkeypatch):
+# IW-6 (option B): the warehouse rule stays word for word; byte-equal across turns
+def test_iw6_index_system_prompt_keeps_the_original_rule_line_and_is_byte_equal(session_factory, seeded, stub_access, monkeypatch):
     out, _seen = _run(session_factory, stub_access, monkeypatch, [("frg stock", idx._quiet()), ("stock at BRW", idx._quiet())])
     assert out[0][0] == out[1][0]
     assert out[0][1] != out[1][1]
     system = out[0][0]
-    assert RULE_SENTENCE in system, system
-    low = system.lower()
-    assert "index lists" in low and "warehouse" in low, system
-
-
-# IW-11 (guard)
-def test_iw11_a_template_without_the_sentence_fails_loud_a_legacy_prompt_is_unchanged():
-    from app.services.chatbot.head import closed_lists_index
-    from app.services.chatbot.head.parser import ParserError
-
-    text = "a prompt that carries no warehouse shape sentence"
-    with pytest.raises(ParserError):
-        closed_lists_index.system_prompt(text, template=True)
-    assert closed_lists_index.system_prompt(text, template=False) == text
+    line = next(ln for ln in parser_template.TEMPLATE.splitlines() if RULE_SENTENCE in ln)
+    assert line in system, system
+    assert "index lists" not in system.lower(), system
