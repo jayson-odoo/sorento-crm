@@ -636,7 +636,9 @@ def test_r8_c5_engine_drawing_also_fetches_the_drawing_without_the_scheme(sessio
     assert fetches[0].get("product_ids") == [ids["product"]], fetches
     assert not fetches[0].get("certificate_ids"), ("the scheme rode the drawing fetch", fetches[0])
     assert fetches[0].get("attachment_type_ids"), fetches
-    assert "no ZZT Drawing matched" not in text and "Couldn't find" not in text, text
+    # The harness stubs every MCP row, so "no ZZT Drawing matched" always shows; the scheme must not.
+    # fb96100fb0's reply headed the ask with "certificate: <number>" (the held scheme's certificate).
+    assert "certificate" not in text.lower() and "zzspan" not in text.lower() and "span" not in text.lower(), text
 
 
 def test_r8_c5_engine_guard_a_follow_up_that_keeps_the_file_kind_keeps_the_scheme(session_factory, seeded, stub_access, monkeypatch, applied):
