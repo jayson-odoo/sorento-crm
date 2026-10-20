@@ -5163,7 +5163,14 @@ def _run_stages_body(  # noqa: PLR0915
         # empties the answer (`head/scheme_index.py`). A read failure leaves the verdict.
         try:
             with _session(session_factory) as scheme_db:
-                verdict, scheme_note = scheme_index.index_scheme(scheme_db, verdict, held_for_scheme)
+                # Under the state gate a listed scheme the focus holds is indexed again for the
+                # products asked now (its certificates are derived from scheme and products).
+                held_scheme = next(
+                    (r for r in (state_in.focus.extra or {}).get("certificate") or []
+                     if isinstance(r, dict) and r.get("listed") == "cert_scheme"),
+                    None,
+                ) if state_in.state_gate else None
+                verdict, scheme_note = scheme_index.index_scheme(scheme_db, verdict, held_for_scheme, held_scheme)
                 # Held products are only added to the verdict later, so a held one (a uuid) is
                 # read here: the scheme path with no product never runs over a held subject.
                 if scheme_note is None and not any(isinstance(p, dict) and p.get("uuid") for p in held_for_scheme):
