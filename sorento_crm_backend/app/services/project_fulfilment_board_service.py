@@ -2498,6 +2498,8 @@ class FulfilmentBoardService:
             # the pill still warns after a reload. Absent on a revision frozen before the
             # checkbox existed, which reads as false: nobody flagged it.
             "suspected_system_issue": bool(frozen.get("suspected_system_issue")),
+            # OI-SPLIT-GUIDE (UAC F32): read by the contribution's `confirmed_remark`.
+            "remark": frozen.get("remark"),
         }
 
     def _demand_pressure(
@@ -5559,6 +5561,9 @@ class FulfilmentBoardService:
             "draft": row.draft,
             #: OI-SPLIT-GUIDE (UAC F3, F10): the email's words for what Confirm sends.
             "saved_remark": row.saved_remark,
+            #: OI-SPLIT-GUIDE (UAC F32): the planner's own remark the active revision froze
+            #: for this line; the draft is gone after Confirm and this is where it lives.
+            "confirmed_remark": (row.decision or {}).get("remark") or None,
             #: The same saver facts flattened, for the tooltip (AC-DT-2) - `row.draft`
             #: already carries `saved_by`/`saved_at`, in the shape the draft PUT/GET
             #: round-trips; these are the same values under the trail's own names.

@@ -5203,6 +5203,9 @@ class ProjectSupplyService:
                 "buy_reason": snapshot.get("buy_reason"),
                 "order_back": bool(snapshot.get("order_back")),
                 "cited_document": snapshot.get("cited_document"),
+                # OI-SPLIT-GUIDE (UAC F32): the planner's own REMARK the revision froze, so a
+                # covered line hands it back and a re-approve carries it unchanged.
+                "remark": (snapshot.get("remark") or None),
             }
         return out
 
