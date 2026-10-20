@@ -1,6 +1,6 @@
 # CARD: CHAT-LATENCY-SCOUT, where slow check_stock turns spend ~9s outside the LLM (20 Oct)
 
-Status: scouted, report posted, waiting on crew's go (small fix track, no behaviour change yet).
+Status: A+B+C built red-first (small fix track), in review. Crew go 20 Oct: (a) A+B+C, A gated on the code reader's own verdict.
 
 ## Question
 
@@ -151,3 +151,29 @@ GROUP BY 1, 2;
 If cause 1 is right, query 1 puts `routed` at roughly 4-8 s, and query 2 shows
 `resolver_code_reader` near 3 s and `spec_search` at 2-3 s. If `queued` leads instead, the time
 is going to the ordering wait, which is a different fix.
+
+## Build (crew go 20 Oct, option a)
+
+- **A** (`references.py`, `_open_tokens_are_codes_the_catalogue_lacks`): the spec MODEL reading is skipped
+  only when every still-unanswered token carries the code reader's own verdict `kind: code, matched: 0`
+  (crew ruling: a code that does not exist cannot be found by a spec reading). `none` (a description),
+  `family`, `error`, `not_asked`, no verdict, AND-mode results, product words a partial row left
+  unanswered, or a token only non-product rows answered all keep today's model reading. No pattern of ours;
+  the deterministic word read still runs.
+- **B** (`product_spec_understanding.py`): `timeout=3.0` on the spec reading, which also turns SDK retries
+  off. On a timeout the reading degrades to the deterministic one (the existing provider-failure arm), the
+  turn continues to spec search on the customer's literal words, and the customer gets that answer (or the
+  usual not-found / did-you-mean reply) after at most about 3 s instead of up to 600 s with retries. Nothing
+  is left pending.
+- **C** (`llm_provider.py`): one `OpenAI` client per (class, key, timeout, retries, base_url), shared across
+  threads under a lock, capped at 32.
+- Tests: `tests/test_chat_latency_llm_budget.py`, 12 tests (A red without the gate, B and C red before the
+  change).
+
+Measured on the real engine (sandbox, gpt-4o, parser stubbed):
+
+| ask | before | after |
+|---|---|---|
+| code miss `SRT1001-BK` | 2 model calls, routed 2,016 ms, wall 2,269 ms | 1 call, routed 1,353 ms, wall 1,631 ms, same reply |
+| 5 found codes + 1 dead code | 2 calls, wall 2,720 ms | 1 call, wall 1,556 ms |
+| found code `MWT1005-CR` | 0 calls, wall 418 ms | 0 calls, wall 400 ms |
