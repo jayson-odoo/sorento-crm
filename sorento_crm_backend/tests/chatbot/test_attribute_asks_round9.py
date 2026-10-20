@@ -36,7 +36,8 @@ from tests.chatbot.test_attribute_asks_round3 import world as r3world  # noqa: F
 from tests.chatbot.test_attribute_asks_round4 import world as r4world  # noqa: F401 - fixture used by name
 from tests.chatbot.test_attribute_asks_round7 import _code_ask, _make
 from tests.chatbot.test_attribute_asks_round7 import world as r7world  # noqa: F401 - fixture used by name
-from tests.chatbot.test_attribute_asks_round8 import HIDDEN_THICKNESS, _Loo, _blocks, _by_code, _sees_its_policy
+from tests.chatbot.test_attribute_asks_round8 import HIDDEN_THICKNESS, _Loo, _blocks, _by_code, _miss, _sees_its_policy
+from tests.chatbot.test_attribute_asks_round8 import composer  # noqa: F401 - fixture used by name
 from tests.chatbot.test_engine import stub_access, stub_parser  # noqa: F401 - fixtures used by name
 from tests.chatbot.test_lane_require import _certificate_for, _stock_for
 from tests.chatbot.test_reverse_asks_owner_phrasings import _class_category, _incoming_for
@@ -203,7 +204,7 @@ def test_turn2_cert_keeps_the_gunmetal_basins_of_the_miss(chat, world):
 
 
 @pytest.mark.parametrize("turn", ["pnk", "product info"])
-def test_turns3_and_4_pink_water_closet_breaks_the_water_closets_down_by_finish(chat, world, turn):
+def test_turns3_and_4_pink_water_closet_breaks_the_water_closets_down_by_finish(chat, world, turn, composer):
     message, verdict = (T3, _v3()) if turn == "pnk" else (T4, _v4())
     text = chat.say(message, verdict)
     print(text)
@@ -217,7 +218,8 @@ def test_turns3_and_4_pink_water_closet_breaks_the_water_closets_down_by_finish(
     assert lines[0] == f"Here's what you want: {said} water closets", text
     assert not [ln for ln in lines if ln.startswith("• ")], text
     assert "*Product Code:*" not in text, text
-    assert f"Couldn't find: {said} (finish or colour). Would you like me to escalate to" in text, text
+    # CHAT-RELEASE-1021: both arms of the composer switch; only the miss line's colon differs.
+    assert f"{_miss(composer)}{said} (finish or colour). Would you like me to escalate to" in text, text
     assert other not in text, text
     _plain(text, world)
 

@@ -442,9 +442,18 @@ def test_b9_a_set_longer_than_the_list_max_is_never_broken_down_by_a_hidden_key(
     assert not [w for w in HIDDEN_FINISH_WORDS if w in said], said
 
 
-def test_b9_a_zero_set_with_more_members_than_the_list_max_never_breaks_them_down_by_a_hidden_key(split_db):
+@pytest.mark.parametrize("composer_on", [False, True], ids=["composer_off", "composer_on"])
+def test_b9_a_zero_set_with_more_members_than_the_list_max_never_breaks_them_down_by_a_hidden_key(
+    split_db, monkeypatch, composer_on
+):
     """A set that qualifies nothing (no stock anywhere) with four members over a list max of 2:
-    any `members.breakdown` (resolve_product_set's members branch) never names the hidden finish."""
+    any `members.breakdown` (resolve_product_set's members branch) never names the hidden finish.
+    CHAT-RELEASE-1021: both arms of the composer switch, set explicitly - with it on the members
+    branch lists a first page of codes instead (`product_predicate_service`), and that page
+    must not name the hidden finish either."""
+    from tests.chatbot.test_composers_stock_xd import _set_gate
+
+    _set_gate(monkeypatch, composer_on)
     result = _resolve(split_db, "which water closet has stock", HIDE_FINISH, set_list_max=2)
 
     predicate = result.get("predicate") or {}
