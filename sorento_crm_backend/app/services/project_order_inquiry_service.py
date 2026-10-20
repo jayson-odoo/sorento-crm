@@ -1553,7 +1553,7 @@ class ProjectOrderInquiryService:
                 # this revision and `_keep_split_rows` moves the ones the edit changed (one
                 # DELAY for a moved date, a cut row's NEW QTY and its CANCEL BALANCE). The
                 # netting below would supersede every raised row it cannot settle as one
-                # (SO417636 480: CANCEL 14 / 236 / 167 and an unsplit ORDER 417). A product
+                # (dev SO417636 480: CANCEL 14 / 236 / 167 and an unsplit ORDER 417). A product
                 # AutoCount swapped still follows on every row, as on the declined-settle path.
                 product_move = self._restate_product(
                     inquiry, self._split_line_rows(str(line.id)), entry

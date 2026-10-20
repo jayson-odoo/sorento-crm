@@ -1,16 +1,21 @@
 # PLAN: kept-split Confirm on all-raised unlinked rows sends one DELAY (OI-SPLIT-SUPERSEDE-FIX)
 
-Status: PR #1803, reviewer READY (S1 product follow, S2 refile assertion, N1 folded in); waiting
-on CI. Track: small fix (server-only, no UI, no migration, no auth change). Lead pattern:
-red test first, one fix, reviewer, touched tests only.
+Status: PR #1803, reviewer READY round 1 (S1 product follow, S2 refile assertion, N1 folded in);
+crew reduce case (Cancel split) added, reviewer round 2 next, then CI. Owner: ships on CI green +
+reviewer READY + red/kill proof, no hand test. Track: small fix (server-only, no UI, no
+migration, no auth change). Lead pattern: red test first, one fix, reviewer, touched tests only.
 
 ## Defect
 
-Live on prod (contains #1749 and #1794). Found by OI-SPLIT-VIEW (#1799) review. Confirming a
+In the code prod runs (#1749 and #1794). Found by OI-SPLIT-VIEW (#1799) review on the dev DB
+(15 Oct prod copy, SO417636 480); prod's rows may since be linked or placed, so whether prod
+was hit is what the read-only check in the PR answers. Confirming a
 saved split edit on a line whose split rows are ALL raised and UNLINKED (no
 `order_inquiry_links` rows) cancels every split row and raises one unsplit ORDER for the full
 qty at the line date, then stamps the edited plan as applied. Purchasing receives CANCEL per row
-plus a fresh ORDER instead of one DELAY on the moved row.
+plus a fresh ORDER instead of one DELAY on the moved row. The same netting hits a REDUCE on such
+rows (crew, 20 Oct: 104 = 52 + 52 edited to 28 + 24 + "Cancel this qty" 52): both rows are
+cancelled and raised again instead of cut in place with one CANCEL BALANCE.
 
 ## UAC
 
