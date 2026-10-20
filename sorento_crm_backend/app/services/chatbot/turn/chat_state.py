@@ -449,7 +449,8 @@ def _drop_listed_qualifiers(focus: Focus, axis: str, verdict: dict[str, Any]) ->
         return
     said = {_listed_key(e) for e in _entities(verdict) if e.get("hint") == axis and e.get("current_message") is not False}
     said.discard("")
-    if not said or said == {_listed_key(r) for r in held}:
+    if not said or {_listed_key(r) for r in held} <= said:
+        # The held value restated (alone, or beside a new one) still stands: so do its qualifiers.
         return
     for kind in [k for k in extra if k != axis]:
         kept = [r for r in extra[kind] if not (isinstance(r, dict) and r.get("listed"))]
