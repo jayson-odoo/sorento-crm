@@ -554,6 +554,21 @@ export interface UnpostableLine {
  * before pressing Confirm. A COVERED line keeps its own rule below: untouched is carried by
  * the server, and an explicit verdict is still posted.
  */
+/**
+ * OI-SPLIT-GUIDE (UAC F26, F32): the REMARK a Confirm sends for a line: the one its saved
+ * decision holds (`''` = cleared), else the one the active revision froze
+ * (`confirmed_remark`, so re-approving a confirmed line unchanged is not a change and tells
+ * purchasing nothing); none prints the default words.
+ */
+export function remarkFor(
+  contribution: BoardContribution,
+  decision: BoardDecision | undefined,
+): string | undefined {
+  const remark =
+    decision?.remark !== undefined ? decision.remark : (contribution.confirmed_remark ?? undefined);
+  return remark?.trim() || undefined;
+}
+
 function lineFor(
   contribution: BoardContribution,
   decision: BoardDecision | undefined,
@@ -597,7 +612,10 @@ function lineFor(
   // it into a Reserve was dropped from the body while the row still read "Amended".
   if (decision?.verdict === 'amended' && decision.reserve) {
     if (!contribution.project_line_id) return 'no_mirror';
-    return confirmLineFrom(contribution.project_line_id, decision);
+    return {
+      ...confirmLineFrom(contribution.project_line_id, decision),
+      remark: remarkFor(contribution, decision),
+    };
   }
 
   // AN APPROVAL ON A COVERED LINE POSTS THE ENGINE'S SUGGESTION, COMPOSED, NOT DERIVED.
@@ -628,8 +646,8 @@ function lineFor(
       cited_document: decision.cited_document ?? undefined,
     });
     suggested.suspected_system_issue = decision.suspected_system_issue ?? false;
-    // OI-SPLIT-GUIDE (UAC F26): the planner's own REMARK rides with the approval too.
-    suggested.remark = decision.remark;
+    // OI-SPLIT-GUIDE (UAC F26, F32): the planner's own REMARK rides with the approval too.
+    suggested.remark = remarkFor(contribution, decision);
     if (!contribution.project_line_id) return 'no_mirror';
     return confirmLineFrom(contribution.project_line_id, suggested);
   }
@@ -686,7 +704,7 @@ function lineFor(
     buy_reason: buyReason,
     cs_note: decision?.cs_note?.trim() || undefined,
     // OI-SPLIT-GUIDE (UAC F26): the planner's own REMARK for the email, when they typed one.
-    remark: decision?.remark?.trim() || undefined,
+    remark: remarkFor(contribution, decision),
     // Present only on the legacy single-number amendment, which is still an override.
     amend_reason: decision?.verdict === 'amended' ? decision.reason : undefined,
     // An approved or untouched line can still carry the flag (R10).

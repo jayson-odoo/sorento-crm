@@ -83,6 +83,7 @@ import {
   splitEditsToConfirm,
   contributionMatchesSearch,
   confirmLinesByOrder,
+  remarkFor,
   confirmSummaryFor,
   decisionHeaderText,
   orderListRows,
@@ -2031,7 +2032,8 @@ export function FulfilmentBoardPanel({
       const decision = draftWithoutPreMark[contribution.key] ?? contribution.draft?.decision;
       return {
         words: contribution.saved_remark ?? null,
-        own: decision?.remark?.trim() || null,
+        // UAC F32: the saved decision's remark ('' = cleared), else the confirmed one.
+        own: remarkFor(contribution, decision) ?? null,
         editable: decision?.verdict === 'approved' || decision?.verdict === 'amended',
       };
     },
@@ -2049,11 +2051,8 @@ export function FulfilmentBoardPanel({
           draftWithoutPreMark[key] ??
           allContributions.find((contribution) => contribution.key === key)?.draft?.decision;
         if (!current) continue;
-        const ok = await decide(
-          key,
-          { ...current, remark: remark || undefined },
-          { quiet: true, adoptSaved: true },
-        );
+        // '' is kept: a cleared remark must not fall back to the confirmed one (UAC F32).
+        const ok = await decide(key, { ...current, remark }, { quiet: true, adoptSaved: true });
         if (!ok) throw new Error('The remark could not be saved.');
       }
       if (changes.size > 0) {

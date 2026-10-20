@@ -1452,6 +1452,11 @@ export interface BoardContribution {
    */
   saved_remark?: string | null;
   /**
+   * OI-SPLIT-GUIDE (UAC F32): the planner's own REMARK the active revision froze for this
+   * line (null without one). A re-approve carries it unless the planner changes or clears it.
+   */
+  confirmed_remark?: string | null;
+  /**
    * AC-DT-2: the same saver facts as `draft.saved_by` / `draft.saved_at`, flattened
    * onto the line under the trail's own names for the tooltip. `null`/absent when
    * nobody has saved one, same as `draft` itself.
