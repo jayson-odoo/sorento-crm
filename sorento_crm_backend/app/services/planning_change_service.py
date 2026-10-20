@@ -3951,12 +3951,12 @@ def _retire_inquiry_rows(
     overrule it.
 
     EVERY BUY ROW IT TOUCHES (`_TOLD_ON_RETIRE`) IS TOLD ON THE HANDOVER EMAIL as CANCEL ALL
-    (OI-RETIRE-CANCEL-EMAIL,
-    owner case 20 Oct 2026: a line AutoCount deleted and replaced printed only the new line's
-    ORDER). This runs before the confirm on purpose (see the caller), so the confirm's own
-    `_retire_uncovered_rows`, which tells its retirements, never sees these rows: the CANCEL
-    has to be queued here, and rides the same commit's email. An `actioned` row is told too:
-    it stays live, but purchasing has to hear the line is gone to undo what they placed.
+    (OI-RETIRE-CANCEL-EMAIL, owner case 20 Oct 2026: a line AutoCount deleted and replaced
+    printed only the new line's ORDER). This runs before the confirm on purpose (see the
+    caller), so the confirm's own `_retire_uncovered_rows`, which tells its retirements, never
+    sees these rows: the CANCEL has to be queued here, and rides the same commit's email. An
+    `actioned` row is told too: it stays live, but purchasing has to hear the line is gone to
+    undo what they placed.
 
     Returns THE ROWS IT CANCELLED, by id, and the shift below takes exactly those: a row
     somebody cancelled last month is not this apply's to move documents off."""
@@ -3976,7 +3976,7 @@ def _retire_inquiry_rows(
         .all()
     )
     cancelled: List[str] = []
-    service = ProjectOrderInquiryService(db) if rows else None
+    service = ProjectOrderInquiryService(db)
     for row in rows:
         note = f"{row.note}\n{reason}" if row.note else reason
         was_qty = row.qty

@@ -1,6 +1,6 @@
 # PLAN - a line AutoCount deleted tells purchasing CANCEL on the planning change Confirm
 
-Status: IN BUILD, 20 Oct 2026. Small fix track (server only, no migration, no UI). Lane
+Status: IN REVIEW (reviewer READY), 20 Oct 2026. Small fix track (server only, no migration, no UI). Lane
 OI-RETIRE-CANCEL-EMAIL. UAC: `oi-retire-cancel-email-acceptance-criteria.md`.
 
 ## Owner case (20 Oct 2026)
