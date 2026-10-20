@@ -1189,11 +1189,10 @@ def _reply_to_message_id(envelope: Envelope) -> str | None:
     return str(value) if value not in (None, "") else None
 
 
-def _typed_keys(message: Any) -> frozenset[str]:
-    """Folded keys of the words of the message's own first line (what `_candidate_lines` reads)."""
-    if not isinstance(message, str):
-        return frozenset()
-    return frozenset(k for w in message.split("\n", 1)[0].split() if (k := turn_state.token_key(w)))
+def _typed_text(user_turn: Any) -> str:
+    """The folded text the customer typed this turn: their own line and the codes read from the
+    turn's media, never the reply-to block."""
+    return turn_state.token_key(" ".join([user_turn.own_text, *user_turn.media]))
 
 
 def turn_apply(state_in: Any, *args: Any, **kwargs: Any) -> Any:
@@ -6042,7 +6041,7 @@ def _run_stages_body(  # noqa: PLR0915
                     resolved_candidates,
                     frozenset(unplaced_tokens),
                     exact=exact_kinds,
-                    typed=_typed_keys(latest_user_message),
+                    typed=_typed_text(user_turn),
                 )
                 state_out.focus.relation = seat_relation
             if (
@@ -6101,7 +6100,7 @@ def _run_stages_body(  # noqa: PLR0915
                     resolved_candidates,
                     frozenset(unplaced_tokens),
                     exact=exact_kinds,
-                    typed=_typed_keys(latest_user_message),
+                    typed=_typed_text(user_turn),
                 )
                 state_out.focus.relation = seat_relation
             # Round 4 R5: a clarify this turn is about to ask keeps the ask, so its answer

@@ -65,11 +65,11 @@ def hits_for_token(resolved: dict[str, dict[str, int]] | None, raw: Any) -> dict
     return folded.get(key)
 
 
-def _is_typed(raw: Any, typed: frozenset[str]) -> bool:
-    if _key(raw) in typed:
-        return True
-    words = str(raw).split()
-    return bool(words) and all(_key(w) in typed for w in words)
+def _is_typed(raw: Any, typed: str) -> bool:
+    """A token is typed when its folded form sits inside `typed`, the folded own text of the
+    message (plus the codes read from its media). One rule for a code and a multi-word name."""
+    key = _key(raw)
+    return bool(key) and key in typed
 
 
 class ReconcileResult:
@@ -90,14 +90,14 @@ def apply_reconciliation(
     entities: list[dict[str, Any]],
     resolved: dict[str, dict[str, int]] | None,
     exact: dict[str, dict[str, int]] | None = None,
-    typed: frozenset[str] | None = None,
+    typed: str | None = None,
 ) -> ReconcileResult:
     """`exact` is the same map counting only the resolver's EXACT whole-token hits (the token
     IS that row's code or name, `turn_runtime.resolve_kinds`); None treats every hit as one (a
     hand-built map). The hint narrowing and the single-kind retype need such a hit: "basin"
-    inside the code ZZBASINWC1 is never a product (review M2). With an `exact` map, a hint naming a kind
-    that has an exact hit keeps that kind, never asked. `typed` (folded keys of the message's own words; None =
-    no limit) arms a kind pick only for a token the asker typed: the whole raw or every word of it."""
+    inside the code ZZBASINWC1 is never a product (review M2). A hint naming a kind that is the only
+    kind with an exact hit keeps that kind, never asked. `typed` (the folded own text of the message; None =
+    no limit) arms a kind pick only for a token the asker typed."""
     result = ReconcileResult()
     if not resolved:
         result.entities = list(entities)
@@ -129,7 +129,12 @@ def apply_reconciliation(
             if inside:
                 matched = sorted(inside, key=lambda k: (k != hint_kind, -hits[k], k))
         # Any hinted kind with an exact whole-token hit wins outright (owner run 1020 class b).
-        if exact is not None and len(matched) > 1 and hint_kind in matched and whole.get(hint_kind):
+        if (
+            len(matched) > 1
+            and hint_kind in matched
+            and whole.get(hint_kind)
+            and not any(whole.get(k) for k in matched if k != hint_kind)
+        ):
             matched = [hint_kind]
         if len(matched) == 0:
             result.entities.append(e)

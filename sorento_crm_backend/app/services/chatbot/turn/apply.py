@@ -1812,7 +1812,7 @@ def _reconcile_step(
     *,
     turn_no: int,
     exact: dict[str, dict[str, int]] | None = None,
-    typed: frozenset[str] | None = None,
+    typed: str | None = None,
 ):
     result = apply_reconciliation(entities, resolved, exact=exact, typed=typed)
     trace.reconciled = result.reconciled
@@ -3316,7 +3316,7 @@ def apply(
     candidates: dict[str, list[dict[str, Any]]] | None = None,
     unplaced: frozenset[str] | set[str] | None = None,
     exact: dict[str, dict[str, int]] | None = None,
-    typed: frozenset[str] | None = None,
+    typed: str | None = None,
 ):
     """`_apply`, and for a contact whose escalation is barred (ESCALATION-CONTROL, owner
     30 Sep 2026) no offer survives it: an escalation offer still open from an earlier
@@ -3356,7 +3356,7 @@ def _apply(
     candidates: dict[str, list[dict[str, Any]]] | None = None,
     unplaced: frozenset[str] | set[str] | None = None,
     exact: dict[str, dict[str, int]] | None = None,
-    typed: frozenset[str] | None = None,
+    typed: str | None = None,
 ):
     """`unplaced` is the resolver's own verdict about the tokens THIS message named and
     could not place (`turn_runtime.unplaced_tokens`, folded). It is read at one seam
