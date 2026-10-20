@@ -242,3 +242,32 @@ def test_an_amount_with_no_account_is_still_not_a_rate(api):
     rows = _post(client, db, _bonus("15,000"))["rows"]
     assert rows[0]["status"] == "not_representable", rows[0]
     assert "is not a rate" in rows[0]["reason"], rows[0]["reason"]
+
+
+# --- crew nits on gate r10 ------------------------------------------------------------------
+
+
+def test_an_amount_past_the_rate_limit_names_its_threshold_once(api):
+    client, db, company_id = api
+    _customer(db, company_id, "FOXTROT HOME SDN BHD [A/C I]", 1)
+    reason = _post(client, db, _bonus("A/C I- 300,000"))["rows"][0]["reason"]
+    assert reason.count("threshold 300,000") == 1, reason
+
+
+def test_the_masked_dry_run_prints_an_account_pick_with_its_choices():
+    from scripts.dealer_targets_dry_run import _pick_detail
+
+    row = {
+        "status": "needs_pick", "reason": "x", "suggestions": [],
+        "account_pick": {"pick_key": "S!57~A/C 9", "label": "A/C 9", "choices": ["A/C I", "A/C III", "A/C IV"]},
+    }
+    assert _pick_detail(row) == 'account pick "A/C 9": A/C I, A/C III, A/C IV or skip'
+    named = {"status": "needs_pick", "reason": "x", "suggestions": [{"name": "a"}], "account_pick": None}
+    assert _pick_detail(named) == "1 suggestion(s)"
+
+
+def test_the_masked_account_pick_shapes_words_that_could_name_a_dealer():
+    from scripts.dealer_targets_dry_run import _pick_detail
+
+    row = {"suggestions": [], "account_pick": {"pick_key": "k", "label": "Acme 9", "choices": ["Deluxe", "A/C I"]}}
+    assert _pick_detail(row) == 'account pick "xxxx 9": xxxxxx, A/C I or skip'

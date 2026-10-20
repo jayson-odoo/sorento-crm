@@ -1396,7 +1396,7 @@ def _period_tiers(ctx: _Ctx, cols, period_start, kind, shared_rates=()) -> Tuple
                     )
                 )
         except CellError as exc:
-            if threshold is not None:
+            if threshold is not None and "threshold" not in str(exc):
                 raise CellError(f"{rate_col.header}: {exc} for the threshold {threshold:,.0f}") from exc
             raise CellError(f"{rate_col.header}: {exc}") from exc
         if threshold is None:

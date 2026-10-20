@@ -74,6 +74,17 @@ def _shape(text: str, digits: bool = True) -> str:
     return re.sub(r"[A-Za-z]+", lambda m: m.group(0) if m.group(0).lower() in _KEEP else "x" * len(m.group(0)), text)
 
 
+def _pick_detail(row: dict) -> str:
+    """What a `needs_pick` row waits on: the account labels an account pick offers, shaped like
+    any other file text ("A/C IV" stays as written, a word that could name a dealer does not),
+    else how many customers are suggested."""
+    pick = row.get("account_pick")
+    if pick:
+        choices = ", ".join(_shape(c, digits=False) for c in pick["choices"])
+        return f'account pick "{_shape(pick["label"], digits=False)}": {choices} or skip'
+    return f"{len(row['suggestions'])} suggestion(s)"
+
+
 def _differ(names) -> str:
     """What tells several same-name candidates apart, masked: the words each one has that the
     others lack, as shapes (no name survives), or that they differ only in punctuation, or are
@@ -171,7 +182,7 @@ def main(argv=None) -> int:
                 continue
             line = f"{_shape(row['sheet'], digits=False)} row {row['row']}: {_mask(row['reason'])}"
             if row["status"] == "needs_pick":
-                line += f", {len(row['suggestions'])} suggestion(s)"
+                line += f", {_pick_detail(row)}"
                 if len(row["suggestions"]) > 1 and "more than one customer" in (row["reason"] or ""):
                     line += f", {_differ([s['name'] for s in row['suggestions']])}"
             print(line)
