@@ -15,6 +15,7 @@ loosely as "warehouse" + "index lists", case aside).
 """
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Any
 
@@ -31,7 +32,10 @@ from tests.chatbot.conftest import session_factory  # noqa: F401
 from tests.chatbot.test_engine import _parser_output, seeded, stub_access  # noqa: F401
 
 RULE_SENTENCE = "at most 4 characters"
-WAREHOUSES = ["BRW", "BRW-IB", "MWH-IB", "WH3"]
+WAREHOUSES = {
+    "BRW": "ZZ BRW", "BRW-IB": "ZZ BRW-IB", "MWH-IB": "ZZ MWH-IB", "WH3": "ZZ WH3", "HQ": "HEADQUARTER",
+    "MKTG-HQ": "ZZ MKTG-HQ", "SD-HQ": "ZZ SD-HQ", "WH3-AM": "ZZ WH3-AM", "MOCHA-WH": "ZZ MOCHA-WH", "NEW-WH": "ZZ NEW-WH",
+}
 
 
 @pytest.fixture(autouse=True)
@@ -41,8 +45,8 @@ def _real_template(monkeypatch):
 
 def _seed(session_factory) -> None:
     db = session_factory()
-    for code in WAREHOUSES:
-        db.add(Warehouse(id=str(uuid.uuid4()), warehouse_code=code, warehouse_name=f"ZZ {code}", company_id=DEFAULT_COMPANY_ID))
+    for code, name in WAREHOUSES.items():
+        db.add(Warehouse(id=str(uuid.uuid4()), warehouse_code=code, warehouse_name=name, company_id=DEFAULT_COMPANY_ID))
     rules = [
         {"builder": {"kind": "code", "code_match": "ends_with", "texts": ["-FRG"], "value": "french_gold"}},
         {"builder": {"kind": "code", "code_match": "ends_with", "texts": ["-WH"], "value": "white"}},
@@ -155,17 +159,58 @@ def test_iw3_a_plain_short_word_gets_no_warehouse_line_and_its_hint_is_dropped(w
     assert "warehouse" in (verdict.get("dropped_kinds") or []), verdict
 
 
-# IW-4
-def test_iw4_wh3_lists_the_warehouse_and_binds_nothing(session_factory, seeded, stub_access, monkeypatch):
-    out, seen = _run(session_factory, stub_access, monkeypatch, [("wh3", idx._quiet())])
+# IW-4 (wh3 half; the "wh" half is IW-10)
+def test_iw4_wh3_lists_the_warehouse(session_factory, seeded, stub_access, monkeypatch):
+    out, _seen = _run(session_factory, stub_access, monkeypatch, [("wh3", idx._quiet())])
     assert any("WH3" in ln for ln in _wh_lines(out[0][1])), out[0][1]
-    assert _last(seen)[1] == []
 
 
-def test_iw4_wh_lists_the_finish_white_and_binds_nothing(session_factory, seeded, stub_access, monkeypatch):
-    out, seen = _run(session_factory, stub_access, monkeypatch, [("wh", idx._quiet())])
-    assert any("finish" in ln and "white" in ln for ln in out[0][1].splitlines()), out[0][1]
-    assert _last(seen)[1] == []
+def _has_code(text: str, code: str) -> bool:
+    return re.search(rf"(?<![\w-]){re.escape(code)}(?![\w-])", text) is not None
+
+
+# IW-8
+def test_iw8_a_warehouse_name_is_not_listed(session_factory, seeded, stub_access, monkeypatch):
+    out, _seen = _run(session_factory, stub_access, monkeypatch, [("stock at headquarter", idx._quiet())])
+    assert not _wh_lines(out[0][1]), out[0][1]
+
+
+# IW-9
+def test_iw9_an_exact_code_wins_over_longer_codes_that_end_in_it(session_factory, seeded, stub_access, monkeypatch):
+    out, _seen = _run(session_factory, stub_access, monkeypatch, [("hq", idx._quiet())])
+    text = "\n".join(_wh_lines(out[0][1]))
+    assert _has_code(text, "HQ"), out[0][1]
+    assert "MKTG-HQ" not in text and "SD-HQ" not in text, out[0][1]
+
+
+def test_iw9_at_wh3_lists_wh3_and_not_wh3_am(session_factory, seeded, stub_access, monkeypatch):
+    out, _seen = _run(session_factory, stub_access, monkeypatch, [("at wh3", idx._quiet())])
+    text = "\n".join(_wh_lines(out[0][1]))
+    assert _has_code(text, "WH3"), out[0][1]
+    assert "WH3-AM" not in text, out[0][1]
+
+
+# IW-7 (guard)
+def test_iw7_a_suffix_hint_is_kept(session_factory, seeded, stub_access, monkeypatch):
+    _out, seen = _run(session_factory, stub_access, monkeypatch, [("stock at IB", _verdict(_wh_entity("IB")))])
+    verdict, warehouse, rules = _last(seen)
+    assert "warehouse" not in (verdict.get("dropped_kinds") or []), verdict
+    assert warehouse, warehouse
+    held = str(warehouse).lower()
+    assert "ib" in _raws(warehouse) or ("brw-ib" in held and "mwh-ib" in held), warehouse
+    assert "dropped_warehouse_clears_axis" not in rules, rules
+
+
+# IW-10
+def test_iw10_wh_lists_the_finish_and_the_wh_warehouses_and_keeps_the_hint(session_factory, seeded, stub_access, monkeypatch):
+    out, seen = _run(session_factory, stub_access, monkeypatch, [("wh", _verdict(_wh_entity("wh")))])
+    block = out[0][1]
+    assert any("finish" in ln and "white" in ln for ln in block.splitlines()), block
+    text = "\n".join(_wh_lines(block))
+    assert "MOCHA-WH" in text and "NEW-WH" in text, block
+    verdict, warehouse, _rules = _last(seen)
+    assert "warehouse" not in (verdict.get("dropped_kinds") or []), verdict
+    assert warehouse, warehouse
 
 
 # IW-5 (GUARD, green today): block mode is unchanged.
@@ -181,12 +226,23 @@ def test_iw5_block_mode_keeps_the_shape_rule_and_does_not_drop_the_hint(session_
     assert "dropped_warehouse_clears_axis" not in rules, rules
 
 
-# IW-6
-def test_iw6_index_system_prompt_is_byte_equal_with_the_shape_rule_replaced(session_factory, seeded, stub_access, monkeypatch):
+# IW-6 (amended: the shape definition stays, the index condition is added)
+def test_iw6_index_system_prompt_is_byte_equal_keeps_the_shape_and_adds_the_index_condition(session_factory, seeded, stub_access, monkeypatch):
     out, _seen = _run(session_factory, stub_access, monkeypatch, [("frg stock", idx._quiet()), ("stock at BRW", idx._quiet())])
     assert out[0][0] == out[1][0]
     assert out[0][1] != out[1][1]
     system = out[0][0]
-    assert RULE_SENTENCE not in system, system
+    assert RULE_SENTENCE in system, system
     low = system.lower()
     assert "index lists" in low and "warehouse" in low, system
+
+
+# IW-11 (guard)
+def test_iw11_a_template_without_the_sentence_fails_loud_a_legacy_prompt_is_unchanged():
+    from app.services.chatbot.head import closed_lists_index
+    from app.services.chatbot.head.parser import ParserError
+
+    text = "a prompt that carries no warehouse shape sentence"
+    with pytest.raises(ParserError):
+        closed_lists_index.system_prompt(text, template=True)
+    assert closed_lists_index.system_prompt(text, template=False) == text
