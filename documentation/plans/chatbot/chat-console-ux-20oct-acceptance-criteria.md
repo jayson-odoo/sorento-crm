@@ -14,7 +14,7 @@ Plan: `PLAN-chat-console-ux-20oct.md`. Screen: System Management > Chatbot conso
   for a customer bubble), the sent bubble shows the quote, and the bar clears.
 - AC-CX-4. Cancel clears the target; nothing is quoted on the next send.
 - AC-CX-5. Greeting bubbles offer no Reply.
-- AC-CX-6. The "Reply to" dropdown is gone (pending Q1).
+- AC-CX-6. The "Reply to" dropdown is gone (Q1 (a)).
 
 ## Voice
 
@@ -33,9 +33,17 @@ Plan: `PLAN-chat-console-ux-20oct.md`. Screen: System Management > Chatbot conso
   clears the stage and the draft; Send is enabled with an image and no text.
 - AC-CX-13. A text paste is untouched (default behaviour, nothing staged).
 - AC-CX-14. Remove clears the staged image.
-- AC-CX-15. A picked file stages the same way (pending Q3).
+- AC-CX-15. A picked file stages the same way (Q3 (a)).
+
+## Quote on media (Q2 (b))
+
+- AC-CX-18. A voice note or image sent with a quote posts the same `reply_to` as text, the sent
+  bubble shows the quote, and the backend media envelope carries the webhook `replyTo` block. The
+  pending-poll follow-up turn and Retry carry it too.
 
 ## Never stuck
 
 - AC-CX-16. Every failure above ends in a visible message and an idle, usable composer.
 - AC-CX-17. Usable and non-clipped at 375px and 1280px.
+- AC-CX-19. Voice records under React StrictMode (`next dev`, where the owner tests).
+- AC-CX-20. A clip finished while another turn is in flight is staged, never dropped.

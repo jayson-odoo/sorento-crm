@@ -1,7 +1,8 @@
 # Behaviour card: chatbot console composer works like WhatsApp (CHAT-CONSOLE-UX)
 
-Status: ASKED (20 Oct 2026), awaiting the owner on Q1-Q3. Small fix track (FE only, no
-migration, no auth change). Plan: `PLAN-chat-console-ux-20oct.md`. Mock:
+Status: RULED (20 Oct 2026) by crew: Q1 (a), Q2 (b) (NOT the recommendation: a quoted voice
+note or image must carry the quote like WhatsApp, the owner answers bot questions by voice), Q3
+(a). Small fix track (no migration, no auth change). Plan: `PLAN-chat-console-ux-20oct.md`. Mock:
 `chat-console-ux-20oct-mock.html` (same folder).
 
 ## Owner report (20 Oct 2026, ~11:20, verbatim)
@@ -80,7 +81,8 @@ Screen: System Management > Chatbot console
 | http (insecure) page | Toast "Voice recording needs a secure (https) page." ; mic stays visible. |
 | Recording, then Reset / contact switch | Clip discarded, mic released. |
 | Swipe on a bubble with no Reply (greeting) | Nothing moves (swipe disabled there); vertical scroll unaffected. |
-| Send fails (network, 4xx) | Existing toast; staged image is NOT lost on a failed read; the media bubble offers Retry as today. |
+| Send fails (network, 4xx) | Existing toast; the image/voice bubble stays in the thread; an extraction failure offers Retry (quote included) as today. |
+| Clip finished while another turn is in flight, or no contact | The clip stages (with a player) and a toast says so; Send sends it. |
 | Clipboard holds a non-image file | Ignored (text-only paste behaviour); picker stays for audio files. |
 | `sending` is true | Mic and Send disabled as today; paste still stages (sends after). |
 

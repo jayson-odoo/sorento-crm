@@ -18,12 +18,13 @@ import { CONSOLE_GREETING_MESSAGES } from '../types/chatbotConsole.types';
 
 const postConsoleTurn = vi.fn();
 const getConsolePromptVersions = vi.fn();
+const getConsoleMediaStatus = vi.fn();
 const toastError = vi.fn();
 
 vi.mock('../services/chatbotConsoleService', () => ({
   postConsoleTurn: (...args: unknown[]) => postConsoleTurn(...args),
   getConsolePromptVersions: (...args: unknown[]) => getConsolePromptVersions(...args),
-  getConsoleMediaStatus: vi.fn(),
+  getConsoleMediaStatus: (...args: unknown[]) => getConsoleMediaStatus(...args),
 }));
 
 vi.mock('@/lib/toast', () => ({
@@ -153,6 +154,7 @@ function mic(): HTMLElement {
 
 beforeEach(() => {
   postConsoleTurn.mockReset();
+  getConsoleMediaStatus.mockReset();
   getConsolePromptVersions.mockReset();
   getConsolePromptVersions.mockResolvedValue([]);
   toastError.mockReset();
@@ -455,5 +457,111 @@ describe('voice under React StrictMode (next dev)', () => {
     fireEvent.pointerUp(mic(), { pointerId: 1, button: 0 });
     await screen.findByTestId('chatbot-console-recording');
     expect(tracks[0].stop).not.toHaveBeenCalled();
+  });
+});
+
+describe('review round: quote on the follow-up and Retry, reset hygiene, never-lost clip', () => {
+  const QUOTE = { id: 'bot-t1-0', text: 'Which one?', source: 'n8n' };
+
+  async function quoteThenPaste() {
+    await send('any WC?');
+    await screen.findByText('Which one?');
+    await replyViaMenu('Which one?');
+    fireEvent.paste(textarea(), { clipboardData: { files: [png()] } });
+    await screen.findByTestId('chatbot-console-staged');
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+  }
+
+  it('AC-CX-18: a pending quoted image carries the quote on the follow-up turn after the poll', async () => {
+    postConsoleTurn
+      .mockResolvedValueOnce(turn('t1', 'Which one?'))
+      .mockResolvedValueOnce({ ...turn('tm', ''), turn_id: null, media_status: 'pending', media_id: 'job-1', media_text: null, media_error: null })
+      .mockResolvedValueOnce(turn('t3', 'RM10.'));
+    getConsoleMediaStatus.mockResolvedValueOnce({ status: 'done', text: 'SRTWC8517 label', error: null });
+    renderConsole();
+    await quoteThenPaste();
+
+    await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(3), { timeout: 8000 });
+    expect(postConsoleTurn.mock.calls[1][0].reply_to).toEqual(QUOTE);
+    expect(postConsoleTurn.mock.calls[2][0]).toMatchObject({ text: 'SRTWC8517 label', reply_to: QUOTE });
+  }, 15000);
+
+  it('AC-CX-18: Retry on a failed quoted image resends the quote', async () => {
+    postConsoleTurn
+      .mockResolvedValueOnce(turn('t1', 'Which one?'))
+      .mockResolvedValueOnce({ ...turn('tm', ''), turn_id: null, media_status: 'failed', media_id: null, media_text: null, media_error: 'refused' })
+      .mockResolvedValueOnce({ ...turn('tm2', ''), turn_id: null, media_status: 'failed', media_id: null, media_text: null, media_error: 'refused' });
+    renderConsole();
+    await quoteThenPaste();
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(3));
+    expect(postConsoleTurn.mock.calls[2][0]).toMatchObject({ media: { kind: 'image' }, reply_to: QUOTE });
+  });
+
+  it('Reset drops the quote and the staged image', async () => {
+    postConsoleTurn.mockResolvedValueOnce(turn('t1', 'Which one?'));
+    renderConsole();
+    await send('any WC?');
+    await screen.findByText('Which one?');
+    await replyViaMenu('Which one?');
+    fireEvent.paste(textarea(), { clipboardData: { files: [png()] } });
+    await screen.findByTestId('chatbot-console-staged');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+    await waitFor(() => expect(screen.queryByTestId('chatbot-console-reply-to')).not.toBeInTheDocument());
+    expect(screen.queryByTestId('chatbot-console-staged')).not.toBeInTheDocument();
+  });
+
+  it('a clip finished while another turn is in flight stages instead of vanishing', async () => {
+    installRecordingStack();
+    let release: (v: unknown) => void = () => {};
+    postConsoleTurn
+      .mockResolvedValueOnce({ ...turn('t1', 'Which one?'), quick_replies: ['The first'] })
+      .mockReturnValueOnce(new Promise((r) => (release = r)));
+    renderConsole();
+    await send('any WC?');
+    await screen.findByText('Which one?');
+    fireEvent.pointerDown(mic(), { pointerId: 1, button: 0 });
+    fireEvent.pointerUp(mic(), { pointerId: 1, button: 0 });
+    await screen.findByTestId('chatbot-console-recording');
+    // A chip starts a turn while the bar is up, then the bar's Send fires mid-turn.
+    fireEvent.click(screen.getByRole('button', { name: 'The first' }));
+    await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole('button', { name: 'Send voice message' }));
+
+    const staged = await screen.findByTestId('chatbot-console-staged');
+    expect(within(staged).getByRole('button', { name: /^Remove voice-message-/ })).toBeInTheDocument();
+    expect(toastError).toHaveBeenCalled();
+    expect(postConsoleTurn).toHaveBeenCalledTimes(2);
+    release(turn('t2', 'Ok.'));
+  });
+
+  it('a recorder that throws on start ends idle with a message', async () => {
+    installRecordingStack();
+    FakeRecorder.prototype.start = () => {
+      throw new Error('NotSupportedError');
+    };
+    try {
+      renderConsole();
+      fireEvent.pointerDown(mic(), { pointerId: 1, button: 0 });
+      fireEvent.pointerUp(mic(), { pointerId: 1, button: 0 });
+      await waitFor(() => expect(toastError).toHaveBeenCalled());
+      expect(screen.queryByTestId('chatbot-console-recording')).not.toBeInTheDocument();
+      // Not wedged: the next press reaches the recorder again.
+      toastError.mockReset();
+      fireEvent.pointerDown(mic(), { pointerId: 2, button: 0 });
+      await waitFor(() => expect(toastError).toHaveBeenCalled());
+    } finally {
+      FakeRecorder.prototype.start = function start() {};
+    }
+  });
+
+  it('Enter or Space on the mic starts recording with the bar (keyboard users)', async () => {
+    installRecordingStack();
+    renderConsole();
+    fireEvent.click(mic(), { detail: 0 });
+    await screen.findByTestId('chatbot-console-recording');
+    expect(screen.getByRole('button', { name: 'Send voice message' })).toBeInTheDocument();
   });
 });

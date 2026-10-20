@@ -1,7 +1,8 @@
 # PLAN: chatbot console composer works like WhatsApp (CHAT-CONSOLE-UX)
 
-Status: Planned, small fix track (FE only, no migration, no auth/RBAC change, no new ingest
-surface). Awaiting owner on behaviour card Q1-Q3.
+Status: Built, in review. Small fix track (no migration, no auth/RBAC change, no new ingest
+surface; one backend helper). Crew rulings 20 Oct: Q1 (a) dropdown removed, Q2 (b) a quoted
+voice note / image carries the same `reply_to` as text (backend included), Q3 (a) picker stages.
 
 Behaviour card: `chat-console-ux-20oct-behaviour-card.md`. UAC:
 `chat-console-ux-20oct-acceptance-criteria.md`. Mock: `chat-console-ux-20oct-mock.html`.
@@ -9,7 +10,11 @@ Behaviour card: `chat-console-ux-20oct-behaviour-card.md`. UAC:
 ## Scope
 
 One screen: `app/(protected)/system-management/chatbot-console/components/ChatbotConsole.tsx`.
-No new message pipeline, no backend change.
+No new message pipeline. Backend: `console_service.py` shares one `_reply_to_block` between the
+text envelope and `_run_console_media_turn`, which now receives `reply_to` (Q2 (b)).
+Shared fixes found on the way: `useVoiceRecorder` re-arms its unmount flag on (re)mount (React
+StrictMode under `next dev` left it set, so no recording ever started there), and
+`MessageBubbleActions` stops the closing menu pulling focus back to the bubble after Reply.
 
 ## Reuse map
 
@@ -29,11 +34,13 @@ No new message pipeline, no backend change.
    from the UAC.
 2. Swipe/hover reply: bubbles through `MessageBubbleActions`; reply bar; dropdown removed (Q1).
 3. Voice: always-visible mic, tap = locked bar, hold = release-to-send, slide-left cancel,
-   every start failure toasted. `useVoiceRecorder` gains a `secure-context` reason (one string).
+   keyboard Enter/Space starts the bar, every start failure toasted (the secure-context reason
+   lives in the component, `voiceUnavailableMessage`). A clip finished mid-turn stages.
 4. Paste + staged image (and picker staging, Q3).
-5. Reviewer, browser pass 1280/375 in sandbox, hand-test script.
+5. Q2 (b): `reply_to` on the media POST, on the pending-poll follow-up turn and on Retry;
+   backend media envelope (`tests/chatbot/test_console_media_reply_to.py`).
+6. Reviewer, browser pass 1280/375 in sandbox, hand-test script.
 
 ## Out of scope / follow-ups
 
-- `reply_to` on a media turn (backend, Q2 option (b)).
 - HTTPS on the tailnet host: owner-run `tailscale serve`, see behaviour card.

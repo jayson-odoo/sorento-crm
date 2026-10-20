@@ -303,6 +303,17 @@ export default function ChatbotConsole() {
 
   const voice = useVoiceRecorder({
     onClip: (file) => {
+      // A clip is never dropped: while another turn is in flight, or with no contact,
+      // it stages (with a player) and Send sends it, quote and draft untouched.
+      if (sending || !contactId) {
+        setStaged(file);
+        toast.error(
+          sending
+            ? 'The voice message is waiting below. Send it once the reply is in.'
+            : 'Pick a contact before sending a message.',
+        );
+        return;
+      }
       const caption = draft;
       setDraft('');
       setReplyToId('');
@@ -326,6 +337,32 @@ export default function ChatbotConsole() {
       ? 'Voice recording needs a secure (https) page.'
       : (voice.reason ?? 'Voice recording is not supported in this browser.');
 
+  /** `voice.start()` with every failure turned into one message, a throw included. */
+  const startRecording = async (): Promise<string | null> => {
+    try {
+      const problem = await voice.start();
+      if (!problem) return null;
+      return /blocked/i.test(problem)
+        ? `${problem} Allow the microphone in the browser's site settings, then try again.`
+        : problem;
+    } catch {
+      voice.cancel();
+      return 'Could not start recording. Try again.';
+    }
+  };
+
+  // Keyboard (Enter / Space fire a click with detail 0): start in the tap mode's bar.
+  const onMicKeyboardClick = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    if (event.detail !== 0 || sending || press.current || voice.recording) return;
+    if (!voice.available) {
+      toast.error(voiceUnavailableMessage());
+      return;
+    }
+    const problem = await startRecording();
+    if (problem) toast.error(problem);
+    else setVoiceLocked(true);
+  };
+
   const onMicPointerDown = async (event: React.PointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
     if (sending || press.current) return;
@@ -341,16 +378,17 @@ export default function ChatbotConsole() {
     const gesture = { id: event.pointerId, x: event.clientX, at: Date.now(), started: false, released: false, cancelled: false };
     press.current = gesture;
     setHolding(true);
-    const problem = await voice.start();
+    const problem = await startRecording();
     if (problem) {
-      press.current = null;
+      if (press.current === gesture) press.current = null;
       setHolding(false);
       setVoiceLocked(false);
-      toast.error(
-        /blocked/i.test(problem)
-          ? `${problem} Allow the microphone in the browser's site settings, then try again.`
-          : problem,
-      );
+      toast.error(problem);
+      return;
+    }
+    // A Reset or contact switch while the permission prompt was open dropped this press.
+    if (press.current !== gesture) {
+      voice.cancel();
       return;
     }
     gesture.started = true;
@@ -417,7 +455,7 @@ export default function ChatbotConsole() {
       data-testid="chatbot-console-recording"
       className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-md border border-destructive/50 px-3"
     >
-      <span className="size-2 shrink-0 animate-pulse rounded-full bg-destructive" />
+      <span className="size-2 shrink-0 rounded-full bg-destructive motion-safe:animate-pulse" />
       <span className="text-sm tabular-nums">{formatElapsed(voice.seconds)}</span>
       {!voiceLocked ? (
         <span className="ms-auto truncate text-xs text-muted-foreground">{'\u2039'} Slide to cancel</span>
@@ -522,7 +560,7 @@ export default function ChatbotConsole() {
         ) : null}
         {staged ? (
           <div data-testid="chatbot-console-staged" className="flex items-start gap-1.5">
-            {stagedUrl && staged.type.startsWith('image/') ? (
+            {staged.type.startsWith('image/') ? (
               <span className="relative inline-block size-14 overflow-hidden rounded-md border" title={staged.name}>
                 <button
                   type="button"
@@ -530,8 +568,13 @@ export default function ChatbotConsole() {
                   aria-label={`Preview ${staged.name}`}
                   onClick={() => setPreviewOpen(true)}
                 >
-                  {/* A local object URL: next/image needs configured hosts. */}
-                  <img src={stagedUrl} alt={staged.name} className="size-full object-cover" />
+                  {/* A local object URL: next/image needs configured hosts. Absent for the
+                      one frame before the effect mints it. */}
+                  {stagedUrl ? (
+                    <img src={stagedUrl} alt={staged.name} className="size-full object-cover" />
+                  ) : (
+                    <span className="block size-full bg-muted" />
+                  )}
                 </button>
                 <Button
                   type="button"
@@ -650,6 +693,7 @@ export default function ChatbotConsole() {
                 onPointerMove={onMicPointerMove}
                 onPointerUp={onMicPointerUp}
                 onPointerCancel={onMicPointerCancel}
+                onClick={onMicKeyboardClick}
                 onContextMenu={(e) => e.preventDefault()}
               >
                 <Mic className="size-4" />
