@@ -18,6 +18,12 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// AttachmentDetailModal reads the caller's permissions (ATTACH-DELETE-PERM); grant them here.
+vi.mock('@/hooks/usePermissions', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/usePermissions')>()),
+  useHasPermission: () => true,
+}));
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
