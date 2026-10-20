@@ -16,6 +16,7 @@ from typing import Any
 from sqlalchemy import text as sa_text
 
 from app.main import app  # noqa: F401  (first app import resolves the guards cycle)
+from tests.chatbot._turn_helpers import make_office_access_type
 from tests.chatbot.test_composers_stock_xd import _set_gate
 from tests.chatbot.test_engine import CONTACT_ID, _parser_output, stub_access, stub_parser  # noqa: F401
 from tests.chatbot.test_set_stock_render import world  # noqa: F401 - fixture used by name
@@ -175,6 +176,8 @@ def test_engine_more_reruns_with_offset(session_factory, monkeypatch):
 
     _set_gate(monkeypatch, True)
     _seed_contact(session_factory, variables={})
+    # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
+    make_office_access_type(session_factory, CONTACT_ID)
     tag = uuid.uuid4().hex[:8]
     _result, first = _l2_turn(
         session_factory, monkeypatch, qf=_qf(order_status="so_outstanding"),
@@ -209,6 +212,8 @@ def test_engine_gate_off_sends_no_group_offset(session_factory, monkeypatch):
 
     _set_gate(monkeypatch, False)
     _seed_contact(session_factory, variables={})
+    # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
+    make_office_access_type(session_factory, CONTACT_ID)
     _result, first = _l2_turn(
         session_factory, monkeypatch, qf=_qf(order_status="so_outstanding"),
         text="SRTWT7445 sales order outstanding", msg_id=f"ZZT-l2-off-{uuid.uuid4().hex[:8]}",
