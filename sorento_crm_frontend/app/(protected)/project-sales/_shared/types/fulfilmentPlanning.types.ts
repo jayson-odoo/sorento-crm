@@ -2632,7 +2632,17 @@ export interface PreviewInquiryRow {
   delivery_date?: string | null;
   stock_location?: string | null;
   note?: string | null;
+  /** The row's state after the press (`raised`, `cancelled`, ...): `cancelled` reads CANCEL. */
+  state?: string | null;
+  /**
+   * OI-SPLIT-GUIDE (UAC C4): set by the server only on a row of a line the press did not name
+   * (not a saved decision, rejection, cancel or split edit): what the AutoCount book did to it.
+   */
+  autocount_change?: AutocountChange | null;
 }
+
+/** What the AutoCount book did to a line nobody saved (`PreviewInquiryRow.autocount_change`). */
+export type AutocountChange = 'cancelled' | 'qty' | 'date' | 'qty_date';
 
 /** One stock transfer a previewed press would propose. */
 export interface PreviewTransfer {
