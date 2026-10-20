@@ -1,10 +1,9 @@
 # PLAN: guided Confirm on the Fulfilment planning board (OI-SPLIT-GUIDE)
 
 Status: Owner hand test 4 (20 Oct, e54d6f2701) = REWORK: editable remark on every row (UAC F25-F31).
-Round 9 (red cf6c4194ce f41e6997b9 79cccca42b; product 9be4a27498 b140e1d1d6 6d22823e84 a16ff0e4db
-cec936aca1 d39a764d68), round 9c (red cf46be4882 cf615106a5; 81580b3dd6 compat shim, f113f02a88 remark box);
-kill held each round; reviewer READY on f113f02a88. Next: browser 1280/375 remark edit + revert on SO424910,
-SO417636 delivered reason, script, --handtest. Track M (no migration).
+Rounds 9 / 9c reviewer READY on f113f02a88; browser pass found 3 issues -> round 9d (red 038af9d82c c9c99fe4c8,
+fixture 1225951200; fixes f19c3de86d remark-only save settles + toast, c15af0ba2c AutoCount-added rows editable;
+kill held). Next: reviewer glance, browser re-check 1280/375, script, --handtest. Track M (no migration).
 
 Card: `oi-split-guide-behaviour-card.md`. UAC: `oi-split-guide-20oct-acceptance-criteria.md` (the
 behaviour; this plan does not restate it). Mock: `documentation/mockups/OI-SPLIT-GUIDE/index.html`.
