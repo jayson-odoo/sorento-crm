@@ -128,6 +128,7 @@ import { LineSplitDialog } from './LineSplitDialog';
 import { BoardOrderSplitsDialog } from './BoardOrderSplitsDialog';
 import {
   ConfirmGuideDialog,
+  previewRowRemark,
   type ConfirmGuidePreview,
   type ConfirmGuideReviewOrder,
   type ConfirmGuideSplitPage,
@@ -2893,9 +2894,14 @@ export function FulfilmentBoardPanel({
                       <li className="text-sm font-medium">Would write</li>
                       {(result.inquiry_rows ?? []).map((row, index) => (
                         <li key={`row-${index}`} className="text-sm break-words">
-                          {`line ${row.line_no ?? '?'} ${row.item_code ?? ''}: ${row.verb} ${formatQty(String(row.qty))}${
+                          {`line ${row.line_no ?? '?'} ${row.item_code ?? ''}: ${previewRowRemark(row)} ${formatQty(String(row.qty))}${
                             row.stock_location ? ` at ${row.stock_location}` : ''
-                          }${row.is_new === false ? ' (settles an existing row)' : ''}`}
+                          }${
+                            // A row the press retires is a CANCEL, not a settle (UAC E1).
+                            row.is_new === false && row.state !== 'cancelled'
+                              ? ' (settles an existing row)'
+                              : ''
+                          }`}
                         </li>
                       ))}
                       {(result.transfers ?? []).map((move, index) => (

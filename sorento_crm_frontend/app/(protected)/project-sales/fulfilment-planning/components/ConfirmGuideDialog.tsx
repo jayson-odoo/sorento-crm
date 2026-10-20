@@ -81,8 +81,12 @@ type ReviewState<P> =
 const plural = (count: number, one: string, many = `${one}s`) =>
   `${count} ${count === 1 ? one : many}`;
 
-/** The remark cell: the row's verb in the words the board prints; a retired row reads CANCEL. */
-function remarkOf(row: PreviewInquiryRow): string {
+/**
+ * What a dry-run row tells purchasing: its verb in the words the board prints, CANCEL for a
+ * row the press retires (UAC C2, E1). Review's remark cell and admin Simulate's "Would write"
+ * list share it, so the two never word one row differently.
+ */
+export function previewRowRemark(row: PreviewInquiryRow): string {
   if (row.state === 'cancelled') return 'CANCEL';
   return VERB_LABEL[row.verb] ?? row.verb;
 }
@@ -176,7 +180,7 @@ function ReviewOrder({ order }: { order: ConfirmGuideReviewOrder }) {
                     <td className={`${TD} tabular-nums`}>{splitDateText(row.delivery_date)}</td>
                     <td className={TD}>
                       <span className="inline-flex items-center gap-1.5">
-                        <span>{remarkOf(row)}</span>
+                        <span>{previewRowRemark(row)}</span>
                         {label ? (
                           <Badge
                             data-testid="confirm-guide-autocount"
