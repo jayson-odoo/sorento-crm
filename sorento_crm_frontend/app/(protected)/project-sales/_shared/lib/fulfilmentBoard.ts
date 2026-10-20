@@ -316,6 +316,18 @@ export interface ConfirmScopeOptions {
 }
 
 /**
+ * OI-SPLIT-VIEW (UAC A10): is this line left out of the press by the planner's untick? Never a
+ * split-edited one: the server applies every split-edited line of an order it confirms, so
+ * leaving it out of the count or the body would only hide what the press does.
+ */
+export function excludedFromPress(
+  contribution: BoardContribution,
+  excludeKeys: ReadonlySet<string> | undefined,
+): boolean {
+  return !contribution.split_edited && Boolean(excludeKeys?.has(contribution.key));
+}
+
+/**
  * What one press does with one contribution: the ONE classification the count, the summary and
  * the pre-confirm dialog all read, so title, list, button and body are views of one population.
  * (`confirmLinesFor` builds the body from `lineFor`, which this calls.)
@@ -329,6 +341,9 @@ type PressRole =
   | { kind: 'blocked_reject' }
   | { kind: 'stale' }
   | { kind: 'post'; line: ConfirmLine }
+  // OI-SPLIT-VIEW (UAC A2, A4): a saved split edit with nothing else staged. No body line:
+  // the server applies every split-edited line of an order it confirms.
+  | { kind: 'split_edit' }
   | { kind: 'unpostable'; reason: UnpostableReason };
 
 function pressRoleFor(
@@ -367,13 +382,45 @@ function pressRoleFor(
   if (contribution.decision && decision?.verdict === 'rejected') {
     return { kind: batchBlocked ? 'blocked_reject' : 'withdraw' };
   }
+  const splitEdit = splitEditApplies(contribution, batchBlocked, batchNamedKeys);
   if (decision && contribution.draft?.stale && decision.verdict !== 'rejected') {
-    return { kind: 'stale' };
+    // OI-SPLIT-VIEW (UAC A2, A3): the stale draft is not posted, but the saved split edit
+    // still is (the server applies it), so the line counts once, as a split edit.
+    return splitEdit ? { kind: 'split_edit' } : { kind: 'stale' };
   }
   const built = lineFor(contribution, decision);
-  if (built === null) return { kind: 'skip' };
+  if (built === null) return splitEdit ? { kind: 'split_edit' } : { kind: 'skip' };
   if (typeof built === 'string') return { kind: 'unpostable', reason: built };
   return { kind: 'post', line: built };
+}
+
+/**
+ * OI-SPLIT-VIEW (UAC A9, A12): does the press apply this line's saved split edit? Yes on an
+ * order carrying a pending AutoCount batch too (the server posts it beside the batch), but
+ * never on a line that batch names pending: such a line goes the AutoCount way (the server
+ * never flags it; `batchNamedKeys`, when known, says the same here).
+ */
+function splitEditApplies(
+  contribution: BoardContribution,
+  batchBlocked: boolean,
+  batchNamedKeys?: ReadonlySet<string>,
+): boolean {
+  if (!contribution.split_edited) return false;
+  return !(batchBlocked && batchNamedKeys?.has(contribution.key));
+}
+
+/**
+ * OI-SPLIT-VIEW (UAC A2, A4, A12): a saved split edit on a line nothing else is staged on.
+ * The press confirms its order (with no body line for it: the server applies the edit, beside
+ * a pending batch too), and the count adds it once.
+ */
+export function pressAppliesSplitEdit(
+  contribution: BoardContribution,
+  decision: BoardDecision | undefined,
+  batchBlocked = false,
+  batchNamedKeys?: ReadonlySet<string>,
+): boolean {
+  return pressRoleFor(contribution, decision, batchBlocked, batchNamedKeys).kind === 'split_edit';
 }
 
 /**
@@ -395,7 +442,14 @@ export function pressPostsContribution(
     options?.batchBlocked ?? false,
     options?.batchNamedKeys,
   );
-  if (role.kind === 'post' || role.kind === 'withdraw' || role.kind === 'cancel_so') return true;
+  if (
+    role.kind === 'post' ||
+    role.kind === 'withdraw' ||
+    role.kind === 'cancel_so' ||
+    role.kind === 'split_edit'
+  ) {
+    return true;
+  }
   return role.kind === 'unpostable' && role.reason === 'no_mirror' && Boolean(options?.unadopted);
 }
 
@@ -409,7 +463,7 @@ export function confirmLinesFor(
   const lines: ConfirmLine[] = [];
   for (const contribution of contributions) {
     if (contribution.sales_order_id !== salesOrderId) continue;
-    if (options?.excludeKeys?.has(contribution.key)) continue;
+    if (excludedFromPress(contribution, options?.excludeKeys)) continue;
     const role = pressRoleFor(contribution, draft[contribution.key], false);
     if (role.kind === 'post') lines.push(role.line);
   }
@@ -435,7 +489,7 @@ export function rejectedCoveredLineIdsFor(
   const ids: string[] = [];
   for (const contribution of contributions) {
     if (contribution.sales_order_id !== salesOrderId) continue;
-    if (options?.excludeKeys?.has(contribution.key)) continue;
+    if (excludedFromPress(contribution, options?.excludeKeys)) continue;
     // N1 (fix round, `PLAN-board-reject-on-confirmed-line.md`): `covered` spans TWO kinds
     // of line - an ACTIVE decision, or a live order-inquiry row naming it with none
     // (`inquiry_decided`, #875). Only the first has a `line_snapshots` entry Confirm's
@@ -460,7 +514,7 @@ export function cancelledLinesFor(
   const lines: { project_line_id: string; reason: string }[] = [];
   for (const contribution of contributions) {
     if (contribution.sales_order_id !== salesOrderId) continue;
-    if (options?.excludeKeys?.has(contribution.key)) continue;
+    if (excludedFromPress(contribution, options?.excludeKeys)) continue;
     const role = pressRoleFor(
       contribution,
       draft[contribution.key],
@@ -814,30 +868,42 @@ export function plannedLineCount(
   options?: ConfirmScopeOptions,
 ): number {
   const batchBlocked = batchBlockedSalesOrderIds.has(salesOrderId);
-  const unadopted = options?.unadoptedSalesOrderIds;
-  return contributions.filter((contribution) => {
-    if (contribution.sales_order_id !== salesOrderId) return false;
-    if (options?.excludeKeys?.has(contribution.key)) return false;
-    const role = pressRoleFor(
-      contribution,
-      draft[contribution.key],
-      batchBlocked,
-      options?.batchNamedKeys,
-    );
-    if (
-      role.kind === 'cancelled' ||
-      role.kind === 'withdraw' ||
-      role.kind === 'post' ||
-      role.kind === 'cancel_so'
-    ) {
-      return true;
-    }
-    // Only an order that is about to be adopted can mint the missing mirror.
-    if (role.kind === 'unpostable' && role.reason === 'no_mirror') {
-      return unadopted === undefined || unadopted.has(salesOrderId);
-    }
-    return false;
-  }).length;
+  return contributions.filter(
+    (contribution) =>
+      contribution.sales_order_id === salesOrderId &&
+      countsInPress(contribution, draft, batchBlocked, options),
+  ).length;
+}
+
+/** `plannedLineCount`'s rule for one line of an order the press confirms. */
+function countsInPress(
+  contribution: BoardContribution,
+  draft: BoardDraft,
+  batchBlocked: boolean,
+  options?: ConfirmScopeOptions,
+): boolean {
+  if (excludedFromPress(contribution, options?.excludeKeys)) return false;
+  const role = pressRoleFor(
+    contribution,
+    draft[contribution.key],
+    batchBlocked,
+    options?.batchNamedKeys,
+  );
+  if (
+    role.kind === 'cancelled' ||
+    role.kind === 'withdraw' ||
+    role.kind === 'post' ||
+    role.kind === 'cancel_so' ||
+    role.kind === 'split_edit'
+  ) {
+    return true;
+  }
+  // Only an order that is about to be adopted can mint the missing mirror.
+  if (role.kind === 'unpostable' && role.reason === 'no_mirror') {
+    const unadopted = options?.unadoptedSalesOrderIds;
+    return unadopted === undefined || unadopted.has(contribution.sales_order_id);
+  }
+  return false;
 }
 
 /**
@@ -856,7 +922,8 @@ export function plannedLineCount(
  * `toConfirm` too, beside `rejected`. A line an active decision already COVERS and nobody has
  * amended OR rejected is not counted: the server carries it into the next revision itself. A
  * SAVED-BUT-STALE line (S4, AC-4.4) is not counted either, the same reason `lineFor` will not
- * post it.
+ * post it, unless it carries a saved split edit (OI-SPLIT-VIEW A2, A3): the server applies
+ * that, so the line counts once as a split edit.
  */
 export function confirmSummaryFor(
   contributions: BoardContribution[],
@@ -865,6 +932,52 @@ export function confirmSummaryFor(
   batchBlockedSalesOrderIds: ReadonlySet<string> = new Set(),
   options?: ConfirmScopeOptions,
 ): { toConfirm: number; rejected: number; orderCount: number; changed: number } {
+  const { orderIds, rejected, changed } = confirmScope(
+    contributions,
+    draft,
+    batchBlockedSalesOrderIds,
+    options,
+  );
+  const toConfirm = [...orderIds].reduce(
+    (total, salesOrderId) =>
+      total +
+      plannedLineCount(contributions, salesOrderId, draft, batchBlockedSalesOrderIds, options),
+    0,
+  );
+  return { toConfirm, rejected, orderCount: orderIds.size, changed };
+}
+
+/**
+ * OI-SPLIT-VIEW (UAC A3): the split-edited lines one press counts, once per line, for the
+ * board's "Split edits to confirm" list: exactly the split-edited lines `confirmSummaryFor`
+ * counts (same orders, same per-line rule), so the list and the count cannot disagree.
+ */
+export function splitEditsToConfirm(
+  contributions: BoardContribution[],
+  draft: BoardDraft,
+  batchBlockedSalesOrderIds: ReadonlySet<string> = new Set(),
+  options?: ConfirmScopeOptions,
+): BoardContribution[] {
+  const { orderIds } = confirmScope(contributions, draft, batchBlockedSalesOrderIds, options);
+  const seen = new Set<string>();
+  return contributions.filter((contribution) => {
+    const lineId = contribution.project_line_id;
+    if (!contribution.split_edited || !lineId || seen.has(lineId)) return false;
+    if (!orderIds.has(contribution.sales_order_id)) return false;
+    const batchBlocked = batchBlockedSalesOrderIds.has(contribution.sales_order_id);
+    if (!countsInPress(contribution, draft, batchBlocked, options)) return false;
+    seen.add(lineId);
+    return true;
+  });
+}
+
+/** The orders one press confirms, and the rejected / changed tallies (`confirmSummaryFor`). */
+function confirmScope(
+  contributions: BoardContribution[],
+  draft: BoardDraft,
+  batchBlockedSalesOrderIds: ReadonlySet<string>,
+  options?: ConfirmScopeOptions,
+): { orderIds: Set<string>; rejected: number; changed: number } {
   // N6 (code review round 3): `confirmed > rejected > stale > saved`, the same order
   // `BoardDecisionPill` reads by. A covered line's frozen composition is what the server
   // carries forward regardless of a local click, so it is checked FIRST - a click of
@@ -880,7 +993,7 @@ export function confirmSummaryFor(
   const orderIds = new Set<string>();
   for (const contribution of contributions) {
     if (contribution.unplannable) continue;
-    if (options?.excludeKeys?.has(contribution.key)) continue;
+    if (excludedFromPress(contribution, options?.excludeKeys)) continue;
     // A CANCELLED line is decided BY THE BOOK (R3, scenario S5): the order it was on removed
     // it, and Confirm retires it. Nobody saves a decision for it, so the untouched-line skip
     // below would drop it from the count and the press would silently do one thing more than
@@ -906,6 +1019,21 @@ export function confirmSummaryFor(
       continue;
     }
     const decision = draft[contribution.key];
+    // OI-SPLIT-VIEW (UAC A2): a saved split edit admits its order on its own; the count
+    // below adds the line once, whatever else is staged on it.
+    if (
+      pressRoleFor(
+        contribution,
+        decision,
+        batchBlockedSalesOrderIds.has(contribution.sales_order_id),
+        options?.batchNamedKeys,
+      ).kind === 'split_edit'
+    ) {
+      // A stale draft beside it is still dropped from the press: said like any other.
+      if (decision && contribution.draft?.stale) changed += 1;
+      orderIds.add(contribution.sales_order_id);
+      continue;
+    }
     // 8 Sep 2026 ruling (reverses R11): an untouched, uncovered line is undecided, not
     // agreed - it must not pull its order into the confirmable set on its own. `decision`
     // is the caller's own draft, already merged with whatever the server sent as
@@ -947,13 +1075,7 @@ export function confirmSummaryFor(
     }
     orderIds.add(contribution.sales_order_id);
   }
-  const toConfirm = [...orderIds].reduce(
-    (total, salesOrderId) =>
-      total +
-      plannedLineCount(contributions, salesOrderId, draft, batchBlockedSalesOrderIds, options),
-    0,
-  );
-  return { toConfirm, rejected, orderCount: orderIds.size, changed };
+  return { orderIds, rejected, changed };
 }
 
 /**

@@ -380,6 +380,7 @@ class ProjectSODraftService:
         project = self._project_or_404(po.project_id)
         schedule_version = self._schedule_version_or_404(schedule_version_id)
         self._assert_schedule_belongs_to_po(schedule_version, po)
+        self._assert_buildable(po, schedule_version)
 
         po_version = self._po_version_for(po, schedule_version)
         source_lines = self._source_lines(po, po_version)
@@ -546,15 +547,42 @@ class ProjectSODraftService:
                 code="schedule_foreign_po",
             )
 
+    def _assert_buildable(
+        self, po: ProjectPurchaseOrder, schedule_version: DeliveryScheduleVersion
+    ) -> None:
+        """D3 (PM-SIMPLIFY): sales orders come from a CONFIRMED schedule and, when the PO
+        was scanned, a CONFIRMED PO version. An unconfirmed one is a proposal nobody has
+        read yet, and building from it put unread dates and quantities into AutoCount."""
+        if schedule_version.confirmed_at is None:
+            raise AppException(
+                status_code=409,
+                message=(
+                    "Confirm the delivery schedule before building sales orders from it."
+                ),
+                code="schedule_not_confirmed",
+            )
+        versions = self.db.query(ProjectPOVersion).filter(
+            ProjectPOVersion.purchase_order_id == po.id
+        )
+        if (
+            versions.first() is not None
+            and versions.filter(ProjectPOVersion.confirmed_at.isnot(None)).first() is None
+        ):
+            raise AppException(
+                status_code=409,
+                message="Confirm the purchase order before building sales orders from it.",
+                code="po_not_confirmed",
+            )
+
     def _po_version_for(
         self, po: ProjectPurchaseOrder, schedule_version: DeliveryScheduleVersion
     ) -> Optional[ProjectPOVersion]:
         """The PO version this build reads.
 
         The schedule names it (finding G1): a schedule issued before a handwritten
-        cancellation reconciles against the PO as it stood. Falling back to the latest
-        CONFIRMED version rather than the latest version is deliberate -- an unconfirmed
-        extraction is a proposal nobody has read yet.
+        cancellation reconciles against the PO as it stood. Otherwise the latest CONFIRMED
+        version, never an unconfirmed one (D3): an unconfirmed extraction is a proposal
+        nobody has read yet.
         """
         if schedule_version.po_version_id:
             named = (
@@ -562,17 +590,17 @@ class ProjectSODraftService:
                 .filter(ProjectPOVersion.id == schedule_version.po_version_id)
                 .first()
             )
-            if named is not None:
+            if named is not None and named.confirmed_at is not None:
                 return named
-        query = self.db.query(ProjectPOVersion).filter(
-            ProjectPOVersion.purchase_order_id == po.id
-        )
-        confirmed = (
-            query.filter(ProjectPOVersion.confirmed_at.isnot(None))
+        return (
+            self.db.query(ProjectPOVersion)
+            .filter(
+                ProjectPOVersion.purchase_order_id == po.id,
+                ProjectPOVersion.confirmed_at.isnot(None),
+            )
             .order_by(ProjectPOVersion.version_no.desc())
             .first()
         )
-        return confirmed or query.order_by(ProjectPOVersion.version_no.desc()).first()
 
     def _source_lines(
         self, po: ProjectPurchaseOrder, po_version: Optional[ProjectPOVersion]
@@ -3339,6 +3367,8 @@ class ProjectSODraftService:
         *,
         query: Optional[str] = None,
         status: Optional[Sequence[str]] = None,
+        purchase_order_id: Optional[str] = None,
+        without_purchase_order: bool = False,
         page: int = 1,
         limit: int = 50,
         sort: str = "created_at",
@@ -3347,6 +3377,10 @@ class ProjectSODraftService:
         rows = self.db.query(ProjectSalesOrder).filter(
             ProjectSalesOrder.project_id == project_id
         )
+        if purchase_order_id:
+            rows = rows.filter(ProjectSalesOrder.purchase_order_id == purchase_order_id)
+        if without_purchase_order:
+            rows = rows.filter(ProjectSalesOrder.purchase_order_id.is_(None))
         if status:
             rows = rows.filter(ProjectSalesOrder.status.in_(list(status)))
         if query:

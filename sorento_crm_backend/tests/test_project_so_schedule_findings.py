@@ -192,6 +192,8 @@ def _po_and_schedule_with_batch_finding(db, project):
         po_version_id=po_version.id,
         extraction_state="done",
         schedule_date=date(2026, 1, 19),
+        # D3: sales orders build only from a confirmed schedule.
+        confirmed_at=date.today(),
     )
     db.add(version)
     db.flush()

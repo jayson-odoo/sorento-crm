@@ -20,8 +20,16 @@ export interface ConsoleTurnRequest {
   prompt_version_id: string | null;
   run_id: string;
   media?: ConsoleMediaInput | null;
-  /** The bot bubble this message quotes (WhatsApp reply-to). Omitted when nothing is quoted. */
-  reply_to?: { id: string; text: string; source: 'n8n' | 'contact' };
+  /** The bubble this message quotes (WhatsApp reply-to), text or media turn alike.
+   * Omitted when nothing is quoted. */
+  reply_to?: ConsoleQuote;
+}
+
+/** A quoted bubble: a bot reply (`n8n`) or the customer's own earlier message (`contact`). */
+export interface ConsoleQuote {
+  id: string;
+  text: string;
+  source: 'n8n' | 'contact';
 }
 
 export interface ConsoleTraceSummary {
@@ -111,6 +119,8 @@ export interface ChatbotConsoleMessage {
   /** Carried on a FAILED status bubble so its Retry chip can resend the exact same
    * attachment without asking the user to re-attach it. */
   mediaRetry?: ConsoleMediaInput | null;
+  /** The quote the failed attachment carried, so Retry resends it quoted too. */
+  mediaRetryQuote?: ConsoleQuote | null;
   /** Only the LAST bot bubble of a turn carries these - the files a `send_attachments`
    * action on this turn would send, via `extractTurnAttachments`. */
   attachments?: TurnAttachment[];

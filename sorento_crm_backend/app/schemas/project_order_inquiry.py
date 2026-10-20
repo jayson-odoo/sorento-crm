@@ -23,6 +23,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.schemas.project_line_split import LineSplitViewOut
 from app.services.uuid_path_param import UUID_PATTERN
 
 #: The longest free-text search string the worklist routes accept
@@ -305,6 +306,9 @@ class OrderInquiryRowOut(BaseModel):
     #: OI-LINE-SPLIT (UAC D3): the splits of this row's SO line; empty when not split.
     #: Declared because `response_model` drops a field it has not been told about.
     splits: List[OrderInquiryLineSplitOut] = []
+    #: OI-SPLIT-VIEW (UAC B1 to B5): the line's split popup (`LineSplitService.split_views`),
+    #: null when the line has no splits.
+    split_view: Optional[LineSplitViewOut] = None
 
 
 class UploadJobScope(BaseModel):
@@ -550,6 +554,9 @@ class OrderInquiryWorklistRow(BaseModel):
     #: read-only expand; empty when not split. Declared because `response_model` drops a
     #: field it has not been told about.
     splits: List[OrderInquiryLineSplitOut] = []
+    #: OI-SPLIT-VIEW (UAC B1 to B5): the line's split popup, the same value
+    #: `OrderInquiryRowOut.split_view` carries; null when the line has no splits.
+    split_view: Optional[LineSplitViewOut] = None
     #: PLAN-oi-request-cs-reserve.md 3.5 (AC-RS-20): `requested` while an open reserve
     #: request row exists, `reserved` once something has actually been reserved (and no
     #: open request), `declined` when the latest answer was 0 (6e.4, AC-RS-78c), else

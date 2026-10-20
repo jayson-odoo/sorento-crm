@@ -35,8 +35,6 @@ vi.mock('../../_shared/services/poIntakeService', () => ({
   updatePOVersionLine: vi.fn(),
   updatePOVersionHeader: vi.fn(),
   confirmPOVersion: vi.fn(),
-  approvePurchaseOrder: vi.fn(),
-  countersignPurchaseOrder: vi.fn(),
   acceptPOAnnotation: vi.fn(),
   editPOAnnotation: vi.fn(),
   rejectPOAnnotation: vi.fn(),

@@ -110,14 +110,10 @@ async function pickPair() {
 }
 
 function confirmBuild() {
+  // One dialog, one button (PM-SIMPLIFY AC-B1): no second confirm.
   fireEvent.click(
     within(screen.getByRole('dialog')).getByRole('button', {
-      name: 'Build drafts',
-    }),
-  );
-  fireEvent.click(
-    within(screen.getByRole('alertdialog')).getByRole('button', {
-      name: 'Build drafts',
+      name: 'Build sales orders',
     }),
   );
 }
@@ -175,21 +171,35 @@ describe('SalesOrderBuildDialog', () => {
     );
   });
 
-  it('names the chosen split in the confirmation', async () => {
-    renderDialog(vi.fn(async () => undefined));
-
-    await pickPair();
-    fireEvent.change(screen.getByLabelText('Select how to split'), {
-      target: { value: 'delivery_date' },
-    });
-    fireEvent.click(
-      within(screen.getByRole('dialog')).getByRole('button', {
-        name: 'Build drafts',
-      }),
+  it('asks only for the split when the PO page names the PO and schedule, no second confirm', async () => {
+    const onBuild = vi.fn(async () => undefined);
+    const onDone = vi.fn();
+    render(
+      <SalesOrderBuildDialog
+        projectId="p1"
+        poId="po-1"
+        scheduleVersionId="sched-v1"
+        onDone={onDone}
+        onBuild={onBuild}
+        building={false}
+      />,
     );
 
-    expect(
-      await screen.findByText(/split by delivery date/),
-    ).toBeInTheDocument();
+    expect(screen.queryByLabelText('Select a purchase order')).toBeNull();
+    expect(screen.queryByLabelText('Select a schedule version')).toBeNull();
+    expect(screen.getByLabelText('Select how to split')).toBeInTheDocument();
+    expect(screen.getByText(/Drafts built earlier from the same pair are replaced/)).toBeInTheDocument();
+
+    confirmBuild();
+
+    await waitFor(() =>
+      expect(onBuild).toHaveBeenCalledWith({
+        poId: 'po-1',
+        scheduleVersionId: 'sched-v1',
+        splitBy: 'area',
+      }),
+    );
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
   });
 });

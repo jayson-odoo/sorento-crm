@@ -1571,6 +1571,8 @@ class ProjectPurchaseOrderResponse(BaseModel):
     # What still stands between this PO and its sales orders (see the serializer).
     status: Optional[str] = None
     po_confirmed: bool = False
+    # PM-SIMPLIFY: the PO came from an uploaded document (its lines are the document's).
+    has_document: bool = False
     schedule_confirmed: bool = False
     # Sales orders already OUT of this PO. Editing it stays allowed - corrections are the
     # normal case - but the screen has to be able to say so before somebody saves over it,
@@ -1590,6 +1592,11 @@ class ProjectPurchaseOrderResponse(BaseModel):
 
     # True only on the response to the create that actually moved the funnel (AC-F10).
     status_moved_to_po_received: bool = False
+
+    # PM-SIMPLIFY AC-O3: units ordered and delivered (AutoCount), next delivery.
+    ordered_units: Decimal = Decimal("0")
+    delivered_units: Decimal = Decimal("0")
+    next_delivery_date: Optional[date] = None
 
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

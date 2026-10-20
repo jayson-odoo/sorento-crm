@@ -521,4 +521,6 @@ export interface ProjectSalesOrderListParams {
   query?: string;
   status?: string;
   purchase_order_id?: string;
+  /** Orders not built from a PO: sponsorship drafts, adopted orders. */
+  without_purchase_order?: boolean;
 }
