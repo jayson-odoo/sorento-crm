@@ -9,19 +9,14 @@ already read (`block`):
 
 - under the candidates' own heading, the file types, certificate kinds and schemes the
   message's own words name (their code, name, own words or a lookup keyword the owner linked:
-  the data `closed_list_items` reads), the warehouses they name (exactly what
-  `resolve_warehouse_token` resolves for the word) and the spec values a word
-  names as a registry code suffix (a derivation rule's `-FRG` typed as "frg");
+  the data `closed_list_items` reads), and the spec values a word names as a registry code
+  suffix (`code_suffix_forms`: a derivation rule's `-FRG` typed as "frg");
 - under `HELD_HEADER`, the file types, certificate kinds and schemes the held products have on
   record, and their own spec values (one line per visible key that holds one).
 
 A word nothing matches gets no line; the existing ask paths handle it. Data only: no word is
-special-cased. Product and warehouse reads go through the scoped session (products also
-through `chat_searchable_products`).
-
-The system prompt's warehouse SHAPE rule (a short token is a warehouse) becomes, in index mode
-only, the fixed `WAREHOUSE_INDEX_RULE` (`system_prompt`): the same shape, and only when the
-index lists it.
+special-cased. Product reads go through the scoped session and `chat_searchable_products`.
+Warehouses are no index line: their closed list is checked at grounding (`head/grounding`).
 """
 from __future__ import annotations
 
@@ -51,21 +46,6 @@ SYSTEM_BLANKS: dict[str, str] = {
     ),
 }
 
-#: The consolidated template's warehouse SHAPE rule (`parser_template`, R-P2-03), exactly as
-#: written, and the ONE fixed sentence index mode renders in its place: the same shape, and
-#: only when the per-turn index lists it, so index mode can only remove a warehouse hint
-#: relative to block, never add one. Fixed text, so the system prompt stays byte-equal across
-#: turns. The template file itself is not edited (prompt freeze).
-WAREHOUSE_SHAPE_RULE = (
-    'In an order or outstanding ask, a short token that is not a product code, after "for", "at", "in" or alone '
-    'beside the product, is a warehouse: at most 4 characters of letters, or letters with one digit ("IB", "BB", '
-    '"BRW", "MWH", "DC1", "WH3"), or a hyphenated site code of at most 10 characters ("BRW-IB", "MWH-IB").'
-)
-WAREHOUSE_INDEX_RULE = WAREHOUSE_SHAPE_RULE.removesuffix(".") + (
-    ', and only when the index lists it (a "Warehouse" line of the candidates block names its code or its part '
-    'after the last "-"); a short token no Warehouse line lists is not a warehouse.'
-)
-
 #: The one heading over the held products' own lines: they are on record, not said this turn.
 HELD_HEADER = "On record for the held products (their own values, not words of this message):"
 
@@ -89,23 +69,6 @@ def read_mode(db: "Session") -> str:
 
     row = db.query(SystemSetting.chatbot_closed_lists_mode).first()
     return normalised(row[0] if row is not None else None)
-
-
-def system_prompt(text: str, *, template: bool) -> str:
-    """The rendered index-mode system prompt with `WAREHOUSE_SHAPE_RULE` replaced by
-    `WAREHOUSE_INDEX_RULE`. A consolidated template version (`template`) that does not carry
-    the rule word for word raises `ParserError`: its line changed, and leaving the shape rule
-    in would be silent. A version from before the template has no such sentence to replace."""
-    if WAREHOUSE_SHAPE_RULE in text:
-        return text.replace(WAREHOUSE_SHAPE_RULE, WAREHOUSE_INDEX_RULE)
-    if template:
-        from app.services.chatbot.head.parser import ParserError
-
-        raise ParserError(
-            "closed lists index mode: the template's warehouse shape rule (R-P2-03) is not word for word "
-            "closed_lists_index.WAREHOUSE_SHAPE_RULE, so it cannot be replaced; update the constant"
-        )
-    return text
 
 
 # --------------------------------------------------------------------------- #
@@ -300,46 +263,21 @@ def file_lines(db: "Session", message: str, held_ids: list[str]) -> tuple[list[s
 
 
 # --------------------------------------------------------------------------- #
-# (a) Warehouses and registry code suffixes the message's words name
+# (a) Spec values a word names as a registry code suffix
 # --------------------------------------------------------------------------- #
 
 
-def warehouse_line(code: str, name: str | None) -> str:
-    """One warehouse as the index lists it: `Warehouse CODE: name`."""
-    from app.services.chatbot_prompt_vars import candidate_text
-
-    code, name = candidate_text(code), candidate_text(name or "")
-    return f"Warehouse {code}: {name}" if name else f"Warehouse {code}"
-
-
-def warehouse_lines(db: "Session", message: str) -> list[str]:
-    """The warehouses the message's words name, each word read EXACTLY as `resolve_warehouse_token`
-    reads it (`warehouse_codes_for`: the equal code wins, else every code whose part after its
-    last `-` is the word), over one `warehouses` read: the index lists only what grounding and
-    the lane resolve. No name and no near spelling. A line only: binding stays the hint's."""
-    from app.models.inventory import Warehouse
-    from app.services.chatbot.head.candidates import _tokens
-    from app.services.chatbot.lanes.business.services import warehouse_codes_for
-
-    rows = db.query(Warehouse.warehouse_code, Warehouse.warehouse_name).order_by(Warehouse.warehouse_code).all()
-    names = {code: name for code, name in rows}
-    codes = [code for code, _name in rows]
-    out: list[str] = []
-    for word in dict.fromkeys(_tokens(message)):
-        out += [warehouse_line(code, names[code]) for code in warehouse_codes_for(word, codes)]
-    return list(dict.fromkeys(out))[:CAP_FILE_LINES]
-
-
-def code_suffix_lines(db: "Session", grams: set[str], hidden: frozenset[str] = frozenset()) -> list[str]:
-    """The spec values a word of the message names as a registry code suffix: a visible key's
-    own derivation rule of kind `code`, `ends_with` a text `-X`, read the way derivation reads it
-    (`stored_or_shipped_rules`, suppressed values out); the word is X ("frg" for `-FRG`), exactly.
-    One candidate line per word, in the candidate lines' `- "word": spec K = V (label)` format."""
+def code_suffix_forms(db: "Session", hidden: frozenset[str] = frozenset()) -> dict[str, list[tuple[Any, Any]]]:
+    """The registry's code-suffix short forms: for every visible key's own derivation rule of kind
+    `code`, `ends_with` a text `-X`, read the way derivation reads it (`stored_or_shipped_rules`,
+    suppressed values out), the folded X ("frg" for `-FRG`) -> the (registry row, value) pairs it
+    sets. The one reader the index lines (`code_suffix_lines`) and grounding's finish-word check
+    share."""
     from app.services.chatbot.head.candidates import SKIP_KEYS, _phrase, _registry
     from app.services.product_spec_derivation import stored_or_shipped_rules, without_suppressed
     from app.services.product_spec_rules import builder_of
 
-    by_word: dict[str, list[str]] = {}
+    forms: dict[str, list[tuple[Any, Any]]] = {}
     for row in _registry(db, hidden):
         if row.spec_key in SKIP_KEYS:
             continue
@@ -350,10 +288,25 @@ def code_suffix_lines(db: "Session", grams: set[str], hidden: frozenset[str] = f
             for text in builder.get("texts") or []:
                 text = str(text).strip()
                 word = _phrase(text[1:]) if text.startswith("-") else ""
-                if word and word in grams:
-                    items = by_word.setdefault(word, [])
-                    items += [item for item in _spec_items(row, builder.get("value")) if item not in items]
-    return [f'- "{word}": ' + "; ".join(items) for word, items in by_word.items() if items]
+                if word:
+                    forms.setdefault(word, []).append((row, builder.get("value")))
+    return forms
+
+
+def code_suffix_lines(db: "Session", grams: set[str], hidden: frozenset[str] = frozenset()) -> list[str]:
+    """The spec values a word of the message names exactly as a registry code-suffix short form
+    (`code_suffix_forms`), one candidate line per word in the candidate lines'
+    `- "word": spec K = V (label)` format."""
+    out: list[str] = []
+    for word, pairs in code_suffix_forms(db, hidden).items():
+        if word not in grams:
+            continue
+        items: list[str] = []
+        for row, value in pairs:
+            items += [item for item in _spec_items(row, value) if item not in items]
+        if items:
+            out.append(f'- "{word}": ' + "; ".join(items))
+    return out
 
 
 def block(
@@ -363,17 +316,15 @@ def block(
     held_ids: list[str] | None,
     hidden: frozenset[str] = frozenset(),
 ) -> list[str]:
-    """The CLOSED LISTS block in index mode: the candidate lines, with the code suffix, file type /
-    certificate and warehouse lines the message's words name under the same `candidates.HEADER`;
-    then, under `HELD_HEADER`, the file types / certificates the held products have on record and
-    their own spec lines. Each heading only when it has a line under it (a word matching nothing
-    gets no line)."""
+    """The CLOSED LISTS block in index mode: the candidate lines, with the code suffix and file type /
+    certificate lines the message's words name under the same `candidates.HEADER`; then, under
+    `HELD_HEADER`, the file types / certificates the held products have on record and their own spec
+    lines. Each heading only when it has a line under it (a word matching nothing gets no line)."""
     from app.services.chatbot.head.candidates import HEADER
 
     held = list(dict.fromkeys(str(h) for h in held_ids or [] if h))[:CAP_HELD_PRODUCTS]
     named, on_record = file_lines(db, message, held)
-    grams = _grams(message)
-    named = [*code_suffix_lines(db, grams, hidden), *named, *warehouse_lines(db, message)]
+    named = [*code_suffix_lines(db, _grams(message), hidden), *named]
     out = list(candidate_lines)
     named = [line for line in named if line not in out]
     if named:

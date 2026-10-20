@@ -845,7 +845,6 @@ def resolve_config(
     from app.services.chatbot.head import closed_lists_index
     from app.services.chatbot.head.chat_state_prompt import HEADING
     from app.services.chatbot.head.closed_lists_prompt import gate_on
-    from app.services.chatbot.head.parser_template import MARKER as TEMPLATE_MARKER
 
     resolved = get_prompt(db, PROMPT_KEY, override_version_id=override_version_id)
     raw_template = resolved.text
@@ -856,10 +855,6 @@ def resolve_config(
     index_mode = closed_lists and closed_lists_index.read_mode(db) == closed_lists_index.MODE_INDEX
     blanks = dict(closed_lists_index.SYSTEM_BLANKS) if index_mode else {}
     system_prompt, prompt_version = render_resolved(db, PROMPT_KEY, resolved, current_date=current_date, **blanks)
-    if index_mode:
-        # The warehouse shape rule becomes "a warehouse is one the index lists" (fixed text).
-        template = TEMPLATE_MARKER in (raw_template or "")
-        system_prompt = closed_lists_index.system_prompt(system_prompt, template=template)
     provider_override, model_override = agent_model(db, PROMPT_KEY)
 
     config = AIAssistantConfigService(db).get()
@@ -871,6 +866,7 @@ def resolve_config(
     if not api_key:
         raise ParserError(f"no API key configured for provider {provider!r}")
     from app.services.chatbot.head import code_lookup_prompt
+    from app.services.chatbot.head.parser_template import MARKER as TEMPLATE_MARKER
 
     # CHAT-STATE: the literal on the prompt text (never on a message) opts the turn in.
     state_block = HEADING in (raw_template or "")

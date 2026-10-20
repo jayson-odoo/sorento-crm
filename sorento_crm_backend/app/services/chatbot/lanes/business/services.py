@@ -511,15 +511,15 @@ def resolve_warehouse_token(db: Session, token: str) -> list[str]:
     contact with no `respond_contact_companies` row already gets zero rows there too -
     a genuinely UNMAPPED contact fails closed everywhere in the turn, not selectively.
 
-    One `warehouses` read; the rule itself is `warehouse_codes_for`, which the CLOSED LISTS
-    index (`head/closed_lists_index.warehouse_lines`) applies to the same rows, so the index
-    lists exactly what this resolves.
+    One `warehouses` read, ordered (code, company) so an exact match across companies is the same
+    code every time; the rule itself is `warehouse_codes_for`.
     """
     from app.models.inventory import Warehouse
 
     if not (token or "").strip():
         return []
-    return warehouse_codes_for(token, [code for (code,) in db.query(Warehouse.warehouse_code).all()])
+    rows = db.query(Warehouse.warehouse_code).order_by(Warehouse.warehouse_code, Warehouse.company_id).all()
+    return warehouse_codes_for(token, [code for (code,) in rows])
 
 
 def warehouse_codes_for(token: str, codes: list[str]) -> list[str]:
