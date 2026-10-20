@@ -7,7 +7,14 @@ S4-3 and S5-10. Schema reference: `REF-autocount-billing-schema.md`. Contract: c
 ## 0. Preconditions
 
 1. AutoCount admin grants the read-only SQL login SELECT on `IV, IVDTL, CS, CSDTL, CN, CNDTL, DN, DNDTL,
-   ARInvoice, ARDN, ARCN` (Debtor and Item are already readable), on every company DB that is in scope.
+   DODTL, ARInvoice, ARDN, ARCN` (Debtor and Item are already readable), on every company DB that is in
+   scope. `DODTL` is for the DO-line hop (foundryx-shared-service PR #127, BL-SS-306): a line with
+   `FromDocType = 'DO'` joins `DODTL ON DODTL.DtlKey = <line>.FromDocDtlKey` to build the exact DO line
+   ref `{db}:DO:{DODTL.DocKey}:{DODTL.DtlKey}`, which the CRM resolves to its own DO line and that line's
+   sales order line. The ref needs `DODTL` only: `FromDocNo` already sits on the billing line, so the `DO`
+   header is not granted. Crew ruling: the link is exact, never by `FromDocNo`; if `DODTL` is unreadable the
+   shared service fails loudly at Preview rather than pushing DO-sourced lines unlinked. Check it before the
+   dry run: `SELECT TOP 1 DtlKey FROM DODTL` under the read-only login, on every company DB.
 2. The REF section 6 checks have run and every [I] that the presets rely on is confirmed; the presets are
    corrected where a check failed. Record the results in section 5 below.
 3. The `finance` module is switched on for the tenant (App Store).
