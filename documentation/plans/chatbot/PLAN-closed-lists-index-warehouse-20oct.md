@@ -44,3 +44,29 @@ template file is not edited: prompt freeze, crew a29691875). Block mode byte-ide
 
 Opus reviewer READY; tests/chatbot/test_closed_lists_index_mode.py + the new file + touched suites green; parser
 gold on TRAIN location / warehouse + spec items in index mode, x1 with early stop, cap USD 1.0 total.
+
+## Round 2b (Opus review NOT READY on 9bce884b56)
+
+Built: red 61d77c5cc1, fix 58d4f909d5, seed shape 9bce884b56 (lead sign-off), harness 51bf7b8f96 / 6f71442ba8
+(parser_gold renders the engine's fresh turn, `--closed-lists-mode`, `warehouse` expect key).
+Review findings taken: (1) no test keeps a suffix hint; (2) the index listed a warehouse by NAME that grounding and
+the lane cannot resolve (HQ "HEADQUARTER"), so the hint dropped and the held axis cleared; (3) the replacement
+sentence said "short token" but no longer defined short, so a word code (PROJECT, SAMPLE, SHOWROOM, PENANG on the
+real DB) could become a warehouse in index mode; (4) IW-4 "binds nothing" could not fail, no -WH warehouse seeded;
+(5) nothing pinned the fail-loud ParserError.
+
+ARCHITECTURE: one warehouse reading everywhere. The index lists, for a message word, exactly what
+resolve_warehouse_token resolves (exact code wins, else the last-"-" suffix; no name, no near spelling), so the
+index never offers what grounding and the lane cannot keep. The index-mode sentence keeps the original short-token
+shape definition and adds one condition ("and only when the index lists it"), so index mode can only REMOVE a
+warehouse hint relative to block, never add one. Removes: name matching and near spelling for warehouses.
+
+- IW-7 a warehouse hint "IB" keeps BRW-IB and MWH-IB; no clears-axis rule fires.
+- IW-8 "stock at headquarter" (HQ named HEADQUARTER) lists no warehouse line.
+- IW-9 "hq" lists HQ only (not MKTG-HQ / SD-HQ); "at wh3" lists WH3 only (not WH3-AM).
+- IW-10 "wh" lists finish white AND the -WH warehouses (MOCHA-WH seeded); a warehouse hint "wh" keeps them.
+- IW-11 system_prompt on a template version without the sentence raises ParserError; a legacy version is unchanged.
+- IW-6 amended (lead sign-off, design change above): the index system prompt keeps the shape definition and adds
+  the "index lists" condition; byte-equal across turns.
+Gold (index arms only, block unchanged): word codes "for project only", "sample", "showroom", "penang" never become
+warehouses; the 6 order rows and 7 location rows stay 6/6 and 7/7.
