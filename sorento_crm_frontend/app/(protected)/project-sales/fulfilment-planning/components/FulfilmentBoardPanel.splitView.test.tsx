@@ -135,6 +135,7 @@ vi.mock('@/services/pendingActionService', () => ({
 
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
 import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsupport__/boardFixture';
+import { MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE } from '../../_shared/__mocks__/planningChanges';
 
 const TODAY = '2026-09-17';
 
@@ -385,5 +386,73 @@ describe('review round 1 (UAC A3): the list names exactly the lines the count in
     expect(listed).toBe(true);
     // and the Confirm button agrees with the count
     expect(screen.getByTestId('board-confirm')).toHaveTextContent(`Confirm (${counted})`);
+  });
+});
+
+
+describe('review round 3 (UAC A12): a pending AutoCount batch on OTHER lines does not hold back a split edit', () => {
+  // MOCK batch: SO381895, its pending row names pl-381895-1. The split-edited line is pl-381895-2.
+  const BATCH = MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE;
+  const named = demand({
+    sales_order_id: 'so-381895', so_number: 'SO381895', project_sales_order_id: 'pso-381895',
+    project_line_id: 'pl-381895-1', line_no: 1, item_code: 'SRTWCX7405-RL-S-PJ',
+  });
+  const edited = demand({
+    sales_order_id: 'so-381895', so_number: 'SO381895', project_sales_order_id: 'pso-381895',
+    project_line_id: 'pl-381895-2', line_no: 2, item_code: 'SRTWCX-OTHER-ITEM',
+  });
+
+  function batchBoard() {
+    const board = withSplitEdited(
+      buildBoard([named, edited], { today: TODAY, freeStock: {}, granularity: 'week' }),
+      ['pl-381895-2'],
+    );
+    return {
+      ...board,
+      orders: board.orders.map((order) => ({ ...order, pending_change_batch_id: BATCH.id })),
+    } as unknown as ReturnType<typeof buildBoard>;
+  }
+
+  it('the split-edited line counts 1, is listed, and the Confirm press posts its order with the batch id', async () => {
+    getPlanningBoard.mockResolvedValue(batchBoard());
+    getPlanningChangeBatch.mockResolvedValue(BATCH);
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-381895', ok: true, decision_revision: 4, lines_confirmed: [] }],
+    });
+    renderPanel(['SO381895']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    expect(await screen.findByTestId('board-confirm-summary')).toHaveTextContent('1 to confirm');
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)');
+    expect(screen.getByText('Split edits to confirm: line 2 SRTWCX-OTHER-ITEM')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
+    fireEvent.click(screen.getByTestId('board-confirm'));
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0];
+    const sent = body.orders.find((order: { pso_id: string }) => order.pso_id === 'pso-381895');
+    expect(sent, JSON.stringify(body)).toBeDefined();
+    expect(sent.lines).toEqual([]);
+    expect(sent.batch_id).toBe(BATCH.id);
+  });
+});
+
+
+describe('review round 3 (UAC B8): Escape on the gear\'s View splits popup returns focus to the gear', () => {
+  it('focus is on the Board actions button after Escape', async () => {
+    getLineSplits.mockResolvedValue({
+      pso_id: 'pso-so-1', so_number: 'SO000001', customer: null, project: null, lines: [],
+    });
+    getPlanningBoard.mockResolvedValue(
+      buildBoard(TWO_ORDERS, { today: TODAY, freeStock: {}, granularity: 'week' }),
+    );
+    renderPanel(['SO000001', 'SO000002']);
+    const menu = await openBoardActions();
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'View splits SO000001' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toBeInTheDocument();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Board actions' })),
+    );
   });
 });

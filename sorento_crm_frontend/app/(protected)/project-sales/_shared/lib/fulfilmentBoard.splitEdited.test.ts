@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { BoardContribution } from '../types/fulfilmentPlanning.types';
-import { confirmLinesFor, confirmSummaryFor, plannedLineCount } from './fulfilmentBoard';
+import { confirmLinesFor, confirmSummaryFor, plannedLineCount, splitEditsToConfirm } from './fulfilmentBoard';
 import { buildBoard, type BoardDemandLine } from './__testsupport__/boardFixture';
 
 const TODAY = '2026-09-17';
@@ -99,5 +99,29 @@ describe('a split-edited line counts in the confirm summary (A2)', () => {
   it('a split-edited line posts no body line of its own (the server applies it)', () => {
     const all = contributionsOf([demand(1)], [1]);
     expect(confirmLinesFor(all, 'so-1', {})).toEqual([]);
+  });
+});
+
+describe('review round 3 (UAC A12): an order carrying a pending AutoCount batch still counts a split edit', () => {
+  const BLOCKED = new Set(['so-1']);
+
+  it('a split-edited line of a batch-blocked order counts 1 and admits its order', () => {
+    const all = contributionsOf([demand(1)], [1]);
+    const summary = confirmSummaryFor(all, {}, BLOCKED);
+    expect(summary.toConfirm).toBe(1);
+    expect(summary.orderCount).toBe(1);
+    expect(plannedLineCount(all, 'so-1', {}, BLOCKED)).toBe(1);
+  });
+
+  it('is listed in the split edits to confirm', () => {
+    const all = contributionsOf([demand(1)], [1]);
+    expect(splitEditsToConfirm(all, {}, BLOCKED).map((c) => c.line_no)).toEqual([1]);
+  });
+
+  it('a line the batch names pending is still never counted as a split edit (A9)', () => {
+    const all = contributionsOf([demand(1), demand(2)], [1, 2]);
+    const named = new Set([keyOf(all, 2)]);
+    const summary = confirmSummaryFor(all, {}, BLOCKED, { batchNamedKeys: named });
+    expect(summary.toConfirm).toBe(1);
   });
 });

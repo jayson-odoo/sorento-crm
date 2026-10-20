@@ -472,3 +472,117 @@ def test_r2_a11_a_confirm_naming_only_752_leaves_an_applied_split_plan_on_608_al
     assert _rows_of(s, 608) == before, "608's rows (state included) are untouched"
     assert [ln for ln in _sent_since(emails, start) if ln["qty"] in ("600", "32", "632")] == [], (
         "no email for 608", _sent_since(emails, start))
+
+
+# ---------------------------------------------------------------------------
+# Review round 3, A12: a pending AutoCount change on OTHER lines does not hold back a split edit
+# ---------------------------------------------------------------------------
+
+
+def _edited_480_beside_a_batch_on_other_lines(api, emails):
+    """The owner's shape: 480's New-line plan applied and its 167 edited, while an UNAPPLIED
+    AutoCount batch of the same order has pending rows on other lines only (one 'added' row with
+    a mirror line and no decision, one with no mirror line at all)."""
+    from app.services.scm.outstanding_diff import ADDED, Change, Line
+    from tests.test_planning_change_apply_on_board import _build as build_batch
+    from tests.test_planning_changes import _core_line, _project_line
+
+    s, po_line = _new_line_plan_applied(api, emails)
+    _edit_480(s, [(14, D_480_NEW, "own", ""), (236, D_608, "new", ""), (167, D_167_EDIT, "new", "")])
+    changes, ids, s.other = [], [], {}
+    for no, mirrored in ((544, True), (4817, False)):
+        core = _core_line(s.db, s.core_so, s.world.product, s.world.own_wh, qty_ordered="5",
+                          required_date=D_608)
+        core.line_no = no
+        if mirrored:
+            s.other[no] = _project_line(s.db, s.order, line_no=no, product=s.world.product,
+                                        core_line=core)
+        after = Line(doc_number=s.core_so.so_number, item_code="ZZT-ITEM", location="ZZT",
+                     qty=5.0, required_date=D_608, row_ref="1")
+        changes.append(Change(ADDED, s.core_so.so_number, "ZZT-ITEM", "ZZT", before=None, after=after))
+        ids.append(str(core.id))
+    s.db.commit()
+    s.batch2 = build_batch(s.world, changes, s.core_so, ids)
+    assert s.batch2 is not None, "premise: the unapplied batch with pending rows on other lines exists"
+    assert s.batch2.applied_at is None
+    return s, po_line
+
+
+def _board_json(s):
+    r = s.client.get(
+        f"{BASE}/fulfilment-planning/board",
+        params={"orders": s.core_so.so_number, "granularity": "week"},
+    )
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _assert_167_moved_and_batch_untouched(s, po_line, emails, start):
+    from app.models.planning_change import PlanningChangeBatch
+
+    s.db.commit()
+    s.db.expire_all()
+    assert (_d("167"), D_167_EDIT) in _rows_with_links(s, po_line), _rows_with_links(s, po_line)
+    sent = _sent_since(emails, start)
+    moved = [ln for ln in sent if ln["qty"] == "167"]
+    assert len(moved) == 1 and str(moved[0]["remark"]).startswith("DELAY"), sent
+    assert [ln for ln in sent if ln["qty"] == "5"] == [], ("no email for the batch's pending lines", sent)
+    from app.models.project_so import OrderInquiryRow
+
+    assert s.db.query(OrderInquiryRow).filter(
+        OrderInquiryRow.so_line_id == s.other[544].id).count() == 0, "no OI row for the batch's pending line"
+    batch = s.db.query(PlanningChangeBatch).filter(PlanningChangeBatch.id == s.batch2.id).one()
+    assert batch.applied_at is None, "the batch stays unapplied"
+
+
+def test_r3a_a12_the_edited_line_is_split_edited_beside_a_batch_on_other_lines(api, emails):
+    s, _po = _edited_480_beside_a_batch_on_other_lines(api, emails)
+    board = _board_json(s)
+    order = next(o for o in board["orders"] if o["so_number"] == s.core_so.so_number)
+    assert order.get("pending_change_batch_id") == str(s.batch2.id), ("premise: the order is on the batch", order)
+    assert _board_flag(s, 480) is True
+    assert not [c for c in board["contributions"]
+                if c.get("project_line_id") == _on(s, 752) and c.get("split_edited")]
+
+
+def test_r3b_a12_the_batch_order_confirm_applies_the_edit_and_leaves_the_batch_pending(api, emails):
+    s, po_line = _edited_480_beside_a_batch_on_other_lines(api, emails)
+    start = len(emails)
+    r = _confirm(s.client, s.order.id, [], batch_id=str(s.batch2.id))
+    assert r.status_code == 200, (r.status_code, r.text)
+    _assert_167_moved_and_batch_untouched(s, po_line, emails, start)
+
+
+def test_r3c_a12_confirm_all_does_the_same(api, emails):
+    s, po_line = _edited_480_beside_a_batch_on_other_lines(api, emails)
+    start = len(emails)
+    bid = str(s.batch2.id)
+    r = s.client.post(
+        f"{BASE}/fulfilment-planning/confirm-all",
+        json={"orders": [{"pso_id": str(s.order.id), "lines": [], "batch_id": bid}], "batch_id": bid},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["results"][0]["ok"] is True, r.json()
+    _assert_167_moved_and_batch_untouched(s, po_line, emails, start)
+
+
+def test_r3c_a12_simulate_confirm_reports_the_edit_and_writes_nothing(api, emails, monkeypatch):
+    from tests.test_fulfilment_simulate_confirm import _as_role
+
+    _as_role(monkeypatch, "admin")
+    s, po_line = _edited_480_beside_a_batch_on_other_lines(api, emails)
+    before = (_snapshot(s), sorted(_worklist(s, s.line[480]), key=str))
+    start = len(emails)
+    bid = str(s.batch2.id)
+    r = s.client.post(
+        f"{BASE}/fulfilment-planning/simulate-confirm",
+        json={"orders": [{"pso_id": str(s.order.id), "lines": [], "batch_id": bid}], "batch_id": bid},
+    )
+    assert r.status_code == 200, r.text
+    result = r.json()["results"][0]
+    assert result["ok"] is True, result
+    rows = result.get("inquiry_rows") or []
+    assert [x for x in rows if Decimal(str(x["qty"])) == 167 and x["delivery_date"] == D_167_EDIT.isoformat()], rows
+    s.db.expire_all()
+    assert (_snapshot(s), sorted(_worklist(s, s.line[480]), key=str)) == before
+    assert _sent_since(emails, start) == []
