@@ -163,6 +163,20 @@ or use own location, just like our email to purchasing". Plan crew-note 62883955
 - F17. F15 follows the email exactly: a saved Reject reads the withdrawal word only when the line has rows the
   email would cancel (raised order inquiry rows); a Reject on a reserve-only line, which the email prints
   nothing for, has no words.
+- F18. Owner hand test 3 (phone, 402a274558) = REWORK, verbatim: "Can i just split it here instead of clicking
+  split and go to another page to actually split?" The Review split page itself is the editable split sheet:
+  the same editor as the board's "Split delivery" (one component, `LineSplitEditor`, hosted by the board
+  dialog and inline by the guide), scoped to the page's covered lines (`onlyLineIds`), with its balance /
+  problems bar and its own Save on the page. After Save the page stays and re-reads. The guide has no "Split
+  delivery <SO>" button and opens no dialog. Unsplit covered lines keep the email's words in Remark; a line
+  with nothing to split (delivered in full) and every line of an order not yet adopted stay read-only rows.
+  The board's own "Split delivery" looks and behaves as before. Plan crew-note on #1799 (round 4).
+- F19. While the page has unsaved split edits, Next and Confirm are off and one line says "Save or undo your
+  split changes first". Save failing shows the error and keeps the edits (never stuck). At 375 the qty and
+  date boxes are reachable by sideways scroll inside the sheet; no page sideways scroll.
+- F20. F17 extended to the email's own cancel rule: a saved Reject reads "CANCEL ALL" when the email would
+  cancel the line's rows: raised rows, and placed or partly linked rows whose links are cascade-only
+  (project_order_inquiry_service.py ~5885-5900). A reserve-only line still has no words.
 
 ## G. Out of scope
 - Making Confirm never touch unsaved lines (crew option b).
