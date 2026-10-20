@@ -2033,7 +2033,7 @@ export function FulfilmentBoardPanel({
       return {
         words: contribution.saved_remark ?? null,
         // UAC F32: the saved decision's remark ('' = cleared), else the confirmed one.
-        own: remarkFor(contribution, decision) ?? null,
+        own: remarkFor(contribution, decision) || null,
         editable: decision?.verdict === 'approved' || decision?.verdict === 'amended',
       };
     },

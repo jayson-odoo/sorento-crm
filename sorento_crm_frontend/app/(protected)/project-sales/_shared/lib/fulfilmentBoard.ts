@@ -555,18 +555,18 @@ export interface UnpostableLine {
  * the server, and an explicit verdict is still posted.
  */
 /**
- * OI-SPLIT-GUIDE (UAC F26, F32): the REMARK a Confirm sends for a line: the one its saved
- * decision holds (`''` = cleared), else the one the active revision froze
+ * OI-SPLIT-GUIDE (UAC F26, F32, F33): the REMARK a Confirm sends for a line: the one its saved
+ * decision holds, `''` when the planner cleared it (the server's only way to clear a confirmed
+ * remark: a line that sends none keeps it), else the one the active revision froze
  * (`confirmed_remark`, so re-approving a confirmed line unchanged is not a change and tells
- * purchasing nothing); none prints the default words.
+ * purchasing nothing); `undefined` sends nothing and prints the default words.
  */
 export function remarkFor(
   contribution: BoardContribution,
   decision: BoardDecision | undefined,
 ): string | undefined {
-  const remark =
-    decision?.remark !== undefined ? decision.remark : (contribution.confirmed_remark ?? undefined);
-  return remark?.trim() || undefined;
+  if (decision?.remark !== undefined) return decision.remark.trim();
+  return contribution.confirmed_remark?.trim() || undefined;
 }
 
 function lineFor(
