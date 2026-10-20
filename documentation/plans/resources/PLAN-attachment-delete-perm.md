@@ -1,6 +1,6 @@
 # PLAN: attachment delete follows `resource.attachments.delete`
 
-Status: round 3 (grant migration) in build. Track: started as small fix; round 3 adds a data migration, so it is no longer the small fix track (reviewer + security reviewer + browser pass all run).
+Status: rounds 1-3 built, reviewed (reviewer + security reviewer READY) and browser-verified at 1280/375; awaiting CI. Not the small fix track since round 3 (data migration).
 
 ## Journey
 
