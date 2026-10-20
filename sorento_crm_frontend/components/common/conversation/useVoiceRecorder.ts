@@ -252,9 +252,12 @@ export function useVoiceRecorder({
   const cancel = useCallback(() => finish(true), [finish]);
 
   // Unmount mid-recording (the drawer closes, the ticket changes): drop the clip
-  // and release the microphone.
-  useEffect(
-    () => () => {
+  // and release the microphone. The flag is re-armed on (re)mount: React StrictMode
+  // (next dev) runs this cleanup once on a component that stays mounted, and a flag
+  // left true there made every later recording release its stream and never start.
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
       unmountedRef.current = true;
       cancelledRef.current = true;
       try {
@@ -266,9 +269,8 @@ export function useVoiceRecorder({
       chunksRef.current = [];
       clearTimers();
       releaseMic();
-    },
-    [clearTimers, releaseMic],
-  );
+    };
+  }, [clearTimers, releaseMic]);
 
   return {
     // A blocked microphone leaves the button ENABLED: the user grants permission
