@@ -47,21 +47,6 @@ const VIEW_480: LineSplitView = {
   ],
 } as unknown as LineSplitView;
 
-const VIEW_480_SAVED: LineSplitView = {
-  ...VIEW_480,
-  status: 'saved',
-  revision_no: null,
-  confirmed_on: null,
-  rows: [
-    row({}),
-    row({ qty: '236', delivery_date: '2026-11-20', change: 'DELAY', sits_on: 'new', sits_on_line_no: null }),
-    row({
-      qty: '167', delivery_date: '2029-11-20', change: 'DELAY', sits_on: 'new', sits_on_line_no: null,
-      changed: true, was_date: '2026-11-20',
-    }),
-  ],
-} as unknown as LineSplitView;
-
 const VIEW_752: LineSplitView = {
   status: 'autocount_changed',
   revision_no: null,
