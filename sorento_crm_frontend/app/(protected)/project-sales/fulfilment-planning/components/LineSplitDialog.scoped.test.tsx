@@ -4,9 +4,9 @@
  * toggle and no search there. Unscoped (the board's gear) it is unchanged: every line, with the
  * toggle (regression pin).
  */
-import { screen } from '@testing-library/react';
+import { cleanup, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { blockIds, renderDialog, savedCase, sheet } from '@/test-mocks/lineSplitSheetKit';
+import { blockIds, renderDialog, savedCase, sheet, wireSplit } from '@/test-mocks/lineSplitSheetKit';
 
 const { getLineSplits, saveLineSplits } = vi.hoisted(() => ({
   getLineSplits: vi.fn(),
@@ -57,5 +57,36 @@ describe('F13: the scoped edit sheet', () => {
     expect(blockIds()).toHaveLength(5);
     expect(screen.getByText('Split lines only')).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/item code/i)).toBeInTheDocument();
+  });
+
+  it('F16: the header count reads the shown lines only', async () => {
+    await scoped(['L480']);
+    await sheet();
+    expect(screen.getByText(/^2 lines · /)).toBeInTheDocument();
+    expect(screen.queryByText(/^5 lines/)).not.toBeInTheDocument();
+  });
+
+  it('F16 pin: unscoped the header counts every line', async () => {
+    await renderDialog();
+    await sheet();
+    expect(screen.getByText(/^5 lines · /)).toBeInTheDocument();
+  });
+
+  it('F16: a problem on a hidden line is never named; unscoped it is', async () => {
+    const withProblem = () => {
+      const p = structuredClone(savedCase());
+      // Line 900 (hidden when scoped to 480): 20 of 50 planned, so 30 are left.
+      p.lines.find((l) => l.line_id === 'L900')!.splits = [wireSplit('h1', 20, '2026-10-01', 'L900')];
+      return p;
+    };
+    getLineSplits.mockResolvedValue(withProblem());
+    await scoped(['L480']);
+    await sheet();
+    expect(screen.queryByText(/30 left/)).not.toBeInTheDocument();
+    cleanup();
+    getLineSplits.mockResolvedValue(withProblem());
+    await renderDialog();
+    await sheet();
+    expect(screen.getByText(/30 left/)).toBeInTheDocument();
   });
 });

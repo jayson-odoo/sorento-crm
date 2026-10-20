@@ -76,6 +76,15 @@ def _book_cancel(s, no):
     s.db.expire_all()
 
 
+def _reserve_only_payload(s, no):
+    """A confirm body reserving the whole line from its own location (no Buy, no Borrow)."""
+    from tests.test_planning_changes import _line_payload
+
+    return _line_payload(
+        s.line[no].id, reserve=[{"warehouse_id": str(s.world.own_wh.id), "qty": "10"}], buy_qty="0"
+    )
+
+
 def _save_draft(s, no, decision):
     board = s.client.get(
         f"{BASE}/fulfilment-planning/board",
@@ -275,3 +284,24 @@ def test_f15_a_saved_reject_on_a_confirmed_line_reads_the_emails_withdrawal_word
     assert word == handover_remark(
         "cancelled", type("R", (), {"qty": Decimal("10")})(), {"qty": Decimal("10")}
     ) == "CANCEL ALL"
+
+
+def test_f17_a_saved_reject_on_a_reserve_only_confirmed_line_has_no_words(api):
+    """The email prints nothing for a withdrawn line that raised no order inquiry rows (no Buy,
+    no Borrow): a reserve-only line has no raised rows, so a saved Reject on it reads null.
+    The F15 case (a line WITH raised rows) keeps "CANCEL ALL"."""
+    from app.models.project_so import OrderInquiryRow
+
+    s = _seed(api)
+    r = s.client.post(
+        f"{BASE}/sales-orders/{s.order.id}/confirm",
+        json={"lines": [_reserve_only_payload(s, 10)]},
+    )
+    assert r.status_code == 200, f"premise: the reserve-only confirm saves: {r.text}"
+    s.db.commit()
+    s.db.expire_all()
+    assert s.db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == s.line[10].id).count() == 0, (
+        "premise: a reserve-only line raises no order inquiry row"
+    )
+    _save_draft(s, 10, {"verdict": "rejected", "reason": "wrong site"})
+    assert _words(s, 10) is None
