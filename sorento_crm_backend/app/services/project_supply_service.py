@@ -595,6 +595,18 @@ class SupplyLinesRefused(AppException):
         return list(self.detail.get("failing_lines") or [])
 
 
+def _confirm_line_remark(entry: Any, carried: Optional[str]) -> Optional[str]:
+    """OI-SPLIT-GUIDE (UAC F33): the REMARK one Confirm line freezes, one rule for every caller
+    (the board, the per-order planning sheet, split-edit re-posts, batch applies, the API): a
+    line that sends no `remark` (or a null one) keeps `carried` (the one its line was confirmed
+    with); one that sends `remark: ""` clears it; any other text replaces it."""
+    sent = getattr(entry, "model_fields_set", None)
+    remark = getattr(entry, "remark", None)
+    if (sent is not None and "remark" not in sent) or remark is None:
+        return carried
+    return remark.strip() or None
+
+
 def _preview_row_facts(row: Any) -> Tuple[Any, ...]:
     """What purchasing reads of one inquiry row: a simulated press that leaves all of it as
     it was only re-filed the row, and writes nothing for purchasing. The note is read too,
@@ -7269,6 +7281,12 @@ class ProjectSupplyService:
         line_changes: Optional[Mapping[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         previous = self.active_decision(str(order.id))
+        # OI-SPLIT-GUIDE (UAC F33): each line's remark as the revision being replaced froze it,
+        # carried by a Confirm line that sends no `remark` (`_snapshot`).
+        previous_remarks = {
+            str(snapshot.get("project_line_id") or ""): (snapshot.get("remark") or None)
+            for snapshot in ((previous.line_snapshots if previous is not None else None) or [])
+        }
         if previous is not None:
             previous.state = DECISION_SUPERSEDED
             previous.superseded_at = datetime.utcnow()
@@ -7298,7 +7316,11 @@ class ProjectSupplyService:
         # frozen (`confirm`): the same dicts, not a re-serialisation of them.
         snapshots = [
             self._snapshot(
-                line, entry, fact, proposed=proposals.get(str(line.id), ())
+                line,
+                entry,
+                fact,
+                proposed=proposals.get(str(line.id), ()),
+                carried_remark=previous_remarks.get(str(line.id)),
             )
             for line, entry, fact in checked
         ] + [entry.snapshot for entry in carried]
@@ -8289,6 +8311,7 @@ class ProjectSupplyService:
         fact: _LineFacts,
         *,
         proposed: Sequence[Component] = (),
+        carried_remark: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Freeze the line as it was decided, in the words it was decided in (AC-G01),
         AND what the engine had proposed for it at that moment (AC-D1).
@@ -8558,9 +8581,10 @@ class ProjectSupplyService:
             # sentence of the RULE that produced it, and on an amended line those sentences
             # explain a decision nobody took.
             "amend_reason": (getattr(entry, "amend_reason", None) or "").strip() or None,
-            # OI-SPLIT-GUIDE (UAC F26): the planner's own REMARK for the purchasing email, in
-            # place of the default words; frozen so the email and Excel read what was decided.
-            "remark": (getattr(entry, "remark", None) or "").strip() or None,
+            # OI-SPLIT-GUIDE (UAC F26, F33): the planner's own REMARK for the purchasing email,
+            # in place of the default words; frozen so the email and Excel read what was
+            # decided. A line that sends no `remark` keeps the one it was confirmed with.
+            "remark": _confirm_line_remark(entry, carried_remark),
             # "This might be a system problem" (R10). Frozen for the same reason the reason
             # is: the board reads the decision back to draw its pill, and a flag that lived
             # only in the session's draft would say the doubt had been answered the moment
