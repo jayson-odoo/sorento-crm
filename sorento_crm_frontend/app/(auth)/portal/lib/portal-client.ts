@@ -80,6 +80,9 @@ export interface PortalContact {
   impersonation?: PortalImpersonationInfo | null;
   /** Portal form types this contact may see (access-type union + overrides). */
   visible_form_types?: string[];
+  /** The "Portal Submission" attachment type's allowed extensions (no dots).
+   *  The file picker's accept list; empty = the type sets no limit. */
+  attachment_allowed_extensions?: string[];
 }
 
 export interface PortalSubmissionSummary {

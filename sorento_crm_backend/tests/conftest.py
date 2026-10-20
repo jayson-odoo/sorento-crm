@@ -177,8 +177,13 @@ def _blank_schema_lifecycle():
 # Four fixtures did exactly that, and the visible damage was the reverse of a stub's
 # intent -- a WORKING resolution path failed with "lambda() got an unexpected keyword
 # argument", in a file that stubs nothing, only in a full-suite run.
+#
+# The attribute may be dotted to reach a class attribute. A permission stub leaked by a
+# monkeypatch that tore down after the fixture which had already restored the real method
+# (release run 39288462357) let every later "denied" test on that xdist worker through.
 _STUBBABLE_SYMBOLS: tuple[tuple[str, str], ...] = (
     ("app.services.ai_assistant_service", "resolve_references"),
+    ("app.services.user_service", "UserPermissionService.check_user_has_permission"),
 )
 
 
@@ -205,9 +210,12 @@ def _no_background_thread_sync():
         module.set_runner(lambda _contact: None)
 
 
-@pytest.fixture(autouse=True)
-def _restore_stubbed_module_symbols():
-    """Restore module-level symbols a test rebound without undoing it.
+_STUBBED_ORIGINALS = pytest.StashKey[list]()
+
+
+def _stubbable_symbols():
+    """The loaded (owner, attribute) pairs of `_STUBBABLE_SYMBOLS`, for the backstop below
+    that restores a symbol a test rebound without undoing it.
 
     Every current site uses ``monkeypatch``, which restores itself; this is the backstop
     for the next one, because the failure it causes lands in somebody else's file and
@@ -221,16 +229,35 @@ def _restore_stubbed_module_symbols():
     """
     import sys
 
-    originals = [
-        (module, attr, getattr(module, attr))
-        for module_path, attr in _STUBBABLE_SYMBOLS
-        if (module := sys.modules.get(module_path)) is not None
-        and hasattr(module, attr)
+    for module_path, path in _STUBBABLE_SYMBOLS:
+        owner = sys.modules.get(module_path)
+        *parents, attr = path.split(".")
+        for name in parents:
+            owner = getattr(owner, name, None)
+        if owner is not None and hasattr(owner, attr):
+            yield owner, attr
+
+
+# Hooks, not an autouse fixture: the snapshot is taken before any fixture sets up and the
+# restore runs after every fixture has torn down. As a fixture it tore down BEFORE
+# `monkeypatch` (conftest fixtures register in name order), so a monkeypatch undo that put
+# a fixture's stub back landed after the restore and survived it.
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_setup(item):
+    item.stash[_STUBBED_ORIGINALS] = [
+        (owner, attr, getattr(owner, attr)) for owner, attr in _stubbable_symbols()
     ]
-    yield
-    for module, attr, original in originals:
-        if getattr(module, attr, None) is not original:
-            setattr(module, attr, original)
+    return (yield)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_teardown(item, nextitem):
+    try:
+        return (yield)
+    finally:
+        for owner, attr, original in item.stash.get(_STUBBED_ORIGINALS, []):
+            if getattr(owner, attr, None) is not original:
+                setattr(owner, attr, original)
 
 
 # runtime_settings binds `SessionLocal` by name when it is first imported, and its readers
