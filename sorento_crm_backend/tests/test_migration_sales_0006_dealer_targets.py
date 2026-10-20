@@ -66,10 +66,24 @@ def _seed_old_target(raw, scratch):
 
 
 def test_revision_chains_and_fits():
+    """No pinned parent (main's head moves under every merge): the id fits, the parent exists,
+    the chain has one head and this revision is on its ancestry."""
+    from pathlib import Path
+
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
     m6 = _load("sales_0006_dealer_targets")
     assert m6.revision == "sales_0006_dealer_targets"
-    assert m6.down_revision == "chs_0001_direct_ingress"
     assert len(m6.revision) <= 32
+    root = Path(__file__).resolve().parent.parent
+    cfg = Config(str(root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(root / "alembic"))
+    script = ScriptDirectory.from_config(cfg)
+    assert m6.down_revision in {r.revision for r in script.walk_revisions()}
+    heads = list(script.get_heads())
+    assert len(heads) == 1, heads
+    assert m6.revision in {r.revision for r in script.walk_revisions(base="base", head=heads[0])}
 
 
 def test_existing_targets_take_the_old_meaning():
