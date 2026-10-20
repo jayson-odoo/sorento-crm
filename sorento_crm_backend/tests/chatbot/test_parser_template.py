@@ -437,29 +437,20 @@ def test_template_stated_quantity_is_a_stock_ask_after_any_answer():
 # --- F1-G: CHAT-STATE R7 LAST-REFERENT (the newest open list or question is the referent) ---------
 
 
-def test_template_any_row_of_the_last_list_can_be_picked():
-    block = _block("R-P1-05")
-    assert not re.search(r"only product rows", block, re.I), "R-P1-05 still limits picks to product rows"
-    assert re.search(r"any row of the last list", block, re.I), "R-P1-05 does not say any row can be picked"
-    for kind in ("file", "promotion", "order"):
-        assert kind in block.split("Not a pick", 1)[0], f"R-P1-05 does not name a {kind} as a pickable row"
-
-
-def test_template_bare_number_after_a_newer_numbered_list_is_a_position():
-    block = _block("R-P1-06")
-    start = block.index("One bare number with no line")
-    clause = block[start:start + 500]
-    assert re.search(r"unless|except|after", clause, re.I) and "reference_positions" in clause, (
-        "R-P1-06 bare-number clause has no exception for a numbered list shown after the quantities: " + clause[:300]
+def test_template_r7_v1_fold_is_gone_guards():
+    """F1-L (owner R7 v2): the state lines equal CHAT-STATE's; the R7 v1 fold (F1-G) is reverted."""
+    p105 = _block("R-P1-05")
+    assert "Only product rows of the last list can be picked" in p105, "R-P1-05 lost the product-rows-only sentence"
+    assert not re.search(r"any row of the last list", p105, re.I), "R-P1-05 still says any row of the last list can be picked"
+    assert "while no numbered list came after it" not in p105, "R-P1-05 not-a-pick clause still carries the R7 v1 qualifier"
+    assert "a number over the stock question (see R-P1-06)" in p105, "R-P1-05 lost the stock-question not-a-pick clause"
+    assert "when the assistant showed a numbered list after asking" not in _block("R-P1-06"), (
+        "R-P1-06 still carries the R7 v1 exception"
     )
-    assert "R-P1-05" in clause, "R-P1-06 bare-number exception does not link R-P1-05"
-
-
-def test_template_number_alone_is_stock_only_when_stock_is_the_newest_thing():
-    block = _block("R-P1-03")
-    assert re.search(r"see R-P1-05", block), "R-P1-03 does not link R-P1-05 for a number alone over a newer list"
-    assert re.search(r"numbered list", block, re.I) and re.search(r"position", block, re.I), (
-        "R-P1-03 does not say a number alone after a numbered list is a position"
+    p103 = _block("R-P1-03")
+    assert not re.search(r"only while the stock check is the newest", p103), "R-P1-03 still carries the R7 v1 newest-thing rule"
+    assert "A number alone over an open numbered question or the last list is a pick (see R-P1-05)" in p103, (
+        "R-P1-03 lost the pre-F1-G number-alone sentence"
     )
 
 
