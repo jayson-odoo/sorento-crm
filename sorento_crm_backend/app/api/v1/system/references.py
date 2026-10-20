@@ -1741,14 +1741,12 @@ def _collect_lookup_product_ids(result: dict[str, Any]) -> list[str]:
     ids: list[str] = []
     seen: set[str] = set()
 
-    def _take(match: Any, tokens: list[Any]) -> None:
+    def _take(match: Any) -> None:
+        # The rows the early drop (`_drop_word_code_fragments`) left are the only gate on code
+        # fragments: a row still here is a code hit for its token.
         if not isinstance(match, dict) or match.get("entity_type") != "product":
             return
         if match.get("match_tier") not in _CODE_MATCH_TIERS:
-            return
-        # CODE-SUBSTRING: a substring / AND row is a code FRAGMENT read, so only a token with a
-        # digit (the test `_code_matched` applies) can make one; a word never joins by it.
-        if match.get("match_tier") in _CODE_FRAGMENT_TIERS and not any(_has_digit(t) for t in tokens):
             return
         uid = match.get("uuid")
         if uid and uid not in seen:
@@ -1757,11 +1755,9 @@ def _collect_lookup_product_ids(result: dict[str, Any]) -> list[str]:
 
     for resolution in result.get("resolutions") or []:
         for match in (resolution or {}).get("matches") or []:
-            _take(match, [(resolution or {}).get("token")])
-    # AND mode's intersection blends every token, so any caller token with a digit stands for it.
-    blended = [*(result.get("tokens") or []), *((r or {}).get("token") for r in result.get("resolutions") or [])]
+            _take(match)
     for match in result.get("intersection") or []:
-        _take(match, blended)
+        _take(match)
     return ids
 
 
