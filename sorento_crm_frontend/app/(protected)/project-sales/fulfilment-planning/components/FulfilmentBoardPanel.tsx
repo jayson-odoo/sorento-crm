@@ -948,6 +948,11 @@ export function FulfilmentBoardPanel({
         // `saveLineDraft`'s own option carries, since this is nothing but a pass-through to it.
         silent?: boolean;
         onFailure?: (message: string) => void;
+        /**
+         * OI-SPLIT-GUIDE (UAC F26): keep the decision the server answered with as this line's
+         * local draft (a remark save reads back what was stored, not what was sent).
+         */
+        adoptSaved?: boolean;
       },
     ): Promise<boolean> => {
       let hadPrevious = false;
@@ -980,9 +985,12 @@ export function FulfilmentBoardPanel({
           // until Confirm freezes a revision.
           pendingSaves.current.add(key);
           try {
-            await saveLineDraft(key, decision, contribution?.sources, {
+            const saved = await saveLineDraft(key, decision, contribution?.sources, {
               silent: options?.silent,
             });
+            if (options?.adoptSaved && saved?.decision) {
+              setDraft((current) => ({ ...current, [key]: saved.decision }));
+            }
           } finally {
             pendingSaves.current.delete(key);
           }
@@ -2041,11 +2049,20 @@ export function FulfilmentBoardPanel({
           draftWithoutPreMark[key] ??
           allContributions.find((contribution) => contribution.key === key)?.draft?.decision;
         if (!current) continue;
-        const ok = await decide(key, { ...current, remark: remark || undefined }, { quiet: true });
+        const ok = await decide(
+          key,
+          { ...current, remark: remark || undefined },
+          { quiet: true, adoptSaved: true },
+        );
         if (!ok) throw new Error('The remark could not be saved.');
       }
+      if (changes.size > 0) {
+        toast.success(changes.size === 1 ? 'Remark saved' : `${changes.size} remarks saved`);
+        // The email's words for the line follow what was stored: read the board again.
+        void board.refetch();
+      }
     },
-    [draftWithoutPreMark, allContributions, decide],
+    [draftWithoutPreMark, allContributions, decide, board],
   );
 
   /**

@@ -789,11 +789,17 @@ export function LineSplitEditor({
     if (cleaned !== current.lines)
       commit({ lines: cleaned, history: [...current.history, current.lines] });
     const remarks = remarkChanges;
-    const finish = () => {
+    const finish = (splitsSaved: boolean) => {
       if (stayAfterSave) {
-        // The saved plan is the read now: start again from it (the page stays).
-        commit(null);
-        setOpenLineIds(new Set());
+        if (splitsSaved) {
+          // The saved plan is the read now: start again from it (the page stays). The split
+          // save answered a new read, which is what re-seeds the sheet.
+          commit(null);
+          setOpenLineIds(new Set());
+        }
+        // A remark-only save touched no split: the sheet stands as it is, and the saved
+        // remarks now come from the host's saved decisions (never a reset that waits for a
+        // split read that is not coming).
         setRemarkEdits(new Map());
       }
       onSaved?.();
@@ -803,7 +809,7 @@ export function LineSplitEditor({
     const saveRemarks = () =>
       remarks.size > 0 && onSaveRemarks ? onSaveRemarks(remarks) : Promise.resolve();
     if (remarks.size > 0 && !splitsDirty) {
-      saveRemarks().then(finish, () => undefined);
+      saveRemarks().then(() => finish(false), () => undefined);
       return;
     }
     // OI-SPLIT-GUIDE (UAC F22): every line of the order, scoped or not; the scope only limits
@@ -812,7 +818,7 @@ export function LineSplitEditor({
       toPayload(cleaned),
       {
         onSuccess: () => {
-          saveRemarks().then(finish, () => undefined);
+          saveRemarks().then(() => finish(true), () => undefined);
         },
       },
     );
@@ -855,13 +861,18 @@ export function LineSplitEditor({
         ? visible.map((line) => {
             const entry = lineRemarks.get(line.lineId);
             if (!entry) return line;
+            const typed = remarkEdits.get(line.lineId);
             return {
               ...line,
               savedRemark: entry.words,
               remarkInDraft: entry.editable,
-              ownRemark: remarkEdits.has(line.lineId)
-                ? remarkEdits.get(line.lineId)
-                : (entry.own ?? ''),
+              ownRemark: typed ?? (entry.own ?? ''),
+              // Edited: a remark typed now that is not the default, else one stored in the
+              // saved decision (the stored one is never the default: the default stores none).
+              remarkEdited:
+                typed !== undefined
+                  ? Boolean(typed.trim()) && typed !== (entry.words ?? '')
+                  : Boolean(entry.own),
             };
           })
         : visible,

@@ -346,16 +346,19 @@ function RemarkCell({
   label,
   onValue,
   onBlur,
+  edited: editedOverride,
 }: {
   value: string;
   generated: string;
   label: string;
   onValue: (remark: string) => void;
   onBlur: () => void;
+  /** The host's own reading of "edited" (a saved line's stored remark); else value vs default. */
+  edited?: boolean;
 }) {
   // What the focused box holds while the planner types (it may be empty); null otherwise.
   const [typing, setTyping] = React.useState<string | null>(null);
-  const edited = Boolean(value.trim()) && value !== generated;
+  const edited = editedOverride ?? (Boolean(value.trim()) && value !== generated);
   const text = typing ?? (value || generated);
   // Showing the default words (nothing stored): marked, and read muted (AC-G5).
   const showsDefault = typing === null && !value && Boolean(generated);
@@ -700,6 +703,7 @@ const LineBlock = React.memo(function LineBlock({
               label={`Remark, line ${no}`}
               value={ownRemark}
               generated={savedRemark ?? line.remarkGenerated ?? ''}
+              edited={line.remarkEdited}
               onValue={(remark) => handlers.lineRemark?.(line, remark)}
               onBlur={handlers.fieldBlur}
             />
