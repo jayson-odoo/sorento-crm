@@ -92,7 +92,9 @@ def test_new_subject_keeps_customer_tier_brands_and_drops_the_rest_and_closes_pe
     assert out.valid is True
     kept = out.state.focus
     assert [c["canonical_code"] for c in kept.customers] == ["C0001"]
-    assert kept.tier == ["dealer"]
+    # R8 CARRY (crew brief 20 Oct, crew a6279481 (a), AC-R8-7): tier no longer rides a new subject
+    # unless this message restates it.
+    assert kept.tier == []
     assert kept.brands == ["SORENTO"]
     assert all(p.get("canonical_code") != "SRT5733" for p in kept.products)
     assert kept.sales_ranking_frame is None

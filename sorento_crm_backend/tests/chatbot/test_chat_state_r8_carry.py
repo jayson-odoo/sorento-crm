@@ -118,15 +118,6 @@ def test_r8_1_held_family_does_not_run_on_a_new_subject(op):
     assert engine._held_for_the_seams(out.state, out.verdict, for_family=False) == []
 
 
-def test_r8_1_a_brand_over_carried_products_still_narrows_by_held_family():
-    """Guard: the product axis carried (no switch, a plain brand refine over the held set) keeps held_family."""
-    from app.services.chatbot import engine
-
-    v = verdict(entities=[_brand()])
-    out = _apply(_focus(), verdict_with(v, [_op("set", "brand")]))
-    assert len(engine._held_for_the_seams(out.state, out.verdict, for_family=True)) == 3
-
-
 def test_r8_1_names_own_subject_predicate():
     _seam_exists()
     assert chat_state.names_own_subject(verdict(entities=[_brand()])) is True
@@ -362,9 +353,13 @@ def test_r8_engine_t9_after_t8_the_promotions_fetch_carries_no_held_product_ids(
         domain_hint="promotion", intent_hint=None, contains_flyer=True, access_levels=["sorento_dealer"],
         entities=[_brand("sorento", "SORENTO")],
         state_changes=[_op("keep"), _op("set", "brand"), _op("set", "tier"), _op("switch_domain")]))
-    args = _promo_args(c)
-    assert args, ("the promotions tool was never called", [n for n, _ in c.tool_calls])
-    assert not _wire_ids(args), ("held product_ids rode the promotions fetch", args)
+    # Whether or not a promotion tool runs: once the held ids are gone the brand (SORENTO owns no
+    # products here) is a described set that qualifies nothing, so no tool may run at all (evidence
+    # class (c), Fix 3, another lane). Red at 0f8e2661df: crm_marketing_promotion_products_list was
+    # called with the 3 held product_ids.
+    held = {c.uuid_of[k] for k in HELD3}
+    sent = [(n, a) for n, a in c.tool_calls if "promotion" in n and held & set(a.get("product_ids") or [])]
+    assert not sent, ("held product_ids rode a promotion fetch", sent)
 
 
 # ---------------------------------------------------------------- AC-R8-8 (state off, behavioural)
@@ -412,3 +407,30 @@ def test_r8_8_state_off_held_family_brand_only_branch_still_receives_the_held_pr
     monkeypatch.setattr(held_family, "narrow_held_family", spy)
     c.say("srt ones", reply(entities=[_brand()]))
     assert seen and seen[0] == HELD3, ("state off: held_family must still get the held products", seen)
+
+
+def test_r8_1_a_brand_over_carried_products_still_narrows_by_held_family(session_factory, monkeypatch, stub_access):
+    """Guard (behavioural): the product axis carried (a refine, NO switch) and a message naming only a
+    brand: held_family runs and narrows the held set, under the state gate."""
+    import dataclasses
+
+    from app.services.chatbot.head import held_family, parser as parser_mod
+    from tests.chatbot._r9_engine_console import reply
+
+    c = _held_console(session_factory, monkeypatch, stub_access, "+60900000885")
+    gated = parser_mod.resolve_config
+    monkeypatch.setattr(parser_mod, "resolve_config", lambda db, *, current_date, override_version_id=None: dataclasses.replace(
+        gated(db, current_date=current_date, override_version_id=override_version_id), closed_lists=True))
+    seen = []
+    real = held_family.narrow_held_family
+
+    def spy(db, v, held):
+        out = real(db, v, held)
+        seen.append(([p.get("canonical_code") for p in held], out[1]))
+        return out
+
+    monkeypatch.setattr(held_family, "narrow_held_family", spy)
+    c.say("srt ones", reply(entities=[_brand()], state_changes=[_op("set", "brand")]))
+    assert seen, "held_family never ran on a carried product axis"
+    assert seen[0][0] == HELD3, seen
+    assert seen[0][1] and sorted(seen[0][1].get("matched") or []) == sorted(HELD3), seen
