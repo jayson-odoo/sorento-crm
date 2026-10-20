@@ -61,6 +61,13 @@ def _seed(session_factory) -> None:
     db.commit()
 
 
+def _scoped(db):
+    from app.models.base import set_company_scope
+
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    return db
+
+
 def _wh_entity(raw: str) -> dict:
     return {"raw": raw, "hint": "warehouse", "canonical_code": None, "current_message": True, "confident": True}
 
@@ -178,7 +185,7 @@ def test_iw4_wh3_hint_is_kept_and_resolves_to_wh3_only(session_factory, seeded, 
     assert not _wh_lines(out[0][1]), out[0][1]
     verdict, warehouse, _rules = _last(seen)
     assert "warehouse" not in (verdict.get("dropped_kinds") or []) and warehouse, verdict
-    assert resolve_warehouse_token(session_factory(), "wh3") == ["WH3"]
+    assert resolve_warehouse_token(_scoped(session_factory()), "wh3") == ["WH3"]
 
 
 def _has_code(text: str, code: str) -> bool:
@@ -199,7 +206,7 @@ def test_iw9_hq_hint_is_kept_and_resolves_to_hq_only(session_factory, seeded, st
     assert not _wh_lines(out[0][1]), out[0][1]
     verdict, warehouse, _rules = _last(seen)
     assert "warehouse" not in (verdict.get("dropped_kinds") or []) and warehouse, verdict
-    assert resolve_warehouse_token(session_factory(), "hq") == ["HQ"]
+    assert resolve_warehouse_token(_scoped(session_factory()), "hq") == ["HQ"]
 
 
 # IW-7 (guard)

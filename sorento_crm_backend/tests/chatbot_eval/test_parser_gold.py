@@ -673,6 +673,15 @@ def _world(session_factory, warehouse: str = "ZZWQ") -> None:
     db = session_factory()
     db.add(Warehouse(id=str(uuid.uuid4()), warehouse_code=warehouse, warehouse_name=f"ZZ {warehouse}",
                      company_id=DEFAULT_COMPANY_ID))
+    from app.models.product_spec import ProductSpecRegistry
+
+    row = db.query(ProductSpecRegistry).filter(ProductSpecRegistry.spec_key == "finish").first()
+    if row is None:
+        row = ProductSpecRegistry(id=str(uuid.uuid4()), spec_key="finish", label="Finish", data_type="enum")
+        db.add(row)
+    row.allowed_values = ["french_gold"]
+    row.synonyms = {"french_gold": ["french gold"]}
+    row.derivation_rules = [{"builder": {"kind": "code", "code_match": "ends_with", "texts": ["-FRG"], "value": "french_gold"}}]
     db.commit()
 
 
@@ -701,11 +710,12 @@ def test_index_mode_renders_the_index_block_and_no_full_list(session_factory, mo
     vid = _closed_lists_version(session_factory, monkeypatch)
     _world(session_factory)
     seen = _seen_parses(monkeypatch)
-    out = _gold_run(session_factory, vid, "stock at ZZWQ", "index")
+    out = _gold_run(session_factory, vid, "frg", "index")
     assert out[0]["reasons"] == [] and out[0]["closed_lists_mode"] == "index", out
     system, block = seen[0]
     lines = block.splitlines()
-    assert any(ln.startswith("Warehouse ZZWQ") for ln in lines), block
+    assert any("french_gold" in ln for ln in lines), block
+    assert not any(ln.startswith("Warehouse") for ln in lines), block
     assert idx.SPEC_LINE not in system and idx.PHOTOS_LINE not in system, system
     assert not any(ln.startswith(("Product types:", "Product details:")) for ln in lines), block
 
