@@ -1247,3 +1247,48 @@ describe('T-FE6 (F18 F19 F21): the guide page is the editable split sheet', () =
     expect(line.remark).toBe('URGENT ORDER');
   });
 });
+
+describe('OI-SPLIT-GEAR-REMARK guide Review page: confirmed remark vs the server words', () => {
+  const withRemarks = (board: Board, lineId: string, extra: Record<string, unknown>) =>
+    mapContributions(board, (entry) => (entry.project_line_id === lineId ? { ...entry, ...extra } : entry));
+  const REJECT = { verdict: 'rejected' };
+
+  async function reviewLine1(board: Board, generated = '') {
+    const read = splitRead('pso-so-1', 'SO000001', [{ id: 'pl-1-1', no: 1, item: 'ZZT-ITEM-1' }]);
+    read.lines = read.lines.map((l) => ({ ...l, remark_generated: generated }));
+    serveSplits({ 'pso-so-1': read });
+    await mountWith(board, ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-1');
+    return page;
+  }
+
+  it('H5: a covered no-draft line (split-edited) with a confirmed remark X shows X on the Review page', async () => {
+    const board = withRemarks(withSplitEdited(boardOf([SO1_L1]), ['pl-1-1']), 'pl-1-1', { confirmed_remark: 'URGENT ORDER' });
+    const page = await reviewLine1(board);
+    expect((screen.getByLabelText('Remark, line 1') as HTMLInputElement).value).toBe('URGENT ORDER');
+    expect(within(page).getByText('edited')).toBeInTheDocument();
+  });
+
+  it('H7: a saved Reject draft line with saved_remark "CANCEL ALL" and confirmed X shows CANCEL ALL, no marker', async () => {
+    const board = withRemarks(boardOf([SO1_L1]), 'pl-1-1', {
+      saved_remark: 'CANCEL ALL',
+      confirmed_remark: 'URGENT ORDER',
+      draft: { decision: REJECT, saved_by: 'Test Planner', saved_at: '2026-09-08T00:00:00Z' },
+    });
+    const page = await reviewLine1(board, 'CANCEL ALL');
+    expect((screen.getByLabelText('Remark, line 1') as HTMLInputElement).value).toBe('CANCEL ALL');
+    expect(within(page).queryByText('edited')).not.toBeInTheDocument();
+  });
+
+  it('H7: a book-cancelled no-draft line with saved_remark "CANCEL ALL" and confirmed X shows CANCEL ALL, no marker', async () => {
+    const board = withRemarks(withSplitEdited(boardOf([SO1_L1]), ['pl-1-1']), 'pl-1-1', {
+      saved_remark: 'CANCEL ALL',
+      confirmed_remark: 'URGENT ORDER',
+    });
+    const page = await reviewLine1(board, 'CANCEL ALL');
+    expect((screen.getByLabelText('Remark, line 1') as HTMLInputElement).value).toBe('CANCEL ALL');
+    expect(within(page).queryByText('edited')).not.toBeInTheDocument();
+  });
+});
