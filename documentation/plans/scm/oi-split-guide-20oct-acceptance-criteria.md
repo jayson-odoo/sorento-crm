@@ -157,6 +157,12 @@ or use own location, just like our email to purchasing". Plan crew-note 62883955
 - F14. Next stays off while a page is still reading its split data (never "seen" before it has loaded).
 - F15. A covered saved Reject on an already-confirmed line shows the purchasing email's own word for that
   withdrawal (server, the email's function), never a blank Remark.
+- F16. In the scoped dialog (F13) everything counts and points at the shown lines only: the header line count
+  and the problems list cover exactly the lines on screen (never "12 lines" with 2 shown, never a problem on a
+  hidden row). Reviewer nit on ca0da0a80a, taken before the hand test.
+- F17. F15 follows the email exactly: a saved Reject reads the withdrawal word only when the line has rows the
+  email would cancel (raised order inquiry rows); a Reject on a reserve-only line, which the email prints
+  nothing for, has no words.
 
 ## G. Out of scope
 - Making Confirm never touch unsaved lines (crew option b).
