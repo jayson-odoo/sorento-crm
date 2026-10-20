@@ -1128,6 +1128,78 @@ def _class_set_check(row: dict[str, Any], item: dict[str, Any]) -> tuple[str, bo
     return ("class_set", not held_only, msg)
 
 
+# a page of a list: the bot's own cap (answer.py SET_LIST_MAX = 50; a longer set is withheld, never listed whole)
+PAGE_CAP = 50
+# the line the bot prints for an asked spec key a product does not carry (fetch.py, the `spec_miss` line): "*<label>:* not recorded for A, B"
+NOT_RECORDED_RE = re.compile(r"^\s*\*([^*\n:]+):\*\s*not recorded for\b", re.I | re.M)
+
+
+VALUE_LINE_RE = re.compile(r"^\s*\*([^*\n:]+):\*\s*(.+)$", re.M)
+
+
+def _attribute_none(reply: str, gold_spec: list[dict[str, Any]], every: bool = False) -> bool:
+    """Owner (19 Oct): "grade is not on record for these gratings". A "not recorded" line for the gold's OWN spec key is the honest
+    none of a none-on-record spec gold (the label is the registry label or the asked word: "Steel grade", "steel_grade"). `every`: the
+    lines name EVERY non-class key of the gold, not just one."""
+    keys = {re.sub(r"[\s_]+", " ", str(sp.get("key") or "").lower()).strip() for sp in gold_spec if sp.get("key") not in CLASS_KEYS}
+    keys.discard("")
+    named = {re.sub(r"[\s_]+", " ", m.group(1).lower()).strip() for m in NOT_RECORDED_RE.finditer(reply)}
+    if not keys:
+        return False
+    # a gold value shown on a line ("*Steel grade:* 201") is the attribute ON record for that product: no honest none
+    gold_values: dict[str, set[str]] = {}
+    for sp in gold_spec:
+        if sp.get("key") not in CLASS_KEYS:
+            gold_values.setdefault(re.sub(r"[\s_]+", " ", str(sp.get("key") or "").lower()).strip(), set()).add(_val(sp.get("value")))
+    for m in VALUE_LINE_RE.finditer(reply):
+        label, value = re.sub(r"[\s_]+", " ", m.group(1).lower()).strip(), m.group(2).strip()
+        if label in gold_values and _val(value) in gold_values[label]:
+            return False
+    return keys <= named if every else bool(keys & named)
+
+
+# a PRODUCT row: a code at the start of a line (after a number or bullet), or the code of a "*Product Code:*" line. A code in a label
+# ("*DC1-SMC:* 0", a warehouse) or in a value ("*Material:* SUS304") is no product, so a stock page's warehouse rows never count.
+PRODUCT_ROW_RE = re.compile(r"^(?:\d+\.\s+|[\u2022-]\s+)?(?:\*?(?:Product Code|Kod Produk|\u4ea7\u54c1\u4ee3\u7801):\*?\s*)?(?=[A-Z0-9-]*\d)(?=[A-Z0-9-]*[A-Z])([A-Z][A-Z0-9-]{3,})\b", re.M)
+# the row label is translated by the app (label_catalog.py:35: ms "Kod Produk", zh "产品代码"); the grader is stdlib-only, so the three are listed here
+# a comma-run of codes ("A100, B200, C300") is one row per code, but only where a product list stands: at the start of a line (after a number
+# or bullet, and optionally a product label: Product, Product Code, Kod Produk, 产品代码) or after "not recorded for". A comma-run inside a value
+# ("*Material:* SUS304, SUS316") or a sentence ("Stock sits at DC1-SMC, WH3-IB.") is no product list.
+_ONE_CODE = r"(?=[A-Z0-9-]*\d)(?=[A-Z0-9-]*[A-Z])[A-Z][A-Z0-9-]{3,}"
+_RUN = rf"{_ONE_CODE}(?:\s*,\s*{_ONE_CODE})+"
+CODE_RUN_RE = re.compile(rf"^(?:\d+\.\s+|[\u2022-]\s+)?(?:\*?(?i:product code|product|kod produk|产品代码):\*?\s*)?({_RUN})"
+                         rf"|\bnot recorded for\s+({_RUN})", re.M)
+
+
+def _listed_products(reply: str) -> set[str]:
+    """The product codes a reply lists: product rows plus every code of a comma-run that starts a line (after a product label) or follows
+    "not recorded for". Codes in a label, a value or a sentence never count."""
+    listed = {_raw(c) for c in PRODUCT_ROW_RE.findall(reply)}
+    for m in CODE_RUN_RE.finditer(reply):
+        listed |= {_raw(c) for c in CODE_RE.findall(m.group(1) or m.group(2))}
+    return listed
+
+
+def _capped_list_check(row: dict[str, Any], item: dict[str, Any]) -> tuple[str, bool | None, str] | None:
+    """Owner (19 Oct): "we shouldn't show all la, should show a cap with the ability to see more". When the expected set is larger
+    than a page, a reply listing more than a page fails (a dump), and a page drawn from the expected set that ends with the more-line
+    passes. The listing is the product rows of the reply (`_listed_products`): never a code in a label, a value or a sentence. A page without the more-line, or not drawn from the set, is
+    unknown (the other checks judge it). Absent when the set fits one page, the gold is none-on-record, or the reply lists nothing."""
+    gold = item.get("gold") or {}
+    expected = {_raw(c) for c in gold.get("spec_products") or [] if c}
+    if gold.get("none_on_record"):
+        return None
+    listed = _listed_products(reply_text(row))
+    if not listed:
+        return None
+    msg = "The reply listed more than a page of the set instead of a capped page with a way to see more."
+    if len(listed) > PAGE_CAP:   # a dump, whatever the expected set size
+        return ("capped_list", False, msg)
+    if len(expected) <= PAGE_CAP:   # the set fits one page: nothing to cap
+        return None
+    return ("capped_list", True if listed <= expected and SEE_MORE_RE.search(reply_text(row)) else None, msg)
+
+
 def _spec_key_state(row: dict[str, Any], gold_spec: list[dict[str, Any]]) -> bool | None:
     """Was every gold value grounded on a gold KEY? Per value, the acceptable keys are the gold's own keys carrying that value
     (there is no other alias table). An entity (this turn's, or the memory's specification slot) with the value and one of
@@ -1165,10 +1237,14 @@ def _spec(row, item):
     reply = reply_text(row)
     shown = bool(CODE_RE.search(reply)) and not COULD_NOT_FIND_RE.search(reply)   # at least one product, no dead end
     # a catalogue that holds nothing for the spec: the bot saying so is the answer, products listed as well are fine
-    answer = (("none_on_record", bool(NO_MATCH_RE.search(reply)), "The bot did not say that no product matches the spec.")
+    answer = (("none_on_record", bool(NO_MATCH_RE.search(reply)) or _attribute_none(reply, gold_spec),
+               "The bot did not say that no product matches the spec.")
               if (item.get("gold") or {}).get("none_on_record") else ("shown", shown, "The reply showed no product."))
     grounded: bool | None = want <= got and bool(want or class_want)
-    if grounded and want:   # the set must be built on the gold's KEY too (the key the bot filtered on rides its entity)
+    honest = bool((item.get("gold") or {}).get("none_on_record")) and _attribute_none(reply, gold_spec, every=True)
+    if honest:
+        grounded = True   # owner (19 Oct): "not on record" is the right answer; the line names every key the gold asks about
+    elif grounded and want:   # the set must be built on the gold's KEY too (the key the bot filtered on rides its entity)
         keyed = _spec_key_state(row, gold_spec)
         grounded = None if keyed is None else keyed
     checks = [("spec_set", grounded, "The spec words were not grounded to the expected set."),
@@ -1176,6 +1252,9 @@ def _spec(row, item):
     class_set = _class_set_check(row, item)
     if class_set:
         checks.append(class_set)
+    capped = _capped_list_check(row, item)
+    if capped:
+        checks.append(capped)
     if class_want:  # reported, not part of `passed`: the bot records class words as category entities
         checks.append(("class", all(any(set(v.split()) <= w for w in words) for v in class_want),
                        "The product class was read differently from the one asked."))
@@ -1360,7 +1439,8 @@ SET_NUMBERED_RE = re.compile(r"^\d+\. ", re.M)
 # a bullet / plain row whose first token is a product code (not "*DC1-SMC:* 0", not "• Sorento: 282")
 SET_CODE_ROW_RE = re.compile(r"^(?:[•-]\s+)?(?=[A-Z0-9-]*\d)(?=[A-Z0-9-]*[A-Z])[A-Z][A-Z0-9-]{3,}\b", re.M)
 SET_CUT_RE = re.compile(r"showing\s+\d+\s+to\s+\d+", re.I)
-SEE_MORE_RE = re.compile(r"\bsee more\b|\breply\s+more\b", re.I)
+# the more-line is a composer line (composers/sets.py: Reply "more" to see the next N.) in en, ms and zh (label_catalog.py): the quoted word
+SEE_MORE_RE = re.compile(r"\bsee more\b|\breply\s+more\b|[\"\u201c\u201d'\u2018\u2019]more[\"\u201c\u201d'\u2018\u2019]|showing\s+\d+\s+to\s+\d+", re.I)
 
 
 def _set_list_check(row: dict[str, Any]) -> tuple[str, bool, str] | None:
