@@ -35,7 +35,6 @@ import {
   fromPayload,
   gapOf,
   groupKeyOf,
-  lineShort,
   moveSplit,
   placeRest,
   readsRemain,
@@ -177,7 +176,10 @@ function dragQty(source: DragSource, line: SplitLine): number {
   return splitsOf(line).find((split) => split.id === source.splitId)?.qty ?? 0;
 }
 
-/** `20/11/2026 · line 608`, `New date`, `Cancel this qty` (the overlay's target, UAC A8). */
+/**
+ * `20/11/2026`, `New date`, `Cancel this qty` (the overlay's target, UAC A8). A line's number
+ * is never named (OI-SPLIT-GUIDE UAC F21, F24): its planned date, else its item.
+ */
 function targetLabel(
   overId: string | null,
   lines: SplitLine[],
@@ -189,7 +191,7 @@ function targetLabel(
   const to = lines.find((line) => lineDropId(line.lineId) === overId);
   if (!to) return null;
   const date = formatSplitDate(plannedDateOf(lines, to.lineId));
-  return date ? `${date} · ${lineShort(to)}` : lineShort(to);
+  return date || to.itemCode;
 }
 
 /** What a host draws in the editor's header: the board dialog's, or the guide page's. */
@@ -729,7 +731,8 @@ export function LineSplitEditor({
         return [
           {
             lineId: line.lineId,
-            text: `${line.itemCode} ${lineShort(line)}: ${what}`,
+            // UAC F24: the item and what is wrong, never the line's number.
+            text: `${line.itemCode}: ${what}`,
           },
         ];
       }),
@@ -903,7 +906,7 @@ export function LineSplitEditor({
         ))}
         {drag && dragLine ? (
           <span className="sr-only">
-            {`Moving ${dragAmount} of ${dragLine.itemCode} from ${lineShort(dragLine)}${dragTarget ? ` → ${dragTarget}` : ''}`}
+            {`Moving ${dragAmount} of ${dragLine.itemCode}${dragTarget ? ` → ${dragTarget}` : ''}`}
           </span>
         ) : null}
       </div>
@@ -951,10 +954,7 @@ export function LineSplitEditor({
                     {drag && dragLine ? (
                       <div className="pointer-events-none w-max whitespace-nowrap rounded-lg border border-s-[3px] border-border border-s-primary bg-background px-2.5 py-1.5 text-xs shadow-lg">
                         <b className="tabular-nums">{dragAmount}</b>
-                        {` · ${dragLine.itemCode} `}
-                        <span className="text-muted-foreground">
-                          {`from ${lineShort(dragLine)}`}
-                        </span>
+                        {` · ${dragLine.itemCode}`}
                         {dragTarget ? (
                           <span
                             className={
