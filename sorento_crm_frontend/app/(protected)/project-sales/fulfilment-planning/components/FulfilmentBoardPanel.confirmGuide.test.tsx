@@ -1189,4 +1189,36 @@ describe('T-FE6 (F18 F19 F21): the guide page is the editable split sheet', () =
     expect(draftKey).toBe(key);
     expect(decision.remark).toBe('ORDER 4 FIRST');
   });
+
+  it('R9d-4: clearing a STORED remark and blurring restores the default words and drops the marker; Save then removes the stored remark', async () => {
+    const user = userEvent.setup();
+    getPlanningBoard.mockResolvedValue(boardWithStoredRemark('URGENT ORDER'));
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    putLineDraft.mockImplementation(() => {
+      getPlanningBoard.mockResolvedValue(boardWithStoredRemark(null));
+      return Promise.resolve({ decision: { verdict: 'approved' }, saved_by: 'Test Planner', saved_at: '2026-09-09T00:00:00Z' });
+    });
+    renderPanel(['SO000001']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    const box = () => screen.getByLabelText('Remark, line 3') as HTMLInputElement;
+    expect(box().value).toBe('URGENT ORDER');
+    expect(within(page).getByText('edited')).toBeInTheDocument();
+    await user.click(box());
+    await user.clear(box());
+    expect(box().value).toBe('');
+    await user.tab();
+    await waitFor(() => expect(box().value).toBe('USE BRW 522 & ORDER 294'));
+    expect(within(page).queryByText('edited')).not.toBeInTheDocument();
+    // Save stores nothing: the draft remark is removed
+    await user.click(within(page).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(putLineDraft).toHaveBeenCalledTimes(1));
+    const [, decision] = putLineDraft.mock.calls[0];
+    expect(decision.remark ?? '').toBe('');
+    await waitFor(() => expect(box().value).toBe('USE BRW 522 & ORDER 294'));
+    expect(within(screen.getByTestId('confirm-guide-split-page')).queryByText('edited')).not.toBeInTheDocument();
+  });
 });
