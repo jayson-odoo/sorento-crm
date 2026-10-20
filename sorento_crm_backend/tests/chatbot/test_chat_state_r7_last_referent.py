@@ -455,3 +455,139 @@ def test_r7_3_live_guard_a_quote_of_the_how_many_turn_keeps_the_how_many_object(
     say_quoted(c, "1", reply(demand_qty=1, entities=[]), quote=ask_text(HELD))
     assert any("quantities" in ln and HELD in ln for ln in _lines(c.last_block, "- open question:")), c.last_block
     assert "pending task: the open question" in c.last_block
+
+
+# =============================================================================================
+# Review round (reviewer NOT READY): quoting the LIVE roster is not quoting a list; the early return;
+# listed-first; single-file keeps the list; fetched-by-id at the tool call; no_links after an unlink.
+# =============================================================================================
+def _plain_vs_quoted_roster(session_factory, monkeypatch, stub_access, phone):
+    import copy
+
+    from tests.chatbot._r9_engine_console import product, reply, stock
+    from tests.chatbot.test_quoted_reply_engine import _console, say_quoted
+
+    c = _console(session_factory, monkeypatch, stub_access, phone)
+    _with_state_block(monkeypatch)
+    roster = c.say("check stock STWC2867", stock(product("STWC2867")))  # the did-you-mean roster
+    saved = copy.deepcopy(c.state)
+    pick = dict(reference_positions=[1], entities=[], state_changes=[{"op": "pick", "axis": None, "position": 1}])
+    plain = c.say("1", reply(**copy.deepcopy(pick)))
+    plain_rules = list(c.traces[-1].rules_fired)
+    c.state = saved
+    quoted = say_quoted(c, "1", reply(**copy.deepcopy(pick)), quote=roster)
+    return plain, quoted, plain_rules, list(c.traces[-1].rules_fired)
+
+
+def test_r7_review_b1_quoting_the_live_roster_is_the_same_as_not_quoting(session_factory, monkeypatch, stub_access):
+    # AC-QR-11: question options are stamped shown_at_turn = asked_at_turn, so the live roster must not read as "the list quoted".
+    plain, quoted, plain_rules, quoted_rules = _plain_vs_quoted_roster(session_factory, monkeypatch, stub_access, "+60900000781")
+    assert "pick_in_roster_domain" in plain_rules, plain_rules
+    assert quoted == plain, ("quoting the live roster changed the reply", plain, quoted)
+    assert "pick_in_roster_domain" in quoted_rules, ("the roster pick did not fire under the quote", quoted_rules)
+
+
+def test_r7_review_b2_guard_quote_of_the_flyer_list_bare_position_is_not_the_quantity(session_factory, monkeypatch, stub_access):
+    # kills the apply.py early return: no pick op, parser says reference_positions [1] only.
+    from tests.chatbot.test_quoted_reply_engine import reply, say_quoted
+
+    c = _audit_console(session_factory, monkeypatch, stub_access, "+60900000782")
+    out = say_quoted(c, "1", reply(reference_positions=[1], entities=[]), quote=FLYER_TEXT)
+    assert f"{HELD} x 1" not in out, ("the held how-many took the 1", out)
+
+
+def test_r7_review_listed_first_guard_an_older_roster_open_and_a_quote_of_a_newer_list_picks_the_list_row(monkeypatch):
+    state = _state(last_list=_promo_rows(4), pending=_roster(asked_at=2), turn_no=5)
+    state = SimpleNamespaceReplace(state, quoted_turn_no=4)
+    applied, *_ = _turn(state, verdict(reference_positions=[1], entities=[], state_changes=[_op("pick", 1)]), monkeypatch)
+    assert applied.valid, applied.log.get("rejected")
+    assert [e.get("uuid") for e in _picked(applied.verdict, "promotion")] == [PID_1], "list row 1, not the roster's option 1"
+    assert "C0001" not in {e.get("canonical_code") for e in _picked(applied.verdict, "customer")}
+
+
+def SimpleNamespaceReplace(state: State, **kw) -> State:
+    from dataclasses import replace
+
+    return replace(state, **kw)
+
+
+def _a_file(name="Brochure.pdf"):
+    return {"id": str(uuid.uuid4()), "url": f"http://cdn/x/{name}", "filename": name, "mimeType": "application/pdf"}
+
+
+def test_r7_review_one_file_sent_after_a_numbered_list_keeps_that_list_and_its_stamp(monkeypatch):
+    earlier = _promo_rows(3)
+    kept = _list_after(earlier, sections=[Section(domain="product_attachment", figures=[], files=[_a_file()])], turn_no=5)
+    assert kept == earlier and _stamps(kept) == {3}, ("a single file replaced the numbered list", kept)
+    # and a later "2", nothing open, still picks promo 2 from the earlier list
+    applied, _s, v, _p = _turn(_state(last_list=kept, turn_no=6), verdict(reference_positions=[2], entities=[], state_changes=[_op("pick", 2)]), monkeypatch)
+    assert applied.valid and [e.get("uuid") for e in _picked(v, "promotion")] == [PID_2]
+
+
+def test_r7_review_guard_two_or_more_files_with_no_figures_are_recorded_as_the_list():
+    files = [_a_file("A.pdf"), _a_file("B.pdf")]
+    rows = _list_after(_promo_rows(3), sections=[Section(domain="product_attachment", figures=[], files=files)], turn_no=5)
+    assert [(r.get("entity_type"), r.get("uuid")) for r in rows] == [("attachment", f["id"]) for f in files]
+    assert _stamps(rows) == {5}
+
+
+def _one_tier(monkeypatch):
+    """One entitled tier, so the promotions turn goes straight to the read (no tier question)."""
+    from app.services.chatbot.lanes.business import services as business_services
+
+    monkeypatch.setattr(
+        business_services, "_access_types", lambda db, default_space_id=None: (lambda **_: [{"name": "Sorento Dealer"}])
+    )
+
+
+def _promo_tool_args(c) -> list[dict[str, Any]]:
+    return [a for n, a in c.tool_calls if n == "crm_marketing_promotions_list"]
+
+
+def test_r7_review_a_quote_of_the_flyer_list_fetches_exactly_that_promotion_by_id(session_factory, monkeypatch, stub_access):
+    from tests.chatbot.test_quoted_reply_engine import reply, say_quoted
+
+    c = _audit_console(session_factory, monkeypatch, stub_access, "+60900000783")
+    _one_tier(monkeypatch)
+    c.tool_calls.clear()
+    say_quoted(c, "1", reply(reference_positions=[1], entities=[], domain_hint="promotion", access_levels=["sorento_dealer"],
+                             state_changes=[_op("pick", 1)]), quote=FLYER_TEXT)
+    calls = _promo_tool_args(c)
+    assert calls and any(a.get("promotion_ids") == [PID_1] for a in calls), (
+        "the promotions tool must be called with promotion_ids == [PID_1]", [n for n, _ in c.tool_calls], calls)
+
+
+def test_r7_review_nothing_open_a_two_on_a_promo_list_fetches_promotion_2_by_id(session_factory, monkeypatch, stub_access):
+    from tests.chatbot.test_quoted_reply_engine import _console, _focus_wire
+    from tests.chatbot._r9_engine_console import reply
+
+    c = _console(session_factory, monkeypatch, stub_access, "+60900000784")
+    _one_tier(monkeypatch)
+    _with_state_block(monkeypatch)
+    focus = _focus_wire(c, HELD)
+    focus["last_list"] = _promo_rows(3)
+    c.state = {"focus": focus, "open_question": None}
+    out = c.say("2", reply(reference_positions=[2], entities=[], domain_hint="promotion", access_levels=["sorento_dealer"], state_changes=[_op("pick", 2)]))
+    print("REPLY", repr(out))
+    calls = _promo_tool_args(c)
+    assert calls and any(a.get("promotion_ids") == [PID_2] for a in calls), (
+        "the promotions tool must be called with promotion_ids == [PID_2]", [n for n, _ in c.tool_calls], calls)
+
+
+def test_r7_review_n1_guard_an_unlinked_contact_picking_an_order_row_is_refused_before_any_order_fetch(
+    session_factory, monkeypatch, stub_access
+):
+    # The contact was shown an order list while linked; it is unlinked now (the console contact has no customer links).
+    from tests.chatbot.test_quoted_reply_engine import _console, _focus_wire
+    from tests.chatbot._r9_engine_console import reply
+
+    c = _console(session_factory, monkeypatch, stub_access, "+60900000785")
+    _with_state_block(monkeypatch)
+    oids = (str(uuid.uuid4()), str(uuid.uuid4()))
+    focus = _focus_wire(c, HELD)
+    focus["last_list"] = _rows("order", oids, ("SO417636", "SO417637"), 3)
+    c.state = {"focus": focus, "open_question": None}
+    c.tool_calls.clear()
+    c.say("2", reply(reference_positions=[2], entities=[], domain_hint="order", state_changes=[_op("pick", 2)]))
+    ordered = [n for n, _ in c.tool_calls if "order" in n]
+    assert not ordered, ("an order tool was called for an unlinked contact", ordered)
