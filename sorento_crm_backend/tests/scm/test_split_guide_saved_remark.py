@@ -584,3 +584,72 @@ def test_f32_pin_re_approving_after_clearing_the_remark_is_a_change_told_once_wi
     start = len(emails)
     _confirm_with(s, 10, remark="")
     assert _sent(emails, start) == [], "told once, not again"
+
+
+# ---------------------------------------------------------------------------
+# F33: a Confirm line with NO `remark` key keeps the confirmed remark, for every caller
+# ---------------------------------------------------------------------------
+
+
+def test_f33_the_per_order_confirm_without_a_remark_key_keeps_the_confirmed_remark_and_tells_nothing(api, emails):
+    """`/sales-orders/{id}/confirm`, the path the planning sheet's `confirmLineFromDraft` posts."""
+    s = _confirmed_with_remark(api, emails)
+    start = len(emails)
+    _confirm_with(s, 10)  # no `remark` key in the line body
+    assert _sent(emails, start) == [], _sent(emails, start)
+    assert _snapshot_of(s, 10).get("remark") == REMARK
+
+
+def test_f33_the_board_confirm_many_without_a_remark_key_tells_nothing(api, emails):
+    from tests.test_planning_changes import _line_payload
+
+    s = _confirmed_with_remark(api, emails)
+    start = len(emails)
+    r = s.client.post(
+        f"{BASE}/fulfilment-planning/confirm-all",
+        json={"orders": [{"pso_id": str(s.order.id), "lines": [_line_payload(s.line[10].id, buy_qty="10")]}]},
+    )
+    assert r.status_code == 200, r.text
+    s.db.commit()
+    s.db.expire_all()
+    assert _sent(emails, start) == [], _sent(emails, start)
+    assert _snapshot_of(s, 10).get("remark") == REMARK
+
+
+def test_f33_a_split_edit_re_post_keeps_the_lines_confirmed_remark(api, emails):
+    """`_with_split_edits` (fulfilment_planning.py ~1336) re-posts an edited line from its
+    snapshot without a `remark` key: the confirmed remark must survive it."""
+    from tests.scm.test_line_splits_round3 import D_167, D_480_NEW, D_608, _new_line_plan_applied
+    from tests.scm.test_split_view_board import _edit_480
+    from tests.test_planning_changes import _line_payload
+
+    s, _po = _new_line_plan_applied(api, emails)
+    line = _line_payload(s.line[480].id, buy_qty="14")
+    line["remark"] = REMARK
+    r = s.client.post(f"{BASE}/sales-orders/{s.order.id}/confirm", json={"lines": [line]})
+    assert r.status_code == 200, r.text
+    s.db.commit()
+    s.db.expire_all()
+    assert _snapshot_of(s, 480).get("remark") == REMARK, "premise: the remark is confirmed"
+    _edit_480(s, [(14, D_480_NEW, "own", ""), (236, D_608, "new", ""), (167, D_167, "new", "SITE HOLD")])
+    start = len(emails)
+    r = s.client.post(
+        f"{BASE}/fulfilment-planning/confirm-all",
+        json={"orders": [{"pso_id": str(s.order.id), "lines": []}]},
+    )
+    assert r.status_code == 200, r.text
+    s.db.commit()
+    s.db.expire_all()
+    assert _snapshot_of(s, 480).get("remark") == REMARK, "the re-post kept the confirmed remark"
+    assert "ORDER" not in [ln["remark"] for ln in _sent(emails, start)], _sent(emails, start)
+
+
+def test_f33_pin_an_empty_remark_clears_it_and_is_told_once_with_todays_words(api, emails):
+    s = _confirmed_with_remark(api, emails)
+    start = len(emails)
+    _confirm_with(s, 10, remark="")
+    assert [ln["remark"] for ln in _sent(emails, start)] == ["ORDER"], _sent(emails, start)
+    assert not _snapshot_of(s, 10).get("remark")
+    start = len(emails)
+    _confirm_with(s, 10)  # now nothing to keep: unchanged
+    assert _sent(emails, start) == []
