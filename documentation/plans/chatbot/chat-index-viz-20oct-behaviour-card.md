@@ -128,3 +128,38 @@ same order). The candidate-lines half needs the same from `WordCandidates` (`gra
    **collapsed with a count**, expanded on tap, because they are not words of the message.
 5. **Also for block-mode turns?** (a) one-line notice, (b) the same panel over the full lists.
    Recommendation: **(a)**, because block mode has no per-turn index to show; the parser saw everything.
+
+## v2 (owner, 21 Oct): the architecture view on the Prompts page
+
+Owner: "i need it on the prompt view also to view the design, not just by turn basis, i need to
+see the architecture". The per-turn section above stays (mock View B). New: mock View A, an
+**Architecture** tab on the prompt version page (`ai-assistant/prompts/components/PromptDetail.tsx`,
+a third pill beside Edit and Preview rendered prompt, PromptDetail.tsx:444), for the selected version:
+
+1. **Strip**: the live `chatbot_closed_lists_mode` (badge, links to System Settings), system prompt
+   size (v77 index mode: 35.7k tokens, owner figure), "same bytes every turn", and an Index / Block
+   toggle that redraws the design as the parser would receive it in either mode.
+2. **What the parser receives**: two lanes. System prompt (fixed per version): static rules,
+   hand-written lists (ATTACHMENT TYPE EXTRACTION, ACCESS LEVELS: typed text, static in both modes),
+   registry variables (`chatbot_prompt_vars.VARIABLES`, rendered from tables, 30 s cache), the
+   CLOSED LISTS rules (closed_lists_prompt.SECTION, 791 tok) and either the 3 index pointer lines
+   (`SYSTEM_BLANKS`: 36 / 30 / 36 tok) or the 3 full lists. User turn (per message): conversation,
+   State, candidates, index lines (index) or the Product types / Product details lines (block).
+3. **Prompt map**: a size bar and a section table (heading, kind, tokens, what it is in this mode).
+4. **Each closed list**: its tables and columns, admin page, how a word matches, the held-product
+   lines, and the grounding check; Warehouses shown as "not indexed, checked at grounding".
+5. **How one message is matched**: the 5 steps with the real constants (3-word runs, near >= 0.55
+   for 4+ letters, codes >= 0.5 / 0.30, caps 12).
+
+Data: a new read-only `GET .../prompts/{name}/versions/{id}/architecture` (section split + sizes
+from the version's template, the mode, `SYSTEM_BLANKS`, block-mode list sizes rendered now, the
+matching constants); list sources reuse `getRegistryVariables`. No table, no migration.
+
+Open: per-section sizes in the mock marked * are from the v50 ablation table or measured from code,
+not from v77 (this sandbox has no DB); the build measures the selected version itself.
+
+Questions (v2):
+6. **Toggle redraws, or only the live mode?** Recommendation: keep the toggle, because it shows
+   what block mode would cost without flipping the live setting.
+7. **Tab on every prompt key, or only `chatbot_semantic_parser`?** Recommendation: parser only,
+   because only it carries the CLOSED LISTS section and the index; other keys keep Edit / Preview.
