@@ -307,17 +307,50 @@ def test_f17_a_saved_reject_on_a_reserve_only_confirmed_line_has_no_words(api):
     assert _words(s, 10) is None
 
 
-def test_f20_a_saved_reject_on_a_line_whose_row_is_placed_reads_cancel_all(api):
-    """The email's cancel rule (`project_order_inquiry_service.py` retire loop, ~5885-5900): a
-    withdrawn line's row is cancelled when it is RAISED, or when it is placed with cascade-only
-    links (`_cascade_only`, vacuously true with no links) and a handover of kind `cancelled` is
-    recorded. So a placed row with no real link reads `CANCEL ALL`."""
-    from app.models.project_so import INQUIRY_PLACED, OrderInquiryRow
+def _placed_row(s, no, *, with_link, auto=True):
+    """Line `no` confirmed as Buy 10, its raised row then PLACED. With `with_link` it is placed
+    through the real placement path (one link on a real PO line), the link marked `auto` (the
+    cascade's own guess) or manual."""
+    from app.models.project_so import INQUIRY_PLACED, OrderInquiryLink, OrderInquiryRow
+    from tests.test_planning_changes import _place_row_on_a_real_po
 
-    s = _seed(api)
-    _confirm_buy(s, 10)
-    row = s.db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == s.line[10].id).one()
-    row.state = INQUIRY_PLACED  # placed, no link: the owner's SO417636 shape
+    _confirm_buy(s, no)
+    row = s.db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == s.line[no].id).one()
+    if with_link:
+        _place_row_on_a_real_po(s.db, s.world, row, qty_ordered=10)
+        for link in s.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row.id):
+            link.auto = auto
+    else:
+        row.state = INQUIRY_PLACED
     s.db.commit()
+    s.db.expire_all()
+    return row
+
+
+def test_f20_a_saved_reject_on_a_placed_row_with_cascade_only_links_reads_cancel_all(api):
+    """The email's cancel rule (`project_order_inquiry_service.py` retire loop ~5885-5900): a
+    withdrawn line's row that is not RAISED is still retired and cancelled when its links are
+    cascade-only, `_cascade_only(links) = bool(links) and all(link.auto ...)`
+    (project_order_inquiry_service.py:9861). Placed with one auto link reads `CANCEL ALL`."""
+    s = _seed(api)
+    _placed_row(s, 10, with_link=True, auto=True)
     _save_draft(s, 10, {"verdict": "rejected", "reason": "wrong site"})
     assert _words(s, 10) == "CANCEL ALL"
+
+
+def test_f20_a_saved_reject_on_a_placed_row_with_a_manual_link_has_no_words(api):
+    """A person's link is purchasing's word: `_cascade_only` is False, the row stays, nothing is
+    printed."""
+    s = _seed(api)
+    _placed_row(s, 10, with_link=True, auto=False)
+    _save_draft(s, 10, {"verdict": "rejected", "reason": "wrong site"})
+    assert _words(s, 10) is None
+
+
+def test_f20_a_saved_reject_on_a_placed_linkless_row_has_no_words(api):
+    """A LINKLESS placed row is NOT cascade-only (`bool(links)` is False, line 9861, PR #471 S1):
+    the press leaves it placed and the email prints nothing for it."""
+    s = _seed(api)
+    _placed_row(s, 10, with_link=False)
+    _save_draft(s, 10, {"verdict": "rejected", "reason": "wrong site"})
+    assert _words(s, 10) is None

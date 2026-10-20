@@ -506,9 +506,9 @@ describe('T-FE2 (F2 F3 F4): a page for every order, listing every covered line a
     expect(await within(page).findByTestId('split-line-1')).toBeInTheDocument();
     expect(within(page).getByTestId('split-line-3')).toBeInTheDocument();
     expect(within(page).queryByTestId('split-line-2')).not.toBeInTheDocument();
-    // the split-edited line shows its split rows (6 and 4)
-    expect(within(page).getByTestId('split-line-1')).toHaveTextContent('6');
-    expect(within(page).getByTestId('split-line-1')).toHaveTextContent('4');
+    // the split-edited line shows its split rows (6 and 4) as the editable sheet's input values
+    expect((qty(1, 1) as HTMLInputElement).value).toBe('6');
+    expect((qty(1, 2) as HTMLInputElement).value).toBe('4');
   });
 
   it('an unsplit covered line is ONE row whose Remark is the board contribution\'s saved_remark', async () => {
@@ -862,7 +862,7 @@ describe('T-FE6 (F18 F19 F21): the guide page is the editable split sheet', () =
     expect(body.lines[0].splits).toHaveLength(2);
     // still on the page, now showing the saved split rows
     expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000001');
-    await waitFor(() => expect(within(page).getByTestId('split-line-3')).toHaveTextContent('20/10/2026'));
+    await waitFor(() => expect((screen.getByLabelText('Date, line 3 split 2') as HTMLInputElement).value).toBe('20/10/2026'));
     expect(screen.queryByTestId('line-split-dialog')).not.toBeInTheDocument();
   });
 

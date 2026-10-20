@@ -92,11 +92,11 @@ describe('AC-A2 one table, columns and line sort', () => {
     ]);
   });
 
-  it('shows the base cells of an unsplit line: line no, SO date, S/O no, item, location, qty, date', async () => {
+  it('shows the base cells of an unsplit line (no line number): SO date, S/O no, item, location, qty, date', async () => {
     await renderDialog();
     await sheet();
     const text = block(480).textContent ?? '';
-    expect(text).toContain('480');
+    expect(text).not.toMatch(/\b480\b/);
     expect(text).toContain('03/09/2026');
     expect(text).toContain('SO417636');
     expect(text).toContain('CSK14B');
@@ -128,8 +128,8 @@ describe('AC-A3 merged cells and the extra notes', () => {
     expect(b.contains(moved)).toBe(false);
     expect(
       Array.from(moved.cells).some((td) => (td.textContent ?? '').trim() === '480'),
-      's236 LINE cell 480',
-    ).toBe(true);
+      'no visible line number on the moved row',
+    ).toBe(false);
   });
 
   it('an unsplit line has single-row cells (no rowSpan above 1)', async () => {
@@ -161,12 +161,12 @@ describe('AC-A3 merged cells and the extra notes', () => {
     expect(screen.queryByRole('button', { name: 'Drag line 32' })).toBeNull();
   });
 
-  it('another line\'s split sitting on a line is drawn in that line\'s block with its own LINE cell, no label', async () => {
+  it('another line\'s split sitting on a line is drawn in that line\'s block no label, no line number', async () => {
     getLineSplits.mockResolvedValue(savedCase());
     await renderDialog();
     await sheet();
     // AC-G2 / AC-G11: s236 (480 split 2) sits on 608: drawn under 608, LINE cell 480
-    expect(drawnUnder(608, 480, 2)).toEqual({ inBlock: true, lineCell: true });
+    expect(drawnUnder(608, 480, 2)).toEqual({ inBlock: true });
     expect(block(608).textContent).not.toMatch(FROM_LINE_LABEL);
     // the split with no sits-on line (a new line) stays in 480 and is drawn on no other line
     expect(drawnUnder(480, 480, 3).inBlock).toBe(true);
@@ -179,7 +179,7 @@ describe('AC-A3 merged cells and the extra notes', () => {
     await renderDialog({ focusLineId: 'L16' }, 'pso-424910');
     await sheet();
     // line 16 split 2 (4 @ 16/10/2026) sits on added line 32
-    expect(drawnUnder(32, 16, 2)).toEqual({ inBlock: true, lineCell: true });
+    expect(drawnUnder(32, 16, 2)).toEqual({ inBlock: true });
     expect(block(32).textContent).not.toMatch(FROM_LINE_LABEL);
   });
 

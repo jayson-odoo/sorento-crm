@@ -74,8 +74,8 @@ describe('planned date of a line', () => {
     );
     await dropIt();
     expect(dateIn(480, 1).value).toBe('20/09/2026');
-    // variant B (AC-G2): 480's row is drawn under 752 with its LINE cell 480; no label
-    expect(drawnUnder(752, 480, 1)).toEqual({ inBlock: true, lineCell: true });
+    // variant B (AC-G2): 480's row is drawn under 752 no label, no line number
+    expect(drawnUnder(752, 480, 1)).toEqual({ inBlock: true });
     expect(block(752).textContent).not.toMatch(FROM_LINE_LABEL);
   });
 

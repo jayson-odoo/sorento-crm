@@ -102,13 +102,13 @@ describe('LineSplitSheet readOnly: same sheet, no controls (E1, E2)', () => {
     for (const fn of Object.values(h)) expect(fn).not.toHaveBeenCalled();
   });
 
-  it('draws a split that moved onto another line under that line, its LINE cell naming the origin', () => {
+  it('draws a split that moved onto another line under that line, with no visible line number', () => {
     renderSheet(receivingCase(), [480, 608]);
     const under608 = screen.getByTestId('split-line-608');
     const rows = Array.from(under608.querySelectorAll('tr'));
     const moved = rows.find((r) => (r.textContent ?? '').includes('236'));
     expect(moved, under608.textContent ?? '').toBeDefined();
-    expect(Array.from((moved as HTMLTableRowElement).cells).some((td) => (td.textContent ?? '').trim() === '480')).toBe(true);
+    expect(Array.from((moved as HTMLTableRowElement).cells).some((td) => (td.textContent ?? '').trim() === '480')).toBe(false);
   });
 });
 
