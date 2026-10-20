@@ -1812,8 +1812,9 @@ def _reconcile_step(
     *,
     turn_no: int,
     exact: dict[str, dict[str, int]] | None = None,
+    typed: str | None = None,
 ):
-    result = apply_reconciliation(entities, resolved, exact=exact)
+    result = apply_reconciliation(entities, resolved, exact=exact, typed=typed)
     trace.reconciled = result.reconciled
 
     if result.kind_pick_options is not None and _named_teams(verdict):
@@ -3315,6 +3316,7 @@ def apply(
     candidates: dict[str, list[dict[str, Any]]] | None = None,
     unplaced: frozenset[str] | set[str] | None = None,
     exact: dict[str, dict[str, int]] | None = None,
+    typed: str | None = None,
 ):
     """`_apply`, and for a contact whose escalation is barred (ESCALATION-CONTROL, owner
     30 Sep 2026) no offer survives it: an escalation offer still open from an earlier
@@ -3322,12 +3324,12 @@ def apply(
     asked, carried or routed to on the way out. The forced path (`_lane`) lands on
     "escalation_barred" whichever door it came through."""
     if not escalation_barred(state.profile):
-        return _apply(state, verdict, policy, resolved, candidates, unplaced, exact)
+        return _apply(state, verdict, policy, resolved, candidates, unplaced, exact, typed)
     open_question, _dropped = without_escalation(state.pending)
     closed = open_question is not state.pending
     if closed:
         state = replace(state, pending=open_question)
-    new_state, plan = _apply(state, verdict, policy, resolved, candidates, unplaced, exact)
+    new_state, plan = _apply(state, verdict, policy, resolved, candidates, unplaced, exact, typed)
     if closed:
         plan.trace.rules_fired.append("escalation_barred_offer_closed")
     ask, _asked = without_escalation(plan.ask)
@@ -3354,6 +3356,7 @@ def _apply(
     candidates: dict[str, list[dict[str, Any]]] | None = None,
     unplaced: frozenset[str] | set[str] | None = None,
     exact: dict[str, dict[str, int]] | None = None,
+    typed: str | None = None,
 ):
     """`unplaced` is the resolver's own verdict about the tokens THIS message named and
     could not place (`turn_runtime.unplaced_tokens`, folded). It is read at one seam
@@ -3485,7 +3488,8 @@ def _apply(
     # Crew ruling a41487222 (a): the reconciliation is data-led (R11 kind pick, R15 retype), so
     # it runs on the state path too; the retype needs an exact whole-token hit (`exact`).
     entities, domain_override, reconcile_short_circuit = _reconcile_step(
-        verdict_entities, resolved, policy, verdict, trace, turn_no=state.turn_no, exact=exact
+        verdict_entities, resolved, policy, verdict, trace, turn_no=state.turn_no, exact=exact,
+        typed=typed,
     )
     if reconcile_short_circuit is not None:
         # #1262 slice 8 (F1b siblings): a kind pick over ONE ambiguous token
