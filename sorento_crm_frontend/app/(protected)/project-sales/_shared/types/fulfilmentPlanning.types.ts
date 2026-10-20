@@ -1440,6 +1440,13 @@ export interface BoardContribution {
    */
   draft?: BoardLineDraft | null;
   /**
+   * OI-SPLIT-GUIDE (UAC F3, F10): the purchasing email's own words, from the server, for
+   * what the next Confirm sends for this line: a saved draft's, "CANCEL ALL" for a line the
+   * book cancelled with no draft; null otherwise. The guided Confirm prints it, never a
+   * browser rebuild.
+   */
+  saved_remark?: string | null;
+  /**
    * AC-DT-2: the same saver facts as `draft.saved_by` / `draft.saved_at`, flattened
    * onto the line under the trail's own names for the tooltip. `null`/absent when
    * nobody has saved one, same as `draft` itself.

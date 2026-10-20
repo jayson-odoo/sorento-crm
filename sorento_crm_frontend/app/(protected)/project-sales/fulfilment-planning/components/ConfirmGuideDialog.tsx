@@ -12,7 +12,11 @@ import {
 } from '@/components/ui/dialog';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { WizardSteps, type WizardStep } from '@/components/common/WizardSteps';
-import { SplitLinesSheet } from '../../_shared/components/LineSplitInfo';
+import {
+  SplitLinesSheet,
+  coveredSheetLines,
+  type CoveredSheetLine,
+} from '../../_shared/components/LineSplitInfo';
 import { useLineSplits } from '../../_shared/hooks/useLineSplits';
 import { LineSplitDialog } from './LineSplitDialog';
 
@@ -21,10 +25,8 @@ export interface ConfirmGuidePage {
   /** The order's planning record; null until the press adopts it (nothing to read yet). */
   psoId: string | null;
   soNumber: string;
-  /** The covered lines' planning line ids: the lines the page's sheet lists. */
-  lineIds: string[];
-  /** How many lines this Confirm covers on the order (UAC F4, F6). */
-  lineCount: number;
+  /** The lines this Confirm covers on the order, as the board states them (UAC F2, F10). */
+  covered: CoveredSheetLine[];
 }
 
 /** UAC F1: the two steps. */
@@ -70,6 +72,15 @@ export function ConfirmGuideDialog({
 
   const page = step.kind === 'review' ? pages[step.index] : undefined;
   const { query: splitRead } = useLineSplits(page?.psoId, Boolean(page?.psoId));
+  const reading = Boolean(page?.psoId) && splitRead.isPending;
+  // The page's sheet: split lines from the split read, every other covered line one row.
+  const sheet = React.useMemo(
+    () =>
+      page && !reading && !splitRead.isError
+        ? coveredSheetLines(splitRead.data ?? null, page.covered)
+        : null,
+    [page, reading, splitRead.isError, splitRead.data],
+  );
 
   // UAC B4: a Save that left the last page's order out of this Confirm drops its page; the
   // guide moves on to the Confirm step (an earlier page's drop shows the next order by index).
@@ -155,7 +166,7 @@ export function ConfirmGuideDialog({
                     Saved, not confirmed
                   </Badge>
                   <span className="text-xs text-muted-foreground">
-                    {plural(page.lineCount, 'line')}
+                    {plural(sheet ? sheet.lines.length : page.covered.length, 'line')}
                   </span>
                   {page.psoId ? (
                     <Button
@@ -192,12 +203,16 @@ export function ConfirmGuideDialog({
                       Retry
                     </Button>
                   </div>
-                ) : page.psoId && splitRead.isPending ? (
-                  <SectionSkeleton rows={4} />
-                ) : (
+                ) : sheet ? (
                   <div className="overflow-hidden rounded-lg border border-border">
-                    <SplitLinesSheet payload={splitRead.data ?? null} lineIds={page.lineIds} />
+                    <SplitLinesSheet
+                      payload={splitRead.data ?? null}
+                      soNumber={page.soNumber}
+                      sheet={sheet}
+                    />
                   </div>
+                ) : (
+                  <SectionSkeleton rows={4} />
                 )}
               </section>
             ) : null}
@@ -206,7 +221,7 @@ export function ConfirmGuideDialog({
               <div className="space-y-3">
                 <p className="text-sm break-words">
                   {`${plural(pages.length, 'order')}: ${pages
-                    .map((entry) => `${entry.soNumber} (${plural(entry.lineCount, 'line')})`)
+                    .map((entry) => `${entry.soNumber} (${plural(entry.covered.length, 'line')})`)
                     .join(', ')}. Nothing has been sent yet.`}
                 </p>
                 <Button

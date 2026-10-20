@@ -140,7 +140,8 @@ function ReadOnlySheet({
   lines,
   all,
 }: {
-  payload: LineSplitsPayload;
+  /** Only the SO number and date the sheet prints are read. */
+  payload: Pick<LineSplitsPayload, 'so_number' | 'so_date'>;
   lines: SplitLine[];
   all: SplitLine[];
 }) {
@@ -404,30 +405,85 @@ export function OrderSplitsDialog({
   );
 }
 
+/** OI-SPLIT-GUIDE (UAC F2, F10): one line a Confirm covers, as the board states it. */
+export interface CoveredSheetLine {
+  /** The planning line id; null on an order nobody has adopted yet. */
+  lineId: string | null;
+  /** The board's own key, the identity of a line with no planning line. */
+  key: string;
+  lineNo: number | null;
+  itemCode: string;
+  location: string;
+  qty: number;
+  date: string | null;
+  /** The purchasing email's words for what Confirm sends (server `saved_remark`). */
+  savedRemark: string | null;
+}
+
 /**
- * OI-SPLIT-GUIDE (UAC F2, F3): only the named lines of one order (every line a Confirm covers)
- * as the same read-only split sheet: a split line with its split rows, plus the lines its
- * splits land on (UAC E3 of #1794); an unsplit line as its one row whose Remark is the
- * purchasing email's words for its saved decision (`saved_remark`). No dialog of its own: the
- * guided Confirm draws it inside its page.
+ * OI-SPLIT-GUIDE (UAC F2, F3, F10): the read-only sheet's lines for the lines one Confirm
+ * covers on an order. A covered line the split read shows split keeps its split rows, with
+ * the lines they land on (UAC E3 of #1794); every other covered line is ONE row built from
+ * the board's own statement of it, whose Remark is the email's words (`savedRemark`). So an
+ * order with no planning record yet (no split read) and a line the read never lists (the
+ * book cancelled it) still get their row, and the shared split read stays as it is.
  */
+export function coveredSheetLines(
+  payload: LineSplitsPayload | null,
+  covered: readonly CoveredSheetLine[],
+): { all: SplitLine[]; lines: SplitLine[] } {
+  const read = payload ? sheetLinesOf(payload) : [];
+  const byId = new Map(read.map((line) => [line.lineId, line]));
+  const words = new Map(
+    covered.flatMap((line) => (line.lineId ? [[line.lineId, line.savedRemark] as const] : [])),
+  );
+  const splitIds = new Set(
+    covered.flatMap((line) =>
+      line.lineId && (byId.get(line.lineId)?.splits.length ?? 0) > 0 ? [line.lineId] : [],
+    ),
+  );
+  const fromRead = linesWithLanding(read, splitIds).map((line) =>
+    words.has(line.lineId) ? { ...line, savedRemark: words.get(line.lineId) ?? null } : line,
+  );
+  const shown = new Set(fromRead.map((line) => line.lineId));
+  const built: SplitLine[] = covered
+    .filter((line) => !(line.lineId && shown.has(line.lineId)))
+    .map((line) => ({
+      lineId: line.lineId ?? `board:${line.key}`,
+      lineNo: line.lineNo,
+      itemCode: line.itemCode,
+      location: line.location,
+      baseQty: line.qty,
+      baseDate: line.date,
+      nowQty: line.qty,
+      nowDate: line.date,
+      pendingChange: false,
+      splits: [],
+      savedRemark: line.savedRemark,
+    }));
+  const builtIds = new Set(built.map((line) => line.lineId));
+  return {
+    all: [...read.filter((line) => !builtIds.has(line.lineId)), ...built],
+    lines: sortLines([...fromRead, ...built]),
+  };
+}
+
+/** OI-SPLIT-GUIDE: `coveredSheetLines` as the read-only sheet, inside the guide's page. */
 export function SplitLinesSheet({
   payload,
-  lineIds,
+  soNumber,
+  sheet,
 }: {
-  /** The order's split sheet; `null` when no line of the order is split. */
   payload: LineSplitsPayload | null;
-  lineIds: readonly string[];
+  soNumber: string;
+  sheet: { all: SplitLine[]; lines: SplitLine[] };
 }) {
-  const sheet = React.useMemo(() => {
-    if (!payload) return { all: [] as SplitLine[], lines: [] as SplitLine[] };
-    const named = new Set(lineIds);
-    const words = new Map(payload.lines.map((line) => [line.line_id, line.saved_remark ?? null]));
-    const all = sheetLinesOf(payload).map((line) =>
-      named.has(line.lineId) ? { ...line, savedRemark: words.get(line.lineId) ?? null } : line,
-    );
-    return { all, lines: linesWithLanding(all, named) };
-  }, [payload, lineIds]);
-  if (!payload || sheet.lines.length === 0) return <NoSplitLines />;
-  return <ReadOnlySheet payload={payload} lines={sheet.lines} all={sheet.all} />;
+  if (sheet.lines.length === 0) return <NoSplitLines />;
+  return (
+    <ReadOnlySheet
+      payload={payload ?? { so_number: soNumber, so_date: null }}
+      lines={sheet.lines}
+      all={sheet.all}
+    />
+  );
 }

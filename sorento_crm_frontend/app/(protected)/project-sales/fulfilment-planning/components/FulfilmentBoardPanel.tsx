@@ -2032,8 +2032,16 @@ export function FulfilmentBoardPanel({
         {
           psoId: order.project_sales_order_id ?? null,
           soNumber: order.so_number,
-          lineIds: lines.flatMap((line) => (line.project_line_id ? [line.project_line_id] : [])),
-          lineCount: lines.length,
+          covered: lines.map((line) => ({
+            lineId: line.project_line_id ?? null,
+            key: line.key,
+            lineNo: line.so_line_no ?? line.line_no,
+            itemCode: line.item_code,
+            location: line.fulfilment_location ?? '',
+            qty: Number(line.qty) || 0,
+            date: line.required_date ?? null,
+            savedRemark: line.saved_remark ?? null,
+          })),
         },
       ];
     });
