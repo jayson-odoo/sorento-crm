@@ -298,4 +298,10 @@ def test_the_export_carries_no_raise_history_column(raise_history_api):
         "TAKEN",
         "REMAINING",
         "SUGGESTED",
+        # OI-LINE-SPLIT round 3 (UAC AC-G7 / AC-G9): a split line's own change per row,
+        # appended before REMARK; no existing column moves.
+        "CHANGE QUANTITY",
+        "CHANGE DATE",
+        # OI-LINE-SPLIT (UAC D2): appended last.
+        "REMARK",
     ]

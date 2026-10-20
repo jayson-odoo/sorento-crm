@@ -100,7 +100,6 @@ describe('CellStockTable: the position, tabulated', () => {
     expect(headers()).toEqual([
       '',
       'Location',
-      'Where',
       'On hand',
       'SO qty',
       'SPO qty',
@@ -135,7 +134,6 @@ describe('CellStockTable: the position, tabulated', () => {
     expect(cellsOf('BRW-BB')).toEqual([
       '',
       'BRW-BB',
-      'Own location',
       '478',
       '47009',
       '0',
@@ -150,7 +148,6 @@ describe('CellStockTable: the position, tabulated', () => {
     expect(cellsOf('BRW')).toEqual([
       '',
       'BRW',
-      'Own location',
       '1015',
       '9028',
       '500',
@@ -204,7 +201,7 @@ describe('CellStockTable: the position, tabulated', () => {
 
     const cells = cellsOf('none');
     expect(cells[1]).toBe('No location');
-    expect(cells.slice(3)).toEqual(['-', '-', '-', '-', '-', '-', '-']);
+    expect(cells.slice(2)).toEqual(['-', '-', '-', '-', '-', '-', '-']);
     expect(cells).not.toContain('0');
     // The phrase is gone from the table: it was the answer to a question this table no
     // longer asks (AC-B2).
@@ -229,11 +226,11 @@ describe('CellStockTable: the position, tabulated', () => {
     ]);
 
     const cells = cellsOf('BRW-IB');
-    expect(cells[3]).toBe('0');
+    expect(cells[2]).toBe('0');
     // The figures the server DID state are untouched by the rule.
-    expect(cells[4]).toBe('10805');
+    expect(cells[3]).toBe('10805');
+    expect(cells[4]).toBe('0');
     expect(cells[5]).toBe('0');
-    expect(cells[6]).toBe('0');
     expect(screen.queryByText('Not stated')).not.toBeInTheDocument();
   });
 
@@ -270,7 +267,9 @@ describe('CellStockTable: where each location stands', () => {
    * and the tag is a column: a site pool holding 1716 and a group warehouse holding nothing are
    * not the same kind of row, and unlabelled they look identical.
    */
-  it('names where each location stands, so a site pool is not read as a group warehouse', () => {
+  // Round 6 (owner, 18 Oct 07:56, "rmb to drop where column in the ui"): the sections and
+  // their subtotals say where a location stands, so no row carries a tag of its own.
+  it('tags no row with where it stands: the Where column is gone', () => {
     renderTable([
       position({ where: 'own' }),
       position({ location: 'DC1-BB', warehouse_id: 'wh-2', where: 'group' }),
@@ -286,10 +285,13 @@ describe('CellStockTable: where each location stands', () => {
       position({ location: 'BRW-IR', warehouse_id: 'wh-4', where: 'other_group' }),
     ]);
 
-    expect(cellsOf('BRW-BB')[2]).toBe('Own location');
-    expect(cellsOf('DC1-BB')[2]).toBe('Group');
-    expect(cellsOf('BRW')[2]).toBe('Site pool');
-    expect(cellsOf('BRW-IR')[2]).toBe('Other group');
+    for (const tag of ['Own location', 'Group', 'Site pool', 'Other group']) {
+      expect(cellsOf('BRW-BB')).not.toContain(tag);
+      expect(cellsOf('DC1-BB')).not.toContain(tag);
+      expect(cellsOf('BRW')).not.toContain(tag);
+      expect(cellsOf('BRW-IR')).not.toContain(tag);
+    }
+    expect(cellsOf('BRW')[2]).toBe('1728');
     // And the figure the Suggestion card quotes is a row of the table, not a number only the
     // sentence knows.
     expect(screen.getByTestId('stock-available-BRW').textContent).toBe('1716');
@@ -483,9 +485,9 @@ describe('CellStockTable: the ownership group', () => {
     ]);
 
     expect(screen.getByRole('table').querySelectorAll('tbody tr')).toHaveLength(3);
-    expect(cellsOf('MWH-BB')[3]).toBe('25');
+    expect(cellsOf('MWH-BB')[2]).toBe('25');
     // Listed even holding nothing: "nothing at DC1-BB" is an answer, a missing row is not.
-    expect(cellsOf('DC1-BB')[3]).toBe('0');
+    expect(cellsOf('DC1-BB')[2]).toBe('0');
   });
 
   it('says why, when the line\u2019s own location is all there is', () => {
@@ -559,7 +561,7 @@ describe('CellStockTable: the whole ladder, in sections', () => {
       .filter((label) => !label.endsWith('subtotal'));
   }
 
-  it('lists the own location, then the group, then every pool, each tagged', () => {
+  it('lists the own location, then the group, then every pool', () => {
     renderTable(ladder());
 
     expect(rowOrder()).toEqual([
@@ -574,9 +576,7 @@ describe('CellStockTable: the whole ladder, in sections', () => {
       'WH3',
       'RSW',
     ]);
-    expect(cellsOf('BRW-BB')[2]).toBe('Own location');
-    expect(cellsOf('RSW-BB')[2]).toBe('Group');
-    expect(cellsOf('RSW')[2]).toBe('Site pool');
+
   });
 
   it('subtotals each section and totals the table', () => {
@@ -715,13 +715,13 @@ describe('CellStockTable: the whole ladder, in sections', () => {
     renderTable(ladder());
 
     // The own location: 40 available, 40 available to a project.
+    expect(cellsOf('BRW-BB')[5]).toBe('40');
     expect(cellsOf('BRW-BB')[6]).toBe('40');
-    expect(cellsOf('BRW-BB')[7]).toBe('40');
     // A group sibling, the same rule.
+    expect(cellsOf('MWH-BB')[5]).toBe('10');
     expect(cellsOf('MWH-BB')[6]).toBe('10');
-    expect(cellsOf('MWH-BB')[7]).toBe('10');
     // And the site pool keeps the share formula it always had.
-    expect(cellsOf('BRW')[7]).toBe('50');
+    expect(cellsOf('BRW')[6]).toBe('50');
 
     // The GROUP subtotal prints its own Available too, and the site pool subtotal does not.
     expect(
@@ -748,7 +748,7 @@ describe('CellStockTable: the whole ladder, in sections', () => {
       }),
     ]);
 
-    expect(cellsOf('BRW-IB')[7]).toBe('-23458');
+    expect(cellsOf('BRW-IB')[6]).toBe('-23458');
     // The subtotal reads the SET's net, exactly as its own Available cell does: the figure
     // covers every IB location, listed here or not. There is no Total row on a one-location
     // table - "one location IS its own total" - so the subtotal is the whole of it.
@@ -769,10 +769,10 @@ describe('CellStockTable: the whole ladder, in sections', () => {
 
     // Available for Project, PO qty, Taken - the server's own share figure, then the two
     // columns the new one pushed along.
-    expect(cellsOf('BRW')[7]).toBe('50');
-    expect(cellsOf('BRW')[8]).toBe('0');
-    expect(cellsOf('BRW')[9]).toBe('71');
-    expect(cellsOf('MWH')[9]).toBe('0');
+    expect(cellsOf('BRW')[6]).toBe('50');
+    expect(cellsOf('BRW')[7]).toBe('0');
+    expect(cellsOf('BRW')[8]).toBe('71');
+    expect(cellsOf('MWH')[8]).toBe('0');
   });
 });
 

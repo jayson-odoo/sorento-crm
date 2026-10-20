@@ -615,7 +615,7 @@ export default function PdfViewerImpl({
           <Button
             type="button"
             mode="icon"
-            variant="ghost"
+            variant={searchOpen ? 'primary' : 'ghost'}
             size="sm"
             aria-label="Search"
             aria-pressed={searchOpen}
@@ -656,7 +656,7 @@ export default function PdfViewerImpl({
           <Button
             type="button"
             mode="icon"
-            variant="ghost"
+            variant={zoom === 'fit' ? 'primary' : 'ghost'}
             size="sm"
             aria-label="Fit width"
             aria-pressed={zoom === 'fit'}

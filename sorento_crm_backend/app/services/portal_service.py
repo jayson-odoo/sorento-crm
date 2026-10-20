@@ -101,6 +101,22 @@ GRANTABLE_PORTAL_FORM_TYPES = SUPPORTED_TYPES + (
 )
 PORTAL_ATTACHMENT_TYPE_CODE = "portal_submission"
 
+
+def parse_allowed_extensions(raw: Optional[str]) -> list[str]:
+    """An attachment type's ``allowed_extensions`` text as sorted, unique,
+    lowercase extensions without dots. Admins type the list by hand, so
+    spaces, capitals, a leading dot and empty entries all occur. Both the
+    portal upload check and the file picker's list (``/me``) read this, so
+    the picker never offers a file the server refuses or greys out one it
+    accepts. Empty means the type sets no limit."""
+    return sorted(
+        {
+            e.strip().lower().lstrip(".")
+            for e in (raw or "").split(",")
+            if e.strip().lstrip(".")
+        }
+    )
+
 # Crockford base32 alphabet - excludes I, L, O, U to eliminate look-alike
 # transcription errors (I↔l↔1, O↔0, U↔V). Tokens are user-visible in URLs and
 # occasionally retyped from screenshots, so we trade ~14% entropy density vs
@@ -1919,6 +1935,17 @@ class PortalService:
                 logger.warning("Purchase request submit notify failed: %s", e)
 
     # ---------- Attachment policy ----------
+
+    def portal_allowed_extensions(self) -> list[str]:
+        """The portal type's extension list for the file picker. Unlike
+        ``get_portal_attachment_type`` this never raises: a missing type row
+        must not break ``/me``; the upload route still refuses on its own."""
+        row = (
+            self.db.query(AttachmentType.allowed_extensions)
+            .filter(AttachmentType.code == PORTAL_ATTACHMENT_TYPE_CODE)
+            .first()
+        )
+        return parse_allowed_extensions(row[0] if row else None)
 
     def get_portal_attachment_type(self) -> AttachmentType:
         row = (

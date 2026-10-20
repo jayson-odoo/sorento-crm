@@ -331,7 +331,7 @@ export function TraceView({ messageId }: { messageId: string }) {
                     }
                     className={cn(
                       'rounded-full border px-2 py-0.5 text-xs',
-                      on ? 'border-primary bg-primary/10 text-primary' : 'text-muted-foreground',
+                      on ? 'border-primary bg-primary text-primary-foreground' : 'text-muted-foreground',
                     )}
                   >
                     {k}

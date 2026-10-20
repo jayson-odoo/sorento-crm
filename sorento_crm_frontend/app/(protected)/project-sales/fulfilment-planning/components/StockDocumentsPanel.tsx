@@ -13,7 +13,10 @@ import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { useStockDetail } from '../../_shared/hooks/useFulfilmentPlanning';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 import { availableForProject, POOLS_SET } from '../../_shared/lib/poolShare';
+import { groupOfWarehouseCode } from '../../_shared/lib/supplyVocabulary';
+import type { StockStatus } from '@/components/stock-status/stockStatus.types';
 import type {
+  StockDetail,
   StockDocumentMatch,
   StockDonorMatch,
   StockJumpTarget,
@@ -82,6 +85,7 @@ export function StockDocumentsPanel({
   documentInfo,
   filterText,
   jumpTarget,
+  autoCount = null,
 }: {
   productId: string;
   /** One bin. Omitted for a group read, where the set is the answer. */
@@ -106,6 +110,13 @@ export function StockDocumentsPanel({
   filterText?: string;
   /** A jump `CellStockTable` raised. Only the panel holding the matching row acts on it. */
   jumpTarget?: StockJumpTarget | null;
+  /**
+   * AutoCount's read of the product (STOCK-STATUS round 6, UAC AC-34). Given, the documents
+   * foot to the AutoCount row above them: the S/O lines are the ones AutoCount counts at this
+   * location, at AutoCount's outstanding qty, the On hand is AutoCount's, and the open POs are
+   * listed (outside Available, as the PO qty column is).
+   */
+  autoCount?: StockStatus | null;
 }) {
   const detail = useStockDetail(productId, warehouseId ?? null, lineIds, group);
   const isGroup = Boolean(group);
@@ -118,7 +129,7 @@ export function StockDocumentsPanel({
   const panelRef = React.useRef<HTMLDivElement | null>(null);
 
   const rows = React.useMemo<StockDetailRow[]>(() => {
-    const data = detail.data;
+    const data = detail.data ? onAutoCount(detail.data, autoCount, warehouseId ?? null, group ?? null) : null;
     if (!data) return [];
     const documents: StockDetailRow[] = [
       // Keyed by POSITION as well as by id: one sales order can stand behind this location on
@@ -195,6 +206,30 @@ export function StockDocumentsPanel({
           ),
         };
       }),
+      ...(data.purchase_orders ?? []).map((order, index) => ({
+        key: `po-${index}-${order.line_id}`,
+        doc_type: 'PO' as const,
+        doc_no: order.po_number,
+        sales_order_id: null,
+        purchase_order_id: order.purchase_order_id,
+        party: order.supplier_name ?? null,
+        agent_code: null,
+        project_label: null,
+        location: order.location,
+        doc_date: order.issue_date ?? null,
+        due_date: order.expected_date ?? null,
+        overdue_days: null,
+        assumed_date: null,
+        counted: true,
+        qty: order.qty,
+        // Outside Available, as the PO qty column is: listed, never moving the pile.
+        delta: 0,
+        balance: null,
+        line_id: null,
+        is_this_line: false,
+        is_donor: false,
+        is_document: false,
+      })),
     ];
     if (!isGroup) return documents;
 
@@ -261,7 +296,7 @@ export function StockDocumentsPanel({
       running += row.delta;
       return { ...row, balance: fromMinor(running) };
     });
-  }, [detail.data, isGroup, donor, documentInfo]);
+  }, [detail.data, isGroup, donor, documentInfo, autoCount, warehouseId, group]);
 
   /**
    * The rows the sticky toolbar's search leaves standing (AC-3.5): SO number, customer or
@@ -430,6 +465,14 @@ export function StockDocumentsPanel({
               >
                 {row.original.doc_no}
               </Link>
+            ) : row.original.purchase_order_id ? (
+              <Link
+                href={`/scm/purchase-orders/${row.original.purchase_order_id}`}
+                className="truncate text-sm font-medium text-primary hover:underline"
+                title={row.original.doc_no}
+              >
+                {row.original.doc_no}
+              </Link>
             ) : row.original.doc_type === 'SPO' &&
               row.original.doc_no !== '-' ? (
               // The captain's own complaint (3 Sep 2026, SO418869 SRTWCX7405-RL-S-PJ): the
@@ -517,7 +560,8 @@ export function StockDocumentsPanel({
           >
             {row.original.party ||
               (row.original.doc_type === 'S/O' ||
-              row.original.doc_type === 'SPO'
+              row.original.doc_type === 'SPO' ||
+              row.original.doc_type === 'PO'
                 ? 'Not recorded'
                 : '-')}
           </span>
@@ -897,9 +941,10 @@ function dateCellText(row: StockDetailRow): string {
 
 interface StockDetailRow {
   key: string;
-  doc_type: 'S/O' | 'SPO' | 'On hand' | 'Hold';
+  doc_type: 'S/O' | 'SPO' | 'PO' | 'On hand' | 'Hold';
   doc_no: string;
   sales_order_id: string | null;
+  purchase_order_id?: string | null;
   party: string | null;
   agent_code: string | null;
   project_label: string | null;
@@ -931,4 +976,105 @@ interface StockDetailRow {
   is_donor: boolean;
   /** The SPO the active suggestion is borrowing/using (AC-3.4). */
   is_document: boolean;
+}
+
+/** A PO line under a location, off AutoCount's read only (the CRM's stock detail carries none). */
+interface AutoCountPoRow {
+  line_id: string;
+  purchase_order_id: string;
+  po_number: string;
+  supplier_name: string | null;
+  issue_date: string | null;
+  expected_date: string | null;
+  qty: string;
+  location: string | null;
+}
+
+/**
+ * The stock detail as AutoCount counts it (UAC AC-34), so the documents foot to the row above
+ * them, and a set's running balance closes on its subtotal:
+ *
+ * - the S/O lines AutoCount counts at this panel's bins (the one bin, or every bin of the
+ *   set), at AutoCount's outstanding qty, with the CRM's own fields kept where the CRM's read
+ *   holds the line; the asking line stays listed at 0 when AutoCount no longer counts it (a
+ *   delivered line, #1362), so "This line" still has a row to land on;
+ * - each bin's On hand, AutoCount's SPO lines and AutoCount's open POs there;
+ * - no holds: AutoCount knows none, and the table above it carries none.
+ *
+ * Without the read, the detail is today's.
+ */
+function onAutoCount(
+  data: StockDetail,
+  status: StockStatus | null,
+  warehouseId: string | null,
+  group: string | null,
+): StockDetail & { purchase_orders?: AutoCountPoRow[] } {
+  if (!status) return data;
+  const bins = new Set(warehouseId ? [warehouseId] : (data.bins ?? []).map((bin) => bin.warehouse_id));
+  if (!warehouseId && group && group !== POOLS_SET) {
+    // The set the table above folded AutoCount's own active members into (`withAutoCount`).
+    for (const loc of status.locations) {
+      if (loc.is_active !== false && groupOfWarehouseCode(loc.warehouse_code) === group) bins.add(loc.warehouse_id);
+    }
+  }
+  const codeOf = new Map(status.locations.map((loc) => [loc.warehouse_id, loc.warehouse_code]));
+  const crmLine = new Map(
+    data.sales_orders.filter((order) => order.line_id).map((order) => [order.line_id as string, order]),
+  );
+  const counted = status.sales_orders.filter((order) => bins.has(order.warehouse_id));
+  const countedIds = new Set(counted.map((order) => order.line_id));
+  const sales_orders = [
+    ...counted.map((order) => {
+      const crm = crmLine.get(order.line_id);
+      return {
+        ...(crm ?? {}),
+        sales_order_id: order.sales_order_id,
+        so_number: order.so_number,
+        customer_name: crm?.customer_name ?? order.debtor_name ?? null,
+        agent_code: crm?.agent_code ?? order.salesperson ?? null,
+        project_label: crm?.project_label ?? order.project_label ?? null,
+        doc_date: crm?.doc_date ?? order.doc_date ?? null,
+        delivery_date: crm?.delivery_date ?? order.due_date ?? null,
+        location: crm?.location ?? codeOf.get(order.warehouse_id) ?? null,
+        line_id: order.line_id,
+        so_qty: fromMinor(toMinor(order.qty)),
+      };
+    }),
+    ...data.sales_orders
+      .filter((order) => order.is_this_line && !countedIds.has(order.line_id ?? ''))
+      .map((order) => ({ ...order, so_qty: '0' })),
+  ] as StockDetail['sales_orders'];
+  const onHand = new Map(status.locations.map((loc) => [loc.warehouse_id, loc.on_hand]));
+  return {
+    ...data,
+    sales_orders,
+    incoming: status.spos
+      .filter((spo) => bins.has(spo.warehouse_id))
+      .map((spo) => ({
+        spo_number: spo.spo_number,
+        supplier_name: spo.supplier_name,
+        location: codeOf.get(spo.warehouse_id) ?? null,
+        expected_date: spo.arrival_date,
+        spo_qty: fromMinor(toMinor(spo.qty)),
+        counted: true,
+      })),
+    holds: [],
+    bins: (data.bins ?? []).map((bin) =>
+      onHand.has(bin.warehouse_id)
+        ? { ...bin, qty_on_hand: fromMinor(toMinor(onHand.get(bin.warehouse_id))) }
+        : { ...bin, qty_on_hand: '0' },
+    ),
+    purchase_orders: status.purchase_orders
+      .filter((order) => bins.has(order.warehouse_id))
+      .map((order) => ({
+        line_id: order.line_id,
+        purchase_order_id: order.purchase_order_id,
+        po_number: order.po_number,
+        supplier_name: order.supplier_name,
+        issue_date: order.issue_date,
+        expected_date: order.expected_date,
+        qty: fromMinor(toMinor(order.qty)),
+        location: codeOf.get(order.warehouse_id) ?? null,
+      })),
+  };
 }
