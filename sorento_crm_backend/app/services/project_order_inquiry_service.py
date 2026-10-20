@@ -1544,14 +1544,17 @@ class ProjectOrderInquiryService:
                     settled_in_place.append(str(line.id))
                 continue
             need = split_needs.get(str(line.id), _dec(entry.get("buy_qty")))
-            if str(line.id) in kept_splits and self._rows_hold_plan_total(line, need):
+            if str(line.id) in kept_splits and self._rows_hold_plan_total(
+                line, need + _dec(kept_splits[str(line.id)].get("cancels"))
+            ):
                 # OI-SPLIT-SUPERSEDE-FIX: the line's rows are already cut to a plan and still
-                # ask for exactly the new plan's total (an edit of a date or of how the qty is
-                # split). They are filed under this revision and `_keep_split_rows` moves the
-                # ones the edit changed (one DELAY for a moved date). The netting below would
-                # supersede every raised row it cannot settle as one (SO417636 480: CANCEL
-                # 14 / 236 / 167 and an unsplit ORDER 417). A product AutoCount swapped still
-                # follows on every row, as on the declined-settle path.
+                # ask for exactly the new plan's total with its cancel splits (an edit of a
+                # date, of how the qty is split, or a "Cancel this qty"). They are filed under
+                # this revision and `_keep_split_rows` moves the ones the edit changed (one
+                # DELAY for a moved date, a cut row's NEW QTY and its CANCEL BALANCE). The
+                # netting below would supersede every raised row it cannot settle as one
+                # (SO417636 480: CANCEL 14 / 236 / 167 and an unsplit ORDER 417). A product
+                # AutoCount swapped still follows on every row, as on the declined-settle path.
                 product_move = self._restate_product(
                     inquiry, self._split_line_rows(str(line.id)), entry
                 )
@@ -6288,6 +6291,10 @@ class ProjectOrderInquiryService:
                     want.remove(key)
                 else:
                     left.append(row)
+            if self._cut_rows_in_place(left, want, decision):
+                # OI-SPLIT-SUPERSEDE-FIX: a reduce (a "Cancel this qty" split) cuts each row at
+                # its own date to its plan qty; the cut is the CANCEL BALANCE below.
+                left, want = [], []
             if want and left:
                 left.sort(
                     key=lambda row: (
@@ -6375,6 +6382,40 @@ class ProjectOrderInquiryService:
                         )
                     )
             self.db.flush()
+
+    def _cut_rows_in_place(
+        self,
+        rows: Sequence[OrderInquiryRow],
+        want: Sequence[Tuple[Decimal, Optional[date]]],
+        decision: Any,
+    ) -> bool:
+        """OI-SPLIT-SUPERSEDE-FIX: when each of a split line's unmatched `rows` has exactly one
+        unmatched plan row at its own date, no larger than it, each row keeps its date and is
+        cut to that qty in place (NEW QTY, links trimmed, purchasing's acknowledgement turned
+        CHANGED), so nothing is joined, cancelled or raised again. False, touching nothing,
+        for any other shape (a new split, a moved date, a grown row)."""
+        if not rows or len(rows) != len(want):
+            return False
+        by_date = {when: (qty, when) for qty, when in want}
+        if len(by_date) != len(want) or len({row.delivery_date for row in rows}) != len(rows):
+            return False
+        pairs = [(row, by_date.get(row.delivery_date)) for row in rows]
+        if any(plan is None or plan[0] > _dec(row.qty) for row, plan in pairs):
+            return False
+        for row, (qty, _when) in pairs:
+            # Purchasing placed it: a cut never sends it back to raised.
+            placed = row.state == INQUIRY_PLACED and not self._links_of(row.id)
+            self._trim_links(row, qty)
+            row.previous_qty = row.qty
+            row.qty = qty
+            row.supply_decision_id = decision.id
+            if row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
+                row.changed_at = datetime.utcnow()
+                row.ack_state = ACK_CHANGED
+            self.refresh_link_state([row])
+            if placed:
+                row.state = INQUIRY_PLACED
+        return True
 
     def _apply_pure_splits(
         self, inquiry: OrderInquiry, decision: Any, buy_lines: Sequence[Dict[str, Any]]
