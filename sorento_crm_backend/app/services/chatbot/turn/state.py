@@ -322,6 +322,11 @@ class State:
     # `{pending, focus}` set aside. Rides on the state so every lane's tail (answer, canned,
     # clarify, out_of_scope) writes the live question back; never serialised.
     quoted_live: Any = None
+    # CHAT-STATE r7: the turn number of the bot message this reply quotes (`QuotedTurn.turn_no`),
+    # set by `engine._quoted_context` also when that turn is the newest and nothing is swapped;
+    # None without a quote. `chat_state.quotes_the_list` compares it to the list's
+    # `shown_at_turn`. Never serialised.
+    quoted_turn_no: int | None = None
     # CHAT-STATE: set once by `turn/chat_state.apply_changes` when the parser's
     # `state_changes` were applied ("answer" / "new_ask" / "refine" / "carry"); None on
     # every other turn. Never serialised.

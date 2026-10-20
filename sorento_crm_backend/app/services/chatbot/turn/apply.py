@@ -2662,6 +2662,14 @@ def _bare_position_is_the_quantity(state: State, verdict: dict[str, Any], trace:
     task = _stock_task_owed_a_number(state.focus)
     if task is None:
         return
+    if getattr(state, "state_path", False):
+        from app.services.chatbot.turn.chat_state import quotes_the_list
+
+        if quotes_the_list(state):
+            # CHAT-STATE r7 (owner r40 case 12, 20 Oct): a reply quoting the message that showed
+            # the list points at that list, so the owed how-many takes nothing. Without a quote
+            # an open how-many still outranks a newer list (owner 20 Oct ~07:40).
+            return
     if state.pending is not None and not _stock_task_is_the_current_question(state, task, verdict):
         return
     position = _lone_position(verdict)
