@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional, Protocol
@@ -366,6 +367,13 @@ def _unsupported_param(message: str) -> str | None:
     return match.group(1) or match.group(2)
 
 
+# `OpenAIProvider._client`'s shared clients. Bounded only as a backstop: production holds a
+# handful (one key, a few timeouts); the clear is for a test run that swaps keys freely.
+_OPENAI_CLIENTS: dict[tuple, Any] = {}
+_OPENAI_CLIENTS_LOCK = threading.Lock()
+_OPENAI_CLIENTS_MAX = 32
+
+
 class OpenAIProvider:
     name = "openai"
 
@@ -387,7 +395,22 @@ class OpenAIProvider:
         if base_url:
             _require_safe_base_url(base_url)
             overrides = {"base_url": base_url, **overrides}
-        return OpenAI(api_key=self.api_key, **overrides)
+        # One client per (key, settings), kept for the process: a new client is a new
+        # connection pool, so every call paid a fresh TCP + TLS handshake to the provider
+        # (CHAT-LATENCY-SCOUT). The SDK client is safe to share across threads. `OpenAI`
+        # itself is in the key so a test that swaps the class never gets another's client.
+        try:
+            key = (OpenAI, self.api_key, tuple(sorted(overrides.items())))
+            hash(key)
+        except TypeError:
+            return OpenAI(api_key=self.api_key, **overrides)
+        with _OPENAI_CLIENTS_LOCK:
+            client = _OPENAI_CLIENTS.get(key)
+            if client is None:
+                if len(_OPENAI_CLIENTS) >= _OPENAI_CLIENTS_MAX:
+                    _OPENAI_CLIENTS.clear()
+                client = _OPENAI_CLIENTS[key] = OpenAI(api_key=self.api_key, **overrides)
+            return client
 
     def chat(
         self,
