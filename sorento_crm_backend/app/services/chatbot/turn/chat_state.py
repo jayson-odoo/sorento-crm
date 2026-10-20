@@ -1348,13 +1348,19 @@ def apply_changes(
     # give the same State. ONE rebuild: the customers, brands, period (R16), tasks and last list
     # keep their own rules; products, warehouse, extra and tier are dropped, and what this
     # message restates (a `set`, a pick, a typed entity of that kind) is written back after it.
-    # A bare switch keeps the held subject whole (only the domain-bound axes drop, below).
-    new_subject = "new_subject" in ops or (switching and names_own_subject(verdict))
+    # A bare switch keeps the held subject whole (only the domain-bound axes drop, below). A switch
+    # never rebuilds when this turn answers the open question (a pick of its option, an `answer`):
+    # a pick may carry the last turn's domain and the option's own code (r8 review B2); only the
+    # explicit `new_subject` op still rebuilds and closes it.
+    answers_the_question = bool(roster_picks) or slot_pick is not None or "answer" in ops
+    new_subject = "new_subject" in ops or (switching and not answers_the_question and names_own_subject(verdict))
     if new_subject:
         window = focus.date_window if NEW_SUBJECT_KEEPS_PERIOD else None
         focus = Focus(
             customers=focus.customers, brands=focus.brands,
             tasks=focus.tasks, last_list=focus.last_list, date_window=window,
+            # The new subject is asked in the message's own domains, whichever op said so.
+            domains=list(switch_to),
         )
         pending = None
         held = []
