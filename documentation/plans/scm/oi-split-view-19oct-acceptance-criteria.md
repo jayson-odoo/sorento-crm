@@ -159,6 +159,40 @@ own, 236 @ 20/11/2026 New line, 167 @ 20/11/2026 New line (AutoCount 417 @ 20/10
   (`BoardCellBreakdownDialog.tsx:1019`) and the AutoCount change table's (`BoardChangeTable.tsx:136`)
   stay.
 
+## E. Owner hand test 20 Oct ~09:57: the popups ARE the split edit sheet, read-only (supersedes B2's grid, B3's per-line badge in the grid, B4's highlight/"was", B5a and D1's popup body)
+
+Owner (verbatim): "the split order i think need to show saved lines only, then the view split it needs to
+be more table form so easier to visualize, it should be similar to split delivery order view but in read
+only, so it is like the excel but read only, similar, the line level split view need to be more tabulated
+like the edit view of the split". Crew correction: the change word (ADVANCE / DELAY / REMAIN / CANCEL /
+ORDER n) STAYS exactly where the edit view shows it (its REMARK column, owner "Keep" 18 Oct); values by
+position, fewer labels; moved splits sit under the line they landed on (mock v5 variant B).
+
+- E1 **One sheet.** The line popup and the whole-order popup render the split delivery edit sheet
+  (`LineSplitSheet`, #1749) in a read-only mode: the same columns in the same order (Line, SO date, S/O
+  no, Item code, Location, Qty, New qty, Delivery date, New date, Change quantity, Change date, Remark),
+  the same row layout (each line its own block, its splits stacked under it, REMAIN-only lines collapsed,
+  the AutoCount extra row, a split moved onto another line drawn under that line with the LINE cell naming
+  its origin) and the same REMARK words. No new grid.
+- E2 **Read-only.** No drag grip, no "N left" chip or Balance cell, no "+ Split", no remove x, no inputs
+  or date pickers (values as plain text), no click-to-edit cells, no keyboard editing, no Save. Nothing
+  under a REMARK word, and no "Total ... AutoCount ... now ..." line.
+- E3 **Saved lines only.** The whole-order popup lists only the lines with saved splits (and a line that
+  only receives a moved split, so that split shows under it). The line popup lists that one line (and
+  splits moved onto it). SO417636: whole order = line 480 (14 / 236 / 167) and line 752 (37 / 467 / extra
+  145); lines 608, 768 and the rest are not listed.
+- E4 **Header.** As the edit dialog's header (title with the SO number, "Confirmed dd/mm/yyyy" when the
+  plan is applied), plus one status badge "Saved, not confirmed" when the line (line popup) or any listed
+  line (whole order) is split-edited (A1). No other labels.
+- E5 **Same data as the edit view.** The sheet's data is `LineSplitService.read` turned into the sheet
+  model by the same `fromPayload` / `sortLines` the edit dialog uses. Board and OI page: GET
+  `/project-sales/sales-orders/{pso}/line-splits` (the same permission their pages already need). SO page:
+  the SO read carries the same payload as `line_splits` when the order has splits, under the SO page's
+  own permission (no new endpoint).
+- E6 **Phone.** The sheet's own narrow behaviour: sideways scroll, sticky item column, desktop-only
+  columns hidden; the popup full screen. Escape / Close return focus to the opener (B8).
+- E7 **Unchanged.** The Split column (chip + (i)), the gear items, the board count and Confirm (A, D2).
+
 ## C. Out of scope
 
 - AC-G19 (moving a confirmed split onto another line) stays deferred (Q2 a).
