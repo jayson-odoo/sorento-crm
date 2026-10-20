@@ -1223,4 +1223,27 @@ describe('T-FE6 (F18 F19 F21): the guide page is the editable split sheet', () =
     await waitFor(() => expect(box().value).toBe('USE BRW 522 & ORDER 294'));
     expect(within(screen.getByTestId('confirm-guide-split-page')).queryByText('edited')).not.toBeInTheDocument();
   });
+
+  it('F32: a covered CONFIRMED line whose board data carries the confirmed remark shows it with the "edited" marker, and the re-approve body carries it', async () => {
+    const board = mapContributions(oneDraftBoard(), (entry) =>
+      entry.project_line_id === 'pl-1-3'
+        ? { ...entry, confirmed_remark: 'URGENT ORDER', saved_remark: 'USE BRW 522 & ORDER 294' }
+        : entry,
+    );
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    await mountWith(board, ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    expect((screen.getByLabelText('Remark, line 3') as HTMLInputElement).value).toBe('URGENT ORDER');
+    expect(within(page).getByText('edited')).toBeInTheDocument();
+    click('confirm-guide-next');
+    await screen.findByTestId('confirm-guide-confirm');
+    click('confirm-guide-confirm');
+    await waitFor(() => expect(previewConfirmMany).toHaveBeenCalled());
+    const [body] = previewConfirmMany.mock.calls[0];
+    const line = body.orders[0].lines.find((l: { project_line_id: string }) => l.project_line_id === 'pl-1-3');
+    expect(line, JSON.stringify(body)).toBeDefined();
+    expect(line.remark).toBe('URGENT ORDER');
+  });
 });

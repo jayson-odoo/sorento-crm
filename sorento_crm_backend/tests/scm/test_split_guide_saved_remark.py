@@ -543,3 +543,44 @@ def test_f30_pin_a_new_stamped_plan_with_a_remark_is_not_a_split_edit_until_edit
 
     s = _applied_with_remark(api, emails)
     assert _board_flag(s, 480) is False
+
+
+# ---------------------------------------------------------------------------
+# F32: a confirmed remark round-trips; re-approving a confirmed line unchanged tells nothing
+# ---------------------------------------------------------------------------
+
+
+def _confirmed_with_remark(api, emails):
+    s = _seed(api)
+    _save_draft(s, 10, {**_amend(buy=10), "remark": REMARK})
+    start = len(emails)
+    _confirm_with(s, 10, remark=REMARK)
+    assert [ln["remark"] for ln in _sent(emails, start)] == [REMARK], "premise: purchasing was told the remark"
+    return s
+
+
+def test_f32_the_board_carries_the_confirmed_remark_of_a_confirmed_line(api, emails):
+    """The draft is gone after Confirm; the remark lives in the confirmed revision. The board's
+    contribution for the line carries it as `confirmed_remark` (field name for the coder)."""
+    s = _confirmed_with_remark(api, emails)
+    got = _board(s)[str(s.line[10].id)]
+    assert got.get("confirmed_remark") == REMARK, sorted(got)
+
+
+def test_f32_re_approving_the_confirmed_line_with_its_remark_carried_tells_nothing(api, emails):
+    s = _confirmed_with_remark(api, emails)
+    carried = _board(s)[str(s.line[10].id)].get("confirmed_remark")
+    assert carried == REMARK, ("the board hands the remark back so a re-approve can carry it", carried)
+    start = len(emails)
+    _confirm_with(s, 10, remark=carried)
+    assert _sent(emails, start) == [], _sent(emails, start)
+
+
+def test_f32_pin_re_approving_after_clearing_the_remark_is_a_change_told_once_with_todays_words(api, emails):
+    s = _confirmed_with_remark(api, emails)
+    start = len(emails)
+    _confirm_with(s, 10, remark="")
+    assert [ln["remark"] for ln in _sent(emails, start)] == ["ORDER"], _sent(emails, start)
+    start = len(emails)
+    _confirm_with(s, 10, remark="")
+    assert _sent(emails, start) == [], "told once, not again"
