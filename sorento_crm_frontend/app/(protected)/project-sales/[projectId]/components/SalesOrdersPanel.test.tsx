@@ -324,7 +324,7 @@ describe('SalesOrdersPanel', () => {
     expect(within(footer).getByText('RM 10.00')).toBeInTheDocument();
   });
 
-  it('builds only after the pair is confirmed, and warns that drafts are replaced', async () => {
+  it('builds from a confirmed pair in one dialog, saying that drafts are replaced', async () => {
     listProjectSalesOrders.mockResolvedValue({ data: [], total: 0, page: 1, limit: 25 });
     buildSalesOrders.mockResolvedValue({ data: [row()], total: 1, page: 1, limit: 25 });
 
@@ -338,22 +338,39 @@ describe('SalesOrdersPanel', () => {
     fireEvent.change(await screen.findByLabelText('Select a schedule version'), {
       target: { value: 'sched-v1' },
     });
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Build drafts' }));
-
-    expect(await screen.findByText('Build the drafts?')).toBeInTheDocument();
     expect(
       screen.getByText(/Drafts built earlier from the same pair are replaced/),
     ).toBeInTheDocument();
     expect(buildSalesOrders).not.toHaveBeenCalled();
 
     fireEvent.click(
-      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Build drafts' }),
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Build sales orders' }),
     );
 
     // The schedule-area split is the default, so an untouched dialog builds as it always did.
     await waitFor(() =>
       expect(buildSalesOrders).toHaveBeenCalledWith('po-1', 'sched-v1', 'area'),
     );
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('on the PO page lists only that PO and leaves building to the page header', async () => {
+    listProjectSalesOrders.mockResolvedValue({ data: [row()], total: 1, page: 1, limit: 25 });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <SalesOrdersPanel project={project()} purchaseOrderId="po-1" />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText('PSO-000123');
+    expect(listProjectSalesOrders).toHaveBeenCalledWith(
+      'p1',
+      expect.objectContaining({ purchase_order_id: 'po-1' }),
+    );
+    expect(screen.queryByRole('button', { name: /Build drafts/ })).not.toBeInTheDocument();
   });
 
   it('hides the build control on a project the user may not edit', async () => {

@@ -314,7 +314,7 @@ export function POLinesProgressGrid({
 function CardFact({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
   return (
     <div>
-      <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</dt>
+      <dt className="text-2xs uppercase tracking-wide text-muted-foreground">{label}</dt>
       <dd className={strong ? 'font-semibold' : undefined}>{value}</dd>
     </div>
   );

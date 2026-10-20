@@ -457,7 +457,7 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
         rowAttributes={(row) => ({ 'data-po-id': row.id })}
         expanded={expanded}
         onExpandedChange={setExpanded}
-        initialColumnVisibility={{ po_source: false, scope: false, drift: false }}
+        initialColumnVisibility={{ po_source: false, scope: false }}
       />
           </div>
         </ContextMenuTrigger>

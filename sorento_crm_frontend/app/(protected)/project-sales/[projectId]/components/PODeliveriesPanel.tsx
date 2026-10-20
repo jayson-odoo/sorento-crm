@@ -103,7 +103,7 @@ export function PODeliveriesPanel({
           const label = [area.area_group, area.label].filter(Boolean).join(' ');
           if (canEdit && editing === area.phase_id) {
             return (
-              <div onClick={(event) => event.stopPropagation()}>
+              <div>
                 <DatePicker
                   value={fromIsoDay(area.delivery_date)}
                   onChange={(next) => moveArea(area, next)}
