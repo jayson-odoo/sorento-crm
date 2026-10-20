@@ -1,7 +1,9 @@
 /**
- * OI-SPLIT-VIEW (UAC B1 to B4, B8, D1): the one shared "Split N" chip + (i) popup and the
- * whole-order popup. Red until `LineSplitInfo.tsx` exists. Both pages render this component,
- * so the same fixtures (SO417636, 480 and 752) stand for both.
+ * OI-SPLIT-VIEW (UAC B1, B8, D1, E): the shared "Split N" chip + (i) popup and the whole-order
+ * popup. Round 4 (UAC E): the popup BODY is the split delivery edit sheet read-only
+ * (`LineSplitSheet readOnly`), fed by the `LineSplitService.read` payload the pages pass as
+ * `payload` (the chip still reads `view`). The line popup shows the block of `lineNo` (and
+ * splits moved onto it); the whole-order popup shows every line with saved splits.
  */
 import React from 'react';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
@@ -13,6 +15,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 
 import { LineSplitInfo, OrderSplitsDialog } from './LineSplitInfo';
 import type { LineSplitView } from '../types/orderInquiry.types';
+import { ownerSavedCase, receivingCase } from '@/test-mocks/lineSplitSheetKit';
 
 const row = (over: Record<string, unknown>) => ({
   qty: '14',
@@ -111,199 +114,162 @@ describe('LineSplitInfo - the chip and the (i) button', () => {
   });
 });
 
-describe('LineSplitInfo - the popup', () => {
-  function open(view: LineSplitView, over: Record<string, unknown> = {}) {
-    info(view, over);
+describe('LineSplitInfo - the popup is the read-only split sheet (E)', () => {
+  function open(payload: unknown, over: Record<string, unknown> = {}) {
+    info(VIEW_480, { payload, ...over });
     const button = screen.getByRole('button', { name: `Show the splits of line ${over.lineNo ?? 480}` });
     button.focus();
     fireEvent.click(button);
     return { button, dialog: screen.getByRole('dialog') };
   }
+  const ids = (dialog: HTMLElement) =>
+    within(dialog).getAllByTestId(/^split-line-/).map((el) => el.getAttribute('data-testid'));
 
   it('is titled "Line 480 CSK14B: split" with the SO number and the OI line under it', () => {
-    const { dialog } = open(VIEW_480, { oiNumber: 'OI-2609-0578' });
+    const { dialog } = open(ownerSavedCase(), { oiNumber: 'OI-2609-0578' });
     expect(within(dialog).getByText('Line 480 CSK14B: split')).toBeInTheDocument();
     expect(dialog.textContent).toContain('SO417636');
     expect(dialog.textContent).toContain('OI-2609-0578 line 480');
   });
 
-  it('names the confirmed status with its revision and date', () => {
-    const { dialog } = open(VIEW_480);
-    expect(within(dialog).getByText('Confirmed')).toBeInTheDocument();
-    expect(dialog.textContent).toContain('revision 3, 19/10/2026');
+  it('renders the sheet for that one line only: one block, line 480', () => {
+    const { dialog } = open(ownerSavedCase());
+    expect(within(dialog).getByRole('table', { name: 'Split delivery sheet' })).toBeInTheDocument();
+    expect(ids(dialog)).toEqual(['split-line-480']);
   });
 
-  it('names the saved and the AutoCount changed statuses', () => {
-    const { dialog } = open(VIEW_480_SAVED);
-    expect(within(dialog).getByText('Saved, not confirmed')).toBeInTheDocument();
-    cleanup();
-    const second = open(VIEW_752, { lineNo: 752 });
-    expect(within(second.dialog).getByText('AutoCount changed')).toBeInTheDocument();
+  it('shows the change words in the REMARK column and the same column headers as the edit sheet', () => {
+    const { dialog } = open(ownerSavedCase());
+    const heads = Array.from(dialog.querySelectorAll('thead th')).map((th) => (th.textContent ?? '').trim());
+    expect(heads).toContain('Change quantity');
+    expect(heads).toContain('New date');
+    expect(heads).not.toContain('Balance');
+    expect(within(dialog).getByText('ADVANCE')).toBeInTheDocument();
+    expect(within(dialog).getAllByText('DELAY')).toHaveLength(2);
   });
 
-  it('lists the headers, one row per split, the date as dd/mm/yyyy, and where each sits', () => {
-    const { dialog } = open(VIEW_480);
-    for (const head of ['Qty', 'Delivery date', 'Change', 'Sits on', 'Remark']) {
-      expect(within(dialog).getByText(head)).toBeInTheDocument();
-    }
+  it('reads "Confirmed 19/10/2026" for an applied plan and no "Saved, not confirmed" badge', () => {
+    const { dialog } = open(ownerSavedCase());
+    expect(dialog.textContent).toContain('Confirmed 19/10/2026');
+    expect(within(dialog).queryByText('Saved, not confirmed')).not.toBeInTheDocument();
+  });
+
+  it('shows one "Saved, not confirmed" badge when the line is split-edited', () => {
+    const { dialog } = open(ownerSavedCase({ edited: true }));
+    expect(within(dialog).getAllByText('Saved, not confirmed')).toHaveLength(1);
+  });
+
+  it('has no Total text, no note under a REMARK word, no "was", no DataGrid of the old popup', () => {
+    const { dialog } = open(ownerSavedCase({ edited: true }));
     const text = dialog.textContent ?? '';
-    expect(text).toContain('20/09/2026');
-    expect(text).toContain('ADVANCE');
-    expect(text).toContain('line 480');
-    expect(text).toContain('New line (not in AutoCount yet)');
-    expect(text).toContain('DELAY');
-    expect(text).not.toMatch(/\d{4}-\d{2}-\d{2}/); // no ISO dates on screen
-  });
-
-  it('ends with the total row: the sum and "AutoCount <base> @ <date>, now <qty> @ <date>"', () => {
-    const { dialog } = open(VIEW_480);
-    expect(dialog.textContent).toContain('417');
-    expect(dialog.textContent).toContain('AutoCount 417 @ 20/10/2026, now 14 @ 20/09/2026');
-  });
-
-  it('prints the AutoCount extra row after the splits', () => {
-    const { dialog } = open(VIEW_752, { lineNo: 752 });
-    expect(dialog.textContent).toContain('ORDER 145');
-    expect(dialog.textContent).toContain('line 752 (AutoCount extra)');
-    expect(dialog.textContent).toContain('AutoCount 504 @ 20/12/2026, now 649 @ 02/01/2027');
-  });
-
-  it('shows "was 20/11/2026" under the one changed date, and nothing else is marked', () => {
-    const { dialog } = open(VIEW_480_SAVED);
-    expect(within(dialog).getAllByText(/^was /)).toHaveLength(1);
-    expect(within(dialog).getByText('was 20/11/2026')).toBeInTheDocument();
-    expect(dialog.textContent).toContain('20/11/2029');
-  });
-
-  it('shows no "was" when no row is marked changed', () => {
-    const { dialog } = open(VIEW_480);
+    expect(text).not.toMatch(/Total \d/);
+    expect(text).not.toContain('AutoCount 417 @');
+    expect(text).not.toContain('New line (not in AutoCount yet)');
     expect(within(dialog).queryByText(/^was /)).not.toBeInTheDocument();
+    expect(dialog.querySelectorAll('[data-slot="data-grid-table"]')).toHaveLength(0);
   });
 
-  it('shows the line state and the PO when the page passes them', () => {
-    const { dialog } = open(VIEW_480, { purchasingState: 'To Buy', po: '202609-S0086' });
-    expect(dialog.textContent).toContain('To Buy');
-    expect(dialog.textContent).toContain('202609-S0086');
+  it('has no input, no grip, no "+ Split", no Save in the popup', () => {
+    const { dialog } = open(ownerSavedCase());
+    expect(dialog.querySelectorAll('input, textarea, select')).toHaveLength(0);
+    expect(dialog.querySelectorAll('[data-drag-handle]')).toHaveLength(0);
+    expect(within(dialog).queryByRole('button', { name: /Add a split|Remove split|^Save$/ })).not.toBeInTheDocument();
+  });
+
+  it('draws a split that moved onto line 608 under 608 when the popup is opened for 608', () => {
+    const { dialog } = open(receivingCase(), { lineNo: 608 });
+    expect(ids(dialog)).toContain('split-line-608');
+    expect(dialog.textContent).toContain('236');
   });
 
   it('Escape closes it and returns focus to the (i) button', () => {
-    const { button, dialog } = open(VIEW_480);
+    const { button, dialog } = open(ownerSavedCase());
     fireEvent.keyDown(dialog, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(document.activeElement).toBe(button);
   });
 
   it('Close returns focus to the (i) button too', () => {
-    const { button, dialog } = open(VIEW_480);
+    const { button, dialog } = open(ownerSavedCase());
     fireEvent.click(within(dialog).getAllByRole('button', { name: 'Close' })[0]);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(document.activeElement).toBe(button);
   });
 });
 
-describe('OrderSplitsDialog - the whole order', () => {
-  const LINES = [
-    { lineNo: 480, itemCode: 'CSK14B', view: VIEW_480 },
-    { lineNo: 752, itemCode: 'CSK14B', view: VIEW_752 },
-  ];
-
-  it('is titled, counts the split lines and groups the rows by line in order', () => {
+describe('OrderSplitsDialog - the whole order is the read-only split sheet (E3, E4)', () => {
+  function dlg(payload: unknown, over: Record<string, unknown> = {}) {
     render(
       <OrderSplitsDialog
         title="SO417636: splits"
-        lines={LINES}
+        payload={payload as never}
         open
         onOpenChange={() => {}}
+        {...(over as object)}
       />,
     );
-    const dialog = screen.getByRole('dialog');
-    expect(within(dialog).getByText('SO417636: splits')).toBeInTheDocument();
+    return screen.getByRole('dialog');
+  }
+  const ids = (dialog: HTMLElement) =>
+    within(dialog).getAllByTestId(/^split-line-/).map((el) => el.getAttribute('data-testid'));
+
+  it('lists only the lines with saved splits: 480 and 752, not 608 or 768', () => {
+    const dialog = dlg(ownerSavedCase());
+    expect(ids(dialog)).toEqual(['split-line-480', 'split-line-752']);
     expect(dialog.textContent).toContain('2 split lines');
-    const text = dialog.textContent ?? '';
-    const a = text.indexOf('Line 480 CSK14B');
-    const b = text.indexOf('Line 752 CSK14B');
-    expect(a).toBeGreaterThan(-1);
-    expect(b).toBeGreaterThan(a);
-    expect(text).toContain('Confirmed');
-    expect(text).toContain('AutoCount changed');
-    expect(text).toContain('AutoCount 417 @ 20/10/2026, now 14 @ 20/09/2026');
-    expect(text).toContain('ORDER 145');
   });
 
-  it('reads "1 split line" for one split line (UAC D1, review round 2)', () => {
-    render(
-      <OrderSplitsDialog
-        title="SO417636: splits"
-        lines={[LINES[0]]}
-        open
-        onOpenChange={() => {}}
-      />,
-    );
-    const text = screen.getByRole('dialog').textContent ?? '';
+  it('shows the AutoCount extra row ORDER 145 and the words in the one sheet', () => {
+    const dialog = dlg(ownerSavedCase());
+    expect(within(dialog).getAllByRole('table', { name: 'Split delivery sheet' })).toHaveLength(1);
+    expect(within(dialog).getByText('ORDER 145')).toBeInTheDocument();
+  });
+
+  it('lists a line that only receives a moved split, with that split under it', () => {
+    const dialog = dlg(receivingCase());
+    expect(ids(dialog)).toEqual(['split-line-480', 'split-line-608', 'split-line-752']);
+    expect(within(screen.getByTestId('split-line-608')).getByText('DELAY')).toBeInTheDocument();
+  });
+
+  it('reads "1 split line" for one split line', () => {
+    const p = ownerSavedCase();
+    p.lines[2].splits = [];
+    p.lines[2].extra_qty = null;
+    const text = dlg(p).textContent ?? '';
     expect(text).toMatch(/1 split line(?!s)/);
     expect(text).not.toContain('1 split lines');
   });
 
-  it('puts the subtitle (the SO number on the OI page) under the title', () => {
-    render(
-      <OrderSplitsDialog
-        title="OI-2609-0578: splits"
-        subtitle="SO417636"
-        lines={LINES}
-        open
-        onOpenChange={() => {}}
-      />,
-    );
-    expect(screen.getByRole('dialog').textContent).toContain('SO417636');
+  it('puts the subtitle under the title and "Confirmed 19/10/2026" in the header', () => {
+    const dialog = dlg(ownerSavedCase(), { title: 'OI-2609-0578: splits', subtitle: 'SO417636' });
+    expect(dialog.textContent).toContain('SO417636');
+    expect(dialog.textContent).toContain('Confirmed 19/10/2026');
+  });
+
+  it('shows one "Saved, not confirmed" badge when any listed line is split-edited, none otherwise', () => {
+    expect(within(dlg(ownerSavedCase({ edited: true }))).getAllByText('Saved, not confirmed')).toHaveLength(1);
+    cleanup();
+    expect(within(dlg(ownerSavedCase())).queryByText('Saved, not confirmed')).not.toBeInTheDocument();
+  });
+
+  it('has no Total text, no per-line headings with badges, no input or grip', () => {
+    const dialog = dlg(ownerSavedCase({ edited: true }));
+    expect(dialog.textContent).not.toMatch(/Total \d/);
+    expect(dialog.textContent).not.toContain('AutoCount 417 @');
+    expect(dialog.querySelectorAll('input, textarea, select, [data-drag-handle]')).toHaveLength(0);
+    expect(dialog.querySelectorAll('[data-slot="data-grid-table"]')).toHaveLength(0);
   });
 
   it('shows the empty state when no line is split', () => {
-    render(<OrderSplitsDialog title="SO417636: splits" lines={[]} open onOpenChange={() => {}} />);
-    const dialog = screen.getByRole('dialog');
+    const p = ownerSavedCase();
+    p.lines.forEach((l) => { l.splits = []; l.extra_qty = null; });
+    const dialog = dlg(p);
     expect(within(dialog).getByText('No split lines')).toBeInTheDocument();
     expect(within(dialog).getByText('Every line ships as AutoCount has it.')).toBeInTheDocument();
   });
 
   it('renders nothing while closed', () => {
-    render(<OrderSplitsDialog title="SO417636: splits" lines={LINES} open={false} onOpenChange={() => {}} />);
+    render(<OrderSplitsDialog title="SO417636: splits" payload={ownerSavedCase() as never} open={false} onOpenChange={() => {}} />);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  });
-});
-
-/**
- * Review round 1 (UAC B5a): the popups render their rows through the shared DataGrid, and the
- * total is a line of text ("Total 417 ..."), not a table row.
- */
-describe('B5a: shared DataGrid, total as text', () => {
-  const GRID = '[data-slot="data-grid-table"]';
-
-  it('the line popup holds exactly one DataGrid and "Total 417" is text outside any table row', () => {
-    info(VIEW_480);
-    const button = screen.getByRole('button', { name: 'Show the splits of line 480' });
-    button.focus();
-    fireEvent.click(button);
-    const dialog = screen.getByRole('dialog');
-    expect(dialog.querySelectorAll(GRID)).toHaveLength(1);
-    const total = within(dialog).getByText(/Total 417/);
-    expect(total.closest('tr')).toBeNull();
-    expect(total.textContent).toContain('AutoCount 417 @ 20/10/2026, now 14 @ 20/09/2026');
-  });
-
-  it('the whole-order popup holds one DataGrid per split line, each under its own heading', () => {
-    render(
-      <OrderSplitsDialog
-        title="SO417636: splits"
-        lines={[
-          { lineNo: 480, itemCode: 'CSK14B', view: VIEW_480 },
-          { lineNo: 752, itemCode: 'CSK14B', view: VIEW_752 },
-        ]}
-        open
-        onOpenChange={() => {}}
-      />,
-    );
-    const dialog = screen.getByRole('dialog');
-    expect(dialog.querySelectorAll(GRID)).toHaveLength(2);
-    expect(within(dialog).getByText(/Line 480 CSK14B/).closest('tr')).toBeNull();
-    expect(within(dialog).getByText(/Line 752 CSK14B/).closest('tr')).toBeNull();
   });
 });

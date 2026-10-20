@@ -362,3 +362,33 @@ def test_r2_b3_a_stale_plan_reads_autocount_changed_even_when_it_is_edited(api, 
     assert batch is not None, "premise: the AutoCount change is pending"
     view = _one(_views(s, 480))
     assert view["status"] == "autocount_changed", ("precedence: AutoCount changed first", view["status"])
+
+
+# ---------------------------------------------------------------------------
+# Review round 4, E5: the SCM sales order carries the split sheet's payload
+# ---------------------------------------------------------------------------
+
+
+def test_r4_e5_the_sales_order_read_carries_line_splits_equal_to_the_sheet_read(api, emails):
+    s = _confirmed_world(api, emails)
+    so = s.client.get(f"/api/v1/scm/sales-orders/{s.core_so.id}")
+    assert so.status_code == 200, so.text
+    sheet = s.client.get(_url(s.order.id))
+    assert sheet.status_code == 200, sheet.text
+    body = so.json()
+    assert "line_splits" in body, ("SalesOrder.line_splits is on the wire", sorted(body))
+    got = body["line_splits"]
+    assert got is not None, "the order has splits, so the payload is there"
+    assert set(got) == set(sheet.json()), (sorted(got), sorted(sheet.json()))
+    assert got == sheet.json()
+    assert {"pso_id", "so_number", "lines"} <= set(got)
+    split_lines = [ln for ln in got["lines"] if ln["splits"]]
+    assert sorted(ln["line_no"] for ln in split_lines) == [480, 752]
+
+
+def test_r4_e5_an_order_without_splits_has_no_line_splits(api, emails):
+    s = _seed(api)
+    so = s.client.get(f"/api/v1/scm/sales-orders/{s.core_so.id}")
+    assert so.status_code == 200, so.text
+    body = so.json()
+    assert body.get("line_splits") is None, "null or absent when nothing is split (pins today)"

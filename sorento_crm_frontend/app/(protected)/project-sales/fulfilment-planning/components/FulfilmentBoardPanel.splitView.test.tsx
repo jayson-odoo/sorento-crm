@@ -135,6 +135,7 @@ vi.mock('@/services/pendingActionService', () => ({
 
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
 import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsupport__/boardFixture';
+import { ownerSavedCase } from '@/test-mocks/lineSplitSheetKit';
 import { MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE } from '../../_shared/__mocks__/planningChanges';
 
 const TODAY = '2026-09-17';
@@ -318,24 +319,9 @@ describe('D1 / D2: the board gear carries Split delivery and View splits per ord
     expect(dialog).toHaveAttribute('data-pso', 'pso-so-1');
   });
 
-  it('"View splits SO000001" reads the order and opens "SO000001: splits"', async () => {
-    const view = (qty: string) => ({
-      status: 'confirmed', revision_no: 3, confirmed_on: '2026-10-19',
-      base_qty: '417', base_date: '2026-10-20', now_qty: '14', now_date: '2026-09-20',
-      total_qty: '417',
-      rows: [{
-        qty, delivery_date: '2026-09-20', change: 'ADVANCE', sits_on: 'own',
-        sits_on_line_no: 480, remark: '', is_cancel: false, changed: false, was_qty: null,
-        was_date: null,
-      }],
-    });
+  it('"View splits SO000001" reads the order and opens "SO000001: splits" as the read-only split sheet', async () => {
     getLineSplits.mockResolvedValue({
-      pso_id: 'pso-so-1', so_number: 'SO000001', customer: null, project: null,
-      lines: [
-        { line_id: 'pl-1-1', line_no: 480, item_code: 'CSK14B', split_view: view('14') },
-        { line_id: 'pl-1-2', line_no: 752, item_code: 'CSK14B', split_view: view('37') },
-        { line_id: 'pl-1-3', line_no: 608, item_code: 'CSK14B', split_view: null },
-      ],
+      ...ownerSavedCase(), pso_id: 'pso-so-1', so_number: 'SO000001',
     });
     getPlanningBoard.mockResolvedValue(
       buildBoard(TWO_ORDERS, { today: TODAY, freeStock: {}, granularity: 'week' }),
@@ -346,9 +332,13 @@ describe('D1 / D2: the board gear carries Split delivery and View splits per ord
     const dialog = await screen.findByRole('dialog');
     expect(getLineSplits).toHaveBeenCalledWith('pso-so-1');
     expect(within(dialog).getByText('SO000001: splits')).toBeInTheDocument();
+    // UAC E3: only the lines with saved splits, as read-only sheet blocks.
+    const blocks = await within(dialog).findAllByTestId(/^split-line-/);
+    expect(blocks.map((el) => el.getAttribute('data-testid'))).toEqual([
+      'split-line-480', 'split-line-752',
+    ]);
     expect(dialog.textContent).toContain('2 split lines');
-    expect(dialog.textContent).toContain('Line 480 CSK14B');
-    expect(dialog.textContent).not.toContain('Line 608');
+    expect(dialog.querySelectorAll('input, [data-drag-handle]')).toHaveLength(0);
   });
 });
 

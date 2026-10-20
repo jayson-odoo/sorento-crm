@@ -148,6 +148,7 @@ vi.mock('../../../services/salesOrderService', () => ({
 
 import { SalesOrderDetail } from './SalesOrderDetail';
 import type { SalesOrder } from '../../../types/scm.types';
+import { ownerSavedCase } from '@/test-mocks/lineSplitSheetKit';
 
 const VIEW_480 = {
   status: 'confirmed',
@@ -199,6 +200,8 @@ function order(withSplit = true): SalesOrder {
       line('l-480', 480, withSplit ? { split_view: VIEW_480 } : { split_view: null }),
       line('l-608', 608, { qty_ordered: 632, split_view: null }),
     ],
+    // OI-SPLIT-VIEW round 4 (UAC E5): the order carries the `LineSplitService.read` payload.
+    line_splits: withSplit ? ownerSavedCase() : null,
     created_at: '2026-07-16T02:00:00',
   } as unknown as SalesOrder;
 }
@@ -272,7 +275,12 @@ describe('SalesOrderDetail Lines: the Split column (B1)', () => {
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByText('Line 480 CSK14B: split')).toBeInTheDocument();
     expect(dialog.textContent).toContain('SO417636');
-    expect(dialog.textContent).toContain('New line (not in AutoCount yet)');
+    // UAC E: the body is the read-only split sheet, one block for line 480, no old note.
+    expect(within(dialog).getAllByTestId(/^split-line-/).map((el) => el.getAttribute('data-testid'))).toEqual([
+      'split-line-480',
+    ]);
+    expect(dialog.textContent).not.toContain('New line (not in AutoCount yet)');
+    expect(dialog.querySelectorAll('input, [data-drag-handle]')).toHaveLength(0);
   });
 });
 
@@ -289,8 +297,11 @@ describe('SalesOrderDetail gear: View splits (D1)', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'View splits' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('SO417636: splits')).toBeInTheDocument();
-    expect(dialog.textContent).toContain('Line 480 CSK14B');
-    expect(dialog.textContent).not.toContain('Line 608');
+    // UAC E3: only the lines with saved splits, as read-only sheet blocks (480 and 752).
+    expect(within(dialog).getAllByTestId(/^split-line-/).map((el) => el.getAttribute('data-testid'))).toEqual([
+      'split-line-480', 'split-line-752',
+    ]);
+    expect(dialog.textContent).toContain('2 split lines');
   });
 
   it('shows the empty state when no line is split', async () => {
