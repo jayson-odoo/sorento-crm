@@ -263,3 +263,44 @@ def test_engine_untyped_held_entity_arms_no_kind_pick(session_factory, monkeypat
         )
         assert isinstance(typed, str) and "srtwb1096rg" not in typed, typed
         assert r.kind_pick_options is None, typed
+
+
+# ---------------------------------------------------------------- engine seam: media codes are typed
+
+from tests.chatbot.test_engine import seeded, stub_access  # noqa: E402,F401
+from tests.chatbot.test_media_intake_turn import (  # noqa: E402
+    IMAGE_RESULT,
+    _image_envelope,
+    _seed_media_limit,
+    _seed_settings,
+    media_pipeline,  # noqa: F401
+)
+
+
+def test_engine_typed_text_includes_codes_read_from_the_media(
+    session_factory, seeded, stub_access, media_pipeline, monkeypatch
+):
+    """A captionless photo: the code exists only in the intake's rendered text, never in the envelope."""
+    from unittest.mock import patch as _patch
+
+    import app.services.chatbot.head.parser as parser_mod
+    from app.services.chatbot import engine as engine_mod
+
+    code = "SRTWT7445"
+    _seed_media_limit(session_factory, modality="image")
+    _seed_settings(session_factory, media_sync_wait_seconds=5)
+    media_pipeline.set_result({**IMAGE_RESULT, "rendered_text": code, "entities": [{"raw": code}]})
+    stub_access()
+    seen = _spy_turn_apply(monkeypatch)
+    qf = _qf_with(code)
+    with _patch.object(parser_mod, "parse", lambda config, user_block: qf), _patch.object(
+        parser_mod,
+        "resolve_config",
+        lambda db, *, current_date, override_version_id=None: parser_mod.ParserConfig(
+            system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test",
+        ),
+    ):
+        engine_mod.run_turn(_image_envelope(caption=None), session_factory=session_factory)
+    typed = [k.get("typed") for k in seen if "typed" in k]
+    assert typed, "engine passed no typed to turn_apply"
+    assert all(isinstance(t, str) and "srtwt7445" in t for t in typed), typed
