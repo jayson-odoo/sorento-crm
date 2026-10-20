@@ -240,8 +240,9 @@ def whole_buy_line_ids(
 
 def split_plan_key(splits: Sequence[Any]) -> List[str]:
     """A saved split plan as the decision snapshot records it (AC-G16): its base and each
-    split's qty, date, line it sits on and cancel, never its remark (a remark-only edit is the
-    same plan)."""
+    split's qty, date, line it sits on and cancel, and (OI-SPLIT-GUIDE UAC F27) its remark
+    when it has one: a remark-only edit is an edit the next Confirm tells. A split with no
+    remark spells as before, so a plan stamped before the remark counted still matches."""
     if not splits:
         return []
     first = splits[0]
@@ -249,6 +250,7 @@ def split_plan_key(splits: Sequence[Any]) -> List[str]:
     return [base] + sorted(
         f"{_qty_str(_dec(s.qty))}@{s.delivery_date.isoformat() if s.delivery_date else ''}"
         f"@{s.sits_on_line_id or ''}@{'cancel' if s.is_cancel else ''}"
+        + (f"@{(s.remark or '').strip()}" if (getattr(s, 'remark', None) or '').strip() else '')
         for s in splits
     )
 
@@ -6133,13 +6135,24 @@ class ProjectOrderInquiryService:
             # Crew ruling (a): AutoCount's growth already counts the qty the origin keeps.
             needs[target] = max(_dec(entries[target].get("buy_qty")) - min(qty, grew), _ZERO)
         # A line whose own row alone moved is told as its saved line, never its plan again.
-        acted_by_order[str(decision.project_sales_order_id)] = {
-            line_id for line_id, plan in acted.items() if not plan["own_rows"]
-        } | told
-        edited_by_order[str(decision.project_sales_order_id)] = self._applied_plan_edits(
-            decision,
-            {line_id: facts[line_id] for line_id, plan in acted.items() if not plan["own_rows"]},
+        # OI-SPLIT-GUIDE (UAC F27): a named line whose rows already are its plan but whose
+        # saved plan still differs from the applied one (a remark-only edit) moves nothing,
+        # yet its edited splits are told: purchasing reads the new remark.
+        remark_edits = self._applied_plan_edits(
+            decision, {line_id: facts[line_id] for line_id in standing if line_id in entries}
         )
+        acted_by_order[str(decision.project_sales_order_id)] = (
+            {line_id for line_id, plan in acted.items() if not plan["own_rows"]}
+            | told
+            | set(remark_edits)
+        )
+        edited_by_order[str(decision.project_sales_order_id)] = {
+            **self._applied_plan_edits(
+                decision,
+                {line_id: facts[line_id] for line_id, plan in acted.items() if not plan["own_rows"]},
+            ),
+            **remark_edits,
+        }
         return acted, needs, standing, waiting
 
     def _applied_plan_edits(self, decision: Any, facts: Mapping[str, Any]) -> Dict[str, List[str]]:
