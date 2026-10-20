@@ -741,10 +741,15 @@ def entity_ids_transformer(
     # named no product (`turn_runtime.promo_filter`), so any product ids here are the set the
     # resolver described from the brand / class words, never the subject: they are dropped.
     # A typed product code carries no `scope_terms` and keeps the product_ids path alone.
-    if tool_name == TIER_PROBE_TOOL and jsc.array(jsc.get(semantic_input, "scope_terms")):
+    # CHAT-PROMO-BRAND-FLYER: `brand_subject` is the same verdict for a brand + kind / flyer
+    # ask: the product ids are the brand's described set or a set an earlier turn held.
+    brand_subject = bool(jsc.array(jsc.get(semantic_input, "brand_subject")))
+    if tool_name == TIER_PROBE_TOOL and (jsc.array(jsc.get(semantic_input, "scope_terms")) or brand_subject):
         out.pop("product_ids", None)
     if tool_name == TIER_PROBE_TOOL and (
-        jsc.array(jsc.get(semantic_input, "scope_terms")) or jsc.array(jsc.get(semantic_input, "promotion_types"))
+        jsc.array(jsc.get(semantic_input, "scope_terms"))
+        or jsc.array(jsc.get(semantic_input, "promotion_types"))
+        or brand_subject
     ):
         # Promotions the resolver matched by NAME off other words are never the subject: a
         # subject or kind ask is answered by explicit links and the kind (AC-22, owner rule).

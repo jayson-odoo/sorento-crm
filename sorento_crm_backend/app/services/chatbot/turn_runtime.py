@@ -635,7 +635,10 @@ def promo_filter(parse_output: dict[str, Any], db: Any, gate: Any = None) -> dic
     if out and promotion_ids:
         # A promotion the customer NAMED and the resolver placed by id stays the subject.
         out["promotion_ids"] = promotion_ids
-    if out and db is not None:
+    # CHAT-PROMO-BRAND-FLYER: a flyer the parser flagged beside a brand ("Sorento A3 flyer",
+    # no product named) is a kind ask even when no listed kind matched: the brand narrows it.
+    flyer_ask = parse_output.get("contains_flyer") is True and not typed_product
+    if (out or flyer_ask) and db is not None:
         # Every live row the brand name names: one brand can carry a row per company.
         live = active_brands(db)
         ids: list[str] = []
@@ -643,6 +646,11 @@ def promo_filter(parse_output: dict[str, Any], db: Any, gate: Any = None) -> dic
             ids += [r["id"] for r in exact_brand_rows(live, brand_identity_word(e)) if r["id"] not in ids]
         if ids:
             out["brand_ids"] = ids
+            if not typed_product:
+                # The brand is the subject: no product was placed this turn, so any product
+                # or promotion ids on the fetch are a set the resolver described off the brand
+                # word (or one an earlier turn held), never what was asked.
+                out["brand_subject"] = ["1"]
     return out
 
 

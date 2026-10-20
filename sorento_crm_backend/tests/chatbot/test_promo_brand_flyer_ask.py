@@ -55,11 +55,10 @@ def _world(session_factory, *, sorento_live_flyer: bool = True) -> dict[str, Any
         held.append(row)
     db.flush()
     _promo(db, "ZZT MOCHA HELD A3 FLYER", flyer, held[0], levels=["sorento_dealer", "mocha_dealer"])
-    srt_prod = db.query(Product).filter(Product.brand_id == ids["srt"]).first()
+    ids["srt_products"] = [str(pid) for (pid,) in db.query(Product.id).filter(Product.brand_id == ids["srt"]).all()]
     _promo(db, "SORENTO ZZT WC DEAL", flyer, held[1], levels=["sorento_dealer"],
            start=TODAY - timedelta(days=90), end=TODAY - timedelta(days=60), active=False)
     db.commit()
-    ids["srt_prod"] = srt_prod
     return ids
 
 
@@ -139,15 +138,45 @@ def test_brand_flyer_ask_with_only_an_expired_flyer_says_it_is_expired(session_f
     """Only an ended Sorento A3 flyer the kind still serves: it is listed marked EXPIRED, never
     as live, and no other brand's file stands in for it."""
     ids = _world(session_factory, sorento_live_flyer=False)
-    db = session_factory()
-    flyer = db.query(PromotionType).filter(PromotionType.type_code == "a3_flyer").one()
-    srt_prod = db.query(Product).filter(Product.brand_id == ids["srt"]).first()
-    _promo(db, "ZZT SORENTO A3 FLYER JUST ENDED", flyer, srt_prod, levels=["sorento_dealer"],
-           start=TODAY - timedelta(days=40), end=TODAY - timedelta(days=2), active=False)
-    db.commit()
+    _ended_sorento_flyer(session_factory, ids)
     captured = _mcp(monkeypatch, session_factory)
     reply = _turn(session_factory, monkeypatch, _brand_flyer_qf(), "Sorento A3 flyer", "zzt-pbf-expired")
     _assert_brand_kind_calls([a for name, a in captured if name == PROMO_TOOL], ids)
     assert "ZZT SORENTO A3 FLYER JUST ENDED" in reply, reply
     assert "EXPIRED" in reply, reply
     assert "MOCHA" not in reply.upper(), reply
+
+
+def _ended_sorento_flyer(session_factory, ids) -> None:
+    db = session_factory()
+    flyer = db.query(PromotionType).filter(PromotionType.type_code == "a3_flyer").one()
+    srt_prod = db.query(Product).filter(Product.brand_id == ids["srt"]).first()
+    _promo(db, "ZZT SORENTO A3 FLYER JUST ENDED", flyer, srt_prod, levels=["sorento_dealer"],
+           start=TODAY - timedelta(days=40), end=TODAY - timedelta(days=2), active=False)
+    db.commit()
+
+
+@pytest.mark.parametrize("sorento_live_flyer", [True, False])
+def test_brand_kind_ask_serves_the_rows_the_equivalent_product_ask_serves(session_factory, monkeypatch, sorento_live_flyer):
+    """Crew ruling (a), 20 Oct: the serving policy is unchanged; the brand + kind ask yields the
+    same rows it yields for the equivalent product ask (every Sorento product, same kind and
+    level). Live world: the live flyer only (rule 2 hides the ended one of its type); ended-only
+    world: the ended flyer the kind still serves, nothing older."""
+    from app.services.contact_access_type_service import ContactAccessTypeService
+    from app.services.marketing_service import PromotionService
+
+    ids = _world(session_factory, sorento_live_flyer=sorento_live_flyer)
+    _ended_sorento_flyer(session_factory, ids)
+    db = session_factory()
+    sorento_products = ids["srt_products"]
+    served = PromotionService(db).list_promotions(
+        page=1, limit=50, serving_policy=True,
+        contact_access_codes=ContactAccessTypeService(db).translate_names_to_codes(["Sorento Dealer"]),
+        product_ids=list(sorento_products), promotion_types=["a3_flyer"],
+    )
+    expected = sorted({p.description for p in served["data"]})
+    assert sorento_products and expected, (sorento_products, served)
+    _mcp(monkeypatch, session_factory)
+    reply = _turn(session_factory, monkeypatch, _brand_flyer_qf(), "Sorento A3 flyer", "zzt-pbf-parity")
+    listed = sorted({line.split("*Promotion:*", 1)[1].strip() for line in reply.splitlines() if "*Promotion:*" in line})
+    assert listed == expected, reply
