@@ -723,17 +723,20 @@ def _on_closed_lists(entity: dict[str, Any], items: dict[str, dict[str, str]]) -
     compared whole with case aside; the customer's words never are."""
     from app.services.chatbot.head.closed_lists_prompt import NOT_LISTED
 
-    if entity.get("confident") is False or entity.get("listed_item") == NOT_LISTED:
+    if entity.get("listed_item") == NOT_LISTED:
         # The parser said no listed item is the kind asked: no code reading overrides it.
         return None
+    # Owner cp0-6240dc53f8 (KEEP): an unsure pick counts only when its `listed_item` IS an item as
+    # listed, exactly; a name, a code reading or an alias link of it does not.
+    unsure = entity.get("confident") is False
     # The parser's `listed_item` first (the gated schema holds it to the rendered items),
     # then its `canonical_code`: an item's code or name, or an explicit alias link.
-    for pick in (str(entity.get("listed_item") or "").strip(), str(entity.get("canonical_code") or "").strip()):
+    for pick in (str(entity.get("listed_item") or "").strip(), *([] if unsure else [str(entity.get("canonical_code") or "").strip()])):
         if not pick:
             continue
         for listed in ("file_type", "cert_kind", "cert_scheme"):
             item = items.get(listed, {}).get(pick.casefold())
-            if item is not None:
+            if item is not None and (not unsure or item.casefold() == pick.casefold()):
                 return {**entity, "canonical_code": item, "listed": listed}
     return None
 
