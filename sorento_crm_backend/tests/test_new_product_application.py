@@ -1838,3 +1838,14 @@ def test_deferred_unlink_is_rechecked_at_commit_after_the_application_was_submit
     assert out["last_outcome"]["status"] != "committed", out["last_outcome"]
     assert len(_atts(world, d["id"])) == 1
     assert len(_links(world, d["id"])) == 1
+
+
+@pytest.mark.parametrize("entity_type", ["", "  ", "stock_inquiry"])
+def test_the_generic_unlink_route_cannot_be_bypassed_with_a_blank_or_wrong_entity_type(world, store, entity_type):
+    d, _att, link = _linked_draft(world, store)
+    # A wrong-but-nonempty type may 404 (no such link under that type); blank must be refused.
+    expected = (403, 404, 409, 422)
+    for user in (world.sales_b, world.sales):
+        res = world.api.as_(user).delete(f"{GENERIC_UNLINK}/{link}", params={"entity_type": entity_type})
+        assert res.status_code in expected, (entity_type, res.status_code, res.text)
+        assert len(_atts(world, d["id"])) == 1, (entity_type, user)
