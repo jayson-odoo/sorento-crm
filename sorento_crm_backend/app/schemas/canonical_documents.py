@@ -436,7 +436,9 @@ class CanonicalBillingDocumentLine(BaseModel):
     description: Optional[str] = Field(None, max_length=8000)
     uom: Optional[str] = Field(None, max_length=20)
     # Sign checked per document type on the header (a credit note may carry a negative).
-    quantity: _Qty4
+    # NULL on an AutoCount charge line (freight, service) that carries money and no Qty
+    # (BL-SS-306): stored NULL, never an invented 1. A line with no qty needs an amount.
+    quantity: Optional[_Qty4] = None
     unit_price: Optional[_Qty4] = None
     discount_amount: Optional[_Money] = None
     net_amount: Optional[_Money] = None
@@ -616,10 +618,14 @@ def billing_document_errors(payload: CanonicalBillingDocument) -> dict[str, str]
             f"total {payload.total} is not net_total + tax_total "
             f"({payload.net_total} + {payload.tax_total}) within {_TOTAL_TOLERANCE}"
         )
-    if payload.document_type in _NON_NEGATIVE_QTY_TYPES:
-        for index, line in enumerate(payload.lines):
-            if line.quantity < 0:
+    for index, line in enumerate(payload.lines):
+        if line.quantity is None:
+            if line.net_amount is None and line.line_total is None:
                 errors[f"lines.{index}.quantity"] = (
-                    f"negative quantity on a {payload.document_type} line"
+                    "quantity is required on a line with no net_amount or line_total"
                 )
+        elif line.quantity < 0 and payload.document_type in _NON_NEGATIVE_QTY_TYPES:
+            errors[f"lines.{index}.quantity"] = (
+                f"negative quantity on a {payload.document_type} line"
+            )
     return errors
