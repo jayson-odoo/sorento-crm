@@ -17,7 +17,7 @@ import {
   type CoveredSheetLine,
 } from '../../_shared/components/LineSplitInfo';
 import { useLineSplitsReads } from '../../_shared/hooks/useLineSplits';
-import { LineSplitEditor } from './LineSplitEditor';
+import { LineSplitEditor, type LineSplitEditorHandle } from './LineSplitEditor';
 
 /** One page of the guide (UAC F2): an order this Confirm covers, and the lines it covers. */
 export interface ConfirmGuidePage {
@@ -70,6 +70,8 @@ export function ConfirmGuideDialog({
   const [posting, setPosting] = React.useState(false);
   /** UAC F19: the page's editor holds unsaved split edits. */
   const [dirty, setDirty] = React.useState(false);
+  /** UAC F23: the page's editor, asked whether Escape or a click outside may close. */
+  const editorRef = React.useRef<LineSplitEditorHandle | null>(null);
 
   const page = step.kind === 'review' ? pages[step.index] : undefined;
   // Every page's split read, kept while the guide is open; the current page reads its own.
@@ -114,10 +116,21 @@ export function ConfirmGuideDialog({
     if (step.kind === 'review' && step.index >= pages.length) setStep({ kind: 'confirm' });
   }, [step, pages.length]);
 
+  /** Cancel: the explicit way out, which writes nothing (UAC A2, F23). */
   const close = React.useCallback(() => {
     if (posting) return;
     onClose();
   }, [posting, onClose]);
+  /**
+   * UAC F23: Escape or a click outside never closes the guide while a split row is being
+   * dragged (Escape puts the drag back) or while the page has unsaved split edits (the
+   * "Save or undo your split changes first" line is already showing); the board's dialog
+   * guards the same way.
+   */
+  const requestClose = () => {
+    if (editorRef.current?.isDragging() || editorRef.current?.isDirty()) return;
+    close();
+  };
 
   const next = () => {
     if (step.kind !== 'review') return;
@@ -158,7 +171,7 @@ export function ConfirmGuideDialog({
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open) close();
+        if (!open) requestClose();
       }}
     >
       <DialogContent
@@ -229,6 +242,7 @@ export function ConfirmGuideDialog({
                       readLoaded
                       stayAfterSave
                       onDirtyChange={setDirty}
+                      handleRef={editorRef}
                       className="h-auto"
                       renderHeader={({ dirty: unsaved, canSave, saving, save, discard }) => (
                         <div className="flex items-center justify-end gap-2 border-b border-border px-3 py-2">
