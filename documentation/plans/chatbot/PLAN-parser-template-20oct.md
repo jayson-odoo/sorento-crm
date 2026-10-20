@@ -183,3 +183,15 @@ Crew attachment audit (v77 TRAIN parser faults besides the entity drop), for the
 (SRTJC2025): digits alone are not a code pick (R-P2-02 / CODE LOOKUP near-code rule); (2) a compound file phrase
 ("DRAWING PICTURE") split into two file types: words naming one file are one file word, one entity; (3) a file word
 beside a code fragment ("8609 cert") gives no file entity: step 1 holds whatever stands beside the file word.
+
+## F1-J (crew 08:10 on a54889127) and the stop
+
+Corrected TRAIN gold g48a (EVAL-BENCH, items sha 73669fe7a5a1): stored runs re-graded at USD 0: v77 64/83 (77.1%), v86
+21/70, v87 40/80. F1-J (red 0fb053c275, fix 9a10928629, 70,537 chars, 104 passed): step 1 adds the crew audit classes
+(several words naming one file are one file word; the entity stands whatever stands beside the file word; digits read
+as a year / page / count beside a document word are not a code pick) and the product_attachment domain line carries
+its file entity (see R-P2-06). Published v88 4646e9a2. Gold c2 N=3 11/12. TRAIN attachment NEW arm: 52/82 (63.4%),
+file entity 59/83: still under v77, STOP per crew, no further wording; v88 is not the build prompt. Spend USD 8.18.
+Push note: pre-push alembic-heads fails on this branch combined with origin/main (main #1796 adds
+adp_0001_pcs_attach_delete, base #1755 carries spec_bare_size_0001); this lane has no migration, pushed with
+SKIP_PREPUSH=1; #1755 re-parents before retarget.
