@@ -1,5 +1,11 @@
 # Behaviour card: guided split view before Confirm (next PR after #1794, size M)
 
+**Answered 20 Oct:** Q1/Q3/Q4/Q5 (a) (crew a62743794; owner ~10:33 "the rest I am ok"). Q2 CHANGED by the
+owner: "Actually when we confirm, should confirm those saved lines only, so the split also should show the
+save lines only" = the split step shows only saved, unconfirmed split edits; orders with none get no page.
+Crew ruling a63941103: Confirm's server behaviour stays; Review labels rows not from a saved line as
+AutoCount changes. Mock v1 approved. Behaviour now lives in `oi-split-guide-20oct-acceptance-criteria.md`.
+
 Owner 20 Oct ~11:14 (verbatim): "the next thing we need to do is to show the split view upon confirm, or
 even before confirm in fulfillment planning, the CTA is to split view the split delivery, so that the
 user can view the split before confirm. My point is I want them to be able to view the split before they
