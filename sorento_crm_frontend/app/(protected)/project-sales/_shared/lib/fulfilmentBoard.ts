@@ -554,6 +554,22 @@ export interface UnpostableLine {
  * before pressing Confirm. A COVERED line keeps its own rule below: untouched is carried by
  * the server, and an explicit verdict is still posted.
  */
+/**
+ * OI-SPLIT-GUIDE (UAC F26, F32, F33): the REMARK a Confirm sends for a line: the one its saved
+ * decision holds, `''` when the planner cleared it (the server's only way to clear a confirmed
+ * remark: a line that sends none keeps it), else the one the active revision froze
+ * (`confirmed_remark`, so re-approving a confirmed line unchanged is not a change and tells
+ * purchasing nothing); `undefined` sends nothing and prints the default words.
+ */
+export function remarkFor(
+  contribution: BoardContribution,
+  decision: BoardDecision | undefined,
+): string | undefined {
+  // A stored `remark: null` (an API client's opaque draft) reads like no remark.
+  if (decision?.remark !== undefined && decision?.remark !== null) return decision.remark.trim();
+  return contribution.confirmed_remark?.trim() || undefined;
+}
+
 function lineFor(
   contribution: BoardContribution,
   decision: BoardDecision | undefined,
@@ -597,7 +613,10 @@ function lineFor(
   // it into a Reserve was dropped from the body while the row still read "Amended".
   if (decision?.verdict === 'amended' && decision.reserve) {
     if (!contribution.project_line_id) return 'no_mirror';
-    return confirmLineFrom(contribution.project_line_id, decision);
+    return {
+      ...confirmLineFrom(contribution.project_line_id, decision),
+      remark: remarkFor(contribution, decision),
+    };
   }
 
   // AN APPROVAL ON A COVERED LINE POSTS THE ENGINE'S SUGGESTION, COMPOSED, NOT DERIVED.
@@ -628,6 +647,8 @@ function lineFor(
       cited_document: decision.cited_document ?? undefined,
     });
     suggested.suspected_system_issue = decision.suspected_system_issue ?? false;
+    // OI-SPLIT-GUIDE (UAC F26, F32): the planner's own REMARK rides with the approval too.
+    suggested.remark = remarkFor(contribution, decision);
     if (!contribution.project_line_id) return 'no_mirror';
     return confirmLineFrom(contribution.project_line_id, suggested);
   }
@@ -683,6 +704,8 @@ function lineFor(
     buy_qty: fromMinor(buy),
     buy_reason: buyReason,
     cs_note: decision?.cs_note?.trim() || undefined,
+    // OI-SPLIT-GUIDE (UAC F26): the planner's own REMARK for the email, when they typed one.
+    remark: remarkFor(contribution, decision),
     // Present only on the legacy single-number amendment, which is still an override.
     amend_reason: decision?.verdict === 'amended' ? decision.reason : undefined,
     // An approved or untouched line can still carry the flag (R10).
@@ -969,6 +992,35 @@ export function splitEditsToConfirm(
     seen.add(lineId);
     return true;
   });
+}
+
+/**
+ * OI-SPLIT-GUIDE (UAC A3, F2): per sales order one press confirms, the lines it covers: the
+ * orders and the per-line rule `confirmSummaryFor` counts by (`confirmScope`,
+ * `countsInPress`), once per line, so the guided Confirm's pages list exactly the lines N
+ * counts.
+ */
+export function confirmLinesByOrder(
+  contributions: BoardContribution[],
+  draft: BoardDraft,
+  batchBlockedSalesOrderIds: ReadonlySet<string> = new Set(),
+  options?: ConfirmScopeOptions,
+): Map<string, BoardContribution[]> {
+  const { orderIds } = confirmScope(contributions, draft, batchBlockedSalesOrderIds, options);
+  const out = new Map<string, BoardContribution[]>();
+  const seen = new Set<string>();
+  for (const contribution of contributions) {
+    if (!orderIds.has(contribution.sales_order_id)) continue;
+    const batchBlocked = batchBlockedSalesOrderIds.has(contribution.sales_order_id);
+    if (!countsInPress(contribution, draft, batchBlocked, options)) continue;
+    const id = contribution.project_line_id ?? contribution.key;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const lines = out.get(contribution.sales_order_id) ?? [];
+    lines.push(contribution);
+    out.set(contribution.sales_order_id, lines);
+  }
+  return out;
 }
 
 /** The orders one press confirms, and the rejected / changed tallies (`confirmSummaryFor`). */

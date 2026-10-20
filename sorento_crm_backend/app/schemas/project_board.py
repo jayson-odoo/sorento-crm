@@ -748,6 +748,13 @@ class BoardContribution(BaseModel):
     #: carry a draft with no decision (saved, not confirmed), a decision with no draft
     #: (confirmed - Confirm deletes the draft it promotes), or neither.
     draft: Optional[BoardLineDraft] = None
+    #: OI-SPLIT-GUIDE (UAC F3, F10): the purchasing email's own words for what the next
+    #: Confirm sends for this line: a saved draft's (`saved_line_remark`), "CANCEL ALL" for a
+    #: line the book cancelled with no draft, null otherwise.
+    saved_remark: Optional[str] = None
+    #: OI-SPLIT-GUIDE (UAC F32): the planner's own REMARK frozen in the active revision for this
+    #: line (null without one); a re-approve carries it unless the planner changes or clears it.
+    confirmed_remark: Optional[str] = None
     #: AC-DT-2: the same saver facts as `draft.saved_by` / `draft.saved_at`, flattened
     #: onto the line under the trail's own names for the tooltip. `None` when nobody
     #: has saved one, same as `draft` itself.

@@ -194,11 +194,13 @@ def test_b3_an_edit_after_the_confirm_reads_saved_not_confirmed(api, emails):
     assert view["status"] == "saved", view["status"]
 
 
-def test_b3_a_remark_only_edit_stays_confirmed(api, emails):
+def test_b3_a_remark_only_edit_reads_saved(api, emails):
+    """Owner hand test 4 (UAC F27) supersedes #1794's B3: a remark-only edit of an applied plan is a
+    split edit, so the view reads `saved`."""
     s, _po = _new_line_plan_applied(api, emails)
     _edit_480(s, [(14, D_480_NEW, "own", ""), (236, D_608, "new", "SITE HOLD"), (167, D_167, "new", "")])
     view = _one(_views(s, 480))
-    assert view["status"] == "confirmed", view["status"]
+    assert view["status"] == "saved", view["status"]
     assert [r["remark"] for r in view["rows"]] == ["", "SITE HOLD", ""]
 
 

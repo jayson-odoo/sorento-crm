@@ -59,6 +59,7 @@ from app.models.project_so import (
     ACK_LINKABLE,
     ACK_REJECTED,
     ACK_STATES,
+    DECISION_ACTIVE,
     INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
     INQUIRY_PLACED,
@@ -3441,6 +3442,22 @@ class OrderInquiryWorklistService:
             ]
         )
 
+    def _own_remarks(self, order_ids: Sequence[str]) -> Dict[str, str]:
+        """`mirror line id -> the planner's own REMARK` off these orders' ACTIVE revisions
+        (OI-SPLIT-GUIDE UAC F26, F27); a line with none is left out."""
+        if not order_ids:
+            return {}
+        out: Dict[str, str] = {}
+        for (snapshots,) in self.db.query(SOSupplyDecision.line_snapshots).filter(
+            SOSupplyDecision.project_sales_order_id.in_(list(order_ids)),
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        ):
+            for snapshot in snapshots or []:
+                remark = ((snapshot or {}).get("remark") or "").strip()
+                if remark and snapshot.get("project_line_id"):
+                    out[str(snapshot["project_line_id"])] = remark
+        return out
+
     def _with_splits(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """OI-LINE-SPLIT (UAC D2, AC-G7): a line splits touch (split itself, or other lines'
         splits sit on it) prints its plan rows (`line_plans`), the same rows as the OI email:
@@ -3466,6 +3483,14 @@ class OrderInquiryWorklistService:
                 .all()
             }
         )
+        # OI-SPLIT-GUIDE (UAC F27): a row with no split plan prints the planner's own REMARK
+        # frozen with its line in the active revision (`ConfirmLine.remark`), as the email
+        # does; one read for the whole export.
+        own_remarks = self._own_remarks(orders)
+
+        def plain(row: Dict[str, Any]) -> Dict[str, Any]:
+            return {**row, "split_remark": own_remarks.get(str(row.get("so_line_id") or ""), "")}
+
         service = LineSplitService(self.db)
         facts = service._facts_for(ProjectSalesOrderLine.project_sales_order_id.in_(orders))
         # AC-G13: only a line bought whole prints its plan; a line partly from stock prints
@@ -3476,7 +3501,7 @@ class OrderInquiryWorklistService:
         }
         stored = [split for f in facts.values() for split in f.splits]
         if not stored:
-            return rows
+            return [plain(row) for row in rows]
         sits = service.effective_sits_on(stored)
         plans = line_plans(facts, sits, {target for target in sits.values() if target})
         out: List[Dict[str, Any]] = []
@@ -3485,7 +3510,7 @@ class OrderInquiryWorklistService:
             line_id = str(row.get("so_line_id") or "")
             plan = plans.get(line_id)
             if plan is None or not plan.involved:
-                out.append({**row, "split_remark": ""})
+                out.append(plain(row))
                 continue
             if line_id in printed:
                 continue

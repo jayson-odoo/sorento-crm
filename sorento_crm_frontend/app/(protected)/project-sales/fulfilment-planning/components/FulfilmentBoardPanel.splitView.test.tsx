@@ -134,6 +134,7 @@ vi.mock('@/services/pendingActionService', () => ({
 }));
 
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
+import { walkConfirmGuide } from '@/test-mocks/confirmGuide';
 import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsupport__/boardFixture';
 import { ownerSavedCase } from '@/test-mocks/lineSplitSheetKit';
 import { MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE } from '../../_shared/__mocks__/planningChanges';
@@ -213,6 +214,9 @@ const TWO_ORDERS = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  getLineSplits.mockImplementation((psoId: string) =>
+    Promise.resolve({ pso_id: psoId, so_number: psoId, customer: null, project: null, lines: [] }),
+  );
   previewConfirmMany.mockImplementation((body: { orders: { pso_id: string; lines: unknown[] }[] }) =>
     Promise.resolve({
       results: body.orders.map((order) => ({
@@ -285,7 +289,7 @@ describe('A4: Confirm posts the order of a split-edited line even with no line o
     renderPanel();
     await screen.findByTestId('fulfilment-board-matrix');
     await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
-    fireEvent.click(screen.getByTestId('board-confirm'));
+    await walkConfirmGuide();
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     const [body] = confirmMany.mock.calls[0];
@@ -415,7 +419,7 @@ describe('review round 3 (UAC A12): a pending AutoCount batch on OTHER lines doe
     expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)');
     expect(screen.getByText('Split edits to confirm: line 2 SRTWCX-OTHER-ITEM')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
-    fireEvent.click(screen.getByTestId('board-confirm'));
+    await walkConfirmGuide();
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     const [body] = confirmMany.mock.calls[0];
     const sent = body.orders.find((order: { pso_id: string }) => order.pso_id === 'pso-so-381895');

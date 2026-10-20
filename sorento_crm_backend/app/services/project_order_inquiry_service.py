@@ -240,8 +240,9 @@ def whole_buy_line_ids(
 
 def split_plan_key(splits: Sequence[Any]) -> List[str]:
     """A saved split plan as the decision snapshot records it (AC-G16): its base and each
-    split's qty, date, line it sits on and cancel, never its remark (a remark-only edit is the
-    same plan)."""
+    split's qty, date, line it sits on and cancel, and (OI-SPLIT-GUIDE UAC F27) its remark
+    when it has one: a remark-only edit is an edit the next Confirm tells. A split with no
+    remark spells as before, so a plan stamped before the remark counted still matches."""
     if not splits:
         return []
     first = splits[0]
@@ -249,6 +250,7 @@ def split_plan_key(splits: Sequence[Any]) -> List[str]:
     return [base] + sorted(
         f"{_qty_str(_dec(s.qty))}@{s.delivery_date.isoformat() if s.delivery_date else ''}"
         f"@{s.sits_on_line_id or ''}@{'cancel' if s.is_cancel else ''}"
+        + (f"@{(s.remark or '').strip()}" if (getattr(s, 'remark', None) or '').strip() else '')
         for s in splits
     )
 
@@ -574,6 +576,76 @@ def saved_line_remark(snapshot: Mapping[str, Any]) -> Tuple[str, Optional[str]]:
     return remark, parts[0][1]
 
 
+def saved_draft_remark(
+    decision: Optional[Mapping[str, Any]],
+    *,
+    location: Optional[str] = None,
+    codes: Optional[Mapping[str, str]] = None,
+    spo_numbers: Sequence[str] = (),
+    buy_origin: Optional[str] = None,
+    withdraws_raised: bool = False,
+) -> Optional[str]:
+    """OI-SPLIT-GUIDE (UAC F3, F11): what the purchasing email will say for a line whose
+    decision is SAVED but not confirmed yet, in the email's own words (`saved_line_remark`,
+    one function): the board's draft (`so_supply_decision_drafts.decision`) laid out the way
+    `ProjectSupplyService._snapshot` freezes a confirmed line's composition (reserve, incoming,
+    borrow, buy, in that order). `codes` names a reserve's or borrow's warehouse by id when the
+    draft carries no code; `spo_numbers` are the SPOs arriving in time at the line's own
+    location (`_facts_for`'s timely rule), which the email prints for incoming stock; a
+    `local` `buy_origin` reads LOCAL BUY, as the email marks it. A saved Cancel SO reads
+    CANCEL, as the email's cancelled-line line does. A saved Reject that `withdraws_raised`
+    (a confirmed line whose row the press cancels: raised, or placed / partly linked with
+    cascade-only links) is a withdrawal told with a `cancelled` handover, whose word is
+    `handover_remark("cancelled", ...)` (UAC F15, F20); any other Reject (nothing the press
+    cancels, e.g. a reserve-only line, UAC F17), or a draft with nothing composed, has no
+    words (`None`)."""
+    if not decision:
+        return None
+    verdict = decision.get("verdict")
+    if verdict == "cancelled":
+        return "CANCEL"
+    if verdict == "rejected":
+        return handover_remark("cancelled", None, None) if withdraws_raised else None
+    codes = codes or {}
+
+    def code_of(item: Mapping[str, Any], key: str) -> Optional[str]:
+        return item.get(key) or codes.get(str(item.get("warehouse_id") or "")) or None
+
+    components: List[Dict[str, Any]] = [
+        {
+            "kind": "reserve",
+            "qty": item.get("qty"),
+            "rung": item.get("rung"),
+            "source_location": code_of(item, "location"),
+        }
+        for item in decision.get("reserve") or []
+    ]
+    if _dec(decision.get("timely_spo_qty")) > _ZERO:
+        components.append({"kind": "timely_spo", "qty": decision.get("timely_spo_qty")})
+    components.extend(
+        {
+            "kind": "borrow",
+            "qty": item.get("qty"),
+            "rung": "supply_borrow" if item.get("supply_key") else None,
+            "supply_document": item.get("supply_document"),
+            "source_location": code_of(item, "warehouse_code"),
+        }
+        for item in decision.get("borrow") or []
+    )
+    if _dec(decision.get("buy_qty")) > _ZERO:
+        components.append({"kind": "buy", "qty": decision.get("buy_qty")})
+    remark, _location = saved_line_remark(
+        {
+            "components": components,
+            "order_back": bool(decision.get("order_back")),
+            "buy_origin": "local" if buy_origin == "local" else None,
+            "location": location,
+            "timely_spo_refs": [{"spo_number": number} for number in spo_numbers],
+        }
+    )
+    return remark or None
+
+
 def _saved_line_parts(
     snapshot: Mapping[str, Any],
 ) -> List[Tuple[str, Optional[str], Decimal, str]]:
@@ -647,7 +719,8 @@ def _decision_words(snapshot: Mapping[str, Any]) -> Tuple[str, ...]:
 
 def _saved_decision_key(snapshot: Mapping[str, Any]) -> Tuple[Any, ...]:
     """What makes two snapshots of one line the SAME decision for purchasing: the line's
-    quantity, date and product, and each part's kind, quantity, location and document. A
+    quantity, date and product, each part's kind, quantity, location and document, and the
+    planner's own REMARK (OI-SPLIT-GUIDE UAC F27: a remark-only change is still told). A
     shortfall of free stock is not in it: the email never tells one (owner, 14 Oct 2026)."""
     return (
         _dec(snapshot.get("open_qty")),
@@ -659,7 +732,14 @@ def _saved_decision_key(snapshot: Mapping[str, Any]) -> Tuple[Any, ...]:
             (words, location, qty)
             for words, location, qty, _key in _saved_line_parts(snapshot)
         ),
+        _own_remark(snapshot),
     )
+
+
+def _own_remark(snapshot: Optional[Mapping[str, Any]]) -> Optional[str]:
+    """OI-SPLIT-GUIDE (UAC F26, F27): the planner's own REMARK frozen with a saved line
+    (`ConfirmLine.remark`), else None: the email and Excel print it over the default words."""
+    return ((snapshot or {}).get("remark") or "").strip() or None
 
 
 def _borrow_donors(snapshot: Mapping[str, Any]) -> Tuple[Optional[str], ...]:
@@ -4504,6 +4584,16 @@ class ProjectOrderInquiryService:
         for line, now, before in saved:
             row_lines = told.get(str(line.id), [])
             unchanged = before is not None and _saved_decision_key(before) == _saved_decision_key(now)
+            own = _own_remark(now)
+            if own is not None and not unchanged:
+                # UAC F27: the planner's own words are the line's REMARK, told once in place
+                # of whatever its rows queued (`_queue_saved_line`'s explicit remark, as a
+                # Cancel SO is told); a remark-only change is a change.
+                self._queue_saved_line(
+                    pso_id, line, now, before, actor_user_id=actor_user_id, remark=own,
+                    keys=[key for _w, _l, _q, key in _saved_line_parts(now)],
+                )
+                continue
             if unchanged and _borrow_donors(before) != _borrow_donors(now):
                 # Only a Borrow's donor moved (owner, 13 Oct 2026, re-confirmed 14 Oct): a
                 # changed decision, told as its one line at the line's own location, never
@@ -6045,13 +6135,24 @@ class ProjectOrderInquiryService:
             # Crew ruling (a): AutoCount's growth already counts the qty the origin keeps.
             needs[target] = max(_dec(entries[target].get("buy_qty")) - min(qty, grew), _ZERO)
         # A line whose own row alone moved is told as its saved line, never its plan again.
-        acted_by_order[str(decision.project_sales_order_id)] = {
-            line_id for line_id, plan in acted.items() if not plan["own_rows"]
-        } | told
-        edited_by_order[str(decision.project_sales_order_id)] = self._applied_plan_edits(
-            decision,
-            {line_id: facts[line_id] for line_id, plan in acted.items() if not plan["own_rows"]},
+        # OI-SPLIT-GUIDE (UAC F27): a named line whose rows already are its plan but whose
+        # saved plan still differs from the applied one (a remark-only edit) moves nothing,
+        # yet its edited splits are told: purchasing reads the new remark.
+        remark_edits = self._applied_plan_edits(
+            decision, {line_id: facts[line_id] for line_id in standing if line_id in entries}
         )
+        acted_by_order[str(decision.project_sales_order_id)] = (
+            {line_id for line_id, plan in acted.items() if not plan["own_rows"]}
+            | told
+            | set(remark_edits)
+        )
+        edited_by_order[str(decision.project_sales_order_id)] = {
+            **self._applied_plan_edits(
+                decision,
+                {line_id: facts[line_id] for line_id, plan in acted.items() if not plan["own_rows"]},
+            ),
+            **remark_edits,
+        }
         return acted, needs, standing, waiting
 
     def _applied_plan_edits(self, decision: Any, facts: Mapping[str, Any]) -> Dict[str, List[str]]:
@@ -6064,7 +6165,8 @@ class ProjectOrderInquiryService:
             return {}
         from app.services.project_line_split_service import LineSplitService, split_plan_edited
 
-        recorded = LineSplitService(self.db).recorded_split_plans(
+        service = LineSplitService(self.db)
+        recorded = service.recorded_split_plans(
             [str(decision.project_sales_order_id)], before_revision=decision.revision_no
         )
         out: Dict[str, List[str]] = {}
@@ -6072,7 +6174,14 @@ class ProjectOrderInquiryService:
             applied = list((recorded.get(line_id) or {}).get("plan") or [])
             if not applied or not f.splits or f.pending:
                 continue
-            if split_plan_key(f.splits)[0] == applied[0] and split_plan_edited(f.splits, applied):
+            if split_plan_key(f.splits)[0] == applied[0] and split_plan_edited(
+                f.splits,
+                applied,
+                # COMPAT SHIM (OI-SPLIT-GUIDE UAC F30): the read of a pre-remark stamp.
+                lambda line_id=line_id: service.changed_after_stamp(
+                    line_id, (recorded.get(line_id) or {}).get("decision_id")
+                ),
+            ):
                 out[line_id] = applied
         return out
 
