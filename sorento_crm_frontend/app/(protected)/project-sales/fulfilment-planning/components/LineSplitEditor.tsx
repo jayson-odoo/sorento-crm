@@ -247,9 +247,9 @@ export function LineSplitEditor({
   active: boolean;
   focusLineId?: string;
   /**
-   * OI-SPLIT-GUIDE (UAC F13): the sheet lists only these lines (the ones a Confirm covers) and
-   * the lines their splits sit on, with no search and no "Split lines only" toggle, and a Save
-   * sends only those. Absent (the board gear): every line, as before.
+   * OI-SPLIT-GUIDE (UAC F13, F22): the sheet draws only these lines (the ones a Confirm covers)
+   * and the lines their splits sit on, with no search and no "Split lines only" toggle; a Save
+   * still sends every line. Absent (the board gear): every line drawn, as before.
    */
   onlyLineIds?: ReadonlySet<string>;
   /** OI-SPLIT-GUIDE (UAC F18): the purchasing email's words for an unsplit line's Remark. */
@@ -756,10 +756,10 @@ export function LineSplitEditor({
       cleaned = dropEmpty(cleaned, line.lineId) ?? cleaned;
     if (cleaned !== current.lines)
       commit({ lines: cleaned, history: [...current.history, current.lines] });
-    // OI-SPLIT-GUIDE (UAC F18): scoped, only the lines shown are saved; the rest stay as stored.
-    const shown = onlyLineIds ? new Set(visible.map((line) => line.lineId)) : null;
+    // OI-SPLIT-GUIDE (UAC F22): every line of the order, scoped or not; the scope only limits
+    // what is drawn, so an edit on a hidden line's row drawn under a shown line is never lost.
     save.mutate(
-      toPayload(shown ? cleaned.filter((line) => shown.has(line.lineId)) : cleaned),
+      toPayload(cleaned),
       {
         onSuccess: () => {
           if (stayAfterSave) {
