@@ -19,6 +19,7 @@ correctly" (AC-M1, AC-M2). It costs about two minutes and skips without a key.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 from pathlib import Path
@@ -1207,61 +1208,21 @@ def test_an_unsupported_file_is_refused_with_a_readable_reason(seeded, stored_do
     assert "PDF" in _message(caught.value)
 
 
-# ---------------------------------------------------------------- approval handshake
+# ---------------------------------------------------------------- one sign-off (Q1a)
 
 
-def test_approval_then_countersignature_by_a_second_person(seeded):
-    db, project, owner = seeded
-    service = ProjectPOExtractionService(db)
-    po = _po(db, project, owner, "HQ/26/01/041")
-    version = _version(db, po)
-    service.persist_pages(version, [_buimaco_like_page()])
-    service.accept_annotation(
-        annotation=service._annotations(version.id)[0], actor_user_id=owner
-    )
-    service.confirm_version(version=version, actor_user_id=owner)
+def test_approve_and_countersign_are_gone_confirm_is_the_only_sign_off():
+    """PM-SIMPLIFY Q1a: Approve and Countersign gated nothing (D2), so they are removed.
+    Confirm is the only sign-off a PO has."""
+    from app.api.v1.projects.po_intake import router
+    from app.services.project_po_extraction_service import ProjectPOExtractionService
 
-    service.approve_po(po=po, actor_user_id=owner)
-    assert po.status == "approved"
-
-    with pytest.raises(AppException) as caught:
-        service.countersign_po(po=po, actor_user_id=owner)
-    assert caught.value.status_code == 409
-
-    manager = _user(db, f"{MARKER} Manager")
-    service.countersign_po(po=po, actor_user_id=manager)
-    assert po.countersigned_by == manager
-
-
-def test_a_po_with_no_lines_cannot_be_approved(seeded):
-    db, project, owner = seeded
-    service = ProjectPOExtractionService(db)
-    po = _po(db, project, owner, "HQ/26/01/041")
-
-    with pytest.raises(AppException) as caught:
-        service.approve_po(po=po, actor_user_id=owner)
-    assert _code(caught.value) == "po_nothing_to_approve"
-
-
-def test_a_po_carrying_an_unconfirmed_document_cannot_be_approved(seeded):
-    """Approving a PO nobody has checked against the scan is what the confirm screen
-    exists to prevent. A hand-keyed PO with no documents is unaffected."""
-    db, project, owner = seeded
-    service = ProjectPOExtractionService(db)
-    po = _po(db, project, owner, "HQ/26/01/041")
-    version = _version(db, po)
-    service.persist_pages(version, [_buimaco_like_page()])
-    # Lines exist on the phase-1 PO from an earlier hand entry, so the "nothing to
-    # approve" guard would not fire on its own.
-    from app.services import project_po_service as po_svc
-
-    po_svc.upsert_line(
-        db, po=po, payload={"product_code": "SRTWC86", "unit_price": Decimal("1"), "quantity": 1}
-    )
-
-    with pytest.raises(AppException) as caught:
-        service.approve_po(po=po, actor_user_id=owner)
-    assert _code(caught.value) == "po_version_not_confirmed"
+    paths = {getattr(route, "path", "") for route in router.routes}
+    assert "/purchase-orders/{po_id}/approve" not in paths
+    assert "/purchase-orders/{po_id}/countersign" not in paths
+    assert "/purchase-order-versions/{po_version_id}/confirm" in paths
+    assert not hasattr(ProjectPOExtractionService, "approve_po")
+    assert not hasattr(ProjectPOExtractionService, "countersign_po")
 
 
 # ------------------------------------------------- what the confirm screen renders
@@ -1525,26 +1486,22 @@ def test_a_retry_after_a_failed_read_does_not_pin_progress_to_the_old_page_count
     assert len((version.extracted_json or {}).get("pages") or []) == 2
 
 
-def test_the_version_carries_the_approval_stamps(seeded):
+def test_the_version_still_reads_old_approval_stamps(seeded):
+    """AC-P3: stamps written before Q1a stay readable on the version."""
     db, project, owner = seeded
     service = ProjectPOExtractionService(db)
     po = _po(db, project, owner, "HQ/26/01/041")
     version = _version(db, po)
-    service.persist_pages(version, [_buimaco_like_page()])
-    service.accept_annotation(
-        annotation=service._annotations(version.id)[0], actor_user_id=owner
-    )
-    service.confirm_version(version=version, actor_user_id=owner)
 
     before = service.serialize_version(version)["purchase_order"]
     assert before["approved_at"] is None and before["countersigned_at"] is None
 
-    service.approve_po(po=po, actor_user_id=owner)
     manager = _user(db, f"{MARKER} Manager")
-    service.countersign_po(po=po, actor_user_id=manager)
+    po.approved_by, po.approved_at = owner, datetime.utcnow()
+    po.countersigned_by, po.countersigned_at = manager, datetime.utcnow()
+    db.flush()
 
     after = service.serialize_version(version)["purchase_order"]
-    assert after["status"] == "approved"
     assert after["approved_by_name"] == f"{MARKER} CONTACT AH"
     assert after["countersigned_by_name"] == f"{MARKER} Manager"
 

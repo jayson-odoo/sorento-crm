@@ -375,11 +375,13 @@ describe('filterOrphanHeadings', () => {
 // ---------------------------------------------------------------------------
 
 describe('menu.config - section headings', () => {
-  it('has exactly 6 headings in order', () => {
+  it('has exactly 7 headings in order', () => {
     const headings = MENU_SIDEBAR.filter((i) => i.heading).map((i) => i.heading);
     expect(headings).toEqual([
       'OVERVIEW',
       'SALES',
+      // Finance billing documents (PLAN-finance-billing-documents-27sep 3.5, UAC S2-1).
+      'FINANCE',
       'SUPPLY CHAIN',
       'CATALOGUE',
       'OPERATIONS',

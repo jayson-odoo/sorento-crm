@@ -395,6 +395,7 @@ async def create_po_line(
         validate_uuid_path(po_id, resource="Purchase order")
         po = po_svc.get_po(db, po_id)
         _project_for_edit(db, po.project_id, current_user)
+        po_svc.assert_hand_lines_editable(db, po=po)
         line = po_svc.upsert_line(
             db, po=po, payload=payload.model_dump(exclude_unset=True)
         )
@@ -423,6 +424,7 @@ async def update_po_line(
         validate_uuid_path(line_id, resource="Purchase order line")
         po = po_svc.get_po(db, po_id)
         _project_for_edit(db, po.project_id, current_user)
+        po_svc.assert_hand_lines_editable(db, po=po)
         line = _line_or_404(db, po_id, line_id)
         line = po_svc.upsert_line(
             db, po=po, payload=payload.model_dump(exclude_unset=True), line=line
@@ -448,6 +450,7 @@ async def delete_po_line(
         validate_uuid_path(line_id, resource="Purchase order line")
         po = po_svc.get_po(db, po_id)
         _project_for_edit(db, po.project_id, current_user)
+        po_svc.assert_hand_lines_editable(db, po=po)
         po_svc.delete_line(db, line=_line_or_404(db, po_id, line_id))
         db.commit()
         return {"success": True}

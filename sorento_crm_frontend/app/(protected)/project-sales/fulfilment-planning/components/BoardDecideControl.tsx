@@ -558,6 +558,7 @@ export function BoardDecideControl({
               {entry.separatorAfter && <DropdownMenuSeparator />}
             </React.Fragment>
           ))}
+          {/* OI-SPLIT-VIEW (UAC D2): "Split delivery" lives in the board gear, per order. */}
         </DropdownMenuContent>
       </DropdownMenu>
       {!embedded && selectedKeys.length > 0 ? (

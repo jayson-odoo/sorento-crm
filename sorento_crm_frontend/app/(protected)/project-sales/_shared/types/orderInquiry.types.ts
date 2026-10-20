@@ -414,6 +414,54 @@ export interface OrderInquiryListEnvelope {
  * screen and the file can be read side by side.
  */
 
+/** OI-LINE-SPLIT (UAC D3): one split of a row's SO line, as the Lines tab lists it. */
+export interface OrderInquiryLineSplit {
+  id: string;
+  qty: string;
+  delivery_date: string | null;
+  is_cancel: boolean;
+  /** REMAIN / DELAY / ADVANCE / CANCEL BALANCE against the line's base date. */
+  change: string;
+  sits_on_line_id: string | null;
+  /** What the screen prints for the line it sits on; the id is addressing only. */
+  sits_on_line_no: number | null;
+  remark: string;
+}
+
+/**
+ * OI-SPLIT-VIEW (UAC B2): one row of a line's split popup, a saved split or the AutoCount
+ * extra (`sits_on: 'extra'`). Quantities and dates are strings; `sits_on_line_no` is the
+ * AutoCount line number.
+ */
+export interface LineSplitViewRow {
+  qty: string;
+  delivery_date: string | null;
+  /** The email's REMARK word: ADVANCE / REMAIN / DELAY / CANCEL BALANCE / ORDER n. */
+  change: string;
+  sits_on: 'own' | 'line' | 'new' | 'extra';
+  sits_on_line_no: number | null;
+  remark: string;
+  is_cancel: boolean;
+  /** Not in the applied plan while the edit waits (UAC B4); `was_*` only when exact. */
+  changed: boolean;
+  was_qty: string | null;
+  was_date: string | null;
+}
+
+/** OI-SPLIT-VIEW (UAC B2 to B4): a split line as the popup reads it, the same value on the
+ * SO and OI reads (server `LineSplitService.split_views`); null on a line with no splits. */
+export interface LineSplitView {
+  status: 'confirmed' | 'saved' | 'autocount_changed';
+  revision_no: number | null;
+  confirmed_on: string | null;
+  base_qty: string;
+  base_date: string | null;
+  now_qty: string;
+  now_date: string | null;
+  total_qty: string;
+  rows: LineSplitViewRow[];
+}
+
 export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
   id: string;
   /** OI-BULK-RESERVE v4: the header this row belongs to; the Lines page commits per order inquiry. */
@@ -517,6 +565,13 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    * on every row before this plan.
    */
   line_cancelled?: boolean;
+  /**
+   * OI-LINE-SPLIT (UAC D3): the splits of this row's SO line, for the Lines tab's
+   * read-only expand; empty when the line is not split.
+   */
+  splits?: OrderInquiryLineSplit[];
+  /** OI-SPLIT-VIEW (UAC B1): the line's split popup; null when the line has no splits. */
+  split_view?: LineSplitView | null;
   /** `PLAN-oi-request-cs-reserve.md` 3.5 (AC-RS-20): `requested` while an open reserve
    * request row exists, `reserved` once CS has actually reserved something (and no open
    * request), `declined` when CS's latest answer was 0 (6e.4), else null. */

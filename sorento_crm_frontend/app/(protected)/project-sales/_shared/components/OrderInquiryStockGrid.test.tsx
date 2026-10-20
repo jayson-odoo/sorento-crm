@@ -31,6 +31,7 @@
  * needs updating to mock that resolver instead - flagged rather than guessed twice.
  */
 import React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -50,6 +51,11 @@ vi.mock('../../fulfilment-planning/components/CellStockTable', () => ({
 const getWarehousesMock = vi.fn();
 vi.mock('@/app/(protected)/inventory-management/warehouses/services/warehouseService', () => ({
   getWarehouses: (...args: unknown[]) => getWarehousesMock(...args),
+}));
+
+const useStockStatusMock = vi.fn<(...args: unknown[]) => Record<string, unknown>>(() => ({ data: undefined as unknown, isLoading: false }));
+vi.mock('@/components/stock-status/useStockStatus', () => ({
+  useStockStatus: (...args: unknown[]) => useStockStatusMock(...args),
 }));
 
 import { OrderInquiryStockGrid } from './OrderInquiryStockGrid';
@@ -137,5 +143,51 @@ describe('reviewer fix round: pool resolution must not lose the bare code behind
     // Must ask in a way that CAN still find BRW behind its own five sub-locations: a
     // bigger page, or a dedicated exact-code param - never the naive 5-row text search.
     expect(pageSize > 5 || hasExactCodeParam).toBe(true);
+  });
+});
+
+describe('STOCK-STATUS round 6 (AC-35): the OI line expand shows AutoCount\'s figures', () => {
+  it('reads AutoCount for the line\'s product and hands it to the stock table', async () => {
+    const status = { product_id: PRODUCT_ID, locations: [], incoming_pl: [], totals: {} };
+    useStockStatusMock.mockReturnValue({ data: status, isLoading: false });
+    render(<OrderInquiryStockGrid productId={PRODUCT_ID} location="BRW-BB" />);
+    await waitFor(() => expect(cellStockTableSpy).toHaveBeenCalled());
+    expect(useStockStatusMock.mock.calls[0][0]).toBe(PRODUCT_ID);
+    expect(cellStockTableSpy.mock.calls.at(-1)?.[0]).toMatchObject({ autoCount: status });
+  });
+
+  it('asks AutoCount nothing for a row with no location', () => {
+    render(<OrderInquiryStockGrid productId={PRODUCT_ID} location={null} />);
+    expect(useStockStatusMock.mock.calls.every((call) => call[1] === false)).toBe(true);
+  });
+});
+
+
+describe('STOCK-GROUPBY (AC-20): the OI line expand carries the Group by bar', () => {
+  it('AC-20 the table the grid draws, given the AutoCount read, shows the group-by-bar', async () => {
+    const status = {
+  product_id: 'prod-1',
+  item_code: 'ITEM-1',
+  locations: [{ warehouse_id: 'wh-BRW-BB', warehouse_code: 'BRW-BB', warehouse_name: 'BRW-BB', is_active: true, on_hand: 5, so_qty: 0, po_qty: 0, spo_qty: 0, forecast: 5 }],
+  totals: { on_hand: 5, so_qty: 0, po_qty: 0, spo_qty: 0, forecast: 5, incoming_pl: 0, forecast_incl_pl: 5 },
+  incoming_pl: [],
+  sales_orders: [],
+  purchase_orders: [],
+  spos: [],
+};
+    useStockStatusMock.mockReturnValue({ data: status, isLoading: false });
+    render(<OrderInquiryStockGrid productId={PRODUCT_ID} location="BRW-BB" />);
+    await waitFor(() => expect(cellStockTableSpy).toHaveBeenCalled());
+    const props = cellStockTableSpy.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(props.autoCount).toBe(status);
+    const actual = await vi.importActual<
+      typeof import('../../fulfilment-planning/components/CellStockTable')
+    >('../../fulfilment-planning/components/CellStockTable');
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <actual.CellStockTable {...(props as unknown as React.ComponentProps<typeof actual.CellStockTable>)} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByTestId('group-by-bar')).toBeInTheDocument();
   });
 });

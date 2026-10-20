@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { Check, ChevronDown, ChevronRight, ExternalLink, Info, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, ExternalLink, Info, Split, X } from 'lucide-react';
 import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
 import { ConsignmentBadge } from '@/app/(protected)/scm/lib/docType';
 import { Button } from '@/components/ui/button';
@@ -59,6 +59,7 @@ import { canQuickSave } from '../../_shared/lib/boardAmend';
 import { soLineLabel } from '../../_shared/lib/fulfilmentBoard';
 import { BoardDecisionPill, isPreMarkOnly } from './BoardDecisionPill';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
+import { useLineSplitOpener } from './lineSplitOpener';
 import { BoardVerdictActions } from './BoardVerdictActions';
 import { BoardTrailPopover, ItemFlagChips } from './BoardTrailPopover';
 import {
@@ -66,6 +67,7 @@ import {
   useDecisionRowExpansion,
 } from './decisionRowExpansion';
 import { CellStockTable } from './CellStockTable';
+import { useStockStatus } from '@/components/stock-status/useStockStatus';
 import type {
   BoardCell,
   BoardContribution,
@@ -305,6 +307,19 @@ export function BoardCellBreakdownDialog({
     [cell.contributions, openKey],
   );
   const shownLocations = shownContribution?.locations ?? cell.locations;
+  /**
+   * STOCK-STATUS round 6 (UAC AC-35): AutoCount's read of the cell's one product, so the Stock
+   * tab reads AutoCount's figures. A cell whose lines name more than one product (a pivot) has
+   * no single position and reads nothing; a failed read leaves today's table.
+   */
+  const stockProductIds = new Set(
+    [
+      ...cell.contributions.map((entry) => entry.product_id),
+      ...shownLocations.map((entry) => entry.product_id),
+    ].filter(Boolean),
+  );
+  const stockProductId = stockProductIds.size === 1 ? ([...stockProductIds][0] as string) : null;
+  const autoCount = useStockStatus(stockProductId);
 
   /**
    * The lightbox's own navigation (S3, PLAN-scm-planning-feedback-31aug): a jump to "This
@@ -487,6 +502,7 @@ export function BoardCellBreakdownDialog({
     .filter(Boolean)
     .join(' · ');
 
+  const splitOpener = useLineSplitOpener();
   const columns = React.useMemo<ColumnDef<BoardContribution>[]>(
     () => [
       // The repo's own select column, the one the users list uses, so the header select-all and
@@ -992,12 +1008,31 @@ export function BoardCellBreakdownDialog({
                 onDecide={(next) => onDecide(key, next)}
                 onChange={() => openRow(key)}
               />
+              {/* OI-LINE-SPLIT (UAC A1): the grid's own per-line way into the split view. */}
+              {splitOpener?.canOpen(contribution) ? (
+                <Button
+                  type="button"
+                  mode="icon"
+                  variant="ghost"
+                  size="sm"
+                  className="shrink-0"
+                  title="Split delivery"
+                  aria-label={`Split delivery for ${contribution.so_number} line ${contribution.line_no}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    splitOpener.open(contribution);
+                  }}
+                >
+                  <Split className="size-3.5" aria-hidden />
+                </Button>
+              ) : null}
             </div>
           );
         },
         // AC-C2: the pill and its icons, on one line at 375px - the column was 140 for a
-        // pill and at most one icon. Resizable like every other column here.
-        size: 200,
+        // pill and at most one icon. Resizable like every other column here. +28 for the
+        // split icon inside the board (OI-LINE-SPLIT).
+        size: splitOpener ? 228 : 200,
         minSize: 170,
         enableSorting: false,
         meta: { headerTitle: 'Decision' },
@@ -1011,6 +1046,7 @@ export function BoardCellBreakdownDialog({
       onDecide,
       openRow,
       setDirty,
+      splitOpener,
     ],
   );
 
@@ -1299,6 +1335,7 @@ export function BoardCellBreakdownDialog({
                 filterText={stockSearch.debouncedValue}
                 landOnMount
                 poolSharePct={poolSharePct}
+                autoCount={autoCount.data ?? null}
               />
             </TabsContent>
 

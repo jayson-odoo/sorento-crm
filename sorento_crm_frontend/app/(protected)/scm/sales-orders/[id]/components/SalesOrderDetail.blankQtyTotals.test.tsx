@@ -255,6 +255,14 @@ beforeEach(() => {
   searchParams = new URLSearchParams();
 });
 
+/** The Outstanding cell's index, read off the header so the Split column cannot shift it. */
+function outstandingIndex(): number {
+  const heads = screen.getAllByRole('columnheader').map((h) => (h.textContent ?? '').trim());
+  const at = heads.findIndex((t) => t === 'Outstanding qty');
+  expect(at).toBeGreaterThan(-1);
+  return at;
+}
+
 describe('SalesOrderDetail - a blank quantity is pending, never 0', () => {
   it('shows - in the line Outstanding cell and in every total that includes it', () => {
     open();
@@ -268,8 +276,8 @@ describe('SalesOrderDetail - a blank quantity is pending, never 0', () => {
 
     const row = cellTexts(tr);
     // Outstanding was 16; it must not become 0 (nor stay 16).
-    // Columns: ... Qty ordered, Qty delivered, Qty cancelled, Outstanding (index 6).
-    expect(row[6]).toBe('-');
+    // Outstanding is found by its header name (the Split column shifts fixed indexes).
+    expect(row[outstandingIndex()]).toBe('-');
     expect(row).toContain('-');
     const foot = footerTexts();
     // Qty ordered and Outstanding footers were 46; neither may read 30 (blank counted as 0).
@@ -296,7 +304,7 @@ describe('SalesOrderDetail - a negative quantity is pending too (round 2, S-F)',
     const tr = rowOf('SRTBASIN16');
     fireEvent.change(qty, { target: { value: '-5' } });
     const row = cellTexts(tr);
-    expect(row[6]).toBe('-');
+    expect(row[outstandingIndex()]).toBe('-');
     const foot = footerTexts();
     expect(foot).not.toContain('25');
     expect(foot).not.toContain('-5');

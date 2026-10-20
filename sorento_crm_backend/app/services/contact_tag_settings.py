@@ -307,6 +307,7 @@ def _v_agent_fields(db, cat, section, value):
     if not isinstance(value, list):
         raise _bad(section, "must be a list")
     codes = {c for c, _ in cat.agents().values()}
+    seen: set[tuple[str, str, str]] = set()
     for entry in value:
         if not isinstance(entry, dict) or set(entry) != {"agent_code", "resource", "field_key", "is_allowed"}:
             raise _bad(section, "each entry needs agent_code, resource, field_key and is_allowed")
@@ -324,6 +325,11 @@ def _v_agent_fields(db, cat, section, value):
             raise _bad(entry["field_key"], f"{entry['resource']}.{entry['field_key']} is not a gated field")
         if owner != entry["agent_code"]:
             raise _bad(entry["field_key"], f"belongs to agent '{owner}', not '{entry['agent_code']}'")
+        # One entry per field: a second one, even with the other is_allowed, is a row nobody can remove.
+        key = (entry["agent_code"], entry["resource"], entry["field_key"])
+        if key in seen:
+            raise _bad(entry["field_key"], "listed twice")
+        seen.add(key)
 
 
 def _v_media(db, cat, section, value):
@@ -590,8 +596,10 @@ def _label(cat: Catalog, section: str, key: str) -> str:
     if section == "agents":
         return f"Agent: {cat.agents().get(key, ('', 'removed agent'))[1]}"
     if section == "agent_fields":
+        from app.services.field_access import field_label
+
         code, _resource, field_key = key.split(".", 2)
-        return f"{cat.agent_name_by_code(code)}: {field_key}"
+        return f"{cat.agent_name_by_code(code)}: {field_label(field_key)}"
     if section == "media":
         modality, field = key.split(".", 1)
         what = {"is_allowed": "access", "monthly_limit": "monthly limit",
@@ -984,14 +992,14 @@ def settings_catalog(db: Session, can: Callable[[str], bool], is_superadmin: Cal
     if is_superadmin():
         out["companies"] = opts("companies")
     if any(can(s) for s in _AGENTS_READ):
-        from app.services.field_access import GATED_FIELDS
+        from app.services.field_access import GATED_FIELDS, field_label
 
         out["agents"] = sorted(
             ({"value": i, "label": n, "code": c} for i, (c, n) in cat.agents().items()),
             key=lambda o: o["label"].lower(),
         )
         out["agent_fields"] = [
-            {"agent_code": owner, "resource": resource, "field_key": field_key}
+            {"agent_code": owner, "resource": resource, "field_key": field_key, "label": field_label(field_key)}
             for resource, fields in GATED_FIELDS.items()
             for field_key, owner in fields.items()
         ]

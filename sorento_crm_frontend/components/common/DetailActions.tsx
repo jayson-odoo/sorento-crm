@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import type { ReactNode, Ref } from 'react';
 import { cn } from '@/lib/utils';
 import ListPager, { type ListPagerProps } from './ListPager';
 import { DetailActionsMenu } from './DetailActionsMenu';
@@ -43,6 +43,8 @@ export interface DetailActionsProps {
   /** Dialogs the actions need mounted, from `use<Entity>Actions`. */
   dialogs?: ReactNode;
   gearLabel?: string;
+  /** The gear button (`DetailActionsMenu`'s `triggerRef`), for a dialog an action opens. */
+  gearRef?: Ref<HTMLButtonElement>;
   className?: string;
   /**
    * Disables the gear trigger while staying mounted (the pager's own `disabled`
@@ -74,6 +76,7 @@ export default function DetailActions({
   pendingAction,
   dialogs,
   gearLabel = 'Actions',
+  gearRef,
   className,
   disabled,
   'data-testid': testId,
@@ -91,6 +94,7 @@ export default function DetailActions({
           trigger="gear"
           ariaLabel={gearLabel}
           disabled={disabled}
+          triggerRef={gearRef}
         />
       )}
       {!actions && gear}
