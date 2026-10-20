@@ -45,10 +45,11 @@ decision draft in `lines`, `rejected_line_ids`, `cancelled_lines`) or a saved sp
 - C1. Entering Review (first time, and again after Back) runs the existing dry run with exactly the body
   today's Confirm press builds (`previewConfirmMany`, `preview: true`); a loading state shows while it
   runs. No new endpoint.
-- C2. Per order, a table of the dry run's `inquiry_rows`: line, item code, location, qty, new qty,
-  delivery date, new date, remark (the email's words, e.g. ORDER / CHANGE QUANTITY / CHANGE DATE / CANCEL),
-  and its `transfers` (kind, qty, from, to) when there are any. An order with no row says "Nothing to send
-  to purchasing".
+- C2. Per order, a table of the dry run's `inquiry_rows`: line, item code, location, qty, delivery date,
+  remark (the row's verb in the words the board already prints; a row the press retires, `state`
+  cancelled, reads CANCEL), and its `transfers` (kind, qty, from, to) when there are any. An order with no
+  row says "Nothing to send to purchasing". (No "new qty"/"new date" columns: the dry run row has one qty
+  and one date, tester finding 20 Oct.)
 - C3. Every row Confirm will send is listed, INCLUDING rows from lines nobody saved: a line the AutoCount
   book cancelled (counted with no decision, `fulfilmentBoard.ts:1017-1019`; batch orders auto-accept it,
   `planning_change_service.py:4428-4433`), and a covered line whose AutoCount qty or date drifted (dropped
@@ -63,7 +64,10 @@ decision draft in `lines`, `rejected_line_ids`, `cancelled_lines`) or a saved sp
   today.
 - C6. The dry run fails (network or server): Review shows the error with Retry and Back; the Confirm step
   cannot be reached.
-- C7. Every order refused: Review says nothing can be confirmed; Confirm cannot be reached.
+- C7. Every order refused: Review shows each refusal reason (the same words today's result card prints)
+  and that nothing can be confirmed; Confirm cannot be reached; Cancel closes the guide and nothing is
+  posted, so no result card appears (lead ruling 20 Oct: the reason moves from the result card into
+  Review). Some refused, some ok: Confirm is reachable and today's result card still lists the refusals.
 
 ## D. Step 3 Confirm
 - D1. A summary line ("2 orders: SO417636 (1 row), SO424910 (9 rows). Nothing has been sent yet.") and one

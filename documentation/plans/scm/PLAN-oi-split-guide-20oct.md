@@ -57,7 +57,9 @@ BE (small; only what Review needs):
    only on a row whose line the press did NOT name (not in `lines`, `rejected_line_ids`, `cancelled_lines`,
    and not a split edit `_with_split_edits` added); null otherwise. Cause from the server's own facts
    (book cancel flag; the same comparison `_carry_snapshot_has_drifted` makes), one rule. Mirror the field
-   in the FE type.
+   in the FE type. Also `PreviewInquiryRow.state` = the row's state after the press (`raised`,
+   `cancelled`, ...; `INQUIRY_*`, models/project_so.py:738-748) so Review can print CANCEL for a retired
+   row (tester finding 20 Oct: today the preview row carries only the verb).
 
 FE:
 3. `ConfirmGuideDialog` (new, fulfilment-planning/components/): dialog + `WizardSteps`; pages = split
@@ -78,7 +80,8 @@ number), `confirm-guide-split-edit` (the "Split delivery <SO>" CTA), `confirm-gu
 `confirm-guide-review-row`, `confirm-guide-autocount` (the label inside a row), `confirm-guide-nothing`
 ("Nothing to send to purchasing"), `confirm-guide-refused`, `confirm-guide-review-error` +
 `confirm-guide-review-retry`, `confirm-guide-confirm` (step 3 button), `confirm-guide-next`,
-`confirm-guide-back`, `confirm-guide-cancel`. The read-only sheet keeps its #1794 test ids inside a page.
+`confirm-guide-back`, `confirm-guide-cancel`. Review to Confirm uses `confirm-guide-next`; step 3 has no
+Next. The read-only sheet keeps its #1794 test ids inside a page.
 Existing board tests that press `board-confirm` and expect an immediate post now walk the guide (A1);
 the tester updates them in the red commit, keeping their assertions on the posted body.
 
