@@ -167,8 +167,8 @@ is going to the ordering wait, which is a different fix.
   is left pending.
 - **C** (`llm_provider.py`): one `OpenAI` client per (class, key, timeout, retries, base_url), shared across
   threads under a lock, capped at 32.
-- Tests: `tests/test_chat_latency_llm_budget.py`, 12 tests (A red without the gate, B and C red before the
-  change).
+- Tests: `tests/test_chat_latency_llm_budget.py`, 17 tests (A red without the gate or its shape guards, B and
+  C red before the change, fork safety red without the hook).
 
 Measured on the real engine (sandbox, gpt-4o, parser stubbed):
 
@@ -189,6 +189,7 @@ Accepted risks (reviewer, 20 Oct), for crew and EVAL-BENCH to weigh:
 - **A looks at tokens; the model reads the whole `query`.** If the parser emits only the dead code as an
   entity and leaves other words of the message un-tokenised ("SRT9999 matt blk wall hung basin" with one
   entity `SRT9999`), the gate skips the model and those words get only the deterministic read. This is the
-  crew rule as written ("every still-unanswered token"); the EVAL-BENCH spec replay is where it would show.
+  crew rule as written ("every still-unanswered token"). Pre-merge gate (crew, 20 Oct): the EVAL-BENCH local
+  replay of the code_lookup + spec TRAIN items with recorded calls, which is where it would show.
 - **C is fork-safe:** a forked child clears the inherited clients (`os.register_at_fork`), the same rule
   `worker.py` applies to DB sockets.
