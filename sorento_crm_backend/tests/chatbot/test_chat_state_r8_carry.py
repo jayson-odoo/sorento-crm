@@ -20,6 +20,7 @@ from app.services.chatbot.turn import chat_state
 from app.services.chatbot.turn.state import Focus, State
 from tests.chatbot._turn_helpers import entity, verdict
 from tests.chatbot.test_chat_state_apply import _op
+from tests.chatbot.test_engine import stub_access  # noqa: F401 - fixture used by name
 
 DOMAINS = ["inventory", "incoming", "order", "sales", "product_attachment", "promotion"]
 KINDS = ["product", "customer", "brand", "warehouse", "tier", "order", "specification", "category"]
@@ -283,21 +284,131 @@ def test_r8_chain_t8_then_t9_the_second_turn_starts_from_the_first_output():
     assert s9["tier"] == ["office"], s9
 
 
-# ---------------------------------------------------------------- AC-R8-8 (state off, byte-identical)
-def test_r8_8_state_off_new_ask_drops_still_fire_and_held_family_brand_branch_stands():
-    import inspect
+# ---------------------------------------------------------------- engine level (EngineConsole, live shape)
+HELD3 = ["SRTWC286-SH", "SRTWC286-SH-150", "SRTWC286-SH-200"]  # stand-ins for the 3 RG basins
 
-    from app.services.chatbot.head import held_family
-    from app.services.chatbot.turn import apply as apply_mod
 
-    src = inspect.getsource(apply_mod)
-    for rule in ("new_ask_drops_tier", "new_ask_drops_date_window", 'f"new_ask_drops_{kind}"', 'f"new_ask_drops_{extra_kind}"'):
-        assert rule in src, rule
-    # state off: no Subject, held products reach the seam exactly as before
+def _seed_brands(session_factory, c):
+    """Real brand rows (SRT holds the stand-in basins, SORENTO exists) so `set brand` validates."""
+    import uuid
+
+    from app.models.product import Brand, Product
+    from tests.chatbot._r9_engine_console import SORENTO
+
+    db = session_factory()
+    db.info["company_scope"] = frozenset({SORENTO})
+    ids = {}
+    for code, name in (("SRT", "SRT"), ("SORENTO", "Sorento")):
+        row = Brand(id=str(uuid.uuid4()), brand_code=code, brand_name=name, company_id=SORENTO)
+        db.add(row)
+        db.flush()
+        ids[code] = row.id
+    for k in HELD3:
+        db.query(Product).filter(Product.id == c.uuid_of[k]).update({"brand_id": ids["SRT"]})
+    db.commit()
+
+
+def _held_console(session_factory, monkeypatch, stub_access, phone, *, tier=False, extra=False):
+    from app.services.chatbot.lanes.business import services as business_services
+    from tests.chatbot.test_chat_state_r7_last_referent import _with_state_block
+    from tests.chatbot.test_quoted_reply_engine import _console, _focus_wire, _store_turn
+
+    c = _console(session_factory, monkeypatch, stub_access, phone)
+    _seed_brands(session_factory, c)
+    monkeypatch.setattr(business_services, "_access_types",
+                        lambda db, default_space_id=None: (lambda **_: [{"name": "Sorento Dealer"}]))
+    _with_state_block(monkeypatch)
+    focus = _focus_wire(c, HELD3[0])
+    focus["products"] = [{"raw": k, "canonical_code": k, "uuid": c.uuid_of[k], "hint": "product"} for k in HELD3]
+    focus["warehouse"] = [{"raw": "frg", "hint": "warehouse"}]
+    if tier:
+        focus["tier"] = ["sorento_dealer"]
+    if extra:
+        focus["extra"] = {"order": [{"raw": "SO0001", "hint": "order"}]}
+    _store_turn(c, reply_text="held", focus=focus, turn_no=1, age_s=900)
+    c.state = {"focus": focus, "open_question": None}
+    return c
+
+
+def _promo_args(c):
+    return [a for n, a in c.tool_calls if n == "crm_marketing_promotions_list"]
+
+
+def _wire_ids(args):
+    return [pid for a in args for pid in (a.get("product_ids") or [])]
+
+
+def test_r8_engine_t8_a_brand_flyer_switch_does_not_ride_the_held_basins_or_frg(session_factory, monkeypatch, stub_access):
+    from tests.chatbot._r9_engine_console import reply
+
+    c = _held_console(session_factory, monkeypatch, stub_access, "+60900000881")
+    out = c.say("send me srt a3 flyer", reply(
+        domain_hint="promotion", intent_hint=None, contains_flyer=True, access_levels=["sorento_dealer"],
+        entities=[_brand()], state_changes=[_op("switch_domain"), _op("set", "brand")]))
+    assert "(promotion)" not in out, f"a kind pick on a held code: {out[:300]}"
+    assert "Location: frg" not in out, f"the stale warehouse filtered the reply: {out[:300]}"
+    assert not _wire_ids(_promo_args(c)), ("held product ids reached the promotions fetch", _promo_args(c))
+
+
+def test_r8_engine_t9_after_t8_the_promotions_fetch_carries_no_held_product_ids(session_factory, monkeypatch, stub_access):
+    from tests.chatbot._r9_engine_console import reply
+
+    c = _held_console(session_factory, monkeypatch, stub_access, "+60900000882", tier=True, extra=True)
+    c.say("send me srt a3 flyer", reply(
+        domain_hint="promotion", intent_hint=None, contains_flyer=True, access_levels=["sorento_dealer"],
+        entities=[_brand()], state_changes=[_op("switch_domain"), _op("set", "brand")]))
+    c.tool_calls.clear()
+    c.say("send me sorento a3 flyer", reply(
+        domain_hint="promotion", intent_hint=None, contains_flyer=True, access_levels=["sorento_dealer"],
+        entities=[_brand("sorento", "SORENTO")],
+        state_changes=[_op("keep"), _op("set", "brand"), _op("set", "tier"), _op("switch_domain")]))
+    args = _promo_args(c)
+    assert args, ("the promotions tool was never called", [n for n, _ in c.tool_calls])
+    assert not _wire_ids(args), ("held product_ids rode the promotions fetch", args)
+
+
+# ---------------------------------------------------------------- AC-R8-8 (state off, behavioural)
+def test_r8_8_state_off_a_new_ask_still_drops_tier_and_extra(session_factory, monkeypatch, stub_access):
+    """State block OFF (console default), no state_changes: apply.py's new_ask_drops_* fire as today."""
+    from tests.chatbot._r9_engine_console import product, stock
+    from tests.chatbot.test_quoted_reply_engine import _console, _focus_wire, _store_turn
+
+    c = _console(session_factory, monkeypatch, stub_access, "+60900000883")
+    focus = _focus_wire(c, HELD3[0])
+    focus["tier"] = ["sorento_dealer"]
+    focus["extra"] = {"attachment_type": [{"raw": "brochure", "hint": "attachment_type"}]}
+    _store_turn(c, reply_text="held", focus=focus, turn_no=1, age_s=900)
+    c.state = {"focus": focus, "open_question": None}
+    c.say("check stock SRTWC287-S-150", stock(product("SRTWC287-S-150"), entity_op="replace"))
+    fired = [r for t in c.traces for r in t.rules_fired]
+    assert "new_ask_drops_tier" in fired and "new_ask_drops_attachment_type" in fired, fired
+
+
+def test_r8_8_state_off_held_family_brand_only_branch_still_receives_the_held_products(
+    session_factory, monkeypatch, stub_access
+):
+    import dataclasses
+
     from app.services.chatbot import engine
+    from app.services.chatbot.head import held_family, parser as parser_mod
+    from tests.chatbot._r9_engine_console import reply
+    from tests.chatbot.test_quoted_reply_engine import _console, _focus_wire, _store_turn
 
-    off = State(focus=_focus(), turn_no=3)
-    assert off.subject is None
-    v = verdict(entities=[_brand()])
-    assert len(engine._held_for_the_seams(off, v, for_family=True)) == 3
-    assert "brands" in inspect.getsource(held_family.narrow_held_family)
+    c = _console(session_factory, monkeypatch, stub_access, "+60900000884")
+    real_cfg = parser_mod.resolve_config
+    monkeypatch.setattr(parser_mod, "resolve_config", lambda db, *, current_date, override_version_id=None: dataclasses.replace(
+        real_cfg(db, current_date=current_date, override_version_id=override_version_id), closed_lists=True))
+    focus = _focus_wire(c, HELD3[0])
+    focus["products"] = [{"raw": k, "canonical_code": k, "uuid": c.uuid_of[k], "hint": "product"} for k in HELD3]
+    _store_turn(c, reply_text="held", focus=focus, turn_no=1, age_s=900)
+    c.state = {"focus": focus, "open_question": None}
+    seen = []
+    real = held_family.narrow_held_family
+
+    def spy(db, v, held):
+        seen.append([p.get("canonical_code") for p in held])
+        return real(db, v, held)
+
+    monkeypatch.setattr(held_family, "narrow_held_family", spy)
+    c.say("srt ones", reply(entities=[_brand()]))
+    assert seen and seen[0] == HELD3, ("state off: held_family must still get the held products", seen)
