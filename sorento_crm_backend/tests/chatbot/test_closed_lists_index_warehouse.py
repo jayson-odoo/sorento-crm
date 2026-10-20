@@ -44,8 +44,8 @@ def _seed(session_factory) -> None:
     for code in WAREHOUSES:
         db.add(Warehouse(id=str(uuid.uuid4()), warehouse_code=code, warehouse_name=f"ZZ {code}", company_id=DEFAULT_COMPANY_ID))
     rules = [
-        {"kind": "code", "code_match": "ends_with", "texts": ["-FRG"], "value": "french_gold"},
-        {"kind": "code", "code_match": "ends_with", "texts": ["-WH"], "value": "white"},
+        {"builder": {"kind": "code", "code_match": "ends_with", "texts": ["-FRG"], "value": "french_gold"}},
+        {"builder": {"kind": "code", "code_match": "ends_with", "texts": ["-WH"], "value": "white"}},
     ]
     row = db.query(ProductSpecRegistry).filter(ProductSpecRegistry.spec_key == "finish").first()
     if row is None:
