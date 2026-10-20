@@ -2214,6 +2214,38 @@ def _has_unresolved_tokens(result: dict[str, Any]) -> bool:
     return any(not (tr.get("matches") or []) for tr in resolutions)
 
 
+def _open_tokens_are_codes_the_catalogue_lacks(result: dict[str, Any]) -> bool:
+    """Every token left unanswered is one the code reader READ AS A CODE that the catalogue's
+    re-probe then did not find (`fallback == {kind: "code", matched: 0}`, entity_resolver's
+    code-reader block). The spec MODEL reading would read that same code and can find
+    nothing either, so it is not asked (CHAT-LATENCY-SCOUT, crew ruling 20 Oct 2026: 2-3 s
+    of a reply for no answer). The reader's own verdict decides, never a pattern of ours:
+    `none` (no code in the text, i.e. a description), `family`, `error`, `not_asked` or no
+    verdict keep the model reading. So does any other reason the spec gate opened (product
+    words a partial row left unanswered, a product question only non-product rows answered),
+    because then the sentence holds more than the dead code.
+    """
+    resolutions = result.get("resolutions")
+    if "intersection" in result or not isinstance(resolutions, list) or _product_words_unanswered(result):
+        return False
+    considered = [tr for tr in resolutions if isinstance(tr, dict) and not _brand_scoping(tr)]
+    open_ = [tr for tr in considered if not (tr.get("matches") or [])]
+    if not open_:
+        return False
+    # A token some non-product row answered (a promotion's description, say) holds words the
+    # spec reading may yet place as a product, so it stays (`_no_product_row_answered`).
+    if any(
+        tr.get("matches")
+        and not any((m or {}).get("entity_type") in _PRODUCT_ROW_TYPES for m in tr["matches"])
+        for tr in considered
+    ):
+        return False
+    return all(
+        (tr.get("fallback") or {}).get("kind") == "code" and (tr.get("fallback") or {}).get("matched") == 0
+        for tr in open_
+    )
+
+
 # The parser's domains whose answer is a product row. n8n sends the parser's
 # `domain_hint` as `domain`: `master_products` and `product_attachment` already
 # canonicalize to `product`; `inventory` is the stock domain and has no alias.
@@ -3615,7 +3647,8 @@ def resolve_reference_post(
                 payload.query,
                 specs=list(payload.extracted_specs or []),
                 free_terms=list(payload.free_terms or []),
-                allow_model=payload.understand_phrase,
+                allow_model=payload.understand_phrase
+                and not _open_tokens_are_codes_the_catalogue_lacks(result),
                 user_id=current_user.get("id"),
                 registry_rows=registry_rows,
                 # D14: a dry run reads the sentence exactly the same way and simply does

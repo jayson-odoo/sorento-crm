@@ -161,3 +161,138 @@ def test_concurrent_first_calls_build_one_client(monkeypatch):
 
     assert not errors
     assert len(built) == 1
+
+
+# --------------------------------------------------------------------------- #
+# A: a code the code reader read out, and the catalogue does not hold, is not re-read by
+# the spec model. Gated on the reader's OWN verdict (`resolutions[i].fallback`, kind
+# `code`, matched 0), never on a pattern of our own (owner rule).
+# --------------------------------------------------------------------------- #
+from app.models.base import set_company_scope  # noqa: E402
+from app.models.product import Product  # noqa: E402
+from app.services.company_scope import DEFAULT_COMPANY_ID, register_company_scope_listeners  # noqa: E402
+from sqlalchemy import text  # noqa: E402
+
+from tests._pg_fixture import unique_code  # noqa: E402
+
+HELD = "ZZTWT5608"
+DEAD = "ZZTNOPE1001-BK"
+
+
+@pytest.fixture
+def catalogue():
+    register_company_scope_listeners()
+    with blank_session() as session:
+        current = session.execute(text("SHOW search_path")).scalar()
+        session.execute(text(f"SET LOCAL search_path TO {current}, public"))
+        set_company_scope(session, None)
+        cat, uom = str(uuid.uuid4()), str(uuid.uuid4())
+        session.add(ProductCategory(id=cat, category_code=unique_code("C")[:50], category_name="C"))
+        session.add(UnitOfMeasure(id=uom, uom_code=unique_code("U")[:20], uom_name="Each"))
+        session.flush()
+        session.add(
+            Product(
+                id=str(uuid.uuid4()), product_code=HELD, product_name="Basin mixer chrome", category_id=cat,
+                base_uom_id=uom, list_price=10, is_active=True, company_id=DEFAULT_COMPANY_ID,
+            )
+        )
+        session.commit()
+        backfill_category_signals(session)
+        seed_spec_registry(session)
+        set_company_scope(session, frozenset({DEFAULT_COMPANY_ID}))
+        yield session
+
+
+class _Reader:
+    """A `CodeReader` answering every asked token with one fixed verdict; counts calls."""
+
+    def __init__(self, kind: str, value: str | None):
+        self.kind, self.value, self.calls = kind, value, 0
+
+    def __call__(self, missed):
+        from app.services.resolver_code_reader import CodeReading
+
+        self.calls += 1
+        return {tok: CodeReading(self.kind, self.value) for tok, _typed in missed}
+
+
+def _ask(
+    db, monkeypatch, reader: _Reader, *, query: str, token, raw, match_mode: str = "or"
+) -> tuple[dict, list]:
+    """The chatbot's resolve request shape (`resolve_gate`: spec_fallback + understand_phrase),
+    with the code reader and the spec model both stubbed and counted."""
+    from app.api.v1.system import references
+    from app.services import resolver_code_reader
+
+    spec_calls: list[dict] = []
+
+    def chat(*_a, **kwargs):
+        spec_calls.append(kwargs)
+        return SimpleNamespace(content=json.dumps({"specs": []}), prompt_tokens=1, completion_tokens=1, total_tokens=2)
+
+    monkeypatch.setattr(resolver_code_reader, "reader_for", lambda *_a, **_k: reader)
+    monkeypatch.setattr(
+        understanding, "_resolve_provider", lambda db: (SimpleNamespace(chat=chat), "openai", "gpt-test")
+    )
+    payload = references.ResolveReferenceRequest(
+        query=query,
+        tokens=token if isinstance(token, list) else [token],
+        raw_tokens=raw if isinstance(raw, list) else [raw],
+        allowed_entity_types=["product"],
+        fallback_to_all_types=True, spec_fallback=True, understand_phrase=True,
+        exact_match=True, limit=50, dry_run=True, domain="inventory", match_mode=match_mode,
+        **({"require": {"stock": True}} if match_mode == "and" else {}),
+    )
+    return references.resolve_reference_post(payload, current_user={"id": None}, db=db), spec_calls
+
+
+@pytest.mark.parametrize("match_mode", ["or", "and"])  # "and" + require stock: a guard (predicate branch, no spec read)
+def test_a_read_out_code_the_catalogue_lacks_makes_one_model_call_not_two(catalogue, monkeypatch, match_mode):
+    """The scout's `SRT1001-BK` miss: the reader reads the code, the catalogue has no such
+    row, and the spec model reading the same code could only find nothing (sandbox: 13 of
+    13 such readings answered nothing)."""
+    reader = _Reader("code", DEAD)
+
+    result, spec_calls = _ask(
+        catalogue, monkeypatch, reader, query=f"stock for {DEAD}?", token="ZZTNOPE1001BK", raw=DEAD,
+        match_mode=match_mode,
+    )
+
+    fallback = result["resolutions"][0]["fallback"]
+    assert fallback["kind"] == "code" and fallback["matched"] == 0, fallback
+    assert reader.calls + len(spec_calls) <= 1, (reader.calls, spec_calls)
+    assert result["unresolved_tokens"] == ["ZZTNOPE1001BK"], "still the not-found answer"
+
+
+@pytest.mark.parametrize(
+    ("kind", "value"),
+    [
+        ("none", None),  # a description: what the spec reading exists for
+        ("family", "ZZTNOPE"),  # crew ruling: only `code` skips
+        ("error", None),  # the reader never answered: nothing to go on
+    ],
+)
+def test_any_other_reader_verdict_still_gets_the_spec_reading(catalogue, monkeypatch, kind, value):
+    reader = _Reader(kind, value)
+
+    _result, spec_calls = _ask(
+        catalogue, monkeypatch, reader,
+        query="chrome basin mixer zztnope 1.0mm", token="chromebasinmixerzztnope1.0mm",
+        raw="chrome basin mixer zztnope 1.0mm",
+    )
+
+    assert len(spec_calls) == 1, f"verdict {kind!r} must keep the spec model reading"
+
+
+def test_a_dead_code_beside_a_found_code_makes_one_model_call_not_two(catalogue, monkeypatch):
+    """The scout's "5 hits + 1 miss" shape: the found code is a product row, the dead one is
+    the reader's `code` with 0 matched, so nothing is left for the spec model to read."""
+    reader = _Reader("code", DEAD)
+
+    result, spec_calls = _ask(
+        catalogue, monkeypatch, reader, query=f"stock for {HELD} and {DEAD}?",
+        token=[HELD, "ZZTNOPE1001BK"], raw=[HELD, DEAD],
+    )
+
+    assert [len(r["matches"]) > 0 for r in result["resolutions"]] == [True, False]
+    assert reader.calls + len(spec_calls) <= 1, (reader.calls, spec_calls)
