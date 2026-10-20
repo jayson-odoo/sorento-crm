@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Index match mock</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #0f172a; --muted: #f1f5f9; --muted-fg: #64748b; --border: #e2e8f0;
+    --card: #ffffff; --primary: #2563eb; --danger: #dc2626; --ok: #059669; --warn: #d97706;
+    --tag: #7c3aed; --code-bg: #f8fafc; --overlay: rgba(15, 23, 42, .35);
+    --w1: #2563eb; --w2: #db2777; --w3: #059669; --w4: #d97706; --w5: #7c3aed; --held: #0891b2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b1120; --fg: #e2e8f0; --muted: #1e293b; --muted-fg: #94a3b8; --border: #334155;
+      --card: #0f172a; --code-bg: #111827; --tag: #a78bfa; --overlay: rgba(0, 0, 0, .5);
+      --w1: #60a5fa; --w2: #f472b6; --w3: #34d399; --w4: #fbbf24; --w5: #a78bfa; --held: #22d3ee;
+      --ok: #34d399; --danger: #f87171; --warn: #fbbf24;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b1120; --fg: #e2e8f0; --muted: #1e293b; --muted-fg: #94a3b8; --border: #334155;
+    --card: #0f172a; --code-bg: #111827; --tag: #a78bfa; --overlay: rgba(0, 0, 0, .5);
+    --w1: #60a5fa; --w2: #f472b6; --w3: #34d399; --w4: #fbbf24; --w5: #a78bfa; --held: #22d3ee;
+    --ok: #34d399; --danger: #f87171; --warn: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; font: 14px/1.45 system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--fg); }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p.lead { color: var(--muted-fg); margin: 0 0 16px; max-width: 78ch; }
+  .tag { display: inline-block; font: 11px/1.3 ui-monospace, monospace; color: var(--tag); margin: 2px 0 6px; overflow-wrap: anywhere; }
+  .layout { display: grid; gap: 24px; grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 1100px) { .layout { grid-template-columns: minmax(0, 672px) minmax(0, 1fr); } }
+
+  /* Example picker */
+  .picker { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .picker button { font: inherit; font-size: 12px; border: 1px solid var(--border); background: var(--card); color: var(--fg); border-radius: 999px; padding: 4px 10px; cursor: pointer; }
+  .picker button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+
+  /* Drawer frame (Sheet, sm:max-w-2xl) */
+  .drawer { border: 1px solid var(--border); border-radius: 12px; background: var(--card); overflow: hidden; max-width: 672px; width: 100%; box-shadow: 0 8px 30px rgba(0,0,0,.08); }
+  .drawer-head { padding: 14px 16px; border-bottom: 1px solid var(--border); font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
+  .drawer-head .x { color: var(--muted-fg); font-weight: 400; }
+  .drawer-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .section { border: 1px solid var(--border); border-radius: 8px; }
+  .section > .trig { display: flex; align-items: center; gap: 6px; padding: 8px 12px; font-size: 14px; font-weight: 500; color: var(--fg); }
+  .section.closed > .trig { color: var(--fg); }
+  .section > .content { border-top: 1px solid var(--border); padding: 10px 12px; }
+  .chev { font-size: 10px; width: 12px; color: var(--muted-fg); }
+
+  /* Index match section */
+  .summary { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 500; border-radius: 6px; padding: 1px 7px; border: 1px solid var(--border); background: var(--muted); color: var(--fg); white-space: nowrap; }
+  .badge.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); background: color-mix(in srgb, var(--ok) 10%, transparent); }
+  .badge.bad { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+  .badge.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: color-mix(in srgb, var(--warn) 10%, transparent); }
+
+  .band { position: relative; padding: 10px 0 10px 28px; }
+  .band + .band { border-top: 1px dashed var(--border); }
+  .band::before { content: attr(data-step); position: absolute; left: 0; top: 10px; width: 20px; height: 20px; border-radius: 50%; background: var(--muted); color: var(--muted-fg); font-size: 11px; font-weight: 600; display: grid; place-items: center; }
+  .band h3 { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--muted-fg); text-transform: uppercase; letter-spacing: .04em; }
+  .band .hint { font-size: 11px; color: var(--muted-fg); margin: 4px 0 0; }
+
+  .words { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .word { font: 13px/1.2 ui-monospace, monospace; border-radius: 6px; padding: 4px 8px; border: 1px solid var(--border); color: var(--muted-fg); background: transparent; }
+  .word.hit { color: #fff; background: var(--c); border-color: var(--c); cursor: pointer; }
+  .word.near { color: var(--c); background: transparent; border: 1.5px dashed var(--c); cursor: pointer; }
+  .word.quoted { opacity: .5; text-decoration: line-through; }
+  .quote-note { font-size: 11px; color: var(--muted-fg); }
+
+  .rows { display: flex; flex-direction: column; gap: 6px; }
+  .item { position: relative; border: 1px solid var(--border); border-left: 4px solid var(--c, var(--border)); border-radius: 6px; padding: 6px 8px 6px 10px; font-size: 12px; background: var(--card); transition: opacity .15s, box-shadow .15s; min-width: 0; }
+  .item .top { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+  .item .src { font: 11px ui-monospace, monospace; color: var(--muted-fg); overflow-wrap: anywhere; }
+  .item code, .mono { font: 12px ui-monospace, monospace; overflow-wrap: anywhere; }
+  .item .via { font-size: 11px; color: var(--muted-fg); }
+  .item .num { display: inline-grid; place-items: center; min-width: 18px; height: 18px; border-radius: 9px; background: var(--c, var(--muted)); color: #fff; font-size: 10px; font-weight: 700; padding: 0 4px; }
+  .heading-line { font: 11px ui-monospace, monospace; color: var(--muted-fg); padding: 2px 0; overflow-wrap: anywhere; }
+  .unused { opacity: .55; }
+
+  .drop { color: var(--danger); }
+  .keep { color: var(--ok); }
+  .rewrite { color: var(--warn); }
+
+  .dim .item, .dim .word { opacity: .25; }
+  .dim .lit { opacity: 1 !important; box-shadow: 0 0 0 2px var(--c); }
+
+  details.more { margin-top: 6px; font-size: 12px; }
+  details.more summary { cursor: pointer; color: var(--muted-fg); }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font: 11px/1.4 ui-monospace, monospace; overflow-x: auto; margin: 6px 0 0; }
+
+  .notice { font-size: 12px; color: var(--muted-fg); border: 1px dashed var(--border); border-radius: 6px; padding: 8px; }
+
+  /* Right column: notes */
+  .notes h2 { font-size: 15px; margin: 0 0 8px; }
+  .notes table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+  .notes th, .notes td { border-bottom: 1px solid var(--border); padding: 6px 6px; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+  .notes th { color: var(--muted-fg); font-weight: 600; }
+  .notes .card { border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: var(--card); margin-bottom: 16px; }
+  .new { color: var(--tag); font-weight: 600; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--muted-fg); margin: 6px 0 0; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; background: var(--sw); border: 1.5px var(--st, solid) var(--sw); }
+</style>
+</head>
+<body>
+<h1>Chatbot Console: "Index match" section (CHAT-INDEX-VIZ)</h1>
+<p class="lead">Static mock, not wired to data. The console's "trace" link opens this drawer (Chat History, <code>TurnDetailDrawer</code>); the new section sits after Parse. Each matched word gets one colour, and that colour runs through every step it reached: index entry, line sent to the parser, parser entity, grounding outcome, tool argument. Tap or hover any chip or row to light up its thread. Purple labels name the repo component each element reuses. Example data is synthetic (masked codes, ZZ-style), rebuilt from the index-mode code paths.</p>
+
+<div class="layout">
+  <div>
+    <div class="picker" role="group" aria-label="Example turn" id="picker"></div>
+    <span class="tag">Sheet + SheetHeader/SheetTitle (components/ui/sheet), TurnDetailDrawer.tsx:57</span>
+    <div class="drawer">
+      <div class="drawer-head"><span id="turnTitle">Turn #7f3a</span><span class="x" aria-hidden="true">&#10005;</span></div>
+      <div class="drawer-body">
+        <div class="section closed"><div class="trig"><span class="chev">&#9654;</span>Order</div></div>
+        <div class="section closed"><div class="trig"><span class="chev">&#9654;</span>Stages</div></div>
+        <div class="section closed"><div class="trig"><span class="chev">&#9654;</span>Parse</div></div>
+        <span class="tag">Section (Collapsible), TurnDetailDrawer.tsx:150, new testId "section-index-match"</span>
+        <div class="section">
+          <div class="trig"><span class="chev">&#9660;</span>Index match</div>
+          <div class="content" id="panel"></div>
+        </div>
+        <div class="section closed"><div class="trig"><span class="chev">&#9654;</span>Apply</div></div>
+        <div class="section closed"><div class="trig"><span class="chev">&#9654;</span>Memory</div></div>
+        <div class="section closed"><div class="trig"><span class="chev">&#9654;</span>Context sent to the AI</div></div>
+        <div class="section closed"><div class="trig"><span class="chev">&#9654;</span>Tool</div></div>
+      </div>
+    </div>
+    <div class="legend" aria-label="Legend">
+      <span style="--sw: var(--w1)">exact match (filled)</span>
+      <span style="--sw: var(--w1); --st: dashed">near spelling (outlined, score shown)</span>
+      <span style="--sw: var(--held)">held product's own record</span>
+      <span style="--sw: var(--border)">word matched nothing</span>
+    </div>
+  </div>
+
+  <div class="notes">
+    <div class="card">
+      <h2>What each step reads (trace source)</h2>
+      <table>
+        <colgroup><col style="width:28%"><col style="width:72%"></colgroup>
+        <tr><th>Step</th><th>Source</th></tr>
+        <tr><td>1 Message words</td><td><span class="new">NEW</span> <code>closed_lists_index</code> trace event, <code>words</code> (the grams <code>closed_lists_index._grams</code> folds); quoted reply from the <code>received</code> stage.</td></tr>
+        <tr><td>2 Index entries</td><td><span class="new">NEW</span> same event, <code>matches[]</code>: <code>source</code>, <code>ref {table, key, value}</code>, <code>via</code>, <code>exact</code>, <code>score</code>. Not recorded today: <code>block()</code> returns strings only, <code>_named()</code> a bool.</td></tr>
+        <tr><td>3 Lines to parser</td><td>Existing <code>prompt_text</code> event (engine.py:4904); the new event's <code>matches[].line</code> ties each line to its entry.</td></tr>
+        <tr><td>4 Parser returned</td><td>Existing <code>understood.raw.parser_raw.entities</code> (engine.py:4863-4902). Linked to a line by the same word (<code>raw</code> folded) or code/spec value.</td></tr>
+        <tr><td>5 Grounding</td><td>Existing <code>grounding</code> event <code>changes[] {from, raw, to}</code> (engine.py:5194). <span class="new">NEW</span> key in <code>compose_trace_detail</code> (trace_detail.py:415), which maps none today.</td></tr>
+        <tr><td>6 Tool call</td><td>Existing Tool section data (<code>detail.tool</code>): tool name + args.</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h2>Component reuse (repo paths)</h2>
+      <table>
+        <colgroup><col style="width:34%"><col style="width:66%"></colgroup>
+        <tr><th>Element</th><th>Reuses</th></tr>
+        <tr><td>Drawer + header</td><td><code>Sheet</code>, <code>SheetHeader</code>, <code>SheetTitle</code> from <code>components/ui/sheet</code>; host <code>app/(protected)/system-management/chat-history/components/TurnDetailDrawer.tsx</code></td></tr>
+        <tr><td>"Index match" collapsible</td><td>local <code>Section</code> (<code>Collapsible</code> from <code>components/ui/collapsible</code>), same file :150</td></tr>
+        <tr><td>Count pills, kept/dropped</td><td><code>Badge</code> from <code>components/ui/badge</code> (variants success / destructive / warning)</td></tr>
+        <tr><td>Word chips</td><td><code>Badge</code> (appearance outline for near, solid for exact), colour from a 5-slot thread palette (new tokens)</td></tr>
+        <tr><td>Rows (entry, line, entity, outcome)</td><td>the drawer's existing <code>&lt;dl&gt;</code>/<code>text-xs</code> row style (<code>StageRow</code>, <code>chat-history/components/TurnPanel.tsx:162</code>) with a coloured left border</td></tr>
+        <tr><td>"Show raw event"</td><td>local <code>Code</code> helper -&gt; <code>SearchableCode</code> (<code>components/common/find-in-text/SearchableCode</code>), TurnDetailDrawer.tsx:182</td></tr>
+        <tr><td>Empty / block-mode line</td><td>local <code>Empty</code>, TurnDetailDrawer.tsx:174</td></tr>
+        <tr><td>Held lines collapsed</td><td><code>Collapsible</code> again, closed by default</td></tr>
+        <tr><td>Data</td><td><code>useChatbotTurn</code> (<code>chat-history/hooks/useChatbotTurns.ts:88</code>) -&gt; <code>getChatbotTurn</code> (<code>services/chatbotTurnService.ts:150</code>), new <code>TurnDetail.index_match</code> + <code>TurnDetail.grounding</code> types in <code>chatbotTurn.types.ts</code></td></tr>
+      </table>
+      <p class="hint" style="font-size:12px;color:var(--muted-fg)">New code: one <code>IndexMatchSection</code> component (pure render + hover state) and the thread palette tokens. No new library.</p>
+    </div>
+    <div class="card">
+      <h2>375px</h2>
+      <p style="font-size:12px;margin:0;color:var(--muted-fg)">The section is one column already, so a phone reads the same steps top to bottom. Rows wrap, long codes break with <code>overflow-wrap: anywhere</code>, and the numbered badge on each row (word #1, #2 ...) carries the link when colour is hard to tell apart.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+const EXAMPLES = [
+  {
+    id: "frg", label: "1. finish short form \"frg\"", turn: "Turn #7f3a",
+    message: ["stock", "ZZKT71SS", "frg"], quoted: null, mode: "index",
+    words: { "ZZKT71SS": { c: 1 }, "frg": { c: 2 } },
+    entries: [
+      { w: "ZZKT71SS", c: 1, src: "products", ref: "canonical_code ZZKT71SS", via: "code", exact: true },
+      { w: "frg", c: 2, src: "product_spec_registry -> derivation rule", ref: "finish: code ends_with \"-FRG\" = french_gold", via: "code suffix", exact: true },
+    ],
+    headings: [
+      { h: "Candidates for words of this message (each says what it is; pick one or none):", lines: [
+        { c: 1, t: '- "zzkt71ss": code ZZKT71SS (holds the word)' },
+        { c: 2, t: '- "frg": spec finish = french_gold (French Gold)' },
+      ] },
+    ],
+    held: [],
+    parser: [
+      { c: 1, t: "ZZKT71SS", d: "hint product, canonical_code ZZKT71SS" },
+      { c: 2, t: "frg", d: "hint specification, finish = french_gold" },
+      { c: 2, t: "frg", d: "hint warehouse (the parser also guessed a location)" },
+    ],
+    grounding: [
+      { c: 1, k: "keep", t: "product ZZKT71SS kept (on the candidate block)" },
+      { c: 2, k: "keep", t: "spec finish = french_gold kept" },
+      { c: 2, k: "drop", t: "warehouse \"frg\": dropped: a finish short form, no warehouse on file", src: "grounding.py:987" },
+    ],
+    tool: { name: "stock_balance", args: [ { c: 1, t: "codes: [ZZKT71SS]" }, { c: 2, t: "spec: finish = french_gold" }, { t: "warehouse: (none)" } ] },
+  },
+  {
+    id: "ib", label: "2. warehouse \"IB\" (not indexed)", turn: "Turn #91c2",
+    message: ["any", "stock", "at", "IB"], quoted: null, mode: "index",
+    words: {},
+    entries: [],
+    headings: [],
+    held: [],
+    parser: [ { c: 3, t: "IB", d: "hint warehouse", free: true } ],
+    grounding: [ { c: 3, k: "keep", t: "warehouse \"IB\" kept: resolves to ZZW-IB, ZZM-IB (resolve_warehouse_token)" } ],
+    tool: { name: "stock_balance", args: [ { c: 3, t: "warehouses: [ZZW-IB, ZZM-IB]" } ] },
+    note: "Warehouses are checked at grounding, not listed in the index (round 2c, option B), so \"IB\" has no index row and no line; the parser's own hint is checked against the warehouses table.",
+  },
+  {
+    id: "cert", label: "3. held product, \"CE cert and drawing\"", turn: "Turn #a044",
+    message: ["send", "the", "CE", "cert", "and", "drawing"], quoted: null, mode: "index",
+    words: { "CE": { c: 1 }, "cert": { c: 4 }, "drawing": { c: 3 } },
+    entries: [
+      { w: "CE", c: 1, src: "certificates.scheme", ref: "scheme CE", via: "name", exact: true },
+      { w: "cert", c: 4, src: "attachment_types (certificate kind)", ref: "code zz_cert: ZZ Certificate", via: "alias keyword \"cert\"", exact: true },
+      { w: "drawing", c: 3, src: "attachment_types", ref: "code zz_drawing: ZZ Technical Drawing", via: "name word", exact: true },
+    ],
+    headings: [
+      { h: "Candidates for words of this message (each says what it is; pick one or none):", lines: [
+        { c: 3, t: "File type zz_drawing: ZZ Technical Drawing (drawing, gambar)" },
+        { c: 4, t: "Certificate kind zz_cert: ZZ Certificate (cert)" },
+        { c: 1, t: "Certificate scheme CE (ce mark)" },
+      ] },
+    ],
+    held: [
+      { t: "File type zz_drawing: ZZ Technical Drawing (drawing, gambar)" },
+      { t: "Certificate kind zz_cert: ZZ Certificate (cert)" },
+      { t: "Certificate scheme CE (ce mark)" },
+      { t: "spec finish = chrome (Chrome)" },
+      { t: "spec trap_type = s_trap (S Trap)" },
+      { t: "spec width_mm = 300" },
+    ],
+    heldProduct: "ZZWC286",
+    parser: [
+      { c: 1, t: "CE", d: "hint certificate scheme" },
+      { c: 3, t: "drawing", d: "hint attachment, zz_drawing" },
+    ],
+    grounding: [
+      { c: 1, k: "keep", t: "\"CE\": on the cert_scheme list: CE" },
+      { c: 3, k: "keep", t: "\"drawing\": on the attachment_type list: zz_drawing" },
+    ],
+    tool: { name: "product_files", args: [ { t: "product: ZZWC286 (held)" }, { c: 3, t: "types: [zz_drawing]" }, { c: 1, t: "certificates: scheme CE" } ] },
+    noteWord: { "cert": "matched but the parser folded it into \"CE\"" },
+  },
+  {
+    id: "near", label: "4. near spelling \"phtos\"", turn: "Turn #b7e1",
+    message: ["phtos", "for", "ZZBS40", "pls"], quoted: "Reply to: Here is the price list ...", mode: "index",
+    words: { "phtos": { c: 2, near: 0.61 }, "ZZBS40": { c: 1 } },
+    entries: [
+      { w: "ZZBS40", c: 1, src: "products", ref: "canonical_code ZZBS40", via: "code", exact: true },
+      { w: "phtos", c: 2, src: "attachment_types", ref: "code zz_photos: ZZ Product Photos", via: "name word \"photos\"", exact: false, score: 0.61 },
+    ],
+    headings: [
+      { h: "Candidates for words of this message (each says what it is; pick one or none):", lines: [
+        { c: 1, t: '- "zzbs40": code ZZBS40 (holds the word)' },
+        { c: 2, t: "File type zz_photos: ZZ Product Photos (photos, gambar produk)" },
+      ] },
+    ],
+    held: [],
+    parser: [
+      { c: 1, t: "ZZBS40", d: "hint product, canonical_code ZZBS40" },
+      { c: 2, t: "phtos", d: "hint attachment, zz_photos" },
+    ],
+    grounding: [
+      { c: 1, k: "keep", t: "product ZZBS40 kept" },
+      { c: 2, k: "keep", t: "\"phtos\": on the attachment_type list: zz_photos" },
+    ],
+    tool: { name: "product_files", args: [ { c: 1, t: "product: ZZBS40" }, { c: 2, t: "types: [zz_photos]" } ] },
+  },
+  {
+    id: "block", label: "5. block-mode turn", turn: "Turn #c310", mode: "block",
+    message: ["stock", "ZZKT71SS"], quoted: null,
+  },
+];
+
+const COLOR = (n) => n ? `var(--w${n})` : "var(--border)";
+const esc = (s) => String(s).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+const picker = document.getElementById("picker");
+const panel = document.getElementById("panel");
+
+function item(c, inner, extra = "") {
+  return `<div class="item ${extra}" data-c="${c || ""}" style="--c:${COLOR(c)}">${inner}</div>`;
+}
+function num(c) { return c ? `<span class="num">${c}</span>` : ""; }
+
+function render(ex) {
+  document.getElementById("turnTitle").textContent = ex.turn;
+  if (ex.mode === "block") {
+    panel.innerHTML = `<span class="tag">Empty (TurnDetailDrawer.tsx:174)</span>
+      <p class="notice">Closed lists sent in full (block mode); no per-turn index this turn.</p>`;
+    return;
+  }
+  const words = ex.words || {};
+  const lineCount = (ex.headings || []).reduce((n, h) => n + h.lines.length, 0) + (ex.held || []).length;
+  const drops = (ex.grounding || []).filter((g) => g.k === "drop").length;
+  const used = new Set((ex.parser || []).filter((p) => !p.free).map((p) => p.c)).size;
+  const matched = Object.keys(words).length;
+
+  let h = `<span class="tag">Badge (components/ui/badge)</span><div class="summary">
+    <span class="badge">${matched} of ${ex.message.length} words matched</span>
+    <span class="badge">${lineCount} lines sent</span>
+    <span class="badge ok">${used} used by the parser</span>
+    ${drops ? `<span class="badge bad">${drops} dropped by grounding</span>` : ""}
+    ${ex.heldProduct ? `<span class="badge" style="color:var(--held)">held: ${esc(ex.heldProduct)}</span>` : ""}
+  </div><div id="flow">`;
+
+  // 1 words
+  h += `<div class="band" data-step="1"><h3>Message words</h3><span class="tag">Badge chips, new IndexMatchSection</span><div class="words">`;
+  for (const w of ex.message) {
+    const m = words[w];
+    if (!m) { h += `<span class="word">${esc(w)}</span>`; continue; }
+    const near = m.near ? ` near` : ` hit`;
+    h += `<span class="word${near}" data-c="${m.c}" style="--c:${COLOR(m.c)}" tabindex="0">${esc(w)}${m.near ? ` <small>${m.near}</small>` : ""}</span>`;
+  }
+  h += `</div>`;
+  if (ex.quoted) h += `<p class="quote-note">Quoted reply not read by the index: <span class="word quoted">${esc(ex.quoted)}</span></p>`;
+  h += `</div>`;
+
+  // 2 entries
+  h += `<div class="band" data-step="2"><h3>Index entries matched</h3><span class="tag">row style of StageRow (TurnPanel.tsx:162)</span><div class="rows">`;
+  if (!ex.entries.length) h += `<p class="notice">No index entry for any word of this message.${ex.note ? " " + esc(ex.note) : ""}</p>`;
+  for (const e of ex.entries) {
+    const how = e.exact ? `<span class="badge ok">exact</span>` : `<span class="badge warn">near ${e.score} (min 0.55)</span>`;
+    const extra = ex.noteWord && ex.noteWord[e.w] ? `<div class="via">${esc(ex.noteWord[e.w])}</div>` : "";
+    h += item(e.c, `<div class="top">${num(e.c)}<code>"${esc(e.w)}"</code> &rarr; <code>${esc(e.ref)}</code>${how}</div>
+      <div class="src">${esc(e.src)} &middot; via ${esc(e.via)}</div>${extra}`);
+  }
+  if (ex.held.length) {
+    h += item("", `<div class="top"><span class="num" style="background:var(--held)">H</span><code>${esc(ex.heldProduct)}</code> &rarr; its own record</div>
+      <div class="src">product_specifications, product_attachments, certificates (held product)</div>`, "").replace('style="--c:var(--border)"', 'style="--c:var(--held)"');
+  }
+  h += `</div></div>`;
+
+  // 3 lines
+  h += `<div class="band" data-step="3"><h3>Lines sent to the parser</h3><span class="tag">from prompt_text event; raw view = Code -> SearchableCode</span><div class="rows">`;
+  if (!lineCount) h += `<p class="notice">No CLOSED LISTS lines this turn: the user block carries none.</p>`;
+  for (const g of ex.headings) {
+    h += `<div class="heading-line">${esc(g.h)}</div>`;
+    for (const l of g.lines) h += item(l.c, `<div class="top">${num(l.c)}<code>${esc(l.t)}</code></div>`);
+  }
+  if (ex.held.length) {
+    h += `<details class="more"><summary>On record for the held products (${ex.held.length} lines, not words of this message)</summary><div class="rows" style="margin-top:6px">`;
+    for (const l of ex.held) h += item("", `<code>${esc(l.t)}</code>`).replace('style="--c:var(--border)"', 'style="--c:var(--held)"');
+    h += `</div></details><span class="tag">Collapsible, closed by default</span>`;
+  }
+  h += `</div></div>`;
+
+  // 4 parser
+  h += `<div class="band" data-step="4"><h3>Parser returned</h3><span class="tag">understood.raw.parser_raw.entities</span><div class="rows">`;
+  for (const p of ex.parser) {
+    const free = p.free ? ` <span class="badge">not from the index</span>` : "";
+    h += item(p.c, `<div class="top">${num(p.c)}<code>${esc(p.t)}</code><span class="via">${esc(p.d)}</span>${free}</div>`);
+  }
+  h += `</div></div>`;
+
+  // 5 grounding
+  h += `<div class="band" data-step="5"><h3>Grounding</h3><span class="tag">grounding event changes[] {from, raw, to}</span><div class="rows">`;
+  for (const g of ex.grounding) {
+    const b = g.k === "drop" ? `<span class="badge bad">dropped</span>` : g.k === "rewrite" ? `<span class="badge warn">rewritten</span>` : `<span class="badge ok">kept</span>`;
+    h += item(g.c, `<div class="top">${num(g.c)}${b}<span class="${g.k}">${esc(g.t)}</span></div>${g.src ? `<div class="src">${esc(g.src)}</div>` : ""}`);
+  }
+  h += `</div></div>`;
+
+  // 6 tool
+  h += `<div class="band" data-step="6"><h3>Tool call</h3><span class="tag">detail.tool (Tool section data)</span><div class="rows">
+    <div class="heading-line"><b class="mono" style="color:var(--fg)">${esc(ex.tool.name)}</b></div>`;
+  for (const a of ex.tool.args) h += item(a.c, `<div class="top">${num(a.c)}<code>${esc(a.t)}</code></div>`);
+  h += `</div></div></div>`;
+
+  // raw
+  const raw = {
+    kind: "closed_lists_index", mode: "index",
+    words: ex.message.map((w) => w.toLowerCase()),
+    matches: ex.entries.map((e) => ({ word: e.w.toLowerCase(), source: e.src.split(" ")[0], ref: e.ref, via: e.via, exact: e.exact, score: e.score ?? null })),
+    capped: {}, hidden_count: 0, failed: false,
+  };
+  h += `<details class="more"><summary>Show raw event (new trace field)</summary><span class="tag">Code -> SearchableCode</span><pre>${esc(JSON.stringify(raw, null, 2))}</pre></details>`;
+  panel.innerHTML = h;
+  wire();
+}
+
+function wire() {
+  const flow = document.getElementById("flow");
+  if (!flow) return;
+  const light = (c) => {
+    if (!c) { flow.classList.remove("dim"); flow.querySelectorAll(".lit").forEach((n) => n.classList.remove("lit")); return; }
+    flow.classList.add("dim");
+    flow.querySelectorAll("[data-c]").forEach((n) => n.classList.toggle("lit", n.dataset.c === c));
+  };
+  let pinned = null;
+  flow.querySelectorAll("[data-c]").forEach((n) => {
+    if (!n.dataset.c) return;
+    n.addEventListener("mouseenter", () => { if (!pinned) light(n.dataset.c); });
+    n.addEventListener("mouseleave", () => { if (!pinned) light(null); });
+    n.addEventListener("click", () => { pinned = pinned === n.dataset.c ? null : n.dataset.c; light(pinned); });
+  });
+}
+
+EXAMPLES.forEach((ex, i) => {
+  const b = document.createElement("button");
+  b.type = "button"; b.textContent = ex.label; b.setAttribute("aria-pressed", i === 0 ? "true" : "false");
+  b.addEventListener("click", () => {
+    picker.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", "false"));
+    b.setAttribute("aria-pressed", "true");
+    render(ex);
+  });
+  picker.appendChild(b);
+});
+render(EXAMPLES[0]);
+</script>
+</body>
+</html>

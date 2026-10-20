@@ -6,9 +6,13 @@ Mock: `documentation/plans/chatbot/chat-index-viz-20oct-mock.html`.
 
 ## What the owner sees
 
-In the Chatbot Console, every bot turn's trace gets one more panel, **Index match**, shown only when
-the turn ran with `chatbot_closed_lists_mode = index`. It reads left to right (top to bottom on a
-phone) as five linked columns, one row per message word:
+The console has no trace view of its own: each bot bubble's "trace" link
+(`chatbot-console/components/ChatbotConsole.tsx:120-142`) opens Chat History
+`?turn=<id>`, where `chat-history/components/TurnDetailDrawer.tsx` renders the turn as collapsible
+sections (Order, Stages, Parse, Apply, ...). The drawer gets one more section, **Index match**,
+placed right after Parse, shown only when the turn ran with `chatbot_closed_lists_mode = index`. It reads top to bottom as six steps; each
+matched word gets one colour (and a number), and that colour runs through every step it reached.
+Tap a chip or row to light up its thread and dim the rest:
 
 1. **Message words.** The customer's own line (`UserTurn.own_text`; the quoted reply is greyed and
    marked "not read"), split the way the index splits it (`candidates._tokens` / `_phrase`, runs of
@@ -24,13 +28,13 @@ phone) as five linked columns, one row per message word:
 3. **Lines sent to the parser.** The exact CLOSED LISTS lines of the user block, in order, under
    their two headings ("Candidates for words of this message ..." and "On record for the held
    products ..."). Hovering / tapping a line highlights the word(s) and the entry that produced it
-   (the arrows). Held-product lines have no word: they hang off the held product chip instead.
+   (the shared colour). Held-product lines have no word: they hang off the held product row (cyan) instead.
 4. **Parser returned.** The parser's entities (`raw`, `hint`, `canonical_code` / spec key=value),
    each linked back to the line it used, or marked "not from the index" when no line carried it.
-5. **Grounding kept / dropped -> tool call.** Each entity's grounding outcome (kept, rewritten,
+5. **Grounding kept / dropped.** Each entity's grounding outcome (kept, rewritten,
    dropped + the reason string grounding already writes, e.g. "dropped: a finish short form, no
-   warehouse on file"), and the tool call the turn made with the arguments that came from those
-   entities.
+   warehouse on file").
+6. **Tool call.** The tool the turn called, each argument coloured by the word it came from.
 
 A collapsed footer shows the counts ("3 words matched, 5 lines sent, 2 used by the parser,
 1 dropped by grounding") and the system-prompt pointer lines (`SYSTEM_BLANKS`), so the owner can
@@ -49,9 +53,9 @@ copied from the console; the build will render whatever the turn trace holds.
 |---|---------|-----------------------------|-----------------|--------|-----------|------|
 | 1 | "stock SRTKT7xSS frg" | `frg` -> derivation rule code suffix `-FRG` on registry key `finish` -> value `french_gold` (exact); `SRTKT7xSS` -> product code (candidates) | `- "frg": spec finish = french_gold (French Gold)` + the code line | product + spec finish=french_gold (or a warehouse hint "frg") | spec kept; a warehouse hint "frg" dropped: "a finish short form, no warehouse on file" (grounding.py:979-987) | stock lookup for the code filtered to French Gold |
 | 2 | "any stock at IB" | no index line (warehouses are NOT indexed: round 2c, option B) | none for `IB` | warehouse hint "IB" | kept: resolves to BRW-IB and MWH-IB (`resolve_warehouse_token`) | stock lookup at both warehouses |
-| 3 | "send the CE cert and drawing" (held product) | `ce` -> `certificates.scheme` CE (exact); `drawing` -> `attachment_types` (name, exact); held product -> its own file types + schemes | `File type ...`, `Certificate scheme CE ...` under candidates; held file types under "On record ..." | attachment entities | each checked against the closed list: "on the attachment_type list: <code>" | file send for the held product |
-| 4 | "gambar for this one" (alias) | `gambar` -> `lookup_option_keywords` alias of a drawing type (exact) | `File type <drawing>: ...` | attachment hint | kept on the list | file send |
-| 5 | "price for the wh one" | `wh` -> finish suffix `-WH` (white) AND (at grounding) warehouses whose suffix is WH | `- "wh": spec finish = white (White)` | spec or warehouse hint | a resolvable warehouse code always wins (IW-10) | depends on the hint: shows the collision |
+| 3 | "send the CE cert and drawing" (held product) | `ce` -> `certificates.scheme` CE (exact); `cert` -> certificate kind via a `lookup_option_keywords` alias (exact); `drawing` -> `attachment_types` (name, exact); held product -> its own file types, schemes and spec values | `File type ...`, `Certificate kind ...`, `Certificate scheme CE ...` under candidates; held lines under "On record ..." (collapsed) | attachment + scheme entities | "on the attachment_type list: <code>", "on the cert_scheme list: CE" | file send for the held product |
+| 4 | "phtos for ZZBS40 pls" (quoting an earlier bot reply) | `phtos` -> `attachment_types` photos, NEAR spelling 0.61 (>= 0.55); `ZZBS40` -> product code; the quoted reply's words are not read | the photos file-type line + the code line | attachment zz_photos + product | kept on the list | file send |
+| 5 | "stock ZZKT71SS" in block mode | none: the full lists were in the system prompt | n/a | n/a | n/a | the section shows a one-line notice |
 
 ## Edge cases the view must handle
 
@@ -70,13 +74,22 @@ copied from the console; the build will render whatever the turn trace holds.
 - **Old turns** recorded before the new trace event: the panel falls back to parsing the
   `prompt_text` event (lines only, no provenance) and says "match details not recorded for this
   turn".
-- **375px**: the five columns stack vertically; the links become numbered badges instead of arrows.
+- **"wh" collision** (IW-10): `wh` is both the finish suffix `-WH` (an index line) and a warehouse
+  suffix (grounding only): the view shows the finish line AND the grounding note for the warehouse
+  hint, so the owner sees why a resolvable warehouse wins.
+- **375px**: the section is one column at every width (the drawer is 672px max); every row carries
+  the word's number badge, so the link survives where colours are hard to tell apart.
 
 ## What the trace already records (no change)
 
 - `prompt_text` event: the full parser user block, so the exact injected lines (engine.py:4904).
 - `understood` stage: `raw.parser_raw` (what the parser returned) and `raw.derived` (engine.py:4863-4902).
-- `grounding` event: `changes` = grounding notes `{from, raw, to}` (engine.py:5194).
+- `grounding` event: `changes` = grounding notes `{from, raw, to}` (engine.py:5194). It is in the
+  raw `chatbot.turns.trace` array but `compose_trace_detail` (`services/chatbot/trace_detail.py:415`)
+  maps no grounding key and the FE never shows it, so the build adds a `grounding` key there too.
+  `to` is a free string or a list of `Grounded` dicts (grounding.py:834-1012); the view classifies
+  it: starts with "dropped" / "canonical dropped" / "canonical refused" -> dropped, "on the ... list"
+  -> kept, a list or other text -> rewritten.
 - `context` event, `held_family`, `scheme_index`, and the tool stages that follow.
 
 ## New trace fields needed (one new event, written only in index mode)
@@ -101,9 +114,10 @@ same order). The candidate-lines half needs the same from `WordCandidates` (`gra
 
 ## Questions (each with a recommendation)
 
-1. **Where does it live?** (a) a new "Index" tab in the console turn trace drawer, (b) inline under
-   the `understood` stage. Recommendation: **(a)**, because it spans parser input, parser output,
-   grounding and tool, not one stage.
+1. **Where does it live?** (a) a new collapsible "Index match" section in Chat History's
+   `TurnDetailDrawer`, right after Parse (the console's "trace" link already opens it), (b) inline in
+   the console bubble. Recommendation: **(a)**, because the drawer is where every other trace
+   section lives and the bubble is 85% of a phone width.
 2. **Record provenance, or rebuild it at view time?** (a) record the new `closed_lists_index` event
    per turn, (b) re-run the matcher when the panel opens. Recommendation: **(a)**, because the
    vocabulary changes (a synonym added later would show a match that did not happen on that turn).
