@@ -128,3 +128,37 @@ def test_r9_4_route_a_one_word_prefix_row_of_a_plural_stays_a_hit(client, db):
     ).json()
 
     assert "TOPS-MIXER" in _product_codes(payload), payload
+
+
+@pytest.mark.parametrize(
+    "tokens,code",
+    [(["tops"], "TOPS-MIXER"), (["tops", "bidet"], "TOPS-BIDET")],
+    ids=["one word", "two words"],
+)
+def test_r9_5_unit_an_and_row_typed_as_a_plural_of_a_registry_word_is_kept(tokens, code):
+    """RED on 1dd6270383: the chatbot asks in AND mode; "tops" is a code family typed as is, and the
+    registry knows only "top", so the AND row stays (R9-3's ZZBASIN-BIDET, a registry word INSIDE
+    the code, still drops)."""
+    assert _gate(tokens, [code], {"top"}) == [code]
+
+
+def _top_world(db, *codes: str) -> None:
+    for code in codes:
+        _stocked(db, code, "ZZT Top Item", "BASIN MIXER")
+    db.add(ProductCategory(
+        id="00000000-0000-4000-8000-00000000b453", category_code="ZZT-TOP5", category_name="ZZT Top",
+        class_label="top", is_searchable=True,
+    ))
+    db.query(ProductSpecRegistry).update({ProductSpecRegistry.is_active: False})
+    db.flush()
+
+
+@pytest.mark.parametrize(
+    "tokens,code",
+    [(["tops"], "TOPS-MIXER"), (["tops", "bidet"], "TOPS-BIDET")],
+    ids=["one word", "two words"],
+)
+def test_r9_5_route_and_mode_a_plural_code_family_stays_a_hit(client, db, tokens, code):
+    _top_world(db, code)
+
+    assert code in _product_codes(_post(client, tokens)), tokens
