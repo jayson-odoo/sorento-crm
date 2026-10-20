@@ -30,11 +30,11 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
+import { NewProductApplicationHeader } from '@/components/common/NewProductApplicationHeader';
 import {
-  NewProductApplicationSheet,
+  NewProductApplicationLines,
   type LookupFetcher,
-  type SheetImageActions,
-} from '@/components/common/NewProductApplicationSheet';
+} from '@/components/common/NewProductApplicationLines';
 import {
   EMPTY_FORM,
   blankLine,
@@ -48,27 +48,25 @@ import {
 import { formatDateInMalaysia } from '@/lib/helpers';
 import type { NewProductApplicationDetail } from '@/types/newProductApplication';
 import { portalBase } from '../lib/portal-paths';
+import { uploadAttachment, type PortalAttachment } from '../lib/portal-client';
 import {
   cancelNewProductApplication,
-  copyNewProductApplicationLineImage,
   createNewProductApplication,
-  deleteNewProductApplicationLineImage,
   downloadNewProductApplicationExcel,
   getNewProductApplication,
   getNewProductApplicationPrefill,
-  listInquiryImagesForNewProductApplication,
   listMyRespondedInquiries,
   lookupNewProductApplication,
   lookupNewProductApplicationCustomers,
   reviseNewProductApplication,
   submitNewProductApplication,
   updateNewProductApplication,
-  uploadNewProductApplicationLineImage,
   type PortalCustomerHit,
   type PortalInquiryHit,
   type PortalLookupKind,
 } from '../lib/new-product-application-service';
 import { AsyncCombobox } from './AsyncCombobox';
+import { AttachmentDropzone } from './AttachmentDropzone';
 
 const LOCK_SENTENCE =
   'Locked: Revise to change it; it goes back to Draft and needs approval again.';
@@ -156,8 +154,8 @@ export default function NewProductApplicationForm({
   const [application, setApplication] =
     useState<NewProductApplicationDetail | null>(null);
   const [savedId, setSavedId] = useState<string | null>(null);
-  // The inquiry the saved record points at; "Copy from the inquiry" reads this one only.
-  const [savedInquiry, setSavedInquiry] = useState('');
+  const [attachments, setAttachments] = useState<PortalAttachment[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(Boolean(applicationId));
   const [notFound, setNotFound] = useState(false);
   const [state, setState] = useState<FormState>({
@@ -178,6 +176,7 @@ export default function NewProductApplicationForm({
 
   const load = useCallback((d: NewProductApplicationDetail) => {
     setApplication(d);
+    setAttachments((d.attachments ?? []) as PortalAttachment[]);
     const loaded = stateFromDetail(d);
     setState(
       loaded.lines.length ? loaded : { ...loaded, lines: [blankLine()] },
@@ -214,36 +213,20 @@ export default function NewProductApplicationForm({
   const canCancel =
     Boolean(application) && !anyResolved && (locked || status === 'draft');
 
-  // The server answered with line ids and images: keep them on the draft so the next save
-  // updates the same products instead of replacing them. A write's answer lists the products
-  // in the order sent, so unsaved ones are matched by position; an image action's answer is
-  // matched by id only. An image the user removed in this edit stays hidden until Save.
-  const adopt = useCallback(
-    (saved?: Partial<NewProductApplicationDetail>, written = false) => {
-      const lines = saved?.lines;
-      if (!lines) return;
-      setState((prev) => ({
-        ...prev,
-        lines: prev.lines.map((l, i) => {
-          const match = l.id
-            ? lines.find((x) => x.id === l.id)
-            : written && lines.length === prev.lines.length
-              ? lines[i]
-              : undefined;
-          return match
-            ? {
-                ...l,
-                id: match.id,
-                images: (match.images ?? l.images).filter(
-                  (img) => !l.removed_link_ids.includes(img.link_id),
-                ),
-              }
-            : l;
-        }),
-      }));
-    },
-    [],
-  );
+  // The server answered with line ids: keep them on the draft so the next save updates the same
+  // products instead of replacing them. A write's answer lists the products in the order sent.
+  const adopt = useCallback((saved?: Partial<NewProductApplicationDetail>) => {
+    const lines = saved?.lines;
+    if (!lines) return;
+    setState((prev) =>
+      lines.length === prev.lines.length
+        ? {
+            ...prev,
+            lines: prev.lines.map((l, i) => ({ ...l, id: lines[i].id })),
+          }
+        : prev,
+    );
+  }, []);
 
   const save = async (): Promise<{ id: string }> => {
     const body = payloadFromState(state);
@@ -252,111 +235,27 @@ export default function NewProductApplicationForm({
       ? await updateNewProductApplication(id, body)
       : await createNewProductApplication(body);
     setSavedId(saved.id);
-    setSavedInquiry(state.stock_inquiry_id);
-    // Images picked before the application existed go up now, in product order.
-    // Ids first, so each answer below lands on the product it belongs to and a refused
-    // Submit leaves the uploaded images on screen.
-    adopt(saved, true);
-    for (const [i, line] of state.lines.entries()) {
-      const lineId = saved.lines?.[i]?.id;
-      if (!lineId) continue;
-      for (const file of line.staged_images) {
-        try {
-          adopt(
-            await uploadNewProductApplicationLineImage(saved.id, lineId, file),
-          );
-        } catch (e) {
-          toast.error(
-            e instanceof Error ? e.message : 'Failed to upload the image',
-          );
-        }
-      }
-      for (const copy of line.staged_copies) {
-        try {
-          adopt(
-            await copyNewProductApplicationLineImage(
-              saved.id,
-              lineId,
-              copy.attachment_id,
-            ),
-          );
-        } catch (e) {
-          toast.error(
-            e instanceof Error ? e.message : 'Failed to copy the image',
-          );
-        }
+    adopt(saved);
+    // Files dropped before the application existed go up now (as the Price Tag Request does).
+    for (const file of pendingFiles) {
+      try {
+        const uploaded = await uploadAttachment(
+          'new_product_application',
+          saved.id,
+          file,
+        );
+        setAttachments((prev) => [...prev, uploaded]);
+      } catch (e) {
+        toast.error(
+          e instanceof Error ? e.message : 'Failed to upload the file',
+        );
       }
     }
-    // Removals staged during the edit are applied now that the save went through.
-    for (const line of state.lines) {
-      if (!line.id) continue;
-      for (const linkId of line.removed_link_ids) {
-        try {
-          await deleteNewProductApplicationLineImage(saved.id, line.id, linkId);
-        } catch (e) {
-          toast.error(
-            e instanceof Error ? e.message : 'Failed to remove the image',
-          );
-        }
-      }
-    }
-    setState((prev) => ({
-      ...prev,
-      lines: prev.lines.map((l) => ({
-        ...l,
-        images: l.images.filter((i) => !l.removed_link_ids.includes(i.link_id)),
-        staged_images: [],
-        staged_copies: [],
-        removed_link_ids: [],
-      })),
-    }));
+    setPendingFiles([]);
     return saved;
   };
 
   const recordId = application?.id ?? savedId;
-  const savedInquiryId = application
-    ? (application.stock_inquiry_id ?? '')
-    : savedInquiry;
-  const attempt = async (run: () => Promise<unknown>, fallback: string) => {
-    try {
-      adopt((await run()) as Partial<NewProductApplicationDetail> | undefined);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : fallback);
-    }
-  };
-  const imageActions: SheetImageActions = {
-    upload: (line, file) =>
-      recordId && line.id
-        ? attempt(
-            () =>
-              uploadNewProductApplicationLineImage(recordId, line.id!, file),
-            'Failed to upload the image',
-          )
-        : undefined,
-    copy: (line, attachmentId) =>
-      recordId && line.id
-        ? attempt(
-            () =>
-              copyNewProductApplicationLineImage(
-                recordId,
-                line.id!,
-                attachmentId,
-              ),
-            'Failed to copy the image',
-          )
-        : undefined,
-    savedInquiryId: savedInquiryId,
-    listInquiry: async (inquiryId) => {
-      try {
-        return await listInquiryImagesForNewProductApplication(inquiryId);
-      } catch (e) {
-        toast.error(
-          e instanceof Error ? e.message : 'Failed to load the inquiry images',
-        );
-        return null;
-      }
-    },
-  };
 
   const downloadExcel = async () => {
     if (!application) return;
@@ -569,16 +468,12 @@ export default function NewProductApplicationForm({
               {application?.status_label ?? 'Draft'}
             </Badge>
           </div>
-          <NewProductApplicationSheet
+          <NewProductApplicationHeader
             value={state}
             onChange={setState}
             readOnly={readOnly}
             applicationNo={application?.application_no}
             createdAt={application?.created_at}
-            salesPerson={application?.applicant_name}
-            brands={BRANDS}
-            errors={errors}
-            imageActions={imageActions}
             stockInquiryField={
               !application ? (
                 <AsyncCombobox<PortalInquiryHit>
@@ -600,10 +495,6 @@ export default function NewProductApplicationForm({
                         ...prev,
                         stock_inquiry_id: '',
                         stock_inquiry_label: '',
-                        lines: prev.lines.map((l) => ({
-                          ...l,
-                          staged_copies: [],
-                        })),
                       }));
                     }
                   }}
@@ -643,45 +534,67 @@ export default function NewProductApplicationForm({
                 )}
               </>
             }
-            lineFooter={
-              application
-                ? (draftLine) => {
-                    const l = application.lines.find(
-                      (x) => x.id === draftLine.id,
-                    );
-                    if (!l) return null;
-                    return (
-                      <div className="min-w-0 space-y-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          {l.opened_product_id ? (
-                            <>
-                              <Badge status="completed">Opened</Badge>
-                              <span className="font-medium">
-                                {l.opened_product_code}
+          />
+          <div className="mt-6">
+            <NewProductApplicationLines
+              lines={state.lines}
+              onChange={(lines) => setState((prev) => ({ ...prev, lines }))}
+              brands={BRANDS}
+              errors={errors}
+              readOnly={readOnly}
+              showCost={Boolean(application)}
+              renderOpenedAs={
+                application
+                  ? (draftLine) => {
+                      const l = application.lines.find(
+                        (x) => x.id === draftLine.id,
+                      );
+                      if (!l) return null;
+                      return (
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            {l.opened_product_id ? (
+                              <>
+                                <Badge status="completed">Opened</Badge>
+                                <span className="font-medium">
+                                  {l.opened_product_code}
+                                </span>
+                              </>
+                            ) : l.closed_reason ? (
+                              <>
+                                <Badge status="cancelled">Not opening</Badge>
+                                <span>{l.closed_reason}</span>
+                              </>
+                            ) : (
+                              <span className="text-muted-foreground">
+                                Not yet
                               </span>
-                            </>
-                          ) : l.closed_reason ? (
-                            <>
-                              <Badge status="cancelled">Not opening</Badge>
-                              <span>{l.closed_reason}</span>
-                            </>
-                          ) : (
-                            <span className="text-muted-foreground">
-                              Not yet
-                            </span>
+                            )}
+                          </div>
+                          {l.opened_supplier_name && (
+                            <p className="text-xs text-muted-foreground">
+                              Supplier: {l.opened_supplier_name}
+                            </p>
                           )}
                         </div>
-                        {l.opened_supplier_name && (
-                          <p className="text-xs text-muted-foreground">
-                            Supplier: {l.opened_supplier_name}
-                          </p>
-                        )}
-                      </div>
-                    );
-                  }
-                : undefined
-            }
-          />
+                      );
+                    }
+                  : undefined
+              }
+            />
+          </div>
+          <div className="mt-6">
+            <AttachmentDropzone
+              kind="new_product_application"
+              submissionId={recordId ?? null}
+              attachments={attachments}
+              onChange={setAttachments}
+              disabled={saving}
+              readOnly={readOnly}
+              pendingFiles={pendingFiles}
+              onPendingFilesChange={setPendingFiles}
+            />
+          </div>
         </CardContent>
       </Card>
 

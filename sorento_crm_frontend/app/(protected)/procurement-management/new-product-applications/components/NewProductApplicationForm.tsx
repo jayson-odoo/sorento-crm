@@ -15,16 +15,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import {
-  NewProductApplicationSheet,
-  type SheetImageActions,
-} from '@/components/common/NewProductApplicationSheet';
+import { NewProductApplicationHeader } from '@/components/common/NewProductApplicationHeader';
+import { NewProductApplicationLines } from '@/components/common/NewProductApplicationLines';
 import { AsyncCombobox } from '@/app/(auth)/portal/components/AsyncCombobox';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import {
   EMPTY_FORM,
   blankLine,
-  type DraftLine,
   numberErrors,
   payloadFromState,
   stateFromDetail,
@@ -40,16 +37,8 @@ import {
   useNewProductApplicationPrefillQuery,
   useNewProductApplicationQuery,
 } from '../hooks/useNewProductApplications';
-import {
-  getStockInquiryAttachmentsForNpa,
-  searchStockInquiryOptions,
-} from '../services/newProductApplicationService';
-
-// Copies staged from one inquiry mean nothing under another.
-const dropStagedCopies = (l: DraftLine): DraftLine => ({
-  ...l,
-  staged_copies: [],
-});
+import NewProductApplicationAttachments from './NewProductApplicationAttachments';
+import { searchStockInquiryOptions } from '../services/newProductApplicationService';
 
 const BASE_PATH = '/procurement-management/new-product-applications';
 
@@ -63,8 +52,7 @@ export default function NewProductApplicationForm({
   stockInquiryId?: string;
 }) {
   const router = useRouter();
-  const { create, update, submit, uploadImage, copyImage, deleteImage } =
-    useNewProductApplicationMutations();
+  const { create, update, submit } = useNewProductApplicationMutations();
   const existing = useNewProductApplicationQuery(applicationId ?? null);
   const prefill = useNewProductApplicationPrefillQuery(
     applicationId ? null : (stockInquiryId ?? null),
@@ -78,8 +66,6 @@ export default function NewProductApplicationForm({
   const [errors, setErrors] = useState<Record<string, string>>({});
   // A Submit the server refuses leaves the draft saved; the next press updates it.
   const [savedId, setSavedId] = useState<string | null>(null);
-  // The inquiry the saved record points at; "Copy from the inquiry" reads this one only.
-  const [savedInquiry, setSavedInquiry] = useState('');
 
   useEffect(() => {
     if (hydrated) return;
@@ -112,151 +98,33 @@ export default function NewProductApplicationForm({
 
   const saving = create.isPending || update.isPending || submit.isPending;
 
-  // The server answered with line ids and images: keep them on the draft so the next save
-  // updates the same products instead of replacing them. A write's answer lists the products
-  // in the order sent, so unsaved ones are matched by position; an image action's answer is
-  // matched by id only. An image the user removed in this edit stays hidden until Save.
-  const adopt = useCallback(
-    (saved?: Partial<NewProductApplicationDetail>, written = false) => {
-      const lines = saved?.lines;
-      if (!lines) return;
-      setState((prev) => ({
-        ...prev,
-        lines: prev.lines.map((l, i) => {
-          const match = l.id
-            ? lines.find((x) => x.id === l.id)
-            : written && lines.length === prev.lines.length
-              ? lines[i]
-              : undefined;
-          return match
-            ? {
-                ...l,
-                id: match.id,
-                images: (match.images ?? l.images).filter(
-                  (img) => !l.removed_link_ids.includes(img.link_id),
-                ),
-              }
-            : l;
-        }),
-      }));
-    },
-    [],
-  );
+  // The server answered with line ids: keep them on the draft so the next save updates the same
+  // products instead of replacing them. A write's answer lists the products in the order sent.
+  const adopt = useCallback((saved?: Partial<NewProductApplicationDetail>) => {
+    const lines = saved?.lines;
+    if (!lines) return;
+    setState((prev) =>
+      lines.length === prev.lines.length
+        ? {
+            ...prev,
+            lines: prev.lines.map((l, i) => ({ ...l, id: lines[i].id })),
+          }
+        : prev,
+    );
+  }, []);
 
   const save = async () => {
     const body = payloadFromState(state);
     const id = applicationId ?? savedId;
     if (id) {
       const updated = await update.mutateAsync({ id, data: body });
-      await uploadStaged(id, updated);
+      adopt(updated);
       return updated;
     }
     const created = await create.mutateAsync(body);
     setSavedId(created.id);
-    setSavedInquiry(state.stock_inquiry_id);
-    await uploadStaged(created.id, created);
+    adopt(created);
     return created;
-  };
-
-  // Images picked before the application existed go up now, in product order.
-  const uploadStaged = async (
-    id: string,
-    saved: Partial<NewProductApplicationDetail>,
-  ) => {
-    const lines = saved.lines ?? [];
-    // Ids first, so each answer below lands on the product it belongs to and a refused
-    // Submit leaves the uploaded images on screen.
-    adopt(saved, true);
-    for (const [i, line] of state.lines.entries()) {
-      const lineId = lines[i]?.id;
-      if (!lineId) continue;
-      for (const file of line.staged_images) {
-        try {
-          adopt(await uploadImage.mutateAsync({ id, lineId, file }));
-        } catch {
-          // the mutation's own onError toast names the refusal
-        }
-      }
-      for (const copy of line.staged_copies) {
-        try {
-          adopt(
-            await copyImage.mutateAsync({
-              id,
-              lineId,
-              attachmentId: copy.attachment_id,
-            }),
-          );
-        } catch {
-          // the mutation's own onError toast names the refusal
-        }
-      }
-    }
-    // Removals staged during the edit are applied now that the save went through.
-    for (const line of state.lines) {
-      if (!line.id) continue;
-      for (const linkId of line.removed_link_ids) {
-        try {
-          await deleteImage.mutateAsync({ id, lineId: line.id, linkId });
-        } catch {
-          // the mutation's own onError toast names the refusal
-        }
-      }
-    }
-    setState((prev) => ({
-      ...prev,
-      lines: prev.lines.map((l) => ({
-        ...l,
-        images: l.images.filter((i) => !l.removed_link_ids.includes(i.link_id)),
-        staged_images: [],
-        staged_copies: [],
-        removed_link_ids: [],
-      })),
-    }));
-  };
-
-  const recordId = applicationId ?? savedId;
-  const imageActions: SheetImageActions = {
-    upload: async (line, file) => {
-      if (!recordId || !line.id) return;
-      try {
-        adopt(
-          await uploadImage.mutateAsync({
-            id: recordId,
-            lineId: line.id,
-            file,
-          }),
-        );
-      } catch {
-        // the mutation's own onError toast names the refusal
-      }
-    },
-    copy: async (line, attachmentId) => {
-      if (!recordId || !line.id) return;
-      try {
-        adopt(
-          await copyImage.mutateAsync({
-            id: recordId,
-            lineId: line.id,
-            attachmentId,
-          }),
-        );
-      } catch {
-        // the mutation's own onError toast names the refusal
-      }
-    },
-    savedInquiryId: applicationId
-      ? (existing.data?.stock_inquiry_id ?? '')
-      : savedInquiry,
-    listInquiry: async (inquiryId) => {
-      try {
-        return await getStockInquiryAttachmentsForNpa(inquiryId);
-      } catch (e) {
-        toast.error(
-          e instanceof Error ? e.message : 'Failed to load the inquiry images',
-        );
-        return null;
-      }
-    },
   };
 
   const checkNumbers = () => {
@@ -314,15 +182,12 @@ export default function NewProductApplicationForm({
               {record?.status_label ?? 'Draft'}
             </span>
           </div>
-          <NewProductApplicationSheet
+          <NewProductApplicationHeader
             value={state}
             onChange={setState}
             applicationNo={record?.application_no}
             createdAt={record?.created_at}
             salesPerson={record?.applicant_name ?? 'You'}
-            brands={lookups.brands}
-            errors={errors}
-            imageActions={imageActions}
             stockInquiryField={
               <SearchableSelect
                 aria-label="Stock inquiry"
@@ -345,7 +210,6 @@ export default function NewProductApplicationForm({
                       ...prev,
                       stock_inquiry_id: '',
                       stock_inquiry_label: '',
-                      lines: prev.lines.map(dropStagedCopies),
                     }));
                 }}
                 onOptionChange={(opt) =>
@@ -354,7 +218,6 @@ export default function NewProductApplicationForm({
                     ...prev,
                     stock_inquiry_id: opt.value,
                     stock_inquiry_label: opt.label,
-                    lines: prev.lines.map(dropStagedCopies),
                   }))
                 }
               />
@@ -385,6 +248,14 @@ export default function NewProductApplicationForm({
               </>
             }
           />
+          <div className="mt-6">
+            <NewProductApplicationLines
+              lines={state.lines}
+              onChange={(lines) => setState((prev) => ({ ...prev, lines }))}
+              brands={lookups.brands}
+              errors={errors}
+            />
+          </div>
 
           <div className="mt-8 flex flex-col gap-2 sm:flex-row sm:justify-end">
             <Button
@@ -410,6 +281,15 @@ export default function NewProductApplicationForm({
           </div>
         </CardContent>
       </Card>
+      {applicationId && record && (
+        <div className="mt-6">
+          <NewProductApplicationAttachments
+            applicationId={applicationId}
+            attachments={record.attachments ?? []}
+            editable={record.status === 'draft' || record.status === 'rejected'}
+          />
+        </div>
+      )}
     </div>
   );
 }

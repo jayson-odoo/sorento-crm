@@ -24,7 +24,9 @@ import { Textarea } from '@/components/ui/textarea';
 import AuditTrail from '@/components/audit/AuditTrail';
 import DetailActions from '@/components/common/DetailActions';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
-import { NewProductApplicationSheet } from '@/components/common/NewProductApplicationSheet';
+import { NewProductApplicationHeader } from '@/components/common/NewProductApplicationHeader';
+import { NewProductApplicationLines } from '@/components/common/NewProductApplicationLines';
+import NewProductApplicationAttachments from './NewProductApplicationAttachments';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
 import { AsyncCombobox } from '@/app/(auth)/portal/components/AsyncCombobox';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
@@ -286,8 +288,17 @@ export default function NewProductApplicationDetail({
     isError,
     error,
   } = useNewProductApplicationQuery(applicationId);
-  const { submit, approve, reject, revise, cancel, link, close, undo, feedback } =
-    useNewProductApplicationMutations();
+  const {
+    submit,
+    approve,
+    reject,
+    revise,
+    cancel,
+    link,
+    close,
+    undo,
+    feedback,
+  } = useNewProductApplicationMutations();
   const canCreate = useHasPermission(
     'procurement.new_product_applications.create',
   );
@@ -365,7 +376,8 @@ export default function NewProductApplicationDetail({
   const canCancel =
     ownerActs && (r.status === 'draft' || locked) && !anyResolved;
   const stamp = r.submitted_at ?? r.created_at;
-  const canFeedback = canOpen && (r.status === 'approved' || r.status === 'completed');
+  const canFeedback =
+    canOpen && (r.status === 'approved' || r.status === 'completed');
   const sheetState = savedState && {
     ...savedState,
     ...(draft
@@ -514,7 +526,8 @@ export default function NewProductApplicationDetail({
               {r.status_label}
             </span>
             {' · '}
-            {r.lines_done} of {r.lines_total} {r.lines_total === 1 ? 'line' : 'lines'} done
+            {r.lines_done} of {r.lines_total}{' '}
+            {r.lines_total === 1 ? 'line' : 'lines'} done
           </p>
         </div>
         <DetailActions
@@ -539,9 +552,7 @@ export default function NewProductApplicationDetail({
                 <Link2 className="size-4" />
                 Copy link
               </DropdownMenuItem>
-              <DropdownMenuItem
-                onSelect={() => void downloadExcel()}
-              >
+              <DropdownMenuItem onSelect={() => void downloadExcel()}>
                 <Download className="size-4" />
                 Download Excel
               </DropdownMenuItem>
@@ -637,7 +648,9 @@ export default function NewProductApplicationDetail({
             <div className="mb-4 space-y-1 text-sm [&_p]:break-words">
               {r.revise_reason && (
                 <p>
-                  <span className="text-muted-foreground">Revised because: </span>
+                  <span className="text-muted-foreground">
+                    Revised because:{' '}
+                  </span>
                   {r.revise_reason}
                 </p>
               )}
@@ -650,76 +663,100 @@ export default function NewProductApplicationDetail({
             </div>
           )}
           {sheetState && (
-            <NewProductApplicationSheet
-              value={sheetState}
-              onChange={(next) =>
-                setDraft({
-                  lead_time: next.lead_time,
-                  costs: Object.fromEntries(
-                    next.lines.map((l) => [l.id ?? '', l.cost_price]),
-                  ),
-                })
-              }
-              readOnly
-              applicationNo={r.application_no}
-              createdAt={r.created_at}
-              salesPerson={r.applicant_name}
-              brands={NO_BRANDS}
-              feedback={{
-                editable: canFeedback,
-                onSave: () => void saveFeedback(),
-                saving: feedback.isPending,
-              }}
-              stockInquiryField={
-                r.stock_inquiry_id && r.stock_inquiry_number ? (
-                  <Link
-                    href={`/procurement-management/stock-inquiries/${r.stock_inquiry_id}`}
-                    className="text-primary hover:underline"
-                  >
-                    {r.stock_inquiry_number}
-                  </Link>
-                ) : (
-                  'None'
-                )
-              }
-              customerField={
-                <span className="flex flex-wrap items-center gap-2">
-                  {[r.customer_code, r.customer_name]
-                    .filter(Boolean)
-                    .join(' - ') || 'None'}
-                  {!r.customer_code && r.customer_name && (
-                    <Badge variant="secondary">No debtor code</Badge>
-                  )}
-                </span>
-              }
-              lineFooter={(draftLine) => {
-                const l = r.lines.find((x) => x.id === draftLine.id);
-                if (!l) return null;
-                return (
-                  <div className="min-w-0 space-y-1.5">
-                    <OpenedAs
-                      line={l}
-                      applicationStatus={r.status}
-                      canOpen={canOpen}
-                      busy={busy}
-                      onLink={(lineId, productId) =>
-                        link.mutate({ id: r.id, lineId, productId })
-                      }
-                      onClose={(lineId) => setAsking({ kind: 'close', lineId })}
-                      onUndo={(lineId) => undo.mutate({ id: r.id, lineId })}
-                    />
-                    {l.opened_product_id && (
-                      <p className="text-xs text-muted-foreground">
-                        From AutoCount: {fromAutoCount(l) || '-'}
-                      </p>
+            <>
+              <NewProductApplicationHeader
+                value={sheetState}
+                onChange={(next) =>
+                  setDraft((prev) => ({
+                    lead_time: next.lead_time,
+                    costs: prev?.costs ?? {},
+                  }))
+                }
+                readOnly
+                applicationNo={r.application_no}
+                createdAt={r.created_at}
+                salesPerson={r.applicant_name}
+                feedback={{
+                  editable: canFeedback,
+                  onSave: () => void saveFeedback(),
+                  saving: feedback.isPending,
+                }}
+                stockInquiryField={
+                  r.stock_inquiry_id && r.stock_inquiry_number ? (
+                    <Link
+                      href={`/procurement-management/stock-inquiries/${r.stock_inquiry_id}`}
+                      className="text-primary hover:underline"
+                    >
+                      {r.stock_inquiry_number}
+                    </Link>
+                  ) : (
+                    'None'
+                  )
+                }
+                customerField={
+                  <span className="flex flex-wrap items-center gap-2">
+                    {[r.customer_code, r.customer_name]
+                      .filter(Boolean)
+                      .join(' - ') || 'None'}
+                    {!r.customer_code && r.customer_name && (
+                      <Badge variant="secondary">No debtor code</Badge>
                     )}
-                  </div>
-                );
-              }}
-            />
+                  </span>
+                }
+              />
+              <div className="mt-6">
+                <NewProductApplicationLines
+                  lines={sheetState.lines}
+                  onChange={(next) =>
+                    setDraft((prev) => ({
+                      lead_time: prev?.lead_time ?? sheetState.lead_time,
+                      costs: Object.fromEntries(
+                        next.map((l) => [l.id ?? '', l.cost_price]),
+                      ),
+                    }))
+                  }
+                  brands={NO_BRANDS}
+                  readOnly
+                  showCost
+                  costEditable={canFeedback}
+                  renderOpenedAs={(draftLine) => {
+                    const l = r.lines.find((x) => x.id === draftLine.id);
+                    if (!l) return null;
+                    return (
+                      <div className="min-w-0 space-y-1.5">
+                        <OpenedAs
+                          line={l}
+                          applicationStatus={r.status}
+                          canOpen={canOpen}
+                          busy={busy}
+                          onLink={(lineId, productId) =>
+                            link.mutate({ id: r.id, lineId, productId })
+                          }
+                          onClose={(lineId) =>
+                            setAsking({ kind: 'close', lineId })
+                          }
+                          onUndo={(lineId) => undo.mutate({ id: r.id, lineId })}
+                        />
+                        {l.opened_product_id && (
+                          <p className="text-xs text-muted-foreground">
+                            From AutoCount: {fromAutoCount(l) || '-'}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  }}
+                />
+              </div>
+            </>
           )}
         </CardContent>
       </Card>
+
+      <NewProductApplicationAttachments
+        applicationId={r.id}
+        attachments={r.attachments ?? []}
+        editable={ownerActs && editable && r.source !== 'portal'}
+      />
 
       {canViewRecord && (
         <AuditTrail

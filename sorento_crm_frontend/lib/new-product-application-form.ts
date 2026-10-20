@@ -6,7 +6,6 @@
  */
 import type {
   NewProductApplicationDetail,
-  NewProductApplicationImage,
   NewProductApplicationLine,
   NewProductApplicationPrefill,
   NewProductApplicationWrite,
@@ -31,13 +30,6 @@ export interface DraftLine {
   expected_qty: string;
   /** Purchasing feedback, shown and edited on the sheet but never part of the write body. */
   cost_price: string;
-  images: NewProductApplicationImage[];
-  /** Picked before the application exists; uploaded right after the create returns line ids. */
-  staged_images: File[];
-  /** Saved images removed in this edit; the host unlinks them when Save succeeds. Never sent in the write. */
-  removed_link_ids: string[];
-  /** Inquiry images picked before the application exists; copied right after the first save. */
-  staged_copies: { attachment_id: string; filename: string }[];
 }
 
 export interface FormState {
@@ -81,10 +73,6 @@ export const blankLine = (): DraftLine => ({
   brand_label: '',
   expected_qty: '',
   cost_price: '',
-  images: [],
-  staged_images: [],
-  removed_link_ids: [],
-  staged_copies: [],
 });
 
 /** "SI26-0412 - XY-1234-MB": the inquiry as the header picker and the detail page name it. */
@@ -112,10 +100,6 @@ function lineFromDetail(l: NewProductApplicationLine): DraftLine {
     brand_label: text(l.brand_name),
     expected_qty: figure(l.expected_qty),
     cost_price: figure(l.cost_price),
-    images: l.images ?? [],
-    staged_images: [],
-    removed_link_ids: [],
-    staged_copies: [],
   };
 }
 

@@ -67,13 +67,18 @@ export interface NewProductApplicationSummary {
   created_at: string | null;
 }
 
-/** One picture of a product: the link row (to remove it) and the file (to show it). */
-export interface NewProductApplicationImage {
+/** One file attached to the application (shape of the generic attachment list). */
+export interface NewProductApplicationAttachment {
   link_id: string;
   attachment_id: string;
-  filename: string;
-  url: string;
-  content_type: string | null;
+  filename: string | null;
+  size: number | null;
+  url: string | null;
+  content_type?: string | null;
+  uploaded_at?: string | null;
+  uploaded_by_name?: string | null;
+  uploaded_by_role?: string | null;
+  can_unlink?: boolean;
 }
 
 export interface NewProductApplicationLine extends NewProductApplicationLineWrite {
@@ -82,7 +87,6 @@ export interface NewProductApplicationLine extends NewProductApplicationLineWrit
   brand_name: string | null;
   /** Purchasing feedback: COST, one per product. */
   cost_price: string | number | null;
-  images: NewProductApplicationImage[];
   /** Read from the linked product (staff only except the supplier, PQ1). */
   opened_category_name?: string | null;
   opened_base_uom_name?: string | null;
@@ -105,6 +109,7 @@ export interface NewProductApplicationDetail extends NewProductApplicationSummar
   remark: string | null;
   /** Purchasing feedback: LEADTIME, one per application. */
   lead_time: string | null;
+  attachments?: NewProductApplicationAttachment[];
   feedback_by_name?: string | null;
   feedback_at?: string | null;
   decided_at: string | null;
@@ -124,14 +129,6 @@ export interface NewProductApplicationPage {
   total: number;
   page: number;
   limit: number;
-}
-
-/** An image file on a stock inquiry, offered by "Copy from the inquiry". */
-export interface NewProductApplicationInquiryImage {
-  attachment_id: string;
-  filename: string;
-  url?: string;
-  content_type?: string | null;
 }
 
 /** PUT /feedback: one lead time, one cost per product; null clears. */

@@ -5,9 +5,12 @@ import { cn } from '@/lib/utils';
 export function ProductInquiryFormLayout({
   className,
   children,
+  title = 'PRODUCT INQUIRY FORM',
 }: {
   className?: string;
   children: React.ReactNode;
+  /** The form's own title; the Stock Inquiry keeps its default. */
+  title?: string;
 }) {
   return (
     <div
@@ -18,7 +21,7 @@ export function ProductInquiryFormLayout({
     >
       <div className="border-b-2 border-foreground/90 px-4 py-3 sm:py-4 text-center bg-muted/30">
         <h2 className="text-sm sm:text-base font-bold uppercase tracking-wide underline underline-offset-[6px] decoration-foreground/90 decoration-2">
-          PRODUCT INQUIRY FORM
+          {title}
         </h2>
       </div>
       <div>{children}</div>
