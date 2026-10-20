@@ -1,6 +1,6 @@
 # PLAN: attachment delete follows `resource.attachments.delete`
 
-Status: round 2 reviewed, awaiting CI (small fix track: under 300 lines, no migration, permission gate on one route plus the controls that call it)
+Status: round 3 (grant migration) in build. Track: started as small fix; round 3 adds a data migration, so it is no longer the small fix track (reviewer + security reviewer + browser pass all run).
 
 ## Journey
 
@@ -24,10 +24,8 @@ shared `require_permission` dependency (`app/dependencies.py:414`).
 - Files screen single delete (`sorento_crm_frontend/app/(protected)/resource-management/attachments/services/attachmentService.ts:413`).
 - Project Documents tab delete (`sorento_crm_frontend/app/(protected)/project-sales/_shared/services/projectDocumentService.ts:128`)
   calls the same route. Its trash button checks only `project.can_edit`
-  (`ProjectDocumentsPanel.tsx:184`), so a project editor whose role lacks
-  `resource.attachments.delete` now gets a 403 toast there. That tab's upload already needs
-  `resource.attachments.upload`, so this matches. Hiding the button by permission is an FE
-  follow-up, not this lane.
+  (`ProjectDocumentsPanel.tsx:184`). The role that uses it daily keeps delete through the
+  round 3 grant.
 
 ## Round 2: the UI follows the permission (crew, after the role audit)
 
@@ -42,6 +40,19 @@ of a trashed file, so there is no 403 toast and no dead click. `useHasPermission
 "Move to trash" is the archive route and is not gated by this slug, so it stays. Bulk permanent
 delete stays on `resource.attachments.bulk_delete`. The Project Documents tab is ON HOLD for the
 owner's call on `project.customer.service`.
+
+## Round 3: project.customer.service keeps delete (owner ruling 20 Oct 2026)
+
+The role audit on the prod copy showed `project.customer.service` (9 staff users) deletes
+project documents through this route from the Project Documents tab. The owner ruled the role
+keeps delete by holding `resource.attachments.delete` (full library delete, chosen over a
+project-scoped rule). `alembic/versions/adp_0001_pcs_attach_delete.py` inserts that one
+role-permission link when the role and the permission both exist and the link is missing;
+downgrade removes only that link. guest losing Trash "Permanently delete" is accepted.
+
+Test: `tests/test_migration_adp_0001_pcs_attach_delete.py` (link present after upgrade, no
+duplicate on re-run, existing link untouched, bystander untouched, downgrade scoped, no-op
+without the role, no app imports).
 
 ## Out of scope (named, not built)
 
