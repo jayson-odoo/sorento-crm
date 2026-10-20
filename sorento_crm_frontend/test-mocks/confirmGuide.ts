@@ -5,6 +5,7 @@
  * Test ids are the PLAN's (`PLAN-oi-split-guide-20oct.md`, "Test ids").
  */
 import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { expect } from 'vitest';
 
 /** Presses Confirm (N) and returns once the guide is open (nothing walked yet). */
 export async function openConfirmGuide() {
