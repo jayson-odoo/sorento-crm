@@ -490,3 +490,19 @@ def test_template_stated_quantity_form_of_the_count_does_not_matter():
     assert re.search(r"x ?\d|x N", block) and re.search(r"\d+ ?pcs|N pcs|units?", block, re.I), (
         "R-P1-03 does not name both 'x N' and 'N pcs' forms"
     )
+
+
+# --- F1-I: a file ask always carries one attachment_type entity per file word --------------------
+
+
+def test_template_file_ask_always_carries_one_entity_per_file_word():
+    block = _block("R-P2-06")
+    first = block.split("\n", 2)[1]
+    assert re.search(r"\balways\b", first, re.I) and re.search(
+        r"one attachment_type entity per (file )?(word|item)", first, re.I
+    ) and re.search(r"file word", first, re.I), (
+        "the first sentence of R-P2-06 does not say a file ask always carries one attachment_type entity per file word: "
+        + first[:200]
+    )
+    examples = re.findall(r'"[A-Za-z ]+ [A-Z]{3,}[A-Z0-9-]*"', block)
+    assert len(examples) <= 3, f"R-P2-06 has {len(examples)} word-plus-code worked examples: {examples}"
