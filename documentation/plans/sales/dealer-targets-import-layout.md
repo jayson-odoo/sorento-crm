@@ -45,7 +45,8 @@ of the threshold column to its left, and a lone column holds tier text (`300,000
 2. A CUSTOMER CODE on the row: matched without regard to case or spaces; unknown fails the row.
 3. Otherwise the NAME: the file's dealer name and every CRM customer name are normalised (case,
    spaces, punctuation ignored; bracketed ledger markers like `[A/C I]` dropped; `SDN BHD`,
-   `SDN. BHD.`, `S/B` dropped; `ENTERPRISES` = `ENTERPRISE`), then the account label must match:
+   `SDN. BHD.`, `S/B` dropped; `ENTERPRISES` = `ENTERPRISE`; accents folded, `É` = `E`, crew
+   ruling 20 Oct), then the account label must match:
    `A/C I` .. `A/C IV` = the customer's `account_level` 1 .. 4, any other label (`[CERAMIC]`,
    `Deluxe`) = a bracketed marker in the customer's name (the Mocha A/C II / III ledgers have no
    level, only the marker). Exactly one candidate = auto-mapped. None, two or more = `needs_pick`

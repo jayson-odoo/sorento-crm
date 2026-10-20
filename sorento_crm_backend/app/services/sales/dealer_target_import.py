@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import io
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
@@ -1467,8 +1468,11 @@ def split_account_suffix(name: str) -> Tuple[str, Optional[str]]:
 def dealer_key(name: Optional[str]) -> str:
     """The normalised company name a file name and a CRM name are compared on: case, spaces and
     punctuation ignored, bracketed ledger markers (`[A/C I]`, `(SRT)`) dropped, the SDN BHD forms
-    dropped, ENTERPRISES = ENTERPRISE (owner ruling 16 Oct 09:12)."""
-    text = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", (name or "").upper())
+    dropped, ENTERPRISES = ENTERPRISE (owner ruling 16 Oct 09:12), accents folded ("É" = "E",
+    crew ruling 20 Oct: the same letter, not a looser match)."""
+    text = unicodedata.normalize("NFKD", name or "")
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", text.upper())
     text = split_account_suffix(text)[0]
     text = re.sub(r"\bS\s*/\s*B\b", " ", text)
     words = re.sub(r"[^A-Z0-9]+", " ", text).split()
