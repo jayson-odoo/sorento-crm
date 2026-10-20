@@ -14,7 +14,7 @@ from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.planning_change import PlanningChangeFromTo
-from app.schemas.project_line_split import LineSplitViewOut
+from app.schemas.project_line_split import LineSplitsOut, LineSplitViewOut
 
 
 # --- sales orders -----------------------------------------------------------
@@ -366,6 +366,10 @@ class SalesOrder(BaseModel):
     planned_lines: int = 0
     plannable_lines: int = 0
     created_at: str
+    #: OI-SPLIT-VIEW (UAC E5): the order's split sheet as `GET /project-sales/sales-orders/
+    #: {pso}/line-splits` serves it (`LineSplitService.read`), for the read-only split popups;
+    #: `None` when no line of the order has saved splits. Single read only.
+    line_splits: Optional[LineSplitsOut] = None
 
 
 class LinkedPurchaseOrder(BaseModel):
