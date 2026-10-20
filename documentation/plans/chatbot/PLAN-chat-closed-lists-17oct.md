@@ -1,6 +1,6 @@
 # PLAN: CHAT-CLOSED-LISTS - chatbot step 2, closed candidate lists
 
-Status: Waiting (owner + bench). Round 7 pushed at 2a2e4d6c2c (H1, H1b, F3-a, F3-b; Opus READY x2, security PASS); ci HOLD until the owner rules a35818889 (a named hidden key narrowing a list); cp0-6240dc53f8 owner call open; F3-c / F3-d not built (crew a38450503, triggers below); EVAL-BENCH paired TRAIN x1 on 2a2e4d6c2c + R5-2 A/B x3 per arm requested by crew. Track: full (size L, LEAD pattern).
+Status: Review, round 8 (CODE-SUBSTRING, CLASS-NAMED-OFF-UNDER-STATE, owner a35818889 (b) not-available, DUP-CODE-LABEL, owner cp0-6240dc53f8 KEEP) built red-first with kill-proofs; one Opus + security re-review next, then push, lift the ci hold, ci-full, bench on the new head. Track: full (size L, LEAD pattern).
 Branch `claude/chat-closed-lists-x6ymb5` (the sandbox cannot push `crew/chat-closed-lists`), PR #1755.
 
 Design source: CHATBOT-SCALE-DESIGN-16oct section 8 step 2 + D2 (crew-only): code only SHORTLISTS
@@ -421,5 +421,43 @@ Red af7903881c (5 seams; gate.py covered through grounding, names_own_class thro
 
 | Slice | Red | Green | Notes |
 |---|---|---|---|
-| CODE-SUBSTRING | c9b33901 | bf462eb7 | 8 red (4 ported CHAT-STATE + 4 route), 33 guards; CS-4 data gap posted (crew-note 6277672165): wc 289 code-only |
-| CLASS-NAMED-OFF-UNDER-STATE | af790388 | 9bac0c2b | 5 red |
+| CODE-SUBSTRING | c9b33901, 7951a487, c0fd2609 | bf462eb7, d52ea77e | 8 red (4 ported CHAT-STATE + 4 route), 33 guards; CS-4 data gap posted (crew-note 6277672165): wc 289 code-only |
+| CLASS-NAMED-OFF-UNDER-STATE | af790388 | 9bac0c2b, d0b950b5 (engine sole state_path writer) | 5 red |
+
+## OWNER a35818889 = (b) "follow policy" (20 Oct ~07:15)
+
+A contact-hidden spec key the customer NAMES never narrows a set; the reply carries ONE `*<Label>:* not available` line
+(the same `spec_hidden:<key>` miss the fetch projection prints, fetch.py:2174-2201); a hidden key the customer did not
+name stays silent (lists omit silently). Owner case #833 holds only for a contact whose policy shows thickness.
+Tests 2ca65fa7 (round8 x3, round9 x2 to the ruling, #833 guard for a contact that sees thickness), fix 9b8dc2fc
+(Shape B reports the named hidden keys as `predicate.spec_hidden`; the reply prints the existing miss line; kill-proof 7
+red), R6-6 strict test amended to the ruling 2a7732f4 (bare size with an unnamed hidden key stays silent, pinned).
+
+## DUP-CODE-LABEL (20 Oct, crew)
+
+ARCHITECTURE: layer PICKER rendering. The incoming annotator (lanes/business/pickers.py:71-83) re-joined numbered lines
+to the probe by exact code text, so F16 (gate.py:934-960) put the "(Company)" suffix on product_attachment only. One
+mechanism: annotators key each line on its candidate's product id; the suffix shows on every domain on exactly the lines
+whose code two or more rows share. Removes the product_attachment special case. Red c8713c5d (R1 bare code twice on
+incoming; R2 a false "has incoming" on the second company's line); stock has no picker for a shared code family (it
+answers every member and names each row's company), so incoming is the domain pinned.
+DUP-CODE fix 6b8986ed (annotators key on product id; F16 suffix on every domain; kill-proof 3 red), owner ruling (2)
+amendments 9c78f7b4 (F16 unit test renamed; rg-15123789 registered in tests/chatbot/divergences.py), R3 red dbef6c20 /
+fix c6e038a6 (a re-asked roster keeps the company; kill-proof 1 red). Residual: the fan-out reply matches found rows by
+code text, so the second company's "no incoming" miss line can be omitted (no wrong data shown).
+
+## OWNER cp0-6240dc53f8 = KEEP (20 Oct ~07:40)
+
+An attachment_type pick with confident=false whose listed_item is EXACTLY a listed item is kept (no file-type ask);
+"none of these", a null listed_item, an alias / canonical-only hit and a type name instead of the listed code still
+drop and ask. head/grounding.py:724 (the confident half only). Reds 94469eae (K1 file type, K2 certificate kind; validate
+and dropped_type tests amended to the ruling, lead sign-off), fix 7b9d0e47 (kill-proof 2 red).
+
+## Crew audit findings (20 Oct; crew a58865998)
+
+- FILE-ASK-AS-COUNT: a set over SET_LIST_MAX with a breakdown is withheld and its files emptied (fetch.py:3631-3634,
+  :3709, :3718; engine.py:7244; same on main). Owner: CHAT-COMPOSER (F5 capped-set render), no rule here; EVAL-BENCH
+  measures TRAIN 41147cbf9f, 7a655af8fa, 45550e462c, 40308581e3, 5c93483505 on combined4 with the composer gate on.
+- MIXED-ASK-TO-STOCK: no TRAIN item of the shape; parked until a real non-held-out example exists.
+- combined4 resolution branches (crew-note 6280096668): crew/combined4-res-1760-on-1761 = 23b7f89a24,
+  crew/combined4-res-1776-on-main = 5b9bd914a4.
