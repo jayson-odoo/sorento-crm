@@ -972,16 +972,32 @@ export function splitEditsToConfirm(
 }
 
 /**
- * OI-SPLIT-GUIDE (UAC A3): the sales orders one press confirms, the same set
- * `confirmSummaryFor` counts, so the guided Confirm's title names exactly the orders of N.
+ * OI-SPLIT-GUIDE (UAC A3, F2): per sales order one press confirms, the lines it covers: the
+ * orders and the per-line rule `confirmSummaryFor` counts by (`confirmScope`,
+ * `countsInPress`), once per line, so the guided Confirm's pages list exactly the lines N
+ * counts.
  */
-export function confirmOrderIdsFor(
+export function confirmLinesByOrder(
   contributions: BoardContribution[],
   draft: BoardDraft,
   batchBlockedSalesOrderIds: ReadonlySet<string> = new Set(),
   options?: ConfirmScopeOptions,
-): Set<string> {
-  return confirmScope(contributions, draft, batchBlockedSalesOrderIds, options).orderIds;
+): Map<string, BoardContribution[]> {
+  const { orderIds } = confirmScope(contributions, draft, batchBlockedSalesOrderIds, options);
+  const out = new Map<string, BoardContribution[]>();
+  const seen = new Set<string>();
+  for (const contribution of contributions) {
+    if (!orderIds.has(contribution.sales_order_id)) continue;
+    const batchBlocked = batchBlockedSalesOrderIds.has(contribution.sales_order_id);
+    if (!countsInPress(contribution, draft, batchBlocked, options)) continue;
+    const id = contribution.project_line_id ?? contribution.key;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const lines = out.get(contribution.sales_order_id) ?? [];
+    lines.push(contribution);
+    out.set(contribution.sales_order_id, lines);
+  }
+  return out;
 }
 
 /** The orders one press confirms, and the rejected / changed tallies (`confirmSummaryFor`). */

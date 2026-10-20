@@ -558,8 +558,10 @@ const LineBlock = React.memo(function LineBlock({
   );
   const emptyRemove = sheetReadOnly ? null : <TableCell className={changeCell} />;
 
+  // OI-SPLIT-GUIDE (UAC F3): the guided Confirm's words for the line's saved decision.
+  const savedRemark = sheetReadOnly ? line.savedRemark || null : null;
   let body: React.ReactNode;
-  if (delivered) {
+  if (delivered && !savedRemark) {
     body = (
       <TableRow className="border-0 hover:bg-transparent">
         {emptyGrip}
@@ -574,13 +576,15 @@ const LineBlock = React.memo(function LineBlock({
         {emptyRemove}
       </TableRow>
     );
-  } else if (added) {
+  } else if (added || delivered) {
     body = (
       <TableRow className="border-0 hover:bg-transparent">
         {emptyGrip}
         {baseCells}
         <TableCell colSpan={2} className={changeCell} />
-        <TableCell className={changeCell} />
+        <TableCell className={changeCell}>
+          {savedRemark ? <RemarkText value={savedRemark} generated="" /> : null}
+        </TableCell>
         {balance}
         {emptyRemove}
       </TableRow>
@@ -594,7 +598,7 @@ const LineBlock = React.memo(function LineBlock({
         <TableCell className={changeCell}>{formatSplitDate(line.baseDate) || '-'}</TableCell>
         <TableCell className={changeCell}>
           <RemarkText
-            value={only?.remark ?? ''}
+            value={savedRemark ?? only?.remark ?? ''}
             generated={line.remarkGenerated ?? ''}
           />
         </TableCell>

@@ -405,10 +405,11 @@ export function OrderSplitsDialog({
 }
 
 /**
- * OI-SPLIT-GUIDE (UAC B2): only the named lines of one order (the saved split edits a
- * Confirm applies), each as the line popup shows a line (UAC E3 of #1794: the line and the
- * lines its splits land on), as the same read-only split sheet. No dialog of its own: the
- * guided Confirm draws it inside its Split page.
+ * OI-SPLIT-GUIDE (UAC F2, F3): only the named lines of one order (every line a Confirm covers)
+ * as the same read-only split sheet: a split line with its split rows, plus the lines its
+ * splits land on (UAC E3 of #1794); an unsplit line as its one row whose Remark is the
+ * purchasing email's words for its saved decision (`saved_remark`). No dialog of its own: the
+ * guided Confirm draws it inside its page.
  */
 export function SplitLinesSheet({
   payload,
@@ -419,8 +420,13 @@ export function SplitLinesSheet({
   lineIds: readonly string[];
 }) {
   const sheet = React.useMemo(() => {
-    const all = payload ? sheetLinesOf(payload) : [];
-    return { all, lines: linesWithLanding(all, new Set(lineIds)) };
+    if (!payload) return { all: [] as SplitLine[], lines: [] as SplitLine[] };
+    const named = new Set(lineIds);
+    const words = new Map(payload.lines.map((line) => [line.line_id, line.saved_remark ?? null]));
+    const all = sheetLinesOf(payload).map((line) =>
+      named.has(line.lineId) ? { ...line, savedRemark: words.get(line.lineId) ?? null } : line,
+    );
+    return { all, lines: linesWithLanding(all, named) };
   }, [payload, lineIds]);
   if (!payload || sheet.lines.length === 0) return <NoSplitLines />;
   return <ReadOnlySheet payload={payload} lines={sheet.lines} all={sheet.all} />;

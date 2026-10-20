@@ -50,6 +50,12 @@ export interface SplitLine {
   extraRemark?: string | null;
   /** The server's generated REMARK for the line's own row (AC-G9). */
   remarkGenerated?: string;
+  /**
+   * OI-SPLIT-GUIDE (UAC F3): set only by the guided Confirm's sheet, the purchasing email's
+   * words for the line's saved decision (`saved_remark`): the read-only sheet prints them,
+   * unmuted, as the Remark of the line's own single row.
+   */
+  savedRemark?: string | null;
   /** Stored splits; empty = not split (one implicit split, `splitsOf`). */
   splits: SplitDraft[];
 }
