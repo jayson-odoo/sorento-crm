@@ -473,3 +473,37 @@ def test_the_sales_order_list_refuses_a_malformed_po_filter(seeded):
         )
     assert caught.value.status_code in (404, 422)
     assert "uuid" not in str(caught.value.detail).lower()
+
+
+def test_undo_on_a_published_area_leaves_no_amendment_behind(seeded):
+    """Moving a published area and then moving it back proposes nothing: the second move
+    supersedes the first's still-proposed amendment, and no line differs any more."""
+    from app.models.project_so import OrderChangeNotice, SOAmendment
+    from app.services.project_po_progress_service import change_area_date
+
+    db, company_id, owner = seeded
+    po, phases, _a, _b = _two_line_po(db, company_id, owner)
+    _publish_all(db, po)
+    area = phases[1]
+    order_ids = [order.id for order in _orders(db, po)]
+
+    first = change_area_date(db, area, delivery_date=date(2030, 8, 20), actor_user_id=owner)
+    assert first["amendments"][0]["amendment_id"]
+    second = change_area_date(
+        db, area, delivery_date=first["previous_date"], actor_user_id=owner,
+        restore_lines=first["previous_lines"],
+    )
+
+    assert all(row["amendment_id"] is None for row in second["amendments"])
+    assert (
+        db.query(SOAmendment)
+        .filter(SOAmendment.project_sales_order_id.in_(order_ids))
+        .count()
+        == 0
+    )
+    assert (
+        db.query(OrderChangeNotice)
+        .filter(OrderChangeNotice.project_sales_order_id.in_(order_ids))
+        .count()
+        == 0
+    )

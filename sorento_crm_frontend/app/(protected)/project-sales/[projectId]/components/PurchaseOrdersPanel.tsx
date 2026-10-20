@@ -50,13 +50,20 @@ export const SOURCE_LABELS: Record<string, string> = {
   trading_house: 'Trading house',
 };
 
-/** What this PO still needs, from the flags the list row carries (no extra request). */
-export function describeNextStep(po: ProjectPurchaseOrder): string {
+/** What this PO still needs, from the list row and its sales orders (no extra request). */
+export function describeNextStep(
+  po: ProjectPurchaseOrder,
+  orders: ProjectSalesOrderRow[] = [],
+): string {
   if (po.has_document && !po.po_confirmed) return 'Confirm PO';
   if (!po.has_document && po.line_count === 0) return 'Add the lines';
   if (!po.schedule_confirmed) return 'Add or confirm the schedule';
-  if ((po.published_sales_order_count ?? 0) > 0) return 'Sales orders out';
-  return 'Build or publish sales orders';
+  if (orders.length === 0) return 'Build sales orders';
+  const unpublished = orders.filter(
+    (order) => !['published', 'amended', 'adopted'].includes(order.status),
+  ).length;
+  if (unpublished > 0) return `Publish ${unpublished} sales order${unpublished === 1 ? '' : 's'}`;
+  return 'Sales orders out';
 }
 
 /**
@@ -231,11 +238,14 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
       },
       {
         id: 'next_step',
-        accessorFn: (row) => describeNextStep(row),
+        accessorFn: (row) => describeNextStep(row, ordersByPo.get(row.id)),
         header: ({ column }) => <DataGridColumnHeader title="Next step" column={column} />,
         cell: ({ row }) => (
-          <span className="truncate text-sm" title={describeNextStep(row.original)}>
-            {describeNextStep(row.original)}
+          <span
+            className="truncate text-sm"
+            title={describeNextStep(row.original, ordersByPo.get(row.original.id))}
+          >
+            {describeNextStep(row.original, ordersByPo.get(row.original.id))}
           </span>
         ),
         size: 200,

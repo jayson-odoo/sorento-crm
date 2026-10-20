@@ -376,3 +376,30 @@ describe('SamplesPanel', () => {
     expect((await screen.findAllByText('-')).length).toBeGreaterThan(0);
   });
 });
+
+describe('describeNextStep (PM-SIMPLIFY Orders tab)', () => {
+  it('names the step left on each PO, counting unpublished orders', async () => {
+    const { describeNextStep } = await import('./PurchaseOrdersPanel');
+    const base = {
+      id: 'po1',
+      project_id: 'p1',
+      po_source: 'contractor_direct',
+      po_number: 'PO-1',
+      line_count: 3,
+      line_total: '0',
+      model_mismatch_count: 0,
+      price_mismatch_count: 0,
+    } as ProjectPurchaseOrder;
+    const order = (status: string) => ({ status }) as never;
+
+    expect(describeNextStep({ ...base, has_document: true, po_confirmed: false })).toBe('Confirm PO');
+    expect(describeNextStep({ ...base, line_count: 0 })).toBe('Add the lines');
+    expect(describeNextStep({ ...base, po_confirmed: true })).toBe('Add or confirm the schedule');
+    const ready = { ...base, po_confirmed: true, schedule_confirmed: true };
+    expect(describeNextStep(ready)).toBe('Build sales orders');
+    expect(describeNextStep(ready, [order('published'), order('blocked')])).toBe(
+      'Publish 1 sales order',
+    );
+    expect(describeNextStep(ready, [order('published'), order('amended')])).toBe('Sales orders out');
+  });
+});

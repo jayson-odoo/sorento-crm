@@ -26,16 +26,19 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 from sqlalchemy.orm import Session
 
 from app.models.project_so import (
+    AMENDMENT_PROPOSED,
     AUTHORED_LIVE_STATUSES,
     LIVE_SO_STATUSES,
     DeliverySchedule,
     DeliveryScheduleCell,
     DeliveryScheduleVersion,
+    OrderChangeNotice,
     ProjectDeliveryPhase,
     ProjectPOLine,
     ProjectPOVersion,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
+    SOAmendment,
 )
 from app.models.projects import ProjectPurchaseOrder, ProjectPurchaseOrderLine
 from app.services.error_handler import AppException
@@ -466,6 +469,28 @@ def change_area_date(
 
     amendments: List[Dict[str, Any]] = []
     if live_orders and previous_date != delivery_date:
+        # A newer move of this area supersedes an earlier one nobody has acted on yet, and
+        # moving it back (Undo) then leaves nothing proposed: drop the still-proposed
+        # area-date amendments (and their notices) before proposing again.
+        stale = (
+            db.query(SOAmendment)
+            .filter(
+                SOAmendment.project_sales_order_id.in_(list(live_orders)),
+                SOAmendment.from_version_kind == "area_date",
+                SOAmendment.from_version_id == phase.id,
+                SOAmendment.status == AMENDMENT_PROPOSED,
+            )
+            .all()
+        )
+        for amendment in stale:
+            ocn_id = amendment.ocn_id
+            db.delete(amendment)
+            db.flush()
+            if ocn_id:
+                db.query(OrderChangeNotice).filter(OrderChangeNotice.id == ocn_id).delete(
+                    synchronize_session=False
+                )
+        db.flush()
         from app.services.project_so_delta_service import ProjectSODeltaService
 
         delta = ProjectSODeltaService(db)
