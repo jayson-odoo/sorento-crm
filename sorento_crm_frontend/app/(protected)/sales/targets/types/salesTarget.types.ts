@@ -280,6 +280,15 @@ export interface DealerImportSuggestion {
   name: string;
 }
 
+export interface DealerImportAccountPick {
+  /** "<sheet>!<dealer row>~<label>": the key the chosen account goes under in the picks. */
+  pick_key: string;
+  /** The label as the file writes it. */
+  label: string;
+  /** The dealer's accounts as the file writes them. */
+  choices: string[];
+}
+
 export interface DealerImportRow {
   sheet: string;
   row: number;
@@ -292,6 +301,8 @@ export interface DealerImportRow {
   /** auto (exact name and account), code, or picked. */
   match: 'auto' | 'code' | 'picked' | null;
   suggestions: DealerImportSuggestion[];
+  /** A rate naming an account none of the dealer's rows has ("A/C 9"): pick which one it means. */
+  account_pick?: DealerImportAccountPick | null;
   status: 'mapped' | 'needs_pick' | 'skipped' | 'not_representable';
   reason: string | null;
   warnings: string[];
@@ -299,7 +310,8 @@ export interface DealerImportRow {
   target_nos: string[];
 }
 
-/** Per row ("<sheet>!<row>"): the picked customer id, or "skip". */
+/** Per row ("<sheet>!<row>"): the picked customer id, or "skip"; per account label
+ * ("<sheet>!<row>~<label>"): the dealer account it means. */
 export type DealerImportPicks = Record<string, string>;
 
 export interface DealerImportResult {

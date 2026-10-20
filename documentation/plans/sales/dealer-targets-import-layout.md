@@ -146,3 +146,22 @@ mapped and every sheet was read (`gate_passes`).
   a remark, said as a warning on the row, never read as a threshold or figure.
 - A block whose dealer side has no tiers ("NIL" merged over the accounts) keeps each account's
   own tiers as that account's target; they are never dropped.
+
+## Round 10 (owner rulings 20 Oct 08:55)
+
+- Rows of one target that land on one CRM customer (MCH 82-84: "A/C I" on all three rows) are
+  that one account: the target lists it once and each of those rows says "rows ... are one CRM
+  customer: read as one account". When the rows give that account different rates in one tier,
+  the rows fail with both rates quoted; the reader never picks one.
+- A rate naming an account no row of the dealer has ("A/C 9", SRT 57-59) waits on an account
+  pick in the preview: the choices are the dealer's accounts as the file writes them, sent as
+  `"<sheet>!<dealer's first row>~<label>": "<account>"` in `picks`. Nothing maps a digit to a
+  roman numeral on its own; Skip skips the row.
+- An account and an amount in an incentive column ("A/C I- 15,000", SRT 15-17) is a fixed bonus
+  on that tier, paid to that account, when the amount is at most `RATE_LIMIT_PCT` (20%) of the
+  tier's threshold; the tier's own rate is then 0 unless the cell also gives one. A larger amount,
+  or an amount with no account, stays "not a rate", and the reason states the amount as a share
+  of the threshold.
+- Targets per customer BRANCH (SRT 49-51) are not built: sales orders and billing documents
+  carry no branch, only delivery orders do (`orders.branch_code`), so a branch's achievement
+  cannot be measured on the ordered or invoiced basis. Those rows stay a pick (crew-note on #1715).

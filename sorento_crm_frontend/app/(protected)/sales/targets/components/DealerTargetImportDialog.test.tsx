@@ -142,6 +142,42 @@ describe('DealerTargetImportDialog', () => {
     );
   });
 
+  it('a rate naming an account the dealer has no row for waits on an account pick (round 10)', async () => {
+    const accountRow = {
+      sheet: 'Sorento 2026', row: 57, pick_key: 'Sorento 2026!57', match: null, code: null,
+      name_in_file: 'Echo Home', account_in_file: 'A/C I', customer: null, status: 'needs_pick',
+      reason: 'Q1: the rate names "A/C 9", which is not an account of this dealer; pick the account it means',
+      warnings: [], target_keys: [], target_nos: [], suggestions: [],
+      account_pick: { pick_key: 'Sorento 2026!57~A/C 9', label: 'A/C 9', choices: ['A/C I', 'A/C III'] },
+    };
+    run.mutateAsync.mockResolvedValue({ ...REPORT, rows: [...REPORT.rows, accountRow] });
+    render(<DealerTargetImportDialog open onOpenChange={() => {}} />);
+    pickFile();
+    fireEvent.click(screen.getByRole('button', { name: /Test/ }));
+    const select = (await screen.findByLabelText('Account "A/C 9" means, Sorento 2026 row 57')) as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.text)).toEqual(['', 'A/C I', 'A/C III', 'Skip this row']);
+    // No customer pick on that row: the account is picked first.
+    expect(screen.queryByLabelText('Customer for Sorento 2026 row 57')).toBeNull();
+
+    fireEvent.change(select, { target: { value: 'A/C I' } });
+    fireEvent.click(screen.getByRole('button', { name: /Test/ }));
+    await waitFor(() =>
+      expect(run.mutateAsync).toHaveBeenLastCalledWith(
+        expect.objectContaining({ dryRun: true, picks: { 'Sorento 2026!57~A/C 9': 'A/C I' } }),
+      ),
+    );
+
+    // Skip replaces the account pick with the row's own skip.
+    const again = (await screen.findByLabelText('Account "A/C 9" means, Sorento 2026 row 57')) as HTMLSelectElement;
+    fireEvent.change(again, { target: { value: 'skip' } });
+    fireEvent.click(screen.getByRole('button', { name: /Test/ }));
+    await waitFor(() =>
+      expect(run.mutateAsync).toHaveBeenLastCalledWith(
+        expect.objectContaining({ dryRun: true, picks: { 'Sorento 2026!57': 'skip' } }),
+      ),
+    );
+  });
+
   it('downloads the template for the year', () => {
     render(<DealerTargetImportDialog open onOpenChange={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: /Template/ }));

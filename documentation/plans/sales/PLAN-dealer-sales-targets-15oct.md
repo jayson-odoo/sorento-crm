@@ -1,6 +1,8 @@
 # PLAN: dealer sales targets and incentive schemes (lane SALES-TARGET-DEALER)
 
-Status: **gate-fail round built, reviewed; waiting on crew's re-run of the real-file gate** (16 Oct;
+Status: **round 10 built (20 Oct: one ledger on several rows, account-label picks, incentive
+amounts as tier bonuses; branch targets held, no branch on SO/invoice data); waiting on crew's
+re-run of the real-file gate and the owner's hand test.** Earlier: gate-fail round built (16 Oct;
 L track). Crew's gate on the real files failed (the importer could not read them as delivered);
 this round reads them as delivered (stacked headers, per-column units, rate grammar, yearly-only
 windows, nothing dropped), matches dealers BY NAME + account (owner ruling 16 Oct 09:12, picks

@@ -244,7 +244,9 @@ export function ImportReport({
                   ) : null}
                 </td>
                 <td className="max-w-[14rem] px-3 py-2">
-                  {row.status === 'needs_pick' && onPick ? (
+                  {row.status === 'needs_pick' && onPick && row.account_pick ? (
+                    <AccountPick row={row} picks={picks} onPick={onPick} />
+                  ) : row.status === 'needs_pick' && onPick ? (
                     <SearchableSelect
                       aria-label={`Customer for ${row.sheet} row ${row.row}`}
                       value={picks[row.pick_key] ?? ''}
@@ -270,6 +272,38 @@ export function ImportReport({
         </table>
       </div>
     </div>
+  );
+}
+
+/**
+ * A rate naming an account the dealer has no row for ("A/C 9", round 10): the user says which of
+ * the dealer's accounts it means, never the reader. Skip skips the row itself.
+ */
+function AccountPick({
+  row,
+  picks,
+  onPick,
+}: {
+  row: DealerImportRow;
+  picks: DealerImportPicks;
+  onPick: (key: string, value: string) => void;
+}) {
+  const pick = row.account_pick!;
+  const value = picks[row.pick_key] === SKIP ? SKIP : (picks[pick.pick_key] ?? '');
+  return (
+    <SearchableSelect
+      aria-label={`Account "${pick.label}" means, ${row.sheet} row ${row.row}`}
+      value={value}
+      onChange={(next) => {
+        onPick(pick.pick_key, next === SKIP ? '' : next);
+        onPick(row.pick_key, next === SKIP ? SKIP : '');
+      }}
+      options={[...pick.choices.map((c) => ({ value: c, label: c })), { value: SKIP, label: 'Skip this row' }]}
+      placeholder={`"${pick.label}" means...`}
+      size="sm"
+      clearable
+      wrapOptions
+    />
   );
 }
 
