@@ -730,8 +730,11 @@ const LineBlock = React.memo(function LineBlock({
                 handlers.remark(
                   line,
                   only.id,
-                  // Typing the confirmed remark back stores nothing (H8).
-                  line.ownRemark && !savedRemark && remark === line.ownRemark ? '' : remark,
+                  // Typing the confirmed remark back stores nothing (H8), unless a split remark
+                  // was stored for the line as loaded: then X replaces it (H9).
+                  line.ownRemark && !savedRemark && !line.remarkStored && remark === line.ownRemark
+                    ? ''
+                    : remark,
                 )
               }
               onBlur={handlers.fieldBlur}
