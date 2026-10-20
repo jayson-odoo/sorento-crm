@@ -195,3 +195,13 @@ file entity 59/83: still under v77, STOP per crew, no further wording; v88 is no
 Push note: pre-push alembic-heads fails on this branch combined with origin/main (main #1796 adds
 adp_0001_pcs_attach_delete, base #1755 carries spec_bare_size_0001); this lane has no migration, pushed with
 SKIP_PREPUSH=1; #1755 re-parents before retarget.
+
+## F1-K / F1-L and the 20 Oct build decision
+
+F1-K (red b78e6f1b48, fix b188e9cb92): canonical_code is the kind of file from grounding.DOCUMENT_TYPE_CODES (drift
+guard test), decoupled from the listed pick. v89 6314252c: gold c2 12/12; TRAIN attachment 62/81, paired on 81 items
+v77 64 / v89 62 (3 v77-only: shorthand or mixed file words read as another type). F1-L (red e217883f15, fix 778fe78dce):
+the R7 v1 fold (F1-G) removed, four sentences restored byte for byte, state lines follow CHAT-STATE R7 v2 at 13d5555967.
+v90 ea338d9e: gold c2 12/12; TRAIN attachment 60/81, paired v77 63 / v90 60. Under v77 both times: tonight's build
+pins v77 (crew). Spend USD 9.27 of 9.3. Open: a re-review of F1-F..F1-L before merge; #1755 re-parents alembic onto
+main's adp_0001 before either PR retargets.
