@@ -59,7 +59,6 @@ import {
   LineSplitInfo,
   splitCount,
   OrderSplitsDialog,
-  type OrderSplitLine,
 } from '@/app/(protected)/project-sales/_shared/components/LineSplitInfo';
 import { OrderInquiryRejectedBadge } from '@/app/(protected)/project-sales/_shared/components/OrderInquiryRejectedBadge';
 import {
@@ -487,6 +486,8 @@ export function SalesOrderDetail({
   // returns: the Lines columns are built above them, and the What-changed dialog titles
   // itself with the order this line belongs to.
   const soNumber = data?.so_number ?? '';
+  // OI-SPLIT-VIEW (UAC E5): the split sheet the read-only popups draw, carried on this read.
+  const lineSplits = data?.line_splits ?? null;
   const backHref = useBackToListHref(listPath);
   // Same gate the list's own "Plan selected" carries (S2, R3): a door that answers 403
   // is worse than not offering it, so the primary is simply absent without it.
@@ -975,6 +976,7 @@ export function SalesOrderDetail({
             itemCode={row.original.sku}
             soNumber={soNumber}
             view={row.original.split_view}
+            payload={lineSplits}
           />
         ),
         size: 110,
@@ -1497,6 +1499,7 @@ export function SalesOrderDetail({
       amountTotal,
       handleRemoveLine,
       soNumber,
+      lineSplits,
       data?.doc_type,
     ],
   );
@@ -1572,10 +1575,6 @@ export function SalesOrderDetail({
   // How far the order has been planned, in the same chip the list carries.
   const plannedBadge = salesOrderPlannedBadge(so.planned_lines, so.plannable_lines);
   const deliveriesLine = deliveriesLineId ? (lines.find((l) => l.id === deliveriesLineId) ?? null) : null;
-  // Not a hook: this sits below the page's early returns.
-  const splitLines: OrderSplitLine[] = (data?.lines ?? []).flatMap((line) =>
-    line.split_view ? [{ lineNo: line.line_no, itemCode: line.sku, view: line.split_view }] : [],
-  );
   const linksLine = linksLineId ? (lines.find((l) => l.id === linksLineId) ?? null) : null;
 
   const handleSave = async () => {
@@ -2340,7 +2339,7 @@ export function SalesOrderDetail({
 
       <OrderSplitsDialog
         title={`${soNumber}: splits`}
-        lines={splitLines}
+        payload={lineSplits}
         open={viewSplitsOpen}
         onOpenChange={setViewSplitsOpen}
         returnFocusRef={gearRef}

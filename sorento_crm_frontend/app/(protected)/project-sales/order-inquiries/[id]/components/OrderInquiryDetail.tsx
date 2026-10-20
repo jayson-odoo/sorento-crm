@@ -36,7 +36,7 @@ import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { LinkDocumentDialog } from '../../../_shared/components/LinkDocumentDialog';
-import { OrderSplitsDialog, type OrderSplitLine } from '../../../_shared/components/LineSplitInfo';
+import { OrderSplitsDialog } from '../../../_shared/components/LineSplitInfo';
 import { BulkRejectOrderInquiryDialog } from '../../../_shared/components/BulkRejectOrderInquiryDialog';
 import { HandoverResendDialog } from '../../../_shared/components/HandoverResendDialog';
 import {
@@ -58,6 +58,7 @@ import {
   useOrderInquiryRowHistory,
 } from '../../../_shared/hooks/useOrderInquiry';
 import { useReserveRowOptions } from '../../../_shared/hooks/useReserveRowOptions';
+import { useLineSplits } from '../../../_shared/hooks/useLineSplits';
 import { reserveIneligibleReason, rowRemaining, rowRequestable } from '../../../_shared/lib/reserveEligibility';
 import { ackStateOf } from '../../../_shared/lib/orderInquiryAck';
 import {
@@ -200,22 +201,24 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   }
 
   const lines = useMemo(() => linesQuery.data ?? [], [linesQuery.data]);
-  const splitLines = useMemo<OrderSplitLine[]>(() => {
-    const seen = new Set<string>();
-    const out: OrderSplitLine[] = [];
-    for (const row of lines) {
-      if (!row.split_view) continue;
-      const key = row.so_line_id ?? row.id;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push({
-        lineNo: row.so_line_no ?? row.line_no ?? null,
-        itemCode: row.item_code,
-        view: row.split_view,
-      });
-    }
-    return out;
-  }, [lines]);
+  // OI-SPLIT-VIEW (UAC E5): the order's split sheet the read-only popups draw (the edit
+  // view's own read), fetched only when a line of this inquiry is split.
+  const hasSplitLines = useMemo(() => lines.some((row) => Boolean(row.split_view)), [lines]);
+  const { query: lineSplitsQuery } = useLineSplits(
+    headerQuery.data?.project_sales_order_id,
+    hasSplitLines,
+  );
+  const lineSplits = hasSplitLines ? lineSplitsQuery.data : null;
+  const refetchLineSplits = lineSplitsQuery.refetch;
+  const retryLineSplits = useCallback(() => void refetchLineSplits(), [refetchLineSplits]);
+  const splitSheet = useMemo(
+    () => ({
+      payload: lineSplits,
+      error: lineSplitsQuery.error ?? undefined,
+      onRetry: retryLineSplits,
+    }),
+    [lineSplits, lineSplitsQuery.error, retryLineSplits],
+  );
   // S0 (`PLAN-oi-no-double-count-25sep.md`, G1/G6): a used row is history now, so it is
   // never ticked, linked, unlinked or rejected from this page - only swept by Confirm.
   const activeLines = useMemo(() => lines.filter(isLiveInquiryRow), [lines]);
@@ -979,6 +982,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
             onLineHistoryClick={handleLineHistoryClick}
             onUndoStaged={handleUndoStaged}
             canEditAttachments={canEditAttachments}
+            splitSheet={splitSheet}
             decideSlot={
               canReserve && tickedPrimaryRows.length > 0 ? (
                 <ReserveDecideControl
@@ -1124,7 +1128,9 @@ export function OrderInquiryDetail({ id }: { id: string }) {
       <OrderSplitsDialog
         title={`${header.inquiry_no}: splits`}
         subtitle={header.so_number}
-        lines={splitLines}
+        payload={lineSplits}
+        loadError={lineSplitsQuery.error ?? undefined}
+        onRetry={retryLineSplits}
         open={viewSplitsOpen}
         onOpenChange={setViewSplitsOpen}
         returnFocusRef={gearRef}

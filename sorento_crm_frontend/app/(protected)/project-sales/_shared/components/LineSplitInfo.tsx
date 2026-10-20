@@ -3,16 +3,8 @@
 import * as React from 'react';
 import { flushSync } from 'react-dom';
 import { Info } from 'lucide-react';
-import {
-  type ColumnDef,
-  getCoreRowModel,
-  useReactTable,
-} from '@tanstack/react-table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { DataGrid, DataGridContainer } from '@/components/ui/data-grid';
-import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridTable } from '@/components/ui/data-grid-table';
 import {
   Dialog,
   DialogContent,
@@ -20,18 +12,27 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { formatInquiryQty } from '../lib/orderInquiryWorklist';
-import type {
-  LineSplitView,
-  LineSplitViewRow,
-} from '../types/orderInquiry.types';
-import { OrderInquiryVerbPill } from './OrderInquiryVerbPill';
+import { ListLoadFailure } from '@/components/common/ListLoadFailure';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
+import {
+  LineSplitSheet,
+  type SheetHandlers,
+} from '../../fulfilment-planning/components/LineSplitSheet';
+import {
+  formatSplitDate,
+  fromPayload,
+  sortLines,
+  type SplitLine,
+} from '../../fulfilment-planning/lib/lineSplitModel';
+import type { LineSplitView } from '../types/orderInquiry.types';
+import type { LineSplitsPayload } from '../types/lineSplit.types';
 
 /**
- * OI-SPLIT-VIEW (UAC B1 to B4, B8, D1): the one split chip + (i) popup the Sales Order and
+ * OI-SPLIT-VIEW (UAC B1, B8, D1, E): the one split chip + (i) popup the Sales Order and
  * Order Inquiry Lines tabs render, and the whole-order popup the planning board, SO and OI
- * gears open. Both read the server's `split_view` (`LineSplitService.split_views`), so the
- * two pages cannot disagree; opening a popup makes no request of its own.
+ * gears open. The chip reads the line's `split_view`; both popups draw the split delivery
+ * edit sheet read-only (`LineSplitSheet readOnly`, UAC E1, E2) off the `LineSplitService.read`
+ * payload, turned into the sheet model by the edit dialog's own `fromPayload` / `sortLines`.
  */
 
 /** `20/10/2026` from an ISO date; empty for none. */
@@ -39,243 +40,129 @@ export function splitDateText(iso: string | null | undefined): string {
   return iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : '';
 }
 
-const STATUS: Record<
-  LineSplitView['status'],
-  { label: string; variant: 'success' | 'warning' | 'secondary' }
-> = {
-  confirmed: { label: 'Confirmed', variant: 'success' },
-  saved: { label: 'Saved, not confirmed', variant: 'warning' },
-  autocount_changed: { label: 'AutoCount changed', variant: 'secondary' },
-};
-
-function StatusBadge({ view }: { view: LineSplitView }) {
-  const own = STATUS[view.status] ?? STATUS.saved;
-  return (
-    <Badge
-      variant={own.variant}
-      appearance="light"
-      size="sm"
-      className="shrink-0"
-    >
-      {own.label}
-    </Badge>
-  );
-}
-
-/** "revision 3, 19/10/2026" beside a confirmed plan; nothing otherwise. */
-function confirmedText(view: LineSplitView): string {
-  if (view.status !== 'confirmed' || view.revision_no == null) return '';
-  const on = splitDateText(view.confirmed_on);
-  return on
-    ? `revision ${view.revision_no}, ${on}`
-    : `revision ${view.revision_no}`;
-}
-
-function atText(qty: string, iso: string | null): string {
-  const date = splitDateText(iso);
-  return date ? `${formatInquiryQty(qty)} @ ${date}` : formatInquiryQty(qty);
-}
-
-/** "AutoCount 417 @ 20/10/2026, now 14 @ 20/09/2026". */
-function baseText(view: LineSplitView): string {
-  return `AutoCount ${atText(view.base_qty, view.base_date)}, now ${atText(
-    view.now_qty,
-    view.now_date,
-  )}`;
-}
-
-/** Where a row sits, in words (UAC B2). */
-function sitsOnText(row: LineSplitViewRow): string {
-  if (row.is_cancel) return '';
-  if (row.sits_on === 'new') return 'New line (not in AutoCount yet)';
-  const line =
-    row.sits_on_line_no != null ? `line ${row.sits_on_line_no}` : 'line';
-  return row.sits_on === 'extra' ? `${line} (AutoCount extra)` : line;
-}
-
-function wasText(row: LineSplitViewRow): string {
-  if (!row.changed) return '';
-  if (row.was_qty && row.was_date) {
-    return `was ${formatInquiryQty(row.was_qty)} @ ${splitDateText(row.was_date)}`;
-  }
-  if (row.was_date) return `was ${splitDateText(row.was_date)}`;
-  if (row.was_qty) return `was ${formatInquiryQty(row.was_qty)}`;
-  return '';
-}
-
-function ChangePill({ change }: { change: string }) {
-  return (
-    <OrderInquiryVerbPill
-      verb={change === 'CANCEL BALANCE' ? 'CANCEL_BALANCE' : change}
-    />
-  );
-}
-
-/** Tailwind's `sm` is 640px: below it Sits on folds under Change (UAC B8). */
-const BELOW_SM_QUERY = '(max-width: 639px)';
-
-function useBelowSm(): boolean {
-  const [below, setBelow] = React.useState(false);
-  React.useEffect(() => {
-    const mql = window.matchMedia(BELOW_SM_QUERY);
-    const update = () => setBelow(mql.matches);
-    update();
-    mql.addEventListener?.('change', update);
-    return () => mql.removeEventListener?.('change', update);
-  }, []);
-  return below;
-}
-
 /** The chip's N (UAC B1, B7a): the line's split rows, the AutoCount extra row not counted. */
 export function splitCount(view: LineSplitView | null | undefined): number {
   return view ? view.rows.filter((row) => row.sits_on !== 'extra').length : 0;
 }
 
-const CHANGED_ROW = 'bg-amber-50 dark:bg-amber-950/40';
+const NO_LINE_IDS: ReadonlySet<string> = new Set();
+const noop = () => {};
+/** The read-only sheet calls none of them (UAC E2). */
+const INERT_HANDLERS: SheetHandlers = {
+  open: noop,
+  qty: noop,
+  date: noop,
+  remark: noop,
+  add: noop,
+  remove: noop,
+  fieldBlur: noop,
+};
 
-/**
- * The split rows of one line on the shared DataGrid (UAC B2, B5a): one per saved split in
- * the saved order, then the AutoCount extra row. Not sortable (the saved order is the
- * plan's), no column persistence (`listingKey={null}`: a popup's columns are not a personal
- * preference), unbounded so the dialog body owns the scroll.
- */
-function SplitGrid({ view }: { view: LineSplitView }) {
-  const narrow = useBelowSm();
-  const columns = React.useMemo<ColumnDef<LineSplitViewRow>[]>(
-    () => [
-      {
-        id: 'qty',
-        accessorFn: (row) => Number(row.qty),
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Qty" column={column} />
-        ),
-        cell: ({ row }) => formatInquiryQty(row.original.qty),
-        size: 72,
-        enableSorting: false,
-        meta: { headerTitle: 'Qty', cellClassName: 'text-right' },
-      },
-      {
-        id: 'delivery_date',
-        accessorFn: (row) => row.delivery_date ?? '',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Delivery date" column={column} />
-        ),
-        cell: ({ row }) => {
-          const was = wasText(row.original);
-          return (
-            <>
-              <span className="block">
-                {splitDateText(row.original.delivery_date)}
-              </span>
-              {was ? (
-                <span
-                  className="block truncate text-xs text-muted-foreground"
-                  title={was}
-                >
-                  {was}
-                </span>
-              ) : null}
-            </>
-          );
-        },
-        size: 130,
-        enableSorting: false,
-        meta: { headerTitle: 'Delivery date' },
-      },
-      {
-        id: 'change',
-        accessorFn: (row) => row.change,
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Change" column={column} />
-        ),
-        cell: ({ row }) => {
-          const sitsOn = narrow ? sitsOnText(row.original) : '';
-          return (
-            <>
-              <ChangePill change={row.original.change} />
-              {/* B8: at 375 the Sits on column folds under Change. */}
-              {sitsOn ? (
-                <span
-                  className="block truncate text-xs text-muted-foreground"
-                  title={sitsOn}
-                >
-                  {sitsOn}
-                </span>
-              ) : null}
-            </>
-          );
-        },
-        size: 150,
-        enableSorting: false,
-        meta: { headerTitle: 'Change' },
-      },
-      {
-        id: 'sits_on',
-        accessorFn: (row) => sitsOnText(row),
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Sits on" column={column} />
-        ),
-        cell: ({ row }) => {
-          const sitsOn = sitsOnText(row.original);
-          return (
-            <span
-              className="block truncate text-muted-foreground"
-              title={sitsOn}
-            >
-              {sitsOn}
-            </span>
-          );
-        },
-        size: 210,
-        enableSorting: false,
-        meta: { headerTitle: 'Sits on' },
-      },
-      {
-        id: 'remark',
-        accessorFn: (row) => row.remark,
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Remark" column={column} />
-        ),
-        cell: ({ row }) => (
-          <span className="block truncate" title={row.original.remark}>
-            {row.original.remark}
-          </span>
-        ),
-        size: 180,
-        enableSorting: false,
-        meta: { headerTitle: 'Remark' },
-      },
-    ],
-    [narrow],
-  );
-  const table = useReactTable({
-    columns,
-    data: view.rows,
-    getRowId: (_row, index) => String(index),
-    getCoreRowModel: getCoreRowModel(),
-    state: { columnVisibility: { sits_on: !narrow } },
-    columnResizeMode: 'onChange',
-  });
-  return (
-    <DataGridContainer>
-      <DataGrid
-        table={table}
-        recordCount={view.rows.length}
-        isLoading={false}
-        listingKey={null}
-        rowClassName={(row) => (row.changed ? CHANGED_ROW : undefined)}
-        tableLayout={{
-          width: 'fixed',
-          columnsResizable: true,
-          dense: true,
-          scrollerMaxHeight: false,
-        }}
-      >
-        <DataGridTable />
-      </DataGrid>
-    </DataGridContainer>
+/** The sheet's lines in its own order (item, location, base date, line no). */
+function sheetLinesOf(payload: LineSplitsPayload): SplitLine[] {
+  return sortLines(fromPayload(payload));
+}
+
+/** Lines another line's split sits on (variant B: the moved split is drawn under them). */
+function receivingLineIds(lines: SplitLine[]): Set<string> {
+  const out = new Set<string>();
+  for (const line of lines) {
+    for (const split of line.splits) {
+      if (
+        !split.isCancel &&
+        split.sitsOnLineId &&
+        split.sitsOnLineId !== line.lineId
+      )
+        out.add(split.sitsOnLineId);
+    }
+  }
+  return out;
+}
+
+/** UAC E4: split-edited (A1, B3), the server's own status, the same the board flag reads. */
+function isSplitEdited(
+  payload: LineSplitsPayload,
+  lineIds: ReadonlySet<string>,
+): boolean {
+  return payload.lines.some(
+    (line) => lineIds.has(line.line_id) && line.split_view?.status === 'saved',
   );
 }
+
+/** UAC E4: the edit dialog's status line, "Confirmed dd/mm/yyyy" and one badge. */
+function SheetStatus({
+  payload,
+  edited,
+}: {
+  payload: LineSplitsPayload;
+  edited: boolean;
+}) {
+  if (!payload.confirmed_at && !edited) return null;
+  return (
+    <div className="flex min-h-8 flex-wrap items-center gap-x-3.5 gap-y-1 border-b border-border px-4 py-1.5 text-xs">
+      {payload.confirmed_at ? (
+        <span className="font-medium text-success">
+          {`Confirmed ${formatSplitDate(payload.confirmed_at.slice(0, 10))}`}
+        </span>
+      ) : null}
+      {edited ? (
+        <Badge variant="warning" appearance="light" size="sm">
+          Saved, not confirmed
+        </Badge>
+      ) : null}
+    </div>
+  );
+}
+
+/** The read-only split sheet of these lines, the moved splits drawn under where they sit. */
+function ReadOnlySheet({
+  payload,
+  lines,
+  all,
+}: {
+  payload: LineSplitsPayload;
+  lines: SplitLine[];
+  all: SplitLine[];
+}) {
+  return (
+    <div className="min-h-0 flex-1 [&>[data-slot=table-wrapper]]:h-full">
+      <LineSplitSheet
+        readOnly
+        lines={lines}
+        allLines={all}
+        savedLines={all}
+        soNumber={payload.so_number ?? ''}
+        soDate={formatSplitDate(payload.so_date ?? null)}
+        openLineIds={NO_LINE_IDS}
+        drag={null}
+        overTarget={null}
+        flashLineId={null}
+        handlers={INERT_HANDLERS}
+      />
+    </div>
+  );
+}
+
+/** The body while the sheet is not in yet: the read's failure with a Retry, else a skeleton. */
+function SheetPending({
+  error,
+  onRetry,
+}: {
+  error?: unknown;
+  onRetry?: () => void;
+}) {
+  return error ? (
+    <div className="flex items-center justify-center p-6 text-sm">
+      <ListLoadFailure error={error} onRetry={onRetry} />
+    </div>
+  ) : (
+    <SectionSkeleton rows={4} className="p-4" />
+  );
+}
+
+/** Full screen on a phone, as wide as the sheet needs on a desktop (UAC E6). */
+const SHEET_DIALOG_CLASS =
+  'gap-0 overflow-hidden p-0 max-md:inset-0 max-md:rounded-none';
 
 export interface LineSplitInfoProps {
   lineNo: number | null | undefined;
@@ -283,10 +170,13 @@ export interface LineSplitInfoProps {
   soNumber: string | null | undefined;
   /** The OI page names its inquiry: "<OI number> line <n>" under the title. */
   oiNumber?: string | null;
-  /** The line's purchasing State (the OI page passes its own pill). */
-  purchasingState?: React.ReactNode;
-  po?: string | null;
+  /** The chip (`split_view`): "Split N", nothing for a line without splits. */
   view: LineSplitView | null | undefined;
+  /** The order's split sheet (`LineSplitService.read`); a skeleton until it is in. */
+  payload?: LineSplitsPayload | null;
+  /** The sheet read failed: said in the popup with a Retry, never a skeleton forever. */
+  loadError?: unknown;
+  onRetry?: () => void;
 }
 
 /** "Split N" and the (i) button; nothing for a line without splits (UAC B1). */
@@ -295,9 +185,10 @@ export function LineSplitInfo({
   itemCode,
   soNumber,
   oiNumber,
-  purchasingState,
-  po,
   view,
+  payload,
+  loadError,
+  onRetry,
 }: LineSplitInfoProps) {
   const [open, setOpen] = React.useState(false);
   const triggerRef = React.useRef<HTMLButtonElement | null>(null);
@@ -308,9 +199,25 @@ export function LineSplitInfo({
     flushSync(() => setOpen(false));
     triggerRef.current?.focus();
   }, []);
+  const sheet = React.useMemo(() => {
+    if (!open || !payload) return null;
+    const all = sheetLinesOf(payload);
+    const own = all.find((line) => line.lineNo === lineNo);
+    if (!own) return { all, lines: [] as SplitLine[], ids: NO_LINE_IDS };
+    // UAC E3: this line, and the lines its own splits moved onto (so every split of it
+    // shows, under the line it sits on); splits moved onto it are drawn under it.
+    const landing = new Set(
+      own.splits
+        .filter((split) => !split.isCancel && split.sitsOnLineId)
+        .map((split) => split.sitsOnLineId as string),
+    );
+    const lines = all.filter(
+      (line) => line.lineId === own.lineId || landing.has(line.lineId),
+    );
+    return { all, lines, ids: new Set([own.lineId]) as ReadonlySet<string> };
+  }, [open, payload, lineNo]);
   if (!view) return null;
   const count = splitCount(view);
-  const confirmed = confirmedText(view);
   const sub = [
     soNumber,
     oiNumber ? `${oiNumber} line ${lineNo ?? ''}`.trim() : null,
@@ -345,33 +252,30 @@ export function LineSplitInfo({
       </Button>
       {open ? (
         <Dialog open onOpenChange={close}>
-          <DialogContent className="flex max-h-[85vh] max-w-3xl flex-col">
-            <DialogHeader>
-              <DialogTitle>{`Line ${lineNo ?? ''} ${itemCode ?? ''}: split`}</DialogTitle>
-              {sub ? <DialogDescription>{sub}</DialogDescription> : null}
+          <DialogContent variant="fullscreen" className={SHEET_DIALOG_CLASS}>
+            <DialogHeader className="mb-0 space-y-0 border-b border-border px-4 py-3 pe-12 text-start sm:text-start">
+              <DialogTitle className="truncate">{`Line ${lineNo ?? ''} ${itemCode ?? ''}: split`}</DialogTitle>
+              {sub ? (
+                <DialogDescription className="truncate text-xs">
+                  {sub}
+                </DialogDescription>
+              ) : null}
             </DialogHeader>
-            <div className="flex flex-col gap-3">
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-                <StatusBadge view={view} />
-                {confirmed ? (
-                  <span className="text-muted-foreground">{confirmed}</span>
-                ) : null}
-                {purchasingState ? (
-                  <span className="inline-flex items-center gap-1">
-                    <span className="text-muted-foreground">Purchasing</span>
-                    {purchasingState}
-                  </span>
-                ) : null}
-                {po ? (
-                  <span className="text-muted-foreground">{`PO ${po}`}</span>
-                ) : null}
-              </div>
-              <SplitGrid view={view} />
-              {/* B5a: the total is a line of text under the grid, never a table row. */}
-              <p className="text-sm text-muted-foreground">
-                {`Total ${formatInquiryQty(view.total_qty)} · ${baseText(view)}`}
-              </p>
-            </div>
+            {payload && sheet ? (
+              <>
+                <SheetStatus
+                  payload={payload}
+                  edited={isSplitEdited(payload, sheet.ids)}
+                />
+                <ReadOnlySheet
+                  payload={payload}
+                  lines={sheet.lines}
+                  all={sheet.all}
+                />
+              </>
+            ) : (
+              <SheetPending error={loadError} onRetry={onRetry} />
+            )}
           </DialogContent>
         </Dialog>
       ) : null}
@@ -379,24 +283,27 @@ export function LineSplitInfo({
   );
 }
 
-export interface OrderSplitLine {
-  lineNo: number | null | undefined;
-  itemCode: string | null | undefined;
-  view: LineSplitView;
-}
-
-/** UAC D1: every split line of one order in one popup, a group per line in line order. */
+/** UAC D1, E3, E4: every split line of one order, as the read-only split sheet. */
 export function OrderSplitsDialog({
   title,
   subtitle,
-  lines,
+  payload,
   open,
   onOpenChange,
   returnFocusRef,
+  loadError,
+  onRetry,
 }: {
   title: string;
   subtitle?: string | null;
-  lines: OrderSplitLine[];
+  /**
+   * The order's split sheet (`LineSplitService.read`): `undefined` while it loads (a
+   * skeleton), `null` when no line of the order is split (the empty state).
+   */
+  payload: LineSplitsPayload | null | undefined;
+  /** The sheet read failed: said with a Retry, never a skeleton forever. */
+  loadError?: unknown;
+  onRetry?: () => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /**
@@ -406,19 +313,26 @@ export function OrderSplitsDialog({
    */
   returnFocusRef?: React.RefObject<HTMLElement | null>;
 }) {
-  const sorted = React.useMemo(
-    () =>
-      [...lines].sort(
-        (a, b) =>
-          (a.lineNo ?? Number.POSITIVE_INFINITY) -
-          (b.lineNo ?? Number.POSITIVE_INFINITY),
-      ),
-    [lines],
-  );
+  const sheet = React.useMemo(() => {
+    if (!payload) return null;
+    const all = sheetLinesOf(payload);
+    // UAC E3: the lines with saved splits, and a line that only receives a moved split.
+    const receiving = receivingLineIds(all);
+    const split = all.filter((line) => line.splits.length > 0);
+    const lines = all.filter(
+      (line) => line.splits.length > 0 || receiving.has(line.lineId),
+    );
+    return {
+      all,
+      lines,
+      splitCount: split.length,
+      ids: new Set(lines.map((line) => line.lineId)) as ReadonlySet<string>,
+    };
+  }, [payload]);
   const sub = [
     subtitle,
-    sorted.length > 0
-      ? `${sorted.length} ${sorted.length === 1 ? 'split line' : 'split lines'}`
+    sheet && sheet.splitCount > 0
+      ? `${sheet.splitCount} ${sheet.splitCount === 1 ? 'split line' : 'split lines'}`
       : null,
   ]
     .filter(Boolean)
@@ -426,7 +340,8 @@ export function OrderSplitsDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="flex max-h-[85vh] max-w-3xl flex-col"
+        variant="fullscreen"
+        className={SHEET_DIALOG_CLASS}
         onCloseAutoFocus={(event) => {
           const opener = returnFocusRef?.current;
           if (!opener || !opener.isConnected) return;
@@ -434,11 +349,17 @@ export function OrderSplitsDialog({
           opener.focus();
         }}
       >
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          {sub ? <DialogDescription>{sub}</DialogDescription> : null}
+        <DialogHeader className="mb-0 space-y-0 border-b border-border px-4 py-3 pe-12 text-start sm:text-start">
+          <DialogTitle className="truncate">{title}</DialogTitle>
+          {sub ? (
+            <DialogDescription className="truncate text-xs">
+              {sub}
+            </DialogDescription>
+          ) : null}
         </DialogHeader>
-        {sorted.length === 0 ? (
+        {payload === undefined ? (
+          <SheetPending error={loadError} onRetry={onRetry} />
+        ) : !payload || !sheet || sheet.lines.length === 0 ? (
           <div className="py-6 text-center">
             <p className="text-sm font-medium">No split lines</p>
             <p className="text-sm text-muted-foreground">
@@ -446,29 +367,17 @@ export function OrderSplitsDialog({
             </p>
           </div>
         ) : (
-          <div className="flex flex-col gap-5">
-            {sorted.map((line, index) => {
-              const heading =
-                `Line ${line.lineNo ?? ''} ${line.itemCode ?? ''}`.trim();
-              return (
-                // B5a: one section per split line, its heading above its own DataGrid.
-                <section
-                  key={`${line.lineNo ?? ''}-${index}`}
-                  aria-label={heading}
-                  className="flex flex-col gap-2"
-                >
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <h3 className="text-sm font-medium">{heading}</h3>
-                    <StatusBadge view={line.view} />
-                    <span className="text-xs text-muted-foreground">
-                      {baseText(line.view)}
-                    </span>
-                  </div>
-                  <SplitGrid view={line.view} />
-                </section>
-              );
-            })}
-          </div>
+          <>
+            <SheetStatus
+              payload={payload}
+              edited={isSplitEdited(payload, sheet.ids)}
+            />
+            <ReadOnlySheet
+              payload={payload}
+              lines={sheet.lines}
+              all={sheet.all}
+            />
+          </>
         )}
       </DialogContent>
     </Dialog>

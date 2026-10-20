@@ -8,6 +8,7 @@
 
 import type { PlanningChangeFromTo } from '@/app/(protected)/project-sales/_shared/types/planningChange.types';
 import type { LineSplitView } from '@/app/(protected)/project-sales/_shared/types/orderInquiry.types';
+import type { LineSplitsPayload } from '@/app/(protected)/project-sales/_shared/types/lineSplit.types';
 import type { CancelSource } from '../lib/autocountCancel';
 
 /** Health-state vocabulary. Backend-real: stockout (rendered "Out of stock"), dead,
@@ -504,6 +505,11 @@ export interface SalesOrder {
   line_count?: number;
   open_line_count?: number;
   lines: SalesOrderLine[];
+  /**
+   * OI-SPLIT-VIEW (UAC E5): the order's split sheet (`GET .../line-splits` payload) for the
+   * read-only split popups; null when no line is split. Single read only.
+   */
+  line_splits?: LineSplitsPayload | null;
   /** Where the order came from - it decides who may edit its figures. `inquiry` = the Order
    *  Inquiry sheet created it, `upload` = CS's outstanding extract, `manual` = keyed in. */
   source?: SalesOrderSource;

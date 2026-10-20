@@ -61,6 +61,7 @@ import {
   splitDateText,
 } from '../../../_shared/components/LineSplitInfo';
 import type { SoLineAttachmentsByLine } from '../../../_shared/services/soLineAttachmentService';
+import type { LineSplitsPayload } from '../../../_shared/types/lineSplit.types';
 
 /**
  * The Lines tab's own columns (AC-DP-03): Expand, Product, SO line, Qty, Taken,
@@ -519,6 +520,7 @@ export function useOrderInquiryHeaderLinesColumns({
   onUndoStaged,
   attachmentsByLine,
   canEditAttachments = false,
+  splitSheet,
 }: {
   /** AC-RS-83/83c: gates the reserve icons inside the State cell - a viewer without
    * `projects.order_inquiries.reserve` sees the pills only. */
@@ -550,6 +552,15 @@ export function useOrderInquiryHeaderLinesColumns({
   attachmentsByLine?: SoLineAttachmentsByLine;
   /** #1312 (Q6): `projects.projects.edit` - gates the lightbox's own upload/remove. */
   canEditAttachments?: boolean;
+  /**
+   * OI-SPLIT-VIEW (UAC E5): the order's split sheet (`useLineSplits`, owned by the caller)
+   * the line popups draw read-only; `payload` undefined while it loads.
+   */
+  splitSheet?: {
+    payload: LineSplitsPayload | null | undefined;
+    error?: unknown;
+    onRetry?: () => void;
+  };
 } = {}): ColumnDef<OrderInquiryLineRow>[] {
   return React.useMemo<ColumnDef<OrderInquiryLineRow>[]>(() => {
     const columns: ColumnDef<OrderInquiryLineRow>[] = [
@@ -655,9 +666,10 @@ export function useOrderInquiryHeaderLinesColumns({
               itemCode={row.original.item_code}
               soNumber={row.original.so_number}
               oiNumber={row.original.inquiry_no}
-              purchasingState={<OrderInquiryLineStatePill state={line.state} />}
-              po={lineDocumentsOf(line, 'po')[0]?.document ?? null}
               view={row.original.split_view}
+              payload={splitSheet?.payload}
+              loadError={splitSheet?.error}
+              onRetry={splitSheet?.onRetry}
             />
           );
         },
@@ -886,5 +898,6 @@ export function useOrderInquiryHeaderLinesColumns({
     onUndoStaged,
     attachmentsByLine,
     canEditAttachments,
+    splitSheet,
   ]);
 }

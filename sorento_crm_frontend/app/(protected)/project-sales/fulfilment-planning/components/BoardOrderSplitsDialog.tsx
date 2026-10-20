@@ -2,10 +2,7 @@
 
 import * as React from 'react';
 import { toast } from '@/lib/toast';
-import {
-  OrderSplitsDialog,
-  type OrderSplitLine,
-} from '../../_shared/components/LineSplitInfo';
+import { OrderSplitsDialog } from '../../_shared/components/LineSplitInfo';
 import { useLineSplits } from '../../_shared/hooks/useLineSplits';
 
 /**
@@ -26,21 +23,6 @@ export function BoardOrderSplitsDialog({
   returnFocusRef?: React.RefObject<HTMLElement | null>;
 }) {
   const { query } = useLineSplits(psoId);
-  const lines = React.useMemo<OrderSplitLine[]>(
-    () =>
-      (query.data?.lines ?? []).flatMap((line) =>
-        line.split_view
-          ? [
-              {
-                lineNo: line.line_no,
-                itemCode: line.item_code,
-                view: line.split_view,
-              },
-            ]
-          : [],
-      ),
-    [query.data],
-  );
   React.useEffect(() => {
     if (!query.isError) return;
     toast.error(
@@ -54,7 +36,7 @@ export function BoardOrderSplitsDialog({
   return (
     <OrderSplitsDialog
       title={`${soNumber}: splits`}
-      lines={lines}
+      payload={query.data}
       open
       onOpenChange={(next) => {
         if (!next) onClose();
