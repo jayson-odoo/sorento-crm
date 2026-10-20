@@ -551,17 +551,32 @@ def test_delivered_survives_a_second_confirmed_po_version(seeded):
     assert progress["totals"]["delivered"] == Decimal("40")
 
 
-def test_a_set_line_counts_sets_delivered_not_parts(seeded):
-    """Review B2: 100 sets drafted as parts of 1, 1 and 2 per set; 10 sets delivered is 10,
-    not 40."""
+def _set_line_progress(db, company_id, owner, *, sets_drafted: str, sent_sets: str):
+    """A SET PO line of 100 sets, quoted with parts of 1, 1 and 2 per set; `sets_drafted`
+    of them drafted into a published order, `sent_sets` sets delivered by AutoCount."""
     import uuid as _uuid
 
     from app.models.project_so import ProjectPOLine, ProjectSalesOrderLine
     from app.services.project_po_progress_service import po_progress
 
-    db, company_id, owner = seeded
     project = _project(db, company_id, owner)
-    po = _po(db, project, party=_party(db, company_id))
+    parts = [(_product(db, f"PART-{tag}"), Decimal(per_set)) for tag, per_set in (("A", "1"), ("B", "1"), ("C", "2"))]
+    quotation = _quotation(db, project, lines=[(parts[0][0], "100", "900.00")])
+    from app.models.projects import ProjectQuotationLine
+
+    quoted = (
+        db.query(ProjectQuotationLine)
+        .filter(ProjectQuotationLine.version_id == quotation.id)
+        .first()
+    )
+    quoted.product_id = None
+    quoted.set_parts_snapshot = [
+        {"product_id": part.id, "product_code": part.product_code, "quantity": str(per_set),
+         "is_driver": index == 0}
+        for index, (part, per_set) in enumerate(parts)
+    ]
+    db.flush()
+    po = _po(db, project, party=_party(db, company_id), quotation_version=quotation)
     version = _po_version(db, po, lines=[(1, None, "SET-WC", "100", "SETS", "900", "90000", False)])
     po_line = db.query(ProjectPOLine).filter(ProjectPOLine.po_version_id == version.id).one()
     order = ProjectSalesOrder(
@@ -574,29 +589,68 @@ def test_a_set_line_counts_sets_delivered_not_parts(seeded):
     )
     db.add(order)
     db.flush()
-    for no, (code, per_set, sent) in enumerate(
-        [("PART-A", "1", "10"), ("PART-B", "1", "10"), ("PART-C", "2", "20")], start=1
-    ):
-        part = _product(db, code)
+    for no, (part, per_set) in enumerate(parts, start=1):
         so_line = ProjectSalesOrderLine(
             id=str(_uuid.uuid4()),
             company_id=company_id,
             project_sales_order_id=order.id,
             line_no=no,
             product_id=part.id,
-            qty=Decimal("100") * Decimal(per_set),
+            qty=Decimal(sets_drafted) * per_set,
             source_po_line_id=po_line.id,
+            quotation_line_id=quoted.id,
             delivery_date=date(2030, 7, 1),
         )
         db.add(so_line)
         db.flush()
-        _deliver(db, so_line, sent)
+        _deliver(db, so_line, str(Decimal(sent_sets) * per_set))
+    return po_progress(db, po)["lines"][0]
 
-    line = po_progress(db, po)["lines"][0]
+
+def test_a_set_line_counts_sets_delivered_not_parts(seeded):
+    """Review B2: 100 sets drafted as parts of 1, 1 and 2 per set; 10 sets delivered is 10,
+    not 40."""
+    db, company_id, owner = seeded
+
+    line = _set_line_progress(db, company_id, owner, sets_drafted="100", sent_sets="10")
 
     assert line["delivered"] == Decimal("10")
     assert line["outstanding"] == Decimal("90")
 
+
+def test_a_partly_drafted_set_line_still_counts_sets_delivered(seeded):
+    """Review round 2 B2: only 50 of the 100 sets are drafted (the schedule is short);
+    10 sets delivered is still 10, not 20."""
+    db, company_id, owner = seeded
+
+    line = _set_line_progress(db, company_id, owner, sets_drafted="50", sent_sets="10")
+
+    assert line["delivered"] == Decimal("10")
+    assert line["outstanding"] == Decimal("90")
+
+
+def test_a_reviewed_amendment_survives_a_new_move_of_the_area(seeded):
+    """Review round 2: a proposed amendment somebody already worked on (an approver named on
+    its notice, or row decisions) is never deleted by moving the area again."""
+    from app.models.project_so import OrderChangeNotice, SOAmendment
+    from app.services.project_po_progress_service import change_area_date
+
+    db, company_id, owner = seeded
+    po, phases, _a, _b = _two_line_po(db, company_id, owner)
+    _publish_all(db, po)
+    area = phases[1]
+
+    first = change_area_date(db, area, delivery_date=date(2030, 8, 20), actor_user_id=owner)
+    reviewed = db.query(SOAmendment).filter(
+        SOAmendment.id == first["amendments"][0]["amendment_id"]
+    ).one()
+    reviewed.row_decisions = {"0": {"decision": "accept"}}
+    db.flush()
+
+    change_area_date(db, area, delivery_date=date(2030, 8, 27), actor_user_id=owner)
+
+    assert db.query(SOAmendment).filter(SOAmendment.id == reviewed.id).count() == 1
+    assert db.query(OrderChangeNotice).filter(OrderChangeNotice.id == reviewed.ocn_id).count() == 1
 
 def test_undo_gives_an_undated_area_its_blank_date_back(seeded):
     """Review should-fix 2: Undo restores an area that had no date."""
