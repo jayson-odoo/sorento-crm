@@ -16,6 +16,7 @@ import {
   isRefused,
   isSignedOut,
   isTimedOut,
+  retryUnlessRefused,
 } from './api-client';
 
 const err = (m: string) => new Error(m);
@@ -101,5 +102,21 @@ describe('isRefused (never retried)', () => {
     expect(isRefused(err('Order not found'))).toBe(true);
     expect(isRefused(err(REQUEST_TIMED_OUT_MESSAGE))).toBe(true);
     expect(isRefused(err('Server error. Try again or contact support.'))).toBe(false);
+  });
+});
+
+describe('retryUnlessRefused (record reads)', () => {
+  const withStatus = (m: string, status: number) => Object.assign(new Error(m), { status });
+
+  it('retries a fault once', () => {
+    expect(retryUnlessRefused(0, withStatus('Internal server error', 500))).toBe(true);
+    expect(retryUnlessRefused(1, withStatus('Internal server error', 500))).toBe(false);
+  });
+
+  it('never retries a refusal, a missing record or a timeout', () => {
+    expect(retryUnlessRefused(0, withStatus('Forbidden', 403))).toBe(false);
+    expect(retryUnlessRefused(0, withStatus('Not found', 404))).toBe(false);
+    // SO-DETAIL-DUP-BACK: a second full budget doubled the skeleton before the error.
+    expect(retryUnlessRefused(0, err(REQUEST_TIMED_OUT_MESSAGE))).toBe(false);
   });
 });
