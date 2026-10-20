@@ -16,6 +16,7 @@ from app.models.product_set import ProductSet, ProductSetMember
 from app.models.product_spec import ProductSpecifications, ProductSpecRegistry
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.head import candidates
+from app.services.chatbot.user_turn import UserTurn
 from app.services.company_scope import DEFAULT_COMPANY_ID, register_company_scope_listeners
 from tests._pg_fixture import blank_session, unique_code
 
@@ -132,7 +133,7 @@ def test_gate_on_candidate_lines_passes_held_ids_to_the_size_keys(db):
     )
 
     lines, listed, info = engine_mod._candidate_lines(
-        db, "150mm zzwc701", [ids["ZZWC560-SH-UF"]], code_lookup=True
+        db, UserTurn(own_text="150mm zzwc701"), [ids["ZZWC560-SH-UF"]], code_lookup=True
     )
 
     size = next(ln for ln in lines if ln.startswith('- "150mm"'))
