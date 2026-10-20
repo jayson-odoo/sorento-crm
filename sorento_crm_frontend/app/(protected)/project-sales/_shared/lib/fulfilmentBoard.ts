@@ -565,7 +565,8 @@ export function remarkFor(
   contribution: BoardContribution,
   decision: BoardDecision | undefined,
 ): string | undefined {
-  if (decision?.remark !== undefined) return decision.remark.trim();
+  // A stored `remark: null` (an API client's opaque draft) reads like no remark.
+  if (decision?.remark !== undefined && decision?.remark !== null) return decision.remark.trim();
   return contribution.confirmed_remark?.trim() || undefined;
 }
 

@@ -628,8 +628,12 @@ export function confirmLineFrom(
     buy_qty: fromMinor(toMinor(decision.buy_qty ?? '0')),
     buy_reason: decision.buy_reason?.trim() || undefined,
     cs_note: decision.cs_note?.trim() || undefined,
-    // OI-SPLIT-GUIDE (UAC F26): the planner's own REMARK for the email, when they typed one.
-    remark: decision.remark?.trim() || undefined,
+    // OI-SPLIT-GUIDE (UAC F26, F33): the planner's own REMARK for the email; '' (cleared) is
+    // passed through, the server's only way to clear a confirmed remark.
+    remark:
+      decision.remark === undefined || decision.remark === null
+        ? undefined
+        : decision.remark.trim(),
     // Frozen with the line. Every other component carries the sentence of the RULE that
     // produced it, and those explain a decision nobody took once a person overrode them.
     amend_reason: decision.reason,
