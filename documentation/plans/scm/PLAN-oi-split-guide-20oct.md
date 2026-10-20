@@ -1,6 +1,6 @@
 # PLAN: guided Confirm on the Fulfilment planning board (OI-SPLIT-GUIDE)
 
-Status: Planned, build waits for #1794 to merge (then rebase crew/oi-split-guide onto main). Card answered
+Status: Build (Phase 2): #1794 merged 296915c7ca, branch rebased onto main 33434f19ee; tester red next. Card answered
 (Q1/Q3/Q4/Q5 (a); Q2 changed by the owner to "saved lines only"), mock v1 approved by the owner 20 Oct
 ~10:33, crew ruling a63941103 (Confirm's server behaviour unchanged; Review labels AutoCount rows). Track:
 M (new flow on an existing screen, no migration, no auth change). Lead pattern: tester red tests, one
@@ -70,6 +70,17 @@ FE:
    calls them. Behaviour of the post half byte-for-byte as today (regression test on the body).
 6. Review table: rows per order (UAC C2), AutoCount label from `autocount_change` (UAC C4), refusals,
    errors with Retry/Back.
+
+Test ids (tester and coder both use these; tests drive the board panel, not the dialog's props):
+`confirm-guide` (dialog), `confirm-guide-steps`, `confirm-guide-split-page` (attr `data-so` = SO
+number), `confirm-guide-split-edit` (the "Split delivery <SO>" CTA), `confirm-guide-split-error` +
+`confirm-guide-split-retry`, `confirm-guide-review`, `confirm-guide-review-order` (attr `data-so`),
+`confirm-guide-review-row`, `confirm-guide-autocount` (the label inside a row), `confirm-guide-nothing`
+("Nothing to send to purchasing"), `confirm-guide-refused`, `confirm-guide-review-error` +
+`confirm-guide-review-retry`, `confirm-guide-confirm` (step 3 button), `confirm-guide-next`,
+`confirm-guide-back`, `confirm-guide-cancel`. The read-only sheet keeps its #1794 test ids inside a page.
+Existing board tests that press `board-confirm` and expect an immediate post now walk the guide (A1);
+the tester updates them in the red commit, keeping their assertions on the posted body.
 
 ## Test list (tester writes red from the UAC; coder may not weaken assertions)
 
