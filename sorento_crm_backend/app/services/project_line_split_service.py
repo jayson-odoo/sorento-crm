@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -130,14 +130,46 @@ from app.services.project_order_inquiry_service import (  # noqa: E402
 )
 
 
-def split_plan_edited(saved_splits: Sequence[Any], applied_plan: Optional[Sequence[str]]) -> bool:
+def legacy_split_plan_key(splits: Sequence[Any]) -> List[str]:
+    """COMPAT SHIM (OI-SPLIT-GUIDE UAC F30, crew ruling (d); drop once no applied plan carries
+    the pre-remark spelling): `split_plan_key` as it was spelled before a split's remark
+    counted (base, then "qty@date@sits on@cancel" per split, sorted, no remark part)."""
+    key = split_plan_key(splits)
+    if not key:
+        return []
+    return [key[0]] + sorted("@".join(entry.split("@")[:4]) for entry in key[1:])
+
+
+def split_plan_edited(
+    saved_splits: Sequence[Any],
+    applied_plan: Optional[Sequence[str]],
+    changed_after_stamp: Optional[Callable[[], bool]] = None,
+) -> bool:
     """OI-SPLIT-VIEW (UAC A1): is a line's saved split plan not the one its last Confirm
     applied (`applied_plan`, the `split_plan` stamp `_recorded_split_plans` reads; none counts
     as different)? False for a line with no saved splits. The one compare the board flag, the
-    Confirm, Simulate and the split view all read; a remark-only edit is the same plan."""
+    Confirm, Simulate and the split view all read. A remark-only edit IS an edit (owner hand
+    test 4, OI-SPLIT-GUIDE UAC F27: `split_plan_key` spells a split's remark).
+
+    COMPAT SHIM (UAC F30, crew ruling (d); drop once no applied plan carries the pre-remark
+    spelling): a plan stamped before remarks counted spells none. When the stamp equals the
+    remark-free spelling of the saved splits, only their remarks can differ, and they count
+    as an edit only when the line's splits changed after that stamp (`changed_after_stamp`,
+    the caller's read of it); a remark that was already there when the plan was applied is
+    not an edit and is never told again."""
     if not saved_splits:
         return False
-    return split_plan_key(saved_splits) != list(applied_plan or [])
+    key = split_plan_key(saved_splits)
+    applied = list(applied_plan or [])
+    if key == applied:
+        return False
+    if (
+        applied
+        and changed_after_stamp is not None
+        and legacy_split_plan_key(saved_splits) == applied
+    ):
+        return changed_after_stamp()
+    return True
 
 
 def splits_not_in_plan(
@@ -169,6 +201,7 @@ def _split_edited_among(
     recorded: Dict[str, Dict[str, Any]],
     *,
     with_pending: bool = False,
+    changed_after: Optional[Callable[[str, Optional[str]], bool]] = None,
 ) -> set:
     """OI-SPLIT-VIEW (UAC A1, A8, A9): of these whole-Buy lines (`whole`, read off facts already
     read), the split-edited ones: still open, nothing pending from AutoCount (such a line goes
@@ -186,7 +219,18 @@ def _split_edited_among(
             and not f.cancelled
             and (with_pending or not f.pending)
             and not (f.now_qty == _ZERO and f.delivered_qty > _ZERO)
-            and split_plan_edited(f.splits, (recorded.get(f.line_id) or {}).get("plan"))
+            and split_plan_edited(
+                f.splits,
+                (recorded.get(f.line_id) or {}).get("plan"),
+                # COMPAT SHIM (UAC F30): the F30 read of a pre-remark stamp.
+                (
+                    lambda line_id=f.line_id: changed_after(
+                        line_id, (recorded.get(line_id) or {}).get("decision_id")
+                    )
+                )
+                if changed_after is not None
+                else None,
+            )
         ):
             out.add(f.line_id)
     return out
@@ -1108,11 +1152,12 @@ class LineSplitService:
             SOSupplyDecision.line_snapshots,
             SOSupplyDecision.revision_no,
             SOSupplyDecision.confirmed_at,
+            SOSupplyDecision.id,
         ).filter(SOSupplyDecision.project_sales_order_id.in_(wanted))
         if before_revision is not None:
             query = query.filter(SOSupplyDecision.revision_no < before_revision)
         out: Dict[str, Dict[str, Any]] = {}
-        for snapshots, revision_no, confirmed_at in (
+        for snapshots, revision_no, confirmed_at, decision_id in (
             query.order_by(SOSupplyDecision.revision_no.desc()).all()
         ):
             for snapshot in snapshots or []:
@@ -1123,9 +1168,45 @@ class LineSplitService:
                         "plan": snapshot.get("split_plan"),
                         "revision_no": revision_no,
                         "confirmed_at": confirmed_at,
+                        "decision_id": str(decision_id),
                     },
                 )
         return out
+
+    def changed_after_stamp(self, line_id: str, decision_id: Optional[str]) -> bool:
+        """COMPAT SHIM (OI-SPLIT-GUIDE UAC F30; drop with `legacy_split_plan_key`): did this
+        line's splits change after the decision that stamped its applied plan was written? Read
+        off the audit log, one clock for both: the decision's own CREATE row and the line's
+        split audit rows (`save` writes one only when a line's splits, remarks included,
+        actually changed). No audit read for the decision answers no."""
+        if not decision_id:
+            return False
+        from sqlalchemy import func
+
+        from app.models.audit import AuditLog
+        from app.models.project_so import SOSupplyDecision
+
+        stamped = (
+            self.db.query(func.min(AuditLog.changed_at))
+            .filter(
+                AuditLog.entity_type == SOSupplyDecision.__audit_entity_type__,
+                AuditLog.entity_id == str(decision_id),
+                AuditLog.action == "CREATE",
+            )
+            .scalar()
+        )
+        if stamped is None:
+            return False
+        return (
+            self.db.query(AuditLog.id)
+            .filter(
+                AuditLog.entity_type == SOLineSplit.__audit_entity_type__,
+                AuditLog.entity_id == str(line_id),
+                AuditLog.changed_at > stamped,
+            )
+            .first()
+            is not None
+        )
 
     def split_edited_line_ids(self, line_ids: Iterable[str]) -> set:
         """OI-SPLIT-VIEW (UAC A2, A4): which of these mirror lines carry a saved split edit a
@@ -1148,7 +1229,9 @@ class LineSplitService:
         orders = {str(s.project_sales_order_id) for line_id in whole for s in splits[line_id]}
         recorded = self.recorded_split_plans(orders)
         facts = self._facts_for(ProjectSalesOrderLine.id.in_(sorted(whole)))
-        return _split_edited_among(facts, whole, recorded)
+        return _split_edited_among(
+            facts, whole, recorded, changed_after=self.changed_after_stamp
+        )
 
     # ------------------------------------------------------------ split view
 
@@ -1193,7 +1276,11 @@ class LineSplitService:
             f.line_id for f in (facts.get(str(i)) for i in line_ids) if f is not None and f.splits
         ]
         edited = _split_edited_among(
-            facts, whole_buy_line_ids(self.db, split_lines), recorded, with_pending=True
+            facts,
+            whole_buy_line_ids(self.db, split_lines),
+            recorded,
+            with_pending=True,
+            changed_after=self.changed_after_stamp,
         )
         out: Dict[str, Dict[str, Any]] = {}
         for line_id in split_lines:

@@ -6165,7 +6165,8 @@ class ProjectOrderInquiryService:
             return {}
         from app.services.project_line_split_service import LineSplitService, split_plan_edited
 
-        recorded = LineSplitService(self.db).recorded_split_plans(
+        service = LineSplitService(self.db)
+        recorded = service.recorded_split_plans(
             [str(decision.project_sales_order_id)], before_revision=decision.revision_no
         )
         out: Dict[str, List[str]] = {}
@@ -6173,7 +6174,14 @@ class ProjectOrderInquiryService:
             applied = list((recorded.get(line_id) or {}).get("plan") or [])
             if not applied or not f.splits or f.pending:
                 continue
-            if split_plan_key(f.splits)[0] == applied[0] and split_plan_edited(f.splits, applied):
+            if split_plan_key(f.splits)[0] == applied[0] and split_plan_edited(
+                f.splits,
+                applied,
+                # COMPAT SHIM (OI-SPLIT-GUIDE UAC F30): the read of a pre-remark stamp.
+                lambda line_id=line_id: service.changed_after_stamp(
+                    line_id, (recorded.get(line_id) or {}).get("decision_id")
+                ),
+            ):
                 out[line_id] = applied
         return out
 
