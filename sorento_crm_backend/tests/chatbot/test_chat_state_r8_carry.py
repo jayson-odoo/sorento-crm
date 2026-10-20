@@ -400,9 +400,9 @@ def test_r8_8_state_off_held_family_brand_only_branch_still_receives_the_held_pr
     seen = []
     real = held_family.narrow_held_family
 
-    def spy(db, v, held):
+    def spy(db, v, held, **kw):
         seen.append([p.get("canonical_code") for p in held])
-        return real(db, v, held)
+        return real(db, v, held, **kw)
 
     monkeypatch.setattr(held_family, "narrow_held_family", spy)
     c.say("srt ones", reply(entities=[_brand()]))
@@ -424,8 +424,8 @@ def test_r8_1_a_brand_over_carried_products_still_narrows_by_held_family(session
     seen = []
     real = held_family.narrow_held_family
 
-    def spy(db, v, held):
-        out = real(db, v, held)
+    def spy(db, v, held, **kw):
+        out = real(db, v, held, **kw)
         seen.append(([p.get("canonical_code") for p in held], out[1]))
         return out
 

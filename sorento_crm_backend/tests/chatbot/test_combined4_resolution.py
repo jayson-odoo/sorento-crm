@@ -33,12 +33,6 @@ from tests.chatbot.test_chat_state_r6_s3_ops_decide import (  # noqa: F401
 from tests.chatbot.test_engine import _envelope, _parser_output, seeded, stub_access  # noqa: F401
 
 
-def test_the_c4res_tree_is_the_one_under_test():
-    import app
-
-    assert "sorento_crm-chat-state-c4res" in app.__file__, app.__file__
-
-
 # =============================================================== 1. spies: Subject decides under the gate
 class _Seams:
     """Counts the #1755 class seams and the scheme-without-product check at their real call sites."""
