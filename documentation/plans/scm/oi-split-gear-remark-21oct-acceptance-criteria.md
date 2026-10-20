@@ -31,6 +31,15 @@ Words: "confirmed remark" = the planner's own REMARK the line's active revision 
   hold there too for a covered line with no draft.
 - H6. SO / OI line (i) popup title reads "<item code>: split", no line number. Already on main
   (`LineSplitInfo.tsx:283`, pinned by `LineSplitInfo.test.tsx:113-131`, #1799); browser check only.
+- H7 (reviewer round 1 blocker). The server's email words win over a confirmed remark wherever the next
+  Confirm tells purchasing them: a line with a saved Reject or Cancel draft (`saved_remark` "CANCEL ALL", UAC
+  F15, F20) and a book-cancelled line with no draft ("CANCEL ALL", UAC F10) show those words, never X and never
+  "edited", in the gear dialog and on the guided Confirm's Review page. Only a line with NO draft hands over
+  its confirmed remark (`remarkFactsOf`, `FulfilmentBoardPanel.tsx:2030-2041`; also fixes the guide's read-only
+  words, `ConfirmGuideDialog.tsx:42`).
+- H8 (reviewer round 1). Typing exactly X back into the box of a no-draft line with no stored split remark
+  stores nothing: the dialog is not dirty and Save sends no split for the line. Emptying the box keeps it empty
+  while focused; on blur X shows again, nothing is stored and Save stays disabled.
 
 ## Out of scope
 
