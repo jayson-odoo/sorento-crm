@@ -438,3 +438,22 @@ describe('a quote rides a voice note or image too (Q2 (b), crew 20 Oct)', () => 
     });
   });
 });
+
+describe('voice under React StrictMode (next dev)', () => {
+  it('records after the dev double mount: the remount must not read as unmounted', async () => {
+    installRecordingStack();
+    postConsoleTurn.mockResolvedValueOnce(mediaDone());
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <React.StrictMode>
+        <QueryClientProvider client={client}>
+          <ChatbotConsole />
+        </QueryClientProvider>
+      </React.StrictMode>,
+    );
+    fireEvent.pointerDown(mic(), { pointerId: 1, button: 0 });
+    fireEvent.pointerUp(mic(), { pointerId: 1, button: 0 });
+    await screen.findByTestId('chatbot-console-recording');
+    expect(tracks[0].stop).not.toHaveBeenCalled();
+  });
+});
