@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OI-SPLIT-GUIDE mock v1</title>
+<style>
+/* Tokens copied from sorento_crm_frontend/css/config.reui.css (light theme), same set as documentation/mockups/OI-SPLIT-VIEW */
+:root{--foreground:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#e4e4e7;--input:#e4e4e7;--primary:#3b82f6;--primary-soft:#eff6ff;--success:#15803d;--success-soft:#f0fdf4;--success-line:#bbf7d0;--warning:#a16207;--warning-soft:#fefce8;--warning-line:#fde68a;--info:#1d4ed8;--info-soft:#eff6ff;--info-line:#bfdbfe;--page:#f7f7f8;--ease:cubic-bezier(.2,0,0,1)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--foreground);font:14px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
+h1{font-size:22px;margin:0 0 4px}
+.doc{max-width:1360px;margin:0 auto;padding:16px}
+.intro{color:var(--muted-fg);font-size:13px;margin:0 0 12px;max-width:1040px}
+section{margin:0 0 30px}
+section>h2{font-size:15px;margin:0 0 6px}
+.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 10px;max-width:1040px}
+.card{background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 18px;max-width:1100px}
+.card ol{margin:6px 0 0;padding-left:20px;font-size:13px}
+.card li{margin:0 0 5px}
+.qs label{display:block;font-size:12.5px;margin:2px 0 2px 4px;color:#3f3f46}
+.qs input{margin-right:6px}
+.qs .rec{color:var(--success);font-weight:500}
+.mut{color:var(--muted-fg)}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+.desk{width:1280px;max-width:100%;background:#fff;border:1px solid var(--border);border-radius:12px;overflow:hidden;position:relative;min-height:760px}
+.main{padding:20px 24px}
+.phone{width:375px;background:#fff;border:1px solid var(--border);border-radius:16px;overflow:hidden;position:relative;height:760px}
+/* components/ui/button.tsx */
+.btn{display:inline-flex;align-items:center;gap:5px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--input);background:#fff;font:500 13px Inter,ui-sans-serif,system-ui,sans-serif;color:var(--foreground);cursor:pointer;white-space:nowrap}
+.btn.pri{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+.btn:focus-visible{outline:2px solid var(--primary);outline-offset:1px}
+.badge{display:inline-flex;align-items:center;border-radius:6px;padding:0 7px;font-size:11.5px;line-height:20px;font-weight:500;border:1px solid transparent}
+.badge.warn{background:var(--warning-soft);color:var(--warning);border-color:var(--warning-line)}
+.badge.ok{background:var(--success-soft);color:var(--success);border-color:var(--success-line)}
+/* FulfilmentBoardPanel summary bar */
+.strip{border:1px solid var(--border);border-radius:12px;padding:12px 16px;display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--muted-fg)}
+.strip .r{margin-left:auto;display:flex;gap:8px}
+/* components/ui/dialog.tsx */
+.scrim{position:absolute;inset:0;background:rgba(9,9,11,.4);display:flex;align-items:flex-start;justify-content:center;padding-top:24px;z-index:20}
+.scrim[hidden]{display:none}
+.dlg{width:1180px;max-width:calc(100% - 24px);height:calc(100% - 48px);background:#fff;border-radius:12px;border:1px solid var(--border);box-shadow:0 20px 50px rgba(0,0,0,.2);display:flex;flex-direction:column}
+.dlg .hd{padding:16px 20px 10px;border-bottom:1px solid var(--border)}
+.dlg .hd h3{margin:0;font-size:16px}
+.dlg .bd{flex:1;overflow:auto;padding:14px 20px}
+.dlg .ft{padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center}
+.dlg .ft .sp{flex:1}
+.phone .scrim{padding-top:0}
+.phone .dlg{width:100%;max-width:100%;height:100%;border-radius:0}
+/* components/common/WizardSteps.tsx */
+.steps{display:flex;gap:18px;margin:8px 0 0;font-size:12.5px;color:var(--muted-fg);flex-wrap:wrap}
+.steps span{display:flex;align-items:center;gap:6px}
+.steps i{font-style:normal;display:inline-flex;width:20px;height:20px;border-radius:50%;border:1px solid var(--border);align-items:center;justify-content:center;font-size:11px}
+.steps .on{color:var(--foreground);font-weight:500}
+.steps .on i{background:var(--primary);border-color:var(--primary);color:#fff}
+.steps .done i{background:var(--success-soft);border-color:var(--success-line);color:var(--success)}
+/* LineSplitSheet readOnly (fulfilment-planning/components/LineSplitSheet.tsx), as on the crew copy 20 Oct */
+.sheetwrap{overflow-x:auto;border:1px solid var(--border);border-radius:8px}
+table.sh{border-collapse:collapse;font-size:12.5px;min-width:1000px;width:100%}
+table.sh th{font-size:10.5px;letter-spacing:.02em;text-transform:uppercase;color:#3f3f46;font-weight:600;padding:8px 6px;border:1px solid var(--border);background:#fafafa;text-align:center}
+table.sh td{padding:8px 6px;border:1px solid var(--border);text-align:center;white-space:nowrap}
+table.sh td.b{font-weight:600}
+table.sh td.l{text-align:left}
+.pill{display:inline-flex;border-radius:999px;padding:0 8px;font-size:11px;line-height:19px;font-weight:600;margin-left:6px}
+.pill.ADVANCE,.pill.DELAY{background:var(--info-soft);color:var(--info)}
+.rem{color:var(--muted-fg)}
+.orderhd{display:flex;align-items:center;gap:10px;margin:0 0 10px}
+.orderhd b{font-size:15px}
+.empty{padding:40px 10px;text-align:center}
+.empty b{display:block;font-size:14px;margin-bottom:10px}
+.result{border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin-top:12px;font-size:13.5px}
+.result .ok{color:var(--success)}
+.map{font-size:12.5px;border-collapse:collapse;width:100%;max-width:1100px;background:#fff}
+.map td,.map th{border:1px solid var(--border);padding:6px 10px;text-align:left;vertical-align:top}
+.map code{font-size:11.5px}
+.note{font-size:11.5px;color:var(--muted-fg);margin:8px 0 0}
+.badge{white-space:nowrap}
+/* phone: the sheet's own narrow behaviour (LineSplitSheet max-md:hidden on Line, SO date, S/O no, Location) */
+.phone .dk{display:none}
+.phone .orderhd{flex-wrap:wrap}
+.phone .orderhd .act{margin-left:0!important;width:100%}
+.phone table.sh{min-width:640px}
+.phone .ph-only{display:inline!important}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>OI-SPLIT-GUIDE mock v1: view the split before you Confirm (guided, step by step)</h1>
+<p class="intro">Next PR after #1794. Built on the card's recommendations, Q1-Q5 all (a) (crew, a62743794). Real case: SO417636 (the owner's split, with 167 moved to 20/11/2029 and saved) planned together with SO424910 (AutoCount changed SRTSP124: line 16 76 -> 2 and eight new lines 4 + 7 x 10 = 74, no split saved). Press <b>Confirm (2)</b> on the board below and walk the guide.</p>
+
+<section>
+<h2>Behaviour card: rules and questions (answer on this page)</h2>
+<div class="card">
+<b>Rules</b>
+<ol>
+<li><b>Confirm (N) opens the guide</b> instead of posting at once. Same count, same button.</li>
+<li><b>Three fixed steps</b>: 1 Split, 2 Review, 3 Confirm. Back is allowed; Cancel or Escape closes the guide and writes nothing.</li>
+<li><b>Step 1 Split (required)</b>: one page per order in this Confirm, showing the read-only split sheet (saved split lines only) and one button "Split delivery &lt;SO&gt;" that opens today's edit sheet on top; after its Save the page refreshes. An order with no split line shows "No split lines" and the same button.</li>
+<li><b>Step 2 Review</b>: what purchasing will get, per order, from the dry run Confirm already makes (nothing written). An order the dry run refuses shows its reason and is left out, as today.</li>
+<li><b>Step 3 Confirm</b> is today's Confirm: same body, same result card, same toast.</li>
+<li><b>Never stuck</b>: if the dry run fails, Review shows the error with Retry and Back; Confirm stays off.</li>
+<li>Unchanged: the board count, "Split edits to confirm", the gear items, admin Simulate confirm, Undo.</li>
+</ol>
+<div class="qs" style="margin-top:10px">
+<b>Questions</b> (pre-marked: the recommendation)
+<p style="margin:8px 0 2px">Q1. Where the guide starts</p>
+<label><input type="radio" name="q1" checked> (a) Confirm (N) opens it <span class="rec">recommended</span></label>
+<label><input type="radio" name="q1"> (b) a separate "Review splits" button must be done before Confirm turns on</label>
+<p style="margin:8px 0 2px">Q2. Which orders get the split step</p>
+<label><input type="radio" name="q2" checked> (a) every order in the Confirm (an empty one shows "No split lines" + the button) <span class="rec">recommended</span></label>
+<label><input type="radio" name="q2"> (b) only orders with split lines or an AutoCount qty change</label>
+<p style="margin:8px 0 2px">Q3. Review step</p>
+<label><input type="radio" name="q3" checked> (a) include it, from the dry run Confirm already makes (no new endpoint) <span class="rec">recommended</span></label>
+<label><input type="radio" name="q3"> (b) Split, then Confirm</label>
+<p style="margin:8px 0 2px">Q4. Editing inside the guide</p>
+<label><input type="radio" name="q4" checked> (a) "Split delivery &lt;SO&gt;" opens the edit sheet on top; the page refreshes after Save <span class="rec">recommended</span></label>
+<label><input type="radio" name="q4"> (b) the guide is read-only; edits only from the board gear</label>
+<p style="margin:8px 0 2px">Q5. "Required"</p>
+<label><input type="radio" name="q5" checked> (a) Next walks every order's page; Review is reached only after the last one <span class="rec">recommended</span></label>
+<label><input type="radio" name="q5"> (b) one "I have checked the splits" tick</label>
+</div>
+</div>
+</section>
+
+<section>
+<h2>The board and the guide (1280)</h2>
+<div class="desk" data-frame="desk"><div class="main">
+  <div style="display:flex;align-items:center;gap:10px;margin:0 0 14px"><div style="font-size:20px;font-weight:600">Planning 2 sales orders together</div></div>
+  <div class="strip">
+    <span>2 to confirm · 0 rejected</span>
+    <span class="r"><span class="btn">Save all suggested</span><span class="btn" aria-label="Board actions">⚙</span><button type="button" class="btn pri" data-open="desk">Confirm (2)</button></span>
+  </div>
+  <div class="mut" style="font-size:13px;margin-top:10px">Split edits to confirm: line 480 CSK14B</div>
+  <div class="result" data-result hidden></div>
+</div><div class="scrim" data-scrim="desk" hidden></div></div>
+</section>
+
+<section>
+<h2>Phone 375: the same guide, full screen</h2>
+<div class="phone" data-frame="ph"><div class="main" style="padding:14px">
+  <b>Planning 2 sales orders</b>
+  <div class="strip" style="margin-top:10px;flex-wrap:wrap"><span>2 to confirm</span><span class="r"><button type="button" class="btn pri" data-open="ph">Confirm (2)</button></span></div>
+</div><div class="scrim" data-scrim="ph" hidden></div></div>
+</section>
+
+<section>
+<h2>Element map (every element reuses an existing component)</h2>
+<table class="map">
+<tr><th>Element</th><th>Existing component / data</th></tr>
+<tr><td>Confirm (N) opens the guide</td><td>button <code>board-confirm</code>, <code>project-sales/fulfilment-planning/components/FulfilmentBoardPanel.tsx:2606-2619</code>; today calls <code>runConfirmAll</code> (:1758) directly</td></tr>
+<tr><td>Guide dialog + steps 1 Split / 2 Review / 3 Confirm</td><td><code>components/ui/dialog.tsx</code> + <code>components/common/WizardSteps.tsx</code> (steps + currentId), as in <code>leads/components/LeadWizardDialog.tsx</code></td></tr>
+<tr><td>Step 1 table</td><td>the read-only split sheet from #1794: <code>LineSplitSheet readOnly</code> (<code>fulfilment-planning/components/LineSplitSheet.tsx</code>) via the <code>OrderSplitsDialog</code> body (<code>_shared/components/LineSplitInfo.tsx</code>), data <code>useLineSplits(psoId)</code> (GET line-splits, <code>LineSplitService.read</code>), saved split lines only</td></tr>
+<tr><td>"Split delivery &lt;SO&gt;" in step 1</td><td>today's edit sheet <code>LineSplitDialog</code> (opened at <code>FulfilmentBoardPanel.tsx:3209</code>), on top of the guide</td></tr>
+<tr><td>"No split lines"</td><td>the read-only popup's existing empty state (#1794 UAC D1)</td></tr>
+<tr><td>Step 2 rows</td><td>the dry run the press already makes: <code>previewConfirmMany</code> (<code>FulfilmentBoardPanel.tsx:1779-1784</code>, hook <code>_shared/hooks/useFulfilmentPlanning.ts:533</code>), per order <code>inquiry_rows</code> + <code>transfers</code> (<code>sorento_crm_backend/app/schemas/project_supply.py:622, :672-725</code>); no new endpoint, same permission as Confirm</td></tr>
+<tr><td>Step 3 Confirm + result</td><td>today's <code>confirmMany</code> (:1838) and result card <code>board-confirm-results</code> (~:2700-2900), toast unchanged</td></tr>
+</table>
+</section>
+</div>
+
+<script>
+// Real rows: SO417636 from the read-only sheet on the crew copy 20 Oct (with the owner's 167 -> 20/11/2029 saved); SO424910 from AutoCount (sales_order_lines + its pending planning change).
+const S417 = `
+<div class="orderhd"><b>SO417636</b><span class="badge warn">Saved, not confirmed</span><span class="mut" style="font-size:12.5px">2 split lines</span><span class="act" style="margin-left:auto"><button type="button" class="btn" data-edit>Split delivery SO417636</button></span></div>
+<div class="sheetwrap"><table class="sh">
+<thead><tr><th class="dk">Line</th><th class="dk">SO date</th><th class="dk">S/O no</th><th>Item code</th><th class="dk">Location</th><th>Qty</th><th>New qty</th><th>Delivery date</th><th>New date</th><th>Change quantity</th><th>Change date</th><th>Remark</th></tr></thead>
+<tbody>
+<tr><td rowspan="3" class="dk">480</td><td rowspan="3" class="dk">19/08/2026</td><td rowspan="3" class="dk">SO417636</td><td rowspan="3" class="b">CSK14B<span class="ph-only mut" style="display:none"> 480</span></td><td rowspan="3" class="dk">BRW-BB</td><td rowspan="3">417</td><td rowspan="3">14</td><td rowspan="3">20/10/2026</td><td rowspan="3">20/09/2026</td><td class="b">14</td><td>20/09/2026<span class="pill ADVANCE">ADVANCE</span></td><td class="l rem">ADVANCE</td></tr>
+<tr><td class="b">236</td><td>20/11/2026<span class="pill DELAY">DELAY</span></td><td class="l rem">DELAY</td></tr>
+<tr><td class="b">167</td><td>20/11/2029<span class="pill DELAY">DELAY</span></td><td class="l rem">DELAY</td></tr>
+<tr><td rowspan="3" class="dk">752</td><td rowspan="3" class="dk">19/08/2026</td><td rowspan="3" class="dk">SO417636</td><td rowspan="3" class="b">CSK14B<span class="ph-only mut" style="display:none"> 752</span></td><td rowspan="3" class="dk">BRW-BB</td><td rowspan="3">504</td><td rowspan="3">649</td><td rowspan="3">20/12/2026</td><td rowspan="3">02/01/2027</td><td class="b">37</td><td>20/11/2026<span class="pill ADVANCE">ADVANCE</span></td><td class="l rem">ADVANCE</td></tr>
+<tr><td class="b">467</td><td>02/01/2027<span class="pill DELAY">DELAY</span></td><td class="l rem">DELAY</td></tr>
+<tr><td class="b">145</td><td>02/01/2027</td><td class="l rem">ORDER 145</td></tr>
+</tbody></table></div>`;
+const S424 = `
+<div class="orderhd"><b>SO424910</b><span class="act" style="margin-left:auto"><button type="button" class="btn" data-edit>Split delivery SO424910</button></span></div>
+<div class="empty"><b>No split lines</b><span class="mut" style="font-size:12.5px">AutoCount: line 16 SRTSP124 76 -> 2 on 07/10/2026, 8 new lines (74)</span></div>`;
+const REVIEW = `
+<div class="orderhd"><b>SO417636</b><span class="mut" style="font-size:12.5px">1 row to purchasing</span></div>
+<div class="sheetwrap"><table class="sh" style="min-width:820px">
+<thead><tr><th>Line</th><th>Item code</th><th>Location</th><th>Qty</th><th>New qty</th><th>Delivery date</th><th>New date</th><th>Remark</th></tr></thead>
+<tbody><tr><td>480</td><td class="b">CSK14B</td><td>BRW-BB</td><td>167</td><td></td><td>20/11/2026</td><td>20/11/2029</td><td class="l rem">DELAY</td></tr></tbody></table></div>
+<div class="orderhd" style="margin-top:16px"><b>SO424910</b><span class="mut" style="font-size:12.5px">9 rows to purchasing</span></div>
+<div class="sheetwrap"><table class="sh" style="min-width:820px">
+<thead><tr><th>Line</th><th>Item code</th><th>Location</th><th>Qty</th><th>New qty</th><th>Delivery date</th><th>New date</th><th>Remark</th></tr></thead>
+<tbody>
+<tr><td>16</td><td class="b">SRTSP124</td><td>BRW-BB</td><td>76</td><td>2</td><td>07/10/2026</td><td></td><td class="l rem">CANCEL BALANCE 74</td></tr>
+${[[32,4,'16/10/2026'],[48,10,'15/11/2026'],[64,10,'20/12/2026'],[80,10,'29/01/2027'],[96,10,'03/03/2027'],[112,10,'04/04/2027'],[128,10,'05/05/2027'],[144,10,'05/06/2027']].map(([l,q,d]) => `<tr><td>${l}</td><td class="b">SRTSP124</td><td>BRW-BB</td><td></td><td>${q}</td><td></td><td>${d}</td><td class="l rem">ORDER ${q}</td></tr>`).join('')}
+</tbody></table></div>
+<p class="note">Rows come from the dry run Confirm already makes; the words shown here are illustrative (exact rows UNVERIFIED until a dry run on the copy). This is the CANCEL 74 + ORDER 74 the split step could have turned into moves.</p>`;
+const CONFIRM = `
+<p style="margin:0 0 10px">2 orders: SO417636 (1 row), SO424910 (9 rows). Nothing has been sent yet.</p>
+<button type="button" class="btn pri" data-confirm>Confirm 2 orders</button>`;
+const RESULT = `<div><b>2 of 2 orders confirmed</b></div><div class="ok">SO417636: confirmed as a new revision</div><div class="ok">SO424910: confirmed as a new revision</div>`;
+const state = {desk: null, ph: null};
+const PAGES = [{step: 'split', order: 0}, {step: 'split', order: 1}, {step: 'review'}, {step: 'confirm'}];
+function stepsBar(i) {
+  const p = PAGES[i];
+  const cur = p.step;
+  const order = ['split', 'review', 'confirm'];
+  const idx = order.indexOf(cur);
+  return `<div class="steps">${[['split', '1', 'Split'], ['review', '2', 'Review'], ['confirm', '3', 'Confirm']].map(([id, n, l], k) => `<span class="${k === idx ? 'on' : k < idx ? 'done' : ''}"><i>${k < idx ? '✓' : n}</i>${l}</span>`).join('')}${cur === 'split' ? `<span class="mut">Order ${p.order + 1} of 2</span>` : ''}</div>`;
+}
+function render(frame) {
+  const i = state[frame];
+  const scrim = document.querySelector(`[data-scrim=${frame}]`);
+  if (i === null) { scrim.hidden = true; scrim.innerHTML = ''; return; }
+  const p = PAGES[i];
+  const body = p.step === 'split' ? (p.order === 0 ? S417 : S424) : p.step === 'review' ? REVIEW : CONFIRM;
+  const next = p.step === 'confirm' ? '' : `<button type="button" class="btn pri" data-next="${frame}">${p.step === 'split' && p.order === 1 ? 'Next: Review' : p.step === 'review' ? 'Next: Confirm' : 'Next order'}</button>`;
+  scrim.hidden = false;
+  scrim.innerHTML = `<div class="dlg" role="dialog" aria-modal="true" aria-labelledby="g-${frame}"><div class="hd"><h3 id="g-${frame}">Confirm SO417636, SO424910</h3>${stepsBar(i)}</div><div class="bd">${body}</div><div class="ft"><button type="button" class="btn" data-cancel="${frame}">Cancel</button><span class="sp"></span>${i > 0 ? `<button type="button" class="btn" data-back="${frame}">Back</button>` : ''}${next}</div></div>`;
+}
+document.addEventListener('click', (e) => {
+  const t = e.target;
+  if (t.dataset.open) { state[t.dataset.open] = 0; render(t.dataset.open); return; }
+  if (t.dataset.next) { state[t.dataset.next] += 1; render(t.dataset.next); return; }
+  if (t.dataset.back) { state[t.dataset.back] -= 1; render(t.dataset.back); return; }
+  if (t.dataset.cancel) { state[t.dataset.cancel] = null; render(t.dataset.cancel); return; }
+  if (t.hasAttribute('data-edit')) { alert("Opens today's Split delivery edit sheet on top of the guide; after Save this page refreshes."); return; }
+  if (t.hasAttribute('data-confirm')) {
+    const frame = t.closest('[data-frame]').dataset.frame;
+    state[frame] = null; render(frame);
+    const r = document.querySelector(`[data-frame=${frame}] [data-result]`);
+    if (r) { r.innerHTML = RESULT; r.hidden = false; }
+  }
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { for (const f of ['desk', 'ph']) { if (state[f] !== null) { state[f] = null; render(f); } } } });
+</script>
+</body>
+</html>
