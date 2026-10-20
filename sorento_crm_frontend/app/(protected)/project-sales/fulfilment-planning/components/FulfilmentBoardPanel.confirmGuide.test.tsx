@@ -758,7 +758,7 @@ describe('T-FE4 (C1 to C7): Review shows what purchasing will get', () => {
     click('confirm-guide-next');
     const refused = await screen.findByTestId('confirm-guide-refused');
     expect(refused).toHaveTextContent('Line 1 has no supply.');
-    const control = await guideControl();
+    const control = (await guideControl())!;
     click('confirm-guide-next');
     const confirm = await screen.findByTestId('confirm-guide-confirm');
     expect(control.getAttribute('data-testid')).toBe('confirm-guide-next');
@@ -808,11 +808,49 @@ describe('T-FE4 (C1 to C7): Review shows what purchasing will get', () => {
     click('confirm-guide-next');
     await screen.findByTestId('confirm-guide-split-page');
     click('confirm-guide-next');
-    await screen.findAllByTestId('confirm-guide-refused');
+    const refusals = await screen.findAllByTestId('confirm-guide-refused');
+    expect(refusals.map((el) => el.textContent).join(' ')).toContain('Line 1 has no supply.');
+    expect(refusals.map((el) => el.textContent).join(' ')).toContain('Line 1 is held.');
     expect(screen.getByTestId('confirm-guide-review')).toHaveTextContent(/nothing can be confirmed/i);
     expect(screen.queryByTestId('confirm-guide-confirm')).not.toBeInTheDocument();
     const next = screen.queryByTestId('confirm-guide-next') as HTMLButtonElement | null;
     expect(next === null || next.disabled).toBe(true);
+    // C7: Cancel closes, nothing is posted, no result card.
+    click('confirm-guide-cancel');
+    await waitFor(() => expect(screen.queryByTestId('confirm-guide')).not.toBeInTheDocument());
+    expect(confirmMany).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('board-confirm-results')).not.toBeInTheDocument();
+  });
+
+  it('a row whose state is cancelled shows CANCEL in its remark cell', async () => {
+    dryRunAnswers({
+      'pso-so-1': {
+        rows: [
+          row({ line_no: 2, item_code: 'ZZT-ITEM-1B', state: 'cancelled', autocount_change: 'qty' }),
+          row({ state: 'raised' }),
+        ],
+      },
+    });
+    await mountWith(oneEditedBoard());
+    await openConfirmGuide();
+    await screen.findByTestId('confirm-guide-split-page');
+    click('confirm-guide-next');
+    const rows = await screen.findAllByTestId('confirm-guide-review-row');
+    const cancelled = rows.find((el) => el.textContent?.includes('ZZT-ITEM-1B'))!;
+    expect(cancelled).toHaveTextContent('CANCEL');
+    const raised = rows.find((el) => el !== cancelled)!;
+    expect(raised).not.toHaveTextContent('CANCEL');
+  });
+
+  it('some orders refused and some ok: Confirm stays reachable', async () => {
+    dryRunAnswers({
+      'pso-so-1': { rows: [row()] },
+      'pso-so-2': { error: 'Line 1 has no supply.' },
+    });
+    await mountWith(twoEditedBoard());
+    const confirm = await walkToConfirmStep();
+    expect(confirm).not.toBeNull();
+    expect(confirm).toBeEnabled();
   });
 });
 
@@ -827,7 +865,7 @@ describe('T-FE5 (D1 D2 D3): the Confirm step posts what today\'s press posts', (
       'pso-so-2': { rows: Array.from({ length: 9 }, (_, i) => row({ line_no: i + 1 })) },
     });
     await mountWith(twoEditedBoard());
-    const confirm = await walkToConfirmStep();
+    const confirm = (await walkToConfirmStep())!;
     const guide = screen.getByTestId('confirm-guide');
     expect(guide).toHaveTextContent(
       '2 orders: SO000001 (1 row), SO000002 (9 rows). Nothing has been sent yet.',
@@ -855,7 +893,7 @@ describe('T-FE5 (D1 D2 D3): the Confirm step posts what today\'s press posts', (
     let finish: (value: unknown) => void = () => undefined;
     confirmMany.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
     await mountWith(oneEditedBoard());
-    const confirm = await walkToConfirmStep();
+    const confirm = (await walkToConfirmStep())!;
     await waitFor(() => expect(confirm).toBeEnabled());
     fireEvent.click(confirm);
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
@@ -869,7 +907,7 @@ describe('T-FE5 (D1 D2 D3): the Confirm step posts what today\'s press posts', (
   it('a failed post toasts the error and leaves the guide open at step 3 with Confirm enabled again', async () => {
     confirmMany.mockRejectedValue(new Error('server said no'));
     await mountWith(oneEditedBoard());
-    const confirm = await walkToConfirmStep();
+    const confirm = (await walkToConfirmStep())!;
     await waitFor(() => expect(confirm).toBeEnabled());
     fireEvent.click(confirm);
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));

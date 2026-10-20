@@ -120,9 +120,13 @@ def test_be1_the_dry_run_lists_the_retired_row_of_an_unnamed_line_autocount_move
     s = _two_line_order(api)
     _drift(s, how)
     result = _result(_press(s, preview=True))
-    assert _rows_of(result, 10), (
+    rows = _rows_of(result, 10)
+    assert rows, (
         "UAC C3: the retired row of line 10 (raised under the older revision) is listed",
         result["inquiry_rows"],
+    )
+    assert [x.get("state") for x in rows] == ["cancelled"] * len(rows), (
+        "each preview row carries the state it has after the press (INQUIRY_CANCELLED)", rows,
     )
 
 
@@ -177,6 +181,9 @@ def test_be2_a_saved_split_edit_row_is_null_not_an_autocount_change(api):
     rows = _rows_of(result, 20)
     assert rows, ("premise: the split edit shows rows", result["inquiry_rows"])
     assert all("autocount_change" in x and x["autocount_change"] is None for x in rows), rows
+    new = [x for x in rows if x["is_new"]]
+    assert new, ("premise: the split edit raises a new row", rows)
+    assert all(x.get("state") == "raised" for x in new), ("a row this press raised reads raised", new)
 
 
 # ---------------------------------------------------------------------------
