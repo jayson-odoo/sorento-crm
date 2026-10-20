@@ -1077,6 +1077,25 @@ NO_MATCH_RE = re.compile(r"\bnone matched\b|\bbut no\b[^\n.]{0,80}?\bmatched the
                          r"|Couldn.?t find: [^\"“”\s][^\n(]*\([^)\n]+\)", re.I)   # the value-miss line has an unquoted value and a label
 
 
+def _spec_key_state(row: dict[str, Any], gold_spec: list[dict[str, Any]]) -> bool | None:
+    """Was every gold value grounded on a gold KEY? Per value, the acceptable keys are the gold's own keys carrying that value
+    (there is no other alias table). An entity (this turn's, or the memory's specification slot) with the value and one of
+    those keys proves it; an entity with the value and a key not among them is wrong; entities with the value but no key
+    cannot show it (None)."""
+    ents = [e for e in _entities(row)] + [e for e in (_mem_focus(row, "after").get("extra") or {}).get("specification") or []
+                                           if isinstance(e, dict)]
+    state: bool | None = True
+    for value in {_val(sp.get("value")) for sp in gold_spec if sp.get("key") not in CLASS_KEYS}:
+        keys = {sp.get("key") for sp in gold_spec if sp.get("key") not in CLASS_KEYS and _val(sp.get("value")) == value}
+        seen = [e for e in ents if _val(e.get("spec_value") if e.get("spec_value") is not None else e.get("raw")) == value]
+        if any(e.get("spec_key") in keys for e in seen):
+            continue
+        if any(e.get("spec_key") for e in seen):
+            return False
+        state = None
+    return state
+
+
 def _spec(row, item):
     extra = _mem_focus(row, "after").get("extra") or {}
     got = {_val(e.get("spec_value") if e.get("spec_value") is not None else e.get("raw")) for e in _entities(row)
@@ -1097,7 +1116,11 @@ def _spec(row, item):
     # a catalogue that holds nothing for the spec: the bot saying so is the answer, products listed as well are fine
     answer = (("none_on_record", bool(NO_MATCH_RE.search(reply)), "The bot did not say that no product matches the spec.")
               if (item.get("gold") or {}).get("none_on_record") else ("shown", shown, "The reply showed no product."))
-    checks = [("spec_set", want <= got and bool(want or class_want), "The spec words were not grounded to the expected set."),
+    grounded: bool | None = want <= got and bool(want or class_want)
+    if grounded and want:   # the set must be built on the gold's KEY too (the key the bot filtered on rides its entity)
+        keyed = _spec_key_state(row, gold_spec)
+        grounded = None if keyed is None else keyed
+    checks = [("spec_set", grounded, "The spec words were not grounded to the expected set."),
               answer, *_needless(row, {}, shown=shown, slice_name="spec")]
     if class_want:  # reported, not part of `passed`: the bot records class words as category entities
         checks.append(("class", all(any(set(v.split()) <= w for w in words) for v in class_want),
