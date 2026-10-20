@@ -6396,7 +6396,8 @@ class ProjectOrderInquiryService:
     ) -> bool:
         """OI-SPLIT-SUPERSEDE-FIX: when each of a split line's unmatched `rows` has exactly one
         unmatched plan row at its own date, no larger than it, each row keeps its date and is
-        cut to that qty in place (NEW QTY, purchasing's acknowledgement turned CHANGED), so nothing is joined, cancelled or raised again. False, touching nothing,
+        cut to that qty in place (NEW QTY, purchasing's acknowledgement turned CHANGED), so
+        nothing is joined, cancelled or raised again. False, touching nothing,
         for any other shape (a new split, a moved date, a grown row) or a linked row: the join
         keeps a linked row's cover on the line, where a cut on its own would give it back."""
         if not rows or len(rows) != len(want):
@@ -6410,17 +6411,13 @@ class ProjectOrderInquiryService:
         if any(plan is None or plan[0] > _dec(row.qty) for row, plan in pairs):
             return False
         for row, (qty, _when) in pairs:
-            # Purchasing placed it: a cut never sends it back to raised.
-            placed = row.state == INQUIRY_PLACED
+            # No links, so the row's state (raised, or placed by hand) stands as it is.
             row.previous_qty = row.qty
             row.qty = qty
             row.supply_decision_id = decision.id
             if row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
                 row.changed_at = datetime.utcnow()
                 row.ack_state = ACK_CHANGED
-            self.refresh_link_state([row])
-            if placed:
-                row.state = INQUIRY_PLACED
         return True
 
     def _apply_pure_splits(
