@@ -192,6 +192,25 @@ or use own location, just like our email to purchasing". Plan crew-note 62883955
   stays the explicit way out and writes nothing.
 - F24. F21 extends to the editor's own texts: the problems bar, the drag status / overlay and the move toast
   name the item (and the split's qty / date where needed), never a line number.
+- F25. Owner hand test 4 (phone, e54d6f2701) = REWORK, verbatim: "I should be able to edit the remark in any row
+  right? Regardless of can split or not, it should just be loaded by the default value and editable". In the
+  shared split editor (guide page and the board's own "Split delivery") every row's Remark is an editable,
+  wrapping text box prefilled with today's words as its VALUE (a split row: its remark or change word; an
+  unsplit saved line: the purchasing email's words, `saved_line_remark`). Clearing it brings the default back;
+  saving the untouched default stores nothing; an edited remark shows a small "edited" marker. Plan crew-note
+  6292756744; crew ruling (a) on a5120231.
+- F26. Storage, no migration: a split row keeps `so_line_splits.remark`; an unsplit saved line stores the edit
+  as `remark` in its saved draft's `decision`, sent on Confirm (`ConfirmLine.remark`) and frozen in the
+  revision snapshot. Typing a remark on an unsplit row no longer turns it into a one-row split.
+- F27. The purchasing email and Excel use the edited text: an unsplit saved line through `record_saved_lines`'
+  explicit-remark hook (`_queue_saved_line(..., remark=...)`), the remark part of `_saved_decision_key` so a
+  remark-only change is still told; a split row's remark part of `split_plan_key` so a remark-only split edit
+  is told again after the plan was applied; Excel REMARK for an unsplit row reads the same text.
+- F28. A line delivered in full (Confirm drops it; nothing reaches purchasing) keeps a read-only Remark and
+  shows one short line in the row: "Delivered in full: nothing goes to purchasing" (crew ruling (a)).
+- F29. Phone: the Remark cell wraps in both the editor and the read-only views (no "..." truncation); the
+  qty / date / remark boxes are reachable inside the sheet's sideways scroll. The SO/OI split popup headers
+  drop their line number too ("CSK14B: split", subtitle without "line N"; aria keeps it).
 
 ## G. Out of scope
 - Making Confirm never touch unsaved lines (crew option b).
