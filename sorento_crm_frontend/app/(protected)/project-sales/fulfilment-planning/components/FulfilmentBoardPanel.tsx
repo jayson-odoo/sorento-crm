@@ -2032,8 +2032,13 @@ export function FulfilmentBoardPanel({
       const decision = draftWithoutPreMark[contribution.key] ?? contribution.draft?.decision;
       return {
         words: contribution.saved_remark ?? null,
-        // UAC F32: the saved decision's remark ('' = cleared), else the confirmed one.
-        own: remarkFor(contribution, decision) || null,
+        // UAC F32: the saved decision's remark ('' = cleared), else the confirmed one. A
+        // non-editable line (Reject, Cancel, ...) with a draft has none: the server's words
+        // win there (OI-SPLIT-GEAR-REMARK H7).
+        own:
+          decision === undefined || decision.verdict === 'approved' || decision.verdict === 'amended'
+            ? remarkFor(contribution, decision) || null
+            : null,
         editable: decision?.verdict === 'approved' || decision?.verdict === 'amended',
       };
     },
