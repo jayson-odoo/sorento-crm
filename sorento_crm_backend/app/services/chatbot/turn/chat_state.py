@@ -445,7 +445,15 @@ def _drop_listed_qualifiers(focus: Focus, axis: str, verdict: dict[str, Any]) ->
     subject (products) and every unlisted row stay; the same value restated changes nothing."""
     extra = focus.extra or {}
     held = [r for r in extra.get(axis) or [] if isinstance(r, dict)]
-    if not any(r.get("listed") for r in held):
+    # CHAT-CLOSED-LISTS F3-b: a listed scheme carries its parent kind (`parent_kind_uuid`), and the
+    # kind row the resolver settled from it holds no `listed` mark of its own; that listing produced
+    # it all the same.
+    parents = {
+        str(r["parent_kind_uuid"])
+        for rows in extra.values() for r in rows or []
+        if isinstance(r, dict) and r.get("listed") and r.get("parent_kind_uuid")
+    }
+    if not any(r.get("listed") or (r.get("uuid") and str(r["uuid"]) in parents) for r in held):
         return
     said = {_listed_key(e) for e in _entities(verdict) if e.get("hint") == axis and e.get("current_message") is not False}
     said.discard("")
