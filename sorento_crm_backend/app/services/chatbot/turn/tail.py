@@ -133,9 +133,9 @@ def last_list_after(
     """The numbered list this turn showed, for `Focus.last_list`. Question options keep
     their position, label, code and keys; the rows of the one section that has rows are
     numbered by their order (a promotion, file or order row with its kind and id, CHAT-STATE
-    r7), else the files of the one section that listed only files. Options win a position
-    clash; several sections with rows record no list; nothing shown keeps `previous`, its
-    stamp included. Every row of a new list carries `shown_at_turn`: a data row the turn that
+    r7), else the files (two or more) of the one section that listed only files. Options win a
+    position clash; several sections with rows record no list; nothing shown keeps `previous`,
+    its stamp included. Every row of a new list carries `shown_at_turn`: a data row the turn that
     showed it (`turn_no`), a question's option the turn the question was asked (the same input
     gives the same focus on every pass)."""
     asked = getattr(question, "asked_at_turn", None)
@@ -157,9 +157,12 @@ def last_list_after(
             _row_item(i, fig, domain) for i, fig in enumerate(with_rows[0].figures, start=1) if isinstance(fig, dict)
         ]
     else:
+        # Files sent with no rows are the list when two or more are sent; one file sent after a
+        # numbered list keeps that list and its stamp (it is the list only when none was shown).
         with_files = [s for s in (sections or []) if getattr(s, "files", None)]
-        if len(with_files) == 1:
-            rows = [_file_item(i, f) for i, f in enumerate(with_files[0].files, start=1) if isinstance(f, dict)]
+        files = [f for f in with_files[0].files if isinstance(f, dict)] if len(with_files) == 1 else []
+        if len(files) >= 2 or (files and not previous):
+            rows = [_file_item(i, f) for i, f in enumerate(files, start=1)]
     merged = {item["position"]: item for item in _stamped(rows, turn_no)}
     merged.update({item["position"]: item for item in options})
     if not merged:

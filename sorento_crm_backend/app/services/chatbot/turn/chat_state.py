@@ -831,9 +831,14 @@ def _pickable(row: dict[str, Any], nothing_open: bool) -> bool:
 def quotes_the_list(state: State) -> bool:
     """CHAT-STATE r7 (owner r40 case 12, 20 Oct): this reply quotes the bot message that showed
     the stored list (`State.quoted_turn_no` is the list's `shown_at_turn`), so that list is what
-    a bare number points at: its rows are pickable and an owed stock task does not take it."""
+    a bare number points at: its rows are pickable and an owed stock task does not take it. A
+    quote of the turn whose own question is still open is not: that list is the question's
+    options, and the quoted question decides (AC-QR-11, quoting the live question is the same as
+    not quoting)."""
     quoted = getattr(state, "quoted_turn_no", None)
     if not isinstance(quoted, int) or isinstance(quoted, bool):
+        return False
+    if state.pending is not None and getattr(state.pending, "asked_at_turn", None) == quoted:
         return False
     return any(isinstance(r, dict) and r.get("shown_at_turn") == quoted for r in state.focus.last_list or [])
 

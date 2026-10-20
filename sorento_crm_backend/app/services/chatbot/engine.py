@@ -8977,7 +8977,7 @@ def _state_log(before: dict[str, Any], state: Any, answer: Any) -> dict[str, Any
     # The view as the NEXT turn's parser sees it: the turn counter has moved on by one.
     after_state = dataclasses_replace(
         state, focus=focus, pending=getattr(answer, "question", None) or state.pending,
-        turn_no=(state.turn_no or 0) + 1,
+        turn_no=(state.turn_no or 0) + 1, quoted_turn_no=None,  # the next turn quotes nothing yet
     )
     after = chat_state.view(
         after_state, turn_question.open_question(after_state.pending, focus.tasks, focus.required_ask)
