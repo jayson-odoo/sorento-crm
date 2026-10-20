@@ -1891,3 +1891,57 @@ def test_cs_t8_a_whole_typed_code_with_no_digit_stays_a_hit_in_and_mode(client, 
     # The rows the answer is built from (resolutions / intersection), not the `by_entity_type` echo,
     # which T2 shows can still list a dropped row.
     assert code in _product_codes(payload), payload
+
+
+# --- CODE-SUBSTRING security re-check (S1, S2) -------------------------------------------------
+
+
+def test_cs_s1_a_partial_drop_leaves_the_resolution_flags_agreeing_with_its_rows():
+    """Should-fix (n8n response shape): when `_drop_word_code_fragments` takes some of a token's
+    rows but not all, `resolved` / `ambiguous` and `ambiguous_tokens` say what the rows left say,
+    as the brand-lock drop does (resolved = exactly one row, ambiguous = more than one)."""
+    from app.api.v1.system.references import _drop_word_code_fragments
+
+    result = {
+        "tokens": ["basin"],
+        "resolutions": [{
+            "token": "basin", "resolved": False, "ambiguous": True,
+            "matches": [
+                {"entity_type": "customer", "canonical_code": "BASINCO", "match_tier": "prefix", "uuid": "c-1"},
+                {"entity_type": "product", "canonical_code": "QQBASINWC7", "match_tier": "substring", "uuid": "p-1"},
+                {"entity_type": "product", "canonical_code": "XXBASINWC8", "match_tier": "substring", "uuid": "p-2"},
+            ],
+        }],
+        "ambiguous_tokens": ["basin"],
+        "unresolved_tokens": [],
+    }
+
+    _drop_word_code_fragments(result, frozenset({"basin"}))
+
+    [resolution] = result["resolutions"]
+    assert [m["uuid"] for m in resolution["matches"]] == ["c-1"], resolution
+    assert (resolution["resolved"], resolution["ambiguous"]) == (True, False), resolution
+    assert "basin" not in result["ambiguous_tokens"], result
+
+
+@pytest.mark.parametrize("token", ["-", " - ", "--"])
+def test_cs_s2_a_separator_only_token_probes_no_product_code(db, token):
+    """Nit: a token of separators only normalizes to "" and the prefix probe became ILIKE '%'."""
+    from app.services.entity_resolver import _prefix_probe_product
+
+    _stocked(db, "ZZSEP01", "ZZT Sep", "CLOSE COUPLED P-TRAP WATER CLOSET")
+
+    assert _prefix_probe_product(db, token) == [], token
+
+
+def test_cs_s2_a_separator_only_token_adds_no_product_to_a_described_set(client, db):
+    _stocked(db, "ZZSEP01", "ZZT Sep", "CLOSE COUPLED P-TRAP WATER CLOSET")
+    _stocked(db, "ZZSEP02", "ZZT Sep", "CLOSE COUPLED P-TRAP WATER CLOSET")
+
+    payload = client.post(
+        ENDPOINT, json={"query": "- has stock", "tokens": ["-"], "require": {"stock": True}, "predicate_words": ["stock"]},
+    ).json()
+
+    rows = [m for r in payload.get("resolutions") or [] for m in r.get("matches") or []]
+    assert not [m for m in rows if m.get("entity_type") == "product" and m.get("match_tier") in ("prefix", "substring")], rows
+    assert not [c for c in _product_codes(payload, tier="spec_search") if c in ("ZZSEP01", "ZZSEP02")], payload.get("predicate")
