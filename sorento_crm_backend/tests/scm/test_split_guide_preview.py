@@ -6,8 +6,7 @@ confirmed as Buy (rows raised under revision 1). Then AutoCount moves line 10 (q
 or cancels it in the book) and the planner presses Confirm naming only line 20.
 
 T-BE1: the dry run lists line 10's retired row (raised under the OLDER revision).
-T-BE2: `autocount_change` = qty / date / qty_date / cancelled on those rows; null on a row of a
-       line the press named, and on a row of a saved split edit.
+T-BE2: each row carries `state` (UAC C2); `autocount_change` is retired (UAC F9).
 T-BE3 (pin): the real press writes the same OrderInquiryRow states with or without this lane.
 """
 from __future__ import annotations
@@ -161,70 +160,22 @@ def test_be1_the_real_press_does_retire_that_row_pin(api):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("how", ["qty", "date", "qty_date", "cancelled"])
-def test_be2_the_row_of_an_unnamed_autocount_line_carries_its_cause(api, how):
-    s = _two_line_order(api)
-    _drift(s, how)
-    rows = _rows_of(_result(_press(s, preview=True)), 10)
-    assert rows, "premise: line 10's row is listed (T-BE1)"
-    assert [x.get("autocount_change") for x in rows] == [how] * len(rows), rows
-
-
-def test_be2_a_line_the_press_names_is_null_even_when_autocount_moved_it(api):
-    s = _two_line_order(api)
-    _drift(s, "qty")
-    result = _result(_press(s, preview=True, named=(10, 20)))
-    rows = _rows_of(result, 10)
-    assert rows, result["inquiry_rows"]
-    assert all("autocount_change" in x and x["autocount_change"] is None for x in rows), rows
-
-
-def test_be2_a_saved_split_edit_row_is_null_not_an_autocount_change(api):
-    """A split edit is added server-side (`_with_split_edits`); the press never names it, but
-    the planner saved it, so its rows carry no AutoCount label. AutoCount ALSO moved line 20's
-    qty after the confirm, so were the exclusion broken, line 20's rows would read as an
-    AutoCount change (reviewer mutation: split edits not named)."""
+def test_be2_a_saved_split_edit_row_reads_raised(api):
+    """A split edit is added server-side (`_with_split_edits`): its new row reads `raised` and
+    the old one it replaces is listed too."""
     from tests.scm.test_line_splits_api import _put, _sp
 
     s = _two_line_order(api)
-    s.core[20].required_date, s.line[20].delivery_date = D_NEW, D_NEW
-    s.db.commit()
-    s.db.expire_all()
     r = _put(s, [{"line_id": str(s.line[20].id), "splits": [
-        _sp(30, D_NEW, on=str(s.line[20].id)),
-        _sp(20, date(2027, 1, 15), on=None),
+        _sp(30, D_OLD, on=str(s.line[20].id)),
+        _sp(20, D_NEW, on=None),
     ]}])
     assert r.status_code == 200, f"premise: the split saves ({r.status_code}) {r.text}"
     result = _result(_press(s, preview=True, named=()))
     rows = _rows_of(result, 20)
-    assert rows, ("premise: the split edit shows rows", result["inquiry_rows"])
-    assert all("autocount_change" in x and x["autocount_change"] is None for x in rows), rows
     new = [x for x in rows if x["is_new"]]
     assert new, ("premise: the split edit raises a new row", rows)
     assert all(x.get("state") == "raised" for x in new), ("a row this press raised reads raised", new)
-
-
-def test_be2_a_rejected_line_row_is_null_even_when_autocount_moved_it(api):
-    s = _two_line_order(api)
-    board = s.client.get(
-        f"{BASE}/fulfilment-planning/board",
-        params={"orders": s.core_so.so_number, "granularity": "week"},
-    )
-    assert board.status_code == 200, board.text
-    key = next(c["key"] for c in board.json()["contributions"]
-               if c.get("project_line_id") == str(s.line[20].id))
-    saved = s.client.put(
-        f"{BASE}/fulfilment-planning/lines/{key}/draft",
-        json={"decision": {"verdict": "rejected", "reason": "wrong site"}},
-    )
-    assert saved.status_code == 200, f"premise: the rejection is saved: {saved.text}"
-    s.core[20].qty_ordered, s.line[20].qty = Decimal("60"), Decimal("60")
-    s.db.commit()
-    s.db.expire_all()
-    result = _result(_press_body(s, {"rejected_line_ids": [str(s.line[20].id)]}))
-    rows = _rows_of(result, 20)
-    assert rows, ("premise: the withdrawn line's retired row is listed", result["inquiry_rows"])
-    assert all("autocount_change" in x and x["autocount_change"] is None for x in rows), rows
 
 
 # ---------------------------------------------------------------------------

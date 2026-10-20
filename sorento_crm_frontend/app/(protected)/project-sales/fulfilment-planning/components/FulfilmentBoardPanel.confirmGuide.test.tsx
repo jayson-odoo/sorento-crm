@@ -1,5 +1,5 @@
 /**
- * OI-SPLIT-GUIDE (UAC A to D) on the planning board panel: Confirm (N) opens a guided dialog
+ * OI-SPLIT-GUIDE (UAC A to F) on the planning board panel: Confirm (N) opens a guided dialog
  * (Split, Review, Confirm) instead of posting. Tests drive the panel, not the dialog's props, and
  * use the test ids of `PLAN-oi-split-guide-20oct.md` ("Test ids").
  *
@@ -163,12 +163,7 @@ vi.mock('@/services/pendingActionService', () => ({
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
 import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsupport__/boardFixture';
 import { wireLine, wireSplit } from '@/test-mocks/lineSplitSheetKit';
-import {
-  guideControl,
-  openConfirmGuide,
-  walkConfirmGuide,
-  walkToConfirmStep,
-} from '@/test-mocks/confirmGuide';
+import { openConfirmGuide, walkConfirmGuide, walkToConfirmStep } from '@/test-mocks/confirmGuide';
 import { toast } from '@/lib/toast';
 
 const TODAY = '2026-09-17';
@@ -200,8 +195,16 @@ function demand(overrides: Partial<BoardDemandLine> = {}): BoardDemandLine {
   } as BoardDemandLine;
 }
 
+
+/*
+ * Round 3 (UAC F, owner rework): the review IS the split view. Two steps, "Review split" then
+ * "Confirm". One page per order of this Confirm, listing every line the Confirm covers: a split
+ * line with its split rows, an unsplit line as ONE row whose Remark is the server's `saved_remark`
+ * (the purchasing email's words). No dry-run table, no transfers, no AutoCount labels.
+ */
 const SO1_L1 = demand({});
 const SO1_L2 = demand({ project_line_id: 'pl-1-2', line_no: 2, item_code: 'ZZT-ITEM-1B' });
+const SO1_L3 = demand({ project_line_id: 'pl-1-3', line_no: 3, item_code: 'ZZT-ITEM-1C' });
 const SO2_L1 = demand({
   sales_order_id: 'so-2',
   so_number: 'SO000002',
@@ -249,22 +252,31 @@ function boardOf(lines: BoardDemandLine[]) {
   return buildBoard(lines, { today: TODAY, freeStock: {}, granularity: 'week' });
 }
 
-/** One saved-edit board: SO000001 line 1 is split-edited, line 2 (same order) is not. */
+/**
+ * SO000001: line 1 split-edited, line 3 a saved draft, line 2 untouched (NOT covered).
+ * SO000002: line 1 a saved draft only (no split). Two orders in this Confirm.
+ */
+function coveredBoard() {
+  return withDraft(
+    withSplitEdited(boardOf([SO1_L1, SO1_L2, SO1_L3, SO2_L1]), ['pl-1-1']),
+    ['pl-1-3', 'pl-2-1'],
+  );
+}
+
+/** Only SO000001's line 1 split-edited: one order in this Confirm, one covered line. */
 function oneEditedBoard() {
   return withSplitEdited(boardOf([SO1_L1, SO1_L2, SO2_L1]), ['pl-1-1']);
 }
 
-/** Both orders carry a saved split edit. */
-function twoEditedBoard() {
-  return withSplitEdited(boardOf([SO1_L1, SO1_L2, SO2_L1]), ['pl-1-1', 'pl-2-1']);
+/** A saved draft on SO000001 line 1 only. */
+function draftOnlyBoard() {
+  return withDraft(boardOf([SO1_L1, SO1_L2]), ['pl-1-1']);
 }
 
-/** The split read of an order: `edited` ids are 'saved', the others 'confirmed' (applied). */
-function splitRead(
-  psoId: string,
-  so: string,
-  lines: { id: string; no: number; item: string; edited: boolean }[],
-) {
+type ReadLine = { id: string; no: number; item: string; edited?: boolean; remark?: string | null };
+
+/** The split read of an order. `edited` lines carry split rows; others are unsplit with `remark`. */
+function splitRead(psoId: string, so: string, lines: ReadLine[]) {
   return {
     pso_id: psoId,
     so_number: so,
@@ -272,28 +284,29 @@ function splitRead(
     customer: 'Test Customer',
     project: 'Test Project',
     confirmed_at: null,
-    lines: lines.map((l) =>
-      wireLine(l.no, l.item, 10, '2026-09-20', {
+    lines: lines.map((l) => ({
+      ...wireLine(l.no, l.item, 10, '2026-09-20', {
         line_id: l.id,
         now_qty: 10,
         split_state: l.edited ? 'acting' : 'applied',
         split_view: { status: l.edited ? 'saved' : 'confirmed' },
-        splits: [
-          wireSplit(`${l.id}-a`, 6, '2026-09-20', l.id),
-          wireSplit(`${l.id}-b`, 4, '2026-10-20', null),
-        ],
+        splits: l.edited
+          ? [wireSplit(`${l.id}-a`, 6, '2026-09-20', l.id), wireSplit(`${l.id}-b`, 4, '2026-10-20', null)]
+          : [],
       }),
-    ),
+      saved_remark: l.remark ?? null,
+    })),
   };
 }
 
 const SO1_READ = () =>
   splitRead('pso-so-1', 'SO000001', [
     { id: 'pl-1-1', no: 1, item: 'ZZT-ITEM-1', edited: true },
-    { id: 'pl-1-2', no: 2, item: 'ZZT-ITEM-1B', edited: false },
+    { id: 'pl-1-2', no: 2, item: 'ZZT-ITEM-1B' },
+    { id: 'pl-1-3', no: 3, item: 'ZZT-ITEM-1C', remark: 'USE BRW 522 & ORDER 294' },
   ]);
 const SO2_READ = () =>
-  splitRead('pso-so-2', 'SO000002', [{ id: 'pl-2-1', no: 1, item: 'ZZT-ITEM-2', edited: true }]);
+  splitRead('pso-so-2', 'SO000002', [{ id: 'pl-2-1', no: 1, item: 'ZZT-ITEM-2', remark: 'ORDER BACK' }]);
 
 function serveSplits(reads: Record<string, unknown> = {}) {
   getLineSplits.mockImplementation((psoId: string) =>
@@ -305,27 +318,11 @@ function serveSplits(reads: Record<string, unknown> = {}) {
 
 type Row = Record<string, unknown>;
 
-function row(over: Row = {}): Row {
-  return {
-    line_no: 1,
-    item_code: 'ZZT-ITEM-1',
-    verb: 'ORDER',
-    is_new: true,
-    qty: '12',
-    delivery_date: '2026-09-20',
-    stock_location: 'BRW-IB',
-    note: null,
-    autocount_change: null,
-    ...over,
-  };
-}
-
-/** The dry run answers every order ok with the rows given per pso (none by default). */
-function dryRunAnswers(perPso: Record<
-    string,
-    { rows?: Row[]; transfers?: Row[]; error?: string; confirmed?: Row[] }
-  > = {}) {
-  previewConfirmMany.mockImplementation((body: { orders: { pso_id: string }[] }) =>
+/** The dry run (pressed from the Confirm step): ok for every order unless `error`, rows irrelevant. */
+function dryRunAnswers(
+  perPso: Record<string, { error?: string; confirmed?: Row[] }> = {},
+) {
+  previewConfirmMany.mockImplementation((body: { orders: { pso_id: string; lines: { project_line_id: string }[] }[] }) =>
     Promise.resolve({
       results: body.orders.map((order) => {
         const spec = perPso[order.pso_id] ?? {};
@@ -337,12 +334,14 @@ function dryRunAnswers(perPso: Record<
           ok: true,
           preview: true,
           decision_revision: 4,
-          lines_confirmed: spec.confirmed ?? [],
+          lines_confirmed: spec.confirmed ?? [
+            { project_line_id: 'pl-x', line_no: 1, item_code: 'ZZT-ITEM-1' },
+          ],
           lines_carried: 0,
           lines_held_back: [],
           lines_fulfilled_skipped: 0,
-          inquiry_rows: spec.rows ?? [],
-          transfers: spec.transfers ?? [],
+          inquiry_rows: [],
+          transfers: [],
         };
       }),
     }),
@@ -382,6 +381,8 @@ async function mountWith(board: Board, soNumbers?: string[]) {
 
 const pages = () => screen.queryAllByTestId('confirm-guide-split-page');
 const click = (id: string) => fireEvent.click(screen.getByTestId(id));
+const pageOf = (so: string) =>
+  screen.getAllByTestId('confirm-guide-split-page').find((el) => el.getAttribute('data-so') === so)!;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -391,10 +392,10 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// T-FE1: A1, A2, A3
+// T-FE1: A1, A2, A3, F1
 // ---------------------------------------------------------------------------
 
-describe('T-FE1 (A1 A2 A3): Confirm (N) opens the guide and posts nothing', () => {
+describe('T-FE1 (A1 A2 A3 F1): Confirm (N) opens the guide and posts nothing', () => {
   it('opens the guide on press, with no dry run and no confirm call yet', async () => {
     await mountWith(oneEditedBoard());
     expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)');
@@ -404,12 +405,25 @@ describe('T-FE1 (A1 A2 A3): Confirm (N) opens the guide and posts nothing', () =
     expect(previewConfirmMany).not.toHaveBeenCalled();
   });
 
-  it('names the orders of this Confirm in the title and draws the three steps', async () => {
-    await mountWith(twoEditedBoard());
+  it('names the orders of this Confirm in the title', async () => {
+    await mountWith(coveredBoard());
     await openConfirmGuide();
     expect(screen.getByTestId('confirm-guide')).toHaveTextContent('Confirm SO000001, SO000002');
+  });
+
+  it('F1: two steps, "Review split" then "Confirm", and no review table, transfers or AutoCount label', async () => {
+    await mountWith(coveredBoard());
+    await openConfirmGuide();
+    await screen.findAllByTestId('confirm-guide-split-page');
     const steps = screen.getByTestId('confirm-guide-steps');
-    expect(within(steps).getAllByRole('listitem')).toHaveLength(3);
+    const items = within(steps).getAllByRole('listitem');
+    expect(items).toHaveLength(2);
+    expect(steps).toHaveTextContent('Review split');
+    expect(steps).toHaveTextContent('Confirm');
+    expect(screen.queryByTestId('confirm-guide-review')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('confirm-guide-review-row')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('confirm-guide-autocount')).not.toBeInTheDocument();
+    expect(screen.getByTestId('confirm-guide')).not.toHaveTextContent(/transfer/i);
   });
 
   it('Cancel closes the guide and writes nothing', async () => {
@@ -430,11 +444,9 @@ describe('T-FE1 (A1 A2 A3): Confirm (N) opens the guide and posts nothing', () =
     expect(confirmMany).not.toHaveBeenCalled();
   });
 
-  it('Escape and Cancel after the dry run still write nothing', async () => {
-    dryRunAnswers({ 'pso-so-1': { confirmed: [{ project_line_id: 'pl-1-1', line_no: 1, item_code: 'ZZT-ITEM-1' }] } });
-    await mountWith(withDraft(boardOf([SO1_L1]), ['pl-1-1']), ['SO000001']);
-    await openConfirmGuide();
-    await screen.findByTestId('confirm-guide-review');
+  it('Escape and Cancel on the Confirm step still write nothing', async () => {
+    await mountWith(draftOnlyBoard(), ['SO000001']);
+    await walkToConfirmStep();
     fireEvent.keyDown(screen.getByTestId('confirm-guide'), { key: 'Escape' });
     await waitFor(() => expect(screen.queryByTestId('confirm-guide')).not.toBeInTheDocument());
     expect(confirmMany).not.toHaveBeenCalled();
@@ -453,11 +465,24 @@ describe('T-FE1 (A1 A2 A3): Confirm (N) opens the guide and posts nothing', () =
 });
 
 // ---------------------------------------------------------------------------
-// T-FE2: B1, B2, B3, B6
+// T-FE2: F2, F3, F4
 // ---------------------------------------------------------------------------
 
-describe('T-FE2 (B1 B2 B3 B6): split pages are the orders with a saved split edit, and only those lines', () => {
-  it('two orders, only SO000001 has a saved split edit: exactly one split page', async () => {
+describe('T-FE2 (F2 F3 F4): a page for every order, listing every covered line and only those', () => {
+  it('one page per order of this Confirm, in board order, including an order with only a saved draft', async () => {
+    await mountWith(coveredBoard());
+    await openConfirmGuide();
+    const first = await screen.findByTestId('confirm-guide-split-page');
+    expect(first).toHaveAttribute('data-so', 'SO000001');
+    click('confirm-guide-next');
+    await waitFor(() =>
+      expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
+    );
+    expect(getLineSplits).toHaveBeenCalledWith('pso-so-1');
+    expect(getLineSplits).toHaveBeenCalledWith('pso-so-2');
+  });
+
+  it('an order not in this Confirm gets no page', async () => {
     await mountWith(oneEditedBoard());
     await openConfirmGuide();
     await waitFor(() => expect(pages()).toHaveLength(1));
@@ -465,73 +490,81 @@ describe('T-FE2 (B1 B2 B3 B6): split pages are the orders with a saved split edi
     expect(getLineSplits).not.toHaveBeenCalledWith('pso-so-2');
   });
 
-  it('shows the saved split edit as a read-only sheet block and not the unchanged line', async () => {
-    await mountWith(oneEditedBoard());
+  it('lists exactly the covered lines: the split-edited line with its splits, the drafted unsplit line as one row, never the untouched line', async () => {
+    await mountWith(coveredBoard());
     await openConfirmGuide();
     const page = await screen.findByTestId('confirm-guide-split-page');
     expect(await within(page).findByTestId('split-line-1')).toBeInTheDocument();
+    expect(within(page).getByTestId('split-line-3')).toBeInTheDocument();
     expect(within(page).queryByTestId('split-line-2')).not.toBeInTheDocument();
+    // the split-edited line shows its split rows (6 and 4), read-only
+    expect(within(page).getByTestId('split-line-1')).toHaveTextContent('6');
+    expect(within(page).getByTestId('split-line-1')).toHaveTextContent('4');
     expect(page.querySelectorAll('input, [data-drag-handle]')).toHaveLength(0);
   });
 
-  it('both orders edited: two pages in board order, SO000001 first', async () => {
-    await mountWith(twoEditedBoard());
+  it('an unsplit covered line is ONE row whose Remark is the server\'s saved_remark', async () => {
+    await mountWith(coveredBoard());
     await openConfirmGuide();
-    const first = await screen.findByTestId('confirm-guide-split-page');
-    expect(first).toHaveAttribute('data-so', 'SO000001');
-    fireEvent.click(screen.getByTestId('confirm-guide-next'));
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    const line3 = await within(page).findByTestId('split-line-3');
+    expect(line3).toHaveTextContent('USE BRW 522 & ORDER 294');
+    expect(within(line3).getAllByRole('row')).toHaveLength(1);
+    click('confirm-guide-next');
     await waitFor(() =>
       expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
     );
+    expect(await within(pageOf('SO000002')).findByTestId('split-line-1')).toHaveTextContent('ORDER BACK');
   });
 
-  it('the page header names the order, the badge, the count (singular) and one CTA', async () => {
-    await mountWith(oneEditedBoard());
+  it('F4: the header names the order, the badge, the line count (singular for 1) and one CTA', async () => {
+    await mountWith(coveredBoard());
     await openConfirmGuide();
     const page = await screen.findByTestId('confirm-guide-split-page');
     expect(page).toHaveTextContent('SO000001');
     expect(page).toHaveTextContent('Saved, not confirmed');
-    expect(page.textContent).toMatch(/1 split line(?!s)/);
-    expect(within(page).getByTestId('confirm-guide-split-edit')).toHaveTextContent(
-      'Split delivery SO000001',
-    );
+    expect(page.textContent).toMatch(/2 lines/);
+    expect(within(page).getByTestId('confirm-guide-split-edit')).toHaveTextContent('Split delivery SO000001');
     expect(within(page).getAllByRole('button', { name: /^Split delivery/ })).toHaveLength(1);
+    click('confirm-guide-next');
+    await waitFor(() =>
+      expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
+    );
+    expect(pageOf('SO000002').textContent).toMatch(/1 line(?!s)/);
   });
 
-  it('no order has a saved split edit: the guide opens at Review with two steps', async () => {
-    dryRunAnswers({ 'pso-so-1': { confirmed: [{ project_line_id: 'pl-1-1', line_no: 1, item_code: 'ZZT-ITEM-1' }] } });
-    await mountWith(withDraft(boardOf([SO1_L1, SO2_L1]), ['pl-1-1']));
+  it('a Confirm with no split edit anywhere still opens at the first order\'s page, two steps', async () => {
+    await mountWith(draftOnlyBoard(), ['SO000001']);
     await openConfirmGuide();
-    expect(await screen.findByTestId('confirm-guide-review')).toBeInTheDocument();
-    expect(pages()).toHaveLength(0);
+    expect(await screen.findByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000001');
     expect(within(screen.getByTestId('confirm-guide-steps')).getAllByRole('listitem')).toHaveLength(2);
   });
 });
 
 // ---------------------------------------------------------------------------
-// T-FE3: B4, B5, B7
+// T-FE3: F5, B4, F7
 // ---------------------------------------------------------------------------
 
-describe('T-FE3 (B4 B5 B7): walking, editing and failing a split page', () => {
-  it('Next walks the pages one by one and Review comes only after the last', async () => {
-    await mountWith(twoEditedBoard());
+describe('T-FE3 (F5 B4 F7): walking, editing and failing a page', () => {
+  it('Next walks the pages one by one, the Confirm step comes only after the last, no dry run yet', async () => {
+    await mountWith(coveredBoard());
     await openConfirmGuide();
     await screen.findByTestId('confirm-guide-split-page');
     expect(screen.getByTestId('confirm-guide-next')).toHaveTextContent('Next order');
-    expect(screen.queryByTestId('confirm-guide-review')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('confirm-guide-confirm')).not.toBeInTheDocument();
     click('confirm-guide-next');
     await waitFor(() =>
       expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
     );
-    expect(screen.queryByTestId('confirm-guide-review')).not.toBeInTheDocument();
-    expect(previewConfirmMany).not.toHaveBeenCalled();
-    expect(screen.getByTestId('confirm-guide-next')).toHaveTextContent('Next: Review');
+    expect(screen.queryByTestId('confirm-guide-confirm')).not.toBeInTheDocument();
     click('confirm-guide-next');
-    expect(await screen.findByTestId('confirm-guide-review')).toBeInTheDocument();
+    expect(await screen.findByTestId('confirm-guide-confirm')).toBeInTheDocument();
+    expect(previewConfirmMany).not.toHaveBeenCalled();
+    expect(confirmMany).not.toHaveBeenCalled();
   });
 
-  it('Back returns to the previous page', async () => {
-    await mountWith(twoEditedBoard());
+  it('Back returns to the previous page, and from the Confirm step to the last page', async () => {
+    await mountWith(coveredBoard());
     await openConfirmGuide();
     await screen.findByTestId('confirm-guide-split-page');
     click('confirm-guide-next');
@@ -541,6 +574,14 @@ describe('T-FE3 (B4 B5 B7): walking, editing and failing a split page', () => {
     click('confirm-guide-back');
     await waitFor(() =>
       expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000001'),
+    );
+    click('confirm-guide-next');
+    await screen.findByTestId('confirm-guide-split-page');
+    click('confirm-guide-next');
+    await screen.findByTestId('confirm-guide-confirm');
+    click('confirm-guide-back');
+    await waitFor(() =>
+      expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
     );
   });
 
@@ -568,28 +609,7 @@ describe('T-FE3 (B4 B5 B7): walking, editing and failing a split page', () => {
     expect(confirmMany).not.toHaveBeenCalled();
   });
 
-  it('after Save the page re-reads: an order left with no saved edit drops, the next page shows', async () => {
-    await mountWith(twoEditedBoard());
-    await openConfirmGuide();
-    await screen.findByTestId('confirm-guide-split-page');
-    click('confirm-guide-split-edit');
-    await screen.findByTestId('line-split-dialog');
-    // The planner's Save put SO000001 back to its applied plan: nothing left to confirm there.
-    getPlanningBoard.mockResolvedValue(withSplitEdited(boardOf([SO1_L1, SO1_L2, SO2_L1]), ['pl-2-1']));
-    serveSplits({
-      'pso-so-1': splitRead('pso-so-1', 'SO000001', [
-        { id: 'pl-1-1', no: 1, item: 'ZZT-ITEM-1', edited: false },
-        { id: 'pl-1-2', no: 2, item: 'ZZT-ITEM-1B', edited: false },
-      ]),
-    });
-    click('line-split-dialog-save');
-    await waitFor(() =>
-      expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
-    );
-    expect(pages()).toHaveLength(1);
-  });
-
-  it('after Save the page shows the changed values', async () => {
+  it('after Save the page re-reads and shows the changed values', async () => {
     await mountWith(oneEditedBoard());
     await openConfirmGuide();
     const before = await screen.findByTestId('confirm-guide-split-page');
@@ -605,10 +625,7 @@ describe('T-FE3 (B4 B5 B7): walking, editing and failing a split page', () => {
             line_id: 'pl-1-1',
             split_state: 'acting',
             split_view: { status: 'saved' },
-            splits: [
-              wireSplit('x1', 3, '2026-09-20', 'pl-1-1'),
-              wireSplit('x2', 7, '2026-12-21', null),
-            ],
+            splits: [wireSplit('x1', 3, '2026-09-20', 'pl-1-1'), wireSplit('x2', 7, '2026-12-21', null)],
           }),
         ],
       },
@@ -620,15 +637,13 @@ describe('T-FE3 (B4 B5 B7): walking, editing and failing a split page', () => {
     expect(screen.getByTestId('confirm-guide-split-page').textContent).toContain('21/12/2026');
   });
 
-  it('a split sheet that fails to load says so with Retry, Next off, Back and Cancel working', async () => {
+  it('F7: a read that fails says so with Retry, Next off, and Back and Cancel working', async () => {
     getLineSplits.mockRejectedValue(new Error('boom'));
     await mountWith(oneEditedBoard());
     await openConfirmGuide();
     expect(await screen.findByTestId('confirm-guide-split-error')).toBeInTheDocument();
-    expect(screen.queryByTestId('confirm-guide-next') ?? { disabled: true }).toHaveProperty(
-      'disabled',
-      true,
-    );
+    const next = screen.queryByTestId('confirm-guide-next') as HTMLButtonElement | null;
+    expect(next === null || next.disabled).toBe(true);
     getLineSplits.mockImplementation(() => Promise.resolve(SO1_READ()));
     click('confirm-guide-split-retry');
     await waitFor(() =>
@@ -638,7 +653,7 @@ describe('T-FE3 (B4 B5 B7): walking, editing and failing a split page', () => {
     expect(screen.getByTestId('confirm-guide-next')).toBeEnabled();
   });
 
-  it('Cancel works on a split page that failed to load', async () => {
+  it('F7: Cancel works on a page that failed to load', async () => {
     getLineSplits.mockRejectedValue(new Error('boom'));
     await mountWith(oneEditedBoard());
     await openConfirmGuide();
@@ -650,304 +665,70 @@ describe('T-FE3 (B4 B5 B7): walking, editing and failing a split page', () => {
 });
 
 // ---------------------------------------------------------------------------
-// T-FE4: C1 to C7
+// T-FE4: F6 and C7 (the Confirm press runs today's silent dry run, narrowing, post, result card)
 // ---------------------------------------------------------------------------
 
-describe('T-FE4 (C1 to C7): Review shows what purchasing will get', () => {
-  it('runs the dry run once on entering Review, with the body the press builds, and shows a loading state', async () => {
-    let release: (value: unknown) => void = () => undefined;
-    previewConfirmMany.mockImplementation(
-      () => new Promise((resolve) => { release = resolve; }),
+describe('T-FE4 (F6 C7): the Confirm step', () => {
+  it('summarises the orders and their lines and offers one button, nothing posted', async () => {
+    await mountWith(coveredBoard());
+    const confirm = (await walkToConfirmStep())!;
+    expect(screen.getByTestId('confirm-guide')).toHaveTextContent(
+      '2 orders: SO000001 (2 lines), SO000002 (1 line). Nothing has been sent yet.',
     );
-    await mountWith(oneEditedBoard());
-    await openConfirmGuide();
-    await screen.findByTestId('confirm-guide-split-page');
+    expect(confirm).toHaveTextContent('Confirm 2 orders');
     expect(previewConfirmMany).not.toHaveBeenCalled();
-    click('confirm-guide-next');
-    await waitFor(() => expect(previewConfirmMany).toHaveBeenCalledTimes(1));
-    expect(screen.getByTestId('confirm-guide-review')).toBeInTheDocument();
-    expect(screen.queryByTestId('confirm-guide-confirm')).not.toBeInTheDocument();
-    const [body] = previewConfirmMany.mock.calls[0];
-    expect(body.orders).toHaveLength(1);
-    expect(body.orders[0].pso_id).toBe('pso-so-1');
-    expect(body.orders[0].lines).toEqual([]);
-    release({ results: [{ pso_id: 'pso-so-1', ok: true, preview: true, inquiry_rows: [], transfers: [] }] });
-    await screen.findByTestId('confirm-guide-nothing');
-  });
-
-  it('runs the dry run again on every re-entry of Review (Back, then Next)', async () => {
-    await mountWith(oneEditedBoard());
-    await openConfirmGuide();
-    await screen.findByTestId('confirm-guide-split-page');
-    click('confirm-guide-next');
-    await screen.findByTestId('confirm-guide-review');
-    await waitFor(() => expect(previewConfirmMany).toHaveBeenCalledTimes(1));
-    click('confirm-guide-back');
-    await screen.findByTestId('confirm-guide-split-page');
-    click('confirm-guide-next');
-    await waitFor(() => expect(previewConfirmMany).toHaveBeenCalledTimes(2));
-    expect(previewConfirmMany.mock.calls[1][0]).toEqual(previewConfirmMany.mock.calls[0][0]);
-  });
-
-  it('lists each order\'s inquiry rows with line, item, location and qty, and its transfers', async () => {
-    dryRunAnswers({
-      'pso-so-1': {
-        rows: [row(), row({ line_no: 3, item_code: 'ZZT-ITEM-3', qty: '5', stock_location: 'KL-HQ' })],
-        transfers: [
-          { line_no: 1, is_new: true, kind: 'borrow', qty: '4', from_location: 'KL-HQ', to_location: 'BRW-IB' },
-        ],
-      },
-      'pso-so-2': { rows: [] },
-    });
-    await mountWith(twoEditedBoard());
-    await openConfirmGuide();
-    await screen.findByTestId('confirm-guide-split-page');
-    click('confirm-guide-next');
-    await screen.findByTestId('confirm-guide-split-page');
-    click('confirm-guide-next');
-    const orders = await screen.findAllByTestId('confirm-guide-review-order');
-    const so1 = orders.find((el) => el.getAttribute('data-so') === 'SO000001')!;
-    const so2 = orders.find((el) => el.getAttribute('data-so') === 'SO000002')!;
-    const rows = within(so1).getAllByTestId('confirm-guide-review-row');
-    expect(rows).toHaveLength(2);
-    expect(rows[0]).toHaveTextContent('ZZT-ITEM-1');
-    expect(rows[0]).toHaveTextContent('BRW-IB');
-    expect(rows[1]).toHaveTextContent('ZZT-ITEM-3');
-    expect(rows[1]).toHaveTextContent('KL-HQ');
-    expect(so1).toHaveTextContent('borrow');
-    expect(so1).toHaveTextContent('4');
-    expect(within(so2).getByTestId('confirm-guide-nothing')).toHaveTextContent(
-      'Nothing to send to purchasing',
-    );
-  });
-
-  it.each([
-    ['cancelled', 'AutoCount cancelled'],
-    ['qty', 'AutoCount changed qty'],
-    ['date', 'AutoCount changed date'],
-    ['qty_date', 'AutoCount changed qty and date'],
-  ])('a row with autocount_change %s carries the label "%s"', async (cause, label) => {
-    dryRunAnswers({
-      'pso-so-1': { rows: [row({ line_no: 2, item_code: 'ZZT-ITEM-1B', autocount_change: cause })] },
-    });
-    await mountWith(oneEditedBoard());
-    await openConfirmGuide();
-    await screen.findByTestId('confirm-guide-split-page');
-    click('confirm-guide-next');
-    const found = await screen.findByTestId('confirm-guide-autocount');
-    expect(found).toHaveTextContent(label);
-    expect(found.textContent?.trim()).toBe(label);
-    expect(found.closest('[data-testid="confirm-guide-review-row"]')).toHaveTextContent('ZZT-ITEM-1B');
-  });
-
-  it('a row from a saved line carries no AutoCount label', async () => {
-    dryRunAnswers({ 'pso-so-1': { rows: [row({ autocount_change: null })] } });
-    await mountWith(oneEditedBoard());
-    await openConfirmGuide();
-    await screen.findByTestId('confirm-guide-split-page');
-    click('confirm-guide-next');
-    await screen.findAllByTestId('confirm-guide-review-row');
-    expect(screen.queryByTestId('confirm-guide-autocount')).not.toBeInTheDocument();
-  });
-
-  it('an order the dry run refuses shows its reason, and step 3 leaves it out', async () => {
-    dryRunAnswers({
-      'pso-so-1': { rows: [row()] },
-      'pso-so-2': { error: 'Line 1 has no supply.' },
-    });
-    await mountWith(twoEditedBoard());
-    await openConfirmGuide();
-    await screen.findByTestId('confirm-guide-split-page');
-    click('confirm-guide-next');
-    await screen.findByTestId('confirm-guide-split-page');
-    click('confirm-guide-next');
-    const refused = await screen.findByTestId('confirm-guide-refused');
-    expect(refused).toHaveTextContent('Line 1 has no supply.');
-    const control = (await guideControl())!;
-    click('confirm-guide-next');
-    const confirm = await screen.findByTestId('confirm-guide-confirm');
-    expect(control.getAttribute('data-testid')).toBe('confirm-guide-next');
-    expect(confirm).toHaveTextContent('Confirm 1 order');
-    expect(screen.getByTestId('confirm-guide')).toHaveTextContent('SO000001 (1 row)');
-    expect(screen.getByTestId('confirm-guide')).not.toHaveTextContent('SO000002 (');
-  });
-
-  it('a dry run that fails shows the error with Retry and Back, and Confirm cannot be reached', async () => {
-    previewConfirmMany.mockRejectedValue(new Error('network down'));
-    await mountWith(oneEditedBoard());
-    await openConfirmGuide();
-    await screen.findByTestId('confirm-guide-split-page');
-    click('confirm-guide-next');
-    expect(await screen.findByTestId('confirm-guide-review-error')).toBeInTheDocument();
-    expect(screen.getByTestId('confirm-guide-review-retry')).toBeEnabled();
-    expect(screen.getByTestId('confirm-guide-back')).toBeEnabled();
-    expect(screen.queryByTestId('confirm-guide-confirm')).not.toBeInTheDocument();
-    const next = screen.queryByTestId('confirm-guide-next') as HTMLButtonElement | null;
-    expect(next === null || next.disabled).toBe(true);
     expect(confirmMany).not.toHaveBeenCalled();
   });
 
-  it('Retry runs the dry run again and, once it answers, Confirm can be reached', async () => {
-    previewConfirmMany.mockRejectedValueOnce(new Error('network down'));
-    await mountWith(oneEditedBoard());
-    await openConfirmGuide();
-    await screen.findByTestId('confirm-guide-split-page');
-    click('confirm-guide-next');
-    await screen.findByTestId('confirm-guide-review-error');
-    dryRunAnswers({ 'pso-so-1': { rows: [row()] } });
-    click('confirm-guide-review-retry');
-    await waitFor(() => expect(previewConfirmMany).toHaveBeenCalledTimes(2));
-    await screen.findAllByTestId('confirm-guide-review-row');
-    expect(screen.queryByTestId('confirm-guide-review-error')).not.toBeInTheDocument();
-    expect(await screen.findByTestId('confirm-guide-next')).toBeEnabled();
+  it('a single order reads "1 order" in the summary and on the button', async () => {
+    await mountWith(draftOnlyBoard(), ['SO000001']);
+    const confirm = (await walkToConfirmStep())!;
+    expect(screen.getByTestId('confirm-guide')).toHaveTextContent(
+      '1 order: SO000001 (1 line). Nothing has been sent yet.',
+    );
+    expect(confirm).toHaveTextContent('Confirm 1 order');
   });
 
-  it('every order refused: the guide closes after Review onto the result card, nothing is posted', async () => {
+  it('every order refused by the dry run: nothing is posted and today\'s result card shows the reasons', async () => {
     dryRunAnswers({
       'pso-so-1': { error: 'Line 1 has no supply.' },
       'pso-so-2': { error: 'Line 1 is held.' },
     });
-    await mountWith(twoEditedBoard());
-    await openConfirmGuide();
-    await screen.findByTestId('confirm-guide-split-page');
-    click('confirm-guide-next');
-    await screen.findByTestId('confirm-guide-split-page');
-    click('confirm-guide-next');
+    await mountWith(coveredBoard());
+    await walkConfirmGuide();
     const card = await screen.findByTestId('board-confirm-results');
     expect(card).toHaveTextContent('Line 1 has no supply.');
     expect(card).toHaveTextContent('Line 1 is held.');
     await waitFor(() => expect(screen.queryByTestId('confirm-guide')).not.toBeInTheDocument());
-    expect(screen.queryByTestId('confirm-guide-confirm')).not.toBeInTheDocument();
     expect(confirmMany).not.toHaveBeenCalled();
   });
 
-  it('an order the press drops as having nothing to confirm shows its reason, not rows, and is left out of step 3', async () => {
-    // SO000001 has a saved split edit (confirmable); SO000002 has only a saved draft and the dry
-    // run confirms no line for it, so the press would drop it ("has nothing to confirm").
-    dryRunAnswers({
-      'pso-so-1': { rows: [row()] },
-      'pso-so-2': { rows: [row({ line_no: 1, item_code: 'ZZT-ITEM-2' })] },
-    });
-    const board = withDraft(oneEditedBoard(), ['pl-2-1']);
-    await mountWith(board);
-    await openConfirmGuide();
-    await screen.findByTestId('confirm-guide-split-page');
-    click('confirm-guide-next');
-    const refused = await screen.findByTestId('confirm-guide-refused');
-    expect(refused).toHaveTextContent('has nothing to confirm');
-    expect(refused).toHaveTextContent('SO000002');
-    const orders = await screen.findAllByTestId('confirm-guide-review-order');
-    const so2 = orders.find((el) => el.getAttribute('data-so') === 'SO000002');
-    expect(so2 === undefined || within(so2).queryAllByTestId('confirm-guide-review-row').length === 0).toBe(true);
-    expect(screen.getByTestId('confirm-guide-review')).not.toHaveTextContent('ZZT-ITEM-2');
-    click('confirm-guide-next');
-    const confirm = await screen.findByTestId('confirm-guide-confirm');
-    expect(confirm).toHaveTextContent('Confirm 1 order');
-    expect(screen.getByTestId('confirm-guide')).toHaveTextContent('SO000001 (1 row)');
-    expect(screen.getByTestId('confirm-guide')).not.toHaveTextContent('SO000002 (');
+  it('some orders refused and some ok: only the ok order posts and the card lists the refusal', async () => {
+    dryRunAnswers({ 'pso-so-2': { error: 'Line 1 has no supply.' } });
+    await mountWith(coveredBoard());
+    await walkConfirmGuide();
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0];
+    expect(body.orders.map((o: { pso_id: string }) => o.pso_id)).toEqual(['pso-so-1']);
+    expect(await screen.findByTestId('board-confirm-results')).toHaveTextContent('Line 1 has no supply.');
   });
 
-  it('every order left with nothing to confirm: the guide closes onto the result card, no confirm call', async () => {
-    await mountWith(withDraft(boardOf([SO1_L1]), ['pl-1-1']), ['SO000001']);
-    // The default dry run answers ok with no confirmed line: nothing to post.
-    await openConfirmGuide();
+  it('an order the press drops as having nothing to confirm lands on the result card, nothing posted', async () => {
+    dryRunAnswers({ 'pso-so-1': { confirmed: [] } });
+    await mountWith(draftOnlyBoard(), ['SO000001']);
+    await walkConfirmGuide();
     const card = await screen.findByTestId('board-confirm-results');
     expect(card).toHaveTextContent('has nothing to confirm');
-    await waitFor(() => expect(screen.queryByTestId('confirm-guide')).not.toBeInTheDocument());
     expect(confirmMany).not.toHaveBeenCalled();
-  });
-
-  it('C2a: Review prints so_line_no (AutoCount 480), not the planning line_no (560), for a row and a transfer', async () => {
-    dryRunAnswers({
-      'pso-so-1': {
-        rows: [row({ line_no: 560, so_line_no: 480, item_code: 'ZZT-ITEM-1' })],
-        transfers: [
-          { line_no: 560, so_line_no: 480, is_new: true, kind: 'pool', qty: '294', from_location: 'MWH', to_location: 'BRW-BB' },
-        ],
-      },
-    });
-    await mountWith(oneEditedBoard());
-    await openConfirmGuide();
-    await screen.findByTestId('confirm-guide-split-page');
-    click('confirm-guide-next');
-    const reviewed = await screen.findByTestId('confirm-guide-review-order');
-    const first = within(reviewed).getByTestId('confirm-guide-review-row');
-    expect(within(first).getAllByRole('cell')[0]).toHaveTextContent(/^480$/);
-    expect(reviewed).not.toHaveTextContent('560');
-    const rowsOfTransfer = within(reviewed).getAllByRole('row').find((el) => el.textContent?.includes('pool'))!;
-    expect(within(rowsOfTransfer).getAllByRole('cell')[0]).toHaveTextContent(/^480$/);
-  });
-
-  it('C2a: without so_line_no Review falls back to line_no', async () => {
-    dryRunAnswers({
-      'pso-so-1': {
-        rows: [row({ line_no: 7 })],
-        transfers: [{ line_no: 9, is_new: true, kind: 'pool', qty: '3', from_location: 'A', to_location: 'B' }],
-      },
-    });
-    await mountWith(oneEditedBoard());
-    await openConfirmGuide();
-    await screen.findByTestId('confirm-guide-split-page');
-    click('confirm-guide-next');
-    const reviewed = await screen.findByTestId('confirm-guide-review-order');
-    expect(within(within(reviewed).getByTestId('confirm-guide-review-row')).getAllByRole('cell')[0]).toHaveTextContent(/^7$/);
-    const rowsOfTransfer = within(reviewed).getAllByRole('row').find((el) => el.textContent?.includes('pool'))!;
-    expect(within(rowsOfTransfer).getAllByRole('cell')[0]).toHaveTextContent(/^9$/);
-  });
-
-  it('a row whose state is cancelled shows CANCEL in its remark cell', async () => {
-    dryRunAnswers({
-      'pso-so-1': {
-        rows: [
-          row({ line_no: 2, item_code: 'ZZT-ITEM-1B', state: 'cancelled', autocount_change: 'qty' }),
-          row({ state: 'raised' }),
-        ],
-      },
-    });
-    await mountWith(oneEditedBoard());
-    await openConfirmGuide();
-    await screen.findByTestId('confirm-guide-split-page');
-    click('confirm-guide-next');
-    const rows = await screen.findAllByTestId('confirm-guide-review-row');
-    const cancelled = rows.find((el) => el.textContent?.includes('ZZT-ITEM-1B'))!;
-    expect(cancelled).toHaveTextContent('CANCEL');
-    const raised = rows.find((el) => el !== cancelled)!;
-    expect(raised).not.toHaveTextContent('CANCEL');
-  });
-
-  it('some orders refused and some ok: Confirm stays reachable', async () => {
-    dryRunAnswers({
-      'pso-so-1': { rows: [row()] },
-      'pso-so-2': { error: 'Line 1 has no supply.' },
-    });
-    await mountWith(twoEditedBoard());
-    const confirm = await walkToConfirmStep();
-    expect(confirm).not.toBeNull();
-    expect(confirm).toBeEnabled();
   });
 });
 
 // ---------------------------------------------------------------------------
-// T-FE5: D1 to D3
+// T-FE5: D2, D3 (F6)
 // ---------------------------------------------------------------------------
 
-describe('T-FE5 (D1 D2 D3): the Confirm step posts what today\'s press posts', () => {
-  it('summarises the orders and rows and offers one button', async () => {
-    dryRunAnswers({
-      'pso-so-1': { rows: [row()] },
-      'pso-so-2': { rows: Array.from({ length: 9 }, (_, i) => row({ line_no: i + 1 })) },
-    });
-    await mountWith(twoEditedBoard());
-    const confirm = (await walkToConfirmStep())!;
-    const guide = screen.getByTestId('confirm-guide');
-    expect(guide).toHaveTextContent(
-      '2 orders: SO000001 (1 row), SO000002 (9 rows). Nothing has been sent yet.',
-    );
-    expect(confirm).toHaveTextContent('Confirm 2 orders');
-    expect(confirmMany).not.toHaveBeenCalled();
-  });
-
-  it('posts the dry run\'s body (same orders, same lines) once, shows the result card and closes the guide', async () => {
+describe('T-FE5 (D2 D3 F6): the Confirm button posts what today\'s press posts', () => {
+  it('runs the dry run once from the button, posts its body once, shows the result card and closes the guide', async () => {
     await mountWith(oneEditedBoard());
     await walkConfirmGuide();
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
@@ -955,8 +736,8 @@ describe('T-FE5 (D1 D2 D3): the Confirm step posts what today\'s press posts', (
     const [dryBody] = previewConfirmMany.mock.calls[0];
     const [body] = confirmMany.mock.calls[0];
     expect(body).not.toHaveProperty('preview');
-    expect(body).toEqual(dryBody);
     expect(body.orders.map((o: { pso_id: string }) => o.pso_id)).toEqual(['pso-so-1']);
+    expect(body.orders[0].pso_id).toBe(dryBody.orders[0].pso_id);
     expect(body.orders[0].lines).toEqual([]);
     expect(await screen.findByTestId('board-confirm-results')).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByTestId('confirm-guide')).not.toBeInTheDocument());
@@ -977,7 +758,7 @@ describe('T-FE5 (D1 D2 D3): the Confirm step posts what today\'s press posts', (
     await screen.findByTestId('board-confirm-results');
   });
 
-  it('a failed post toasts the error and leaves the guide open at step 3 with Confirm enabled again', async () => {
+  it('a failed post toasts the error and leaves the guide open at the Confirm step with the button enabled again', async () => {
     confirmMany.mockRejectedValue(new Error('server said no'));
     await mountWith(oneEditedBoard());
     const confirm = (await walkToConfirmStep())!;

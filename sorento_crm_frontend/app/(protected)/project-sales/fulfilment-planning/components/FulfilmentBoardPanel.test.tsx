@@ -179,8 +179,16 @@ import {
   deleteLineDraft,
   putLineDraft,
 } from '../../_shared/services/fulfilmentPlanningService';
+// OI-SPLIT-GUIDE (UAC F2): every guide page reads its order's split view; these specs only care
+// about what the press posts, so the read answers an order with no lines.
+vi.mock('../../_shared/services/lineSplitService', () => ({
+  getLineSplits: (psoId: string) =>
+    Promise.resolve({ pso_id: psoId, so_number: psoId, customer: null, project: null, lines: [] }),
+  saveLineSplits: vi.fn(),
+}));
+
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
-import { openConfirmGuide, walkConfirmGuide } from '@/test-mocks/confirmGuide';
+import { walkConfirmGuide } from '@/test-mocks/confirmGuide';
 import { unpostableNotices } from '../../_shared/lib/unpostableNotices';
 import {
   buildBoard,
@@ -4692,9 +4700,7 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     previewConfirmMany.mockRejectedValue(new Error('Network down'));
 
     renderPanel(['SO403340']);
-    // UAC C6: a failed dry run keeps the guide open on Review with Retry, no Next or Confirm.
-    await openConfirmGuide();
-    await screen.findByTestId('confirm-guide-review-error');
+    await walkConfirmGuide();
 
     await waitFor(() => expect(previewConfirmMany).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());

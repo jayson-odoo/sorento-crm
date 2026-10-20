@@ -214,6 +214,9 @@ const TWO_ORDERS = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  getLineSplits.mockImplementation((psoId: string) =>
+    Promise.resolve({ pso_id: psoId, so_number: psoId, customer: null, project: null, lines: [] }),
+  );
   previewConfirmMany.mockImplementation((body: { orders: { pso_id: string; lines: unknown[] }[] }) =>
     Promise.resolve({
       results: body.orders.map((order) => ({
