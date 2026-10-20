@@ -382,31 +382,45 @@ function pressRoleFor(
   if (contribution.decision && decision?.verdict === 'rejected') {
     return { kind: batchBlocked ? 'blocked_reject' : 'withdraw' };
   }
+  const splitEdit = splitEditApplies(contribution, batchBlocked, batchNamedKeys);
   if (decision && contribution.draft?.stale && decision.verdict !== 'rejected') {
     // OI-SPLIT-VIEW (UAC A2, A3): the stale draft is not posted, but the saved split edit
     // still is (the server applies it), so the line counts once, as a split edit.
-    return contribution.split_edited && !batchBlocked ? { kind: 'split_edit' } : { kind: 'stale' };
+    return splitEdit ? { kind: 'split_edit' } : { kind: 'stale' };
   }
   const built = lineFor(contribution, decision);
-  if (built === null) {
-    // A pending planning change confirms through its own apply, which carries no split edit.
-    return contribution.split_edited && !batchBlocked ? { kind: 'split_edit' } : { kind: 'skip' };
-  }
+  if (built === null) return splitEdit ? { kind: 'split_edit' } : { kind: 'skip' };
   if (typeof built === 'string') return { kind: 'unpostable', reason: built };
   return { kind: 'post', line: built };
 }
 
 /**
- * OI-SPLIT-VIEW (UAC A2, A4): a saved split edit on a line nothing else is staged on. The
- * press confirms its order (with no body line for it: the server applies the edit), and the
- * count adds it once.
+ * OI-SPLIT-VIEW (UAC A9, A12): does the press apply this line's saved split edit? Yes on an
+ * order carrying a pending AutoCount batch too (the server posts it beside the batch), but
+ * never on a line that batch names pending: such a line goes the AutoCount way (the server
+ * never flags it; `batchNamedKeys`, when known, says the same here).
+ */
+function splitEditApplies(
+  contribution: BoardContribution,
+  batchBlocked: boolean,
+  batchNamedKeys?: ReadonlySet<string>,
+): boolean {
+  if (!contribution.split_edited) return false;
+  return !(batchBlocked && batchNamedKeys?.has(contribution.key));
+}
+
+/**
+ * OI-SPLIT-VIEW (UAC A2, A4, A12): a saved split edit on a line nothing else is staged on.
+ * The press confirms its order (with no body line for it: the server applies the edit, beside
+ * a pending batch too), and the count adds it once.
  */
 export function pressAppliesSplitEdit(
   contribution: BoardContribution,
   decision: BoardDecision | undefined,
   batchBlocked = false,
+  batchNamedKeys?: ReadonlySet<string>,
 ): boolean {
-  return pressRoleFor(contribution, decision, batchBlocked).kind === 'split_edit';
+  return pressRoleFor(contribution, decision, batchBlocked, batchNamedKeys).kind === 'split_edit';
 }
 
 /**

@@ -1419,6 +1419,7 @@ export function FulfilmentBoardPanel({
                 contribution,
                 decision,
                 pendingBatchSalesOrderIds.has(contribution.sales_order_id),
+                batchNamedKeys,
               )
             ) {
               return true;
@@ -1666,6 +1667,7 @@ export function FulfilmentBoardPanel({
               contribution,
               draftWithoutPreMark[contribution.key],
               Boolean(orderBatchId),
+              batchNamedKeys,
             ),
         );
         if (splitEdited) splitEditPsoIds.add(orderPsoId);
