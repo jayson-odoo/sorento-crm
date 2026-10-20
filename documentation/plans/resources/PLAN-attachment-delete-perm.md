@@ -25,7 +25,8 @@ shared `require_permission` dependency (`app/dependencies.py:414`).
 - Project Documents tab delete (`sorento_crm_frontend/app/(protected)/project-sales/_shared/services/projectDocumentService.ts:128`)
   calls the same route. Its trash button checks only `project.can_edit`
   (`ProjectDocumentsPanel.tsx:184`). The role that uses it daily keeps delete through the
-  round 3 grant.
+  round 3 grant, and the icon now also requires the slug, so a project editor without it is
+  not offered a delete that would answer 403.
 
 ## Round 2: the UI follows the permission (crew, after the role audit)
 
