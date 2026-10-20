@@ -304,3 +304,29 @@ def test_engine_typed_text_includes_codes_read_from_the_media(
     typed = [k.get("typed") for k in seen if "typed" in k]
     assert typed, "engine passed no typed to turn_apply"
     assert all(isinstance(t, str) and "srtwt7445" in t for t in typed), typed
+
+
+# ---------------------------------------------------------------- engine seam: the customer's own later lines
+
+
+def test_engine_typed_text_keeps_the_customers_own_second_line(session_factory, monkeypatch):
+    seen = _spy_turn_apply(monkeypatch)
+    _run(
+        session_factory, monkeypatch, text="Hi boss\nSRTKS8551 promo?", raw="SRTKS8551",
+        msg_id="zzt-kp-line2",
+    )
+    typed = [k.get("typed") for k in seen if "typed" in k]
+    assert typed, "engine passed no typed to turn_apply"
+    assert all(isinstance(t, str) and "srtks8551" in t for t in typed), typed
+
+
+def test_engine_typed_text_keeps_later_lines_and_cuts_only_the_reply_to_block(session_factory, monkeypatch):
+    seen = _spy_turn_apply(monkeypatch)
+    _quote_envelope(monkeypatch, "earlier we spoke of SRTWB1096-RG")
+    _run(
+        session_factory, monkeypatch, text="Hi boss\nSRTKS8551 promo?", raw="SRTKS8551",
+        msg_id="zzt-kp-line2-quote", also="SRTWB1096-RG",
+    )
+    typed = [k.get("typed") for k in seen if "typed" in k]
+    assert typed, "engine passed no typed to turn_apply"
+    assert all(isinstance(t, str) and "srtks8551" in t and "srtwb1096rg" not in t for t in typed), typed
