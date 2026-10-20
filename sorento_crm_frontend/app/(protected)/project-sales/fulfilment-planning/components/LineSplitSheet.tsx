@@ -452,7 +452,12 @@ const LineBlock = React.memo(function LineBlock({
       <TableCell
         rowSpan={span}
         data-pinned=""
-        className={cn(BASE_CELL, top, ITEM_STICKY, 'max-md:z-[1]')}
+        className={cn(
+          BASE_CELL,
+          top,
+          sheetReadOnly ? READ_ONLY_ITEM_STICKY : ITEM_STICKY,
+          'max-md:z-[1]',
+        )}
       >
         <span className="font-semibold">{line.itemCode}</span>
         <span className="block text-2xs text-muted-foreground md:hidden">
