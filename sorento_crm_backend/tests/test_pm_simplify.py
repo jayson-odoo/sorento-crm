@@ -424,3 +424,52 @@ def test_the_sales_order_list_narrows_to_one_po(seeded):
     assert total == len(_orders(db, po))
     assert {row.purchase_order_id for row in rows} == {po.id}
     assert all_total == total + 1
+
+
+def test_an_adopted_order_on_the_area_is_named_not_rewritten(seeded):
+    """Security review N1: an order adopted from AutoCount is neither rewritten nor amended
+    here, and the result says so."""
+    from app.services.project_po_progress_service import change_area_date
+
+    db, company_id, owner = seeded
+    po, phases, _a, _b = _two_line_po(db, company_id, owner)
+    for order in _orders(db, po):
+        order.status = "adopted"
+    db.flush()
+    area = phases[0]
+    before = {line.id: line.delivery_date for line in _so_lines(db, po, phase=area)}
+
+    result = change_area_date(db, area, delivery_date=date(2030, 7, 9), actor_user_id=owner)
+
+    assert {line.id: line.delivery_date for line in _so_lines(db, po, phase=area)} == before
+    assert result["amendments"] and all(row["refused"] for row in result["amendments"])
+    assert all(row["amendment_id"] is None for row in result["amendments"])
+
+
+def test_the_sales_order_list_refuses_a_malformed_po_filter(seeded):
+    """Security review S1: a non-UUID filter is a clean client error, never a database
+    error echoed back in a 500."""
+    import asyncio
+
+    from app.api.v1.projects.sales_orders import list_project_sales_orders
+
+    db, company_id, owner = seeded
+    po, _phases, _a, _b = _two_line_po(db, company_id, owner)
+
+    with pytest.raises(AppException) as caught:
+        asyncio.run(
+            list_project_sales_orders(
+                project_id=po.project_id,
+                query=None,
+                so_status=None,
+                purchase_order_id="x",
+                page=1,
+                limit=50,
+                sort="created_at",
+                dir="desc",
+                _user={"id": owner},
+                db=db,
+            )
+        )
+    assert caught.value.status_code in (404, 422)
+    assert "uuid" not in str(caught.value.detail).lower()

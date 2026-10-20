@@ -281,6 +281,8 @@ async def list_project_sales_orders(
 ):
     try:
         validate_uuid_path(project_id, resource="Project")
+        if purchase_order_id:
+            validate_uuid_path(purchase_order_id, resource="Purchase order")
         projects.get_project_or_404(db, project_id)
         service = ProjectSODraftService(db)
         rows, total = service.list_for_project(

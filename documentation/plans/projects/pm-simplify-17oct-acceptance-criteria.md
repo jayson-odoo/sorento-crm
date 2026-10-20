@@ -1,9 +1,7 @@
 # UAC: simplify the project PO and delivery schedule parts (PM-SIMPLIFY)
 
-Status: DRAFT, written against the recommended answers to Q1-Q3 (Q4 and Q5 answered (a) by crew,
-17 Oct) in
-`PLAN-pm-simplify-17oct.md`. Rewritten once the owner OKs mock v1
-(`mockups/po-schedule-simplify-v1.html`) and answers the questions. Nothing here is built.
+Status: BUILT (20 Oct 2026) against mock v2 with Q1-Q3 taken as (a). Deviations from these
+criteria are listed in the plan's "Build (20 Oct)" section (AC-P1 redirect, AC-L3 drag sort).
 
 Tags: `[BE]` pytest, `[FE]` vitest, `[E2E]` recorded agent-browser run (no new Playwright spec),
 `[T]` copy check. Words on screen follow the 24 Sep ruling: "Area" (never "Phase"), "AutoCount
@@ -84,3 +82,15 @@ moving a delivery.
 ### Browser
 - AC-E1 `[E2E]` J1-J6 walked on the sandbox project at 1280 and 375, screenshots per step, counts
   matching the plan's before/after table.
+
+## Behaviour card: changing an area's delivery date (Q2a)
+
+| Given | When | Then |
+| --- | --- | --- |
+| An area of the confirmed schedule with draft sales order lines on it | The date is changed on the Deliveries tab | The area's date and every draft line on it take the new date, in one transaction; the toast names the area, the date and the orders that followed, with Undo |
+| Some of those lines carry another date already (built from an older schedule, D6) | Same | They take the new date too |
+| A published (or amended) order has lines on the area | Same | Its lines are untouched; an amendment with an order change notice is proposed (DELAY or ADVANCE per line), to be published through the existing amendment flow |
+| The published order has an open AutoCount difference | Same | No amendment; the toast says why |
+| An order adopted from AutoCount has lines on the area | Same | Untouched and named: change it in AutoCount |
+| The change was just made | Undo is pressed | The area's previous date and each draft line's own previous date come back |
+| Undo names a line that is not a draft line on that area | Sent to the API | 422, nothing written |

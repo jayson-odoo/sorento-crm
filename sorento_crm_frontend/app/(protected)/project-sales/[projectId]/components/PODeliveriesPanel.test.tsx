@@ -115,9 +115,11 @@ describe('PODeliveriesPanel', () => {
     fireEvent.click(
       await screen.findByRole('button', { name: /Change the delivery date of Common Area Part 3/ }),
     );
-    fireEvent.change(screen.getByLabelText('Delivery date of Common Area Part 3'), {
-      target: { value: '05/08/2027' },
-    });
+    const box = screen.getByLabelText('Delivery date of Common Area Part 3');
+    fireEvent.change(box, { target: { value: '05/08/2027' } });
+    // A typed date commits on Enter or blur, never per keystroke.
+    expect(changeAreaDate).not.toHaveBeenCalled();
+    fireEvent.keyDown(box, { key: 'Enter' });
 
     await waitFor(() =>
       expect(changeAreaDate).toHaveBeenCalledWith('ph-cap3', { delivery_date: '2027-08-05' }),

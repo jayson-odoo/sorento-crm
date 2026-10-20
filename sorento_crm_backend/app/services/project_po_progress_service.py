@@ -434,6 +434,13 @@ def change_area_date(
     live_orders: Dict[str, ProjectSalesOrder] = {
         str(order.id): order for _line, order in rows if order.status in AUTHORED_LIVE_STATUSES
     }
+    # Adopted from the AutoCount book: never authored here, so it cannot be amended here
+    # either. Named in the result so the move is not silently partial.
+    adopted_orders: Dict[str, ProjectSalesOrder] = {
+        str(order.id): order
+        for _line, order in rows
+        if order.status in LIVE_SO_STATUSES and order.status not in AUTHORED_LIVE_STATUSES
+    }
 
     restore = {str(row["id"]): row.get("delivery_date") for row in (restore_lines or [])}
     draft_ids = {str(line.id) for line, _order in draft_rows}
@@ -483,6 +490,16 @@ def change_area_date(
                 savepoint.rollback()
                 entry["refused"] = exc.message
             amendments.append(entry)
+    if previous_date != delivery_date:
+        for order in sorted(adopted_orders.values(), key=lambda row: row.provisional_ref):
+            amendments.append(
+                {
+                    "sales_order_id": str(order.id),
+                    "provisional_ref": order.autocount_doc_no or order.provisional_ref,
+                    "amendment_id": None,
+                    "refused": "Taken from AutoCount, so change its date in AutoCount.",
+                }
+            )
 
     return {
         "phase_id": str(phase.id),

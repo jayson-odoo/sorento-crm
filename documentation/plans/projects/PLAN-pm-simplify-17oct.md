@@ -1,8 +1,9 @@
 # PLAN: simplify the project PO and delivery schedule parts (PM-SIMPLIFY)
 
-Status: mock v2 on the real project case (PRJ-000001, masked rows from crew) filed for the owner
-(17 Oct 2026) with Q1-Q3 open; Q4 and Q5 answered (a). No code until the owner OKs the mock. No code until the owner OKs the mock. Track: not chosen yet
-(decided by the diff once the mock is approved).
+Status: BUILT, in review (20 Oct 2026). Mock v2 approved by the owner; Q1, Q2 and Q3 built as
+the recommended (a) (crew to correct if the owner picked otherwise); Q4 and Q5 (a) as answered.
+Track: full (Q2 changes a business rule; diff well over 300 lines; no migration). Build notes and
+deviations: section "Build (20 Oct)" at the bottom.
 
 Owner 15 Oct: "the PO part and the delivery schedule part are badly designed, too complicated ->
 simplify." This is a new round on top of the shipped 24 Sep redesign
@@ -167,3 +168,41 @@ case adds over the synthetic one:
   confirmed date.** The sales orders were built from schedule v1; v2 (confirmed 19 Aug) moved every
   tower date by about six months and nothing carried the new dates over. This is defect D6, and the
   case for Q2: a date belongs to the area, and draft sales order lines follow it.
+
+## Build (20 Oct)
+
+What shipped, by acceptance criterion (UAC file alongside):
+
+- AC-O1/O2/O3: one Orders tab (`ProjectDetailClient.tsx`, old `?tab=pos|schedules|sales-orders`
+  links open it). PO grid gains Delivered (x of y), Next delivery, Next step, a caret that expands
+  to the PO's schedule and sales orders, a right-click menu (Open, Upload delivery schedule,
+  Upload a new PO version, Copy PO number) and the Columns toggle. The list row carries
+  `ordered_units`, `delivered_units`, `next_delivery_date`, `has_document`.
+- AC-P1/P2: the PO page has four line tabs (Lines, Deliveries, Sales orders, Documents) and one
+  header button that is the next step (`poNextStep.ts`). Edit and the uploads sit behind the gear.
+- AC-P3 (Q1a): `POST /purchase-orders/{id}/approve` and `/countersign` removed with their service
+  methods; old stamps stay readable on the version.
+- AC-P4 (D1): hand line edits on a PO that came from a document are refused (409
+  `po_lines_from_document`); Edit then covers the header only.
+- AC-P5 (D3): build refuses an unconfirmed schedule version (409 `schedule_not_confirmed`) and a
+  scanned PO with no confirmed version (409 `po_not_confirmed`); it never reads an unconfirmed PO
+  version.
+- AC-L1/L2/L3: `GET /purchase-orders/{id}/progress` and the Lines tab grid (filters "Still to
+  deliver", "Schedule differs", amber rows, expand to deliveries, cards at 375).
+- AC-D1 to D4 (Q2a, D6): `PUT /delivery-phases/{id}/date` writes the area date and every draft
+  sales order line on it in one transaction, proposes an amendment (with its OCN) for each
+  published order, names adopted orders as refused, and returns the previous per-line dates for
+  Undo. Deliveries tab: date edited in place, toast with Undo, Upload revised schedule asks only
+  for the file.
+- AC-B1 (Q5a): Build sales orders is one dialog; from the PO page split by is its only field.
+
+Deviations, for the owner to accept or send back:
+
+- **Review pages kept, not merged.** The PO document review (`purchase-orders/[versionId]`) and
+  the schedule review (`delivery-schedules/[versionId]`) still exist: they hold the side-by-side
+  document viewer and the per-column corrections. The PO page's "Confirm PO" / "Confirm schedule"
+  button opens them and they return to the PO page. AC-P1's redirect is therefore not built.
+- **No drag sort on the Lines grid.** The grid is read-only progress; it sorts by any column
+  instead. Rows on the sales order editor keep their drag sort.
+- **"Publish N sales orders"** opens the PO's Sales orders tab, where each order is published as
+  today; there is no bulk publish endpoint and none was added.

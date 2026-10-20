@@ -409,7 +409,7 @@ class AreaDateRestoreLine(BaseModel):
 class AreaDateChange(BaseModel):
     delivery_date: date
     # Undo only: the `previous_lines` the last change returned.
-    restore_lines: Optional[List[AreaDateRestoreLine]] = None
+    restore_lines: Optional[List[AreaDateRestoreLine]] = Field(None, max_length=5000)
 
 
 class AreaDateOrderRef(BaseModel):
