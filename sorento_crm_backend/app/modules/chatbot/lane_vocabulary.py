@@ -122,3 +122,17 @@ def default_chatbot_memory() -> dict:
         "enabled": False,
         "default_level": "full",
     }
+
+
+def composer_enabled() -> bool:
+    """CHAT-COMPOSER's one gate (`chatbot.composers.enabled()`), for core callers."""
+    from app.services.chatbot import composers
+
+    return composers.enabled()
+
+
+def clear_composer_cache() -> None:
+    """A settings save drops this process's cached composer switch, so a flip lands now."""
+    from app.services.chatbot import composers
+
+    composers.clear_cache()

@@ -767,6 +767,10 @@ class SystemSetting(Base):
     chatbot_closed_lists_mode = Column(
         String(16), nullable=False, server_default="block", default="block"
     )
+    # CHAT-RELEASE-1021: the stored CHAT-COMPOSER gate (default off), flipped on Settings >
+    # Chatbot and read at run time by `chatbot.composers.enabled()`; `CHAT_COMPOSER_ENABLED`,
+    # when set, overrides it.
+    chatbot_composer_enabled = Column(Boolean, nullable=False, server_default="false", default=False)
 
 
 class UserQuickAccess(Base):

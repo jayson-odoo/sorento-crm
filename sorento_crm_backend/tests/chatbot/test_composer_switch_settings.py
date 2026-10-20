@@ -27,6 +27,14 @@ GENERAL = "/api/v1/user-management/settings/general"
 APP_DIR = Path(__file__).resolve().parents[2] / "app"
 
 
+@pytest.fixture(autouse=True)
+def _fresh_cache():
+    """The gate's process cache must not carry a value into the next test (or file)."""
+    composers.clear_cache()
+    yield
+    composers.clear_cache()
+
+
 @pytest.fixture
 def db():
     with blank_session() as s:
@@ -117,11 +125,12 @@ def test_a_closed_lists_mode_outside_the_two_is_refused(api, db, bad):
     assert api.put(GENERAL, json={"chatbot_closed_lists_mode": bad}).status_code == 422
 
 
-def test_an_explicit_null_composer_leaves_the_stored_value(api, db):
+def test_an_explicit_null_composer_resets_it_to_off(api, db):
+    """The chatbot columns' one rule: an explicit null is "reset to the default"."""
     _row(db, chatbot_composer_enabled=True)
     resp = api.put(GENERAL, json={"chatbot_composer_enabled": None})
     assert resp.status_code == 200, resp.text
-    assert api.get(SETTINGS).json()["settings"]["chatbot_composer_enabled"] is True
+    assert api.get(SETTINGS).json()["settings"]["chatbot_composer_enabled"] is False
 
 
 def test_flipping_needs_the_settings_edit_permission(viewer, db):

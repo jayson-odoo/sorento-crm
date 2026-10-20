@@ -21,7 +21,9 @@ def test_gate_defaults_off(monkeypatch):
     from app.config import Settings
 
     monkeypatch.delenv("CHAT_COMPOSER_ENABLED", raising=False)
-    assert Settings().chat_composer_enabled is False
+    # CHAT-RELEASE-1021: unset now reads None, "the stored switch decides" (default off,
+    # `tests/chatbot/test_composer_switch_settings.py`); a set var still wins.
+    assert Settings().chat_composer_enabled is None
     monkeypatch.setenv("CHAT_COMPOSER_ENABLED", "true")
     assert Settings().chat_composer_enabled is True
 
