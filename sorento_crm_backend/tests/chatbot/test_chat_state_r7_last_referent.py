@@ -41,6 +41,7 @@ from app.services.chatbot.turn.state import Focus, State, focus_to_wire
 from tests._pg_fixture import blank_session
 from tests.chatbot import _ht26_fixtures as ht
 from tests.chatbot._turn_helpers import build_policy, verdict
+from tests.chatbot.test_engine import stub_access  # noqa: F401 - fixture used by name
 
 DOMAINS = ["inventory", "incoming", "order", "sales", "product_attachment", "promotion"]
 KINDS = ["product", "customer", "brand", "promotion", "attachment", "order"]
@@ -358,3 +359,112 @@ def test_r7_8_guard_state_off_the_legacy_bare_number_rule_is_unchanged():
     v = verdict(reference_positions=[1], entities=[])
     _out, plan = apply(state, v, build_policy())
     assert v.get("demand_qty") == 1 and "bare_number_is_the_quantity" in plan.trace.rules_fired
+
+
+# =============================================================================================
+# AC-R7-2, live shape: what the PARSER READS when the dealer quotes the flyer-list turn.
+# The parser decides from its input; if the input still carries the held how-many it reads "1" as
+# demand_qty and the held task takes it. Through the real `engine.run_turn` (EngineConsole: real engine,
+# real quote resolution, stubbed parser + stock tool; `console.last_block` is the exact user block the parser
+# got). The held product is ELP3754 (a code the console seeds) standing in for MKS9505-GM-HC.
+# =============================================================================================
+HELD = "ELP3754"
+FLYER_TEXT = f"1. {FILE_1}\n2. {FILE_2}"
+LIST_TURN = 3
+
+
+def _with_state_block(monkeypatch):
+    import dataclasses
+
+    from app.services.chatbot.head import parser as parser_mod
+
+    real = parser_mod.resolve_config
+
+    def with_state(db, *, current_date, override_version_id=None):
+        return dataclasses.replace(real(db, current_date=current_date, override_version_id=override_version_id), state_block=True)
+
+    monkeypatch.setattr(parser_mod, "resolve_config", with_state)
+
+
+def _audit_console(session_factory, monkeypatch, stub_access, phone):
+    from tests.chatbot.test_quoted_reply_engine import (
+        _console, _focus_wire, _live_c, _store_asked, _store_turn, _task_wire, ask_text,
+    )
+    from tests.chatbot._r9_engine_console import stock, product
+
+    c = _console(session_factory, monkeypatch, stub_access, phone)
+    _with_state_block(monkeypatch)
+    _store_asked(c, HELD, turn_no=1, age_s=900)  # the how-many turn
+    listed = _focus_wire(c, HELD, [_task_wire(c, HELD)])
+    listed["last_list"] = _promo_rows(LIST_TURN)
+    _store_turn(c, reply_text=FLYER_TEXT, focus=listed, turn_no=LIST_TURN, age_s=800)  # the flyer-list turn
+    assert c.say(f"check stock {HELD}", stock(product(HELD))) == ask_text(HELD)  # live: the how-many is open
+    c.state["focus"]["last_list"] = _promo_rows(LIST_TURN)  # live: the flyer list is stored too
+    return c
+
+
+def _lines(block: str, *prefixes: str) -> list[str]:
+    return [ln for ln in block.splitlines() if ln.startswith(prefixes)]
+
+
+def test_r7_2_live_a_quote_of_the_list_turn_hides_the_held_how_many_from_the_parser_input(
+    session_factory, monkeypatch, stub_access
+):
+    from tests.chatbot.test_quoted_reply_engine import reply, say_quoted
+
+    c = _audit_console(session_factory, monkeypatch, stub_access, "+60900000771")
+    say_quoted(c, "1", reply(reference_positions=[1], entities=[]), quote=FLYER_TEXT)
+    block = c.last_block
+    # State block on: the how-many reaches the parser as the State block's `open question` object and the
+    # `pending task: the open question` line (the Open task / Open question lines are folded into it, context.py:394).
+    assert not _lines(block, "Open task:", "Open question:")
+    oq = _lines(block, "- open question:")
+    assert not any("quantities" in ln or HELD in ln for ln in oq), ("the held how-many is still the open question", oq)
+    assert "pending task: the open question" not in block, "the State block still prints the how-many as THE open question"
+    # Held is not hidden: the quantities object (owed [1]) must not reach the parser at all, or it reads "1" as demand_qty.
+    assert '"kind": "quantities"' not in block and '"owed"' not in block, (
+        "the quantities / how-many object is still in the parser input", _lines(block, "- pending task:")
+    )
+
+
+def test_r7_2_live_a_quote_of_the_list_turn_shows_the_flyer_list_as_the_open_list(
+    session_factory, monkeypatch, stub_access
+):
+    from tests.chatbot.test_quoted_reply_engine import reply, say_quoted
+
+    c = _audit_console(session_factory, monkeypatch, stub_access, "+60900000772")
+    say_quoted(c, "1", reply(reference_positions=[1], entities=[]), quote=FLYER_TEXT)
+    last = _lines(c.last_block, "- last list")
+    assert last and FILE_1 in last[0] and FILE_2 in last[0], ("the State block must list the flyers", last)
+    assert "- open question: none" in c.last_block or "- open question: {" not in c.last_block
+
+
+def test_r7_2_live_guard_no_quote_the_how_many_object_is_in_the_parser_input(session_factory, monkeypatch, stub_access):
+    from tests.chatbot._r9_engine_console import reply
+
+    c = _audit_console(session_factory, monkeypatch, stub_access, "+60900000773")
+    c.say("1", reply(demand_qty=1, entities=[]))
+    assert any("quantities" in ln and HELD in ln for ln in _lines(c.last_block, "- open question:")), c.last_block
+    assert "pending task: the open question" in c.last_block
+
+
+def test_r7_3_live_guard_a_quote_of_the_how_many_turn_keeps_the_how_many_object(session_factory, monkeypatch, stub_access):
+    from tests.chatbot.test_quoted_reply_engine import ask_text, reply, say_quoted
+
+    c = _audit_console(session_factory, monkeypatch, stub_access, "+60900000774")
+    say_quoted(c, "1", reply(demand_qty=1, entities=[]), quote=ask_text(HELD))
+    assert any("quantities" in ln and HELD in ln for ln in _lines(c.last_block, "- open question:")), c.last_block
+    assert "pending task: the open question" in c.last_block
+
+
+def test_r7_2_live_apply_a_quote_of_the_list_turn_with_a_bare_demand_qty_does_not_fill_the_held_task(
+    session_factory, monkeypatch, stub_access
+):
+    # The parser read "1" as demand_qty (no entity, no positions). NOTE: if the parser input no longer shows the
+    # how-many this reading should not occur; this pins the apply side for the case it still does (see report).
+    from tests.chatbot.test_quoted_reply_engine import _answered, _open_task_labels, reply, say_quoted
+
+    c = _audit_console(session_factory, monkeypatch, stub_access, "+60900000775")
+    text = say_quoted(c, "1", reply(demand_qty=1, entities=[]), quote=FLYER_TEXT)
+    assert text != _answered(HELD, 1), ("the held task took the bare 1 under a quote of the list turn", text)
+    assert _open_task_labels(c) == [HELD], "the stock task must stay open and unanswered"
