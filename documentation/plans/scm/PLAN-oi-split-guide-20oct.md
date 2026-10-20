@@ -1,10 +1,9 @@
 # PLAN: guided Confirm on the Fulfilment planning board (OI-SPLIT-GUIDE)
 
-Status: Owner hand test 1 (20 Oct, c024bf4056) = REWORK: the review is the split view (UAC F). Rework
-built in rounds 3-4 (red 7b7d0a1f87, 4bb00be5d0; product 42d1bd9d36 22c8d751ea ff468ae078 e5b0a2a0d3
-608d5deb10 754b38de0d; kill held each round); reviewer READY on 754b38de0d. Main defect found on the way
-fixed by #1803 (merged in). Next: browser pass 1280/375 on the final head, laneboard/scripts/1799.md,
---handtest. Track M.
+Status: Owner hand test 2 (20 Oct, ada23cbb92) = REWORK: splitting from the guide must show only the saved
+lines (UAC F13-F17). Round 5 (red e01076d1fc; 51cf84f79a 391cd93320 ca0da0a80a) reviewer READY on
+ca0da0a80a; round 6 nits (red acbba37ec8; cdca0d5ff6 7f9ebfff5b; test 63b9d9702f); kill held each round.
+Next: reviewer glance, browser 1280/375 on this head, laneboard/scripts/1799.md, --handtest. Track M.
 
 Card: `oi-split-guide-behaviour-card.md`. UAC: `oi-split-guide-20oct-acceptance-criteria.md` (the
 behaviour; this plan does not restate it). Mock: `documentation/mockups/OI-SPLIT-GUIDE/index.html`.
