@@ -13,6 +13,7 @@ import {
   List,
   PackageSearch,
   Settings,
+  Split,
   Undo2,
 } from 'lucide-react';
 import {
@@ -77,6 +78,9 @@ import {
   boardAxis,
   bucketLabelText,
   pressPostsContribution,
+  pressAppliesSplitEdit,
+  excludedFromPress,
+  splitEditsToConfirm,
   contributionMatchesSearch,
   confirmSummaryFor,
   decisionHeaderText,
@@ -120,6 +124,7 @@ import { PlanningHistorySheet } from './PlanningHistorySheet';
 import { PlanningRefusalTable, hasReasonCode } from './PlanningRefusalTable';
 import { FulfilmentBoardListView } from './FulfilmentBoardListView';
 import { LineSplitDialog } from './LineSplitDialog';
+import { BoardOrderSplitsDialog } from './BoardOrderSplitsDialog';
 import { LineSplitOpenerContext, type LineSplitOpener } from './lineSplitOpener';
 import { FulfilmentBoardMatrix } from './FulfilmentBoardMatrix';
 import { DecisionStrip } from './DecisionStrip';
@@ -231,8 +236,11 @@ const ROW_AXES: BoardRowAxis[] = ['product', 'sales_order', 'customer', 'project
 function pressHasSomething(
   answer: ConfirmManyOrderResult | undefined,
   order: { cancelled_lines: unknown[]; batch_id: string | null },
+  /** OI-SPLIT-VIEW (UAC A4): the order carries a saved split edit the server applies. */
+  splitEdited = false,
 ): boolean {
   return (
+    splitEdited ||
     (answer?.lines_confirmed?.length ?? 0) > 0 ||
     (answer?.lines_withdrawn?.length ?? 0) > 0 ||
     (answer?.lines_cancelled?.length ?? 0) > 0 ||
@@ -554,6 +562,13 @@ export function FulfilmentBoardPanel({
     psoId: string;
     focusLineId?: string;
   } | null>(null);
+  /** OI-SPLIT-VIEW (UAC D1): the board gear's "View splits <SO>", one order at a time. */
+  const [viewSplits, setViewSplits] = React.useState<{ psoId: string; soNumber: string } | null>(
+    null,
+  );
+  const closeViewSplits = React.useCallback(() => setViewSplits(null), []);
+  /** UAC B8: the board gear, where the View splits popup hands focus back on close. */
+  const boardActionsRef = React.useRef<HTMLButtonElement | null>(null);
   const psoIdBySalesOrder = React.useMemo(
     () =>
       new Map(
@@ -1306,6 +1321,41 @@ export function FulfilmentBoardPanel({
     () => (board.data?.orders ?? []).filter((order) => order.undo),
     [board.data],
   );
+  // OI-SPLIT-VIEW (UAC D1, D2): the per-order gear items, for every order with a planning
+  // record (the split sheet needs one).
+  const plannedOrders = React.useMemo(
+    () =>
+      (board.data?.orders ?? []).filter(
+        (order): order is typeof order & { project_sales_order_id: string } =>
+          Boolean(order.project_sales_order_id),
+      ),
+    [board.data],
+  );
+  // OI-SPLIT-VIEW (UAC A3): per order, the lines whose saved split edit the next Confirm
+  // applies, as "line <AutoCount no> <item>": exactly the split-edited lines the count above
+  // includes (`splitEditsToConfirm` reads `confirmSummaryFor`'s own rule and draft).
+  const splitEditsByOrder = React.useMemo(() => {
+    const out = new Map<string, string[]>();
+    for (const contribution of splitEditsToConfirm(
+      allContributions,
+      draftWithoutPreMark,
+      pendingBatchSalesOrderIds,
+      { unadoptedSalesOrderIds, batchNamedKeys },
+    )) {
+      const labels = out.get(contribution.sales_order_id) ?? [];
+      labels.push(
+        `line ${contribution.so_line_no ?? contribution.line_no} ${contribution.item_code}`,
+      );
+      out.set(contribution.sales_order_id, labels);
+    }
+    return out;
+  }, [
+    allContributions,
+    draftWithoutPreMark,
+    pendingBatchSalesOrderIds,
+    unadoptedSalesOrderIds,
+    batchNamedKeys,
+  ]);
 
   const confirmMany = useConfirmManyMutation();
   const previewConfirmMany = usePreviewConfirmManyMutation();
@@ -1362,8 +1412,20 @@ export function FulfilmentBoardPanel({
         contributions
           .filter((contribution) => {
             if (contribution.unplannable) return false;
-            if (excludeKeys.has(contribution.key)) return false;
+            // OI-SPLIT-VIEW (UAC A10): a split-edited line cannot be unticked.
+            if (excludedFromPress(contribution, excludeKeys)) return false;
             const decision = draftWithoutPreMark[contribution.key];
+            // OI-SPLIT-VIEW (UAC A4): a saved split edit confirms its order on its own.
+            if (
+              pressAppliesSplitEdit(
+                contribution,
+                decision,
+                pendingBatchSalesOrderIds.has(contribution.sales_order_id),
+                batchNamedKeys,
+              )
+            ) {
+              return true;
+            }
             // A COVERED reject is a WITHDRAWAL this press carries out (owner ruling 23 Sep
             // 2026, `PLAN-board-reject-on-confirmed-line.md`: "we should confirm the
             // rejection") - its order belongs in the batch on that account alone, same as an
@@ -1465,6 +1527,7 @@ export function FulfilmentBoardPanel({
       // reported instead, in the same place a server refusal is reported, so a press that
       // deliberately skipped it does not read as a press that did nothing.
       const skipped: BoardBatchResult[] = [];
+      const splitEditPsoIds = new Set<string>();
       for (const salesOrderId of wantedOrders) {
         const psoId = psoIdBySalesOrder.get(salesOrderId);
         const standing = liveBoard.orders.find(
@@ -1596,7 +1659,26 @@ export function FulfilmentBoardPanel({
         // because a press whose `orders` came out empty with an empty `skipped` never set
         // `batchResults` at all. It is reported beside every other order's outcome instead,
         // in the wording the notice above the block already uses for the lines themselves.
-        if (lines.length === 0 && rejectedLineIds.length === 0 && cancelledLines.length === 0) {
+        // OI-SPLIT-VIEW (UAC A4): a saved split edit is posted as its order with no line of
+        // its own; the server applies every split-edited line of an order it confirms.
+        const splitEdited = contributions.some(
+          (contribution) =>
+            contribution.sales_order_id === salesOrderId &&
+            !excludedFromPress(contribution, excludeKeys) &&
+            pressAppliesSplitEdit(
+              contribution,
+              draftWithoutPreMark[contribution.key],
+              Boolean(orderBatchId),
+              batchNamedKeys,
+            ),
+        );
+        if (splitEdited) splitEditPsoIds.add(orderPsoId);
+        if (
+          lines.length === 0 &&
+          rejectedLineIds.length === 0 &&
+          cancelledLines.length === 0 &&
+          !splitEdited
+        ) {
           // The held-back note above already said why, when that is the whole reason -
           // the generic "had no line..." sentence would only repeat it more vaguely.
           if (heldBackByBatch.length > 0) continue;
@@ -1640,6 +1722,7 @@ export function FulfilmentBoardPanel({
         orders,
         skipped,
         contributions,
+        splitEditPsoIds,
         body: bodyBatchId ? { orders, batch_id: bodyBatchId } : { orders },
       };
     },
@@ -1715,7 +1798,7 @@ export function FulfilmentBoardPanel({
           }
           // An order whose named lines are all already fulfilled confirms nothing new, but the REAL
           // press clears their stale decisions (the dry run rolled that back), so it is still posted.
-          if (pressHasSomething(dryRun, order)) {
+          if (pressHasSomething(dryRun, order, built.splitEditPsoIds.has(order.pso_id))) {
             return true;
           }
           refusals.push({
@@ -1946,7 +2029,9 @@ export function FulfilmentBoardPanel({
         const labelled = standing ? { ...result, so_number: standing.so_number } : result;
         const posted = built.orders[index];
         // The same "nothing to confirm" reading the real press gives an ok order.
-        return result.ok && posted && !pressHasSomething(result, posted)
+        return result.ok &&
+          posted &&
+          !pressHasSomething(result, posted, built.splitEditPsoIds.has(posted.pso_id))
           ? ({
               ...labelled,
               ok: false,
@@ -2350,6 +2435,7 @@ export function FulfilmentBoardPanel({
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
+                ref={boardActionsRef}
                 type="button"
                 size="sm"
                 variant="outline"
@@ -2406,6 +2492,34 @@ export function FulfilmentBoardPanel({
                   nothing on the board is undoable (AC-UC-04). A refused order keeps its
                   entry so purchasing's reason is where the planner is already looking,
                   rather than a control that silently is not there (AC-UC-03). */}
+              {plannedOrders.length > 0 && (
+                <>
+                  <DropdownMenuSeparator />
+                  {plannedOrders.map((order) => (
+                    <React.Fragment key={order.sales_order_id}>
+                      <DropdownMenuItem
+                        onSelect={() =>
+                          setLineSplit({ open: true, psoId: order.project_sales_order_id })
+                        }
+                      >
+                        <Split className="size-4" aria-hidden />
+                        {`Split delivery ${order.so_number}`}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={() =>
+                          setViewSplits({
+                            psoId: order.project_sales_order_id,
+                            soNumber: order.so_number,
+                          })
+                        }
+                      >
+                        <Split className="size-4" aria-hidden />
+                        {`View splits ${order.so_number}`}
+                      </DropdownMenuItem>
+                    </React.Fragment>
+                  ))}
+                </>
+              )}
               {undoableOrders.length > 0 && (
                 <>
                   <DropdownMenuSeparator />
@@ -2510,6 +2624,23 @@ export function FulfilmentBoardPanel({
           ) : null}
         </div>
       </div>
+
+      {/* OI-SPLIT-VIEW (UAC A3): the saved split edits this Confirm applies, per order. */}
+      {splitEditsByOrder.size > 0 ? (
+        <div data-testid="board-split-edits" className="space-y-0.5 text-sm">
+          {[...splitEditsByOrder.entries()].map(([salesOrderId, labels]) => (
+            <div key={salesOrderId} className="flex flex-wrap gap-x-2">
+              {splitEditsByOrder.size > 1 ? (
+                <span className="font-medium">
+                  {board.data?.orders.find((order) => order.sales_order_id === salesOrderId)
+                    ?.so_number ?? ''}
+                </span>
+              ) : null}
+              <span className="break-words">{`Split edits to confirm: ${labels.join(', ')}`}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {/* Why Confirm is off, when it is - stated, never a dead button. */}
       {confirmBlockedReason ? (
@@ -3205,6 +3336,14 @@ export function FulfilmentBoardPanel({
           initialSoId={historySoId}
         />
       )}
+      {viewSplits ? (
+        <BoardOrderSplitsDialog
+          psoId={viewSplits.psoId}
+          soNumber={viewSplits.soNumber}
+          onClose={closeViewSplits}
+          returnFocusRef={boardActionsRef}
+        />
+      ) : null}
       {lineSplit ? (
         <LineSplitDialog
           open={lineSplit.open}

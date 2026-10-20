@@ -55,6 +55,11 @@ import { DEMAND_CLASS_OPTIONS } from '@/app/(protected)/master-data-management/s
 // The SAME pill the order-inquiry worklist reads, not a second one worded differently:
 // "Placed" has to mean the same thing on both screens or the two disagree in a glance.
 import { OrderInquiryStatePill } from '@/app/(protected)/project-sales/_shared/components/OrderInquiryVerbPill';
+import {
+  LineSplitInfo,
+  splitCount,
+  OrderSplitsDialog,
+} from '@/app/(protected)/project-sales/_shared/components/LineSplitInfo';
 import { OrderInquiryRejectedBadge } from '@/app/(protected)/project-sales/_shared/components/OrderInquiryRejectedBadge';
 import {
   formatMyrExact,
@@ -481,6 +486,8 @@ export function SalesOrderDetail({
   // returns: the Lines columns are built above them, and the What-changed dialog titles
   // itself with the order this line belongs to.
   const soNumber = data?.so_number ?? '';
+  // OI-SPLIT-VIEW (UAC E5): the split sheet the read-only popups draw, carried on this read.
+  const lineSplits = data?.line_splits ?? null;
   const backHref = useBackToListHref(listPath);
   // Same gate the list's own "Plan selected" carries (S2, R3): a door that answers 403
   // is worse than not offering it, so the primary is simply absent without it.
@@ -603,9 +610,14 @@ export function SalesOrderDetail({
   // list and nothing at all here, so a record could only be removed by finding it again in
   // the list. Edit moved in here too (S2, R3): the header's primary slot is now Plan, and
   // the list surface calls this same hook with no `onEdit`, so its row menu shows no Edit.
+  // OI-SPLIT-VIEW (UAC D1): the gear's "View splits", every split line of this order.
+  const [viewSplitsOpen, setViewSplitsOpen] = useState(false);
+  // UAC B8: the gear, where the View splits popup hands focus back on close.
+  const gearRef = useRef<HTMLButtonElement | null>(null);
   const { actions, pending: deletionPending } = useSalesOrderActions(data, {
     onDeleted: () => router.push(backHref),
     onEdit: () => beginEdit(data as SalesOrder),
+    onViewSplits: () => setViewSplitsOpen(true),
   });
 
   const cancelEdit = () => {
@@ -950,6 +962,25 @@ export function SalesOrderDetail({
         },
         size: 260,
         meta: { headerTitle: 'Product' },
+      },
+      // OI-SPLIT-VIEW (UAC B1): "Split N" and the (i) popup in their own column right after
+      // Product, on Columns like the rest; empty for a line with no splits.
+      {
+        id: 'split',
+        // B7a: sorts by the chip's N (the AutoCount extra row not counted).
+        accessorFn: (line) => splitCount(line.split_view),
+        header: ({ column }) => <DataGridColumnHeader title="Split" column={column} />,
+        cell: ({ row }) => (
+          <LineSplitInfo
+            lineNo={row.original.line_no}
+            itemCode={row.original.sku}
+            soNumber={soNumber}
+            view={row.original.split_view}
+            payload={lineSplits}
+          />
+        ),
+        size: 110,
+        meta: { headerTitle: 'Split' },
       },
       {
         id: 'qty_ordered',
@@ -1468,6 +1499,7 @@ export function SalesOrderDetail({
       amountTotal,
       handleRemoveLine,
       soNumber,
+      lineSplits,
       data?.doc_type,
     ],
   );
@@ -1725,6 +1757,7 @@ export function SalesOrderDetail({
                 actions={actions}
                 pendingAction={deletionPending}
                 gearLabel="Sales order options"
+                gearRef={gearRef}
                 // The main action on this page is now PLAN, not Edit (S2, R3): this is the
                 // same board the list's "Plan selected" opens, on this one order, and it
                 // wears the main colour for the same reason an Add does on every list. Edit
@@ -2303,6 +2336,14 @@ export function SalesOrderDetail({
           />
         </PlanRowDialog>
       ) : null}
+
+      <OrderSplitsDialog
+        title={`${soNumber}: splits`}
+        payload={lineSplits}
+        open={viewSplitsOpen}
+        onOpenChange={setViewSplitsOpen}
+        returnFocusRef={gearRef}
+      />
     </div>
     </QtyDraftContext.Provider>
   );
