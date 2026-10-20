@@ -492,3 +492,10 @@ token list. No word list in code.
   plurals newly read as registry words). The rule stays "the forms the probe matched it by": `_word_variants` forms
   for an AND-tier row only; every other row reads the word as typed. Guard: "tops" alone on TOPS-MIXER (prefix tier,
   vocabulary {"top"}) is kept. Lead call within the stated rule (reviewer option (a)); no owner question.
+- R9-5 (Opus re-review should-fix on 1dd6270383): the chatbot sends one-word turns as AND too
+  (lanes/business/resolve_gate.py:713-714), so the tier flag still dropped "tops" on TOPS-MIXER in AND mode (1,296
+  one-word AND cases kept on 83d697a768, dropped on 1dd6270383). The AND probe matches a word as typed OR by its
+  singular (entity_resolver.py:3806-3810). Rule, per word, no tier flag: a word whose typed form is in the row's code
+  was matched as typed and is checked as typed; a word whose typed form is not in the code was matched by its
+  `_word_variants` forms and is checked by them. Covers R9-3 (ZZBASIN-BIDET holds "basin", not "basins") and R9-4.
+  Guards: AND-mode "tops" alone on TOPS-MIXER and ["tops", "bidet"] on TOPS-BIDET are kept.
