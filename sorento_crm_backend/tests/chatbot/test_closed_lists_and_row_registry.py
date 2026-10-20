@@ -99,3 +99,32 @@ def test_r9_3_route_guard_plural_non_registry_words_stay_hits(client, db):
     _basin_class(db)
 
     assert "ZZQAMS-BIDET" in _product_codes(_post(client, ["zzqams", "bidets"]))
+
+
+@pytest.mark.parametrize("token,code,word", [("tops", "TOPS-MIXER", "top"), ("rains", "RAINS-SET", "rain")])
+def test_r9_4_unit_a_one_word_prefix_row_is_read_as_typed_not_by_its_singular(token, code, word):
+    """RED on b01b363750: the one-word prefix probe matches the word as typed, so a plural form of a
+    registry word counts for AND-tier rows only; the prefix row stays."""
+    row = {"entity_type": "product", "match_tier": "prefix", "uuid": f"u-{code}", "canonical_code": code}
+    result = {"tokens": [token], "resolutions": [{"token": token, "matches": [row]}]}
+
+    _drop_word_code_fragments(result, frozenset({word}))
+
+    assert [m["canonical_code"] for m in result["resolutions"][0]["matches"]] == [code], result
+
+
+def test_r9_4_route_a_one_word_prefix_row_of_a_plural_stays_a_hit(client, db):
+    _stocked(db, "TOPS-MIXER", "ZZT Top Mixer", "BASIN MIXER")
+    db.add(ProductCategory(
+        id="00000000-0000-4000-8000-00000000b452", category_code="ZZT-TOP", category_name="ZZT Top",
+        class_label="top", is_searchable=True,
+    ))
+    db.query(ProductSpecRegistry).update({ProductSpecRegistry.is_active: False})
+    db.flush()
+    payload = client.post(
+        ENDPOINT,
+        json={"query": "tops", "tokens": ["tops"], "raw_tokens": ["tops"], "spec_fallback": True,
+              "exact_match": True, "fallback_to_all_types": True, "understand_phrase": False},
+    ).json()
+
+    assert "TOPS-MIXER" in _product_codes(payload), payload
