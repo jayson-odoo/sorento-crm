@@ -1,9 +1,10 @@
 # PLAN: guided Confirm on the Fulfilment planning board (OI-SPLIT-GUIDE)
 
-Status: Owner hand test 2 (20 Oct, ada23cbb92) = REWORK: splitting from the guide must show only the saved
-lines (UAC F13-F17). Round 5 (red e01076d1fc; 51cf84f79a 391cd93320 ca0da0a80a) reviewer READY on
-ca0da0a80a; round 6 nits (red acbba37ec8; cdca0d5ff6 7f9ebfff5b; test 63b9d9702f); kill held each round.
-Next: reviewer glance, browser 1280/375 on this head, laneboard/scripts/1799.md, --handtest. Track M.
+Status: Owner hand test 3 (20 Oct, 402a274558) = REWORK: split in place on the guide page, no line numbers
+(UAC F18-F24). Rounds 7-8 (red 1947646cbd 3e992c04f2 d017537cd1; product 9446a96033 d055e7bed5 810355c1b8
+db76fc7132 b6c0129f66 ae179f857b 785c152c2c 3cd36af34f; kill held each round); reviewer READY on 3cd36af34f.
+Follow-ups: scoped problems check also for hidden lines drawn under shown lines; unused lineShort export;
+F20 single-row summary. Next: browser 1280/375 split + Save + revert ON the guide page, script, --handtest. Track M.
 
 Card: `oi-split-guide-behaviour-card.md`. UAC: `oi-split-guide-20oct-acceptance-criteria.md` (the
 behaviour; this plan does not restate it). Mock: `documentation/mockups/OI-SPLIT-GUIDE/index.html`.
