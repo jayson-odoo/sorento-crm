@@ -668,9 +668,11 @@ export function LineSplitDialog({
   };
 
   // ---- the header and status line
+  // OI-SPLIT-GUIDE (UAC F16): scoped, the counts and the problems read the lines shown only.
+  const counted = onlyLineIds ? visible : sorted;
   const problems = React.useMemo(
     () =>
-      sorted.flatMap((line) => {
+      counted.flatMap((line) => {
         const gap = gapOf(line);
         const undated =
           !readsRemain(line) &&
@@ -687,10 +689,10 @@ export function LineSplitDialog({
           },
         ];
       }),
-    [sorted],
+    [counted],
   );
-  const splitCount = sorted.filter((line) => !readsRemain(line)).length;
-  const products = new Set(sorted.map((line) => line.itemCode)).size;
+  const splitCount = counted.filter((line) => !readsRemain(line)).length;
+  const products = new Set(counted.map((line) => line.itemCode)).size;
   const dirty =
     Boolean(lines) &&
     JSON.stringify(toPayload(lines as SplitLine[])) !== initialRef.current;
@@ -726,7 +728,7 @@ export function LineSplitDialog({
   const subtitle = [query.data?.so_number, soDate, query.data?.customer]
     .filter(Boolean)
     .join(' · ');
-  const locations = [...new Set(sorted.map((line) => line.location))]
+  const locations = [...new Set(counted.map((line) => line.location))]
     .filter(Boolean)
     .join(', ');
 
@@ -826,7 +828,7 @@ export function LineSplitDialog({
           >
             {lines ? (
               <span className="text-muted-foreground">
-                {`${sorted.length} line${sorted.length === 1 ? '' : 's'} · ${products} product${products === 1 ? '' : 's'} · ${splitCount} split`}
+                {`${counted.length} line${counted.length === 1 ? '' : 's'} · ${products} product${products === 1 ? '' : 's'} · ${splitCount} split`}
               </span>
             ) : null}
             {/* AC-G1: the change shown is the one the last Confirm applied. */}
