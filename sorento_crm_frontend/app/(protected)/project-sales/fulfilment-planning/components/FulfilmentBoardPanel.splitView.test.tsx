@@ -9,7 +9,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('next/navigation', () => ({
@@ -391,21 +391,21 @@ describe('review round 1 (UAC A3): the list names exactly the lines the count in
 
 
 describe('review round 3 (UAC A12): a pending AutoCount batch on OTHER lines does not hold back a split edit', () => {
-  // MOCK batch: SO381895, its pending row names pl-381895-1. The split-edited line is pl-381895-2.
+  // MOCK batch: SO381895, its pending row names pl-381895-1. The split-edited line is pl-381895-9.
   const BATCH = MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE;
   const named = demand({
-    sales_order_id: 'so-381895', so_number: 'SO381895', project_sales_order_id: 'pso-381895',
+    sales_order_id: 'so-381895', so_number: 'SO381895', project_sales_order_id: 'pso-so-381895',
     project_line_id: 'pl-381895-1', line_no: 1, item_code: 'SRTWCX7405-RL-S-PJ',
   });
   const edited = demand({
-    sales_order_id: 'so-381895', so_number: 'SO381895', project_sales_order_id: 'pso-381895',
-    project_line_id: 'pl-381895-2', line_no: 2, item_code: 'SRTWCX-OTHER-ITEM',
+    sales_order_id: 'so-381895', so_number: 'SO381895', project_sales_order_id: 'pso-so-381895',
+    project_line_id: 'pl-381895-9', line_no: 2, item_code: 'SRTWCX-OTHER-ITEM',
   });
 
   function batchBoard() {
     const board = withSplitEdited(
       buildBoard([named, edited], { today: TODAY, freeStock: {}, granularity: 'week' }),
-      ['pl-381895-2'],
+      ['pl-381895-9'],
     );
     return {
       ...board,
@@ -417,7 +417,7 @@ describe('review round 3 (UAC A12): a pending AutoCount batch on OTHER lines doe
     getPlanningBoard.mockResolvedValue(batchBoard());
     getPlanningChangeBatch.mockResolvedValue(BATCH);
     confirmMany.mockResolvedValue({
-      results: [{ pso_id: 'pso-381895', ok: true, decision_revision: 4, lines_confirmed: [] }],
+      results: [{ pso_id: 'pso-so-381895', ok: true, decision_revision: 4, lines_confirmed: [] }],
     });
     renderPanel(['SO381895']);
     await screen.findByTestId('fulfilment-board-matrix');
@@ -428,7 +428,7 @@ describe('review round 3 (UAC A12): a pending AutoCount batch on OTHER lines doe
     fireEvent.click(screen.getByTestId('board-confirm'));
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     const [body] = confirmMany.mock.calls[0];
-    const sent = body.orders.find((order: { pso_id: string }) => order.pso_id === 'pso-381895');
+    const sent = body.orders.find((order: { pso_id: string }) => order.pso_id === 'pso-so-381895');
     expect(sent, JSON.stringify(body)).toBeDefined();
     expect(sent.lines).toEqual([]);
     expect(sent.batch_id).toBe(BATCH.id);
@@ -449,6 +449,9 @@ describe('review round 3 (UAC B8): Escape on the gear\'s View splits popup retur
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'View splits SO000001' }));
     const dialog = await screen.findByRole('dialog');
     expect(dialog).toBeInTheDocument();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
     fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     await waitFor(() =>
