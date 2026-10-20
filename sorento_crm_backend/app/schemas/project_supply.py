@@ -393,6 +393,10 @@ class ConfirmLine(BaseModel):
     #: order inquiry row as "CS: ...". Its own field because `amend_reason`/`buy_reason` can
     #: hold a sentence the board's Reason box was only seeded with.
     cs_note: Optional[str] = Field(None, max_length=1000)
+    #: OI-SPLIT-GUIDE (UAC F26): the planner's own REMARK for this line in the purchasing
+    #: email and Excel, edited over the default words on the split sheet; frozen with the line.
+    #: Absent (or blank) prints the default words, as before.
+    remark: Optional[str] = Field(None, max_length=500)
     #: This Buy is an ORDER BACK (part 2 section 4b, captain 25 Aug): the quantity is owed
     #: against something already ordered or already shipped rather than being a new
     #: purchase, so the row purchasing gets carries verb `ORDER_BACK` and is the one row

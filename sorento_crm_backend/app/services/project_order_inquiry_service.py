@@ -717,7 +717,8 @@ def _decision_words(snapshot: Mapping[str, Any]) -> Tuple[str, ...]:
 
 def _saved_decision_key(snapshot: Mapping[str, Any]) -> Tuple[Any, ...]:
     """What makes two snapshots of one line the SAME decision for purchasing: the line's
-    quantity, date and product, and each part's kind, quantity, location and document. A
+    quantity, date and product, each part's kind, quantity, location and document, and the
+    planner's own REMARK (OI-SPLIT-GUIDE UAC F27: a remark-only change is still told). A
     shortfall of free stock is not in it: the email never tells one (owner, 14 Oct 2026)."""
     return (
         _dec(snapshot.get("open_qty")),
@@ -729,7 +730,14 @@ def _saved_decision_key(snapshot: Mapping[str, Any]) -> Tuple[Any, ...]:
             (words, location, qty)
             for words, location, qty, _key in _saved_line_parts(snapshot)
         ),
+        _own_remark(snapshot),
     )
+
+
+def _own_remark(snapshot: Optional[Mapping[str, Any]]) -> Optional[str]:
+    """OI-SPLIT-GUIDE (UAC F26, F27): the planner's own REMARK frozen with a saved line
+    (`ConfirmLine.remark`), else None: the email and Excel print it over the default words."""
+    return ((snapshot or {}).get("remark") or "").strip() or None
 
 
 def _borrow_donors(snapshot: Mapping[str, Any]) -> Tuple[Optional[str], ...]:
@@ -4574,6 +4582,16 @@ class ProjectOrderInquiryService:
         for line, now, before in saved:
             row_lines = told.get(str(line.id), [])
             unchanged = before is not None and _saved_decision_key(before) == _saved_decision_key(now)
+            own = _own_remark(now)
+            if own is not None and not unchanged:
+                # UAC F27: the planner's own words are the line's REMARK, told once in place
+                # of whatever its rows queued (`_queue_saved_line`'s explicit remark, as a
+                # Cancel SO is told); a remark-only change is a change.
+                self._queue_saved_line(
+                    pso_id, line, now, before, actor_user_id=actor_user_id, remark=own,
+                    keys=[key for _w, _l, _q, key in _saved_line_parts(now)],
+                )
+                continue
             if unchanged and _borrow_donors(before) != _borrow_donors(now):
                 # Only a Borrow's donor moved (owner, 13 Oct 2026, re-confirmed 14 Oct): a
                 # changed decision, told as its one line at the line's own location, never

@@ -8555,6 +8555,9 @@ class ProjectSupplyService:
             # sentence of the RULE that produced it, and on an amended line those sentences
             # explain a decision nobody took.
             "amend_reason": (getattr(entry, "amend_reason", None) or "").strip() or None,
+            # OI-SPLIT-GUIDE (UAC F26): the planner's own REMARK for the purchasing email, in
+            # place of the default words; frozen so the email and Excel read what was decided.
+            "remark": (getattr(entry, "remark", None) or "").strip() or None,
             # "This might be a system problem" (R10). Frozen for the same reason the reason
             # is: the board reads the decision back to draw its pill, and a flag that lived
             # only in the session's draft would say the doubt had been answered the moment
