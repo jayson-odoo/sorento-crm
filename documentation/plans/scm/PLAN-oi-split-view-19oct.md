@@ -1,8 +1,9 @@
 # PLAN: split follow-ups after #1749 (OI-SPLIT-VIEW)
 
-Status: Hand test (PR #1794). Reviewer READY on 6624baf8de after fix round 3 (browser pass 1 on the
-owner's SO417636 found A12: a pending AutoCount upload on other lines hid the split edit); browser
-re-check PASS on the crew copy :3106 at 6624baf8de; owner hand test next. Owner approved mock v3
+Status: Hand test round 2 (PR #1794). Owner hand test 1 (20 Oct) FAILED on the popups' look; round 4
+(UAC E) made both popups the split edit sheet read-only, saved lines only; reviewer READY on
+17c7bc9b9d, sticky fix c3786389b8, main merged 1503ea9f7e; browser pass PASS on the crew copy :3106
+at 1503ea9f7e (crew-note 6281343410); owner hand test next. Owner approved mock v3
 at Lavish 21:54 with Q4 = (a) and the gear items of UAC D, recorded as mock v4
 `documentation/mockups/OI-SPLIT-VIEW/index.html`. Card answered (crew Q1 a,
 Q2 a; owner Q3 b, Q5 = (i) popup per line, crew ruling a14761180). Track: M (new rule on the board, UI on two existing screens, no
