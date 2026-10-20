@@ -842,7 +842,10 @@ _SUBJECT_AXIS = {"brand": "brand", "category": "class", "product_type": "class",
 _PREDICATE_AXES = ("brand", "class", "spec")
 #: The fields a typed predicate row keeps from its entity, so the fetch can hand the row to the
 #: resolver as it was said or held (a grounded spec keeps its registry key and value).
-_ROW_FIELDS = ("uuid", "canonical_code", "spec_key", "spec_value", "spec_unit", "spec_label", "spec_words", "spec_known")
+_ROW_FIELDS = (
+    "uuid", "canonical_code", "spec_key", "spec_value", "spec_unit", "spec_label", "spec_words", "spec_known",
+    "spec_any_keys",
+)
 
 
 #: The applier's mark on a parse entity `keep` set aside (a word typed on a held axis). Written
