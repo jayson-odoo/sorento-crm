@@ -183,6 +183,15 @@ or use own location, just like our email to purchasing". Plan crew-note 62883955
   under the item code (375) and no Line column (1280). No prop: it is removed in the sheet itself. Line
   identity stays internal (row keys, drag targets, aria-labels, test ids, the save body and API); the same item
   on two lines is told apart by its rows' qty and dates.
+- F22. Review round 7 (reviewer NOT READY on 35a22d74c0, lead ruling): the guide's inline editor saves EVERY
+  line of the order, exactly as the board's "Split delivery" does; the scope only limits what is drawn. An
+  edit on a row a hidden line moved onto a shown line is therefore never dropped. Supersedes the "(only those
+  lines)" save body in F18.
+- F23. Escape (or a click outside) never closes the guide while a split row is being dragged or while the page
+  has unsaved split edits; it shows "Save or undo your split changes first", as the board dialog does. Cancel
+  stays the explicit way out and writes nothing.
+- F24. F21 extends to the editor's own texts: the problems bar, the drag status / overlay and the move toast
+  name the item (and the split's qty / date where needed), never a line number.
 
 ## G. Out of scope
 - Making Confirm never touch unsaved lines (crew option b).
