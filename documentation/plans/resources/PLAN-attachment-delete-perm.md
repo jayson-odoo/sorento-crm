@@ -1,6 +1,6 @@
 # PLAN: attachment delete follows `resource.attachments.delete`
 
-Status: round 2 (FE gate) in build (small fix track: under 300 lines, no migration, permission gate on one route plus the controls that call it)
+Status: round 2 reviewed, awaiting CI (small fix track: under 300 lines, no migration, permission gate on one route plus the controls that call it)
 
 ## Journey
 

@@ -5,8 +5,12 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Delete controls read the caller's permissions (ATTACH-DELETE-PERM); grant them here.
-vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => true }));
+// Delete controls read the caller's permissions (ATTACH-DELETE-PERM); each test sets the grant.
+const perm = vi.hoisted(() => ({ canDelete: true }));
+vi.mock('@/hooks/usePermissions', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/usePermissions')>()),
+  useHasPermission: (slug: string) => slug !== 'resource.attachments.delete' || perm.canDelete,
+}));
 import { render, screen, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { UploadManagerProvider } from '@/components/upload-activity';
@@ -129,6 +133,7 @@ function renderModal() {
 beforeEach(() => {
   cleanup();
   vi.clearAllMocks();
+  perm.canDelete = true;
   getAttachmentMetadata.mockResolvedValue(attachment());
 });
 
@@ -144,5 +149,23 @@ describe('AttachmentDetailModal - Linkages DataGrid', () => {
     // covered by the row assertions below instead.
     expect(screen.getAllByRole('link', { name: /View/ })).toHaveLength(2);
     expect(screen.getAllByRole('button', { name: /Unlink/ })).toHaveLength(2);
+  });
+});
+
+describe('AttachmentDetailModal - permanent delete follows resource.attachments.delete', () => {
+  it('a trashed file offers Restore but no Permanently Delete without the permission', async () => {
+    perm.canDelete = false;
+    getAttachmentMetadata.mockResolvedValue(attachment({ is_deleted: true }));
+    renderModal();
+
+    expect(await screen.findByRole('button', { name: 'Restore' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Permanently Delete/ })).not.toBeInTheDocument();
+  });
+
+  it('a trashed file offers Permanently Delete with the permission', async () => {
+    getAttachmentMetadata.mockResolvedValue(attachment({ is_deleted: true }));
+    renderModal();
+
+    expect(await screen.findByRole('button', { name: /Permanently Delete/ })).toBeInTheDocument();
   });
 });
