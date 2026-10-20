@@ -19,6 +19,9 @@ decision draft in `lines`, `rejected_line_ids`, `cancelled_lines`) or a saved sp
 - A1. Confirm (N) opens the guide dialog instead of posting. Same button, same N, same disabled state at
   N = 0 (no guide reachable).
 - A2. Cancel, Escape or the dialog's close writes nothing (no confirm call, no draft change).
+  Exception, same as today's press: an order never planned before is adopted when Review builds the
+  dry run (`buildConfirmOrders`, adopt now), and stays adopted after Cancel. Adoption confirms nothing
+  and sends nothing to purchasing (lead ruling 20 Oct on reviewer S4).
 - A3. The dialog title names the orders of this Confirm ("Confirm SO417636, SO424910"); the stepper is
   the existing `WizardSteps`.
 
@@ -60,11 +63,13 @@ decision draft in `lines`, `rejected_line_ids`, `cancelled_lines`) or a saved sp
   cancelled", "AutoCount changed qty", "AutoCount changed date" (or "AutoCount changed qty and date").
   Rows from saved lines carry no such label. The cause comes from the server (one rule), never re-derived
   in the browser.
-- C5. An order the dry run refuses shows its reason and is left out of step 3, as the result card does
-  today.
+- C5. An order the dry run refuses, or that the press would drop as having nothing to confirm, shows
+  its reason (the result card's words, e.g. "has nothing to confirm") and is left out of step 3, as the
+  result card does today. It never shows as confirmable rows (reviewer S1).
 - C6. The dry run fails (network or server): Review shows the error with Retry and Back; the Confirm step
   cannot be reached.
-- C7. Every order refused: nothing is posted, the guide closes and today's result card shows the
+- C7. Every order refused or left with nothing to confirm (the press's narrowed order list is empty):
+  nothing is posted, the guide closes and today's result card shows the
   refusals exactly as a refused press does now (same words, admin failing-lines table, Go to line, Reload,
   History). Refusals render in ONE place (the result card), never rebuilt inside the dialog (lead ruling
   20 Oct, revised after the tester found ~10 planningWhy specs on that card). Some refused, some ok: Review
@@ -83,6 +88,9 @@ decision draft in `lines`, `rejected_line_ids`, `cancelled_lines`) or a saved sp
 ## E. Unchanged
 - E1. Confirm's server behaviour (what it confirms, carries, drops, retires), the board count, "Split
   edits to confirm", the gear items, admin Simulate confirm, Undo.
+  Deliberate change (reviewer S3): admin Simulate's "Would write" list shares the dry-run rows, so it now
+  also lists the rows an older revision raised that the press retires; they print CANCEL (from `state`),
+  not their original verb.
 - E2. Permissions: the guide uses the same calls with the same permission as Confirm.
 
 ## F. Layout

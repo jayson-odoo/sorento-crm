@@ -1,6 +1,8 @@
 # PLAN: guided Confirm on the Fulfilment planning board (OI-SPLIT-GUIDE)
 
-Status: Build (Phase 2): #1794 merged 296915c7ca, branch rebased onto main 33434f19ee; tester red next. Card answered
+Status: Review fix round 1 (PR #1799 draft). Red 0d06cf198c 958fe40c42 83e092d6e6, product 5317ee5db9
+3d8e78adc2 8f6adc4544, kill held; reviewer NOT READY (B1 test-mocks import, S1 nothing-to-confirm order
+in Review, S2 BE test gaps, S3 Simulate CANCEL); S4 adoption accepted (UAC A2). Card answered
 (Q1/Q3/Q4/Q5 (a); Q2 changed by the owner to "saved lines only"), mock v1 approved by the owner 20 Oct
 ~10:33, crew ruling a63941103 (Confirm's server behaviour unchanged; Review labels AutoCount rows). Track:
 M (new flow on an existing screen, no migration, no auth change). Lead pattern: tester red tests, one
