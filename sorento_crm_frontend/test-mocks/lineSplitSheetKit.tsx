@@ -44,6 +44,8 @@ export interface WireLine {
   /** Round 3: generated text for the line's own row. */
   remark_generated: string;
   splits: WireSplit[];
+  /** OI-SPLIT-VIEW: the server's split status (the board flag's rule); only `status` is read. */
+  split_view?: { status: 'confirmed' | 'saved' | 'autocount_changed' } | null;
 }
 
 export function wireLine(
@@ -297,6 +299,7 @@ export function ownerSavedCase(opts: { edited?: boolean; confirmedAt?: string | 
         now_qty: 14,
         now_date: '2026-09-20',
         split_state: state,
+        split_view: { status: opts.edited ? 'saved' : 'confirmed' },
         splits: [
           wireSplit('s14', 14, '2026-09-20', 'L480'),
           wireSplit('s236', 236, '2026-11-20', null),
@@ -308,6 +311,7 @@ export function ownerSavedCase(opts: { edited?: boolean; confirmedAt?: string | 
         now_qty: 649,
         now_date: '2027-01-02',
         split_state: 'applied',
+        split_view: { status: 'confirmed' },
         extra_qty: 145,
         extra_remark: 'ORDER 145',
         splits: [
