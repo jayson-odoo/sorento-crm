@@ -476,3 +476,13 @@ token list. No word list in code.
 - R9-1 AND tokens ["basin", "bidet"], registry knows "basin" and not "bidet", code ZZBASIN-BIDET: the row is dropped.
 - R9-2 Kept (guards): ["qams", "bidet"] on QAMS-BIDET with neither word in the registry; "bidet" alone on ACC-BIDET;
   a whole typed code; a token with a digit.
+- R9-3 (Opus review should-fix, same class): the registry check reads each typed word in the forms the probe matched
+  it by (`_word_variants`, entity_resolver.py:3754: a plural's singular), so ["basins", "bidet"] on ZZBASIN-BIDET with
+  "basin" in the registry is dropped too. One read of the probe's own word forms, not a second plural rule.
+- Red 08636df963 (R9-1 unit + route; R9-2 guards), fix 83d697a768 (references.py 4+/4-; kill-proof R9-1 x2 red in rp2).
+  Opus review: NOT READY on test order (the R9-1 route world seeded the basin class before `_stocked`, whose unordered
+  `ProductCategory.first()` could hand the product that class; test amended, lead sign-off: order only, no assertion
+  change) plus R9-3. Residuals (not this round): a multi-word token can reach an AND row on some of its words only
+  (entity_resolver.py:3786-3830), so a registry word in it drops the row as on the prefix branch; `token_coverage` is
+  computed before the gate (references.py ~2734 / ~2754 vs ~3435) and still describes dropped rows
+  (lanes/business/answer.py:2248 reads it; since CODE-SUBSTRING).
