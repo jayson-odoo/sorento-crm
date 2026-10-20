@@ -1,0 +1,218 @@
+"""SCHEME-INDEX (CHAT-CLOSED-LISTS, crew T2, 17 Oct 2026): a listed certificate scheme is an
+index into certificates, never a filter that empties a product's answer (owner c04 / c19).
+
+"span certificate" was read as the listed scheme SPAN alone. The leg became `{"certificate":
+{"scheme": "SPAN"}}`, the product held no SPAN certificate, and nothing was sent. Under the
+gate, a scheme pick about products (named in the message, else held by the conversation) is
+checked against the explicit link: product, attachment, certificate revision, certificate
+scheme. Holding one, the scheme stays and narrows the files, with the certificate kind beside
+it and the held products carried into the fetch. Holding none, the pick becomes the
+certificate kind, so every certificate file of the products is sent. With no product at all
+("which item has PPS cert") the verdict is left as it was. Data only: no word is read.
+"""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+
+def _asked_product_ids(db: "Session", said: list[dict[str, Any]], held: list[dict[str, Any]]) -> tuple[list[str], bool]:
+    """The products the ask is about and whether the message named them itself. `held` is what
+    the caller says the ask is about (`engine._held_for_the_seams`): none when the message is
+    about a class of its own."""
+    from app.models.product import Product, chat_searchable_products
+
+    codes = [
+        str(e.get("canonical_code")).strip()
+        for e in said
+        if str(e.get("hint") or "").strip().lower() == "product" and str(e.get("canonical_code") or "").strip()
+    ]
+    if codes:
+        rows = db.query(Product.id).filter(Product.product_code.in_(codes), chat_searchable_products()).all()
+        return [str(pid) for (pid,) in rows], True
+    return [str(p["uuid"]) for p in held if isinstance(p, dict) and p.get("uuid")], False
+
+
+def _held_certificates(db: "Session", product_ids: list[str], scheme: str) -> list[str]:
+    """The certificates of the scheme filed against the products' own attachments."""
+    from sqlalchemy import func
+
+    from app.models.certificate import Certificate, CertificateRevision
+    from app.models.product import ProductAttachment
+
+    rows = (
+        db.query(Certificate.id)
+        .join(CertificateRevision, CertificateRevision.certificate_id == Certificate.id)
+        .join(ProductAttachment, ProductAttachment.attachment_id == CertificateRevision.attachment_id)
+        .filter(ProductAttachment.product_id.in_(product_ids), func.lower(Certificate.scheme) == scheme.casefold())
+        .distinct()
+        .all()
+    )
+    return sorted(str(cid) for (cid,) in rows)
+
+
+# Every id rides one GET query string (h11's request line holds about 400): the same 200 cap
+# as product_predicate_service._CERTIFICATE_ID_CAP, restated rather than imported.
+_CERTIFICATE_ID_CAP = 200
+
+
+def _scheme_certificates(db: "Session", scheme: str) -> list[str]:
+    """The scheme's active certificates in the session's company scope: the read goes
+    through the scoped session, so another company's certificate never appears."""
+    from sqlalchemy import func
+
+    from app.models.certificate import Certificate
+
+    rows = (
+        db.query(Certificate.id)
+        .filter(func.lower(Certificate.scheme) == scheme.casefold(), Certificate.status == "active")
+        .order_by(Certificate.id)
+        .limit(_CERTIFICATE_ID_CAP)
+        .all()
+    )
+    return [str(cid) for (cid,) in rows]
+
+
+def _parent_kind(
+    db: "Session", scheme: str, kinds: dict[str, str], certificate_ids: list[str] | None = None
+) -> dict[str, str] | None:
+    """The scheme's parent kind, from certificate data: the listed attachment type most of the
+    scheme's active certificates are filed under (count first, type name only as a stable
+    tiebreak). Only certificate kinds count (`is_certificate`, the rows the lists print); a scheme
+    none of them carries has none. `certificate_ids` narrows the count to those certificates (the
+    ones the products hold). `{"parent_kind": the listed item, "parent_kind_uuid": the type's id,
+    "parent_kind_name": the type's name}`."""
+    from sqlalchemy import func
+
+    from app.models.certificate import Certificate
+    from app.models.resources import AttachmentType
+
+    query = (
+        db.query(AttachmentType.id, AttachmentType.code, AttachmentType.type_name)
+        .join(Certificate, Certificate.attachment_type_id == AttachmentType.id)
+        .filter(
+            func.lower(Certificate.scheme) == scheme.casefold(),
+            Certificate.status == "active",
+            AttachmentType.is_certificate.is_(True),
+        )
+    )
+    if certificate_ids is not None:
+        query = query.filter(Certificate.id.in_(certificate_ids))
+    rows = (
+        query.group_by(AttachmentType.id, AttachmentType.code, AttachmentType.type_name)
+        .order_by(func.count(Certificate.id).desc(), AttachmentType.type_name)
+        .all()
+    )
+    for type_id, code, name in rows:
+        for key in (code, name):
+            item = kinds.get(str(key or "").strip().casefold())
+            if item:
+                return {"parent_kind": item, "parent_kind_uuid": str(type_id), "parent_kind_name": str(name)}
+    return None
+
+
+def _with_parent_kind(
+    entities: list[dict[str, Any]], scheme_entity: dict[str, Any], parent: dict[str, str] | None, kinds: dict[str, str]
+) -> list[dict[str, Any]]:
+    """B-2 / B-3: the scheme entity carries its parent kind itself, so it is ONE entity. A kind
+    the parser said beside it that IS the parent folds into it; a different kind stays beside the
+    scheme as said, and the scheme then carries no parent of its own."""
+    kind_entities = [e for e in entities if e.get("listed") == "cert_kind"]
+    if parent is None:
+        return entities
+
+    def is_parent(e: dict[str, Any]) -> bool:
+        said = (str(e.get("listed_item") or "").strip(), str(e.get("canonical_code") or "").strip())
+        return any(kinds.get(k.casefold()) == parent["parent_kind"] for k in said if k)
+
+    if any(not is_parent(e) for e in kind_entities):
+        return entities
+    return [{**e, **parent} if e is scheme_entity else e for e in entities if e not in kind_entities]
+
+
+def index_scheme(
+    db: "Session", verdict: dict[str, Any], held_products: list[dict[str, Any]]
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """The verdict with its scheme pick read as an index, and a trace note; the verdict
+    unchanged (and no note) when the rule does not apply."""
+    from app.services.chatbot_prompt_vars import closed_list_items
+
+    entities = [e for e in verdict.get("entities") or [] if isinstance(e, dict)]
+    said = [e for e in entities if e.get("current_message") is not False]
+    schemes = [e for e in said if e.get("listed") == "cert_scheme" and str(e.get("canonical_code") or "").strip()]
+    if not schemes:
+        return verdict, None
+    product_ids, named = _asked_product_ids(db, said, held_products)
+    if not product_ids:
+        return verdict, None
+    scheme = str(schemes[0]["canonical_code"]).strip()
+    kinds = closed_list_items(db).get("cert_kind", {})
+    held = _held_certificates(db, product_ids, scheme)
+    if held:
+        # The certificates the scheme names for these products, read here through the link,
+        # are the scheme's resolution (`resolve_gate`): its word is never a record lookup.
+        # Typed `certificate`, the kind its rows are; the certificate kind beside it stays
+        # the file leg.
+        scheme_entity = {**schemes[0], "hint": "certificate", "certificate_uuids": held}
+        entities = [scheme_entity if e is schemes[0] else e for e in entities]
+        # What the products hold decides the parent, not the scheme's whole stock.
+        entities = _with_parent_kind(entities, scheme_entity, _parent_kind(db, scheme, kinds, held), kinds)
+        carried = [] if named else [
+            {"raw": p.get("canonical_code") or p.get("raw"), "hint": "product", "canonical_code": p.get("canonical_code"),
+             "current_message": True, "confident": True}
+            for p in held_products
+            if isinstance(p, dict) and p.get("uuid") and p.get("canonical_code")
+        ]
+        out = [*carried, *entities]
+        note = {"scheme": scheme, "held_by_products": True, "carried": len(carried)}
+    else:
+        # HELD-WITHOUT-SCHEME (crew ruling (b)): the products stay the subject and the scheme's
+        # certificates the filter; the engine says plainly that none is on record.
+        certificates = _scheme_certificates(db, scheme)
+        scheme_entity = {**schemes[0], "hint": "certificate", "certificate_uuids": certificates} if certificates else schemes[0]
+        entities = [scheme_entity if e is schemes[0] else e for e in entities]
+        entities = _with_parent_kind(entities, scheme_entity, _parent_kind(db, scheme, kinds), kinds)
+        carried = [] if named else [
+            {"raw": p.get("canonical_code") or p.get("raw"), "hint": "product", "canonical_code": p.get("canonical_code"),
+             "current_message": True, "confident": True}
+            for p in held_products
+            if isinstance(p, dict) and p.get("uuid") and p.get("canonical_code")
+        ]
+        out = [*carried, *entities]
+        codes = [str(e.get("canonical_code")).strip() for e in [*carried, *said] if str(e.get("hint") or "").strip().lower() == "product" and str(e.get("canonical_code") or "").strip()]
+        note = {"scheme": scheme, "held_by_products": False, "none_match": True, "products": list(dict.fromkeys(codes))}
+    return {**verdict, "entities": out}, note
+
+
+def scheme_without_product(db: "Session", verdict: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """SCHEME-NO-PRODUCT: a listed scheme pick asked as a file ask with no product named or
+    held (any product entity, said or carried, leaves the verdict as it is). The scheme's own
+    active certificates in the contact's companies become the fetch's filter (read through the scoped session, so another company's never appears); the tool's
+    own row limit bounds the reply. The verdict unchanged (and no note) otherwise; with no
+    certificate of the scheme in scope, the verdict unchanged and a `none_in_scope` note."""
+    if verdict.get("domain_hint") != "product_attachment":
+        return verdict, None
+    entities = [e for e in verdict.get("entities") or [] if isinstance(e, dict)]
+    said = [e for e in entities if e.get("current_message") is not False]
+    schemes = [e for e in said if e.get("listed") == "cert_scheme" and str(e.get("canonical_code") or "").strip()]
+    if not schemes or any(str(e.get("hint") or "").strip().lower() == "product" for e in entities):
+        return verdict, None
+    scheme = str(schemes[0]["canonical_code"]).strip()
+    certificates = _scheme_certificates(db, scheme)
+    if not certificates:
+        # The scheme list is the same for every company, so a scheme can be listed with no
+        # certificate of it in this contact's scope: said plainly by the engine, nothing sent.
+        return verdict, {"scheme": scheme, "held_by_products": False, "products": 0, "certificates": 0, "none_in_scope": True}
+    # Left typed as the attachment-type pick it is, so the ask stays a file ask: typed
+    # `certificate` it would read as the set "which products have this certificate". A product
+    # carried from an open pick is added later and skipped there (`with_carried_entities`).
+    from app.services.chatbot_prompt_vars import closed_list_items
+
+    kinds = closed_list_items(db).get("cert_kind", {})
+    scheme_entity = {**schemes[0], "certificate_uuids": certificates}
+    out = [scheme_entity if e is schemes[0] else e for e in entities]
+    # The parent kind rides on the scheme's own entity (B-2), never a second entity.
+    out = _with_parent_kind(out, scheme_entity, _parent_kind(db, scheme, kinds), kinds)
+    return {**verdict, "entities": out}, {"scheme": scheme, "held_by_products": False, "products": 0, "certificates": len(certificates)}

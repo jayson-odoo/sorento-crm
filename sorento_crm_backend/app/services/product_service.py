@@ -181,6 +181,7 @@ from app.schemas.product import (
 )
 from app.services.error_handler import handle_not_found, handle_conflict, AppException
 from app.services.company_scope import stamp_lookup_companies
+from app.services.contact_brand_scope import product_in_scope_clauses
 from app.schemas.common import PaginationResponse
 from app.models.user import SystemSetting
 from app.services.embedding_events import publish_embedding_event
@@ -2868,6 +2869,9 @@ class ProductAttachmentService:
             # get_product_attachments_by_product. Without this, "Move to Trash"d
             # files keep showing in product-attachment listings.
             ProductAttachment.attachment.has(Attachment.is_deleted == False),
+            # A brand-scoped session lists only in-brand products' rows: the brand rule sits
+            # on Product, which the joinedload LEFT JOIN does not filter on.
+            *product_in_scope_clauses(self.db, ProductAttachment.product_id),
         )
 
         if entity_buckets is not None and entity_buckets.product_codes:

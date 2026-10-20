@@ -2629,7 +2629,7 @@ def _outstanding_report_text(item: Any) -> str:
     return jsc.js_string(body.get("response") or "").strip()
 
 
-def _unplaced_token_has_neighbours(resolved: Any, gate: Any) -> bool:
+def _unplaced_token_has_neighbours(resolved: Any, gate: Any, only_token: str | None = None) -> bool:
     """True when a token the customer typed missed AND has real did-you-mean neighbours.
 
     AC-1703. The described-set branches below all assert something about the SET the
@@ -2663,6 +2663,8 @@ def _unplaced_token_has_neighbours(resolved: Any, gate: Any) -> bool:
     for res in _ms_miss_resolutions(r, gate=g):
         token = jsc.nullish_str(jsc.get(res, "token")).strip()
         if len(token) < 3 or not _CODE_RE.fullmatch(token):
+            continue
+        if only_token is not None and token.lower() != only_token.strip().lower():
             continue
         candidates = [
             *jsc.array(jsc.get(res, "matches")),
@@ -3116,6 +3118,48 @@ def near_miss_sentence(near: Any, require: dict[str, Any]) -> str:
     return f"{said} {counted} {has_what} in another {label.lower()}: {others}."
 
 
+def token_labeller(r: Any, all_ents: Any) -> tuple[Any, Any, Any]:
+    """`(type_of_token, raw_of_token, label_token)` for the words a miss names: `"zzqq999" (product)`.
+    One definition for the not-found message and for any other reply that names an unplaced word."""
+    # FIRST-wins on a normalised-key collision (a plain map built from `.map()` would keep
+    # the LAST entity instead, letting this node and the tail disagree on which entity a
+    # token names). Keyed under BOTH `raw` and `canonical_code`, mirroring what
+    # `resolve-entity` is SENT.
+    by_raw_stripped: dict[str, Any] = {}
+    for entity in all_ents:
+        key = _type_norm(jsc.get(entity, "raw"))
+        if key not in by_raw_stripped:
+            by_raw_stripped[key] = entity
+        code_key = _type_norm(jsc.get(entity, "canonical_code"))
+        if code_key and code_key not in by_raw_stripped:
+            by_raw_stripped[code_key] = entity
+
+    def type_of_token(token: Any) -> str:
+        res = jsc.find(
+            jsc.array(jsc.get(r, "resolutions")),
+            lambda x: _type_norm(jsc.get(x, "token")) == _type_norm(token),
+        )
+        matches = jsc.get(res, "matches") if jsc.truthy(res) else None
+        first = matches[0] if isinstance(matches, list) and matches else None
+        if jsc.truthy(first) and jsc.truthy(jsc.get(first, "entity_type")):
+            return _prettify_type(jsc.get(first, "entity_type"))
+        hint = jsc.get(by_raw_stripped.get(_type_norm(token)), "hint")
+        return _prettify_type(jsc.js_string(hint)) if jsc.truthy(hint) else ""
+
+    def raw_of_token(token: Any) -> Any:
+        entity = by_raw_stripped.get(_type_norm(token))
+        raw = jsc.get(entity, "raw")
+        return raw if jsc.truthy(raw) else token
+
+    def label_token(token: Any) -> str:
+        type_label = type_of_token(token)
+        return f'"{jsc.js_string(raw_of_token(token))}"' + (
+            f" ({type_label})" if type_label else ""
+        )
+
+    return type_of_token, raw_of_token, label_token
+
+
 def not_found_error_message(
     item: dict[str, Any] | None,
     *,
@@ -3528,6 +3572,10 @@ def not_found_error_message(
             entity_type = jsc.get(c, "entity_type")
             entity_type = entity_type if jsc.truthy(entity_type) else "item"
             base = disp_by_uuid.get(jsc.get(c, "uuid"))
+            if jsc.truthy(jsc.get(c, "set_code")):
+                # CHAT-CODE-LOOKUP R2: a product set read as its members is named by the code
+                # the customer typed (the set's), one label for all its members.
+                base = jsc.get(c, "set_code")
             if not jsc.truthy(base):
                 # Hand pass 12, Group F: `disp_by_uuid` is built from the RESOLVER's own
                 # matches (`r["resolutions"]`), empty on a turn that resolved nothing
@@ -3733,41 +3781,7 @@ def not_found_error_message(
         not_found_raw = [t for t in unresolved if _nf_norm_raw(t) not in resolved_toks]
         use_breakdown = len(found_lines) > 0
 
-        # FIRST-wins on a normalised-key collision (a plain map built from `.map()` would keep
-        # the LAST entity instead, letting this node and the tail disagree on which entity a
-        # token names). Keyed under BOTH `raw` and `canonical_code`, mirroring what
-        # `resolve-entity` is SENT.
-        by_raw_stripped: dict[str, Any] = {}
-        for entity in all_ents:
-            key = _type_norm(jsc.get(entity, "raw"))
-            if key not in by_raw_stripped:
-                by_raw_stripped[key] = entity
-            code_key = _type_norm(jsc.get(entity, "canonical_code"))
-            if code_key and code_key not in by_raw_stripped:
-                by_raw_stripped[code_key] = entity
-
-        def type_of_token(token: Any) -> str:
-            res = jsc.find(
-                jsc.array(jsc.get(r, "resolutions")),
-                lambda x: _type_norm(jsc.get(x, "token")) == _type_norm(token),
-            )
-            matches = jsc.get(res, "matches") if jsc.truthy(res) else None
-            first = matches[0] if isinstance(matches, list) and matches else None
-            if jsc.truthy(first) and jsc.truthy(jsc.get(first, "entity_type")):
-                return _prettify_type(jsc.get(first, "entity_type"))
-            hint = jsc.get(by_raw_stripped.get(_type_norm(token)), "hint")
-            return _prettify_type(jsc.js_string(hint)) if jsc.truthy(hint) else ""
-
-        def raw_of_token(token: Any) -> Any:
-            entity = by_raw_stripped.get(_type_norm(token))
-            raw = jsc.get(entity, "raw")
-            return raw if jsc.truthy(raw) else token
-
-        def label_token(token: Any) -> str:
-            type_label = type_of_token(token)
-            return f'"{jsc.js_string(raw_of_token(token))}"' + (
-                f" ({type_label})" if type_label else ""
-            )
+        type_of_token, raw_of_token, label_token = token_labeller(r, all_ents)
 
         # State the SEARCH SCOPE, so "nothing matched" cannot be read as "nothing matched in
         # the one company you were thinking of". Empty on a single-company turn.
@@ -3934,13 +3948,22 @@ def not_found_error_message(
         vague_unresolved = [
             t for t in unresolved if jsc.get(by_raw.get(_nf_norm_raw(t)), "confident") is False
         ]
+        if jsc.truthy(jsc.get(q, "closed_lists")):
+            # CLOSED LISTS: an unsure token the resolver has real neighbours for is a
+            # mistyped code, so it takes the did-you-mean below, not the vague clarify.
+            # Only when EVERY unsure token has neighbours: otherwise the clarify names them all.
+            if all(_unplaced_token_has_neighbours(r, g, t) for t in vague_unresolved):
+                vague_unresolved = []
 
         if len(vague_unresolved) > 0:
             is_clarification = True  # so escalate-catalog's is_escalate_offer is false
             labels = _human_list(
                 [_prettify_type(t) for t in (allowed_types if isinstance(allowed_types, list) else [])]
             )
-            captured = ", ".join(jsc.js_string(t) for t in vague_unresolved)
+            # CLOSED LISTS: each unsure word is quoted on its own ("a", "b"), never one quoted run.
+            captured = (
+                '", "' if jsc.truthy(jsc.get(q, "closed_lists")) else ", "
+            ).join(jsc.js_string(t) for t in vague_unresolved)
             unresolved_set = {_nf_norm_raw(t) for t in unresolved}
             resolved_ents = [
                 e

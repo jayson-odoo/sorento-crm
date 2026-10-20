@@ -33,6 +33,7 @@ from app.services.chatbot.turn.decide import (
     DOCUMENT_BY_SCOPE,
     NEW_ASK,
     OUTSTANDING_KINDS,
+    REFINE,
     EVERYTHING,
     FAMILY,
     Decision,
@@ -1078,6 +1079,11 @@ def _focus_rules(
     replaced_kinds = {kind for kind in by_kind if kind not in picked_kinds}
     for kind in replaced_kinds:
         _set_kind_field(focus, kind, by_kind[kind])
+    # CLOSED LISTS: a kind this message named and grounding dropped replaces the axis with nothing.
+    for kind in verdict.get("dropped_kinds") or []:
+        if kind not in by_kind and kind not in picked_kinds:
+            _set_kind_field(focus, kind, [])
+            trace.rules_fired.append(f"dropped_{kind}_clears_axis")
     # MULTI-CODE-DYM Q3 (owner, 4 Oct 2026): "2 and SRTWC286-SH-150" picks one option AND
     # names a code of its own. The typed code that is not the picked row's own word is a
     # second subject, answered beside the pick, never dropped.
@@ -1130,6 +1136,10 @@ def _focus_rules(
             # Per KIND, not per row: every settled row of that kind stays (an echo of a
             # few of fifty listed products keeps the fifty, as ATTACH-SET round 2 wants).
             kept_kinds = set(by_kind) | restated_kinds(verdict)
+            if verdict.get("closed_lists") and set(by_kind) == {"attachment_type"}:
+                # CLOSED LISTS: a message whose only entities are file types says what to
+                # answer, not about what, so the held product stays its subject.
+                kept_kinds.add("product")
             for kind, attr in KIND_FIELD_MAP.items():
                 if kind in kept_kinds:
                     continue
@@ -1805,8 +1815,9 @@ def _reconcile_step(
     trace: Trace,
     *,
     turn_no: int,
+    exact: dict[str, dict[str, int]] | None = None,
 ):
-    result = apply_reconciliation(entities, resolved)
+    result = apply_reconciliation(entities, resolved, exact=exact)
     trace.reconciled = result.reconciled
 
     if result.kind_pick_options is not None and _named_teams(verdict):
@@ -2304,6 +2315,7 @@ def _narrow_and_plan(
     candidates: dict[str, list[dict[str, Any]]] | None = None,
     unplaced: frozenset[str] | set[str] | None = None,
     refuse_empty_subject: bool = False,
+    held_product_uuids: frozenset[str] = frozenset(),
 ) -> Plan:
     denied: list[str] = []
     ask: Pending | None = None
@@ -2349,6 +2361,7 @@ def _narrow_and_plan(
                 # rosters already read through `roster_caps` - never `narrow.py`'s
                 # module literal.
                 roster_cap=getattr(policy.kind(kind), "roster_cap", None),
+                held_uuids=held_product_uuids if kind == "product" else frozenset(),
             )
             trace.narrowing.append(f"{name}.{kind}:{outcome.note or policy_value}")
             if outcome.ask_kind:
@@ -3297,6 +3310,7 @@ def apply(
     resolved: dict[str, dict[str, int]] | None = None,
     candidates: dict[str, list[dict[str, Any]]] | None = None,
     unplaced: frozenset[str] | set[str] | None = None,
+    exact: dict[str, dict[str, int]] | None = None,
 ):
     """`_apply`, and for a contact whose escalation is barred (ESCALATION-CONTROL, owner
     30 Sep 2026) no offer survives it: an escalation offer still open from an earlier
@@ -3304,12 +3318,12 @@ def apply(
     asked, carried or routed to on the way out. The forced path (`_lane`) lands on
     "escalation_barred" whichever door it came through."""
     if not escalation_barred(state.profile):
-        return _apply(state, verdict, policy, resolved, candidates, unplaced)
+        return _apply(state, verdict, policy, resolved, candidates, unplaced, exact)
     open_question, _dropped = without_escalation(state.pending)
     closed = open_question is not state.pending
     if closed:
         state = replace(state, pending=open_question)
-    new_state, plan = _apply(state, verdict, policy, resolved, candidates, unplaced)
+    new_state, plan = _apply(state, verdict, policy, resolved, candidates, unplaced, exact)
     if closed:
         plan.trace.rules_fired.append("escalation_barred_offer_closed")
     ask, _asked = without_escalation(plan.ask)
@@ -3335,6 +3349,7 @@ def _apply(
     resolved: dict[str, dict[str, int]] | None = None,
     candidates: dict[str, list[dict[str, Any]]] | None = None,
     unplaced: frozenset[str] | set[str] | None = None,
+    exact: dict[str, dict[str, int]] | None = None,
 ):
     """`unplaced` is the resolver's own verdict about the tokens THIS message named and
     could not place (`turn_runtime.unplaced_tokens`, folded). It is read at one seam
@@ -3428,6 +3443,12 @@ def _apply(
         # own subject reading is bypassed. why="state_changes" keeps `starts_fresh` False,
         # so the carry eviction in `_focus_rules` cannot fire.
         decision = replace(decision, kind=state.state_led, why="state_changes")
+    elif getattr(state, "state_gate", False) and decision.kind != ANSWER:
+        # CHAT-STATE r6 S5: under the state gate decide()'s standing-subject table (its
+        # refine-of-standing-subject row included) stands down too. An `answer` the open
+        # question did not take, or a rejected change set, keeps every held axis and fills
+        # what the message typed (card R1 / R5): a refine of it, a carry when it typed nothing.
+        decision = replace(decision, kind=REFINE if decision.entities else CARRY, why="state_changes")
     trace.decision = decision.as_trace()
 
     refused = _stock_pick_refuses_all(state, verdict, decision, trace)
@@ -3446,6 +3467,8 @@ def _apply(
     # read the subject - and its result is written back onto the focus AFTER
     # `_focus_rules`, which empties every other axis on a topic reset and would take
     # the tasks with it.
+    from app.services.chatbot.class_named import names_own_class
+
     task_outcome = task_mod.run(
         tuple(state.focus.tasks or ()),
         verdict,
@@ -3453,12 +3476,21 @@ def _apply(
         positions=list(decision.positions) if decision.answers else [],
         pending=state.pending,
         turn_no=state.turn_no,
+        # CHAT-CLOSED-LISTS R6-3 (a class ask is not the held product at a new number), read off
+        # the state gate only: under it the ops decide, as decide()'s table stands down above.
+        class_ask=(
+            not getattr(state, "state_gate", False)
+            and bool(verdict.get("closed_lists"))
+            and names_own_class(verdict.get("entities") or [])
+        ),
     )
     trace.rules_fired.extend(task_outcome.rules)
 
     verdict_entities = list(verdict.get("entities") or [])
+    # Crew ruling a41487222 (a): the reconciliation is data-led (R11 kind pick, R15 retype), so
+    # it runs on the state path too; the retype needs an exact whole-token hit (`exact`).
     entities, domain_override, reconcile_short_circuit = _reconcile_step(
-        verdict_entities, resolved, policy, verdict, trace, turn_no=state.turn_no
+        verdict_entities, resolved, policy, verdict, trace, turn_no=state.turn_no, exact=exact
     )
     if reconcile_short_circuit is not None:
         # #1262 slice 8 (F1b siblings): a kind pick over ONE ambiguous token
@@ -3687,18 +3719,36 @@ def _apply(
     # set to the brand, counted the same way the offer counted it, never a new set of
     # everything the brand has.
     chosen_brand = verdict.get("set_brand")
-    if carried_set and isinstance(chosen_brand, str) and chosen_brand:
+    # The state path carries a LIST (every brand the parser named, one re-run); main's path
+    # carries the one brand string it always did.
+    brand_names = [chosen_brand] if isinstance(chosen_brand, str) else list(chosen_brand) if isinstance(chosen_brand, list) else []
+    brand_names = [b for b in brand_names if isinstance(b, str) and b]
+    if carried_set and brand_names:
         key = dict(carried_set.get("set_key") or {})
         domain = key.get("domain")
         if domain:
-            offered = next(
-                (o for o in key.get("other_brands") or [] if str(o.get("brand") or "").lower() == chosen_brand.lower()),
-                {},
-            )
+            offered_rows = [
+                o for o in key.get("other_brands") or []
+                if isinstance(o, dict) and str(o.get("brand") or "").lower() in {b.lower() for b in brand_names}
+            ]
+            own_brand = key.get("brand")
+            if (
+                isinstance(chosen_brand, list)
+                and isinstance(own_brand, str)
+                and own_brand.lower() in {b.lower() for b in brand_names}
+                and not any(str(o.get("brand") or "").lower() == own_brand.lower() for o in offered_rows)
+            ):
+                # State path: the set's own brand counts with the set's own total.
+                offered_rows.append({"brand": own_brand, "count": key.get("total") or 0})
             for stale in ("offer_only", "other_brands"):
                 key.pop(stale, None)
             key.update(
-                {"brand": chosen_brand, "brand_default": False, "shown": 0, "total": int(offered.get("count") or 0)}
+                {
+                    "brand": chosen_brand if isinstance(chosen_brand, str) else brand_names,
+                    "brand_default": False,
+                    "shown": 0,
+                    "total": sum(int(o.get("count") or 0) for o in offered_rows),
+                }
             )
             trace.rules_fired.append("set_brand_chosen")
             return new_state, Plan(
@@ -3755,6 +3805,15 @@ def _apply(
         attributes,
         candidates,
         unplaced,
+        # HELD-FAMILY: the products the conversation held BEFORE this message; none when
+        # the parser read the message as asking for the whole family.
+        held_product_uuids=(
+            frozenset()
+            if verdict.get("family") is True or verdict.get("broaden_to") or not verdict.get("closed_lists")
+            else frozenset(
+                str(p["uuid"]) for p in state.focus.products or [] if isinstance(p, dict) and p.get("uuid")
+            )
+        ),
         # Ported from PR #1118 (not merged), review round 9 finding 4 / D34 round 11:
         # a bare quantity with nothing open, or a cancel that names nothing, is not a
         # subject - see `_narrow_and_plan`'s own comment on `refuse_empty_subject`.

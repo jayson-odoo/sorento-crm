@@ -40,6 +40,7 @@ from app.services.chatbot.contracts import (
     named_count,
 )
 from app.services.chatbot.turn.apply import names_its_own_ask
+from app.services.chatbot.turn.chat_state import CARRIED_QUANTITY_KEY
 from app.services.chatbot.turn.decide import RESTATED_KINDS_KEY, picked_positions
 from app.services.chatbot.turn.pending import (
     OFFER_KINDS,
@@ -1311,7 +1312,10 @@ def with_set_count_from_text(
     count, the count is that number and no position is picked. A message that names
     anything else (a subject, a word the regex does not know) is left to the parser.
     """
-    if not isinstance(carried, dict) or not isinstance(message, str):
+    from app.services.chatbot.user_turn import first_text_line_of
+
+    line = first_text_line_of(message)
+    if not isinstance(carried, dict) or line is None:
         return verdict
     echoed = any(isinstance(e, dict) and e.get("current_message") is True for e in (verdict.get("entities") or []))
     # CLASS-HINT-KIND-PICK R2 (CHATBOT-TRIO console case 12, 7 Oct 2026): the parser read
@@ -1345,10 +1349,9 @@ def with_set_count_from_text(
         return {**base, "top_n": more, "reference_positions": [], SET_CONTINUE_KEY: True}
     if shown == 0 and named_count(verdict.get("top_n")) is not None:
         return base
-    # Line 1 is the customer's own text; a quoted "reply to: ..." rides on line 2
-    # (`engine.build_latest_user_message`).
-    lines = message.strip().splitlines()
-    match = _BARE_COUNT_RE.match(lines[0].strip()) if lines else None
+    # The turn's first text line (CHAT-STATE r6 S6, `UserTurn.first_text_line`): line 1 is
+    # the customer's own text, a quoted "reply to: ..." rides on line 2.
+    match = _BARE_COUNT_RE.match(line.strip()) if line else None
     if not match:
         return verdict
     count = int(match.group(1))
@@ -1397,9 +1400,12 @@ def set_clarify_carry(verdict: dict[str, Any], predicate: Any, resolved: Any) ->
     options = [o for o in options if o]
     if not term or not options:
         return None
+    from app.services.chatbot.turn.chat_state import without_mark
+
     ask = {key: verdict.get(key) for key in _CLARIFY_ASK_KEYS}
+    # Stored in the session: the State applier's internal mark (`KEPT_ASIDE`) never is.
     ask["entities"] = [
-        dict(e)
+        without_mark(e)
         for e in (verdict.get("entities") or [])
         if isinstance(e, dict) and e.get("current_message") is True
     ]
@@ -1423,13 +1429,15 @@ def with_clarify_answer(verdict: dict[str, Any], message: Any, *, carried: Any) 
     the question's own ask again, "any water tap basin" with "water tap basin" read as
     "tap", so the customer gets the counted set ("2 taps have stock."). A message that is
     not one of the options is a question of its own and is left to the parser."""
-    if not isinstance(carried, dict) or not isinstance(message, str):
+    from app.services.chatbot.user_turn import first_text_line_of
+
+    line = first_text_line_of(message)
+    if not isinstance(carried, dict) or line is None:
         return verdict
     term = jsc.nullish_str(carried.get("term")).strip()
     options = [o for o in (carried.get("options") or []) if isinstance(o, str) and o]
     ask = carried.get("ask") if isinstance(carried.get("ask"), dict) else None
-    lines = message.strip().splitlines()
-    words = re.findall(r"[a-z0-9]+", lines[0].lower()) if lines else []
+    words = re.findall(r"[a-z0-9]+", line.lower()) if line else []
     while words and words[0] in _CLARIFY_LEAD_WORDS:
         words = words[1:]
     reply = " ".join(words)
@@ -1504,11 +1512,11 @@ _CONTINUE_COUNT_RE = re.compile(
 
 
 def set_continue_count(message: Any) -> int | None:
-    """The count in an "another N" message, or None."""
-    if not isinstance(message, str):
-        return None
-    lines = message.strip().splitlines()
-    match = _CONTINUE_COUNT_RE.search(lines[0]) if lines else None
+    """The count in an "another N" message, or None (`UserTurn.first_text_line`)."""
+    from app.services.chatbot.user_turn import first_text_line_of
+
+    line = first_text_line_of(message)
+    match = _CONTINUE_COUNT_RE.search(line) if line else None
     if not match:
         return None
     count = int(match.group(1) or match.group(2))
@@ -2362,7 +2370,7 @@ def company_names_by_uuid(resolved: Any) -> dict[str, str]:
 
 
 def _without_guesses(
-    compatible: list[dict[str, Any]], resolved: Any, unplaced: dict[str, str]
+    compatible: list[dict[str, Any]], resolved: Any, unplaced: dict[str, str], *, listed_scheme_placed: bool = False
 ) -> list[dict[str, Any]]:
     """`compatible` minus the rows that ONLY a guess matched.
 
@@ -2394,6 +2402,8 @@ def _without_guesses(
     """
     if not unplaced:
         return compatible
+    from app.services.chatbot.lanes.business.resolve_gate import LISTED_SCHEME_FIELDS
+
     described = jsc.get(resolved, "predicate")
     qualifying = jsc.get(described, "qualifying_total") if isinstance(described, dict) else None
     set_answered = isinstance(qualifying, int) and not isinstance(qualifying, bool) and qualifying > 0
@@ -2406,7 +2416,14 @@ def _without_guesses(
         # recording that lists no `tokens` at all must not turn every resolution it
         # DOES carry into a guess.
         phrase = bool(asked) and token not in asked and not set_answered
-        bucket = guessed if (token in unplaced or phrase) else placed
+        # CHAT-CLOSED-LISTS F3-b: a listed scheme and its parent kind never reach the resolver,
+        # so their rows (`resolve_gate.listed_scheme_resolutions`) sit under tokens it was not
+        # asked; under the state gate (`listed_scheme_placed`) they are the engine's data read,
+        # not a phrase guess. Off it the rule stays #1755's.
+        listed = listed_scheme_placed and bool(jsc.array(jsc.get(resolution, "matches"))) and all(
+            jsc.get(m, "match_field") in LISTED_SCHEME_FIELDS for m in jsc.array(jsc.get(resolution, "matches"))
+        )
+        bucket = guessed if (token in unplaced or (phrase and not listed)) else placed
         for match in jsc.array(jsc.get(resolution, "matches")):
             uuid = jsc.nullish_str(jsc.get(match, "uuid")).strip()
             if uuid:
@@ -2442,6 +2459,10 @@ class ResolveOutcome:
     # this message named that the resolver cut at its ceiling and never looked up
     # (`not_checked_tokens`). Empty on the two early returns, like `unplaced_tokens`.
     not_checked: dict[str, str] = field(default_factory=dict)
+    # Review M2 (CHAT-STATE r6 S5 review): `resolved_kinds` counting only the resolver's EXACT
+    # whole-token hits (the token IS that row's code or name), what reconciliation's hint
+    # narrowing and single-kind retype need (`turn/reconcile.apply_reconciliation`'s `exact`).
+    exact_kinds: dict[str, dict[str, int]] = field(default_factory=dict)
 
 
 _CUSTOMER_OWNED_SO_KINDS = frozenset({"sales_order"})
@@ -2554,6 +2575,23 @@ def _without_foreign_sales_orders(
     return out
 
 
+def _whole_token_hit(token: str, match: Any) -> bool:
+    """Is this resolver match an EXACT whole-token hit: the resolver's own exact tier, or the
+    token, folded, IS the row's code or one of its names / codes / numbers as a whole, never a
+    substring or prefix of one (review M2: "basin" inside the code ZZBASINWC1 is not a product)."""
+    key = _token_key(token)
+    if not key:
+        return False
+    if jsc.nullish_str(jsc.get(match, "match_tier")).strip().lower() == "exact":
+        return True
+    display = jsc.get(match, "display")
+    values = [jsc.get(match, "canonical_code")] + [
+        v for k, v in (display.items() if isinstance(display, dict) else ())
+        if isinstance(k, str) and k.endswith(("name", "code", "number", "_no", "ref"))
+    ]
+    return any(isinstance(v, str) and _token_key(v) == key for v in values)
+
+
 def resolve_kinds(
     db: Session,
     *,
@@ -2571,6 +2609,7 @@ def resolve_kinds(
     po_ref_scope_linked: Any = _SAME_AS_LINKED,
     hide_customers: bool = False,
     skip_customer_probe: bool = False,
+    listed_scheme_placed: bool = False,
 ) -> ResolveOutcome:
     """Ask the resolver what each named token actually IS (AC-1527).
 
@@ -2822,6 +2861,7 @@ def resolve_kinds(
         if key and hint:
             hint_by_key.setdefault(key, hint)
     by_token: dict[str, dict[str, int]] = {}
+    exact_by_token: dict[str, dict[str, int]] = {}
     for resolution in jsc.array(jsc.get(resolved, "resolutions")):
         token = jsc.nullish_str(jsc.get(resolution, "token")).strip()
         if not token:
@@ -2837,11 +2877,14 @@ def resolve_kinds(
             if hinted and (kind in fan_out or brand_word):
                 kind = hinted
             hits[kind] = hits.get(kind, 0) + 1
+            if _whole_token_hit(token, match):
+                exact = exact_by_token.setdefault(token, {})
+                exact[kind] = exact.get(kind, 0) + 1
 
     gate = payload.get("gate") if isinstance(payload.get("gate"), dict) else {}
     compatible = [e for e in jsc.array(gate.get("compatible_entities")) if isinstance(e, dict)]
     unplaced = named_unplaced(entities, resolved)
-    compatible = _without_guesses(compatible, resolved, unplaced)
+    compatible = _without_guesses(compatible, resolved, unplaced, listed_scheme_placed=listed_scheme_placed)
     if is_order_domain and live_brands_read:
         # #1262 fix lane round 3, S5: a brand word that is NOT on the live list, typed
         # beside one that is ("Sorento and XYZ"), must be said back like any other
@@ -2977,6 +3020,9 @@ def resolve_kinds(
             continue
         echoed = next((t for t in by_token if _token_key(t) == key), None)
         by_token[echoed if echoed is not None else word] = {"brand": 1}
+        # A live brand named exactly is an exact whole-token hit (merged beside the token's
+        # other exact kinds, never replacing them).
+        exact_by_token.setdefault(echoed if echoed is not None else word, {})["brand"] = 1
         unplaced.pop(key, None)
         unplaced.pop(_token_key(jsc.nullish_str(e.get("raw")).strip()), None)
 
@@ -2999,6 +3045,7 @@ def resolve_kinds(
         spec_tier_matched(resolved),
         payload,
         not_checked=not_checked_tokens(entities, resolved),
+        exact_kinds=exact_by_token,
     )
 
 
@@ -3103,6 +3150,11 @@ def candidates_by_kind(
         family = row.get("uuids")
         if isinstance(family, list) and family:
             built["uuids"] = list(family)
+        if row.get("set_code"):
+            # CHAT-CODE-LOOKUP R2: a member of the product set the customer typed.
+            built["set_code"] = row["set_code"]
+            if row.get("set_codes"):
+                built["set_codes"] = list(row["set_codes"])
         # Finding 3 (owner, hand-pass 1): the gate carries the resolver's own human
         # label as `display_name` - for customers only, by `gate._display_name`'s rule,
         # because a customer's `canonical_code` is an ACCOUNT code the customer never
@@ -3169,6 +3221,77 @@ def stamp_customer_options(
                 option["stamp"] = value
         out.append(option)
     return out
+
+
+def file_type_ask(db: Session, ask: Any, focus: Any) -> Any:
+    """`ask`, a "which kind of file?" question given the file types the subject products
+    really carry as its numbered options (CHAT-CLOSED-LISTS card R3, crew Q3 (a), 17 Oct
+    2026), or `ask` itself when it is another question, already has options, or no product
+    on the focus has a file. Each option is the roster shape a picked option becomes an
+    entity from (`turn/apply._answer_pending`): a bare "2" fetches that type."""
+    from dataclasses import replace
+
+    from app.models.product import ProductAttachment
+    from app.models.resources import Attachment, AttachmentType
+
+    if getattr(ask, "kind", None) != "attachment_type_ask" or getattr(ask, "options", None):
+        return ask
+    from sqlalchemy import func
+
+    from app.models.product import Product, chat_searchable_products
+
+    from sqlalchemy import or_
+
+    rows_in_focus = [row for row in getattr(focus, "products", None) or [] if isinstance(row, dict)]
+    uuids = [str(row["uuid"]) for row in rows_in_focus if row.get("uuid")]
+    # The ask is raised before the resolver runs, so a product named this turn has its
+    # code and no uuid yet: the code, whole (case aside). Either way the product is read
+    # through the ORM here, so the contact's company AND brand scope and the chat rule
+    # apply to every product the roster is built from (security review, 17 Oct 2026).
+    codes = {
+        str(row.get("canonical_code") or row.get("raw") or "").strip().upper()
+        for row in rows_in_focus
+        if not row.get("uuid")
+    } - {""}
+    if not uuids and not codes:
+        return ask
+    product_ids = [
+        str(pid)
+        for (pid,) in db.query(Product.id)
+        .filter(
+            or_(
+                *([Product.id.in_(uuids)] if uuids else []),
+                *([func.upper(Product.product_code).in_(codes)] if codes else []),
+            ),
+            chat_searchable_products(),
+        )
+        .all()
+    ]
+    if not product_ids:
+        return ask
+    rows = (
+        db.query(AttachmentType.id, AttachmentType.code, AttachmentType.type_name)
+        .join(Attachment, Attachment.attachment_type_id == AttachmentType.id)
+        .join(ProductAttachment, ProductAttachment.attachment_id == Attachment.id)
+        .filter(ProductAttachment.product_id.in_(product_ids), Attachment.is_deleted.isnot(True))
+        .distinct()
+        .order_by(AttachmentType.type_name)
+        .all()
+    )
+    if not rows:
+        return ask
+    options = [
+        {
+            "position": i,
+            "entity_type": "attachment_type",
+            "code": code or name,
+            "uuid": str(type_id),
+            "name": name,
+            "label": name,
+        }
+        for i, (type_id, code, name) in enumerate(rows, start=1)
+    ]
+    return replace(ask, options=options)
 
 
 def stamp_customer_ask(
@@ -3389,6 +3512,29 @@ def _spec_quantities(
             prefixed = [uuid for uuid, code in resolved_codes.items() if token in _token_key(code)]
         if len(prefixed) == 1 and prefixed[0] not in quantities:
             quantities[prefixed[0]] = quantity
+    return {**out, "requested_quantities": quantities} if quantities else out
+
+
+def _carried_quantities(out: dict[str, Any], carried: Any, entities: list[dict[str, Any]]) -> dict[str, Any]:
+    """The LAST quantity source: what the State carried this turn (`chat_state.apply_changes`
+    decided it), joined to the placed uuid by the product's own code. A uuid the task or this
+    message already gave a quantity keeps it."""
+    by_code = carried.get("by_code") if isinstance(carried, dict) else None
+    if not by_code:
+        return out
+    keyed = {_token_key(str(code)): qty for code, qty in by_code.items()}
+    quantities = dict(out.get("requested_quantities") or {})
+    for e in entities:
+        uuid = e.get("uuid") if isinstance(e, dict) else None
+        if not isinstance(uuid, str) or not uuid or uuid in quantities:
+            continue
+        for name in ("code", "canonical_code", "raw"):
+            code = e.get(name)
+            if isinstance(code, str) and code.strip() and _token_key(code) in keyed:
+                value = _int(keyed[_token_key(code)])
+                if value is not None:
+                    quantities[uuid] = value
+                break
     return {**out, "requested_quantities": quantities} if quantities else out
 
 
@@ -3885,6 +4031,7 @@ def make_tool_runner(
         # product, resolved to uuids here - `lanes/business/fetch.py` reads it
         # straight off the lane input.
         lane_out = _spec_quantities(lane_out, spec, entities)
+        lane_out = _carried_quantities(lane_out, verdict.get(CARRIED_QUANTITY_KEY), entities)
         lane_ctx = {**lane_ctx, "parse": {**(lane_ctx.get("parse") or {}), "output": lane_out}}
         # R2: start from the resolver's own gate (gate_reason, require_specific,
         # customer_probe_entities, company_team, gate_debug, ...) - `compatible_entities`
@@ -4455,7 +4602,10 @@ def with_brand_from_offer(verdict: dict[str, Any], message: Any, *, carried: Any
     named there narrows the SAME set (`turn/apply.py`, `set_brand_chosen`), so the count
     in the offer and the narrowed answer are one count. A message that names a product,
     a class or any other subject is a new question and is left alone."""
-    if not isinstance(carried, dict) or not isinstance(message, str):
+    from app.services.chatbot.user_turn import first_text_line_of
+
+    line = first_text_line_of(message)
+    if not isinstance(carried, dict) or line is None:
         return verdict
     offered = (carried.get("set_key") or {}).get("other_brands") or []
     names = {str(o.get("brand") or "").strip().lower(): str(o.get("brand") or "").strip() for o in offered if isinstance(o, dict)}
@@ -4467,8 +4617,7 @@ def with_brand_from_offer(verdict: dict[str, Any], message: Any, *, carried: Any
             continue
         if str(e.get("hint") or "").strip().lower() != "brand":
             return verdict
-    lines = message.strip().splitlines()
-    words = [w for w in re.findall(r"[a-z0-9]+", lines[0].lower()) if w not in _BRAND_PICK_FILLER] if lines else []
+    words = [w for w in re.findall(r"[a-z0-9]+", line.lower()) if w not in _BRAND_PICK_FILLER] if line else []
     said = " ".join(words)
     chosen = names.get(said)
     if chosen is None:
@@ -4862,8 +5011,82 @@ def _restates_a_settled_row(entity: dict[str, Any], focus: Focus) -> bool:
     return False
 
 
+def focus_entities(
+    focus: Focus,
+    *,
+    unsettled_only: bool = False,
+    skip_kinds: frozenset[str] = frozenset(),
+    scheme_pick: bool = False,
+) -> tuple[list[dict[str, Any]], bool]:
+    """The focus's rows as carried entities (`current_message: false`), kinds in `skip_kinds`
+    left out, and whether a settled product was passed over. The one row-to-entity mapping
+    both `with_carried_entities` and the state path's `chat_state.fetch_entities` use."""
+    carried: list[dict[str, Any]] = []
+    # Every kind the focus holds, `extra` included. `KIND_FIELD_MAP` names four kinds
+    # and the rest of them live in the catch-all, so an `attachment_type` carried from
+    # "photos for srtwc286" was never handed to the resolver, never became an
+    # `attachment_type_ids` argument, and the answer to the product pick that followed
+    # listed Certification PDFs under a header that said "photo" (turns d77231ed /
+    # 2b9aaa96, 16 Sep 2026).
+    by_kind: list[tuple[str, list[Any]]] = [
+        (kind, getattr(focus, attr, []) or []) for kind, attr in KIND_FIELD_MAP.items()
+    ]
+    by_kind += [
+        (kind, rows or [])
+        for kind, rows in (getattr(focus, "extra", {}) or {}).items()
+        if isinstance(rows, list)
+    ]
+    product_scoped = unsettled_only and _holds_a_resolved_product_outside_a_set(focus)
+    settled_products = False
+    for kind, rows in by_kind:
+        if kind in skip_kinds:
+            # This turn's own words of the kind replace the carried ones.
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if scheme_pick and kind == "product" and not row.get("uuid"):
+                continue
+            if unsettled_only and row.get("uuid"):
+                settled_products = settled_products or kind == "product"
+                continue
+            if product_scoped and _is_a_bare_class_word(kind, row):
+                continue
+            code = row.get("canonical_code") or row.get("raw")
+            if not jsc.truthy(code):
+                continue
+            entity: dict[str, Any] = {
+                "raw": row.get("raw") or code,
+                "hint": kind,
+                "canonical_code": code,
+                "current_message": False,
+                "confident": True,
+            }
+            if row.get("uuid"):
+                entity["uuid"] = row["uuid"]
+            # Fix round 8 on PR #833: a grounded specification keeps its registry key and
+            # value, so "cert?" after "any gunmetal basin has incoming?" asks about the
+            # SAME gunmetal basins.
+            for name in ("spec_key", "spec_value", "spec_unit", "spec_label", "spec_words", "spec_known", "spec_any_keys"):
+                if name in row:
+                    entity[name] = row[name]
+            carried.append(entity)
+    return carried, settled_products
+
+
 def with_carried_entities(
     parse_output: dict[str, Any], focus: Focus, *, unsettled_only: bool = False
+) -> dict[str, Any]:
+    """The carry off the state path (its body is `carried_entities_except`). A turn on the
+    state path never runs either: its fetch reads the Subject (`chat_state.fetch_entities`)."""
+    return carried_entities_except(parse_output, focus, unsettled_only=unsettled_only)
+
+
+def carried_entities_except(
+    parse_output: dict[str, Any],
+    focus: Focus,
+    *,
+    unsettled_only: bool = False,
 ) -> dict[str, Any]:
     """What the RESOLVER is asked about on a turn that named nothing (contract 33, 35).
 
@@ -4908,54 +5131,13 @@ def with_carried_entities(
     )
     if parse_output.get("entities") and not domain_word_only:
         return _with_carried_document_types(parse_output, focus) if unsettled_only else parse_output
-    carried: list[dict[str, Any]] = []
-    # Every kind the focus holds, `extra` included. `KIND_FIELD_MAP` names four kinds
-    # and the rest of them live in the catch-all, so an `attachment_type` carried from
-    # "photos for srtwc286" was never handed to the resolver, never became an
-    # `attachment_type_ids` argument, and the answer to the product pick that followed
-    # listed Certification PDFs under a header that said "photo" (turns d77231ed /
-    # 2b9aaa96, 16 Sep 2026).
-    by_kind: list[tuple[str, list[Any]]] = [
-        (kind, getattr(focus, attr, []) or []) for kind, attr in KIND_FIELD_MAP.items()
-    ]
-    by_kind += [
-        (kind, rows or [])
-        for kind, rows in (getattr(focus, "extra", {}) or {}).items()
-        if isinstance(rows, list)
-    ]
-    product_scoped = unsettled_only and _holds_a_resolved_product_outside_a_set(focus)
-    settled_products = False
-    for kind, rows in by_kind:
-        if domain_word_only and kind == "attachment_type":
-            # This turn's own document word replaces the carried one.
-            continue
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            if unsettled_only and row.get("uuid"):
-                settled_products = settled_products or kind == "product"
-                continue
-            if product_scoped and _is_a_bare_class_word(kind, row):
-                continue
-            code = row.get("canonical_code") or row.get("raw")
-            if not jsc.truthy(code):
-                continue
-            entity: dict[str, Any] = {
-                "raw": row.get("raw") or code,
-                "hint": kind,
-                "canonical_code": code,
-                "current_message": False,
-                "confident": True,
-            }
-            if row.get("uuid"):
-                entity["uuid"] = row["uuid"]
-            # Fix round 8 on PR #833: a grounded specification keeps its registry key and
-            # value, so "cert?" after "any gunmetal basin has incoming?" asks about the
-            # SAME gunmetal basins.
-            for name in ("spec_key", "spec_value", "spec_unit", "spec_label", "spec_words", "spec_known"):
-                if name in row:
-                    entity[name] = row[name]
-            carried.append(entity)
+    scheme_pick = bool(parse_output.get("closed_lists")) and any(e.get("listed") == "cert_scheme" for e in own)
+    carried, settled_products = focus_entities(
+        focus,
+        unsettled_only=unsettled_only,
+        skip_kinds=frozenset({"attachment_type"}) if domain_word_only else frozenset(),
+        scheme_pick=scheme_pick,
+    )
     if domain_word_only and settled_products:
         # ATTACH-SET-BRAND-FOLLOWUP round 2 (owner hand test on the local copy, 7 Oct
         # 2026): the document word's subject is the SETTLED products the plan already

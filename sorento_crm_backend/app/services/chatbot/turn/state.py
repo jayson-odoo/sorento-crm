@@ -279,6 +279,33 @@ def reads_customer_po_refs(profile: "Profile | None") -> bool:
 
 
 @dataclass
+class Subject:
+    """What a state-led turn is about, written only by `chat_state.apply_changes`.
+
+    `source`: "ids" (explicit product uuids), "predicate" (a described set over brand /
+    class / spec / family) or "unresolved" (nothing to fetch by). `predicate` maps an axis to
+    typed rows, `{"value", "key", "hint", ...}`: the word as said or held, its registry key
+    (uuid, else code; None for a bare word), the entity kind, and a grounded spec's own
+    fields, so the fetch never re-reads the focus. The class is ONE axis. `provenance` maps
+    an axis (the predicate axes plus "product") to "held" / "said" / "offer"; a cleared axis
+    is absent. `product_tokens` are the named products with no key yet, `{"value", "key":
+    <code>, "hint": "product"}` (a held one stays a token until the resolver places it);
+    `unplaced` are the tokens the resolver could not place (set by `settle_subject`).
+    `kept_aside` are the words the applier saw this message type on a held axis under `keep`
+    (written only under keep): not a change, so the fetch drops exactly these."""
+
+    source: str = "unresolved"
+    product_ids: tuple[str, ...] = ()
+    product_tokens: tuple[dict[str, Any], ...] = ()
+    unplaced: tuple[dict[str, Any], ...] = ()
+    kept_aside: tuple[dict[str, Any], ...] = ()
+    predicate: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    scope: frozenset[str] = frozenset()
+    hidden: frozenset[str] = frozenset()
+    provenance: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
 class State:
     focus: Focus
     pending: Any = None
@@ -308,6 +335,22 @@ class State:
     # CHAT-STATE: a question the state change itself raises (an unclear held slot): the
     # engine asks it instead of fetching. Never serialised.
     slot_ask: Any = None
+    # CHAT-STATE r6 S5: the turn is under the state gate: the applier read the parser's ops over
+    # a State it showed (applied or rejected), so the legacy text rewriters stand down. False on
+    # a first ask over nothing shown, which runs exactly as without the key. Written only by
+    # `chat_state.apply_changes`; never serialised.
+    state_gate: bool = False
+    # CHAT-STATE r6 S4: who this contact is for the Subject, read by the engine ONCE per turn on
+    # the state path before the applier runs: its company scope (company ids) and its hidden
+    # keys ({"customer"} when it may not see other customers' rows or documents, V1-DOC-SCOPE).
+    # Only `chat_state` reads them, to write `Subject.scope` / `Subject.hidden`. Never serialised.
+    company_scope: frozenset[str] = frozenset()
+    hidden_keys: frozenset[str] = frozenset()
+    # CHAT-STATE r6: the typed subject the applier built from the focus and this turn's ops
+    # (`chat_state.py` is its only writer: `apply_changes`, `narrow_held_to_brands`,
+    # `settle_subject`); None off the state path. The fetch reads it (`fetch_entities`).
+    # Never serialised.
+    subject: "Subject | None" = None
 
 
 # --------------------------------------------------------------------------- #

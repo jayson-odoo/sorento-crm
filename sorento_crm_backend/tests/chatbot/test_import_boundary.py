@@ -48,20 +48,31 @@ ALLOWED = {
     # (engine H57), so there is no route through `/chat/turn` that exercises the queue.
     # Not core, not on any request path.
     "scripts/chatbot_queue_replay.py",
+    # CHAT-CLOSED-LISTS S3: publishes a parser version carrying the CLOSED LISTS section,
+    # which lives in the package (`head/closed_lists_prompt.py`) because the engine's gate
+    # reads the same marker. A developer tool, not core, not on any request path; it never
+    # moves a label.
+    "scripts/publish_closed_lists_prompt.py",
+    "scripts/publish_code_lookup_prompt.py",
     # CHAT-STATE (#1747): a maintenance script that publishes an unlabelled parser prompt
     # version (`head/chat_state_prompt`). Not core, not on any request path.
     "scripts/publish_chat_state_prompt.py",
+    # PARSER-TEMPLATE F1-A: publishes `head/parser_template.TEMPLATE` as an unlabelled parser
+    # version. Not core, not on any request path.
+    "scripts/publish_parser_template.py",
     # EVAL-BENCH (#1743) L1 replay: re-runs recorded parses through the engine with every LLM
     # call blocked, so it patches `llm_call`, `head.parser` and `grounding` directly; `/chat/turn`
     # has no seam for a recorded parse. A developer tool and its own test, not core, not on any
     # request path. Listed by file, not by directory, like the parity script above.
     "scripts/chatbot_eval/replay.py",
+    "scripts/chatbot_eval/parser_gold.py",
     "tests/chatbot_eval/test_replay.py",
     # EVAL-BENCH (#1745) live replay test: drives `replay.py live` through the real engine and
     # patches `engine`, `head.parser` and `lanes.ideate` directly to block the network and the
     # ideation offload; `/chat/turn` has no seam for those. Bench tooling, not core, not on a
     # request path. Listed by file, like `test_replay.py` above.
     "tests/chatbot_eval/test_replay_live.py",
+    "tests/chatbot_eval/test_parser_gold.py",
     # EVAL-SETS chained live turns (`replay.py live --chain`): same seams as test_replay_live.py, plus
     # `console_service._next_state`, the console's own reading of a dry-run session_patch, which the
     # chain must match. Bench tooling, not core, not on a request path. Listed by file.

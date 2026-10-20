@@ -81,8 +81,20 @@ class ParserConfig:
     provider: str
     model: str
     api_key: str
+    # CHAT-CLOSED-LISTS: the version carries the CLOSED LISTS section, so the user turn
+    # carries the candidate block and grounding validates picks against the lists.
+    closed_lists: bool = False
+    # CHAT-CODE-LOOKUP: the version also carries the CODE LOOKUP section (near codes are
+    # listed and a product pick is checked against the block). Only with closed_lists.
+    code_lookup: bool = False
+    # CHAT-CLOSED-LISTS S4b-v2: the gated version's own strict schema (`closed_lists_schema`),
+    # None for the production one.
+    json_schema: dict[str, Any] | None = None
     # CHAT-STATE: the prompt in use asks for `state_changes` (set by `resolve_config` in S5).
     state_block: bool = False
+    # PARSER-TEMPLATE F1-A: the version is the consolidated template (`head/parser_template`),
+    # whose rules decide what the engine's own re-readings of the message used to.
+    template: bool = False
 
 
 def _build_base_json_schema() -> dict[str, Any]:
@@ -785,6 +797,26 @@ TOLERATED_ABSENT: frozenset[str] = frozenset(
 )
 
 
+def closed_lists_schema(items: list[str], *, state: bool = False) -> dict[str, Any]:
+    """The strict schema of a CLOSED LISTS version: the production one (the CHAT-STATE one
+    when the version also asks for `state_changes`), with each entity's `listed_item` held
+    to the items the lists render (a JSON enum) or null. The provider then guarantees the
+    parser picks a listed file type, certificate kind or scheme, or none; no code ever maps
+    the customer's word to one (CHAT-CLOSED-LISTS card R2/R5)."""
+    import copy
+
+    schema = copy.deepcopy(PARSE_OUTPUT_JSON_SCHEMA_WITH_STATE if state else PARSE_OUTPUT_JSON_SCHEMA)
+    entity = schema["properties"]["entities"]["items"]
+    # No item at all is a null-only key: an enum of [null] alone is refused by some providers.
+    from app.services.chatbot.head.closed_lists_prompt import NOT_LISTED
+
+    entity["properties"]["listed_item"] = (
+        {"type": ["string", "null"], "enum": [*items, NOT_LISTED, None]} if items else {"type": "null"}
+    )
+    entity["required"] = [*entity["required"], "listed_item"]
+    return schema
+
+
 def resolve_config(
     db: Session, *, current_date: str, override_version_id: str | None = None
 ) -> ParserConfig:
@@ -818,15 +850,50 @@ def resolve_config(
     api_key = resolve_api_key(config, provider)
     if not api_key:
         raise ParserError(f"no API key configured for provider {provider!r}")
+    from app.services.chatbot.head import code_lookup_prompt
+    from app.services.chatbot.head.closed_lists_prompt import gate_on
+    from app.services.chatbot.head.parser_template import MARKER as TEMPLATE_MARKER
+
+    # The same one read as the state gate (#1747 R6): both gates and the text, one version.
+    closed_lists = gate_on(raw_template)
+    # CHAT-STATE: the literal on the prompt text (never on a message) opts the turn in.
+    state_block = HEADING in (raw_template or "")
+    json_schema = None
+    if closed_lists:
+        from app.services.chatbot_prompt_vars import closed_list_enum
+
+        json_schema = closed_lists_schema(closed_list_enum(db), state=state_block)
     return ParserConfig(
         system_prompt=system_prompt,
         prompt_version=prompt_version,
         provider=provider,
         model=model,
         api_key=api_key,
-        # CHAT-STATE: the literal on the prompt text (never on a message) opts the turn in.
-        state_block=HEADING in (raw_template or ""),
+        closed_lists=closed_lists,
+        code_lookup=closed_lists and code_lookup_prompt.gate_on(raw_template),
+        json_schema=json_schema,
+        state_block=state_block,
+        template=TEMPLATE_MARKER in (raw_template or ""),
     )
+
+
+def uses_closed_lists(db: Session, *, override_version_id: str | None = None) -> bool:
+    """CHAT-CLOSED-LISTS gate: does the version this turn runs carry the CLOSED LISTS
+    section? Read off the RAW template (the same resolution `render` makes), so no
+    rendered list value can switch it on."""
+    from app.services import ai_prompt_registry
+    from app.services.chatbot.head.closed_lists_prompt import gate_on
+
+    return gate_on(ai_prompt_registry.get_prompt(db, PROMPT_KEY, override_version_id=override_version_id).text)
+
+
+def uses_code_lookup(db: Session, *, override_version_id: str | None = None) -> bool:
+    """CHAT-CODE-LOOKUP gate: does the version this turn runs carry the CODE LOOKUP section
+    beside the CLOSED LISTS one? Read off the RAW template, like `uses_closed_lists`."""
+    from app.services import ai_prompt_registry
+    from app.services.chatbot.head.code_lookup_prompt import gate_on
+
+    return gate_on(ai_prompt_registry.get_prompt(db, PROMPT_KEY, override_version_id=override_version_id).text)
 
 
 def _subject_names(rows: Any) -> list[str]:
@@ -1087,7 +1154,8 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
             messages,
             temperature=0.0,
             max_tokens=PARSER_MAX_TOKENS,
-            json_schema=PARSE_OUTPUT_JSON_SCHEMA_WITH_STATE if config.state_block else PARSE_OUTPUT_JSON_SCHEMA,
+            json_schema=config.json_schema
+            or (PARSE_OUTPUT_JSON_SCHEMA_WITH_STATE if config.state_block else PARSE_OUTPUT_JSON_SCHEMA),
             json_schema_name=PARSE_OUTPUT_SCHEMA_NAME,
             # One cache bucket per published prompt version: every parse on it shares
             # the same static prefix (OpenAI only; the others ignore it).
