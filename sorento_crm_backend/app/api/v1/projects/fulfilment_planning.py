@@ -21,6 +21,7 @@ import logging
 import uuid
 from datetime import date
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any, Dict, Literal, Optional, Tuple
 
 from fastapi import APIRouter, Depends, Query
@@ -501,8 +502,17 @@ def _run_confirm_many(
     supply = ProjectSupplyService(db)
     any_per_order = any(entry.batch_id for entry in payload.orders)
 
+    def batch_of_entry(entry):
+        return entry.batch_id or (None if any_per_order else payload.batch_id)
+
+    def prepare_one(order, entry):
+        # OI-SPLIT-VIEW (UAC A4, A11, A12): every saved split edit of the order rides along,
+        # added once before the hold-back so a refused one is held back like any named line;
+        # beside a pending AutoCount batch too, as a line the batch does not carry.
+        return _with_split_edits(db, supply, order, entry)
+
     def write_one(order, entry):
-        resolved_batch_id = entry.batch_id or (None if any_per_order else payload.batch_id)
+        resolved_batch_id = batch_of_entry(entry)
         # `_confirm_with_possible_rejects` opens its OWN `UndoJournal` per branch (S1,
         # #978: `confirm_many` commits or rolls back each entry on its own, so a journal
         # opened HERE - inside that per-order try - never survives past this order's own
@@ -533,10 +543,9 @@ def _run_confirm_many(
         actor_user_id=actor_id,
         assert_can_act=lambda session, order: _assert_can_act_on(session, order, current_user),
         write=write_one,
+        prepare=prepare_one,
         # #1362 hold-back: an order answering a planning-change batch is applied whole.
-        can_hold_back=lambda entry: not (
-            entry.batch_id or (None if any_per_order else payload.batch_id)
-        ),
+        can_hold_back=lambda entry: not batch_of_entry(entry),
         preview=preview,
         raw_errors=raw_errors,
         describe_writes=describe_writes,
@@ -1279,6 +1288,71 @@ def _withdrawn_entries(db: Session, service: ProjectSupplyService, order, line_i
     ]
 
 
+def _with_split_edits(db: Session, service: ProjectSupplyService, order, payload: Any) -> Any:
+    """OI-SPLIT-VIEW (UAC A4, A5): the payload plus every line of the order whose saved split
+    edit a Confirm applies (`LineSplitService.split_edited_line_ids`, the set the board's
+    `split_edited` flag reads) and that the body does not already name, withdraw, cancel or
+    scope out (`only_line_ids`). Each is re-posted with its active decision's composition (a
+    whole Buy: only such a line's plan becomes purchasing's rows), so the engine acts on the
+    edited plan exactly as for a named line (#1749 AC-G15).
+
+    A11: run ONCE per order, BEFORE the hold-back (`_write_holding_back`), never inside its
+    retry: an added line is then an ordinary named line the hold-back can drop when the
+    recheck refuses it, and a held-back line is never added back. Confirm calls it before
+    its hold-back; Confirm all and Simulate through `confirm_many`'s `prepare`.
+
+    A12: a press answering a pending AutoCount batch adds them too. A line the batch names
+    pending is never split-edited (A9), so what is added is a line the batch does not carry:
+    `_confirm_a_planning_change` posts it beside the batch (`extra`), the batch's undecided
+    rows stay pending and the batch stays open."""
+    from app.schemas.project_supply import ConfirmLine
+    from app.services.project_line_split_service import LineSplitService
+
+    lines = list(getattr(payload, "lines", None) or [])
+    taken = {str(line.project_line_id) for line in lines}
+    taken |= {str(x) for x in (getattr(payload, "rejected_line_ids", None) or [])}
+    taken |= {
+        str(x.project_line_id) for x in (getattr(payload, "cancelled_lines", None) or [])
+    }
+    edited = LineSplitService(db).split_edited_line_ids(
+        str(line.id) for line in service.lines_of(str(order.id))
+    ) - taken
+    only = getattr(payload, "only_line_ids", None)
+    if only is not None:
+        edited &= {str(x) for x in only}
+    if not edited:
+        return payload
+    active = service.active_decision(str(order.id))
+    snapshots = {
+        str(snapshot.get("project_line_id") or ""): snapshot
+        for snapshot in ((active.line_snapshots if active is not None else None) or [])
+    }
+    added = []
+    for line_id in sorted(edited):
+        snapshot = snapshots.get(line_id)
+        if snapshot is None:
+            continue
+        added.append(
+            ConfirmLine(
+                project_line_id=line_id,
+                buy_qty=sum(
+                    (
+                        Decimal(str(component.get("qty") or 0))
+                        for component in snapshot.get("components") or []
+                        if component.get("kind") == "buy"
+                    ),
+                    Decimal("0"),
+                ),
+                buy_reason=snapshot.get("buy_reason"),
+                amend_reason=snapshot.get("amend_reason"),
+                suspected_system_issue=bool(snapshot.get("suspected_system_issue")),
+            )
+        )
+    if not added:
+        return payload
+    return payload.model_copy(update={"lines": lines + added})
+
+
 def _confirm_with_possible_rejects(
     db: Session,
     service: ProjectSupplyService,
@@ -1481,9 +1555,13 @@ def confirm_supply(
         # refuses the whole order. The lines the recheck refuses are held back and named, and
         # the rest confirm - the same seam Confirm all uses (#1362). A planning-change press
         # names its lines on purpose, so it is never applied in part.
+        # OI-SPLIT-VIEW (UAC A4, A11, A12): every saved split edit of the order rides along,
+        # named or not, added once before the hold-back so a refused one is held back like
+        # any line; beside a pending AutoCount batch too, as a line the batch does not carry.
+        posted = _with_split_edits(db, service, order, payload)
         body, _entry, held = service._write_holding_back(
             order,
-            payload,
+            posted,
             lambda target, entry: _confirm_with_possible_rejects(
                 db,
                 service,

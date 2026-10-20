@@ -44,6 +44,8 @@ export interface WireLine {
   /** Round 3: generated text for the line's own row. */
   remark_generated: string;
   splits: WireSplit[];
+  /** OI-SPLIT-VIEW: the server's split status (the board flag's rule); only `status` is read. */
+  split_view?: { status: 'confirmed' | 'saved' | 'autocount_changed' } | null;
 }
 
 export function wireLine(
@@ -274,4 +276,61 @@ export function toastCalls(...fns: Array<{ mock: { calls: unknown[][] } }>) {
   return fns.flatMap((f) => f.mock.calls.map((c) => ({ msg: String(c[0]), opts: c[1] as
     | { action?: { label: string; onClick: () => void } }
     | undefined })));
+}
+
+
+/**
+ * OI-SPLIT-VIEW round 4 (UAC E): SO417636 as `LineSplitService.read` serves it once the owner's
+ * plan is applied: 480 = 14 own + 236 and 167 on a New line; 752 = 37 own + 467 on a New line
+ * and the AutoCount extra 145; 608 and 768 carry no split. `edited` marks 480 as saved but not
+ * confirmed (`split_state` 'acting'); applied lines read 'applied'.
+ */
+export function ownerSavedCase(opts: { edited?: boolean; confirmedAt?: string | null } = {}) {
+  const state = opts.edited ? 'acting' : 'applied';
+  return {
+    pso_id: PSO,
+    so_number: 'SO417636',
+    so_date: '2026-09-03',
+    customer: 'GLOBAL INGRESS SDN BHD (PROJECT)',
+    project: '405U + 397U PANGSAPURI',
+    confirmed_at: opts.edited ? null : (opts.confirmedAt ?? '2026-10-19'),
+    lines: [
+      wireLine(480, 'CSK14B', 417, '2026-10-20', {
+        now_qty: 14,
+        now_date: '2026-09-20',
+        split_state: state,
+        split_view: { status: opts.edited ? 'saved' : 'confirmed' },
+        splits: [
+          wireSplit('s14', 14, '2026-09-20', 'L480'),
+          wireSplit('s236', 236, '2026-11-20', null),
+          wireSplit('s167', 167, '2026-11-20', null),
+        ],
+      }),
+      wireLine(608, 'CSK14B', 632, '2026-11-20'),
+      wireLine(752, 'CSK14B', 504, '2026-12-20', {
+        now_qty: 649,
+        now_date: '2027-01-02',
+        split_state: 'applied',
+        split_view: { status: 'confirmed' },
+        extra_qty: 145,
+        extra_remark: 'ORDER 145',
+        splits: [
+          wireSplit('t37', 37, '2026-11-20', 'L752'),
+          wireSplit('t467', 467, '2027-01-02', null),
+        ],
+      }),
+      wireLine(768, 'CSK11A', 335, '2027-01-02'),
+    ],
+  };
+}
+
+/** 480 moves 236 onto line 608 (which carries no split of its own): variant B. */
+export function receivingCase() {
+  const p = ownerSavedCase();
+  p.lines[0].splits = [
+    wireSplit('s14', 14, '2026-09-20', 'L480'),
+    wireSplit('s236', 236, '2026-11-20', 'L608'),
+    wireSplit('s167', 167, '2026-11-20', null),
+  ];
+  return p;
 }

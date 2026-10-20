@@ -9,6 +9,8 @@ a phase its area group and label, a column the product code and the customer's o
 """
 from __future__ import annotations
 
+from datetime import date
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -327,3 +329,109 @@ class DeliveryScheduleDeleteResponse(BaseModel):
 
     success: bool = True
     deleted: Dict[str, int] = {}
+
+
+# ------------------------------------------------------------- PM-SIMPLIFY progress
+#
+# Decimals serialise as strings in JSON (pydantic v2), the same wire shape as the
+# quantities above.
+
+
+class POProgressDelivery(BaseModel):
+    phase_id: Optional[str] = None
+    area_group: Optional[str] = None
+    label: Optional[str] = None
+    delivery_date: Optional[date] = None
+    units: Decimal
+    delivered: Decimal
+    sales_order_id: str
+    provisional_ref: str
+    sales_order_status: str
+
+
+class POProgressLine(BaseModel):
+    key: str
+    po_line_id: Optional[str] = None
+    line_no: int
+    product_id: Optional[str] = None
+    product_code: Optional[str] = None
+    description: Optional[str] = None
+    uom: Optional[str] = None
+    ordered: Decimal
+    scheduled: Decimal
+    schedule_gap: Decimal
+    delivered: Decimal
+    outstanding: Decimal
+    next_delivery_date: Optional[date] = None
+    deliveries: List[POProgressDelivery] = []
+
+
+class POProgressAreaOrder(BaseModel):
+    id: str
+    provisional_ref: str
+    status: str
+
+
+class POProgressArea(BaseModel):
+    phase_id: str
+    area_group: str
+    sequence: int
+    label: Optional[str] = None
+    delivery_date: Optional[date] = None
+    units: Decimal
+    delivered: Decimal
+    sales_orders: List[POProgressAreaOrder] = []
+
+
+class POProgressTotals(BaseModel):
+    ordered: Decimal
+    scheduled: Decimal
+    delivered: Decimal
+    outstanding: Decimal
+    next_delivery_date: Optional[date] = None
+    schedule_short_lines: int = 0
+    schedule_over_lines: int = 0
+
+
+class POProgressResponse(BaseModel):
+    purchase_order_id: str
+    schedule_version_id: Optional[str] = None
+    lines: List[POProgressLine] = []
+    areas: List[POProgressArea] = []
+    totals: POProgressTotals
+
+
+class AreaDateRestoreLine(BaseModel):
+    id: str
+    delivery_date: Optional[date] = None
+
+
+class AreaDateChange(BaseModel):
+    # Null only on Undo, to give back an area that had no date (`restore_lines` present).
+    delivery_date: Optional[date] = None
+    # Undo only: the `previous_lines` the last change returned.
+    restore_lines: Optional[List[AreaDateRestoreLine]] = Field(None, max_length=5000)
+
+
+class AreaDateOrderRef(BaseModel):
+    id: str
+    provisional_ref: str
+
+
+class AreaDateAmendment(BaseModel):
+    sales_order_id: str
+    provisional_ref: str
+    amendment_id: Optional[str] = None
+    refused: Optional[str] = None
+
+
+class AreaDateChangeResponse(BaseModel):
+    phase_id: str
+    area_group: str
+    label: Optional[str] = None
+    delivery_date: Optional[date] = None
+    previous_date: Optional[date] = None
+    moved_lines: int = 0
+    moved_orders: List[AreaDateOrderRef] = []
+    previous_lines: List[AreaDateRestoreLine] = []
+    amendments: List[AreaDateAmendment] = []

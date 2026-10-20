@@ -1413,6 +1413,11 @@ export interface BoardContribution {
    * fields are absent because it is not in the queue they count.
    */
   covered?: boolean;
+  /**
+   * OI-SPLIT-VIEW (UAC A2): the line's saved split plan differs from the one its last
+   * Confirm applied; the next Confirm applies it whether or not the body names the line.
+   */
+  split_edited?: boolean;
   /** What was frozen, when the row is covered. Absent otherwise, never an empty object. */
   decision?: BoardLineDecision | null;
   /**

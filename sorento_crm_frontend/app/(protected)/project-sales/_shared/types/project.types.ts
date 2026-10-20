@@ -1091,6 +1091,8 @@ export interface ProjectPurchaseOrder {
    *  deriving it here would mean loading every version and schedule of every PO. */
   status?: string | null;
   po_confirmed?: boolean;
+  /** PM-SIMPLIFY: came from an uploaded document, so its lines are the document's. */
+  has_document?: boolean;
   schedule_confirmed?: boolean;
   /**
    * Sales orders already published out of this PO. Editing the PO is still allowed - a
@@ -1108,6 +1110,11 @@ export interface ProjectPurchaseOrder {
 
   /** True only on the create response that actually moved the funnel (AC-F10). */
   status_moved_to_po_received?: boolean;
+
+  /** PM-SIMPLIFY AC-O3: units ordered and delivered (AutoCount), and the next delivery. */
+  ordered_units?: string;
+  delivered_units?: string;
+  next_delivery_date?: string | null;
 
   created_at?: string | null;
   updated_at?: string | null;
