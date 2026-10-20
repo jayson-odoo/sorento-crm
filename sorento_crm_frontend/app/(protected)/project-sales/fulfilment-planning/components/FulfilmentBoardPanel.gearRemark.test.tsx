@@ -305,6 +305,24 @@ describe('OI-SPLIT-GEAR-REMARK: a no-draft line\'s confirmed remark in the gear 
     expect(putLineDraft).not.toHaveBeenCalled();
   });
 
+  it('H2: saving ANOTHER line\'s edit leaves the untouched line\'s confirmed remark out of the save body and the draft calls', async () => {
+    await open('X CONFIRMED');
+    const key4 = (
+      (await getPlanningBoard.mock.results[0].value) as unknown as { contributions: { key: string; project_line_id: string }[] }
+    ).contributions.find((c) => c.project_line_id === 'pl-1-4')!.key;
+    fireEvent.change(screen.getByLabelText('Remark, line 3'), { target: { value: 'OTHER LINE EDIT' } });
+    const save = screen.getByRole('button', { name: /^save$/i });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+    await waitFor(() => expect(putLineDraft).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 50));
+    for (const [, body] of saveLineSplits.mock.calls) {
+      const l4 = body.lines.find((l: { line_id: string }) => l.line_id === 'pl-1-4');
+      for (const sp of l4?.splits ?? []) expect(sp.remark ?? '').not.toBe('X CONFIRMED');
+    }
+    for (const [draftKey] of putLineDraft.mock.calls) expect(draftKey).not.toBe(key4);
+  });
+
   it('H3: a split remark already stored on the line wins over the confirmed remark', async () => {
     await open('X CONFIRMED', 'Y STORED');
     expect(box4().value).toBe('Y STORED');
