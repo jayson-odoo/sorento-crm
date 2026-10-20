@@ -87,6 +87,6 @@ describe('F13: the scoped edit sheet', () => {
     getLineSplits.mockResolvedValue(withProblem());
     await renderDialog();
     await sheet();
-    expect(screen.getByText(/30 left/)).toBeInTheDocument();
+    expect(screen.getByText(/line 900: 30 left/)).toBeInTheDocument();
   });
 });
