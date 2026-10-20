@@ -151,6 +151,13 @@ const createPendingActionSpy = vi.fn(async ({ entityId }: { entityId: string }) 
   window_seconds: 10,
 }));
 const cancelPendingActionSpy = vi.fn(async () => undefined);
+// UAC E5: the OI gear's whole-inquiry popup reads the sheet payload, as the board does.
+let splitsPayload: unknown = null;
+vi.mock('../../../_shared/services/lineSplitService', () => ({
+  getLineSplits: () => Promise.resolve(splitsPayload),
+  saveLineSplits: vi.fn(),
+}));
+
 vi.mock('@/services/pendingActionService', () => ({
   createPendingAction: (...args: unknown[]) =>
     createPendingActionSpy(...(args as [{ entityId: string }])),
@@ -164,6 +171,7 @@ import {
   getOrderInquiryHeaderLines,
 } from '../../../_shared/services/orderInquiryService';
 import { OrderInquiryDetail } from './OrderInquiryDetail';
+import { ownerSavedCase } from '@/test-mocks/lineSplitSheetKit';
 
 const mockGetOrderInquiryHeader = getOrderInquiryHeader as unknown as ReturnType<typeof vi.fn>;
 
@@ -231,22 +239,26 @@ async function openViewSplits() {
 describe('OI gear: View splits (D1)', () => {
   it('opens "OI-2609-0001: splits" with the SO number and one group per split line', async () => {
     linesNow = () => [oiLine('r-752', 752, view('37')), oiLine('r-480', 480, view('14')), oiLine('r-608', 608, null)];
+    splitsPayload = ownerSavedCase();
     renderDetail('oi-1');
     const dialog = await openViewSplits();
     expect(within(dialog).getByText('OI-2609-0001: splits')).toBeInTheDocument();
     expect(dialog.textContent).toContain('SO123456');
     expect(dialog.textContent).toContain('2 split lines');
-    const text = dialog.textContent ?? '';
-    expect(text.indexOf('Line 480 CSK14B')).toBeGreaterThan(-1);
-    expect(text.indexOf('Line 752 CSK14B')).toBeGreaterThan(text.indexOf('Line 480 CSK14B'));
-    expect(text).not.toContain('Line 608');
+    // UAC E3: the read-only sheet, only the lines with saved splits.
+    const blocks = await within(dialog).findAllByTestId(/^split-line-/);
+    expect(blocks.map((el) => el.getAttribute('data-testid'))).toEqual([
+      'split-line-480', 'split-line-752',
+    ]);
+    expect(within(dialog).queryByTestId('split-line-608')).not.toBeInTheDocument();
   });
 
   it('shows "No split lines" when no line is split', async () => {
     linesNow = () => [oiLine('r-608', 608, null)];
+    splitsPayload = { ...ownerSavedCase(), lines: ownerSavedCase().lines.map((l) => ({ ...l, splits: [], extra_qty: null })) };
     renderDetail('oi-1');
     const dialog = await openViewSplits();
-    expect(within(dialog).getByText('No split lines')).toBeInTheDocument();
+    expect(await within(dialog).findByText('No split lines')).toBeInTheDocument();
     expect(within(dialog).getByText('Every line ships as AutoCount has it.')).toBeInTheDocument();
   });
 });
