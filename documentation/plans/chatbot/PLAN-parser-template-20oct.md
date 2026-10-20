@@ -178,3 +178,8 @@ R-P2-06 first step "a file ask always carries one attachment_type entity per fil
 attachment NEW arm alone (stored v77 baseline): v87 REAL 32/80 (40%) vs v77 52/83 (63%); attachment_type entity on
 43/83 items (v86 22/73, v77 70/83); tool results 53 vs 78. Still under v77, so per crew a54889127: STOP, no further
 wording. Spend about USD 7.65 of 8.5. The file-entity gap stands as the open blocker for the consolidated template.
+Crew attachment audit (v77 TRAIN parser faults besides the entity drop), for the next R-P2-06 step-1 fix, as classes
+(no per-word rules): (1) a bare number beside a document word (a catalogue year "2025") taken as a product code
+(SRTJC2025): digits alone are not a code pick (R-P2-02 / CODE LOOKUP near-code rule); (2) a compound file phrase
+("DRAWING PICTURE") split into two file types: words naming one file are one file word, one entity; (3) a file word
+beside a code fragment ("8609 cert") gives no file entity: step 1 holds whatever stands beside the file word.
