@@ -177,11 +177,12 @@ or use own location, just like our email to purchasing". Plan crew-note 62883955
 - F20. F17 extended to the email's own cancel rule: a saved Reject reads "CANCEL ALL" when the email would
   cancel the line's rows: raised rows, and placed or partly linked rows whose links are cascade-only
   (project_order_inquiry_service.py ~5885-5900). A reserve-only line still has no words.
-- F21. Owner (verbatim): "The line number can remove". On the guide's Review split sheet no line number is
-  shown: no grey "line 384" sub-label under the item code (375) and no Line column (1280). Done by a prop on
-  the sheet/editor (`hideLineNumbers`) that only the guide sets; line identity stays internal (keys, test ids,
-  save body), and the same item on two lines is told apart by its rows and dates. The board's own "Split
-  delivery" keeps its line numbers until crew confirms with the owner.
+- F21. Owner (verbatim): "The line number can remove", then (20:3x MYT) "yeap drop also the line number".
+  The shared #1794 split sheet shows no line number anywhere it renders (the guide's Review split page, the
+  board's own "Split delivery" dialog, the SO / OI / board "View splits" popups): no grey "line N" sub-label
+  under the item code (375) and no Line column (1280). No prop: it is removed in the sheet itself. Line
+  identity stays internal (row keys, drag targets, aria-labels, test ids, the save body and API); the same item
+  on two lines is told apart by its rows' qty and dates.
 
 ## G. Out of scope
 - Making Confirm never touch unsaved lines (crew option b).
