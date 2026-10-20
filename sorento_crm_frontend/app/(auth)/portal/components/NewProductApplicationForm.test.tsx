@@ -245,8 +245,10 @@ describe('new application', () => {
     expect(screen.queryByText(/selling/i)).toBeNull();
     expect(screen.queryByLabelText(/^cost/i)).toBeNull();
     expect(screen.queryByLabelText('Lead time')).toBeNull();
-    expect(screen.getByText('PRODUCT CODE:')).toBeInTheDocument();
-    expect(screen.getByText('Product 1 of 1')).toBeInTheDocument();
+    expect(
+      screen.getByRole('columnheader', { name: /product code/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/product \d+ of \d+/i)).toBeNull();
   });
 
   it('stays on the form with the server text when Submit is refused', async () => {

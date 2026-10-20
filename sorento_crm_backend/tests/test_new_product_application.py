@@ -1481,6 +1481,8 @@ def _make_attachment(w, store, name="doc.pdf", data=b"%PDF-1.4 fake", mime="appl
             id=uid(), attachment_type_id=atype.id, original_filename=name, stored_filename=name,
             file_path=key, file_size_bytes=len(data), storage_provider="s3", mime_type=mime,
         )
+        if company is not None:
+            row.company_id = company  # Attachment is company-shared: the scope never stamps it
         w.db.add(row)
         w.db.flush()
         return str(row.id)
