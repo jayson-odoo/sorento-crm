@@ -40,7 +40,11 @@ from app.models.project_so import (
     ProjectSalesOrderLine,
     SOAmendment,
 )
-from app.models.projects import ProjectPurchaseOrder, ProjectPurchaseOrderLine
+from app.models.projects import (
+    ProjectPurchaseOrder,
+    ProjectPurchaseOrderLine,
+    ProjectQuotationLine,
+)
 from app.services.error_handler import AppException
 
 _ZERO = Decimal("0")
@@ -263,6 +267,20 @@ def po_progress(db: Session, po: ProjectPurchaseOrder) -> Dict[str, Any]:
         if owner is not None:
             so_by_line[owner.key].append(so_line)
 
+    # A set line's parts carry their quantity per set frozen on the quoted line.
+    quoted_ids = {str(row.quotation_line_id) for row in so_lines if row.quotation_line_id}
+    per_set_of: Dict[str, Dict[str, Decimal]] = {}
+    if quoted_ids:
+        for quoted in db.query(ProjectQuotationLine).filter(
+            ProjectQuotationLine.id.in_(list(quoted_ids))
+        ):
+            parts = quoted.set_parts_snapshot or []
+            per_set_of[str(quoted.id)] = {
+                str(part.get("product_id")): _dec(part.get("quantity") or "1")
+                for part in parts
+                if isinstance(part, dict) and part.get("product_id")
+            }
+
     # Areas a sales order line sits on that the confirmed schedule no longer carries, in
     # one query rather than one per line.
     extra_phase_ids = {
@@ -310,7 +328,9 @@ def po_progress(db: Session, po: ProjectPurchaseOrder) -> Dict[str, Any]:
                     "sales_order_status": order.status,
                 }
             )
-        delivered = _po_line_units_delivered(line, so_by_line.get(line.key, []), _delivered)
+        delivered = _po_line_units_delivered(
+            line, so_by_line.get(line.key, []), _delivered, per_set_of
+        )
         outstanding = max(line.ordered - delivered, _ZERO)
         upcoming = [
             row["delivery_date"]
@@ -416,27 +436,39 @@ def _po_line_units_delivered(
     line: _Line,
     so_lines: Sequence[ProjectSalesOrderLine],
     delivered_of,
+    per_set_of: Dict[str, Dict[str, Decimal]],
 ) -> Decimal:
     """What went out, in the PO line's own units.
 
     One product (the normal line): the delivered quantities add up. A SET line (no product
-    of its own) is drafted as one line per part, at that part's quantity per set, so adding
-    the parts would count a set once per part (review B2). A set is delivered as far as its
-    scarcest part: the PO line's units times the smallest delivered share over the parts.
+    of its own) is drafted as one line per part, so adding the parts would count a set once
+    per part (review B2). A set is delivered as far as its scarcest part: the smallest of
+    (part delivered / part quantity per set), with the per-set quantity frozen on the quoted
+    line. Without that snapshot the parts' drafted quantities stand in, against the PO line's
+    ordered sets.
     """
     if not so_lines:
         return _ZERO
     by_product: Dict[str, List[Decimal]] = defaultdict(lambda: [_ZERO, _ZERO])
+    per_set: Dict[str, Decimal] = {}
     for row in so_lines:
-        entry = by_product[str(row.product_id or "")]
+        key = str(row.product_id or "")
+        entry = by_product[key]
         entry[0] += _dec(row.qty)
         entry[1] += delivered_of(row)
+        snapshot = per_set_of.get(str(row.quotation_line_id or ""), {})
+        if key in snapshot:
+            per_set[key] = snapshot[key]
     if line.product_id or len(by_product) == 1:
         return sum((entry[1] for entry in by_product.values()), _ZERO)
-    share = min(
-        (got / drafted if drafted else _ZERO) for drafted, got in by_product.values()
-    )
-    return min(line.ordered * share, line.ordered)
+    if per_set and all(key in per_set and per_set[key] > 0 for key in by_product):
+        sets = min(by_product[key][1] / per_set[key] for key in by_product)
+    else:
+        share = min(
+            (got / drafted if drafted else _ZERO) for drafted, got in by_product.values()
+        )
+        sets = line.ordered * share
+    return min(sets, line.ordered)
 
 
 def po_totals(db: Session, purchase_orders: Sequence[ProjectPurchaseOrder]) -> Dict[str, Dict[str, Any]]:
@@ -543,7 +575,17 @@ def change_area_date(
             .all()
         )
         for amendment in stale:
+            # Never throw away review work: an amendment with row decisions, or whose
+            # notice already names an approver, stays and the new move is proposed beside it.
+            if amendment.row_decisions:
+                continue
             ocn_id = amendment.ocn_id
+            if ocn_id:
+                notice = (
+                    db.query(OrderChangeNotice).filter(OrderChangeNotice.id == ocn_id).first()
+                )
+                if notice is not None and notice.approver_id:
+                    continue
             db.delete(amendment)
             db.flush()
             if ocn_id:

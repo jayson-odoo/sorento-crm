@@ -214,6 +214,11 @@ no date; adopted orders are named, not skipped; sales orders not built from a PO
 adopted) get their own section under the Orders tab; the PO filter is UUID-checked; route-level
 tests for both new routes and the line guard.
 
+Review round 2 (20 Oct), red first (bf3f091f) then fixed: a set line counts sets delivered from
+the per-set part quantities frozen on the quoted line, so a partly drafted line is right too; a
+proposed area-date amendment that already has row decisions or a named approver is kept when the
+area is moved again (the new move is proposed beside it).
+
 Decided in the build, for the owner to overrule:
 
 - **An area is the project's, not one PO's** (`delivery_phases` is unique per project). Moving
