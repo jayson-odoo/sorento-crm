@@ -104,6 +104,38 @@ decision draft in `lines`, `rejected_line_ids`, `cancelled_lines`) or a saved sp
   review tables scroll horizontally inside their own box, footer buttons always visible, no page
   horizontal scroll.
 
+## F. Owner hand test 20 Oct (phone, c024bf4056) = REWORK: the review IS the split view
+Supersedes B6, C1-C7 (the dry-run rows table, transfers, AutoCount labels) and D1's wording. A, B1-B5, B7
+mechanics and D2-D3 stay. Owner (verbatim): "i thought it is the split view? All these transfers dont need
+to be there, need to reuse the component, i want the flow is like they review the split, adjust if
+necessary, then confirm" and "All the saved lines shoild appear in the preview, be it use brw or order back
+or use own location, just like our email to purchasing". Plan crew-note 6288395500.
+- F1. Two steps: "Review split", then "Confirm". The guide shows no dry-run table, no transfers table and
+  no AutoCount labels.
+- F2. Step 1: one page per order in this Confirm (every order the press covers, board order). The page is
+  the #1794 read-only split sheet (`LineSplitSheet readOnly`, same columns and look as "View splits") and
+  lists EVERY line this Confirm covers for that order (the lines `countsInPress` counts), whatever its
+  supply: own location, BRW pool, Borrow, Order back, Cancel SO, book cancel. No other line of the order.
+- F3. A split line shows its split rows as today. A line with no split shows ONE row (its qty and date)
+  whose Remark is the purchasing email's own words for its saved decision, computed by the server with the
+  email's function (`saved_line_remark` / `_saved_line_parts`, project_order_inquiry_service.py:548-640),
+  e.g. "USE MWH 294 & USE BRW-BB 113", "USE BRW 522 & ORDER 294", "ORDER BACK"; never rebuilt in the
+  browser. A covered line that is delivered in full shows its saved words, not "Delivered N". A covered
+  line the split read does not return today (book-cancelled, or no planning line) still gets one row.
+- F4. Page header: SO number, "Saved, not confirmed", "N line(s)" (singular for 1), and the CTA "Split
+  delivery <SO>" (B4: edit sheet on top, page re-reads after Save).
+- F5. Next walks every page; the Confirm step is reached only after the last page (Q5 a). Back works.
+- F6. Step 2: "N order(s): SO417636 (2 lines), ... Nothing has been sent yet." and "Confirm N order(s)",
+  which runs today's press unchanged (silent dry run, narrowing, post, result card, toast; refusals and
+  "nothing to confirm" land on the result card as today). Disabled while posting; a failed post keeps
+  step 2 open with the button enabled again.
+- F7. The split read fails: the page says so with Retry, Next stays off, Back and Cancel work.
+- F8. The owner's case (dev data): SO417636 alone with its 2 saved Approve drafts gives one page with
+  AutoCount line 384 CB6633 and line 400 TPE-9101 as one row each with the email's words; with the 167
+  edit saved, line 480 also shows (its split rows). Line 752 is not shown.
+- F9. Code: the unused `PreviewInquiryRow.autocount_change` is removed. The dry-run builder fixes stay
+  because admin Simulate's "Would write" uses them (retired rows read CANCEL, AutoCount line numbers).
+
 ## G. Out of scope
 - Making Confirm never touch unsaved lines (crew option b).
 - Follow-up (PR body): an order whose only counted line is book-cancelled may count in N but press
