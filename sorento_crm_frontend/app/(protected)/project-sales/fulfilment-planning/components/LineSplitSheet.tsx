@@ -551,8 +551,9 @@ const LineBlock = React.memo(function LineBlock({
   );
   const emptyRemove = sheetReadOnly ? null : <TableCell className={changeCell} />;
 
-  // OI-SPLIT-GUIDE (UAC F3): the guided Confirm's words for the line's saved decision.
-  const savedRemark = sheetReadOnly ? line.savedRemark || null : null;
+  // OI-SPLIT-GUIDE (UAC F3, F18): the guided Confirm's words for the line's saved decision
+  // (only the guide sets them).
+  const savedRemark = line.savedRemark || null;
   let body: React.ReactNode;
   if (delivered && !savedRemark) {
     body = (
@@ -635,7 +636,7 @@ const LineBlock = React.memo(function LineBlock({
           <RemarkCell
             label={`Remark, line ${no}`}
             value={only?.remark ?? ''}
-            generated={line.remarkGenerated ?? ''}
+            generated={savedRemark ?? line.remarkGenerated ?? ''}
             onValue={(remark) => only && handlers.remark(line, only.id, remark)}
             onBlur={handlers.fieldBlur}
           />

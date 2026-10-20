@@ -233,6 +233,7 @@ export function LineSplitEditor({
   focusLineId,
   onlyLineIds,
   savedRemarks,
+  readLoaded = false,
   stayAfterSave = false,
   onSaved,
   onDirtyChange,
@@ -253,6 +254,11 @@ export function LineSplitEditor({
   onlyLineIds?: ReadonlySet<string>;
   /** OI-SPLIT-GUIDE (UAC F18): the purchasing email's words for an unsplit line's Remark. */
   savedRemarks?: ReadonlyMap<string, string | null>;
+  /**
+   * The host has just read this order's split plan and shows it loaded: start from that read
+   * instead of waiting for the editor's own refetch (no skeleton flash on the guide page).
+   */
+  readLoaded?: boolean;
   /** After a Save the editor stays and starts again from the stored plan (the guide page). */
   stayAfterSave?: boolean;
   onSaved?: () => void;
@@ -351,7 +357,7 @@ export function LineSplitEditor({
       setSplitOnly(false);
       return;
     }
-    if (query.data && !query.isFetching && !draftRef.current) {
+    if (query.data && (readLoaded || !query.isFetching) && !draftRef.current) {
       const lines = fromPayload(query.data);
       initialRef.current = JSON.stringify(toPayload(lines));
       setSavedLines(lines);
@@ -362,7 +368,7 @@ export function LineSplitEditor({
         setFlashLineId(focusLineId);
       }
     }
-  }, [active, query.data, query.isFetching, focusLineId, commit, endDrag]);
+  }, [active, query.data, query.isFetching, readLoaded, focusLineId, commit, endDrag]);
 
   const lines = draft?.lines ?? null;
   const sorted = React.useMemo(() => (lines ? sortLines(lines) : []), [lines]);
