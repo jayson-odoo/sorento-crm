@@ -1,6 +1,6 @@
 # PLAN: attachment delete follows `resource.attachments.delete`
 
-Status: review done, awaiting CI (small fix track: backend only, under 300 lines, no migration, permission gate on one route)
+Status: round 2 (FE gate) in build (small fix track: under 300 lines, no migration, permission gate on one route plus the controls that call it)
 
 ## Journey
 
@@ -28,6 +28,20 @@ shared `require_permission` dependency (`app/dependencies.py:414`).
   `resource.attachments.delete` now gets a 403 toast there. That tab's upload already needs
   `resource.attachments.upload`, so this matches. Hiding the button by permission is an FE
   follow-up, not this lane.
+
+## Round 2: the UI follows the permission (crew, after the role audit)
+
+Never a stuck UI: a caller without `resource.attachments.delete` is not offered permanent delete
+of a trashed file, so there is no 403 toast and no dead click. `useHasPermission` hides:
+
+- the Trash row context-menu "Permanently delete" (`DriveRowActions.tsx`, fed by
+  `AttachmentsInFolderPanel.tsx`);
+- the "Permanently Delete" button in `AttachmentDetailModal.tsx`;
+- the "Permanently delete" record action in `attachments/actions.tsx` (detail page + browser).
+
+"Move to trash" is the archive route and is not gated by this slug, so it stays. Bulk permanent
+delete stays on `resource.attachments.bulk_delete`. The Project Documents tab is ON HOLD for the
+owner's call on `project.customer.service`.
 
 ## Out of scope (named, not built)
 

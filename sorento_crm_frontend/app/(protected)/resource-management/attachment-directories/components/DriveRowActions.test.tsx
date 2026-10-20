@@ -72,6 +72,7 @@ function renderActions(props: Partial<React.ComponentProps<typeof DriveRowAction
           isTrashView={false}
           recursive={false}
           resubmitting={false}
+          canDeletePermanently
           handlers={noopHandlers}
           {...props}
         />
@@ -110,6 +111,17 @@ describe('DriveRowActions', () => {
     expect(screen.queryByText('Rename')).not.toBeInTheDocument();
     expect(screen.queryByText('Resubmit to n8n')).not.toBeInTheDocument();
     expect(screen.queryByText('Move to trash')).not.toBeInTheDocument();
+  });
+
+  it('file row in trash without resource.attachments.delete: no Permanently delete', () => {
+    renderActions({ item: fileItem, isTrashView: true, canDeletePermanently: false });
+    expect(screen.getByText('Restore')).toBeInTheDocument();
+    expect(screen.queryByText('Permanently delete')).not.toBeInTheDocument();
+  });
+
+  it('live file row without resource.attachments.delete still offers Move to trash', () => {
+    renderActions({ item: fileItem, canDeletePermanently: false });
+    expect(screen.getByText('Move to trash')).toBeInTheDocument();
   });
 
   it('folder row: open/new subfolder/rename/move/delete, no file actions', () => {
