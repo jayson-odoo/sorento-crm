@@ -1271,6 +1271,35 @@ describe('OI-SPLIT-GEAR-REMARK guide Review page: confirmed remark vs the server
     expect(within(page).getByText('edited')).toBeInTheDocument();
   });
 
+  it('H10: a reserve-only Reject draft (no server words) never shows the confirmed remark in the editor', async () => {
+    const board = withRemarks(boardOf([SO1_L1]), 'pl-1-1', {
+      saved_remark: null,
+      confirmed_remark: 'URGENT ORDER',
+      draft: { decision: REJECT, saved_by: 'Test Planner', saved_at: '2026-09-08T00:00:00Z' },
+    });
+    const page = await reviewLine1(board, 'DEFAULT WORDS');
+    expect((screen.getByLabelText('Remark, line 1') as HTMLInputElement).value).toBe('DEFAULT WORDS');
+    expect(within(page).queryByText('edited')).not.toBeInTheDocument();
+  });
+
+  it('H10: an order not yet adopted (read-only row) with a Reject draft shows the server words, never X', async () => {
+    const board = withRemarks(boardOf([SO1_L1]), 'pl-1-1', {
+      saved_remark: 'CANCEL ALL',
+      confirmed_remark: 'URGENT ORDER',
+      draft: { decision: REJECT, saved_by: 'Test Planner', saved_at: '2026-09-08T00:00:00Z' },
+    });
+    const unadopted = mapContributions(
+      { ...board, orders: board.orders.map((o) => ({ ...o, project_sales_order_id: null })) } as unknown as Board,
+      (entry) => ({ ...entry, project_line_id: null, project_sales_order_id: null }),
+    );
+    await mountWith(unadopted, ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    const row = await within(page).findByTestId('split-line-1');
+    expect(within(row).getByText('CANCEL ALL')).toBeInTheDocument();
+    expect(within(row).queryByText('URGENT ORDER')).not.toBeInTheDocument();
+  });
+
   it('H7: a saved Reject draft line with saved_remark "CANCEL ALL" and confirmed X shows CANCEL ALL, no marker', async () => {
     const board = withRemarks(boardOf([SO1_L1]), 'pl-1-1', {
       saved_remark: 'CANCEL ALL',

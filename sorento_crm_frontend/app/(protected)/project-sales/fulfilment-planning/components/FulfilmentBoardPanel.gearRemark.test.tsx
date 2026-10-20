@@ -249,7 +249,7 @@ describe('F26: the board dialog and an unsplit saved line\'s remark', () => {
  * OI-SPLIT-GEAR-REMARK H1-H5: line 4 has NO draft; its active revision froze a confirmed remark.
  */
 describe('OI-SPLIT-GEAR-REMARK: a no-draft line\'s confirmed remark in the gear Split delivery sheet', () => {
-  type Opts = { saved?: string | null; verdict?: string };
+  type Opts = { saved?: string | null; verdict?: string; generated?: string };
   const withConfirmed = (confirmed: string | null, opts: Opts = {}) => {
     const b = board();
     // The server sends a no-draft line's saved_remark as null, except a book-cancelled line.
@@ -280,7 +280,9 @@ describe('OI-SPLIT-GEAR-REMARK: a no-draft line\'s confirmed remark in the gear 
           ? { ...l, splits: [wireSplit('s-4', 10, '2026-09-20', 'pl-1-4', { remark: storedSplitRemark })] }
           : opts.saved && l.line_id === 'pl-1-4'
             ? { ...l, remark_generated: opts.saved }
-            : l,
+            : opts.generated && l.line_id === 'pl-1-4'
+              ? { ...l, remark_generated: opts.generated }
+              : l,
       ),
     });
     getLineSplits.mockImplementation(() => Promise.resolve(read()));
@@ -375,6 +377,25 @@ describe('OI-SPLIT-GEAR-REMARK: a no-draft line\'s confirmed remark in the gear 
     fireEvent.blur(box4());
     await waitFor(() => expect(box4().value).toBe('X CONFIRMED'));
     await saveAndExpectNoLine4Remark();
+  });
+
+  it('H9: a split remark Y stored on the line, the planner types X: Save sends a split with remark X', async () => {
+    await open('X CONFIRMED', 'Y STORED');
+    act(() => box4().focus());
+    fireEvent.change(box4(), { target: { value: 'X CONFIRME' } });
+    fireEvent.change(box4(), { target: { value: 'X CONFIRMED' } });
+    fireEvent.blur(box4());
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(saveLineSplits).toHaveBeenCalled());
+    const l4 = saveLineSplits.mock.calls[0][1].lines.find((l: { line_id: string }) => l.line_id === 'pl-1-4');
+    expect(l4.splits).toHaveLength(1);
+    expect(l4.splits[0].remark).toBe('X CONFIRMED');
+  });
+
+  it('H10: a reserve-only Reject draft (no server words) never shows the confirmed remark', async () => {
+    await open('X CONFIRMED', undefined, { verdict: 'rejected', generated: 'DEFAULT WORDS' });
+    expect(box4().value).toBe('DEFAULT WORDS');
+    expect(within(row4()).queryByText('edited')).not.toBeInTheDocument();
   });
 
   it('H8: typing exactly X back stores nothing: Save sends no remark split for the line', async () => {
