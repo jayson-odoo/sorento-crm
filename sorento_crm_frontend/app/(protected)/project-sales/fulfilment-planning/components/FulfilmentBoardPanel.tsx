@@ -2127,9 +2127,11 @@ export function FulfilmentBoardPanel({
       if (!lineId || psoIdBySalesOrder.get(contribution.sales_order_id) !== lineSplit.psoId)
         continue;
       const facts = remarkFactsOf(contribution);
-      if (!facts.editable) continue;
+      // OI-SPLIT-GEAR-REMARK: a line with no draft still hands over its confirmed remark
+      // (display only); only a draft line is saved through its decision.
+      if (!facts.editable && !facts.own) continue;
       remarks.set(lineId, facts);
-      keys.set(lineId, contribution.key);
+      if (facts.editable) keys.set(lineId, contribution.key);
     }
     return {
       remarks: remarks as ReadonlyMap<string, { words: string | null; own: string | null; editable: boolean }>,
