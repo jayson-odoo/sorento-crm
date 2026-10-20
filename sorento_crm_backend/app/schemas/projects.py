@@ -1571,6 +1571,8 @@ class ProjectPurchaseOrderResponse(BaseModel):
     # What still stands between this PO and its sales orders (see the serializer).
     status: Optional[str] = None
     po_confirmed: bool = False
+    # PM-SIMPLIFY: the PO came from an uploaded document (its lines are the document's).
+    has_document: bool = False
     schedule_confirmed: bool = False
     # Sales orders already OUT of this PO. Editing it stays allowed - corrections are the
     # normal case - but the screen has to be able to say so before somebody saves over it,

@@ -642,6 +642,7 @@ def serialize_pos(
     # Which POs have been agreed, and which have a delivery programme agreed too. Two
     # set lookups rather than a query per row: this list renders every PO on a project.
     confirmed_po_ids: set = set()
+    scanned_po_ids: set = set()
     scheduled_po_ids: set = set()
     # How many sales orders are already OUT of each PO. Editing a PO stays allowed -- a
     # correction is the normal case -- but the screen has to be able to say this before
@@ -657,6 +658,12 @@ def serialize_pos(
             ProjectSalesOrder,
         )
 
+        scanned_po_ids = {
+            row[0]
+            for row in db.query(ProjectPOVersion.purchase_order_id)
+            .filter(ProjectPOVersion.purchase_order_id.in_(ids))
+            .all()
+        }
         confirmed_po_ids = {
             row[0]
             for row in db.query(ProjectPOVersion.purchase_order_id)
@@ -749,6 +756,7 @@ def serialize_pos(
                 # out, and a next step that is wrong is worse than none.
                 "status": po.status,
                 "po_confirmed": bool(confirmed_po_ids and po.id in confirmed_po_ids),
+                "has_document": bool(scanned_po_ids and po.id in scanned_po_ids),
                 "schedule_confirmed": bool(scheduled_po_ids and po.id in scheduled_po_ids),
                 "published_sales_order_count": published_so_counts.get(str(po.id), 0),
                 "model_mismatch_count": model_flags.get(po.id, 0),

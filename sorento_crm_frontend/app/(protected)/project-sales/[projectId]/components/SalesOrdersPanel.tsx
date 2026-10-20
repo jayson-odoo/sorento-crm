@@ -86,7 +86,14 @@ export function salesOrderDeleteRefusal(
  * before it can be run again - which is why the rows tick and the delete is one call rather
  * than twelve.
  */
-export function SalesOrdersPanel({ project }: { project: Project }) {
+export function SalesOrdersPanel({
+  project,
+  purchaseOrderId,
+}: {
+  project: Project;
+  /** PM-SIMPLIFY: on the PO page, only that PO's orders; building is the page's header step. */
+  purchaseOrderId?: string;
+}) {
   const router = useRouter();
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
@@ -98,8 +105,12 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
   const [confirmBulkDelete, setConfirmBulkDelete] = React.useState(false);
 
   const params = React.useMemo(
-    () => ({ page: pagination.pageIndex + 1, limit: pagination.pageSize }),
-    [pagination.pageIndex, pagination.pageSize],
+    () => ({
+      page: pagination.pageIndex + 1,
+      limit: pagination.pageSize,
+      ...(purchaseOrderId ? { purchase_order_id: purchaseOrderId } : {}),
+    }),
+    [pagination.pageIndex, pagination.pageSize, purchaseOrderId],
   );
   const salesOrders = useProjectSalesOrders(project.id, params);
   const build = useSalesOrderBuild(project.id);
@@ -418,7 +429,9 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
           router.push(
             withReviewOrigin(
               `/project-sales/${project.id}/sales-orders/${row.id}`,
-              projectTabOriginHref(project.id, 'sales-orders'),
+              purchaseOrderId
+                ? `/project-sales/${project.id}/pos/${purchaseOrderId}?tab=sales-orders`
+                : projectTabOriginHref(project.id, 'orders'),
             ),
           )
         }
@@ -438,7 +451,7 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
                     Order inquiry
                   </Link>
                 </Button>
-                {project.can_edit && (
+                {project.can_edit && !purchaseOrderId && (
                   <Button type="button" size="sm" onClick={() => setBuilding(true)}>
                     <Hammer className="size-4" aria-hidden />
                     Build drafts

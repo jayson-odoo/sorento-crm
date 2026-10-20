@@ -3367,6 +3367,7 @@ class ProjectSODraftService:
         *,
         query: Optional[str] = None,
         status: Optional[Sequence[str]] = None,
+        purchase_order_id: Optional[str] = None,
         page: int = 1,
         limit: int = 50,
         sort: str = "created_at",
@@ -3375,6 +3376,8 @@ class ProjectSODraftService:
         rows = self.db.query(ProjectSalesOrder).filter(
             ProjectSalesOrder.project_id == project_id
         )
+        if purchase_order_id:
+            rows = rows.filter(ProjectSalesOrder.purchase_order_id == purchase_order_id)
         if status:
             rows = rows.filter(ProjectSalesOrder.status.in_(list(status)))
         if query:

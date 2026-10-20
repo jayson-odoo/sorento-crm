@@ -261,6 +261,7 @@ def test_the_po_list_carries_ordered_delivered_and_next_delivery(seeded):
     assert row["ordered_units"] == Decimal("360")
     assert row["delivered_units"] == Decimal("40")
     assert row["next_delivery_date"] == date(2030, 7, 1)
+    assert row["has_document"] is True
 
 
 def test_moving_an_area_moves_its_draft_lines_and_undo_puts_them_back(seeded):
@@ -391,3 +392,35 @@ def test_the_new_routes_are_mounted():
     paths = {getattr(route, "path", "") for route in router.routes}
     assert "/purchase-orders/{po_id}/progress" in paths
     assert "/delivery-phases/{phase_id}/date" in paths
+
+
+def test_the_sales_order_list_narrows_to_one_po(seeded):
+    """The PO page's Sales orders tab lists that PO's orders only."""
+    import uuid as _uuid
+
+    from app.models.projects import Project
+
+    db, company_id, owner = seeded
+    po, _phases, _a, _b = _two_line_po(db, company_id, owner)
+    project = db.query(Project).filter(Project.id == po.project_id).one()
+    other_po = _po(db, project, party=_party(db, company_id))
+    db.add(
+        ProjectSalesOrder(
+            id=str(_uuid.uuid4()),
+            company_id=company_id,
+            project_id=project.id,
+            purchase_order_id=other_po.id,
+            provisional_ref=f"ZZT-{_uuid.uuid4().hex[:8]}",
+            status="draft",
+        )
+    )
+    db.flush()
+
+    rows, total = ProjectSODraftService(db).list_for_project(
+        project.id, purchase_order_id=po.id
+    )
+    everything, all_total = ProjectSODraftService(db).list_for_project(project.id)
+
+    assert total == len(_orders(db, po))
+    assert {row.purchase_order_id for row in rows} == {po.id}
+    assert all_total == total + 1
