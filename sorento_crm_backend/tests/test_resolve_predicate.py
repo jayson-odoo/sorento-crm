@@ -1838,16 +1838,24 @@ def test_cs_t3_a_zero_qualifying_set_carries_no_code_fragment_rows_of_the_word(c
     assert "QQZZBASINWC7" not in [m.get("canonical_code") for m in rows if m.get("entity_type") == "product"], rows
 
 
-def test_cs_t4_and_mode_admits_fragment_rows_only_for_a_token_with_a_digit():
-    """Opus nit, pinned on the helper: in AND mode the intersection blends every caller token, so a
-    caller token with a digit admits its code fragment rows; digitless tokens do not."""
-    from app.api.v1.system.references import _collect_lookup_product_ids
+def test_cs_t4_and_mode_keeps_fragment_rows_only_for_a_token_with_a_digit():
+    """Opus nit, pinned on the one rule (`_drop_word_code_fragments`; amended with lead sign-off
+    when the second gate in `_collect_lookup_product_ids` went): in AND mode the intersection
+    blends every caller token, so a caller token with a digit keeps its code fragment rows, and
+    registry words drop them."""
+    from app.api.v1.system.references import _drop_word_code_fragments
 
-    rows = [{"entity_type": "product", "match_tier": "and", "uuid": "u-and"},
-            {"entity_type": "product", "match_tier": "substring", "uuid": "u-sub"}]
+    def rows() -> list[dict]:
+        return [{"entity_type": "product", "match_tier": "and", "uuid": "u-and", "canonical_code": "BASINWC286X"},
+                {"entity_type": "product", "match_tier": "substring", "uuid": "u-sub", "canonical_code": "QQBASINWC286"}]
 
-    assert _collect_lookup_product_ids({"tokens": ["basin", "wc286"], "intersection": list(rows)}) == ["u-and", "u-sub"]
-    assert _collect_lookup_product_ids({"tokens": ["wall", "basin"], "intersection": list(rows)}) == []
+    with_digit = {"tokens": ["basin", "wc286"], "intersection": rows()}
+    _drop_word_code_fragments(with_digit, frozenset({"wall", "basin"}))
+    assert [m["uuid"] for m in with_digit["intersection"]] == ["u-and", "u-sub"], with_digit
+
+    words = {"tokens": ["wall", "basin"], "intersection": rows()}
+    _drop_word_code_fragments(words, frozenset({"wall", "basin"}))
+    assert words["intersection"] == [], words
 
 
 @pytest.mark.parametrize("token", ["zzbasin\u00b2", "zzbasin\u0663", "zz\u0661\u0662"])
@@ -1891,6 +1899,45 @@ def test_cs_t8_a_whole_typed_code_with_no_digit_stays_a_hit_in_and_mode(client, 
     # The rows the answer is built from (resolutions / intersection), not the `by_entity_type` echo,
     # which T2 shows can still list a dropped row.
     assert code in _product_codes(payload), payload
+    if path == "shape b":
+        # A3 (Opus re-check of fcb6fb589a): the rows are not enough; the code is IN the described set.
+        assert (payload.get("predicate") or {}).get("qualifying_total") == 1, payload.get("predicate")
+        assert code in _product_codes(payload, tier="spec_search"), payload.get("predicate")
+
+
+# --- CODE-SUBSTRING one rule (Opus re-check of fcb6fb589a): the AND-mode set keeps what the -----
+# --- early drop keeps (the lane asks in AND mode, resolve_gate) -----------------------------------
+
+
+def test_cs_a1_and_mode_a_whole_typed_digitless_code_is_in_the_described_set(client, db):
+    _stocked(db, "ZZSORENTOX", "ZZT Placeholder", "CLOSE COUPLED P-TRAP WATER CLOSET")
+
+    payload = client.post(
+        ENDPOINT,
+        json={
+            "query": "zzsorentox has stock", "tokens": ["zzsorentox"], "match_mode": "and",
+            "require": {"stock": True}, "predicate_words": ["stock"],
+        },
+    ).json()
+
+    assert (payload.get("predicate") or {}).get("qualifying_total") == 1, payload.get("predicate")
+    assert "ZZSORENTOX" in _product_codes(payload, tier="spec_search"), payload.get("predicate")
+
+
+@pytest.mark.parametrize("mode", ["and", "or"], ids=["and mode", "guard: or mode"])
+def test_cs_a2_a_non_registry_code_family_is_in_the_described_set(client, db, mode):
+    family = [_stocked(db, code, "ZZT Family", "CLOSE COUPLED P-TRAP WATER CLOSET") for code in ("ZZQAMSX01", "ZZQAMSX02")]
+
+    payload = client.post(
+        ENDPOINT,
+        json={
+            "query": "zzqamsx has stock", "tokens": ["zzqamsx"], "match_mode": mode,
+            "require": {"stock": True}, "predicate_words": ["stock"],
+        },
+    ).json()
+
+    assert (payload.get("predicate") or {}).get("qualifying_total") == 2, payload.get("predicate")
+    assert {p.product_code for p in family} <= set(_product_codes(payload, tier="spec_search")), payload.get("predicate")
 
 
 # --- CODE-SUBSTRING security re-check (S1, S2) -------------------------------------------------
