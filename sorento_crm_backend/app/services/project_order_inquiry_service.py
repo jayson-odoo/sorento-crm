@@ -592,10 +592,11 @@ def saved_draft_remark(
     location (`_facts_for`'s timely rule), which the email prints for incoming stock; a
     `local` `buy_origin` reads LOCAL BUY, as the email marks it. A saved Cancel SO reads
     CANCEL, as the email's cancelled-line line does. A saved Reject that `withdraws_raised`
-    (a confirmed line with a raised row) is a withdrawal the press tells with a `cancelled`
-    handover, whose word is `handover_remark("cancelled", ...)` (UAC F15); any other Reject
-    (nothing raised, e.g. a reserve-only line, UAC F17), or a draft with nothing composed,
-    has no words (`None`)."""
+    (a confirmed line whose row the press cancels: raised, or placed / partly linked with
+    cascade-only links) is a withdrawal told with a `cancelled` handover, whose word is
+    `handover_remark("cancelled", ...)` (UAC F15, F20); any other Reject (nothing the press
+    cancels, e.g. a reserve-only line, UAC F17), or a draft with nothing composed, has no
+    words (`None`)."""
     if not decision:
         return None
     verdict = decision.get("verdict")

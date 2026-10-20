@@ -68,6 +68,8 @@ from app.models.project_so import (
     ACK_REJECTED,
     DECISION_ACTIVE,
     INQUIRY_CANCELLED,
+    INQUIRY_PARTLY_LINKED,
+    INQUIRY_PLACED,
     INQUIRY_RAISED,
     OrderInquiry,
     OrderInquiryRow,
@@ -5291,6 +5293,7 @@ class FulfilmentBoardService:
         draft. Incoming stock names the SPOs arriving in time at the line's own location
         (`_facts_for`'s rule). No extra statement on a board with no saved draft."""
         from app.services.project_order_inquiry_service import (
+            ProjectOrderInquiryService,
             handover_remark,
             saved_draft_remark,
         )
@@ -5331,6 +5334,36 @@ class FulfilmentBoardService:
             if incoming
             else {}
         )
+        # UAC F15, F17, F20: a saved Reject withdraws a confirmed line, and the email tells it
+        # only for the rows the press then cancels (the retire loop's own rule): a raised row,
+        # or a placed / partly linked one whose links are all the cascade's (`_cascade_only`).
+        # Links are read once, and only for such a Reject on a placed or partly linked row.
+        def _rejecting(row: _Row) -> bool:
+            return (decisions.get(id(row)) or {}).get("verdict") == "rejected" and bool(
+                row.decision
+            )
+
+        held = {
+            str((row.order_inquiry or {}).get("row_id"))
+            for row in rows
+            if _rejecting(row)
+            and (row.order_inquiry or {}).get("state") in (INQUIRY_PLACED, INQUIRY_PARTLY_LINKED)
+            and (row.order_inquiry or {}).get("row_id")
+        }
+        inquiries = ProjectOrderInquiryService(self.db)
+        links = inquiries._links_by_row(sorted(held)) if held else {}
+
+        def _withdraws(row: _Row) -> bool:
+            if not _rejecting(row):
+                return False
+            inquiry = row.order_inquiry or {}
+            if inquiry.get("state") == INQUIRY_RAISED:
+                return True
+            return inquiry.get("state") in (
+                INQUIRY_PLACED,
+                INQUIRY_PARTLY_LINKED,
+            ) and inquiries._cascade_only(links.get(str(inquiry.get("row_id")), []))
+
         for row in rows:
             decision = decisions.get(id(row))
             if decision:
@@ -5346,10 +5379,7 @@ class FulfilmentBoardService:
                         or (ref.arrival_date is not None and ref.arrival_date <= row.required_date)
                     ],
                     buy_origin=self._buy_origin.get(str(row.product_id)) if row.product_id else None,
-                    # UAC F15, F17: a Reject on a confirmed line is told only when the press
-                    # will retire a raised row for it (the line's live instruction).
-                    withdraws_raised=bool(row.decision)
-                    and (row.order_inquiry or {}).get("state") == INQUIRY_RAISED,
+                    withdraws_raised=_withdraws(row),
                 )
             elif row.cancelled and not row.cancelled_at:
                 row.saved_remark = handover_remark("cancelled", row, None)
