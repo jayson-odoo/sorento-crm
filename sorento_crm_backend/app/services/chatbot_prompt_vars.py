@@ -377,12 +377,15 @@ def _listed_line(head: str, words: list[str] | str | None) -> str:
     return f"{head}. Words: {text}." if text else f"{head}."
 
 
+def file_type_line(row: dict, aliases: dict[str, list[str]]) -> str:
+    """One `{{attachment_types}}` line: the code, the name, and what it holds. Also what the
+    CLOSED LISTS index mode prints per turn for a matched or held type (one wording)."""
+    return _one_line(_listed_line(f'File type {_item(row)}: {row["type_name"]}', _type_words(row, aliases)))
+
+
 def render_attachment_types(db: Session) -> str:
     aliases = _alias_words(db)
-    return "\n".join(
-        _one_line(_listed_line(f'File type {_item(r)}: {r["type_name"]}', _type_words(r, aliases)))
-        for r in _file_type_rows(db)
-    )
+    return "\n".join(file_type_line(r, aliases) for r in _file_type_rows(db))
 
 
 def _cert_kind_rows(db: Session) -> list[dict]:
@@ -435,14 +438,21 @@ def _cert_schemes(db: Session) -> list[tuple[str, list[str]]]:
     return sorted(schemes.values(), key=lambda entry: entry[0].casefold())
 
 
+def cert_kind_line(row: dict, aliases: dict[str, list[str]]) -> str:
+    """One certificate kind line of `{{certification_types}}` (and of index mode's per-turn lines)."""
+    return _one_line(_listed_line(f'Certificate kind {_item(row)}: {row["type_name"]}', _type_words(row, aliases)))
+
+
+def cert_scheme_line(name: str, words: list[str]) -> str:
+    """One certificate scheme line of `{{certification_types}}` (and of index mode's per-turn lines)."""
+    return _one_line(_listed_line(f"Certificate scheme {name}", ", ".join(words)))
+
+
 def render_certification_types(db: Session) -> str:
     aliases = _alias_words(db)
-    lines = [
-        _listed_line(f'Certificate kind {_item(r)}: {r["type_name"]}', _type_words(r, aliases))
-        for r in _cert_kind_rows(db)
-    ]
-    lines += [_listed_line(f"Certificate scheme {name}", ", ".join(words)) for name, words in _cert_schemes(db)]
-    return "\n".join(_one_line(line) for line in lines)
+    lines = [cert_kind_line(r, aliases) for r in _cert_kind_rows(db)]
+    lines += [cert_scheme_line(name, words) for name, words in _cert_schemes(db)]
+    return "\n".join(lines)
 
 
 def closed_list_items(db: Session) -> dict[str, dict[str, str]]:

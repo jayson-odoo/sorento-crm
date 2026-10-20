@@ -95,6 +95,10 @@ class ParserConfig:
     # PARSER-TEMPLATE F1-A: the version is the consolidated template (`head/parser_template`),
     # whose rules decide what the engine's own re-readings of the message used to.
     template: bool = False
+    # CLOSED-LISTS-INDEX-MODE: `chatbot_closed_lists_mode` is 'index' on a CLOSED LISTS version:
+    # the system prompt carries each full list as one fixed pointer line and the candidate
+    # block carries the index lines (`head/closed_lists_index`). Only with closed_lists.
+    closed_lists_index: bool = False
 
 
 def _build_base_json_schema() -> dict[str, Any]:
@@ -830,16 +834,27 @@ def resolve_config(
     the way down. It exists for the Prompts screen's "Run a turn" test (AC-807), which is
     dry-run only: the engine refuses to read it off a live envelope, so a customer can
     never be answered by an unpublished prompt.
+
+    A CLOSED LISTS version also reads `system_settings.chatbot_closed_lists_mode` here, every
+    call (no cache, so a flip reaches the next turn), for the index mode below.
     """
     from app.services.ai_assistant_service import AIAssistantConfigService
     from app.services.llm_provider import resolve_api_key
 
     # ONE registry read: the gate reads the RAW template, the prompt is that same text rendered.
+    from app.services.chatbot.head import closed_lists_index
     from app.services.chatbot.head.chat_state_prompt import HEADING
+    from app.services.chatbot.head.closed_lists_prompt import gate_on
 
     resolved = get_prompt(db, PROMPT_KEY, override_version_id=override_version_id)
     raw_template = resolved.text
-    system_prompt, prompt_version = render_resolved(db, PROMPT_KEY, resolved, current_date=current_date)
+    # The same one read as the state gate (#1747 R6): both gates and the text, one version.
+    closed_lists = gate_on(raw_template)
+    # CLOSED-LISTS-INDEX-MODE: the full lists render as fixed pointer lines, passed at render
+    # time (a value the caller passes wins over the registry's), so the template is untouched.
+    index_mode = closed_lists and closed_lists_index.read_mode(db) == closed_lists_index.MODE_INDEX
+    blanks = dict(closed_lists_index.SYSTEM_BLANKS) if index_mode else {}
+    system_prompt, prompt_version = render_resolved(db, PROMPT_KEY, resolved, current_date=current_date, **blanks)
     provider_override, model_override = agent_model(db, PROMPT_KEY)
 
     config = AIAssistantConfigService(db).get()
@@ -851,11 +866,8 @@ def resolve_config(
     if not api_key:
         raise ParserError(f"no API key configured for provider {provider!r}")
     from app.services.chatbot.head import code_lookup_prompt
-    from app.services.chatbot.head.closed_lists_prompt import gate_on
     from app.services.chatbot.head.parser_template import MARKER as TEMPLATE_MARKER
 
-    # The same one read as the state gate (#1747 R6): both gates and the text, one version.
-    closed_lists = gate_on(raw_template)
     # CHAT-STATE: the literal on the prompt text (never on a message) opts the turn in.
     state_block = HEADING in (raw_template or "")
     json_schema = None
@@ -874,6 +886,7 @@ def resolve_config(
         json_schema=json_schema,
         state_block=state_block,
         template=TEMPLATE_MARKER in (raw_template or ""),
+        closed_lists_index=index_mode,
     )
 
 

@@ -60,7 +60,7 @@ from app.services.customer_group_service import family_overrides
 from app.services.error_handler import AppException
 from app.utils.build_info import GIT_SHA
 from app.services.ledger_family import customer_groups
-from app.services.chatbot.head import candidates as candidates_mod, grounding, held_family, parser, scheme_index
+from app.services.chatbot.head import candidates as candidates_mod, closed_lists_index, grounding, held_family, parser, scheme_index
 from app.services.chatbot.head import access as access_mod
 from app.services.chatbot.head.access import check_access, default_space_id
 from app.services.chatbot.head.build_ctx import build_ctx
@@ -1135,11 +1135,16 @@ def _candidate_lines(
     hidden: frozenset[str] = frozenset(),
     *,
     code_lookup: bool = False,
+    index: bool = False,
 ) -> tuple[list[str] | None, frozenset[str], dict[str, dict[str, Any]]]:
     """The candidate block for the message's OWN line (`UserTurn.own_text`: the quoted reply
     under it is not this message's words, the line grounding reads too). It only advises the
     parser, so a failure leaves it out and the turn goes on (savepoint: the session stays usable).
-    Also the codes the block lists, for grounding's product pick check under CODE LOOKUP."""
+    Also the codes the block lists, for grounding's product pick check under CODE LOOKUP.
+
+    `index` (CLOSED-LISTS-INDEX-MODE): the block also carries the index lines
+    (`head/closed_lists_index.index_lines`), in their own savepoint so a failure there keeps the
+    candidate lines."""
     message = user_turn.own_text
     try:
         with db.begin_nested():
@@ -1148,14 +1153,23 @@ def _candidate_lines(
                 if code_lookup
                 else candidates_mod.shortlist(db, message, held_ids, hidden=hidden)
             )
-            return (
+            lines, codes, picks = (
                 candidates_mod.candidate_lines(entries),
                 candidates_mod.listed_codes(entries),
                 candidates_mod.pick_info(entries) if code_lookup else {},
             )
     except Exception:  # noqa: BLE001 - advisory block, never a failed turn
         logger.warning("chatbot: candidate shortlist failed; parsing without it", exc_info=True)
-        return None, frozenset(), {}
+        lines, codes, picks = None, frozenset(), {}
+    if not index:
+        return lines, codes, picks
+    try:
+        with db.begin_nested():
+            extra = closed_lists_index.index_lines(db, message, held_ids, hidden)
+    except Exception:  # noqa: BLE001 - advisory block, never a failed turn
+        logger.warning("chatbot: closed lists index lines failed; parsing without them", exc_info=True)
+        extra = []
+    return ([*(lines or []), *extra] or lines), codes, picks
 
 
 def _scoped_factory(
@@ -4652,8 +4666,11 @@ def _run_stages_body(  # noqa: PLR0915
         # no cache, so an operator's table edit reaches the very next turn.
         brands = turn_runtime.active_brands(db)
         promotion_kinds = turn_runtime.promotion_kind_rows(db)
-        product_types = turn_runtime.product_type_names(db)
-        product_details = turn_runtime.product_detail_values(db)
+        # CLOSED-LISTS-INDEX-MODE: the two full catalogue lines are indexed instead (the
+        # candidate lines name the product types and spec values the words say; the index
+        # lines the held products' own values), so index mode reads neither.
+        product_types = None if parser_config.closed_lists_index else turn_runtime.product_type_names(db)
+        product_details = None if parser_config.closed_lists_index else turn_runtime.product_detail_values(db)
         # CHAT-CLOSED-LISTS: what is on file under the words of this message, for a
         # version carrying the CLOSED LISTS section only (code shortlists, the parser picks).
         # H1: the contact's hidden spec keys (the real policy, `head/access`), read once here and
@@ -4670,6 +4687,7 @@ def _run_stages_body(  # noqa: PLR0915
                 [str(p["uuid"]) for p in state_in.focus.products if isinstance(p, dict) and p.get("uuid")],
                 hidden_spec,
                 code_lookup=parser_config.code_lookup,
+                index=parser_config.closed_lists_index,
             )
             if parser_config.closed_lists
             else (None, frozenset(), {})
