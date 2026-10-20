@@ -1073,7 +1073,7 @@ export default function AttachmentsInFolderPanel({
               </div>
               <div className="flex items-center rounded-md border p-0.5">
                 <Button
-                  variant={viewMode === 'list' ? 'secondary' : 'ghost'}
+                  variant={viewMode === 'list' ? 'primary' : 'ghost'}
                   size="sm"
                   className="size-7 p-0"
                   onClick={() => setViewMode('list')}
@@ -1083,7 +1083,7 @@ export default function AttachmentsInFolderPanel({
                   <List className="size-4" />
                 </Button>
                 <Button
-                  variant={viewMode === 'grid' ? 'secondary' : 'ghost'}
+                  variant={viewMode === 'grid' ? 'primary' : 'ghost'}
                   size="sm"
                   className="size-7 p-0"
                   onClick={() => setViewMode('grid')}
