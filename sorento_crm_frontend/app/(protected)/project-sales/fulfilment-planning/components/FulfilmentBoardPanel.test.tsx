@@ -4536,7 +4536,7 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     expect(screen.queryByTestId('board-confirm-mismatch-pso-so-a')).toBeNull();
   });
 
-  it('posts nothing for an order the dry run refuses and shows the refusal in Review', async () => {
+  it('posts nothing for an order the dry run refuses and shows the refusal in the results', async () => {
     getPlanningBoard.mockResolvedValue(twoLines());
     previewConfirmMany.mockResolvedValue({
       results: [
@@ -4553,12 +4553,8 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     renderPanel(['SO403340']);
     await walkConfirmGuide();
 
-    // UAC C7: every order refused, so the reason shows in Review (same words), Confirm is
-    // unreachable and no result card is drawn.
-    const block = await screen.findByTestId('confirm-guide-refused');
+    const block = await screen.findByTestId('board-confirm-results');
     expect(block).toHaveTextContent('Nothing was written');
-    expect(screen.queryByTestId('confirm-guide-confirm')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('board-confirm-results')).not.toBeInTheDocument();
     expect(confirmMany).not.toHaveBeenCalled();
   });
 

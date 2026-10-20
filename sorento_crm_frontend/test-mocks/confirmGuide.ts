@@ -14,29 +14,23 @@ export async function openConfirmGuide() {
 
 /**
  * The next actionable control of the open guide: the step 3 Confirm, else an enabled Next. Null
- * when Review has settled with every order refused (UAC C7): nothing can be confirmed, so the
- * walk stops there instead of waiting for a button that never comes.
+ * once the guide has closed by itself after Review (UAC C7: every order refused).
  */
 export async function guideControl(): Promise<HTMLElement | null> {
   return waitFor(() => {
     const confirm = screen.queryByTestId('confirm-guide-confirm');
     if (confirm) return confirm;
+    // C7: every order refused, so the guide closed itself onto the result card.
+    if (!screen.queryByTestId('confirm-guide')) return null;
     const next = screen.queryByTestId('confirm-guide-next') as HTMLButtonElement | null;
     if (next && !next.disabled) return next;
-    if (
-      screen.queryByTestId('confirm-guide-review') &&
-      screen.queryByTestId('confirm-guide-refused') &&
-      !screen.queryByTestId('confirm-guide-review-error')
-    ) {
-      return null;
-    }
     throw new Error('the guide has no enabled Next or Confirm yet');
   });
 }
 
 /**
  * Walks Next until the step 3 Confirm shows (it stays open; nothing is posted yet). Returns null
- * when Review is all refused and Confirm is unreachable (C7).
+ * when the guide closed itself after Review (C7).
  */
 export async function walkToConfirmStep() {
   await openConfirmGuide();
@@ -51,7 +45,7 @@ export async function walkToConfirmStep() {
 
 /**
  * Press Confirm (N), walk every page, press the guide's own Confirm: today's post. When every
- * order is refused it stops at Review with the guide open and posts nothing.
+ * order is refused the guide closes itself after Review and nothing is posted.
  */
 export async function walkConfirmGuide() {
   const confirm = await walkToConfirmStep();

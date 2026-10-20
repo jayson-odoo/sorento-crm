@@ -797,7 +797,7 @@ describe('T-FE4 (C1 to C7): Review shows what purchasing will get', () => {
     expect(await screen.findByTestId('confirm-guide-next')).toBeEnabled();
   });
 
-  it('every order refused: Review says nothing can be confirmed and Confirm cannot be reached', async () => {
+  it('every order refused: the guide closes after Review onto the result card, nothing is posted', async () => {
     dryRunAnswers({
       'pso-so-1': { error: 'Line 1 has no supply.' },
       'pso-so-2': { error: 'Line 1 is held.' },
@@ -808,18 +808,12 @@ describe('T-FE4 (C1 to C7): Review shows what purchasing will get', () => {
     click('confirm-guide-next');
     await screen.findByTestId('confirm-guide-split-page');
     click('confirm-guide-next');
-    const refusals = await screen.findAllByTestId('confirm-guide-refused');
-    expect(refusals.map((el) => el.textContent).join(' ')).toContain('Line 1 has no supply.');
-    expect(refusals.map((el) => el.textContent).join(' ')).toContain('Line 1 is held.');
-    expect(screen.getByTestId('confirm-guide-review')).toHaveTextContent(/nothing can be confirmed/i);
-    expect(screen.queryByTestId('confirm-guide-confirm')).not.toBeInTheDocument();
-    const next = screen.queryByTestId('confirm-guide-next') as HTMLButtonElement | null;
-    expect(next === null || next.disabled).toBe(true);
-    // C7: Cancel closes, nothing is posted, no result card.
-    click('confirm-guide-cancel');
+    const card = await screen.findByTestId('board-confirm-results');
+    expect(card).toHaveTextContent('Line 1 has no supply.');
+    expect(card).toHaveTextContent('Line 1 is held.');
     await waitFor(() => expect(screen.queryByTestId('confirm-guide')).not.toBeInTheDocument());
+    expect(screen.queryByTestId('confirm-guide-confirm')).not.toBeInTheDocument();
     expect(confirmMany).not.toHaveBeenCalled();
-    expect(screen.queryByTestId('board-confirm-results')).not.toBeInTheDocument();
   });
 
   it('a row whose state is cancelled shows CANCEL in its remark cell', async () => {
