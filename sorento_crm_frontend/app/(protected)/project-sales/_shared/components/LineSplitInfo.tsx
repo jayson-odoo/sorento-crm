@@ -79,6 +79,26 @@ function receivingLineIds(lines: SplitLine[]): Set<string> {
   return out;
 }
 
+/**
+ * UAC E3: these lines, and the lines their own splits moved onto (so every split of them
+ * shows, under the line it sits on), in the sheet's order.
+ */
+function linesWithLanding(
+  all: SplitLine[],
+  ownIds: ReadonlySet<string>,
+): SplitLine[] {
+  const landing = new Set<string>();
+  for (const line of all) {
+    if (!ownIds.has(line.lineId)) continue;
+    for (const split of line.splits) {
+      if (!split.isCancel && split.sitsOnLineId) landing.add(split.sitsOnLineId);
+    }
+  }
+  return all.filter(
+    (line) => ownIds.has(line.lineId) || landing.has(line.lineId),
+  );
+}
+
 /** UAC E4: split-edited (A1, B3), the server's own status, the same the board flag reads. */
 function isSplitEdited(
   payload: LineSplitsPayload,
@@ -160,6 +180,18 @@ function SheetPending({
   );
 }
 
+/** UAC D1: the whole-order popup's empty state, also a guided Confirm page's. */
+function NoSplitLines() {
+  return (
+    <div className="py-6 text-center">
+      <p className="text-sm font-medium">No split lines</p>
+      <p className="text-sm text-muted-foreground">
+        Every line ships as AutoCount has it.
+      </p>
+    </div>
+  );
+}
+
 /** Full screen on a phone, as wide as the sheet needs on a desktop (UAC E6). */
 const SHEET_DIALOG_CLASS =
   'gap-0 overflow-hidden p-0 max-md:inset-0 max-md:rounded-none';
@@ -204,17 +236,10 @@ export function LineSplitInfo({
     const all = sheetLinesOf(payload);
     const own = all.find((line) => line.lineNo === lineNo);
     if (!own) return { all, lines: [] as SplitLine[], ids: NO_LINE_IDS };
-    // UAC E3: this line, and the lines its own splits moved onto (so every split of it
-    // shows, under the line it sits on); splits moved onto it are drawn under it.
-    const landing = new Set(
-      own.splits
-        .filter((split) => !split.isCancel && split.sitsOnLineId)
-        .map((split) => split.sitsOnLineId as string),
-    );
-    const lines = all.filter(
-      (line) => line.lineId === own.lineId || landing.has(line.lineId),
-    );
-    return { all, lines, ids: new Set([own.lineId]) as ReadonlySet<string> };
+    // UAC E3: this line, and the lines its own splits moved onto; splits moved onto it
+    // are drawn under it.
+    const ids = new Set([own.lineId]) as ReadonlySet<string>;
+    return { all, lines: linesWithLanding(all, ids), ids };
   }, [open, payload, lineNo]);
   if (!view) return null;
   const count = splitCount(view);
@@ -360,12 +385,7 @@ export function OrderSplitsDialog({
         {payload === undefined ? (
           <SheetPending error={loadError} onRetry={onRetry} />
         ) : !payload || !sheet || sheet.lines.length === 0 ? (
-          <div className="py-6 text-center">
-            <p className="text-sm font-medium">No split lines</p>
-            <p className="text-sm text-muted-foreground">
-              Every line ships as AutoCount has it.
-            </p>
-          </div>
+          <NoSplitLines />
         ) : (
           <>
             <SheetStatus
@@ -382,4 +402,26 @@ export function OrderSplitsDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+/**
+ * OI-SPLIT-GUIDE (UAC B2): only the named lines of one order (the saved split edits a
+ * Confirm applies), each as the line popup shows a line (UAC E3 of #1794: the line and the
+ * lines its splits land on), as the same read-only split sheet. No dialog of its own: the
+ * guided Confirm draws it inside its Split page.
+ */
+export function SplitLinesSheet({
+  payload,
+  lineIds,
+}: {
+  /** The order's split sheet; `null` when no line of the order is split. */
+  payload: LineSplitsPayload | null;
+  lineIds: readonly string[];
+}) {
+  const sheet = React.useMemo(() => {
+    const all = payload ? sheetLinesOf(payload) : [];
+    return { all, lines: linesWithLanding(all, new Set(lineIds)) };
+  }, [payload, lineIds]);
+  if (!payload || sheet.lines.length === 0) return <NoSplitLines />;
+  return <ReadOnlySheet payload={payload} lines={sheet.lines} all={sheet.all} />;
 }

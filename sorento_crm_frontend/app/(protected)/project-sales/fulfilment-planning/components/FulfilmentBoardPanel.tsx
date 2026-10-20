@@ -82,6 +82,7 @@ import {
   excludedFromPress,
   splitEditsToConfirm,
   contributionMatchesSearch,
+  confirmOrderIdsFor,
   confirmSummaryFor,
   decisionHeaderText,
   orderListRows,
@@ -125,6 +126,12 @@ import { PlanningRefusalTable, hasReasonCode } from './PlanningRefusalTable';
 import { FulfilmentBoardListView } from './FulfilmentBoardListView';
 import { LineSplitDialog } from './LineSplitDialog';
 import { BoardOrderSplitsDialog } from './BoardOrderSplitsDialog';
+import {
+  ConfirmGuideDialog,
+  type ConfirmGuidePreview,
+  type ConfirmGuideReviewOrder,
+  type ConfirmGuideSplitPage,
+} from './ConfirmGuideDialog';
 import { LineSplitOpenerContext, type LineSplitOpener } from './lineSplitOpener';
 import { FulfilmentBoardMatrix } from './FulfilmentBoardMatrix';
 import { DecisionStrip } from './DecisionStrip';
@@ -611,7 +618,7 @@ export function FulfilmentBoardPanel({
 
   /**
    * Orders a PENDING planning-change batch currently covers (S4, fix round,
-   * `PLAN-board-reject-on-confirmed-line.md`) - the SAME predicate `runConfirmAll`
+   * `PLAN-board-reject-on-confirmed-line.md`) - the SAME predicate `buildConfirmOrders`
    * resolves each order's own `orderBatchId` with below, read here so the "Confirm
    * (N)" counter (and the per-decision toast, which reads the identical function)
    * never promises a covered-rejected line's withdrawal a press cannot actually
@@ -619,7 +626,7 @@ export function FulfilmentBoardPanel({
    * that line rides along as nothing and a counter that still named it read
    * "Confirm (1)" for a press that then confirmed nothing at all.
    *
-   * N3 (nit, fix round): reads `board.data`, while `runConfirmAll`'s own loop below acts
+   * N3 (nit, fix round): reads `board.data`, while `buildConfirmOrders`'s own loop below acts
    * on `liveBoard` - the FRESH read after an adoption round, when one ran. The two can
    * disagree for exactly the span between that refetch and this memo's own re-render off
    * the same query cache; the counter self-corrects on the next render once React catches
@@ -1334,19 +1341,21 @@ export function FulfilmentBoardPanel({
   // OI-SPLIT-VIEW (UAC A3): per order, the lines whose saved split edit the next Confirm
   // applies, as "line <AutoCount no> <item>": exactly the split-edited lines the count above
   // includes (`splitEditsToConfirm` reads `confirmSummaryFor`'s own rule and draft).
+  // OI-SPLIT-GUIDE (UAC B1, B2): the same lines' ids, for the guided Confirm's Split pages.
   const splitEditsByOrder = React.useMemo(() => {
-    const out = new Map<string, string[]>();
+    const out = new Map<string, { labels: string[]; lineIds: string[] }>();
     for (const contribution of splitEditsToConfirm(
       allContributions,
       draftWithoutPreMark,
       pendingBatchSalesOrderIds,
       { unadoptedSalesOrderIds, batchNamedKeys },
     )) {
-      const labels = out.get(contribution.sales_order_id) ?? [];
-      labels.push(
+      const entry = out.get(contribution.sales_order_id) ?? { labels: [], lineIds: [] };
+      entry.labels.push(
         `line ${contribution.so_line_no ?? contribution.line_no} ${contribution.item_code}`,
       );
-      out.set(contribution.sales_order_id, labels);
+      if (contribution.project_line_id) entry.lineIds.push(contribution.project_line_id);
+      out.set(contribution.sales_order_id, entry);
     }
     return out;
   }, [
@@ -1718,11 +1727,19 @@ export function FulfilmentBoardPanel({
         firstOrderBatchId && orders.every((order) => order.batch_id === firstOrderBatchId)
           ? firstOrderBatchId
           : null;
+      // OI-SPLIT-GUIDE: each planning record's SO number in board order, off the board this
+      // press read (an order adopted just now is not on the panel's board yet).
+      const soNumberByPsoId = new Map<string, string>();
+      for (const order of liveBoard.orders) {
+        const psoId = psoIdBySalesOrder.get(order.sales_order_id);
+        if (psoId) soNumberByPsoId.set(psoId, order.so_number);
+      }
       return {
         orders,
         skipped,
         contributions,
         splitEditPsoIds,
+        soNumberByPsoId,
         body: bodyBatchId ? { orders, batch_id: bodyBatchId } : { orders },
       };
     },
@@ -1738,12 +1755,61 @@ export function FulfilmentBoardPanel({
     ],
   );
 
+  type BuiltPress = NonNullable<Awaited<ReturnType<typeof buildConfirmOrders>>>;
+  /** What step 3 of the guided Confirm posts: the press narrowed by its dry run's answer. */
+  type PreparedPress = {
+    orders: (BuiltPress['orders'][number] & { only_line_ids?: string[] })[];
+    body: { orders: PreparedPress['orders']; batch_id?: string };
+    answer: Map<string, ConfirmManyOrderResult>;
+    skipped: BoardBatchResult[];
+    refusals: BoardBatchResult[];
+    contributions: BoardContribution[];
+    leftOutAtConfirm: number;
+  };
+
   /**
-   * CONFIRM: one call, grouped per order, each order writing in its OWN transaction
-   * server-side (`confirm_many`) - so one order's refusal never takes the others down. Any
-   * order that has not been adopted yet is adopted first; the board is re-read once
-   * afterwards so the fresh mirror lines can be named in the payload (adoption fills
-   * `project_line_id`, which is null until then).
+   * OI-SPLIT-GUIDE: Confirm (N) opens the guided Confirm (UAC A1); the press below runs in
+   * two halves the guide calls. `previewPress` (step 2, Review) builds the body and runs the
+   * dry run, `postPress` (step 3) posts what that dry run answered.
+   */
+  const [guideOpen, setGuideOpen] = React.useState(false);
+  const closeGuide = React.useCallback(() => setGuideOpen(false), []);
+  /** UAC A3: the orders of this Confirm, the set the count reads, in board order. */
+  const guideSoNumbers = React.useMemo(() => {
+    const ids = confirmOrderIdsFor(allContributions, draftWithoutPreMark, pendingBatchSalesOrderIds, {
+      unadoptedSalesOrderIds,
+      batchNamedKeys,
+    });
+    return (board.data?.orders ?? [])
+      .filter((order) => ids.has(order.sales_order_id))
+      .map((order) => order.so_number);
+  }, [
+    board.data,
+    allContributions,
+    draftWithoutPreMark,
+    pendingBatchSalesOrderIds,
+    unadoptedSalesOrderIds,
+    batchNamedKeys,
+  ]);
+  /** UAC B1: one Split page per order of this Confirm with a saved split edit, board order. */
+  const guideSplitPages = React.useMemo<ConfirmGuideSplitPage[]>(
+    () =>
+      (board.data?.orders ?? []).flatMap((order) => {
+        const edits = splitEditsByOrder.get(order.sales_order_id);
+        const psoId = order.project_sales_order_id;
+        return edits && psoId && edits.lineIds.length > 0
+          ? [{ psoId, soNumber: order.so_number, lineIds: edits.lineIds }]
+          : [];
+      }),
+    [board.data, splitEditsByOrder],
+  );
+
+  /**
+   * CONFIRM, first half (the guide's Review, UAC C1): one call, grouped per order, each order
+   * writing in its OWN transaction server-side (`confirm_many`) - so one order's refusal never
+   * takes the others down. Any order that has not been adopted yet is adopted first; the board
+   * is re-read once afterwards so the fresh mirror lines can be named in the payload (adoption
+   * fills `project_line_id`, which is null until then).
    *
    * The population is `confirmLinesFor`'s own: CONFIRM POSTS SAVED LINES ONLY (8 Sep 2026
    * ruling, reverses R11). An uncovered line nobody saved a decision for is left undecided,
@@ -1754,12 +1820,24 @@ export function FulfilmentBoardPanel({
    * throughout - a `Change proposed` line nobody has saved is the SAME "nothing to post" case
    * as a line nobody has touched, so its order never enters the batch on its account alone and
    * its batch row stays pending server-side.
+   *
+   * Answers `closed` when there is nothing to post (UAC C7): its `settle` puts up the result
+   * card a press that posted nothing shows today. A failed dry run throws (UAC C6).
    */
-  const runConfirmAll = React.useCallback(async () => {
-    if (!board.data) return;
+  const previewPress = React.useCallback(async (): Promise<
+    ConfirmGuidePreview<PreparedPress>
+  > => {
+    // A press that posts nothing says so the way it always has: in the result card, or a toast.
+    const settleWith = (results: BoardBatchResult[] | null, message?: string) => ({
+      kind: 'closed' as const,
+      settle: () => {
+        setSimulated(false);
+        setBatchResults(results);
+        if (message) toast.error(message);
+      },
+    });
+    if (!board.data) return settleWith(null);
     setConfirmingAll(true);
-    setBatchResults(null);
-    setSimulated(false);
     // AC-6: the count as the banner above stated it the moment Confirm was pressed - the
     // owner's own words were "confirming silently is dangerous", so a press that leaves lines
     // out says so in the SAME toast that says what it did commit, not only in a banner that
@@ -1768,18 +1846,19 @@ export function FulfilmentBoardPanel({
     try {
       const built = await buildConfirmOrders(new Set());
       if (!built) {
-        if (confirmSummary.toConfirm > 0) toast.error('Nothing could be sent for this press');
-        return;
+        return settleWith(
+          null,
+          confirmSummary.toConfirm > 0 ? 'Nothing could be sent for this press' : undefined,
+        );
       }
       const { skipped, contributions } = built;
       if (built.orders.length === 0) {
-        if (skipped.length > 0) setBatchResults(skipped);
-        return;
+        return settleWith(skipped.length > 0 ? skipped : null);
       }
       // DRY RUN FIRST (FULFIL-CONFIRM-SCOPE): the server runs this very body and rolls it back,
       // answering per order which lines it would confirm or withdraw. The press then posts the
       // same body narrowed to exactly those lines, so hold-back and the recheck still protect
-      // and "Posted P" is what the server said it would write. No step for the planner.
+      // and "Posted P" is what the server said it would write.
       const dry = await previewConfirmMany.mutateAsync(built.body);
       const answer = new Map(dry.results.map((entry) => [entry.pso_id, entry]));
       const refusals: BoardBatchResult[] = [];
@@ -1830,11 +1909,73 @@ export function FulfilmentBoardPanel({
           };
         });
       const body = built.body.batch_id ? { orders, batch_id: built.body.batch_id } : { orders };
+      // UAC C7: the dry run refused every order, so there is nothing to walk on to.
+      const refusedIds = new Set(
+        built.orders
+          .filter((order) => answer.get(order.pso_id)?.ok === false)
+          .map((order) => order.pso_id),
+      );
+      if (refusedIds.size === built.orders.length) {
+        return settleWith([...skipped, ...refusals]);
+      }
+      // UAC C2, C5: every order of the dry run with its rows, or the reason it refused; an
+      // order the press left out before the dry run is named too. An order the dry run took
+      // but has nothing for stays in (no rows): step 3 answers it as the one-step press did.
+      const soNumberOf = (psoId: string, fallback?: string) =>
+        built.soNumberByPsoId.get(psoId) ?? fallback ?? '';
+      const refusalOf = new Map(refusals.map((entry) => [entry.pso_id, entry]));
+      const rank = [...built.soNumberByPsoId.keys()];
+      const rankOf = (psoId: string) => {
+        const index = rank.indexOf(psoId);
+        return index === -1 ? rank.length : index;
+      };
+      const review: ConfirmGuideReviewOrder[] = [
+        ...built.orders.map((order) => {
+          const dryRun = answer.get(order.pso_id);
+          const refusal = refusalOf.get(order.pso_id);
+          return {
+            psoId: order.pso_id,
+            soNumber: soNumberOf(order.pso_id, refusal?.so_number),
+            rows: dryRun?.inquiry_rows ?? [],
+            transfers: dryRun?.transfers ?? [],
+            refusal: refusedIds.has(order.pso_id) ? (refusal?.error ?? 'refused') : null,
+          };
+        }),
+        ...skipped
+          .filter((entry) => !entry.heldBack)
+          .map((entry) => ({
+            psoId: entry.pso_id,
+            soNumber: soNumberOf(entry.pso_id, entry.so_number),
+            rows: [],
+            transfers: [],
+            refusal: entry.error ?? 'refused',
+          })),
+      ].sort((left, right) => rankOf(left.psoId) - rankOf(right.psoId));
+      return {
+        kind: 'ready',
+        prepared: { orders, body, answer, skipped, refusals, contributions, leftOutAtConfirm },
+        review,
+      };
+    } finally {
+      setConfirmingAll(false);
+    }
+  }, [board, buildConfirmOrders, unpostable, previewConfirmMany, confirmSummary]);
+
+  /**
+   * CONFIRM, second half (the guide's step 3, UAC D2): posts what the dry run answered, then
+   * the result card and the toast, exactly as the one-step press did. Resolves false when the
+   * post failed (the mutation's own `onError` already toasted it), so the guide stays open.
+   */
+  const postPress = React.useCallback(async (prepared: PreparedPress): Promise<boolean> => {
+    const { orders, body, answer, skipped, refusals, contributions, leftOutAtConfirm } = prepared;
+    setConfirmingAll(true);
+    setBatchResults(null);
+    setSimulated(false);
+    try {
       if (orders.length === 0) {
         setBatchResults([...skipped, ...refusals]);
-        return;
+        return true;
       }
-
       const posted = await confirmMany.mutateAsync(body);
       // Lines the dry run held back were never posted, so the real press cannot name them:
       // carry them into the displayed entry (union by line no) so the scope is never silent.
@@ -1979,20 +2120,15 @@ export function FulfilmentBoardPanel({
         }
         return next;
       });
+      return true;
     } catch {
       // The mutation's own `onError` already toasted the message; nothing here is left to say.
       // Caught only so the rejection does not float unhandled past this async click handler.
+      return false;
     } finally {
       setConfirmingAll(false);
     }
-  }, [
-    board,
-    buildConfirmOrders,
-    confirmMany,
-    unpostable,
-    previewConfirmMany,
-    confirmSummary,
-  ]);
+  }, [confirmMany]);
 
   /**
    * SIMULATE CONFIRM (admin): the body Confirm would post, sent to the server's dry run. A
@@ -2614,7 +2750,7 @@ export function FulfilmentBoardPanel({
                       Boolean(confirmBlockedReason)
                     }
                     title={confirmBlockedReason ?? undefined}
-                    onClick={() => void runConfirmAll()}
+                    onClick={() => setGuideOpen(true)}
                   >
                     {`Confirm (${confirmSummary.toConfirm})`}
                   </Button>
@@ -2628,7 +2764,7 @@ export function FulfilmentBoardPanel({
       {/* OI-SPLIT-VIEW (UAC A3): the saved split edits this Confirm applies, per order. */}
       {splitEditsByOrder.size > 0 ? (
         <div data-testid="board-split-edits" className="space-y-0.5 text-sm">
-          {[...splitEditsByOrder.entries()].map(([salesOrderId, labels]) => (
+          {[...splitEditsByOrder.entries()].map(([salesOrderId, { labels }]) => (
             <div key={salesOrderId} className="flex flex-wrap gap-x-2">
               {splitEditsByOrder.size > 1 ? (
                 <span className="font-medium">
@@ -3342,6 +3478,15 @@ export function FulfilmentBoardPanel({
           soNumber={viewSplits.soNumber}
           onClose={closeViewSplits}
           returnFocusRef={boardActionsRef}
+        />
+      ) : null}
+      {guideOpen ? (
+        <ConfirmGuideDialog
+          soNumbers={guideSoNumbers}
+          splitPages={guideSplitPages}
+          runPreview={previewPress}
+          runPost={postPress}
+          onClose={closeGuide}
         />
       ) : null}
       {lineSplit ? (

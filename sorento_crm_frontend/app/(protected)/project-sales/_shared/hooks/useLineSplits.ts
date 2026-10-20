@@ -23,7 +23,9 @@ export function useLineSplits(
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: [LINE_SPLITS_KEY, psoId ?? ''],
-    queryFn: () => getLineSplits(psoId as string),
+    // A read that answers no body is "no split lines" (`null`, the popups' empty state), not
+    // a failed read: React Query refuses `undefined` as data.
+    queryFn: async () => (await getLineSplits(psoId as string)) ?? null,
     enabled: Boolean(psoId) && enabled,
   });
   const save = useMutation({

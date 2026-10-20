@@ -971,6 +971,19 @@ export function splitEditsToConfirm(
   });
 }
 
+/**
+ * OI-SPLIT-GUIDE (UAC A3): the sales orders one press confirms, the same set
+ * `confirmSummaryFor` counts, so the guided Confirm's title names exactly the orders of N.
+ */
+export function confirmOrderIdsFor(
+  contributions: BoardContribution[],
+  draft: BoardDraft,
+  batchBlockedSalesOrderIds: ReadonlySet<string> = new Set(),
+  options?: ConfirmScopeOptions,
+): Set<string> {
+  return confirmScope(contributions, draft, batchBlockedSalesOrderIds, options).orderIds;
+}
+
 /** The orders one press confirms, and the rejected / changed tallies (`confirmSummaryFor`). */
 function confirmScope(
   contributions: BoardContribution[],
