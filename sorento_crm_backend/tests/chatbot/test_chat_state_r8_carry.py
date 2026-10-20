@@ -672,3 +672,23 @@ def test_r8_c5_state_off_the_drawing_fetch_is_unchanged(session_factory, seeded,
     engine_mod.run_turn(_envelope(message=_message("drawing also", 1)), session_factory=session_factory)
     fetches = _file_fetches(calls)
     assert fetches and fetches[0].get("certificate_ids"), ("state-off behaviour changed", fetches)
+
+
+# ---------------------------------------------------------------- C5 review round
+def test_r8_c5_review_restating_the_held_kind_beside_a_new_one_keeps_the_scheme():
+    """"drawing and the cert too": the message names the new kind AND the held certificate kind, so the
+    file kind is not dropped and the scheme that qualified it stays (else the fetch widens to every certificate)."""
+    restated = {**CERT_KIND_ROW, "current_message": True}
+    v = verdict(domain_hint="product_attachment", entities=[dict(DRAWING), restated])
+    out = _apply(_c5_focus(), verdict_with(v, [_op("set", "attachment_type")]))
+    assert (out.state.focus.extra or {}).get("certificate"), f"the scheme was dropped: {out.state.focus.extra}"
+
+
+def test_r8_c5_review_pin_an_unlisted_extra_row_stays_while_the_listed_scheme_drops():
+    focus = _c5_focus()
+    focus.extra["order"] = [{"raw": "SO0001", "hint": "order", "current_message": False}]
+    v = verdict(domain_hint="product_attachment", entities=[dict(DRAWING)])
+    out = _apply(focus, verdict_with(v, [_op("set", "attachment_type")]))
+    extra = out.state.focus.extra or {}
+    assert extra.get("order"), f"an unlisted extra row was dropped with the scheme: {extra}"
+    assert not extra.get("certificate"), f"the listed scheme must drop on a file-kind change: {extra}"
