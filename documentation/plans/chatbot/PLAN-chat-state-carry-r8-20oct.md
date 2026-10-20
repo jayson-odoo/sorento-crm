@@ -1,6 +1,6 @@
 # PLAN: CHAT-STATE round 8 - one carry rule for every held axis (CARRY)
 
-**Status:** Plan (crew brief 20 Oct, owner exploratory run on #1802 build 4cd6d4d930). Track: inside the L lane, LEAD
+**Status:** Build complete, reviewer READY, L1 gate clean, pushing to #1772 (crew brief 20 Oct, owner exploratory run on #1802 build 4cd6d4d930; scope approved crew a6279481 (a)). Track: inside the L lane, LEAD
 pattern (tester red -> coder -> lead kill-proof -> reviewer -> L1 gate -> ONE push to #1772). No migration, no auth.
 **UAC:** `chat-state-carry-r8-acceptance-criteria.md` (alongside). **Evidence (local only, never committed):**
 crew/state/eval/cp0/explore1020/owner-run-1020.md sections 1-4 (class (a); the T8 half of (b); the INDEX half of (c)).
@@ -45,8 +45,10 @@ follow-up ("got eta?", "What price?") keeps the held subject, because that is wh
 - R8-1 the rebuild + `names_own_subject`: owner turn shapes T8, T9, T10, T15 (masked codes / ids) as replay-style unit
   tests, each run with `switch_domain` AND with `new_subject`: same State. Guards: bare switch keeps the held product;
   spec over held keeps members (round 6); `set product` with no switch keeps the other axes (card R1).
-- R8-2 held_family gate + the brand-only branch under the gate; tier no longer rides a new subject (prompt line to
-  CHAT-CODE-LOOKUP: the new_subject row of head/chat_state_prompt.py drops "the access tier").
+- R8-2 held_family runs only when the product axis is carried (lead dropped a brand-only stand-down: the rebuild already
+  clears held products on a brand-named switch, and a brand refine over carried products keeps narrowing); tier no
+  longer rides a new subject (prompt line to CHAT-CODE-LOOKUP, sequenced: the new_subject row of
+  head/chat_state_prompt.py:31 drops "the access tier"; until it lands the tier is re-asked after a new subject).
 
 ## Measurement
 L1 replay gate (base 13d5555967) for first asks / state-off; $0 recorded-ops replay of my TRAIN follow-up rows through
@@ -54,3 +56,16 @@ old vs new apply_changes, listing every item whose held axes change, checked aga
 follow-up bars). No paid E2E without crew's cap.
 
 ## Round log
+- Build (20 Oct): reds 171f0f906b + 0f8e2661df (apply-level owner shapes T8 / T9 / T10 / T15, stale "frg", chains, engine
+  T8 / T9 promotions-fetch product_ids, behavioural state-off pins) -> lead-signed test changes bcd1f019fa (T9 engine
+  assert = no promotion call carries a held id whether or not one runs: a brand + flyer ask with nothing held has no
+  lookup path, evidence class (c) / Fix 3, another lane; test_chat_state_apply.py:95 tier pin follows R8; brand refine
+  guard behavioural) -> fix 8cdeb28542 (names_own_subject + one rebuild); kill-proof 22 fail / restored 173/173.
+- $0 follow-up delta: parser-level gold delta 0 by construction (no parser input / prompt change); state-level replay of
+  1690 recorded TRAIN turns old vs new: 29 items change, all a previous held product no longer riding next to a newly
+  typed product on an implicit domain change; 0 bare-switch, 0 spec-refine and (after review) 0 pick turns change
+  held axes.
+- Review round 1 NOT READY: B1 implicit switch unguarded (kill K3 green), B2 a pick over an open roster on an implicit
+  domain change wiped the pending. Tests 0584616cc1 -> fix fcd9fa3975 (an answer to the open question never rebuilds on
+  any switch; the rebuild sets the message's domains); kill-proof 4 fail / restored 182/182. Re-check READY (K3 K6 K7
+  caught). L1 gate vs 13d5555967: grounding 0/1506, turn 0/585 (both fixes).
