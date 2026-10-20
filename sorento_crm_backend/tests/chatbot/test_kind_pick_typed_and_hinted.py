@@ -93,3 +93,24 @@ def test_reference_narrow_regression_named_kind_beats_other_kind():
     assert r.kind_pick_options is None
     assert [e["hint"] for e in r.entities] == ["sales_order"]
     assert r.reconciled == []
+
+
+def test_t15_hinted_exact_kind_wins_without_typed():
+    r = apply_reconciliation(
+        [_ent("SRTKS8551", "product")],
+        {"SRTKS8551": {"product": 1, "promotion": 1}},
+        exact={"SRTKS8551": {"product": 1}},
+    )
+    assert r.kind_pick_options is None
+    assert [e["hint"] for e in r.entities] == ["product"]
+
+
+def test_control_typed_token_without_hinted_exact_hit_still_asks_with_typed():
+    r = apply_reconciliation(
+        [_ent("Sorento", "brand")],
+        {"Sorento": {"transporter": 1, "customer": 1}},
+        exact={"Sorento": {"transporter": 1, "customer": 1}},
+        typed=_typed("sorento"),
+    )
+    assert r.kind_pick_options is not None
+    assert [o["entity_type"] for o in r.kind_pick_options] == ["customer", "transporter"]
