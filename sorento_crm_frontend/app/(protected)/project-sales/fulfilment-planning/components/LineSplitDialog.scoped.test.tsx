@@ -89,4 +89,11 @@ describe('F13: the scoped edit sheet', () => {
     await sheet();
     expect(screen.getByText(/line 900: 30 left/)).toBeInTheDocument();
   });
+
+  it('F21 pin: the board dialog keeps its Line column and the "line N" sub-label', async () => {
+    await renderDialog();
+    await sheet();
+    expect(screen.getByRole('columnheader', { name: /^line$/i })).toBeInTheDocument();
+    expect(document.body.textContent).toMatch(/line 480/);
+  });
 });

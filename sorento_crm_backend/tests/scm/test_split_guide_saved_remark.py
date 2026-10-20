@@ -305,3 +305,19 @@ def test_f17_a_saved_reject_on_a_reserve_only_confirmed_line_has_no_words(api):
     )
     _save_draft(s, 10, {"verdict": "rejected", "reason": "wrong site"})
     assert _words(s, 10) is None
+
+
+def test_f20_a_saved_reject_on_a_line_whose_row_is_placed_reads_cancel_all(api):
+    """The email's cancel rule (`project_order_inquiry_service.py` retire loop, ~5885-5900): a
+    withdrawn line's row is cancelled when it is RAISED, or when it is placed with cascade-only
+    links (`_cascade_only`, vacuously true with no links) and a handover of kind `cancelled` is
+    recorded. So a placed row with no real link reads `CANCEL ALL`."""
+    from app.models.project_so import INQUIRY_PLACED, OrderInquiryRow
+
+    s = _seed(api)
+    _confirm_buy(s, 10)
+    row = s.db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == s.line[10].id).one()
+    row.state = INQUIRY_PLACED  # placed, no link: the owner's SO417636 shape
+    s.db.commit()
+    _save_draft(s, 10, {"verdict": "rejected", "reason": "wrong site"})
+    assert _words(s, 10) == "CANCEL ALL"

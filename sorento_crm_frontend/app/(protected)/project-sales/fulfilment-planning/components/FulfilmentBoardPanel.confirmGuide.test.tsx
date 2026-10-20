@@ -116,9 +116,10 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 
 
 const getLineSplits = vi.fn();
+const saveLineSplits = vi.fn();
 vi.mock('../../_shared/services/lineSplitService', () => ({
   getLineSplits: (...args: unknown[]) => getLineSplits(...args),
-  saveLineSplits: vi.fn(),
+  saveLineSplits: (...args: unknown[]) => saveLineSplits(...args),
 }));
 
 vi.mock('./LineSplitDialog', () => ({
@@ -167,7 +168,7 @@ vi.mock('@/services/pendingActionService', () => ({
 
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
 import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsupport__/boardFixture';
-import { wireLine, wireSplit } from '@/test-mocks/lineSplitSheetKit';
+import { addBtn, qty, splitLine, typeDate, typeQty, wireLine, wireSplit } from '@/test-mocks/lineSplitSheetKit';
 import { openConfirmGuide, walkConfirmGuide, walkToConfirmStep } from '@/test-mocks/confirmGuide';
 import { toast } from '@/lib/toast';
 
@@ -394,6 +395,7 @@ const pageOf = (so: string) =>
 beforeEach(() => {
   vi.clearAllMocks();
   serveSplits();
+  saveLineSplits.mockImplementation(() => Promise.resolve(SO1_READ()));
   dryRunAnswers();
   confirmAnswers();
 });
@@ -504,10 +506,9 @@ describe('T-FE2 (F2 F3 F4): a page for every order, listing every covered line a
     expect(await within(page).findByTestId('split-line-1')).toBeInTheDocument();
     expect(within(page).getByTestId('split-line-3')).toBeInTheDocument();
     expect(within(page).queryByTestId('split-line-2')).not.toBeInTheDocument();
-    // the split-edited line shows its split rows (6 and 4), read-only
+    // the split-edited line shows its split rows (6 and 4)
     expect(within(page).getByTestId('split-line-1')).toHaveTextContent('6');
     expect(within(page).getByTestId('split-line-1')).toHaveTextContent('4');
-    expect(page.querySelectorAll('input, [data-drag-handle]')).toHaveLength(0);
   });
 
   it('an unsplit covered line is ONE row whose Remark is the board contribution\'s saved_remark', async () => {
@@ -562,16 +563,6 @@ describe('T-FE2 (F2 F3 F4): a page for every order, listing every covered line a
     expect(count).toBe(shown);
   });
 
-  it('F13: the CTA opens the edit sheet scoped to the page\'s covered lines only', async () => {
-    await mountWith(coveredBoard());
-    await openConfirmGuide();
-    await screen.findByTestId('confirm-guide-split-page');
-    click('confirm-guide-split-edit');
-    const edit = await screen.findByTestId('line-split-dialog');
-    // SO000001: line 1 (split edit) and line 3 (draft); line 2 is not covered.
-    expect(edit).toHaveAttribute('data-only-lines', 'pl-1-1,pl-1-3');
-  });
-
   it('F13 pin: the board gear\'s "Split delivery" is not scoped', async () => {
     await mountWith(coveredBoard());
     const trigger = await screen.findByRole('button', { name: 'Board actions' });
@@ -605,15 +596,15 @@ describe('T-FE2 (F2 F3 F4): a page for every order, listing every covered line a
     expect(await within(page).findByTestId('split-line-1')).toHaveTextContent('CANCEL ALL');
   });
 
-  it('F4: the header names the order, the badge, the line count (singular for 1) and one CTA', async () => {
+  it('F4: the header names the order, the badge, the line count (singular for 1), and no Split delivery button', async () => {
     await mountWith(coveredBoard());
     await openConfirmGuide();
     const page = await screen.findByTestId('confirm-guide-split-page');
     expect(page).toHaveTextContent('SO000001');
     expect(page).toHaveTextContent('Saved, not confirmed');
     expect(page.textContent).toMatch(/2 lines/);
-    expect(within(page).getByTestId('confirm-guide-split-edit')).toHaveTextContent('Split delivery SO000001');
-    expect(within(page).getAllByRole('button', { name: /^Split delivery/ })).toHaveLength(1);
+    expect(within(page).queryByTestId('confirm-guide-split-edit')).not.toBeInTheDocument();
+    expect(within(page).queryByRole('button', { name: /^Split delivery/ })).not.toBeInTheDocument();
     click('confirm-guide-next');
     await waitFor(() =>
       expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
@@ -671,58 +662,6 @@ describe('T-FE3 (F5 B4 F7): walking, editing and failing a page', () => {
     await waitFor(() =>
       expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
     );
-  });
-
-  it('the CTA opens the edit sheet for that order on top of the guide', async () => {
-    await mountWith(oneEditedBoard());
-    await openConfirmGuide();
-    await screen.findByTestId('confirm-guide-split-page');
-    click('confirm-guide-split-edit');
-    const edit = await screen.findByTestId('line-split-dialog');
-    expect(edit).toHaveAttribute('data-pso', 'pso-so-1');
-    expect(screen.getByTestId('confirm-guide')).toBeInTheDocument();
-  });
-
-  it('closing the edit sheet without saving changes nothing', async () => {
-    await mountWith(oneEditedBoard());
-    await openConfirmGuide();
-    await screen.findByTestId('confirm-guide-split-page');
-    click('confirm-guide-split-edit');
-    await screen.findByTestId('line-split-dialog');
-    click('line-split-dialog-close');
-    await waitFor(() => expect(screen.queryByTestId('line-split-dialog')).not.toBeInTheDocument());
-    const page = screen.getByTestId('confirm-guide-split-page');
-    expect(page).toHaveAttribute('data-so', 'SO000001');
-    expect(await within(page).findByTestId('split-line-1')).toBeInTheDocument();
-    expect(confirmMany).not.toHaveBeenCalled();
-  });
-
-  it('after Save the page re-reads and shows the changed values', async () => {
-    await mountWith(oneEditedBoard());
-    await openConfirmGuide();
-    const before = await screen.findByTestId('confirm-guide-split-page');
-    await within(before).findByTestId('split-line-1');
-    const textBefore = before.textContent;
-    click('confirm-guide-split-edit');
-    await screen.findByTestId('line-split-dialog');
-    serveSplits({
-      'pso-so-1': {
-        ...SO1_READ(),
-        lines: [
-          wireLine(1, 'ZZT-ITEM-1', 10, '2026-09-20', {
-            line_id: 'pl-1-1',
-            split_state: 'acting',
-            split_view: { status: 'saved' },
-            splits: [wireSplit('x1', 3, '2026-09-20', 'pl-1-1'), wireSplit('x2', 7, '2026-12-21', null)],
-          }),
-        ],
-      },
-    });
-    click('line-split-dialog-save');
-    await waitFor(() =>
-      expect(screen.getByTestId('confirm-guide-split-page').textContent).not.toBe(textBefore),
-    );
-    expect(screen.getByTestId('confirm-guide-split-page').textContent).toContain('21/12/2026');
   });
 
   it('F7: a read that fails says so with Retry, Next off, and Back and Cancel working', async () => {
@@ -856,5 +795,144 @@ describe('T-FE5 (D2 D3 F6): the Confirm button posts what today\'s press posts',
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
     expect(screen.getByTestId('confirm-guide')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId('confirm-guide-confirm')).toBeEnabled());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T-FE6: F18 to F21 (round 7, owner hand test 3): split in place on the guide page
+// ---------------------------------------------------------------------------
+
+/** SO000001 line 3 only: a saved draft with the email's words, an open unsplit line. */
+function oneDraftBoard() {
+  return withDraft(boardOf([SO1_L3]), ['pl-1-3'], { 'pl-1-3': 'USE BRW 522 & ORDER 294' });
+}
+const LINE3_READ = () =>
+  splitRead('pso-so-1', 'SO000001', [{ id: 'pl-1-3', no: 3, item: 'ZZT-ITEM-1C' }]);
+const LINE3_SPLIT_READ = () => ({
+  ...LINE3_READ(),
+  lines: [
+    wireLine(3, 'ZZT-ITEM-1C', 10, '2026-09-20', {
+      line_id: 'pl-1-3',
+      now_qty: 10,
+      split_state: 'acting',
+      split_view: { status: 'saved' },
+      splits: [wireSplit('n1', 6, '2026-09-20', 'pl-1-3'), wireSplit('n2', 4, '2026-10-20', null)],
+    }),
+  ],
+});
+
+async function openEditablePage() {
+  serveSplits({ 'pso-so-1': LINE3_READ() });
+  await mountWith(oneDraftBoard(), ['SO000001']);
+  await openConfirmGuide();
+  const page = await screen.findByTestId('confirm-guide-split-page');
+  await within(page).findByTestId('split-line-3');
+  return page;
+}
+
+/** One real edit: line 3 split into 6 + 4 (the 4 on a later date). */
+async function editLine3() {
+  await splitLine(3);
+  typeQty(3, 1, '6');
+  fireEvent.click(addBtn(3));
+  await screen.findByLabelText('Quantity, line 3 split 2');
+  typeDate(3, 2, '20/10/2026');
+}
+
+describe('T-FE6 (F18 F19 F21): the guide page is the editable split sheet', () => {
+  it('F18: the page renders the editable sheet inline: a Split control for the covered open line, no button that opens a dialog', async () => {
+    const page = await openEditablePage();
+    expect(within(page).getAllByRole('button', { name: /^Split line \d+ quantity$/ }).length).toBeGreaterThan(0);
+    expect(screen.queryByTestId('confirm-guide-split-edit')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('line-split-dialog')).not.toBeInTheDocument();
+    // an unsplit covered line still carries the email's words
+    expect(within(page).getByTestId('split-line-3')).toHaveTextContent('USE BRW 522 & ORDER 294');
+  });
+
+  it('F18: the page has its own Save; it saves the scoped lines through the split service and the page stays and re-reads', async () => {
+    const page = await openEditablePage();
+    await editLine3();
+    serveSplits({ 'pso-so-1': LINE3_SPLIT_READ() });
+    saveLineSplits.mockImplementation(() => Promise.resolve(LINE3_SPLIT_READ()));
+    fireEvent.click(within(page).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(saveLineSplits).toHaveBeenCalledTimes(1));
+    const [psoId, body] = saveLineSplits.mock.calls[0];
+    expect(psoId).toBe('pso-so-1');
+    expect(body.lines.map((l: { line_id: string }) => l.line_id)).toEqual(['pl-1-3']);
+    expect(body.lines[0].splits).toHaveLength(2);
+    // still on the page, now showing the saved split rows
+    expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000001');
+    await waitFor(() => expect(within(page).getByTestId('split-line-3')).toHaveTextContent('20/10/2026'));
+    expect(screen.queryByTestId('line-split-dialog')).not.toBeInTheDocument();
+  });
+
+  it('F18: a covered line delivered in full is a read-only row', async () => {
+    const read = LINE3_READ();
+    read.lines = [
+      {
+        ...wireLine(3, 'ZZT-ITEM-1C', 10, '2026-09-20', {
+          line_id: 'pl-1-3',
+          delivered_qty: 10,
+          now_qty: 0,
+          split_state: 'applied',
+          split_view: { status: 'confirmed' },
+        }),
+        delivered_in_full: true,
+      } as never,
+    ];
+    serveSplits({ 'pso-so-1': read });
+    await mountWith(oneDraftBoard(), ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    expect(within(page).queryByRole('button', { name: /^Split line \d+ quantity$/ })).not.toBeInTheDocument();
+    expect(page.querySelectorAll('input')).toHaveLength(0);
+  });
+
+  it('F18: every line of an order not yet adopted is a read-only row', async () => {
+    const board = withDraft(boardOf([SO1_L1]), ['pl-1-1'], { 'pl-1-1': 'ORDER' });
+    const unadopted = mapContributions(
+      { ...board, orders: board.orders.map((o) => ({ ...o, project_sales_order_id: null })) } as unknown as Board,
+      (entry) => ({ ...entry, project_line_id: null, project_sales_order_id: null }),
+    );
+    await mountWith(unadopted, ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-1');
+    expect(within(page).queryByRole('button', { name: /^Split line \d+ quantity$/ })).not.toBeInTheDocument();
+    expect(page.querySelectorAll('input')).toHaveLength(0);
+  });
+
+  it('F19: with an unsaved edit Next is off and "Save or undo your split changes first" shows; after Save Next is on', async () => {
+    const page = await openEditablePage();
+    expect(screen.getByTestId('confirm-guide-next')).toBeEnabled();
+    expect(screen.queryByText('Save or undo your split changes first')).not.toBeInTheDocument();
+    await editLine3();
+    expect(screen.getByTestId('confirm-guide-next')).toBeDisabled();
+    expect(screen.getByText('Save or undo your split changes first')).toBeInTheDocument();
+    serveSplits({ 'pso-so-1': LINE3_SPLIT_READ() });
+    saveLineSplits.mockImplementation(() => Promise.resolve(LINE3_SPLIT_READ()));
+    fireEvent.click(within(page).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
+    expect(screen.queryByText('Save or undo your split changes first')).not.toBeInTheDocument();
+  });
+
+  it('F19: a failed Save shows the error and keeps the edit, Next stays off', async () => {
+    const page = await openEditablePage();
+    await editLine3();
+    saveLineSplits.mockRejectedValue(new Error('Splits refused'));
+    fireEvent.click(within(page).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect((qty(3, 1) as HTMLInputElement).value).toBe('6');
+    expect(screen.getByTestId('confirm-guide-next')).toBeDisabled();
+    expect(screen.getByText('Save or undo your split changes first')).toBeInTheDocument();
+  });
+
+  it('F21: no line number shows on the guide sheet: no Line column, no "line N" sub-label', async () => {
+    const page = await openEditablePage();
+    expect(within(page).queryByRole('columnheader', { name: /^line$/i })).not.toBeInTheDocument();
+    expect(page.textContent).not.toMatch(/\bline \d+\b/i);
+    // identity stays internal: the block is still addressable
+    expect(within(page).getByTestId('split-line-3')).toBeInTheDocument();
   });
 });
