@@ -1,7 +1,7 @@
 # PLAN: kept-split Confirm on all-raised unlinked rows sends one DELAY (OI-SPLIT-SUPERSEDE-FIX)
 
-Status: PR #1803, reviewer READY round 1 (S1 product follow, S2 refile assertion, N1 folded in);
-crew reduce case (Cancel split) added, reviewer round 2 next, then CI. Owner: ships on CI green +
+Status: PR #1803, reviewer READY round 3 (date edit, crew reduce case, told cancel splits, linked
+reduce; every finding folded in); local split suites green; waiting on CI. Owner: ships on CI green +
 reviewer READY + red/kill proof, no hand test. Track: small fix (server-only, no UI, no
 migration, no auth change). Lead pattern: red test first, one fix, reviewer, touched tests only.
 
