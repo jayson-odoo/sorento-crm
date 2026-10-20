@@ -1,8 +1,8 @@
 # Behaviour card: link every form to a project (FORMS-PROJECT)
 
 **Answered 17 Oct 2026 (crew):** Q2 (a) one Forms tab, Q3 (a) keep free text, suggestion only,
-Q4 (a) optional everywhere, Q5 (a) portal picker too, checked server-side. Q1 (scope) with the owner;
-the (a) scope is built meanwhile (workflow + form-builder submissions out).
+Q4 (a) optional everywhere, Q5 (a) portal picker too, checked server-side. **Answered 18 Oct
+2026 (owner):** Q1 (a) the six forms are the scope (workflow + form-builder submissions out).
 
 Base: origin/main fde0a5597. Dev examples: pending the crew data request on PR #1768 (masked rows,
 not copied into the repo). Fixes #1689.

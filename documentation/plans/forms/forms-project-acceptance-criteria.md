@@ -1,7 +1,7 @@
 # UAC: link every form to a project (FORMS-PROJECT)
 
-Behaviour card: `forms-project-behaviour-card.md`. Answers 17 Oct: Q2-Q5 (a); Q1 with the owner,
-(a) scope built (workflow + form-builder submissions out).
+Behaviour card: `forms-project-behaviour-card.md`. Answers 17 Oct: Q2-Q5 (a); 18 Oct: Q1 (a),
+the six forms are the scope (workflow + form-builder submissions out).
 
 ## Link storage
 

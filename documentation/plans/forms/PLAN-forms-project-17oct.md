@@ -1,7 +1,7 @@
 # PLAN: link every form to a project (FORMS-PROJECT)
 
-Status: Review passed, awaiting owner hand test (Q2-Q5 answered 17 Oct; Q1 scope with the owner,
-(a) built). Track: full (migration + multi-company write check).
+Status: Review passed, awaiting owner hand test (Q2-Q5 answered 17 Oct, Q1 (a) answered 18 Oct:
+the six forms are the scope). Track: full (migration + multi-company write check).
 
 Owner 15 Oct: "Forms not connected to projects: sponsorship form, complaint, stock inquiry, all the
 forms -> link to project." Fixes #1689 (staff PR/SF form drops project_id).
@@ -39,6 +39,6 @@ Behaviour card: `forms-project-behaviour-card.md`. UAC: `forms-project-acceptanc
 
 ## Not doing
 
-- Workflow submissions and form-builder submissions (Q1 (a), pending owner).
+- Workflow submissions and form-builder submissions (Q1 (a), owner 18 Oct).
 - External n8n API (`schemas/external/*`): unchanged, never set a link before.
 - Any backfill or name matching.
