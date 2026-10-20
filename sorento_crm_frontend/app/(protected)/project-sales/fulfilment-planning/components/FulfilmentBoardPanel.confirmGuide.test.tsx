@@ -233,11 +233,13 @@ function withSplitEdited(board: Board, lineIds: string[]) {
 }
 
 /** A saved approved decision draft on the named lines (a saved line the press names). */
-function withDraft(board: Board, lineIds: string[]) {
+function withDraft(board: Board, lineIds: string[], remarks: Record<string, string> = {}) {
   return mapContributions(board, (entry) =>
     lineIds.includes(String(entry.project_line_id))
       ? {
           ...entry,
+          // F10: the email's words ride the board's own line data (`saved_remark`).
+          saved_remark: remarks[String(entry.project_line_id)] ?? null,
           draft: {
             decision: { verdict: 'approved' },
             saved_by: 'Test Planner',
@@ -260,6 +262,7 @@ function coveredBoard() {
   return withDraft(
     withSplitEdited(boardOf([SO1_L1, SO1_L2, SO1_L3, SO2_L1]), ['pl-1-1']),
     ['pl-1-3', 'pl-2-1'],
+    { 'pl-1-3': 'USE BRW 522 & ORDER 294', 'pl-2-1': 'ORDER BACK' },
   );
 }
 
@@ -273,7 +276,7 @@ function draftOnlyBoard() {
   return withDraft(boardOf([SO1_L1, SO1_L2]), ['pl-1-1']);
 }
 
-type ReadLine = { id: string; no: number; item: string; edited?: boolean; remark?: string | null };
+type ReadLine = { id: string; no: number; item: string; edited?: boolean };
 
 /** The split read of an order. `edited` lines carry split rows; others are unsplit with `remark`. */
 function splitRead(psoId: string, so: string, lines: ReadLine[]) {
@@ -294,7 +297,6 @@ function splitRead(psoId: string, so: string, lines: ReadLine[]) {
           ? [wireSplit(`${l.id}-a`, 6, '2026-09-20', l.id), wireSplit(`${l.id}-b`, 4, '2026-10-20', null)]
           : [],
       }),
-      saved_remark: l.remark ?? null,
     })),
   };
 }
@@ -303,10 +305,10 @@ const SO1_READ = () =>
   splitRead('pso-so-1', 'SO000001', [
     { id: 'pl-1-1', no: 1, item: 'ZZT-ITEM-1', edited: true },
     { id: 'pl-1-2', no: 2, item: 'ZZT-ITEM-1B' },
-    { id: 'pl-1-3', no: 3, item: 'ZZT-ITEM-1C', remark: 'USE BRW 522 & ORDER 294' },
+    { id: 'pl-1-3', no: 3, item: 'ZZT-ITEM-1C' },
   ]);
 const SO2_READ = () =>
-  splitRead('pso-so-2', 'SO000002', [{ id: 'pl-2-1', no: 1, item: 'ZZT-ITEM-2', remark: 'ORDER BACK' }]);
+  splitRead('pso-so-2', 'SO000002', [{ id: 'pl-2-1', no: 1, item: 'ZZT-ITEM-2' }]);
 
 function serveSplits(reads: Record<string, unknown> = {}) {
   getLineSplits.mockImplementation((psoId: string) =>
@@ -503,7 +505,7 @@ describe('T-FE2 (F2 F3 F4): a page for every order, listing every covered line a
     expect(page.querySelectorAll('input, [data-drag-handle]')).toHaveLength(0);
   });
 
-  it('an unsplit covered line is ONE row whose Remark is the server\'s saved_remark', async () => {
+  it('an unsplit covered line is ONE row whose Remark is the board contribution\'s saved_remark', async () => {
     await mountWith(coveredBoard());
     await openConfirmGuide();
     const page = await screen.findByTestId('confirm-guide-split-page');
@@ -515,6 +517,44 @@ describe('T-FE2 (F2 F3 F4): a page for every order, listing every covered line a
       expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
     );
     expect(await within(pageOf('SO000002')).findByTestId('split-line-1')).toHaveTextContent('ORDER BACK');
+  });
+
+  it('B2: an order not yet adopted (no split read) still gets its page: the saved draft line as ONE row with its saved_remark', async () => {
+    const board = withDraft(boardOf([SO1_L1]), ['pl-1-1'], { 'pl-1-1': 'ORDER' });
+    const unadopted = mapContributions(
+      { ...board, orders: board.orders.map((o) => ({ ...o, project_sales_order_id: null })) } as unknown as Board,
+      (entry) => ({ ...entry, project_line_id: null, project_sales_order_id: null }),
+    );
+    await mountWith(unadopted, ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    expect(page).toHaveAttribute('data-so', 'SO000001');
+    expect(await within(page).findByTestId('split-line-1')).toHaveTextContent('ORDER');
+    expect(page).not.toHaveTextContent('No split lines');
+    expect(page.textContent).toMatch(/1 line(?!s)/);
+    expect(getLineSplits).not.toHaveBeenCalled();
+  });
+
+  it('B2: a covered book-cancelled line with no draft shows one row with the cancel word', async () => {
+    const board = mapContributions(boardOf([SO1_L1, SO1_L2]), (entry) =>
+      entry.project_line_id === 'pl-1-2'
+        ? { ...entry, cancelled: true, cancelled_at: null, saved_remark: 'CANCEL ALL' }
+        : entry,
+    );
+    await mountWith(board, ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    expect(await within(page).findByTestId('split-line-2')).toHaveTextContent('CANCEL ALL');
+  });
+
+  it('B2: the header count equals the rows shown', async () => {
+    await mountWith(coveredBoard());
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    const shown = page.querySelectorAll('[data-testid^="split-line-"]').length;
+    const count = Number(page.textContent?.match(/(\d+) lines?/)?.[1]);
+    expect(count).toBe(shown);
   });
 
   it('F4: the header names the order, the badge, the line count (singular for 1) and one CTA', async () => {
