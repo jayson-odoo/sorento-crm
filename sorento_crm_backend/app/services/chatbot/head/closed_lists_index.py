@@ -9,8 +9,8 @@ already read (`block`):
 
 - under the candidates' own heading, the file types, certificate kinds and schemes the
   message's own words name (their code, name, own words or a lookup keyword the owner linked:
-  the data `closed_list_items` reads), the warehouses they name (code, name, or the code's
-  part after its last `-`: `resolve_warehouse_token`'s reading) and the spec values a word
+  the data `closed_list_items` reads), the warehouses they name (exactly what
+  `resolve_warehouse_token` resolves for the word) and the spec values a word
   names as a registry code suffix (a derivation rule's `-FRG` typed as "frg");
 - under `HELD_HEADER`, the file types, certificate kinds and schemes the held products have on
   record, and their own spec values (one line per visible key that holds one).
@@ -20,7 +20,8 @@ special-cased. Product and warehouse reads go through the scoped session (produc
 through `chat_searchable_products`).
 
 The system prompt's warehouse SHAPE rule (a short token is a warehouse) becomes, in index mode
-only, the fixed `WAREHOUSE_INDEX_RULE` (`system_prompt`): a warehouse is one the index lists.
+only, the fixed `WAREHOUSE_INDEX_RULE` (`system_prompt`): the same shape, and only when the
+index lists it.
 """
 from __future__ import annotations
 
@@ -51,19 +52,18 @@ SYSTEM_BLANKS: dict[str, str] = {
 }
 
 #: The consolidated template's warehouse SHAPE rule (`parser_template`, R-P2-03), exactly as
-#: written, and the ONE fixed sentence index mode renders in its place: a warehouse is one the
-#: per-turn index lists, never a token of some shape. Fixed text, so the system prompt stays
-#: byte-equal across turns. The template file itself is not edited (prompt freeze).
+#: written, and the ONE fixed sentence index mode renders in its place: the same shape, and
+#: only when the per-turn index lists it, so index mode can only remove a warehouse hint
+#: relative to block, never add one. Fixed text, so the system prompt stays byte-equal across
+#: turns. The template file itself is not edited (prompt freeze).
 WAREHOUSE_SHAPE_RULE = (
     'In an order or outstanding ask, a short token that is not a product code, after "for", "at", "in" or alone '
     'beside the product, is a warehouse: at most 4 characters of letters, or letters with one digit ("IB", "BB", '
     '"BRW", "MWH", "DC1", "WH3"), or a hyphenated site code of at most 10 characters ("BRW-IB", "MWH-IB").'
 )
-WAREHOUSE_INDEX_RULE = (
-    'In an order or outstanding ask, a short token that is not a product code, after "for", "at", "in" or alone '
-    'beside the product, is a warehouse only when the index lists it (a "Warehouse" line of the candidates block '
-    'names its code or the part of a code after the last "-"); a short token no Warehouse line lists is not a '
-    "warehouse."
+WAREHOUSE_INDEX_RULE = WAREHOUSE_SHAPE_RULE.removesuffix(".") + (
+    ', and only when the index lists it (a "Warehouse" line of the candidates block names its code or its part '
+    'after the last "-"); a short token no Warehouse line lists is not a warehouse.'
 )
 
 #: The one heading over the held products' own lines: they are on record, not said this turn.
@@ -312,18 +312,21 @@ def warehouse_line(code: str, name: str | None) -> str:
     return f"Warehouse {code}: {name}" if name else f"Warehouse {code}"
 
 
-def warehouse_lines(db: "Session", grams: set[str]) -> list[str]:
-    """The warehouses the message's words name: by code, by name, or by the code's part after
-    its last `-` (`resolve_warehouse_token`'s reading, so "IB" lists every `-IB` code), exactly or
-    spelt near (`_named`). A line only: binding stays the warehouse hint's, which grounding
-    checks against `resolve_warehouse_token`."""
+def warehouse_lines(db: "Session", message: str) -> list[str]:
+    """The warehouses the message's words name, each word read EXACTLY as `resolve_warehouse_token`
+    reads it (`warehouse_codes_for`: the equal code wins, else every code whose part after its
+    last `-` is the word), over one `warehouses` read: the index lists only what grounding and
+    the lane resolve. No name and no near spelling. A line only: binding stays the hint's."""
     from app.models.inventory import Warehouse
-    from app.services.chatbot.lanes.business.services import warehouse_code_suffix
+    from app.services.chatbot.head.candidates import _tokens
+    from app.services.chatbot.lanes.business.services import warehouse_codes_for
 
+    rows = db.query(Warehouse.warehouse_code, Warehouse.warehouse_name).order_by(Warehouse.warehouse_code).all()
+    names = {code: name for code, name in rows}
+    codes = [code for code, _name in rows]
     out: list[str] = []
-    for code, name in db.query(Warehouse.warehouse_code, Warehouse.warehouse_name).order_by(Warehouse.warehouse_code):
-        if code and _named(grams, [code, name or "", warehouse_code_suffix(code) or ""]):
-            out.append(warehouse_line(code, name))
+    for word in dict.fromkeys(_tokens(message)):
+        out += [warehouse_line(code, names[code]) for code in warehouse_codes_for(word, codes)]
     return list(dict.fromkeys(out))[:CAP_FILE_LINES]
 
 
@@ -370,7 +373,7 @@ def block(
     held = list(dict.fromkeys(str(h) for h in held_ids or [] if h))[:CAP_HELD_PRODUCTS]
     named, on_record = file_lines(db, message, held)
     grams = _grams(message)
-    named = [*code_suffix_lines(db, grams, hidden), *named, *warehouse_lines(db, grams)]
+    named = [*code_suffix_lines(db, grams, hidden), *named, *warehouse_lines(db, message)]
     out = list(candidate_lines)
     named = [line for line in named if line not in out]
     if named:

@@ -510,34 +510,28 @@ def resolve_warehouse_token(db: Session, token: str) -> list[str]:
     contact's own company than there would be for widening the product lookup, and a
     contact with no `respond_contact_companies` row already gets zero rows there too -
     a genuinely UNMAPPED contact fails closed everywhere in the turn, not selectively.
-    """
-    from sqlalchemy import func
 
+    One `warehouses` read; the rule itself is `warehouse_codes_for`, which the CLOSED LISTS
+    index (`head/closed_lists_index.warehouse_lines`) applies to the same rows, so the index
+    lists exactly what this resolves.
+    """
     from app.models.inventory import Warehouse
 
-    word = (token or "").strip()
+    if not (token or "").strip():
+        return []
+    return warehouse_codes_for(token, [code for (code,) in db.query(Warehouse.warehouse_code).all()])
+
+
+def warehouse_codes_for(token: str, codes: list[str]) -> list[str]:
+    """D5's rule over `codes` (the `warehouses` rows read): the one code equal to `token`, case
+    aside; else every code whose part after its LAST `-` equals it; else nothing."""
+    word = (token or "").strip().lower()
     if not word:
         return []
-    exact = (
-        db.query(Warehouse.warehouse_code)
-        .filter(func.lower(Warehouse.warehouse_code) == word.lower())
-        .first()
-    )
+    exact = [code for code in codes if code and code.lower() == word]
     if exact:
-        return [exact[0]]
-    suffix = word.lower()
-    return [
-        code
-        for (code,) in db.query(Warehouse.warehouse_code).all()
-        if (warehouse_code_suffix(code) or "").lower() == suffix
-    ]
-
-
-def warehouse_code_suffix(code: str) -> str | None:
-    """The part of a `warehouse_code` after its LAST `-` (`BRW-IB` -> `IB`), None for a code
-    with no `-`: the suffix `resolve_warehouse_token` resolves a token by, and the one the
-    CLOSED LISTS index lists a warehouse under (`head/closed_lists_index.warehouse_lines`)."""
-    return code.rsplit("-", 1)[-1] if "-" in (code or "") else None
+        return exact[:1]
+    return [code for code in codes if code and "-" in code and code.rsplit("-", 1)[-1].lower() == word]
 
 
 def _visible_sets(db: Session) -> Callable[[list[str]], set[str]]:
