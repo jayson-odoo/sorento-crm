@@ -660,7 +660,19 @@ async def delete_attachment_link(
     db: Session = Depends(get_db),
 ):
     """Delete an entity-attachment link (e.g. unlink a packing list from an attachment)."""
-    if (entity_type or "").strip() == "new_product_application":
+    # The STORED type decides, not the query value (a blank one would skip delete_link's filter).
+    from app.models.entity_attachment import EntityAttachmentLink
+
+    try:
+        uuid.UUID(link_id)
+        stored = (
+            db.query(EntityAttachmentLink.entity_type)
+            .filter(EntityAttachmentLink.id == link_id)
+            .scalar()
+        )
+    except ValueError:
+        stored = None
+    if "new_product_application" in ((entity_type or "").strip(), stored):
         # Its unlink is a deferred pending action with its own owner and lock rules.
         raise AppException(
             status_code=409,
