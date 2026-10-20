@@ -225,6 +225,11 @@ or use own location, just like our email to purchasing". Plan crew-note 62883955
   marker) instead of the default, and re-approving the confirmed line unchanged carries the same remark, so it
   is NOT a change and purchasing gets nothing (as before this PR). Test: confirm with an edited remark ->
   reopen -> remark shown -> re-approve unchanged -> no email row.
+- F33. One server rule for every Confirm caller (reviewer round 10 blocker): a Confirm line with NO `remark`
+  key keeps the line's confirmed remark (carried from the active revision's snapshot); only `remark: ""`
+  clears it. So the per-order planning sheet (`confirmLineFromDraft`), split-edit re-posts
+  (`_with_split_edits`), batch applies and API callers never re-tell an unchanged line; the board sends ""
+  for a cleared remark.
 
 ## G. Out of scope
 - Making Confirm never touch unsaved lines (crew option b).
