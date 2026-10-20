@@ -1,6 +1,6 @@
 # PLAN: CLOSED-LISTS-INDEX-MODE round 2 - warehouse and finish short forms join the index
 
-Status: Build (explore branch crew/closed-lists-index-explore1020 only; not #1755 / main). Track: full (LEAD pattern).
+Status: Review READY (Opus) on option B f619836032, handed to EVAL-BENCH for EXPLORE-1021 (explore branch crew/closed-lists-index-explore1020 only; not #1755 / main). Track: full (LEAD pattern).
 Source: owner 20 Oct ~22:35 MYT "i thought warehouse should be indexed also just like spec?" + crew brief (the "frg" bug).
 
 ## Root cause (code check on 4cd6d4d930)
@@ -86,3 +86,8 @@ filter word is said back, never dropped to answer unfiltered): in index mode a w
 cannot resolve is dropped ONLY when its word is a registry finish short form (W3's data), and that drop does not
 clear the held warehouse (the customer named a finish, not a warehouse). A resolvable code always wins ("wh" ->
 MOCHA-WH / NEW-WH). Any other unknown warehouse word is kept and said back, as in block mode.
+
+Residuals (not this round): if the parser ignores the W3 line and hints "frg" only as a warehouse, the hint is
+dropped without being said back (block says "I don't know 'frg' as a location"); re-labelling it as the finish after
+the parse would be a post-parser domain override (standing rule: fix at the parser input), so W3 stays the fix.
+IW-12's "never written" half sends no entity (its "no Warehouse line" half is the guard).
