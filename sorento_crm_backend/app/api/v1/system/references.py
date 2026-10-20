@@ -1800,18 +1800,27 @@ def _restate_resolution(result: dict[str, Any], tr: dict[str, Any], kept: list[A
 def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
     """CODE-SUBSTRING (crew a59517206 (a)): a WORD token (no ASCII digit) gets no product from a
     code fragment read. A registry word is never a code hit, as a substring or as whole code
-    segments. Kept: exact / head_code rows and a row whose code IS the token (separators aside,
-    whatever its tier: the AND probe has no exact tier). Dropped: rows with the word INSIDE the
-    code, and rows that start with it (prefix, or AND tier) when the registry knows the word
-    (`vocabulary`, a set or a callable read only when such a row needs it: a code family such as
-    "QAMS" or a brand word keeps its prefix rows). A token with a digit keeps them all (a code
-    fragment). Runs once, early, so every reader of the result sees the same rows."""
+    segments. Kept: exact / head_code rows, a row whose code IS the token (separators aside,
+    whatever its tier: the AND probe has no exact tier), and a row whose code holds the token's
+    words as whole code segments when the registry does not know them ("bidet" in ACC-BIDET on a
+    catalogue with no bidet class: the code is the only reading of the word). Dropped: rows with
+    the word INSIDE the code, and rows that start with it (prefix, or AND tier) when the registry
+    knows the word (`vocabulary`, a set or a callable read only when such a row needs it: a code
+    family such as "QAMS" or a brand word keeps its prefix rows). A token with a digit keeps them
+    all (a code fragment). Runs once, early, so every reader of the result sees the same rows."""
     words: list[frozenset[str]] = []
 
     def known(tokens: list[str]) -> bool:
         if not words:
             words.append(vocabulary() if callable(vocabulary) else vocabulary)
         return any(w in words[0] for t in tokens for w in re.split(r"[^a-z0-9]+", str(t or "").lower()) if w)
+
+    def whole_segments(code: Any, token: Any) -> bool:
+        token_words = [w for w in re.split(r"[^a-z0-9]+", str(token or "").lower()) if w]
+        segments = [w for w in re.split(r"[^a-z0-9]+", str(code or "").lower()) if w]
+        return bool(token_words) and any(
+            segments[i : i + len(token_words)] == token_words for i in range(len(segments) - len(token_words) + 1)
+        )
 
     def kept(match: Any, tokens: list[str]) -> bool:
         if not isinstance(match, dict) or match.get("entity_type") != "product":
@@ -1822,6 +1831,9 @@ def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
         code = _fold_code(match.get("canonical_code"))
         if code in {_fold_code(t) for t in tokens}:
             return True
+        segment_tokens = [t for t in tokens if whole_segments(match.get("canonical_code"), t)]
+        if segment_tokens:
+            return not known(segment_tokens)  # whole code words: a code hit unless a registry word
         if tier == "substring" or not any(code.startswith(_fold_code(t)) for t in tokens):
             return False  # the word sits inside the code, not at its start
         return not known(tokens)  # a code that STARTS with the word: a family sibling unless it is a registry word
