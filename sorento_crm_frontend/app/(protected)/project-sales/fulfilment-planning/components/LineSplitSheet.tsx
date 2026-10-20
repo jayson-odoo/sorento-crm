@@ -639,7 +639,18 @@ const LineBlock = React.memo(function LineBlock({
         {baseCells}
         <TableCell colSpan={2} className={changeCell} />
         <TableCell className={changeCell}>
-          {savedRemark || ownRemark ? (
+          {added && !sheetReadOnly && line.remarkInDraft && handlers.lineRemark ? (
+            // A line AutoCount added (nothing of its own to split) still takes a remark when
+            // it carries a saved decision: kept in that decision, as any saved line's is.
+            <RemarkCell
+              label={`Remark, line ${no}`}
+              value={ownRemark}
+              generated={savedRemark ?? ''}
+              edited={line.remarkEdited}
+              onValue={(remark) => handlers.lineRemark?.(line, remark)}
+              onBlur={handlers.fieldBlur}
+            />
+          ) : savedRemark || ownRemark ? (
             <RemarkText value={ownRemark || savedRemark || ''} generated="" />
           ) : null}
         </TableCell>
