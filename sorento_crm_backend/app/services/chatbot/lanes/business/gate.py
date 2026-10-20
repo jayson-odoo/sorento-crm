@@ -1018,6 +1018,13 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
         if require_specific:
             opt_uuids = {c["uuid"] for o in specific_options for c in o["candidates"]}
             compatible_entities = [e for e in entities if e["uuid"] in opt_uuids]
+            # The stored roster re-prints these rows when a reply answers nothing on it, so each
+            # carries the label the picker PRINTED (the company on a shared code), the same string.
+            printed = {c["uuid"]: c["label"] for o in specific_options for c in o["candidates"]}
+            compatible_entities = [
+                {**e, "label": printed[e["uuid"]]} if printed.get(e["uuid"]) not in (None, e.get("label")) else e
+                for e in compatible_entities
+            ]
         elif len(exact_entities) > 0:
             compatible_entities = exact_entities
 
