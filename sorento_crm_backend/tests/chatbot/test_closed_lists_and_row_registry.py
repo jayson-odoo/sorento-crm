@@ -61,8 +61,8 @@ def _post(client, tokens: list[str]) -> dict:
 
 def test_r9_1_route_an_and_row_holding_a_registry_word_is_not_a_hit(client, db):
     """RED today through the real route: ["basin", "bidet"] AND probes ZZBASIN-BIDET (tier "and")."""
-    _basin_class(db)
     _stocked(db, "ZZBASIN-BIDET", "ZZT Bidet Spray", "BIDET SPRAY SET")
+    _basin_class(db)  # after the product: `_stocked` takes an unordered first category
 
     payload = _post(client, ["basin", "bidet"])
 
@@ -70,9 +70,32 @@ def test_r9_1_route_an_and_row_holding_a_registry_word_is_not_a_hit(client, db):
 
 
 def test_r9_2_route_guards_a_non_registry_family_and_a_lone_word_stay_hits(client, db):
-    _basin_class(db)
     _stocked(db, "ZZQAMS-BIDET", "ZZT Bidet Spray", "BIDET SPRAY SET")
     _stocked(db, "ZZACC-BIDET", "ZZT Bidet Acc", "BIDET ACCESSORY")
+    _basin_class(db)
 
     assert "ZZQAMS-BIDET" in _product_codes(_post(client, ["zzqams", "bidet"]))
     assert "ZZACC-BIDET" in _product_codes(_post(client, ["bidet"]))
+
+
+def test_r9_3_unit_a_plural_of_a_registry_word_drops_the_and_row():
+    """RED: the AND probe matches "basins" by its singular too; the registry check reads it as typed."""
+    assert _gate(["basins", "bidet"], ["ZZBASIN-BIDET"], {"basin"}) == []
+
+
+def test_r9_3_unit_guard_plural_non_registry_words_stay_kept():
+    assert _gate(["zzqams", "bidets"], ["ZZQAMS-BIDET"], {"basin"}) == ["ZZQAMS-BIDET"]
+
+
+def test_r9_3_route_a_plural_registry_word_in_an_and_row_is_not_a_hit(client, db):
+    _stocked(db, "ZZBASIN-BIDET", "ZZT Bidet Spray", "BIDET SPRAY SET")
+    _basin_class(db)
+
+    assert "ZZBASIN-BIDET" not in _product_codes(_post(client, ["basins", "bidet"]))
+
+
+def test_r9_3_route_guard_plural_non_registry_words_stay_hits(client, db):
+    _stocked(db, "ZZQAMS-BIDET", "ZZT Bidet Spray", "BIDET SPRAY SET")
+    _basin_class(db)
+
+    assert "ZZQAMS-BIDET" in _product_codes(_post(client, ["zzqams", "bidets"]))
