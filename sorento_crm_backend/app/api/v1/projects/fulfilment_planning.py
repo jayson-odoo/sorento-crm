@@ -506,10 +506,9 @@ def _run_confirm_many(
         return entry.batch_id or (None if any_per_order else payload.batch_id)
 
     def prepare_one(order, entry):
-        # OI-SPLIT-VIEW (UAC A4, A11): every saved split edit of the order rides along, added
-        # once before the hold-back so a refused one is held back like any named line.
-        if batch_of_entry(entry):
-            return entry
+        # OI-SPLIT-VIEW (UAC A4, A11, A12): every saved split edit of the order rides along,
+        # added once before the hold-back so a refused one is held back like any named line;
+        # beside a pending AutoCount batch too, as a line the batch does not carry.
         return _with_split_edits(db, supply, order, entry)
 
     def write_one(order, entry):
@@ -1300,8 +1299,12 @@ def _with_split_edits(db: Session, service: ProjectSupplyService, order, payload
     A11: run ONCE per order, BEFORE the hold-back (`_write_holding_back`), never inside its
     retry: an added line is then an ordinary named line the hold-back can drop when the
     recheck refuses it, and a held-back line is never added back. Confirm calls it before
-    its hold-back; Confirm all and Simulate through `confirm_many`'s `prepare`. A press
-    answering a planning-change batch never calls it (the batch names its lines)."""
+    its hold-back; Confirm all and Simulate through `confirm_many`'s `prepare`.
+
+    A12: a press answering a pending AutoCount batch adds them too. A line the batch names
+    pending is never split-edited (A9), so what is added is a line the batch does not carry:
+    `_confirm_a_planning_change` posts it beside the batch (`extra`), the batch's undecided
+    rows stay pending and the batch stays open."""
     from app.schemas.project_supply import ConfirmLine
     from app.services.project_line_split_service import LineSplitService
 
@@ -1552,9 +1555,10 @@ def confirm_supply(
         # refuses the whole order. The lines the recheck refuses are held back and named, and
         # the rest confirm - the same seam Confirm all uses (#1362). A planning-change press
         # names its lines on purpose, so it is never applied in part.
-        # OI-SPLIT-VIEW (UAC A4, A11): every saved split edit of the order rides along, named
-        # or not, added once before the hold-back so a refused one is held back like any line.
-        posted = payload if payload.batch_id else _with_split_edits(db, service, order, payload)
+        # OI-SPLIT-VIEW (UAC A4, A11, A12): every saved split edit of the order rides along,
+        # named or not, added once before the hold-back so a refused one is held back like
+        # any line; beside a pending AutoCount batch too, as a line the batch does not carry.
+        posted = _with_split_edits(db, service, order, payload)
         body, _entry, held = service._write_holding_back(
             order,
             posted,
