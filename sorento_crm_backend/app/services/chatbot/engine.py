@@ -9009,12 +9009,17 @@ def _held_for_the_seams(state_in: Any, verdict: dict[str, Any], *, for_family: b
     """The held products the held-family narrowing and the scheme index read. On the state path
     the Subject's, as the ops left them (`chat_state.held_products`). Off the state path the rule
     those seams always had, unchanged (state-off is byte-identical): a message whose own entity
-    the parser hinted `category` / `product_type` is about that class, so no held product."""
+    the parser hinted `category` / `product_type` is about that class, so no held product. The
+    rule of `class_named.py` (CHAT-CLOSED-LISTS R6-3): a spec grounding made out of that class
+    keeps it as `class_hint`, so it names the class too."""
     if state_in.subject is not None:
         return chat_state.held_products(state_in, for_family=for_family)
     names_a_class = any(
         isinstance(e, dict) and e.get("current_message") is not False
-        and str(e.get("hint") or "").strip().lower() in ("category", "product_type")
+        and (
+            str(e.get("hint") or "").strip().lower() in ("category", "product_type")
+            or str(e.get("class_hint") or "").strip().lower() in ("category", "product_type")
+        )
         for e in verdict.get("entities") or []
     )
     return [] if names_a_class else list(state_in.focus.products)
