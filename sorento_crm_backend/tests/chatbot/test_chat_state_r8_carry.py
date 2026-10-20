@@ -434,3 +434,101 @@ def test_r8_1_a_brand_over_carried_products_still_narrows_by_held_family(session
     assert seen, "held_family never ran on a carried product axis"
     assert seen[0][0] == HELD3, seen
     assert seen[0][1] and sorted(seen[0][1].get("matched") or []) == sorted(HELD3), seen
+
+
+# ---------------------------------------------------------------- review round: B1 implicit switch rebuilds
+IMPLICIT_OPS = {"keep": [_op("keep")], "close_question": [_op("close_question")]}
+
+
+@pytest.mark.parametrize("ops", sorted(IMPLICIT_OPS))
+def test_r8_b1_an_implicit_switch_naming_a_new_product_rebuilds(ops):
+    """Real $0-delta shapes: "Check eta , <code>" [close_question]; "<code> eta" [keep]. No switch op,
+    but the domain changes (held inventory, message incoming) and a NEW product is typed."""
+    out = _apply(_focus(domains=("inventory",)), verdict_with(
+        verdict(domain_hint="incoming", entities=[_product(Y)]), list(IMPLICIT_OPS[ops])))
+    shape = _shape(out)
+    assert shape["warehouse"] == [] and shape["extra"] == {} and shape["tier"] == [], shape
+    assert shape["products"] == [], f"held products rode an implicit switch: {shape['products']}"
+    assert _subject_codes(out) == [Y], _subject_codes(out)
+
+
+@pytest.mark.parametrize("ops", sorted(IMPLICIT_OPS))
+def test_r8_b1_engine_an_implicit_switch_fetches_the_new_product_only(session_factory, monkeypatch, stub_access, ops):
+    from tests.chatbot._r9_engine_console import reply
+
+    c = _held_console(session_factory, monkeypatch, stub_access, "+60900000886" if ops == "keep" else "+60900000887",
+                      tier=True, extra=True)
+    new = "SRTWC287-S-150"
+    c.tool_calls.clear()
+    c.say(f"check eta, {new}", reply(domain_hint="incoming", intent_hint=None, entities=[_product(new)],
+                                      state_changes=list(IMPLICIT_OPS[ops])))
+    held = {c.uuid_of[k] for k in HELD3}
+    sent = [(n, a) for n, a in c.tool_calls if held & set(str(a.get("product_ids") or []).replace("'", " ").replace("[", " ").replace("]", " ").replace(",", " ").split())]
+    assert not sent, ("held product ids rode the implicit switch fetch", sent)
+    assert any(c.uuid_of[new] in str(a) for _n, a in c.tool_calls), ("the new product was never fetched", [n for n, _ in c.tool_calls])
+
+
+def test_r8_nit_domains_equal_across_explicit_and_implicit_switch():
+    shapes = {}
+    for name, ops in (("explicit", [_op("switch_domain")]), ("implicit", [_op("keep")])):
+        out = _apply(_focus(domains=("inventory",)), verdict_with(
+            verdict(domain_hint="incoming", entities=[_product(Y)]), ops))
+        shapes[name] = (_shape(out), list(out.state.focus.domains))
+    assert shapes["explicit"] == shapes["implicit"], shapes
+    assert shapes["implicit"][1] == ["incoming"]
+
+
+# ---------------------------------------------------------------- review round: B2 an answer never rebuilds
+CODES2 = ["SRTWC286-SH", "SRTWC286-SH-P"]
+
+
+def _roster_state():
+    from app.services.chatbot.turn.pending import ask
+    from app.services.chatbot.turn.tail import last_list_after
+
+    pending = ask("product_pick", [
+        {"position": i, "label": c, "code": c, "name": None, "entity_type": "product", "payload": {}}
+        for i, c in enumerate(CODES2, 1)], asked_at_turn=2, payload={"domain": "incoming"})
+    ll = last_list_after(None, question=pending, sections=[], turn_no=2)
+    return pending, State(focus=Focus(domains=["incoming"], last_list=ll, tier=["dealer"]), pending=pending,
+                          turn_no=3, state_path=True)
+
+
+def _roster_turn(ops, hint="inventory", extra_v=None):
+    from app.services.chatbot.turn import question as question_mod
+    from app.services.chatbot.turn.apply import apply
+    from tests.chatbot._turn_helpers import build_policy
+
+    pending, st = _roster_state()
+    v = verdict(domain_hint=hint, reference_positions=[1] if any(o.get("op") == "pick" for o in ops) else [],
+                entities=[entity(CODES2[0], "product", canonical_code=CODES2[0])], state_changes=ops, **(extra_v or {}))
+    a = chat_state.apply_changes(st, v, open_question=question_mod.of_pending(pending), domains=DOMAINS,
+                                 kinds=KINDS, brands=["SORENTO"], positions_read_elsewhere=False)
+    assert a.valid is True, a.log.get("rejected")
+    _s, plan = apply(a.state, a.verdict, build_policy())
+    return a, plan
+
+
+@pytest.mark.parametrize("ops", [
+    [{"op": "pick", "axis": None, "position": 1}],
+    [{"op": "pick", "axis": None, "position": 1}, _op("switch_domain")],
+], ids=["pick-implicit-domain", "pick-explicit-switch"])
+def test_r8_b2_a_pick_over_an_open_roster_never_rebuilds(ops):
+    a, plan = _roster_turn(ops)
+    fired = plan.trace.rules_fired
+    assert "open_question_answer_pick" in fired and "pick_in_roster_domain" in fired, fired
+    assert list(plan.domains) == ["incoming"], plan.domains
+    assert a.state.focus.tier == ["dealer"], f"the tier was rebuilt away: {a.state.focus.tier}"
+    assert a.state.pending is not None, "the open roster was wiped before it was answered"
+
+
+def test_r8_b2_an_answer_op_with_a_typed_product_and_a_domain_change_never_rebuilds():
+    a, plan = _roster_turn([_op("answer")], extra_v={"open_question_answer": {
+        "mode": "pick", "picked": [1], "items": [], "qty_for_all": None}})
+    assert a.state.focus.tier == ["dealer"], a.state.focus.tier
+    assert a.state.pending is not None, "the open roster was wiped before it was answered"
+
+
+def test_r8_b2_guard_explicit_new_subject_still_rebuilds():
+    a, _plan = _roster_turn([_op("new_subject")])
+    assert a.state.focus.tier == [] and a.state.pending is None
