@@ -1,0 +1,46 @@
+# PLAN: CLOSED-LISTS-INDEX-MODE round 2 - warehouse and finish short forms join the index
+
+Status: Build (explore branch crew/closed-lists-index-explore1020 only; not #1755 / main). Track: full (LEAD pattern).
+Source: owner 20 Oct ~22:35 MYT "i thought warehouse should be indexed also just like spec?" + crew brief (the "frg" bug).
+
+## Root cause (code check on 4cd6d4d930)
+
+- parser_template.py:170 tells the parser that a short token (at most 4 letters, or letters with one digit) after
+  "for / at / in" or beside the product is a warehouse, so "frg" is hinted `warehouse`.
+- Grounding never checks a warehouse hint (head/grounding.py:772-779 touches class / spec / attachment / product hints
+  only), so turn/apply.py:1085-1110 writes "frg" onto focus.warehouse and it rides every later turn.
+- "-FRG" is the registry's own finish code suffix (product_spec_registry.py:301-305 derivation rule, texts ["-FRG"],
+  value french_gold; product_spec_derivation.py:469), which index mode never shows the parser.
+
+## ARCHITECTURE (owner 20 Oct: layer, shared mechanism, other classes fixed, special cases removed)
+
+Layers DATA -> candidates (index) and GROUNDING. One mechanism: index mode's per-turn closed list
+(head/closed_lists_index.py, message-word match by code / name / alias, exact or near spelling at the candidates.py
+thresholds; near spelling adds lines only and never binds) gains two sources read from data, never word lists:
+- W1 warehouses: the `warehouses` table, matched on code, name, and the code's last `-` segment (the same reading
+  as resolve_warehouse_token, lanes/business/services.py:497-533). Listed under the candidates header for this turn.
+- W3 finish short forms: the registry's own derivation code-suffix texts (kind "code", code_match ends_with):
+  a typed "frg" lists "finish = french_gold" for this turn only.
+- W2 grounding: in index mode a warehouse hint the registry does not resolve is dropped, through the same path as
+  the attachment-type drop (grounding.py:966-999 -> verdict dropped_kinds -> turn/apply.py:1111-1115 clears the axis).
+Removes, in index mode only: the "<= 4 letters is a warehouse" shape rule. The rendered prompt replaces that rule
+with "a warehouse is one the index lists" (fixed text, so the system prompt stays byte-equal across turns; the
+template file is not edited: prompt freeze, crew a29691875). Block mode byte-identical (tests pin it).
+
+## Acceptance (red first)
+
+- IW-1 index mode, message "frg" (no warehouse FRG exists): the index lists `finish = french_gold`, no warehouse
+  line; a warehouse hint "frg" is dropped by grounding and focus.warehouse is not written (an earlier held
+  warehouse is cleared, as dropped_kinds does for file types).
+- IW-2 a real warehouse code (e.g. "BRW") and a suffix ("IB" -> BRW-IB, MWH-IB): listed; the hint is kept and
+  resolves as today.
+- IW-3 a 3-4 letter non-warehouse word ("stok", "ada"): no warehouse line; a warehouse hint on it is dropped.
+- IW-4 the WH collision: "wh3" (a warehouse code in the seeded world) lists the warehouse; "wh" alone lists
+  finish white and any warehouse whose code or suffix is WH; neither binds by itself.
+- IW-5 block mode: prompt and grounding byte-identical to 4cd6d4d930 (the I-series guards stay green).
+- IW-6 the index-mode system prompt is byte-equal across turns (I8 pattern) with the rule replaced.
+
+## Gate
+
+Opus reviewer READY; tests/chatbot/test_closed_lists_index_mode.py + the new file + touched suites green; parser
+gold on TRAIN location / warehouse + spec items in index mode, x1 with early stop, cap USD 1.0 total.
