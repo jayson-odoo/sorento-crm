@@ -1258,6 +1258,17 @@ def _reply_to_message_id(envelope: Envelope) -> str | None:
     return str(value) if value not in (None, "") else None
 
 
+def _typed_text(user_turn: Any) -> str:
+    """The folded text the customer typed this turn: every line of their own text up to the
+    `reply to:` block `build_latest_user_message` appends, plus the codes read from the media."""
+    own = [user_turn.own_text]
+    for line in user_turn.quoted_text.split("\n"):
+        if line.lstrip().lower().startswith("reply to:"):
+            break
+        own.append(line)
+    return turn_state.token_key(" ".join([*own, *user_turn.media]))
+
+
 def turn_apply(state_in: Any, *args: Any, **kwargs: Any) -> Any:
     """APPLY, keeping the QUOTED-REPLY live-question aside (R4) on the state it returns:
     APPLY builds a fresh `State`, which would otherwise drop it."""
@@ -6130,6 +6141,7 @@ def _run_stages_body(  # noqa: PLR0915
                     resolved_candidates,
                     frozenset(unplaced_tokens),
                     exact=exact_kinds,
+                    typed=_typed_text(user_turn),
                 )
                 state_out.focus.relation = seat_relation
             if (
@@ -6188,6 +6200,7 @@ def _run_stages_body(  # noqa: PLR0915
                     resolved_candidates,
                     frozenset(unplaced_tokens),
                     exact=exact_kinds,
+                    typed=_typed_text(user_turn),
                 )
                 state_out.focus.relation = seat_relation
             # Round 4 R5: a clarify this turn is about to ask keeps the ask, so its answer
