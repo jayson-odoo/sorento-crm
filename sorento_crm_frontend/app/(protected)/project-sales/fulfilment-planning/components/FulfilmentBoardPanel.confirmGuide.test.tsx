@@ -321,7 +321,10 @@ function row(over: Row = {}): Row {
 }
 
 /** The dry run answers every order ok with the rows given per pso (none by default). */
-function dryRunAnswers(perPso: Record<string, { rows?: Row[]; transfers?: Row[]; error?: string }> = {}) {
+function dryRunAnswers(perPso: Record<
+    string,
+    { rows?: Row[]; transfers?: Row[]; error?: string; confirmed?: Row[] }
+  > = {}) {
   previewConfirmMany.mockImplementation((body: { orders: { pso_id: string }[] }) =>
     Promise.resolve({
       results: body.orders.map((order) => {
@@ -334,7 +337,7 @@ function dryRunAnswers(perPso: Record<string, { rows?: Row[]; transfers?: Row[];
           ok: true,
           preview: true,
           decision_revision: 4,
-          lines_confirmed: [],
+          lines_confirmed: spec.confirmed ?? [],
           lines_carried: 0,
           lines_held_back: [],
           lines_fulfilled_skipped: 0,
@@ -428,6 +431,7 @@ describe('T-FE1 (A1 A2 A3): Confirm (N) opens the guide and posts nothing', () =
   });
 
   it('Escape and Cancel after the dry run still write nothing', async () => {
+    dryRunAnswers({ 'pso-so-1': { confirmed: [{ project_line_id: 'pl-1-1', line_no: 1, item_code: 'ZZT-ITEM-1' }] } });
     await mountWith(withDraft(boardOf([SO1_L1]), ['pl-1-1']), ['SO000001']);
     await openConfirmGuide();
     await screen.findByTestId('confirm-guide-review');
@@ -495,6 +499,7 @@ describe('T-FE2 (B1 B2 B3 B6): split pages are the orders with a saved split edi
   });
 
   it('no order has a saved split edit: the guide opens at Review with two steps', async () => {
+    dryRunAnswers({ 'pso-so-1': { confirmed: [{ project_line_id: 'pl-1-1', line_no: 1, item_code: 'ZZT-ITEM-1' }] } });
     await mountWith(withDraft(boardOf([SO1_L1, SO2_L1]), ['pl-1-1']));
     await openConfirmGuide();
     expect(await screen.findByTestId('confirm-guide-review')).toBeInTheDocument();
