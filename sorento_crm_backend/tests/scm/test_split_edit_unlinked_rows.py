@@ -101,3 +101,28 @@ def test_editing_one_date_of_an_all_raised_unlinked_split_sends_one_delay(api, e
     splits = service.splits_of_lines({str(s.line[480].id)})[str(s.line[480].id)]
     assert not split_plan_edited(splits, (recorded.get(str(s.line[480].id)) or {}).get("plan")), (
         "the edited plan is recorded as applied", recorded.get(str(s.line[480].id)))
+
+
+def test_a_re_plan_netted_on_the_last_confirmed_line_still_reaches_its_plan(api, emails):
+    """The flush half: a re-plan that changes the total (480: 10 + 4 against its 14 / 236 / 167)
+    still nets, cancelling the three rows and raising the 14 fresh. With 480 the LAST line the
+    Confirm reads, nothing writes that fresh row before `_keep_split_rows` queries for it on the
+    non-autoflushing session, so the plan was never cut: 480 kept one unsplit 14."""
+    from tests.scm.test_line_splits_round3 import (
+        _assert_dropped_403_is_told,
+        _confirm,
+        _line_payload,
+    )
+
+    s = _unlinked_new_line_plan_applied(api, emails)
+    _edit_480(s, [(10, D_480_NEW, "own", ""), (4, D_608, "new", "")])
+    start = len(emails)
+    r = _confirm(s.client, s.order.id, [
+        _line_payload(s.line[608].id, buy_qty="632"),
+        _line_payload(s.line[752].id, buy_qty="649"),
+        _line_payload(s.line[480].id, buy_qty="14"),
+    ])
+    assert r.status_code == 200, r.text
+    s.db.commit()
+    s.db.expire_all()
+    _assert_dropped_403_is_told(s, _sent_since(emails, start))
