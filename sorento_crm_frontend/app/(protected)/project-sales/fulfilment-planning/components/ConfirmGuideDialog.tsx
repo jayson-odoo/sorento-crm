@@ -17,7 +17,7 @@ import {
   coveredSheetLines,
   type CoveredSheetLine,
 } from '../../_shared/components/LineSplitInfo';
-import { useLineSplits } from '../../_shared/hooks/useLineSplits';
+import { useLineSplitsReads } from '../../_shared/hooks/useLineSplits';
 import { LineSplitDialog } from './LineSplitDialog';
 
 /** One page of the guide (UAC F2): an order this Confirm covers, and the lines it covers. */
@@ -76,15 +76,18 @@ export function ConfirmGuideDialog({
   } | null>(null);
 
   const page = step.kind === 'review' ? pages[step.index] : undefined;
-  const { query: splitRead } = useLineSplits(page?.psoId, Boolean(page?.psoId));
-  const reading = Boolean(page?.psoId) && splitRead.isPending;
+  // Every page's split read, kept while the guide is open; the current page reads its own.
+  const reads = useLineSplitsReads(pages.map((entry) => entry.psoId));
+  const splitRead = step.kind === 'review' && page ? reads[step.index] : undefined;
+  const reading = Boolean(page?.psoId) && Boolean(splitRead?.isPending);
+  const readFailed = Boolean(splitRead?.isError);
   // The page's sheet: split lines from the split read, every other covered line one row.
   const sheet = React.useMemo(
     () =>
-      page && !reading && !splitRead.isError
-        ? coveredSheetLines(splitRead.data ?? null, page.covered)
+      page && !reading && !readFailed
+        ? coveredSheetLines(splitRead?.data ?? null, page.covered)
         : null,
-    [page, reading, splitRead.isError, splitRead.data],
+    [page, reading, readFailed, splitRead?.data],
   );
 
   // UAC B4: a Save that left the last page's order out of this Confirm drops its page; the
@@ -128,7 +131,9 @@ export function ConfirmGuideDialog({
         ? 'Next order'
         : 'Next: Confirm'
       : null;
-  const nextEnabled = step.kind === 'review' && Boolean(page) && !splitRead.isError;
+  // UAC F14: a page is never "seen" before its split read has loaded.
+  const nextEnabled =
+    step.kind === 'review' && Boolean(page) && !reading && !readFailed;
 
   return (
     <>
@@ -196,13 +201,13 @@ export function ConfirmGuideDialog({
                     </Button>
                   ) : null}
                 </div>
-                {splitRead.isError ? (
+                {readFailed ? (
                   <div
                     data-testid="confirm-guide-split-error"
                     className="flex flex-col items-start gap-2 py-4 text-sm"
                   >
                     <span role="alert" className="break-words">
-                      {(splitRead.error instanceof Error && splitRead.error.message) ||
+                      {(splitRead?.error instanceof Error && splitRead.error.message) ||
                         'The split sheet could not be loaded.'}
                     </span>
                     <Button
@@ -210,7 +215,7 @@ export function ConfirmGuideDialog({
                       variant="outline"
                       size="sm"
                       data-testid="confirm-guide-split-retry"
-                      onClick={() => void splitRead.refetch()}
+                      onClick={() => void splitRead?.refetch()}
                     >
                       Retry
                     </Button>
@@ -218,7 +223,7 @@ export function ConfirmGuideDialog({
                 ) : sheet ? (
                   <div className="overflow-hidden rounded-lg border border-border">
                     <SplitLinesSheet
-                      payload={splitRead.data ?? null}
+                      payload={splitRead?.data ?? null}
                       soNumber={page.soNumber}
                       sheet={sheet}
                     />
