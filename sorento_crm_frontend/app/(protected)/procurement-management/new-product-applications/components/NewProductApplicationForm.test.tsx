@@ -410,7 +410,7 @@ describe('attachments list is the shared PanelDataGrid', () => {
     // PRINCIPLES: the attachments list is the shared PanelDataGrid, not a hand-rolled table
     const cell = screen.getByText('sample-doc.pdf');
     expect(cell.closest('table')).toHaveAttribute('data-slot', 'data-grid-table');
-    const panel = cell.closest('[data-slot="data-grid"]');
+    const panel = cell.closest('[data-slot="card"]');
     expect(panel).not.toBeNull();
     expect(
       within(panel as HTMLElement).getByRole('button', { name: /link attachment/i }),
