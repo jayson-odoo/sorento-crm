@@ -22,11 +22,20 @@ export function LineSplitDialog({
   open,
   psoId,
   focusLineId,
+  lineRemarks,
+  onSaveRemarks,
   onOpenChange,
 }: {
   open: boolean;
   psoId: string;
   focusLineId?: string;
+  /**
+   * OI-SPLIT-GUIDE (UAC F26): per line with a saved decision, its Remark facts
+   * (`LineSplitEditor.lineRemarks`); such a line's remark is kept in its draft.
+   */
+  lineRemarks?: ReadonlyMap<string, { words: string | null; own: string | null; editable: boolean }>;
+  /** Saves those lines' edited remarks to their drafts (`LineSplitEditor.onSaveRemarks`). */
+  onSaveRemarks?: (changes: ReadonlyMap<string, string>) => Promise<void>;
   onOpenChange: (open: boolean) => void;
 }) {
   const editor = React.useRef<LineSplitEditorHandle | null>(null);
@@ -60,6 +69,8 @@ export function LineSplitDialog({
           psoId={psoId}
           active={open}
           focusLineId={focusLineId}
+          lineRemarks={lineRemarks}
+          onSaveRemarks={onSaveRemarks}
           onSaved={() => onOpenChange(false)}
           handleRef={editor}
           testId="line-split-dialog"

@@ -2013,6 +2013,24 @@ export function FulfilmentBoardPanel({
   ]);
 
   /**
+   * OI-SPLIT-GUIDE (UAC F25, F26): one line's Remark facts, one rule for the guide's pages and
+   * the board's own Split delivery: the purchasing email's words (`saved_remark`), the
+   * planner's own remark kept in the line's saved decision, and whether it is kept there (an
+   * Approve or Amend draft; a line with none keeps its remark as a split, as before).
+   */
+  const remarkFactsOf = React.useCallback(
+    (contribution: BoardContribution) => {
+      const decision = draftWithoutPreMark[contribution.key] ?? contribution.draft?.decision;
+      return {
+        words: contribution.saved_remark ?? null,
+        own: decision?.remark?.trim() || null,
+        editable: decision?.verdict === 'approved' || decision?.verdict === 'amended',
+      };
+    },
+    [draftWithoutPreMark],
+  );
+
+  /**
    * OI-SPLIT-GUIDE (UAC F26): a saved line's own remark is kept in its saved decision (the
    * same save every decision on the board takes), never as a one-row split.
    */
@@ -2052,7 +2070,7 @@ export function FulfilmentBoardPanel({
           soNumber: order.so_number,
           covered: lines.map((line) => {
             // UAC F25, F26: the planner's own remark lives in the line's saved decision.
-            const decision = draftWithoutPreMark[line.key] ?? line.draft?.decision;
+            const facts = remarkFactsOf(line);
             return {
               lineId: line.project_line_id ?? null,
               key: line.key,
@@ -2061,10 +2079,9 @@ export function FulfilmentBoardPanel({
               location: line.fulfilment_location ?? '',
               qty: Number(line.qty) || 0,
               date: line.required_date ?? null,
-              savedRemark: line.saved_remark ?? null,
-              ownRemark: decision?.remark?.trim() || null,
-              remarkEditable:
-                decision?.verdict === 'approved' || decision?.verdict === 'amended',
+              savedRemark: facts.words,
+              ownRemark: facts.own,
+              remarkEditable: facts.editable,
             };
           }),
         },
@@ -2077,7 +2094,40 @@ export function FulfilmentBoardPanel({
     pendingBatchSalesOrderIds,
     unadoptedSalesOrderIds,
     batchNamedKeys,
+    remarkFactsOf,
   ]);
+
+  /**
+   * OI-SPLIT-GUIDE (UAC F26): the board's own Split delivery gets the same Remark facts for
+   * the open order's lines with a saved decision, so a saved line's remark is kept in its
+   * draft there too, never as a one-row split.
+   */
+  const dialogRemarks = React.useMemo(() => {
+    if (!lineSplit) return null;
+    const remarks = new Map<string, { words: string | null; own: string | null; editable: boolean }>();
+    const keys = new Map<string, string>();
+    for (const contribution of allContributions) {
+      const lineId = contribution.project_line_id;
+      if (!lineId || psoIdBySalesOrder.get(contribution.sales_order_id) !== lineSplit.psoId)
+        continue;
+      const facts = remarkFactsOf(contribution);
+      if (!facts.editable) continue;
+      remarks.set(lineId, facts);
+      keys.set(lineId, contribution.key);
+    }
+    return {
+      remarks: remarks as ReadonlyMap<string, { words: string | null; own: string | null; editable: boolean }>,
+      save: (changes: ReadonlyMap<string, string>) =>
+        saveLineRemarks(
+          new Map(
+            [...changes].flatMap(([lineId, remark]) => {
+              const key = keys.get(lineId);
+              return key ? [[key, remark] as const] : [];
+            }),
+          ),
+        ),
+    };
+  }, [lineSplit, allContributions, psoIdBySalesOrder, remarkFactsOf, saveLineRemarks]);
 
   /**
    * SIMULATE CONFIRM (admin): the body Confirm would post, sent to the server's dry run. A
@@ -3447,6 +3497,8 @@ export function FulfilmentBoardPanel({
           open={lineSplit.open}
           psoId={lineSplit.psoId}
           focusLineId={lineSplit.focusLineId}
+          lineRemarks={dialogRemarks?.remarks}
+          onSaveRemarks={dialogRemarks?.save}
           onOpenChange={(next) =>
             setLineSplit((current) => (current ? { ...current, open: next } : current))
           }
