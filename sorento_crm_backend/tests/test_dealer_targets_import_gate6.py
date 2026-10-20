@@ -139,9 +139,10 @@ def test_one_ledger_written_on_three_rows_of_a_target_names_the_rows(api):
             ws[f"B{r}"] = "A/C I"
 
     rows = _post(client, db, _bytes(fill))["rows"]
+    # Owner 20 Oct (MCH 82-84): read as that one account when the figures agree (gate 10).
     for row in rows:
-        assert row["status"] == "not_representable", row
-        assert "rows 2, 3 and 4 are one CRM customer" in row["reason"], row["reason"]
+        assert row["status"] == "mapped", row
+        assert "rows 2, 3 and 4 are one CRM customer: read as one account" in row["warnings"], row["warnings"]
 
 
 def test_masked_reasons_keep_row_numbers():
@@ -169,7 +170,7 @@ def test_one_code_on_two_rows_names_both_rows(api):
         ws["B2"], ws["B3"], ws["B4"] = c1.customer_code, c2.customer_code, c1.customer_code
 
     rows = _post(client, db, _bytes(fill))["rows"]
-    assert all("rows 2 and 4 are one CRM customer" in r["reason"] for r in rows), [r["reason"] for r in rows]
+    assert all("rows 2 and 4 are one CRM customer: read as one account" in r["warnings"] for r in rows), rows
 
 
 def test_a_paren_that_is_the_matched_account_is_not_a_branch(api):
@@ -302,4 +303,5 @@ def test_a_repeated_ledger_names_every_row_of_the_dealer_on_it(api):
             ws[f"B{r}"] = "A/C I"
 
     rows = _post(client, db, _bytes(fill))["rows"]
-    assert [r["reason"].split(";")[0] for r in rows] == ["rows 2, 3 and 4 are one CRM customer"] * 3, rows
+    assert [r["status"] for r in rows] == ["mapped"] * 3, rows
+    assert all("rows 2, 3 and 4 are one CRM customer: read as one account" in r["warnings"] for r in rows), rows
