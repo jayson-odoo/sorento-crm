@@ -168,6 +168,7 @@ import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsuppor
 import { addBtn, qty, splitLine, typeDate, typeQty, wireLine, wireSplit } from '@/test-mocks/lineSplitSheetKit';
 import { openConfirmGuide, walkConfirmGuide, walkToConfirmStep } from '@/test-mocks/confirmGuide';
 import { toast } from '@/lib/toast';
+import userEvent from '@testing-library/user-event';
 
 const TODAY = '2026-09-17';
 
@@ -1062,5 +1063,130 @@ describe('T-FE6 (F18 F19 F21): the guide page is the editable split sheet', () =
     const block = await within(page).findByTestId('split-line-3');
     expect(block).toHaveTextContent('Delivered in full: nothing goes to purchasing');
     expect(block.querySelectorAll('input')).toHaveLength(0);
+  });
+
+  /** The board after a draft remark was saved: the contribution carries the stored words. */
+  function boardWithStoredRemark(remark: string | null) {
+    return mapContributions(oneDraftBoard(), (entry) =>
+      entry.project_line_id === 'pl-1-3'
+        ? {
+            ...entry,
+            saved_remark: remark ?? 'USE BRW 522 & ORDER 294',
+            draft: {
+              decision: { verdict: 'approved', ...(remark ? { remark } : {}) },
+              saved_by: 'Test Planner',
+              saved_at: '2026-09-08T00:00:00Z',
+            },
+          }
+        : entry,
+    );
+  }
+
+  it('R9d-1: a remark-only Save sends the draft PUT, toasts success and never leaves the page on a skeleton', async () => {
+    // Only the FIRST split read ever answers: a remark-only save changes the draft, not the
+    // splits, so the page must not wait for a split re-read that never comes.
+    getLineSplits
+      .mockReset()
+      .mockImplementationOnce(() => Promise.resolve(LINE3_READ()))
+      .mockImplementation(() => new Promise(() => undefined));
+    putLineDraft.mockImplementation(() => {
+      getPlanningBoard.mockResolvedValue(boardWithStoredRemark('URGENT ORDER'));
+      return Promise.resolve({ decision: { verdict: 'approved', remark: 'URGENT ORDER' }, saved_by: 'Test Planner', saved_at: '2026-09-09T00:00:00Z' });
+    });
+    await mountWith(oneDraftBoard(), ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    fireEvent.change(screen.getByLabelText('Remark, line 3'), { target: { value: 'URGENT ORDER' } });
+    fireEvent.click(within(page).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(putLineDraft).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    // the row is still there (no skeleton) with the stored remark and the edited marker
+    await waitFor(() => expect((screen.getByLabelText('Remark, line 3') as HTMLInputElement).value).toBe('URGENT ORDER'));
+    expect(within(screen.getByTestId('confirm-guide-split-page')).getByText('edited')).toBeInTheDocument();
+    expect(screen.getByTestId('confirm-guide-next')).toBeEnabled();
+  });
+
+  it('R9d-1: saving the default back (clearing the stored remark) also leaves no skeleton', async () => {
+    getPlanningBoard.mockResolvedValue(boardWithStoredRemark('URGENT ORDER'));
+    getLineSplits
+      .mockReset()
+      .mockImplementationOnce(() => Promise.resolve(LINE3_READ()))
+      .mockImplementation(() => new Promise(() => undefined));
+    putLineDraft.mockImplementation(() => {
+      getPlanningBoard.mockResolvedValue(boardWithStoredRemark(null));
+      return Promise.resolve({ decision: { verdict: 'approved' }, saved_by: 'Test Planner', saved_at: '2026-09-09T00:00:00Z' });
+    });
+    renderPanel(['SO000001']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    expect((screen.getByLabelText('Remark, line 3') as HTMLInputElement).value).toBe('URGENT ORDER');
+    fireEvent.change(screen.getByLabelText('Remark, line 3'), { target: { value: 'USE BRW 522 & ORDER 294' } });
+    fireEvent.click(within(page).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(putLineDraft).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect((screen.getByLabelText('Remark, line 3') as HTMLInputElement).value).toBe('USE BRW 522 & ORDER 294'),
+    );
+    expect(within(screen.getByTestId('confirm-guide-split-page')).queryByText('edited')).not.toBeInTheDocument();
+  });
+
+  it('R9d-2: a real focus-out (Tab, and a click elsewhere) on an emptied remark box brings the default back and removes the marker', async () => {
+    const user = userEvent.setup();
+    const page = await openEditablePage();
+    const box = () => screen.getByLabelText('Remark, line 3') as HTMLInputElement;
+    await user.click(box());
+    await user.clear(box());
+    await user.type(box(), 'x');
+    expect(within(page).getByText('edited')).toBeInTheDocument();
+    await user.clear(box());
+    expect(box().value).toBe('');
+    await user.tab();
+    await waitFor(() => expect(box().value).toBe('USE BRW 522 & ORDER 294'));
+    expect(within(page).queryByText('edited')).not.toBeInTheDocument();
+    // and by clicking another element
+    await user.click(box());
+    await user.clear(box());
+    await user.click(screen.getByTestId('confirm-guide-steps'));
+    await waitFor(() => expect(box().value).toBe('USE BRW 522 & ORDER 294'));
+    expect(within(page).queryByText('edited')).not.toBeInTheDocument();
+    // nothing changed against the stored plan, so Next is on and no draft write happens
+    expect(screen.getByTestId('confirm-guide-next')).toBeEnabled();
+    expect(putLineDraft).not.toHaveBeenCalled();
+  });
+
+  it('R9d-3: a saved draft on a line AutoCount added has an editable Remark with the email words; edit + Save writes the draft remark', async () => {
+    const added = demand({ project_line_id: 'pl-1-5', line_no: 5, item_code: 'ZZT-ITEM-5' });
+    const board = withDraft(boardOf([added]), ['pl-1-5'], { 'pl-1-5': 'ORDER' });
+    const key = (board.contributions as unknown as { key: string; project_line_id: string }[]).find(
+      (c) => c.project_line_id === 'pl-1-5',
+    )!.key;
+    const read = splitRead('pso-so-1', 'SO000001', []);
+    read.lines = [
+      wireLine(5, 'ZZT-ITEM-5', 0, null, {
+        line_id: 'pl-1-5',
+        now_qty: 4,
+        now_date: '2026-10-16',
+        pending_change: true,
+        new_qty: 4,
+        new_date: '2026-10-16',
+        split_state: 'applied',
+      }),
+    ];
+    serveSplits({ 'pso-so-1': read });
+    await mountWith(board, ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-5');
+    const box = screen.getByLabelText('Remark, line 5') as HTMLInputElement;
+    expect(box.value).toBe('ORDER');
+    fireEvent.change(box, { target: { value: 'ORDER 4 FIRST' } });
+    fireEvent.click(within(page).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(putLineDraft).toHaveBeenCalled());
+    const [draftKey, decision] = putLineDraft.mock.calls[0];
+    expect(draftKey).toBe(key);
+    expect(decision.remark).toBe('ORDER 4 FIRST');
   });
 });
