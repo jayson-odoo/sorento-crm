@@ -81,7 +81,7 @@ def real_hidden_spec_keys(session_factory) -> list[str]:
         db.close()
 
 
-def _run(session_factory, stub_access, monkeypatch, message: str, verdict: dict, *, gate: bool = True):
+def _run(session_factory, stub_access, monkeypatch, message: str, verdict: dict, *, gate: bool = True, code_lookup: bool = False):
     """(parser user block, trace records) of one turn."""
     blocks: list[str] = []
     traces: list = []
@@ -90,6 +90,7 @@ def _run(session_factory, stub_access, monkeypatch, message: str, verdict: dict,
     def fake_resolve_config(db, *, current_date, override_version_id=None):
         return parser_mod.ParserConfig(
             system_prompt="stub", prompt_version=1, provider="openai", model="m", api_key="k", closed_lists=gate,
+            **({"code_lookup": True} if code_lookup else {}),
         )
 
     def parse(config, user_block):
@@ -118,6 +119,21 @@ def test_a_hidden_dim_width_is_never_shown_to_the_parser(session_factory, seeded
     _hide(session_factory, "dim_width")
 
     block, _t = _run(session_factory, stub_access, monkeypatch, "600mm zz basin", QUIET)
+
+    lines = _candidate_lines(block)
+    assert not any("dim_width" in ln for ln in lines), lines
+    assert not any(ln.startswith('- "600mm"') and "size 600" in ln for ln in lines), lines
+
+
+def test_a_hidden_dim_width_is_never_shown_to_the_parser_under_code_lookup(
+    session_factory, seeded, stub_access, monkeypatch
+):
+    """Guard: the CODE LOOKUP shortlist call (engine `shortlist(..., hidden=hidden, code_lookup=True)`)
+    carries the hidden set too."""
+    _seed(session_factory)
+    _hide(session_factory, "dim_width")
+
+    block, _t = _run(session_factory, stub_access, monkeypatch, "600mm zz basin", QUIET, code_lookup=True)
 
     lines = _candidate_lines(block)
     assert not any("dim_width" in ln for ln in lines), lines

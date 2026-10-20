@@ -1,0 +1,42 @@
+{"id": "cp2-c1-01", "message": "SRT0100S x 5", "expect": {"domain_hint": "inventory", "product": "SRT0100S"}, "context": {"previous_reply": "SRT552HP: 40 pcs in stock at the main warehouse.", "subject": "domain inventory (answered); product SRT552HP", "open_question": null}}
+{"id": "cp2-c1-02", "message": "SRT584HP x 5", "expect": {"domain_hint": "inventory", "product": "SRT584HP"}, "context": {"previous_reply": "SRT68900 incoming: 200 pcs, arriving 12 Nov.", "subject": "domain incoming (answered); product SRT68900", "open_question": null}}
+{"id": "cp2-c1-03", "message": "SRT7312B 5 units", "expect": {"domain_hint": "inventory", "product": "SRT7312B"}, "context": {"previous_reply": "SRT7712C list price: RM 120.", "subject": "domain master_products (answered); product SRT7712C", "open_question": null}}
+{"id": "cp2-c1-04", "message": "SRTBR11803 x 30", "expect": {"domain_hint": "inventory", "product": "SRTBR11803"}, "context": {"previous_reply": "Here is the photo of SRTBT3156.", "subject": "domain product_attachment (answered); product SRTBT3156", "open_question": null}}
+{"id": "cp2-c1-05", "message": "SRTBT3314", "expect": {"domain_hint": "incoming", "product": "SRTBT3314"}, "context": {"previous_reply": "SRTBT3636 incoming: 90 pcs, arriving 3 Dec.", "subject": "domain incoming (answered); product SRTBT3636", "open_question": null}}
+{"id": "cp2-c1-06", "message": "SRTBT800A list price", "expect": {"domain_hint": "master_products", "product": "SRTBT800A"}, "context": {"previous_reply": "SRTC01011W incoming: 60 pcs, arriving 8 Nov.", "subject": "domain incoming (answered); product SRTC01011W", "open_question": null}}
+{"id": "cp2-c1-07", "message": "ETA SRTCB7211 x 5", "expect": {"domain_hint": "incoming", "product": "SRTCB7211"}, "context": {"previous_reply": "SRTCB7812: 12 pcs in stock at the main warehouse.", "subject": "domain inventory (answered); product SRTCB7812", "open_question": null}}
+{"id": "cp2-c1-08", "message": "SRTCH6033 drawing", "expect": {"domain_hint": "product_attachment", "product": "SRTCH6033"}, "context": {"previous_reply": "SRTDB909 incoming: 30 pcs, arriving 20 Nov.", "subject": "domain incoming (answered); product SRTDB909", "open_question": null}}
+{"id": "cp2-c1-09", "message": "SRTDR8011 10 pcs", "expect": {"domain_hint": "inventory", "product": "SRTDR8011"}, "context": {"previous_reply": "Outstanding orders for SRTFLANGE: 2 orders, 40 pcs.", "subject": "domain order (answered); status outstanding; product SRTFLANGE", "open_question": null}}
+{"id": "cp2-c1-10", "message": "SRTFT5X5 x 300", "expect": {"domain_hint": "inventory", "product": "SRTFT5X5"}}
+{"id": "cp2-wd-01", "message": "SRTGB2550 when does it get to the shop", "expect": {"status": "outstanding", "domain_hint": "order", "product": "SRTGB2550"}}
+{"id": "cp2-wd-02", "message": "when can SRTGB9006B reach ZZ Demo Trading", "expect": {"status": "outstanding", "domain_hint": "order", "product": "SRTGB9006B", "customer": true}}
+{"id": "cp2-wd-03", "message": "how soon will SRTGB9260B be at ZZ Demo Trading's place", "expect": {"status": "outstanding", "domain_hint": "order", "product": "SRTGB9260B", "customer": true}}
+{"id": "cp2-wd-04", "message": "SRTHS11031 什么时候到 ZZ Demo Trading", "expect": {"status": "outstanding", "domain_hint": "order", "product": "SRTHS11031", "customer": true}}
+{"id": "cp2-wd-05", "message": "when will SRTHS3000 arrive from the factory", "expect": {"domain_hint": "incoming", "product": "SRTHS3000"}}
+{"id": "cp2-wd-06", "message": "ETA of the SRTHS3142 shipment", "expect": {"domain_hint": "incoming", "product": "SRTHS3142"}}
+{"id": "cp2-wd-07", "message": "when is SRTHS5030 landing in our warehouse", "expect": {"domain_hint": "incoming", "product": "SRTHS5030"}}
+{"id": "cp2-c6-01", "message": "when will SRTHS5241 arrive", "expect": {"domain_hint": "order", "status": "outstanding", "product": "SRTHS5241"}, "context": {"previous_reply": "SRTHS713: 20 pcs in stock.", "subject": "domain inventory (answered); customer ZZ Demo Trading; product SRTHS713", "open_question": null}}
+{"id": "cp2-c6-02", "message": "ETA from factory for SRTJC0414", "expect": {"domain_hint": "incoming", "product": "SRTJC0414"}, "context": {"previous_reply": "SRTJC1515: 20 pcs in stock.", "subject": "domain inventory (answered); customer ZZ Demo Trading; product SRTJC1515", "open_question": null}}
+{"id": "cp2-c6-03", "message": "when will SRTJC1787 arrive", "expect": {"domain_hint": "incoming", "product": "SRTJC1787"}}
+{"id": "cp2-c6-04", "message": "wen deliverd SRTJC286A to ZZ Demo Trading", "expect": {"domain_hint": "order", "status": "outstanding", "product": "SRTJC286A", "customer": true}}
+{"id": "cp2-c2-01", "message": "gambar SRTJC3305", "expect": {"product": "SRTJC3305", "attachment_types": ["product_photos"]}}
+{"id": "cp2-c2-02", "message": "video SRTJC5107", "expect": {"product": "SRTJC5107", "attachment_types": ["product_videos"]}}
+{"id": "cp2-c2-03", "message": "pps cert SRTJC7753", "expect": {"product": "SRTJC7753", "attachment_types": ["PPS"]}}
+{"id": "cp2-c2-04", "message": "SPAN cert for SRTKS1105F", "expect": {"product": "SRTKS1105F", "attachment_types": ["SPAN"]}}
+{"id": "cp2-c3-01", "message": "SRTKS317CB check weight ?", "expect": {"domain_hint": "master_products", "product": "SRTKS317CB", "attributes_include": ["weight"]}}
+{"id": "cp2-c3-02", "message": "steel grade of SRTKX105550A", "expect": {"product": "SRTKX105550A", "attributes_include": ["steel grade"]}}
+{"id": "cp2-c3-03", "message": "SRTKX4911 spec", "expect": {"product": "SRTKX4911", "attributes_only": []}}
+{"id": "cp2-c3-04", "message": "SRTKX8062 P-trap set price", "expect": {"product": "SRTKX8062", "attributes_include": ["price"], "no_attribute": "p-trap"}}
+{"id": "cp2-c3-05", "message": "is SRTMR31417 still sold", "expect": {"product": "SRTMR31417", "attributes_include": ["discontinued"]}}
+{"id": "cp2-dq-01", "message": "SRTNSWY103 x 120", "expect": {"domain_hint": "inventory", "product": "SRTNSWY103"}}
+{"id": "cp2-dq-02", "message": "srtny301 xx 40", "expect": {"domain_hint": "inventory", "product": "SRTNY301"}}
+{"id": "cp2-dq-03", "message": "SRTPCAT826C 60 pcs", "expect": {"domain_hint": "inventory", "product": "SRTPCAT826C"}}
+{"id": "cp2-dq-04", "message": "SRTPD010 80 unit ada?", "expect": {"domain_hint": "inventory", "product": "SRTPD010"}}
+{"id": "cp2-dq-05", "message": "srtpp75pc x 25", "expect": {"domain_hint": "inventory", "product": "SRTPP75PC"}}
+{"id": "cp2-dq-06", "message": "SRTRD502C 200 unit ada tak", "expect": {"domain_hint": "inventory", "product": "SRTRD502C"}}
+{"id": "cp2-dq-07", "message": "SRTSA300HP x 15", "expect": {"domain_hint": "inventory", "product": "SRTSA300HP"}, "context": {"previous_reply": "SRTSCBD190: 35 pcs in stock.", "subject": "domain inventory (answered); product SRTSCBD190", "open_question": null}}
+{"id": "cp2-dq-08", "message": "srtsh1916 xx 90", "expect": {"domain_hint": "inventory", "product": "SRTSH1916"}, "context": {"previous_reply": "SRTSH4110: 35 pcs in stock.", "subject": "domain inventory (answered); product SRTSH4110", "open_question": null}}
+{"id": "cp2-dq-09", "message": "SRTSH5154 x 15", "expect": {"domain_hint": "inventory", "product": "SRTSH5154"}, "context": {"previous_reply": "SRTSHABS250 incoming: 150 pcs, arriving 5 Dec.", "subject": "domain incoming (answered); product SRTSHABS250", "open_question": null}}
+{"id": "cp2-dq-10", "message": "SRTSK162 70 pcs", "expect": {"domain_hint": "inventory", "product": "SRTSK162"}, "context": {"previous_reply": "SRTSS11714 incoming: 150 pcs, arriving 5 Dec.", "subject": "domain incoming (answered); product SRTSS11714", "open_question": null}}
+{"id": "cp2-dq-11", "message": "SRTSS12541 x 15", "expect": {"domain_hint": "inventory", "product": "SRTSS12541"}, "context": {"previous_reply": "SRTSS1531 list price: RM 75.", "subject": "domain master_products (answered); product SRTSS1531", "open_question": null}}
+{"id": "cp2-dq-12", "message": "SRTSS2015 50 pcs", "expect": {"domain_hint": "inventory", "product": "SRTSS2015"}, "context": {"previous_reply": "SRTUMBRELLA list price: RM 75.", "subject": "domain master_products (answered); product SRTUMBRELLA", "open_question": null}}

@@ -1846,6 +1846,39 @@ _PRODUCT_IDENTITY_LABELS: frozenset[str] = frozenset(
     {"Product Code", "Product Name", "Description", "List Price", "Dimensions", "Company"}
 )
 
+#: Price fields a product set answer drops (CHAT-CODE-LOOKUP R2), by key; the product list's
+#: price pair carries no key, so its label stands in.
+_SET_PRICE_KEYS: frozenset[str] = frozenset({"list_price", "selling_price"})
+_SET_PRICE_LABELS: frozenset[str] = frozenset({"List Price", "Selling Price"})
+
+
+def _group_set_rows(e: dict[str, Any], set_by_code: dict[str, list[str]]) -> None:
+    """CHAT-CODE-LOOKUP R2 (U2.3): the rows that are members of a typed product set drop their
+    price and sit under their own "Set <code>" heading, one block per set; a plain product's
+    row keeps its price and sits under no set (its block comes first, with no heading)."""
+    plain: list[Any] = []
+    by_set: dict[str, list[Any]] = {}
+    for row in e.get("items") or []:
+        fields = row.get("fields") if isinstance(row, dict) else None
+        code = next(
+            (jsc.js_string(f.get("value")).casefold() for f in fields or [] if isinstance(f, dict) and f.get("label") == "Product Code"),
+            None,
+        )
+        owners = set_by_code.get(code) if code else None
+        if not owners:
+            plain.append(row)
+            continue
+        row["fields"] = [
+            f for f in fields
+            if not (isinstance(f, dict) and (f.get("key") in _SET_PRICE_KEYS or (not _has_key(f) and f.get("label") in _SET_PRICE_LABELS)))
+        ]
+        for owner in owners:  # a member of two typed sets sits under each
+            by_set.setdefault(owner, []).append(row)
+    if not by_set:
+        return
+    groups = [{"label": f"Set {code}", "items": rows} for code, rows in by_set.items()]
+    e["groups"] = ([{"label": "", "items": plain}] if plain else []) + groups
+
 _SPEC_KEY_PREFIX = "spec:"
 
 
@@ -1877,8 +1910,8 @@ def _names_a_base_property(norm: str) -> bool:
 
 
 def _asks_discontinued(req_attrs: list[Any]) -> bool:
-    """DISCONTINUED-ASK: the parser's closed `requested_attributes` vocabulary carries
-    "discontinued" for a status question (`chatbot_parser_prompt.py`, REQUESTED ATTRIBUTES).
+    """DISCONTINUED-ASK: the parser emits the attribute "discontinued" for a status question
+    (whether a product is still sold, still made or discontinued; parser_template.py R-P3-05).
     A parsed field, compared as emitted; nothing here reads the user's message."""
     return any(_normalize_spec_word(a) == "discontinued" for a in req_attrs)
 
@@ -3052,6 +3085,9 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         if axis_perm is not None and axis_perm not in granted:
             e["groups"] = []
             e["group_by_dropped"] = axis
+
+    if ctx.get("set_by_code") and not e.get("groups"):
+        _group_set_rows(e, ctx["set_by_code"])
 
     # -- requested-attribute projection ------------------------------------- #
     # The CRM dumps every clearance field the caller may see, by design: it prevents the
