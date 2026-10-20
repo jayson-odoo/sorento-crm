@@ -816,6 +816,42 @@ describe('T-FE4 (C1 to C7): Review shows what purchasing will get', () => {
     expect(confirmMany).not.toHaveBeenCalled();
   });
 
+  it('an order the press drops as having nothing to confirm shows its reason, not rows, and is left out of step 3', async () => {
+    // SO000001 has a saved split edit (confirmable); SO000002 has only a saved draft and the dry
+    // run confirms no line for it, so the press would drop it ("has nothing to confirm").
+    dryRunAnswers({
+      'pso-so-1': { rows: [row()] },
+      'pso-so-2': { rows: [row({ line_no: 1, item_code: 'ZZT-ITEM-2' })] },
+    });
+    const board = withDraft(oneEditedBoard(), ['pl-2-1']);
+    await mountWith(board);
+    await openConfirmGuide();
+    await screen.findByTestId('confirm-guide-split-page');
+    click('confirm-guide-next');
+    const refused = await screen.findByTestId('confirm-guide-refused');
+    expect(refused).toHaveTextContent('has nothing to confirm');
+    expect(refused).toHaveTextContent('SO000002');
+    const orders = await screen.findAllByTestId('confirm-guide-review-order');
+    const so2 = orders.find((el) => el.getAttribute('data-so') === 'SO000002');
+    expect(so2 === undefined || within(so2).queryAllByTestId('confirm-guide-review-row').length === 0).toBe(true);
+    expect(screen.getByTestId('confirm-guide-review')).not.toHaveTextContent('ZZT-ITEM-2');
+    click('confirm-guide-next');
+    const confirm = await screen.findByTestId('confirm-guide-confirm');
+    expect(confirm).toHaveTextContent('Confirm 1 order');
+    expect(screen.getByTestId('confirm-guide')).toHaveTextContent('SO000001 (1 row)');
+    expect(screen.getByTestId('confirm-guide')).not.toHaveTextContent('SO000002 (');
+  });
+
+  it('every order left with nothing to confirm: the guide closes onto the result card, no confirm call', async () => {
+    await mountWith(withDraft(boardOf([SO1_L1]), ['pl-1-1']), ['SO000001']);
+    // The default dry run answers ok with no confirmed line: nothing to post.
+    await openConfirmGuide();
+    const card = await screen.findByTestId('board-confirm-results');
+    expect(card).toHaveTextContent('has nothing to confirm');
+    await waitFor(() => expect(screen.queryByTestId('confirm-guide')).not.toBeInTheDocument());
+    expect(confirmMany).not.toHaveBeenCalled();
+  });
+
   it('a row whose state is cancelled shows CANCEL in its remark cell', async () => {
     dryRunAnswers({
       'pso-so-1': {

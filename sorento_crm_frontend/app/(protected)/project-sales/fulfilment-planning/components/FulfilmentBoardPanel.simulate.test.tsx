@@ -503,6 +503,36 @@ describe('fix round: simulated wording and number formatting (R7-R10)', () => {
     expect(within(writes).getByText('line 10: pool 50 BRW -> OWN')).toBeInTheDocument();
   });
 
+  it('E1: a row the press retires (state cancelled) is listed as CANCEL, not its original verb', async () => {
+    simulateConfirm.mockResolvedValue({
+      results: [
+        okSimulated({
+          inquiry_rows: [
+            {
+              line_no: 11,
+              item_code: 'OLDITEM',
+              verb: 'ORDER',
+              qty: '7',
+              stock_location: 'LOC2',
+              is_new: false,
+              state: 'cancelled',
+              autocount_change: 'qty',
+            },
+          ],
+          transfers: [],
+        }),
+      ],
+    });
+    renderPanel();
+
+    await pressSimulate();
+
+    const writes = await screen.findByTestId('board-simulate-writes-pso-so-a');
+    expect(within(writes).getByText('line 11 OLDITEM: CANCEL 7 at LOC2')).toBeInTheDocument();
+    expect(writes).not.toHaveTextContent('ORDER 7');
+    expect(writes).not.toHaveTextContent('settles an existing row');
+  });
+
   it('R10: confirmed and carried lines read in the conditional mood', async () => {
     simulateConfirm.mockResolvedValue({
       results: [okSimulated({ lines_carried: 2 })],

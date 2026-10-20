@@ -90,6 +90,17 @@ def _press(s, *, preview, named=(20,)):
     )
 
 
+def _press_body(s, body_extra, *, named=(), preview=True):
+    entry = {
+        "pso_id": str(s.order.id),
+        "lines": [_line_payload(s.line[no].id, buy_qty=str(s.core[no].qty_ordered)) for no in named],
+    }
+    entry.update(body_extra)
+    return s.client.post(
+        f"{BASE}/fulfilment-planning/confirm-all", json={"preview": preview, "orders": [entry]}
+    )
+
+
 def _result(r):
     assert r.status_code == 200, r.text
     result = r.json()["results"][0]
@@ -101,12 +112,14 @@ def _rows_of(result, line_no):
     return [x for x in result["inquiry_rows"] if x["line_no"] == line_no]
 
 
-def _states(s):
+def _written(s):
+    """The FULL set of OrderInquiryRow the order holds, by line number (ids differ between
+    orders): verb, state, qty, date, note."""
     s.db.expire_all()
-    ids = [str(s.line[no].id) for no in s.line]
+    no_of = {str(s.line[no].id): no for no in s.line}
     return sorted(
-        (str(r.so_line_id), r.verb, r.state, str(r.qty), str(r.delivery_date), r.note or "")
-        for r in s.db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id.in_(ids))
+        (no_of[str(r.so_line_id)], r.verb, r.state, str(r.qty), str(r.delivery_date), r.note or "")
+        for r in s.db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id.in_(list(no_of)))
     )
 
 
@@ -168,13 +181,18 @@ def test_be2_a_line_the_press_names_is_null_even_when_autocount_moved_it(api):
 
 def test_be2_a_saved_split_edit_row_is_null_not_an_autocount_change(api):
     """A split edit is added server-side (`_with_split_edits`); the press never names it, but
-    the planner saved it, so its rows carry no AutoCount label."""
+    the planner saved it, so its rows carry no AutoCount label. AutoCount ALSO moved line 20's
+    qty after the confirm, so were the exclusion broken, line 20's rows would read as an
+    AutoCount change (reviewer mutation: split edits not named)."""
     from tests.scm.test_line_splits_api import _put, _sp
 
     s = _two_line_order(api)
+    s.core[20].required_date, s.line[20].delivery_date = D_NEW, D_NEW
+    s.db.commit()
+    s.db.expire_all()
     r = _put(s, [{"line_id": str(s.line[20].id), "splits": [
-        _sp(30, D_OLD, on=str(s.line[20].id)),
-        _sp(20, D_NEW, on=None),
+        _sp(30, D_NEW, on=str(s.line[20].id)),
+        _sp(20, date(2027, 1, 15), on=None),
     ]}])
     assert r.status_code == 200, f"premise: the split saves ({r.status_code}) {r.text}"
     result = _result(_press(s, preview=True, named=()))
@@ -186,21 +204,52 @@ def test_be2_a_saved_split_edit_row_is_null_not_an_autocount_change(api):
     assert all(x.get("state") == "raised" for x in new), ("a row this press raised reads raised", new)
 
 
+def test_be2_a_rejected_line_row_is_null_even_when_autocount_moved_it(api):
+    s = _two_line_order(api)
+    board = s.client.get(
+        f"{BASE}/fulfilment-planning/board",
+        params={"orders": s.core_so.so_number, "granularity": "week"},
+    )
+    assert board.status_code == 200, board.text
+    key = next(c["key"] for c in board.json()["contributions"]
+               if c.get("project_line_id") == str(s.line[20].id))
+    saved = s.client.put(
+        f"{BASE}/fulfilment-planning/lines/{key}/draft",
+        json={"decision": {"verdict": "rejected", "reason": "wrong site"}},
+    )
+    assert saved.status_code == 200, f"premise: the rejection is saved: {saved.text}"
+    s.core[20].qty_ordered, s.line[20].qty = Decimal("60"), Decimal("60")
+    s.db.commit()
+    s.db.expire_all()
+    result = _result(_press_body(s, {"rejected_line_ids": [str(s.line[20].id)]}))
+    rows = _rows_of(result, 20)
+    assert rows, ("premise: the withdrawn line's retired row is listed", result["inquiry_rows"])
+    assert all("autocount_change" in x and x["autocount_change"] is None for x in rows), rows
+
+
 # ---------------------------------------------------------------------------
 # T-BE3 pin (no behaviour change)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("how", ["qty", "cancelled"])
-def test_be3_the_real_press_after_a_dry_run_writes_what_it_always_wrote(api, how):
-    s = _two_line_order(api)
-    _drift(s, how)
-    _result(_press(s, preview=True))
-    before = _states(s)
-    _result(_press(s, preview=False))
-    s.db.commit()
-    after = _states(s)
-    line10 = [x for x in after if x[0] == str(s.line[10].id)]
+@pytest.mark.parametrize("how", ["qty", "date", "cancelled"])
+def test_be3_the_real_press_writes_the_same_rows_with_or_without_a_dry_run_before_it(api, how):
+    """Two identical orders: one is previewed and then pressed, the other only pressed. The full
+    set of rows (every line, verb, state, qty, date, note) is the same, so the dry run and this
+    lane's preview fix change nothing the real press writes."""
+    plain = _two_line_order(api)
+    previewed = _two_line_order(api)
+    for s in (plain, previewed):
+        _drift(s, how)
+    _result(_press(previewed, preview=True))
+    dry_state = _written(previewed)
+    _result(_press(plain, preview=False))
+    _result(_press(previewed, preview=False))
+    for s in (plain, previewed):
+        s.db.commit()
+    after = _written(previewed)
+    assert after == _written(plain), (after, _written(plain))
+    assert dry_state != after, "the real press moved rows the dry run left alone"
+    line10 = [x for x in after if x[0] == 10]
     assert line10 and all(x[2] == INQUIRY_CANCELLED for x in line10), line10
-    # The dry run left nothing behind: only the real press moved line 10's row.
-    assert [x for x in before if x[0] == str(s.line[10].id)] != line10
+    assert {x[0] for x in after} == {10, 20}
