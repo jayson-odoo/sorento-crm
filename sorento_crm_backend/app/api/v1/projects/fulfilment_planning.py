@@ -1205,40 +1205,6 @@ def _restamp_superseded_reason(db: Session, before_id, reason: str) -> None:
         db.flush()
 
 
-def _cancels_held_by_batch(db: Session, batch_id: str, order, cancelled_lines) -> bool:
-    """PLAN-BATCH-HELD-CANCEL: does the pending change name a line this press transfers to
-    Cancel SO - one the board used to hold until the change was applied? Named the way the
-    board reads it: the row's own line, or (an `added` row) the core line its proposal names."""
-    from sqlalchemy import or_
-
-    from app.models.planning_change import PlanningChangeRow
-    from app.models.project_so import ProjectSalesOrderLine
-    from app.services.planning_change_service import PLANNING_CHANGE_STATE_PENDING
-
-    line_ids = [str(x.project_line_id) for x in cancelled_lines]
-    core_ids = [
-        str(core_id)
-        for (core_id,) in db.query(ProjectSalesOrderLine.core_sales_order_line_id)
-        .filter(ProjectSalesOrderLine.id.in_(line_ids))
-        .all()
-        if core_id
-    ]
-    return (
-        db.query(PlanningChangeRow.id)
-        .filter(
-            PlanningChangeRow.batch_id == batch_id,
-            PlanningChangeRow.project_sales_order_id == str(order.id),
-            PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,
-            or_(
-                PlanningChangeRow.project_line_id.in_(line_ids),
-                PlanningChangeRow.core_line_id.in_(core_ids),
-            ),
-        )
-        .first()
-        is not None
-    )
-
-
 def _applied_rows(db: Session, batch_id: str, order) -> list:
     """This order's rows of `batch_id` an apply has carried out (PLAN-BATCH-HELD-CANCEL)."""
     from app.models.planning_change import PlanningChangeRow
@@ -1474,101 +1440,89 @@ def _confirm_with_possible_rejects(
         db, order, rejected_line_ids, named_lines=named
     )
     before_id = _active_decision_id(db, order)
-    # PLAN-BATCH-HELD-CANCEL (owner ruling (a), 21 Oct 2026): the press that applies a pending
-    # AutoCount change together with the Cancel SO that change used to hold sends no cancel or
-    # retire email (`QUIET_CANCELS_KEY`). A normal Cancel SO still emails its CANCEL list.
-    from app.services.project_order_inquiry_service import QUIET_CANCELS_KEY
-
-    if batch_id and cancelled_lines and _cancels_held_by_batch(
-        db, batch_id, order, cancelled_lines
-    ):
-        db.info[QUIET_CANCELS_KEY] = True
-    try:
-        lines_cancelled = (
-            service.cancel_lines(order, cancelled_lines, actor_user_id=actor_user_id)
-            if cancelled_lines
-            else []
-        )
-        if batch_id:
-            applied_before = {row.id for row in _applied_rows(db, batch_id, order)}
-            with UndoJournal(db) as journal:
-                body = confirm_batch()
-            if body is None:
-                body = _withdrawal_only_result(db, service, order, [])
-            else:
-                _attach_undo_journal(db, order, journal, before_id)
-            # PLAN-BATCH-HELD-CANCEL: what this press did to the AutoCount change, said by the
-            # rows it applied, so the board never claims an apply that did not happen.
-            applied_now = [
-                row for row in _applied_rows(db, batch_id, order) if row.id not in applied_before
-            ]
-            body["planning_change_applied"] = bool(applied_now)
-            body["lines_retired"] = [
-                {"line_no": row.line_no, "item_code": row.item_code}
-                for row in sorted(applied_now, key=lambda r: r.line_no or 0)
-                if row.kind == "cancelled"
-            ]
-        elif getattr(payload, "lines", None):
-            with UndoJournal(db) as journal:
-                body = service.confirm(
-                    order,
-                    payload,
-                    actor_user_id=actor_user_id,
-                    uncover_line_ids=rejected_line_ids,
-                    # S2/S3 (rework fix round): the BARE per-line reason, so each withdrawn
-                    # line's own OI row note reads "Taken out of the confirmation: <its own
-                    # reason>" rather than the ordinary carry-forward's "Superseded by
-                    # revision N" - `joined_reason` stays reserved for `superseded_reason`
-                    # below.
-                    uncover_reason_by_line=reasons,
-                )
-                # AC-B14 (fix round, review): INSIDE the journal, not after it closes.
-                # `_write_decision` (`service.confirm`, just above) stamps the superseded
-                # revision "Reconfirmed by CS." WHILE the journal is open, so the journal's
-                # own `update` entry for `superseded_reason` records that value as its
-                # `new`. Restamping AFTER the `with` block exits (the first cut of this
-                # rework) left the LIVE column reading the joined sentence while the
-                # journal still said "Reconfirmed by CS." - `_changed_refusal` compares
-                # exactly those two and refused every undo of this path with 409
-                # `changed`, on a row nothing but this confirm itself had touched.
-                if rejected_line_ids:
-                    _restamp_superseded_reason(db, before_id, joined_reason)
-                    body["rejected_count"] = len(rejected_line_ids)
-                    body["lines_withdrawn"] = _withdrawn_entries(db, service, order, rejected_line_ids)
-            _attach_undo_journal(db, order, journal, before_id)
-        elif rejected_line_ids:
-            # NOT wrapped in `UndoJournal` - see this function's own docstring.
-            uncovered = service.uncover_lines(
-                order,
-                rejected_line_ids,
-                actor_user_id=actor_user_id,
-                reason=joined_reason,
-                reason_by_line=reasons,
-            )
-            # B1 (fix round, review, belt and braces): `_reasons_for_rejected_lines` above
-            # already refuses an id the active decision does not cover, so this should never
-            # actually be `False` - kept as a second guard rather than trusting that no
-            # future caller of `uncover_lines` ever drifts the two checks apart.
-            if not uncovered:
-                raise AppException(
-                    status_code=422,
-                    message="This line is not confirmed any more. Reload the board.",
-                    code="board_line_withdrawal_not_covered",
-                )
-            body = _withdrawal_only_result(db, service, order, rejected_line_ids)
-            body["lines_withdrawn"] = _withdrawn_entries(db, service, order, rejected_line_ids)
-        elif cancelled_lines:
-            # Only Cancel SO lines: nothing to confirm, so no revision is written.
+    lines_cancelled = (
+        service.cancel_lines(order, cancelled_lines, actor_user_id=actor_user_id)
+        if cancelled_lines
+        else []
+    )
+    if batch_id:
+        applied_before = {row.id for row in _applied_rows(db, batch_id, order)}
+        with UndoJournal(db) as journal:
+            body = confirm_batch()
+        if body is None:
             body = _withdrawal_only_result(db, service, order, [])
         else:
-            with UndoJournal(db) as journal:
-                body = service.confirm(order, payload, actor_user_id=actor_user_id)
             _attach_undo_journal(db, order, journal, before_id)
-        if lines_cancelled:
-            body["lines_cancelled"] = lines_cancelled
-        return body
-    finally:
-        db.info.pop(QUIET_CANCELS_KEY, None)
+        # PLAN-BATCH-HELD-CANCEL: what this press did to the AutoCount change, said by the
+        # rows it applied, so the board never claims an apply that did not happen.
+        applied_now = [
+            row for row in _applied_rows(db, batch_id, order) if row.id not in applied_before
+        ]
+        body["planning_change_applied"] = bool(applied_now)
+        body["lines_retired"] = [
+            {"line_no": row.line_no, "item_code": row.item_code}
+            for row in sorted(applied_now, key=lambda r: r.line_no or 0)
+            if row.kind == "cancelled"
+        ]
+    elif getattr(payload, "lines", None):
+        with UndoJournal(db) as journal:
+            body = service.confirm(
+                order,
+                payload,
+                actor_user_id=actor_user_id,
+                uncover_line_ids=rejected_line_ids,
+                # S2/S3 (rework fix round): the BARE per-line reason, so each withdrawn
+                # line's own OI row note reads "Taken out of the confirmation: <its own
+                # reason>" rather than the ordinary carry-forward's "Superseded by
+                # revision N" - `joined_reason` stays reserved for `superseded_reason`
+                # below.
+                uncover_reason_by_line=reasons,
+            )
+            # AC-B14 (fix round, review): INSIDE the journal, not after it closes.
+            # `_write_decision` (`service.confirm`, just above) stamps the superseded
+            # revision "Reconfirmed by CS." WHILE the journal is open, so the journal's
+            # own `update` entry for `superseded_reason` records that value as its
+            # `new`. Restamping AFTER the `with` block exits (the first cut of this
+            # rework) left the LIVE column reading the joined sentence while the
+            # journal still said "Reconfirmed by CS." - `_changed_refusal` compares
+            # exactly those two and refused every undo of this path with 409
+            # `changed`, on a row nothing but this confirm itself had touched.
+            if rejected_line_ids:
+                _restamp_superseded_reason(db, before_id, joined_reason)
+                body["rejected_count"] = len(rejected_line_ids)
+                body["lines_withdrawn"] = _withdrawn_entries(db, service, order, rejected_line_ids)
+        _attach_undo_journal(db, order, journal, before_id)
+    elif rejected_line_ids:
+        # NOT wrapped in `UndoJournal` - see this function's own docstring.
+        uncovered = service.uncover_lines(
+            order,
+            rejected_line_ids,
+            actor_user_id=actor_user_id,
+            reason=joined_reason,
+            reason_by_line=reasons,
+        )
+        # B1 (fix round, review, belt and braces): `_reasons_for_rejected_lines` above
+        # already refuses an id the active decision does not cover, so this should never
+        # actually be `False` - kept as a second guard rather than trusting that no
+        # future caller of `uncover_lines` ever drifts the two checks apart.
+        if not uncovered:
+            raise AppException(
+                status_code=422,
+                message="This line is not confirmed any more. Reload the board.",
+                code="board_line_withdrawal_not_covered",
+            )
+        body = _withdrawal_only_result(db, service, order, rejected_line_ids)
+        body["lines_withdrawn"] = _withdrawn_entries(db, service, order, rejected_line_ids)
+    elif cancelled_lines:
+        # Only Cancel SO lines: nothing to confirm, so no revision is written.
+        body = _withdrawal_only_result(db, service, order, [])
+    else:
+        with UndoJournal(db) as journal:
+            body = service.confirm(order, payload, actor_user_id=actor_user_id)
+        _attach_undo_journal(db, order, journal, before_id)
+    if lines_cancelled:
+        body["lines_cancelled"] = lines_cancelled
+    return body
 
 
 @router.post("/sales-orders/{pso_id}/confirm", response_model=ConfirmResult)
