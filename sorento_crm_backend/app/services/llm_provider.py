@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional, Protocol
@@ -39,6 +40,9 @@ class ChatResult:
     # The part of `prompt_tokens` the provider served from its prompt cache (billed at a
     # discount). 0 when the provider reports none (LLM-TEST-COST).
     cached_tokens: int = 0
+    # The part of `completion_tokens` spent reasoning (OpenAI `completion_tokens_details`); None when the
+    # provider reports none.
+    reasoning_tokens: Optional[int] = None
 
 
 @dataclass
@@ -325,7 +329,10 @@ def _create_chat_completion(client, kwargs: dict) -> Any:
     attempt = dict(kwargs)
     if "max_tokens" in attempt:
         attempt["max_completion_tokens"] = attempt.pop("max_tokens")
-    rejected = _OPENAI_REJECTED_PARAMS.setdefault(str(attempt.get("model")), set())
+    # Remembered per model AND per whether an effort is sent: a parameter refused beside a reasoning effort says
+    # nothing about the same model without one (and the reverse). A request with no effort keeps the model key.
+    memo = str(attempt.get("model")) + (" +reasoning_effort" if attempt.get("reasoning_effort") else "")
+    rejected = _OPENAI_REJECTED_PARAMS.setdefault(memo, set())
     for param in [p for p in attempt if p in rejected]:
         _adapt(attempt, param)
     for _ in range(_MAX_PARAM_RETRIES):
@@ -366,6 +373,17 @@ def _unsupported_param(message: str) -> str | None:
     return match.group(1) or match.group(2)
 
 
+# `OpenAIProvider._client`'s shared clients. Bounded only as a backstop: production holds a
+# handful (one key, a few timeouts); the clear is for a test run that swaps keys freely.
+_OPENAI_CLIENTS: dict[tuple, Any] = {}
+_OPENAI_CLIENTS_LOCK = threading.Lock()
+_OPENAI_CLIENTS_MAX = 32
+# A forked child (an RQ work-horse, a gunicorn worker) must not share its parent's open TLS
+# connection, so it starts with no clients (the same rule worker.py applies to DB sockets).
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_OPENAI_CLIENTS.clear)
+
+
 class OpenAIProvider:
     name = "openai"
 
@@ -387,7 +405,22 @@ class OpenAIProvider:
         if base_url:
             _require_safe_base_url(base_url)
             overrides = {"base_url": base_url, **overrides}
-        return OpenAI(api_key=self.api_key, **overrides)
+        # One client per (key, settings), kept for the process: a new client is a new
+        # connection pool, so every call paid a fresh TCP + TLS handshake to the provider
+        # (CHAT-LATENCY-SCOUT). The SDK client is safe to share across threads. `OpenAI`
+        # itself is in the key so a test that swaps the class never gets another's client.
+        try:
+            key = (OpenAI, self.api_key, tuple(sorted(overrides.items())))
+            hash(key)
+        except TypeError:
+            return OpenAI(api_key=self.api_key, **overrides)
+        with _OPENAI_CLIENTS_LOCK:
+            client = _OPENAI_CLIENTS.get(key)
+            if client is None:
+                if len(_OPENAI_CLIENTS) >= _OPENAI_CLIENTS_MAX:
+                    _OPENAI_CLIENTS.clear()
+                client = _OPENAI_CLIENTS[key] = OpenAI(api_key=self.api_key, **overrides)
+            return client
 
     def chat(
         self,
@@ -403,6 +436,7 @@ class OpenAIProvider:
         json_schema_name: Optional[str] = None,
         timeout: Optional[float] = None,
         prompt_cache_key: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> ChatResult:
         from app.services import llm_cassette
 
@@ -413,8 +447,11 @@ class OpenAIProvider:
             # `LLM_MODEL_OVERRIDE` wins only when set (LLM-TEST-COST; set nowhere yet).
             "model": os.environ.get("LLM_MODEL_OVERRIDE") or model or self.default_model,
             "messages": outbound_messages,
-            "temperature": temperature,
         }
+        # A reasoning effort and a temperature are refused together (gpt-5.4-mini, probe 21 Oct 2026), so a
+        # request that carries an effort carries no temperature: no refused round trip.
+        if not reasoning_effort:
+            kwargs["temperature"] = temperature
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
@@ -437,6 +474,9 @@ class OpenAIProvider:
         # covers only what decides the answer.
         if prompt_cache_key:
             kwargs["prompt_cache_key"] = prompt_cache_key
+        # Only when the caller sets one (the chatbot parser's stored setting); none is sent otherwise.
+        if reasoning_effort:
+            kwargs["reasoning_effort"] = reasoning_effort
 
         def live() -> Any:
             # A caller-set timeout turns the SDK's own retries off: the caller owns the retry
@@ -481,6 +521,7 @@ class OpenAIProvider:
         total_tokens = int(getattr(usage, "total_tokens", prompt_tokens + completion_tokens) or 0)
         details = getattr(usage, "prompt_tokens_details", None)
         cached_tokens = int(getattr(details, "cached_tokens", 0) or 0)
+        reasoning = getattr(getattr(usage, "completion_tokens_details", None), "reasoning_tokens", None)
 
         return ChatResult(
             content=content,
@@ -490,6 +531,7 @@ class OpenAIProvider:
             tool_calls=normalized_calls,
             raw=completion,
             cached_tokens=cached_tokens,
+            reasoning_tokens=int(reasoning) if isinstance(reasoning, (int, float)) else None,
         )
 
     def embed(self, text: str) -> list[float]:
