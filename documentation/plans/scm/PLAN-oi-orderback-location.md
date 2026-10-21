@@ -46,3 +46,8 @@ Status: in review on PR #1815. Track: small fix (no migration, no auth, no UI ch
   `_carried_rows_stand` in `project_order_inquiry_service.py`), so only a location move with no Confirm followed by
   a resend can reach it; gating the donor on the "Order-back:" note instead would drop it from
   older borrow rows. Trigger to revisit: a real resend that names a stale location.
+- Review round 2 (READY on b8f3bfac93) noted two edges that predate this lane, not taken:
+  a split target whose whole growth moved in returns before the donor check, so a donor move
+  on that target stays silent; and a two-donor cut in place reads `<decision>, CANCEL ORDER 2`
+  while the same cut with one donor moved reads `CANCEL 2, <decision>`. Trigger to revisit: a
+  real Confirm email that shows either shape.
