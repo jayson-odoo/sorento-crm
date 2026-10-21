@@ -1,6 +1,6 @@
 # PLAN-chat-release-1021c: release PR for the owner-tested chat build EXPLORE-1021C
 
-Status: in progress (release lane, no new product code; branch crew/chat-release-1021c)
+Status: PR open, waiting on CI (release lane, no new product code; branch crew/chat-release-1021c)
 
 ## Journey
 
@@ -36,9 +36,9 @@ behaves as before for the gated parts until the owner switches them on.
 (b) Prompts page: import v92 (`documentation/plans/chatbot/lean-index/parser-v92.txt`, explore pin 9ad4bf39),
     publish it as the production label.
 (c) MCP redeploys with the backend (`blue_green_deploy.sh`): confirm.
-Open question to crew: the explore DB the owner tested on also carried the LEAN data step
-(`documentation/plans/chatbot/lean-index/PROD-OWNER-STEP.md`: photo alias words, "Spec" out of the Technical
-Specifications description). Listed in the PR body as an owner step to match the tested data.
+(b0), before (b), crew ruling (a) 21 Oct: the explore DB the owner tested on also carried the LEAN data step
+(photo alias words, "Spec" out of the Technical Specifications description). The PR body gives it as UI steps
+(Lookup Sets, Attachment Types); `documentation/plans/chatbot/lean-index/PROD-OWNER-STEP.md` SQL is the fallback.
 
 ## Known gaps (owner accepted)
 

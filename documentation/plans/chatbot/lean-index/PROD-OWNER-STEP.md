@@ -4,6 +4,12 @@ The same two DATA changes `explore-data.sql` makes on sorento_explore1020, for t
 once the LEAN-INDEX measurements say so. The prompt version is NOT part of this step: a production version is
 published by the owner through the Prompts screen or `scripts/publish_parser_template.py`, and no label moves here.
 
+**UI first (crew ruling, 21 Oct 2026, CHAT-RELEASE-1021C):** both changes can be made on screens, with no SQL:
+the photo alias words on System > Configuration > Lookup Sets > Attachment Type Alias (Add option, Keywords), and
+"Spec" out of the description on Resources > Attachment Types > Technical Specifications > Edit. The click-by-click
+steps, with file:line, are owner step (b0) in the release PR "release(chat): EXPLORE-1021C owner-tested chat build".
+The SQL below is the fallback only.
+
 Run each READ first and check its output against the expectation under it. Run the WRITE only when the read
 matches. Both writes are guarded, so running one twice changes nothing.
 
