@@ -67,10 +67,20 @@ def test_last_year_is_the_same_dates_a_year_earlier(client, db):
 def test_no_compare_carries_nothing(client, db):
     _world(db)
     body = _ok(client, _full(db), group_by="sales_agent", top_n=10, product_code="ZZTCMP")
-    assert body.get("compare_to") is None and body["total"].get("prev") is None, body
-    assert all(r.get("prev") is None for r in body["rows"]), body["rows"]
+    # Review S3: the keys are ABSENT, so the body is what every caller read before.
+    for key in ("compare_to", "compare_from", "compare_until"):
+        assert key not in body, body
+    assert not {"prev", "change_pct", "count"} & set(body["total"]), body["total"]
+    assert body["rows"] and all(not {"prev", "change_pct", "count"} & set(r) for r in body["rows"]), body["rows"]
 
 
 def test_an_unknown_compare_is_refused(client, db):
     resp = _ask(client, _full(db), compare_to="last_week")
     assert resp.status_code == 422 and resp.json().get("code") == "unknown_compare_to", resp.text
+
+
+def test_a_month_breakdown_is_never_compared_month_against_unmatched_month(client, db):
+    """Review S1: month rows are named by month, so the earlier window's months never match; refused."""
+    _world(db)
+    resp = _ask(client, _full(db), group_by="month", top_n=12, product_code="ZZTCMP", compare_to="last_year")
+    assert resp.status_code == 422 and resp.json().get("code") == "compare_by_month", resp.text

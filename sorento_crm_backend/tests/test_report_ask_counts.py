@@ -94,3 +94,19 @@ def test_the_count_window_is_the_period(client, db):
     body = _ok(client, _full(db), measure="customers", product_code="ZZTCNT-1",
                date_from=date(2026, 8, 1).isoformat(), date_to=date(2026, 8, 31).isoformat())
     assert body["total"]["count"] == 1, body["total"]
+
+
+def test_a_line_with_no_figure_on_the_basis_is_not_counted(client, db):
+    """Review S2: an ordered line nothing was delivered on counts as ordered, never as delivered."""
+    from tests._report_ask_so_seed import seed_so_line
+
+    w = _world(db)
+    c4 = seed_customer(db, name=unique_code("Cnt4"))
+    seed_so_line(db, cust=c4, prod=w.p1, qty=7, total="700.00", agent=w.a1, wh=w.wh, order_date=date(2026, 9, 10), delivered=0)
+    db.commit()
+    contact = _full(db)
+    delivered = _ok(client, contact, measure="customers", product_code="ZZTCNT-1")
+    ordered = _ok(client, contact, measure="customers", product_code="ZZTCNT-1", basis="ordered")
+    assert delivered["total"]["count"] == 2 and ordered["total"]["count"] == 3, (delivered, ordered)
+    per_agent = _ok(client, contact, measure="customers", group_by="sales_agent", top_n=5, product_code="ZZTCNT-1")
+    assert {r["name"]: r["count"] for r in per_agent["rows"]}["ZZT-CNT-1"] == 2, per_agent["rows"]

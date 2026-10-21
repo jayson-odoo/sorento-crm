@@ -41,3 +41,9 @@ def test_near_miss_no_comparison_named_sends_none(console) -> None:
 def test_near_miss_an_unknown_comparison_word_is_dropped(console) -> None:
     text, calls = console.say(_rank(_e("Sorento", "brand"), compare_to="last_week", **SEP), "x")
     assert len(calls) == 1 and "compare_to" not in calls[0], (text, calls)
+
+
+def test_a_month_trend_compared_is_said_never_sent(console) -> None:
+    text, calls = console.say(_rank(_e("Sorento", "brand"), group_by="month", compare_to="last_year", **SEP), "sorento by month vs last year")
+    assert calls == [], (text, calls)
+    assert "month" in text.lower() and "compare" in text.lower(), text

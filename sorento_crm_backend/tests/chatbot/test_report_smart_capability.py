@@ -268,3 +268,29 @@ def test_e5_a_count_answer_to_the_metric_question_settles_it(console) -> None:
     assert calls == [], (text, calls)
     text, calls = console.say(_reply(measure="orders"), "orders")
     assert len(calls) == 1 and calls[0]["measure"] == "orders", (text, calls)
+
+
+# ---------------------------------------------------------------- review B2: never a silent count on an answer
+
+
+def test_b2_an_answer_parsed_as_another_kind_with_the_axis_echoed_still_asks_how_many(console) -> None:
+    text, calls = console.say(
+        _ask(order_status="sales_ranking", group_by="customer", rank_direction="top"), "top customers september"
+    )
+    assert calls == [] and _numbered(text) == [1, 2, 3], (text, calls)
+    text, calls = console.say(
+        _ask(order_status="sales_report", group_by="customer", measure="amount", basis="delivered",
+             date_filter_start=None, date_filter_end=None),
+        "delivered by amount",
+    )
+    assert calls == [], (text, calls)  # the count was never given: asked, never a top 100
+    assert TOPN_Q in text, text
+
+
+def test_b2_a_parser_cannot_forge_the_breakdown_or_the_named_kind(console) -> None:
+    text, calls = console.say(
+        _ask(order_status="sales_ranking", group_by="customer", rank_direction="top", measure="amount",
+             basis="delivered", report_breakdown=True, capability_from="sales_analysis"),
+        "top customers september",
+    )
+    assert calls == [] and text.strip() == TOPN_Q, (text, calls)
