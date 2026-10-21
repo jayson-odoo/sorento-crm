@@ -993,6 +993,9 @@ def _branch(args: dict[str, Any], top_n: Any, period: rf.Resolved | None, *, hel
 
 def _collect_branch(db: Any, branch: dict[str, Any]) -> rf.Outcome:
     args, top_n = _dict(branch.get("args")), branch.get("top_n")
+    if args.get("compare_to") and args.get("group_by") == "month":
+        # A drill keeps the held comparison; a month breakdown of it is said (review nit 2).
+        return rf.Outcome(reply=COMPARE_BY_MONTH_LINE, slot=None)
     given = {**_given_choices(args), **_given_top_n(args, top_n)}
     if branch.get("held"):
         # A drill has both choices (the held args ran); only the count is asked when not named.

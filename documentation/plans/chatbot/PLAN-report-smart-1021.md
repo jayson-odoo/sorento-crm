@@ -1,6 +1,6 @@
 # PLAN: smarter chatbot reports (lane REPORT-SMART-1021)
 
-Status: built, review round 1 fixed (B2, S1-S4), re-review pending; exploratory build for the owner hand test 21 Oct 21:00 MYT. Track: L (diff over 300
+Status: built, reviewer READY (round 2, nits fixed), pinned into the 21 Oct exploratory build; exploratory build for the owner hand test 21 Oct 21:00 MYT. Track: L (diff over 300
 lines; no migration, no auth/RBAC change, no new ingest surface). Branch `claude/report-smart-1021-r2xexf` (cloud
 sandbox; stands in for `crew/report-smart-1021`), base `claude/release-chat-1021-sppzcw` 9d64921e9 with PR #1721
 (`crew/chat-fix-reports` 52b336345) merged in at cf7aded65.

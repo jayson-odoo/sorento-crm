@@ -22,4 +22,5 @@ Plan: `PLAN-report-smart-1021.md`. Every check reads the parser's fields, never 
   figure is zero. (`tests/test_report_ask_compare.py`, presenter, lane)
 - AC-RS-8: no reply carries `[object Object]`, a tool error string, an error code or an exception name; a period the
   parser wrote in words is asked, never run or echoed. (`test_report_smart_errors.py`)
-- AC-RS-9: a sales body neither counted nor compared is unchanged on the wire. (`test_report_ask_chat_route.py`)
+- AC-RS-9: a sales body neither counted nor compared is unchanged on the wire.
+  (`tests/test_report_ask_compare.py::test_no_compare_carries_nothing`, `test_report_ask_chat_route.py`)
