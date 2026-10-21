@@ -392,8 +392,13 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     tier_gate: dict[str, Any] | None = None,
     aggregate: dict[str, Any] | None = None,
     roster_caps: Mapping[str, int] | None = None,
+    held_product_uuids: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """`disallowed-entity-gate`'s output item. `item` is mutated and returned, as in JS.
+
+    `held_product_uuids` (CHAT-CLOSED-LISTS HELD-FAMILY): the products the conversation
+    already held before this message. A product picker whose candidates for a token hold
+    exactly one of them is no choice: that product is the token.
 
     `roster_caps` (PLAN-chatbot-answer-half-reattach.md "Roster cap", owner ruling
     20 Sep 2026) is `{entity kind: chatbot_entity_kinds.roster_cap}`, read at the two
@@ -448,6 +453,7 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     gate_passed = True
     gate_reason = "ok"
     gate_clarification = ""
+    picker_lines: list[dict[str, Any]] = []
     customer_picker = False
     compatible_entities: list[dict[str, Any]] = entities
     # D10 (owner console pass, 8 Sep 2026, turn 69d9900e "srtwc8610-sh hav incoming?"):
@@ -485,7 +491,16 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
             intent = jsc.js_string(parser.get("intent_hint") or "")
             intent_allows_empty = intent in INTENTS_ALLOWING_EMPTY
             gate_passed = ALLOWS_EMPTY.get(domain) is True or intent_allows_empty
-            if intent_allows_empty and ALLOWS_EMPTY.get(domain) is not True:
+            # CLOSED LISTS: a spec that grounding made out of the parser's class (`class_hint`)
+            # names a class, so the described set is the scope and the ask is never refused as
+            # "search every <domain>". A parser-emitted spec without it keeps the refusal.
+            names_class = bool(parser.get("closed_lists")) and predicate_bypass and any(
+                isinstance(e, dict) and e.get("class_hint") for e in jsc.array(parser.get("entities"))
+            )
+            if names_class and not gate_passed:
+                gate_passed = True
+                gate_reason = "no entities; the ask names a class, so the described set is the scope"
+            elif intent_allows_empty and ALLOWS_EMPTY.get(domain) is not True:
                 # Its own reason string, so a trace says WHY a domain that normally
                 # demands a filter let this one through.
                 gate_reason = f"no entities; intent '{intent}' permits broad query"
@@ -900,48 +915,59 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                 if len(option["candidates"]) > 0
             ]
 
+        if len(specific_options) > 0 and held_product_uuids:
+            # HELD-FAMILY (CHAT-STATE handoff, 17 Oct 2026): "incoming srtwc286?" with
+            # SRTWC286-SH held is about the held variant. Exactly one held candidate settles
+            # the token; two or none leave the picker. Data only: no word is read.
+            unsettled: list[dict[str, Any]] = []
+            for o in specific_options:
+                held = [c for c in o["candidates"] if str(c.get("uuid")) in held_product_uuids]
+                if len(held) == 1:
+                    exact_entities.append({"uuid": held[0]["uuid"], "entity_type": "product", "code": held[0]["label"]})
+                else:
+                    unsettled.append(o)
+            specific_options = unsettled
+
         if len(specific_options) > 0:
             require_specific = True
             gate_passed = False
             gate_reason = f"'{domain}' ambiguous (no single exact match); user must pick"
-            # F16 (RS-9 round 4+5): append the company to ONLY the duplicated-code lines,
-            # and ONLY on product_attachment. `incoming`'s annotator re-joins the rendered
-            # lines to the probe BY EXACT CODE TEXT, so a suffixed line would miss that
-            # set and render a confident FALSE "- no incoming" (measured 2/2).
-            if domain == "product_attachment":
-                code_companies: dict[str, list[Any]] = {}
-                for o in specific_options:
-                    for c in o["candidates"]:
-                        ck = jsc.lower_or_empty(c.get("label")).strip()
-                        if not ck:
-                            continue
-                        bucket = code_companies.setdefault(ck, [])
-                        if c.get("company") and c["company"] not in bucket:
-                            bucket.append(c["company"])
-                specific_options = [
-                    {
-                        **o,
-                        "candidates": [
-                            (
-                                {**c, "label": f"{c['label']} ({c['company']})"}
-                                if (
-                                    c.get("company")
-                                    and code_companies.get(
-                                        jsc.lower_or_empty(c.get("label")).strip()
-                                    )
-                                    is not None
-                                    and len(
-                                        code_companies[jsc.lower_or_empty(c.get("label")).strip()]
-                                    )
-                                    > 1
+            # F16 / DUP-CODE-LABEL: append the company to ONLY the lines whose code two or more
+            # rows share, on every domain. The incoming annotator keys each line on its product
+            # id (`picker_lines`), never on the rendered code text, so a suffixed line is safe.
+            code_companies: dict[str, list[Any]] = {}
+            for o in specific_options:
+                for c in o["candidates"]:
+                    ck = jsc.lower_or_empty(c.get("label")).strip()
+                    if not ck:
+                        continue
+                    bucket = code_companies.setdefault(ck, [])
+                    if c.get("company") and c["company"] not in bucket:
+                        bucket.append(c["company"])
+            specific_options = [
+                {
+                    **o,
+                    "candidates": [
+                        (
+                            {**c, "label": f"{c['label']} ({c['company']})", "code": c["label"]}
+                            if (
+                                c.get("company")
+                                and code_companies.get(
+                                    jsc.lower_or_empty(c.get("label")).strip()
                                 )
-                                else c
+                                is not None
+                                and len(
+                                    code_companies[jsc.lower_or_empty(c.get("label")).strip()]
+                                )
+                                > 1
                             )
-                            for c in o["candidates"]
-                        ],
-                    }
-                    for o in specific_options
-                ]
+                            else c
+                        )
+                        for c in o["candidates"]
+                    ],
+                }
+                for o in specific_options
+            ]
             # Roster cap (owner ruling 20 Sep 2026): trimmed HERE, on `specific_options`
             # itself, so the printed roster and the `compatible_entities` the FIX A block
             # below derives from the SAME `specific_options` never disagree on which
@@ -960,6 +986,13 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                     capped_options.append({**o, "candidates": candidates})
                 specific_options = capped_options
             flat_labels = [c["label"] for o in specific_options for c in o["candidates"]]
+            # One entry per numbered line, in line order: the product each line stands for, so an
+            # annotator keys on the product and never re-joins the rendered text.
+            picker_lines = [
+                {"uuid": c.get("uuid"), "code": c.get("code") or c["label"], "company": c.get("company")}
+                for o in specific_options
+                for c in o["candidates"]
+            ]
             numbered = "\n".join(f"{i + 1}. {label}" for i, label in enumerate(flat_labels))
             # mc-prefix-collapse: say what DID resolve. A header line, never a numbered
             # one - downstream annotators key on /^\d+\.\s/ and must not see it as a pick.
@@ -985,6 +1018,13 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
         if require_specific:
             opt_uuids = {c["uuid"] for o in specific_options for c in o["candidates"]}
             compatible_entities = [e for e in entities if e["uuid"] in opt_uuids]
+            # The stored roster re-prints these rows when a reply answers nothing on it, so each
+            # carries the label the picker PRINTED (the company on a shared code), the same string.
+            printed = {c["uuid"]: c["label"] for o in specific_options for c in o["candidates"]}
+            compatible_entities = [
+                {**e, "label": printed[e["uuid"]]} if printed.get(e["uuid"]) not in (None, e.get("label")) else e
+                for e in compatible_entities
+            ]
         elif len(exact_entities) > 0:
             compatible_entities = exact_entities
 
@@ -1831,6 +1871,8 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
 
     out["gate_reason"] = gate_reason
     out["gate_clarification"] = gate_clarification  # '' when nothing to ask
+    if picker_lines:
+        out["picker_lines"] = picker_lines
     out["compatible_entities"] = compatible_entities
     if cust_probe_entities and len(cust_probe_entities) > 0:
         out["customer_probe_entities"] = cust_probe_entities

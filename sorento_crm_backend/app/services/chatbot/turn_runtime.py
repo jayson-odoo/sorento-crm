@@ -3171,6 +3171,77 @@ def stamp_customer_options(
     return out
 
 
+def file_type_ask(db: Session, ask: Any, focus: Any) -> Any:
+    """`ask`, a "which kind of file?" question given the file types the subject products
+    really carry as its numbered options (CHAT-CLOSED-LISTS card R3, crew Q3 (a), 17 Oct
+    2026), or `ask` itself when it is another question, already has options, or no product
+    on the focus has a file. Each option is the roster shape a picked option becomes an
+    entity from (`turn/apply._answer_pending`): a bare "2" fetches that type."""
+    from dataclasses import replace
+
+    from app.models.product import ProductAttachment
+    from app.models.resources import Attachment, AttachmentType
+
+    if getattr(ask, "kind", None) != "attachment_type_ask" or getattr(ask, "options", None):
+        return ask
+    from sqlalchemy import func
+
+    from app.models.product import Product, chat_searchable_products
+
+    from sqlalchemy import or_
+
+    rows_in_focus = [row for row in getattr(focus, "products", None) or [] if isinstance(row, dict)]
+    uuids = [str(row["uuid"]) for row in rows_in_focus if row.get("uuid")]
+    # The ask is raised before the resolver runs, so a product named this turn has its
+    # code and no uuid yet: the code, whole (case aside). Either way the product is read
+    # through the ORM here, so the contact's company AND brand scope and the chat rule
+    # apply to every product the roster is built from (security review, 17 Oct 2026).
+    codes = {
+        str(row.get("canonical_code") or row.get("raw") or "").strip().upper()
+        for row in rows_in_focus
+        if not row.get("uuid")
+    } - {""}
+    if not uuids and not codes:
+        return ask
+    product_ids = [
+        str(pid)
+        for (pid,) in db.query(Product.id)
+        .filter(
+            or_(
+                *([Product.id.in_(uuids)] if uuids else []),
+                *([func.upper(Product.product_code).in_(codes)] if codes else []),
+            ),
+            chat_searchable_products(),
+        )
+        .all()
+    ]
+    if not product_ids:
+        return ask
+    rows = (
+        db.query(AttachmentType.id, AttachmentType.code, AttachmentType.type_name)
+        .join(Attachment, Attachment.attachment_type_id == AttachmentType.id)
+        .join(ProductAttachment, ProductAttachment.attachment_id == Attachment.id)
+        .filter(ProductAttachment.product_id.in_(product_ids), Attachment.is_deleted.isnot(True))
+        .distinct()
+        .order_by(AttachmentType.type_name)
+        .all()
+    )
+    if not rows:
+        return ask
+    options = [
+        {
+            "position": i,
+            "entity_type": "attachment_type",
+            "code": code or name,
+            "uuid": str(type_id),
+            "name": name,
+            "label": name,
+        }
+        for i, (type_id, code, name) in enumerate(rows, start=1)
+    ]
+    return replace(ask, options=options)
+
+
 def stamp_customer_ask(
     db: Session,
     ask: Any,
@@ -4924,6 +4995,9 @@ def with_carried_entities(
         if isinstance(rows, list)
     ]
     product_scoped = unsettled_only and _holds_a_resolved_product_outside_a_set(focus)
+    # CLOSED LISTS SCHEME-NO-PRODUCT: a listed scheme pick does not answer an open product
+    # pick, so a product token no pick settled is not carried beside it.
+    scheme_pick = bool(parse_output.get("closed_lists")) and any(e.get("listed") == "cert_scheme" for e in own)
     settled_products = False
     for kind, rows in by_kind:
         if domain_word_only and kind == "attachment_type":
@@ -4931,6 +5005,8 @@ def with_carried_entities(
             continue
         for row in rows:
             if not isinstance(row, dict):
+                continue
+            if scheme_pick and kind == "product" and not row.get("uuid"):
                 continue
             if unsettled_only and row.get("uuid"):
                 settled_products = settled_products or kind == "product"
@@ -4952,7 +5028,7 @@ def with_carried_entities(
             # Fix round 8 on PR #833: a grounded specification keeps its registry key and
             # value, so "cert?" after "any gunmetal basin has incoming?" asks about the
             # SAME gunmetal basins.
-            for name in ("spec_key", "spec_value", "spec_unit", "spec_label", "spec_words", "spec_known"):
+            for name in ("spec_key", "spec_value", "spec_unit", "spec_label", "spec_words", "spec_known", "spec_any_keys"):
                 if name in row:
                     entity[name] = row[name]
             carried.append(entity)

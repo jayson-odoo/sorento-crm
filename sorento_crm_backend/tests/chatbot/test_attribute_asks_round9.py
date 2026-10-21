@@ -36,7 +36,7 @@ from tests.chatbot.test_attribute_asks_round3 import world as r3world  # noqa: F
 from tests.chatbot.test_attribute_asks_round4 import world as r4world  # noqa: F401 - fixture used by name
 from tests.chatbot.test_attribute_asks_round7 import _code_ask, _make
 from tests.chatbot.test_attribute_asks_round7 import world as r7world  # noqa: F401 - fixture used by name
-from tests.chatbot.test_attribute_asks_round8 import _Loo, _blocks, _by_code
+from tests.chatbot.test_attribute_asks_round8 import HIDDEN_THICKNESS, _Loo, _blocks, _by_code, _sees_its_policy
 from tests.chatbot.test_engine import stub_access, stub_parser  # noqa: F401 - fixtures used by name
 from tests.chatbot.test_lane_require import _certificate_for, _stock_for
 from tests.chatbot.test_reverse_asks_owner_phrasings import _class_category, _incoming_for
@@ -220,13 +220,21 @@ def test_turns3_and_4_pink_water_closet_breaks_the_water_closets_down_by_finish(
     _plain(text, world)
 
 
+def _kitchen_sinks(world) -> set[str]:
+    return {p.product_code for p in [*world["sinks"], *world["thick12"], world["thick10"]]}
+
+
 def test_turn5_kitchen_sink_1_2mm_thickness_lists_every_brand(chat, world):
-    text = chat.say(T5, _v5())
+    """Amended to owner ruling a35818889 (b): a default-policy contact, whose policy hides
+    thickness: the kitchen sinks are not narrowed by it, and thickness is said not available."""
+    text = _sees_its_policy(chat).say(T5, _v5())
     print(text)
-    assert _codes(text, world) == {p.product_code for p in world["thick12"]}, text
+    assert _codes(text, world) == _kitchen_sinks(world), text
     _plain(text, world)
     for name in _brand_names(world):
         assert name not in text.split("\n")[0], text
+    assert "1.2 mm" not in text.split("\n")[0], text
+    assert text.count(HIDDEN_THICKNESS) == 1, text
 
 
 # --------------------------------------------------------------------------- #
@@ -272,6 +280,7 @@ def test_a_document_word_still_asks_about_documents(chat, world):
 
 def test_the_five_turns_in_order(chat, world):
     """The owner's test as typed, one conversation: each reply is the one structure."""
+    chat = _sees_its_policy(chat)  # a default-policy contact (owner ruling a35818889 (b))
     replies = [chat.say(T1, _v1()), chat.say(T2, _v2()), chat.say(T3, _v3()), chat.say(T4, _v4()), chat.say(T5, _v5())]
     for text in replies:
         print(text, end="\n\n=====\n\n")
@@ -282,5 +291,7 @@ def test_the_five_turns_in_order(chat, world):
     # Amended to fix round 10 on PR #833: turn 3 says "pnk" as typed.
     assert replies[2].startswith("Here's what you want: pnk water closets\n• White water closets: "), replies[2]
     assert replies[3].startswith("Here's what you want: pink water closets\n• White water closets: "), replies[3]
-    assert replies[4].startswith("Here's what you want: kitchen sinks with thickness 1.2 mm (2)"), replies[4]
-    assert _codes(replies[4], world) == {p.product_code for p in world["thick12"]}, replies[4]
+    # Amended to owner ruling a35818889 (b): thickness is hidden for this contact, never a filter.
+    assert replies[4].startswith(f"Here's what you want: kitchen sinks ({len(_kitchen_sinks(world))})"), replies[4]
+    assert _codes(replies[4], world) == _kitchen_sinks(world), replies[4]
+    assert replies[4].count(HIDDEN_THICKNESS) == 1, replies[4]

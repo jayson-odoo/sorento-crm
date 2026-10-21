@@ -3503,7 +3503,13 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         msg += refer.sentence() + "\n\n"
     # Item 8: the product projection's miss lines, one per asked word, AFTER the items
     # (`_project_product_specs`). Byte-inert when the key is absent.
-    for miss in e.get("spec_misses") or []:
+    # A set ask's hidden key the customer named (the route's `predicate.spec_hidden`) is the same
+    # `spec_hidden:<key>` miss, once per key (owner a35818889 (b)).
+    from app.services.chatbot.lanes.business import answer as answer_mod
+
+    set_hidden = answer_mod.spec_hidden_misses(ctx.get("predicate"))
+    seen_misses = {m.get("key") for m in e.get("spec_misses") or [] if isinstance(m, dict)}
+    for miss in [*(e.get("spec_misses") or []), *(m for m in set_hidden if m["key"] not in seen_misses)]:
         if isinstance(miss, dict):
             msg += f"*{jsc.js_string(miss.get('label', jsc.UNDEFINED))}:* {_fmt_value(miss.get('value'))}\n\n"
 

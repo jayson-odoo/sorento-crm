@@ -59,7 +59,8 @@ from app.services.customer_group_service import family_overrides
 from app.services.error_handler import AppException
 from app.utils.build_info import GIT_SHA
 from app.services.ledger_family import customer_groups
-from app.services.chatbot.head import grounding, parser
+from app.services.chatbot.head import candidates as candidates_mod, grounding, held_family, parser, scheme_index
+from app.services.chatbot.head import access as access_mod
 from app.services.chatbot.head.access import check_access, default_space_id
 from app.services.chatbot.head.build_ctx import build_ctx
 from app.services.chatbot.lanes import business, canned as canned_lanes, casual
@@ -1078,6 +1079,45 @@ def _contact_brand_scope(factory: SessionFactory, contact_respond_id: str) -> fr
         return frozenset({NO_BRAND_ID})
     finally:
         db.close()
+
+
+_ENGINE_ENTITY_KEYS = ("listed", "certificate_uuids", "parent_kind", "parent_kind_uuid", "parent_kind_name", "class_hint")
+
+
+def closed_lists_verdict(verdict: dict[str, Any], *, gate: bool) -> dict[str, Any]:
+    """CHAT-CLOSED-LISTS: a verdict parsed by a CLOSED LISTS version says so, so the lanes
+    read the parser's listed picks and none of the word fallbacks (card R2/R5). The key is
+    the engine's alone: one a harness emission carried is dropped when the gate is off."""
+    if gate:
+        return {**verdict, "closed_lists": True}
+    return {k: v for k, v in verdict.items() if k != "closed_lists"} if "closed_lists" in verdict else verdict
+
+
+def _strip_hidden_spec_entities(verdict: dict[str, Any], hidden: frozenset[str]) -> dict[str, Any]:
+    """H1: a spec entity on a contact-hidden key is dropped. Runs once, on the grounding output
+    (the parser's own emission and what grounding re-derives from raw words alike), before
+    `turn_apply`, the only writer of spec entities into the focus."""
+    entities = verdict.get("entities")
+    if not hidden or not isinstance(entities, list):
+        return verdict
+    # Grounding binds on the stripped key, so the compare is on the stripped key too.
+    kept = [e for e in entities if not (isinstance(e, dict) and str(e.get("spec_key") or "").strip() in hidden)]
+    return verdict if len(kept) == len(entities) else {**verdict, "entities": kept}
+
+
+def _candidate_lines(
+    db: Session, latest_user_message: str, held_ids: list[str] | None = None, hidden: frozenset[str] = frozenset()
+) -> list[str] | None:
+    """The candidate block for the message's OWN first line (the quoted reply under it is
+    not this message's words, the line grounding reads too). It only advises the parser,
+    so a failure leaves it out and the turn goes on (savepoint: the session stays usable)."""
+    message = latest_user_message.split("\n", 1)[0]
+    try:
+        with db.begin_nested():
+            return candidates_mod.candidate_lines(candidates_mod.shortlist(db, message, held_ids, hidden=hidden))
+    except Exception:  # noqa: BLE001 - advisory block, never a failed turn
+        logger.warning("chatbot: candidate shortlist failed; parsing without it", exc_info=True)
+        return None
 
 
 def _scoped_factory(
@@ -4568,6 +4608,25 @@ def _run_stages_body(  # noqa: PLR0915
         promotion_kinds = turn_runtime.promotion_kind_rows(db)
         product_types = turn_runtime.product_type_names(db)
         product_details = turn_runtime.product_detail_values(db)
+        # CHAT-CLOSED-LISTS: what is on file under the words of this message, for a
+        # version carrying the CLOSED LISTS section only (code shortlists, the parser picks).
+        # H1: the contact's hidden spec keys (the real policy, `head/access`), read once here and
+        # applied at the parser's two entries (the block it is shown, the spec entities it emits).
+        hidden_spec = (
+            frozenset(access_mod._hidden_spec_keys(db, contact_id=str(contact_respond_id), space_id=default_space_id(db)))
+            if parser_config.closed_lists
+            else frozenset()
+        )
+        candidate_lines = (
+            _candidate_lines(
+                db,
+                latest_user_message,
+                [str(p["uuid"]) for p in state_in.focus.products if isinstance(p, dict) and p.get("uuid")],
+                hidden_spec,
+            )
+            if parser_config.closed_lists and isinstance(latest_user_message, str)
+            else None
+        )
 
     # -- B PARSER (NO DB SESSION IS OPEN HERE) ------------------------------ #
     # One call, one schema. What comes back IS the verdict - a plain dict, validated once
@@ -4615,6 +4674,7 @@ def _run_stages_body(  # noqa: PLR0915
         product_types=product_types,
         product_details=product_details,
         recent_exchanges=recent,
+        candidate_lines=candidate_lines,
         state_block=state_block,
     )
     user_block, context_report = context_mod.assemble(context_layers)
@@ -4642,6 +4702,16 @@ def _run_stages_body(  # noqa: PLR0915
             # because this is the seam that skipped it.
             parser.assert_emission(parser_raw)
         verdict: dict[str, Any] = dict(parser_raw)
+        # `listed`, `certificate_uuids`, `class_hint` and the `parent_kind*` keys are the ENGINE's own entity keys
+        # (grounding and the scheme index set them). One the parser emitted (the Anthropic path does not enforce
+        # additionalProperties) is dropped before any reader.
+        verdict.pop("dropped_kinds", None)
+        verdict.pop("state_path", None)
+        if isinstance(verdict.get("entities"), list):
+            verdict["entities"] = [
+                {k: v for k, v in e.items() if k not in _ENGINE_ENTITY_KEYS} if isinstance(e, dict) else e
+                for e in verdict["entities"]
+            ]
         # CHATBOT-EMPTY-ROUTE-PICK: a declared answer to a question that was never
         # asked (no `Open question:` line went to the parser) is dropped before any
         # reader, and the `understood` record below shows the drop as `derived`.
@@ -4790,6 +4860,7 @@ def _run_stages_body(  # noqa: PLR0915
     state_path = bool(parser_config.state_block or (parser_bypassed and "state_changes" in verdict))
     if state_path:
         state_in = dataclasses_replace(state_in, state_path=True)
+        verdict = {**verdict, "state_path": True}  # the class-named seams read it (`class_named`)
         with _session(session_factory) as hygiene_db:
             state_in = dataclasses_replace(
                 state_in,
@@ -4890,8 +4961,64 @@ def _run_stages_body(  # noqa: PLR0915
     verdict, _ranking_words = _report_ask.hold_words(verdict)
     with _session(session_factory) as grounding_db:
         verdict, grounding_notes = grounding.ground(
-            grounding_db, verdict, message=latest_user_message.split("\n", 1)[0] if isinstance(latest_user_message, str) else None
+            grounding_db,
+            verdict,
+            message=latest_user_message.split("\n", 1)[0] if isinstance(latest_user_message, str) else None,
+            closed_lists=parser_config.closed_lists,
+            held_ids=[str(p["uuid"]) for p in state_in.focus.products if isinstance(p, dict) and p.get("uuid")],
+            hidden_keys=hidden_spec,
         )
+    # H1: the ONE strip, on the grounding output: grounding re-derives specs from the raw words
+    # over the whole registry, so this covers the parser's own emission too.
+    verdict = _strip_hidden_spec_entities(verdict, hidden_spec)
+    verdict = closed_lists_verdict(verdict, gate=parser_config.closed_lists)
+    held_none_match: dict[str, Any] | None = None
+    scheme_none_in_scope: str | None = None
+    if parser_config.closed_lists and state_in.focus.products:
+        # SPEC-OVER-HELD: a spec said about a held product narrows that product's family
+        # (`head/held_family.py`). A read failure leaves the verdict as it was.
+        try:
+            with _session(session_factory) as family_db:
+                verdict, family_note = held_family.narrow_held_family(family_db, verdict, list(state_in.focus.products), hidden_keys=hidden_spec)
+        except Exception:  # noqa: BLE001 - an advisory narrowing, never a failed turn
+            logger.warning("chatbot: held family narrowing failed; the turn goes on without it", exc_info=True)
+            family_note = None
+        if family_note:
+            turn_trace.add("held_family", family_note)
+            if family_note.get("none_match"):
+                held_none_match = {
+                    "held": [p.get("canonical_code") for p in state_in.focus.products if isinstance(p, dict) and p.get("canonical_code")],
+                    "said": [
+                        str(e.get("raw") or "").strip()
+                        for e in verdict.get("entities") or []
+                        if isinstance(e, dict)
+                        and e.get("current_message") is not False
+                        and str(e.get("hint") or "").strip().lower() in ("specification", "spec", "brand")
+                        and str(e.get("raw") or "").strip()
+                    ],
+                }
+    if parser_config.closed_lists:
+        # SCHEME-INDEX: a listed scheme about products indexes their certificates, never
+        # empties the answer (`head/scheme_index.py`). A read failure leaves the verdict.
+        try:
+            with _session(session_factory) as scheme_db:
+                verdict, scheme_note = scheme_index.index_scheme(scheme_db, verdict, list(state_in.focus.products))
+                # Held products are only added to the verdict later, so a held one (a uuid) is
+                # read here: the scheme path with no product never runs over a held subject.
+                if scheme_note is None and (
+                    (scheme_index.class_named_applies(verdict) and scheme_index.names_own_class(verdict.get("entities") or []))
+                    or not any(isinstance(p, dict) and p.get("uuid") for p in state_in.focus.products)
+                ):
+                    verdict, scheme_note = scheme_index.scheme_without_product(scheme_db, verdict)
+        except Exception:  # noqa: BLE001 - an advisory reading, never a failed turn
+            logger.warning("chatbot: scheme index failed; the turn goes on without it", exc_info=True)
+            scheme_note = None
+        if scheme_note:
+            turn_trace.add("scheme_index", scheme_note)
+            if scheme_note.get("none_in_scope"):
+                scheme_none_in_scope = scheme_note["scheme"]
+            if scheme_note.get("none_match") and scheme_note.get("products"):
+                held_none_match = {"held": list(scheme_note["products"]), "said": [], "scheme": scheme_note["scheme"]}
     if _ranking_words:
         verdict = {**verdict, "entities": [*(verdict.get("entities") or []), *_ranking_words]}
     if grounding_notes:
@@ -6612,6 +6739,17 @@ def _run_stages_body(  # noqa: PLR0915
         # already says whether a pick is needed or a tier settles automatically, so this
         # fetch runs from a ONE-SPEC plan built for the occasion rather than waiting on
         # `narrow.py`'s now-shadowed ask.
+        if (
+            scheme_none_in_scope
+            and answer is None
+            and branch_kind == "business_query"
+            and completes_here
+            and not (sales_report_grant_refused or customer_scope_refused)
+        ):
+            # SCHEME-NONE-IN-SCOPE: nothing held, and no certificate of the listed scheme in
+            # this contact's scope. Said plainly; nothing is fetched.
+            answer = turn_compose.Answer(text=f"No {scheme_none_in_scope} certificate on record.")
+            turn_trace.add("scheme_none_in_scope", {"scheme": scheme_none_in_scope})
         fetch_plan = plan
         if (
             answer is None
@@ -7333,6 +7471,15 @@ def _run_stages_body(  # noqa: PLR0915
                     focus=dataclasses_replace(state_out.focus, customers=focus_customers_named),
                 )
             ask = plan.ask
+            if parser_config.closed_lists and ask.kind == "attachment_type_ask":
+                # CHAT-CLOSED-LISTS card R3: the file types the product really has, as the
+                # roster the tail stores, so the reply's numbers are what "2" answers.
+                offered = turn_runtime.file_type_ask(db, ask, state_out.focus)
+                if offered is not ask:
+                    # The tail stores the question the Answer carries, so the options
+                    # printed here are the ones a bare "2" answers.
+                    ask = offered
+                    turn_trace.add("file_type_ask", {"options": len(offered.options)})
             if (
                 ask.kind == "customer_pick"
                 and not _roster_is_outstanding(verdict, state_out.focus)
@@ -7387,6 +7534,25 @@ def _run_stages_body(  # noqa: PLR0915
             answer = turn_compose.Answer(
                 text=account_question or str((customer_scope or {}).get("refusal") or "")
             )
+
+        if (
+            held_none_match
+            and answer is not None
+            and lane_error_text is None
+            and branch_kind == "business_query"
+            and not (customer_scope_refused or sales_report_grant_refused)
+        ):
+            # FILTER-OVER-HELD (crew ruling (a), 18 Oct 2026): no member of the held family
+            # carries what the message names. Said plainly, from that data check alone; never
+            # the held products' own rows as if they matched, never the catalogue's set.
+            held_codes = ", ".join(dict.fromkeys(held_none_match["held"]))
+            said = " ".join(dict.fromkeys(held_none_match["said"])) or "that"
+            # HELD-WITHOUT-SCHEME: the filter was a certificate scheme the products hold none of.
+            scheme_none = held_none_match.get("scheme")
+            answer = turn_compose.Answer(
+                text=f"{held_codes}: no {scheme_none} certificate on record." if scheme_none else f"{held_codes}: none on record with {said}."
+            )
+            turn_trace.add("held_none_match", {"held": held_none_match["held"], "said": held_none_match["said"]})
 
     if answer is not None and lane_error_text is None:
         if _dealer_stock_ask(state_out, plan) or _dealer_incoming_ask(state_out, plan):

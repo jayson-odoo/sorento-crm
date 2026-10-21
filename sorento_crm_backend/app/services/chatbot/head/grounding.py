@@ -38,6 +38,8 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from app.services.chatbot.class_named import class_named_applies
+
 if TYPE_CHECKING:  # pragma: no cover
     from sqlalchemy.orm import Session
 
@@ -260,6 +262,8 @@ class Grounded:
     known: list[str] = field(default_factory=list)
     #: the registry's own words for the value ("gunmetal" for a typed "gunmetl")
     words: str | None = None
+    #: a bare size's OR (R6-1): the keys the number may be under (`head/bare_size.py`)
+    any_keys: list[str] | None = None
 
     def entity(self, template: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -273,6 +277,7 @@ class Grounded:
             "spec_label": self.label,
             "spec_words": self.words,
             "spec_known": list(self.known) if self.value is None else [],
+            **({"spec_any_keys": list(self.any_keys)} if self.any_keys else {}),
         }
 
 
@@ -711,14 +716,50 @@ def _as_typed(grounded: list[Grounded], entity: dict[str, Any], message: str | N
     return out
 
 
+def _on_closed_lists(entity: dict[str, Any], items: dict[str, dict[str, str]]) -> dict[str, Any] | None:
+    """CHAT-CLOSED-LISTS card R5: the entity tagged with the list its pick is on (file type,
+    certificate kind, certificate scheme) and the item as listed, or None when the pick is
+    on no list or the parser was not confident. Only the parser's `canonical_code` is read,
+    compared whole with case aside; the customer's words never are."""
+    from app.services.chatbot.head.closed_lists_prompt import NOT_LISTED
+
+    if entity.get("listed_item") == NOT_LISTED:
+        # The parser said no listed item is the kind asked: no code reading overrides it.
+        return None
+    # Owner cp0-6240dc53f8 (KEEP): an unsure pick counts only when its `listed_item` IS an item as
+    # listed, exactly; a name, a code reading or an alias link of it does not.
+    unsure = entity.get("confident") is False
+    # The parser's `listed_item` first (the gated schema holds it to the rendered items),
+    # then its `canonical_code`: an item's code or name, or an explicit alias link.
+    for pick in (str(entity.get("listed_item") or "").strip(), *([] if unsure else [str(entity.get("canonical_code") or "").strip()])):
+        if not pick:
+            continue
+        for listed in ("file_type", "cert_kind", "cert_scheme"):
+            item = items.get(listed, {}).get(pick.casefold())
+            if item is not None and (not unsure or item.casefold() == pick.casefold()):
+                return {**entity, "canonical_code": item, "listed": listed}
+    return None
+
+
 def ground(
-    db: "Session", verdict: dict[str, Any], *, vocab: Vocabulary | None = None, message: str | None = None
+    db: "Session",
+    verdict: dict[str, Any],
+    *,
+    vocab: Vocabulary | None = None,
+    message: str | None = None,
+    closed_lists: bool = False,
+    held_ids: list[str] | None = None,
+    hidden_keys: frozenset[str] = frozenset(),
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """The verdict with every descriptor grounded, and a note per change for the trace.
 
     Entities the registry says nothing about are returned untouched, in place: a turn
     with no descriptor is byte-identical to the parse. `message` is the customer's own
-    text: a descriptor the parser put right is read as typed (`_as_typed`)."""
+    text: a descriptor the parser put right is read as typed (`_as_typed`).
+
+    `closed_lists` (CHAT-CLOSED-LISTS, the parser version carries the CLOSED LISTS
+    section): a document type is kept only when its pick is an item of the lists the
+    prompt rendered, and is tagged with that list (`_on_closed_lists`)."""
     entities = verdict.get("entities")
     if not isinstance(entities, list) or not entities:
         return verdict, []
@@ -731,7 +772,9 @@ def ground(
     if not touched:
         return verdict, []
     vocab = vocab or load_vocabulary(db)
-    moved = _category_word_under_documents(db, verdict, vocab)
+    # CHAT-CLOSED-LISTS: under the gate the parser's domain stands; the word lists below
+    # never move it.
+    moved = not closed_lists and _category_word_under_documents(db, verdict, vocab)
     if moved:
         # Fix round 9 on PR #833 (owner, 28 Sep 2026): a category word never opens the
         # "Which kind of file do you need?" menu. With no document word anywhere in the
@@ -741,6 +784,9 @@ def ground(
     out: list[Any] = []
     notes: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
+    dropped_types = False
+    closed_items: dict[str, dict[str, str]] | None = None
+    listed_types: dict[str, str] | None = None
 
     def add(grounded: list[Grounded], template: dict[str, Any]) -> None:
         for g in grounded:
@@ -757,6 +803,18 @@ def ground(
         hint = str(entity.get("hint") or "").strip().lower()
         raw = str(entity.get("raw") or "").strip()
         canonical = str(entity.get("canonical_code") or "").strip()
+        if closed_lists and hint in _CLASS_HINTS and canonical and entity.get("confident") is not False:
+            if listed_types is None:
+                from app.services.chatbot.head.candidates import type_values
+
+                listed_types = type_values(db)
+            shown = listed_types.get(canonical.casefold())
+            if shown is not None:
+                # CHAT-CLOSED-LISTS card R2 (c27, "kitchan tap" -> kitchen_tap): a product type
+                # the parser picked off the lists IS the type; its raw words are not split.
+                notes.append({"from": hint, "raw": raw, "to": f"listed product type: {shown}"})
+                out.append({**entity, "raw": shown, "canonical_code": None})
+                continue
         if (
             hint in _CLASS_HINTS
             and canonical
@@ -778,6 +836,14 @@ def ground(
             entity = {**entity, "hint": "category"}
             hint = "category"
             notes.append({"from": _PRODUCT_HINT, "raw": raw, "to": "category"})
+        if hint in _SPEC_HINTS and closed_lists:
+            from app.services.chatbot.head.bare_size import ground_bare
+
+            bare = ground_bare(db, entity, [e for e in entities if isinstance(e, dict)], vocab, held_ids, hidden_keys)
+            if bare is not None:
+                add([bare], entity)
+                notes.append({"from": hint, "raw": raw, "to": [bare.__dict__]})
+                continue
         if hint in _SPEC_HINTS:
             others = [
                 str(e.get("raw") or "")
@@ -799,7 +865,11 @@ def ground(
                 # PROMO-SUBJECT-FILTER AC-24: the words name two types, but the whole phrase
                 # is one value of a registry key, said word for word ("basin cabinet",
                 # furniture_type basin_cabinet): that value is what was asked for.
+                size = len(out)
                 add([whole], entity)
+                if closed_lists and len(out) > size and class_named_applies(verdict):
+                    # The parser named a class; the spec this makes still says so (`names_own_class`).
+                    out[-1] = {**out[-1], "class_hint": hint}
                 notes.append({"from": hint, "raw": raw, "to": [whole.__dict__]})
                 continue
             # Fix round 10 on PR #833: "water tap basin" holds two product types word for
@@ -863,6 +933,19 @@ def ground(
             add(grounded, entity)
             notes.append({"from": hint, "raw": raw, "to": [rest, *[g.__dict__ for g in grounded]]})
             continue
+        if hint == _ATTACHMENT_HINT and closed_lists:
+            if closed_items is None:
+                from app.services.chatbot_prompt_vars import closed_list_items
+
+                closed_items = closed_list_items(db)
+            tagged = _on_closed_lists(entity, closed_items)
+            if tagged is None:
+                notes.append({"from": hint, "raw": raw, "to": "dropped: not on the closed lists"})
+                dropped_types = True
+                continue
+            notes.append({"from": hint, "raw": raw, "to": f"on the {tagged['listed']} list: {tagged['canonical_code']}"})
+            out.append(tagged)
+            continue
         if hint == _ATTACHMENT_HINT:
             # ATTACH-GROUNDING-TYPO, option (c) (owner, 6 Oct 2026): only the parser
             # understands words. A confident document type whose code is listed stays that
@@ -877,6 +960,13 @@ def ground(
     if not notes:
         return verdict, []
     grounded_verdict = {**verdict, "entities": out}
+    if dropped_types and not any(
+        isinstance(e, dict) and str(e.get("hint") or "").strip().lower() == _ATTACHMENT_HINT and e.get("current_message") is not False
+        for e in out
+    ):
+        # R4-3: a file type this message named and the lists dropped still replaces the type
+        # axis (with nothing), so a type from an earlier turn never answers it.
+        grounded_verdict["dropped_kinds"] = [_ATTACHMENT_HINT]
     return grounded_verdict, notes
 
 

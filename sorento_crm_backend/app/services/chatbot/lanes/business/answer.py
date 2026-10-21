@@ -2629,7 +2629,7 @@ def _outstanding_report_text(item: Any) -> str:
     return jsc.js_string(body.get("response") or "").strip()
 
 
-def _unplaced_token_has_neighbours(resolved: Any, gate: Any) -> bool:
+def _unplaced_token_has_neighbours(resolved: Any, gate: Any, only_token: str | None = None) -> bool:
     """True when a token the customer typed missed AND has real did-you-mean neighbours.
 
     AC-1703. The described-set branches below all assert something about the SET the
@@ -2663,6 +2663,8 @@ def _unplaced_token_has_neighbours(resolved: Any, gate: Any) -> bool:
     for res in _ms_miss_resolutions(r, gate=g):
         token = jsc.nullish_str(jsc.get(res, "token")).strip()
         if len(token) < 3 or not _CODE_RE.fullmatch(token):
+            continue
+        if only_token is not None and token.lower() != only_token.strip().lower():
             continue
         candidates = [
             *jsc.array(jsc.get(res, "matches")),
@@ -2824,6 +2826,16 @@ def what_you_want_reply(asked: str, lines: list[str], *, missing: str = "", leg:
     if team == refer.SALESMAN_TEAM:
         return refer.after(f"{head}\n\n{tail}", sep=" ")
     return f"{head}\n\n{tail} Would you like me to escalate to {team} team?" if team else f"{head}\n\n{tail}"
+
+
+def spec_hidden_misses(predicate: Any) -> list[dict[str, Any]]:
+    """Owner a35818889 (b): the hidden spec keys a set ask NAMED (the route's `predicate.spec_hidden`),
+    as the same `spec_hidden:<key>` "not available" misses the product projection builds."""
+    return [
+        {"key": f"spec_hidden:{h.get('key')}", "label": h.get("label"), "value": "not available"}
+        for h in (jsc.get(predicate, "spec_hidden") or [] if isinstance(predicate, dict) else [])
+        if isinstance(h, dict) and h.get("key")
+    ]
 
 
 def described_members_reply(predicate: Any, team: Any) -> str | None:
@@ -3934,13 +3946,22 @@ def not_found_error_message(
         vague_unresolved = [
             t for t in unresolved if jsc.get(by_raw.get(_nf_norm_raw(t)), "confident") is False
         ]
+        if jsc.truthy(jsc.get(q, "closed_lists")):
+            # CLOSED LISTS: an unsure token the resolver has real neighbours for is a
+            # mistyped code, so it takes the did-you-mean below, not the vague clarify.
+            # Only when EVERY unsure token has neighbours: otherwise the clarify names them all.
+            if all(_unplaced_token_has_neighbours(r, g, t) for t in vague_unresolved):
+                vague_unresolved = []
 
         if len(vague_unresolved) > 0:
             is_clarification = True  # so escalate-catalog's is_escalate_offer is false
             labels = _human_list(
                 [_prettify_type(t) for t in (allowed_types if isinstance(allowed_types, list) else [])]
             )
-            captured = ", ".join(jsc.js_string(t) for t in vague_unresolved)
+            # CLOSED LISTS: each unsure word is quoted on its own ("a", "b"), never one quoted run.
+            captured = (
+                '", "' if jsc.truthy(jsc.get(q, "closed_lists")) else ", "
+            ).join(jsc.js_string(t) for t in vague_unresolved)
             unresolved_set = {_nf_norm_raw(t) for t in unresolved}
             resolved_ents = [
                 e
@@ -4432,6 +4453,17 @@ def not_found_error_message(
 
     # Q23: the customer named an access level they do not hold. The gate detects it; say so
     # here too, or an entitlement problem reads as an ordinary "couldn't find it".
+    hidden_lines = [
+        f"*{m['label']}:* {m['value']}" for m in spec_hidden_misses(jsc.get(g, "predicate") if jsc.truthy(g) else None)
+    ]
+    if hidden_lines and jsc.truthy(escalate_message):
+        # Before the closing question when there is one, so the offer stays the last line.
+        head, sep, tail = jsc.js_string(escalate_message).rpartition("\n\n")
+        escalate_message = (
+            f"{head}\n\n" + "\n\n".join(hidden_lines) + f"\n\n{tail}"
+            if sep and tail.rstrip().endswith("?")
+            else f"{escalate_message}\n\n" + "\n\n".join(hidden_lines)
+        )
     access_notice = jsc.get(g, "access_notice")
     if jsc.truthy(g) and jsc.truthy(access_notice) and jsc.truthy(escalate_message):
         escalate_message = f"{jsc.js_string(access_notice)}\n\n{escalate_message}"

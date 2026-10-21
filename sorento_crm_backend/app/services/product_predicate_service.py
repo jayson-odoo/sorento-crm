@@ -615,7 +615,9 @@ def describe_set(
     rows = (
         {
             row.spec_key: row
-            for row in db.query(ProductSpecRegistry).filter(ProductSpecRegistry.spec_key.in_(others)).all()
+            for row in db.query(ProductSpecRegistry)
+            .filter(ProductSpecRegistry.spec_key.in_([m for k in others for m in (k[4:].split("|") if k.startswith("any:") else [k])]))
+            .all()
         }
         if others
         else {}
@@ -644,6 +646,10 @@ def describe_set(
         values = [display_spec_value(v, labels) for v in membership[key]]
         # Fix round 8 on PR #833: a grounded number reads with its unit ("1.2 mm").
         unit = getattr(row, "unit", None) if row is not None and (row.data_type or "") == "numeric" else None
+        if row is None and key.startswith("any:"):
+            # A bare size's OR (`any:k1|k2`): its unit is the one its member keys share.
+            units = {getattr(rows.get(k), "unit", None) for k in key[4:].split("|")} - {None, ""}
+            unit = next(iter(units)) if len(units) == 1 else None
         if unit:
             values = [f"{v} {unit}" for v in values]
         out.append(
@@ -778,7 +784,13 @@ def _near_miss(db: Session, *, membership: dict[str, list[str]], legs: list, bra
 
 
 def _set_breakdown(
-    db: Session, members_query, *, membership: dict[str, list[str]], brand: str | None, key: str | None = None
+    db: Session,
+    members_query,
+    *,
+    membership: dict[str, list[str]],
+    brand: str | None,
+    key: str | None = None,
+    hidden_keys: frozenset[str] = frozenset(),
 ) -> dict | None:
     """A set counted by the next attribute that splits it: `{key, label, rows: [{value,
     count}]}`, largest first, each count in distinct variant families as the set's own
@@ -791,7 +803,8 @@ def _set_breakdown(
     the ask did not already bind; the first that splits the set in two or more is used.
     `key` forces one (the key of a value the registry does not know: "pink water
     closets" is said beside the finishes water closets come in). One query over the
-    members' brand and specification row; `_near_miss` counts the same way."""
+    members' brand and specification row; `_near_miss` counts the same way. A key in
+    `hidden_keys` (the contact's hidden spec keys) is never the attribute, forced or not."""
     from app.services.product_spec_registry import active_registry, display_spec_value
 
     members = members_query.subquery()
@@ -812,7 +825,7 @@ def _set_breakdown(
         *(["class"] if len(membership.get("class") or []) != 1 else []),
         *[row.spec_key for row in registry if row.spec_key not in membership and row.spec_key not in ("brand", "class")],
     ]
-    for name in order:
+    for name in [n for n in order if n not in hidden_keys]:
         counts: dict[str, set[str]] = {}
         row = by_key.get(name)
         labels = dict(getattr(row, "value_labels", None) or {})
@@ -862,6 +875,7 @@ def resolve_product_set(
     brand_is_default: bool = False,
     breakdown_over: int | None = None,
     breakdown_key: str | None = None,
+    hidden_keys: frozenset[str] = frozenset(),
 ) -> dict:
     """(described set) ∩ (require legs), with an honest count.
 
@@ -871,7 +885,8 @@ def resolve_product_set(
     (`_set_breakdown`), and a set that qualifies nothing carries ``members``, the
     described products without the require legs, so the miss can say what matched.
     ``breakdown_key`` names the key to break the set down by (a value the registry does
-    not know is said back beside the values the set does hold).
+    not know is said back beside the values the set does hold). ``hidden_keys`` are the
+    contact's hidden spec keys: a breakdown never splits the set by one.
 
     The described set is ``product_ids`` (ids LOOKUP already matched by name or
     code prefix) and the ``class`` / ``product_type`` / ``brand`` membership
@@ -879,11 +894,11 @@ def resolve_product_set(
     attribute-first asks, work item C3, AC-1306/1308. Either alone is enough to
     describe the set. A name match stands in for WHAT the product is (its class,
     type or brand, `_SET_NOUN_KEYS`), so on those keys a product needs ONE of
-    the two ("which tap has cert": a code with TAP in it, or a class-Tap
-    product); a property asked of the set (a trap, a finish) holds for every
-    member, name-matched or not (chat fix PR-A, AC-A8: "any P-trap WC?" counts
-    the P-trap water closets, never every name match beside them, dev 220
-    against 183). ``brand`` scopes the WHOLE set on top of that (D3): it reads
+    the two (a code the caller typed, or a class member; a word never reaches
+    `product_ids` by a code substring, CODE-SUBSTRING); a property asked of the
+    set (a trap, a finish) holds for every member, code-matched or not (chat fix
+    PR-A, AC-A8: "any P-trap WC?" counts the P-trap water closets, never every
+    code match beside them, dev 220 against 183). ``brand`` scopes the WHOLE set on top of that (D3): it reads
     `Product.brand_id` live, not the spec-derived echo, so it is correct even
     when a product's brand changed since its spec row was last derived.
 
@@ -938,6 +953,7 @@ def resolve_product_set(
         specs=specs,
         free_terms=list(free_terms or []),
         scope_terms=list(scope_terms or []),
+        hidden_keys=hidden_keys,
     )
     unrecognized = list(verdict["unrecognized_terms"])
 
@@ -1269,7 +1285,8 @@ def resolve_product_set(
     membership = verdict.get("membership") or {}
     if breakdown_key or (breakdown_over is not None and int(qualifying_total) > breakdown_over):
         broken = _set_breakdown(
-            db, _base(db.query(Product.id.label("pid"), family.label("family"))), membership=membership, brand=brand, key=breakdown_key
+            db, _base(db.query(Product.id.label("pid"), family.label("family"))), membership=membership, brand=brand, key=breakdown_key,
+            hidden_keys=hidden_keys,
         )
         if broken:
             outcome["breakdown"] = broken
@@ -1281,7 +1298,8 @@ def resolve_product_set(
             members: dict[str, Any] = {"total": members_total}
             if members_total > breakdown_over:
                 broken = _set_breakdown(
-                    db, _base(db.query(Product.id.label("pid"), family.label("family")), with_legs=False), membership=membership, brand=brand
+                    db, _base(db.query(Product.id.label("pid"), family.label("family")), with_legs=False), membership=membership, brand=brand,
+                    hidden_keys=hidden_keys,
                 )
                 if broken:
                     members["breakdown"] = broken

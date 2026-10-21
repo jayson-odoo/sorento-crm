@@ -1078,6 +1078,11 @@ def _focus_rules(
     replaced_kinds = {kind for kind in by_kind if kind not in picked_kinds}
     for kind in replaced_kinds:
         _set_kind_field(focus, kind, by_kind[kind])
+    # CLOSED LISTS: a kind this message named and grounding dropped replaces the axis with nothing.
+    for kind in verdict.get("dropped_kinds") or []:
+        if kind not in by_kind and kind not in picked_kinds:
+            _set_kind_field(focus, kind, [])
+            trace.rules_fired.append(f"dropped_{kind}_clears_axis")
     # MULTI-CODE-DYM Q3 (owner, 4 Oct 2026): "2 and SRTWC286-SH-150" picks one option AND
     # names a code of its own. The typed code that is not the picked row's own word is a
     # second subject, answered beside the pick, never dropped.
@@ -1130,6 +1135,10 @@ def _focus_rules(
             # Per KIND, not per row: every settled row of that kind stays (an echo of a
             # few of fifty listed products keeps the fifty, as ATTACH-SET round 2 wants).
             kept_kinds = set(by_kind) | restated_kinds(verdict)
+            if verdict.get("closed_lists") and set(by_kind) == {"attachment_type"}:
+                # CLOSED LISTS: a message whose only entities are file types says what to
+                # answer, not about what, so the held product stays its subject.
+                kept_kinds.add("product")
             for kind, attr in KIND_FIELD_MAP.items():
                 if kind in kept_kinds:
                     continue
@@ -2304,6 +2313,7 @@ def _narrow_and_plan(
     candidates: dict[str, list[dict[str, Any]]] | None = None,
     unplaced: frozenset[str] | set[str] | None = None,
     refuse_empty_subject: bool = False,
+    held_product_uuids: frozenset[str] = frozenset(),
 ) -> Plan:
     denied: list[str] = []
     ask: Pending | None = None
@@ -2349,6 +2359,7 @@ def _narrow_and_plan(
                 # rosters already read through `roster_caps` - never `narrow.py`'s
                 # module literal.
                 roster_cap=getattr(policy.kind(kind), "roster_cap", None),
+                held_uuids=held_product_uuids if kind == "product" else frozenset(),
             )
             trace.narrowing.append(f"{name}.{kind}:{outcome.note or policy_value}")
             if outcome.ask_kind:
@@ -3755,6 +3766,15 @@ def _apply(
         attributes,
         candidates,
         unplaced,
+        # HELD-FAMILY: the products the conversation held BEFORE this message; none when
+        # the parser read the message as asking for the whole family.
+        held_product_uuids=(
+            frozenset()
+            if verdict.get("family") is True or verdict.get("broaden_to") or not verdict.get("closed_lists")
+            else frozenset(
+                str(p["uuid"]) for p in state.focus.products or [] if isinstance(p, dict) and p.get("uuid")
+            )
+        ),
         # Ported from PR #1118 (not merged), review round 9 finding 4 / D34 round 11:
         # a bare quantity with nothing open, or a cancel that names nothing, is not a
         # subject - see `_narrow_and_plan`'s own comment on `refuse_empty_subject`.

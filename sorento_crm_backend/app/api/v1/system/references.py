@@ -32,6 +32,7 @@ from app.services.entity_resolver import (
     FREE_TEXT_CANDIDATES,
     EntityPinMismatch,
     _canonical_entity_type,
+    _word_variants,
     _with_resolve_memo,
     fetch_product_brands,
     resolve_references,
@@ -1413,6 +1414,20 @@ class ResolveReferenceRequest(BaseModel):
             "the known choices before anything is counted or searched."
         ),
     )
+    no_free_remainder: bool = Field(
+        default=False,
+        description=(
+            "CLOSED LISTS: on a file ask the described set comes only from the caller's "
+            "entities, never from the leftover words of the message."
+        ),
+    )
+    cert_number_is_code: bool = Field(
+        default=False,
+        description=(
+            "CLOSED LISTS: a token the resolver matched exactly as a certificate counts as a "
+            "typed code, so `require` does not describe a set over the leftover words."
+        ),
+    )
     set_list_max: int | None = Field(
         default=None,
         ge=1,
@@ -1618,9 +1633,49 @@ class ResolveReferenceRequest(BaseModel):
 #: code prefix, a code substring, a set's head code, the AND probe (code-only by design).
 #: Never `embedding`, `trgm` or `spec_search`: those are nearest-neighbour guesses.
 _CODE_MATCH_TIERS = frozenset({"exact", "prefix", "substring", "head_code", "and"})
+#: The code tiers that read a token as a code FRAGMENT: only a token with a digit may make one.
+_CODE_FRAGMENT_TIERS = frozenset({"substring", "and"})
 
 
-def _code_matched(result: dict[str, Any], tokens: list[str] | None = None) -> bool:
+def _has_digit(token: Any) -> bool:
+    """An ASCII digit (`str.isdigit` also takes "\u00b2" and Arabic-Indic digits)."""
+    return re.search(r"[0-9]", str(token or "")) is not None
+
+
+def _contact_hidden_spec_keys(db: Session, payload: "ResolveReferenceRequest") -> set[str]:
+    """The spec keys this contact may not be told about: the caller's list UNIONED with the
+    contact's own policy (see the AC-18 / B/S2 notes at the spec fallback)."""
+    hidden_spec_keys = {str(k) for k in (payload.hidden_spec_keys or [])}
+    if payload.contact_id:
+        from app.services.field_access import (
+            resolve_contact_with_null_workspace_fallback,
+        )
+        from app.services.spec_visibility import (
+            full_registry_rows,
+            hidden_keys as _hidden_keys,
+            resolve_policy as _resolve_spec_policy,
+        )
+
+        # SF-1 (security re-verify): resolved through the SAME NULL-
+        # workspace fallback `check_access` uses, not the bare
+        # `resolve_contact_id` `resolve_policy` calls internally - a
+        # contact with `workspace_id IS NULL` (16 measured) resolves to
+        # nothing through the plain path, so this route would have handed
+        # such a contact the closed DEFAULT policy while `check_access`
+        # gives them their real one. Once resolved to the internal id,
+        # `resolve_policy` re-resolving it is a same-id no-op.
+        resolved_contact_id = resolve_contact_with_null_workspace_fallback(
+            db, contact_id=payload.contact_id, space_id=payload.space_id
+        )
+        contact_policy = _resolve_spec_policy(
+            db, resolved_contact_id or payload.contact_id, payload.space_id
+        )
+        registry_keys = {key for key, _label in full_registry_rows(db)}
+        hidden_spec_keys |= _hidden_keys(contact_policy, registry_keys)
+    return hidden_spec_keys
+
+
+def _code_matched(result: dict[str, Any], tokens: list[str] | None = None, *, certificates: bool = False) -> bool:
     """Code first (fix round 13 on PR #833, owner 28 Sep 2026: "if found by product code
     -> forward asking, if cannot find product code, fallback to spec search -> reverse
     asking"): did the resolver match a caller token to a product BY ITS CODE?
@@ -1637,17 +1692,17 @@ def _code_matched(result: dict[str, Any], tokens: list[str] | None = None) -> bo
     one list, so the caller's own `tokens` are tested against it instead.
     """
 
-    def _fold(value: Any) -> str:
-        return re.sub(r"[^0-9a-z]", "", str(value or "").lower())
-
     def _hit(token: Any, match: Any) -> bool:
-        fragment = _fold(token)
+        fragment = _fold_code(token)
+        if certificates and isinstance(match, dict) and match.get("entity_type") == "certificate":
+            # CLOSED LISTS: a certificate matched exactly (by number, or scheme and number).
+            return _has_digit(fragment) and match.get("match_tier") == "exact"
         return (
-            any(ch.isdigit() for ch in fragment)
+            _has_digit(fragment)
             and isinstance(match, dict)
             and match.get("entity_type") == "product"
             and match.get("match_tier") in _CODE_MATCH_TIERS
-            and fragment in _fold(match.get("canonical_code"))
+            and fragment in _fold_code(match.get("canonical_code"))
         )
 
     for resolution in result.get("resolutions") or []:
@@ -1688,6 +1743,8 @@ def _collect_lookup_product_ids(result: dict[str, Any]) -> list[str]:
     seen: set[str] = set()
 
     def _take(match: Any) -> None:
+        # The rows the early drop (`_drop_word_code_fragments`) left are the only gate on code
+        # fragments: a row still here is a code hit for its token.
         if not isinstance(match, dict) or match.get("entity_type") != "product":
             return
         if match.get("match_tier") not in _CODE_MATCH_TIERS:
@@ -1709,6 +1766,104 @@ def _collect_lookup_product_ids(result: dict[str, Any]) -> list[str]:
 _NEIGHBOUR_TIERS = frozenset({"embedding", "trgm"})
 
 
+def _fold_code(value: Any) -> str:
+    return re.sub(r"[^0-9a-z]", "", str(value or "").lower())
+
+
+def _rebuild_intersection_fields(result: dict[str, Any]) -> None:
+    """The fields derived from `intersection`, after a drop took rows out of it: the by-type
+    view, `empty`, and every token unresolved once nothing is left."""
+    if not isinstance(result.get("intersection"), list):
+        return
+    by_type: dict[str, list[dict[str, Any]]] = {}
+    for m in result["intersection"]:
+        by_type.setdefault(m["entity_type"], []).append(m)
+    result["by_entity_type"] = by_type
+    result["empty"] = not result["intersection"]
+    if result["empty"]:
+        result["unresolved_tokens"] = list(result.get("tokens") or [])
+
+
+def _restate_resolution(result: dict[str, Any], tr: dict[str, Any], kept: list[Any]) -> None:
+    """A resolution's rows were cut to `kept`: its flags and the result's token lists say what the
+    rows left say (the resolver's own meaning, `_suppress_brand_prefix_junk`: resolved = exactly one
+    match, ambiguous = more than one)."""
+    tr["matches"] = kept
+    tr["resolved"] = len(kept) == 1
+    tr["ambiguous"] = len(kept) > 1
+    if not tr["ambiguous"] and "ambiguous_tokens" in result:
+        result["ambiguous_tokens"] = [t for t in result["ambiguous_tokens"] if t != tr.get("token")]
+    result["unresolved_tokens"] = [
+        r["token"] for r in result.get("resolutions") or [] if isinstance(r, dict) and not (r.get("matches") or [])
+    ]
+
+
+def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
+    """CODE-SUBSTRING (crew a59517206 (a)): a WORD token (no ASCII digit) gets no product from a
+    code fragment read. A registry word is never a code hit, as a substring or as whole code
+    segments. Kept: exact / head_code rows, a row whose code IS the token (separators aside,
+    whatever its tier: the AND probe has no exact tier), and a row whose code holds the token's
+    words as whole code segments when the registry does not know them ("bidet" in ACC-BIDET on a
+    catalogue with no bidet class: the code is the only reading of the word). Dropped: rows with
+    the word INSIDE the code, and rows that start with it (prefix, or AND tier) when the registry
+    knows the word (`vocabulary`, a set or a callable read only when such a row needs it: a code
+    family such as "QAMS" or a brand word keeps its prefix rows). A token with a digit keeps them
+    all (a code fragment). A row with SEVERAL tokens (the AND row) loses its whole-code-word keep
+    when ANY of its tokens is a registry word. Each word is checked in the form the probe matched it
+    by (as typed when the code holds it, else its `_word_variants` forms). Runs once, early, so every
+    reader of the result sees the same rows."""
+    words: list[frozenset[str]] = []
+
+    def known(tokens: list[str], code: str) -> bool:
+        if not words:
+            words.append(vocabulary() if callable(vocabulary) else vocabulary)
+        return any(
+            v in words[0]
+            for t in tokens
+            for w in re.split(r"[^a-z0-9]+", str(t or "").lower())
+            if w
+            for v in ([w] if w in code else _word_variants(w))
+        )
+
+    def whole_segments(code: Any, token: Any) -> bool:
+        token_words = [w for w in re.split(r"[^a-z0-9]+", str(token or "").lower()) if w]
+        segments = [w for w in re.split(r"[^a-z0-9]+", str(code or "").lower()) if w]
+        return bool(token_words) and any(
+            segments[i : i + len(token_words)] == token_words for i in range(len(segments) - len(token_words) + 1)
+        )
+
+    def kept(match: Any, tokens: list[str]) -> bool:
+        if not isinstance(match, dict) or match.get("entity_type") != "product":
+            return True
+        tier = match.get("match_tier")
+        if tier not in _CODE_FRAGMENT_TIERS and tier != "prefix":
+            return True
+        code = _fold_code(match.get("canonical_code"))
+        if code in {_fold_code(t) for t in tokens}:
+            return True
+        if any(whole_segments(match.get("canonical_code"), t) for t in tokens):
+            return not known(tokens, code)  # whole code words: a code hit unless a registry word in ANY token
+        if tier == "substring" or not any(code.startswith(_fold_code(t)) for t in tokens):
+            return False  # the word sits inside the code, not at its start
+        # a code that STARTS with the word: a family sibling unless it is a registry word
+        return not known(tokens, code)
+
+    for resolution in result.get("resolutions") or []:
+        if not isinstance(resolution, dict) or _has_digit(resolution.get("token")):
+            continue
+        rows = resolution.get("matches") or []
+        keep = [m for m in rows if kept(m, [resolution.get("token")])]
+        if len(keep) != len(rows):
+            _restate_resolution(result, resolution, keep)
+    tokens = [t for t in result.get("tokens") or []]
+    if isinstance(result.get("intersection"), list) and not any(_has_digit(t) for t in tokens):
+        rows = result["intersection"]
+        keep = [m for m in rows if kept(m, tokens)]
+        if len(keep) != len(rows):
+            result["intersection"] = keep
+            _rebuild_intersection_fields(result)
+
+
 def _drop_word_neighbours(result: dict[str, Any]) -> None:
     """Fix round 10 on PR #833 (owner, 28 Sep 2026: "i tried to search like gunmetal
     basin, there is no such thing and it gives me flexible trap", "for #833 yeah exact
@@ -1718,7 +1873,7 @@ def _drop_word_neighbours(result: dict[str, Any]) -> None:
     with a digit keeps them: a code typo ("SRWC8088") still finds its code. Customers,
     orders and every other entity type are untouched."""
     def word(token: Any) -> bool:
-        return not any(ch.isdigit() for ch in str(token or ""))
+        return not _has_digit(token)
 
     def neighbour(match: Any) -> bool:
         return (
@@ -1745,13 +1900,7 @@ def _drop_word_neighbours(result: dict[str, Any]) -> None:
             result["alternatives"] = [m for m in result["alternatives"] if not neighbour(m)]
         if isinstance(result.get("intersection"), list):
             result["intersection"] = [m for m in result["intersection"] if not neighbour(m)]
-            by_type: dict[str, list[dict[str, Any]]] = {}
-            for m in result["intersection"]:
-                by_type.setdefault(m["entity_type"], []).append(m)
-            result["by_entity_type"] = by_type
-            result["empty"] = not result["intersection"]
-            if result["empty"]:
-                result["unresolved_tokens"] = list(result.get("tokens") or [])
+            _rebuild_intersection_fields(result)
 
 
 # A COPY of `app.services.chatbot.head.output_exchange._CERT_RE`, never an import of it:
@@ -1794,7 +1943,21 @@ def _with_grounded_unknowns(found: list[dict], grounded: list[dict] | None) -> l
     return extra + [u for u in found if u.get("key") not in keys]
 
 
-def _unknown_value_members(db: Session, payload, query_text: str, unknown: list[dict], current_user) -> dict | None:
+def _without_hidden_specs(specs: list[dict], hidden: set[str]) -> list[dict]:
+    """A contact-hidden key never filters the set: out of a bare size's OR (R6-5 S2), and a
+    strict entry on it is dropped, the rule the spec fallback applies (R6-6)."""
+    if not hidden:
+        return specs
+    specs = [
+        {**e, "any_keys": [k for k in e["any_keys"] if k not in hidden]} if e.get("any_keys") else e
+        for e in specs
+    ]
+    return [e for e in specs if ("any_keys" in e and e["any_keys"]) or ("any_keys" not in e and e.get("key") not in hidden)]
+
+
+def _unknown_value_members(
+    db: Session, payload, query_text: str, unknown: list[dict], current_user, hidden: set[str] = frozenset()
+) -> dict | None:
     """The described set without its unknown value, broken down by that value's key:
     "pink water closets" is answered with the finishes the water closets do come in
     (fix round 9 on PR #833, owner: "always break it down"). None when the rest of the
@@ -1817,7 +1980,7 @@ def _unknown_value_members(db: Session, payload, query_text: str, unknown: list[
         log_usage=False,
     )
     brand_entry = next((e for e in specs if e.get("key") == "brand"), None)
-    specs = [e for e in specs if e.get("key") not in ("brand", key)]
+    specs = _without_hidden_specs([e for e in specs if e.get("key") not in ("brand", key)], hidden)
     scope_terms = list(payload.scope_terms or [])
     if not specs and not scope_terms:
         return None
@@ -1831,6 +1994,7 @@ def _unknown_value_members(db: Session, payload, query_text: str, unknown: list[
         access_levels=payload.access_levels,
         breakdown_key=key,
         breakdown_over=None if key else 0,
+        hidden_keys=frozenset(hidden),
     )
     if not outcome.get("qualifying_total"):
         return None
@@ -1942,8 +2106,11 @@ def _has_turn_free_terms(
 #: filename, a transporter's or a form's name. A token whose kind the caller has locked
 #: (`hint_locked_tokens`) is never given one of these; the resolver's product rows (code
 #: tiers and the spec tier) and every other kind are untouched.
+#: CHAT-CLOSED-LISTS S4a (owner CP0 card c06, "Why we cant identify WC ya"): the attachment
+#: TYPE is one too - its probe reads the type's description words, so a locked "WC" was
+#: handed the Certification type through "wcm" and the bot asked "WC (attachment type)?".
 _NAME_MATCHED_KINDS: frozenset[str] = frozenset(
-    {"promotion", "customer", "attachment", "transporter", "form"}
+    {"promotion", "customer", "attachment", "attachment_type", "transporter", "form"}
 )
 
 
@@ -1966,6 +2133,9 @@ def _name_kinds_dropped_for(domain_hint: str | None) -> frozenset[str]:
     own: set[str] = {canonical} if canonical else set()
     if domain in {"resource_attachment", "attachment"}:
         own.add("attachment")
+    if domain in {"product_attachment", "resource_attachment", "attachment"}:
+        # A file ask: the type a word names is that ask's own answer.
+        own.add("attachment_type")
     if canonical == "customer_order":
         # Order / sales (crew ruling Q4 on the lane card, 6 Oct 2026: out of scope): the
         # resolver's own domain expansion reads a brand or category word there as the
@@ -2010,8 +2180,6 @@ def _strip_name_kinds_for_locked(
     resolutions = result.get("resolutions")
     if not isinstance(resolutions, list):
         return result
-    changed = False
-    ambiguous = list(result.get("ambiguous_tokens") or [])
     for tr in resolutions:
         if not isinstance(tr, dict) or _norm_locked_token(tr.get("token")) not in locked:
             continue
@@ -2021,18 +2189,7 @@ def _strip_name_kinds_for_locked(
             continue
         # The resolver's own meaning of the two flags (`_suppress_brand_prefix_junk`):
         # resolved = exactly one match, ambiguous = more than one.
-        tr["matches"] = kept_matches
-        tr["resolved"] = len(kept_matches) == 1
-        tr["ambiguous"] = len(kept_matches) > 1
-        if not tr["ambiguous"]:
-            ambiguous = [t for t in ambiguous if t != tr.get("token")]
-        changed = True
-    if changed:
-        result["unresolved_tokens"] = [
-            tr["token"] for tr in resolutions if isinstance(tr, dict) and not (tr.get("matches") or [])
-        ]
-        if "ambiguous_tokens" in result:
-            result["ambiguous_tokens"] = ambiguous
+        _restate_resolution(result, tr, kept_matches)
     return result
 
 
@@ -3281,6 +3438,11 @@ def resolve_reference_post(
 
     if payload.exact_match:
         _drop_word_neighbours(result)
+    if payload.require or payload.spec_fallback:
+        # CODE-SUBSTRING: before Shape B and the spec fallback read the rows.
+        from app.services.product_spec_search import _search_vocabulary
+
+        _drop_word_code_fragments(result, lambda: _search_vocabulary(db, brands=[]))
 
     # Shape B: a domain predicate over the described set. This is NOT a fallback -
     # "what faucets have certs" is a different question from "find me a faucet",
@@ -3288,7 +3450,7 @@ def resolve_reference_post(
     # UNLESS a caller token matched a product by code (`_code_matched`: code first,
     # spec search only when no code matched), so the response stays byte-identical to
     # the same request without `require`.
-    if payload.require and not _code_matched(result, payload.tokens):
+    if payload.require and not _code_matched(result, payload.tokens, certificates=payload.cert_number_is_code):
         from app.services.product_predicate_service import (
             recover_certificate_scheme,
             resolve_product_set,
@@ -3324,10 +3486,17 @@ def resolve_reference_post(
         # with it dropped or read as its nearest neighbour.
         from app.services.product_spec_search import unknown_spec_values
 
-        unknown = _with_grounded_unknowns(
-            unknown_spec_values(db, " ".join([payload.query or "", *(payload.scope_terms or [])])),
-            payload.unknown_values,
-        )
+        # H1b: the contact's hidden keys, read ONCE at this entry: a hidden key is never said
+        # back as an unknown value, never breaks the set down and never narrows it.
+        hidden = _contact_hidden_spec_keys(db, payload)
+        unknown = [
+            u
+            for u in _with_grounded_unknowns(
+                unknown_spec_values(db, " ".join([payload.query or "", *(payload.scope_terms or [])])),
+                payload.unknown_values,
+            )
+            if u.get("key") not in hidden
+        ]
         if unknown:
             result["predicate"] = {
                 "require": payload.require,
@@ -3338,7 +3507,7 @@ def resolve_reference_post(
             }
             # Fix round 9 on PR #833: the subject without the unknown value, broken down
             # by that value's key, so the reply lists what the set does come in.
-            members = _unknown_value_members(db, payload, query_text, unknown, current_user)
+            members = _unknown_value_members(db, payload, query_text, unknown, current_user, hidden)
             if members:
                 result["predicate"]["members"] = members
             return _stamp_brand_on_products(db, result)
@@ -3368,6 +3537,10 @@ def resolve_reference_post(
             log_usage=not payload.dry_run,
         )
         specs = _with_parser_brand(specs, payload.brand_tokens)
+        # Owner a35818889 (b): a hidden key the customer NAMED (a strict entry) never narrows the set;
+        # the reply says it is not available, like the fetch projection's `spec_hidden:<key>` line.
+        named_hidden = sorted({str(e["key"]) for e in specs if "any_keys" not in e and e.get("key") in hidden})
+        specs = _without_hidden_specs(specs, hidden)
         if understanding is None and not specs and not payload.scope_terms and not payload.free_terms:
             # Nothing describes a set: the message held only predicate words ("Stock") and
             # no spec, brand or class word grounded. A set built off the looked-up ids
@@ -3418,7 +3591,11 @@ def resolve_reference_post(
         scope_terms = (
             list(payload.scope_terms)
             if payload.scope_terms
-            else (None if payload.free_terms else _has_turn_free_terms(payload, result, query_text))
+            else (
+                None
+                if payload.free_terms
+                else ([] if payload.no_free_remainder else _has_turn_free_terms(payload, result, query_text))
+            )
         )
 
         # The counted set lists off the QUALIFYING ids themselves, capped at
@@ -3427,6 +3604,10 @@ def resolve_reference_post(
         # message down to 15.
         # Read BEFORE `_emit_spec_matches` adds the qualifying set to the resolutions.
         lookup_ids = _collect_lookup_product_ids(result)
+        if not (lookup_ids or specs or scope_terms or brand or payload.free_terms):
+            # Nothing is left to describe a set (a separator-only token, a word that was no code
+            # hit): a set built off no description would be the whole catalogue.
+            return _stamp_brand_on_products(db, result)
         outcome = resolve_product_set(
             db,
             # R14/AC-1338: the PROMOTED require (a bare `true` recovered a
@@ -3454,6 +3635,7 @@ def resolve_reference_post(
             # long for one message is broken down by brand instead (`breakdown`).
             prefer_weighted_brand=False,
             breakdown_over=payload.set_list_max,
+            hidden_keys=frozenset(hidden),
         )
         # One nested block, not top-level scalars: n8n item-mutation chains
         # persist top-level keys across nodes. And never inside `by_entity_type`,
@@ -3464,6 +3646,13 @@ def resolve_reference_post(
             "truncated": outcome["truncated"],
             "unrecognized_terms": outcome["unrecognized_terms"],
         }
+        if named_hidden:
+            from app.services.product_spec_registry import active_registry
+
+            labels = {row.spec_key: row.label for row in active_registry(db)}
+            result["predicate"]["spec_hidden"] = [
+                {"key": key, "label": labels.get(key) or key.replace("_", " ").capitalize()} for key in named_hidden
+            ]
         # D2/AC-1313: present ONLY on a scheme miss - a resolvable scheme carries
         # no such key at all, so a caller reading it never has to tell "no schemes"
         # from "not a scheme question".
@@ -3585,10 +3774,17 @@ def resolve_reference_post(
         # never searched for as its nearest neighbour, so no spec candidate is offered.
         from app.services.product_spec_search import unknown_spec_values
 
-        unknown = _with_grounded_unknowns(
-            unknown_spec_values(db, payload.query or "", registry_rows=registry_rows),
-            payload.unknown_values,
-        )
+        # H1b: the contact's hidden keys, read once here (the later spec drops reuse the set); a
+        # hidden key is never said back as an unknown value.
+        hidden_spec_keys = _contact_hidden_spec_keys(db, payload)
+        unknown = [
+            u
+            for u in _with_grounded_unknowns(
+                unknown_spec_values(db, payload.query or "", registry_rows=registry_rows),
+                payload.unknown_values,
+            )
+            if u.get("key") not in hidden_spec_keys
+        ]
         if unknown:
             result["unknown_spec_values"] = unknown
             return _stamp_brand_on_products(db, result)
@@ -3643,33 +3839,6 @@ def resolve_reference_post(
         # pair `check_access` uses) and UNIONS it in. The caller-supplied list
         # only ever narrows further; it can never widen past the server's own
         # answer for that contact.
-        hidden_spec_keys = {str(k) for k in (payload.hidden_spec_keys or [])}
-        if payload.contact_id:
-            from app.services.field_access import (
-                resolve_contact_with_null_workspace_fallback,
-            )
-            from app.services.spec_visibility import (
-                full_registry_rows,
-                hidden_keys as _hidden_keys,
-                resolve_policy as _resolve_spec_policy,
-            )
-
-            # SF-1 (security re-verify): resolved through the SAME NULL-
-            # workspace fallback `check_access` uses, not the bare
-            # `resolve_contact_id` `resolve_policy` calls internally - a
-            # contact with `workspace_id IS NULL` (16 measured) resolves to
-            # nothing through the plain path, so this route would have handed
-            # such a contact the closed DEFAULT policy while `check_access`
-            # gives them their real one. Once resolved to the internal id,
-            # `resolve_policy` re-resolving it is a same-id no-op.
-            resolved_contact_id = resolve_contact_with_null_workspace_fallback(
-                db, contact_id=payload.contact_id, space_id=payload.space_id
-            )
-            contact_policy = _resolve_spec_policy(
-                db, resolved_contact_id or payload.contact_id, payload.space_id
-            )
-            registry_keys = {key for key, _label in full_registry_rows(db)}
-            hidden_spec_keys |= _hidden_keys(contact_policy, registry_keys)
         if hidden_spec_keys:
             specs = [s for s in specs if s.get("key") not in hidden_spec_keys]
 
