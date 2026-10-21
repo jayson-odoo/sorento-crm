@@ -269,8 +269,10 @@ def test_apply_is_audited_per_product(client, db, refs):
     assert hit, [(r.action, r.old_values, r.new_values) for r in logs]
     assert (hit[0].old_values or {}).get("barcode") == EAN_A
     assert hit[0].event == "product.barcode_import"
+    # The Same row is not written, so it gains no import row (its seed INSERT row stays).
     assert not db.query(AuditLog).filter(AuditLog.entity_type == "product",
-                                         AuditLog.entity_id == same).all()
+                                         AuditLog.entity_id == same,
+                                         AuditLog.event == "product.barcode_import").all()
 
 
 # --------------------------------------------------------------------------- permission
@@ -285,3 +287,25 @@ def test_both_endpoints_need_products_edit(perm_client, db, refs):
     assert _barcode(db, pid) is None
     allow.add("master_data.products.edit")
     assert _post(c, "preview", data).status_code == 200
+
+
+def test_repeated_code_keeps_first_row_only(client, db, refs):
+    stem = unique_code("BCR", alpha=True)
+    pid = _mk(db, refs, f"{stem}-R")
+    body = _post(client, "apply", _xlsx([
+        ["Product Code", "Barcode"], [f"{stem}-R", EAN_A], [f"{stem}-r", EAN_B],
+    ])).json()
+    assert [r["status"] for r in body["rows"]] == ["new", "repeated_code"]
+    assert body["rows"][1]["repeated_of_row"] == 2
+    assert body["applied"] == 1
+    assert _barcode(db, pid) == EAN_A
+
+
+def test_title_lines_above_header_are_skipped(client, db, refs):
+    stem = unique_code("BCT", alpha=True)
+    _mk(db, refs, f"{stem}-T")
+    body = _post(client, "preview", _xlsx([
+        ["Barcode list 21 Oct"], [], ["Item Code", "Barcode"], [f"{stem}-T", EAN_A],
+    ])).json()
+    assert body["readable"] is True
+    assert body["rows"][0]["row"] == 4 and body["rows"][0]["status"] == "new"
