@@ -47,3 +47,22 @@ def test_a_month_trend_compared_is_said_never_sent(console) -> None:
     text, calls = console.say(_rank(_e("Sorento", "brand"), group_by="month", compare_to="last_year", **SEP), "sorento by month vs last year")
     assert calls == [], (text, calls)
     assert "month" in text.lower() and "compare" in text.lower(), text
+
+
+def test_review_a_refine_comparing_a_month_trend_is_said(console) -> None:
+    console.say(_rank(_e("Sorento", "brand"), group_by="month", **SEP), "sorento by month september")
+    text, calls = console.say(_refine(compare_to="last_year"), "compare with last year")
+    assert calls == [], (text, calls)
+    assert "compare" in text.lower() and "month" in text.lower(), text
+
+
+def test_review_a_drill_into_months_from_a_compared_ranking_is_said() -> None:
+    """A held `compare_to` rides into a drill; a month breakdown of it is said, never a 422."""
+    from app.services.chatbot.lanes.business import report_ask
+
+    branch = report_ask._branch(
+        {"group_by": "month", "compare_to": "last_year", "customer_ids": ["c1"], "measure": "amount", "basis": "delivered"},
+        None, report_ask.period_from("2026-09-01", "2026-09-30"), held=True,
+    )
+    outcome = report_ask._collect_branch(None, branch)
+    assert outcome.reply == report_ask.COMPARE_BY_MONTH_LINE and outcome.slot is None and not outcome.done, outcome
