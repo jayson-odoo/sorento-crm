@@ -224,3 +224,58 @@ Cosmetic: at 1280 the six boxes are narrow, so "Kept or dropped" with its captio
 "Customer's message" nearly touches its arrow; nothing is clipped.
 
 Servers stopped and session `viz` closed.
+
+---
+
+# Round 4 (fix round v2.1, head `96e025377`)
+
+Head: `96e025377` (exact short sha from `git rev-parse --short=9 HEAD`). Round 3 seed reused. Re-seeded: the main turn's
+`closed_lists_index.matches` regenerated with the new `block_with_matches` (so `plain` / `source` come from the new code),
+plus a numeric registry key `zz_wattage` ("Wattage", numeric) whose word `wattage` carries the item
+`spec zz_wattage (a number)`; the main turn's `tool` event args now also hold `contact_id`, `space_id`,
+`dry_run: true`, `limit: 5` and `product_code: "ZZ_K4013"` (besides `product_codes`, `product_id` UUID and `finish`).
+Same navigation as before (sidebar to Chat History / Prompts; `?turn=<id>` for the drawer).
+
+| Check | 1280x900 | 375x812 |
+|---|---|---|
+| A. Looked-up hides contact id, space id, dry run, limit | PASS | PASS |
+| A. Looked-up shows "Product code: ZZ_K4013" verbatim and "Finish: French Gold" | PASS | PASS |
+| A. Numeric-key word reads "Wattage: a number" (source "from the product wattage list") | PASS | PASS |
+| A. "Show details" off by default | PASS | PASS |
+| B. Flow: 3 boxes per row, two rows, no word-by-word wrapping | PASS | n/a (stacked, as before) |
+| B. Specifications sentence keeps "-FRG" on one line | PASS | PASS |
+| B. No `{{current_date}}` chip under Architecture; returns on Edit | PASS | PASS |
+| B. Warehouses "-" in both size cells | PASS | PASS |
+| B. 375 tables stack, all values visible | n/a | PASS |
+| C. No parser / token / grounding / snake_case in the two components | PASS | PASS |
+| C. Console errors | PASS (see note) | PASS (see note) |
+| C. Page sideways scroll | PASS (drawer 1280/1280, prompts 1265/1280) | PASS (drawer 375/375, prompts 360/375) |
+
+## A (screenshots `A-1280-r4.png`, `A-375-r4.png`, `A-375-lookedup-r4.png`)
+
+Section text (details off): chips `stock` `zzkt71ss` `frg` `wattage` (last three filled); rows `zzkt71ss`, `wattage |
+Wattage: a number / from the product wattage list | - | -`, `frg | Finish: French Gold / from the product finish list (code
+ending -FRG) | "frg" read as Finish: French Gold -> Kept; "frg" read as a warehouse -> Dropped + a finish code ending, not on
+the warehouse list`. Looked up: `Stock balance / Finish: French Gold / Product code: ZZ_K4013 / Product codes: ZZKT71SS`;
+no contact id, space id, dry run, limit or product_id UUID. The "wattage" row shows "-" under understood and result
+because no entity was seeded for it (only its match was). At 375 the rows are cards, nothing clipped. Scans of the
+section and of the whole drawer (details off): no parser, token, grounding, snake_case.
+
+## B (screenshots `B-1280-r4.png`, `B-375-top-r4.png`, `B-375-lists-r4.png`, `B-375-tables-r4.png`)
+
+1280: row one Customer's message -> Matched list entries (Specifications, File types, Certificates) -> What the bot was
+given; row two What the bot understood -> Kept or dropped (Checked against the same lists and the warehouse list) -> What
+the bot looked up. The Specifications sentence ends "or a code ending like -FRG; close spellings count too." with the
+hyphen in the text as a non-breaking hyphen (U+2011), so "-FRG" never splits. Lists: Specifications 2 / 36 / 38, File
+types 2 / 30 / 20, Certificates 0 / 36 / 0, Warehouses 2 / - / -. What the bot is given: Rules 30.5k, Examples 3.7k,
+Product lists 102, Lists from other settings 5. Page text holds no `{{current_date}}` on the Architecture tab; clicking
+Edit brings it back. Scan inside the component: clean at both widths. 375: tables are `display:block` stacks, nothing
+inside scrolls sideways.
+
+## C note
+
+The console log holds exactly one `[error]`: `[next-auth][error][CLIENT_FETCH_ERROR] Failed to fetch ... /api/auth/session`,
+logged by the page that was navigating away while the dev server was still compiling right after sign-in. It is not from
+either component and did not recur on later page loads; no other errors, `errors` empty.
+
+Servers stopped and session `viz` closed.
