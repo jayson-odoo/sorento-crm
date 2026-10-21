@@ -3485,6 +3485,15 @@ def _apply(
     focus_after_pending, pending_after, pending_short_circuit, domain_locked = _answer_pending(
         state, decision, trace, verdict
     )
+    if verdict.get("topic_reset") is True:
+        # The parser marked this turn a topic reset: the reset wins over whatever the pending-answer
+        # branch returned (as the state path's new_subject does). The stored question goes, and a
+        # branch that returned before `_focus_rules` still gets the wipe.
+        pending_after = None
+        if pending_short_circuit is not None and state.state_led is None:
+            kept = {k: getattr(focus_after_pending, k) for k in RESET_KEEPS}
+            focus_after_pending = replace(Focus(**kept), tasks=focus_after_pending.tasks)
+            trace.rules_fired.append("reset_on_topic")
     if pending_short_circuit is not None:
         # #1262 slice 8 (F1b siblings): `focus_after_pending` carries this branch's
         # OWN mutation (a queued kind_pick's settled sibling) where one exists - the
