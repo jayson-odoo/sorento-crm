@@ -721,9 +721,22 @@ const LineBlock = React.memo(function LineBlock({
           ) : (
             <RemarkCell
               label={`Remark, line ${no}`}
-              value={only?.remark ?? ''}
+              // OI-SPLIT-GEAR-REMARK: a stored split remark wins, then the server's words, then
+              // the line's confirmed remark (display only, never copied into the split state).
+              value={only?.remark || (savedRemark ? '' : line.ownRemark) || ''}
               generated={savedRemark ?? line.remarkGenerated ?? ''}
-              onValue={(remark) => only && handlers.remark(line, only.id, remark)}
+              onValue={(remark) =>
+                only &&
+                handlers.remark(
+                  line,
+                  only.id,
+                  // Typing the confirmed remark back stores nothing (H8), unless a split remark
+                  // was stored for the line as loaded: then X replaces it (H9).
+                  line.ownRemark && !savedRemark && !line.remarkStored && remark === line.ownRemark
+                    ? ''
+                    : remark,
+                )
+              }
               onBlur={handlers.fieldBlur}
             />
           )}

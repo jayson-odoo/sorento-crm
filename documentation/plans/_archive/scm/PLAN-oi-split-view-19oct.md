@@ -1,14 +1,6 @@
 # PLAN: split follow-ups after #1749 (OI-SPLIT-VIEW)
 
-Status: Hand test round 2 (PR #1794). Owner hand test 1 (20 Oct) FAILED on the popups' look; round 4
-(UAC E) made both popups the split edit sheet read-only, saved lines only; reviewer READY on
-17c7bc9b9d, sticky fix c3786389b8, main merged 1503ea9f7e; browser pass PASS on the crew copy :3106
-at 1503ea9f7e (crew-note 6281343410); owner hand test next. Owner approved mock v3
-at Lavish 21:54 with Q4 = (a) and the gear items of UAC D, recorded as mock v4
-`documentation/mockups/OI-SPLIT-VIEW/index.html`. Card answered (crew Q1 a,
-Q2 a; owner Q3 b, Q5 = (i) popup per line, crew ruling a14761180). Track: M (new rule on the board, UI on two existing screens, no
-migration). Lead pattern: tester red tests, one coder, reviewer, browser pass 1280/375 on the crew
-test copy.
+Status: merged (#1794, 296915c7ca) and deployed. Track M (no migration).
 
 Card: `oi-split-view-behaviour-card.md` (alongside; filed as crew ask 19 Oct). UAC:
 `oi-split-view-19oct-acceptance-criteria.md` (after the card is answered). Mock:
