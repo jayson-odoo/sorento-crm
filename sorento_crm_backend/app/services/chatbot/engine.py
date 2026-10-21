@@ -5098,10 +5098,10 @@ def _run_stages_body(  # noqa: PLR0915
         # PR #1353 fix round 3: a bare position over an open roster is read by the
         # engine, and its positions win over the parser's (turn 3f56a40d: "2" read as 1).
         # Not while a stock quantity asked AFTER the roster is the current question:
-        # there the bare number is that quantity (`apply._stock_task_is_the_current_question`).
-        from app.services.chatbot.turn.apply import (
-            _stock_task_is_the_current_question,
-            _stock_task_owed_a_number,
+        # there the bare number is that quantity (`chat_state.stock_task_is_the_current_question`).
+        from app.services.chatbot.turn.chat_state import (
+            stock_task_is_the_current_question as _stock_task_is_the_current_question,
+            stock_task_owed_a_number as _stock_task_owed_a_number,
         )
 
         if getattr(getattr(state_in, "profile", None), "stock_availability_only", False):

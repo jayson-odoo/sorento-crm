@@ -27,6 +27,16 @@ from typing import Any
 from app.services.chatbot import contracts
 from app.services.chatbot.turn import refer
 from app.services.chatbot.turn import task as task_mod
+from app.services.chatbot.turn.chat_state import (
+    bare_position_quantity,
+    lone_position as _lone_position,
+    message_states_a_quantity as _message_states_a_quantity,
+    names_a_product as _names_a_product,
+    stated_quantity as _stated_quantity,
+    stock_pick as _stock_pick,
+    stock_task_is_the_current_question as _stock_task_is_the_current_question,
+    stock_task_owed_a_number as _stock_task_owed_a_number,
+)
 from app.services.chatbot.turn.decide import (
     ANSWER,
     CARRY,
@@ -2205,17 +2215,6 @@ _REFUSES_EMPTY_SUBJECT: frozenset[str] = frozenset({"inventory"})
 # --------------------------------------------------------------------------- #
 
 
-def _stated_quantity(value: Any) -> int | None:
-    """A quantity the message stated, or None. Mirrors `turn/task.py::_number`."""
-    if isinstance(value, bool) or value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return int(value)
-    if isinstance(value, str) and value.strip().lstrip("+").isdigit():
-        return int(value.strip())
-    return None
-
-
 def _row_codes(row: dict[str, Any]) -> set[str]:
     out = set()
     for name in ("canonical_code", "code", "raw"):
@@ -2573,40 +2572,6 @@ def _did_you_mean_keeps_quantity(focus: Focus, verdict: dict[str, Any], trace: T
     trace.rules_fired.append("did_you_mean_keeps_quantity")
 
 
-def _stock_task_owed_a_number(focus: Focus) -> Any:
-    """The stock check a bare number is for, or None: one still asking its quantities
-    (any number of products - round 6, "one number like 10 to apply to all"), or a
-    one-product check just answered (the number revises it, round 5)."""
-    for task in focus.tasks or ():
-        if task.kind != "stock_qty":
-            continue
-        if task.status == task_mod.OPEN and task.slots:
-            return task
-        if task.status == task_mod.ANSWERED and len(task.slots) == 1:
-            return task
-    return None
-
-
-def _lone_position(verdict: dict[str, Any]) -> int | None:
-    """The one position this message names and nothing else beside it: no quantity, no
-    product of its own, no proceed and no reset."""
-    raw = verdict.get("reference_positions")
-    positions = [
-        int(p) for p in (raw if isinstance(raw, list) else [])
-        if isinstance(p, (int, float)) and not isinstance(p, bool)
-    ]
-    if len(positions) != 1 or positions[0] < 1:
-        return None
-    if (
-        _message_states_a_quantity(verdict)
-        or _names_a_product(verdict)
-        or verdict.get("proceed_anyway") is True
-        or verdict.get("topic_reset") is True
-    ):
-        return None
-    return positions[0]
-
-
 def _bare_position_is_the_quantity(state: State, verdict: dict[str, Any], trace: Trace) -> None:
     """Owner ruling 26 Sep 2026 (round 3 hand test, ruling 2): once the which-one pick is
     spent and the stock check is about one product, a bare number is that product's
@@ -2623,41 +2588,12 @@ def _bare_position_is_the_quantity(state: State, verdict: dict[str, Any], trace:
     tool asked "How many units of SRTWC286-SH?" again. Written onto `demand_qty` here,
     before any reader, the same way `_normalise_demand_qty` settles its own two shapes.
     """
-    task = _stock_task_owed_a_number(state.focus)
-    if task is None:
-        return
-    if state.pending is not None and not _stock_task_is_the_current_question(state, task, verdict):
-        return
-    position = _lone_position(verdict)
+    position = bare_position_quantity(state, verdict)
     if position is None:
         return
     verdict["demand_qty"] = position
     verdict["reference_positions"] = []
     trace.rules_fired.append("bare_number_is_the_quantity")
-
-
-def _stock_task_is_the_current_question(state: State, task: Any, verdict: dict[str, Any]) -> bool:
-    """Issue #1352, the chained-question rule (owner ruling, 29 Sep 2026): the engine
-    judges a message against the CURRENT question first, and earlier rosters stay stored
-    underneath for a later pick.
-
-    "incoming srtwc286" -> "4" -> "check stock" -> "How many units of SRTWC286-SH-NEW?"
-    leaves the product roster stored (sticky, contract 36) AND the stock task asking.
-    The task was touched after the roster was asked, so it is the question the next bare
-    number answers: "5" is SRTWC286-SH-NEW's quantity, never variant 5 off the roster
-    underneath (the scout's trace T4 fetched incoming for SRTWC286-SH-NEW-150). A message
-    that names its own domain is not a bare answer to either and is left to the judgement
-    in `_answer_pending`. A stored pick with no turn stamp, or one asked at or after the
-    task, is still the current question: today's behaviour.
-    """
-    pending = state.pending
-    if pending is None or _stock_pick(pending) or not is_roster(pending.kind):
-        return False
-    if names_its_own_domain(verdict):
-        return False
-    asked = pending.asked_at_turn
-    touched = max(task.opened_at_turn or 0, task.touched_at_turn or 0)
-    return isinstance(asked, int) and touched > asked
 
 
 def _open_point_form_task(focus: Focus) -> Any:
@@ -3116,31 +3052,6 @@ def _bare_number_over_a_finished_answer(
         ideation=state.ideation,
     )
     return asked, Plan(domains=["inventory"], fetch=[], ask=None, denied=[], trace=trace)
-
-
-def _stock_pick(pending: Any) -> bool:
-    """Is the open question a stock pick (owner hand test 26 Sep, slice 2 and F1): the
-    which-one question `turn/task.py::after_reply` asks over a product family, or the
-    dealer's did-you-mean? Both carry the typed quantity on their own payload."""
-    return pending is not None and bool((pending.payload or {}).get("stock_pick"))
-
-
-def _message_states_a_quantity(verdict: dict[str, Any]) -> bool:
-    if _stated_quantity(verdict.get("demand_qty")) is not None:
-        return True
-    return any(
-        isinstance(e, dict) and _stated_quantity(e.get("quantity")) is not None
-        for e in verdict.get("entities") or []
-    )
-
-
-def _names_a_product(verdict: dict[str, Any]) -> bool:
-    return any(
-        isinstance(e, dict)
-        and e.get("current_message") is True
-        and e.get("hint") in (None, "product")
-        for e in verdict.get("entities") or []
-    )
 
 
 #: AVAIL-MODE-REPLIES rule 4 (owner, 2 Oct 2026): the re-ask when a dealer answers a stock

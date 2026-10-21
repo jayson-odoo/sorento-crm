@@ -219,7 +219,7 @@ def _plan_uuids(plan: Any) -> dict[str, str]:
 
 
 def _quantity(value: Any) -> int | None:
-    """Mirrors `turn/apply.py::_stated_quantity`, without importing the turn package."""
+    """Mirrors `turn/chat_state.py::stated_quantity`, without importing the turn package."""
     if isinstance(value, bool) or value is None:
         return None
     if isinstance(value, (int, float)):
