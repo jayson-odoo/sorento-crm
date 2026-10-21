@@ -770,7 +770,11 @@ def apply_changes(
     data_picks: list[dict[str, Any]] = []
     # A bare number over an owed stock quantity is the quantity (the old path's safeguard, one
     # predicate): it is not a pick on an older list, so the pick loop leaves it to `apply`.
-    bare_quantity = bare_position_quantity(state, verdict)
+    bare_quantity = (
+        bare_position_quantity(state, verdict)
+        if (open_question or {}).get("kind") == question_mod.QUANTITIES
+        else None
+    )
     left_to_apply = False
     for position in picks:
         if bare_quantity is not None and position == bare_quantity and position not in options:
