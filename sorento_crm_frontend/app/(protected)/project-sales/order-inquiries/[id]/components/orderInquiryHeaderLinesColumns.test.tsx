@@ -921,6 +921,7 @@ describe('OI-RESERVE-PILL-QTY round 2: the line reads Requested, Reserve request
     qty: '170',
     reserve_state: 'requested',
     requested_qty: '70',
+    asked_reserve_qty: '70',
     reserved_qty: '0',
   });
 
@@ -943,9 +944,9 @@ describe('OI-RESERVE-PILL-QTY round 2: the line reads Requested, Reserve request
       };
     const [lineRow] = toLineRows(
       foldInquiryLines([
-        linesRow({ id: 'a', so_line_id: 'sol-1', qty: '100', reserve_state: 'requested', requested_qty: '70', reserved_qty: '0' }),
-        linesRow({ id: 'b', so_line_id: 'sol-1', qty: '70', reserve_state: 'reserved', requested_qty: '0', reserved_qty: '25' }),
-        linesRow({ id: 'c', so_line_id: 'sol-1', qty: '9', reserve_state: 'requested', requested_qty: '5', reserved_qty: '0' }),
+        linesRow({ id: 'a', so_line_id: 'sol-1', qty: '100', reserve_state: 'requested', requested_qty: '70', asked_reserve_qty: '70', reserved_qty: '0' }),
+        linesRow({ id: 'b', so_line_id: 'sol-1', qty: '70', reserve_state: 'reserved', requested_qty: '0', asked_reserve_qty: '0', reserved_qty: '25' }),
+        linesRow({ id: 'c', so_line_id: 'sol-1', qty: '9', reserve_state: 'requested', requested_qty: '5', asked_reserve_qty: '5', reserved_qty: '0' }),
       ]),
     );
     render(
@@ -956,6 +957,25 @@ describe('OI-RESERVE-PILL-QTY round 2: the line reads Requested, Reserve request
     );
     expect(screen.getByTestId('req')).toHaveTextContent('75');
     expect(screen.getByTestId('res')).toHaveTextContent('25');
+  });
+
+  it('a partial answer keeps both numbers: asked 70, reserved 50 (owner ruling 21 Oct 2026)', () => {
+    const partial = linesRow({
+      id: 'row-partial',
+      qty: '170',
+      reserve_state: 'reserved',
+      requested_qty: '0',
+      asked_reserve_qty: '70',
+      reserved_qty: '50',
+    });
+    render(
+      <>
+        <span data-testid="req">{cellOf('reserve_requested', partial)}</span>
+        <span data-testid="res">{cellOf('reserved', partial)}</span>
+      </>,
+    );
+    expect(screen.getByTestId('req')).toHaveTextContent('70');
+    expect(screen.getByTestId('res')).toHaveTextContent('50');
   });
 
   it('Reserved prints the reserved qty once CS has reserved', () => {

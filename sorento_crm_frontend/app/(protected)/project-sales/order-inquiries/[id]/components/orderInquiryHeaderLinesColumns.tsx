@@ -546,7 +546,7 @@ function quantityColumn({
 
 /** The line's reserve figure: summed over its live buy rows, the same fold Taken and
  * Requested use (`orderInquiryLineFold.ts`), so the columns beside them agree. */
-function lineReserveQty(row: OrderInquiryLineRow, field: 'requested_qty' | 'reserved_qty') {
+function lineReserveQty(row: OrderInquiryLineRow, field: 'asked_reserve_qty' | 'reserved_qty') {
   const total = lineOf(row)
     .liveRows.filter((live) => isInquiryBuyRow(live.verb))
     .reduce((sum, live) => sum + (Number(live[field] ?? '0') || 0), 0);
@@ -739,7 +739,7 @@ export function useOrderInquiryHeaderLinesColumns({
       // buy rows.
       ...QUANTITY_COLUMNS.slice(0, 2).map(quantityColumn),
       ...orderInquiryReserveQtyColumns<OrderInquiryLineRow>({
-        requestedOf: (row) => lineReserveQty(row, 'requested_qty'),
+        requestedOf: (row) => lineReserveQty(row, 'asked_reserve_qty'),
         reservedOf: (row) => lineReserveQty(row, 'reserved_qty'),
       }),
       ...QUANTITY_COLUMNS.slice(2).map(quantityColumn),

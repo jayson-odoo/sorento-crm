@@ -1131,7 +1131,7 @@ export function useOrderInquiryWorklistColumns({
         cell: ({ row }) => <QtyCell row={row.original} />,
       },
       ...orderInquiryReserveQtyColumns<OrderInquiryWorklistRow>({
-        requestedOf: (row) => row.requested_qty,
+        requestedOf: (row) => row.asked_reserve_qty,
         reservedOf: (row) => row.reserved_qty,
       }),
       {

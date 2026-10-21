@@ -500,6 +500,29 @@ _OPEN_REQUEST_QTY = (
     .limit(1)
     .scalar_subquery()
 )
+#: OI-RESERVE-PILL-QTY (owner ruling 21 Oct 2026): what purchasing last ASKED CS to
+#: reserve off this row, kept once CS answers so a partial answer (asked 70, reserved 50)
+#: still shows both numbers - `_OPEN_REQUEST_QTY` above drops to nothing the moment the row
+#: is answered. A request cancelled before its row was answered asks for nothing.
+_ASKED_RESERVE_QTY = (
+    select(OrderInquiryReserveRequestRow.qty_requested)
+    .select_from(OrderInquiryReserveRequestRow)
+    .join(
+        OrderInquiryReserveRequest,
+        OrderInquiryReserveRequest.id == OrderInquiryReserveRequestRow.request_id,
+    )
+    .where(
+        OrderInquiryReserveRequestRow.row_id == OrderInquiryRow.id,
+        or_(
+            OrderInquiryReserveRequestRow.qty_reserved.isnot(None),
+            OrderInquiryReserveRequest.state != "cancelled",
+        ),
+    )
+    .correlate(OrderInquiryRow)
+    .order_by(OrderInquiryReserveRequest.ordinal.desc())
+    .limit(1)
+    .scalar_subquery()
+)
 #: OI-BULK-RESERVE v4 (B2): the OPEN request row's warehouse id and code, same open-row
 #: conditions and latest ordinal as `_OPEN_REQUEST_QTY`, for the Lines page's Decide drafts.
 _OPEN_REQUEST_WAREHOUSE_ID = (
@@ -882,6 +905,7 @@ _COLUMNS = (
     _HAS_OPEN_RESERVE_REQUEST.label("has_open_reserve_request"),
     # PLAN-oi-request-cs-reserve.md 6e.2: the open request row's own `qty_requested`.
     _OPEN_REQUEST_QTY.label("requested_qty"),
+    _ASKED_RESERVE_QTY.label("asked_reserve_qty"),
     _OPEN_REQUEST_WAREHOUSE_ID.label("reserve_warehouse_id"),
     _OPEN_REQUEST_LOCATION.label("reserve_location"),
     # 6e.4 (AC-RS-78c): the latest answer, so a declined line reads `declined`.
@@ -2398,6 +2422,8 @@ class OrderInquiryWorklistService:
             # 6e.2: "0" when there is no open request row, same default shape as
             # `reserved_qty` above.
             "requested_qty": _qty_str(_dec(getattr(row, "requested_qty", None))),
+            # The last asked figure, kept after CS answers ("0" when nothing was asked).
+            "asked_reserve_qty": _qty_str(_dec(getattr(row, "asked_reserve_qty", None))),
             # OI-BULK-RESERVE v4 (B2): the open request row's warehouse, null without one.
             "reserve_warehouse_id": getattr(row, "reserve_warehouse_id", None),
             "reserve_location": getattr(row, "reserve_location", None),
@@ -3594,7 +3620,7 @@ class OrderInquiryWorklistService:
                         "split_figures": figures if first else ("", "", ""),
                         # The line's reserve figures, like `split_figures`: on its first
                         # row only, never repeated per split.
-                        "requested_qty": row.get("requested_qty") if first else None,
+                        "asked_reserve_qty": row.get("asked_reserve_qty") if first else None,
                         "reserved_qty": row.get("reserved_qty") if first else None,
                         # The line's rows stay together, in their own order.
                         "plan_key": (plan.base_date or date.max, line_id, index),
@@ -3658,7 +3684,7 @@ class OrderInquiryWorklistService:
                     "QTY": float(_dec(row["row_qty"]))
                     if own_figures and "row_qty" in row
                     else float(_dec(row.get("qty"))) if row.get("qty") not in (None, "") else None,
-                    "REQUESTED RESERVE": _export_reserve_qty(row.get("requested_qty")),
+                    "REQUESTED RESERVE": _export_reserve_qty(row.get("asked_reserve_qty")),
                     "RESERVED": _export_reserve_qty(row.get("reserved_qty")),
                     "TOTAL QTY": run_total,
                     "DELIVERY DATE": row["row_date"]

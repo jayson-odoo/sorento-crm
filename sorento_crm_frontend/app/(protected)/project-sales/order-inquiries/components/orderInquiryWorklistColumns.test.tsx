@@ -2205,6 +2205,7 @@ describe('OI-RESERVE-PILL-QTY round 2: Reserve requested and Reserved sit beside
       qty: '170',
       reserve_state: 'requested',
       requested_qty: '70',
+      asked_reserve_qty: '70',
       reserved_qty: '0',
     });
     renderRows([row], 'reserve_requested');
@@ -2219,8 +2220,21 @@ describe('OI-RESERVE-PILL-QTY round 2: Reserve requested and Reserved sit beside
     expect(within(screen.getByTestId('row-row-res')).getByText('70')).toBeInTheDocument();
   });
 
+  it('a partial answer keeps both numbers: asked 70, reserved 50 (owner ruling 21 Oct 2026)', () => {
+    const row = worklistRow({
+      id: 'row-partial',
+      qty: '170',
+      reserve_state: 'reserved',
+      requested_qty: '0',
+      asked_reserve_qty: '70',
+      reserved_qty: '50',
+    });
+    renderRows([row], 'reserve_requested');
+    expect(within(screen.getByTestId('row-row-partial')).getByText('70')).toBeInTheDocument();
+  });
+
   it('a zero or missing figure reads a muted dash, never "0"', () => {
-    renderRows([worklistRow({ id: 'row-none', requested_qty: '0' })], 'reserve_requested');
+    renderRows([worklistRow({ id: 'row-none', requested_qty: '0', asked_reserve_qty: '0' })], 'reserve_requested');
     const row = screen.getByTestId('row-row-none');
     expect(within(row).queryByText('0')).not.toBeInTheDocument();
     expect(within(row).getByText('-')).toBeInTheDocument();
