@@ -31,8 +31,15 @@ USAGE_KEYS = ("prompt_tokens", "cached_tokens", "completion_tokens")
 
 EXPECT_KEYS = frozenset({
     "status", "not_status", "domain_hint", "intent_hint", "product", "no_attribute", "customer", "canonical",
-    "attributes_only", "attributes_include", "attachment_types", "warehouse",
+    "attributes_only", "attributes_include", "attachment_types", "warehouse", "promotion_kind", "is_active",
+    "continues",
 })
+#: LEAN v90: the type each of these expect values must have (null allowed where listed).
+_EXPECT_TYPES: dict[str, tuple[type, ...]] = {
+    "is_active": (bool, type(None)),
+    "continues": (bool,),
+    "promotion_kind": (str, type(None)),
+}
 #: PARSER-TEMPLATE F1-B: what a gold row may say the conversation held before its message. Each
 #: value is the text as the user block shows it, or null.
 CONTEXT_KEYS = frozenset({"previous_reply", "subject", "open_question"})
@@ -72,6 +79,9 @@ def load_gold(path: Any) -> list[dict[str, Any]]:
                 isinstance(expect["warehouse"], list) and all(isinstance(w, str) for w in expect["warehouse"])
             ):
                 raise ValueError(f"line {n}: warehouse must be a list of warehouse words")
+            bad = [k for k, types in _EXPECT_TYPES.items() if k in expect and not isinstance(expect[k], types)]
+            if bad:
+                raise ValueError(f"line {n}: {bad[0]} has the wrong type")
             if "context" in row and not _valid_context(row["context"]):
                 raise ValueError(f"line {n}: context must map {sorted(CONTEXT_KEYS)} to text or null")
             seen.add(row["id"])
@@ -144,6 +154,21 @@ def grade_parse(verdict: dict[str, Any], expect: dict[str, Any]) -> tuple[bool, 
         has = any(e.get("hint") == "customer" for e in entities)
         if has != bool(expect["customer"]):
             reasons.append("customer entity " + ("missing" if expect["customer"] else "present"))
+    if "promotion_kind" in expect and _fold(verdict.get("promotion_kind")) != _fold(expect["promotion_kind"]):
+        reasons.append(f"promotion_kind {verdict.get('promotion_kind')!r} != {expect['promotion_kind']!r}")
+    if "is_active" in expect and verdict.get("is_active") is not expect["is_active"]:
+        reasons.append(f"is_active {verdict.get('is_active')!r} != {expect['is_active']!r}")
+    if "continues" in expect:
+        flagged = verdict.get("continuation") is True
+        if expect["continues"]:
+            # Continuing the listed set: the paging flag, and no new file ask beside it (turn_runtime.with_set_more).
+            if not flagged or verdict.get("domain_hint") == "product_attachment" or any(
+                e.get("hint") == "attachment_type" for e in entities
+            ):
+                reasons.append(f"continues: continuation {verdict.get('continuation')!r}, "
+                               f"domain_hint {verdict.get('domain_hint')!r}, or a file type entity")
+        elif flagged:
+            reasons.append("continues: continuation is true")
     if "warehouse" in expect:
         # The parse's own warehouse words, folded, as a set: [] means no warehouse entity at all.
         got = {_fold(raw) for raw in _warehouse_raws(entities)}
