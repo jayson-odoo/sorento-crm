@@ -55,6 +55,30 @@ Out of scope: discontinued candidates in did-you-mean (bug 5 of the incident), t
    while a parked task shares its domain; any later list question shown over an older last_list.
 4. Removes: the state path's private "lone position -> last_list pick" conversion while a quantities question is open.
 
+## Measured (22 Oct, lane DB copy of sorento_explore1020, dry run, egress blocked, dev key)
+- Replay, dealer contact, 8 turns x 3 arms (A v63 composer off Block; B v92 composer on Index; C v92 composer off
+  Block). The parse of `1` (did-you-mean pick) and of `2` (after "How many units of CL8109A?") is the same on v63 and
+  v92: open_question_answer pick [n], reference_positions [n]. So bugs 1 and 2 are code after the parser.
+  "Clear all": v63 topic_reset true + mode cancel; v92 topic_reset true in C, false in B.
+- Old path given parse B (topic_reset false, mode null) also clears nothing: parser variance, not a parity gap.
+- Parser gold set `scripts/chatbot_eval/gold/parser_pick_qty.jsonl` (16 rows), x1: picks by number, code, Malay,
+  Chinese and a continuously numbered roster pass on both prompts. A bare `2` over the quantity question: v63 gives no
+  position, v92 gives position 2 even with no last list, so on v92 the shared code safeguard holds it. Reset phrasings:
+  topic_reset true 6 of 7 on both; "padam semua" false on both.
+- Case 2 (owner Console, staff): a multi-product answer numbers items 1..11 and its did-you-mean 12-14
+  (turn/compose.py:479-492, product_pick :535-540); answer_bridge.py:287-288 `apply_crossdomain_hit` then replaces that
+  roster with the zero-stock escalate offer (or None), so `13` finds no option on either path. Ruling (crew-relayed): the
+  numbered question wins; keep the roster, render the rung without the offer sentence. No escalation-audience change
+  (owner ruling 22 Oct: as today, availability-only contacts get no offer per HT26, dealer-tier contacts keep it per
+  s11 26 Sep). Fact for a later lane, not changed here: the HT26 strip runs only on inventory/incoming turns
+  (engine.py:7828-7833; tests/chatbot/test_stock_ask_ht26_dealer_no_escalation.py:216 pins a promotion turn unstripped).
+
+## Slices
+1. task.run resume arm: parser answer to the stored question wins (red 56b383324d, fix e423c9481b).
+2. One bare-number predicate for both paths, `chat_state.bare_position_quantity` (red 1a3ab4b58e, fix 144f39068e).
+3. Topic reset on the state path drops the stored list (red e47f774f29).
+4. Numbered did-you-mean keeps its roster over the zero-stock offer (answer_bridge.py:272-288).
+
 ## Coordination
 REPORT-SMART-L (#1816) and CHAT-CLOSED-LISTS-L (#1755) touch turn/apply.py, chat_state.py, task.py; keep the diff to
 the seams above, rebase often.

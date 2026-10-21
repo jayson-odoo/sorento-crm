@@ -14,5 +14,10 @@ result is today's behaviour and must not change.
 5. Same as 3, but the dealer quotes the older list message: the reply picks row 2 of that list (the #1823 quoted-list
    rule is kept).
 6. "clear all" (and "start over" / "reset", Malay and Chinese variants as the parser reads them): the state path gives
-   the same result as the old path (measured by the v63 replay, recorded in the PR).
+   the same result as the old path (measured by the v63 replay, recorded in the PR): when the parser marks the turn a
+   topic reset, no task, no stored list and no open question survive, on both paths.
 7. No reply names an ID or UUID; no contact data in any committed fixture.
+8. A multi-product stock answer that numbers its items 1..11 and its did-you-mean 12, 13, 14 and also carries the
+   zero-stock escalate offer: the stored question is the numbered did-you-mean (positions 12-14) and the reply shows no
+   escalate sentence; `13` next turn answers the 13th option. Both paths. An answer with no question of its own keeps
+   today's offer.
