@@ -42,10 +42,13 @@ _MAX_SHEET_ROWS = 1_048_576
 #: Non-empty data rows per file. The catalogue is ~12k products.
 _MAX_DATA_ROWS = 50_000
 #: Sum of the workbook archive's uncompressed members; guards a zip bomb under 25 MB.
-#: Pictures (xl/media/) are never parsed in read-only mode, so they do not count; the XML
+#: Pictures are never parsed in read-only mode, so they do not count; the XML
 #: does (openpyxl holds roughly 75x its size in memory).
 _MAX_UNCOMPRESSED_BYTES = 20 * 1024 * 1024
 _MAX_CELL_CHARS = 256
+#: A member that starts like a picture is never parsed by openpyxl; the decision is by content,
+#: never by name (rels can point a sheet anywhere).
+_PICTURE_SIGNATURES = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a")
 _MAX_COLS = 64
 _MAX_HEADER_SHEETS = 10
 
@@ -131,9 +134,12 @@ def _sheets(data: bytes, name: str) -> Iterable[Iterable[tuple]]:
 
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
-            xml_bytes = sum(i.file_size for i in zf.infolist()
-                            if not i.filename.startswith("xl/media/"))
-            if xml_bytes > _MAX_UNCOMPRESSED_BYTES:
+            counted = 0
+            for info in zf.infolist():
+                with zf.open(info) as member:
+                    if not member.read(8).startswith(_PICTURE_SIGNATURES):
+                        counted += info.file_size
+            if counted > _MAX_UNCOMPRESSED_BYTES:
                 raise _bad_request("This workbook is too large to read.")
     except HTTPException:
         raise
@@ -161,7 +167,7 @@ def _cell(value: Any) -> str:
         return str(value)
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
-    return str(value)[:_MAX_CELL_CHARS].strip()
+    return str(value).strip()[:_MAX_CELL_CHARS]
 
 
 def _norm_header(value: Any) -> str:
