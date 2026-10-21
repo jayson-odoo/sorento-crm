@@ -5280,8 +5280,10 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
       expect(screen.getByTestId('board-confirm')).toHaveTextContent('Apply AutoCount change'),
     );
     expect(screen.getByTestId('board-confirm')).toBeEnabled();
-    expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent(
-      'Applies the AutoCount change from 1 Sep: 1 old line (CB110) is retired',
+    await waitFor(() =>
+      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent(
+        'Applies the AutoCount change from 1 Sep: 1 old line (CB110) is retired',
+      ),
     );
     await pressPreviewThenConfirm();
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
@@ -5331,9 +5333,13 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
       ),
     );
     expect(screen.getByTestId('board-confirm')).toBeEnabled();
+    await waitFor(() =>
+      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent(
+        'SO403340: from 1 Sep, 1 old line (WESERP10B) is retired',
+      ),
+    );
     const note = screen.getByTestId('board-autocount-change-note');
     expect(note).toHaveTextContent('Applies the AutoCount change on 2 orders');
-    expect(note).toHaveTextContent('SO403340: from 1 Sep, 1 old line (WESERP10B) is retired');
     expect(note).toHaveTextContent('SO398322: from 1 Sep, 1 old line (ZZT-B) is retired');
   });
 
@@ -5343,8 +5349,10 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
     retiredPlusNamedCancel();
     renderPanel(['SO403340']);
     await waitFor(() => expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'));
-    expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent(
-      'Also applies the AutoCount change from 1 Sep: 1 old line (WESERP10B) is retired',
+    await waitFor(() =>
+      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent(
+        'Also applies the AutoCount change from 1 Sep: 1 old line (WESERP10B) is retired',
+      ),
     );
   });
 

@@ -5,7 +5,10 @@
  * enabled "Confirm (0)".
  */
 import { describe, expect, it } from 'vitest';
-import type { BoardContribution, BoardDraft } from '../types/fulfilmentPlanning.types';
+import type {
+  BoardContribution,
+  BoardDraft,
+} from '../types/fulfilmentPlanning.types';
 import {
   autocountChangeNotes,
   autocountChangeSentence,
@@ -54,18 +57,28 @@ const retired = [5, 14, 22, 30, 38, 46, 54, 62, 70, 78].map((lineNo) =>
     cancelled: true,
   }),
 );
-const cancelLineNos = [82, 96, 112, 256, 272, 296, 480, 496, 512, 640, 656, 672];
+const cancelLineNos = [
+  82, 96, 112, 256, 272, 296, 480, 496, 512, 640, 656, 672,
+];
 const cancels = cancelLineNos.map((lineNo) =>
-  row({ key: `${SO}|${lineNo}|RL-NEW|2026-12-08`, project_line_id: `pl-${lineNo}`, line_no: lineNo }),
+  row({
+    key: `${SO}|${lineNo}|RL-NEW|2026-12-08`,
+    project_line_id: `pl-${lineNo}`,
+    line_no: lineNo,
+  }),
 );
 const contributions = [...retired, ...cancels];
-const draft: BoardDraft = Object.fromEntries(cancels.map((line) => [line.key, CANCEL]));
+const draft: BoardDraft = Object.fromEntries(
+  cancels.map((line) => [line.key, CANCEL]),
+);
 const named = new Set(contributions.map((line) => line.key));
 const options = { batchNamedKeys: named } as never;
 
 describe('Confirm and Saved count decisions only (D1)', () => {
   it('SO394881 reads 12, not 22: the 10 retired lines are not counted', () => {
-    expect(confirmSummaryFor(contributions, draft, new Set([SO]), options).toConfirm).toBe(12);
+    expect(
+      confirmSummaryFor(contributions, draft, new Set([SO]), options).toConfirm,
+    ).toBe(12);
   });
 
   it('Saved names the 12 Cancel SO lines and none of the retired lines', () => {
@@ -82,7 +95,12 @@ describe('Confirm and Saved count decisions only (D1)', () => {
 describe('the AutoCount change is one note per order (D2)', () => {
   it('lists the retired lines of each order with their item codes', () => {
     expect(autocountChangeNotes(contributions, draft)).toEqual([
-      { salesOrderId: SO, soNumber: 'SO394881', count: 10, itemCodes: ['SRTWCX8840-S-RL'] },
+      {
+        salesOrderId: SO,
+        soNumber: 'SO394881',
+        count: 10,
+        itemCodes: ['SRTWCX8840-S-RL'],
+      },
     ]);
   });
 
@@ -92,7 +110,11 @@ describe('the AutoCount change is one note per order (D2)', () => {
 });
 
 describe('the note sentence (D2-D5)', () => {
-  const note = { count: 10, itemCodes: ['SRTWCX8840-S-RL'], createdAt: '2026-09-24T06:36:12' };
+  const note = {
+    count: 10,
+    itemCodes: ['SRTWCX8840-S-RL'],
+    createdAt: '2026-09-24T06:36:12',
+  };
 
   it('on the board, beside decisions and on its own', () => {
     expect(autocountChangeSentence(note, 'board', true)).toBe(
@@ -114,15 +136,27 @@ describe('the note sentence (D2-D5)', () => {
 
   it('one line, many item codes, and no batch date', () => {
     expect(
-      autocountChangeSentence({ count: 1, itemCodes: ['CB110'], createdAt: null }, 'board', false),
-    ).toBe('Applies the pending AutoCount change: 1 old line (CB110) is retired');
+      autocountChangeSentence(
+        { count: 1, itemCodes: ['CB110'], createdAt: null },
+        'board',
+        false,
+      ),
+    ).toBe(
+      'Applies the pending AutoCount change: 1 old line (CB110) is retired',
+    );
     expect(
       autocountChangeSentence(
-        { count: 5, itemCodes: ['A', 'B', 'C', 'D', 'E'], createdAt: '2026-10-02T00:00:00' },
+        {
+          count: 5,
+          itemCodes: ['A', 'B', 'C', 'D', 'E'],
+          createdAt: '2026-10-02T00:00:00',
+        },
         'confirmed',
         false,
       ),
-    ).toBe('Applied the AutoCount change from 2 Oct: 5 old lines (A, B, C and 2 more) were retired');
+    ).toBe(
+      'Applied the AutoCount change from 2 Oct: 5 old lines (A, B, C and 2 more) were retired',
+    );
   });
 });
 
