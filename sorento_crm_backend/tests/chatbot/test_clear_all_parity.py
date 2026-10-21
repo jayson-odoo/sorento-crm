@@ -90,3 +90,66 @@ def test_the_focus_diff_of_a_reset_that_drops_the_list_is_whole():
     diff = focus_diff(state.focus, new_state.focus)
     assert "last_list" in diff
     assert diff["last_list"]["before"] and not diff["last_list"]["after"]
+
+
+# --- a cancel answer resets on the state path as on the old path ----------------------------------
+# Live v92 ("mula semula", "全部清除", "Restart"): state_changes [close_question], open_question_answer
+# mode cancel, topic_reset false. The old path's cancel rule (`_open_question_answer` writes
+# topic_reset true) is the reset; the state path must reach the same result.
+
+
+def _did_you_mean_pending():
+    from app.services.chatbot.turn import pending as turn_pending
+
+    return turn_pending.ask(
+        "product_pick",
+        [
+            {"position": i, "label": c, "code": c, "uuid": ht.uuid_of(c), "entity_type": "product",
+             "uuids": [ht.uuid_of(c)], "payload": {}}
+            for i, c in enumerate(LISTED, 1)
+        ],
+        asked_at_turn=4,
+        payload={"domain": "inventory", "domains": ["inventory"], "stock_pick": True,
+                 "did_you_mean": True, "typed": "CLB109A", "count": 3, "stock_qty": None},
+    )
+
+
+def _cancel_state(gate: bool, context: str):
+    from app.services.chatbot.turn import task as task_mod
+
+    status = task_mod.PARKED if context == "did_you_mean" else task_mod.OPEN
+    task = ht.stock_task([(code, None) for code in OLDER], status=status, opened_at_turn=2, touched_at_turn=2)
+    rows = [
+        {"position": i, "label": c, "code": c, "uuid": ht.uuid_of(c), "entity_type": "product", "shown_at_turn": 4}
+        for i, c in enumerate(LISTED, 1)
+    ]
+    focus = Focus(
+        products=ht.product_rows(*OLDER), domains=["inventory"], tasks=(task,),
+        last_list=rows if gate and context == "did_you_mean" else None,
+    )
+    pending = _did_you_mean_pending() if context == "did_you_mean" else None
+    return replace(ht.state(focus, pending=pending, turn_no=5), state_path=gate)
+
+
+def _cancel_parse(gate: bool):
+    v = verdict(
+        domain_hint="inventory", intent_hint="check_stock", entities=[], topic_reset=False,
+        open_question_answer={"mode": "cancel", "picked": [], "items": [], "qty_for_all": None},
+    )
+    if gate:
+        v["state_changes"] = [{"op": "close_question", "axis": None, "position": None}]
+    return v
+
+
+@GATES
+@pytest.mark.parametrize("context", ["did_you_mean", "quantities"])
+def test_a_cancel_answer_over_a_did_you_mean_or_quantities_resets_on_both_paths(gate, context):
+    new_state, plan = _turn(_cancel_state(gate, context), _cancel_parse(gate))
+    # A cancel over a did-you-mean is the decline of that question ("none of them"): the dealer is
+    # referred to the salesman on BOTH paths. Over the quantities question it asks nothing.
+    expected = "Please refer to your salesman." if context == "did_you_mean" else None
+    assert plan.trace.task_question == expected, plan.trace.task_question
+    assert not [t for t in new_state.focus.tasks if t.status == "open"], new_state.focus.tasks
+    assert new_state.pending is None, new_state.pending
+    assert not new_state.focus.last_list
+    assert not ht.inventory_specs(plan)
