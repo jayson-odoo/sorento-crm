@@ -43,14 +43,14 @@ def _rows(shown_at: int = 1) -> list[dict[str, Any]]:
     ]
 
 
-def _state(gate: bool, *, last_list: bool = True):
+def _state(gate: bool, *, last_list: bool = True, quoted: int | None = None):
     task = ht.stock_task([(HELD, None)], opened_at_turn=4, touched_at_turn=4)
     focus = Focus(
         products=ht.product_rows(HELD), domains=["inventory"], tasks=(task,),
         last_list=_rows() if last_list else None,
     )
     state = ht.state(focus, turn_no=5)
-    return replace(state, state_path=gate)
+    return replace(state, state_path=gate, quoted_turn_no=quoted)
 
 
 def _turn(state, v: dict[str, Any]):
@@ -60,6 +60,7 @@ def _turn(state, v: dict[str, Any]):
             domains=DOMAINS, kinds=KINDS, brands=[], positions_read_elsewhere=False,
         )
         # A rejected change set still runs the turn on the input state, as the engine does.
+        assert applied.state.state_gate, "the state path was not entered"
         state, v = applied.state, applied.verdict
     return apply(state, v, build_policy())
 
@@ -152,3 +153,10 @@ def test_guard_f1_a_bare_number_over_a_newer_list_with_no_question_picks_its_row
     _new_state, plan = _turn(state, v)
     codes = [row["canonical_code"] for spec in ht.inventory_specs(plan) for row in spec.entities]
     assert codes == ["ELP3755"], codes
+
+
+def test_guard_quoting_the_did_you_mean_message_picks_its_row():
+    state = _state(True, quoted=1)
+    new_state, plan = _turn(state, _two(True))
+    codes = [row["canonical_code"] for spec in ht.inventory_specs(plan) for row in spec.entities]
+    assert codes == ["C9109A"], codes

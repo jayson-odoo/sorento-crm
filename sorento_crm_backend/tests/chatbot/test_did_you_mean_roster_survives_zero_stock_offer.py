@@ -121,6 +121,7 @@ def test_thirteen_on_the_next_turn_resolves_the_suggested_code(rung, gate, tier)
             state, v, open_question=question_mod.open_question(state.pending, state.focus.tasks),
             domains=DOMAINS, kinds=KINDS, brands=[], positions_read_elsewhere=False,
         )
+        assert applied.state.state_gate, "the state path was not entered"
         state, v = applied.state, applied.verdict
     _new_state, plan = apply(state, v, build_policy())
     codes = [row["canonical_code"] for spec in ht.inventory_specs(plan) for row in spec.entities]

@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import pytest
 
+from app.services.chatbot.turn import chat_state
 from app.services.chatbot.turn import pending as turn_pending
+from app.services.chatbot.turn import question as question_mod
 from app.services.chatbot.turn import task as task_mod
 from app.services.chatbot.turn.apply import apply
 from app.services.chatbot.turn.state import Focus
@@ -57,6 +59,24 @@ def _state(status: str, gate: bool):
     return replace(ht.state(focus, pending=_did_you_mean(), turn_no=5), state_path=gate)
 
 
+DOMAINS = ["inventory", "incoming", "order", "sales", "product_attachment", "promotion"]
+KINDS = ["product", "customer", "brand", "promotion", "attachment", "order"]
+
+
+def _run(state, v, ops):
+    """The engine's order on the state path: the applier reads the parser's `state_changes`
+    (and puts the turn under the state gate), then the turn APPLY. Off the path, APPLY alone."""
+    if getattr(state, "state_path", False):
+        v = {**v, "state_changes": ops}
+        applied = chat_state.apply_changes(
+            state, v, open_question=question_mod.open_question(state.pending, state.focus.tasks),
+            domains=DOMAINS, kinds=KINDS, brands=[], positions_read_elsewhere=False,
+        )
+        assert applied.state.state_gate, "the state path was not entered"
+        state, v = applied.state, applied.verdict
+    return apply(state, v, build_policy())
+
+
 def _pick_verdict(form: str):
     answer = {"mode": "pick", "picked": [], "items": [], "qty_for_all": None}
     entities = []
@@ -78,7 +98,7 @@ def _pick_verdict(form: str):
 @pytest.mark.parametrize("form", ["position", "code"])
 def test_pick_answer_answers_the_pick_and_leaves_the_older_task(form, status, gate):
     state = _state(status, gate)
-    new_state, plan = apply(state, _pick_verdict(form), build_policy())
+    new_state, plan = _run(state, _pick_verdict(form), [{"op": "pick", "axis": None, "position": 1}])
 
     assert plan.trace.task_question is None, "the older task's question was returned"
     assert "task_resumed_stock_qty" not in plan.trace.rules_fired
@@ -120,7 +140,7 @@ def test_a_yes_to_a_one_option_did_you_mean_answers_it_and_leaves_the_parked_tas
         domain_hint="inventory", intent_hint="check_stock", entities=[], is_affirmative=True,
         open_question_answer={"mode": "yes", "picked": [], "items": [], "qty_for_all": None},
     )
-    new_state, plan = apply(_parked_state(gate), v, build_policy())
+    new_state, plan = _run(_parked_state(gate), v, [{"op": "answer", "axis": None, "position": None}])
     assert plan.trace.task_question is None, "the older task's question was returned"
     assert "task_resumed_stock_qty" not in plan.trace.rules_fired
     codes = [row["canonical_code"] for spec in ht.inventory_specs(plan) for row in spec.entities]
@@ -138,5 +158,5 @@ def test_guard_an_unfit_pick_applies_nothing_and_still_resumes_as_on_main(gate):
             "qty_for_all": None,
         },
     )
-    _new_state, plan = apply(_parked_state(gate), v, build_policy())
+    _new_state, plan = _run(_parked_state(gate), v, [{"op": "answer", "axis": None, "position": None}])
     assert "task_resumed_stock_qty" in plan.trace.rules_fired

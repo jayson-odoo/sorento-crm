@@ -63,6 +63,7 @@ def _turn(state, v):
             state, v, open_question=question_mod.open_question(state.pending, state.focus.tasks),
             domains=DOMAINS, kinds=KINDS, brands=[], positions_read_elsewhere=False,
         )
+        assert applied.state.state_gate, "the state path was not entered"
         state, v = applied.state, applied.verdict
     return apply(state, v, build_policy())
 
