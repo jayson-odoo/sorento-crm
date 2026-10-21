@@ -1385,7 +1385,9 @@ class ProjectSupplyService:
             product_id = core.product_id or mirror.product_id
             if product_id:
                 code = self.db.query(Product.product_code).filter(Product.id == product_id).scalar()
-            echo.append({"line_no": mirror.line_no, "item_code": code})
+            # The reason rides back (PLAN-BATCH-HELD-CANCEL): an AutoCount Cancel SO draft's
+            # reason names its document, and the board's results say which one.
+            echo.append({"line_no": mirror.line_no, "item_code": code, "reason": reason})
         self.db.flush()
         project_line_draft_service.delete_drafts_for_lines(
             self.db,
@@ -11593,6 +11595,8 @@ class ProjectSupplyService:
                         "lines_carried": body.get("lines_carried"),
                         "lines_withdrawn": body.get("lines_withdrawn") or [],
                         "lines_cancelled": body.get("lines_cancelled") or [],
+                        "planning_change_applied": body.get("planning_change_applied"),
+                        "lines_retired": body.get("lines_retired") or [],
                         # The board confirms every order in one press and reports one toast,
                         # so the movements and the flags have to come back PER ORDER or the
                         # toast has nothing to add up. `.get`, because the planning-change

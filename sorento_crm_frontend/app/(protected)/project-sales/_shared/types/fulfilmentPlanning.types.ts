@@ -674,6 +674,8 @@ export interface CancelledLineBody {
 export interface CancelledLineEcho {
   line_no?: number | null;
   item_code?: string | null;
+  /** Why it went to Cancel SO ("AutoCount Cancel SO <doc>" for an AutoCount draft). */
+  reason?: string | null;
 }
 
 export interface ConfirmException {
@@ -719,6 +721,10 @@ export interface ConfirmResult {
   lines_withdrawn?: ConfirmedLine[] | null;
   /** The lines this press transferred to Cancel SO. */
   lines_cancelled?: CancelledLineEcho[] | null;
+  /** PLAN-BATCH-HELD-CANCEL: this press applied the order's pending AutoCount change. */
+  planning_change_applied?: boolean | null;
+  /** The lines that change retired (the book cancelled them). */
+  lines_retired?: CancelledLineEcho[] | null;
   /** How many of the confirmed lines were flagged as a suspected system problem (R10). */
   suspected_issues?: number | null;
   /**
@@ -2694,6 +2700,10 @@ export interface ConfirmManyOrderResult {
   lines_withdrawn?: ConfirmedLine[] | null;
   /** The lines this press transferred to Cancel SO. */
   lines_cancelled?: CancelledLineEcho[] | null;
+  /** PLAN-BATCH-HELD-CANCEL: this press applied the order's pending AutoCount change. */
+  planning_change_applied?: boolean | null;
+  /** The lines that change retired (the book cancelled them). */
+  lines_retired?: CancelledLineEcho[] | null;
   transfers?: PreviewTransfer[] | null;
   pso_id: string;
   ok: boolean;
