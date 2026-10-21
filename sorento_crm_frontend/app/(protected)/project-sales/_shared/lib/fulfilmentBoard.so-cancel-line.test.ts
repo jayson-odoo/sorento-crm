@@ -206,7 +206,10 @@ describe('committed Cancel SO line (AC-F16)', () => {
   });
 
   it('control: a book-cancelled line is still retired by the press', () => {
-    expect(plannedLineCount([bookCancelled], 'so-1', {})).toBe(1);
+    // PLAN-BATCH-COUNT-DISPLAY (owner ruling 21 Oct 2026 ~16:15): not counted as a decision; it
+    // is the AutoCount change note, and the press still retires it.
+    expect(plannedLineCount([bookCancelled], 'so-1', {})).toBe(0);
+    expect(board.autocountChangeNotes([bookCancelled], {})).toHaveLength(1);
     expect(confirmDialogRowsFor([bookCancelled], {}, ctx).cancelled).toHaveLength(1);
   });
 });

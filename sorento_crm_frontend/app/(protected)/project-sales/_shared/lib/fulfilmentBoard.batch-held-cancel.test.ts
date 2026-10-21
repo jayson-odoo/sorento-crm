@@ -128,23 +128,22 @@ describe('a saved Cancel SO the pending AutoCount change names rides in the same
 });
 
 describe('the counter offers exactly what the press does (U1)', () => {
-  it('Confirm counts the 10 lines the change retires plus the 12 Cancel SO, on one order', () => {
+  // PLAN-BATCH-COUNT-DISPLAY (owner ruling 21 Oct 2026 ~16:15): decisions only. The 10 lines the
+  // change retires are one note (`autocountChangeNotes`), not part of the count.
+  it('Confirm counts the 12 Cancel SO, on one order, not the 10 lines the change retires', () => {
     const summary = confirmSummaryFor(contributions, draft, blocked, options);
     expect(summary.orderCount).toBe(1);
-    expect(summary.toConfirm).toBe(22);
+    expect(summary.toConfirm).toBe(12);
   });
 
-  it('Saved names the same 22 lines Confirm counts, never Saved (0) beside Confirm (N)', () => {
+  it('Saved names the same 12 lines Confirm counts, never Saved (0) beside Confirm (N)', () => {
     const saved = contributions.filter((line) =>
       pressPostsContribution(line, draft[line.key], {
         batchBlocked: true,
         batchNamedKeys: named,
       } as never),
     );
-    expect(saved.map((line) => line.line_no)).toEqual([
-      ...bookCancelled.map((line) => line.line_no),
-      ...replacementLineNos,
-    ]);
+    expect(saved.map((line) => line.line_no)).toEqual(replacementLineNos);
     expect(saved).toHaveLength(
       confirmSummaryFor(contributions, draft, blocked, options).toConfirm,
     );
