@@ -1413,15 +1413,27 @@ class ResolveReferenceRequest(BaseModel):
             "the known choices before anything is counted or searched."
         ),
     )
+    no_free_remainder: bool = Field(
+        default=False,
+        description=(
+            "CLOSED LISTS: on a file ask the described set comes only from the caller's "
+            "entities, never from the leftover words of the message."
+        ),
+    )
+    cert_number_is_code: bool = Field(
+        default=False,
+        description=(
+            "CLOSED LISTS: a token the resolver matched exactly as a certificate counts as a "
+            "typed code, so `require` does not describe a set over the leftover words."
+        ),
+    )
     set_list_max: int | None = Field(
         default=None,
         ge=1,
         description=(
             "Fix round 9 on PR #833: the longest set the caller lists in one reply. A "
-            "`require` set longer than it carries `predicate.breakdown` (its members "
-            "counted by the next attribute), and a set that qualifies nothing carries "
-            "`predicate.members` (the described products without the legs). Absent: "
-            "neither is computed."
+            "`require` set that qualifies nothing carries `predicate.members` (the "
+            "described products without the legs). Absent: it is not computed."
         ),
     )
     hidden_spec_keys: list[str] | None = Field(
@@ -1620,7 +1632,40 @@ class ResolveReferenceRequest(BaseModel):
 _CODE_MATCH_TIERS = frozenset({"exact", "prefix", "substring", "head_code", "and"})
 
 
-def _code_matched(result: dict[str, Any], tokens: list[str] | None = None) -> bool:
+def _contact_hidden_spec_keys(db: Session, payload: "ResolveReferenceRequest") -> set[str]:
+    """The spec keys this contact may not be told about: the caller's list UNIONED with the
+    contact's own policy (see the AC-18 / B/S2 notes at the spec fallback)."""
+    hidden_spec_keys = {str(k) for k in (payload.hidden_spec_keys or [])}
+    if payload.contact_id:
+        from app.services.field_access import (
+            resolve_contact_with_null_workspace_fallback,
+        )
+        from app.services.spec_visibility import (
+            full_registry_rows,
+            hidden_keys as _hidden_keys,
+            resolve_policy as _resolve_spec_policy,
+        )
+
+        # SF-1 (security re-verify): resolved through the SAME NULL-
+        # workspace fallback `check_access` uses, not the bare
+        # `resolve_contact_id` `resolve_policy` calls internally - a
+        # contact with `workspace_id IS NULL` (16 measured) resolves to
+        # nothing through the plain path, so this route would have handed
+        # such a contact the closed DEFAULT policy while `check_access`
+        # gives them their real one. Once resolved to the internal id,
+        # `resolve_policy` re-resolving it is a same-id no-op.
+        resolved_contact_id = resolve_contact_with_null_workspace_fallback(
+            db, contact_id=payload.contact_id, space_id=payload.space_id
+        )
+        contact_policy = _resolve_spec_policy(
+            db, resolved_contact_id or payload.contact_id, payload.space_id
+        )
+        registry_keys = {key for key, _label in full_registry_rows(db)}
+        hidden_spec_keys |= _hidden_keys(contact_policy, registry_keys)
+    return hidden_spec_keys
+
+
+def _code_matched(result: dict[str, Any], tokens: list[str] | None = None, *, certificates: bool = False) -> bool:
     """Code first (fix round 13 on PR #833, owner 28 Sep 2026: "if found by product code
     -> forward asking, if cannot find product code, fallback to spec search -> reverse
     asking"): did the resolver match a caller token to a product BY ITS CODE?
@@ -1642,6 +1687,9 @@ def _code_matched(result: dict[str, Any], tokens: list[str] | None = None) -> bo
 
     def _hit(token: Any, match: Any) -> bool:
         fragment = _fold(token)
+        if certificates and isinstance(match, dict) and match.get("entity_type") == "certificate":
+            # CLOSED LISTS: a certificate matched exactly (by number, or scheme and number).
+            return any(ch.isdigit() for ch in fragment) and match.get("match_tier") == "exact"
         return (
             any(ch.isdigit() for ch in fragment)
             and isinstance(match, dict)
@@ -1794,17 +1842,27 @@ def _with_grounded_unknowns(found: list[dict], grounded: list[dict] | None) -> l
     return extra + [u for u in found if u.get("key") not in keys]
 
 
-def _unknown_value_members(db: Session, payload, query_text: str, unknown: list[dict], current_user) -> dict | None:
-    """The described set without its unknown value, broken down by that value's key:
-    "pink water closets" is answered with the finishes the water closets do come in
-    (fix round 9 on PR #833, owner: "always break it down"). None when the rest of the
-    ask describes no set."""
+def _without_hidden_specs(specs: list[dict], hidden: set[str]) -> list[dict]:
+    """A contact-hidden key never filters the set: out of a bare size's OR (R6-5 S2), and a
+    strict entry on it is dropped, the rule the spec fallback applies (R6-6)."""
+    if not hidden:
+        return specs
+    specs = [
+        {**e, "any_keys": [k for k in e["any_keys"] if k not in hidden]} if e.get("any_keys") else e
+        for e in specs
+    ]
+    return [e for e in specs if ("any_keys" in e and e["any_keys"]) or ("any_keys" not in e and e.get("key") not in hidden)]
+
+
+def _unknown_value_members(
+    db: Session, payload, query_text: str, unknown: list[dict], current_user, hidden: set[str] = frozenset()
+) -> dict | None:
+    """The described set without its unknown value, for the miss reply's phrase (its
+    description and class). SET-STOCK-RENDER (owner, 16 Oct 2026): never broken down.
+    None when the rest of the ask describes no set."""
     from app.services.product_predicate_service import resolve_product_set
     from app.services.product_spec_understanding import derive_search_inputs
 
-    # Fix round 10 on PR #833: a word with no key at all ("pnk" in "pnk water closet",
-    # "kitchne" in "kitchne sink") breaks the rest down by the next attribute that splits
-    # it (`_set_breakdown`), so the reply still lists what does exist.
     key = next((u.get("key") for u in unknown if u.get("key")), None)
     said = [str(u.get("said") or "") for u in unknown]
     specs, _free, _excl, _understanding = derive_search_inputs(
@@ -1817,7 +1875,7 @@ def _unknown_value_members(db: Session, payload, query_text: str, unknown: list[
         log_usage=False,
     )
     brand_entry = next((e for e in specs if e.get("key") == "brand"), None)
-    specs = [e for e in specs if e.get("key") not in ("brand", key)]
+    specs = _without_hidden_specs([e for e in specs if e.get("key") not in ("brand", key)], hidden)
     scope_terms = list(payload.scope_terms or [])
     if not specs and not scope_terms:
         return None
@@ -1829,13 +1887,12 @@ def _unknown_value_members(db: Session, payload, query_text: str, unknown: list[
         limit=1,
         brand=str(brand_entry["value"]) if brand_entry else None,
         access_levels=payload.access_levels,
-        breakdown_key=key,
-        breakdown_over=None if key else 0,
+        hidden_keys=frozenset(hidden),
     )
     if not outcome.get("qualifying_total"):
         return None
     members: dict[str, Any] = {"total": int(outcome["qualifying_total"])}
-    for field in ("breakdown", "description", "class_labels"):
+    for field in ("description", "class_labels"):
         if outcome.get(field):
             members[field] = outcome[field]
     return members
@@ -1942,8 +1999,11 @@ def _has_turn_free_terms(
 #: filename, a transporter's or a form's name. A token whose kind the caller has locked
 #: (`hint_locked_tokens`) is never given one of these; the resolver's product rows (code
 #: tiers and the spec tier) and every other kind are untouched.
+#: CHAT-CLOSED-LISTS S4a (owner CP0 card c06, "Why we cant identify WC ya"): the attachment
+#: TYPE is one too - its probe reads the type's description words, so a locked "WC" was
+#: handed the Certification type through "wcm" and the bot asked "WC (attachment type)?".
 _NAME_MATCHED_KINDS: frozenset[str] = frozenset(
-    {"promotion", "customer", "attachment", "transporter", "form"}
+    {"promotion", "customer", "attachment", "attachment_type", "transporter", "form"}
 )
 
 
@@ -1966,6 +2026,9 @@ def _name_kinds_dropped_for(domain_hint: str | None) -> frozenset[str]:
     own: set[str] = {canonical} if canonical else set()
     if domain in {"resource_attachment", "attachment"}:
         own.add("attachment")
+    if domain in {"product_attachment", "resource_attachment", "attachment"}:
+        # A file ask: the type a word names is that ask's own answer.
+        own.add("attachment_type")
     if canonical == "customer_order":
         # Order / sales (crew ruling Q4 on the lane card, 6 Oct 2026: out of scope): the
         # resolver's own domain expansion reads a brand or category word there as the
@@ -2212,6 +2275,38 @@ def _has_unresolved_tokens(result: dict[str, Any]) -> bool:
     if not isinstance(resolutions, list):
         return False
     return any(not (tr.get("matches") or []) for tr in resolutions)
+
+
+def _open_tokens_are_codes_the_catalogue_lacks(result: dict[str, Any]) -> bool:
+    """Every token left unanswered is one the code reader READ AS A CODE that the catalogue's
+    re-probe then did not find (`fallback == {kind: "code", matched: 0}`, entity_resolver's
+    code-reader block). The spec MODEL reading would read that same code and can find
+    nothing either, so it is not asked (CHAT-LATENCY-SCOUT, crew ruling 20 Oct 2026: 2-3 s
+    of a reply for no answer). The reader's own verdict decides, never a pattern of ours:
+    `none` (no code in the text, i.e. a description), `family`, `error`, `not_asked` or no
+    verdict keep the model reading. So does any other reason the spec gate opened (product
+    words a partial row left unanswered, a product question only non-product rows answered),
+    because then the sentence holds more than the dead code.
+    """
+    resolutions = result.get("resolutions")
+    if "intersection" in result or not isinstance(resolutions, list) or _product_words_unanswered(result):
+        return False
+    considered = [tr for tr in resolutions if isinstance(tr, dict) and not _brand_scoping(tr)]
+    open_ = [tr for tr in considered if not (tr.get("matches") or [])]
+    if not open_:
+        return False
+    # A token some non-product row answered (a promotion's description, say) holds words the
+    # spec reading may yet place as a product, so it stays (`_no_product_row_answered`).
+    if any(
+        tr.get("matches")
+        and not any((m or {}).get("entity_type") in _PRODUCT_ROW_TYPES for m in tr["matches"])
+        for tr in considered
+    ):
+        return False
+    return all(
+        (tr.get("fallback") or {}).get("kind") == "code" and (tr.get("fallback") or {}).get("matched") == 0
+        for tr in open_
+    )
 
 
 # The parser's domains whose answer is a product row. n8n sends the parser's
@@ -3288,7 +3383,7 @@ def resolve_reference_post(
     # UNLESS a caller token matched a product by code (`_code_matched`: code first,
     # spec search only when no code matched), so the response stays byte-identical to
     # the same request without `require`.
-    if payload.require and not _code_matched(result, payload.tokens):
+    if payload.require and not _code_matched(result, payload.tokens, certificates=payload.cert_number_is_code):
         from app.services.product_predicate_service import (
             recover_certificate_scheme,
             resolve_product_set,
@@ -3324,10 +3419,17 @@ def resolve_reference_post(
         # with it dropped or read as its nearest neighbour.
         from app.services.product_spec_search import unknown_spec_values
 
-        unknown = _with_grounded_unknowns(
-            unknown_spec_values(db, " ".join([payload.query or "", *(payload.scope_terms or [])])),
-            payload.unknown_values,
-        )
+        # H1b: the contact's hidden keys, read ONCE at this entry: a hidden key is never said
+        # back as an unknown value, never breaks the set down and never narrows it.
+        hidden = _contact_hidden_spec_keys(db, payload)
+        unknown = [
+            u
+            for u in _with_grounded_unknowns(
+                unknown_spec_values(db, " ".join([payload.query or "", *(payload.scope_terms or [])])),
+                payload.unknown_values,
+            )
+            if u.get("key") not in hidden
+        ]
         if unknown:
             result["predicate"] = {
                 "require": payload.require,
@@ -3336,9 +3438,9 @@ def resolve_reference_post(
                 "unrecognized_terms": [u["said"] for u in unknown],
                 "unknown_values": unknown,
             }
-            # Fix round 9 on PR #833: the subject without the unknown value, broken down
-            # by that value's key, so the reply lists what the set does come in.
-            members = _unknown_value_members(db, payload, query_text, unknown, current_user)
+            # Fix round 9 on PR #833: the subject without the unknown value, which the
+            # reply names (SET-STOCK-RENDER: no breakdown lines).
+            members = _unknown_value_members(db, payload, query_text, unknown, current_user, hidden)
             if members:
                 result["predicate"]["members"] = members
             return _stamp_brand_on_products(db, result)
@@ -3368,6 +3470,10 @@ def resolve_reference_post(
             log_usage=not payload.dry_run,
         )
         specs = _with_parser_brand(specs, payload.brand_tokens)
+        # Owner a35818889 (b): a hidden key the customer NAMED (a strict entry) never narrows the set;
+        # the reply says it is not available, like the fetch projection's `spec_hidden:<key>` line.
+        named_hidden = sorted({str(e["key"]) for e in specs if "any_keys" not in e and e.get("key") in hidden})
+        specs = _without_hidden_specs(specs, hidden)
         if understanding is None and not specs and not payload.scope_terms and not payload.free_terms:
             # Nothing describes a set: the message held only predicate words ("Stock") and
             # no spec, brand or class word grounded. A set built off the looked-up ids
@@ -3418,7 +3524,11 @@ def resolve_reference_post(
         scope_terms = (
             list(payload.scope_terms)
             if payload.scope_terms
-            else (None if payload.free_terms else _has_turn_free_terms(payload, result, query_text))
+            else (
+                None
+                if payload.free_terms
+                else ([] if payload.no_free_remainder else _has_turn_free_terms(payload, result, query_text))
+            )
         )
 
         # The counted set lists off the QUALIFYING ids themselves, capped at
@@ -3451,9 +3561,10 @@ def resolve_reference_post(
             stock_policy=_stock_policy_for(db, payload) if require.get("stock") else None,
             # Fix round 9 on PR #833 (owner, 28 Sep 2026): no brand named means every
             # brand, never a silent default. R1's weighted default is off here; a set too
-            # long for one message is broken down by brand instead (`breakdown`).
+            # long for one message is listed in part (SET-STOCK-RENDER, 16 Oct 2026).
             prefer_weighted_brand=False,
             breakdown_over=payload.set_list_max,
+            hidden_keys=frozenset(hidden),
         )
         # One nested block, not top-level scalars: n8n item-mutation chains
         # persist top-level keys across nodes. And never inside `by_entity_type`,
@@ -3464,6 +3575,13 @@ def resolve_reference_post(
             "truncated": outcome["truncated"],
             "unrecognized_terms": outcome["unrecognized_terms"],
         }
+        if named_hidden:
+            from app.services.product_spec_registry import active_registry
+
+            labels = {row.spec_key: row.label for row in active_registry(db)}
+            result["predicate"]["spec_hidden"] = [
+                {"key": key, "label": labels.get(key) or key.replace("_", " ").capitalize()} for key in named_hidden
+            ]
         # D2/AC-1313: present ONLY on a scheme miss - a resolvable scheme carries
         # no such key at all, so a caller reading it never has to tell "no schemes"
         # from "not a scheme question".
@@ -3515,9 +3633,8 @@ def resolve_reference_post(
         # R4 (round 4): what a zero set looked for and the count in its other values.
         if outcome.get("near_miss"):
             result["predicate"]["near_miss"] = outcome["near_miss"]
-        # Fix round 9: a long set's breakdown by the next attribute, and a zero set's
-        # described products without the legs.
-        for key in ("breakdown", "members", "set_brands"):
+        # Fix round 9: a zero set's described products without the legs.
+        for key in ("members", "set_brands"):
             if outcome.get(key):
                 result["predicate"][key] = outcome[key]
         # W4: what a page of this set replays - the bound specs, the brand and the ids
@@ -3585,10 +3702,17 @@ def resolve_reference_post(
         # never searched for as its nearest neighbour, so no spec candidate is offered.
         from app.services.product_spec_search import unknown_spec_values
 
-        unknown = _with_grounded_unknowns(
-            unknown_spec_values(db, payload.query or "", registry_rows=registry_rows),
-            payload.unknown_values,
-        )
+        # H1b: the contact's hidden keys, read once here (the later spec drops reuse the set); a
+        # hidden key is never said back as an unknown value.
+        hidden_spec_keys = _contact_hidden_spec_keys(db, payload)
+        unknown = [
+            u
+            for u in _with_grounded_unknowns(
+                unknown_spec_values(db, payload.query or "", registry_rows=registry_rows),
+                payload.unknown_values,
+            )
+            if u.get("key") not in hidden_spec_keys
+        ]
         if unknown:
             result["unknown_spec_values"] = unknown
             return _stamp_brand_on_products(db, result)
@@ -3615,7 +3739,8 @@ def resolve_reference_post(
                 payload.query,
                 specs=list(payload.extracted_specs or []),
                 free_terms=list(payload.free_terms or []),
-                allow_model=payload.understand_phrase,
+                allow_model=payload.understand_phrase
+                and not _open_tokens_are_codes_the_catalogue_lacks(result),
                 user_id=current_user.get("id"),
                 registry_rows=registry_rows,
                 # D14: a dry run reads the sentence exactly the same way and simply does
@@ -3643,33 +3768,6 @@ def resolve_reference_post(
         # pair `check_access` uses) and UNIONS it in. The caller-supplied list
         # only ever narrows further; it can never widen past the server's own
         # answer for that contact.
-        hidden_spec_keys = {str(k) for k in (payload.hidden_spec_keys or [])}
-        if payload.contact_id:
-            from app.services.field_access import (
-                resolve_contact_with_null_workspace_fallback,
-            )
-            from app.services.spec_visibility import (
-                full_registry_rows,
-                hidden_keys as _hidden_keys,
-                resolve_policy as _resolve_spec_policy,
-            )
-
-            # SF-1 (security re-verify): resolved through the SAME NULL-
-            # workspace fallback `check_access` uses, not the bare
-            # `resolve_contact_id` `resolve_policy` calls internally - a
-            # contact with `workspace_id IS NULL` (16 measured) resolves to
-            # nothing through the plain path, so this route would have handed
-            # such a contact the closed DEFAULT policy while `check_access`
-            # gives them their real one. Once resolved to the internal id,
-            # `resolve_policy` re-resolving it is a same-id no-op.
-            resolved_contact_id = resolve_contact_with_null_workspace_fallback(
-                db, contact_id=payload.contact_id, space_id=payload.space_id
-            )
-            contact_policy = _resolve_spec_policy(
-                db, resolved_contact_id or payload.contact_id, payload.space_id
-            )
-            registry_keys = {key for key, _label in full_registry_rows(db)}
-            hidden_spec_keys |= _hidden_keys(contact_policy, registry_keys)
         if hidden_spec_keys:
             specs = [s for s in specs if s.get("key") not in hidden_spec_keys]
 
