@@ -236,6 +236,7 @@ export function LineSplitEditor({
   onlyLineIds,
   lineRemarks,
   onSaveRemarks,
+  canDrag = true,
   readLoaded = false,
   stayAfterSave = false,
   onSaved,
@@ -266,6 +267,11 @@ export function LineSplitEditor({
   >;
   /** Saves the edited remarks of `lineRemarks` lines (line id -> remark, '' = the default). */
   onSaveRemarks?: (changes: ReadonlyMap<string, string>) => Promise<void>;
+  /**
+   * OI-SPLIT-CONFIRM-POLISH (owner, 21 Oct 2026): false = no drag grips and no draggable
+   * "N left" (the guided Confirm's page); the qty and date cells still edit. Default: drag.
+   */
+  canDrag?: boolean;
   /**
    * The host has just read this order's split plan and shows it loaded: start from that read
    * instead of waiting for the editor's own refetch (no skeleton flash on the guide page).
@@ -1013,6 +1019,7 @@ export function LineSplitEditor({
               overTarget={overTarget}
               flashLineId={flashLineId}
               handlers={handlers}
+              canDrag={canDrag}
             />
             {typeof document !== 'undefined'
               ? createPortal(

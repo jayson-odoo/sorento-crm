@@ -85,7 +85,7 @@ async function cells(no: number) {
 }
 
 describe('header', () => {
-  it('reads SO date, S/O no, Item code, Location, Qty, New qty, Delivery date, New date, Change quantity, Change date, Remark, Balance', async () => {
+  it('reads SO date, S/O no, Item code, Location, Qty, New qty, Delivery date, New date, Breakdown qty, Breakdown date, Remark, Balance', async () => {
     await renderDialog();
     const heads = within(await sheet())
       .getAllByRole('columnheader')
@@ -93,7 +93,7 @@ describe('header', () => {
       .filter(Boolean);
     expect(heads).toEqual([
       'so date', 's/o no', 'item code', 'location', 'qty', 'new qty',
-      'delivery date', 'new date', 'change quantity', 'change date', 'remark', 'balance',
+      'delivery date', 'new date', 'breakdown qty', 'breakdown date', 'remark', 'balance',
     ]);
     expect(heads).not.toContain('autocount line');
   });
