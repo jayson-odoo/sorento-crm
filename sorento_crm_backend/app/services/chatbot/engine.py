@@ -4823,8 +4823,8 @@ def _run_stages_body(  # noqa: PLR0915
                 "model": parser_config.model,
                 "prompt_sha256": _parser_prompt_sha256(parser_config),
                 "provider": getattr(parser_config, "provider", None),
-                # The parser call sends no reasoning effort, so None is the recorded truth.
-                "reasoning_effort": None,
+                # LEAN: the effort the parser call SENT ("off": none, also for a provider other than OpenAI).
+                "reasoning_effort": parser.sent_reasoning_effort(parser_config),
                 "code_sha": GIT_SHA,
                 # A replay miss fails here: the console check must not read it as a live
                 # spend (LLM-TEST-COST).
@@ -4895,8 +4895,8 @@ def _run_stages_body(  # noqa: PLR0915
             "model": parser_config.model,
             "prompt_sha256": _parser_prompt_sha256(parser_config),
             "provider": getattr(parser_config, "provider", None),
-            # The parser call sends no reasoning effort, so None is the recorded truth.
-            "reasoning_effort": None,
+            # LEAN: the effort the parser call SENT ("off": none, also for a provider other than OpenAI).
+            "reasoning_effort": parser.sent_reasoning_effort(parser_config),
             "code_sha": GIT_SHA,
             "tokens": int(parser_usage.get("total_tokens") or 0),
             # Chatbot memory lane A (contract section 6): the provider's own split,
@@ -4906,6 +4906,12 @@ def _run_stages_body(  # noqa: PLR0915
             # LLM-TEST-COST: the prompt-cache hit, and whether this parse was live,
             # recorded or replayed (`off` everywhere but a test run).
             "cached_tokens": int(parser_usage.get("cached_tokens") or 0),
+            # LEAN: the part of completion_tokens spent reasoning, only when the provider reported it.
+            **(
+                {"reasoning_tokens": parser_usage["reasoning_tokens"]}
+                if parser_usage.get("reasoning_tokens") is not None
+                else {}
+            ),
             "llm_cassette": llm_cassette.mode_label(),
             "parser_bypassed": parser_bypassed,
             "recalled_frames": len(recalled),

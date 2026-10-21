@@ -99,6 +99,9 @@ class ParserConfig:
     # the system prompt carries each full list as one fixed pointer line and the candidate
     # block carries the index lines (`head/closed_lists_index`). Only with closed_lists.
     closed_lists_index: bool = False
+    # LEAN: `system_settings.chatbot_parser_reasoning_effort` as read for this parse (REASONING_EFFORTS).
+    # `parse` puts it on an OpenAI request only when it is not `off` (`sent_reasoning_effort`).
+    reasoning_effort: str = "off"
 
 
 def _build_base_json_schema() -> dict[str, Any]:
@@ -821,6 +824,30 @@ def closed_lists_schema(items: list[str], *, state: bool = False) -> dict[str, A
     return schema
 
 
+#: The stored parser reasoning efforts; anything else (a typo, "none", an effort this list does not hold) is `off`.
+#: `off` and `low` only (LEAN review S1): minimal, medium and high are unmeasured, and medium / high can spend the
+#: whole PARSER_MAX_TOKENS ceiling on reasoning. Trigger to widen: a measured arm shows a value is needed, and
+#: PARSER_MAX_TOKENS is raised with it in the same change.
+REASONING_EFFORTS = frozenset({"off", "low"})
+
+
+def reasoning_effort_setting(db: Session) -> str:
+    """`system_settings.chatbot_parser_reasoning_effort`, read now (no cache: a flip reaches the next parse);
+    anything not in REASONING_EFFORTS, or no row, is `off`."""
+    from app.models.user import SystemSetting
+
+    row = db.query(SystemSetting.chatbot_parser_reasoning_effort).first()
+    value = row[0] if row is not None else None
+    return value if value in REASONING_EFFORTS else "off"
+
+
+def sent_reasoning_effort(config: ParserConfig) -> str:
+    """The effort `parse` actually sends: the stored one on OpenAI, `off` (none sent) otherwise. The trace
+    records this, so it says what the provider was asked for."""
+    effort = getattr(config, "reasoning_effort", "off")
+    return effort if effort in REASONING_EFFORTS and getattr(config, "provider", None) == "openai" else "off"
+
+
 def resolve_config(
     db: Session, *, current_date: str, override_version_id: str | None = None
 ) -> ParserConfig:
@@ -887,6 +914,7 @@ def resolve_config(
         state_block=state_block,
         template=TEMPLATE_MARKER in (raw_template or ""),
         closed_lists_index=index_mode,
+        reasoning_effort=reasoning_effort_setting(db),
     )
 
 
@@ -1173,6 +1201,8 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
             # One cache bucket per published prompt version: every parse on it shares
             # the same static prefix (OpenAI only; the others ignore it).
             prompt_cache_key=f"{PROMPT_KEY}:v{config.prompt_version or 'fallback'}",
+            # LEAN: the stored effort, on OpenAI only and only when set (`off` sends none, as before).
+            **({"reasoning_effort": effort} if (effort := sent_reasoning_effort(config)) != "off" else {}),
         )
     except llm_call.RateLimited as exc:
         raise ParserError(f"parser provider call failed: {exc}", rate_limited=True) from exc
@@ -1188,6 +1218,8 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
         # The prompt-cache hit (LLM-TEST-COST): how much of `prompt_tokens` was billed
         # at the cached rate.
         "cached_tokens": int(getattr(result, "cached_tokens", 0) or 0),
+        # LEAN: the part of `completion_tokens` spent reasoning, None when the provider reports none.
+        "reasoning_tokens": getattr(result, "reasoning_tokens", None),
     }
     try:
         content = (result.content or "").strip()

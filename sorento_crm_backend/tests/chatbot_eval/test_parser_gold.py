@@ -867,3 +867,296 @@ def test_run_live_rows_record_the_warehouse_raws(session_factory, monkeypatch):
                       version_id="1", repeats=1, max_usd=5.0, require_key_last4="WXYZ")
     assert out[0]["passed"] is True and out[0]["warehouse"] == ["BRW"], out
     assert out[0]["closed_lists_mode"] == "off", out
+
+
+# --- LEAN-INDEX M2: each row records what the parse cost (tokens) and how long the parser call took ----------
+
+USAGE_KEYS = ("prompt_tokens", "cached_tokens", "completion_tokens")
+
+
+def _usage_run(session_factory, monkeypatch, parse):
+    from app.services.chatbot.head import parser as parser_mod
+
+    monkeypatch.setattr(parser_mod, "resolve_config", lambda db, **kw: _config())
+    monkeypatch.setattr(parser_mod, "parse", parse)
+    return pg.run_live([{"id": "u", "message": "ZZA100 price", "expect": {}}], session_factory=session_factory,
+                       version_id="1", repeats=1, max_usd=5.0, require_key_last4="WXYZ")
+
+
+def test_rows_record_the_parse_tokens_the_provider_reported(session_factory, monkeypatch):
+    from app.services.chatbot.head import parser as parser_mod
+
+    usage = {"provider": "openai", "model": "m", "prompt_tokens": 18318, "cached_tokens": 17920,
+             "completion_tokens": 214, "total_tokens": 18532}
+    out = _usage_run(session_factory, monkeypatch,
+                     lambda config, block: parser_mod.ParsedOutput({"status": None, "entities": []}, usage))
+    assert out[0]["reasons"] == [], out
+    assert {k: out[0].get(k) for k in USAGE_KEYS} == {"prompt_tokens": 18318, "cached_tokens": 17920,
+                                                       "completion_tokens": 214}, out
+
+
+def test_rows_record_the_parser_call_ms(session_factory, monkeypatch):
+    import time
+
+    def slow(config, block):
+        time.sleep(0.05)
+        return {"status": None, "entities": []}
+
+    out = _usage_run(session_factory, monkeypatch, slow)
+    ms = out[0].get("parser_ms")
+    assert isinstance(ms, int) and 50 <= ms < 5000, out
+
+
+def test_a_parse_that_reports_no_usage_records_none_not_zero(session_factory, monkeypatch):
+    out = _usage_run(session_factory, monkeypatch, lambda config, block: {"status": None, "entities": []})
+    assert all(k in out[0] and out[0][k] is None for k in USAGE_KEYS), out
+    assert isinstance(out[0].get("parser_ms"), int), out
+
+
+# ---- LEAN v90: expect keys promotion_kind / is_active / continues + the typo battery (red) ----
+
+TYPO_BATTERY = BACKEND / "scripts" / "chatbot_eval" / "gold" / "parser_typo_battery.jsonl"
+
+
+def test_load_gold_accepts_the_v90_expect_keys(tmp_path):
+    rows = pg.load_gold(_write(tmp_path, [
+        _row("a", "x", {"promotion_kind": "a3_flyer"}),
+        _row("b", "x", {"promotion_kind": None}),
+        _row("c", "x", {"is_active": False}),
+        _row("d", "x", {"is_active": None}),
+        _row("e", "x", {"continues": True}),
+    ]))
+    assert [r["id"] for r in rows] == ["a", "b", "c", "d", "e"]
+
+
+@pytest.mark.parametrize("good, bad", [
+    ({"is_active": False}, {"is_active": "false"}),
+    ({"continues": True}, {"continues": None}),
+    ({"continues": False}, {"continues": "yes"}),
+    ({"promotion_kind": "special"}, {"promotion_kind": 3}),
+])
+def test_load_gold_rejects_malformed_v90_values(tmp_path, good, bad):
+    # the well-typed sibling must load first, so a bare unknown-key refusal cannot pass this test
+    assert pg.load_gold(_write(tmp_path, [_row("a", "x", good)]))[0]["expect"] == good
+    with pytest.raises(ValueError):
+        pg.load_gold(_write(tmp_path, [_row("a", "x", bad)]))
+
+
+def test_promotion_kind_is_folded_equality():
+    ok, _ = pg.grade_parse({"promotion_kind": "a3_flyer"}, {"promotion_kind": "A3 Flyer"})
+    assert ok
+    ok, reasons = pg.grade_parse({"promotion_kind": "special"}, {"promotion_kind": "a3_flyer"})
+    assert not ok and any("promotion_kind" in r for r in reasons), reasons
+    ok, reasons = pg.grade_parse({"promotion_kind": None}, {"promotion_kind": "a3_flyer"})
+    assert not ok and any("promotion_kind" in r for r in reasons), reasons
+    ok, _ = pg.grade_parse({}, {"promotion_kind": None})
+    assert ok
+    ok, reasons = pg.grade_parse({"promotion_kind": "pp"}, {"promotion_kind": None})
+    assert not ok and any("promotion_kind" in r for r in reasons), reasons
+
+
+def test_is_active_is_exact_on_true_false_null():
+    for value in (True, False, None):
+        ok, reasons = pg.grade_parse({"is_active": value}, {"is_active": value})
+        assert ok, reasons
+    for got, want in ((True, False), (False, True), (None, True), (None, False), (True, None), (False, None)):
+        ok, reasons = pg.grade_parse({"is_active": got}, {"is_active": want})
+        assert not ok and any("is_active" in r for r in reasons), (got, want, reasons)
+    ok, reasons = pg.grade_parse({}, {"is_active": None})
+    assert ok, reasons
+
+
+def _more(**over):
+    return {"continuation": True, "domain_hint": None, "intent_hint": None, "entities": [], **over}
+
+
+def test_continues_true_needs_the_continuation_flag():
+    ok, reasons = pg.grade_parse(_more(), {"continues": True})
+    assert ok, reasons
+    ok, reasons = pg.grade_parse(_more(continuation=False), {"continues": True})
+    assert not ok and any("continues" in r for r in reasons), reasons
+    ok, reasons = pg.grade_parse({"entities": []}, {"continues": True})
+    assert not ok and any("continues" in r for r in reasons), reasons
+
+
+def test_continues_true_fails_on_a_new_file_type_ask():
+    entity = {"hint": "attachment_type", "listed_item": "product_photos", "confident": True}
+    ok, reasons = pg.grade_parse(_more(entities=[entity]), {"continues": True})
+    assert not ok and any("continues" in r for r in reasons), reasons
+    ok, reasons = pg.grade_parse(
+        _more(domain_hint="product_attachment", intent_hint="check_product_attachment"), {"continues": True})
+    assert not ok and any("continues" in r for r in reasons), reasons
+
+
+def test_continues_false_means_the_verdict_does_not_continue_the_set():
+    ok, reasons = pg.grade_parse(_more(continuation=False), {"continues": False})
+    assert ok, reasons
+    ok, reasons = pg.grade_parse({"entities": []}, {"continues": False})
+    assert ok, reasons
+    ok, reasons = pg.grade_parse(_more(), {"continues": False})
+    assert not ok and any("continues" in r for r in reasons), reasons
+
+
+def test_typo_battery_file_shape_and_counts():
+    rows = pg.load_gold(TYPO_BATTERY)
+    ids = [r["id"] for r in rows]
+    assert len(ids) == len(set(ids))
+    for cls in ("c1", "c2", "c3", "c4"):
+        mine = [i for i in ids if i.startswith(f"tb-{cls}-")]
+        controls = [i for i in mine if i.startswith(f"tb-{cls}-ctl-")]
+        assert len(mine) - len(controls) >= 8, cls
+        assert len(controls) >= 2, cls
+    by_id = {r["id"]: r for r in rows}
+    for i, r in by_id.items():
+        if i.startswith("tb-c1-"):
+            assert "promotion_kind" in r["expect"], i
+        if i.startswith("tb-c4-"):
+            assert "is_active" in r["expect"], i
+        if i.startswith("tb-c3-"):
+            assert "continues" in r["expect"], i
+        if i.startswith("tb-c2-") and "-ctl-" not in i:
+            assert r["expect"].get("product") and r["expect"].get("attachment_types"), i
+    for i, r in by_id.items():
+        if i.startswith("tb-c3-") and "-ctl-" not in i:
+            assert r["expect"]["continues"] is True, i
+            assert "Showing 10 of" in (r.get("context") or {}).get("previous_reply", ""), i
+    assert any(r["expect"].get("is_active") is True for i, r in by_id.items() if i.startswith("tb-c4-") and "-ctl-" not in i)
+    assert any(r["expect"].get("is_active") is False for i, r in by_id.items() if i.startswith("tb-c4-ctl-"))
+
+
+# --- LEAN: --reasoning-effort forces the STORED parser setting in-process (never the DB, never the provider) ------
+
+
+def _effort_version(session_factory, monkeypatch, provider: str = "openai") -> str:
+    """An unlabelled parser version and a stubbed provider config, so the REAL `resolve_config` runs."""
+    import types
+    import uuid
+
+    from app.models.ai_prompt import AIPromptVersion
+    from app.services import ai_assistant_service, llm_provider
+    from app.services.chatbot.head import parser as parser_mod
+
+    db = session_factory()
+    vid = str(uuid.uuid4())
+    db.add(AIPromptVersion(id=vid, name=parser_mod.PROMPT_KEY, version=43, type="text",
+                           template="Rules for {{current_date}}.", variables=["current_date"]))
+    db.commit()
+    service = types.SimpleNamespace(get=lambda: types.SimpleNamespace(provider=provider, model="gpt-test"))
+    monkeypatch.setattr(ai_assistant_service, "AIAssistantConfigService", lambda d: service)
+    monkeypatch.setattr(llm_provider, "resolve_api_key", lambda config, provider: "sk-test")
+    return vid
+
+
+def _stored_effort(session_factory, value: str | None = None) -> str | None:
+    """Set the stored setting (when `value`), and return what the DB holds."""
+    from app.models.user import SystemSetting
+
+    db = session_factory()
+    row = db.query(SystemSetting).first()
+    if value is not None:
+        if row is None:
+            row = SystemSetting()
+            db.add(row)
+        row.chatbot_parser_reasoning_effort = value
+        db.commit()
+    return row.chatbot_parser_reasoning_effort if row is not None else None
+
+
+def _effort_gold(session_factory, monkeypatch, effort, *, provider="openai", on_start=None):
+    from app.services.chatbot.head import parser as parser_mod
+
+    vid = _effort_version(session_factory, monkeypatch, provider)
+    seen: list[str] = []
+
+    def parse(config, block):
+        seen.append(config.reasoning_effort)
+        return {"status": None, "entities": []}
+
+    monkeypatch.setattr(parser_mod, "parse", parse)
+    out = pg.run_live([{"id": "e", "message": "ZZA100 price", "expect": {}}], session_factory=session_factory,
+                      version_id=vid, repeats=1, max_usd=5.0, require_key_last4="WXYZ", reasoning_effort=effort,
+                      on_start=on_start)
+    return out, seen
+
+
+@pytest.mark.parametrize("effort", ["off", "low"])
+def test_a_forced_effort_is_the_stored_setting_the_parse_reads(effort, session_factory, monkeypatch,
+                                                               _fresh_prompt_caches):
+    from app.services.chatbot.head import parser as parser_mod
+
+    real = parser_mod.reasoning_effort_setting
+    _stored_effort(session_factory, "low" if effort == "off" else "off")
+    headers: list[dict] = []
+    out, seen = _effort_gold(session_factory, monkeypatch, effort, on_start=headers.append)
+    assert out[0]["reasons"] == [], out
+    assert seen == [effort], seen
+    assert out[0]["reasoning_effort"] == effort, out
+    assert headers and headers[0]["reasoning_effort"] == effort and headers[0]["reasoning_forced"] is True, headers
+    assert parser_mod.reasoning_effort_setting is real
+
+
+def test_without_the_flag_the_stored_setting_is_used_and_rows_say_so(session_factory, monkeypatch,
+                                                                     _fresh_prompt_caches):
+    _stored_effort(session_factory, "low")
+    headers: list[dict] = []
+    out, seen = _effort_gold(session_factory, monkeypatch, None, on_start=headers.append)
+    assert seen == ["low"], seen
+    assert out[0]["reasoning_effort"] == "low", out
+    assert headers[0]["reasoning_effort"] == "low" and headers[0]["reasoning_forced"] is False, headers
+
+
+def test_the_forced_effort_never_writes_system_settings(session_factory, monkeypatch, _fresh_prompt_caches):
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session
+
+    from app.models.user import SystemSetting
+
+    _stored_effort(session_factory, "off")
+    written: list[str] = []
+
+    def spy(session, _ctx, _instances):
+        written.extend(type(o).__name__ for o in [*session.new, *session.dirty] if isinstance(o, SystemSetting))
+
+    event.listen(Session, "before_flush", spy)
+    try:
+        out, seen = _effort_gold(session_factory, monkeypatch, "low")
+    finally:
+        event.remove(Session, "before_flush", spy)
+    assert seen == ["low"] and written == [], (seen, written)
+    assert _stored_effort(session_factory) == "off"
+
+
+@pytest.mark.parametrize("bad", ["max", "none", "xhigh", "minimal", "medium", "high"])
+def test_an_unknown_effort_is_refused(bad):
+    with pytest.raises(ValueError):
+        pg.run_live([], session_factory=None, version_id="1", repeats=1, max_usd=1.0, require_key_last4="WXYZ",
+                    reasoning_effort=bad)
+
+
+def test_a_forced_effort_on_a_provider_other_than_openai_is_refused_before_any_parse(session_factory, monkeypatch,
+                                                                                     _fresh_prompt_caches):
+    with pytest.raises(ValueError):
+        _effort_gold(session_factory, monkeypatch, "low", provider="gemini")
+
+
+@pytest.mark.parametrize("bad", ["max", "none", "medium"])
+def test_cli_reasoning_effort_choices(bad):
+    with pytest.raises(SystemExit):
+        pg.main([*_BASE, "--reasoning-effort", bad])
+
+
+def test_rows_record_the_reasoning_tokens_the_provider_reported(session_factory, monkeypatch):
+    from app.services.chatbot.head import parser as parser_mod
+
+    usage = {"provider": "openai", "model": "m", "prompt_tokens": 100, "cached_tokens": 0,
+             "completion_tokens": 40, "total_tokens": 140, "reasoning_tokens": 37}
+    out = _usage_run(session_factory, monkeypatch,
+                     lambda config, block: parser_mod.ParsedOutput({"status": None, "entities": []}, usage))
+    assert out[0]["reasons"] == [], out
+    assert out[0].get("reasoning_tokens") == 37, out
+
+
+def test_a_parse_that_reports_no_reasoning_tokens_records_none(session_factory, monkeypatch):
+    out = _usage_run(session_factory, monkeypatch, lambda config, block: {"status": None, "entities": []})
+    assert "reasoning_tokens" in out[0] and out[0]["reasoning_tokens"] is None, out
+    assert "reasoning_tokens" in pg.USAGE_KEYS
