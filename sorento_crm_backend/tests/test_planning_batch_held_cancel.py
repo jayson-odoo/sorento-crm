@@ -96,11 +96,12 @@ def _world(client, world, *, n_old, n_cancel, n_covered, n_open, autocount=False
     covered = [_line(db, core_so, order, world, next(line_no)) for _ in range(n_covered)]
     still_open = [_line(db, core_so, order, world, next(line_no)) for _ in range(n_open)]
     db.commit()
-    assert _confirm_all(
-        client,
-        order,
-        lines=[_line_payload(m.id, buy_qty=QTY) for _c, m in [*old, *covered]],
-    )["ok"]
+    if old or covered:
+        assert _confirm_all(
+            client,
+            order,
+            lines=[_line_payload(m.id, buy_qty=QTY) for _c, m in [*old, *covered]],
+        )["ok"]
     batch = PlanningChangeBatch(id=str(uuid.uuid4()), source_kind="so_manual_edit", applied_at=None)
     db.add(batch)
     db.flush()
@@ -219,3 +220,199 @@ def test_q2_an_added_row_on_a_line_nobody_confirmed_stays_pending(api):
     assert _states(db, w, "open") == {"pending"}
     assert _states(db, w, "covered") == {"applied"}
     assert db.get(PlanningChangeBatch, w["batch_id"]).applied_at is None
+
+
+# --------------------------------------------------------------------------- #
+# Owner ruling (b), 21 Oct 2026 ~15:50 MYT, everywhere: "no Cancel SO sends any automated
+# email" ("B, I thought we had B all this while"). A Cancel SO (board or AutoCount draft) and a
+# line the book cancelled put NO line in any automated email and fire no changed-with-links
+# automation; a press that also confirms ordinary lines still emails those lines only; an email
+# whose only content would be cancels is not sent. Purchasing sees the rows cancelled in the CRM
+# and keeps the in-app "Planning change applied" notice. Resend never prints a cancelled row:
+# pinned by tests/test_oi_handover_resend.py::test_preview_single_rebuilds_open_rows_marked_resent.
+# --------------------------------------------------------------------------- #
+
+CHANGED_WITH_LINKS = "order_inquiry_changed_with_links"
+
+
+def _outbox_count(db) -> int:
+    from sqlalchemy import func
+
+    from app.models.email_outbox import EmailOutbox
+
+    db.expire_all()
+    return db.query(func.count(EmailOutbox.id)).scalar()
+
+
+def _live_row_on(world, w, mirror):
+    """A raised ORDER row on a line CS is about to transfer to Cancel SO."""
+    from app.models.project_so import OrderInquiry
+
+    from .test_oi_cancelled_line_used_confirm import _inquiry, _oi_row
+
+    db = world.db
+    inquiry = (
+        db.query(OrderInquiry)
+        .filter(
+            OrderInquiry.project_sales_order_id == w["order"].id,
+            OrderInquiry.amendment_id.is_(None),
+        )
+        .one_or_none()
+    ) or _inquiry(db, world.company_id, w["order"].id)
+    row = _oi_row(db, world.company_id, inquiry.id, mirror.id, "ZZT-ITEM", QTY)
+    db.commit()
+    return row
+
+
+@pytest.mark.parametrize("source", ["board", "autocount_cancel"])
+def test_the_press_with_held_cancels_sends_no_automated_email(api, monkeypatch, source):
+    from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow
+
+    from .test_order_inquiry_handover_automation import (
+        _captured_dispatches,
+        _handover_calls,
+        _register,
+    )
+
+    client, world = api
+    db = world.db
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+    w = _world(
+        client, world, n_old=2, n_cancel=2, n_covered=1, n_open=0,
+        autocount=source == "autocount_cancel",
+    )
+    rows = [_live_row_on(world, w, m) for _c, m in w["cancel"]]
+    old_rows = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id.in_([m.id for _c, m in w["old"]]))
+        .all()
+    )
+    assert old_rows, "the confirmed old lines raised ORDER rows the retire must cancel"
+    calls.clear()
+    outbox_before = _outbox_count(db)
+
+    result = _press(client, w, cancel=w["cancel"])
+
+    assert result["planning_change_applied"] is True
+    assert _handover_calls(calls) == []
+    assert [c for c in calls if c["trigger_type"] == CHANGED_WITH_LINKS] == []
+    assert _outbox_count(db) == outbox_before
+    # Purchasing still sees it in the CRM: every row on a cancelled or retired line is cancelled.
+    db.expire_all()
+    for row in [*rows, *old_rows]:
+        assert db.get(OrderInquiryRow, row.id).state == INQUIRY_CANCELLED
+
+
+def _spy(api, monkeypatch):
+    from .test_order_inquiry_handover_automation import _captured_dispatches, _register
+
+    _client, world = api
+    _register(world)
+    return _captured_dispatches(monkeypatch)
+
+
+def _mail(calls, db, outbox_before):
+    """What went out: handover dispatches, changed-with-links dispatches, new outbox rows."""
+    from .test_order_inquiry_handover_automation import _handover_calls
+
+    return (
+        _handover_calls(calls),
+        [c for c in calls if c["trigger_type"] == CHANGED_WITH_LINKS],
+        _outbox_count(db) - outbox_before,
+    )
+
+
+@pytest.mark.parametrize("source", ["board", "autocount_cancel"])
+def test_a_cancel_so_press_sends_no_automated_email(api, monkeypatch, source):
+    """No pending change at all: a manual Cancel SO, or confirming an AutoCount-cancel draft."""
+    from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow
+
+    client, world = api
+    calls = _spy(api, monkeypatch)
+    w = _world(
+        client, world, n_old=0, n_cancel=1, n_covered=1, n_open=0,
+        autocount=source == "autocount_cancel",
+    )
+    row = _live_row_on(world, w, w["cancel"][0][1])
+    calls.clear()
+    outbox_before = _outbox_count(world.db)
+
+    response = client.post(
+        f"{BASE}/fulfilment-planning/confirm-all",
+        json={
+            "orders": [
+                {
+                    "pso_id": w["order"].id,
+                    "lines": [],
+                    "cancelled_lines": [
+                        {"project_line_id": w["cancel"][0][1].id, "reason": REASON}
+                    ],
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert _mail(calls, world.db, outbox_before) == ([], [], 0)
+    world.db.expire_all()
+    assert world.db.get(OrderInquiryRow, row.id).state == INQUIRY_CANCELLED
+
+
+def test_a_batch_retire_sends_no_automated_email(api, monkeypatch):
+    """The book cancelled two confirmed lines; the press retires them (#1806's CANCEL ALL)."""
+    from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow
+
+    client, world = api
+    calls = _spy(api, monkeypatch)
+    w = _world(client, world, n_old=2, n_cancel=0, n_covered=1, n_open=0)
+    db = world.db
+    old_rows = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id.in_([m.id for _c, m in w["old"]]))
+        .all()
+    )
+    assert old_rows
+    calls.clear()
+    outbox_before = _outbox_count(db)
+
+    result = _press(client, w)
+
+    assert result["planning_change_applied"] is True
+    assert _mail(calls, db, outbox_before) == ([], [], 0)
+    db.expire_all()
+    assert {db.get(OrderInquiryRow, r.id).state for r in old_rows} == {INQUIRY_CANCELLED}
+
+
+def test_a_mixed_press_emails_its_order_lines_without_cancel_lines(api, monkeypatch):
+    """Cancel SO on one line beside a Buy confirmed on another: one handover, no CANCEL line."""
+    from .test_order_inquiry_handover_automation import _handover_calls
+
+    client, world = api
+    calls = _spy(api, monkeypatch)
+    w = _world(client, world, n_old=0, n_cancel=1, n_covered=0, n_open=1)
+    _live_row_on(world, w, w["cancel"][0][1])
+    calls.clear()
+
+    response = client.post(
+        f"{BASE}/fulfilment-planning/confirm-all",
+        json={
+            "orders": [
+                {
+                    "pso_id": w["order"].id,
+                    "lines": [_line_payload(w["open"][0][1].id, buy_qty=QTY)],
+                    "cancelled_lines": [
+                        {"project_line_id": w["cancel"][0][1].id, "reason": REASON}
+                    ],
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    handovers = _handover_calls(calls)
+    assert len(handovers) == 1
+    lines = handovers[0]["context"]["handover"]["lines"]
+    assert lines, "the confirmed Buy is still handed over"
+    assert all("CANCEL" not in (line.get("remark") or "") for line in lines), lines
+    assert any("ORDER" in (line.get("remark") or "") for line in lines), lines
