@@ -44,6 +44,7 @@ import {
   documentsOf,
   ItemCodeCell,
   LocationCell,
+  orderInquiryReserveQtyColumns,
   orderInquirySuggestedColumn,
   RaisedCell,
   SupplierCell,
@@ -509,6 +510,43 @@ const QUANTITY_COLUMNS: {
   { id: 'remaining', title: 'Remaining', field: 'remaining' },
 ];
 
+/** The SO Qty / Requested / Taken / Remaining column for one `QUANTITY_COLUMNS` entry. */
+function quantityColumn({
+  id,
+  title,
+  field,
+}: (typeof QUANTITY_COLUMNS)[number]): ColumnDef<OrderInquiryLineRow> {
+  return {
+    id,
+    accessorFn: (row) => lineOf(row)[field],
+    header: ({ column }) => <DataGridColumnHeader title={title} column={column} />,
+    size: id === 'requested' || id === 'remaining' ? 120 : 100,
+    meta: { headerTitle: title, skeleton: <Skeleton className="h-4 w-10" /> },
+    cell: ({ row }) => {
+      // A row that names no sales order line has no SO Qty (L17).
+      const value = lineOf(row.original)[field];
+      return (
+        <span className="tabular-nums">
+          {value == null ? '-' : formatInquiryQty(String(value))}
+        </span>
+      );
+    },
+    footer: ({ table }) => (
+      <LineFooter
+        rows={table.getPrePaginationRowModel().rows.map((r) => r.original)}
+        field={field}
+      />
+    ),
+  };
+}
+
+/** The row whose reserve figures the line prints - the State cell's own pill reads the
+ * same `primary`, and only while the line has a live row. */
+function reserveRowOf(row: OrderInquiryLineRow): OrderInquiryWorklistRow | null {
+  const line = lineOf(row);
+  return line.liveRows.length > 0 ? line.primary : null;
+}
+
 export function useOrderInquiryHeaderLinesColumns({
   canReserve,
   stagedByRowId,
@@ -690,30 +728,15 @@ export function useOrderInquiryHeaderLinesColumns({
       },
       // AC-ND-3..5b (owner ruling 26 Sep, G4): SO Qty, Requested, Taken, Remaining - the
       // line's own sums (`orderInquiryLineFold.ts`), no Was / now annotation (G1).
-      ...QUANTITY_COLUMNS.map(
-        ({ id, title, field }): ColumnDef<OrderInquiryLineRow> => ({
-          id,
-          accessorFn: (row) => lineOf(row)[field],
-          header: ({ column }) => <DataGridColumnHeader title={title} column={column} />,
-          size: id === 'requested' || id === 'remaining' ? 120 : 100,
-          meta: { headerTitle: title, skeleton: <Skeleton className="h-4 w-10" /> },
-          cell: ({ row }) => {
-            // A row that names no sales order line has no SO Qty (L17).
-            const value = lineOf(row.original)[field];
-            return (
-              <span className="tabular-nums">
-                {value == null ? '-' : formatInquiryQty(String(value))}
-              </span>
-            );
-          },
-          footer: ({ table }) => (
-            <LineFooter
-              rows={table.getPrePaginationRowModel().rows.map((r) => r.original)}
-              field={field}
-            />
-          ),
-        }),
-      ),
+      // OI-RESERVE-PILL-QTY round 2: Reserve requested and Reserved sit right after
+      // Requested, the shared columns the Lines list uses, reading the same primary row
+      // the State cell's reserve pill reads.
+      ...QUANTITY_COLUMNS.slice(0, 2).map(quantityColumn),
+      ...orderInquiryReserveQtyColumns<OrderInquiryLineRow>({
+        requestedOf: (row) => reserveRowOf(row)?.requested_qty,
+        reservedOf: (row) => reserveRowOf(row)?.reserved_qty,
+      }),
+      ...QUANTITY_COLUMNS.slice(2).map(quantityColumn),
       {
         accessorKey: 'delivery_date',
         header: ({ column }) => <DataGridColumnHeader title="Delivery date" column={column} />,

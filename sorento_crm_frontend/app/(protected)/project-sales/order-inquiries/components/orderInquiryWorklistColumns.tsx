@@ -884,6 +884,50 @@ export function orderInquiryTakenRemainingColumns({
   ];
 }
 
+/** A reserve figure: the quantity, or a muted dash when it is zero or absent (the server
+ * sends "0" for a row with no open request / nothing reserved). */
+export function ReserveQtyCell({ value }: { value: string | null | undefined }) {
+  return Number(value ?? '0') ? (
+    <span className="tabular-nums">{formatInquiryQty(String(value))}</span>
+  ) : (
+    <Muted>-</Muted>
+  );
+}
+
+/**
+ * OI-RESERVE-PILL-QTY round 2 (owner ruling 21 Oct 2026: "we just need more visibility"):
+ * the requested reserve qty and the reserved qty, printed beside the line's own Qty so a
+ * 170 line with a 70 reserve request never reads as one number. ONE definition, used by
+ * the Lines list here and the OI detail Lines tab (`orderInquiryHeaderLinesColumns.tsx`),
+ * each passing how it reads the figures off its own row shape.
+ */
+export function orderInquiryReserveQtyColumns<TRow>({
+  requestedOf,
+  reservedOf,
+}: {
+  requestedOf: (row: TRow) => string | null | undefined;
+  reservedOf: (row: TRow) => string | null | undefined;
+}): ColumnDef<TRow>[] {
+  return [
+    {
+      id: 'reserve_requested',
+      header: ({ column }) => <DataGridColumnHeader title="Reserve requested" column={column} />,
+      size: 150,
+      enableSorting: false,
+      meta: { headerTitle: 'Reserve requested', skeleton: <Skeleton className="h-4 w-10" /> },
+      cell: ({ row }) => <ReserveQtyCell value={requestedOf(row.original)} />,
+    },
+    {
+      id: 'reserved',
+      header: ({ column }) => <DataGridColumnHeader title="Reserved" column={column} />,
+      size: 110,
+      enableSorting: false,
+      meta: { headerTitle: 'Reserved', skeleton: <Skeleton className="h-4 w-10" /> },
+      cell: ({ row }) => <ReserveQtyCell value={reservedOf(row.original)} />,
+    },
+  ];
+}
+
 export function SupplierCell({ row }: { row: OrderInquiryWorklistRow }) {
   return row.supplier ? (
     <span className="block truncate" title={row.supplier}>
@@ -1086,6 +1130,10 @@ export function useOrderInquiryWorklistColumns({
         meta: { headerTitle: 'Qty', skeleton: <Skeleton className="h-4 w-10" /> },
         cell: ({ row }) => <QtyCell row={row.original} />,
       },
+      ...orderInquiryReserveQtyColumns<OrderInquiryWorklistRow>({
+        requestedOf: (row) => row.requested_qty,
+        reservedOf: (row) => row.reserved_qty,
+      }),
       {
         accessorKey: 'delivery_date',
         header: ({ column }) => (
