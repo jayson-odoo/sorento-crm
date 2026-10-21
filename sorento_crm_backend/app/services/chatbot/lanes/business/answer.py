@@ -33,11 +33,10 @@ from functools import cmp_to_key
 from typing import Any, Literal
 
 from app.services.chatbot import jsc, label_catalog, quick_reply_guard
-from app.services.chatbot.composers import misses as composers_misses
 from app.services.chatbot.lanes.business.fetch import DATE_PARAMS, space_id_or_default
 from app.services.ledger_family import customer_group_of, customer_header_words
 from app.services.product_spec_registry import SPEC_ACRONYMS
-from app.services.chatbot.tail.scope_block import live_brand_words, search_scope_header
+from app.services.chatbot.tail.scope_block import live_brand_words
 from app.services.chatbot.turn import refer
 from app.services.chatbot.turn.state import token_key
 from app.services.chatbot.turn_runtime import SPEC_TIER
@@ -941,13 +940,6 @@ def crossdomain_render(
     # same row reached through two entries is the same object, while two genuinely
     # different rows that happen to render alike stay two rows.
     seen_rows: set[int] = set()
-    # CHAT-COMPOSER: gate on, an ETA miss prints its stock rows as the numbered stock block;
-    # `xd_rows` holds the code of each, stamped on the block for `_prefix_zero_note`.
-    from app.services.chatbot import composers
-    from app.services.chatbot.composers import stock as composers_stock
-
-    gate_on = composers.enabled()
-    xd_rows: list[str] = []
     # Codes that came back empty on BOTH sides. Owner ruling (6 Sep 2026): name them and
     # offer an escalation, rather than dropping them so the reply lists only the codes that
     # had something to show. "Positive facts only" still holds for a code the probe never
@@ -1021,14 +1013,6 @@ def crossdomain_render(
             rows.sort(key=eta)
         for it in rows:
             if id(it) in seen_rows:
-                continue
-            if gate_on:
-                # CHAT-COMPOSER: the numbered block, as the product-code answer prints it.
-                if not jsc.get(it, "fields"):
-                    continue
-                blocks.append(composers_stock.block(len(xd_rows) + 1, it))
-                xd_rows.append(jsc.nullish_str(_field_val(it, "product code")).strip())
-                seen_rows.add(id(it))
                 continue
             field_lines = "\n".join(
                 f"*{jsc.get(f, 'label')}:* {_fmt_xd_value(_field_render_value(f))}"
@@ -1117,7 +1101,7 @@ def crossdomain_render(
     # breakdown, a demand verdict) never gets "no stock" underneath the stock it just showed.
     only_other_note = ""
     if only_other and can_state_absence:
-        only_other_note = composers_stock.none_for(primary_word, only_other)
+        only_other_note = f"No {primary_word} for {', '.join(only_other)}."
 
     # NO OFFER SENTENCE HERE (8 Sep 2026, turns 0184d84d / 5f73ddb0 / 90a1637a): the block
     # used to end "...Would you like me to escalate to X team?" and `tail/compose.
@@ -1147,8 +1131,7 @@ def crossdomain_render(
         nothing_note = " ".join(sentences)
 
     body = (lead + "\n\n" + "\n\n".join(blocks) + silent_note) if blocks else ""
-    note_printed = bool(body and only_other_note)
-    if note_printed:
+    if body and only_other_note:
         body = f"{only_other_note}\n\n{body}"
     if nothing_note:
         body = f"{body}\n\n{nothing_note}" if body else nothing_note
@@ -1161,15 +1144,6 @@ def crossdomain_render(
         "origin": zs.get("origin_domain") or None,
         "probed_rows": len(items),
         "rendered_rows": len(blocks),
-        **(
-            {
-                "rendered_codes": [c for c in xd_rows if c],
-                # `answer_bridge._apply_crossdomain_render` drops this line on a total miss.
-                **({"only_other_note": only_other_note, "only_other_codes": only_other} if note_printed else {}),
-            }
-            if gate_on
-            else {}
-        ),
         # A7: the codes with NOTHING on either side, and the sentence built for them - so
         # `run_crossdomain` can try a NEXT ladder rung (e.g. purchase_order) for exactly
         # these codes and, if that rung answers, swap this sentence for its own without
@@ -1448,13 +1422,7 @@ def _crossdomain_rung_text(rows: list[dict[str, Any]]) -> str:
         lines.append(f"*Outstanding:* {_fmt_xd_value(row.get('qty'))}")
         po_date = row.get("po_date")
         if po_date not in (None, ""):
-            from app.services.chatbot import composers
-            from app.services.chatbot.composers import format as composers_format
-
-            if composers.enabled() and composers_format.date(po_date):
-                lines.append(f"*PO date:* {composers_format.date(po_date)}")
-            else:
-                lines.append(f"*PO date:* {_fmt_xd_value(po_date)}")
+            lines.append(f"*PO date:* {_fmt_xd_value(po_date)}")
         location = row.get("location")
         if location not in (None, ""):
             lines.append(f"*Location:* {_fmt_xd_value(location)}")
@@ -2661,7 +2629,7 @@ def _outstanding_report_text(item: Any) -> str:
     return jsc.js_string(body.get("response") or "").strip()
 
 
-def _unplaced_token_has_neighbours(resolved: Any, gate: Any, only_token: str | None = None) -> bool:
+def _unplaced_token_has_neighbours(resolved: Any, gate: Any) -> bool:
     """True when a token the customer typed missed AND has real did-you-mean neighbours.
 
     AC-1703. The described-set branches below all assert something about the SET the
@@ -2695,8 +2663,6 @@ def _unplaced_token_has_neighbours(resolved: Any, gate: Any, only_token: str | N
     for res in _ms_miss_resolutions(r, gate=g):
         token = jsc.nullish_str(jsc.get(res, "token")).strip()
         if len(token) < 3 or not _CODE_RE.fullmatch(token):
-            continue
-        if only_token is not None and token.lower() != only_token.strip().lower():
             continue
         candidates = [
             *jsc.array(jsc.get(res, "matches")),
@@ -2802,9 +2768,7 @@ def not_understood_line(words: Any) -> str:
     quoted = _and_list([f'"{t}"' for t in terms])
     # Fix round 9 on PR #833 (owner: "no explanations"): the "did not match" line of the
     # one reply structure, never how the search was run.
-    from app.services.chatbot import composers
-
-    return f"Couldn't find {quoted}." if composers.enabled() else f"Couldn't find: {quoted}."
+    return f"Couldn't find: {quoted}."
 
 
 #: The one opener of every described-set answer, hit or miss (fix round 12 on PR #833, owner
@@ -2842,30 +2806,16 @@ def breakdown_lines(breakdown: Any, set_noun: str) -> list[str]:
     return out
 
 
-def what_you_want_reply(
-    asked: str,
-    lines: list[str],
-    *,
-    missing: str = "",
-    leg: str = "",
-    team: Any,
-    between: str = "",
-    leg_tail: bool = False,
-) -> str:
+def what_you_want_reply(asked: str, lines: list[str], *, missing: str = "", leg: str = "", team: Any) -> str:
     """The ONE reply a miss has, the product-code miss's own (owner, 28 Sep 2026: "you do
     like here is what you want, but no incoming, do you want me to escalate..., I want
     that structure to stay"): what was asked for on one line, what matched line by line,
     what did not match, one short escalate offer. Fix round 9 on PR #833."""
     head = "\n".join([f"Here's what you want: {asked}", *lines])
-    if between:
-        # CHAT-COMPOSER: a line that belongs under the list, above the miss sentence.
-        head = f"{head}\n\n{between}"
     if missing:
-        from app.services.chatbot import composers
-
-        tail = f"Couldn't find {missing}." if composers.enabled() else f"Couldn't find: {missing}."
-    elif (lines or leg_tail) and leg:
-        tail = f"But no {leg} {composers_misses.PHRASE_MATCHED}."
+        tail = f"Couldn't find: {missing}."
+    elif lines and leg:
+        tail = f"But no {leg} matched these."
     else:
         tail = "But none matched."
     # #1301 (F8): a staff profile gets no bot-initiated offer; its caller passes no team.
@@ -2874,16 +2824,6 @@ def what_you_want_reply(
     if team == refer.SALESMAN_TEAM:
         return refer.after(f"{head}\n\n{tail}", sep=" ")
     return f"{head}\n\n{tail} Would you like me to escalate to {team} team?" if team else f"{head}\n\n{tail}"
-
-
-def spec_hidden_misses(predicate: Any) -> list[dict[str, Any]]:
-    """Owner a35818889 (b): the hidden spec keys a set ask NAMED (the route's `predicate.spec_hidden`),
-    as the same `spec_hidden:<key>` "not available" misses the product projection builds."""
-    return [
-        {"key": f"spec_hidden:{h.get('key')}", "label": h.get("label"), "value": "not available"}
-        for h in (jsc.get(predicate, "spec_hidden") or [] if isinstance(predicate, dict) else [])
-        if isinstance(h, dict) and h.get("key")
-    ]
 
 
 def described_members_reply(predicate: Any, team: Any) -> str | None:
@@ -2899,43 +2839,11 @@ def described_members_reply(predicate: Any, team: Any) -> str | None:
     phrase = described_set_phrase(jsc.get(predicate, "description"), noun, {})
     total = int(jsc.get(members, "total") or 0)
     lines = [f"• {jsc.js_string(c)}" for c in jsc.array(jsc.get(members, "codes")) if jsc.truthy(c)]
-    from app.services.chatbot import composers
-
-    on = composers.enabled()
-    # CHAT-COMPOSER: more matching products than the page names them by code, no count lines;
-    # the header states the range and a "more" line sits under the list.
-    offset = int(jsc.get(predicate, "offset") or 0) if on else 0
-    ended = on and bool(jsc.get(predicate, "exhausted"))
-    paged = on and (total > len(lines) > 0 or (offset > 0 and len(lines) > 0))
-    lines = lines or ([] if on else breakdown_lines(jsc.get(members, "breakdown"), noun))
+    lines = lines or breakdown_lines(jsc.get(members, "breakdown"), noun)
     leg = next(iter(require), "")
     noun_of_leg = (
         jsc.js_string(require[leg]).strip().lower() if leg == "attachment_type" else _MISS_NOUN.get(leg, "")
     )
-    if ended and total:
-        # CHAT-COMPOSER: "more" past the last page of a miss list: the end of the list, then the
-        # same miss sentence and offer every page carries.
-        if team and team != refer.SALESMAN_TEAM and jsc.truthy(jsc.get(predicate, "offer_team")):
-            team = _pretty_team(jsc.get(predicate, "offer_team"))
-        return what_you_want_reply(
-            f"{phrase} ({total:,}). That is all {total:,}.", [], leg=noun_of_leg, team=team, leg_tail=True
-        )
-    if paged:
-        from app.services.chatbot.composers import sets as composers_sets
-
-        # Every page header is the leg-less phrase: the products exist, the leg is what is missing.
-        if offset:
-            # ...and a later page offers the team the first page offered.
-            if team and team != refer.SALESMAN_TEAM and jsc.truthy(jsc.get(predicate, "offer_team")):
-                team = _pretty_team(jsc.get(predicate, "offer_team"))
-        remaining = composers_sets.next_count(total, offset, len(lines), SET_LIST_MAX)
-        return what_you_want_reply(
-            f"{phrase} ({total:,}, showing {offset + 1} to {offset + len(lines)})",
-            lines,
-            leg=noun_of_leg,
-            team=team,
-            between=composers_sets.more_line(remaining) if remaining else "",
-        )
     return what_you_want_reply(f"{phrase} ({total:,})" if total else phrase, lines, leg=noun_of_leg, team=team)
 
 
@@ -2948,9 +2856,7 @@ def near_miss_reply(predicate: Any, team: Any) -> str:
     labels = [jsc.js_string(c) for c in jsc.array(jsc.get(predicate, "class_labels")) if jsc.truthy(c)]
     noun = set_noun_for(labels)
     asked = described_set_phrase(jsc.get(predicate, "description"), noun, jsc.get(predicate, "require") or {})
-    from app.services.chatbot import composers
-
-    lines = [] if composers.enabled() else breakdown_lines({"rows": jsc.array(jsc.get(near, "other_values"))}, set_noun_for(
+    lines = breakdown_lines({"rows": jsc.array(jsc.get(near, "other_values"))}, set_noun_for(
         [jsc.js_string(c) for c in jsc.array(jsc.get(near, "class_labels")) if jsc.truthy(c)] or labels
     ))
     value = jsc.js_string(jsc.get(near, "value")).strip()
@@ -2961,9 +2867,9 @@ def near_miss_reply(predicate: Any, team: Any) -> str:
 
 def unknown_values_reply(unknown: Any, predicate: Any, team: Any, *, subject: str = "") -> str:
     """A value the registry does not know ("pink" as a finish or colour), in
-    `what_you_want_reply`: the subject with the value as asked, then "Couldn't find: pink
-    (finish or colour)". No list of the registry's choices, no typo said back, and no
-    breakdown lines (SET-STOCK-RENDER, owner 16 Oct 2026)."""
+    `what_you_want_reply`: the subject with the value as asked, the subject broken down
+    by that key (`predicate.members.breakdown`), then "Couldn't find: pink (finish or
+    colour)". No list of the registry's choices and no typo said back."""
     members = jsc.get(predicate, "members") if isinstance(predicate, dict) else None
     labels = [jsc.js_string(c) for c in jsc.array(jsc.get(members, "class_labels")) if jsc.truthy(c)]
     noun = set_noun_for(labels)
@@ -2986,7 +2892,8 @@ def unknown_values_reply(unknown: Any, predicate: Any, team: Any, *, subject: st
             if w
         ]
     )
-    return what_you_want_reply(asked, [], missing=missing, team=team)
+    lines = breakdown_lines(jsc.get(members, "breakdown"), noun) if members is not None else []
+    return what_you_want_reply(asked, lines, missing=missing, team=team)
 
 
 def _value_words(value: str) -> str:
@@ -3045,6 +2952,7 @@ def build_set_header(
     offset: int = 0,
     previous_total: int | None = None,
     exhausted: bool = False,
+    breakdown: Any = None,
 ) -> str:
     """A counted set's ONE intro line, the same opener a set that qualified nothing has
     (`what_you_want_reply`), with the described set, what it has and its count; the rows
@@ -3054,10 +2962,9 @@ def build_set_header(
 
     Fix round 12 on PR #833: the leg's word is in the phrase and nowhere else, so a stock,
     incoming, certificate or promotion ask gets one shape and the leg picks only the rows.
-    No paging (owner ruling, 26 Sep 2026): every qualifying product listed on one page
-    says the count alone; a named count, a set longer than `SET_LIST_MAX` and every
-    continuation page, the last included, say which ones (SET-STOCK-RENDER, owner 16 Oct
-    2026: no breakdown by the next attribute; UAC SSR-14).
+    No paging (owner ruling, 26 Sep 2026): every qualifying product listed says the count
+    alone; a named count says which ones; none listed (a set longer than `SET_LIST_MAX`)
+    gives the breakdown by the next attribute.
 
     A pure string function: `qualifying_total` and `shown` are counts the caller already
     has, never re-derived here."""
@@ -3065,7 +2972,7 @@ def build_set_header(
     # about a described set (`{"price": "described"}`) names no leg at all.
     phrase = described_set_phrase(description, set_noun, require or {})
     withheld = not exhausted and shown <= 0 and qualifying_total > 0
-    if withheld or exhausted or (not offset and shown >= qualifying_total):
+    if withheld or exhausted or shown >= qualifying_total - offset:
         count = f"{qualifying_total:,}"
     else:
         count = f"{qualifying_total:,}, showing {offset + 1} to {offset + shown}"
@@ -3076,6 +2983,13 @@ def build_set_header(
     if exhausted:
         # Round 3 W2: a count after the last page; every product was already listed.
         header += f"{'' if header.endswith('.') else '.'} That is all {qualifying_total:,}."
+    elif withheld:
+        # Fix round 9 on PR #833 (owner: "no cap", "always break it down"): the full count
+        # and the set broken down by the next attribute, one line each, never a paging
+        # question.
+        lines = breakdown_lines(breakdown, set_noun)
+        if lines:
+            header += "\n" + "\n".join(lines)
     return header
 
 
@@ -3094,17 +3008,8 @@ def other_brands_line(other_brands: Any, require: dict[str, Any]) -> str:
     last line of a reply answered for the company's default brand because the customer
     named none (owner hand test round 3 on PR #833, W4). Every other brand with its full
     count, largest first; "" when there is none."""
-    from app.services.chatbot import composers
-
-    # CHAT-COMPOSER (crew R2): gate on, the offer names the brands and drops their counts.
-    with_counts = not composers.enabled()
-
-    def named(o: Any) -> str:
-        name = jsc.js_string(jsc.get(o, "brand")).strip()
-        return name if not with_counts else f"{name} {int(jsc.get(o, 'count') or 0):,}"
-
     others = [
-        named(o)
+        f"{jsc.js_string(jsc.get(o, 'brand')).strip()} {int(jsc.get(o, 'count') or 0):,}"
         for o in jsc.array(other_brands)
         if jsc.js_string(jsc.get(o, "brand")).strip() and jsc.get(o, "count")
     ]
@@ -3209,48 +3114,6 @@ def near_miss_sentence(near: Any, require: dict[str, Any]) -> str:
     )
     counted = f"1 {singular} has" if total == 1 else f"{total:,} {noun} have"
     return f"{said} {counted} {has_what} in another {label.lower()}: {others}."
-
-
-def token_labeller(r: Any, all_ents: Any) -> tuple[Any, Any, Any]:
-    """`(type_of_token, raw_of_token, label_token)` for the words a miss names: `"zzqq999" (product)`.
-    One definition for the not-found message and for any other reply that names an unplaced word."""
-    # FIRST-wins on a normalised-key collision (a plain map built from `.map()` would keep
-    # the LAST entity instead, letting this node and the tail disagree on which entity a
-    # token names). Keyed under BOTH `raw` and `canonical_code`, mirroring what
-    # `resolve-entity` is SENT.
-    by_raw_stripped: dict[str, Any] = {}
-    for entity in all_ents:
-        key = _type_norm(jsc.get(entity, "raw"))
-        if key not in by_raw_stripped:
-            by_raw_stripped[key] = entity
-        code_key = _type_norm(jsc.get(entity, "canonical_code"))
-        if code_key and code_key not in by_raw_stripped:
-            by_raw_stripped[code_key] = entity
-
-    def type_of_token(token: Any) -> str:
-        res = jsc.find(
-            jsc.array(jsc.get(r, "resolutions")),
-            lambda x: _type_norm(jsc.get(x, "token")) == _type_norm(token),
-        )
-        matches = jsc.get(res, "matches") if jsc.truthy(res) else None
-        first = matches[0] if isinstance(matches, list) and matches else None
-        if jsc.truthy(first) and jsc.truthy(jsc.get(first, "entity_type")):
-            return _prettify_type(jsc.get(first, "entity_type"))
-        hint = jsc.get(by_raw_stripped.get(_type_norm(token)), "hint")
-        return _prettify_type(jsc.js_string(hint)) if jsc.truthy(hint) else ""
-
-    def raw_of_token(token: Any) -> Any:
-        entity = by_raw_stripped.get(_type_norm(token))
-        raw = jsc.get(entity, "raw")
-        return raw if jsc.truthy(raw) else token
-
-    def label_token(token: Any) -> str:
-        type_label = type_of_token(token)
-        return f'"{jsc.js_string(raw_of_token(token))}"' + (
-            f" ({type_label})" if type_label else ""
-        )
-
-    return type_of_token, raw_of_token, label_token
 
 
 def not_found_error_message(
@@ -3506,15 +3369,8 @@ def not_found_error_message(
 
         date_start = jsc.get(q, "date_filter_start")
         date_end = jsc.get(q, "date_filter_end")
-        from app.services.chatbot import composers
-        from app.services.chatbot.composers import format as composers_format
-
-        # CHAT-COMPOSER F5: the window reads dd/mm/yyyy gate on.
-        def _window_end(v: Any) -> str:
-            return (composers_format.date(v) if composers.enabled() else None) or jsc.js_string(v)
-
         date_range = (
-            f" from {_window_end(date_start)} to {_window_end(date_end)}"
+            f" from {jsc.js_string(date_start)} to {jsc.js_string(date_end)}"
             if (jsc.truthy(date_start) and jsc.truthy(date_end))
             else ""
         )
@@ -3554,9 +3410,6 @@ def not_found_error_message(
             )
 
         disp_by_uuid: dict[Any, Any] = {}
-        # CHAT-COMPOSER H1: an order's own customer, said as its group (R3), for the printed
-        # bullet only; `disp_by_uuid` stays the ledger label because it is also a grouping key.
-        shown_by_uuid: dict[Any, Any] = {}
         for match in all_matches:
             if not jsc.truthy(match):
                 continue
@@ -3570,13 +3423,6 @@ def not_found_error_message(
                     name = f"{jsc.js_string(code)} ({jsc.js_string(customer)})" if jsc.truthy(customer) else code
                 else:
                     name = customer if jsc.truthy(customer) else ""
-                if jsc.truthy(customer) and composers.enabled():
-                    group_words = customer_header_words([(jsc.js_string(customer), customer_group_of(jsc.js_string(customer)))])
-                    if group_words:
-                        shown_by_uuid.setdefault(
-                            jsc.get(match, "uuid"),
-                            f"{jsc.js_string(code)} ({group_words})" if jsc.truthy(code) else group_words,
-                        )
             elif jsc.get(match, "entity_type") in _CODE_FIRST_TYPES:
                 # CODE FIRST. The code is what the customer typed, what is on the carton and
                 # what they will type again; the name is a description for somebody else.
@@ -3681,11 +3527,7 @@ def not_found_error_message(
                 continue
             entity_type = jsc.get(c, "entity_type")
             entity_type = entity_type if jsc.truthy(entity_type) else "item"
-            base = shown_by_uuid.get(jsc.get(c, "uuid")) or disp_by_uuid.get(jsc.get(c, "uuid"))
-            if jsc.truthy(jsc.get(c, "set_code")):
-                # CHAT-CODE-LOOKUP R2: a product set read as its members is named by the code
-                # the customer typed (the set's), one label for all its members.
-                base = jsc.get(c, "set_code")
+            base = disp_by_uuid.get(jsc.get(c, "uuid"))
             if not jsc.truthy(base):
                 # Hand pass 12, Group F: `disp_by_uuid` is built from the RESOLVER's own
                 # matches (`r["resolutions"]`), empty on a turn that resolved nothing
@@ -3884,11 +3726,6 @@ def not_found_error_message(
             rendered = ", ".join(
                 ", ".join(with_quantity(l) for l in by_code[b]) for b in named_codes
             )
-            if entity_type == "customer" and composers.enabled():
-                # CHAT-COMPOSER (R3): a customer is named by its group, with no "(+N more)".
-                group_words = customer_header_words([(b, customer_group_of(b)) for b in named_codes])
-                if group_words:
-                    rendered, extra = group_words, ""
             # ATTACHMENT-MULTI R5: "• attachment type:", never the raw `attachment_type` key.
             found_lines.append(f"• {_prettify_type(entity_type)}: {rendered}{extra}")
         found_summary = "\n".join(found_lines)
@@ -3896,7 +3733,41 @@ def not_found_error_message(
         not_found_raw = [t for t in unresolved if _nf_norm_raw(t) not in resolved_toks]
         use_breakdown = len(found_lines) > 0
 
-        type_of_token, raw_of_token, label_token = token_labeller(r, all_ents)
+        # FIRST-wins on a normalised-key collision (a plain map built from `.map()` would keep
+        # the LAST entity instead, letting this node and the tail disagree on which entity a
+        # token names). Keyed under BOTH `raw` and `canonical_code`, mirroring what
+        # `resolve-entity` is SENT.
+        by_raw_stripped: dict[str, Any] = {}
+        for entity in all_ents:
+            key = _type_norm(jsc.get(entity, "raw"))
+            if key not in by_raw_stripped:
+                by_raw_stripped[key] = entity
+            code_key = _type_norm(jsc.get(entity, "canonical_code"))
+            if code_key and code_key not in by_raw_stripped:
+                by_raw_stripped[code_key] = entity
+
+        def type_of_token(token: Any) -> str:
+            res = jsc.find(
+                jsc.array(jsc.get(r, "resolutions")),
+                lambda x: _type_norm(jsc.get(x, "token")) == _type_norm(token),
+            )
+            matches = jsc.get(res, "matches") if jsc.truthy(res) else None
+            first = matches[0] if isinstance(matches, list) and matches else None
+            if jsc.truthy(first) and jsc.truthy(jsc.get(first, "entity_type")):
+                return _prettify_type(jsc.get(first, "entity_type"))
+            hint = jsc.get(by_raw_stripped.get(_type_norm(token)), "hint")
+            return _prettify_type(jsc.js_string(hint)) if jsc.truthy(hint) else ""
+
+        def raw_of_token(token: Any) -> Any:
+            entity = by_raw_stripped.get(_type_norm(token))
+            raw = jsc.get(entity, "raw")
+            return raw if jsc.truthy(raw) else token
+
+        def label_token(token: Any) -> str:
+            type_label = type_of_token(token)
+            return f'"{jsc.js_string(raw_of_token(token))}"' + (
+                f" ({type_label})" if type_label else ""
+            )
 
         # State the SEARCH SCOPE, so "nothing matched" cannot be read as "nothing matched in
         # the one company you were thinking of". Empty on a single-company turn.
@@ -3974,9 +3845,7 @@ def not_found_error_message(
                         words.append(value)
             return ", ".join(words)
 
-        def build_breakdown_msg(
-            domain_word: str, not_found_override: Any = None, missing_lines: list[str] | None = None
-        ) -> str:
+        def build_breakdown_msg(domain_word: str, not_found_override: Any = None) -> str:
             nf = [
                 label_token(t)
                 for t in (not_found_override if not_found_override is not None else not_found_raw)
@@ -3986,14 +3855,7 @@ def not_found_error_message(
                 jsc.js_string(domain_hint if jsc.truthy(domain_hint) else "").lower()
                 in _DATE_SCOPE_DOMAINS
             )
-            from app.services.chatbot import composers
-
-            if is_order_scope and composers.enabled():
-                # CHAT-COMPOSER F1: the miss header is the hit path's header (one writer).
-                scope_header = search_scope_header(domain=domain_hint, qf=q, gate_json=g, resolver_json=r)
-                if scope_header:
-                    parts.append(scope_header)
-            elif is_order_scope:
+            if is_order_scope:
                 start = date_start if jsc.truthy(date_start) else None
                 end = date_end if jsc.truthy(date_end) else None
                 head: list[str] = []
@@ -4025,11 +3887,7 @@ def not_found_error_message(
             if found_lines:
                 parts.append("Here's what you want:\n" + "\n".join(found_lines))
             if nf:
-                from app.services.chatbot import composers
-
-                parts.append(
-                    f"Couldn't find {', '.join(nf)}." if composers.enabled() else f"Couldn't find: {', '.join(nf)}."
-                )
+                parts.append(f"Couldn't find: {', '.join(nf)}.")
             # A WINDOWED MISS NAMES ITS DATES THE WAY THE HEADER DOES, AND OFFERS THE WIDEN.
             # A DO list needs a range of at most 31 days for every contact (owner, 4 Oct 2026,
             # `do_ask.range_reply`), so the invite asks for another month or dates rather
@@ -4059,23 +3917,10 @@ def not_found_error_message(
                 )
             else:
                 esc_ask = _esc_offer()
-            from app.services.chatbot import composers
-            from app.services.chatbot.composers import misses as composers_misses
-
-            # CHAT-COMPOSER: a table name (master_products, inventory) reads as a customer word.
-            miss_noun = (
-                composers_misses.domain_word(domain_word)
-                if composers.enabled() and domain_word in composers_misses.MISS_WORD
-                else _plain_words(domain_word)
-            )
             miss_sentence = (
                 # R7 (round 4): "But no purchase order matched", never the domain key.
-                f"But no{active_inactive} {miss_noun}{miss_window}{access} {composers_misses.PHRASE_MATCHED}{co_suffix}."
+                f"But no{active_inactive} {_plain_words(domain_word)}{miss_window}{access} matched these{co_suffix}."
             )
-            if missing_lines:
-                # CHAT-COMPOSER F4: the one "nothing on record" line per product, in place of
-                # "But no <types> matched these."
-                miss_sentence = "\n".join(missing_lines)
             if esc_ask:
                 miss_sentence = f"{miss_sentence} {esc_ask}"
             entitlement_miss = _entitlement_miss()
@@ -4089,22 +3934,13 @@ def not_found_error_message(
         vague_unresolved = [
             t for t in unresolved if jsc.get(by_raw.get(_nf_norm_raw(t)), "confident") is False
         ]
-        if jsc.truthy(jsc.get(q, "closed_lists")):
-            # CLOSED LISTS: an unsure token the resolver has real neighbours for is a
-            # mistyped code, so it takes the did-you-mean below, not the vague clarify.
-            # Only when EVERY unsure token has neighbours: otherwise the clarify names them all.
-            if all(_unplaced_token_has_neighbours(r, g, t) for t in vague_unresolved):
-                vague_unresolved = []
 
         if len(vague_unresolved) > 0:
             is_clarification = True  # so escalate-catalog's is_escalate_offer is false
             labels = _human_list(
                 [_prettify_type(t) for t in (allowed_types if isinstance(allowed_types, list) else [])]
             )
-            # CLOSED LISTS: each unsure word is quoted on its own ("a", "b"), never one quoted run.
-            captured = (
-                '", "' if jsc.truthy(jsc.get(q, "closed_lists")) else ", "
-            ).join(jsc.js_string(t) for t in vague_unresolved)
+            captured = ", ".join(jsc.js_string(t) for t in vague_unresolved)
             unresolved_set = {_nf_norm_raw(t) for t in unresolved}
             resolved_ents = [
                 e
@@ -4379,43 +4215,6 @@ def not_found_error_message(
                     jsc.get(c, "entity_type") == "product" and jsc.truthy(jsc.get(c, "uuid"))
                     for c in jsc.array(jsc.get(g, "compatible_entities"))
                 )
-                # CHAT-COMPOSER F4: a resolved product with no file of the asked type, and no
-                # qualifier (active / inactive, dates, level, company, entitlement), is "nothing
-                # on record"; a filtered miss keeps today's sentence.
-                f4_lines: list[str] | None = None
-                if (
-                    composers.enabled()
-                    and product_resolved
-                    and not (active_inactive or date_range or access or co_suffix)
-                    and not jsc.truthy(_entitlement_miss())
-                ):
-                    kept_types = {
-                        jsc.get(c, "uuid")
-                        for c in jsc.array(jsc.get(g, "compatible_entities"))
-                        if jsc.get(c, "entity_type") == "attachment_type"
-                    }
-                    type_names: list[str] = []
-                    for res in jsc.array(jsc.get(r, "resolutions")):
-                        for m in jsc.array(jsc.get(res, "matches")):
-                            name = jsc.nullish_str(jsc.get(jsc.get(m, "display"), "type_name")).strip()
-                            if (
-                                jsc.get(m, "entity_type") == "attachment_type"
-                                and jsc.get(m, "uuid") in kept_types
-                                and name
-                                and name not in type_names
-                            ):
-                                type_names.append(name)
-                    what = " or ".join(type_names or [jsc.js_string(x) for x in attach_raws])
-                    codes = [
-                        jsc.js_string(jsc.get(c, "code"))
-                        for c in jsc.array(jsc.get(g, "compatible_entities"))
-                        if jsc.get(c, "entity_type") == "product"
-                        and jsc.truthy(jsc.get(c, "uuid"))
-                        and jsc.truthy(jsc.get(c, "code"))
-                        and not _ms_is_uuid(jsc.get(c, "code"))
-                    ]
-                    if what and codes:
-                        f4_lines = [composers_format.missing_line(what, code) for code in codes]
                 if unfound_products and not product_resolved:
                     esc = _esc_offer()
                     escalate_message = (
@@ -4439,7 +4238,6 @@ def not_found_error_message(
                     escalate_message = build_breakdown_msg(
                         jsc.js_string(attach_noun),
                         [t for t in not_found_raw if _nf_norm_raw(t) not in attach_set],
-                        f4_lines,
                     )
                 else:
                     # The resolver folds dashes off the typed code, so a resolved product
@@ -4452,8 +4250,6 @@ def not_found_error_message(
                         and jsc.truthy(jsc.get(c, "code"))
                     }
                     product_raws = [stored_by_key.get(_type_norm(x), x) for x in product_raws]
-                    if composers.enabled():
-                        product_raws = [x for x in product_raws if not _ms_is_uuid(x)]
                     prod_text = (
                         f"product {' and '.join(jsc.js_string(x) for x in product_raws)}"
                         if product_raws
@@ -4474,9 +4270,7 @@ def not_found_error_message(
                         subject = requested if jsc.truthy(requested) else "the requested item"
                     esc = _esc_offer()
                     escalate_message = (
-                        "\n".join(f4_lines)
-                        if f4_lines
-                        else f"Could not find{active_inactive} {subject}{date_range}{access}."
+                        f"Could not find{active_inactive} {subject}{date_range}{access}."
                     ) + (f" {esc}" if esc else "")
             elif _outstanding_report_text(item):
                 # AC-1107 / S4 point 6, and the owner's approved miss mock: an outstanding
@@ -4526,11 +4320,6 @@ def not_found_error_message(
                     for order_match in order_matches:
                         display = jsc.get(order_match, "display") or {}
                         customer = jsc.get(display, "customer_name")
-                        if jsc.truthy(customer) and composers.enabled():
-                            # CHAT-COMPOSER H2: the order's customer as its group (R3).
-                            customer = customer_header_words(
-                                [(jsc.js_string(customer), customer_group_of(jsc.js_string(customer)))]
-                            ) or customer
                         label = jsc.js_string(jsc.get(order_match, "canonical_code")) + (
                             f" ({jsc.js_string(customer)})" if jsc.truthy(customer) else ""
                         )
@@ -4620,8 +4409,8 @@ def not_found_error_message(
     unknown_values = jsc.array(jsc.get(predicate, "unknown_values")) if isinstance(predicate, dict) else []
     unknown_values = unknown_values or jsc.array(jsc.get(r, "unknown_spec_values"))
     if unknown_values:
-        # Fix round 9 on PR #833: the one reply structure, the subject as asked (no
-        # breakdown, SET-STOCK-RENDER); the escalate offer stands, so it is not a clarify.
+        # Fix round 9 on PR #833: the one reply structure, the subject broken down by the
+        # unknown value's key; the escalate offer stands, so it is not a clarify.
         subject = next(
             (
                 words
@@ -4643,17 +4432,6 @@ def not_found_error_message(
 
     # Q23: the customer named an access level they do not hold. The gate detects it; say so
     # here too, or an entitlement problem reads as an ordinary "couldn't find it".
-    hidden_lines = [
-        f"*{m['label']}:* {m['value']}" for m in spec_hidden_misses(jsc.get(g, "predicate") if jsc.truthy(g) else None)
-    ]
-    if hidden_lines and jsc.truthy(escalate_message):
-        # Before the closing question when there is one, so the offer stays the last line.
-        head, sep, tail = jsc.js_string(escalate_message).rpartition("\n\n")
-        escalate_message = (
-            f"{head}\n\n" + "\n\n".join(hidden_lines) + f"\n\n{tail}"
-            if sep and tail.rstrip().endswith("?")
-            else f"{escalate_message}\n\n" + "\n\n".join(hidden_lines)
-        )
     access_notice = jsc.get(g, "access_notice")
     if jsc.truthy(g) and jsc.truthy(access_notice) and jsc.truthy(escalate_message):
         escalate_message = f"{jsc.js_string(access_notice)}\n\n{escalate_message}"
@@ -4804,10 +4582,6 @@ def _unsuggested_line(tokens: list[str]) -> str:
     if not tokens:
         return ""
     names = tokens[0] if len(tokens) == 1 else ", ".join(tokens[:-1]) + " or " + tokens[-1]
-    from app.services.chatbot import composers
-
-    if composers.enabled():
-        return f"\n\nCouldn't find {names}."
     return f"\n\nI could not find {names}."
 
 
@@ -5094,7 +4868,7 @@ def build_suggest_offer(
                 out["suggest_offer"] = True
                 out["suggest_selection_context"] = "suggest_offer"
                 out["suggest_response"] = (
-                    f"No incoming stock (ETA){composers_misses.PHRASE_FOUND_FOR}{exact_list}. Related products:\n"
+                    f"No incoming stock (ETA) found for {exact_list}. Related products:\n"
                     f"{numbered}\n"
                     + _cont(
                         "Reply with a number to check its incoming",

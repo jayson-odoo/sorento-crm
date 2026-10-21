@@ -81,27 +81,8 @@ class ParserConfig:
     provider: str
     model: str
     api_key: str
-    # CHAT-CLOSED-LISTS: the version carries the CLOSED LISTS section, so the user turn
-    # carries the candidate block and grounding validates picks against the lists.
-    closed_lists: bool = False
-    # CHAT-CODE-LOOKUP: the version also carries the CODE LOOKUP section (near codes are
-    # listed and a product pick is checked against the block). Only with closed_lists.
-    code_lookup: bool = False
-    # CHAT-CLOSED-LISTS S4b-v2: the gated version's own strict schema (`closed_lists_schema`),
-    # None for the production one.
-    json_schema: dict[str, Any] | None = None
     # CHAT-STATE: the prompt in use asks for `state_changes` (set by `resolve_config` in S5).
     state_block: bool = False
-    # PARSER-TEMPLATE F1-A: the version is the consolidated template (`head/parser_template`),
-    # whose rules decide what the engine's own re-readings of the message used to.
-    template: bool = False
-    # CLOSED-LISTS-INDEX-MODE: `chatbot_closed_lists_mode` is 'index' on a CLOSED LISTS version:
-    # the system prompt carries each full list as one fixed pointer line and the candidate
-    # block carries the index lines (`head/closed_lists_index`). Only with closed_lists.
-    closed_lists_index: bool = False
-    # LEAN: `system_settings.chatbot_parser_reasoning_effort` as read for this parse (REASONING_EFFORTS).
-    # `parse` puts it on an OpenAI request only when it is not `off` (`sent_reasoning_effort`).
-    reasoning_effort: str = "off"
 
 
 def _build_base_json_schema() -> dict[str, Any]:
@@ -804,50 +785,6 @@ TOLERATED_ABSENT: frozenset[str] = frozenset(
 )
 
 
-def closed_lists_schema(items: list[str], *, state: bool = False) -> dict[str, Any]:
-    """The strict schema of a CLOSED LISTS version: the production one (the CHAT-STATE one
-    when the version also asks for `state_changes`), with each entity's `listed_item` held
-    to the items the lists render (a JSON enum) or null. The provider then guarantees the
-    parser picks a listed file type, certificate kind or scheme, or none; no code ever maps
-    the customer's word to one (CHAT-CLOSED-LISTS card R2/R5)."""
-    import copy
-
-    schema = copy.deepcopy(PARSE_OUTPUT_JSON_SCHEMA_WITH_STATE if state else PARSE_OUTPUT_JSON_SCHEMA)
-    entity = schema["properties"]["entities"]["items"]
-    # No item at all is a null-only key: an enum of [null] alone is refused by some providers.
-    from app.services.chatbot.head.closed_lists_prompt import NOT_LISTED
-
-    entity["properties"]["listed_item"] = (
-        {"type": ["string", "null"], "enum": [*items, NOT_LISTED, None]} if items else {"type": "null"}
-    )
-    entity["required"] = [*entity["required"], "listed_item"]
-    return schema
-
-
-#: The stored parser reasoning efforts; anything else (a typo, "none", an effort this list does not hold) is `off`.
-#: `off` and `low` only (LEAN review S1): minimal, medium and high are unmeasured, and medium / high can spend the
-#: whole PARSER_MAX_TOKENS ceiling on reasoning. Trigger to widen: a measured arm shows a value is needed, and
-#: PARSER_MAX_TOKENS is raised with it in the same change.
-REASONING_EFFORTS = frozenset({"off", "low"})
-
-
-def reasoning_effort_setting(db: Session) -> str:
-    """`system_settings.chatbot_parser_reasoning_effort`, read now (no cache: a flip reaches the next parse);
-    anything not in REASONING_EFFORTS, or no row, is `off`."""
-    from app.models.user import SystemSetting
-
-    row = db.query(SystemSetting.chatbot_parser_reasoning_effort).first()
-    value = row[0] if row is not None else None
-    return value if value in REASONING_EFFORTS else "off"
-
-
-def sent_reasoning_effort(config: ParserConfig) -> str:
-    """The effort `parse` actually sends: the stored one on OpenAI, `off` (none sent) otherwise. The trace
-    records this, so it says what the provider was asked for."""
-    effort = getattr(config, "reasoning_effort", "off")
-    return effort if effort in REASONING_EFFORTS and getattr(config, "provider", None) == "openai" else "off"
-
-
 def resolve_config(
     db: Session, *, current_date: str, override_version_id: str | None = None
 ) -> ParserConfig:
@@ -861,27 +798,16 @@ def resolve_config(
     the way down. It exists for the Prompts screen's "Run a turn" test (AC-807), which is
     dry-run only: the engine refuses to read it off a live envelope, so a customer can
     never be answered by an unpublished prompt.
-
-    A CLOSED LISTS version also reads `system_settings.chatbot_closed_lists_mode` here, every
-    call (no cache, so a flip reaches the next turn), for the index mode below.
     """
     from app.services.ai_assistant_service import AIAssistantConfigService
     from app.services.llm_provider import resolve_api_key
 
     # ONE registry read: the gate reads the RAW template, the prompt is that same text rendered.
-    from app.services.chatbot.head import closed_lists_index
     from app.services.chatbot.head.chat_state_prompt import HEADING
-    from app.services.chatbot.head.closed_lists_prompt import gate_on
 
     resolved = get_prompt(db, PROMPT_KEY, override_version_id=override_version_id)
     raw_template = resolved.text
-    # The same one read as the state gate (#1747 R6): both gates and the text, one version.
-    closed_lists = gate_on(raw_template)
-    # CLOSED-LISTS-INDEX-MODE: the full lists render as fixed pointer lines, passed at render
-    # time (a value the caller passes wins over the registry's), so the template is untouched.
-    index_mode = closed_lists and closed_lists_index.read_mode(db) == closed_lists_index.MODE_INDEX
-    blanks = dict(closed_lists_index.SYSTEM_BLANKS) if index_mode else {}
-    system_prompt, prompt_version = render_resolved(db, PROMPT_KEY, resolved, current_date=current_date, **blanks)
+    system_prompt, prompt_version = render_resolved(db, PROMPT_KEY, resolved, current_date=current_date)
     provider_override, model_override = agent_model(db, PROMPT_KEY)
 
     config = AIAssistantConfigService(db).get()
@@ -892,49 +818,15 @@ def resolve_config(
     api_key = resolve_api_key(config, provider)
     if not api_key:
         raise ParserError(f"no API key configured for provider {provider!r}")
-    from app.services.chatbot.head import code_lookup_prompt
-    from app.services.chatbot.head.parser_template import MARKER as TEMPLATE_MARKER
-
-    # CHAT-STATE: the literal on the prompt text (never on a message) opts the turn in.
-    state_block = HEADING in (raw_template or "")
-    json_schema = None
-    if closed_lists:
-        from app.services.chatbot_prompt_vars import closed_list_enum
-
-        json_schema = closed_lists_schema(closed_list_enum(db), state=state_block)
     return ParserConfig(
         system_prompt=system_prompt,
         prompt_version=prompt_version,
         provider=provider,
         model=model,
         api_key=api_key,
-        closed_lists=closed_lists,
-        code_lookup=closed_lists and code_lookup_prompt.gate_on(raw_template),
-        json_schema=json_schema,
-        state_block=state_block,
-        template=TEMPLATE_MARKER in (raw_template or ""),
-        closed_lists_index=index_mode,
-        reasoning_effort=reasoning_effort_setting(db),
+        # CHAT-STATE: the literal on the prompt text (never on a message) opts the turn in.
+        state_block=HEADING in (raw_template or ""),
     )
-
-
-def uses_closed_lists(db: Session, *, override_version_id: str | None = None) -> bool:
-    """CHAT-CLOSED-LISTS gate: does the version this turn runs carry the CLOSED LISTS
-    section? Read off the RAW template (the same resolution `render` makes), so no
-    rendered list value can switch it on."""
-    from app.services import ai_prompt_registry
-    from app.services.chatbot.head.closed_lists_prompt import gate_on
-
-    return gate_on(ai_prompt_registry.get_prompt(db, PROMPT_KEY, override_version_id=override_version_id).text)
-
-
-def uses_code_lookup(db: Session, *, override_version_id: str | None = None) -> bool:
-    """CHAT-CODE-LOOKUP gate: does the version this turn runs carry the CODE LOOKUP section
-    beside the CLOSED LISTS one? Read off the RAW template, like `uses_closed_lists`."""
-    from app.services import ai_prompt_registry
-    from app.services.chatbot.head.code_lookup_prompt import gate_on
-
-    return gate_on(ai_prompt_registry.get_prompt(db, PROMPT_KEY, override_version_id=override_version_id).text)
 
 
 def _subject_names(rows: Any) -> list[str]:
@@ -1195,14 +1087,11 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
             messages,
             temperature=0.0,
             max_tokens=PARSER_MAX_TOKENS,
-            json_schema=config.json_schema
-            or (PARSE_OUTPUT_JSON_SCHEMA_WITH_STATE if config.state_block else PARSE_OUTPUT_JSON_SCHEMA),
+            json_schema=PARSE_OUTPUT_JSON_SCHEMA_WITH_STATE if config.state_block else PARSE_OUTPUT_JSON_SCHEMA,
             json_schema_name=PARSE_OUTPUT_SCHEMA_NAME,
             # One cache bucket per published prompt version: every parse on it shares
             # the same static prefix (OpenAI only; the others ignore it).
             prompt_cache_key=f"{PROMPT_KEY}:v{config.prompt_version or 'fallback'}",
-            # LEAN: the stored effort, on OpenAI only and only when set (`off` sends none, as before).
-            **({"reasoning_effort": effort} if (effort := sent_reasoning_effort(config)) != "off" else {}),
         )
     except llm_call.RateLimited as exc:
         raise ParserError(f"parser provider call failed: {exc}", rate_limited=True) from exc
@@ -1218,8 +1107,6 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
         # The prompt-cache hit (LLM-TEST-COST): how much of `prompt_tokens` was billed
         # at the cached rate.
         "cached_tokens": int(getattr(result, "cached_tokens", 0) or 0),
-        # LEAN: the part of `completion_tokens` spent reasoning, None when the provider reports none.
-        "reasoning_tokens": getattr(result, "reasoning_tokens", None),
     }
     try:
         content = (result.content or "").strip()

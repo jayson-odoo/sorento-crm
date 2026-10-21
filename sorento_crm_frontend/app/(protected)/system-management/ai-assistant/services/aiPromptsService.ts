@@ -181,36 +181,6 @@ export interface DryRunResponse {
   turn?: ChatbotTurn | null;
 }
 
-/** CHAT-INDEX-VIZ: what the parser prompt sends on every message, section by section. */
-export interface PromptArchitectureGroup {
-  name: string;
-  size: number;
-  /** 0..1 of the total. */
-  share: number;
-}
-
-export interface PromptArchitectureList {
-  key: string;
-  name: string;
-  source: string;
-  href: string;
-  /** One plain sentence on how a message is matched against this list. */
-  how: string;
-  entries: number;
-  sent_each_message_size: number;
-  full_list_size: number;
-  checked_only?: boolean;
-}
-
-export interface PromptArchitecture {
-  version: number;
-  mode: 'index' | 'block';
-  uses_closed_lists: boolean;
-  total_size: number;
-  groups: PromptArchitectureGroup[];
-  lists: PromptArchitectureList[];
-}
-
 const BASE = '/api/v1/system/ai-assistant/prompts';
 
 export async function listPromptKeys(): Promise<PromptKeySummary[]> {
@@ -224,15 +194,6 @@ export async function getPromptVersions(name: string): Promise<PromptVersionsRes
   if (USE_PROMPT_MOCKS) return structuredClone(MOCK_VERSIONS[name]);
   const r = await apiFetch(`${BASE}/${encodeURIComponent(name)}/versions`);
   if (!r.ok) throw new Error(await extractApiError(r, 'Failed to load version history'));
-  return r.json();
-}
-
-/** Served by the chatbot module's own read surface, not the core prompts router. */
-const CHATBOT_PROMPTS_BASE = '/api/v1/system/chatbot/prompts';
-
-export async function getPromptArchitecture(name: string, version: number): Promise<PromptArchitecture> {
-  const r = await apiFetch(`${CHATBOT_PROMPTS_BASE}/${encodeURIComponent(name)}/versions/${version}/architecture`);
-  if (!r.ok) throw new Error(await extractApiError(r, 'Failed to load the architecture'));
   return r.json();
 }
 

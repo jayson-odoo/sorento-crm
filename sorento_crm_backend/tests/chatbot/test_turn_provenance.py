@@ -64,7 +64,7 @@ def test_ac1_1_success_record_carries_provenance(session_factory, seeded, parser
     assert facts.get("prompt_version") == 7
     assert facts.get("model") == "gpt-test"
     assert facts.get("provider") == "openai"
-    assert "reasoning_effort" in facts and facts["reasoning_effort"] == "off"
+    assert "reasoning_effort" in facts and facts["reasoning_effort"] is None
     assert facts.get("code_sha") == GIT_SHA
 
 
@@ -78,7 +78,7 @@ def test_ac1_2_parser_failure_record_carries_provenance(session_factory, seeded,
     missing = [k for k in KEYS if k not in facts]
     assert not missing, f"failed-parse understood record lacks {missing}"
     assert facts["prompt_sha256"] == hashlib.sha256(PROMPT.encode()).hexdigest()
-    assert facts["reasoning_effort"] == "off"
+    assert facts["reasoning_effort"] is None
     assert facts["code_sha"] == GIT_SHA
 
 
