@@ -362,6 +362,8 @@ def _donor(world, tag):
 
 
 def test_a_changed_borrow_reads_the_lines_own_location_in_the_email(api, emails):
+    """OI-ORDERBACK-LOCATION (owner, 21 Oct 2026): REMARK names the new donor Y; the old
+    donor X is not told."""
     from app.models.project_so import INQUIRY_CANCELLED, IV_ORDER_BACK, OrderInquiryRow
 
     _client, world = api
@@ -378,7 +380,9 @@ def test_a_changed_borrow_reads_the_lines_own_location_in_the_email(api, emails)
     )])
 
     assert len(emails) == 1, emails
-    assert _lines(emails[0]) == [(code, "10", own, "ORDER BACK")], _lines(emails[0])
+    assert _lines(emails[0]) == [
+        (code, "10", own, f"ORDER BACK {donor_y.warehouse_code}")
+    ], _lines(emails[0])
     assert emails[0]["subject_scope"].startswith(f"{own} @ "), emails[0]["subject_scope"]
     live = (
         world.db.query(OrderInquiryRow)
@@ -446,7 +450,7 @@ def _one_line_order(world, qty):
 
 
 def _then_changed_email(api, emails, *, first, second, second_donor_moves, cut_to=None,
-                        qty="10"):
+                        qty="10", new_date=None):
     """Confirm `first`, optionally cut the SO line, re-Confirm `second`; the one email line."""
     _client, world = api
     order, line, core_line = _one_line_order(world, qty)
@@ -456,32 +460,64 @@ def _then_changed_email(api, emails, *, first, second, second_donor_moves, cut_t
         core_line.qty_ordered = Decimal(cut_to)
         line.qty = Decimal(cut_to)
         world.db.commit()
+    if new_date is not None:
+        core_line.required_date = new_date
+        line.delivery_date = new_date
+        world.db.commit()
     _post(api, order, [_line_payload(line.id, **{"amend_reason": "Changed.", **second})])
     assert len(emails) == 1, emails
     assert len(emails[0]["lines"]) == 1, emails[0]["lines"]
     return emails[0]["lines"][0]
 
 
-def _same(moved, still, own):
+def _same(moved, still, own, *, kept_at, moved_to):
+    """A donor move reads as the same change without it, except that REMARK names the new
+    donor where the unmoved one names the old (OI-ORDERBACK-LOCATION, owner 21 Oct 2026)."""
     assert moved["location"] == own and still["location"] == own, (moved, still)
-    for key in ("item_code", "qty", "was", "remark"):
+    for key in ("item_code", "qty", "was"):
         assert moved.get(key) == still.get(key), (key, moved, still)
+    assert moved["remark"] == still["remark"].replace(
+        kept_at.warehouse_code, moved_to.warehouse_code
+    ), (moved, still)
     assert "CANCEL ORDER" not in moved["remark"] or "CANCEL ORDER" in still["remark"], moved
 
 
-def test_a_borrow_moved_and_cut_reads_as_the_same_cut_without_the_move(api, emails):
+def _moved_and_kept(api, emails, tag, **change):
     _client, world = api
-    x, y = _donor(world, "CX"), _donor(world, "CY")
-    own = world.own_wh.warehouse_code
+    x, y = _donor(world, f"{tag}X"), _donor(world, f"{tag}Y")
     kept = _then_changed_email(
         api, emails, first={"borrow": _borrow_from(world, x, "10")},
-        second={"borrow": _borrow_from(world, x, "8")}, second_donor_moves=False, cut_to="8",
+        second={"borrow": _borrow_from(world, x, change.get("qty", "10"))},
+        second_donor_moves=False, **change.get("kw", {}),
     )
     moved = _then_changed_email(
         api, emails, first={"borrow": _borrow_from(world, x, "10")},
-        second={"borrow": _borrow_from(world, y, "8")}, second_donor_moves=True, cut_to="8",
+        second={"borrow": _borrow_from(world, y, change.get("qty", "10"))},
+        second_donor_moves=True, **change.get("kw", {}),
     )
-    _same(moved, kept, own)
+    return kept, moved, y
+
+
+def test_a_borrow_moved_and_cut_remark_names_the_new_donor_after_the_cut(api, emails):
+    _client, world = api
+    own = world.own_wh.warehouse_code
+    kept, moved, y = _moved_and_kept(api, emails, "C", qty="8", kw={"cut_to": "8"})
+    assert kept["remark"] == "CANCEL 2", kept
+    assert moved["remark"] == f"CANCEL 2, ORDER BACK {y.warehouse_code}", moved
+    assert moved["location"] == own and kept["location"] == own, (moved, kept)
+    for key in ("item_code", "qty", "was"):
+        assert moved.get(key) == kept.get(key), (key, moved, kept)
+
+
+def test_a_borrow_moved_with_a_later_date_remark_names_the_new_donor_after_delay(api, emails):
+    _client, world = api
+    own = world.own_wh.warehouse_code
+    kept, moved, y = _moved_and_kept(api, emails, "D", kw={"new_date": D_B})
+    assert kept["remark"] == "DELAY", kept
+    assert moved["remark"] == f"DELAY, ORDER BACK {y.warehouse_code}", moved
+    assert moved["location"] == own and kept["location"] == own, (moved, kept)
+    for key in ("item_code", "qty", "was"):
+        assert moved.get(key) == kept.get(key), (key, moved, kept)
 
 
 def test_a_borrow_moved_with_a_new_buy_split_reads_as_the_same_split_without_the_move(
@@ -502,7 +538,7 @@ def test_a_borrow_moved_with_a_new_buy_split_reads_as_the_same_split_without_the
         second={"borrow": _borrow_from(world, y, "4"), "buy_qty": "6", "amend_reason": "Part from stock."},
         second_donor_moves=True,
     )
-    _same(moved, kept, own)
+    _same(moved, kept, own, kept_at=x, moved_to=y)
 
 
 # ------------------------------- a resized hole among several donors is not a cancelled order
@@ -529,7 +565,7 @@ def test_two_donor_borrow_merged_into_one_reads_no_cancel(api, emails):
         _borrow_from(world, x, "10"),
     )
     assert got == [(world.product.product_code, "10", world.own_wh.warehouse_code,
-                    "ORDER BACK")], got
+                    f"ORDER BACK {x.warehouse_code}")], got
 
 
 def test_one_donor_borrow_split_across_two_reads_no_cancel(api, emails):
@@ -541,7 +577,7 @@ def test_one_donor_borrow_split_across_two_reads_no_cancel(api, emails):
         _borrow_from(world, x, "6") + _borrow_from(world, y, "4"),
     )
     assert got == [(world.product.product_code, "10", world.own_wh.warehouse_code,
-                    "ORDER BACK 6 & ORDER BACK 4")], got
+                    f"ORDER BACK {x.warehouse_code} 6 & ORDER BACK {y.warehouse_code} 4")], got
 
 
 def test_two_donor_borrow_moved_wholly_reads_order_back_only(api, emails):
@@ -552,7 +588,7 @@ def test_two_donor_borrow_moved_wholly_reads_order_back_only(api, emails):
         _borrow_from(world, x, "6") + _borrow_from(world, y, "4"),
         _borrow_from(world, z, "10"),
     )
-    assert [g[3] for g in got] == ["ORDER BACK"], got
+    assert [g[3] for g in got] == [f"ORDER BACK {z.warehouse_code}"], got
 
 
 def test_one_donor_borrow_split_onto_two_new_donors_reads_two_order_backs(api, emails):
@@ -563,7 +599,9 @@ def test_one_donor_borrow_split_onto_two_new_donors_reads_two_order_backs(api, e
         _borrow_from(world, x, "10"),
         _borrow_from(world, y, "6") + _borrow_from(world, z, "4"),
     )
-    assert [g[3] for g in got] == ["ORDER BACK 6 & ORDER BACK 4"], got
+    assert [g[3] for g in got] == [
+        f"ORDER BACK {y.warehouse_code} 6 & ORDER BACK {z.warehouse_code} 4"
+    ], got
 
 
 def test_two_donor_borrow_reshuffled_in_place_reads_no_cancel(api, emails):
@@ -576,7 +614,7 @@ def test_two_donor_borrow_reshuffled_in_place_reads_no_cancel(api, emails):
         qty="5",
     )
     assert got == [(world.product.product_code, "5", world.own_wh.warehouse_code,
-                    "ORDER BACK 2 & ORDER BACK 3")], got
+                    f"ORDER BACK {x.warehouse_code} 2 & ORDER BACK {y.warehouse_code} 3")], got
 
 
 def test_two_donor_borrow_cut_in_place_reads_the_cut(api, emails):
@@ -590,4 +628,69 @@ def test_two_donor_borrow_cut_in_place_reads_the_cut(api, emails):
     )
     # Guard: the order back purchasing held drops 10 -> 8, so "CANCEL ORDER 2" is the real 2
     # (reviewer, 14 Oct); netting the two resized holes must not double or drop it.
-    assert got["remark"] == "ORDER BACK 5 & ORDER BACK 3, CANCEL ORDER 2", got
+    assert got["remark"] == (
+        f"ORDER BACK {x.warehouse_code} 5 & ORDER BACK {y.warehouse_code} 3, CANCEL ORDER 2"
+    ), got
+
+
+# ----------------------- OI-ORDERBACK-LOCATION (owner 21 Oct 2026): REMARK names the donor
+# LOCATION stays the SO line's own (and the subject with it); every ORDER BACK part whose
+# donor differs from LOCATION names it, the way USE names its location. Still ONE row per
+# saved line (the owner: "I already can split manually when I confirm").
+
+
+def test_so426913_buy_turned_borrow_names_the_donor_in_remark(api, emails):
+    """The real case: ORDER 4 at the line's own location, re-Confirmed as Borrow 4 from
+    another location. One row at the own location, "ORDER BACK <donor>, CANCEL ORDER 4"."""
+    _client, world = api
+    donor = _donor(world, "BB")
+    order, line, _core = _one_line_order(world, "4")
+    own = world.own_wh.warehouse_code
+    code = world.product.product_code
+
+    _post(api, order, [_line_payload(line.id, buy_qty="4")])
+    emails.clear()
+    _post(api, order, [_line_payload(
+        line.id, borrow=_borrow_from(world, donor, "4"), amend_reason="BB has it.",
+    )])
+
+    assert len(emails) == 1, emails
+    assert _lines(emails[0]) == [
+        (code, "4", own, f"ORDER BACK {donor.warehouse_code}, CANCEL ORDER 4"),
+    ], _lines(emails[0])
+    assert emails[0]["subject_scope"].startswith(f"{own} @ "), emails[0]["subject_scope"]
+
+
+def test_a_borrow_from_the_lines_own_location_names_no_donor(api, emails):
+    _client, world = api
+    order, line, _core = _one_line_order(world, "4")
+    own = world.own_wh.warehouse_code
+    _post(api, order, [_line_payload(line.id, borrow=[{
+        "source": "other_location", "warehouse_id": world.own_wh.id, "qty": "4",
+        "reason": "Another order's units at our own bin.",
+    }])])
+
+    assert len(emails) == 1, emails
+    assert [(g[2], g[3]) for g in _lines(emails[0])] == [(own, "ORDER BACK")], _lines(emails[0])
+
+
+def test_a_use_plus_borrow_mix_names_the_donor_beside_use(api, emails):
+    _client, world = api
+    _stock(world.db, world.product, world.pool_wh, on_hand=50)
+    world.db.commit()
+    donor = _donor(world, "KL")
+    order, line, _core = _one_line_order(world, "10")
+    own = world.own_wh.warehouse_code
+    pool = world.pool_wh.warehouse_code
+    _post(api, order, [_line_payload(
+        line.id,
+        reserve=[{"warehouse_id": world.pool_wh.id, "qty": "6"}],
+        borrow=_borrow_from(world, donor, "4"),
+        amend_reason="Part from stock.",
+    )])
+
+    assert len(emails) == 1, emails
+    assert _lines(emails[0]) == [(
+        world.product.product_code, "10", own,
+        f"USE {pool} 6 & ORDER BACK {donor.warehouse_code} 4",
+    )], _lines(emails[0])

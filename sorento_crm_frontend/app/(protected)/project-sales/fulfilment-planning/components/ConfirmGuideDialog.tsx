@@ -70,12 +70,21 @@ const plural = (count: number, one: string, many = `${one}s`) =>
  */
 export function ConfirmGuideDialog({
   pages,
+  autocountNote = [],
+  applyLabel = 'Apply AutoCount change',
   runConfirm,
   saveRemarks,
   onClose,
 }: {
   /** The orders of this Confirm, in board order; re-read live, so a page drops once saved away. */
   pages: ConfirmGuidePage[];
+  /**
+   * PLAN-BATCH-COUNT-DISPLAY (reviewer round 1): the board's AutoCount change note, said again on
+   * the Confirm step. With no page (no decision, only pending changes) it is the whole press, and
+   * the title and button read `applyLabel` instead of "Confirm 0 orders".
+   */
+  autocountNote?: string[];
+  applyLabel?: string;
   runConfirm: () => Promise<boolean>;
   /**
    * UAC F26: keeps saved lines' remarks in their saved decisions (board line key -> remark,
@@ -214,7 +223,9 @@ export function ConfirmGuideDialog({
       >
         <DialogHeader className="mb-0 space-y-2 border-b border-border px-5 pt-4 pb-3 pe-12 text-start sm:text-start">
           <DialogTitle className="truncate text-base">
-            {`Confirm ${pages.map((entry) => entry.soNumber).join(', ')}`}
+            {pages.length > 0
+              ? `Confirm ${pages.map((entry) => entry.soNumber).join(', ')}`
+              : applyLabel}
           </DialogTitle>
           <div data-testid="confirm-guide-steps">
             <WizardSteps steps={STEPS} currentId={step.kind} />
@@ -335,18 +346,28 @@ export function ConfirmGuideDialog({
 
           {step.kind === 'confirm' ? (
             <div className="space-y-3">
-              <p className="text-sm break-words">
-                {`${plural(pages.length, 'order')}: ${pages
-                  .map((entry) => `${entry.soNumber} (${plural(entry.covered.length, 'line')})`)
-                  .join(', ')}. Nothing has been sent yet.`}
-              </p>
+              {pages.length > 0 ? (
+                <p className="text-sm break-words">
+                  {`${plural(pages.length, 'order')}: ${pages
+                    .map((entry) => `${entry.soNumber} (${plural(entry.covered.length, 'line')})`)
+                    .join(', ')}. Nothing has been sent yet.`}
+                </p>
+              ) : null}
+              {autocountNote.map((line) => (
+                <p key={line} className="text-sm break-words">
+                  {line}
+                </p>
+              ))}
+              {pages.length === 0 ? (
+                <p className="text-sm break-words">Nothing has been sent yet.</p>
+              ) : null}
               <Button
                 type="button"
                 data-testid="confirm-guide-confirm"
                 disabled={posting}
                 onClick={() => void pressConfirm()}
               >
-                {`Confirm ${plural(pages.length, 'order')}`}
+                {pages.length > 0 ? `Confirm ${plural(pages.length, 'order')}` : applyLabel}
               </Button>
             </div>
           ) : null}
