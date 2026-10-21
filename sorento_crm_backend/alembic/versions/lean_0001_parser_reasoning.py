@@ -9,13 +9,13 @@ Additive only and idempotent (`IF NOT EXISTS`) so the shared dev DB, which conve
 take it in any order.
 
 Revision ID: lean_0001_parser_reasoning
-Revises: clim_0001_closed_lists_mode
+Revises: ccmp_0001_composer_switch
 """
 from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "lean_0001_parser_reasoning"
-down_revision = "clim_0001_closed_lists_mode"
+down_revision = "ccmp_0001_composer_switch"
 branch_labels = None
 depends_on = None
 
