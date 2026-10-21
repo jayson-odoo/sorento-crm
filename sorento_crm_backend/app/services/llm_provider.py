@@ -328,7 +328,10 @@ def _create_chat_completion(client, kwargs: dict) -> Any:
     attempt = dict(kwargs)
     if "max_tokens" in attempt:
         attempt["max_completion_tokens"] = attempt.pop("max_tokens")
-    rejected = _OPENAI_REJECTED_PARAMS.setdefault(str(attempt.get("model")), set())
+    # Remembered per model AND per whether an effort is sent: a parameter refused beside a reasoning effort says
+    # nothing about the same model without one (and the reverse). A request with no effort keeps the model key.
+    memo = str(attempt.get("model")) + (" +reasoning_effort" if attempt.get("reasoning_effort") else "")
+    rejected = _OPENAI_REJECTED_PARAMS.setdefault(memo, set())
     for param in [p for p in attempt if p in rejected]:
         _adapt(attempt, param)
     for _ in range(_MAX_PARAM_RETRIES):
@@ -417,8 +420,11 @@ class OpenAIProvider:
             # `LLM_MODEL_OVERRIDE` wins only when set (LLM-TEST-COST; set nowhere yet).
             "model": os.environ.get("LLM_MODEL_OVERRIDE") or model or self.default_model,
             "messages": outbound_messages,
-            "temperature": temperature,
         }
+        # A reasoning effort and a temperature are refused together (gpt-5.4-mini, probe 21 Oct 2026), so a
+        # request that carries an effort carries no temperature: no refused round trip.
+        if not reasoning_effort:
+            kwargs["temperature"] = temperature
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
