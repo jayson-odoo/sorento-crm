@@ -2032,8 +2032,13 @@ export function FulfilmentBoardPanel({
       const decision = draftWithoutPreMark[contribution.key] ?? contribution.draft?.decision;
       return {
         words: contribution.saved_remark ?? null,
-        // UAC F32: the saved decision's remark ('' = cleared), else the confirmed one.
-        own: remarkFor(contribution, decision) || null,
+        // UAC F32: the saved decision's remark ('' = cleared), else the confirmed one. A
+        // non-editable line (Reject, Cancel, ...) with a draft has none: the server's words
+        // win there (OI-SPLIT-GEAR-REMARK H7).
+        own:
+          decision === undefined || decision.verdict === 'approved' || decision.verdict === 'amended'
+            ? remarkFor(contribution, decision) || null
+            : null,
         editable: decision?.verdict === 'approved' || decision?.verdict === 'amended',
       };
     },
@@ -2127,9 +2132,11 @@ export function FulfilmentBoardPanel({
       if (!lineId || psoIdBySalesOrder.get(contribution.sales_order_id) !== lineSplit.psoId)
         continue;
       const facts = remarkFactsOf(contribution);
-      if (!facts.editable) continue;
+      // OI-SPLIT-GEAR-REMARK: a line with no draft still hands over its confirmed remark
+      // (display only); only a draft line is saved through its decision.
+      if (!facts.editable && !facts.own) continue;
       remarks.set(lineId, facts);
-      keys.set(lineId, contribution.key);
+      if (facts.editable) keys.set(lineId, contribution.key);
     }
     return {
       remarks: remarks as ReadonlyMap<string, { words: string | null; own: string | null; editable: boolean }>,

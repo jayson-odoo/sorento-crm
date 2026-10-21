@@ -77,7 +77,6 @@ import type {
   PurchaseOrderLine,
   PurchaseOrderLineAllocation,
 } from '../../../types/scm.types';
-import BackToList from '@/components/common/BackToList';
 import { codeWithName, distinctName } from '@/lib/product-display';
 import { numberFieldError, parseNumberDraft } from '@/lib/number-field';
 import { useStableColumns } from '@/hooks/useStableColumns';
@@ -957,18 +956,11 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   });
   const visibleLineCount = table.getFilteredRowModel().rows.length;
 
-  // Back and prev/next live on the RIGHT of the record header, next to each other, the way
-  // the sales-order and users screens do it.
-  // Back carries the list query the row click wrote (S3-01). It lives on the
-  // toolbar row now; the empty states below keep one of their own.
-  const backLink = (
-    <BackToList listPath="/scm/purchase-orders" label="Back to purchase orders" />
-  );
-
+  // Back is the page header's (`../page.tsx`) on every state; one here stacked a second
+  // Back under it while the order loaded (SO-DETAIL-DUP-BACK).
   if (isLoading) {
     return (
       <div className="space-y-4">
-        <div className="flex justify-end">{backLink}</div>
         <Skeleton className="h-40 w-full rounded-xl" />
         <Skeleton className="h-64 w-full rounded-xl" />
       </div>
@@ -977,16 +969,13 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
 
   if (isError || !data) {
     return (
-      <div className="space-y-4">
-        <div className="flex justify-end">{backLink}</div>
-        <Card className="flex flex-col items-center gap-3 p-10 text-center">
-          <div className="text-sm font-semibold">Purchase order not found</div>
-          <p className="max-w-md text-sm text-muted-foreground">
-            This purchase order doesn&apos;t exist, or it was removed after this link was
-            made. Head back to the list to pick another.
-          </p>
-        </Card>
-      </div>
+      <Card className="flex flex-col items-center gap-3 p-10 text-center">
+        <div className="text-sm font-semibold">Purchase order not found</div>
+        <p className="max-w-md text-sm text-muted-foreground">
+          This purchase order doesn&apos;t exist, or it was removed after this link was
+          made. Head back to the list to pick another.
+        </p>
+      </Card>
     );
   }
 
