@@ -1022,3 +1022,72 @@ def test_typo_battery_file_shape_and_counts():
             assert "Showing 10 of" in (r.get("context") or {}).get("previous_reply", ""), i
     assert any(r["expect"].get("is_active") is True for i, r in by_id.items() if i.startswith("tb-c4-") and "-ctl-" not in i)
     assert any(r["expect"].get("is_active") is False for i, r in by_id.items() if i.startswith("tb-c4-ctl-"))
+
+
+# --- LEAN v90: --reasoning-effort forces the parser call's effort in-process (never the DB) ----------------------
+
+
+def _effort_run(session_factory, monkeypatch, effort, *, provider="openai", on_start=None):
+    """Run one row; the stubbed parse sends a request through the OpenAI seam the parser call uses
+    (`llm_provider._create_chat_completion`, called by OpenAIProvider.chat) to a fake client."""
+    import types
+
+    from app.services import llm_provider
+    from app.services.chatbot.head import parser as parser_mod
+
+    sent: list[dict] = []
+
+    class _Client:
+        chat = types.SimpleNamespace(completions=types.SimpleNamespace(
+            create=lambda **kw: sent.append(kw) or types.SimpleNamespace()))
+
+    def parse(config, block):
+        llm_provider._create_chat_completion(_Client(), {"model": "gpt-test", "messages": []})
+        return {"status": None, "entities": []}
+
+    config = parser_mod.ParserConfig(system_prompt="x", prompt_version=1, provider=provider, model="m", api_key="k")
+    monkeypatch.setattr(parser_mod, "resolve_config", lambda db, **kw: config)
+    monkeypatch.setattr(parser_mod, "parse", parse)
+    out = pg.run_live([{"id": "e", "message": "ZZA100 price", "expect": {}}], session_factory=session_factory,
+                      version_id="1", repeats=1, max_usd=5.0, require_key_last4="WXYZ", reasoning_effort=effort,
+                      on_start=on_start)
+    return out, sent
+
+
+@pytest.mark.parametrize(("effort", "sent_as"), [("low", "low"), ("medium", "medium"), ("high", "high"),
+                                                   ("off", "none")])
+def test_a_forced_effort_reaches_the_parser_request_and_every_row(effort, sent_as, session_factory, monkeypatch):
+    from app.services import llm_provider
+
+    real = llm_provider._create_chat_completion
+    headers: list[dict] = []
+    out, sent = _effort_run(session_factory, monkeypatch, effort, on_start=headers.append)
+    assert out[0]["reasons"] == [], out
+    assert [kw.get("reasoning_effort") for kw in sent] == [sent_as], sent
+    assert out[0]["reasoning_effort"] == effort, out
+    assert headers and headers[0]["reasoning_effort"] == effort, headers
+    assert llm_provider._create_chat_completion is real
+
+
+def test_without_the_flag_no_effort_is_sent_and_rows_say_so(session_factory, monkeypatch):
+    headers: list[dict] = []
+    out, sent = _effort_run(session_factory, monkeypatch, None, on_start=headers.append)
+    assert sent and "reasoning_effort" not in sent[0], sent
+    assert out[0]["reasoning_effort"] is None, out
+    assert headers[0]["reasoning_effort"] is None, headers
+
+
+def test_an_unknown_effort_is_refused():
+    with pytest.raises(ValueError):
+        pg.run_live([], session_factory=None, version_id="1", repeats=1, max_usd=1.0, require_key_last4="WXYZ",
+                    reasoning_effort="max")
+
+
+def test_a_forced_effort_on_a_provider_other_than_openai_is_refused_before_any_parse(session_factory, monkeypatch):
+    with pytest.raises(ValueError):
+        _effort_run(session_factory, monkeypatch, "low", provider="anthropic")
+
+
+def test_cli_reasoning_effort_choices(tmp_path):
+    with pytest.raises(SystemExit):
+        pg.main([*_BASE, "--reasoning-effort", "max"])
