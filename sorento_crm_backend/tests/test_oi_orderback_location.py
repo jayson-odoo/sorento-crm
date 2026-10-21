@@ -73,17 +73,19 @@ def test_resend_of_an_order_back_row_at_the_lines_own_location_names_nothing(rs)
 
 
 def test_resend_of_a_plain_order_row_keeps_its_own_location(rs):
-    """Control: only ORDER BACK changes; an ORDER row prints its own `stock_location`."""
+    """Control: only ORDER BACK changes; an ORDER row prints its own `stock_location`, not the SO line's."""
     client, world = rs
     _automation(world)
     inquiry = _oi(world)
     so_line = _so_line(world, inquiry, location="BRW-IR")
-    row = _line(world, inquiry, qty="4", item="ZZT-SRTUB207", location="BRW-IR")
+    row = _line(world, inquiry, qty="4", item="ZZT-SRTUB207", location="BRW-BB")
     row.verb = IV_ORDER
     row.so_line_id = so_line.id
     world.db.commit()
 
     email = _ok(client.post(PREVIEW, json={"inquiry_ids": [inquiry.id]}))["emails"][0]
 
-    assert email["subject"].startswith("OI: BRW-IR @ "), email["subject"]
-    assert "BRW-IR" in _cells(email["body_html"], "ZZT-SRTUB207")
+    assert email["subject"].startswith("OI: BRW-BB @ "), email["subject"]
+    cells = _cells(email["body_html"], "ZZT-SRTUB207")
+    assert "BRW-BB" in cells and "BRW-IR" not in cells, cells
+    assert "ORDER" in cells and not any("ORDER BACK" in c for c in cells), cells

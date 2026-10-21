@@ -450,7 +450,7 @@ def _one_line_order(world, qty):
 
 
 def _then_changed_email(api, emails, *, first, second, second_donor_moves, cut_to=None,
-                        qty="10"):
+                        qty="10", new_date=None):
     """Confirm `first`, optionally cut the SO line, re-Confirm `second`; the one email line."""
     _client, world = api
     order, line, core_line = _one_line_order(world, qty)
@@ -459,6 +459,10 @@ def _then_changed_email(api, emails, *, first, second, second_donor_moves, cut_t
     if cut_to is not None:
         core_line.qty_ordered = Decimal(cut_to)
         line.qty = Decimal(cut_to)
+        world.db.commit()
+    if new_date is not None:
+        core_line.required_date = new_date
+        line.delivery_date = new_date
         world.db.commit()
     _post(api, order, [_line_payload(line.id, **{"amend_reason": "Changed.", **second})])
     assert len(emails) == 1, emails
@@ -478,19 +482,42 @@ def _same(moved, still, own, *, kept_at, moved_to):
     assert "CANCEL ORDER" not in moved["remark"] or "CANCEL ORDER" in still["remark"], moved
 
 
-def test_a_borrow_moved_and_cut_reads_as_the_same_cut_without_the_move(api, emails):
+def _moved_and_kept(api, emails, tag, **change):
     _client, world = api
-    x, y = _donor(world, "CX"), _donor(world, "CY")
-    own = world.own_wh.warehouse_code
+    x, y = _donor(world, f"{tag}X"), _donor(world, f"{tag}Y")
     kept = _then_changed_email(
         api, emails, first={"borrow": _borrow_from(world, x, "10")},
-        second={"borrow": _borrow_from(world, x, "8")}, second_donor_moves=False, cut_to="8",
+        second={"borrow": _borrow_from(world, x, change.get("qty", "10"))},
+        second_donor_moves=False, **change.get("kw", {}),
     )
     moved = _then_changed_email(
         api, emails, first={"borrow": _borrow_from(world, x, "10")},
-        second={"borrow": _borrow_from(world, y, "8")}, second_donor_moves=True, cut_to="8",
+        second={"borrow": _borrow_from(world, y, change.get("qty", "10"))},
+        second_donor_moves=True, **change.get("kw", {}),
     )
-    _same(moved, kept, own, kept_at=x, moved_to=y)
+    return kept, moved, y
+
+
+def test_a_borrow_moved_and_cut_remark_names_the_new_donor_after_the_cut(api, emails):
+    _client, world = api
+    own = world.own_wh.warehouse_code
+    kept, moved, y = _moved_and_kept(api, emails, "C", qty="8", kw={"cut_to": "8"})
+    assert kept["remark"] == "CANCEL 2", kept
+    assert moved["remark"] == f"CANCEL 2, ORDER BACK {y.warehouse_code}", moved
+    assert moved["location"] == own and kept["location"] == own, (moved, kept)
+    for key in ("item_code", "qty", "was"):
+        assert moved.get(key) == kept.get(key), (key, moved, kept)
+
+
+def test_a_borrow_moved_with_a_later_date_remark_names_the_new_donor_after_delay(api, emails):
+    _client, world = api
+    own = world.own_wh.warehouse_code
+    kept, moved, y = _moved_and_kept(api, emails, "D", kw={"new_date": D_B})
+    assert kept["remark"] == "DELAY", kept
+    assert moved["remark"] == f"DELAY, ORDER BACK {y.warehouse_code}", moved
+    assert moved["location"] == own and kept["location"] == own, (moved, kept)
+    for key in ("item_code", "qty", "was"):
+        assert moved.get(key) == kept.get(key), (key, moved, kept)
 
 
 def test_a_borrow_moved_with_a_new_buy_split_reads_as_the_same_split_without_the_move(

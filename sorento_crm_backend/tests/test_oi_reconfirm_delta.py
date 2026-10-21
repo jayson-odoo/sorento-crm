@@ -201,7 +201,9 @@ def test_owner_case_so424764_saved_two_sends_two_not_three(api):
     assert len(all_rows) == 3, "no cancelled copy of the DIY order-back was left behind"
     assert sorted(item["item_code"] for item in _TOLD) == ["C-FH14", "CGB9032B"], _TOLD
     # OI-ORDERBACK-LOCATION (owner, 21 Oct 2026): REMARK names each hole's donor.
-    assert sorted(_remarks(_TOLD)) == ["ORDER BACK BRW-BB", "ORDER BACK BRW-CC"]
+    assert sorted((i["item_code"], i["line"]["remark"]) for i in _TOLD) == [
+        ("C-FH14", "ORDER BACK BRW-CC"), ("CGB9032B", "ORDER BACK BRW-BB"),
+    ]
     assert created == 2, "only the two new order-backs count as raised"
 
 
