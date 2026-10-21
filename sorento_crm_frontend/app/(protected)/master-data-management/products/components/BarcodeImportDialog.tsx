@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ColumnDef,
   getCoreRowModel,
+  getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
 import { Download, LoaderCircle, TestTube } from 'lucide-react';
@@ -20,10 +21,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { FileDropzone } from '@/components/common/FileDropzone';
 import { CountTile } from '@/components/common/CountTile';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { generateExcelFile } from '@/lib/excel-utils';
 import { toast } from '@/lib/toast';
@@ -39,8 +43,9 @@ import {
 /**
  * Products > Actions > Import barcodes (BARCODE-IMPORT).
  *
- * Test then Apply, nothing on file select, same as the other upload dialogs. Apply is
- * synchronous: one column on a few thousand products is well inside a request.
+ * Test then Apply, nothing on file select. Apply needs a Test of the same file (the server
+ * refuses without the preview's token), and it is synchronous: the result panel is the end
+ * state, so the dialog cannot be closed while it runs.
  */
 
 const MAX_SIZE_MB = 25;
@@ -63,12 +68,27 @@ const STATUS: Record<
   repeated_code: { label: 'Repeated code', variant: 'outline' },
   blank_barcode: { label: 'Blank barcode', variant: 'outline' },
   too_long: { label: 'Too long', variant: 'destructive' },
+  scientific: { label: 'Number lost (E+ format)', variant: 'destructive' },
 };
 
 const WARNING_LABEL = {
   duplicate: 'Duplicate',
   not_ean13: 'Not EAN-13 valid',
 } as const;
+
+/** Rows someone should look at before applying; the rest are routine New / Same / Blank. */
+const ATTENTION: ReadonlySet<BarcodeRowStatus> = new Set([
+  'change',
+  'unknown_code',
+  'ambiguous_code',
+  'repeated_code',
+  'too_long',
+  'scientific',
+]);
+
+export function needsAttention(row: BarcodeImportRow): boolean {
+  return ATTENTION.has(row.status) || row.warnings.length > 0;
+}
 
 function downloadTemplate() {
   generateExcelFile(
@@ -119,6 +139,46 @@ function BarcodeCell({ row }: { row: BarcodeImportRow }) {
   }
   const value = row.new_barcode ?? row.old_barcode;
   return value ? <BarcodeValue value={value} /> : null;
+}
+
+function StatusCell({ row }: { row: BarcodeImportRow }) {
+  const shared = row.duplicate_of.length
+    ? `Also on ${row.duplicate_of.join(', ')}`
+    : null;
+  return (
+    <div className="min-w-0 space-y-1">
+      <div className="flex flex-wrap gap-1">
+        <Badge
+          variant={STATUS[row.status].variant}
+          appearance="light"
+          size="sm"
+        >
+          {STATUS[row.status].label}
+        </Badge>
+        {row.warnings.map((w) => (
+          <Badge key={w} variant="warning" appearance="light" size="sm">
+            {WARNING_LABEL[w]}
+          </Badge>
+        ))}
+      </div>
+      {shared ? (
+        <span
+          className="block truncate text-xs text-muted-foreground"
+          title={shared}
+        >
+          {shared}
+        </span>
+      ) : null}
+      {row.note ? (
+        <span
+          className="block truncate text-xs text-muted-foreground"
+          title={row.note}
+        >
+          {row.note}
+        </span>
+      ) : null}
+    </div>
+  );
 }
 
 const PREVIEW_COLUMNS: ColumnDef<BarcodeImportRow>[] = [
@@ -182,35 +242,22 @@ const PREVIEW_COLUMNS: ColumnDef<BarcodeImportRow>[] = [
     header: ({ column }) => (
       <DataGridColumnHeader title="Status" column={column} />
     ),
-    cell: ({ row }) => (
-      <div className="flex flex-wrap gap-1">
-        <Badge
-          variant={STATUS[row.original.status].variant}
-          appearance="light"
-          size="sm"
-        >
-          {STATUS[row.original.status].label}
-        </Badge>
-        {row.original.warnings.map((w) => (
-          <Badge key={w} variant="warning" appearance="light" size="sm">
-            {WARNING_LABEL[w]}
-          </Badge>
-        ))}
-      </div>
-    ),
-    size: 200,
+    cell: ({ row }) => <StatusCell row={row.original} />,
+    size: 240,
     enableSorting: false,
     meta: { headerTitle: 'Status' },
   },
 ];
 
 function PreviewGrid({ rows }: { rows: BarcodeImportRow[] }) {
-  const columns = useMemo(() => PREVIEW_COLUMNS, []);
   const table = useReactTable({
-    columns,
+    columns: PREVIEW_COLUMNS,
     data: rows,
     getRowId: (r) => String(r.row),
     getCoreRowModel: getCoreRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    initialState: { pagination: { pageIndex: 0, pageSize: 50 } },
+    autoResetPageIndex: true,
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
   });
@@ -224,8 +271,10 @@ function PreviewGrid({ rows }: { rows: BarcodeImportRow[] }) {
         columnsResizable: true,
         scrollerMaxHeight: '20rem',
       }}
+      emptyMessage="Nothing needs attention"
     >
       <DataGridTable />
+      {rows.length > 50 ? <DataGridPagination /> : null}
     </DataGrid>
   );
 }
@@ -237,6 +286,11 @@ function OutcomePanel({
   outcome: BarcodeImportOutcome;
   applied: boolean;
 }) {
+  const [showAll, setShowAll] = useState(false);
+  const attention = useMemo(
+    () => outcome.rows.filter(needsAttention),
+    [outcome.rows],
+  );
   if (!outcome.readable) {
     return (
       <Alert variant="destructive" appearance="light">
@@ -253,7 +307,8 @@ function OutcomePanel({
     c.ambiguous_code +
     c.repeated_code +
     c.blank_barcode +
-    c.too_long;
+    c.too_long +
+    c.scientific;
   return (
     <div className="space-y-3">
       <p className="text-sm text-muted-foreground">
@@ -265,6 +320,16 @@ function OutcomePanel({
         <span className="font-medium text-foreground">
           {outcome.barcode_column}
         </span>
+        {outcome.note_column ? (
+          <>
+            {' '}
+            (notes from{' '}
+            <span className="font-medium text-foreground">
+              {outcome.note_column}
+            </span>
+            )
+          </>
+        ) : null}
         {applied ? (
           <>
             .{' '}
@@ -281,11 +346,30 @@ function OutcomePanel({
         <CountTile label="Same" value={c.same} />
         <CountTile label="Skipped" value={skipped} />
         <CountTile label="Unknown code" value={c.unknown_code} />
-        <CountTile label="Too long" value={c.too_long} />
+        <CountTile label="Too long or E+" value={c.too_long + c.scientific} />
         <CountTile label="Duplicate" value={c.duplicate} />
         <CountTile label="Not EAN-13 valid" value={c.not_ean13} />
       </div>
-      {outcome.rows.length ? <PreviewGrid rows={outcome.rows} /> : null}
+      {outcome.rows.length ? (
+        <>
+          <div className="flex items-center gap-2">
+            <Switch
+              id="barcode-import-show-all"
+              checked={showAll}
+              onCheckedChange={setShowAll}
+              size="sm"
+            />
+            <Label
+              htmlFor="barcode-import-show-all"
+              className="text-sm font-normal"
+            >
+              Show all {outcome.rows.length} rows ({attention.length} need
+              attention)
+            </Label>
+          </div>
+          <PreviewGrid rows={showAll ? outcome.rows : attention} />
+        </>
+      ) : null}
     </div>
   );
 }
@@ -343,11 +427,11 @@ export function BarcodeImportDialog({
   };
 
   const apply = async () => {
-    if (!file) return;
+    if (!file || !preview) return;
     setApplying(true);
     setError(null);
     try {
-      const out = await applyBarcodeImport(file);
+      const out = await applyBarcodeImport(file, preview.preview_token);
       setResult(out);
       void queryClient.invalidateQueries({ queryKey: ['products'] });
       toast.success(
@@ -364,14 +448,24 @@ export function BarcodeImportDialog({
   };
 
   const writable = preview ? preview.counts.new + preview.counts.change : null;
+  // Apply only after a Test of THIS file: picking another file clears `preview`.
   const canApply =
     !!file &&
+    !!preview &&
+    preview.readable &&
     !testing &&
     !applying &&
-    (!preview || (preview.readable && (writable ?? 0) > 0));
+    (writable ?? 0) > 0;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // The write is one request; closing mid-way would hide its end state.
+        if (!next && applying) return;
+        onOpenChange(next);
+      }}
+    >
       <DialogContent className="max-w-3xl">
         <DialogHeader>
           <DialogTitle>Import barcodes</DialogTitle>
@@ -393,7 +487,7 @@ export function BarcodeImportDialog({
             }}
             accept={BARCODE_IMPORT_ACCEPT}
             maxSizeMb={MAX_SIZE_MB}
-            disabled={testing || applying}
+            disabled={testing || applying || !!result}
             aria-label="Barcode file"
           />
           <Button
@@ -413,13 +507,17 @@ export function BarcodeImportDialog({
           ) : null}
 
           {result ? (
-            <OutcomePanel outcome={result} applied />
+            <OutcomePanel key="result" outcome={result} applied />
           ) : preview ? (
-            <OutcomePanel outcome={preview} applied={false} />
+            <OutcomePanel key="preview" outcome={preview} applied={false} />
           ) : null}
         </DialogBody>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={applying}
+          >
             {result ? 'Close' : 'Cancel'}
           </Button>
           {!result ? (

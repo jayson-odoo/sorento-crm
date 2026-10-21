@@ -55,9 +55,10 @@ const COUNTS = {
   too_long: 1,
   duplicate: 1,
   not_ean13: 1,
+  scientific: 0,
 };
 
-const OUTCOME = {
+const BASE_OUTCOME = {
   readable: true,
   missing_columns: [],
   code_column: 'Item Code',
@@ -115,7 +116,28 @@ const OUTCOME = {
       warnings: [],
       repeated_of_row: null,
     },
+    {
+      row: 7,
+      product_code: 'SRT-E',
+      product_name: 'Basin E',
+      old_barcode: null,
+      new_barcode: '9555123400066',
+      status: 'new',
+      warnings: [],
+      repeated_of_row: null,
+    },
   ],
+};
+
+const OUTCOME = {
+  ...BASE_OUTCOME,
+  note_column: 'Note',
+  preview_token: 'tok-1',
+  rows: BASE_OUTCOME.rows.map((r) => ({
+    ...r,
+    duplicate_of: r.product_code === 'SRT-A' ? ['SRT-A-OLD'] : [],
+    note: r.product_code === 'SRT-A' ? 'Same barcode as SRT-A-OLD' : null,
+  })),
 };
 
 function openDialog() {
@@ -154,14 +176,11 @@ describe('BarcodeImportDialog', () => {
 
     expect(await screen.findByText('Item Code')).toBeInTheDocument();
     expect(screen.getByText('EAN')).toBeInTheDocument();
-    for (const label of [
-      'Unknown code',
-      'Too long',
-      'Duplicate',
-      'Not EAN-13 valid',
-    ]) {
+    for (const label of ['Unknown code', 'Duplicate', 'Not EAN-13 valid']) {
       expect(screen.getAllByText(label).length).toBeGreaterThanOrEqual(2); // tile + badge
     }
+    expect(screen.getByText('Too long')).toBeInTheDocument(); // badge
+    expect(screen.getByText('Too long or E+')).toBeInTheDocument(); // tile
     expect(screen.getAllByText('New').length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText('9555123400028')).toBeInTheDocument(); // old value of the Change row
     expect(
@@ -178,7 +197,9 @@ describe('BarcodeImportDialog', () => {
       await screen.findByRole('button', { name: 'Apply 2 barcodes' }),
     );
 
-    await waitFor(() => expect(applyBarcodeImport).toHaveBeenCalledWith(file));
+    await waitFor(() =>
+      expect(applyBarcodeImport).toHaveBeenCalledWith(file, 'tok-1'),
+    );
     expect(await screen.findByText(/products? updated/)).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: /^Test$/i }),
@@ -223,5 +244,53 @@ describe('BarcodeImportDialog template', () => {
       'Barcode',
     ]);
     expect(filename).toBe('barcode_import_template.xlsx');
+  });
+});
+
+describe('BarcodeImportDialog crew audit round', () => {
+  it('lists only rows needing attention until Show all is on', async () => {
+    previewBarcodeImport.mockResolvedValue(OUTCOME);
+    openDialog();
+    pickAndTest();
+    expect(await screen.findByText('SRT-A')).toBeInTheDocument(); // New + Duplicate
+    expect(screen.getByText('SRT-B')).toBeInTheDocument(); // Change
+    expect(screen.getByText('SRT-C')).toBeInTheDocument(); // Same + Not EAN-13
+    expect(screen.getByText('NOPE')).toBeInTheDocument(); // Unknown code
+    expect(screen.queryByText('SRT-E')).toBeNull(); // plain New
+    fireEvent.click(screen.getByRole('switch'));
+    expect(await screen.findByText('SRT-E')).toBeInTheDocument();
+  });
+
+  it('shows the note and the codes sharing a duplicate barcode', async () => {
+    previewBarcodeImport.mockResolvedValue(OUTCOME);
+    openDialog();
+    pickAndTest();
+    expect(await screen.findByText('Also on SRT-A-OLD')).toBeInTheDocument();
+    expect(screen.getByText('Same barcode as SRT-A-OLD')).toBeInTheDocument();
+  });
+
+  it('cannot apply before a Test of the chosen file', () => {
+    openDialog();
+    const input = document.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(['x'], 'b.xlsx')] } });
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+  });
+
+  it('locks Cancel while the apply runs', async () => {
+    previewBarcodeImport.mockResolvedValue(OUTCOME);
+    let finish: (v: unknown) => void = () => {};
+    applyBarcodeImport.mockReturnValue(new Promise((r) => (finish = r)));
+    openDialog();
+    pickAndTest();
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Apply 2 barcodes' }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled(),
+    );
+    finish({ ...OUTCOME, applied: 2 });
+    expect(await screen.findByText(/products? updated/)).toBeInTheDocument();
   });
 });
