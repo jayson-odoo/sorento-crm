@@ -1081,6 +1081,12 @@ def _focus_rules(
         kept = {k: getattr(focus, k) for k in RESET_KEEPS}
         focus = Focus(**kept)
         trace.rules_fired.append("reset_on_topic")
+    elif verdict.get("topic_reset") and focus.last_list:
+        # CHAT-STATE: the ops decide what the prior state keeps, but a reset also ends the stored
+        # list, as the wipe above does off the state path: a bare number after "clear all" must
+        # not pick a row of a list the dealer just cleared.
+        focus = replace(focus, last_list=None)
+        trace.rules_fired.append("reset_on_topic_list")
 
     # #865 round 5 (R2): on an escalation to a named team, a product code the parser is
     # unsure of is still what the escalation is about - the lane asks the did-you-mean for
