@@ -1,0 +1,160 @@
+/**
+ * CHAT-INDEX-VIZ FE-2: the prompt "Architecture" tab body (contract:
+ * documentation/plans/chatbot/chat-index-viz-20oct-contract.md). Written before the component exists.
+ * Assumed props: `{ name: string; version: number }`; the component reads `usePromptArchitecture`.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, render, screen, within } from '@testing-library/react';
+import { PromptArchitecture } from './PromptArchitecture';
+import type { PromptArchitecture as Architecture } from '../../services/aiPromptsService';
+
+const usePromptArchitecture = vi.fn();
+vi.mock('../../hooks/useAIAssistantPrompts', () => ({
+  usePromptArchitecture: (...args: unknown[]) => usePromptArchitecture(...args),
+}));
+
+const DATA: Architecture = {
+  version: 77,
+  mode: 'index',
+  uses_closed_lists: true,
+  total_tokens: 1426,
+  sections: [
+    { title: 'PRICE TERMINOLOGY', tokens: 177, kind: 'text' },
+    { title: 'TODAY', tokens: 356, kind: 'filled_from_data' },
+    { title: 'CLOSED LISTS', tokens: 893, kind: 'closed_lists' },
+  ],
+  lists: [
+    { key: 'specs', name: 'Specifications', source: 'Product Specifications', href: '/master-data-management/product-specifications', entries: 42, sent_each_message_tokens: 36, full_list_tokens: 5120 },
+    { key: 'attachment_types', name: 'File types', source: 'Attachment Types', href: '/resource-management/attachment-types', entries: 7, sent_each_message_tokens: 22, full_list_tokens: 480 },
+    { key: 'certification_types', name: 'Certification types', source: 'Certificates', href: '/master-data-management/certificates', entries: 5, sent_each_message_tokens: 25, full_list_tokens: 300 },
+    { key: 'warehouses', name: 'Warehouses', source: 'Warehouses', href: '/inventory-management/warehouses', entries: 9, sent_each_message_tokens: 0, full_list_tokens: 0, checked_only: true },
+  ],
+};
+
+function rowOf(text: string): HTMLElement {
+  const row = screen.getAllByText(text).map((el) => el.closest('tr')).find(Boolean);
+  expect(row, `a table row holding "${text}"`).toBeTruthy();
+  return row as HTMLElement;
+}
+
+beforeEach(() => {
+  usePromptArchitecture.mockReset().mockReturnValue({ data: DATA, isLoading: false, isError: false });
+});
+afterEach(() => cleanup());
+
+describe('PromptArchitecture', () => {
+  it('asks for the architecture of the given key and version', () => {
+    render(<PromptArchitecture name="chatbot_semantic_parser" version={77} />);
+    expect(usePromptArchitecture).toHaveBeenCalled();
+    const args = usePromptArchitecture.mock.calls[0];
+    expect(args[0]).toBe('chatbot_semantic_parser');
+    expect(args[1]).toBe(77);
+  });
+
+  it('has the root test id', () => {
+    render(<PromptArchitecture name="chatbot_semantic_parser" version={77} />);
+    expect(screen.getByTestId('prompt-architecture')).toBeInTheDocument();
+  });
+
+  it('shows the summary line and the index badge', () => {
+    render(<PromptArchitecture name="chatbot_semantic_parser" version={77} />);
+    expect(
+      screen.getByText(/v77 sends about 1,?426 tokens to the parser on every message\./),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Only the matching entries are sent')).toBeInTheDocument();
+    expect(screen.queryByText('Full lists are sent')).toBeNull();
+  });
+
+  it('shows the full-lists badge in block mode', () => {
+    usePromptArchitecture.mockReturnValue({ data: { ...DATA, mode: 'block' }, isLoading: false, isError: false });
+    render(<PromptArchitecture name="chatbot_semantic_parser" version={77} />);
+    expect(screen.getByText('Full lists are sent')).toBeInTheDocument();
+    expect(screen.queryByText('Only the matching entries are sent')).toBeNull();
+  });
+
+  it('shows the full-lists badge in index mode when the version has no closed lists section', () => {
+    usePromptArchitecture.mockReturnValue({
+      data: { ...DATA, uses_closed_lists: false },
+      isLoading: false,
+      isError: false,
+    });
+    render(<PromptArchitecture name="chatbot_semantic_parser" version={77} />);
+    expect(screen.getByText('Full lists are sent')).toBeInTheDocument();
+  });
+
+  it('draws the five flow boxes with the written labels', () => {
+    render(<PromptArchitecture name="chatbot_semantic_parser" version={77} />);
+    for (const label of [
+      "Customer's message",
+      'Matched list entries',
+      'What the parser got',
+      'What it understood',
+      'Kept or dropped',
+    ]) {
+      expect(screen.getByText(label), label).toBeInTheDocument();
+    }
+    expect(screen.getByText('Checked against the same lists and the warehouse list')).toBeInTheDocument();
+  });
+
+  it('names the lists under "Matched list entries", leaving the checked-only warehouses out', () => {
+    render(<PromptArchitecture name="chatbot_semantic_parser" version={77} />);
+    expect(screen.getAllByText('Specifications').some((el) => !el.closest('tr'))).toBe(true);
+    expect(screen.getAllByText('File types').some((el) => !el.closest('tr'))).toBe(true);
+    expect(screen.getAllByText('Warehouses').every((el) => el.closest('tr'))).toBe(true);
+  });
+
+  it('has the Lists table with its columns and one row per list', () => {
+    render(<PromptArchitecture name="chatbot_semantic_parser" version={77} />);
+    for (const col of ['List', 'Comes from', 'Entries', 'Sent each message', 'Full list']) {
+      expect(screen.getAllByText(col).length, col).toBeGreaterThan(0);
+    }
+    const specs = rowOf('Specifications');
+    expect(specs).toHaveTextContent('42');
+    expect(specs).toHaveTextContent('36');
+    expect(specs).toHaveTextContent(/5,?120/);
+    const link = within(specs).getByRole('link', { name: 'Product Specifications' });
+    expect(link.getAttribute('href')).toBe('/master-data-management/product-specifications');
+  });
+
+  it('shows "-" for the full list of a checked-only list', () => {
+    render(<PromptArchitecture name="chatbot_semantic_parser" version={77} />);
+    const warehouses = rowOf('Warehouses');
+    expect(warehouses).toHaveTextContent('9');
+    expect(within(warehouses).getByText('-')).toBeInTheDocument();
+    expect(within(rowOf('Specifications')).queryByText('-')).toBeNull();
+  });
+
+  it('has the Sections table with plain kind words and tokens', () => {
+    render(<PromptArchitecture name="chatbot_semantic_parser" version={77} />);
+    for (const col of ['Section', 'Kind', 'Tokens']) {
+      expect(screen.getAllByText(col).length, col).toBeGreaterThan(0);
+    }
+    expect(rowOf('PRICE TERMINOLOGY')).toHaveTextContent('Text');
+    expect(rowOf('PRICE TERMINOLOGY')).toHaveTextContent('177');
+    expect(rowOf('TODAY')).toHaveTextContent('Filled from data');
+    expect(rowOf('CLOSED LISTS')).toHaveTextContent('Closed lists');
+    expect(rowOf('CLOSED LISTS')).toHaveTextContent('893');
+  });
+
+  it('shows one error line when the architecture cannot be loaded', () => {
+    usePromptArchitecture.mockReturnValue({ data: undefined, isLoading: false, isError: true });
+    render(<PromptArchitecture name="chatbot_semantic_parser" version={77} />);
+    expect(screen.getByText('Could not load the architecture for this version.')).toBeInTheDocument();
+    expect(screen.queryByText(/tokens to the parser/)).toBeNull();
+  });
+
+  it('shows neither the summary nor the error while loading', () => {
+    usePromptArchitecture.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+    render(<PromptArchitecture name="chatbot_semantic_parser" version={77} />);
+    expect(screen.queryByText(/tokens to the parser/)).toBeNull();
+    expect(screen.queryByText('Could not load the architecture for this version.')).toBeNull();
+  });
+
+  it('prints no internal names', () => {
+    const { container } = render(<PromptArchitecture name="chatbot_semantic_parser" version={77} />);
+    const text = (container.textContent ?? '').toLowerCase();
+    for (const internal of ['grounding', 'hidden_keys', 'closed_lists_index', 'system_blanks', 'index mode']) {
+      expect(text).not.toContain(internal);
+    }
+  });
+});
