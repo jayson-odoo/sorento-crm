@@ -564,6 +564,8 @@ def _understood_text(entity: dict[str, Any], lk: _Lookups, noun: str | None = No
 
 
 _PLUMBING_ARGS = frozenset({"contact_id", "space_id", "dry_run", "limit", "offset"})
+#: Args that carry the customer's own words: shown as typed.
+_FREE_TEXT_ARGS = frozenset({"query", "q", "text", "search"})
 
 
 def _arg_text(value: Any) -> str:
@@ -572,7 +574,8 @@ def _arg_text(value: Any) -> str:
 
 def _looked_up(records: list[dict[str, Any]], lk: _Lookups) -> dict[str, Any] | None:
     """What the bot looked up this turn (its tool call), in plain words. Codes (`*_code`,
-    `*_codes` args) stay as stored; a registry spec key shows its label and value label."""
+    `*_codes` args) and free text stay as stored; internal ids (`*_id`, `*_ids`) and plumbing
+    args are left out; a registry spec key shows its label and value label."""
     entries = _kind_records(records, "tool")
     if not entries or not entries[-1].get("name"):
         return None
@@ -580,7 +583,7 @@ def _looked_up(records: list[dict[str, Any]], lk: _Lookups) -> dict[str, Any] | 
     details: list[str] = []
     args = entry.get("args") if isinstance(entry.get("args"), dict) else {}
     for key, value in args.items():
-        if key in _PLUMBING_ARGS or value is None or isinstance(value, dict):
+        if key in _PLUMBING_ARGS or key.endswith(("_id", "_ids")) or value is None or isinstance(value, dict):
             continue
         items = [v for v in (value if isinstance(value, list) else [value]) if v not in (None, "") and not isinstance(v, (dict, list))]
         items = [v for v in items if not _UUID_LIKE.match(str(v))]
@@ -588,7 +591,7 @@ def _looked_up(records: list[dict[str, Any]], lk: _Lookups) -> dict[str, Any] | 
             continue
         if key in lk.specs:
             label, text = lk.label(key), ", ".join(lk.value(key, v) for v in items)
-        elif key.endswith(("_code", "_codes")):
+        elif key.endswith(("_code", "_codes")) or key in _FREE_TEXT_ARGS:
             label, text = _say(key).capitalize(), ", ".join(str(v) for v in items)
         else:
             label, text = _say(key).capitalize(), _say(", ".join(_arg_text(v) for v in items))

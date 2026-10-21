@@ -1,6 +1,6 @@
 # PLAN: Chatbot console "Index match" view (CHAT-INDEX-VIZ)
 
-Status: Review READY (Opus reviewer, round 2 + nit); browser pass round 2 PASS 1280 + 375; awaiting owner hand test. Track: M, LEAD pattern.
+Status: Review READY (crew audit round v2 + v2.1, Opus reviewer READY on 96e025377 + nit); browser pass round 4 PASS 1280 + 375 (sandbox v77-shaped stand-in); real-v77 pass on the test copy is with crew; awaiting owner hand test. Track: M, LEAD pattern.
 
 Owner ask (21 Oct): see, for one console turn, how the closed-list index connects to the parser:
 message tokens -> matched index entries (with source table/row/synonym) -> lines injected into the

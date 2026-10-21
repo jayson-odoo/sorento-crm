@@ -478,3 +478,11 @@ def test_looked_up_skips_plumbing_args_and_reads_booleans_yes_no():
             "include_cost": False, "brand": "ZZ Brand"}
     im = _im(words=["frg"], matches=[FRG], tool=_tool(args))
     assert im["looked_up"]["details"] == ["In stock only: yes", "Include cost: no", "Brand: ZZ Brand"]
+
+
+def test_looked_up_skips_internal_ids_and_keeps_free_text_as_typed():
+    # Review v2.1 nits: an `*_id` / `*_ids` arg is an internal id, never what the bot looked up;
+    # a free-text arg (query / q / text / search) is the customer's own words, shown as typed.
+    args = {"promotion_id": 42, "customer_ids": [7, 8], "query": "ib_frg basin", "q": "zz_x", "brand": "ZZ Brand"}
+    im = _im(words=["frg"], matches=[FRG], tool=_tool(args))
+    assert im["looked_up"]["details"] == ["Query: ib_frg basin", "Q: zz_x", "Brand: ZZ Brand"]
