@@ -558,15 +558,17 @@ def saved_line_remark(snapshot: Mapping[str, Any]) -> Tuple[str, Optional[str]]:
     * Buy: ``ORDER`` (an Order back Buy: ``ORDER BACK``, a local one ``LOCAL BUY``);
     * Use BRW (a reserve on the ``pool`` rung): ``USE <pool code>``, i.e. ``USE BRW``;
     * Use own location (any other reserve): ``USE <location>``, e.g. ``USE BRW-BB``;
-    * Borrow (any borrow but a document one): ``ORDER BACK``;
+    * Borrow (any borrow but a document one): ``ORDER BACK <donor>``, e.g. ``ORDER BACK
+      BRW-BB``, or plain ``ORDER BACK`` when the donor is the line's own location;
     * Borrow incoming (``supply_borrow``): the document number;
     * Use incoming (``timely_spo``): the SPO number(s).
 
     One part reads as its words alone; several read each with its quantity, joined by
     `` & `` in the snapshot's order (``USE BRW-BB 6 & ORDER 4``). STOCK LOCATION is always
-    the SO line's own location, as on the Excel sheet (owner, 13 Oct).
+    the SO line's own location (owner, 13 Oct); REMARK names the donor an ORDER BACK is
+    ordered back to (owner, 21 Oct 2026, OI-ORDERBACK-LOCATION).
     """
-    parts = _saved_line_parts(snapshot)
+    parts = _saved_line_parts(snapshot, name_donors=True)
     own = snapshot.get("location") or None
     if not parts:
         return "", own
@@ -648,9 +650,15 @@ def saved_draft_remark(
 
 def _saved_line_parts(
     snapshot: Mapping[str, Any],
+    *,
+    name_donors: bool = False,
 ) -> List[Tuple[str, Optional[str], Decimal, str]]:
     """`(words, location, qty, headline key)` per non-zero part of a saved line's snapshot,
-    in its own order: what `saved_line_remark` joins and what the headline names."""
+    in its own order: what `saved_line_remark` joins and what the headline names.
+
+    `name_donors`: a Borrow's words name its donor (``ORDER BACK BRW-BB``), what REMARK
+    prints. Off for every comparison (`_decision_words`, `_saved_decision_key`), so a donor
+    move stays the same KIND of decision, told as `_borrow_donors` says."""
     own = snapshot.get("location") or None
     # A ref is `{"spo_number": ...}` as `_snapshot` writes it, or the bare number some
     # frozen snapshots carry.
@@ -691,9 +699,13 @@ def _saved_line_parts(
             if rung == "supply_borrow" or document:
                 parts.append((document or "BORROW INCOMING", own, qty, "INCOMING"))
             else:
-                # Owner, 13 Oct: just ORDER BACK; STOCK LOCATION (the SO line's own) says
-                # where it is ordered back to.
-                parts.append(("ORDER BACK", own, qty, IV_ORDER_BACK))
+                # Owner, 21 Oct 2026 (OI-ORDERBACK-LOCATION): STOCK LOCATION is the SO line's
+                # own, so REMARK names where it is ordered back to, the donor, unless that is
+                # the line's own location ("ORDER BACK BRW-BB", as USE names its location).
+                words = "ORDER BACK"
+                if name_donors and location and location != own:
+                    words = f"ORDER BACK {location}"
+                parts.append((words, own, qty, IV_ORDER_BACK))
         elif kind == "timely_spo":
             parts.append((spo_numbers or "INCOMING", own, qty, "INCOMING"))
     return parts
@@ -743,9 +755,10 @@ def _own_remark(snapshot: Optional[Mapping[str, Any]]) -> Optional[str]:
 
 
 def _borrow_donors(snapshot: Mapping[str, Any]) -> Tuple[Optional[str], ...]:
-    """Where each Borrow of a saved line draws from. Its email line reads ORDER BACK at the
-    line's own location (owner, 13 Oct 2026), so `_saved_decision_key` no longer sees the
-    donor: a Borrow moved to another donor is told apart by this."""
+    """Where each Borrow of a saved line draws from. Its email line reads at the line's own
+    location (owner, 13 Oct 2026) and only REMARK names the donor (21 Oct), so
+    `_saved_decision_key` does not see it: a Borrow moved to another donor is told apart by
+    this."""
     return tuple(
         component.get("source_location") or None
         for component in snapshot.get("components") or []
@@ -766,7 +779,12 @@ def _hole_move(item: Mapping[str, Any]) -> Tuple[Decimal, Decimal]:
 
 
 def handover_remark(
-    kind: str, row: Any, was: Optional[Dict[str, Any]], qty: Optional[Decimal] = None
+    kind: str,
+    row: Any,
+    was: Optional[Dict[str, Any]],
+    qty: Optional[Decimal] = None,
+    *,
+    donor: Optional[str] = None,
 ) -> str:
     """The REMARK cell of the handover email, table-tested (AC-H2/H3/H4/H5, PLAN 3.3).
 
@@ -794,6 +812,9 @@ def handover_remark(
 
     `qty` as `_handover_settle_diff` reads it: the line's new total for a settled line
     told off a row whose own quantity did not move.
+
+    `donor`: where a raised ORDER BACK is ordered back to, when LOCATION prints another
+    place (the SO line's own): ``ORDER BACK BRW-BB`` (owner, 21 Oct 2026).
     """
     if kind == "raised":
         label = _HANDOVER_REMARK_SPELLING.get(row.verb, row.verb or "")
@@ -809,6 +830,8 @@ def handover_remark(
             )
             if moved:
                 label = f"MOVED TO {moved.group(1)}"
+        if row.verb == IV_ORDER_BACK and donor:
+            label = f"{label} {donor}"
         if (was or {}).get("item_code"):
             # OI-PRODUCT-FOLLOW R4: a fresh row raised on the line's new product.
             label = f"{label}, {_NEW_ITEM_CODE}"
@@ -4483,8 +4506,8 @@ class ProjectOrderInquiryService:
         if row.verb == IV_ORDER_BACK and row.so_line_id:
             # Owner, 13 Oct 2026 (re-confirmed 14 Oct): a line telling a Borrow reads the SO
             # line's OWN location, in LOCATION and in the subject. The row keeps its donor
-            # on the worklist; only the email reads the line's. An Order back Buy row
-            # already names the line's own location.
+            # on the worklist; the email names it in REMARK (21 Oct 2026). An Order back
+            # Buy row already names the line's own location.
             so_line = self.db.get(ProjectSalesOrderLine, row.so_line_id)
             location = (
                 (so_line.stock_location if so_line is not None else None)
@@ -4503,7 +4526,19 @@ class ProjectOrderInquiryService:
             # when the row carries no stock location (`_build_handover_context`'s own
             # subject-scope reduction already treats a blank the same way).
             "location": location or "",
-            "remark": handover_remark(kind, row, was, qty),
+            "remark": handover_remark(
+                kind,
+                row,
+                was,
+                qty,
+                # OI-ORDERBACK-LOCATION (owner, 21 Oct 2026): LOCATION reads the line's,
+                # so REMARK names the donor the row keeps.
+                donor=(
+                    row.stock_location
+                    if row.stock_location and row.stock_location != location
+                    else None
+                ),
+            ),
             "was": _format_handover_was(was),
         }
         return {
@@ -4596,8 +4631,8 @@ class ProjectOrderInquiryService:
                 continue
             if unchanged and _borrow_donors(before) != _borrow_donors(now):
                 # Only a Borrow's donor moved (owner, 13 Oct 2026, re-confirmed 14 Oct): a
-                # changed decision, told as its one line at the line's own location, never
-                # as its rows' lines at the donors. The old donor's CANCEL ALL is the same
+                # changed decision, told as its one line at the line's own location (REMARK
+                # names the new donor), never as its rows' lines at the donors. The old donor's CANCEL ALL is the same
                 # order back moved, not an order taken back.
                 self._queue_saved_line(pso_id, line, now, before, actor_user_id=actor_user_id)
                 continue
@@ -4625,9 +4660,10 @@ class ProjectOrderInquiryService:
             taken_back = _ZERO
             raised = _ZERO
             # A Borrow moved or reshuffled across donors cancels, raises and resizes holes at
-            # the donors. The email never names a donor, so ALL of the line's holes read as
-            # ONE hole settled from what they held to what they hold, exactly as the same
-            # change without the move (reviewer B1, 14 Oct 2026): never an order taken back.
+            # the donors. One line tells them (REMARK names where they are now), so ALL of the
+            # line's holes read as ONE hole settled from what they held to what they hold,
+            # exactly as the same change without the move (reviewer B1, 14 Oct 2026): never
+            # an order taken back.
             holes = [i for i in row_lines if i.get("borrow_hole")]
             if len(holes) < 2:
                 holes = []
