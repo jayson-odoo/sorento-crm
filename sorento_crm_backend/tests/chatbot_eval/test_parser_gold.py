@@ -911,3 +911,114 @@ def test_a_parse_that_reports_no_usage_records_none_not_zero(session_factory, mo
     out = _usage_run(session_factory, monkeypatch, lambda config, block: {"status": None, "entities": []})
     assert all(k in out[0] and out[0][k] is None for k in USAGE_KEYS), out
     assert isinstance(out[0].get("parser_ms"), int), out
+
+
+# ---- LEAN v90: expect keys promotion_kind / is_active / continues + the typo battery (red) ----
+
+TYPO_BATTERY = BACKEND / "scripts" / "chatbot_eval" / "gold" / "parser_typo_battery.jsonl"
+
+
+def test_load_gold_accepts_the_v90_expect_keys(tmp_path):
+    rows = pg.load_gold(_write(tmp_path, [
+        _row("a", "x", {"promotion_kind": "a3_flyer"}),
+        _row("b", "x", {"promotion_kind": None}),
+        _row("c", "x", {"is_active": False}),
+        _row("d", "x", {"is_active": None}),
+        _row("e", "x", {"continues": True}),
+    ]))
+    assert [r["id"] for r in rows] == ["a", "b", "c", "d", "e"]
+
+
+@pytest.mark.parametrize("good, bad", [
+    ({"is_active": False}, {"is_active": "false"}),
+    ({"continues": True}, {"continues": None}),
+    ({"continues": False}, {"continues": "yes"}),
+    ({"promotion_kind": "special"}, {"promotion_kind": 3}),
+])
+def test_load_gold_rejects_malformed_v90_values(tmp_path, good, bad):
+    # the well-typed sibling must load first, so a bare unknown-key refusal cannot pass this test
+    assert pg.load_gold(_write(tmp_path, [_row("a", "x", good)]))[0]["expect"] == good
+    with pytest.raises(ValueError):
+        pg.load_gold(_write(tmp_path, [_row("a", "x", bad)]))
+
+
+def test_promotion_kind_is_folded_equality():
+    ok, _ = pg.grade_parse({"promotion_kind": "a3_flyer"}, {"promotion_kind": "A3 Flyer"})
+    assert ok
+    ok, reasons = pg.grade_parse({"promotion_kind": "special"}, {"promotion_kind": "a3_flyer"})
+    assert not ok and any("promotion_kind" in r for r in reasons), reasons
+    ok, reasons = pg.grade_parse({"promotion_kind": None}, {"promotion_kind": "a3_flyer"})
+    assert not ok and any("promotion_kind" in r for r in reasons), reasons
+    ok, _ = pg.grade_parse({}, {"promotion_kind": None})
+    assert ok
+    ok, reasons = pg.grade_parse({"promotion_kind": "pp"}, {"promotion_kind": None})
+    assert not ok and any("promotion_kind" in r for r in reasons), reasons
+
+
+def test_is_active_is_exact_on_true_false_null():
+    for value in (True, False, None):
+        ok, reasons = pg.grade_parse({"is_active": value}, {"is_active": value})
+        assert ok, reasons
+    for got, want in ((True, False), (False, True), (None, True), (None, False), (True, None), (False, None)):
+        ok, reasons = pg.grade_parse({"is_active": got}, {"is_active": want})
+        assert not ok and any("is_active" in r for r in reasons), (got, want, reasons)
+    ok, reasons = pg.grade_parse({}, {"is_active": None})
+    assert ok, reasons
+
+
+def _more(**over):
+    return {"continuation": True, "domain_hint": None, "intent_hint": None, "entities": [], **over}
+
+
+def test_continues_true_needs_the_continuation_flag():
+    ok, reasons = pg.grade_parse(_more(), {"continues": True})
+    assert ok, reasons
+    ok, reasons = pg.grade_parse(_more(continuation=False), {"continues": True})
+    assert not ok and any("continues" in r for r in reasons), reasons
+    ok, reasons = pg.grade_parse({"entities": []}, {"continues": True})
+    assert not ok and any("continues" in r for r in reasons), reasons
+
+
+def test_continues_true_fails_on_a_new_file_type_ask():
+    entity = {"hint": "attachment_type", "listed_item": "product_photos", "confident": True}
+    ok, reasons = pg.grade_parse(_more(entities=[entity]), {"continues": True})
+    assert not ok and any("continues" in r for r in reasons), reasons
+    ok, reasons = pg.grade_parse(
+        _more(domain_hint="product_attachment", intent_hint="check_product_attachment"), {"continues": True})
+    assert not ok and any("continues" in r for r in reasons), reasons
+
+
+def test_continues_false_means_the_verdict_does_not_continue_the_set():
+    ok, reasons = pg.grade_parse(_more(continuation=False), {"continues": False})
+    assert ok, reasons
+    ok, reasons = pg.grade_parse({"entities": []}, {"continues": False})
+    assert ok, reasons
+    ok, reasons = pg.grade_parse(_more(), {"continues": False})
+    assert not ok and any("continues" in r for r in reasons), reasons
+
+
+def test_typo_battery_file_shape_and_counts():
+    rows = pg.load_gold(TYPO_BATTERY)
+    ids = [r["id"] for r in rows]
+    assert len(ids) == len(set(ids))
+    for cls in ("c1", "c2", "c3", "c4"):
+        mine = [i for i in ids if i.startswith(f"tb-{cls}-")]
+        controls = [i for i in mine if i.startswith(f"tb-{cls}-ctl-")]
+        assert len(mine) - len(controls) >= 8, cls
+        assert len(controls) >= 2, cls
+    by_id = {r["id"]: r for r in rows}
+    for i, r in by_id.items():
+        if i.startswith("tb-c1-"):
+            assert "promotion_kind" in r["expect"], i
+        if i.startswith("tb-c4-"):
+            assert "is_active" in r["expect"], i
+        if i.startswith("tb-c3-"):
+            assert "continues" in r["expect"], i
+        if i.startswith("tb-c2-") and "-ctl-" not in i:
+            assert r["expect"].get("product") and r["expect"].get("attachment_types"), i
+    for i, r in by_id.items():
+        if i.startswith("tb-c3-") and "-ctl-" not in i:
+            assert r["expect"]["continues"] is True, i
+            assert "Showing 10 of" in (r.get("context") or {}).get("previous_reply", ""), i
+    assert any(r["expect"].get("is_active") is True for i, r in by_id.items() if i.startswith("tb-c4-") and "-ctl-" not in i)
+    assert any(r["expect"].get("is_active") is False for i, r in by_id.items() if i.startswith("tb-c4-ctl-"))
