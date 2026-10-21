@@ -1403,7 +1403,7 @@ jobs:
   # - MCP changed: its import chain and its test suite;
   # - frontend changed: `tsc --noEmit` and `vitest run --changed <base>`, the
   #   vitest files related to what the PR changed (vitest's own module
-  #   graph), instead of four shards of the whole suite.
+  #   graph), instead of the sharded whole suite.
   #
   # The image builds the old validate jobs did are not repeated per PR: the
   # release builds every changed image (build-images) before it deploys.
