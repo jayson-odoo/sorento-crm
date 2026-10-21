@@ -78,6 +78,10 @@ describe('AC-B3-1: the Lines tab reads Product, Qty, Taken, Remaining, Delivery 
       'Confirmed',
       'SO Qty',
       'Requested',
+      // OI-RESERVE-PILL-QTY round 2 (owner, 21 Oct 2026): the reserve figures beside the
+      // line's own quantities, the same shared columns the Lines list carries.
+      'Reserve requested',
+      'Reserved',
       'Taken',
       'Remaining',
       'Delivery date',
@@ -897,5 +901,49 @@ describe('State sorts on the line State, not the primary row state', () => {
       'line_cancelled',
       'nothing_to_buy',
     ]);
+  });
+});
+
+describe('OI-RESERVE-PILL-QTY round 2: the line reads Requested, Reserve requested and Reserved side by side', () => {
+  function cellOf(id: string, row: OrderInquiryWorklistRow) {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const column = result.current.find((c) => (c as { id?: string }).id === id) as
+      | { cell: (context: unknown) => React.ReactNode }
+      | undefined;
+    expect(column).toBeDefined();
+    const [lineRow] = toLineRows(foldInquiryLines([row]));
+    return column!.cell({ row: { original: lineRow } });
+  }
+
+  const cb315 = linesRow({
+    id: 'row-cb315',
+    item_code: 'CB315',
+    qty: '170',
+    reserve_state: 'requested',
+    requested_qty: '70',
+    reserved_qty: '0',
+  });
+
+  it('Reserve requested prints the open request qty (70), not the line qty (170)', () => {
+    render(<>{cellOf('reserve_requested', cb315)}</>);
+    expect(screen.getByText('70')).toBeInTheDocument();
+    expect(screen.queryByText('170')).not.toBeInTheDocument();
+  });
+
+  it('Reserved prints a muted dash while nothing is reserved yet', () => {
+    render(<>{cellOf('reserved', cb315)}</>);
+    expect(screen.getByText('-')).toBeInTheDocument();
+  });
+
+  it('Reserved prints the reserved qty once CS has reserved', () => {
+    render(
+      <>
+        {cellOf(
+          'reserved',
+          linesRow({ id: 'row-done', qty: '170', reserve_state: 'reserved', reserved_qty: '70', requested_qty: '0' }),
+        )}
+      </>,
+    );
+    expect(screen.getByText('70')).toBeInTheDocument();
   });
 });
