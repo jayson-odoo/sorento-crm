@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from app.services.chatbot.trace_detail import compose_trace_detail
+from tests.chatbot.conftest import session_factory  # noqa: F401
 
 NOW = datetime(2026, 10, 21, tzinfo=timezone.utc)
 
@@ -417,7 +418,6 @@ def test_db_labels_and_type_names_are_used_when_a_session_is_given(session_facto
     from app.models.product_spec import ProductSpecRegistry
     from app.services.company_scope import DEFAULT_COMPANY_ID
     from tests.chatbot._attach_world import World
-    from tests.chatbot.conftest import session_factory as _sf  # noqa: F401
 
     setup = session_factory()
     setup.add(ProductSpecRegistry(id=str(uuid.uuid4()), spec_key="zz_dbfinish", label="ZZ Db Finish", data_type="enum",
