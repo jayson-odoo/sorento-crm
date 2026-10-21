@@ -1002,7 +1002,7 @@ def test_review_the_ten_column_worksheet_prints_every_split_rows_qty(api, emails
     cells add up to the worklist export's TOTAL QTY (1295 for the owner plan). A split whose
     qty already sits inside another line (236 / 167 from 480 and 37 from 752, inside 608's
     632) is not printed again in this slice (re-check: the QTY cells summed 1735)."""
-    from app.services.order_inquiry_worklist_service import EXPORT_HEADINGS
+    from app.services.order_inquiry_worklist_service import WORKSHEET_HEADINGS
 
     s = _seed(api)
     _save(s, _owner_plan())
@@ -1011,7 +1011,7 @@ def test_review_the_ten_column_worksheet_prints_every_split_rows_qty(api, emails
     at_total = full_heads.index("TOTAL QTY")
     totals = [r[at_total] for r in full_rows if r[at_total] not in (None, "")]
     assert totals == [1295.0], ("premise: the worklist export's TOTAL QTY", totals)
-    heads, rows = _sheet(s, EXPORT_HEADINGS[:10])
+    heads, rows = _sheet(s, WORKSHEET_HEADINGS)
     assert len(heads) == 10, heads
     at = heads.index("QTY")
     qtys = [r[at] for r in rows]

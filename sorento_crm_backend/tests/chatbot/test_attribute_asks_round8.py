@@ -190,6 +190,22 @@ def compact(session_factory, monkeypatch, stub_parser, stub_access, world):
     return _Loo(session_factory, monkeypatch, stub_parser, stub_access, world, "compact")
 
 
+@pytest.fixture(params=[False, True], ids=["composer_off", "composer_on"])
+def composer(request, monkeypatch):
+    """CHAT-RELEASE-1021: both arms of the CHAT-COMPOSER switch, set explicitly. Off (the
+    shipped default) keeps main's miss line, "Couldn't find: <what>."; on is the composer's
+    owner-tested wording (EXPLORE-1021), "Couldn't find <what>." with no colon."""
+    from tests.chatbot.test_composers_stock_xd import _set_gate
+
+    _set_gate(monkeypatch, request.param)
+    return request.param
+
+
+def _miss(composer_on: bool) -> str:
+    """The miss line's opening words under each arm of the composer switch."""
+    return "Couldn't find " if composer_on else "Couldn't find: "
+
+
 @pytest.fixture()
 def list_max_3(monkeypatch):
     from app.services.chatbot.lanes.business import answer as answer_mod
@@ -274,7 +290,7 @@ def _blocks(text: str) -> dict[str, str]:
         if not _ROW.match(block):
             continue
         body = _ROW.sub("", block, count=1)
-        m = re.search(r"\*Product Code:\* ([A-Z0-9-]+)", body)
+        m = re.search(r"\*Product Code:\* ([A-Za-z0-9-]+)", body)
         if m:
             out[m.group(1)] = body
     return out
@@ -319,14 +335,18 @@ def test_item1_a_stock_set_reads_exactly_like_the_product_code_answer(chat, worl
     first = chat.say(M1A, _ask("stock", "basin", M1A))
     # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): too many is the count and a breakdown by the next
     # attribute (every brand, no default), never a paging question.
-    assert re.match(r"Here's what you want: wash basins with stock \(\d+\)\n• ", first), first
+    # SET-STOCK-RENDER (SSR-5): no breakdown lines; the first 3 are listed.
+    assert re.match(r"Here's what you want: wash basins with stock \(\d+, showing 1 to 3\)", first), first
+    assert not [ln for ln in first.split("\n") if ln.startswith("• ")], first
     assert "too many to list" not in first, first
     text = chat.say(M1B, _ask("stock", "basin", M1B, top_n=2, entities=[]))
-    total = int(re.search(r"\((\d+), showing 1 to 2\)", text).group(1))
-    assert _intro(text) == f"Here's what you want: wash basins with stock ({total}, showing 1 to 2)", text
+    # SET-STOCK-RENDER (SSR-5/6): the ask listed 1 to 3; the typed "10" is read from the text and
+    # capped at the list limit, so the next page is 4 to 6.
+    total = int(re.search(r"\((\d+), showing 4 to 6\)", text).group(1))
+    assert _intro(text) == f"Here's what you want: wash basins with stock ({total}, showing 4 to 6)", text
     assert re.search(r"\n\n_Data last updated: 21/09/2026 \d\d:32:45_$", text.rstrip()), text
     blocks = _blocks(text)
-    assert len(blocks) == 2, text
+    assert len(blocks) == 3, text
     for code, block in blocks.items():
         single = _blocks(_by_code(chat, code, "stock"))
         assert block == single[code], (block, single[code])
@@ -369,7 +389,7 @@ def test_item2_gunmetal_basin_incoming_answers_the_gunmetal_basins(compact, worl
     assert _intro(text) == "Here's what you want: gunmetal wash basins with incoming stock (3)", text
 
 
-def test_item2_a_finish_no_basin_has_incoming_says_what_it_looked_for_never_a_category_miss(compact, world):
+def test_item2_a_finish_no_basin_has_incoming_says_what_it_looked_for_never_a_category_miss(compact, world, composer):
     """The owner's reply was "Could not find incoming for category gunmetal basin": the
     zero set's recount crashed on a member with no finish (`_near_miss` bound its empty
     list as a JSON string), so the resolver lost the set and the generic miss named the
@@ -379,8 +399,15 @@ def test_item2_a_finish_no_basin_has_incoming_says_what_it_looked_for_never_a_ca
     assert "Could not find" not in text and "category" not in text, text
     # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): no explanation of how it searched: the one reply
     # structure: the finishes the basins with incoming do come in, one line each.
-    assert text.startswith("Here's what you want: rose gold wash basins with incoming stock\n• Gunmetal wash basins: 3\n"), text
-    assert text.endswith("Couldn't find: rose gold (finish or colour). Would you like me to escalate to purchasing team?"), text
+    if not composer:
+        assert text.startswith("Here's what you want: rose gold wash basins with incoming stock\n• Gunmetal wash basins: 3\n"), text
+    else:
+        # CHAT-RELEASE-1021, composer arm: the owner's 16 Oct no-forced-breakdown ruling (the
+        # one 31189aea4a pins for the hidden-key paths) - the composer prints the typed header
+        # and the miss line with no "what the others hold" breakdown, as the owner tested.
+        assert text.startswith("Here's what you want: rose gold wash basins with incoming stock\n\n"), text
+        assert not [ln for ln in text.split("\n") if ln.startswith("• ")], text
+    assert text.endswith(f"{_miss(composer)}rose gold (finish or colour). Would you like me to escalate to purchasing team?"), text
 
 
 def test_item2_then_cert_switches_the_domain_and_keeps_the_gunmetal_basins(compact, world):
@@ -423,19 +450,25 @@ def test_a_one_word_stock_follow_up_answers_as_the_described_set(compact, world)
     assert _codes(text, world) == {p.product_code for p in world["gunmetal"]}, text
 
 
-def test_item3_f_trap_is_an_unknown_trap(compact, world):
+def test_item3_f_trap_is_an_unknown_trap(compact, world, composer):
     text = compact.say(M3, _v3())
     # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): the one reply structure, broken down by the key.
-    assert text.startswith("Here's what you want: f trap water closets\n• P trap water closets: "), text
-    assert "Couldn't find: f trap (trap). Would you like me to escalate to" in text, text
+    # SET-STOCK-RENDER (SSR-7): the typed header, no breakdown line, no rows, then the miss line.
+    assert text.split("\n", 1)[0] == "Here's what you want: f trap water closets", text
+    assert not [ln for ln in text.split("\n") if ln.startswith("• ")], text
+    assert "*Product Code:*" not in text, text
+    assert f"{_miss(composer)}f trap (trap). Would you like me to escalate to" in text, text
     assert "document type" not in text.lower(), text
 
 
-def test_item4_pink_colour_is_an_unknown_finish_or_colour_never_a_document_type(compact, world):
+def test_item4_pink_colour_is_an_unknown_finish_or_colour_never_a_document_type(compact, world, composer):
     text = compact.say(M4, _v4())
     # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): no list of known choices; what the set does come in.
-    assert text.startswith("Here's what you want: pink water closets\n• White water closets: "), text
-    assert "Couldn't find: pink (finish or colour)." in text, text
+    # SET-STOCK-RENDER (SSR-7): the typed header, no breakdown line, no rows, then the miss line.
+    assert text.split("\n", 1)[0] == "Here's what you want: pink water closets", text
+    assert not [ln for ln in text.split("\n") if ln.startswith("• ")], text
+    assert "*Product Code:*" not in text, text
+    assert f"{_miss(composer)}pink (finish or colour)." in text, text
     assert "document type" not in text.lower(), text
 
 
@@ -446,7 +479,7 @@ def _v5_spelt(kind: str = "stock") -> dict[str, Any]:
     return _ask(kind, "kitchen sink thickness 1.2 mm", M5_SPELT)  # option (c), see _v3
 
 
-def test_item5_misspelt_kitchne_and_thicnkess_are_said_back_never_read_as_the_words_they_resemble(compact, world):
+def test_item5_misspelt_kitchne_and_thicnkess_are_said_back_never_read_as_the_words_they_resemble(compact, world, composer):
     """Fix round 10 on PR #833 (owner, 28 Sep 2026: "for #833 yeah exact only"): round 8
     read "kitchne" as kitchen and "thicnkess" as thickness, one typo apart. Neither is the
     catalogue's word, so neither binds; both are the "Couldn't find" line. Option (c) (owner,
@@ -456,21 +489,82 @@ def test_item5_misspelt_kitchne_and_thicnkess_are_said_back_never_read_as_the_wo
     print(text)
     assert "document type" not in text.lower(), text
     assert not _codes(text, world) & {p.product_code for p in world["thick12"] + world["thick10"]}, text
-    assert 'Couldn\'t find: "kitchne" and "thicnkess".' in text, text
+    assert f'{_miss(composer)}"kitchne" and "thicnkess".' in text, text
+
+
+# --------------------------------------------------------------------------- #
+# Owner ruling a35818889 (b), "b follow policy" (20 Oct 2026): a spec key the     #
+# contact's policy HIDES never narrows the set, even when the customer names it,  #
+# and the reply carries the policy's one "<label>: not available" line (the       #
+# `spec_hidden:<key>` miss, lanes/business/fetch.py). The default policy's floor  #
+# hides thickness (app/services/spec_visibility.py `DEFAULT_HIDDEN_KEYS`), so     #
+# owner case #833 now holds only for a contact whose policy shows thickness.     #
+# --------------------------------------------------------------------------- #
+
+HIDDEN_THICKNESS = "*Thickness:* not available"
+
+
+def _sees_its_policy(chat):
+    """The access snapshot carries the contact's real hidden set (head/access `_hidden_spec_keys`),
+    as the real `check_access` does; the stub alone carries none."""
+    from app.services.chatbot.head import access as access_mod
+
+    install = chat.stub_access
+
+    def with_policy() -> None:
+        db = chat.session_factory()
+        try:
+            hidden = access_mod._hidden_spec_keys(db, contact_id=str(chat.contact_id), space_id="364817")
+        finally:
+            db.close()
+        install(hidden_spec_keys=hidden)
+
+    chat.stub_access = with_policy
+    return chat
+
+
+def _shows_thickness(chat) -> None:
+    """A contact-override policy that hides nothing (excluded_spec_keys [] = nothing withheld)."""
+    import uuid as uuid_mod
+
+    from sqlalchemy import text as sa_text
+
+    from app.models.access import SpecVisibilityPolicy
+
+    db = chat.session_factory()
+    contact_row = db.execute(sa_text("SELECT id FROM respond_contacts WHERE respond_io_id = :c"), {"c": chat.contact_id}).scalar()
+    db.add(SpecVisibilityPolicy(id=str(uuid_mod.uuid4()), contact_id=contact_row, spec_keys=None, excluded_spec_keys=[]))
+    db.commit()
+
+
+def _kitchen_sinks(world, kind: str) -> set[str]:
+    """Every kitchen sink the world seeds that the ask's leg can hold: all of them for a miss,
+    the ones with stock for a stock set."""
+    with_stock = {p.product_code for p in world["thick12"] + world["thick10"]}
+    return with_stock if kind == "stock" else with_stock | {p.product_code for p in world["sinks"]}
 
 
 @pytest.mark.parametrize("kind", ["stock", "cert"])
-def test_item5_thickness_1_2_mm_narrows_the_kitchen_sinks(compact, world, kind):
+def test_item5_a_hidden_thickness_never_narrows_the_kitchen_sinks_and_says_not_available(compact, world, kind):
     """Amended to fix round 10 on PR #833: the owner's words spelt as the catalogue spells
-    them (the misspelt message is pinned just above)."""
-    text = compact.say(M5_SPELT, _v5_spelt(kind))
+    them (the misspelt message is pinned just above). Amended to owner ruling a35818889 (b):
+    a default-policy contact, whose policy hides thickness."""
+    text = _sees_its_policy(compact).say(M5_SPELT, _v5_spelt(kind))
     assert "document type" not in text.lower(), text
+    assert _codes(text, world) == _kitchen_sinks(world, kind), text
+    assert "thickness" not in _intro(text).lower() and "1.2 mm" not in _intro(text), text
+    assert text.count(HIDDEN_THICKNESS) == 1, text
     if kind == "stock":
-        assert _codes(text, world) == {p.product_code for p in world["thick12"]}, text
-        assert "kitchen sinks with thickness 1.2 mm with stock (2)" in _intro(text), text
-    else:
-        # No 1.2 mm sink has a certificate: said as a miss about THOSE sinks.
-        assert not (_codes(text, world) & {p.product_code for p in world["thick10"]}), text
+        assert "kitchen sinks with stock (3)" in _intro(text), text
+
+
+def test_item5_a_contact_whose_policy_shows_thickness_keeps_owner_case_833(compact, world):
+    """Owner case #833 as it stood, for a contact-override policy that hides nothing."""
+    _shows_thickness(compact)
+    text = _sees_its_policy(compact).say(M5_SPELT, _v5_spelt("stock"))
+    assert _codes(text, world) == {p.product_code for p in world["thick12"]}, text
+    assert "kitchen sinks with thickness 1.2 mm with stock (2)" in _intro(text), text
+    assert "not available" not in text, text
 
 
 def test_undermount_basin_cert_answers_the_undermount_basins(compact, world):
@@ -500,7 +594,7 @@ _DESCRIBED = [
     ("mounting", "under_counter", "basin", "wash basins"),
     ("trap_type", "p_trap", "water closet", "water closets"),
     ("material", "stainless_steel", "kitchen sink", "kitchen sinks"),
-    ("thickness", 1.2, "kitchen sink", "kitchen sinks"),
+    # thickness: hidden by the default policy, its own test below (owner ruling a35818889 (b)).
 ]
 
 
@@ -508,7 +602,7 @@ _DESCRIBED = [
 @pytest.mark.parametrize("kind", ["stock", "incoming", "cert"])
 def test_a_registry_descriptor_with_a_product_type_is_grounded_in_every_domain(compact, world, key, value, type_word, noun, kind):
     db = world["db"]
-    said = f"thickness {value} mm" if key == "thickness" else _registry_word(db, key, value)
+    said = _registry_word(db, key, value)
     message = f"any {said} {type_word} has {kind}"
     text = compact.say(message, _ask(kind, f"{said} {type_word}", message))
     assert "document type" not in text.lower() and "Could not find" not in text, text
@@ -520,8 +614,22 @@ def test_a_registry_descriptor_with_a_product_type_is_grounded_in_every_domain(c
     else:
         from app.services.product_spec_registry import display_spec_value
 
-        shown = f"{value} mm" if key == "thickness" else display_spec_value(value)
+        shown = display_spec_value(value)
         assert shown.lower() in text.lower(), text
+
+
+@pytest.mark.parametrize("kind", ["stock", "incoming", "cert"])
+def test_a_hidden_thickness_with_a_product_type_never_narrows_in_any_domain(compact, world, kind):
+    """Owner ruling a35818889 (b): the default policy hides thickness, so "thickness 1.2 mm" with
+    a product type is never a filter in any domain; the reply says it is not available, once."""
+    message = f"any thickness 1.2 mm kitchen sink has {kind}"
+    text = _sees_its_policy(compact).say(message, _ask(kind, "thickness 1.2 mm kitchen sink", message))
+    assert "document type" not in text.lower() and "Could not find" not in text, text
+    if _blocks(text):
+        assert "kitchen sinks" in _intro(text), text
+        assert "*Product Code:*" in text, text
+    assert "1.2 mm" not in _intro(text), text
+    assert text.count(HIDDEN_THICKNESS) == 1, text
 
 
 def test_price_of_a_described_set_reads_like_the_product_code_price(compact, world):
@@ -541,7 +649,7 @@ def test_price_of_a_described_set_reads_like_the_product_code_price(compact, wor
 # --------------------------------------------------------------------------- #
 
 
-def test_the_retest_in_order(compact, world, list_max_3):
+def test_the_retest_in_order(compact, world, list_max_3, composer):
     replies = [
         compact.say(M1A, _ask("stock", "basin", M1A)),
         compact.say(M1B, _ask("stock", "basin", M1B, top_n=3, entities=[])),
@@ -554,10 +662,11 @@ def test_the_retest_in_order(compact, world, list_max_3):
     assert "with stock (" in replies[1].split("\n")[0], replies[1]
     assert _codes(replies[2], world) == {p.product_code for p in world["gunmetal"]}, replies[2]
     assert _codes(replies[3], world) == {p.product_code for p in world["gunmetal"]}, replies[3]
-    assert "Couldn't find: f trap (trap)." in replies[4] and "Couldn't find: pink (finish or colour)." in replies[5], replies[4:6]
+    miss = _miss(composer)
+    assert f"{miss}f trap (trap)." in replies[4] and f"{miss}pink (finish or colour)." in replies[5], replies[4:6]
     # Amended to fix round 10 on PR #833 ("for #833 yeah exact only"): the misspelt
     # "kitchne" and "thicnkess" bind nothing and are said back.
     assert not _codes(replies[6], world), replies[6]
-    assert 'Couldn\'t find: "kitchne" and "thicnkess".' in replies[6], replies[6]
+    assert f'{miss}"kitchne" and "thicnkess".' in replies[6], replies[6]
     for text in replies:
         assert "document type" not in text.lower(), text

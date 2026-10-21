@@ -736,7 +736,7 @@ def generate_oi_worksheet(download_id: str, run_id: str, user_id: str) -> dict:
     The row set is the run's own Start Plan scope (`demand.run_scope_oi_rows`, C2/C4a -
     the SAME helper the order sheet's Project qty column reads, so the two can never list
     a different row set for the same run), printed through the worklist's own writer with
-    the worksheet's 10-column slice (`EXPORT_HEADINGS[:10]`, C3 - no ACKNOWLEDGED / TAKEN
+    the worksheet's 10 columns (`WORKSHEET_HEADINGS`, C3 - no ACKNOWLEDGED / TAKEN
     / REMAINING).
 
     `_record_failure` on any exception, never raising into RQ: a poisoned job retries for
@@ -778,7 +778,7 @@ def generate_oi_worksheet(download_id: str, run_id: str, user_id: str) -> dict:
             raise AppException(404, "That plan does not exist.")
 
         from app.services.order_inquiry_worklist_service import (
-            EXPORT_HEADINGS,
+            WORKSHEET_HEADINGS,
             OrderInquiryWorklistService,
         )
         from app.services.scm.demand import run_scope_oi_rows
@@ -792,7 +792,7 @@ def generate_oi_worksheet(download_id: str, run_id: str, user_id: str) -> dict:
         row_ids = [r["row_id"] for r in scope_rows]
 
         fallback_filename, file_bytes = OrderInquiryWorklistService(db).export_xlsx(
-            row_ids=row_ids, columns=EXPORT_HEADINGS[:10],
+            row_ids=row_ids, columns=WORKSHEET_HEADINGS,
         )
         filename = filename or fallback_filename
         content_type = (

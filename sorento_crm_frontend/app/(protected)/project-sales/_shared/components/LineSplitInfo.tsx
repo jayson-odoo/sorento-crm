@@ -472,7 +472,8 @@ export function SplitLinesSheet({
   soNumber,
   sheet,
 }: {
-  payload: LineSplitsPayload | null;
+  /** Only the SO number and date the sheet prints are read. */
+  payload: Pick<LineSplitsPayload, 'so_number' | 'so_date'> | null;
   soNumber: string;
   sheet: { all: SplitLine[]; lines: SplitLine[] };
 }) {

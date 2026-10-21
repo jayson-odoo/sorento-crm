@@ -464,3 +464,31 @@ def test_pdf_escapes_text():
 
     html = order_inquiry_pdf.build_html(("A", "B"), [["<b>x</b>", "a&b"]])
     assert "<b>x</b>" not in html and "&lt;b&gt;x&lt;/b&gt;" in html and "a&amp;b" in html
+
+
+def test_pdf_header_carries_requested_reserve_and_reserved_beside_qty():
+    """OI-RESERVE-PILL-QTY (owner, 21 Oct 2026): the one-table PDF prints the same header row
+    as the Excel, so REQUESTED RESERVE / RESERVED sit right after QTY there too, and a
+    partly answered line (asked 70, reserved 50) prints both numbers."""
+    from app.services import order_inquiry_pdf
+    from app.services.order_inquiry_worklist_service import (
+        EXPORT_HEADINGS, OrderInquiryWorklistService,
+    )
+
+    rows = [
+        {"so_date": date(2026, 9, 1), "so_number": "SO426913", "item_code": "CB315",
+         "qty": "170", "asked_reserve_qty": "70", "reserved_qty": "50",
+         "delivery_date": date(2026, 10, 1), "supplier": "TAIYANG", "location": "BRW-BB"},
+    ]
+    parsed = _Tables()
+    parsed.feed(_pdf_html(rows))
+    header, (row,) = parsed.rows[0], parsed.rows[1:]
+    at = header.index("QTY")
+    assert header[at : at + 3] == ["QTY", "REQUESTED RESERVE", "RESERVED"], header
+    assert [row[at], row[at + 1], row[at + 2]] == ["170", "70", "50"], row
+
+    values = OrderInquiryWorklistService(db=None)._sheet_values(rows)
+    text = _pdf_text(order_inquiry_pdf.render_pdf(EXPORT_HEADINGS, values))
+    flat = " ".join(text.split())
+    assert "REQUESTED RESERVE" in flat or ("REQUESTED" in flat and "RESERVE" in flat), flat[:400]
+    assert "RESERVED" in flat, flat[:400]

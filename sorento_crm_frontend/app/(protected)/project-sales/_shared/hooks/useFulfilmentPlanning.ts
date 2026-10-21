@@ -150,7 +150,20 @@ export function useFulfilmentPlanningMutations() {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  return { adopt };
+  /**
+   * OI-SPLIT-CONFIRM-POLISH: the same idempotent adopt, run by the guided Confirm when it opens
+   * so every order's Review split is the editable sheet. Silent: the guide itself says when it
+   * could not start planning an order, and "ready to plan" would only be noise there.
+   */
+  const ensure = useMutation({
+    mutationFn: (salesOrderId: string) => adoptSalesOrder(salesOrderId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [FULFILMENT_PLANNING_KEY] });
+      queryClient.invalidateQueries({ queryKey: [SALES_ORDERS_KEY] });
+    },
+  });
+
+  return { adopt, ensure };
 }
 
 /**

@@ -493,6 +493,40 @@ export interface TurnDetailCustomerScope {
   offer_passed?: boolean;
 }
 
+/** CHAT-INDEX-VIZ: the per-turn word -> matched entry -> parser -> understood -> kept/dropped flow. */
+export interface IndexMatchWord {
+  text: string;
+  matched: boolean;
+}
+
+export interface IndexMatchEntry {
+  /** The entry in plain words, e.g. "Finish: French Gold". */
+  plain: string;
+  /** Where it comes from, e.g. "from the product finish list". */
+  source: string;
+  close_spelling: boolean;
+}
+
+export type IndexMatchOutcome = 'kept' | 'dropped' | 'changed';
+
+export interface IndexMatchRow {
+  word: string;
+  matched: IndexMatchEntry[];
+  parser_got: string[];
+  understood: { text: string }[];
+  result: { outcome: IndexMatchOutcome; text: string }[];
+}
+
+export interface IndexMatch {
+  words: IndexMatchWord[];
+  rows: IndexMatchRow[];
+  held: string[];
+  not_from_lists: { text: string; outcome: IndexMatchOutcome; result: string }[];
+  failed: boolean;
+  /** The turn's tool call in plain words; null when the bot looked nothing up. */
+  looked_up: { what: string; details: string[] } | null;
+}
+
 export interface TurnDetail {
   stages: TurnDetailStage[];
   parse: TurnDetailParse | null;
@@ -509,6 +543,8 @@ export interface TurnDetail {
   /** Absent on a trace composed before the lane shipped; renders as an empty section. */
   customer_scope?: TurnDetailCustomerScope[];
   session: TurnDetailSession;
+  /** `null` when the turn sent the full lists; absent on a trace composed before the lane shipped. */
+  index_match?: IndexMatch | null;
 }
 
 export interface ChatbotTurnDetail extends ChatbotTurn {

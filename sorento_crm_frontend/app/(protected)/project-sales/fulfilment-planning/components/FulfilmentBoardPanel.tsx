@@ -757,7 +757,7 @@ export function FulfilmentBoardPanel({
     [board.data, dayWindow],
   );
 
-  const { adopt } = useFulfilmentPlanningMutations();
+  const { adopt, ensure } = useFulfilmentPlanningMutations();
   const { save: saveLineDraft, remove: removeLineDraft } = useLineDraftMutation();
 
   // NO PER-ORDER CONFIRM (R11). The board used to carry one Confirm per sales order in a
@@ -2160,6 +2160,64 @@ export function FulfilmentBoardPanel({
    */
   const [guideOpen, setGuideOpen] = React.useState(false);
   const closeGuide = React.useCallback(() => setGuideOpen(false), []);
+  /**
+   * OI-SPLIT-CONFIRM-POLISH (owner, SO426939): Review split is ALWAYS the editable sheet. An
+   * order nobody has adopted has no planning record (so no split read and no + Split), so the
+   * guide gives it one as it opens: the board's own idempotent adopt (one record and its mirror
+   * lines, nothing sent anywhere), then one board re-read for the mirror line ids. The adopt's
+   * answer wins over the re-read, as it does for the press (`buildConfirmOrders`).
+   */
+  const [guideAdopted, setGuideAdopted] = React.useState<ReadonlyMap<string, string>>(
+    () => new Map(),
+  );
+  // Per order: why it could not be made ready (core sales order id -> the server's sentence).
+  const [guidePrep, setGuidePrep] = React.useState<{
+    running: boolean;
+    errors: ReadonlyMap<string, string>;
+  }>({ running: false, errors: new Map() });
+  // One run at a time: a guide reopened (or a Retry pressed) while one runs joins it, so two
+  // adopts never race for one order.
+  const guidePrepRun = React.useRef<Promise<void> | null>(null);
+  const prepareGuide = React.useCallback(
+    (salesOrderIds: string[]) => {
+      if (salesOrderIds.length === 0 || guidePrepRun.current) return;
+      const run = (async () => {
+        setGuidePrep({ running: true, errors: new Map() });
+        const adopted = new Map<string, string>();
+        const errors = new Map<string, string>();
+        // Every order is tried: one that cannot be planned never holds up the others.
+        for (const salesOrderId of salesOrderIds) {
+          try {
+            const result = await ensure.mutateAsync(salesOrderId);
+            if (result?.project_sales_order_id) {
+              adopted.set(salesOrderId, result.project_sales_order_id);
+            }
+          } catch (error) {
+            errors.set(
+              salesOrderId,
+              (error instanceof Error && error.message) ||
+                'This order could not be made ready to split.',
+            );
+          }
+        }
+        // The re-read brings the mirror line ids every adopted order's sheet edits.
+        if (adopted.size > 0) {
+          try {
+            await board.refetch();
+          } catch {
+            // The board's own read failure is shown by the board.
+          }
+          setGuideAdopted((current) => new Map([...current, ...adopted]));
+        }
+        setGuidePrep({ running: false, errors });
+      })();
+      guidePrepRun.current = run;
+      void run.finally(() => {
+        guidePrepRun.current = null;
+      });
+    },
+    [ensure, board],
+  );
   const guidePages = React.useMemo<ConfirmGuidePage[]>(() => {
     const covered = confirmLinesByOrder(
       allContributions,
@@ -2172,8 +2230,10 @@ export function FulfilmentBoardPanel({
       if (!lines) return [];
       return [
         {
-          psoId: order.project_sales_order_id ?? null,
+          psoId: order.project_sales_order_id ?? guideAdopted.get(order.sales_order_id) ?? null,
+          salesOrderId: order.sales_order_id,
           soNumber: order.so_number,
+          soDate: order.so_date ?? null,
           covered: lines.map((line) => {
             // UAC F25, F26: the planner's own remark lives in the line's saved decision.
             const facts = remarkFactsOf(line);
@@ -2201,7 +2261,16 @@ export function FulfilmentBoardPanel({
     unadoptedSalesOrderIds,
     batchNamedKeys,
     remarkFactsOf,
+    guideAdopted,
   ]);
+  const unplannedGuideOrders = React.useMemo(
+    () => guidePages.filter((page) => !page.psoId).map((page) => page.salesOrderId),
+    [guidePages],
+  );
+  const openGuide = () => {
+    setGuideOpen(true);
+    prepareGuide(unplannedGuideOrders);
+  };
 
   /**
    * OI-SPLIT-GUIDE (UAC F26): the board's own Split delivery gets the same Remark facts for
@@ -2865,7 +2934,7 @@ export function FulfilmentBoardPanel({
                       Boolean(confirmBlockedReason)
                     }
                     title={confirmBlockedReason ?? undefined}
-                    onClick={() => setGuideOpen(true)}
+                    onClick={openGuide}
                   >
                     {confirmButtonLabel(confirmSummary.toConfirm, autocountNotes.length)}
                   </Button>
@@ -3629,6 +3698,9 @@ export function FulfilmentBoardPanel({
           applyLabel={confirmButtonLabel(0, autocountNotes.length)}
           runConfirm={runConfirmAll}
           saveRemarks={saveLineRemarks}
+          preparing={guidePrep.running}
+          prepareErrors={guidePrep.errors}
+          onRetryPrepare={() => prepareGuide(unplannedGuideOrders)}
           onClose={closeGuide}
         />
       ) : null}

@@ -124,11 +124,13 @@ def _has_block(rows, block):
 
 def test_remark_is_the_last_heading_and_the_ten_before_it_are_unchanged():
     assert EXPORT_HEADINGS[-1] == "REMARK"
-    assert EXPORT_HEADINGS[:10] == (
-        "SO DATE", "S/O NO", "ITEM CODE", "QTY", "TOTAL QTY", "DELIVERY DATE",
-        "PROJECT/CUSTOMER", "SUPPLIER", "PO NO ", "LOCATION",
+    # OI-RESERVE-PILL-QTY round 2 (owner, 21 Oct 2026): REQUESTED RESERVE and RESERVED
+    # sit right after QTY; the rest keep their order.
+    assert EXPORT_HEADINGS[:12] == (
+        "SO DATE", "S/O NO", "ITEM CODE", "QTY", "REQUESTED RESERVE", "RESERVED",
+        "TOTAL QTY", "DELIVERY DATE", "PROJECT/CUSTOMER", "SUPPLIER", "PO NO ", "LOCATION",
     )
-    assert EXPORT_HEADINGS[10:14] == ("ACKNOWLEDGED", "TAKEN", "REMAINING", "SUGGESTED")
+    assert EXPORT_HEADINGS[12:16] == ("ACKNOWLEDGED", "TAKEN", "REMAINING", "SUGGESTED")
 
 
 def test_unsplit_rows_print_once_with_an_empty_remark(api):
@@ -154,7 +156,7 @@ def test_a_row_whose_splits_add_up_prints_one_row_per_split(api):
         (None, None, 6.0, D_B, "site not ready"),
     ], _plan_rows(heads, rows)
     # TOTAL QTY stays the sum of the printed QTY cells, on the last row of the run
-    assert rows[-1][4] == 10.0
+    assert rows[-1][heads.index("TOTAL QTY")] == 10.0
 
 
 def test_splits_swapped_between_two_lines_print_under_their_own_line(api):
@@ -172,7 +174,7 @@ def test_splits_swapped_between_two_lines_print_under_their_own_line(api):
     assert _has_block(got, [(10.0, D_A, 6.0, D_A, "REMAIN"), (None, None, 4.0, D_B, "DELAY")]), got
     assert _has_block(got, [(12.0, D_A, 8.0, D_A, "REMAIN"), (None, None, 4.0, D_B, "DELAY")]), got
     assert not [r for r in got if "line" in r[4]], ("no line labels in REMARK", got)
-    assert rows[-1][4] == 22.0, "TOTAL QTY is the sum of the printed QTY cells"
+    assert rows[-1][heads.index("TOTAL QTY")] == 22.0, "TOTAL QTY is the sum of the printed QTY cells"
 
 
 def test_a_line_whose_splits_do_not_cover_its_autocount_qty_prints_the_extra_row(api):
@@ -306,7 +308,7 @@ def test_taken_remaining_and_suggested_print_once_on_the_expanded_rows(api):
     assert len(rows) == 2, rows
     cols = [heads.index(h) for h in ("TAKEN", "REMAINING", "SUGGESTED")]
     first, second = rows[0], rows[1]
-    assert _day(first[5]) == D_A, "the first split row is the earliest date"
+    assert _day(first[heads.index("DELIVERY DATE")]) == D_A, "the first split row is the earliest date"
     assert first[cols[0]] not in (None, ""), "TAKEN prints on the first split row"
     assert first[cols[1]] not in (None, ""), "REMAINING prints on the first split row"
     for c in cols:
@@ -442,3 +444,26 @@ def test_excel_remark_names_the_origin_by_its_core_line_number(api):
     got = _plan_rows(heads, rows)
     assert _has_block(got, [(10.0, D_A, 6.0, D_A, "REMAIN"), (None, None, 4.0, D_B, "DELAY")]), got
     assert _has_block(got, [(12.0, D_A, 8.0, D_A, "REMAIN"), (None, None, 4.0, D_B, "DELAY")]), got
+
+
+def test_a_split_lines_reserve_figures_print_once_on_its_first_row(api):
+    """OI-RESERVE-PILL-QTY round 2 (review S1): REQUESTED RESERVE / RESERVED are the line's,
+    like TAKEN / REMAINING / SUGGESTED - printed on the split line's first row only, never
+    repeated on every split (which would read as a reserve per split)."""
+    from app.services.order_inquiry_reserve_service import OrderInquiryReserveService
+
+    s = _order(api, [(10, 10, D_A)])
+    _confirm_all(s)
+    row = _order_row(s.world, s.line[10])
+    OrderInquiryReserveService(s.db).create_request(
+        inquiry_id=row.order_inquiry_id,
+        rows=[{"row_id": row.id, "qty_requested": "7", "warehouse_id": s.world.own_wh.id}],
+        note=None,
+        actor_user_id=None,
+    )
+    s.db.commit()
+    _save(s, {10: [_sp(4, D_A, on=_on(s, 10)), _sp(6, D_B, on=_on(s, 10))]})
+    heads, rows = _sheet_rows(s)
+    assert len(rows) == 2, rows
+    at = heads.index("REQUESTED RESERVE")
+    assert [r[at] for r in rows] == [7.0, None], [r[at] for r in rows]

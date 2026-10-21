@@ -129,7 +129,7 @@ describe('LineSplitInfo - the popup is the read-only split sheet (E)', () => {
     const heads = Array.from(dialog.querySelectorAll('thead th')).map((th) => (th.textContent ?? '').trim());
     expect(heads).not.toContain('Line');
     expect(within(dialog).getByRole('table', { name: 'Split delivery sheet' }).textContent).not.toMatch(/\bline \d+/i);
-    expect(heads).toContain('Change quantity');
+    expect(heads).toContain('Breakdown qty');
     expect(heads).toContain('New date');
     expect(heads).not.toContain('Balance');
     expect(within(dialog).getByText('ADVANCE')).toBeInTheDocument();

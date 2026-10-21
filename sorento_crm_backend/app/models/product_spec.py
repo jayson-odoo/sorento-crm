@@ -71,6 +71,9 @@ class ProductSpecRegistry(Base):
     # shape is round or square. Ungated, diameter would be proposed for a rectangular
     # product, where it is meaningless.
     applies_when = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    # A size given alone (no dimension named) matches the numeric keys flagged here, as an OR
+    # (width or length); a key scoped to a class by `applies_when` is read for that class only.
+    matches_bare_size = Column(Boolean, nullable=False, server_default=text("false"), default=False)
     # Multiplier on this key's contribution to the match score. Hand-tuned against the
     # eval baseline, so the seed must never overwrite it.
     rank_weight = Column(Numeric(6, 3), nullable=False, server_default=text("1.0"))

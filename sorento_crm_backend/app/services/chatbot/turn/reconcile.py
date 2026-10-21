@@ -65,6 +65,13 @@ def hits_for_token(resolved: dict[str, dict[str, int]] | None, raw: Any) -> dict
     return folded.get(key)
 
 
+def _is_typed(raw: Any, typed: str) -> bool:
+    """A token is typed when its folded form sits inside `typed`, the folded own text of the
+    message (plus the codes read from its media). One rule for a code and a multi-word name."""
+    key = _key(raw)
+    return bool(key) and key in typed
+
+
 class ReconcileResult:
     def __init__(self) -> None:
         self.entities: list[dict[str, Any]] = []
@@ -80,8 +87,17 @@ class ReconcileResult:
 
 
 def apply_reconciliation(
-    entities: list[dict[str, Any]], resolved: dict[str, dict[str, int]] | None
+    entities: list[dict[str, Any]],
+    resolved: dict[str, dict[str, int]] | None,
+    exact: dict[str, dict[str, int]] | None = None,
+    typed: str | None = None,
 ) -> ReconcileResult:
+    """`exact` is the same map counting only the resolver's EXACT whole-token hits (the token
+    IS that row's code or name, `turn_runtime.resolve_kinds`); None treats every hit as one (a
+    hand-built map). The hint narrowing and the single-kind retype need such a hit: "basin"
+    inside the code ZZBASINWC1 is never a product (review M2). A hint naming a kind that is the only
+    kind with an exact hit keeps that kind, never asked. `typed` (the folded own text of the message; None =
+    no limit) arms a kind pick only for a token the asker typed."""
     result = ReconcileResult()
     if not resolved:
         result.entities = list(entities)
@@ -93,6 +109,7 @@ def apply_reconciliation(
         if not hits:
             result.entities.append(e)
             continue
+        whole = hits if exact is None else (hits_for_token(exact, raw) or {})
         matched = [k for k, count in hits.items() if count and count > 0]
         # #1262 slice 7 (F1b): the resolver's own hit-dict order is an accident of
         # however its callers happened to run, not a contract - the SAME ambiguity
@@ -105,24 +122,34 @@ def apply_reconciliation(
             matched = sorted(matched, key=lambda k: (-hits[k], k))
         # REF-PROBES: a hint that names a kind keeps only that kind's hits when it has any
         # (the named kind first), so a number that is also another kind is not asked about.
-        narrow = REFERENCE_NARROW.get(e.get("hint"))
+        hint_kind = e.get("hint")
+        narrow = REFERENCE_NARROW.get(hint_kind)
         if narrow is not None:
-            inside = [k for k in matched if k in narrow]
+            inside = [k for k in matched if k in narrow and whole.get(k)]
             if inside:
-                hint_kind = e.get("hint")
                 matched = sorted(inside, key=lambda k: (k != hint_kind, -hits[k], k))
+        # Any hinted kind with an exact whole-token hit wins outright (owner run 1020 class b).
+        if (
+            len(matched) > 1
+            and hint_kind in matched
+            and whole.get(hint_kind)
+            and not any(whole.get(k) for k in matched if k != hint_kind)
+        ):
+            matched = [hint_kind]
         if len(matched) == 0:
             result.entities.append(e)
         elif len(matched) == 1:
             new_kind = matched[0]
             old_kind = e.get("hint")
-            if new_kind != old_kind:
+            if new_kind != old_kind and whole.get(new_kind):
                 result.reconciled.append((raw, old_kind, new_kind))
                 rewritten = dict(e)
                 rewritten["hint"] = new_kind
                 result.entities.append(rewritten)
             else:
                 result.entities.append(e)
+        elif typed is not None and not _is_typed(raw, typed):
+            result.entities.append(e)
         else:
             options = [
                 {
