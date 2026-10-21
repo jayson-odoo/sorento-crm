@@ -25,3 +25,12 @@ columns resizable.
   C-FH14 line. Removing drag removes it; tests pin opens-clean and warning-only-after-an-edit.
 - Resize: TanStack column sizing + `DataGridTableHeadRowCellResize`
   (`components/ui/data-grid-table.tsx`). REMARK is the flex column (min 100px once resized).
+
+## Round 2 (owner, 21 Oct ~22:55, SO427002)
+
+- SO DATE blank on first open: the guide's second, read-only sheet (covered lines the split read
+  does not list) was drawn with no payload, so its rows had no SO date while the read had one.
+  It now takes the order's read (`ConfirmGuideDialog.tsx`). The editor's own rows already follow
+  the read, refetch included (vitest).
+- Footer: Cancel far left; the step's action at the right (Next on Review split, "Confirm N
+  orders" on Confirm) with Back immediately left of it. The Confirm button left the body.
