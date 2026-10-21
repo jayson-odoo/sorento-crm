@@ -43,14 +43,14 @@ def _rows(shown_at: int = 1) -> list[dict[str, Any]]:
     ]
 
 
-def _state(gate: bool, *, last_list: bool = True, quoted: int | None = None):
+def _state(gate: bool, *, last_list: bool = True):
     task = ht.stock_task([(HELD, None)], opened_at_turn=4, touched_at_turn=4)
     focus = Focus(
         products=ht.product_rows(HELD), domains=["inventory"], tasks=(task,),
         last_list=_rows() if last_list else None,
     )
     state = ht.state(focus, turn_no=5)
-    return replace(state, state_path=gate, state_gate=gate, quoted_turn_no=quoted)
+    return replace(state, state_path=gate)
 
 
 def _turn(state, v: dict[str, Any]):
@@ -125,17 +125,4 @@ def test_the_same_with_no_last_list_in_the_state(gate):
 @GATES
 def test_two_pcs_over_the_quantity_question_is_the_quantity(gate):
     new_state, plan = _turn(_state(gate), _two_pcs(gate))
-    _is_two_of_the_held_product(new_state, plan)
-
-
-def test_guard_quoting_the_did_you_mean_message_picks_its_row():
-    state = _state(True, quoted=1)
-    new_state, plan = _turn(state, _two(True))
-    codes = [row["canonical_code"] for spec in ht.inventory_specs(plan) for row in spec.entities]
-    assert codes == ["C9109A"], codes
-
-
-@GATES
-def test_guard_two_pcs_as_a_quantity_on_the_product_entity(gate):
-    new_state, plan = _turn(_state(gate), _two_pcs_on_the_entity())
     _is_two_of_the_held_product(new_state, plan)

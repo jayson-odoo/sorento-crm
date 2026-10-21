@@ -39,7 +39,7 @@ def _state(gate: bool):
         products=ht.product_rows(*OLDER), domains=["inventory"], tasks=(task,),
         last_list=rows if gate else None,
     )
-    return replace(ht.state(focus, turn_no=5), state_path=gate, state_gate=gate)
+    return replace(ht.state(focus, turn_no=5), state_path=gate)
 
 
 def _clear_all(gate: bool, *, topic_reset: bool = True):

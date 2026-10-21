@@ -5,7 +5,7 @@ Prod shape: the contact has an older stock_qty task with every slot null. The bo
 "Couldn't find CLB109A. Did you mean: 1. CL8109A 2. C9109A 3. CB3109A"; the dealer sent `1`.
 The parser answered correctly (open_question_answer mode pick, picked [1], domain stock),
 yet the task's own "How many units for each?" came back with nothing fetched. Both the old
-path (`state_gate` off) and the state path (on) are covered. Only the parser is stubbed.
+path (`state_path` off) and the state path (on) are covered. Only the parser is stubbed.
 """
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ def _state(status: str, gate: bool):
 
     task = ht.stock_task([(code, None) for code in OLDER], status=status)
     focus = Focus(products=ht.product_rows(*OLDER), domains=["inventory"], tasks=(task,))
-    return replace(ht.state(focus, pending=_did_you_mean(), turn_no=5), state_gate=gate)
+    return replace(ht.state(focus, pending=_did_you_mean(), turn_no=5), state_path=gate)
 
 
 def _pick_verdict(form: str):

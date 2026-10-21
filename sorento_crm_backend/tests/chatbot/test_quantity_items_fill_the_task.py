@@ -38,7 +38,7 @@ PATHS = pytest.mark.parametrize(
 def _state(gate: bool):
     task = ht.stock_task([(CODE, None)], opened_at_turn=4, touched_at_turn=4)
     focus = Focus(products=ht.product_rows(CODE), domains=["inventory"], tasks=(task,))
-    return replace(ht.state(focus, turn_no=5), state_path=gate, state_gate=gate)
+    return replace(ht.state(focus, turn_no=5), state_path=gate)
 
 
 def _parse(mode: str, ops):
@@ -108,7 +108,7 @@ def test_guard_pick_over_a_did_you_mean_with_no_quantity_still_picks_the_option(
                  "did_you_mean": True, "typed": "CLB109A", "stock_qty": None},
     )
     state = replace(
-        ht.state(Focus(domains=["inventory"]), pending=pending, turn_no=5), state_path=gate, state_gate=gate
+        ht.state(Focus(domains=["inventory"]), pending=pending, turn_no=5), state_path=gate
     )
     v = verdict(
         domain_hint="inventory", intent_hint="check_stock", entities=[], reference_positions=[2],

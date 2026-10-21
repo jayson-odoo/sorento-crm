@@ -110,7 +110,7 @@ def test_guard_with_no_question_of_its_own_staff_get_no_offer_and_no_question(ru
 def test_thirteen_on_the_next_turn_resolves_the_suggested_code(rung, gate, tier):
     stored = _hit(_roster(), tier).question
     focus = Focus(products=ht.product_rows("SRTWT105"), domains=["inventory"])
-    state = replace(ht.state(focus, pending=stored, turn_no=4), state_path=gate, state_gate=gate)
+    state = replace(ht.state(focus, pending=stored, turn_no=4), state_path=gate)
     v = verdict(
         domain_hint="inventory", intent_hint="check_stock", entities=[], reference_positions=[13],
         open_question_answer={"mode": "pick", "picked": [13], "items": [], "qty_for_all": None},
