@@ -10,14 +10,14 @@ purchasing; the role names are not in the repo.
 Card: documentation/plans/procurement/CARD-new-product-application-17oct.md.
 
 Revision ID: npa_0001_new_product_apps
-Revises: chs_0001_direct_ingress
+Revises: sales_0006_dealer_targets
 """
 import sqlalchemy as sa
 from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "npa_0001_new_product_apps"
-down_revision = "chs_0001_direct_ingress"
+down_revision = "sales_0006_dealer_targets"
 branch_labels = None
 depends_on = None
 
