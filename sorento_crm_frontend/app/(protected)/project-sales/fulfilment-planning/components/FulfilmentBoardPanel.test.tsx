@@ -455,6 +455,13 @@ describe('FulfilmentBoardPanel: the header', () => {
     fireEvent.click(within(actions).getByRole('button', { name: 'List' }));
     expect(within(actions).queryByLabelText('rows')).not.toBeInTheDocument();
     expect(within(actions).queryByLabelText('granularity')).not.toBeInTheDocument();
+    // Hidden is not forgotten: the link written while List shows still carries both choices.
+    await waitFor(() => {
+      const url = String(routerReplace.mock.calls.at(-1)?.[0] ?? '');
+      expect(url).toContain('rows=customer');
+      expect(url).toContain('granularity=month');
+      expect(url).not.toContain('view=grid');
+    });
 
     fireEvent.click(within(actions).getByRole('button', { name: 'Grid' }));
     expect(within(actions).getByLabelText('rows')).toHaveValue('customer');
