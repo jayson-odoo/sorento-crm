@@ -362,6 +362,24 @@ def get_ai_assistant_prompt_version(
     return PromptVersionDetail(**AIPromptService(db).get_version(name, version))
 
 
+@router.get("/ai-assistant/prompts/{name}/versions/{version}/architecture")
+def get_ai_assistant_prompt_architecture(
+    name: str,
+    version: int,
+    _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
+    db: Session = Depends(get_db),
+):
+    from app.models.ai_prompt import AIPromptVersion
+    from app.services.chatbot import prompt_architecture
+
+    _ensure_known_prompt(name)
+    if name != prompt_architecture.PROMPT_KEY:
+        raise HTTPException(status_code=404, detail="No architecture view for this prompt")
+    AIPromptService(db).get_version(name, version)  # the same 404 for an unknown version
+    row = db.query(AIPromptVersion).filter(AIPromptVersion.name == name, AIPromptVersion.version == version).one()
+    return prompt_architecture.describe(db, row)
+
+
 @router.post(
     "/ai-assistant/prompts/{name}/versions",
     response_model=PromptVersionDetail,

@@ -412,6 +412,126 @@ def _prompt_text(records: list[dict[str, Any]]) -> str | None:
     return text[:PROMPT_TEXT_CHAR_CAP]
 
 
+_HINT_WORDS = {
+    "product": "a product",
+    "category": "a product type",
+    "specification": "a specification",
+    "spec": "a specification",
+    "attachment_type": "a file",
+    "warehouse": "a warehouse",
+    "brand": "a brand",
+    "customer": "a customer",
+}
+_LIST_WORDS = {"attachment_type": "file type", "cert_kind": "certificate", "cert_scheme": "certificate scheme"}
+
+
+def _fold(text: Any) -> str:
+    from app.services.chatbot.head.candidates import _phrase
+
+    return _phrase(text or "")
+
+
+def _result_text(note: dict[str, Any] | None) -> dict[str, str]:
+    """One entity's grounding outcome in plain words (CHAT-INDEX-VIZ wording table)."""
+    if note is None:
+        return {"outcome": "kept", "text": "Kept"}
+    to = note.get("to")
+    if isinstance(to, list):
+        parts = []
+        for item in to:
+            if isinstance(item, dict):
+                parts.append(f"{item.get('label') or item.get('key')} = {item.get('value')}")
+            else:
+                parts.append(str(item))
+        return {"outcome": "changed", "text": "Changed: read as " + "; ".join(parts)}
+    to = str(to)
+    if to == "dropped: a finish short form, no warehouse on file":
+        return {"outcome": "dropped", "text": "Dropped: a finish code ending, not on the warehouse list"}
+    if to in ("dropped: not on the closed lists", "dropped: not a listed document type"):
+        return {"outcome": "dropped", "text": "Dropped: not on the file type list"}
+    if to == "unknown product type":
+        return {"outcome": "dropped", "text": "Dropped: not a known product type"}
+    if to.startswith("on the ") and " list: " in to:
+        listed, _, code = to[len("on the "):].partition(" list: ")
+        return {"outcome": "kept", "text": f"Kept: on the {_LIST_WORDS.get(listed, listed)} list ({code})"}
+    if to == "canonical dropped: not on the candidate block":
+        return {"outcome": "changed", "text": "Changed: product code not among the matches, removed"}
+    if to.startswith("canonical refused:"):
+        return {"outcome": "changed", "text": "Changed: several product codes fit, the bot asks which"}
+    return {"outcome": "changed", "text": f"Changed: read as {to}"}
+
+
+def _understood_text(entity: dict[str, Any]) -> str:
+    hint = str(entity.get("hint") or "")
+    text = f'"{entity.get("raw")}" as {_HINT_WORDS.get(hint, hint)}'
+    if entity.get("spec_key") and entity.get("spec_value") is not None:
+        return f"{text}: {entity['spec_key']} = {entity['spec_value']}"
+    value = entity.get("canonical_code") or entity.get("listed_item")
+    return f"{text}: {value}" if value else text
+
+
+def _index_match(records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """CHAT-INDEX-VIZ: the word -> matched entry -> parser -> understood -> kept/dropped flow of
+    a turn that ran in index mode; None for a turn with no `closed_lists_index` event."""
+    events = _kind_records(records, "closed_lists_index")
+    if not events:
+        return None
+    event = events[-1]
+    matches = [m for m in event.get("matches") or [] if isinstance(m, dict)]
+    words = [str(w) for w in event.get("words") or []]
+    plain = [m for m in matches if not m.get("held") and m.get("word")]
+    matched_words: set[str] = set()
+    for m in plain:
+        matched_words.update(_fold(m["word"]).split())
+
+    rows: list[dict[str, Any]] = []
+    by_word: dict[str, dict[str, Any]] = {}
+    for m in plain:
+        row = by_word.get(m["word"])
+        if row is None:
+            row = by_word[m["word"]] = {"word": m["word"], "matched": [], "parser_got": [], "understood": [], "result": []}
+            rows.append(row)
+        row["matched"].append({"list": m["list"], "entry": m["entry"], "close_spelling": bool(m.get("close_spelling"))})
+        if m.get("line") not in row["parser_got"]:
+            row["parser_got"].append(m.get("line"))
+
+    notes = []
+    for r in _kind_records(records, "grounding"):
+        notes += [n for n in r.get("changes") or [] if isinstance(n, dict)]
+    raw = _understood_raw(records) or {}
+    parser_raw = raw.get("parser_raw") if isinstance(raw.get("parser_raw"), dict) else {}
+    entities = [e for e in parser_raw.get("entities") or [] if isinstance(e, dict)]
+
+    def result_for(entity: dict[str, Any]) -> dict[str, str]:
+        note = next(
+            (n for n in notes if n.get("from") == entity.get("hint") and _fold(n.get("raw")) == _fold(entity.get("raw"))),
+            None,
+        )
+        return _result_text(note)
+
+    leftover: list[dict[str, str]] = []
+    for entity in entities:
+        folded = f" {_fold(entity.get('raw'))} "
+        row = next((r for r in rows if folded == f" {_fold(r['word'])} "), None) or next(
+            (r for r in rows if f" {_fold(r['word'])} " in folded), None
+        )
+        text = _understood_text(entity)
+        result = result_for(entity)
+        if row is None:
+            leftover.append({"text": text, "outcome": result["outcome"], "result": result["text"]})
+        else:
+            row["understood"].append({"text": text})
+            row["result"].append(result)
+
+    return {
+        "words": [{"text": w, "matched": _fold(w) in matched_words} for w in words],
+        "rows": rows,
+        "held": [m["entry"] for m in matches if m.get("held")],
+        "not_from_lists": leftover,
+        "failed": bool(event.get("failed")),
+    }
+
+
 def compose_trace_detail(row: ChatbotTurn, db: Session | None = None) -> dict[str, Any]:
     records = _records(row)
     return {
@@ -430,4 +550,5 @@ def compose_trace_detail(row: ChatbotTurn, db: Session | None = None) -> dict[st
         "context": _context(records),
         "order": _order(row, db),
         "prompt_text": _prompt_text(records),
+        "index_match": _index_match(records),
     }
