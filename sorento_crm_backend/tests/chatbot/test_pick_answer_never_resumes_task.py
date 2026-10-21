@@ -160,3 +160,51 @@ def test_guard_an_unfit_pick_applies_nothing_and_still_resumes_as_on_main(gate):
     )
     _new_state, plan = _run(_parked_state(gate), v, [{"op": "answer", "axis": None, "position": None}])
     assert "task_resumed_stock_qty" in plan.trace.rules_fired
+
+
+# --- a declined did-you-mean drops its unresolved token ----------------------------------------------
+
+
+def _miss_row(raw="Clb109a"):
+    return {"raw": raw, "hint": "product", "canonical_code": raw.upper(), "current_message": False, "confident": True}
+
+
+def _declined_state(gate: bool, *, resolved: bool = False):
+    from dataclasses import replace
+
+    products = [_miss_row()] + (ht.product_rows("SRTBF101") if resolved else [])
+    focus = Focus(products=products, domains=["inventory"])
+    return replace(ht.state(focus, pending=_did_you_mean(), turn_no=5), state_path=gate)
+
+
+def _decline_verdict():
+    return verdict(
+        domain_hint="inventory", intent_hint="check_stock", entities=[], is_affirmative=False,
+        entity_op="clear", broaden_axis="all",
+        open_question_answer={"mode": "cancel", "picked": [], "items": [], "qty_for_all": None},
+    )
+
+
+@pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
+def test_a_declined_did_you_mean_drops_its_unresolved_token_and_a_bare_two_does_not_reshow_it(gate):
+    state, plan = _run(
+        _declined_state(gate), _decline_verdict(), [{"op": "close_question", "axis": None, "position": None}]
+    )
+    assert "stock_pick_declined" in plan.trace.rules_fired
+    assert not [p for p in state.focus.products if not p.get("uuid")], state.focus.products
+    # the next turn: a bare `2`, nothing pending
+    v = verdict(domain_hint="inventory", intent_hint="check_stock", entities=[], reference_positions=[2],
+                entity_op="reuse")
+    _state2, plan2 = _run(state, v, [{"op": "pick", "axis": None, "position": 2}])
+    codes = [row.get("raw") for spec in plan2.fetch for row in spec.entities]
+    assert "Clb109a" not in codes, codes
+    assert plan2.trace.task_question != "Please refer to your salesman."
+
+
+@pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
+def test_guard_a_declined_did_you_mean_keeps_a_resolved_product_the_ask_also_named(gate):
+    state, _plan = _run(
+        _declined_state(gate, resolved=True), _decline_verdict(),
+        [{"op": "close_question", "axis": None, "position": None}],
+    )
+    assert [p.get("canonical_code") for p in state.focus.products] == ["SRTBF101"], state.focus.products
