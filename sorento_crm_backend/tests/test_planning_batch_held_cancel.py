@@ -248,26 +248,12 @@ def test_q2_an_added_row_on_a_line_nobody_confirmed_stays_pending(api):
 
 
 # --------------------------------------------------------------------------- #
-# Owner ruling (a), 21 Oct 2026 ~16:00 MYT (crew relay): ONLY the press this fix enables is
-# silent. An order whose Cancel SO a pending AutoCount change held (board-saved or an AutoCount
-# Cancel SO draft) gets the change applied and those cancels sent with NO cancel or retire line
-# in any automated email and no changed-with-links automation; purchasing sees the rows
-# cancelled in the CRM and keeps the in-app "Planning change applied" notice. A normal Cancel SO
-# still emails its CANCEL list (8 Oct rule, #1530) and a batch retire without held cancels still
-# prints its CANCEL ALL lines (#1806).
+# Owner clarification, 21 Oct 2026 ~16:00 MYT: purchasing gets the email AS USUAL when Confirm is
+# clicked, the held case included. "No automated email" meant only the AutoCount Cancel SO
+# arrival itself, which writes a draft and sends nothing (#1679). So the press this fix enables
+# sends exactly what a normal Cancel SO confirm plus a batch apply sends: the CANCEL line of each
+# transferred line in the one handover email. The controls pin the other two shapes.
 # --------------------------------------------------------------------------- #
-
-CHANGED_WITH_LINKS = "order_inquiry_changed_with_links"
-
-
-def _outbox_count(db) -> int:
-    from sqlalchemy import func
-
-    from app.models.email_outbox import EmailOutbox
-
-    db.expire_all()
-    return db.query(func.count(EmailOutbox.id)).scalar()
-
 
 def _live_row_on(world, w, mirror):
     """A raised ORDER row on a line CS is about to transfer to Cancel SO."""
@@ -290,43 +276,31 @@ def _live_row_on(world, w, mirror):
 
 
 @pytest.mark.parametrize("source", ["board", "autocount_cancel"])
-def test_the_press_with_held_cancels_sends_no_automated_email(api, monkeypatch, source):
+def test_the_press_with_held_cancels_sends_the_usual_handover_email(api, monkeypatch, source):
+    """SO394881's 12 held Cancel SO: one handover email carrying a CANCEL line for each."""
     from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow
 
-    from .test_order_inquiry_handover_automation import (
-        _captured_dispatches,
-        _handover_calls,
-        _register,
-    )
+    from .test_order_inquiry_handover_automation import _handover_calls
 
     client, world = api
     db = world.db
-    _register(world)
-    calls = _captured_dispatches(monkeypatch)
+    calls = _spy(api, monkeypatch)
     w = _world(
-        client, world, n_old=2, n_cancel=2, n_covered=1, n_open=0,
+        client, world, n_old=2, n_cancel=12, n_covered=1, n_open=0,
         autocount=source == "autocount_cancel",
     )
     rows = [_live_row_on(world, w, m) for _c, m in w["cancel"]]
-    old_rows = (
-        db.query(OrderInquiryRow)
-        .filter(OrderInquiryRow.so_line_id.in_([m.id for _c, m in w["old"]]))
-        .all()
-    )
-    assert old_rows, "the confirmed old lines raised ORDER rows the retire must cancel"
     calls.clear()
-    outbox_before = _outbox_count(db)
 
     result = _press(client, w, cancel=w["cancel"])
 
     assert result["planning_change_applied"] is True
-    assert _handover_calls(calls) == []
-    assert [c for c in calls if c["trigger_type"] == CHANGED_WITH_LINKS] == []
-    assert _outbox_count(db) == outbox_before
-    # Purchasing still sees it in the CRM: every row on a cancelled or retired line is cancelled.
+    handovers = _handover_calls(calls)
+    assert len(handovers) == 1
+    remarks = [entry["remark"] for entry in handovers[0]["context"]["handover"]["lines"]]
+    assert remarks.count("CANCEL") == 12, remarks
     db.expire_all()
-    for row in [*rows, *old_rows]:
-        assert db.get(OrderInquiryRow, row.id).state == INQUIRY_CANCELLED
+    assert {db.get(OrderInquiryRow, row.id).state for row in rows} == {INQUIRY_CANCELLED}
 
 
 def _spy(api, monkeypatch):
@@ -335,17 +309,6 @@ def _spy(api, monkeypatch):
     _client, world = api
     _register(world)
     return _captured_dispatches(monkeypatch)
-
-
-def _mail(calls, db, outbox_before):
-    """What went out: handover dispatches, changed-with-links dispatches, new outbox rows."""
-    from .test_order_inquiry_handover_automation import _handover_calls
-
-    return (
-        _handover_calls(calls),
-        [c for c in calls if c["trigger_type"] == CHANGED_WITH_LINKS],
-        _outbox_count(db) - outbox_before,
-    )
 
 
 @pytest.mark.parametrize("source", ["board", "autocount_cancel"])
