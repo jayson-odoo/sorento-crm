@@ -208,3 +208,33 @@ def test_guard_a_declined_did_you_mean_keeps_a_resolved_product_the_ask_also_nam
         [{"op": "close_question", "axis": None, "position": None}],
     )
     assert [p.get("canonical_code") for p in state.focus.products] == ["SRTBF101"], state.focus.products
+
+
+@pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
+def test_a_no_with_nothing_stored_over_an_open_stock_task_resumes_as_on_base(gate):
+    """A decline needs a stored question to decline: with none, the task's own question is the
+    one the dealer answered "no" to, and resume re-asks it (as on base)."""
+    from dataclasses import replace
+
+    task = ht.stock_task([(code, None) for code in OLDER], status=task_mod.OPEN)
+    focus = Focus(products=ht.product_rows(*OLDER), domains=["inventory"], tasks=(task,))
+    state = replace(ht.state(focus, turn_no=5), state_path=gate)
+    v = verdict(
+        domain_hint="inventory", intent_hint="check_stock", entities=[], is_affirmative=False,
+        open_question_answer={"mode": "no", "picked": [], "items": [], "qty_for_all": None},
+    )
+    _new_state, plan = _run(state, v, [{"op": "answer", "axis": None, "position": None}])
+    assert "task_resumed_stock_qty" in plan.trace.rules_fired
+    assert plan.trace.task_question and plan.trace.task_question.startswith("How many units for each?")
+
+
+@pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
+def test_guard_a_declined_did_you_mean_keeps_a_resolved_row_that_carries_uuids_only(gate):
+    from dataclasses import replace
+
+    row = {"raw": "SRTBF101", "hint": "product", "canonical_code": "SRTBF101", "uuids": [ht.uuid_of("SRTBF101")],
+           "current_message": False, "confident": True}
+    focus = Focus(products=[_miss_row(), row], domains=["inventory"])
+    state = replace(ht.state(focus, pending=_did_you_mean(), turn_no=5), state_path=gate)
+    new_state, _plan = _run(state, _decline_verdict(), [{"op": "close_question", "axis": None, "position": None}])
+    assert [p.get("canonical_code") for p in new_state.focus.products] == ["SRTBF101"], new_state.focus.products
