@@ -77,11 +77,10 @@ with a pending batch, whatever row kind names it.
   covered line closes applied (`_settle_answered_rows`); a row on an uncovered line stays pending.
 - Crew item 3: an order whose only counted lines are book-cancelled posts its batch; a press that
   applied rows but wrote no revision answers ok (reviewer round 1).
-- Owner email ruling, final (a) ~16:00 MYT: ONLY the press this fix enables is silent. When the
-  press applies a pending change with a Cancel SO that change names (`_cancels_held_by_batch`),
-  `QUIET_CANCELS_KEY` stops cancelled handover lines, the CANCEL list of `record_cancelled_lines`
-  and changed-with-links. A normal Cancel SO (8 Oct rule, #1530) and a batch retire without held
-  cancels (#1806) still email. The in-app "Planning change applied" notice stays.
+- Email, owner clarification ~16:00 MYT (after crew relayed (a), (b), (a)): purchasing gets the
+  email as usual when Confirm is clicked, the held case included; "no automated email" meant only
+  the AutoCount Cancel SO arrival, silent since #1679. No silencing ships:
+  `project_order_inquiry_service.py` is unchanged from main.
 - Results echo each Cancel SO line's reason ("AutoCount Cancel SO <doc>").
 - Prod reach: `batch-held-cancel-21oct-prod-read.sql` (owner runs it; dev copy: 81 open batches,
   85 orders, 173 unlinked added rows, 0 held drafts).
