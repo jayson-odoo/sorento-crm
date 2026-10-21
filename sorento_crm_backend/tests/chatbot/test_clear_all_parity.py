@@ -305,7 +305,7 @@ def test_a_state_path_reset_on_an_early_return_drops_a_list_that_is_not_the_ques
          "entity_type": "product", "shown_at_turn": 4}
         for i in range(1, 12)
     ]
-    focus = Focus(products=[_miss_row()], domains=["inventory"], last_list=rows)
+    focus = Focus(products=_miss_focus().products, domains=["inventory"], last_list=rows)
     state = replace(ht.state(focus, pending=_did_you_mean_pending(), turn_no=5), state_path=True)
     v = verdict(
         domain_hint="inventory", intent_hint="check_stock", entities=[], topic_reset=True, is_affirmative=False,
