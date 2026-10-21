@@ -186,6 +186,11 @@ def _row_keys(db: Session, group_by: str, names: list[str], company_grants: Any)
 _CHANNEL_NAMES = {"retail": "Dealer", "project": "Project team"}
 
 MEASURES = ("amount", "qty")
+#: REPORT-SMART-1021: distinct counts, ranked by the count (ties by amount, then quantity).
+#: Each row and the total carry `count` beside the amount and quantity.
+COUNT_MEASURES = tuple(key for key, _label, _column in sales_order_lines_ask.COUNT_COLUMNS)
+#: Every measure a sales ask may name.
+SALES_MEASURES = MEASURES + COUNT_MEASURES
 
 
 def _empty(status: str = "ok", message: Optional[str] = None) -> dict[str, Any]:
@@ -252,11 +257,12 @@ def run_ask(
     # The engine refuses rows == cols, so the one-total shape groups by month and reads the
     # grand total only.
     rows_key = group_by or "month"
+    counted = measure in COUNT_MEASURES
     view = ReportViewConfig.model_validate(
         {
             "params": params,
             "detail": {"columns": [], "order": []},
-            "pivot": {"rows": rows_key, "cols": "all", "measures": list(MEASURES)},
+            "pivot": {"rows": rows_key, "cols": "all", "measures": [*MEASURES, *((measure,) if counted else ())]},
         }
     )
     pivot = engine.run_summary(
@@ -266,6 +272,8 @@ def run_ask(
     grand = pivot.grand_total or {}
     body = _empty()
     body["total"] = {"qty": _qty(grand.get("qty")), "amount": _money_edge(grand.get("amount"))}
+    if counted:
+        body["total"]["count"] = int(Decimal(grand.get(measure) or 0))
     if not group_by:
         return body
 
@@ -276,17 +284,20 @@ def run_ask(
         if not qty and not amount:
             continue
         name = _CHANNEL_NAMES.get(value, value) if group_by == "channel" else value
-        ranked.append((name, qty, amount))
+        ranked.append((name, qty, amount, Decimal(totals.get(measure) or 0) if counted else Decimal(0)))
 
     sign = -1 if sort == "desc" else 1
-    first, second = (2, 1) if measure == "amount" else (1, 2)
-    ranked.sort(key=lambda r: (sign * r[first], sign * r[second], r[0]))
+    order = {"amount": (2, 1), "qty": (1, 2)}.get(measure, (3, 2))
+    ranked.sort(key=lambda r: (sign * r[order[0]], sign * r[order[1]], r[0]))
 
     shown = ranked[:top_n] if top_n else ranked
-    keys = _row_keys(db, group_by, [name for name, _q, _a in shown], company_grants)
+    keys = _row_keys(db, group_by, [r[0] for r in shown], company_grants)
     body["rows"] = [
-        {"rank": i, "name": name, "qty": _qty(qty), "amount": _money_edge(amount), "keys": keys.get(name, [])}
-        for i, (name, qty, amount) in enumerate(shown, start=1)
+        {
+            "rank": i, "name": name, "qty": _qty(qty), "amount": _money_edge(amount), "keys": keys.get(name, []),
+            **({"count": int(count)} if counted else {}),
+        }
+        for i, (name, qty, amount, count) in enumerate(shown, start=1)
     ]
     body["total_count"] = len(ranked)
     body["more"] = len(ranked) - len(shown)

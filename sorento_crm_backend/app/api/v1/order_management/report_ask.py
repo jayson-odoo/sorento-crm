@@ -198,7 +198,10 @@ def report_ask(
         description="delivered | ordered | outstanding. All three rank sales order lines (the SO's own agent), "
         "dated by the line's required date, else the SO date.",
     ),
-    measure: str = Query("amount", description="amount | qty - what the ranking sorts by."),
+    measure: str = Query(
+        "amount",
+        description="amount | qty | customers | orders | products - what the ranking sorts by (the last three count).",
+    ),
     group_by: Optional[str] = Query(
         None,
         description="customer | product | brand | category | sales_agent | location | channel | month. Absent = one total.",
@@ -264,8 +267,8 @@ def report_ask(
     if basis_norm not in ask.CATALOGUE["sales"]:
         raise _unprocessable(f"Unknown basis '{basis}'", "unknown_basis", _allowed(ask.CATALOGUE["sales"]))
     measure_norm = (measure or "").strip().lower()
-    if measure_norm not in ask.MEASURES:
-        raise _unprocessable(f"Unknown measure '{measure}'", "unknown_measure", _allowed(ask.MEASURES))
+    if measure_norm not in ask.SALES_MEASURES:
+        raise _unprocessable(f"Unknown measure '{measure}'", "unknown_measure", _allowed(ask.SALES_MEASURES))
     sort_norm = (sort or "").strip().lower()
     if sort_norm not in ("desc", "asc"):
         raise _unprocessable(f"Unknown sort '{sort}'", "unknown_sort", _allowed(("desc", "asc")))

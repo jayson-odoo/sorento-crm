@@ -26,11 +26,14 @@ class ReportAskRow(BaseModel):
     # "(no agent)" row), so a follow-up can rank within exactly the rows printed. Empty for a
     # channel or month row (not a drill source).
     keys: List[str] = []
+    # REPORT-SMART-1021: a count measure's distinct count (customers, orders, products).
+    count: Optional[int] = None
 
 
 class ReportAskTotal(BaseModel):
     qty: int
     amount: float
+    count: Optional[int] = None
 
 
 class ReportAskResponse(BaseModel):

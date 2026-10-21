@@ -287,7 +287,12 @@ def by_capability(verdict: dict[str, Any]) -> dict[str, Any]:
     raw_group = jsc.js_string(verdict.get("group_by") or "").strip().lower()
     if status not in CAN_DRAW or raw_group in CAN_DRAW[status] or raw_group not in GROUP_BY:
         return verdict
-    out = {**{k: v for k, v in verdict.items() if k not in ("status", "document")}, **SALES_RANKING_ASK.reroute}
+    out = {
+        **{k: v for k, v in verdict.items() if k not in ("status", "document")},
+        **SALES_RANKING_ASK.reroute,
+        # The kind the parser named: an open question reads it as that kind's new ask.
+        "capability_from": status,
+    }
     if basis_from(out) is None and verdict.get("sales_basis") in _ANALYSIS_BASES:
         out["basis"] = verdict["sales_basis"]
     if (
@@ -355,7 +360,7 @@ def names_its_own_ask(verdict: dict[str, Any], open_slot: dict[str, Any] | None 
     never read as a failed basis answer. And a parse that FILLS an open field is the answer: its
     `group_by` is not the slot's axis changing (the parser's axis on an answering turn was noise
     12 of 14 live turns, PR-B replay 16 Oct: "top 5" read as sales_agent under a customer ask)."""
-    status = jsc.js_string(verdict.get("order_status") or "").strip()
+    status = jsc.js_string(verdict.get("capability_from") or verdict.get("order_status") or "").strip()
     named = any(
         isinstance(e, dict) and e.get("current_message") is not False and jsc.js_string(e.get("hint") or "").strip()
         for e in jsc.array(verdict.get("entities"))

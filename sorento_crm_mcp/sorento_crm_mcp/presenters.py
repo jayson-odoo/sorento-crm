@@ -3404,10 +3404,18 @@ def _ask_pcs(value: Any) -> str:
         return "0 pcs"
 
 
+#: REPORT-SMART-1021: a count measure's unit, one and several.
+_ASK_COUNT_UNITS = {"customers": ("customer", "customers"), "orders": ("order", "orders"), "products": ("product", "products")}
+
+
 def _ask_figures(figures: dict, measure: Any) -> str:
     """A row's (or the total's) amount and quantity, the measure the ranking sorts by first
-    (chat fix PR-B S6)."""
+    (chat fix PR-B S6); a count measure's count before both."""
     rm, pcs = _ask_rm(figures.get("amount")), _ask_pcs(figures.get("qty"))
+    if measure in _ASK_COUNT_UNITS:
+        one, many = _ASK_COUNT_UNITS[measure]
+        count = int(figures.get("count") or 0)
+        return f"{count:,} {one if count == 1 else many}, {rm}, {pcs}"
     return f"{pcs}, {rm}" if measure == "qty" else f"{rm}, {pcs}"
 
 
@@ -3431,13 +3439,15 @@ def _ask_rows(rows: list, group_by: Any, measure: Any = None, sort: Any = None) 
             seen = merged[name]
             seen["qty"] = (seen.get("qty") or 0) + (row.get("qty") or 0)
             seen["amount"] = (seen.get("amount") or 0) + (row.get("amount") or 0)
+            if row.get("count") is not None:
+                seen["count"] = (seen.get("count") or 0) + row["count"]
         else:
             merged[name] = dict(row)
     out = list(merged.values())
     if group_by == "month":
         out.sort(key=lambda r: str(r.get("name")))
     elif len(out) < len(rows):
-        first, second = ("qty", "amount") if measure == "qty" else ("amount", "qty")
+        first, second = {"qty": ("qty", "amount"), "amount": ("amount", "qty")}.get(str(measure), ("count", "amount"))
         sign = 1 if sort == "asc" else -1
         out.sort(key=lambda r: (sign * float(r.get(first) or 0), sign * float(r.get(second) or 0)))
         for i, row in enumerate(out, start=1):
@@ -3481,7 +3491,8 @@ def _report_ask(body: dict) -> str:
     # The twins folded above are one name each, so the count of every name drops by as many.
     count = int(body.get("total_count") or (raw_rows + more)) - (raw_rows - len(rows))
     of = f" of {count:,}" if count > len(rows) else ""
-    lines = [f"{lead} {len(rows)}{of} {plural} by {basis}", *facts]
+    by = f"{measure}, {basis}" if measure in _ASK_COUNT_UNITS else basis
+    lines = [f"{lead} {len(rows)}{of} {plural} by {by}", *facts]
     for row in rows:
         if group_by == "month":
             # A trend, not a ranking: its months in date order, no rank number.
