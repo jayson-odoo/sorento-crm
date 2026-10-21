@@ -137,7 +137,9 @@ def _sheets(data: bytes, name: str) -> Iterable[Iterable[tuple]]:
             counted = 0
             for info in zf.infolist():
                 with zf.open(info) as member:
-                    if not member.read(8).startswith(_PICTURE_SIGNATURES):
+                    looks_like_picture = member.read(8).startswith(_PICTURE_SIGNATURES)
+                    # Real pictures barely compress; a deflate bomb with a picture header does.
+                    if not (looks_like_picture and info.file_size <= 2 * info.compress_size):
                         counted += info.file_size
             if counted > _MAX_UNCOMPRESSED_BYTES:
                 raise _bad_request("This workbook is too large to read.")
