@@ -76,6 +76,8 @@ const nav = vi.hoisted(() => ({
   params: new URLSearchParams(),
   router: { replace: () => {}, push: () => {} },
 }));
+// The Import barcodes action is gated on master_data.products.edit.
+vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => true }));
 vi.mock('next/navigation', () => ({
   useRouter: () => nav.router,
   usePathname: () => '/master-data-management/products',
