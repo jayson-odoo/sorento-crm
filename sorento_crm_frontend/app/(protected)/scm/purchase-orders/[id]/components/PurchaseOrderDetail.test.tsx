@@ -73,6 +73,12 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));
 
+// The route tests render the server page, whose `Container` reads the layout settings
+// provider; the wrapper is layout only, so a plain div stands in.
+vi.mock('@/components/common/container', () => ({
+  Container: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+}));
+
 const usePurchaseOrder = vi.fn();
 const updatePurchaseOrderMutateAsync = vi.fn();
 vi.mock('../../../hooks/usePurchaseOrders', () => ({
@@ -124,6 +130,7 @@ vi.mock('../../../services/salesOrderService', () => ({
 }));
 
 import { PurchaseOrderDetail } from './PurchaseOrderDetail';
+import PurchaseOrderDetailPage from '../page';
 import type { PurchaseOrder, PurchaseOrderLine } from '../../../types/scm.types';
 
 function po(over: Partial<PurchaseOrder> = {}): PurchaseOrder {
@@ -197,19 +204,31 @@ beforeEach(() => {
 });
 
 describe('PurchaseOrderDetail - states', () => {
-  it('shows a skeleton and the way back while loading', () => {
+  // The page header owns Back (`../page.tsx`); the component's states draw none, or a
+  // second one stacks under the header's while the order loads (SO-DETAIL-DUP-BACK).
+  it('shows a skeleton and no second Back while loading', () => {
     usePurchaseOrder.mockReturnValue({ data: undefined, isLoading: true, isError: false });
     const { container } = renderDetail();
     expect(container.querySelector('[data-slot="skeleton"], .animate-pulse')).toBeTruthy();
-    // The way back is present even before the record is: a slow read must not trap anybody.
-    expect(screen.getByText('Back to purchase orders')).toBeInTheDocument();
+    expect(screen.queryByText('Back to purchase orders')).toBeNull();
   });
 
   it('names what is missing rather than rendering an empty shell', () => {
     usePurchaseOrder.mockReturnValue({ data: null, isLoading: false, isError: true });
     renderDetail();
     expect(screen.getByText('Purchase order not found')).toBeInTheDocument();
-    expect(screen.getByText('Back to purchase orders')).toBeInTheDocument();
+    expect(screen.queryByText('Back to purchase orders')).toBeNull();
+  });
+
+  it.each([
+    ['loading', { data: undefined, isLoading: true, isError: false }],
+    ['failed', { data: null, isLoading: false, isError: true }],
+  ])('while %s, the purchase-order route has exactly one Back', async (_, state) => {
+    usePurchaseOrder.mockReturnValue(state);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = await PurchaseOrderDetailPage({ params: Promise.resolve({ id: 'po-1' }) });
+    render(<QueryClientProvider client={client}>{tree}</QueryClientProvider>);
+    expect(screen.getAllByRole('link', { name: /Back to purchase orders/ })).toHaveLength(1);
   });
 
   it('carries one tab per concern of the order, General first', () => {

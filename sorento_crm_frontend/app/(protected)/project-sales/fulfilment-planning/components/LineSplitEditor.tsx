@@ -866,6 +866,9 @@ export function LineSplitEditor({
               ...line,
               savedRemark: entry.words,
               remarkInDraft: entry.editable,
+              remarkStored: savedLines
+                .find((saved) => saved.lineId === line.lineId)
+                ?.splits.some((split) => Boolean(split.remark)),
               ownRemark: typed ?? (entry.own ?? ''),
               // Edited: a remark typed now that is not the default, else one stored in the
               // saved decision (the stored one is never the default: the default stores none).
@@ -876,7 +879,7 @@ export function LineSplitEditor({
             };
           })
         : visible,
-    [visible, lineRemarks, remarkEdits],
+    [visible, lineRemarks, remarkEdits, savedLines],
   );
 
   const searchControls = onlyLineIds ? null : (

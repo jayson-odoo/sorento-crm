@@ -63,6 +63,8 @@ export interface SplitLine {
    */
   remarkInDraft?: boolean;
   ownRemark?: string | null;
+  /** The line carried a stored split remark when loaded (not the live draft). */
+  remarkStored?: boolean;
   /** The planner's own remark differs from the default words (stored, or typed now). */
   remarkEdited?: boolean;
   /** Stored splits; empty = not split (one implicit split, `splitsOf`). */
