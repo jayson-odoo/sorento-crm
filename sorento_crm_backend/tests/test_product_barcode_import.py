@@ -428,3 +428,16 @@ def test_apply_refuses_without_a_preview_of_the_same_file(client, db, refs):
     res = client.post(f"{BASE}/apply", files=files(data), data={"preview_token": token})
     assert res.status_code == 200 and res.json()["applied"] == 1
     assert _barcode(db, pid) == EAN_A
+
+
+def test_preview_names_the_active_company(client, db, refs):
+    """Owner ruling 21 Oct: the file is run once per company, so the preview names it."""
+    from app.models.base import set_company_scope
+    from app.models.company import Company
+
+    cid = str(uuid.uuid4())
+    db.add(Company(id=cid, name="ZZT Mocha Test Sdn Bhd", code=unique_code("C")[:50]))
+    db.flush()
+    set_company_scope(db, frozenset({cid}))
+    body = _post(client, "preview", _xlsx([["Product Code", "Barcode"], ["NOPE", EAN_A]])).json()
+    assert body["companies"] == ["ZZT Mocha Test Sdn Bhd"]

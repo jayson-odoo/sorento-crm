@@ -279,6 +279,26 @@ function PreviewGrid({ rows }: { rows: BarcodeImportRow[] }) {
   );
 }
 
+/** The owner runs one file per company, so which one is active leads the panel. */
+function CompanyLine({ companies }: { companies: string[] }) {
+  if (!companies.length) return null;
+  return (
+    <div className="space-y-2">
+      <p className="text-sm font-semibold" data-testid="barcode-import-company">
+        Importing into: {companies.join(', ')}
+      </p>
+      {companies.length > 1 ? (
+        <Alert variant="warning" appearance="light">
+          <AlertDescription>
+            Several companies are active. A code found in more than one is
+            skipped; switch to one company to import into it.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+    </div>
+  );
+}
+
 function OutcomePanel({
   outcome,
   applied,
@@ -311,6 +331,7 @@ function OutcomePanel({
     c.scientific;
   return (
     <div className="space-y-3">
+      <CompanyLine companies={outcome.companies} />
       <p className="text-sm text-muted-foreground">
         Columns used:{' '}
         <span className="font-medium text-foreground">

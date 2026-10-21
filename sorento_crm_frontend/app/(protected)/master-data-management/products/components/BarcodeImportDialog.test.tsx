@@ -132,6 +132,7 @@ const BASE_OUTCOME = {
 const OUTCOME = {
   ...BASE_OUTCOME,
   note_column: 'Note',
+  companies: ['Sorento Sdn Bhd'],
   preview_token: 'tok-1',
   rows: BASE_OUTCOME.rows.map((r) => ({
     ...r,
@@ -292,5 +293,28 @@ describe('BarcodeImportDialog crew audit round', () => {
     );
     finish({ ...OUTCOME, applied: 2 });
     expect(await screen.findByText(/products? updated/)).toBeInTheDocument();
+  });
+});
+
+describe('BarcodeImportDialog company', () => {
+  it('names the company the file is imported into', async () => {
+    previewBarcodeImport.mockResolvedValue(OUTCOME);
+    openDialog();
+    pickAndTest();
+    expect(
+      await screen.findByText('Importing into: Sorento Sdn Bhd'),
+    ).toBeInTheDocument();
+  });
+
+  it('warns when several companies are active', async () => {
+    previewBarcodeImport.mockResolvedValue({
+      ...OUTCOME,
+      companies: ['Mocha Sdn Bhd', 'Sorento Sdn Bhd'],
+    });
+    openDialog();
+    pickAndTest();
+    expect(
+      await screen.findByText(/Several companies are active/),
+    ).toBeInTheDocument();
   });
 });

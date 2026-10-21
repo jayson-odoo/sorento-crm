@@ -42,6 +42,8 @@ export interface BarcodeImportOutcome {
   code_column: string | null;
   barcode_column: string | null;
   note_column: string | null;
+  /** Names of the companies in scope: what this file reads and writes. */
+  companies: string[];
   total_rows: number;
   counts: Record<BarcodeRowStatus | BarcodeRowWarning, number>;
   rows: BarcodeImportRow[];

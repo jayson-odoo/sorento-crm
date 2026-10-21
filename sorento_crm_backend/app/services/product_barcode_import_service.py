@@ -24,6 +24,8 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.models.base import get_company_scope
+from app.models.company import Company
 from app.models.product import Product
 from app.services.audit_service import audit_event
 
@@ -175,6 +177,21 @@ def _barcode_holders(db: Session, barcodes: set[str]) -> dict[str, dict[str, str
     return out
 
 
+def _companies_in_scope(db: Session) -> list[str]:
+    """Names of the companies this import reads and writes, for the dialog's "Importing
+    into" line. The owner runs the same file once per company (SRT, then MCH), so which
+    one is active has to be on screen before anything is written."""
+    scope = get_company_scope(db)
+    query = db.query(Company.name).order_by(Company.name)
+    if isinstance(scope, frozenset):
+        if not scope:
+            return []
+        query = query.filter(Company.id.in_(list(scope)))
+    elif scope is not None:  # UNSET: no request scope, nothing to name
+        return []
+    return [n for (n,) in query.all()]
+
+
 def resolve(db: Session, data: bytes, name: str) -> dict[str, Any]:
     """Classify every line of the file. Writes nothing; `_writes` carries what apply would."""
     code_col = barcode_col = note_col = None
@@ -203,6 +220,7 @@ def resolve(db: Session, data: bytes, name: str) -> dict[str, Any]:
         return {
             "readable": False, "missing_columns": missing or ["product code", "barcode"],
             "code_column": None, "barcode_column": None, "note_column": None, "total_rows": 0,
+            "companies": _companies_in_scope(db),
             "counts": {k: 0 for k in STATUSES + WARNINGS}, "rows": [], "_writes": [],
         }
 
@@ -289,6 +307,7 @@ def resolve(db: Session, data: bytes, name: str) -> dict[str, Any]:
     return {
         "readable": True,
         "missing_columns": [],
+        "companies": _companies_in_scope(db),
         "code_column": _cell(header[code_col]),
         "barcode_column": _cell(header[barcode_col]),
         "note_column": _cell(header[note_col]) if note_col is not None else None,
