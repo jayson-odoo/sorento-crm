@@ -226,3 +226,56 @@ def test_guard_a_decline_without_a_topic_reset_keeps_todays_behaviour(gate):
     assert "stock_pick_declined" in plan.trace.rules_fired
     assert plan.trace.task_question == "Please refer to your salesman."
     assert not [p for p in new_state.focus.products if not p.get("uuid")]
+
+
+# --- a new_subject that carries nothing is a reset (state path) --------------------------------------
+# Live v92 ("mula semula"): state_changes [new_subject], topic_reset false, nothing else. The prompt's
+# own mirror rule makes that a reset; the applier writes it, and the existing machinery runs.
+
+
+def _one_slot_state(status: str = "open"):
+    from app.services.chatbot.turn import task as task_mod
+
+    task = ht.stock_task([("CL8109A", None)], status=status, opened_at_turn=3, touched_at_turn=3)
+    rows = [
+        {"position": i, "label": c, "code": c, "uuid": ht.uuid_of(c), "entity_type": "product", "shown_at_turn": 2}
+        for i, c in enumerate(LISTED, 1)
+    ]
+    focus = Focus(products=ht.product_rows("CL8109A"), domains=["inventory"], tasks=(task,), last_list=rows)
+    return replace(ht.state(focus, turn_no=5), state_path=True)
+
+
+def _new_subject_parse(**over):
+    base = dict(
+        domain_hint=None, intent_hint=None, entities=[], entity_op="reuse", topic_reset=False,
+        open_question_answer={"mode": None, "picked": [], "items": [], "qty_for_all": None},
+        state_changes=[{"op": "new_subject", "axis": None, "position": None}],
+    )
+    base.update(over)
+    return verdict(**base)
+
+
+def test_a_new_subject_that_carries_nothing_resets_and_a_next_bare_number_resumes_nothing():
+    state, plan = _turn(_one_slot_state(), _new_subject_parse())
+    assert not [t for t in state.focus.tasks if t.status in ("open", "parked")], state.focus.tasks
+    assert state.pending is None and not state.focus.last_list
+    v = verdict(domain_hint="inventory", intent_hint="check_stock", entities=[], reference_positions=[2],
+                entity_op="reuse", state_changes=[{"op": "pick", "axis": None, "position": 2}])
+    _state2, plan2 = _turn(state, v)
+    assert plan2.trace.task_question is None, plan2.trace.task_question
+
+
+def test_guard_a_new_subject_that_names_a_domain_is_not_a_reset_and_parks_the_task():
+    state, _plan = _turn(_one_slot_state(), _new_subject_parse(domain_hint="promotion"))
+    assert [t.status for t in state.focus.tasks] == ["parked"], state.focus.tasks
+
+
+def test_guard_a_new_subject_with_a_product_of_its_own_is_not_a_reset():
+    typed = {"raw": "ELP3754", "hint": "product", "canonical_code": "ELP3754", "current_message": True,
+             "confident": True, "hint_confident": True}
+    state, plan = _turn(
+        _one_slot_state("parked"), _new_subject_parse(domain_hint="inventory", intent_hint="check_stock", entities=[typed])
+    )
+    assert "reset_on_topic" not in plan.trace.rules_fired
+    codes = [row["canonical_code"] for spec in ht.inventory_specs(plan) for row in spec.entities]
+    assert codes == ["ELP3754"], codes
