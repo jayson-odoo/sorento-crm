@@ -9,8 +9,8 @@ The capped-list rule applies to the files too, with its own page size (`answer.S
 no new number): a turn sends only the files of the products it lists, never more than one
 page of them, whole products only. Composer on, the page ends where its files would pass the
 cap and closes with the existing 'Reply "more" to see the next N.'. Composer off, set paging
-does not exist ("more" is not a continuation there), so the files stop at the cap and no
-"more" line is printed.
+does not exist ("more" is not a continuation there), so such a set is withheld as on main
+(crew answer (b), 21 Oct): the count, no rows, no files.
 """
 from __future__ import annotations
 
@@ -109,24 +109,20 @@ def _gate(monkeypatch, on):
     _set_gate(monkeypatch, on)
 
 
-def test_composer_off_a_60_product_cert_set_sends_at_most_one_page_of_whole_products_files(
+def test_composer_off_a_60_product_cert_set_is_withheld_as_on_main(
     session_factory, stub_parser, stub_access, monkeypatch
 ):
-    from app.services.chatbot.lanes.business.answer import SET_LIST_MAX
-
+    """Crew answer (b), 21 Oct: with the composer off (the shipped default) a file / certificate
+    set longer than one page is withheld as main withholds it: the count, no rows, no files."""
     _gate(monkeypatch, False)
     engine_mod, contact_id = _world(session_factory, monkeypatch, 60)
     stub_parser(_tap_cert_verdict())
     stub_access()
     reply, sent = _say(engine_mod, session_factory, contact_id, 1, "which tap has cert")
 
-    assert 0 < len(sent) <= SET_LIST_MAX, len(sent)
-    assert len(sent) == len(set(sent))
-    # Whole products only: every product whose files went out sent all of them.
-    assert len(sent) == FILES_PER_PRODUCT * len(_codes_of(sent)), sent
-    # Only files of products the reply lists.
-    assert _codes_of(sent) <= _s4_codes_in(reply), (_codes_of(sent) - _s4_codes_in(reply))
-    # "more" does not page a set with the composer off, so no reply offers it.
+    assert reply.split("\n", 1)[0] == "Here's what you want: taps with certificates (60)", reply
+    assert not _s4_codes_in(reply), reply
+    assert sent == [], sent
     assert not MORE.search(reply), reply
 
 

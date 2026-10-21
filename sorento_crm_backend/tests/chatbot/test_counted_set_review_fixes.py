@@ -457,6 +457,13 @@ def test_anything_but_a_bare_count_is_left_to_the_parser(verdict, message, carri
 def test_a_count_that_names_nothing_still_arms_the_question(
     session_factory, stub_parser, stub_access, seven_taps, monkeypatch, bad_count
 ):
+    # CHAT-RELEASE-1021 (crew answer (b) on #1809): a file / certificate set longer than one page
+    # is listed only with the composer on (off, it is withheld as on main:
+    # tests/chatbot/test_set_file_send_cap.py), so this listing scenario runs with it on.
+    from tests.chatbot.test_composers_stock_xd import _set_gate
+
+    _set_gate(monkeypatch, True)
+
     from app.services.chatbot.lanes.business import answer
 
     monkeypatch.setattr(answer, "SET_LIST_MAX", 5)
