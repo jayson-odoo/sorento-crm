@@ -1961,6 +1961,11 @@ export interface BoardOrderStanding {
    */
   project_sales_order_id?: string | null;
   customer_name?: string | null;
+  /**
+   * OI-SPLIT-CONFIRM-POLISH: the core sales order's document date (`YYYY-MM-DD`), the same value
+   * the split read's `so_date` carries; the guided Confirm prints it when there is no read.
+   */
+  so_date?: string | null;
   /** Lines of this order inside the SELECTION - never only the ones a window is showing. */
   line_count: number;
   /** How many of those lines carry a verdict in the draft. The client's, never the server's. */

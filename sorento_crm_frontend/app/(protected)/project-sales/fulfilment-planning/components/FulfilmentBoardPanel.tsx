@@ -2174,6 +2174,7 @@ export function FulfilmentBoardPanel({
         {
           psoId: order.project_sales_order_id ?? null,
           soNumber: order.so_number,
+          soDate: order.so_date ?? null,
           covered: lines.map((line) => {
             // UAC F25, F26: the planner's own remark lives in the line's saved decision.
             const facts = remarkFactsOf(line);

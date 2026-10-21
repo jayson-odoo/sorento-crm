@@ -32,6 +32,8 @@ export interface ConfirmGuidePage {
   /** The order's planning record; null until the press adopts it (nothing to read yet). */
   psoId: string | null;
   soNumber: string;
+  /** The board's SO date for the order (`YYYY-MM-DD`); null when the board has none. */
+  soDate?: string | null;
   /** The lines this Confirm covers on the order, as the board states them (UAC F2, F10). */
   covered: ConfirmGuideLine[];
 }
@@ -108,6 +110,10 @@ export function ConfirmGuideDialog({
   const splitRead = step.kind === 'review' && page ? reads[step.index] : undefined;
   const reading = Boolean(page?.psoId) && Boolean(splitRead?.isPending);
   const readFailed = Boolean(splitRead?.isError);
+  // OI-SPLIT-CONFIRM-POLISH (owner, SO426939): the ONE SO date every sheet on the page prints:
+  // the order's split read, else the board's (an order nobody adopted has no read at all).
+  const soDate = splitRead?.data?.so_date ?? page?.soDate ?? null;
+  const sheetHead = page ? { so_number: page.soNumber, so_date: soDate } : null;
   // The page's sheet: split lines from the split read, every other covered line one row.
   const sheet = React.useMemo(
     () =>
@@ -282,6 +288,7 @@ export function ConfirmGuideDialog({
                       active
                       onlyLineIds={editable.onlyLineIds}
                       lineRemarks={editable.remarks}
+                      soDate={soDate}
                       // OI-SPLIT-CONFIRM-POLISH: no drag-to-reorder on the Review split page.
                       canDrag={false}
                       onSaveRemarks={(changes) =>
@@ -324,9 +331,8 @@ export function ConfirmGuideDialog({
                   </div>
                   {editable.rest.lines.length > 0 ? (
                     <div className="overflow-hidden rounded-lg border border-border">
-                      {/* The order's read is loaded: its SO date is every row's (owner, SO427002). */}
                       <SplitLinesSheet
-                        payload={splitRead?.data ?? null}
+                        payload={sheetHead}
                         soNumber={page.soNumber}
                         sheet={editable.rest}
                       />
@@ -336,7 +342,7 @@ export function ConfirmGuideDialog({
               ) : sheet ? (
                 <div className="overflow-hidden rounded-lg border border-border">
                   <SplitLinesSheet
-                    payload={splitRead?.data ?? null}
+                    payload={sheetHead}
                     soNumber={page.soNumber}
                     sheet={sheet}
                   />

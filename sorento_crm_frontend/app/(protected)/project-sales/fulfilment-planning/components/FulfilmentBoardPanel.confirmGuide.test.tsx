@@ -1333,6 +1333,65 @@ describe('OI-SPLIT-GEAR-REMARK guide Review page: confirmed remark vs the server
  * lines at BRW-ED, both saved decisions, not confirmed. Line 1 (40) has 20 moved onto line 2's
  * date (19/10/2026), the case the owner's screenshots showed.
  */
+/*
+ * Owner, SO426939 (21 Oct ~23:25): three saved lines on an order nobody has adopted yet open
+ * Review split as the READ-ONLY sheet (no split read, no Undo/Save), and SO DATE was blank on
+ * every row. The board's order carries the SO date; every sheet on the page prints it.
+ */
+describe('OI-SPLIT-CONFIRM-POLISH: SO date on the read-only Review split (SO426939)', () => {
+  const RO_LINES = [
+    demand({ sales_order_id: 'so-9', so_number: 'SO426939', project_sales_order_id: null, project_line_id: 'pl-9-1', line_no: 1, item_code: 'SRTWC8613-RL', fulfilment_location: 'BRW-BB', qty: '1115', required_date: '2030-01-01' }),
+    demand({ sales_order_id: 'so-9', so_number: 'SO426939', project_sales_order_id: null, project_line_id: 'pl-9-2', line_no: 2, item_code: 'SRTWT907SS', fulfilment_location: 'BRW-BB', qty: '1115', required_date: '2030-01-01' }),
+    demand({ sales_order_id: 'so-9', so_number: 'SO426939', project_sales_order_id: null, project_line_id: 'pl-9-3', line_no: 3, item_code: 'WESERP10B', fulfilment_location: 'BRW-BB', qty: '1115', required_date: '2030-01-01' }),
+  ];
+  const firstCells = (page: HTMLElement) =>
+    Array.from(page.querySelectorAll('tbody[data-line-id]')).map((body) => body.querySelector('td')?.textContent ?? '');
+
+  function unadoptedBoard(soDate: string | null) {
+    const board = withDraft(boardOf(RO_LINES), ['pl-9-1', 'pl-9-2', 'pl-9-3'], { 'pl-9-1': 'ORDER' });
+    return mapContributions(
+      {
+        ...board,
+        orders: board.orders.map((o) => ({ ...o, project_sales_order_id: null, so_date: soDate })),
+      } as unknown as Board,
+      (entry) => ({ ...entry, project_line_id: null, project_sales_order_id: null }),
+    );
+  }
+
+  it('the read-only sheet prints the board order\'s SO date on every row', async () => {
+    await mountWith(unadoptedBoard('2026-10-20'), ['SO426939']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-1');
+    // the read-only summary: no Undo / Save toolbar
+    expect(within(page).queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+    expect(firstCells(page)).toEqual(['20/10/2026', '20/10/2026', '20/10/2026']);
+    expect(getLineSplits).not.toHaveBeenCalled();
+  });
+
+  it('an order with no SO date anywhere still renders, with SO DATE empty', async () => {
+    await mountWith(unadoptedBoard(null), ['SO426939']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-1');
+    expect(firstCells(page)).toEqual(['', '', '']);
+  });
+
+  it('with a split read, the read\'s SO date wins over the board\'s (editable sheet)', async () => {
+    serveSplits({ 'pso-so-1': { ...LINE3_READ(), so_date: '2026-10-21' } });
+    const board = oneDraftBoard();
+    await mountWith(
+      { ...board, orders: board.orders.map((o) => ({ ...o, so_date: '2026-10-20' })) } as unknown as Board,
+      ['SO000001'],
+    );
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    expect(within(page).getByRole('button', { name: 'Undo' })).toBeInTheDocument();
+    expect(firstCells(page)).toEqual(['21/10/2026']);
+  });
+});
+
 describe('OI-SPLIT-CONFIRM-POLISH: the footer (owner, 21 Oct ~22:55)', () => {
   const footerIds = () =>
     Array.from(screen.getByTestId('confirm-guide-footer').querySelectorAll('button')).map(

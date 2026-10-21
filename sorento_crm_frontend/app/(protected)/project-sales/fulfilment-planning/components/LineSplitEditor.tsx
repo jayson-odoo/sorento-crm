@@ -236,6 +236,7 @@ export function LineSplitEditor({
   onlyLineIds,
   lineRemarks,
   onSaveRemarks,
+  soDate: hostSoDate,
   canDrag = true,
   readLoaded = false,
   stayAfterSave = false,
@@ -272,6 +273,8 @@ export function LineSplitEditor({
    * "N left" (the guided Confirm's page); the qty and date cells still edit. Default: drag.
    */
   canDrag?: boolean;
+  /** The host's SO date for the order (`YYYY-MM-DD`), printed when the read carries none. */
+  soDate?: string | null;
   /**
    * The host has just read this order's split plan and shows it loaded: start from that read
    * instead of waiting for the editor's own refetch (no skeleton flash on the guide page).
@@ -851,7 +854,7 @@ export function LineSplitEditor({
     isDragging: () => Boolean(dragRef.current),
   }));
 
-  const soDate = formatSplitDate(query.data?.so_date ?? null);
+  const soDate = formatSplitDate(query.data?.so_date ?? hostSoDate ?? null);
   const subtitle = [query.data?.so_number, soDate, query.data?.customer]
     .filter(Boolean)
     .join(' · ');
