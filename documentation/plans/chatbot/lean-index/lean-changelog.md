@@ -3,7 +3,7 @@
 Base: `chatbot_semantic_parser` v88 (id 4646e9a2-696e-4461-955e-5722b916b763), the consolidated template.
 Candidate: `parser-lean.txt` (the template text plus one trailing newline, the same convention as the v88 copy
 taken with `psql -t`; psql's backquote strips that one newline when `explore-data.sql` reads the file).
-Every `{{variable}}` is kept (14, same set). Kept untouched: grammar particles (R-X-04, R-P3-09), FLYER
+Every `{{variable}}` is kept (16, same set). Kept untouched: grammar particles (R-X-04, R-P3-09), FLYER
 (R-P3-15), KNOWN BRANDS (R-P2-09), output and routing rules.
 
 Size (template text): v77 142,657 chars / 35,651 tokens; v88 70,537 / 18,347; lean 70,453 / 18,318
@@ -87,3 +87,15 @@ Size: v90 71,220 chars / 18,506 tokens; v91 71,402 / 18,548 (o200k_base). Every 
      R-P1-02), else false; ``
    - (B) R-X-06 new: `` - `continuation` true when the message only asks for more of the set the last reply listed and
      names nothing new (see R-P1-02), else false; ``
+
+# v92 candidate (`parser-v92.txt`): v91 with R1 scoped so it does not override the brand rule
+
+Size: v91 71,402 chars / 18,548 tokens; v92 71,433 / 18,557 (o200k_base). Every `{{variable}}` kept (16).
+
+7. R1, R-X-04 MEANING (line 25): "the item's code, never its label" read against a brand would contradict R-P2-09
+   (line 176: a brand's `canonical_code` is the brand name exactly as listed, never the code); the brand keeps
+   R-P2-09.
+   - old: `(a status, a promotion or flyer kind, a file type, any value on a list) by that item's code exactly as its
+     list line gives it, never its label:`
+   - new: `(a status, a promotion or flyer kind, a file type, any other closed-list value; a brand keeps R-P2-09) by
+     that item's code exactly as its list line gives it, never its label:`
