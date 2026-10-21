@@ -1,4 +1,7 @@
-"""CHAT-INDEX-VIZ BE-3: `GET /system/ai-assistant/prompts/{name}/versions/{version}/architecture`.
+"""CHAT-INDEX-VIZ BE-3: `GET /system/chatbot/prompts/{name}/versions/{version}/architecture`.
+
+It lives on the chatbot module's own read surface (`app/api/v1/system/chatbot.py`), the doorway
+`tests/chatbot/test_import_boundary.py` allows, so core (`ai_assistant.py`) never imports the package.
 
 Contract: documentation/plans/chatbot/chat-index-viz-20oct-contract.md ("BE-3"). Written before
 the route and `app/services/chatbot/prompt_architecture.py` exist: each test fails on a 404
@@ -29,7 +32,7 @@ from tests._pg_fixture import pg_session
 
 VIEW = "system.ai_assistant_settings.view"
 KEY = "chatbot_semantic_parser"
-BASE = "/api/v1/system/ai-assistant/prompts"
+BASE = "/api/v1/system/chatbot/prompts"
 LISTS = ("specs", "attachment_types", "certification_types")
 
 _GRANTS: set[str] = set()
