@@ -539,10 +539,10 @@ def run(
 
     `decision_kind` is `decide()`'s own reading of this message; `positions` are the
     option numbers it picked. `pending` is the stored open question: when the parser's
-    answer, applied to it (`positions` non-empty), picked one of its options, the answer is
-    that question's and the resume arm does not fire, so a pick on a did-you-mean never
+    answer, applied to it, is an answer (`decision_kind` "answer": a fitting pick or a yes),
+    that answer wins and the resume arm does not fire, so a pick on a did-you-mean never
     wakes an older task of the same domain (its status is left as it was). A pick that did
-    not fit the stored question applied nothing and blocks nothing. Nothing here reads a
+    not fit the stored question is no answer and blocks nothing. Nothing here reads a
     word.
     """
     rules: list[str] = []
@@ -552,7 +552,7 @@ def run(
         return TaskOutcome(tasks=(), rules=())
 
     named_domain = verdict.get("domain_hint")
-    answers_pending = pending is not None and bool(positions)
+    answers_pending = pending is not None and decision_kind == "answer"
 
     # (1) Close or park on a topic reset. A reset aimed at a task's OWN domain ends
     # it; one aimed elsewhere parks it, and the focus keeps the task through the wipe
