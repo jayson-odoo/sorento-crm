@@ -1620,6 +1620,14 @@ def apply_changes(
             names_own = any(e.get("current_message") is not False for e in _entities(out))
             if open_question.get("kind") == question_mod.QUANTITIES and set(ops) == {"close_question"} and not names_own:
                 out[question_mod.ANSWER_KEY] = {**question_mod.NO_ANSWER, "mode": "cancel"}
+        elif open_question is not None and (verdict.get(question_mod.ANSWER_KEY) or {}).get("mode") in ("no", "cancel"):
+            # The parser declared a decline of the stored question: its own arm answers it, as it
+            # does off the state path ("none of them" over a did-you-mean), so the question stays
+            # for that arm and the declared answer is kept.
+            out[question_mod.ANSWER_KEY] = verdict.get(question_mod.ANSWER_KEY)
+            if _same_list([i for i in (_list_item(r) for r in focus.last_list or [] if isinstance(r, dict)) if i], open_question):
+                # The declined question's options WERE the stored list: it goes with them.
+                focus.last_list = None
         elif open_question is not None:
             pending, focus.required_ask = None, None
         focus.set_clarify = None

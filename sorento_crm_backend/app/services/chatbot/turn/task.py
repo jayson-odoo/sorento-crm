@@ -541,7 +541,7 @@ def run(
     `decision_kind` is `decide()`'s own reading of this message; `positions` are the
     option numbers it picked. `pending` is the stored open question: when the parser's
     answer, applied to it, is an answer (`decision_kind` "answer": a fitting pick or a yes),
-    that answer wins and the resume arm does not fire, so a pick on a did-you-mean never
+    that answer (a decline included) wins and the resume arm does not fire, so a pick on a did-you-mean never
     wakes an older task of the same domain (its status is left as it was). A pick that did
     not fit the stored question is no answer and blocks nothing. `class_ask` is the caller's
     reading that the message names its own class (`apply._apply`, off the state gate only).
@@ -554,7 +554,11 @@ def run(
         return TaskOutcome(tasks=(), rules=())
 
     named_domain = verdict.get("domain_hint")
-    answers_pending = pending is not None and decision_kind == "answer"
+    oqa = verdict.get("open_question_answer")
+    declined = isinstance(oqa, dict) and oqa.get("mode") in ("no", "cancel")
+    # A decline is an answer too ("none of them", "start over"): the parser said so, whether or not
+    # the state path already took the stored question off (a `close_question` op).
+    answers_pending = (pending is not None and decision_kind == "answer") or declined
 
     # (1) Close or park on a topic reset. A reset aimed at a task's OWN domain ends
     # it; one aimed elsewhere parks it, and the focus keeps the task through the wipe
