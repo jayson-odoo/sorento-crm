@@ -212,19 +212,13 @@ function stub(over: Record<string, unknown>) {
 }
 
 describe('UAC-21: consignment route back link and pager', () => {
-  it('docType="consignment" backs out to /scm/consignments, labelled Back to consignments', () => {
+  // Back itself is the page header's now (SO-DETAIL-DUP-BACK): one per route, pinned in
+  // SalesOrderDetail.test.tsx "exactly one Back". The component keeps the consignment
+  // list path for its Delete landing and its pager.
+  it('docType="consignment" draws no Back of its own, so the header\'s is the only one', () => {
     useSalesOrder.mockReturnValue({ data: undefined, isLoading: true, isError: false });
     renderDetail({ docType: 'consignment' });
-    const back = screen.getByRole('link', { name: /Back to consignments/i });
-    expect(back.getAttribute('href')).toMatch(/^\/scm\/consignments(\?|$)/);
-    expect(screen.queryByText('Back to sales orders')).toBeNull();
-  });
-
-  it('the sales-orders route keeps Back to sales orders', () => {
-    useSalesOrder.mockReturnValue({ data: undefined, isLoading: true, isError: false });
-    renderDetail();
-    const back = screen.getByRole('link', { name: /Back to sales orders/i });
-    expect(back.getAttribute('href')).toMatch(/^\/scm\/sales-orders(\?|$)/);
+    expect(screen.queryByRole('link', { name: /Back to/i })).toBeNull();
   });
 
   it('docType="consignment" walks the consignment list: pager detailPath /scm/consignments', () => {

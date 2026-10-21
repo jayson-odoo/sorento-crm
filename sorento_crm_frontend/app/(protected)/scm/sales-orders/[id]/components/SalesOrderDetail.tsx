@@ -111,7 +111,9 @@ import type {
 import { describe as describeSupply } from '../../../../project-sales/_shared/lib/supplyVocabulary';
 import { BoardChangeTable } from '@/app/(protected)/project-sales/fulfilment-planning/components/BoardChangeTable';
 import { lineChangeAnnotation } from './salesOrderLineChange';
-import BackToList, { useBackToListHref } from '@/components/common/BackToList';
+import { useBackToListHref } from '@/components/common/BackToList';
+import { QueryErrorState } from '@/components/common/LoadErrorState';
+import { isNotFound } from '@/lib/api-client';
 import { useSalesOrderActions } from '../../actions';
 import { PLAN_PERMISSION } from '../../lib/planActions';
 // Aliased: this file already has its own header-scoped `SOURCE_LABELS` above, worded
@@ -478,10 +480,10 @@ export function SalesOrderDetail({
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { data, isLoading, isError } = useSalesOrder(id);
+  const { data, isLoading, isError, error: loadError, refetch, isFetching } = useSalesOrder(id);
   const isConsignmentRoute = docType === 'consignment';
   const listPath = isConsignmentRoute ? '/scm/consignments' : '/scm/sales-orders';
-  const listLabel = isConsignmentRoute ? 'Back to consignments' : 'Back to sales orders';
+  const docNoun = isConsignmentRoute ? 'Consignment' : 'Sales order';
   // Read here rather than off `so` below, which is narrowed after the loading and error
   // returns: the Lines columns are built above them, and the What-changed dialog titles
   // itself with the order this line belongs to.
@@ -1537,36 +1539,40 @@ export function SalesOrderDetail({
     enabled: !isLoading,
   });
 
-  // Back and prev/next live on the RIGHT of the record header, next to each other, the way
-  // the purchase-order and users screens do it.
-  // Back carries the list query the row click wrote (S3-01). It lives on the
-  // toolbar row now; the empty states below keep one of their own.
-  const backLink = (
-    <BackToList listPath={listPath} label={listLabel} />
-  );
-
+  // Back is the page header's (`../page.tsx`, the consignment twin likewise), on every
+  // state: drawing another here stacked a second Back under it while the order loaded
+  // (SO-DETAIL-DUP-BACK). `listPath` above still serves Delete's landing and the pager.
   if (isLoading) {
     return (
       <div className="space-y-4">
-        <div className="flex justify-end">{backLink}</div>
         <Skeleton className="h-40 w-full rounded-xl" />
         <Skeleton className="h-64 w-full rounded-xl" />
       </div>
     );
   }
 
-  if (isError || !data) {
-    return (
-      <div className="space-y-4">
-        <div className="flex justify-end">{backLink}</div>
+  // Every failure ends in a state that says which one it is (NEVER-STUCK-UI): only a 404
+  // reads "not found"; a refusal is AccessDenied; a fault or a timeout carries its reason
+  // and a Retry. A background refetch that fails over an order already shown keeps it.
+  if (!data) {
+    if (!isError || isNotFound(loadError)) {
+      return (
         <Card className="flex flex-col items-center gap-3 p-10 text-center">
-          <div className="text-sm font-semibold">Sales order not found</div>
+          <div className="text-sm font-semibold">{docNoun} not found</div>
           <p className="max-w-md text-sm text-muted-foreground">
-            This sales order doesn&apos;t exist, or it was removed after this link was made.
-            Head back to the list to pick another.
+            This {docNoun.toLowerCase()} doesn&apos;t exist, or it was removed after this link was
+            made. Head back to the list to pick another.
           </p>
         </Card>
-      </div>
+      );
+    }
+    return (
+      <QueryErrorState
+        error={loadError}
+        title={`Could not load this ${docNoun.toLowerCase()}`}
+        onRetry={() => void refetch()}
+        retrying={isFetching}
+      />
     );
   }
 
