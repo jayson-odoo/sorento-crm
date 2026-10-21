@@ -3495,6 +3495,10 @@ def _apply(
             kept = {k: getattr(focus_after_pending, k) for k in RESET_KEEPS}
             focus_after_pending = replace(Focus(**kept), tasks=focus_after_pending.tasks)
             trace.rules_fired.append("reset_on_topic")
+        elif pending_short_circuit is not None and focus_after_pending.last_list:
+            # State path: the ops decided what the focus keeps, but a reset also ends the stored list.
+            focus_after_pending = replace(focus_after_pending, last_list=None)
+            trace.rules_fired.append("reset_on_topic_list")
     if pending_short_circuit is not None:
         # #1262 slice 8 (F1b siblings): `focus_after_pending` carries this branch's
         # OWN mutation (a queued kind_pick's settled sibling) where one exists - the
