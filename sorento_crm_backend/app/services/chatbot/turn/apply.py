@@ -797,6 +797,12 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
             # decline.
             trace.rules_fired.append("stock_pick_declined")
             trace.task_question = refer.sentence()
+            # "None of these": the token the question was about never resolved, and nothing of that
+            # ask carries (a later bare number must not re-run it into the same did-you-mean). A
+            # product the ask also named and resolved stays.
+            focus.products = [
+                row for row in focus.products or [] if not (isinstance(row, dict) and not row.get("uuid"))
+            ]
             focus.domains = ["inventory"]
             return (
                 focus,
