@@ -1185,26 +1185,33 @@ export function LineSplitSheet({
   // column sizing and the DataGrid's own handle (`components/ui/data-grid-table.tsx`
   // `DataGridTableHeadRowCellResize`, the pattern every list page uses). Only widths are
   // tracked here: the body rows stay this sheet's own merged blocks.
+  const sizingColumns = React.useMemo<ColumnDef<SplitLine>[]>(
+    () =>
+      columns.map((column) => ({
+        id: column.key,
+        size: column.width ?? REMARK_MIN_WIDTH,
+        minSize: MIN_COLUMN_WIDTH,
+        enableResizing: !FIXED_COLUMNS.has(column.key),
+      })),
+    [columns],
+  );
   const sizing = useReactTable<SplitLine>({
     data: NO_LINES,
-    columns: React.useMemo<ColumnDef<SplitLine>[]>(
-      () =>
-        columns.map((column) => ({
-          id: column.key,
-          size: column.width ?? REMARK_MIN_WIDTH,
-          minSize: MIN_COLUMN_WIDTH,
-          enableResizing: !FIXED_COLUMNS.has(column.key),
-        })),
-      [columns],
-    ),
+    columns: sizingColumns,
     getCoreRowModel: getCoreRowModel(),
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
   });
   const headers = sizing.getHeaderGroups()[0]?.headers ?? [];
   // Once a column is dragged the sheet is at least as wide as its columns, so a wider column
-  // never squeezes REMARK below its minimum.
+  // never squeezes REMARK below its minimum; a phone leaves out the columns it hides.
   const resized = Object.keys(sizing.getState().columnSizing).length > 0;
+  const total = sizing.getTotalSize();
+  const phoneTotal =
+    total -
+    headers
+      .filter((header, index) => columns[index]?.className === DESKTOP_ONLY)
+      .reduce((sum, header) => sum + header.getSize(), 0);
   const lastOfDragGroup = drag
     ? lines.reduce(
         (last, line, index) =>
@@ -1219,12 +1226,21 @@ export function LineSplitSheet({
       data-split-sheet=""
       data-read-only={readOnly ? 'true' : undefined}
       onKeyDown={readOnly ? undefined : onKeyDown}
-      style={resized ? { minWidth: sizing.getTotalSize() } : undefined}
+      style={
+        resized
+          ? ({
+              '--sheet-min': `${total}px`,
+              '--sheet-min-phone': `${phoneTotal}px`,
+            } as React.CSSProperties)
+          : undefined
+      }
       className={cn(
         'table-fixed border-separate border-spacing-0 text-xs',
-        readOnly
-          ? 'min-w-[1030px] max-md:min-w-[850px]'
-          : 'min-w-[1180px] max-md:min-w-[1000px]',
+        resized
+          ? 'min-w-(--sheet-min) max-md:min-w-(--sheet-min-phone)'
+          : readOnly
+            ? 'min-w-[1030px] max-md:min-w-[850px]'
+            : 'min-w-[1180px] max-md:min-w-[1000px]',
       )}
     >
       <TableHeader className="[&_tr]:border-0">

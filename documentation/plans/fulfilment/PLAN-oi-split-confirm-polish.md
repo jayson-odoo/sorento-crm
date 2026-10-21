@@ -1,6 +1,6 @@
 # PLAN: OI-SPLIT-CONFIRM-POLISH
 
-Status: in progress (small fix track: UI polish, no migration, no auth/RBAC change)
+Status: in review, PR #1820 (small fix track: UI polish, no migration, no auth/RBAC change)
 
 Owner feedback (21 Oct 2026) on the guided Confirm dialog, step 1 "Review split":
 
@@ -13,3 +13,15 @@ Owner feedback (21 Oct 2026) on the guided Confirm dialog, step 1 "Review split"
 
 Tests (red first): no drag handle; renamed headers; opens clean; warning only after an edit;
 columns resizable.
+
+## Outcome
+
+- Drag: `canDrag` prop on `LineSplitEditor` / `LineSplitSheet` (default on); the guide passes
+  false. The board gear's "Split delivery" keeps drag.
+- Headers: shared `COLUMNS` in `LineSplitSheet.tsx`, so the gear dialog and the read-only split
+  popups read "Breakdown qty" / "Breakdown date" too.
+- Dirty on open: the page already opened clean on SO426513-shaped data (vitest and browser); the
+  owner's dirty state came from an accidental drag (5px mouse sensor) dropping 20 on the other
+  C-FH14 line. Removing drag removes it; tests pin opens-clean and warning-only-after-an-edit.
+- Resize: TanStack column sizing + `DataGridTableHeadRowCellResize`
+  (`components/ui/data-grid-table.tsx`). REMARK is the flex column (min 100px once resized).

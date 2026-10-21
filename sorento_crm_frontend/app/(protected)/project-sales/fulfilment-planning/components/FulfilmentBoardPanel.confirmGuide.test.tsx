@@ -1402,6 +1402,30 @@ describe('OI-SPLIT-CONFIRM-POLISH: the Review split page', () => {
     expect(page.querySelector('[data-drag-handle]')).toBeNull();
   });
 
+  // every split of line 1 sits on line 2: line 1's own row is the base cells only
+  const FH_ALL_MOVED_READ = () => ({
+    ...splitRead('pso-so-1', 'SO000001', []),
+    lines: [fhLine(1, 40, '2026-09-20', [wireSplit('fh-c', 40, '2026-10-19', 'pl-1-2')]), fhLine(2, 20, '2026-10-19')],
+  });
+
+  it.each([
+    ['part moved', FH_READ],
+    ['all moved', FH_ALL_MOVED_READ],
+  ])('1: no row carries a grip cell, so every body column sits under its header (%s)', async (_name, read) => {
+    const page = await openFh(read);
+    // the only pinned cells left are the item code's (a grip cell is pinned and empty)
+    const pinned = Array.from(page.querySelectorAll('td[data-pinned]'));
+    expect(pinned.length).toBeGreaterThan(0);
+    for (const cell of pinned) expect(cell).toHaveTextContent('C-FH14');
+    // the first row of each line block: base cells + Breakdown qty/date + Remark + Balance + remove
+    const heads = within(page).getAllByRole('columnheader').length;
+    for (const body of Array.from(page.querySelectorAll('tbody[data-line-id]'))) {
+      const first = body.querySelector('tr')!;
+      const span = Array.from(first.querySelectorAll('td')).reduce((sum, td) => sum + (td.colSpan || 1), 0);
+      expect(span).toBe(heads);
+    }
+  });
+
   it('2: the editable split columns read BREAKDOWN QTY and BREAKDOWN DATE; the email columns are unchanged', async () => {
     const page = await openFh();
     const names = headers(page).map((h) => h.toLowerCase());
@@ -1459,7 +1483,9 @@ describe('OI-SPLIT-CONFIRM-POLISH: the Review split page', () => {
       .map((th) => parseFloat(th.style.width))
       .filter((width) => !Number.isNaN(width))
       .reduce((sum, width) => sum + width, 0);
-    expect(parseFloat(table.style.minWidth)).toBe(fixed + 100);
+    expect(parseFloat(table.style.getPropertyValue('--sheet-min'))).toBe(fixed + 100);
+    // a phone hides SO date, S/O no and Location (80 + 76 + 64), so its floor leaves them out
+    expect(parseFloat(table.style.getPropertyValue('--sheet-min-phone'))).toBe(fixed + 100 - 220);
     // REMARK takes whatever width the others leave, so its edge moves with theirs
     const named = ths.filter((th) => th.textContent?.trim() && th.textContent.trim().toLowerCase() !== 'remark');
     expect(named.length).toBeGreaterThan(8);
