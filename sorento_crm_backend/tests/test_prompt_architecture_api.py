@@ -93,27 +93,37 @@ def _get(client, version: int, name: str = KEY):
     return client.get(f"{BASE}/{name}/versions/{version}/architecture")
 
 
-def _tokens(text: str) -> int:
-    return round(len(text) / 4)
+def _size(chars: int) -> int:
+    return round(chars / 4)
 
 
-# Section text that is long enough for the heading line and a trailing newline to be rounding noise.
-BODY_A = "alpha text " * 60
-BODY_B = "bravo text " * 120
-HEAD = "Opening words before any heading. " * 20
-TEMPLATE = (
-    f"{HEAD}\n== PRICE TERMINOLOGY ==\n{BODY_A}\n== ACCESS LEVELS ==\n{BODY_B}\n"
-    "== TODAY ==\nToday is {{current_date}}. " + "pad " * 80 + "\n"
-)
 CLOSED_TEMPLATE = (
-    f"{HEAD}\n== PRICE TERMINOLOGY ==\n{BODY_A}\n== CLOSED LISTS ==\n"
+    "Opening words before any heading. " * 20 + "\n== PRICE TERMINOLOGY ==\n" + "alpha text " * 60 + "\n== CLOSED LISTS ==\n"
     "SPECS-BEGIN {{specs}} SPECS-END\nFILES-BEGIN {{attachment_types}} FILES-END\n"
     "CERTS-BEGIN {{certification_types}} CERTS-END\n"
 )
+EXAMPLES = '  - "check stock x" -> true\n  - "price of y" -> false\n'
+RULES_A = "Read the message and answer in strict JSON. " * 30
+RULES_B = "A price word means the sell price unless the message says cost. " * 25
+REALISTIC = (
+    "You read one customer message.\n"
+    f"== PRICE TERMINOLOGY ==\n{RULES_A}\n"
+    "== TODAY ==\nToday is {{current_date}}.\n"
+    "== BRANDS ==\nKnown brands: {{brands}}\n"
+    f"== EXAMPLES ==\n{EXAMPLES}"
+    f"== SELF_REFERENCE ==\n{RULES_B}\nSpec words: {{{{specs}}}}\n"
+    "== CLOSED LISTS ==\nFiles: {{attachment_types}}\nCertificates: {{certification_types}}\n"
+)
+GROUPS = ["Rules", "Examples", "Product lists", "Lists from other settings"]
+HEADINGS = ("PRICE TERMINOLOGY", "SELF_REFERENCE", "CLOSED LISTS", "EXAMPLES", "TODAY", "BRANDS")
+
+
+def _groups(body: dict) -> dict[str, dict]:
+    return {g["name"]: g for g in body["groups"]}
 
 
 # --------------------------------------------------------------------------- #
-# Shape and sections
+# Shape and groups
 # --------------------------------------------------------------------------- #
 
 
@@ -123,64 +133,81 @@ def test_shape_of_the_response(client, pg_db):
     res = _get(client, number)
     assert res.status_code == 200, res.text
     body = res.json()
-    assert set(body) >= {"version", "mode", "uses_closed_lists", "total_tokens", "sections", "lists"}, body
+    assert set(body) >= {"version", "mode", "uses_closed_lists", "total_size", "groups", "lists"}, body
+    assert "sections" not in body and "total_tokens" not in body
     assert body["version"] == number
     assert body["mode"] == "index"
     assert body["uses_closed_lists"] is True
-    for section in body["sections"]:
-        assert set(section) == {"title", "tokens", "kind"}, section
-    assert body["total_tokens"] == sum(s["tokens"] for s in body["sections"])
+    for group in body["groups"]:
+        assert set(group) == {"name", "size", "share"}, group
+        assert group["size"] > 0 and 0 < group["share"] <= 1
+    assert body["total_size"] == sum(g["size"] for g in body["groups"])
     assert [item["key"] for item in body["lists"]] == [*LISTS, "warehouses"]
     for item in body["lists"]:
-        assert {"key", "name", "source", "href", "entries", "sent_each_message_tokens", "full_list_tokens"} <= set(item)
+        assert {"key", "name", "source", "href", "how", "entries", "sent_each_message_size", "full_list_size"} <= set(item)
+        assert not ({"sent_each_message_tokens", "full_list_tokens"} & set(item))
 
 
-def test_sections_split_at_headings_with_an_opening_section(client, pg_db):
+def test_groups_are_at_most_the_four_in_order_and_zero_size_ones_are_left_out(client, pg_db):
     _mode(pg_db, "block")
-    number = _version(pg_db, TEMPLATE)
-    body = _get(client, number).json()
-    titles = [s["title"] for s in body["sections"]]
-    assert titles == ["Opening", "PRICE TERMINOLOGY", "ACCESS LEVELS", "TODAY"], titles
-    by_title = {s["title"]: s for s in body["sections"]}
-    # tokens = round(len(rendered) / 4); the heading line and newlines are rounding noise here.
-    assert by_title["Opening"]["tokens"] == pytest.approx(_tokens(HEAD), abs=4)
-    assert by_title["PRICE TERMINOLOGY"]["tokens"] == pytest.approx(_tokens(BODY_A), abs=6)
-    assert by_title["ACCESS LEVELS"]["tokens"] == pytest.approx(_tokens(BODY_B), abs=6)
+    body = _get(client, _version(pg_db, "== ONLY ==\n" + "plain rule text. " * 40 + "\n")).json()
+    assert [g["name"] for g in body["groups"]] == ["Rules"]
+    assert body["groups"][0]["share"] == pytest.approx(1.0)
 
 
-def test_kinds(client, pg_db):
+def test_realistic_template_groups(client, pg_db):
+    _mode(pg_db, "index")
+    body = _get(client, _version(pg_db, REALISTIC)).json()
+    groups = _groups(body)
+    names = [g["name"] for g in body["groups"]]
+    assert names == [n for n in GROUPS if n in groups]
+    assert {"Rules", "Examples", "Product lists"} <= set(names), names
+    # No heading text, section list or token word anywhere in the response.
+    for heading in HEADINGS:
+        assert heading not in str(body), heading
+    # Examples: whole lines holding a quoted phrase then `->`.
+    assert groups["Examples"]["size"] == pytest.approx(_size(len(EXAMPLES)), abs=2)
+    # Rules: the template's own text, variables removed, examples out, the date counted here.
+    own = REALISTIC.replace(EXAMPLES, "")
+    import re as _re
+
+    own = _re.sub(r"\{\{\w+\}\}", "", own)
+    assert groups["Rules"]["size"] == pytest.approx(_size(len(own) + len(date.today().strftime("%A, %d %B %Y"))), abs=3)
+    # Product lists: `{{specs}}` under a heading that is NOT the closed lists one still counts here,
+    # and in index mode on a version carrying the section it is the fixed pointer line.
+    blanks = sum(len(cli.SYSTEM_BLANKS[k]) for k in LISTS)
+    assert groups["Product lists"]["size"] == pytest.approx(_size(blanks), abs=2)
+    brands = pv.render_value(pg_db, "brands")
+    if _size(len(brands)):
+        assert groups["Lists from other settings"]["size"] == pytest.approx(_size(len(brands)), abs=1)
+    else:
+        assert "Lists from other settings" not in groups
+    assert body["total_size"] == sum(g["size"] for g in body["groups"])
+    assert sum(g["share"] for g in body["groups"]) == pytest.approx(1.0, abs=0.01)
+
+
+def test_index_vs_block_changes_only_the_product_lists_group(client, pg_db):
+    number = _version(pg_db, REALISTIC)
+    _mode(pg_db, "index")
+    idx = _groups(_get(client, number).json())
     _mode(pg_db, "block")
-    template = TEMPLATE + "== CLOSED LISTS ==\n{{specs}}\n"
-    body = _get(client, _version(pg_db, template)).json()
-    kinds = {s["title"]: s["kind"] for s in body["sections"]}
-    assert kinds["PRICE TERMINOLOGY"] == "text"
-    assert kinds["TODAY"] == "filled_from_data"
-    assert kinds["CLOSED LISTS"] == "closed_lists"
+    blk = _groups(_get(client, number).json())
+    for name in GROUPS:
+        if name == "Product lists":
+            continue
+        assert (idx.get(name) or {}).get("size") == (blk.get(name) or {}).get("size"), name
+    full = sum(len(pv.render_value(pg_db, k)) for k in LISTS)
+    assert blk["Product lists"]["size"] == pytest.approx(_size(full), abs=2)
+    assert blk["Product lists"]["size"] > idx["Product lists"]["size"]
 
 
-def test_a_closed_lists_variable_in_any_section_makes_it_closed_lists_kind(client, pg_db):
-    _mode(pg_db, "block")
-    template = "== ONE ==\n{{attachment_types}}\n== TWO ==\n{{certification_types}}\n== THREE ==\nplain\n"
-    kinds = {s["title"]: s["kind"] for s in _get(client, _version(pg_db, template)).json()["sections"]}
-    assert kinds == {"ONE": "closed_lists", "TWO": "closed_lists", "THREE": "text"}
-
-
-def test_opening_is_omitted_when_blank(client, pg_db):
-    _mode(pg_db, "block")
-    body = _get(client, _version(pg_db, "\n\n== ONLY ==\nbody text here\n")).json()
-    assert [s["title"] for s in body["sections"]] == ["ONLY"]
-
-
-def test_current_date_is_substituted_before_counting(client, pg_db):
+def test_current_date_counts_under_rules(client, pg_db):
     _mode(pg_db, "block")
     padded = "x" * 400
-    raw_template = "== DATED ==\n{{current_date}}" + padded + "\n"
-    body = _get(client, _version(pg_db, raw_template)).json()
-    [section] = body["sections"]
-    rendered_len = len(date.today().strftime("%Y")) + len(padded)  # the date text is longer than the token
-    assert section["kind"] == "filled_from_data"
-    assert section["tokens"] >= _tokens(padded) - 2, section
-    assert section["tokens"] * 4 >= rendered_len
+    body = _get(client, _version(pg_db, "== DATED ==\n{{current_date}}" + padded + "\n")).json()
+    [rules] = body["groups"]
+    assert rules["name"] == "Rules"
+    assert rules["size"] * 4 >= len(padded) + len(date.today().strftime("%Y"))
 
 
 # --------------------------------------------------------------------------- #
@@ -193,24 +220,16 @@ def test_index_mode_lists_report_the_blank_line_as_what_is_sent(client, pg_db):
     body = _get(client, _version(pg_db, CLOSED_TEMPLATE)).json()
     assert body["mode"] == "index" and body["uses_closed_lists"] is True
     lists = {item["key"]: item for item in body["lists"]}
+    names = {"specs": "Specifications", "attachment_types": "File types", "certification_types": "Certificates"}
     for key in LISTS:
         item = lists[key]
         variable = pv.VARIABLES[key]
-        assert item["name"] == {"specs": "Specifications", "attachment_types": "File types", "certification_types": "Certificates"}[key]
+        assert item["name"] == names[key]
         assert item["source"] == variable.source
         assert item["href"] == variable.href
-        assert item["sent_each_message_tokens"] == _tokens(cli.SYSTEM_BLANKS[key]), item
-        assert item["full_list_tokens"] == _tokens(pv.render_value(pg_db, key)), item
+        assert item["sent_each_message_size"] == _size(len(cli.SYSTEM_BLANKS[key])), item
+        assert item["full_list_size"] == _size(len(pv.render_value(pg_db, key))), item
         assert not item.get("checked_only")
-
-
-def test_index_mode_closed_lists_section_counts_the_blanks_not_the_full_lists(client, pg_db):
-    _mode(pg_db, "index")
-    body = _get(client, _version(pg_db, "== CLOSED LISTS ==\n{{specs}}\n{{attachment_types}}\n{{certification_types}}\n")).json()
-    [section] = body["sections"]
-    blanks = sum(len(cli.SYSTEM_BLANKS[k]) for k in LISTS)
-    assert section["kind"] == "closed_lists"
-    assert section["tokens"] == pytest.approx(_tokens("x" * blanks), abs=8)
 
 
 def test_block_mode_sends_the_full_lists(client, pg_db):
@@ -219,15 +238,7 @@ def test_block_mode_sends_the_full_lists(client, pg_db):
     assert body["mode"] == "block" and body["uses_closed_lists"] is True
     for item in body["lists"]:
         if item["key"] in LISTS:
-            assert item["sent_each_message_tokens"] == item["full_list_tokens"], item
-
-
-def test_block_mode_closed_lists_section_counts_the_full_lists(client, pg_db):
-    _mode(pg_db, "block")
-    full = sum(len(pv.render_value(pg_db, k)) for k in LISTS)
-    body = _get(client, _version(pg_db, "== CLOSED LISTS ==\n{{specs}}\n{{attachment_types}}\n{{certification_types}}\n")).json()
-    [section] = body["sections"]
-    assert section["tokens"] == pytest.approx(_tokens("x" * full), abs=8)
+            assert item["sent_each_message_size"] == item["full_list_size"], item
 
 
 def test_a_template_without_the_closed_lists_section_sends_the_lists_whole_even_in_index_mode(client, pg_db):
@@ -238,9 +249,41 @@ def test_a_template_without_the_closed_lists_section_sends_the_lists_whole_even_
     assert body["uses_closed_lists"] is False
     for item in body["lists"]:
         if item["key"] in LISTS:
-            assert item["sent_each_message_tokens"] == item["full_list_tokens"] == _tokens(pv.render_value(pg_db, item["key"]))
-    [_, specs] = body["sections"]
-    assert specs["tokens"] == pytest.approx(_tokens(pv.render_value(pg_db, "specs")), abs=8)
+            assert item["sent_each_message_size"] == item["full_list_size"] == _size(len(pv.render_value(pg_db, item["key"])))
+    assert _groups(body)["Product lists"]["size"] == pytest.approx(_size(len(pv.render_value(pg_db, "specs"))), abs=2)
+
+
+def test_how_a_message_is_matched_is_one_plain_sentence_per_list(client, pg_db):
+    _mode(pg_db, "index")
+    lists = {item["key"]: item for item in _get(client, _version(pg_db, CLOSED_TEMPLATE)).json()["lists"]}
+    assert lists["specs"]["how"] == (
+        "A word of the message matches a value, its name or a synonym from Product Specifications, "
+        "or a code ending like -FRG; close spellings count too."
+    )
+    assert lists["attachment_types"]["how"] == (
+        "A word matches a file type's code, name, its words or an alias keyword; close spellings count too."
+    )
+    assert lists["certification_types"]["how"] == (
+        "A word matches a certificate kind or a certificate scheme by its name or words; close spellings count too."
+    )
+    assert lists["warehouses"]["how"] == (
+        "Not sent to the bot; a warehouse the bot reads is checked against the warehouse list "
+        "(the exact code, or the part after the last dash)."
+    )
+
+
+def test_no_internal_word_or_snake_case_in_any_text_field(client, pg_db):
+    import re as _re
+
+    _mode(pg_db, "index")
+    body = _get(client, _version(pg_db, REALISTIC)).json()
+    texts = [g["name"] for g in body["groups"]]
+    for item in body["lists"]:
+        texts += [item["name"], item["source"], item["how"]]
+    blob = " ".join(texts)
+    assert not _re.search(r"[A-Za-z]_[A-Za-z]", blob), blob
+    for word in ("parser", "token", "grounding"):
+        assert word not in blob.lower(), word
 
 
 def test_warehouses_are_checked_only(client, pg_db):
@@ -265,7 +308,7 @@ def test_warehouses_are_checked_only(client, pg_db):
     assert wh["name"] == "Warehouses" and wh["source"] == "Warehouses"
     assert wh["href"] == "/inventory-management/warehouses"
     assert wh["checked_only"] is True
-    assert wh["sent_each_message_tokens"] == 0 and wh["full_list_tokens"] == 0
+    assert wh["sent_each_message_size"] == 0 and wh["full_list_size"] == 0
     assert wh["entries"] == pg_db.query(Warehouse).count() and wh["entries"] >= 2
 
 

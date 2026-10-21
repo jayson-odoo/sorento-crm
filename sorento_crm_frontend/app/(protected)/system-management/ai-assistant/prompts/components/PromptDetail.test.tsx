@@ -505,8 +505,8 @@ describe('PromptDetail Architecture tab (CHAT-INDEX-VIZ FE-2)', () => {
   it('opens the architecture view for the shown version and keeps the chip editor mounted but hidden', () => {
     usePromptArchitecture.mockReturnValue({
       data: {
-        version: 2, mode: 'block', uses_closed_lists: false, total_tokens: 10,
-        sections: [{ title: 'ONLY', tokens: 10, kind: 'text' }], lists: [],
+        version: 2, mode: 'block', uses_closed_lists: false, total_size: 10,
+        groups: [{ name: 'Rules', size: 10, share: 1 }], lists: [],
       },
       isLoading: false,
       isError: false,

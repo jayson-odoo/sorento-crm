@@ -17,17 +17,18 @@ const DATA: Architecture = {
   version: 77,
   mode: 'index',
   uses_closed_lists: true,
-  total_tokens: 1426,
-  sections: [
-    { title: 'PRICE TERMINOLOGY', tokens: 177, kind: 'text' },
-    { title: 'TODAY', tokens: 356, kind: 'filled_from_data' },
-    { title: 'CLOSED LISTS', tokens: 893, kind: 'closed_lists' },
+  total_size: 35700,
+  groups: [
+    { name: 'Rules', size: 28000, share: 0.784 },
+    { name: 'Examples', size: 6000, share: 0.168 },
+    { name: 'Product lists', size: 891, share: 0.025 },
+    { name: 'Lists from other settings', size: 809, share: 0.023 },
   ],
   lists: [
-    { key: 'specs', name: 'Specifications', source: 'Product Specifications', href: '/master-data-management/product-specifications', entries: 42, sent_each_message_tokens: 36, full_list_tokens: 5120 },
-    { key: 'attachment_types', name: 'File types', source: 'Attachment Types', href: '/resource-management/attachment-types', entries: 7, sent_each_message_tokens: 22, full_list_tokens: 480 },
-    { key: 'certification_types', name: 'Certificates', source: 'Certificates', href: '/master-data-management/certificates', entries: 5, sent_each_message_tokens: 25, full_list_tokens: 300 },
-    { key: 'warehouses', name: 'Warehouses', source: 'Warehouses', href: '/inventory-management/warehouses', entries: 9, sent_each_message_tokens: 0, full_list_tokens: 0, checked_only: true },
+    { key: 'specs', name: 'Specifications', source: 'Product Specifications', href: '/master-data-management/product-specifications', how: 'HOW-SPECS sentence.', entries: 42, sent_each_message_size: 36, full_list_size: 5120 },
+    { key: 'attachment_types', name: 'File types', source: 'Attachment Types', href: '/resource-management/attachment-types', how: 'HOW-FILES sentence.', entries: 7, sent_each_message_size: 22, full_list_size: 480 },
+    { key: 'certification_types', name: 'Certificates', source: 'Certificates', href: '/master-data-management/certificates', how: 'HOW-CERTS sentence.', entries: 5, sent_each_message_size: 25, full_list_size: 300 },
+    { key: 'warehouses', name: 'Warehouses', source: 'Warehouses', href: '/inventory-management/warehouses', how: 'HOW-WH sentence.', entries: 9, sent_each_message_size: 0, full_list_size: 0, checked_only: true },
   ],
 };
 
@@ -59,7 +60,7 @@ describe('PromptArchitecture', () => {
   it('shows the summary line and the index badge', () => {
     render(<PromptArchitecture name="chatbot_semantic_parser" version={77} />);
     expect(
-      screen.getByText(/v77 sends about 1,?426 tokens to the parser on every message\./),
+      screen.getByText('Each message, v77 gives the bot about 35.7k of instructions and lists.'),
     ).toBeInTheDocument();
     expect(screen.getByText('Only the matching entries are sent')).toBeInTheDocument();
     expect(screen.queryByText('Full lists are sent')).toBeNull();
@@ -87,9 +88,10 @@ describe('PromptArchitecture', () => {
     for (const label of [
       "Customer's message",
       'Matched list entries',
-      'What the parser got',
-      'What it understood',
+      'What the bot was given',
+      'What the bot understood',
       'Kept or dropped',
+      'What the bot looked up',
     ]) {
       expect(screen.getByText(label), label).toBeInTheDocument();
     }
@@ -105,13 +107,14 @@ describe('PromptArchitecture', () => {
 
   it('has the Lists table with its columns and one row per list', () => {
     render(<PromptArchitecture name="chatbot_semantic_parser" version={77} />);
-    for (const col of ['List', 'Comes from', 'Entries', 'Sent each message', 'Full list']) {
+    for (const col of ['List', 'Comes from', 'How a message is matched', 'Entries', 'Size each message', 'Full list size']) {
       expect(screen.getAllByText(col).length, col).toBeGreaterThan(0);
     }
     const specs = rowOf('Specifications');
     expect(specs).toHaveTextContent('42');
     expect(specs).toHaveTextContent('36');
-    expect(specs).toHaveTextContent(/5,?120/);
+    expect(specs).toHaveTextContent('5.1k');
+    expect(specs).toHaveTextContent('HOW-SPECS sentence.');
     const link = within(specs).getByRole('link', { name: 'Product Specifications' });
     expect(link.getAttribute('href')).toBe('/master-data-management/product-specifications');
   });
@@ -124,37 +127,48 @@ describe('PromptArchitecture', () => {
     expect(within(rowOf('Specifications')).queryByText('-')).toBeNull();
   });
 
-  it('has the Sections table with plain kind words and tokens', () => {
+  it('has the "What the bot is given" table with the groups only, sizes formatted, no heading names', () => {
     render(<PromptArchitecture name="chatbot_semantic_parser" version={77} />);
-    for (const col of ['Section', 'Kind', 'Tokens']) {
+    expect(screen.getAllByText('What the bot is given').length).toBeGreaterThan(0);
+    for (const col of ['Part', 'Size']) {
       expect(screen.getAllByText(col).length, col).toBeGreaterThan(0);
     }
-    expect(rowOf('PRICE TERMINOLOGY')).toHaveTextContent('Text');
-    expect(rowOf('PRICE TERMINOLOGY')).toHaveTextContent('177');
-    expect(rowOf('TODAY')).toHaveTextContent('Filled from data');
-    expect(rowOf('CLOSED LISTS')).toHaveTextContent('Closed lists');
-    expect(rowOf('CLOSED LISTS')).toHaveTextContent('893');
+    expect(rowOf('Rules')).toHaveTextContent('28.0k');
+    expect(rowOf('Examples')).toHaveTextContent('6.0k');
+    expect(rowOf('Product lists')).toHaveTextContent('891');
+    expect(rowOf('Product lists')).not.toHaveTextContent('0.9k');
+    expect(rowOf('Lists from other settings')).toHaveTextContent('809');
+    expect(screen.queryByText('Sections')).toBeNull();
+  });
+
+  it('labels every table cell so each row can stack as "label: value" on a phone', () => {
+    const { container } = render(<PromptArchitecture name="chatbot_semantic_parser" version={77} />);
+    const cells = Array.from(container.querySelectorAll('tbody td'));
+    expect(cells.length).toBeGreaterThan(0);
+    for (const cell of cells) expect(cell.getAttribute('data-label'), cell.textContent ?? '').toBeTruthy();
+    expect(container.querySelector('.overflow-x-auto')).toBeNull();
   });
 
   it('shows one error line when the architecture cannot be loaded', () => {
     usePromptArchitecture.mockReturnValue({ data: undefined, isLoading: false, isError: true });
     render(<PromptArchitecture name="chatbot_semantic_parser" version={77} />);
     expect(screen.getByText('Could not load the architecture for this version.')).toBeInTheDocument();
-    expect(screen.queryByText(/tokens to the parser/)).toBeNull();
+    expect(screen.queryByText(/gives the bot about/)).toBeNull();
   });
 
   it('shows neither the summary nor the error while loading', () => {
     usePromptArchitecture.mockReturnValue({ data: undefined, isLoading: true, isError: false });
     render(<PromptArchitecture name="chatbot_semantic_parser" version={77} />);
-    expect(screen.queryByText(/tokens to the parser/)).toBeNull();
+    expect(screen.queryByText(/gives the bot about/)).toBeNull();
     expect(screen.queryByText('Could not load the architecture for this version.')).toBeNull();
   });
 
   it('prints no internal names', () => {
     const { container } = render(<PromptArchitecture name="chatbot_semantic_parser" version={77} />);
     const text = (container.textContent ?? '').toLowerCase();
-    for (const internal of ['grounding', 'hidden_keys', 'closed_lists_index', 'system_blanks', 'index mode']) {
-      expect(text).not.toContain(internal);
+    for (const internal of ['parser', 'token', 'grounding', 'hidden_keys', 'closed_lists_index', 'system_blanks', 'index mode']) {
+      expect(text, internal).not.toContain(internal);
     }
+    expect(text).not.toMatch(/[a-z]_[a-z]/);
   });
 });

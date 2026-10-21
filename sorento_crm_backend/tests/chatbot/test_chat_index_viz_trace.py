@@ -122,6 +122,7 @@ def test_candidate_code_item_is_listed_under_products(session_factory):
     assert matches == [{
         "word": "zzidxp1", "list": "Products", "entry": "code ZZIDXP1 (ZZT ZZIDXP1)",
         "close_spelling": False, "held": False, "line": '- "zzidxp1": code ZZIDXP1 (ZZT ZZIDXP1)',
+        "plain": "ZZIDXP1 (ZZT ZZIDXP1)", "source": "from the product codes",
     }], matches
     assert matches[0]["line"] in lines
 
@@ -200,7 +201,7 @@ def test_index_mode_turn_persists_the_closed_lists_index_event(session_factory, 
     assert event["failed"] is False
     frg = [m for m in event["matches"] if m["word"] == "frg"]
     assert frg and frg[0]["list"] == "Specifications", event["matches"]
-    assert set(frg[0]) == {"word", "list", "entry", "close_spelling", "held", "line"}
+    assert set(frg[0]) == {"word", "list", "entry", "close_spelling", "held", "line", "plain", "source"}
 
 
 def test_index_mode_failure_records_failed_and_the_turn_still_answers(session_factory, seeded, stub_access, monkeypatch):
@@ -226,3 +227,73 @@ def test_block_mode_turn_has_no_closed_lists_index_event(session_factory, seeded
     [(_system, _block, result)] = idx._turns(session_factory, stub_access, monkeypatch, [("frg stock", idx._quiet())])
     assert _events(session_factory, result.turn_id) == []
     assert hasattr(engine_mod, "_candidate_lines")
+
+
+# --------------------------------------------------------------------------- #
+# v2: every match carries a plain value and a plain source
+# --------------------------------------------------------------------------- #
+
+HELD_SOURCE = "on record for the held product"
+
+
+def _plain(matches, entry):
+    [m] = [m for m in matches if m["entry"] == entry]
+    return m["plain"], m["source"]
+
+
+def test_plain_and_source_for_each_candidate_kind(session_factory):
+    db = _world(session_factory)
+    items = [
+        "code ZZIDXP1 (ZZT ZZIDXP1)", "set code ZZSET1 (ZZ Set)", "product type Basin (class = basin)",
+        "spec finish = white (White)", "spec zz_numkey = 12", "flag zz_flag = true (ZZ Flag)",
+        "flag zz_flag = false (ZZ Flag)", "size 600 mm", "size 700 mm (no dimension named)",
+    ]
+    entry = candidates.WordCandidates(gram="zzw", position=0, items=items)
+    _lines, matches = _call(db, [entry], "zzw")
+    assert _plain(matches, "code ZZIDXP1 (ZZT ZZIDXP1)") == ("ZZIDXP1 (ZZT ZZIDXP1)", "from the product codes")
+    assert _plain(matches, "set code ZZSET1 (ZZ Set)") == ("ZZSET1 (ZZ Set)", "from the product sets")
+    assert _plain(matches, "product type Basin (class = basin)") == ("Product type: Basin", "from the product type list")
+    assert _plain(matches, "spec finish = white (White)") == ("Finish: White", "from the product finish list")
+    assert _plain(matches, "spec zz_numkey = 12") == ("Zz numkey: 12", "from the product zz numkey list")
+    assert _plain(matches, "flag zz_flag = true (ZZ Flag)") == ("ZZ Flag: yes", "from the product zz flag list")
+    assert _plain(matches, "flag zz_flag = false (ZZ Flag)") == ("ZZ Flag: no", "from the product zz flag list")
+    assert _plain(matches, "size 600 mm") == ("Size: 600 mm", "from the product sizes")
+    assert _plain(matches, "size 700 mm (no dimension named)") == ("Size: 700 mm", "from the product sizes")
+
+
+def test_near_spec_item_has_the_same_plain_value(session_factory):
+    db = _world(session_factory)
+    entry = candidates.WordCandidates(gram="whyte", position=0, items=["near spec finish = white (White)"])
+    _lines, matches = _call(db, [entry], "whyte")
+    assert (matches[0]["plain"], matches[0]["source"]) == ("Finish: White", "from the product finish list")
+
+
+def test_code_suffix_plain_and_source_name_the_code_ending(session_factory):
+    db = _world(session_factory)
+    _lines, matches = _call(db, [], "frg stock")
+    [hit] = [m for m in matches if m["word"] == "frg"]
+    assert hit["plain"].startswith("Finish: ") and "_" not in hit["plain"], hit
+    assert hit["source"] == "from the product finish list (code ending -FRG)"
+
+
+def test_file_type_certificate_and_scheme_plain_and_source(session_factory):
+    db = _world(session_factory)
+    _lines, matches = _call(db, [], "send zz idx drawing zz idx cert zzsch")
+    by_list = {m["list"]: m for m in matches}
+    assert (by_list["File types"]["plain"], by_list["File types"]["source"]) == ("ZZ Idx Drawing", "from the file type list")
+    assert (by_list["Certificates"]["plain"], by_list["Certificates"]["source"]) == ("ZZ Idx Cert", "from the certificate list")
+    assert (by_list["Certificate schemes"]["plain"], by_list["Certificate schemes"]["source"]) == (
+        "ZZSCH", "from the certificate scheme list")
+
+
+def test_held_matches_are_plain_and_say_they_are_on_record(session_factory):
+    db = _world(session_factory)
+    held = _held_id(db)
+    _lines, matches = _call(db, [], "zzqwerty", [held])
+    held_matches = [m for m in matches if m["held"]]
+    assert held_matches
+    assert all(m["source"] == HELD_SOURCE for m in held_matches), held_matches
+    plains = [m["plain"] for m in held_matches]
+    assert "ZZ Idx Drawing" in plains, plains
+    assert any(p.startswith("Idx Visible: ") for p in plains), plains
+    assert not any("_" in p or p.startswith("spec ") for p in plains), plains

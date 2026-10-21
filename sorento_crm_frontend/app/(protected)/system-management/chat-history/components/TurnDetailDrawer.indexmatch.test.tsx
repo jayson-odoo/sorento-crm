@@ -68,15 +68,16 @@ describe('TurnDetailDrawer Index match section', () => {
           rows: [
             {
               word: 'frg',
-              matched: [{ list: 'Specifications', entry: 'spec finish = french_gold (French Gold)', close_spelling: false }],
+              matched: [{ plain: 'Finish: French Gold', source: 'from the product finish list', close_spelling: false }],
               parser_got: ['- "frg": spec finish = french_gold (French Gold)'],
-              understood: [{ text: '"frg" as a specification: finish = french_gold' }],
+              understood: [{ text: '"frg" read as Finish: French Gold' }],
               result: [{ outcome: 'kept', text: 'Kept' }],
             },
           ],
           held: [],
           not_from_lists: [],
           failed: false,
+          looked_up: null,
         },
       }),
       isLoading: false,
