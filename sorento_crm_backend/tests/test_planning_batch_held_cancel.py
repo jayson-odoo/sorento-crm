@@ -405,7 +405,9 @@ def test_control_a_cancel_the_batch_does_not_name_still_emails_beside_the_batch(
     client, world = api
     db = world.db
     calls = _spy(api, monkeypatch)
-    w = _world(client, world, n_old=1, n_cancel=0, n_covered=1, n_open=1)
+    # No retired line: the batch only carries the confirmed line's `added` row, so the one
+    # email this press may send is the Cancel SO's own CANCEL list.
+    w = _world(client, world, n_old=0, n_cancel=0, n_covered=1, n_open=1)
     _core, line = w["open"][0]
     db.delete(w["rows"].pop(line.id))
     db.commit()
@@ -414,4 +416,7 @@ def test_control_a_cancel_the_batch_does_not_name_still_emails_beside_the_batch(
 
     _press(client, w, cancel=w["open"])
 
-    assert len(_handover_calls(calls)) == 1
+    handovers = _handover_calls(calls)
+    assert len(handovers) == 1
+    remarks = [entry["remark"] for entry in handovers[0]["context"]["handover"]["lines"]]
+    assert remarks == ["CANCEL"], remarks
