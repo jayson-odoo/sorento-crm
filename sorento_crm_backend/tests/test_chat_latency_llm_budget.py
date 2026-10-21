@@ -57,7 +57,11 @@ def test_the_spec_reading_asks_the_provider_with_the_code_readers_budget(db, mon
         understanding, "_resolve_provider", lambda db: (SimpleNamespace(chat=chat), "openai", "gpt-test")
     )
 
-    understanding.understand_phrase(db, "a stainless steel kitchen sink")
+    # CHAT-RELEASE-1021 (crew review fix 2 of #1809): the budget is the chatbot turn's, passed by
+    # the resolve endpoint only (`tests/test_chat_latency_scope.py`); the CRM preview keeps none.
+    understanding.understand_phrase(
+        db, "a stainless steel kitchen sink", model_timeout=understanding.CHAT_TURN_MODEL_TIMEOUT_SECONDS
+    )
 
     assert len(seen) == 1
     assert seen[0].get("timeout") == pytest.approx(3.0), "no timeout means the SDK's 600 s and 2 retries"
