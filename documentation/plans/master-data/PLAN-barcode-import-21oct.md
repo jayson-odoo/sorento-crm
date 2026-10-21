@@ -1,6 +1,6 @@
 # PLAN: Import barcodes from Excel (BARCODE-IMPORT)
 
-Status: in review (PR #1811); audit round (UAC 9-14) built at 9452e8bf, merged main b2a16b44; reviewer + browser pass on the audit round pending. Track: small fix track (size S+, no migration, no new permission; reuses
+Status: in review (PR #1811); audit round (UAC 9-14) + security rounds 2-3 (UAC 15) at 1625dd4f91; final re-review, then crew hand test. Track: small fix track (size S+, no migration, no new permission; reuses
 `master_data.products.edit`). Owner request 21 Oct 2026.
 UAC: `barcode-import-acceptance-criteria.md`.
 
