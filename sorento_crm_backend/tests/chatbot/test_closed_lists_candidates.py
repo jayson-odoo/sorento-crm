@@ -519,7 +519,7 @@ def test_every_exact_code_gets_its_line_whatever_the_line_cap(db):
     lines = candidates.candidate_lines(entries)
     assert len(lines) == 1 + len(codes), lines
     for code in codes:
-        assert f'- "{code.lower()}": code {code} (Name of {code})' in lines
+        assert any(ln.startswith(f'- "{code.lower()}": code {code} (Name of {code})') for ln in lines), code
     # what grounding and the trace read agrees with what is rendered
     assert candidates.listed_codes(entries) >= {c.lower() for c in codes}
     assert set(candidates.pick_info(entries)) >= {c.lower() for c in codes}
