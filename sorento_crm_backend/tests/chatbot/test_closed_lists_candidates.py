@@ -542,3 +542,13 @@ def test_guard_near_code_lines_stay_capped_per_word_and_to_the_first_coded_words
     near_lines = [ln for ln in lines if "near code" in ln]
     assert len(near_lines) <= candidates.CODE_WORDS_PER_MESSAGE
     assert all(ln.count("near code") <= candidates.CAP_PER_WORD for ln in near_lines)
+
+
+def test_p8b_a_large_paste_of_exact_codes_has_a_ceiling_and_keeps_message_order(db):
+    codes = [f"ZZTBG{n:03d}" for n in range(80)]
+    _products(db, *codes)
+    lines = candidates.candidate_lines(candidates.shortlist(db, " ".join(codes)))
+    body = lines[1:]
+    assert len(body) <= 60, len(body)
+    listed = [ln.split('"')[1] for ln in body]
+    assert listed == [c.lower() for c in codes[: len(listed)]], "first come, first listed"

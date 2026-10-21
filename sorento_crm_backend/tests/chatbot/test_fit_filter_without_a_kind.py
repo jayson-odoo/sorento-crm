@@ -35,3 +35,11 @@ def test_guard_a_named_kind_over_an_unlinked_code_still_gives_the_no_link_line(s
 def test_guard_a_kindless_fit_ask_over_a_linked_code_still_answers_the_links(session_factory):
     out, lines = _linked(session_factory, CAB1, fits(None, "goes with"))
     assert _codes(out) == [MIRROR1, SHELF1] and lines == []
+
+
+def test_p5b_a_kindless_fit_ask_with_no_file_word_keeps_the_no_link_line(session_factory):
+    """"what goes with <WC>" / "what accessories fit <WC>": no kind and no file word is a real fit
+    ask over a code that links nothing, so it still gets its no-link line."""
+    for value in ("goes with", "accessories"):
+        out, lines = _linked(session_factory, WC_NONE, fits(None, value))
+        assert lines == [f"No seat cover is on record for {WC_NONE}."], (value, lines)
