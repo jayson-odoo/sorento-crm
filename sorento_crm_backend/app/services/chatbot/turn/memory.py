@@ -385,13 +385,17 @@ def history_items(
     is_test: bool,
     current_turn_id: str | None,
     level: str,
+    include_open: bool = True,
 ) -> list[str]:
     """What this contact asked, newest first, as deterministic summaries: the open
     conversation (a digest of its turns, the current one excluded) and the newest
     closed conversations of this contact and world. No figure is ever in a summary
-    (`episode_digest`), so a list built from these can never quote a stale number."""
+    (`episode_digest`), so a list built from these can never quote a stale number.
+
+    `include_open=False` is the closed episodes alone: what "Last time" means, since the
+    open conversation is today's, never the time before."""
     items: list[str] = []
-    if level in _OPEN_LEVELS:
+    if include_open and level in _OPEN_LEVELS:
         open_rows = list(
             reversed(
                 open_turns_newest(

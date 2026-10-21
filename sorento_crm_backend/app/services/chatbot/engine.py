@@ -4201,6 +4201,15 @@ def _fallback_context(
         current_turn_id=turn_id,
         level=level,
     )
+    # "Last time" is a CLOSED episode: the open conversation is today's, never the time before.
+    last_time = memory_mod.history_items(
+        db,
+        contact_respond_id=contact_respond_id,
+        is_test=dry_run,
+        current_turn_id=turn_id,
+        level=level,
+        include_open=False,
+    )
     facts = memory_intake.get("profile_facts") if level == "full" else None
     usual_sites = _as_list(_fact_value(facts, "usual_sites"))
 
@@ -4230,7 +4239,7 @@ def _fallback_context(
         kind=kind,
         level=level,
         history=history if kind == "history" else [],
-        last_time=history[0] if history else None,
+        last_time=last_time[0] if last_time else None,
         usual_products=_as_list(_fact_value(facts, "usual_products")),
         usual_site=usual_sites[0] if usual_sites else None,
         customer=customer,
