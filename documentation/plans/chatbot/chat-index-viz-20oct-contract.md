@@ -100,7 +100,7 @@ File `app/services/chatbot/trace_detail.py`: `compose_trace_detail` gains `"inde
 
 ## BE-3 prompt architecture endpoint
 
-`GET /api/v1/system/ai-assistant/prompts/{name}/versions/{version}/architecture`
+`GET /api/v1/system/chatbot/prompts/{name}/versions/{version}/architecture` (on the chatbot module's own read surface `app/api/v1/system/chatbot.py`, so the core prompts router never imports the chatbot package; import boundary, 21 Oct)
 (same router + permission as `.../versions/{version}`: `system.ai_assistant_settings.view`).
 404 for an unknown key or version; for any key other than `chatbot_semantic_parser`, 404 with
 detail "No architecture view for this prompt". Service function in a new module
