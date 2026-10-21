@@ -3029,6 +3029,14 @@ def _open_pick_answer(state: State, verdict: dict[str, Any], trace: Trace) -> tu
         return state, True
     if mode != "pick":
         return state, False
+    from app.services.chatbot.turn.chat_state import names_own_subject
+
+    if pending.kind == "tier_pick" and names_own_subject(verdict):
+        # CHAT-PROMO-TIER-PICK-KIND (owner run 21 Oct, "Gimme sorento a3 flyer"): an access
+        # level menu lists levels, never a brand or a product, so a message typing its own is a
+        # fresh ask; the still-open menu's position is not its answer.
+        trace.rules_fired.append("open_question_pick_fresh_ask")
+        return state, False
     offered = {o.get("position") for o in pending.options}
     picked: list[int] = []
     for position in answer.get("picked") or []:

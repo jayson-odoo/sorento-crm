@@ -580,7 +580,9 @@ def _promotion_words_naming_no_promotion(db: Session, entities: Any) -> list[dic
     return out
 
 
-def promo_filter(parse_output: dict[str, Any], db: Any, gate: Any = None) -> dict[str, list[str]]:
+def promo_filter(
+    parse_output: dict[str, Any], db: Any, gate: Any = None, *, tier_pick: bool = False
+) -> dict[str, list[str]]:
     """PROMO-SUBJECT-FILTER: what narrows a promotions read besides the access level, off the
     parser's own answer. `scope_terms`: the class words it named, unless the resolver placed
     one of its product tokens on a product id this turn (`gate["resolutions"]`): a typed code
@@ -588,7 +590,8 @@ def promo_filter(parse_output: dict[str, Any], db: Any, gate: Any = None) -> dic
     leaves the class as the subject.
     `promotion_types`: its `promotion_kind` code. `brand_ids`: the brand it named, only beside
     a subject or a kind (a plain brand ask is narrowed by the tier gate), resolved by the one
-    brand-word rule the order lane uses. Empty keys are left out."""
+    brand-word rule the order lane uses. Empty keys are left out. `tier_pick`: this message
+    answers the access level menu (`tier_gate["tier_pick"]`)."""
     from app.services.chatbot.lanes.business.fetch import is_uuid as _is_uuid
 
     out: dict[str, list[str]] = {}
@@ -625,8 +628,9 @@ def promo_filter(parse_output: dict[str, Any], db: Any, gate: Any = None) -> dic
     if terms:
         out["scope_terms"] = terms
     kind = parse_output.get("promotion_kind")
-    if parse_output.get("reference_target") or jsc.array(parse_output.get("reference_positions")):
-        # A message the parser reads as a reference (a pick off a list) names no kind.
+    if not tier_pick and (parse_output.get("reference_target") or jsc.array(parse_output.get("reference_positions"))):
+        # A message the parser reads as a reference (a pick off a list) names no kind. The
+        # access level menu lists levels, so a kind the parser read beside that pick is its own.
         kind = None
     if isinstance(kind, str) and kind.strip() and (
         db is None or kind.strip() in {r["type_code"] for r in promotion_kind_rows(db)}
