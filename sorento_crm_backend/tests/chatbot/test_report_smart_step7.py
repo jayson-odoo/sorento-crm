@@ -16,6 +16,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+import pytest
+
 from tests.chatbot.test_engine import _parser_output, stub_access  # noqa: F401
 from tests.chatbot.test_report_ask_lane import (  # noqa: F401 - fixtures + helpers
     PERIOD_Q,
@@ -128,4 +130,142 @@ def test_near_miss_a_bare_channel_refine_keeps_the_held_choices(console) -> None
     text, calls = console.say(_refine(sales_channel="dealer"), "dealer sales only")
     assert len(calls) == 1, (text, calls)
     assert calls[0]["basis"] == "delivered" and calls[0]["measure"] == "qty" and calls[0]["channel"] == "dealer", calls
+    _held(calls[0], console)
+
+
+# ---- EVAL-BENCH re-run on bcbc823214 (crew note 6312251738): the State path drops the frame ----
+#
+# Live (parser v77, State prompt on), turn 516a6b39: step 4 ran the refine, and the turn's
+# domain was written `sales` (`turn_runtime._report_status_means_order_domain`: a sales figure
+# status is the `sales` domain). Step 5's parse names the same ask with the prompt's own
+# `domain_hint "order"`, so `chat_state.apply_changes` read `order` against the held `sales`
+# as a domain switch and dropped the domain-bound axes, the held report frame included: the
+# refine then ran as a fresh ask with no period ("Which period?"), and step 6's "qty,
+# delivered" was taken as that period's answer. One domain reading for both: the State's
+# switch check reads the message's domain the way the turn writes it.
+
+KEEP = [{"op": "keep", "axis": None, "position": None}]
+SALES_FRAME = {
+    "group_by": "sales_agent", "top_n": 3, "measure": "qty", "basis": "ordered",
+    "date_from": "2026-01-01", "date_to": "2026-12-31", "sort": "desc",
+}
+
+
+def _apply_state(focus, v):
+    from app.services.chatbot.turn import chat_state
+    from app.services.chatbot.turn.state import State
+
+    return chat_state.apply_changes(
+        State(focus=focus, turn_no=5), v, open_question=None,
+        domains=["inventory", "incoming", "order", "sales", "product_attachment"],
+        kinds=["product", "customer", "brand", "category"], brands=["SORENTO", "MOCHA"],
+        positions_read_elsewhere=False,
+    )
+
+
+def _sales_focus():
+    from app.services.chatbot.turn.state import Focus
+
+    return Focus(domains=["sales"], status="sales_ranking", sales_ranking_frame=dict(SALES_FRAME),
+                 date_window={"start": "2026-01-01", "end": "2026-12-31", "mode": None})
+
+
+@pytest.mark.parametrize("status", ["sales_ranking", "sales_report", "sales_analysis", "top_selling"])
+def test_a_sales_figure_ask_under_the_prompts_order_domain_is_not_a_switch_off_the_held_sales(status) -> None:
+    """516a6b39: the parse names `order` for a sales figure ask; the turn holds `sales`. Not a
+    switch: the held report frame and status stay for the lane to read."""
+    from tests.chatbot._turn_helpers import verdict
+
+    out = _apply_state(_sales_focus(), verdict(
+        domain_hint="order", intent_hint="check_order", order_status=status, ranking_refine=True,
+        sales_channel="dealer", state_changes=KEEP, **THIS_YEAR,
+    ))
+    assert out.valid is True, out.log
+    assert out.state.focus.sales_ranking_frame == SALES_FRAME, out.state.focus
+    assert out.state.focus.domains == ["sales"], out.state.focus.domains
+
+
+def test_the_sales_word_on_an_order_ask_is_not_a_switch_off_the_held_order_list() -> None:
+    """The same normalisation's other half: `sales` with no sales figure status is the order
+    ask (`_report_status_means_order_domain`), so an order list held is not switched away."""
+    from app.services.chatbot.turn.state import Focus
+    from tests.chatbot._turn_helpers import verdict
+
+    focus = Focus(domains=["order"], status="open", sort={"by": "date", "dir": "desc"})
+    out = _apply_state(focus, verdict(domain_hint="sales", intent_hint="check_order", state_changes=KEEP))
+    assert out.valid is True, out.log
+    assert out.state.focus.status == "open" and out.state.focus.sort == {"by": "date", "dir": "desc"}
+    assert out.state.focus.domains == ["order"]
+
+
+def test_near_miss_a_real_domain_switch_off_a_held_report_still_drops_its_frame() -> None:
+    from tests.chatbot._turn_helpers import verdict
+
+    out = _apply_state(_sales_focus(), verdict(domain_hint="inventory", intent_hint="check_stock", state_changes=KEEP))
+    assert out.valid is True, out.log
+    assert out.state.focus.sales_ranking_frame is None
+    assert out.state.focus.domains == ["inventory"]
+
+
+def _state_on(console) -> list[int]:
+    """The live turn path: the State prompt on (`ParserConfig.state_block`), so the engine runs
+    `chat_state.apply_changes` on every parse carrying `state_changes`. Returns a run counter."""
+    import dataclasses
+
+    from app.services.chatbot.head import parser as parser_mod
+    from app.services.chatbot.turn import chat_state
+
+    real_config, real_apply = parser_mod.resolve_config, chat_state.apply_changes
+    ran: list[int] = []
+
+    def counted(*a: Any, **k: Any) -> Any:
+        ran.append(1)
+        return real_apply(*a, **k)
+
+    console.monkeypatch.setattr(
+        parser_mod, "resolve_config", lambda db, **kw: dataclasses.replace(real_config(db, **kw), state_block=True)
+    )
+    console.monkeypatch.setattr(chat_state, "apply_changes", counted)
+    return ran
+
+
+def test_step5_state_on_the_ask_typed_again_reruns_the_held_report_with_its_channel(console) -> None:
+    """516a6b39 with the State path on: step 4's refine ran and wrote the `sales` domain; the
+    re-typed ask (parser `order`, op `keep`, refine) re-runs the held report with the dealer
+    channel and its period, never "Which period?"."""
+    ran = _state_on(console)
+    _step3(console)
+    console.say(_live_refine(basis="ordered", state_changes=[{"op": "set", "axis": "status", "position": None}]),
+                "ordered")
+    text, calls = console.say(
+        _rank(_e("Cabana", "brand"), top_n=3, measure="qty", basis="ordered", sales_channel="dealer",
+              ranking_refine=True, state_changes=KEEP, **THIS_YEAR),
+        "who's the top 3 salesman for cabana this year, dealer sales only",
+    )
+    assert ran, "harness: the State path never ran"
+    assert PERIOD_Q not in text, text
+    assert len(calls) == 1, (text, calls)
+    assert calls[0]["channel"] == "dealer" and calls[0]["basis"] == "ordered", calls
+    _held(calls[0], console)
+
+
+def test_step6_state_on_measure_and_basis_after_the_rerun_refine_the_report(console) -> None:
+    """d7be934d: "qty, delivered" right after step 5 re-runs the held report delivered, with the
+    channel, brand and period held; it is never read as a period."""
+    _state_on(console)
+    _step3(console)
+    console.say(_live_refine(basis="ordered", state_changes=[{"op": "set", "axis": "status", "position": None}]),
+                "ordered")
+    console.say(
+        _rank(_e("Cabana", "brand"), top_n=3, measure="qty", basis="ordered", sales_channel="dealer",
+              ranking_refine=True, state_changes=KEEP, **THIS_YEAR),
+        "who's the top 3 salesman for cabana this year, dealer sales only",
+    )
+    text, calls = console.say(
+        _live_refine(basis="delivered", state_changes=[{"op": "answer", "axis": None, "position": None}]),
+        "qty, delivered",
+    )
+    assert "as a period" not in text and PERIOD_Q not in text, text
+    assert len(calls) == 1, (text, calls)
+    assert calls[0]["basis"] == "delivered" and calls[0]["channel"] == "dealer", calls
     _held(calls[0], console)
