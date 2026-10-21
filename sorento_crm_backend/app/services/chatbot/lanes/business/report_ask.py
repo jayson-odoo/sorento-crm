@@ -405,8 +405,13 @@ def names_its_own_ask(verdict: dict[str, Any], open_slot: dict[str, Any] | None 
             return True
         own = bool(verdict.get("group_by")) or verdict.get("domain_in_message") is True
         return own and not filled
-    if status != ASK_NAME or verdict.get("ranking_refine") is True:
+    if status != ASK_NAME:
         return False
+    if verdict.get("ranking_refine") is True:
+        # REPORT-SMART-1021 (EVAL-BENCH 21 Oct, turn dded3dc7): a refine naming its own entity,
+        # or the whole ask typed again (`new_subject`), is never the open question's answer; a
+        # bare refine ("ordered") still is.
+        return named or restates_the_ask(verdict)
     if named:
         return True
     raw_group = jsc.js_string(verdict.get("group_by") or "").strip().lower()
@@ -424,15 +429,15 @@ def names_its_own_ask(verdict: dict[str, Any], open_slot: dict[str, Any] | None 
 
 
 def restates_the_ask(verdict: dict[str, Any]) -> bool:
-    """REPORT-SMART-1021 (#1721 hand test step 7): a verdict flagged `ranking_refine` that
-    names its own `group_by`, or that the parser marked `new_subject`, is the whole ask typed
-    again, not a refine: a refine names only the fields it changes, `group_by` null (prompt
-    R-X-05). It starts a new report frame, so the held basis and measure are not carried.
-    Parser fields only."""
+    """REPORT-SMART-1021 (#1721 hand test step 7): a verdict flagged `ranking_refine` that the
+    parser marked `new_subject` is the whole ask typed again, not a refine: it starts a new
+    report frame, so the held basis and measure are not carried. Only the parser's op says so:
+    the live parser repeats the held axis, count and measure on most refines (98 of 130 live
+    refines carry a `group_by`, EVAL-BENCH 21 Oct), so those fields never mean a restart."""
     if verdict.get("ranking_refine") is not True:
         return False
     ops = {jsc.js_string(c.get("op") or "") for c in jsc.array(verdict.get("state_changes")) if isinstance(c, dict)}
-    return bool(jsc.js_string(verdict.get("group_by") or "").strip()) or "new_subject" in ops
+    return "new_subject" in ops
 
 
 def as_held_refine(verdict: dict[str, Any], frame: Any) -> dict[str, Any]:

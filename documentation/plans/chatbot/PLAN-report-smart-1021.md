@@ -58,6 +58,15 @@ them (n8n agents), and the lane reads both fields the moment the parser emits th
   earlier window's months never match (S1). Trigger to build month shifting: an owner ask for a compared trend.
 - A held `compare_to` rides on the frame: refines keep comparing until a new ask (a new frame) drops it.
 
+## EVAL-BENCH fix (21 Oct, crew notes 6311920067, 6312015162)
+
+The live parser repeats the held axis, count and measure on most refines (98 of 130 live refines carry a `group_by`), so
+step 1's `group_by` test turned "ordered" into a fresh ask that lost the period, and the next re-typed ask was eaten as
+that period's answer. Now only the parser's `new_subject` op restarts the frame (`restates_the_ask`); a refine naming its
+own entity or `new_subject` is never an open question's answer (`names_its_own_ask`). A whole ask typed again that the
+parser flags as a plain refine re-runs the held report with what it names: the parser decides, and the prompt half
+(emit `new_subject` on a fully re-typed ask) is CHAT-CLOSED-LISTS-L's.
+
 ## Out (named)
 
 - Example 7 ("top 200 project hot selling item": cap and a stale brand from earlier chat) and example 8 (a total for an
