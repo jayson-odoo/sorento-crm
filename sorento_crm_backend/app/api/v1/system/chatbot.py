@@ -810,6 +810,30 @@ def console_media_status(
     return ConsoleMediaStatusResponse(**status_body)
 
 
+@router.get("/prompts/{name}/versions/{version}/architecture")
+def prompt_architecture_view(
+    name: str,
+    version: int,
+    _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
+    db: Session = Depends(get_db),
+):
+    """CHAT-INDEX-VIZ: the Prompts page's Architecture tab for one parser version (what the bot
+    is given, the lists and how a message is matched). Served here, on the chatbot module's
+    own read surface, so the core prompts router never imports the package; the permission is
+    the Prompts page's own."""
+    from app.services.ai_prompt_registry import PROMPT_KEYS
+    from app.services.chatbot import prompt_architecture
+
+    if name not in PROMPT_KEYS:
+        raise HTTPException(status_code=404, detail=f"Unknown prompt key '{name}'.")
+    if name != prompt_architecture.PROMPT_KEY:
+        raise HTTPException(status_code=404, detail="No architecture view for this prompt")
+    row = db.query(AIPromptVersion).filter(AIPromptVersion.name == name, AIPromptVersion.version == version).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Version {version} not found for prompt '{name}'.")
+    return prompt_architecture.describe(db, row)
+
+
 @router.get("/console/prompt-versions", response_model=list[ConsolePromptVersion])
 def console_prompt_versions(
     _user: dict = Depends(require_permission(VIEW)),

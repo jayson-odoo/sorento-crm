@@ -1051,6 +1051,12 @@ class TestABrandEchoOnAPagingTurnIsNotASubject:
         harness): the first answer lists 5 of the 7 certified taps; "another 2" with the
         brand echoed under `reuse` lists the last 2 of the SAME set, never an attachment
         type ask and never a kind pick over the brand word."""
+        # CHAT-RELEASE-1021 (crew answer (b) on #1809): a file / certificate set longer than one page
+        # is listed only with the composer on (off, it is withheld as on main:
+        # tests/chatbot/test_set_file_send_cap.py), so this listing scenario runs with it on.
+        from tests.chatbot.test_composers_stock_xd import _set_gate
+
+        _set_gate(monkeypatch, True)
         from app.services.chatbot.lanes.business import answer
         from tests.chatbot.set_reply import one_line_header
         from tests.chatbot.test_counted_set_no_paging import _tap_cert_verdict, _turn
