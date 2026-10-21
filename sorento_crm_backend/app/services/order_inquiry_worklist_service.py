@@ -197,6 +197,12 @@ EXPORT_HEADINGS = (
     "S/O NO",
     "ITEM CODE",
     "QTY",
+    # OI-RESERVE-PILL-QTY round 2 (owner ruling 21 Oct 2026, "we just need more
+    # visibility"): the reserve figures right beside QTY, so a 170 line with a 70 reserve
+    # request never reads as one number. Inserted, not appended, on that ruling; the
+    # planning-board worksheet keeps its own ten columns (`WORKSHEET_HEADINGS`).
+    "REQUESTED RESERVE",
+    "RESERVED",
     "TOTAL QTY",
     "DELIVERY DATE",
     "PROJECT/CUSTOMER",
@@ -227,6 +233,29 @@ EXPORT_HEADINGS = (
     # OI-LINE-SPLIT (UAC D2, AC-G7): the sheet's remark for the row, else the generated one.
     "REMARK",
 )
+
+#: The planning-board OI worksheet's columns (Lane C, AC-C3): the sheet's first ten as they
+#: stood before the reserve figures went in, no ACKNOWLEDGED / TAKEN / REMAINING.
+WORKSHEET_HEADINGS = (
+    "SO DATE",
+    "S/O NO",
+    "ITEM CODE",
+    "QTY",
+    "TOTAL QTY",
+    "DELIVERY DATE",
+    "PROJECT/CUSTOMER",
+    "SUPPLIER",
+    "PO NO ",
+    "LOCATION",
+)
+
+
+def _export_reserve_qty(value: Any) -> Optional[float]:
+    """A reserve figure for the sheet: the quantity, blank when there is none (the row
+    carries "0" when it has no open request / nothing reserved)."""
+    qty = _dec(value)
+    return float(qty) if qty else None
+
 
 # The two routes a row can be attributed by, joined ONCE through a coalesce rather than
 # twice through two aliases of `customers`. The precedence is the same either way - the
@@ -3381,8 +3410,8 @@ class OrderInquiryWorklistService:
 
         `columns` (Lane C, AC-C3): the heading tuple to print, defaulting to the full
         `EXPORT_HEADINGS` so the list page's own export is unchanged. The OI worksheet
-        passes `EXPORT_HEADINGS[:10]` (no ACKNOWLEDGED / TAKEN / REMAINING) - a prefix,
-        so the row values below can be cut to the same length.
+        passes `WORKSHEET_HEADINGS` (no reserve figures, ACKNOWLEDGED / TAKEN /
+        REMAINING); `_write_sheet` prints each row by heading.
         """
         import openpyxl
 
@@ -3613,32 +3642,40 @@ class OrderInquiryWorklistService:
                 # Only where it says something the QTY column does not: a single-row
                 # run has its own quantity as its total, and printing it twice is noise.
                 run_total = float(total) if last_of_run and len(run) > 1 else None
-                values = [
-                    row.get("so_date"),
-                    row.get("so_number") or "",
-                    code or "",
-                    float(_dec(row["row_qty"]))
+                taken, remaining, suggested = (
+                    row["split_figures"]
+                    if "split_figures" in row
+                    else (_export_taken(row), _export_remaining(row), _export_suggested(row))
+                )
+                values = {
+                    "SO DATE": row.get("so_date"),
+                    "S/O NO": row.get("so_number") or "",
+                    "ITEM CODE": code or "",
+                    "QTY": float(_dec(row["row_qty"]))
                     if own_figures and "row_qty" in row
                     else float(_dec(row.get("qty"))) if row.get("qty") not in (None, "") else None,
-                    run_total,
-                    row["row_date"] if own_figures and "row_qty" in row else row.get("delivery_date"),
-                    row.get("project_customer") or "",
+                    "REQUESTED RESERVE": _export_reserve_qty(row.get("requested_qty")),
+                    "RESERVED": _export_reserve_qty(row.get("reserved_qty")),
+                    "TOTAL QTY": run_total,
+                    "DELIVERY DATE": row["row_date"]
+                    if own_figures and "row_qty" in row
+                    else row.get("delivery_date"),
+                    "PROJECT/CUSTOMER": row.get("project_customer") or "",
                     # Blank means nobody has placed it, exactly as it does on their
                     # sheet.
-                    row.get("supplier") or "",
-                    row.get("po_number") or "",
-                    row.get("location") or "",
-                    ack_label(row),
-                    *(
-                        row["split_figures"]
-                        if "split_figures" in row
-                        else (_export_taken(row), _export_remaining(row), _export_suggested(row))
-                    ),
-                    float(row["change_qty"]) if row.get("change_qty") is not None else None,
-                    row.get("change_date"),
-                    row.get("split_remark") or "",
-                ]
-                # `columns` may be a PREFIX of `EXPORT_HEADINGS` (Lane C's worksheet, no
-                # ACKNOWLEDGED / TAKEN / REMAINING) - cut the row to match so the sheet
-                # never carries more cells than it has headings for.
-                sheet.append(values[: len(columns)])
+                    "SUPPLIER": row.get("supplier") or "",
+                    "PO NO ": row.get("po_number") or "",
+                    "LOCATION": row.get("location") or "",
+                    "ACKNOWLEDGED": ack_label(row),
+                    "TAKEN": taken,
+                    "REMAINING": remaining,
+                    "SUGGESTED": suggested,
+                    "CHANGE QUANTITY": float(row["change_qty"])
+                    if row.get("change_qty") is not None
+                    else None,
+                    "CHANGE DATE": row.get("change_date"),
+                    "REMARK": row.get("split_remark") or "",
+                }
+                # Keyed by heading, so `columns` may name any of them in any order (the
+                # planning-board worksheet prints `WORKSHEET_HEADINGS` only).
+                sheet.append([values[heading] for heading in columns])
