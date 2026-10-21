@@ -45,6 +45,13 @@ function Cell({
   );
 }
 
+const OUTCOME_WORD: Record<IndexMatchOutcome, string> = {
+  kept: 'Kept',
+  dropped: 'Dropped',
+  changed: 'Changed',
+};
+
+/** The outcome word in the badge; the reason, when there is one, as plain muted text beside it. */
 function Outcome({
   outcome,
   text,
@@ -52,15 +59,25 @@ function Outcome({
   outcome: IndexMatchOutcome;
   text: string;
 }) {
+  const word = OUTCOME_WORD[outcome];
+  const reason = text.startsWith(`${word}: `)
+    ? text.slice(word.length + 2)
+    : '';
   return (
-    <Badge
-      variant={OUTCOME_VARIANT[outcome]}
-      appearance="light"
-      size="sm"
-      className="h-auto whitespace-normal text-start"
+    <div
+      className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5"
+      data-testid="index-outcome"
     >
-      {text}
-    </Badge>
+      <Badge variant={OUTCOME_VARIANT[outcome]} appearance="light" size="sm">
+        {reason ? word : text}
+      </Badge>
+      {reason && (
+        <span className="min-w-0 break-words text-muted-foreground">
+          <span className="sr-only">: </span>
+          {reason}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -73,6 +90,7 @@ function FlowRow({
   word: React.ReactNode;
   row: Omit<IndexMatchRow, 'word'>;
 }) {
+  const pairs = Math.max(row.understood.length, row.result.length);
   return (
     <div
       data-testid={testId}
@@ -104,20 +122,23 @@ function FlowRow({
           </div>
         ))}
       </Cell>
-      <Cell label={LABELS[3]}>
-        {row.understood.map((u, i) => (
-          <div key={i} className="break-words">
-            {u.text}
+      <div className="min-w-0 space-y-2 sm:col-span-2">
+        {Array.from({ length: pairs }, (_, i) => (
+          <div key={i} className="grid gap-2 sm:grid-cols-2 sm:gap-3">
+            <Cell label={LABELS[3]}>
+              <div className="break-words">{row.understood[i]?.text}</div>
+            </Cell>
+            <Cell label={LABELS[4]}>
+              {row.result[i] && (
+                <Outcome
+                  outcome={row.result[i].outcome}
+                  text={row.result[i].text}
+                />
+              )}
+            </Cell>
           </div>
         ))}
-      </Cell>
-      <Cell label={LABELS[4]}>
-        {row.result.map((r, i) => (
-          <div key={i}>
-            <Outcome outcome={r.outcome} text={r.text} />
-          </div>
-        ))}
-      </Cell>
+      </div>
     </div>
   );
 }
@@ -130,7 +151,7 @@ export function IndexMatchSection({
   if (!indexMatch) {
     return (
       <p className="text-xs text-muted-foreground">
-        This turn sent the full lists, so nothing was matched.
+        No list matching was recorded on this turn.
       </p>
     );
   }
@@ -159,39 +180,46 @@ export function IndexMatchSection({
           ),
         )}
       </div>
-      <div className="space-y-2">
-        <div
-          className={`${FLOW} hidden px-2 text-2xs font-medium text-muted-foreground sm:grid`}
-        >
-          {LABELS.map((label) => (
-            <div key={label}>{label}</div>
+      {indexMatch.rows.length === 0 &&
+      indexMatch.not_from_lists.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          No word of this message matched a list entry.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          <div
+            className={`${FLOW} hidden px-2 text-2xs font-medium text-muted-foreground sm:grid`}
+          >
+            {LABELS.map((label) => (
+              <div key={label}>{label}</div>
+            ))}
+          </div>
+          {indexMatch.rows.map((row) => (
+            <FlowRow
+              key={row.word}
+              testId={`index-row-${row.word}`}
+              word={<span className="font-medium">{row.word}</span>}
+              row={row}
+            />
+          ))}
+          {indexMatch.not_from_lists.map((n, i) => (
+            <FlowRow
+              key={`n${i}`}
+              word={
+                <span className="text-muted-foreground">
+                  (not from the lists)
+                </span>
+              }
+              row={{
+                matched: [],
+                parser_got: [],
+                understood: [{ text: n.text }],
+                result: [{ outcome: n.outcome, text: n.result }],
+              }}
+            />
           ))}
         </div>
-        {indexMatch.rows.map((row) => (
-          <FlowRow
-            key={row.word}
-            testId={`index-row-${row.word}`}
-            word={<span className="font-medium">{row.word}</span>}
-            row={row}
-          />
-        ))}
-        {indexMatch.not_from_lists.map((n, i) => (
-          <FlowRow
-            key={`n${i}`}
-            word={
-              <span className="text-muted-foreground">
-                (not from the lists)
-              </span>
-            }
-            row={{
-              matched: [],
-              parser_got: [],
-              understood: [{ text: n.text }],
-              result: [{ outcome: n.outcome, text: n.result }],
-            }}
-          />
-        ))}
-      </div>
+      )}
       {indexMatch.held.length > 0 && (
         <Collapsible defaultOpen={false}>
           <CollapsibleTrigger className="text-xs font-medium text-muted-foreground">

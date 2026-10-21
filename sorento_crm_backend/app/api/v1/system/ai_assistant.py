@@ -375,8 +375,9 @@ def get_ai_assistant_prompt_architecture(
     _ensure_known_prompt(name)
     if name != prompt_architecture.PROMPT_KEY:
         raise HTTPException(status_code=404, detail="No architecture view for this prompt")
-    AIPromptService(db).get_version(name, version)  # the same 404 for an unknown version
-    row = db.query(AIPromptVersion).filter(AIPromptVersion.name == name, AIPromptVersion.version == version).one()
+    row = db.query(AIPromptVersion).filter(AIPromptVersion.name == name, AIPromptVersion.version == version).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Version {version} not found for prompt '{name}'.")
     return prompt_architecture.describe(db, row)
 
 

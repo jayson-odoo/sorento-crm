@@ -151,7 +151,7 @@ detail "No architecture view for this prompt". Service function in a new module
 - `chat-history/components/IndexMatchSection.tsx` exports `IndexMatchSection({ indexMatch })`.
 - `TurnDetailDrawer.tsx` renders `<Section title="Index match" testId="section-index-match">` right
   after Parse.
-- Null -> `Empty`: "This turn sent the full lists, so nothing was matched."
+- Null -> `Empty`: "No list matching was recorded on this turn."
 - `failed` -> one line "The matching step failed on this turn; the parser ran without it."
 - Top: the message words as chips, matched ones filled (`Badge`), others plain.
 - Then a 5-column flow, header labels exactly: "Word", "Matched list entry", "What the parser got",

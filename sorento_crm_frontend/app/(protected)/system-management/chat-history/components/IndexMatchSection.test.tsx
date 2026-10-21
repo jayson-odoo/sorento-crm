@@ -51,7 +51,7 @@ function fixture(over: Partial<IndexMatch> = {}): IndexMatch {
 describe('IndexMatchSection', () => {
   it('shows the empty text when the turn sent the full lists (null)', () => {
     render(<IndexMatchSection indexMatch={null} />);
-    expect(screen.getByText('This turn sent the full lists, so nothing was matched.')).toBeInTheDocument();
+    expect(screen.getByText('No list matching was recorded on this turn.')).toBeInTheDocument();
   });
 
   it('shows one line when the matching step failed', () => {
@@ -91,8 +91,9 @@ describe('IndexMatchSection', () => {
     render(<IndexMatchSection indexMatch={fixture()} />);
     const frg = screen.getByTestId('index-row-frg');
     expect(within(frg).getByText('Kept')).toBeInTheDocument();
-    expect(within(frg).getByText(WAREHOUSE_DROPPED)).toBeInTheDocument();
-    expect(within(screen.getByTestId('index-row-whyte')).getByText('Changed: read as Finish = white')).toBeInTheDocument();
+    expect(within(frg).getByText('Dropped')).toBeInTheDocument();
+    expect(frg).toHaveTextContent(WAREHOUSE_DROPPED);
+    expect(screen.getByTestId('index-row-whyte')).toHaveTextContent('Changed: read as Finish = white');
   });
 
   it('marks a close spelling next to the entry, and only there', () => {
@@ -105,6 +106,22 @@ describe('IndexMatchSection', () => {
     render(<IndexMatchSection indexMatch={fixture()} />);
     expect(screen.getByText('(not from the lists)')).toBeInTheDocument();
     expect(screen.getByText('"IB" as a warehouse')).toBeInTheDocument();
+  });
+
+  it('keeps each understood item on the same line as its result, the badge holding only the outcome word', () => {
+    render(<IndexMatchSection indexMatch={fixture()} />);
+    const frg = screen.getByTestId('index-row-frg');
+    const outcomes = within(frg).getAllByTestId('index-outcome');
+    expect(outcomes).toHaveLength(2);
+    expect(outcomes[0].parentElement?.parentElement).toHaveTextContent('"frg" as a specification: finish = french_gold');
+    expect(outcomes[1].parentElement?.parentElement).toHaveTextContent('"frg" as a warehouse');
+    expect(within(frg).getByText('Dropped').textContent).toBe('Dropped');
+  });
+
+  it('shows one line instead of an empty grid when no word matched', () => {
+    render(<IndexMatchSection indexMatch={fixture({ rows: [], not_from_lists: [], held: [] })} />);
+    expect(screen.getByText('No word of this message matched a list entry.')).toBeInTheDocument();
+    expect(screen.queryByText('Matched list entry')).toBeNull();
   });
 
   it('keeps the held lines in a closed collapsible that opens on click', () => {

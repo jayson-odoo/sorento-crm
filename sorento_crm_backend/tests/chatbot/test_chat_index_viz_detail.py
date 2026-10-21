@@ -254,3 +254,23 @@ def test_no_internal_names_reach_any_text():
     blob = " ".join(r["text"] for r in im["rows"][0]["result"]).lower()
     for internal in ("grounding", "hidden_keys", "closed_lists_index", "hint", "dropped: a finish short form"):
         assert internal not in blob, blob
+
+
+def test_product_type_hint_reads_as_a_product_type():
+    im = _im(words=["zzw"], matches=[_match("zzw", "Products", "code ZZW1 (ZZT)")], entities=[_entity("zzw", "product_type")])
+    assert im["rows"][0]["understood"] == [{"text": '"zzw" as a product type'}]
+
+
+def test_no_hint_drops_the_as_part():
+    plain = _entity("zzw", "")
+    plain["canonical_code"] = "ZZW1"
+    im = _im(words=["zzw"], matches=[_match("zzw", "Products", "code ZZW1 (ZZT)")], entities=[plain])
+    assert im["rows"][0]["understood"] == [{"text": '"zzw": ZZW1'}]
+    im = _im(words=["zzw"], matches=[_match("zzw", "Products", "code ZZW1 (ZZT)")], entities=[_entity("zzw", "")])
+    assert im["rows"][0]["understood"] == [{"text": '"zzw"'}]
+
+
+def test_split_note_skips_empty_pieces_and_never_prints_none():
+    to = ["", {"key": "finish", "label": "Finish", "said": "zzw", "value": "french_gold"},
+          {"key": "", "label": "", "said": "zz", "value": None}, {"key": "", "label": "", "said": "", "value": None}]
+    assert _result("specification", to) == {"outcome": "changed", "text": "Changed: read as Finish = french_gold; zz"}

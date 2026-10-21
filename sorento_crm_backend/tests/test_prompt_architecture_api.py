@@ -196,7 +196,7 @@ def test_index_mode_lists_report_the_blank_line_as_what_is_sent(client, pg_db):
     for key in LISTS:
         item = lists[key]
         variable = pv.VARIABLES[key]
-        assert item["name"] == variable.label
+        assert item["name"] == {"specs": "Specifications", "attachment_types": "File types", "certification_types": "Certificates"}[key]
         assert item["source"] == variable.source
         assert item["href"] == variable.href
         assert item["sent_each_message_tokens"] == _tokens(cli.SYSTEM_BLANKS[key]), item

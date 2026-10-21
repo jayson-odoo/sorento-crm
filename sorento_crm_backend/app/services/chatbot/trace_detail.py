@@ -415,6 +415,7 @@ def _prompt_text(records: list[dict[str, Any]]) -> str | None:
 _HINT_WORDS = {
     "product": "a product",
     "category": "a product type",
+    "product_type": "a product type",
     "specification": "a specification",
     "spec": "a specification",
     "attachment_type": "a file",
@@ -440,8 +441,12 @@ def _result_text(note: dict[str, Any] | None) -> dict[str, str]:
         parts = []
         for item in to:
             if isinstance(item, dict):
-                parts.append(f"{item.get('label') or item.get('key')} = {item.get('value')}")
-            else:
+                name = item.get("label") or item.get("key")
+                if item.get("value") is not None and name:
+                    parts.append(f"{name} = {item['value']}")
+                elif item.get("said"):
+                    parts.append(str(item["said"]))
+            elif str(item).strip():
                 parts.append(str(item))
         return {"outcome": "changed", "text": "Changed: read as " + "; ".join(parts)}
     to = str(to)
@@ -463,7 +468,7 @@ def _result_text(note: dict[str, Any] | None) -> dict[str, str]:
 
 def _understood_text(entity: dict[str, Any]) -> str:
     hint = str(entity.get("hint") or "")
-    text = f'"{entity.get("raw")}" as {_HINT_WORDS.get(hint, hint)}'
+    text = f'"{entity.get("raw")}"' + (f" as {_HINT_WORDS.get(hint, hint)}" if hint else "")
     if entity.get("spec_key") and entity.get("spec_value") is not None:
         return f"{text}: {entity['spec_key']} = {entity['spec_value']}"
     value = entity.get("canonical_code") or entity.get("listed_item")

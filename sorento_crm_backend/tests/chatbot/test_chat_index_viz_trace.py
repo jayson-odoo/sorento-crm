@@ -141,6 +141,15 @@ def test_candidate_item_kinds_map_to_list_names(session_factory):
     assert all(m["word"] == "zzw" for m in matches)
 
 
+def test_set_code_and_unknown_items_list_names(session_factory):
+    db = _world(session_factory)
+    entry = candidates.WordCandidates(gram="zzw", position=0, items=["set code ZZSET (ZZ Set)", "mystery thing"])
+    _lines, matches = _call(db, [entry], "zzw")
+    by_entry = {m["entry"]: m["list"] for m in matches}
+    assert by_entry["set code ZZSET (ZZ Set)"] == "Products"
+    assert by_entry["mystery thing"] == "Other"
+
+
 def test_near_item_strips_the_prefix_and_sets_close_spelling(session_factory):
     db = _world(session_factory)
     entry = candidates.WordCandidates(gram="whyte", position=0, items=["near spec finish = white (White)"])

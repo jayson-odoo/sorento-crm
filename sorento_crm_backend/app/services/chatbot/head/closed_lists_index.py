@@ -333,7 +333,10 @@ def code_suffix_lines(db: "Session", grams: set[str], hidden: frozenset[str] = f
     return [line for _word, line, _items in _code_suffix_matches(db, grams, hidden)]
 
 
+HELD_LIST = "On record for the held product"
+
 _ITEM_LISTS = (
+    ("set code ", "Products"),
     ("code ", "Products"),
     ("product type ", "Product types"),
     ("spec ", "Specifications"),
@@ -343,7 +346,7 @@ _ITEM_LISTS = (
 
 
 def _item_list(item: str) -> str:
-    return next((name for prefix, name in _ITEM_LISTS if item.startswith(prefix)), "Specifications")
+    return next((name for prefix, name in _ITEM_LISTS if item.startswith(prefix)), "Other")
 
 
 def _match(word: str | None, list_name: str, entry: str, line: str, *, near: bool = False, held: bool = False) -> dict:
@@ -401,11 +404,7 @@ def block_with_matches(
     held_lines = [*held_texts, *spec_held]
     if held_lines:
         out += [HELD_HEADER, *held_lines]
-        matches += [_match(None, m["list"], m["line"], m["line"], held=True) for m in file_held if m["line"] in held_texts]
-        matches += [_match(None, "On record for the held product", line, line, held=True) for line in spec_held]
-    for m in matches:
-        if m["held"]:
-            m["list"] = "On record for the held product"
+        matches += [_match(None, HELD_LIST, line, line, held=True) for line in [*held_texts, *spec_held]]
     return out, matches
 
 

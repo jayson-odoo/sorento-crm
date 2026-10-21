@@ -22,6 +22,8 @@ from app.services.chatbot.head.closed_lists_prompt import gate_on
 PROMPT_KEY = "chatbot_semantic_parser"
 CLOSED_LIST_KEYS = tuple(closed_lists_index.SYSTEM_BLANKS)
 _HEADING = re.compile(r"^== (.+) ==$", re.MULTILINE)
+#: Plain names for the three lists, the same words the per-turn screen uses.
+LIST_NAMES = {"specs": "Specifications", "attachment_types": "File types", "certification_types": "Certificates"}
 WAREHOUSES = {"name": "Warehouses", "source": "Warehouses", "href": "/inventory-management/warehouses"}
 
 
@@ -70,7 +72,7 @@ def describe(db: Session, version: AIPromptVersion) -> dict[str, Any]:
         full = _tokens(pv.render_value(db, key))
         lists.append({
             "key": key,
-            "name": variable.label,
+            "name": LIST_NAMES[key],
             "source": variable.source,
             "href": variable.href,
             "entries": variable.count(db),

@@ -56,7 +56,7 @@ describe('TurnDetailDrawer Index match section', () => {
     render(<TurnDetailDrawer turnId="ZZT-turn-idx-1" onOpenChange={vi.fn()} />);
     fireEvent.click(screen.getByTestId('section-index-match-trigger'));
     expect(screen.getByTestId('section-index-match')).toHaveTextContent(
-      'This turn sent the full lists, so nothing was matched.',
+      'No list matching was recorded on this turn.',
     );
   });
 

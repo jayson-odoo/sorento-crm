@@ -21,6 +21,9 @@ const BOXES = [
   'Kept or dropped',
 ];
 
+const CELL =
+  'max-sm:flex max-sm:justify-between max-sm:gap-3 max-sm:py-0.5 before:text-muted-foreground before:content-[attr(data-label)] sm:before:content-none';
+
 const fmt = (n: number) => n.toLocaleString('en-US');
 
 export function PromptArchitecture({
@@ -109,9 +112,9 @@ export function PromptArchitecture({
 
       <div className="space-y-1">
         <h3 className="text-sm font-medium">Lists</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
+        <div>
+          <table className="w-full text-xs max-sm:block">
+            <thead className="max-sm:hidden">
               <tr className="border-b text-start text-muted-foreground">
                 <th className="py-1 pe-2 text-start font-medium">List</th>
                 <th className="py-1 pe-2 text-start font-medium">Comes from</th>
@@ -122,11 +125,16 @@ export function PromptArchitecture({
                 <th className="py-1 text-end font-medium">Full list</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="max-sm:block">
               {data.lists.map((l) => (
-                <tr key={l.key} className="border-b last:border-0">
-                  <td className="py-1 pe-2">{l.name}</td>
-                  <td className="py-1 pe-2">
+                <tr
+                  key={l.key}
+                  className="border-b last:border-0 max-sm:block max-sm:py-2"
+                >
+                  <td data-label="List" className={`py-1 pe-2 ${CELL}`}>
+                    {l.name}
+                  </td>
+                  <td data-label="Comes from" className={`py-1 pe-2 ${CELL}`}>
                     {l.href ? (
                       <Link
                         href={l.href}
@@ -138,13 +146,22 @@ export function PromptArchitecture({
                       l.source
                     )}
                   </td>
-                  <td className="py-1 pe-2 text-end tabular-nums">
+                  <td
+                    data-label="Entries"
+                    className={`py-1 pe-2 text-end tabular-nums ${CELL}`}
+                  >
                     {fmt(l.entries)}
                   </td>
-                  <td className="py-1 pe-2 text-end tabular-nums">
+                  <td
+                    data-label="Sent each message"
+                    className={`py-1 pe-2 text-end tabular-nums ${CELL}`}
+                  >
                     {fmt(l.sent_each_message_tokens)}
                   </td>
-                  <td className="py-1 text-end tabular-nums">
+                  <td
+                    data-label="Full list"
+                    className={`py-1 text-end tabular-nums ${CELL}`}
+                  >
                     {l.checked_only ? '-' : fmt(l.full_list_tokens)}
                   </td>
                 </tr>
@@ -156,26 +173,32 @@ export function PromptArchitecture({
 
       <div className="space-y-1">
         <h3 className="text-sm font-medium">Sections</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
+        <div>
+          <table className="w-full text-xs max-sm:block">
+            <thead className="max-sm:hidden">
               <tr className="border-b text-muted-foreground">
                 <th className="py-1 pe-2 text-start font-medium">Section</th>
                 <th className="py-1 pe-2 text-start font-medium">Kind</th>
                 <th className="py-1 text-end font-medium">Tokens</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="max-sm:block">
               {data.sections.map((s) => (
-                <tr key={s.title} className="border-b last:border-0">
+                <tr
+                  key={s.title}
+                  className="border-b last:border-0 max-sm:block max-sm:py-2"
+                >
                   <td
-                    className="max-w-[16rem] truncate py-1 pe-2"
+                    data-label="Section"
+                    className={`max-w-[16rem] truncate py-1 pe-2 max-sm:max-w-none max-sm:whitespace-normal ${CELL}`}
                     title={s.title}
                   >
                     {s.title}
                   </td>
-                  <td className="py-1 pe-2">{KIND_LABEL[s.kind]}</td>
-                  <td className="py-1">
+                  <td data-label="Kind" className={`py-1 pe-2 ${CELL}`}>
+                    {KIND_LABEL[s.kind]}
+                  </td>
+                  <td data-label="Tokens" className={`py-1 ${CELL}`}>
                     <div className="flex items-center justify-end gap-2">
                       <div
                         className="hidden h-1.5 w-24 rounded bg-muted sm:block"

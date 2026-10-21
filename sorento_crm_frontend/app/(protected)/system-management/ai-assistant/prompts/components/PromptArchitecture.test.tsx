@@ -26,7 +26,7 @@ const DATA: Architecture = {
   lists: [
     { key: 'specs', name: 'Specifications', source: 'Product Specifications', href: '/master-data-management/product-specifications', entries: 42, sent_each_message_tokens: 36, full_list_tokens: 5120 },
     { key: 'attachment_types', name: 'File types', source: 'Attachment Types', href: '/resource-management/attachment-types', entries: 7, sent_each_message_tokens: 22, full_list_tokens: 480 },
-    { key: 'certification_types', name: 'Certification types', source: 'Certificates', href: '/master-data-management/certificates', entries: 5, sent_each_message_tokens: 25, full_list_tokens: 300 },
+    { key: 'certification_types', name: 'Certificates', source: 'Certificates', href: '/master-data-management/certificates', entries: 5, sent_each_message_tokens: 25, full_list_tokens: 300 },
     { key: 'warehouses', name: 'Warehouses', source: 'Warehouses', href: '/inventory-management/warehouses', entries: 9, sent_each_message_tokens: 0, full_list_tokens: 0, checked_only: true },
   ],
 };
