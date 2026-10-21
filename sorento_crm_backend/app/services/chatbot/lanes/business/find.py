@@ -347,6 +347,11 @@ def as_linked_products(
             # Q3 (a): a named code that is no product's exact code (a family prefix, a typo)
             # is the resolver's to place, picker or miss, so the turn runs on as typed.
             return verdict, []
+        if every:
+            # No kind named and nothing linked: the parser filled the schema on a message that asked
+            # for something else ("can send photo of <code> basin"), not a fit ask. A NAMED kind keeps
+            # its no-link line below.
+            return {**verdict, "find": None}, []
         accessory_of = {kind: product_find._accessories(db, unlinked, kind) for kind in kinds}
         lines: list[str] = []
         for p in unlinked:
