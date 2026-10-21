@@ -1333,6 +1333,29 @@ describe('OI-SPLIT-GEAR-REMARK guide Review page: confirmed remark vs the server
  * lines at BRW-ED, both saved decisions, not confirmed. Line 1 (40) has 20 moved onto line 2's
  * date (19/10/2026), the case the owner's screenshots showed.
  */
+describe('OI-SPLIT-CONFIRM-POLISH: the footer (owner, 21 Oct ~22:55)', () => {
+  const footerIds = () =>
+    Array.from(screen.getByTestId('confirm-guide-footer').querySelectorAll('button')).map(
+      (button) => button.getAttribute('data-testid'),
+    );
+
+  it('Review split: Cancel far left, then Next at the right', async () => {
+    await mountWith(oneEditedBoard(), ['SO000001']);
+    await openConfirmGuide();
+    await screen.findByTestId('confirm-guide-split-page');
+    expect(footerIds()).toEqual(['confirm-guide-cancel', 'confirm-guide-next']);
+  });
+
+  it('Confirm step: the Confirm button is in the footer at the right, Back immediately left of it, Cancel far left', async () => {
+    await mountWith(oneEditedBoard(), ['SO000001']);
+    await walkToConfirmStep();
+    const confirm = screen.getByTestId('confirm-guide-confirm');
+    expect(screen.getByTestId('confirm-guide-footer')).toContainElement(confirm);
+    expect(footerIds()).toEqual(['confirm-guide-cancel', 'confirm-guide-back', 'confirm-guide-confirm']);
+    expect(confirm).toHaveTextContent('Confirm 1 order');
+  });
+});
+
 describe('OI-SPLIT-CONFIRM-POLISH: the Review split page', () => {
   const FH1 = demand({ project_line_id: 'pl-1-1', line_no: 1, item_code: 'C-FH14', fulfilment_location: 'BRW-ED', qty: '40' });
   const FH2 = demand({
@@ -1434,6 +1457,31 @@ describe('OI-SPLIT-CONFIRM-POLISH: the Review split page', () => {
     );
     expect(names).not.toContain('change quantity');
     expect(names).not.toContain('change date');
+  });
+
+  // owner, SO427002 (21 Oct ~22:55): SO DATE was blank on first open of Review split
+  const SO_DATE = '20/10/2026';
+  const firstCells = (page: HTMLElement) =>
+    Array.from(page.querySelectorAll('tbody[data-line-id]')).map((body) => body.querySelector('td')?.textContent ?? '');
+  const datedRead = (read: () => { lines: unknown[] }) => () => ({ ...read(), so_date: '2026-10-20' });
+
+  it('5: SO DATE is filled on every row on first open, and is the same after an edit and Undo', async () => {
+    const page = await openFh(datedRead(FH_READ));
+    expect(firstCells(page).length).toBeGreaterThan(0);
+    expect(firstCells(page).every((text) => text === SO_DATE)).toBe(true);
+    typeQty(1, 1, '15');
+    fireEvent.click(within(page).getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expectClean(page));
+    expect(firstCells(page).every((text) => text === SO_DATE)).toBe(true);
+  });
+
+  it('5: a covered line the split read does not list still shows the SO date read for the order', async () => {
+    // line 2 is covered on the board but missing from the read: it is a read-only row under the editor
+    const onlyLine1 = () => ({ ...splitRead('pso-so-1', 'SO000001', []), lines: [fhLine(1, 40, '2026-09-20')] });
+    const page = await openFh(datedRead(onlyLine1));
+    await within(page).findByTestId('split-line-2');
+    expect(within(page).getAllByRole('table', { name: 'Split delivery sheet' })).toHaveLength(2);
+    expect(firstCells(page)).toEqual([SO_DATE, SO_DATE]);
   });
 
   it('3: opens clean on a saved split: Save and Undo off, Next: Confirm on, no warning', async () => {
