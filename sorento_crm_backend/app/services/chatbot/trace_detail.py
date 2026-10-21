@@ -434,6 +434,8 @@ _HINT_WORDS = {
 def _hint_words(hint: str) -> str:
     """A hint in plain words; one the table does not name still never shows an underscore."""
     return _HINT_WORDS.get(hint, hint.replace("_", " "))
+
+
 _LIST_WORDS = {"attachment_type": "file type", "cert_kind": "certificate", "cert_scheme": "certificate scheme"}
 
 
@@ -478,7 +480,9 @@ def _result_text(note: dict[str, Any] | None) -> dict[str, str]:
         return {"outcome": "changed", "text": "Changed: several product codes fit, the bot asks which"}
     if to.startswith("listed product type: "):
         return {"outcome": "changed", "text": f"Changed: read as the product type {to[len('listed product type: '):]}"}
-    return {"outcome": "changed", "text": f"Changed: read as {_hint_words(to)}"}
+    if to == "category":
+        return {"outcome": "changed", "text": "Changed: read as a product type"}
+    return {"outcome": "changed", "text": f"Changed: read as {to}"}
 
 
 def _understood_text(entity: dict[str, Any]) -> str:

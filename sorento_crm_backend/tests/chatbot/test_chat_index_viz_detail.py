@@ -225,6 +225,8 @@ def _result(hint: str, to: Any, *, raw: str = "zzw", note_from: str | None = Non
      "Changed: read as zz_key = red; Size = 600"),
     ("product", "category", "changed", "Changed: read as a product type"),
     ("category", "listed product type: Basin", "changed", "Changed: read as the product type Basin"),
+    ("category", "Order", "changed", "Changed: read as Order"),
+    ("category", "zz_type", "changed", "Changed: read as zz_type"),
     ("specification", [{"key": "", "label": "", "said": "", "value": None}], "changed", "Changed"),
 ])
 def test_grounding_note_wording(hint, to, outcome, text):
