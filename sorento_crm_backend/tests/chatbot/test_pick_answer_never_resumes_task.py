@@ -89,3 +89,54 @@ def test_pick_answer_answers_the_pick_and_leaves_the_older_task(form, status, ga
     assert older.status == status
     assert [slot.label for slot in older.slots] == OLDER
     assert [slot.value for slot in older.slots] == [None, None, None]
+
+
+def _one_option_pending():
+    return turn_pending.ask(
+        "product_pick",
+        [{
+            "position": 1, "label": "ELP3754", "code": "ELP3754", "uuid": ht.uuid_of("ELP3754"),
+            "entity_type": "product",
+        }],
+        asked_at_turn=4,
+        payload={
+            "domain": "inventory", "domains": ["inventory"], "stock_pick": True,
+            "did_you_mean": True, "typed": "ELP3753", "count": 1, "stock_qty": None,
+        },
+    )
+
+
+def _parked_state(gate: bool):
+    from dataclasses import replace
+
+    task = ht.stock_task([(code, None) for code in OLDER], status=task_mod.PARKED)
+    focus = Focus(products=ht.product_rows(*OLDER), domains=["inventory"], tasks=(task,))
+    return replace(ht.state(focus, pending=_one_option_pending(), turn_no=5), state_path=gate)
+
+
+@pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
+def test_a_yes_to_a_one_option_did_you_mean_answers_it_and_leaves_the_parked_task(gate):
+    v = verdict(
+        domain_hint="inventory", intent_hint="check_stock", entities=[], is_affirmative=True,
+        open_question_answer={"mode": "yes", "picked": [], "items": [], "qty_for_all": None},
+    )
+    new_state, plan = apply(_parked_state(gate), v, build_policy())
+    assert plan.trace.task_question is None, "the older task's question was returned"
+    assert "task_resumed_stock_qty" not in plan.trace.rules_fired
+    codes = [row["canonical_code"] for spec in ht.inventory_specs(plan) for row in spec.entities]
+    assert codes == ["ELP3754"], codes
+    (older,) = [t for t in new_state.focus.tasks if t.kind == "stock_qty"]
+    assert older.status == task_mod.PARKED
+
+
+@pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
+def test_guard_an_unfit_pick_applies_nothing_and_still_resumes_as_on_main(gate):
+    v = verdict(
+        domain_hint="inventory", intent_hint="check_stock", entities=[],
+        open_question_answer={
+            "mode": "pick", "picked": [], "items": [{"position": None, "code": "ZZ9999", "qty": None}],
+            "qty_for_all": None,
+        },
+    )
+    _new_state, plan = apply(_parked_state(gate), v, build_policy())
+    assert "task_resumed_stock_qty" in plan.trace.rules_fired
