@@ -119,3 +119,40 @@ describe('exportOrderInquiryWorklistXlsx (AC-B6)', () => {
     await expect(exportOrderInquiryWorklistXlsx({})).rejects.toThrow('already in flight');
   });
 });
+
+describe('OI-DOWNLOAD: the PDF twins of the two exports', () => {
+  it('exportOrderInquiryPdf POSTs to the detail /export/pdf route', async () => {
+    const { exportOrderInquiryPdf } = await import('./orderInquiryService');
+    const download = { id: 'dl-3', kind: 'order_inquiry_pdf', status: 'pending' };
+    mockFetch.mockResolvedValue(ok(download));
+
+    expect(await exportOrderInquiryPdf('oi-1')).toEqual(download);
+    expect(mockFetch).toHaveBeenCalledWith(
+      '/api/v1/project-sales/order-inquiries/oi-1/export/pdf',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('exportOrderInquiryWorklistPdf POSTs the filters, unpaged, to /export/pdf', async () => {
+    const { exportOrderInquiryWorklistPdf } = await import('./orderInquiryService');
+    mockFetch.mockResolvedValue(ok({ id: 'dl-4' }));
+
+    await exportOrderInquiryWorklistPdf({ ack: 'rejected', page: 2, limit: 25 });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      '/api/v1/project-sales/order-inquiries/export/pdf',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    const parsed = JSON.parse((mockFetch.mock.calls[0][1] as { body: string }).body);
+    expect(parsed).toMatchObject({ ack: 'rejected' });
+    expect(parsed).not.toHaveProperty('page');
+    expect(parsed).not.toHaveProperty('limit');
+  });
+
+  it('throws the extracted error on failure', async () => {
+    const { exportOrderInquiryPdf } = await import('./orderInquiryService');
+    mockFetch.mockResolvedValue(failed(409, { detail: 'already in flight' }));
+
+    await expect(exportOrderInquiryPdf('oi-1')).rejects.toThrow('already in flight');
+  });
+});
