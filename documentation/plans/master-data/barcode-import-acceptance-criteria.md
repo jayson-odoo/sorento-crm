@@ -12,3 +12,20 @@
 6. Both endpoints return 403 without `master_data.products.edit`.
 7. A template file is downloadable from the dialog.
 8. Dialog is usable at 375px and 1280px.
+
+## Audit round (crew audit 21 Oct 09:50 + owner rulings 10:55)
+
+9. The header "Barcode (EAN-13)" is read as the barcode column; a column whose header names
+   an image ("Barcode Image") is never the barcode or code column.
+10. A barcode cell holding scientific-notation text ("9.55103E+12") is skipped with its own
+    status and a row note; it is never written.
+11. A duplicate barcode (on another product or twice in the file) is a warning that names the
+    product(s) already holding it; it never blocks the row. A Note/Remark column, when present,
+    is shown beside the row.
+12. Apply is only possible after a Test of the same file: the button stays disabled until a
+    preview of the selected file has come back, picking another file clears it, and the server
+    refuses an apply whose preview token does not match the file and user.
+13. The preview names the active company ("Importing into: <company>"); the owner runs the same
+    file once per company (SRT, then MCH).
+14. A 12k-row file previews without freezing: the table shows rows needing attention first
+    (toggle to show all), paged 50 at a time; apply writes in chunks inside one transaction.
