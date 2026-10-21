@@ -1,6 +1,6 @@
 # PLAN: smarter chatbot reports (lane REPORT-SMART-1021)
 
-Status: built, reviewer READY (round 2, nits fixed), pinned into the 21 Oct exploratory build; exploratory build for the owner hand test 21 Oct 21:00 MYT. Track: L (diff over 300
+Status: built; EVAL-BENCH re-run fix (State domain switch) in review, lane REPORT-SMART-L 21 Oct; exploratory build for the owner hand test 21 Oct late MYT. Track: L (diff over 300
 lines; no migration, no auth/RBAC change, no new ingest surface). Branch `claude/report-smart-1021-r2xexf` (cloud
 sandbox; stands in for `crew/report-smart-1021`), base `claude/release-chat-1021-sppzcw` 9d64921e9 with PR #1721
 (`crew/chat-fix-reports` 52b336345) merged in at cf7aded65.
@@ -66,6 +66,25 @@ that period's answer. Now only the parser's `new_subject` op restarts the frame 
 own entity or `new_subject` is never an open question's answer (`names_its_own_ask`). A whole ask typed again that the
 parser flags as a plain refine re-runs the held report with what it names: the parser decides, and the prompt half
 (emit `new_subject` on a fully re-typed ask) is CHAT-CLOSED-LISTS-L's.
+
+## EVAL-BENCH re-run fix (21 Oct, crew note 6312251738, lane REPORT-SMART-L)
+
+Steps 5-6 still failed on bcbc823214 with the State prompt on (turn 516a6b39). Not report_ask: step 4's refine ran and
+`turn_runtime._report_status_means_order_domain` wrote the turn's domain `sales` (a sales figure status); step 5's
+parse names the same ask with the prompt's `domain_hint "order"`, and `chat_state.apply_changes` (engine.py:5015, before
+that seam at :5082) read raw `order` against the held `sales` as a domain switch, so `_drop_domain_bound` dropped the
+held report frame. The refine then ran as a fresh ask with no period ("Which period?") and step 6 was that slot's answer.
+
+ARCHITECTURE. Layer: the State's domain-switch check (`chat_state._message_domains`). Shared mechanism: the ONE domain
+normalisation the turn already writes with (`turn_runtime.report_domain`, a copy wrapper over
+`_report_status_means_order_domain`), now read by the State before it compares domains, so both readers agree. Other
+classes fixed: every sales figure status (`sales_report`, `sales_analysis`, `top_selling`, `sales_ranking`) under the
+prompt's `order`, and the reverse (`sales` with no sales status is the order ask, so a held order list is not switched
+away). Only the `order`/`sales` alias pair is read so: any other named domain stands, so a stock ask echoing a held
+sales status is still a switch (`test_r10_restated_dropped_values_do_not_survive_the_switch_to_a_stock_ask`, which
+the first, unscoped version broke). Special cases removed: none added; no report_ask rule, no words. Red-first: the state-on console tests and the
+chat_state unit tests in `tests/chatbot/test_report_smart_step7.py` (the console fixture runs state-off, which is why
+the earlier tests could not see it).
 
 ## Out (named)
 

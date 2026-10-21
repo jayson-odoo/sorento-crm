@@ -362,10 +362,21 @@ def names_own_subject(verdict: dict[str, Any]) -> bool:
 
 
 def _message_domains(verdict: dict[str, Any]) -> list[str]:
-    asks = [a.get("domain") for a in (verdict.get("asks") or []) if isinstance(a, dict) and a.get("domain")]
-    if asks:
-        return asks
-    return [verdict["domain_hint"]] if verdict.get("domain_hint") else []
+    from app.services.chatbot.contracts import ORDER_OR_SALES_DOMAINS
+    from app.services.chatbot.turn_runtime import report_domain
+
+    def named(v: dict[str, Any]) -> list[str]:
+        asks = [a.get("domain") for a in (v.get("asks") or []) if isinstance(a, dict) and a.get("domain")]
+        return asks or ([v["domain_hint"]] if v.get("domain_hint") else [])
+
+    domains = named(verdict)
+    if domains and set(domains) <= ORDER_OR_SALES_DOMAINS:
+        # REPORT-SMART-1021 (EVAL-BENCH turn 516a6b39): `order` and `sales` are read the way the
+        # turn writes them (`turn_runtime.report_domain`: a sales figure status is `sales`, `sales`
+        # with none is `order`), so a sales ask under the prompt's `order` is no switch off the
+        # held `sales` report (which would drop its frame). Any other domain stands as named.
+        return named(report_domain(verdict))
+    return domains
 
 
 def _held_quantity(focus: Focus) -> tuple[dict[str, Any], Any]:

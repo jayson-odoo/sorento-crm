@@ -1868,6 +1868,15 @@ def with_routing_agent_default(
     return out
 
 
+def report_domain(verdict: dict[str, Any]) -> dict[str, Any]:
+    """A copy of `verdict` with its domain read the way the turn writes it
+    (`_report_status_means_order_domain`), for a reader that runs before that seam
+    (`turn/chat_state._message_domains`)."""
+    out = dict(verdict)
+    _report_status_means_order_domain(out)
+    return out
+
+
 def _report_status_means_order_domain(out: dict[str, Any]) -> None:
     """A REPORT status word always routes to its report's domain: `sales` for a sales
     figure status, `order` for every other one. Mutates `out`.
