@@ -104,3 +104,53 @@ the Section/Kind cells shrink (smaller Kind text or stack Kind under Section) so
 - The sandbox DB is empty: a user, role grants (from migrations), all modules enabled, the prompt version and the turn
   were seeded; `.test` e-mail addresses are rejected by login validation so the seed user uses `example.com`.
 - Servers started for this pass were stopped; the agent-browser session `viz` was closed.
+
+---
+
+# Round 2 (after fix round 1, commit 19d66735a)
+
+Same sandbox and seed, backend and `npm run dev` rebooted, logged in again (the new dev server invalidated the old
+cookie), agent-browser session `viz`. Two more turns seeded: one whose `closed_lists_index` event has `matches: []`
+(words hello, there) and one with no `closed_lists_index` event. Turn drawers opened by `?turn=<id>` as in round 1
+(one deep URL per turn, after reaching Chat History via the sidebar); the prompts page by sidebar clicks.
+
+| Check | 1280x900 | 375x812 |
+|---|---|---|
+| A. Index match, understood line beside its result, badge = word only | PASS | PASS |
+| A. Empty matches: "No word of this message matched a list entry." and no header row | PASS | PASS |
+| A. No event: "No list matching was recorded on this turn." | PASS | PASS |
+| B. Architecture, table at 1280 / stacked label: value blocks at 375, no inner sideways scroll | PASS | PASS |
+| B. List names Specifications, File types, Certificates, Warehouses | PASS | PASS |
+| C. Console errors | PASS (none) | PASS (none) |
+| C. Horizontal page scroll (scrollWidth / innerWidth) | PASS (1280/1280 drawer, 1265/1280 prompts) | PASS (375/375 drawer, 360/375 prompts) |
+
+D1 from round 1 is fixed.
+
+## A (screenshots `A-1280-r2.png`, `A-375-r2.png`, `A-empty-r2.png`, `A-empty-375-r2.png`, `A-none-r2.png`, `A-none-375-r2.png`)
+
+frg row text now (innerText): `"frg" as a specification: finish = french_gold` -> badge `Kept`; `"frg" as a warehouse` -> badge
+`Dropped` with muted `a finish code ending, not on the warehouse list` beside it (1280: in the Kept or dropped column on
+the same row as its understood line; 375: each understood line is followed by its own "Kept or dropped" label and result,
+so a line and its result stay together). zzkt71ss row: `"zzkt71ss" as a product: ZZKT71SS` -> `Kept`.
+Headers unchanged. Chips unchanged. Elements wider than their box: none visible (only a `sr-only` ": " separator
+between the badge and the reason, which is by design).
+
+Empty-matches turn: chips `hello` `there`, then the single muted line "No word of this message matched a list entry.";
+no "Word / Matched list entry / ..." header text anywhere on the page. No-event turn: the section holds only "No list
+matching was recorded on this turn.".
+
+## B (screenshots `B-1280-r2.png`, `B-375-lists-r2.png`, `B-375-tables-r2.png`)
+
+1280: still two real tables (Lists, Sections) with the token bars; the flow lists "Specifications, File types,
+Certificates" under "Matched list entries"; Lists rows are Specifications, File types, Certificates, Warehouses
+(Warehouses full list "-").
+
+375: both tables render as `display: block` stacks; each row is a block of `Label  value` lines (List, Comes from,
+Entries, Sent each message, Full list; Section, Kind, Tokens), every column visible, no element inside the card
+scrolls sideways. Observation (not a failure): the Sections token bars are not drawn at 375, only the number.
+
+## C
+
+Console: no `[error]` entries, `errors` empty. Page scroll widths as in the table.
+
+Servers stopped and session `viz` closed at the end of the round.
