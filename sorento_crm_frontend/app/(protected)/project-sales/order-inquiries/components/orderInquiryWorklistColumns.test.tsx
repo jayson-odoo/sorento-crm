@@ -2140,3 +2140,39 @@ describe('AC-DT-5/AC-DT-6 (PLAN-oi-decision-trail-ui.md, round 2): the decision 
     expect(DEFAULT_HIDDEN_COLUMNS).toContain('raise_event');
   });
 });
+
+describe('OI-RESERVE-PILL-QTY (CS report 21 Oct 2026): the Instruction cell reserve pill prints its qty', () => {
+  it('a requested row reads "Request to reserve 70", the open request qty the detail page already prints', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-requested',
+          reserve_state: 'requested',
+          requested_qty: '70',
+          reserved_qty: '0',
+        }),
+      ],
+      'verb',
+    );
+
+    const row = screen.getByTestId('row-row-requested');
+    expect(within(row).getByText('Request to reserve 70')).toBeInTheDocument();
+  });
+
+  it('a reserved row reads "Reserved 12"', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-reserved',
+          reserve_state: 'reserved',
+          reserved_qty: '12',
+          requested_qty: '0',
+        }),
+      ],
+      'verb',
+    );
+
+    const row = screen.getByTestId('row-row-reserved');
+    expect(within(row).getByText(/Reserved 12/)).toBeInTheDocument();
+  });
+});
