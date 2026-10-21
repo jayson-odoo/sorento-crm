@@ -7,7 +7,10 @@
  * the panel posted nothing for the order.
  */
 import { describe, expect, it } from 'vitest';
-import type { BoardContribution, BoardDraft } from '../types/fulfilmentPlanning.types';
+import type {
+  BoardContribution,
+  BoardDraft,
+} from '../types/fulfilmentPlanning.types';
 import {
   cancelledLinesFor,
   confirmDialogRowsFor,
@@ -60,9 +63,15 @@ const bookCancelled = [5, 14, 22, 30, 38, 46, 54, 62, 70, 78].map((lineNo) =>
   }),
 );
 // 12 replacement lines the change names, Cancel SO saved on each.
-const replacementLineNos = [82, 96, 112, 256, 272, 296, 480, 496, 512, 640, 656, 672];
+const replacementLineNos = [
+  82, 96, 112, 256, 272, 296, 480, 496, 512, 640, 656, 672,
+];
 const replacements = replacementLineNos.map((lineNo) =>
-  row({ key: `${SO}|${lineNo}|RL-NEW|2026-12-08`, project_line_id: `pl-${lineNo}`, line_no: lineNo }),
+  row({
+    key: `${SO}|${lineNo}|RL-NEW|2026-12-08`,
+    project_line_id: `pl-${lineNo}`,
+    line_no: lineNo,
+  }),
 );
 // Lines an active decision covers and nobody touched (the board's "Confirmed" rows).
 const covered = [1, 2, 3].map((lineNo) =>
@@ -75,8 +84,12 @@ const covered = [1, 2, 3].map((lineNo) =>
   }),
 );
 const contributions = [...covered, ...bookCancelled, ...replacements];
-const draft: BoardDraft = Object.fromEntries(replacements.map((line) => [line.key, CANCEL]));
-const named = new Set([...bookCancelled, ...replacements].map((line) => line.key));
+const draft: BoardDraft = Object.fromEntries(
+  replacements.map((line) => [line.key, CANCEL]),
+);
+const named = new Set(
+  [...bookCancelled, ...replacements].map((line) => line.key),
+);
 const blocked = new Set([SO]);
 const options = { batchNamedKeys: named } as never;
 
@@ -132,13 +145,17 @@ describe('the counter offers exactly what the press does (U1)', () => {
       ...bookCancelled.map((line) => line.line_no),
       ...replacementLineNos,
     ]);
-    expect(saved).toHaveLength(confirmSummaryFor(contributions, draft, blocked, options).toConfirm);
+    expect(saved).toHaveLength(
+      confirmSummaryFor(contributions, draft, blocked, options).toConfirm,
+    );
   });
 
   it('control: a covered untouched line is neither saved nor counted', () => {
-    expect(pressPostsContribution(covered[0], undefined, { batchBlocked: true } as never)).toBe(
-      false,
-    );
+    expect(
+      pressPostsContribution(covered[0], undefined, {
+        batchBlocked: true,
+      } as never),
+    ).toBe(false);
     expect(confirmSummaryFor(covered, {}, blocked, options).toConfirm).toBe(0);
   });
 });
@@ -171,10 +188,13 @@ describe('an AutoCount Cancel SO draft on a line the pending change names rides 
         batchBlocked: true,
         batchNamedKeys: namedAutocount,
       } as never),
-    ).toEqual([{ project_line_id: 'pl-82', reason: 'AutoCount Cancel SO CSO-0001' }]);
+    ).toEqual([
+      { project_line_id: 'pl-82', reason: 'AutoCount Cancel SO CSO-0001' },
+    ]);
     expect(
-      confirmSummaryFor([autocount], draft, blocked, { batchNamedKeys: namedAutocount } as never)
-        .toConfirm,
+      confirmSummaryFor([autocount], draft, blocked, {
+        batchNamedKeys: namedAutocount,
+      } as never).toConfirm,
     ).toBe(1);
     expect(
       pressPostsContribution(autocount, draft[autocount.key], {
