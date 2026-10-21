@@ -80,7 +80,7 @@ describe('+ Split on a pending, unsplit line', () => {
     expect(dateIn(608, 2).value).toBe('20/11/2026');
   });
 
-  it('guard AC-A4: clicking line 480 CHANGE QUANTITY value gives ONE split row 417 @ 20/10/2026', async () => {
+  it('guard AC-A4: clicking line 480 BREAKDOWN QTY value gives ONE split row 417 @ 20/10/2026', async () => {
     await renderDialog();
     await sheet();
     fireEvent.click(remainQty(480));

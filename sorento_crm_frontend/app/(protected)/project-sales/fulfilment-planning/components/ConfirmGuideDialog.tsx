@@ -282,6 +282,8 @@ export function ConfirmGuideDialog({
                       active
                       onlyLineIds={editable.onlyLineIds}
                       lineRemarks={editable.remarks}
+                      // OI-SPLIT-CONFIRM-POLISH: no drag-to-reorder on the Review split page.
+                      canDrag={false}
                       onSaveRemarks={(changes) =>
                         saveRemarks(
                           new Map(

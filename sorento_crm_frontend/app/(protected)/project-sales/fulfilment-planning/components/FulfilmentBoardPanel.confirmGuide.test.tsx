@@ -982,15 +982,14 @@ describe('T-FE6 (F18 F19 F21): the guide page is the editable split sheet', () =
     expect(previewConfirmMany).not.toHaveBeenCalled();
   });
 
-  it('F23: Escape during a keyboard drag does not close the guide', async () => {
-    await openEditablePage();
-    const grip = screen.getByRole('button', { name: /^Drag line \d+$/ });
-    act(() => grip.focus());
-    fireEvent.keyDown(grip, { key: ' ', code: 'Space' });
-    await screen.findByTestId('drop-cancel');
-    fireEvent.keyDown(document.activeElement ?? grip, { key: 'Escape', code: 'Escape' });
+  it('F23 (OI-SPLIT-CONFIRM-POLISH): the page has no drag, so Space on a row picks nothing up', async () => {
+    const page = await openEditablePage();
+    expect(within(page).queryByRole('button', { name: /^Drag / })).not.toBeInTheDocument();
+    const cell = within(page).getByRole('button', { name: /^Split line 3 quantity$/ });
+    act(() => cell.focus());
+    fireEvent.keyDown(cell, { key: ' ', code: 'Space' });
     await new Promise((r) => setTimeout(r, 50));
-    expect(screen.getByTestId('confirm-guide')).toBeInTheDocument();
+    expect(screen.queryByTestId('drop-cancel')).not.toBeInTheDocument();
   });
 
   it('F25: an unsplit saved line\'s Remark is a text box whose VALUE is the email\'s words', async () => {
@@ -1454,7 +1453,9 @@ describe('OI-SPLIT-CONFIRM-POLISH: the Review split page', () => {
     fireEvent.mouseMove(document, { clientX: 160 });
     fireEvent.mouseUp(document, { clientX: 160 });
     await waitFor(() => expect(parseFloat(qtyTh.style.width)).toBe(before + 60));
-    const named = ths.filter((th) => th.textContent?.trim());
+    // REMARK takes whatever width the others leave, so its edge moves with theirs
+    const named = ths.filter((th) => th.textContent?.trim() && th.textContent.trim().toLowerCase() !== 'remark');
+    expect(named.length).toBeGreaterThan(8);
     for (const th of named) expect(th.querySelector('.cursor-col-resize')).not.toBeNull();
   });
 });

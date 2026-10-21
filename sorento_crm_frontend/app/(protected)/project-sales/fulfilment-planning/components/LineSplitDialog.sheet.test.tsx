@@ -85,8 +85,8 @@ describe('AC-A2 one table, columns and line sort', () => {
       'new qty',
       'delivery date',
       'new date',
-      'change quantity',
-      'change date',
+      'breakdown qty',
+      'breakdown date',
       'remark',
       'balance',
     ]);
@@ -220,7 +220,7 @@ describe('AC-A3 merged cells and the extra notes', () => {
 });
 
 describe('AC-A4 REMAIN', () => {
-  it('an unsplit line shows its own QTY and DELIVERY DATE in CHANGE QUANTITY and CHANGE DATE, never the word REMAIN', async () => {
+  it('an unsplit line shows its own QTY and DELIVERY DATE in BREAKDOWN QTY and BREAKDOWN DATE, never the word REMAIN', async () => {
     await renderDialog();
     await sheet();
     expect(remainQty(608)).toHaveTextContent('192');
