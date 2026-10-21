@@ -73,6 +73,8 @@ def _row(db, batch, order, core, mirror, kind):
         item_code="ZZT-ITEM",
         kind=kind,
         facts_json={},
+        # As the book upload writes them (dev batch a0df3624): the new line's qty and status.
+        to_json={"qty": QTY, "status": "open", "item_code": None} if kind == "added" else None,
         proposal_json={"project_line_id": str(mirror.id)} if kind == "added" else None,
         applied_state="pending",
     )
@@ -80,7 +82,7 @@ def _row(db, batch, order, core, mirror, kind):
     return row
 
 
-def _world(client, world, *, n_old, n_cancel, n_covered, n_open):
+def _world(client, world, *, n_old, n_cancel, n_covered, n_open, autocount=False):
     """Old lines confirmed, then the book cancels them and adds `n_cancel + n_covered +
     n_open` replacement lines. `n_covered` of those are confirmed afterwards by an ordinary
     press (their `added` rows stay pending), `n_cancel` carry a saved Cancel SO, `n_open`
@@ -108,6 +110,12 @@ def _world(client, world, *, n_old, n_cancel, n_covered, n_open):
         rows[mirror.id] = _row(db, batch, order, core, mirror, "cancelled")
     for core, mirror in [*cancel, *covered, *still_open]:
         rows[mirror.id] = _row(db, batch, order, core, mirror, "added")
+    if autocount:
+        # An AutoCount Cancel SO document cancelled these lines afterwards; the ingest saved
+        # Transfer to Cancel SO on each (`propose_autocount_cancel`): `awaits_cancel_so`.
+        for core, _m in cancel:
+            core.line_status = "cancelled"
+            core.cancelled_by_cancel_doc = True
     db.commit()
     return {
         "order": order,
@@ -120,7 +128,7 @@ def _world(client, world, *, n_old, n_cancel, n_covered, n_open):
     }
 
 
-def _press(client, w, *, lines=(), cancel=()):
+def _press(client, w, *, lines=(), cancel=(), reason=REASON):
     response = client.post(
         f"{BASE}/fulfilment-planning/confirm-all",
         json={
@@ -130,7 +138,7 @@ def _press(client, w, *, lines=(), cancel=()):
                     "batch_id": w["batch_id"],
                     "lines": list(lines),
                     "cancelled_lines": [
-                        {"project_line_id": m.id, "reason": REASON} for _c, m in cancel
+                        {"project_line_id": m.id, "reason": reason} for _c, m in cancel
                     ],
                 }
             ]
@@ -147,13 +155,20 @@ def _states(db, w, group):
     return {db.get(PlanningChangeRow, w["rows"][m.id].id).applied_state for _c, m in w[group]}
 
 
-def test_so394881_one_press_applies_the_change_and_sends_the_held_cancels(api):
-    """10 cancelled + 30 added rows; 12 with Cancel SO, the other 18 already confirmed."""
+@pytest.mark.parametrize("source", ["board", "autocount_cancel"])
+def test_so394881_one_press_applies_the_change_and_sends_the_held_cancels(api, source):
+    """10 cancelled + 30 added rows; 12 with Cancel SO, the other 18 already confirmed. The
+    Cancel SO is either saved on the board or the draft an AutoCount Cancel SO document left
+    (reason "AutoCount Cancel SO <doc>"), which the results echo per line."""
     client, world = api
     db = world.db
-    w = _world(client, world, n_old=10, n_cancel=12, n_covered=18, n_open=0)
+    autocount = source == "autocount_cancel"
+    w = _world(client, world, n_old=10, n_cancel=12, n_covered=18, n_open=0, autocount=autocount)
+    reason = "AutoCount Cancel SO CSO-0001" if autocount else REASON
 
-    result = _press(client, w, cancel=w["cancel"])
+    result = _press(client, w, cancel=w["cancel"], reason=reason)
+
+    assert {r["reason"] for r in result["lines_cancelled"]} == {reason}
 
     assert sorted(r["line_no"] for r in result["lines_cancelled"]) == [
         m.line_no for _c, m in w["cancel"]

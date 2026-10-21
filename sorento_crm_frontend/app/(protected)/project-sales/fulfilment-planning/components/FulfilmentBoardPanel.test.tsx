@@ -5241,7 +5241,9 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
           inquiry_rows_created: 0,
           lines_confirmed: [],
           lines_carried: 0,
-          lines_cancelled: [{ line_no: 2, item_code: 'CB110' }],
+          lines_cancelled: [
+            { line_no: 2, item_code: 'CB110', reason: 'AutoCount Cancel SO CSO-0001' },
+          ],
           lines_retired: [{ line_no: 1, item_code: 'WESERP10B' }],
           planning_change_applied: true,
         },
@@ -5317,6 +5319,9 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
       'SO403340: applied the AutoCount change; 1 line transferred to Cancel SO',
     );
     expect(block).toHaveTextContent('Retired by the AutoCount change: line 1 WESERP10B');
+    expect(block).toHaveTextContent(
+      'Transferred to Cancel SO: line 2 CB110 (AutoCount Cancel SO CSO-0001)',
+    );
     expect(block).not.toHaveTextContent(/commits after the pending change/);
   });
 

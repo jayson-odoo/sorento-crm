@@ -142,3 +142,45 @@ describe('the counter offers exactly what the press does (U1)', () => {
     expect(confirmSummaryFor(covered, {}, blocked, options).toConfirm).toBe(0);
   });
 });
+
+// The 12 SO394881 drafts are most likely AUTOMATIC: an AutoCount Cancel SO document cancelled the
+// line and the ingest saved Transfer to Cancel SO on it (`propose_autocount_cancel`, source
+// `autocount_cancel`, reason "AutoCount Cancel SO <doc>"). The line is cancelled in the book but
+// still awaits the transfer (`awaitsCancelSo`). Any order with an open batch naming such a line
+// was stuck the same way, so the rule is general, not SO394881's.
+describe('an AutoCount Cancel SO draft on a line the pending change names rides in the press too', () => {
+  const autocount = row({
+    key: `${SO}|82|RL-NEW|2026-12-08`,
+    project_line_id: 'pl-82',
+    line_no: 82,
+    cancelled: true,
+    cancel_open_oi_rows: 2,
+  } as never);
+  const draft: BoardDraft = {
+    [autocount.key]: {
+      verdict: 'cancelled',
+      reason: 'AutoCount Cancel SO CSO-0001',
+      source: 'autocount_cancel',
+    } as unknown as BoardDraft[string],
+  };
+  const namedAutocount = new Set([autocount.key]);
+
+  it('is sent in cancelled_lines with its AutoCount reason, counted and Saved', () => {
+    expect(
+      cancelledLinesFor([autocount], SO, draft, {
+        batchBlocked: true,
+        batchNamedKeys: namedAutocount,
+      } as never),
+    ).toEqual([{ project_line_id: 'pl-82', reason: 'AutoCount Cancel SO CSO-0001' }]);
+    expect(
+      confirmSummaryFor([autocount], draft, blocked, { batchNamedKeys: namedAutocount } as never)
+        .toConfirm,
+    ).toBe(1);
+    expect(
+      pressPostsContribution(autocount, draft[autocount.key], {
+        batchBlocked: true,
+        batchNamedKeys: namedAutocount,
+      } as never),
+    ).toBe(true);
+  });
+});
