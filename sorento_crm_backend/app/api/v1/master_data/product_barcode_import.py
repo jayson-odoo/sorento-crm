@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -25,7 +26,7 @@ async def preview_barcode_import(
 ) -> dict[str, Any]:
     """What the file would do, per row, plus the token apply needs. Writes nothing."""
     data, name = await svc.read_barcode_upload(file)
-    return svc.preview(db, data, name, user_id=user.get("id"))
+    return await run_in_threadpool(svc.preview, db, data, name, user_id=user.get("id"))
 
 
 @router.post("/barcode-import/apply")
@@ -38,7 +39,7 @@ async def apply_barcode_import(
     """Write only the New and Change rows, in one transaction. Refused (409) unless the same
     user previewed the same bytes."""
     data, name = await svc.read_barcode_upload(file)
-    svc.check_preview_token(data, user.get("id"), preview_token)
-    out = svc.apply(db, data, name)
+    await run_in_threadpool(svc.check_preview_token, data, user.get("id"), preview_token, db)
+    out = await run_in_threadpool(svc.apply, db, data, name)
     db.commit()
     return out

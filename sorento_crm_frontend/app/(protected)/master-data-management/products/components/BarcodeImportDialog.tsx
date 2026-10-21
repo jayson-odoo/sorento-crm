@@ -224,6 +224,16 @@ const PREVIEW_COLUMNS: ColumnDef<BarcodeImportRow>[] = [
     meta: { headerTitle: 'Product' },
   },
   {
+    id: 'status',
+    header: ({ column }) => (
+      <DataGridColumnHeader title="Status" column={column} />
+    ),
+    cell: ({ row }) => <StatusCell row={row.original} />,
+    size: 240,
+    enableSorting: false,
+    meta: { headerTitle: 'Status' },
+  },
+  {
     id: 'barcode',
     header: ({ column }) => (
       <DataGridColumnHeader title="Barcode" column={column} />
@@ -236,16 +246,6 @@ const PREVIEW_COLUMNS: ColumnDef<BarcodeImportRow>[] = [
     size: 180,
     enableSorting: false,
     meta: { headerTitle: 'Barcode' },
-  },
-  {
-    id: 'status',
-    header: ({ column }) => (
-      <DataGridColumnHeader title="Status" column={column} />
-    ),
-    cell: ({ row }) => <StatusCell row={row.original} />,
-    size: 240,
-    enableSorting: false,
-    meta: { headerTitle: 'Status' },
   },
 ];
 

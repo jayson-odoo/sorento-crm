@@ -459,6 +459,7 @@ def _xlsx_with_row(row_no: int, rows: list[list]) -> bytes:
                 last = len(rows)
                 xml = re.sub(rf'<row r="{last}"', f'<row r="{row_no}"', xml)
                 xml = re.sub(rf'<c r="([A-Z]+){last}"', rf'<c r="\g<1>{row_no}"', xml)
+                xml = re.sub(r'<dimension ref="A1:([A-Z]+)\d+"', rf'<dimension ref="A1:\g<1>{row_no}"', xml)
                 blob = xml.encode()
             zf.writestr(item, blob)
     return out.getvalue()

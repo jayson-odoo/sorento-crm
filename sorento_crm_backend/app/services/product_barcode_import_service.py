@@ -17,6 +17,7 @@ import hashlib
 import hmac
 import io
 import re
+import zipfile
 from typing import Any, Iterable, Optional
 
 from fastapi import HTTPException, UploadFile, status
@@ -35,6 +36,13 @@ ALLOWED_EXTENSIONS = (".xlsx", ".csv")
 #: Title lines above the table are allowed; the header is the first row naming both columns.
 _HEADER_SCAN_ROWS = 20
 _FLUSH_CHUNK = 1000
+#: Excel's own row limit; a sheet reaching past it is malformed (openpyxl read-only would
+#: fill the gap with empty rows, so one cell at r=30,000,000 costs seconds of CPU).
+_MAX_SHEET_ROWS = 1_048_576
+#: Non-empty data rows per file. The catalogue is ~12k products.
+_MAX_DATA_ROWS = 50_000
+#: Sum of the workbook archive's uncompressed members; guards a zip bomb under 25 MB.
+_MAX_UNCOMPRESSED_BYTES = 200 * 1024 * 1024
 
 # Normalized header (lowercase, non-alphanumerics collapsed to one space).
 _CODE_HEADERS = (
@@ -92,19 +100,43 @@ async def read_barcode_upload(file: UploadFile) -> tuple[bytes, str]:
     return data, name
 
 
+def _bad_request(detail: str) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+
+def _guarded(rows: Iterable[tuple]) -> Iterable[tuple]:
+    """Rows with the sheet-length cap applied and any reader failure turned into a 400."""
+    try:
+        for idx, row in enumerate(rows, start=1):
+            if idx > _MAX_SHEET_ROWS:
+                raise _bad_request("This sheet goes past row 1,048,576, the most Excel allows.")
+            yield row
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _bad_request("This file could not be read.") from exc
+
+
 def _sheets(data: bytes, name: str) -> Iterable[Iterable[tuple]]:
     """Each sheet's rows. A workbook is searched sheet by sheet for the header row."""
     if name.endswith(".csv"):
         text_data = data.decode("utf-8-sig", errors="replace")
-        return [(tuple(r) for r in csv.reader(io.StringIO(text_data)))]
+        return [_guarded(tuple(r) for r in csv.reader(io.StringIO(text_data)))]
     import openpyxl
 
     try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            if sum(i.file_size for i in zf.infolist()) > _MAX_UNCOMPRESSED_BYTES:
+                raise _bad_request("This workbook is too large to read.")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _bad_request("This file could not be read as an Excel workbook.") from exc
+    try:
         wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True, read_only=True)
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                            detail="This file could not be read as an Excel workbook.") from exc
-    return [ws.iter_rows(values_only=True) for ws in wb.worksheets]
+        raise _bad_request("This file could not be read as an Excel workbook.") from exc
+    return [_guarded(ws.iter_rows(values_only=True)) for ws in wb.worksheets]
 
 
 def _cell(value: Any) -> str:
@@ -234,6 +266,8 @@ def resolve(db: Session, data: bytes, name: str) -> dict[str, Any]:
         if not code and not barcode:
             continue
         parsed.append((idx, code, barcode, at(row, note_col)))
+        if len(parsed) > _MAX_DATA_ROWS:
+            raise _bad_request("This file has more than 50,000 rows. Split it and import in parts.")
 
     products = _products_by_code(db, {c.upper() for _, c, _, _ in parsed if c})
     holders = _barcode_holders(db, {b for _, _, b, _ in parsed if b and len(b) <= MAX_BARCODE_LEN})
@@ -318,16 +352,27 @@ def resolve(db: Session, data: bytes, name: str) -> dict[str, Any]:
     }
 
 
-def preview_token(data: bytes, user_id: Any) -> str:
-    """Proof that this user previewed exactly these bytes. Apply refuses a file without one,
-    so nothing is written that nobody has seen the per-row statuses of."""
+def _scope_marker(db: Session) -> str:
+    """The caller's company scope as text, so a token minted in one company is void in another."""
+    scope = get_company_scope(db)
+    if isinstance(scope, frozenset):
+        return ",".join(sorted(str(c) for c in scope))
+    return "all" if scope is None else "unset"
+
+
+def preview_token(data: bytes, user_id: Any, db: Session) -> str:
+    """Proof that this user previewed exactly these bytes in this company scope. Apply
+    refuses a file without one, so nothing is written that nobody has seen the per-row
+    statuses of."""
     digest = hashlib.sha256(data).hexdigest()
     key = (settings.jwt_secret or "").encode()
-    return hmac.new(key, f"barcode-import:{user_id}:{digest}".encode(), hashlib.sha256).hexdigest()
+    msg = f"barcode-import:{user_id}:{_scope_marker(db)}:{digest}"
+    return hmac.new(key, msg.encode(), hashlib.sha256).hexdigest()
 
 
-def check_preview_token(data: bytes, user_id: Any, token: Optional[str]) -> None:
-    if not token or not hmac.compare_digest(token, preview_token(data, user_id)):
+def check_preview_token(data: bytes, user_id: Any, token: Optional[str], db: Session) -> None:
+    expected = preview_token(data, user_id, db).encode()
+    if not token or not hmac.compare_digest(token.encode(), expected):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Test this file before applying it.",
@@ -337,7 +382,7 @@ def check_preview_token(data: bytes, user_id: Any, token: Optional[str]) -> None
 def preview(db: Session, data: bytes, name: str, user_id: Any = None) -> dict[str, Any]:
     out = resolve(db, data, name)
     out.pop("_writes")
-    out["preview_token"] = preview_token(data, user_id)
+    out["preview_token"] = preview_token(data, user_id, db)
     return out
 
 
