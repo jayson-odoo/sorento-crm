@@ -154,3 +154,73 @@ scrolls sideways. Observation (not a failure): the Sections token bars are not d
 Console: no `[error]` entries, `errors` empty. Page scroll widths as in the table.
 
 Servers stopped and session `viz` closed at the end of the round.
+
+---
+
+# Round 3 (v2 amendment, head `4326d71ae9`)
+
+Head: `4326d71ae9` (feat(chatbot): CHAT-INDEX-VIZ v2 plain words, groups, looked-up step). Sandbox DB at
+`ccmp_0001_composer_switch`, still holding the earlier seed (user, 24 modules). Re-seeded for this round (ZZ only,
+scripts not committed): a v77-shaped parser version v2000 (the legacy order-broaden text, 77 `== X ==` headings
+counting the appended CLOSED LISTS, `{{specs}}` under SELF_REFERENCE, `{{brands}}`, `closed_lists_prompt.SECTION`)
+with the production label; a `finish` spec ("Finish", `french_gold` -> "French Gold", `-FRG` code-ending rule); two
+attachment types (ZZ Technical Drawing, ZZ Photos); two warehouses; one brand; product ZZKT71SS. Three turns
+regenerated: the main turn's `closed_lists_index.matches` came from the real
+`candidates.shortlist` + `closed_lists_index.block_with_matches` (so they carry `plain` and `source`), plus a `tool` event
+`stock_balance` with a product_id UUID in its args; one turn with `matches: []`; one with no event.
+Navigation as before (sidebar to Chat History and to Prompts; `?turn=<id>` for the drawers, the one deep URL).
+
+| Check | 1280x900 | 375x812 |
+|---|---|---|
+| A. Four columns Word / Matched list entry / What the bot understood / Kept or dropped | PASS | PASS (stacked cards, same labels) |
+| A. frg entry "Finish: French Gold" + muted "from the product finish list (code ending -FRG)" | PASS | PASS |
+| A. Understood `"frg" read as Finish: French Gold` | PASS | PASS |
+| A. "Show details" off by default; on shows "What the bot was given" raw lines | PASS | PASS (toggle works, shown off) |
+| A. "What the bot looked up": "Stock balance", details, no UUID | PASS | PASS |
+| A. Empty matches / no event lines | PASS | PASS |
+| B. Summary, 6 flow boxes, Lists table with "How a message is matched" | PASS | PASS |
+| B. "What the bot is given": Rules, Examples, Product lists, Lists from other settings (4) | PASS | PASS |
+| B. No prompt heading text ("SELF_REFERENCE", "entities[]", "== ") | PASS | PASS |
+| B. 375 tables stack, every value visible, no inner sideways scroll | n/a | PASS |
+| C. No "parser", "token", "grounding", snake_case in the new UI | PASS | PASS |
+| C. Console errors | PASS (none) | PASS (none) |
+| C. Page sideways scroll | PASS (drawer 1280/1280, prompts 1265/1280) | PASS (drawer 375/375, prompts 360/375) |
+
+## A (screenshots `A-1280-r3.png`, `A-1280-details-r3.png`, `A-375-r3.png`, `A-empty-375-r3.png`, `A-none-375-r3.png`)
+
+innerText of the section, details off: chips `stock` (plain) `zzkt71ss` `frg` (filled); `Show details`; headers
+`Word`, `Matched list entry`, `What the bot understood`, `Kept or dropped`; rows
+`zzkt71ss | ZZKT71SS (ZZT ZZKT71SS) / from the product codes | "zzkt71ss" read as product ZZKT71SS | Kept` and
+`frg | Finish: French Gold / from the product finish list (code ending -FRG) | "frg" read as Finish: French Gold -> Kept;
+"frg" read as a warehouse -> Dropped + a finish code ending, not on the warehouse list`; then
+`What the bot looked up / Stock balance / Finish: french gold / Product codes: ZZKT71SS` (the product_id UUID is absent).
+Details on: button reads `Hide details`, each row gains `What the bot was given` with `- "frg": spec finish = french_gold
+(French Gold)` and `- "zzkt71ss": code ZZKT71SS (ZZT ZZKT71SS)` in monospace. The no-snake_case scan is for the section
+with details off; the raw lines behind the toggle intentionally show registry keys.
+
+Observation: the looked-up detail reads `Finish: french gold` (the arg value with `_` turned to a space, lower case)
+while the row above reads "French Gold"; harmless, not in the spec's wording rules.
+
+Empty-matches turn: "No word of this message matched a list entry." with no header row; no-event turn: "No list
+matching was recorded on this turn.".
+
+## B (screenshots `B-1280-r3.png`, `B-375-top-r3.png`, `B-375-lists-r3.png`, `B-375-tables-r3.png`)
+
+Summary: "Each message, v2000 gives the bot about 34.3k of instructions and lists." + badge "Only the matching entries are
+sent". Flow, six boxes: Customer's message, Matched list entries (Specifications, File types, Certificates), What the bot
+was given, What the bot understood, Kept or dropped (Checked against the same lists and the warehouse list), What the bot
+looked up. Lists columns: List, Comes from, How a message is matched, Entries, Size each message, Full list size
+(Specifications 1 / 36 / 26; File types 2 / 30 / 20; Certificates 0 / 36 / 0; Warehouses 2 / 0 / -). "What the bot is
+given": Rules 30.5k, Examples 3.7k, Product lists 102, Lists from other settings 5 (the last one appears only once a
+brand exists; with no brand its size is 0 and the group is omitted, as specified). 375: both tables are `display:block`
+stacks with every value visible.
+
+Scans: inside `[data-testid=prompt-architecture]` no "parser", "token", "grounding", "SELF_REFERENCE", "entities[]",
+"== " and no snake_case at either width. Whole-page scan of the prompt page still finds text outside the component and
+outside this lane: the prompt's own name `chatbot_semantic_parser` and its description, older versions' commit messages,
+and the `{{current_date}}` variable chip. The turn drawer whole-page scan (details off) is clean.
+
+Cosmetic: at 1280 the six boxes are narrow, so "Kept or dropped" with its caption wraps to eight short lines and
+"Customer's message" nearly touches its arrow; nothing is clipped.
+
+Servers stopped and session `viz` closed.
