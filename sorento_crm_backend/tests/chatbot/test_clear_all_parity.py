@@ -315,3 +315,74 @@ def test_a_state_path_reset_on_an_early_return_drops_a_list_that_is_not_the_ques
     new_state, plan = _turn(state, v)
     assert "stock_pick_declined" in plan.trace.rules_fired
     assert not new_state.focus.last_list, new_state.focus.last_list
+
+
+# --- a cancel answer is a topic reset, whether or not a question is stored ----------------------------
+
+
+def _customer_pick():
+    from app.services.chatbot.turn import pending as turn_pending
+
+    return turn_pending.ask(
+        "customer_pick",
+        [
+            {"position": i, "label": f"ZZT Customer {i}", "code": f"ZZC00{i}", "entity_type": "customer",
+             "uuid": ht.uuid_of(f"ZZC00{i}"), "uuids": [ht.uuid_of(f"ZZC00{i}")], "payload": {}}
+            for i in (1, 2)
+        ],
+        asked_at_turn=4,
+        payload={"domain": "order", "domains": ["order"]},
+    )
+
+
+def _customer_state(gate: bool):
+    customers = [
+        {"raw": f"ZZC00{i}", "hint": "customer", "canonical_code": f"ZZC00{i}", "uuid": ht.uuid_of(f"ZZC00{i}"),
+         "current_message": False, "confident": True}
+        for i in (1, 2)
+    ]
+    focus = Focus(customers=customers, domains=["order"])
+    return replace(ht.state(focus, pending=_customer_pick(), turn_no=5), state_path=gate)
+
+
+def _customer_parse(gate: bool, mode: str):
+    v = verdict(
+        domain_hint="order", intent_hint="check_order", entities=[], topic_reset=False,
+        is_affirmative=False,
+        open_question_answer={"mode": mode, "picked": [], "items": [], "qty_for_all": None},
+    )
+    if gate:
+        v["state_changes"] = [{"op": "close_question", "axis": None, "position": None}]
+    return v
+
+
+@GATES
+def test_a_cancel_over_a_customer_pick_is_a_reset_nothing_is_fetched_for_the_carried_customers(gate):
+    state, plan = _turn(_customer_state(gate), _customer_parse(gate, "cancel"))
+    assert not plan.fetch, [(s.domain, s.entities) for s in plan.fetch]
+    assert not state.focus.customers, state.focus.customers
+    assert state.pending is None
+
+
+@GATES
+def test_guard_a_no_over_the_customer_pick_keeps_todays_behaviour(gate):
+    state, _plan = _turn(_customer_state(gate), _customer_parse(gate, "no"))
+    assert state.pending is None  # the decline clears it, as before
+    assert "topic_reset" not in _plan.trace.rules_fired and "reset_on_topic" not in _plan.trace.rules_fired
+
+
+@GATES
+def test_guard_a_cancel_over_a_stock_did_you_mean_still_drops_the_token_and_the_question(gate):
+    state, plan = _turn(_reset_state(gate, "not_an_answer"), _customer_parse_stock(gate))
+    assert state.pending is None
+    assert not [p for p in state.focus.products if not p.get("uuid")], state.focus.products
+
+
+def _customer_parse_stock(gate: bool):
+    v = verdict(
+        domain_hint="inventory", intent_hint="check_stock", entities=[], topic_reset=False, is_affirmative=False,
+        open_question_answer={"mode": "cancel", "picked": [], "items": [], "qty_for_all": None},
+    )
+    if gate:
+        v["state_changes"] = [{"op": "close_question", "axis": None, "position": None}]
+    return v
