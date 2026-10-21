@@ -556,9 +556,9 @@ def run(
     named_domain = verdict.get("domain_hint")
     oqa = verdict.get("open_question_answer")
     declined = isinstance(oqa, dict) and oqa.get("mode") in ("no", "cancel")
-    # A decline is an answer too ("none of them", "start over"): the parser said so, whether or not
-    # the state path already took the stored question off (a `close_question` op).
-    answers_pending = (pending is not None and decision_kind == "answer") or declined
+    # A decline is an answer too ("none of them", "start over"), to a STORED question: with nothing
+    # stored, a "no" answers the task's own question and resume re-asks it.
+    answers_pending = pending is not None and (decision_kind == "answer" or declined)
 
     # (1) Close or park on a topic reset. A reset aimed at a task's OWN domain ends
     # it; one aimed elsewhere parks it, and the focus keeps the task through the wipe
