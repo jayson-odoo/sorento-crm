@@ -12,6 +12,9 @@ Status: in review on PR #1815. Track: small fix (no migration, no auth, no UI ch
   - two donors: `ORDER BACK BRW-X 6 & ORDER BACK BRW-Y 4`
   - Use + Borrow: `USE BRW-BB 6 & ORDER BACK BRW-KL 4`
   - donor moved X to Y: `ORDER BACK BRW-Y` (X not told)
+  - donor moved X to Y in the same Confirm as a qty cut or a date move (lead, review round 2):
+    the new donor is still named, after the date and qty words as for any change of decision:
+    `CANCEL 2, ORDER BACK BRW-Y`, `DELAY, ORDER BACK BRW-Y`
   - borrow from the line's own location: `ORDER BACK`
   - rejected borrow: `CANCEL ALL` (unchanged)
 - Resend uses the same function and rule. The OI Excel is unchanged.
@@ -40,6 +43,6 @@ Status: in review on PR #1815. Track: small fix (no migration, no auth, no UI ch
 - Reviewer S2 (not taken): a resent Order back BUY row whose `stock_location` went stale after
   the SO line's location moved would read `ORDER BACK <old location>`. A Confirm whose location
   differs from the row's supersedes it with a fresh row at the new location (the settle gate,
-  `project_order_inquiry_service.py:2502`), so only a location move with no Confirm followed by
+  `_carried_rows_stand` in `project_order_inquiry_service.py`), so only a location move with no Confirm followed by
   a resend can reach it; gating the donor on the "Order-back:" note instead would drop it from
   older borrow rows. Trigger to revisit: a real resend that names a stale location.
