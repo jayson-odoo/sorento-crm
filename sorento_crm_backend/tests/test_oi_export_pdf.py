@@ -161,6 +161,18 @@ def test_worklist_pdf_post_creates_download_row_and_enqueues_with_filters(api, m
     assert sent == []
 
 
+def test_worklist_pdf_and_excel_do_not_block_each_other(api, monkeypatch):
+    from app.services import queue_service
+
+    client, db, company_id = api
+    _header(db, company_id)
+    monkeypatch.setattr(queue_service, "enqueue_job", _fake_enqueue([]))
+
+    assert client.post(f"{HEADERS_BASE}/export", json={}).status_code in (200, 201)
+    assert client.post(f"{HEADERS_BASE}/export/pdf", json={}).status_code in (200, 201)
+    assert client.post(f"{HEADERS_BASE}/export/pdf", json={}).status_code == 409
+
+
 def test_worklist_pdf_post_rejects_bad_filter(api):
     client, db, _company_id = api
     resp = client.post(f"{HEADERS_BASE}/export/pdf", json={"project_id": "not-a-uuid"})
@@ -283,6 +295,43 @@ def test_worklist_pdf_task_prints_only_the_filtered_rows(api, monkeypatch):
     assert f"{MARKER}-DROPME" not in pdf and dropped["core"].so_number not in pdf
 
 
+def test_worklist_pdf_task_never_prints_another_companys_rows(api, monkeypatch):
+    """The list task adopts the enqueuing request's company: a matching OI of another
+    company stays out of the PDF."""
+    from app.models.base import UNSET, set_company_scope
+    from app.models.company import Company
+    from app.services.download_service import DownloadService
+    from app.tasks import export_tasks
+
+    client, db, company_id = api
+    other_id = _uid()
+    db.add(Company(id=other_id, name=f"{MARKER} Other Co", code=f"ZZT{other_id[:6]}"))
+    db.flush()
+    item = f"{MARKER}-SCOPED"
+    ours = _header(db, company_id, rows=[{"item_code": item}])
+    set_company_scope(db, None)
+    theirs = _header(db, other_id, rows=[{"item_code": item}])
+    user_id = _user(db, f"{MARKER} scoped exporter")
+    db.flush()
+    dl = DownloadService(db).create(
+        user_id=user_id, kind="order_inquiry_worklist_pdf", filename="order-inquiries.pdf",
+    )
+    monkeypatch.setattr(export_tasks, "SessionLocal", lambda: _NoCloseSession(db))
+    captured: dict = {}
+    monkeypatch.setattr(export_tasks, "default_provider", lambda: "s3")
+    monkeypatch.setattr(export_tasks, "get_backend", lambda p: _CapturingBackend(captured))
+
+    set_company_scope(db, UNSET)
+    result = export_tasks.generate_order_inquiry_worklist_xlsx(
+        str(dl.id), {"query": item}, user_id, company_id=str(company_id), fmt="pdf",
+    )
+
+    assert result["status"] == "ready", result
+    pdf = _pdf_text(captured["bytes"])
+    assert ours["core"].so_number in pdf
+    assert theirs["core"].so_number not in pdf
+
+
 # --------------------------------------------------------------------------- #
 # Layout (pure): the email's columns and split-row rule
 # --------------------------------------------------------------------------- #
@@ -322,6 +371,22 @@ def test_layout_one_block_per_so_and_split_rows_follow_the_email():
     assert "NEW QTY" in so1 and "NEW DATE" in so1
     assert "NEW QTY" not in so2 and "NEW DATE" not in so2
     assert "01/09/2026" in so1 and "A CO" in so1 and "P1" in so1
+
+
+def test_layout_lines_follow_the_so_line_number_like_the_email():
+    """`_handover_sort_key`: SO line number ascending, a row naming no line last."""
+    from app.services.order_inquiry_pdf import orders
+
+    rows = [
+        {"so_number": "SO1", "so_line_no": None, "so_line_id": None, "item_code": "AAA"},
+        {"so_number": "SO1", "so_line_no": 2, "so_line_id": "f-uuid", "item_code": "BBB"},
+        {"so_number": "SO1", "so_line_no": 1, "so_line_id": "z-uuid", "item_code": "ZZZ"},
+        {"so_number": "SO1", "so_line_no": 10, "so_line_id": "a-uuid", "item_code": "CCC"},
+    ]
+
+    codes = [line["item_code"] for line in orders(rows)[0]["lines"]]
+
+    assert codes == ["ZZZ", "BBB", "CCC", "AAA"]
 
 
 def test_layout_escapes_text():

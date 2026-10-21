@@ -60,7 +60,8 @@ def _line(row: Dict[str, Any]) -> Dict[str, str]:
 
 def orders(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """`[{so_number, so_date, customer, project, lines}]`, by S/O no, each S/O's lines in
-    item-code order with a split line's rows kept together - the order the email reads in."""
+    the email's order (`_handover_sort_key`): the SO line number ascending, a row naming no
+    line last, then item code, with a split line's rows kept together in plan order."""
     by_so: Dict[str, Dict[str, Any]] = {}
     for row in rows:
         so_number = str(row.get("so_number") or "")
@@ -81,7 +82,10 @@ def orders(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
         members = sorted(
             order.pop("rows"),
             key=lambda row: (
-                str(row.get("so_line_id") or row.get("item_code") or ""),
+                row.get("so_line_no") is None,
+                row.get("so_line_no") or 0,
+                str(row.get("item_code") or ""),
+                str(row.get("so_line_id") or ""),
                 row["plan_key"][2] if row.get("plan_key") else 0,
             ),
         )

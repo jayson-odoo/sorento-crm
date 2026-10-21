@@ -1257,6 +1257,7 @@ def _oi_export(db, fmt: str, filters: dict) -> tuple[str, bytes, str, str]:
     filename, file_bytes = service.export_xlsx(**filters)
     return filename, file_bytes, _OI_XLSX_CONTENT_TYPE, ""
 
+
 def generate_order_inquiry_xlsx(
     download_id: str, inquiry_id: str, user_id: str, *, fmt: str = "xlsx",
 ) -> dict:

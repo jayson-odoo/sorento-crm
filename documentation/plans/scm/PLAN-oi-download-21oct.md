@@ -17,12 +17,12 @@ like purchase request and sponsorship form".
 
 ## Build
 
-- `POST /api/v1/order-inquiries/{id}/export/pdf` and `POST /api/v1/order-inquiries/export/pdf`
+- `POST /api/v1/project-sales/order-inquiries/{id}/export/pdf` and `.../order-inquiries/export/pdf`
   (filtered rows), same shape as `POST /procurement/purchase-requests/{id}/export/pdf`: a
   `user_downloads` row + an RQ task on `imports`, the file arrives in My Downloads.
 - PDF layout = the OI email: one table per S/O (S/O NO, SO DATE, CUSTOMER, PROJECT), then the item
-  lines LOCATION / ITEM CODE / QTY / DELIVERY / REMARK. Rendered with xhtml2pdf, the engine the PR /
-  sponsorship form PDF uses (`purchase_request_pdf_service.py`).
+  lines LOCATION / ITEM CODE / QTY / DELIVERY / REMARK. Rendered with WeasyPrint (`pdf_render.render_html`), the engine
+  the PR / sponsorship form PDF uses (`purchase_request_pdf_service.py`).
 - Permission: the same as the Excel export on the same screen. No email is sent.
 - FE: "Print / Download PDF" next to "Export Excel" (detail gear menu, lines list toolbar), same
   label and icon the PR detail uses.
