@@ -181,6 +181,33 @@ export interface DryRunResponse {
   turn?: ChatbotTurn | null;
 }
 
+/** CHAT-INDEX-VIZ: what the parser prompt sends on every message, section by section. */
+export interface PromptArchitectureSection {
+  title: string;
+  tokens: number;
+  kind: 'text' | 'filled_from_data' | 'closed_lists';
+}
+
+export interface PromptArchitectureList {
+  key: string;
+  name: string;
+  source: string;
+  href: string;
+  entries: number;
+  sent_each_message_tokens: number;
+  full_list_tokens: number;
+  checked_only?: boolean;
+}
+
+export interface PromptArchitecture {
+  version: number;
+  mode: 'index' | 'block';
+  uses_closed_lists: boolean;
+  total_tokens: number;
+  sections: PromptArchitectureSection[];
+  lists: PromptArchitectureList[];
+}
+
 const BASE = '/api/v1/system/ai-assistant/prompts';
 
 export async function listPromptKeys(): Promise<PromptKeySummary[]> {
@@ -194,6 +221,12 @@ export async function getPromptVersions(name: string): Promise<PromptVersionsRes
   if (USE_PROMPT_MOCKS) return structuredClone(MOCK_VERSIONS[name]);
   const r = await apiFetch(`${BASE}/${encodeURIComponent(name)}/versions`);
   if (!r.ok) throw new Error(await extractApiError(r, 'Failed to load version history'));
+  return r.json();
+}
+
+export async function getPromptArchitecture(name: string, version: number): Promise<PromptArchitecture> {
+  const r = await apiFetch(`${BASE}/${encodeURIComponent(name)}/versions/${version}/architecture`);
+  if (!r.ok) throw new Error(await extractApiError(r, 'Failed to load the architecture'));
   return r.json();
 }
 

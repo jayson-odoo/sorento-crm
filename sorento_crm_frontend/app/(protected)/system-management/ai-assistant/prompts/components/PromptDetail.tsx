@@ -41,6 +41,7 @@ import type { SaveVersionError } from '../../services/aiPromptsService';
 import { AgentModelCard } from './AgentModelCard';
 import { DiffView } from './DiffView';
 import { DryRunBox } from './DryRunBox';
+import { PromptArchitecture } from './PromptArchitecture';
 import { PromptChipEditor, type PromptChipEditorHandle } from './PromptChipEditor';
 import { PublishDialog } from './PublishDialog';
 import { VarChips } from './VarChips';
@@ -123,7 +124,8 @@ export function PromptDetail({ name }: { name: string }) {
   const hasRegistry = registryNames.length > 0;
   const registryQuery = useRegistryVariables(name, hasRegistry);
   const registryRows = useMemo(() => registryQuery.data ?? [], [registryQuery.data]);
-  const [editorMode, setEditorMode] = useState<'edit' | 'preview'>('edit');
+  const [editorMode, setEditorMode] = useState<'edit' | 'preview' | 'architecture'>('edit');
+  const isParser = name === 'chatbot_semantic_parser';
   // Full screen for the Editor card (owner, 16 Oct: long prompts are hard to read in the box).
   const [focus, setFocus] = useState(false);
   const chipEditorRef = useRef<PromptChipEditorHandle>(null);
@@ -440,17 +442,27 @@ export function PromptDetail({ name }: { name: string }) {
               </div>
             </CardHeader>
             <CardContent className={cn('space-y-3', focus && 'flex flex-auto flex-col')}>
-              {hasRegistry ? (
-                <Tabs value={editorMode} onValueChange={(v) => setEditorMode(v as 'edit' | 'preview')}>
+              {hasRegistry || isParser ? (
+                <Tabs value={editorMode} onValueChange={(v) => setEditorMode(v as 'edit' | 'preview' | 'architecture')}>
                   <TabsList shape="pill" size="sm" aria-label="Editor mode">
                     <TabsTrigger value="edit" data-testid="editor-mode-edit">
                       Edit
                     </TabsTrigger>
-                    <TabsTrigger value="preview" data-testid="editor-mode-preview">
-                      Preview rendered prompt
-                    </TabsTrigger>
+                    {hasRegistry ? (
+                      <TabsTrigger value="preview" data-testid="editor-mode-preview">
+                        Preview rendered prompt
+                      </TabsTrigger>
+                    ) : null}
+                    {isParser ? (
+                      <TabsTrigger value="architecture" data-testid="editor-mode-architecture">
+                        Architecture
+                      </TabsTrigger>
+                    ) : null}
                   </TabsList>
                 </Tabs>
+              ) : null}
+              {isParser && editorMode === 'architecture' && (baseQuery.data?.version ?? baseVersion) != null ? (
+                <PromptArchitecture name={name} version={(baseQuery.data?.version ?? baseVersion) as number} />
               ) : null}
               {hasRegistry && editorMode === 'preview' ? (
                 <RenderedPreview template={draft} registryNames={registryNames} rows={registryRows} fill={focus} />
@@ -459,7 +471,7 @@ export function PromptDetail({ name }: { name: string }) {
                 // Stays mounted (hidden) under Preview, so the owner's last caret survives a
                 // look at the preview and the wired panel's Insert still lands there.
                 <div
-                  hidden={editorMode === 'preview'}
+                  hidden={editorMode !== 'edit'}
                   className={cn(focus && 'flex min-h-[360px] grow basis-0 flex-col')}
                   data-testid="chip-editor-pane"
                 >
@@ -474,15 +486,17 @@ export function PromptDetail({ name }: { name: string }) {
                   />
                 </div>
               ) : (
-                <SearchableTextarea
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  className={cn('min-h-[320px] font-mono text-xs', focus && 'grow basis-0 resize-none')}
-                  containerClassName={cn(focus && 'flex min-h-[320px] grow basis-0 flex-col')}
-                  spellCheck={false}
-                  disabled={!canEdit}
-                  data-testid="prompt-editor"
-                />
+                <div hidden={editorMode !== 'edit'} className={cn(focus && 'flex grow basis-0 flex-col')}>
+                  <SearchableTextarea
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    className={cn('min-h-[320px] font-mono text-xs', focus && 'grow basis-0 resize-none')}
+                    containerClassName={cn(focus && 'flex min-h-[320px] grow basis-0 flex-col')}
+                    spellCheck={false}
+                    disabled={!canEdit}
+                    data-testid="prompt-editor"
+                  />
+                </div>
               )}
               <VarChips validation={validation} declared={declared} />
 
