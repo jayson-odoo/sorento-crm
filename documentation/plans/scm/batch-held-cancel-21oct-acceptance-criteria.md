@@ -16,3 +16,9 @@ cancelled by the book, replacement lines added) and Cancel SO saved on replaceme
 - U6. A Cancel SO on a line the change does not name still rides along as before (AC-F23 unchanged).
 - U7. A staged rejection on such an order still reads "commits after the pending change is applied" (out of
   scope, follow-up).
+- U8. That press sends no automated email for its cancels and retires (no CANCEL / CANCEL ALL
+  line, no changed-with-links); purchasing sees the rows cancelled in the CRM and keeps the
+  in-app "Planning change applied" notice. A normal Cancel SO still emails (owner ruling (a)).
+- U9. A retire-only press takes only the retired lines out of the revision; every other confirmed
+  line stays confirmed (crew Q1). A new line's change row closes once the line is confirmed or
+  cancelled, never before (crew Q2).

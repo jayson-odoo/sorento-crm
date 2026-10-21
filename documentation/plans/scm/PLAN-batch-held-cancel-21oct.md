@@ -1,6 +1,6 @@
 # PLAN-BATCH-HELD-CANCEL: Confirm applies a pending AutoCount change and sends the held Cancel SO
 
-Status: Build (small fix track, S+: no migration, no auth/RBAC change, no new ingest surface)
+Status: Review (small fix track, S+: no migration, no auth/RBAC change, no new ingest surface; owner P0 21 Oct)
 UAC: `batch-held-cancel-21oct-acceptance-criteria.md` (alongside)
 Owner ruling: (a), 21 Oct 2026 ~14:30 MYT. Supersedes AC-F11 of `PLAN-so-cancel-line.md`
 ("a cancel draft the pending planning change NAMES is held, not counted").
@@ -66,6 +66,25 @@ Architecture: one predicate (`pressRoleFor`) still decides count, Saved, body an
 special case (`blocked_cancel`) rather than adding one, and the server's refusal goes with it, so FE and BE no
 longer hold two definitions of "named". Other class fixed by the same edit: any saved Cancel SO on an order
 with a pending batch, whatever row kind names it.
+
+## Rulings added during the lane (21 Oct 2026)
+
+- Crew Q1 (a): a retire-only apply takes ONLY the retired lines out of the revision, through the
+  same `confirm(lines=[], uncover_line_ids=..., defer_auto_place=True)` a composed press uses;
+  supersede only when every covered line leaves (planning_change_service.py Q1 branch).
+- Crew Q2 (a): an `added` row links to its mirror line by core line (`link_rows_to_mirror_lines`);
+  an undecided row on a cancelled core line closes superseded, an undecided `added` row on a
+  covered line closes applied (`_settle_answered_rows`); a row on an uncovered line stays pending.
+- Crew item 3: an order whose only counted lines are book-cancelled posts its batch; a press that
+  applied rows but wrote no revision answers ok (reviewer round 1).
+- Owner email ruling, final (a) ~16:00 MYT: ONLY the press this fix enables is silent. When the
+  press applies a pending change with a Cancel SO that change names (`_cancels_held_by_batch`),
+  `QUIET_CANCELS_KEY` stops cancelled handover lines, the CANCEL list of `record_cancelled_lines`
+  and changed-with-links. A normal Cancel SO (8 Oct rule, #1530) and a batch retire without held
+  cancels (#1806) still email. The in-app "Planning change applied" notice stays.
+- Results echo each Cancel SO line's reason ("AutoCount Cancel SO <doc>").
+- Prod reach: `batch-held-cancel-21oct-prod-read.sql` (owner runs it; dev copy: 81 open batches,
+  85 orders, 173 unlinked added rows, 0 held drafts).
 
 Not in scope (follow-up issue): a staged REJECTION on a batch-named line still waits for the change to apply
 (server refuses `rejected_line_ids` beside `batch_id`, FP:1398-1407). Same never-stuck class; the ruling is
