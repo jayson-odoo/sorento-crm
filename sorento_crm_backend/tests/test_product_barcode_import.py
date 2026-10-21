@@ -576,3 +576,132 @@ def test_sheet_that_fails_while_rows_are_read_is_400(client, monkeypatch):
     monkeypatch.setattr(ro.ReadOnlyWorksheet, "_cells_by_row", boom)
     res = _post(client, "preview", _xlsx([["Product Code", "Barcode"], ["X", EAN_A]]))
     assert res.status_code == 400, res.text
+
+
+# --------------------------------------------------------------------------- round 3 caps
+def _rewrite_zip(data: bytes, edit, extra: dict | None = None) -> bytes:
+    import zipfile
+
+    src = zipfile.ZipFile(io.BytesIO(data))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+        for item in src.infolist():
+            zf.writestr(item, edit(item.filename, src.read(item.filename)))
+        for name, blob in (extra or {}).items():
+            zf.writestr(name, blob)
+    return out.getvalue()
+
+
+def test_a_huge_cell_is_cut_to_256_chars_in_the_response(client, db, refs):
+    stem = unique_code("BCL", alpha=True)
+    _mk(db, refs, f"{stem}-L")
+    big = "9" * 100_000
+    data = _xlsx([
+        ["Product Code", "Barcode", "Note"],
+        [f"{stem}-L", big, big],
+        [big, big, big],
+    ])
+    res = _post(client, "preview", data)
+    assert res.status_code == 200, res.text
+    rows = res.json()["rows"]
+    assert rows[0]["status"] == "too_long"
+    for r in rows:
+        for key in ("product_code", "new_barcode", "note"):
+            assert len(r[key] or "") <= 256, (key, len(r[key]))
+
+
+def test_media_members_do_not_count_toward_the_xml_cap(client, monkeypatch):
+    from app.services import product_barcode_import_service as svc
+
+    monkeypatch.setattr(svc, "_MAX_UNCOMPRESSED_BYTES", 1024 * 1024)
+    data = _rewrite_zip(_xlsx([["Product Code", "Barcode"], ["X", EAN_A]]), lambda n, b: b,
+                        extra={"xl/media/image1.png": b"\0" * (2 * 1024 * 1024)})
+    assert _post(client, "preview", data).status_code == 200
+
+
+def test_non_media_members_over_the_cap_are_refused(client, monkeypatch):
+    from app.services import product_barcode_import_service as svc
+
+    monkeypatch.setattr(svc, "_MAX_UNCOMPRESSED_BYTES", 1024 * 1024)
+    data = _rewrite_zip(_xlsx([["Product Code", "Barcode"], ["X", EAN_A]]), lambda n, b: b,
+                        extra={"xl/customXml/big.xml": b"\0" * (2 * 1024 * 1024)})
+    assert _post(client, "preview", data).status_code == 400
+
+
+def test_header_past_column_64_is_not_found(client):
+    row = [None] * 64 + ["Product Code", "Barcode"]
+    body = _post(client, "preview", _xlsx([row, [None] * 64 + ["X", EAN_A]])).json()
+    assert body["readable"] is False
+    csv_row = ",".join([""] * 64 + ["Product Code", "Barcode"]) + "\n" + ",".join([""] * 64 + ["X", EAN_A])
+    body = _post(client, "preview", csv_row.encode(), name="b.csv").json()
+    assert body["readable"] is False
+
+
+def _sheets_with_header_on(n: int) -> bytes:
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    for i in range(1, 12):
+        ws = wb.active if i == 1 else wb.create_sheet(f"S{i}")
+        ws.append(["Product Code", "Barcode"] if i == n else ["Read me"])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_header_is_searched_on_ten_sheets_only(client):
+    assert _post(client, "preview", _sheets_with_header_on(10)).json()["readable"] is True
+    assert _post(client, "preview", _sheets_with_header_on(11)).json()["readable"] is False
+
+
+def test_wide_dimension_with_empty_rows_returns_quickly(client):
+    import re
+    import time
+
+    def edit(name, blob):
+        if name != "xl/worksheets/sheet1.xml":
+            return blob
+        xml = blob.decode()
+        xml = re.sub(r'<dimension ref="[^"]*"', '<dimension ref="A1:ZZZ1048576"', xml)
+        return xml.replace("</sheetData>", "<row/>" * 100000 + "</sheetData>").encode()
+
+    data = _rewrite_zip(_xlsx([["Product Code", "Barcode"], ["X", EAN_A]]), edit)
+    start = time.monotonic()
+    _post(client, "preview", data)
+    assert time.monotonic() - start < 5
+
+
+def test_other_company_holding_the_same_barcode_is_not_a_duplicate(client, db, refs):
+    from app.models.base import set_company_scope
+
+    a, b = _company(db, "ZZT A"), _company(db, "ZZT B")
+    stem = unique_code("BCJ", alpha=True)
+    for code, cid, bc in ((f"{stem}-A", a, None), (f"{stem}-B", b, EAN_A)):
+        db.add(Product(id=str(uuid.uuid4()), product_code=code, product_name=code,
+                       category_id=refs[0], base_uom_id=refs[1], list_price=0, is_active=True,
+                       company_id=cid, barcode=bc))
+    db.flush()
+    set_company_scope(db, frozenset({a}))
+    body = _post(client, "preview", _xlsx([["Product Code", "Barcode"], [f"{stem}-A", EAN_A]])).json()
+    assert body["rows"][0]["status"] == "new"
+    assert body["rows"][0]["warnings"] == []
+    assert body["rows"][0]["duplicate_of"] == []
+
+
+def test_a_lying_small_dimension_does_not_drop_data_rows(client, db, refs):
+    import re
+
+    stem = unique_code("BCV", alpha=True)
+    _mk(db, refs, f"{stem}-V")
+
+    def edit(name, blob):
+        if name != "xl/worksheets/sheet1.xml":
+            return blob
+        xml = blob.decode()
+        xml = re.sub(r'<dimension ref="[^"]*"', '<dimension ref="A1:B3"', xml)
+        return xml.encode()
+
+    rows = [["Product Code", "Barcode"]] + [[] for _ in range(8)] + [[f"{stem}-V", EAN_A]]
+    data = _rewrite_zip(_xlsx(rows), edit)
+    body = _post(client, "preview", data).json()
+    assert [r["status"] for r in body["rows"]] == ["new"]
