@@ -1314,6 +1314,7 @@ export function useOrderInquiryWorklistColumns({
             <ReservePill
               reserveState={row.original.reserve_state}
               reservedQty={row.original.reserved_qty}
+              requestedQty={row.original.requested_qty}
             />
             {reserveControls ? (
               <ReserveActionsCell
