@@ -153,7 +153,7 @@ def test_entity_raw_matches_by_fold_or_as_a_whole_word():
 @pytest.mark.parametrize("hint,plain", [
     ("product", "a product"), ("category", "a product type"), ("specification", "a specification"),
     ("spec", "a specification"), ("attachment_type", "a file"), ("warehouse", "a warehouse"),
-    ("brand", "a brand"), ("customer", "a customer"), ("zz_other", "zz_other"),
+    ("brand", "a brand"), ("customer", "a customer"), ("zz_other", "zz other"),
 ])
 def test_understood_text_names_the_hint_in_plain_words(hint, plain):
     im = _im(words=["zzw"], matches=[_match("zzw", "Products", "code ZZW1 (ZZT)")], entities=[_entity("zzw", hint)])
@@ -223,7 +223,9 @@ def _result(hint: str, to: Any, *, raw: str = "zzw", note_from: str | None = Non
     ("specification", [{"key": "zz_key", "label": "", "said": "zzw", "value": "red"},
                        {"key": "size", "label": "Size", "said": "zzw", "value": 600}], "changed",
      "Changed: read as zz_key = red; Size = 600"),
-    ("product", "category", "changed", "Changed: read as category"),
+    ("product", "category", "changed", "Changed: read as a product type"),
+    ("category", "listed product type: Basin", "changed", "Changed: read as the product type Basin"),
+    ("specification", [{"key": "", "label": "", "said": "", "value": None}], "changed", "Changed"),
 ])
 def test_grounding_note_wording(hint, to, outcome, text):
     assert _result(hint, to) == {"outcome": outcome, "text": text}
@@ -274,3 +276,21 @@ def test_split_note_skips_empty_pieces_and_never_prints_none():
     to = ["", {"key": "finish", "label": "Finish", "said": "zzw", "value": "french_gold"},
           {"key": "", "label": "", "said": "zz", "value": None}, {"key": "", "label": "", "said": "", "value": None}]
     assert _result("specification", to) == {"outcome": "changed", "text": "Changed: read as Finish = french_gold; zz"}
+
+
+# Review round 2 (owner bar: no internal name on screen): every hint the engine reads reads as
+# plain words, and an unmapped one never shows an underscore.
+@pytest.mark.parametrize("hint, words", [
+    ("sales_agent", "a sales agent"),
+    ("order", "an order"),
+    ("promotion", "a promotion"),
+    ("product_attachment", "a product file"),
+    ("inventory", "stock"),
+    ("incoming", "incoming stock"),
+    ("zz_new_kind", "zz new kind"),
+])
+def test_every_hint_reads_as_plain_words(hint, words):
+    im = _im(words=["ali"], matches=[], entities=[_entity("ali", hint)], changes=[])
+    [item] = im["not_from_lists"]
+    assert item["text"] == f'"ali" as {words}'
+    assert "_" not in item["text"]

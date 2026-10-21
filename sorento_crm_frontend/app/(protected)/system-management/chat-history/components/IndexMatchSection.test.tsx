@@ -118,6 +118,19 @@ describe('IndexMatchSection', () => {
     expect(within(frg).getByText('Dropped').textContent).toBe('Dropped');
   });
 
+  it('shows a muted dash under understood and kept or dropped when the parser did not use the word', () => {
+    const unused = {
+      word: 'zzidle',
+      matched: [{ list: 'File types', entry: 'File type zz_photos: ZZ Photos.', close_spelling: false }],
+      parser_got: ['File type zz_photos: ZZ Photos.'],
+      understood: [],
+      result: [],
+    };
+    render(<IndexMatchSection indexMatch={fixture({ rows: [unused] })} />);
+    const row = screen.getByTestId('index-row-zzidle');
+    expect(within(row).getAllByText('-')).toHaveLength(2);
+  });
+
   it('shows one line instead of an empty grid when no word matched', () => {
     render(<IndexMatchSection indexMatch={fixture({ rows: [], not_from_lists: [], held: [] })} />);
     expect(screen.getByText('No word of this message matched a list entry.')).toBeInTheDocument();

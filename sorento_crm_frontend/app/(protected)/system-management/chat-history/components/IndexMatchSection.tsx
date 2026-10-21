@@ -123,6 +123,16 @@ function FlowRow({
         ))}
       </Cell>
       <div className="min-w-0 space-y-2 sm:col-span-2">
+        {pairs === 0 && (
+          <div className="grid gap-2 sm:grid-cols-2 sm:gap-3">
+            <Cell label={LABELS[3]}>
+              <span className="text-muted-foreground">-</span>
+            </Cell>
+            <Cell label={LABELS[4]}>
+              <span className="text-muted-foreground">-</span>
+            </Cell>
+          </div>
+        )}
         {Array.from({ length: pairs }, (_, i) => (
           <div key={i} className="grid gap-2 sm:grid-cols-2 sm:gap-3">
             <Cell label={LABELS[3]}>

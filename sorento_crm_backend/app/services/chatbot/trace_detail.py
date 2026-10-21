@@ -422,7 +422,18 @@ _HINT_WORDS = {
     "warehouse": "a warehouse",
     "brand": "a brand",
     "customer": "a customer",
+    "sales_agent": "a sales agent",
+    "order": "an order",
+    "promotion": "a promotion",
+    "product_attachment": "a product file",
+    "inventory": "stock",
+    "incoming": "incoming stock",
 }
+
+
+def _hint_words(hint: str) -> str:
+    """A hint in plain words; one the table does not name still never shows an underscore."""
+    return _HINT_WORDS.get(hint, hint.replace("_", " "))
 _LIST_WORDS = {"attachment_type": "file type", "cert_kind": "certificate", "cert_scheme": "certificate scheme"}
 
 
@@ -448,6 +459,8 @@ def _result_text(note: dict[str, Any] | None) -> dict[str, str]:
                     parts.append(str(item["said"]))
             elif str(item).strip():
                 parts.append(str(item))
+        if not parts:
+            return {"outcome": "changed", "text": "Changed"}
         return {"outcome": "changed", "text": "Changed: read as " + "; ".join(parts)}
     to = str(to)
     if to == "dropped: a finish short form, no warehouse on file":
@@ -463,12 +476,14 @@ def _result_text(note: dict[str, Any] | None) -> dict[str, str]:
         return {"outcome": "changed", "text": "Changed: product code not among the matches, removed"}
     if to.startswith("canonical refused:"):
         return {"outcome": "changed", "text": "Changed: several product codes fit, the bot asks which"}
-    return {"outcome": "changed", "text": f"Changed: read as {to}"}
+    if to.startswith("listed product type: "):
+        return {"outcome": "changed", "text": f"Changed: read as the product type {to[len('listed product type: '):]}"}
+    return {"outcome": "changed", "text": f"Changed: read as {_hint_words(to)}"}
 
 
 def _understood_text(entity: dict[str, Any]) -> str:
     hint = str(entity.get("hint") or "")
-    text = f'"{entity.get("raw")}"' + (f" as {_HINT_WORDS.get(hint, hint)}" if hint else "")
+    text = f'"{entity.get("raw")}"' + (f" as {_hint_words(hint)}" if hint else "")
     if entity.get("spec_key") and entity.get("spec_value") is not None:
         return f"{text}: {entity['spec_key']} = {entity['spec_value']}"
     value = entity.get("canonical_code") or entity.get("listed_item")
