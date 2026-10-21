@@ -5219,22 +5219,105 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
     return screen.findByTestId('board-confirm-results');
   }
 
-  it('AC-F13: lists the saved cancel per line under the pending change', async () => {
-    batchNaming('pl-so-a-2');
-    getPlanningBoard.mockResolvedValue(batchedBoard());
-    const block = await press();
-    expect(block).toHaveTextContent(
-      'Cancel SO is saved; it commits after the pending change is applied.',
+  // PLAN-BATCH-HELD-CANCEL (owner ruling (a), 21 Oct 2026; supersedes AC-F13/AC-F14): a
+  // saved cancel on a line the pending change NAMES is no longer held. The one press applies
+  // the change and sends the cancel; the results say both, and count the order.
+  /** SO394881's shape in small: line 1 the book cancelled, line 2 a named line with Cancel SO. */
+  function retiredPlusNamedCancel() {
+    batchNaming('pl-so-a-1', 'pl-so-a-2');
+    getPlanningBoard.mockResolvedValue(
+      withContribution(
+        batchedBoard(),
+        (entry) => entry.line_no === 1,
+        (entry) => ({ ...entry, cancelled: true, covered: false, draft: null }),
+      ),
     );
+    confirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          decision_revision: 4,
+          inquiry_rows_created: 0,
+          lines_confirmed: [],
+          lines_carried: 0,
+          lines_cancelled: [{ line_no: 2, item_code: 'CB110' }],
+          lines_retired: [{ line_no: 1, item_code: 'WESERP10B' }],
+          planning_change_applied: true,
+        },
+      ],
+    });
+  }
+
+  it('BATCH-HELD-CANCEL (crew item 3): an order with only a line the book cancelled still posts its batch', async () => {
+    batchNaming('pl-so-a-1');
+    getPlanningBoard.mockResolvedValue(
+      withContribution(
+        batchedBoard({ onlyCancel: true }),
+        (entry) => entry.line_no === 2,
+        (entry) => ({ ...entry, cancelled: true, covered: false, draft: null }),
+      ),
+    );
+    confirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          decision_revision: 4,
+          inquiry_rows_created: 0,
+          lines_confirmed: [],
+          lines_carried: 0,
+          lines_retired: [{ line_no: 2, item_code: 'CB110' }],
+          planning_change_applied: true,
+        },
+      ],
+    });
+    renderPanel(['SO403340']);
+    await waitFor(() => expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'));
+    await pressPreviewThenConfirm();
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0] as [
+      { orders: { batch_id: string | null; lines: unknown[]; cancelled_lines: unknown[] }[] },
+    ];
+    expect(body.orders[0].batch_id).toBe('b-1');
+    expect(body.orders[0].lines).toEqual([]);
+    const block = await screen.findByTestId('board-confirm-results');
+    expect(block).toHaveTextContent('1 of 1 orders confirmed');
+    expect(block).toHaveTextContent('SO403340: applied the AutoCount change');
+    expect(block).toHaveTextContent('Retired by the AutoCount change: line 2 CB110');
   });
 
-  it('AC-F14: an order sentence for cancels only names Cancel SO, never a rejection', async () => {
-    batchNaming('pl-so-a-2');
-    getPlanningBoard.mockResolvedValue(batchedBoard());
-    const block = await press();
-    const sentence = within(block).getByText(/^SO403340: (has|was confirmed, but)/);
-    expect(sentence).toHaveTextContent(/Cancel SO/);
-    expect(sentence).not.toHaveTextContent(/rejection/);
+  it('BATCH-HELD-CANCEL U1: Confirm offers the retired line and the named cancel, never a press that sends nothing', async () => {
+    retiredPlusNamedCancel();
+    renderPanel(['SO403340']);
+    await waitFor(() => expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (2)'));
+  });
+
+  it('BATCH-HELD-CANCEL U2: the press posts batch_id with the named cancel in cancelled_lines', async () => {
+    retiredPlusNamedCancel();
+    renderPanel(['SO403340']);
+    await pressPreviewThenConfirm();
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0] as [
+      { orders: { batch_id: string | null; cancelled_lines: { project_line_id: string; reason: string }[] }[] },
+    ];
+    expect(body.orders[0].batch_id).toBe('b-1');
+    expect(body.orders[0].cancelled_lines).toEqual([
+      { project_line_id: 'pl-so-a-2', reason: 'CANCEL ORDER' },
+    ]);
+  });
+
+  it('BATCH-HELD-CANCEL U3: the results say the change applied and the cancel went, 1 of 1', async () => {
+    retiredPlusNamedCancel();
+    renderPanel(['SO403340']);
+    await pressPreviewThenConfirm();
+    const block = await screen.findByTestId('board-confirm-results');
+    expect(block).toHaveTextContent('1 of 1 orders confirmed');
+    expect(block).toHaveTextContent(
+      'SO403340: applied the AutoCount change; 1 line transferred to Cancel SO',
+    );
+    expect(block).toHaveTextContent('Retired by the AutoCount change: line 1 WESERP10B');
+    expect(block).not.toHaveTextContent(/commits after the pending change/);
   });
 
   it('AC-F15: an unplannable cancel is not listed as held back by the batch', async () => {

@@ -15,6 +15,7 @@ Postgres only (`blank_session` via the shared `api` fixture); every test seeds i
 """
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from decimal import Decimal
 
@@ -402,20 +403,99 @@ def _open_batch_naming(world, w, line_key, client=None):
     return batch
 
 
-def test_c12_a_cancel_of_a_line_the_batch_names_beside_its_batch_id_is_422(api):
-    """AC-C12 (round 8, option b): the 422 now needs the batch to NAME the cancelled line.
-    Was: any `cancelled_lines` beside a `batch_id` (a bare fake batch id) was refused."""
+def _cancelled_row_on_open_line(world, w, batch_id):
+    """The book CANCELLED the open line (SO394881's old lines): a pending `cancelled` row in
+    `batch_id`, on a line the active decision covers."""
+    from app.models.planning_change import PlanningChangeRow
+    from app.services.planning_change_service import PLANNING_CHANGE_STATE_PENDING
+
+    open_core, open_line = w["open"]
+    row = PlanningChangeRow(
+        id=str(uuid.uuid4()),
+        batch_id=batch_id,
+        project_sales_order_id=w["order"].id,
+        project_line_id=open_line.id,
+        core_line_id=open_core.id,
+        line_no=open_line.line_no,
+        item_code="ZZT-ITEM",
+        kind="cancelled",
+        facts_json={},
+        applied_state=PLANNING_CHANGE_STATE_PENDING,
+    )
+    world.db.add(row)
+    world.db.commit()
+    return row
+
+
+def test_c12_a_cancel_of_a_line_the_batch_names_rides_along_and_the_change_applies(api):
+    """PLAN-BATCH-HELD-CANCEL (owner ruling (a), 21 Oct 2026; supersedes AC-C12's 422):
+    SO394881's shape. The open line is confirmed; the pending batch cancelled it (book) and
+    names A, where CS saved Cancel SO. ONE press applies the change (the open line retires)
+    and transfers A, and says the change applied."""
+    from app.models.planning_change import PlanningChangeRow
+
     client, world = api
     w = _cb_world(world)
     core_a, mirror_a, _p = w["a"]
+    _open_core, open_line = w["open"]
+    db = world.db
+    assert _confirm_all(client, w["order"], lines=[_line_payload(open_line.id, buy_qty="5")])["ok"]
     batch = _open_batch_naming(world, w, "a")
+    batch_id = str(batch.id)
+    retired_row = _cancelled_row_on_open_line(world, w, batch_id)
+
     response = client.post(
-        f"{BASE}/sales-orders/{w['order'].id}/confirm",
-        json=dict(_cancel_body(mirror_a), batch_id=str(batch.id)),
+        f"{BASE}/fulfilment-planning/confirm-all",
+        json={"orders": [dict(_cancel_body(mirror_a), pso_id=w["order"].id, batch_id=batch_id)]},
     )
-    assert response.status_code == 422, response.text
-    assert _status(world.db, core_a.id) == "closed"
-    assert _raw(world.db, core_a.id).cancelled_at is None
+
+    assert response.status_code == 200, response.text
+    result = response.json()["results"][0]
+    assert result["ok"] is True, result
+    assert [r["line_no"] for r in result["lines_cancelled"]] == [10]
+    assert result["planning_change_applied"] is True
+    raw = _raw(db, core_a.id)
+    assert raw.line_status == "cancelled"
+    assert raw.cancel_reason == REASON
+    db.expire_all()
+    assert db.get(PlanningChangeRow, retired_row.id).applied_state == "applied"
+
+
+def test_c12b_a_decided_row_on_the_cancelled_line_is_closed_not_composed(api):
+    """PLAN-BATCH-HELD-CANCEL: a row decided ahead of the press (`planning_changes.py:88`) on
+    the line CS transfers to Cancel SO. The press cancels first, so the apply closes that row
+    ("the sales-order line is cancelled") instead of confirming a composition onto a line
+    that is gone, and the transfer is not refused as covered."""
+    from app.models.planning_change import PlanningChangeRow
+
+    client, world = api
+    w = _cb_world(world)
+    core_a, mirror_a, _p = w["a"]
+    _open_core, open_line = w["open"]
+    db = world.db
+    assert _confirm_all(client, w["order"], lines=[_line_payload(open_line.id, buy_qty="5")])["ok"]
+    batch = _open_batch_naming(world, w, "a")
+    batch_id = str(batch.id)
+    row_a = db.query(PlanningChangeRow).filter(PlanningChangeRow.batch_id == batch_id).one()
+    row_a.decision = "confirm"
+    row_a.composition_json = _line_payload(mirror_a.id, buy_qty="36")
+    db.commit()
+    _cancelled_row_on_open_line(world, w, batch_id)
+
+    response = client.post(
+        f"{BASE}/fulfilment-planning/confirm-all",
+        json={"orders": [dict(_cancel_body(mirror_a), pso_id=w["order"].id, batch_id=batch_id)]},
+    )
+
+    assert response.status_code == 200, response.text
+    result = response.json()["results"][0]
+    assert result["ok"] is True, result
+    assert [r["line_no"] for r in result["lines_cancelled"]] == [10]
+    assert _raw(db, core_a.id).line_status == "cancelled"
+    db.expire_all()
+    closed = db.get(PlanningChangeRow, row_a.id)
+    assert closed.applied_state == "superseded"
+    assert closed.applied_reason == "the sales-order line is cancelled"
 
 
 def test_c23_a_cancel_of_a_line_the_batch_does_not_name_rides_along_with_the_batch(api):
@@ -534,6 +614,8 @@ def test_c26_a_cancel_only_press_with_a_batch_id_cancels_and_leaves_the_batch_pe
     assert rows and all(r.applied_state != "applied" for r in rows)
     assert db.get(PlanningChangeBatch, batch_id).applied_at is None
     assert _decision_count(db, w["order"]) == decisions_before
+    # PLAN-BATCH-HELD-CANCEL: the board must not say the change applied when it did not.
+    assert result["planning_change_applied"] is False
 
 
 def test_c27_a_real_batch_refusal_beside_a_cancel_still_rolls_the_cancel_back(api, monkeypatch):
