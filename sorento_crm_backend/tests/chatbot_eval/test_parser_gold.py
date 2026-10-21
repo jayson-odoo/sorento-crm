@@ -1160,3 +1160,107 @@ def test_a_parse_that_reports_no_reasoning_tokens_records_none(session_factory, 
     out = _usage_run(session_factory, monkeypatch, lambda config, block: {"status": None, "entities": []})
     assert "reasoning_tokens" in out[0] and out[0]["reasoning_tokens"] is None, out
     assert "reasoning_tokens" in pg.USAGE_KEYS
+
+
+# --- parser gold reads last list, pending task and the answer fields ------------------------------
+
+
+def _loads(tmp_path, expect):
+    return pg.load_gold(_write(tmp_path, [_row("a", "x", expect)]))[0]["expect"]
+
+
+@pytest.mark.parametrize("good, bad", [
+    ({"topic_reset": True}, {"topic_reset": None}),
+    ({"answer_mode": "pick"}, {"answer_mode": 3}),
+    ({"picked": [2]}, {"picked": "2"}),
+    ({"reference_positions": [1]}, {"reference_positions": 1}),
+    ({"entity_op": "reuse"}, {"entity_op": True}),
+    ({"broaden_axis": None}, {"broaden_axis": 4}),
+    ({"state_ops_include": ["pick"]}, {"state_ops_include": "pick"}),
+    ({"state_ops_exclude": ["pick"]}, {"state_ops_exclude": "pick"}),
+])
+def test_load_gold_types_the_answer_and_state_expect_keys(tmp_path, good, bad):
+    assert _loads(tmp_path, good) == good
+    with pytest.raises(ValueError):
+        _loads(tmp_path, bad)
+
+
+def test_grade_topic_reset():
+    assert pg.grade_parse({"topic_reset": True}, {"topic_reset": True})[0]
+    assert pg.grade_parse({"topic_reset": None}, {"topic_reset": False})[0]
+    assert not pg.grade_parse({"topic_reset": False}, {"topic_reset": True})[0]
+
+
+def test_grade_answer_mode_and_picked():
+    v = {"open_question_answer": {"mode": "pick", "picked": [2]}}
+    assert pg.grade_parse(v, {"answer_mode": "pick", "picked": [2]})[0]
+    assert not pg.grade_parse(v, {"answer_mode": None})[0]
+    assert not pg.grade_parse(v, {"picked": [1]})[0]
+    assert pg.grade_parse({}, {"answer_mode": None, "picked": []})[0]
+
+
+def test_grade_reference_positions():
+    assert pg.grade_parse({"reference_positions": [2]}, {"reference_positions": [2]})[0]
+    assert not pg.grade_parse({"reference_positions": []}, {"reference_positions": [2]})[0]
+
+
+@pytest.mark.parametrize("key", ["entity_op", "broaden_axis"])
+def test_grade_entity_op_and_broaden_axis(key):
+    assert pg.grade_parse({key: "reuse"}, {key: "reuse"})[0]
+    assert pg.grade_parse({}, {key: None})[0]
+    assert not pg.grade_parse({key: "clear"}, {key: "reuse"})[0]
+
+
+def test_grade_state_ops_include_and_exclude():
+    v = {"state_changes": [{"op": "pick", "position": 2}]}
+    assert pg.grade_parse(v, {"state_ops_include": ["pick"], "state_ops_exclude": ["new_subject"]})[0]
+    assert not pg.grade_parse(v, {"state_ops_include": ["keep"]})[0]
+    assert not pg.grade_parse(v, {"state_ops_exclude": ["pick"]})[0]
+
+
+def test_grade_state_ops_skip_when_the_verdict_has_no_state_changes():
+    assert pg.grade_parse({}, {"state_ops_include": ["pick"], "state_ops_exclude": ["keep"]})[0]
+
+
+def test_state_block_renders_last_list_and_pending_task():
+    ctx = {"last_list": "(inventory, 3): 1 CL8109A; 2 C9109A; 3 CB3109A", "pending_task": "the open question"}
+    lines = pg._state_block(ctx).splitlines()
+    assert "- last list (inventory, 3): 1 CL8109A; 2 C9109A; 3 CB3109A" in lines
+    assert "- pending task: the open question" in lines
+    lines = pg._state_block({"last_list": "x", "pending_task": '{"kind": "quantities"}'}).splitlines()
+    assert "- last list: x" in lines
+    assert '- pending task: {"kind": "quantities"}' in lines
+    assert "- last list: none" in pg._state_block({"subject": "s"}).splitlines()
+    assert "- pending task: none" in pg._state_block({"subject": "s"}).splitlines()
+
+
+def test_a_context_of_only_a_last_list_or_pending_task_still_gets_a_state_block(session_factory, monkeypatch):
+    from app.services.chatbot import turn_runtime
+    from app.services.chatbot.head import parser as parser_mod
+
+    seen = {}
+    monkeypatch.setattr(parser_mod, "parse", lambda cfg, block: seen.setdefault("block", block) or {})
+    for fn in ("active_brands", "promotion_kind_rows", "product_type_names", "product_detail_values"):
+        monkeypatch.setattr(turn_runtime, fn, lambda db: None)
+    pg._parse_one("2", _config(state_block=True), session_factory, {"pending_task": "the open question"})
+    assert "- pending task: the open question" in seen["block"].splitlines()
+
+
+def test_open_question_object_is_valid_and_rendered_as_json(tmp_path, session_factory, monkeypatch):
+    oq = {"kind": "quantities", "items": [{"position": 1, "code": "CL8109A"}], "owed": [1]}
+    line = json.dumps({"id": "c", "message": "2", "expect": {}, "context": {"open_question": oq}})
+    assert pg.load_gold(_write(tmp_path, [line]))[0]["context"]["open_question"] == oq
+    bad = json.dumps({"id": "c", "message": "2", "expect": {}, "context": {"subject": {"a": 1}}})
+    with pytest.raises(ValueError):
+        pg.load_gold(_write(tmp_path, [bad]))
+    assert "- open question: " + json.dumps(oq, ensure_ascii=False) in pg._state_block({"open_question": oq}).splitlines()
+
+    from app.services.chatbot import turn_runtime
+    from app.services.chatbot.head import parser as parser_mod
+
+    seen = {}
+    monkeypatch.setattr(parser_mod, "parse", lambda cfg, block: seen.setdefault("block", block) or {})
+    for fn in ("active_brands", "promotion_kind_rows", "product_type_names", "product_detail_values"):
+        monkeypatch.setattr(turn_runtime, fn, lambda db: None)
+    pg._parse_one("2", _config(state_block=False), session_factory, {"open_question": oq})
+    assert parser_mod.open_question_line(oq) in seen["block"].splitlines()

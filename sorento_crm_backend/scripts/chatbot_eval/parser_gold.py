@@ -35,24 +35,38 @@ USAGE_KEYS = ("prompt_tokens", "cached_tokens", "completion_tokens", "reasoning_
 EXPECT_KEYS = frozenset({
     "status", "not_status", "domain_hint", "intent_hint", "product", "no_attribute", "customer", "canonical",
     "attributes_only", "attributes_include", "attachment_types", "warehouse", "promotion_kind", "is_active",
-    "continues",
+    "continues", "topic_reset", "answer_mode", "picked", "reference_positions", "entity_op", "broaden_axis",
+    "state_ops_include", "state_ops_exclude",
 })
 #: LEAN v90: the type each of these expect values must have (null allowed where listed).
 _EXPECT_TYPES: dict[str, tuple[type, ...]] = {
     "is_active": (bool, type(None)),
     "continues": (bool,),
     "promotion_kind": (str, type(None)),
+    "topic_reset": (bool,),
+    "answer_mode": (str, type(None)),
+    "picked": (list,),
+    "reference_positions": (list,),
+    "entity_op": (str, type(None)),
+    "broaden_axis": (str, type(None)),
+    "state_ops_include": (list,),
+    "state_ops_exclude": (list,),
 }
 #: PARSER-TEMPLATE F1-B: what a gold row may say the conversation held before its message. Each
 #: value is the text as the user block shows it, or null.
-CONTEXT_KEYS = frozenset({"previous_reply", "subject", "open_question"})
+#: `last_list` and `pending_task` are the State block's own rendered values; `open_question` may be the
+#: JSON object the real State line and `parser.open_question_line` both dump.
+CONTEXT_KEYS = frozenset({"previous_reply", "subject", "open_question", "last_list", "pending_task"})
 
 
 def _valid_context(context: Any) -> bool:
     return (
         isinstance(context, dict)
         and set(context) <= CONTEXT_KEYS
-        and all(value is None or isinstance(value, str) for value in context.values())
+        and all(
+            value is None or isinstance(value, str) or (key == "open_question" and isinstance(value, dict))
+            for key, value in context.items()
+        )
     )
 
 
@@ -178,6 +192,27 @@ def grade_parse(verdict: dict[str, Any], expect: dict[str, Any]) -> tuple[bool, 
         want = {_fold(w) for w in expect["warehouse"] or []}
         if got != want:
             reasons.append(f"warehouse raws {sorted(got)} != {sorted(want)}")
+    answer = verdict.get("open_question_answer")
+    answer = answer if isinstance(answer, dict) else {}
+    if "topic_reset" in expect and (verdict.get("topic_reset") is True) is not expect["topic_reset"]:
+        reasons.append(f"topic_reset {verdict.get('topic_reset')!r} != {expect['topic_reset']!r}")
+    if "answer_mode" in expect and answer.get("mode") != expect["answer_mode"]:
+        reasons.append(f"answer_mode {answer.get('mode')!r} != {expect['answer_mode']!r}")
+    if "picked" in expect and list(answer.get("picked") or []) != expect["picked"]:
+        reasons.append(f"picked {answer.get('picked')!r} != {expect['picked']!r}")
+    if "reference_positions" in expect and list(verdict.get("reference_positions") or []) != expect["reference_positions"]:
+        reasons.append(f"reference_positions {verdict.get('reference_positions')!r} != {expect['reference_positions']!r}")
+    for key in ("entity_op", "broaden_axis"):
+        if key in expect and verdict.get(key) != expect[key]:
+            reasons.append(f"{key} {verdict.get(key)!r} != {expect[key]!r}")
+    if ("state_ops_include" in expect or "state_ops_exclude" in expect) and "state_changes" in verdict:
+        ops = {c.get("op") for c in verdict.get("state_changes") or [] if isinstance(c, dict)}
+        missing = [o for o in expect.get("state_ops_include") or [] if o not in ops]
+        if missing:
+            reasons.append(f"state_changes lack ops {missing}")
+        present = [o for o in expect.get("state_ops_exclude") or [] if o in ops]
+        if present:
+            reasons.append(f"state_changes carry forbidden ops {present}")
     return (not reasons, reasons)
 
 
@@ -195,12 +230,17 @@ def _state_block(context: dict[str, Any]) -> str:
     """A gold context as the `State:` block, in `chat_state.render`'s four-line shape (the gold
     gives the subject already rendered, so there is no Focus to view)."""
     question = context.get("open_question")
+    last = context.get("last_list")
+    if not last:
+        last_line = "- last list: none"
+    else:
+        last_line = "- last list " + last if last.startswith("(") else "- last list: " + last
     return "\n".join([
         "State:",
         f"- subject: {context.get('subject') or 'none'}",
         "- open question: " + (json.dumps(question, ensure_ascii=False) if question else "none"),
-        "- last list: none",
-        "- pending task: none",
+        last_line,
+        "- pending task: " + (context.get("pending_task") or "none"),
     ])
 
 
@@ -253,7 +293,9 @@ def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] 
         db.close()
     held = context or {}
     # As the engine: an empty state adds no block.
-    held_any = bool(held.get("subject") or held.get("open_question"))
+    held_any = bool(
+        held.get("subject") or held.get("open_question") or held.get("last_list") or held.get("pending_task")
+    )
     state = _state_block(held) if config.state_block and held_any else None
     layers = context_mod.ContextLayers(
         level="off", profile_facts=None, summaries=None, earlier_messages=None,
