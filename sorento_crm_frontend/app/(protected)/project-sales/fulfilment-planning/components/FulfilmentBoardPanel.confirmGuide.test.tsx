@@ -1453,6 +1453,13 @@ describe('OI-SPLIT-CONFIRM-POLISH: the Review split page', () => {
     fireEvent.mouseMove(document, { clientX: 160 });
     fireEvent.mouseUp(document, { clientX: 160 });
     await waitFor(() => expect(parseFloat(qtyTh.style.width)).toBe(before + 60));
+    // the sheet grows to its columns (REMARK keeps its minimum) instead of squeezing REMARK
+    const table = within(page).getByRole('table', { name: 'Split delivery sheet' });
+    const fixed = Array.from(ths)
+      .map((th) => parseFloat(th.style.width))
+      .filter((width) => !Number.isNaN(width))
+      .reduce((sum, width) => sum + width, 0);
+    expect(parseFloat(table.style.minWidth)).toBe(fixed + 100);
     // REMARK takes whatever width the others leave, so its edge moves with theirs
     const named = ths.filter((th) => th.textContent?.trim() && th.textContent.trim().toLowerCase() !== 'remark');
     expect(named.length).toBeGreaterThan(8);

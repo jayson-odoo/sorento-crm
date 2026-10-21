@@ -147,6 +147,8 @@ const NO_DRAG_COLUMNS = withoutColumns(new Set(['grip']));
 const FIXED_COLUMNS = new Set(['grip', 'remark', 'remove']);
 /** The narrowest a dragged column gets. */
 const MIN_COLUMN_WIDTH = 40;
+/** What REMARK keeps once columns are dragged wider: the sheet scrolls sideways instead. */
+const REMARK_MIN_WIDTH = 100;
 
 const CELL =
   'h-9 border-b border-e border-border bg-background px-1.5 py-1 text-center align-middle text-xs';
@@ -1189,7 +1191,7 @@ export function LineSplitSheet({
       () =>
         columns.map((column) => ({
           id: column.key,
-          size: column.width,
+          size: column.width ?? REMARK_MIN_WIDTH,
           minSize: MIN_COLUMN_WIDTH,
           enableResizing: !FIXED_COLUMNS.has(column.key),
         })),
@@ -1200,6 +1202,9 @@ export function LineSplitSheet({
     enableColumnResizing: true,
   });
   const headers = sizing.getHeaderGroups()[0]?.headers ?? [];
+  // Once a column is dragged the sheet is at least as wide as its columns, so a wider column
+  // never squeezes REMARK below its minimum.
+  const resized = Object.keys(sizing.getState().columnSizing).length > 0;
   const lastOfDragGroup = drag
     ? lines.reduce(
         (last, line, index) =>
@@ -1214,6 +1219,7 @@ export function LineSplitSheet({
       data-split-sheet=""
       data-read-only={readOnly ? 'true' : undefined}
       onKeyDown={readOnly ? undefined : onKeyDown}
+      style={resized ? { minWidth: sizing.getTotalSize() } : undefined}
       className={cn(
         'table-fixed border-separate border-spacing-0 text-xs',
         readOnly
