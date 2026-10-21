@@ -188,7 +188,7 @@ vi.mock('../../_shared/services/lineSplitService', () => ({
 }));
 
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
-import { walkConfirmGuide } from '@/test-mocks/confirmGuide';
+import { walkConfirmGuide, walkToConfirmStep } from '@/test-mocks/confirmGuide';
 import { unpostableNotices } from '../../_shared/lib/unpostableNotices';
 import {
   buildBoard,
@@ -5297,6 +5297,81 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
     expect(block).toHaveTextContent(
       'SO403340: applied the AutoCount change from 1 Sep: 1 old line (CB110) was retired',
     );
+  });
+
+  /** One book-cancelled line (CB110) on SO403340's pending change b-1, nothing decided. */
+  function changeOnlyBoard() {
+    batchNaming('pl-so-a-2');
+    return withContribution(
+      batchedBoard({ onlyCancel: true }),
+      (entry) => entry.line_no === 2,
+      (entry) => ({ ...entry, cancelled: true, covered: false, draft: null }),
+    );
+  }
+
+  it('COUNT-DISPLAY review: the guide of a change-only press says Apply AutoCount change, never Confirm 0 orders', async () => {
+    getPlanningBoard.mockResolvedValue(changeOnlyBoard());
+    renderPanel(['SO403340']);
+    await waitFor(() =>
+      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent('from 1 Sep'),
+    );
+    await walkToConfirmStep();
+    const guide = screen.getByTestId('confirm-guide');
+    expect(within(guide).getByRole('heading')).toHaveTextContent('Apply AutoCount change');
+    expect(screen.getByTestId('confirm-guide-confirm')).toHaveTextContent('Apply AutoCount change');
+    expect(guide).toHaveTextContent(
+      'Applies the AutoCount change from 1 Sep: 1 old line (CB110) is retired',
+    );
+    expect(guide).not.toHaveTextContent(/0 orders/);
+  });
+
+  it('COUNT-DISPLAY review: the guide of a mixed press also names the AutoCount change', async () => {
+    retiredPlusNamedCancel();
+    renderPanel(['SO403340']);
+    await waitFor(() =>
+      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent('from 1 Sep'),
+    );
+    await walkToConfirmStep();
+    expect(screen.getByTestId('confirm-guide')).toHaveTextContent(
+      'Also applies the AutoCount change from 1 Sep: 1 old line (WESERP10B) is retired',
+    );
+  });
+
+  it('COUNT-DISPLAY review: the results keep the change date after the board re-reads it as applied', async () => {
+    const pending = changeOnlyBoard();
+    getPlanningBoard.mockResolvedValue(pending);
+    confirmMany.mockImplementation(async () => {
+      // The press applied the change: the re-read board no longer names a pending batch.
+      getPlanningBoard.mockResolvedValue({
+        ...pending,
+        orders: pending.orders.map((order) => ({ ...order, pending_change_batch_id: null })),
+      });
+      return {
+        results: [
+          {
+            pso_id: 'pso-so-a',
+            ok: true,
+            decision_revision: 4,
+            inquiry_rows_created: 0,
+            lines_confirmed: [],
+            lines_carried: 0,
+            lines_retired: [{ line_no: 2, item_code: 'CB110' }],
+            planning_change_applied: true,
+          },
+        ],
+      };
+    });
+    renderPanel(['SO403340']);
+    await waitFor(() =>
+      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent('from 1 Sep'),
+    );
+    await pressPreviewThenConfirm();
+    const block = await screen.findByTestId('board-confirm-results');
+    await waitFor(() => expect(getPlanningBoard.mock.calls.length).toBeGreaterThan(1));
+    expect(block).toHaveTextContent(
+      'SO403340: applied the AutoCount change from 1 Sep: 1 old line (CB110) was retired',
+    );
+    expect(block).not.toHaveTextContent('pending');
   });
 
   it('COUNT-DISPLAY (crew ruling b): two orders with only pending changes read Apply AutoCount changes (2 orders)', async () => {

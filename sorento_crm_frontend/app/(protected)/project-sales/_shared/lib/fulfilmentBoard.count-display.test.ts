@@ -10,6 +10,7 @@ import type {
   BoardDraft,
 } from '../types/fulfilmentPlanning.types';
 import {
+  autocountBoardNote,
   autocountChangeNotes,
   autocountChangeSentence,
   confirmButtonLabel,
@@ -173,5 +174,59 @@ describe('the Confirm button never offers an enabled Confirm (0) (crew ruling b)
 
   it('control: nothing to do reads Confirm (0)', () => {
     expect(confirmButtonLabel(0, 0)).toBe('Confirm (0)');
+  });
+});
+
+// Reviewer round 1 (#1818): the note's date is the Malaysia calendar date of the batch's naive
+// UTC `created_at`; an applied or simulated change is never called "pending"; a change that
+// retired nothing does not read "0 old lines".
+describe('the note sentence, reviewer round 1', () => {
+  it('dates the change in Malaysia time', () => {
+    expect(
+      autocountChangeSentence(
+        { count: 1, itemCodes: ['CB110'], createdAt: '2026-09-23T17:30:00' },
+        'board',
+        false,
+      ),
+    ).toBe('Applies the AutoCount change from 24 Sep: 1 old line (CB110) is retired');
+  });
+
+  it('never calls an applied or simulated change pending', () => {
+    const undated = { count: 1, itemCodes: ['CB110'], createdAt: null };
+    expect(autocountChangeSentence(undated, 'confirmed', false)).toBe(
+      'Applied the AutoCount change: 1 old line (CB110) was retired',
+    );
+    expect(autocountChangeSentence(undated, 'simulated', true)).toBe(
+      'Would also apply the AutoCount change: 1 old line (CB110) would be retired',
+    );
+  });
+
+  it('a change that retired nothing names only the change', () => {
+    expect(
+      autocountChangeSentence(
+        { count: 0, itemCodes: [], createdAt: '2026-09-24T06:36:12' },
+        'confirmed',
+        false,
+      ),
+    ).toBe('Applied the AutoCount change from 24 Sep');
+  });
+});
+
+describe('the board note lines for one order and for several (D2, crew ruling b)', () => {
+  const one = { soNumber: 'SO394881', count: 10, itemCodes: ['SRTWCX8840-S-RL'], createdAt: '2026-09-24T06:36:12' };
+  const two = { soNumber: 'SO415685', count: 1, itemCodes: ['CB110'], createdAt: '2026-09-24T06:36:12' };
+
+  it('one order: the one sentence', () => {
+    expect(autocountBoardNote([one], true)).toEqual([
+      'Also applies the AutoCount change from 24 Sep: 10 old lines (SRTWCX8840-S-RL) are retired',
+    ]);
+  });
+
+  it('several orders: a count, then one line per order', () => {
+    expect(autocountBoardNote([one, two], false)).toEqual([
+      'Applies the AutoCount change on 2 orders',
+      'SO394881: from 24 Sep, 10 old lines (SRTWCX8840-S-RL) are retired',
+      'SO415685: from 24 Sep, 1 old line (CB110) is retired',
+    ]);
   });
 });
