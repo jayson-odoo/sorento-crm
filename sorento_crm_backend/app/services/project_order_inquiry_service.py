@@ -4479,18 +4479,16 @@ class ProjectOrderInquiryService:
             line_no = so_line.line_no if so_line is not None else None
             core_line_id = so_line.core_sales_order_line_id if so_line is not None else None
             self._handover_line_no_cache[row.so_line_id] = (line_no, core_line_id)
+        # Owner, 21 Oct 2026 (OI-ORDERBACK-LOCATION, reverses 13/14 Oct): an ORDER BACK row
+        # reads where it is ordered back to, its own `stock_location` (the donor), in
+        # LOCATION and in the subject, as the OI Excel does. An Order back Buy row already
+        # names the line's own location. One with no donor stamped falls back to the line's.
         location = row.stock_location
-        if row.verb == IV_ORDER_BACK and row.so_line_id:
-            # Owner, 13 Oct 2026 (re-confirmed 14 Oct): a line telling a Borrow reads the SO
-            # line's OWN location, in LOCATION and in the subject. The row keeps its donor
-            # on the worklist; only the email reads the line's. An Order back Buy row
-            # already names the line's own location.
+        if not location and row.verb == IV_ORDER_BACK and row.so_line_id:
             so_line = self.db.get(ProjectSalesOrderLine, row.so_line_id)
             location = (
-                (so_line.stock_location if so_line is not None else None)
-                or self._stock_location(str(row.so_line_id))
-                or row.stock_location
-            )
+                so_line.stock_location if so_line is not None else None
+            ) or self._stock_location(str(row.so_line_id))
         line = {
             "so_date": _handover_fmt_date(facts.get("so_date")),
             "so_number": so_number,
@@ -4517,7 +4515,7 @@ class ProjectOrderInquiryService:
             "so_number": so_number,
             "customer": facts.get("customer"),
             "project": facts.get("project"),
-            #: The subject's location: what LOCATION prints (a Borrow's, the line's own).
+            #: The subject's location: what LOCATION prints (an ORDER BACK's, its donor).
             "stock_location": location,
             #: AC-2/AC-3: what `_build_handover_context` sorts the whole queue by -
             #: `so_number` above, then these two.

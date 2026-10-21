@@ -389,7 +389,9 @@ def test_a_changed_borrow_reads_the_lines_own_location_in_the_email(api, emails)
     assert [r.stock_location for r in live] == [donor_y.warehouse_code], "rows keep the donor"
 
 
-def test_a_rejected_borrow_reads_the_lines_own_location_in_the_email(api, emails):
+def test_a_rejected_borrow_reads_the_donor_location_in_the_email(api, emails):
+    """OI-ORDERBACK-LOCATION (owner, 21 Oct 2026): the withdrawn ORDER BACK reads where it
+    was ordered back to, the donor, as the OI Excel does."""
     from app.models.project_so import IV_ORDER_BACK, OrderInquiryRow
 
     from .test_fulfilment_line_draft_route import _board, _stage_reject
@@ -420,9 +422,14 @@ def test_a_rejected_borrow_reads_the_lines_own_location_in_the_email(api, emails
     db.commit()
 
     assert len(emails) == 1, emails
-    assert _lines(emails[0]) == [(code, "0", own, "CANCEL ALL")], _lines(emails[0])
+    assert _lines(emails[0]) == [
+        (code, "0", donor.warehouse_code, "CANCEL ALL")
+    ], _lines(emails[0])
     assert emails[0]["lines"][0]["was"] == {"qty": "2"}, emails[0]["lines"]
-    assert emails[0]["subject_scope"].startswith(f"{own} @ "), emails[0]["subject_scope"]
+    assert emails[0]["subject_scope"].startswith(f"{donor.warehouse_code} @ "), (
+        emails[0]["subject_scope"]
+    )
+    assert own != donor.warehouse_code
     row = (
         db.query(OrderInquiryRow)
         .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == IV_ORDER_BACK)
