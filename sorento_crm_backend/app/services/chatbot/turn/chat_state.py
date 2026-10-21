@@ -361,7 +361,7 @@ def names_own_subject(verdict: dict[str, Any]) -> bool:
     return bool({"product", "brand"} & _named_kinds(verdict))
 
 
-def _message_domains(verdict: dict[str, Any]) -> list[str]:
+def _message_domains(verdict: dict[str, Any], held_status: str | None = None) -> list[str]:
     from app.services.chatbot.contracts import ORDER_OR_SALES_DOMAINS
     from app.services.chatbot.turn_runtime import report_domain
 
@@ -374,7 +374,10 @@ def _message_domains(verdict: dict[str, Any]) -> list[str]:
         # REPORT-SMART-1021 (EVAL-BENCH turn 516a6b39): `order` and `sales` are read the way the
         # turn writes them (`turn_runtime.report_domain`: a sales figure status is `sales`, `sales`
         # with none is `order`), so a sales ask under the prompt's `order` is no switch off the
-        # held `sales` report (which would drop its frame). Any other domain stands as named.
+        # held `sales` report (which would drop its frame). Any other domain stands as named, and
+        # a `status` echoing the held one is not the message's own report kind (review should-fix 1).
+        if held_status and verdict.get("status") == held_status:
+            verdict = {**verdict, "status": None}
         return named(report_domain(verdict))
     return domains
 
@@ -1448,7 +1451,7 @@ def apply_changes(
                 # escalation offer showed IS the answer to that offer.
                 fail(op, "no answer declared")
         elif op == "switch_domain":
-            target = _message_domains(verdict)
+            target = _message_domains(verdict, focus.status)
             if not target or any(d not in domains for d in target):
                 fail(op, "no known domain in the parse")
 
@@ -1514,7 +1517,7 @@ def apply_changes(
         if mapped and all(mapped):
             out["domain_hint"] = mapped[0]
             out["asks"] = []
-    switch_to = _message_domains(out)
+    switch_to = _message_domains(out, focus.status)
     held = list(focus.domains or [])
     switching = "switch_domain" in ops or bool(held and switch_to and not any(d in held for d in switch_to))
     # CHAT-STATE r8 CARRY (owner run 20 Oct): a message that names its own subject on a switch
