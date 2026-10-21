@@ -126,3 +126,29 @@ def test_the_same_with_no_last_list_in_the_state(gate):
 def test_two_pcs_over_the_quantity_question_is_the_quantity(gate):
     new_state, plan = _turn(_state(gate), _two_pcs(gate))
     _is_two_of_the_held_product(new_state, plan)
+
+
+def test_guard_f1_a_bare_number_over_a_newer_list_with_no_question_picks_its_row():
+    """The bare-quantity skip is for the OWED quantities question only. An answered one-product
+    check with a newer product-row list and no question open: `2` picks row 2 of that list."""
+    newer = ["ELP3754", "ELP3755", "ELP3756"]
+    rows = [
+        {
+            "position": i, "label": c, "code": c, "uuid": ht.uuid_of(c),
+            "entity_type": "product", "shown_at_turn": 4,
+        }
+        for i, c in enumerate(newer, 1)
+    ]
+    task = ht.stock_task([("SRTGV332-DIY", 20)], status=task_mod.ANSWERED, opened_at_turn=1, touched_at_turn=2)
+    focus = Focus(
+        products=ht.product_rows("SRTGV332-DIY"), domains=["inventory"], tasks=(task,), last_list=rows
+    )
+    state = replace(ht.state(focus, turn_no=5), state_path=True)
+    v = verdict(
+        domain_hint="inventory", entity_op="reuse", entities=[], reference_positions=[2],
+        open_question_answer={"mode": None, "picked": [], "items": [], "qty_for_all": None},
+        state_changes=[{"op": "pick", "axis": None, "position": 2}],
+    )
+    _new_state, plan = _turn(state, v)
+    codes = [row["canonical_code"] for spec in ht.inventory_specs(plan) for row in spec.entities]
+    assert codes == ["ELP3755"], codes
