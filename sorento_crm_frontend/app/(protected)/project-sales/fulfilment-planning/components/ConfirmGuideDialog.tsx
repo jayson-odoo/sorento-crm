@@ -80,7 +80,7 @@ export function ConfirmGuideDialog({
   runConfirm,
   saveRemarks,
   preparing = false,
-  prepareError = null,
+  prepareErrors,
   onRetryPrepare,
   onClose,
 }: {
@@ -104,7 +104,8 @@ export function ConfirmGuideDialog({
    * record one (so their page is the editable sheet, never the read-only one), or that failed.
    */
   preparing?: boolean;
-  prepareError?: string | null;
+  /** Per core sales order id: why it could not be made ready (the server's sentence). */
+  prepareErrors?: ReadonlyMap<string, string>;
   onRetryPrepare?: () => void;
   onClose: () => void;
 }) {
@@ -127,7 +128,9 @@ export function ConfirmGuideDialog({
   // the guide can still move on: the press names that order in its results, and one order
   // that cannot be planned never holds up the others.
   const unready = Boolean(page && !page.psoId && preparing);
-  const prepareFailed = Boolean(page && !page.psoId && !preparing && prepareError);
+  const prepareError =
+    page && !page.psoId && !preparing ? prepareErrors?.get(page.salesOrderId) ?? null : null;
+  const prepareFailed = Boolean(prepareError);
   const readFailed = Boolean(splitRead?.isError);
   // OI-SPLIT-CONFIRM-POLISH (owner, SO426939): the ONE SO date every sheet on the page prints:
   // the order's split read, else the board's (an order nobody adopted has no read at all).
@@ -182,7 +185,10 @@ export function ConfirmGuideDialog({
     if (step.kind === 'review' && step.index >= pages.length) setStep({ kind: 'confirm' });
   }, [step, pages.length]);
 
-  /** Cancel: the explicit way out, which writes nothing (UAC A2, F23). */
+  /**
+   * Cancel: the explicit way out, which confirms and sends nothing (UAC A2, F23). An order the
+   * guide adopted as it opened keeps its planning record (OI-SPLIT-CONFIRM-POLISH, owner).
+   */
   const close = React.useCallback(() => {
     if (posting) return;
     onClose();
@@ -337,7 +343,6 @@ export function ConfirmGuideDialog({
                       active
                       onlyLineIds={editable.onlyLineIds}
                       lineRemarks={editable.remarks}
-                      soDate={soDate}
                       // OI-SPLIT-CONFIRM-POLISH: no drag-to-reorder on the Review split page.
                       canDrag={false}
                       onSaveRemarks={(changes) =>

@@ -1421,7 +1421,9 @@ describe('OI-SPLIT-CONFIRM-POLISH: an order nobody adopted opens Review split ed
     const page = await screen.findByTestId('confirm-guide-split-page');
     expect(within(page).queryByRole('table', { name: 'Split delivery sheet' })).not.toBeInTheDocument();
     expect(screen.getByTestId('confirm-guide-next')).toBeDisabled();
-    finish({ project_sales_order_id: 'pso-so-9', so_number: 'SO426939', review_state: 'in_review', already_adopted: false });
+    await act(async () => {
+      finish({ project_sales_order_id: 'pso-so-9', so_number: 'SO426939', review_state: 'in_review', already_adopted: false });
+    });
   });
 
   it('a failed adopt says so with a Retry above the order\'s lines, Next stays on, and Retry gets the editable sheet', async () => {
@@ -1478,6 +1480,92 @@ describe('OI-SPLIT-CONFIRM-POLISH: an order nobody adopted opens Review split ed
     const page = await screen.findByTestId('confirm-guide-split-page');
     await within(page).findByRole('button', { name: 'Undo' });
     expect(within(page).queryByTestId('confirm-guide-so-date')).not.toBeInTheDocument();
+  });
+
+  it('two orders, one adopt fails: the adopted order is editable, the other shows ITS OWN error', async () => {
+    const ok = (no: number, item: string) =>
+      demand({
+        sales_order_id: 'so-8',
+        so_number: 'SO426800',
+        project_sales_order_id: null,
+        project_line_id: `pl-8-${no}`,
+        line_no: no,
+        item_code: item,
+        fulfilment_location: 'BRW-BB',
+        qty: '10',
+        required_date: '2030-01-01',
+      });
+    const adoptedIds = new Set<string>();
+    const twoBoard = () => {
+      const board = withDraft(boardOf([ok(1, 'ZZT-OK-1'), ...RO_LINES]), ['pl-8-1', 'pl-9-1', 'pl-9-2', 'pl-9-3']);
+      return mapContributions(
+        {
+          ...board,
+          orders: board.orders.map((o) => ({
+            ...o,
+            project_sales_order_id: adoptedIds.has(o.sales_order_id) ? `pso-${o.sales_order_id}` : null,
+            so_date: '2026-10-20',
+          })),
+        } as unknown as Board,
+        (entry) =>
+          adoptedIds.has(String(entry.sales_order_id))
+            ? { ...entry, project_sales_order_id: `pso-${entry.sales_order_id}` }
+            : { ...entry, project_line_id: null, project_sales_order_id: null },
+      );
+    };
+    adoptSalesOrder.mockImplementation(async (salesOrderId: string) => {
+      if (salesOrderId === 'so-9') throw new Error('Another planning record already holds SO426939.');
+      adoptedIds.add(salesOrderId);
+      return { project_sales_order_id: `pso-${salesOrderId}`, so_number: 'SO426800', review_state: 'in_review', already_adopted: false };
+    });
+    getPlanningBoard.mockImplementation(async () => twoBoard());
+    serveSplits({
+      'pso-so-8': {
+        ...splitRead('pso-so-8', 'SO426800', []),
+        so_date: '2026-10-20',
+        lines: [wireLine(1, 'ZZT-OK-1', 10, '2030-01-01', { line_id: 'pl-8-1', location: 'BRW-BB', split_view: { status: 'saved' } })],
+      },
+    });
+    renderPanel(['SO426800', 'SO426939']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
+    await openConfirmGuide();
+    const first = await screen.findByTestId('confirm-guide-split-page');
+    expect(first).toHaveAttribute('data-so', 'SO426800');
+    await within(first).findByRole('button', { name: 'Undo' });
+    expect(within(first).getAllByRole('button', { name: /^Add a split to line \d+$/ })).toHaveLength(1);
+    expect(within(first).queryByRole('alert')).not.toBeInTheDocument();
+    expect(adoptSalesOrder).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByTestId('confirm-guide-next'));
+    await waitFor(() =>
+      expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO426939'),
+    );
+    const second = screen.getByTestId('confirm-guide-split-page');
+    expect(within(second).getByRole('alert')).toHaveTextContent('Another planning record already holds SO426939.');
+  });
+
+  it('the adopt\'s own planning record wins when the board re-read still reports none', async () => {
+    adoptSalesOrder.mockResolvedValue({
+      project_sales_order_id: 'pso-so-9',
+      so_number: 'SO426939',
+      review_state: 'in_review',
+      already_adopted: false,
+    });
+    // the re-read names the mirror lines but, as for SO419851, not the record itself
+    const stillNull = () => {
+      const board = soBoard(true);
+      return { ...board, orders: board.orders.map((o) => ({ ...o, project_sales_order_id: null })) } as unknown as Board;
+    };
+    getPlanningBoard.mockResolvedValueOnce(soBoard(false)).mockImplementation(async () => stillNull());
+    serveSplits({ 'pso-so-9': SO9_READ() });
+    renderPanel(['SO426939']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByRole('button', { name: 'Undo' });
+    expect(getLineSplits).toHaveBeenCalledWith('pso-so-9');
+    expect(within(page).getAllByRole('button', { name: /^Add a split to line \d+$/ })).toHaveLength(3);
   });
 
   it('an order that already has its planning record is not adopted again', async () => {

@@ -34,3 +34,23 @@ columns resizable.
   the read, refetch included (vitest).
 - Footer: Cancel far left; the step's action at the right (Next on Review split, "Confirm N
   orders" on Confirm) with Back immediately left of it. The Confirm button left the body.
+
+## Round 3 (owner, 21 Oct ~23:25 to ~23:45, SO426939)
+
+- Review split is ALWAYS the editable sheet (owner: "can I split for this scenario?"). When the
+  guide opens, the board adopts every guide order that has no planning record through the
+  existing idempotent `POST /fulfilment-planning/adopt` (a silent `ensure` mutation beside the
+  board's `adopt`), every order tried, errors kept per order, then re-reads the board once for
+  the mirror line ids; the adopt's own record id wins over the re-read, as the press already
+  does. One run at a time (a reopened guide or a Retry joins the running one). While it runs a
+  page is a skeleton with Next off; a failed order shows its own error and Retry above its
+  read-only lines, and Next stays on so it never holds up the other orders (the press names
+  it, as before).
+- **Changed criterion (guide UAC A2):** "Cancel, Escape or close writes nothing" now reads
+  "confirms and sends nothing". Opening the guide may write a planning record (one
+  `project_sales_orders` row, its mirror lines and the usual audit row), which stays after
+  Cancel. Adoption sends nothing: no email, no AutoCount write, no queue job.
+- SO date: the board's `orders[]` carries `so_date` (core `sales_orders.order_date`, the same
+  value as the split read's `so_date`). One helper in `ConfirmGuideDialog` (read's date, else
+  the board's) feeds every sheet on the page.
+- Owner ruling (~23:45): the phone (375) page header shows the same SO date, DD/MM/YYYY.

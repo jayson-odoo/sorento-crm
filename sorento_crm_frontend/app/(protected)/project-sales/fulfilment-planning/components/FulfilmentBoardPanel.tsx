@@ -2170,30 +2170,51 @@ export function FulfilmentBoardPanel({
   const [guideAdopted, setGuideAdopted] = React.useState<ReadonlyMap<string, string>>(
     () => new Map(),
   );
-  const [guidePrep, setGuidePrep] = React.useState<{ running: boolean; error: string | null }>({
-    running: false,
-    error: null,
-  });
+  // Per order: why it could not be made ready (core sales order id -> the server's sentence).
+  const [guidePrep, setGuidePrep] = React.useState<{
+    running: boolean;
+    errors: ReadonlyMap<string, string>;
+  }>({ running: false, errors: new Map() });
+  // One run at a time: a guide reopened (or a Retry pressed) while one runs joins it, so two
+  // adopts never race for one order.
+  const guidePrepRun = React.useRef<Promise<void> | null>(null);
   const prepareGuide = React.useCallback(
-    async (salesOrderIds: string[]) => {
-      if (salesOrderIds.length === 0) return;
-      setGuidePrep({ running: true, error: null });
-      const adopted = new Map<string, string>();
-      try {
+    (salesOrderIds: string[]) => {
+      if (salesOrderIds.length === 0 || guidePrepRun.current) return;
+      const run = (async () => {
+        setGuidePrep({ running: true, errors: new Map() });
+        const adopted = new Map<string, string>();
+        const errors = new Map<string, string>();
+        // Every order is tried: one that cannot be planned never holds up the others.
         for (const salesOrderId of salesOrderIds) {
-          const result = await ensure.mutateAsync(salesOrderId);
-          if (result?.project_sales_order_id) adopted.set(salesOrderId, result.project_sales_order_id);
+          try {
+            const result = await ensure.mutateAsync(salesOrderId);
+            if (result?.project_sales_order_id) {
+              adopted.set(salesOrderId, result.project_sales_order_id);
+            }
+          } catch (error) {
+            errors.set(
+              salesOrderId,
+              (error instanceof Error && error.message) ||
+                'This order could not be made ready to split.',
+            );
+          }
         }
-        await board.refetch();
-        setGuidePrep({ running: false, error: null });
-      } catch (error) {
-        setGuidePrep({
-          running: false,
-          error: (error instanceof Error && error.message) || 'This order could not be made ready to split.',
-        });
-      } finally {
-        if (adopted.size > 0) setGuideAdopted((current) => new Map([...current, ...adopted]));
-      }
+        // The re-read brings the mirror line ids every adopted order's sheet edits.
+        if (adopted.size > 0) {
+          try {
+            await board.refetch();
+          } catch {
+            // The board's own read failure is shown by the board.
+          }
+          setGuideAdopted((current) => new Map([...current, ...adopted]));
+        }
+        setGuidePrep({ running: false, errors });
+      })();
+      guidePrepRun.current = run;
+      void run.finally(() => {
+        guidePrepRun.current = null;
+      });
     },
     [ensure, board],
   );
@@ -2248,7 +2269,7 @@ export function FulfilmentBoardPanel({
   );
   const openGuide = () => {
     setGuideOpen(true);
-    void prepareGuide(unplannedGuideOrders);
+    prepareGuide(unplannedGuideOrders);
   };
 
   /**
@@ -3670,8 +3691,8 @@ export function FulfilmentBoardPanel({
           runConfirm={runConfirmAll}
           saveRemarks={saveLineRemarks}
           preparing={guidePrep.running}
-          prepareError={guidePrep.error}
-          onRetryPrepare={() => void prepareGuide(unplannedGuideOrders)}
+          prepareErrors={guidePrep.errors}
+          onRetryPrepare={() => prepareGuide(unplannedGuideOrders)}
           onClose={closeGuide}
         />
       ) : null}
