@@ -611,10 +611,29 @@ def export_order_inquiry_worklist_async(
     the `user_downloads` row, enqueue the render, mark it failed and answer 503 on an
     enqueue failure rather than leaving the row stuck pending.
     """
+    return _queue_worklist_export(payload, current_user, db, fmt="xlsx")
+
+
+@router.post("/order-inquiries/export/pdf", response_model=DownloadResponse)
+def export_order_inquiry_worklist_pdf(
+    payload: OrderInquiryWorklistExportRequest = Body(default_factory=OrderInquiryWorklistExportRequest),
+    current_user: dict = Depends(_EXPORT),
+    db: Session = Depends(get_db),
+):
+    """OI-DOWNLOAD (`PLAN-oi-download-21oct.md`): the lines list's Print / Download PDF -
+    the filtered rows the Export Excel above prints, in the OI email's layout, through My
+    Downloads (the Purchase Request PDF's shape). Sends no email."""
+    return _queue_worklist_export(payload, current_user, db, fmt="pdf")
+
+
+def _queue_worklist_export(
+    payload: OrderInquiryWorklistExportRequest, current_user: dict, db: Session, *, fmt: str,
+):
     from app.api.v1.projects._common import acting_company_id
     from app.services.queue_service import enqueue_job
     from app.tasks.export_tasks import generate_order_inquiry_worklist_xlsx
 
+    kind = f"order_inquiry_worklist_{fmt}"
     filters = payload.model_dump(exclude_none=True)
     # Security review fix round 2, item 1: the SAME UUID guard the GET list/summary/
     # matrix routes and the acknowledge route's own `filter` branch run - defense in
@@ -629,19 +648,17 @@ def export_order_inquiry_worklist_async(
     # same as the UUID guard above.
     company_id = acting_company_id(db)
 
-    if DownloadService(db).has_in_flight(
-        user_id=str(current_user["id"]), kind="order_inquiry_worklist_xlsx",
-    ):
+    if DownloadService(db).has_in_flight(user_id=str(current_user["id"]), kind=kind):
         raise AppException(
             status_code=409,
             message="An order inquiry export is already being prepared - check My "
                     "Downloads.",
         )
 
-    filename = f"order-inquiries-{compact_ddmmyyyy(None)}.xlsx"
+    filename = f"order-inquiries-{compact_ddmmyyyy(None)}.{fmt}"
     download = DownloadService(db).create(
         user_id=str(current_user["id"]),
-        kind="order_inquiry_worklist_xlsx",
+        kind=kind,
         filename=filename,
     )
     try:
@@ -651,6 +668,8 @@ def export_order_inquiry_worklist_async(
             filters,
             str(current_user["id"]),
             company_id=company_id,
+            # Only a PDF names its format: an Excel job is queued exactly as before.
+            **({"fmt": fmt} if fmt != "xlsx" else {}),
             queue_name="imports",
             job_timeout=600,
         )
@@ -681,14 +700,33 @@ def export_order_inquiry_header(
     render, mark it failed and answer 503 on an enqueue failure. 404 for an unknown or
     another company's header, off the SAME loader the detail page itself reads.
     """
+    return _queue_header_export(inquiry_id, current_user, db, fmt="xlsx")
+
+
+@router.post("/order-inquiries/{inquiry_id}/export/pdf", response_model=DownloadResponse)
+def export_order_inquiry_header_pdf(
+    inquiry_id: str,
+    current_user: dict = Depends(_EXPORT),
+    db: Session = Depends(get_db),
+):
+    """OI-DOWNLOAD (`PLAN-oi-download-21oct.md`): the OI detail page's Print / Download PDF
+    - the OI email's layout (S/O table on top, then the item lines) off the rows its Export
+    Excel prints, through My Downloads like `POST /procurement/purchase-requests/{id}/export/
+    pdf`, named like it (`order-inquiry-<OI no>.pdf`). Sends no email."""
+    return _queue_header_export(inquiry_id, current_user, db, fmt="pdf")
+
+
+def _queue_header_export(inquiry_id: str, current_user: dict, db: Session, *, fmt: str):
+    from app.services.pdf_revision_support import export_filename
     from app.services.queue_service import enqueue_job
     from app.tasks.export_tasks import generate_order_inquiry_xlsx
 
     validate_uuid_path(inquiry_id, resource="Order inquiry")
     header = OrderInquiryHeaderService(db).get(inquiry_id)
+    kind = f"order_inquiry_{fmt}"
 
     if DownloadService(db).has_in_flight(
-        user_id=str(current_user["id"]), kind="order_inquiry_xlsx",
+        user_id=str(current_user["id"]), kind=kind,
         source_entity_type="order_inquiry", source_entity_id=inquiry_id,
     ):
         raise AppException(
@@ -699,10 +737,16 @@ def export_order_inquiry_header(
 
     download = DownloadService(db).create(
         user_id=str(current_user["id"]),
-        kind="order_inquiry_xlsx",
+        kind=kind,
         source_entity_type="order_inquiry",
         source_entity_id=inquiry_id,
-        filename=f"{header.inquiry_no}.xlsx",
+        # The Excel keeps the name the OI email attaches it under; the PDF is named the way
+        # the Purchase Request / Sponsorship Form PDF is (`<what it is>-<number>.pdf`).
+        filename=(
+            export_filename("order-inquiry", header.inquiry_no)
+            if fmt == "pdf"
+            else f"{header.inquiry_no}.xlsx"
+        ),
     )
     try:
         enqueue_job(
@@ -710,6 +754,7 @@ def export_order_inquiry_header(
             str(download.id),
             inquiry_id,
             str(current_user["id"]),
+            **({"fmt": fmt} if fmt != "xlsx" else {}),
             queue_name="imports",
             job_timeout=600,
         )
