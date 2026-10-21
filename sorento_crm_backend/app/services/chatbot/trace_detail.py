@@ -508,9 +508,9 @@ def _result_text(note: dict[str, Any] | None, lk: _Lookups) -> dict[str, str]:
                 if item.get("value") is not None and label:
                     parts.append(f"{label}: {lk.value(key, item['value'])}")
                 elif item.get("said"):
-                    parts.append(_say(item["said"]))
+                    parts.append(str(item["said"]))  # the customer's own words, as typed
             elif str(item).strip():
-                parts.append(_say(item))
+                parts.append(str(item))
         if not parts:
             return {"outcome": "changed", "text": "Changed"}
         return {"outcome": "changed", "text": "Changed: read as " + "; ".join(parts)}
@@ -550,7 +550,7 @@ def _understood_text(entity: dict[str, Any], lk: _Lookups, noun: str | None = No
     key, spec_value = entity.get("spec_key"), entity.get("spec_value")
     value = entity.get("canonical_code") or entity.get("listed_item")
     if not hint:
-        return f"{head}: {_say(value)}" if value else head
+        return f"{head}: {value}" if value else head
     if hint in _CLASS_HINTS and (value or spec_value):
         return f"{head} read as product type {_say(value or spec_value)}"
     if key and spec_value is not None:
@@ -560,11 +560,19 @@ def _understood_text(entity: dict[str, Any], lk: _Lookups, noun: str | None = No
     if hint == "attachment_type" and value:
         return f"{head} read as {noun or 'file type'} {lk.type_name(value)}"
     text = f"{head} read as {_hint_words(hint)}"
-    return f"{text}: {_say(value)}" if value else text
+    return f"{text}: {value}" if value else text
 
 
-def _looked_up(records: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """What the bot looked up this turn (its tool call), in plain words."""
+_PLUMBING_ARGS = frozenset({"contact_id", "space_id", "dry_run", "limit", "offset"})
+
+
+def _arg_text(value: Any) -> str:
+    return "yes" if value is True else "no" if value is False else str(value)
+
+
+def _looked_up(records: list[dict[str, Any]], lk: _Lookups) -> dict[str, Any] | None:
+    """What the bot looked up this turn (its tool call), in plain words. Codes (`*_code`,
+    `*_codes` args) stay as stored; a registry spec key shows its label and value label."""
     entries = _kind_records(records, "tool")
     if not entries or not entries[-1].get("name"):
         return None
@@ -572,13 +580,19 @@ def _looked_up(records: list[dict[str, Any]]) -> dict[str, Any] | None:
     details: list[str] = []
     args = entry.get("args") if isinstance(entry.get("args"), dict) else {}
     for key, value in args.items():
-        if value is None or isinstance(value, dict):
+        if key in _PLUMBING_ARGS or value is None or isinstance(value, dict):
             continue
         items = [v for v in (value if isinstance(value, list) else [value]) if v not in (None, "") and not isinstance(v, (dict, list))]
         items = [v for v in items if not _UUID_LIKE.match(str(v))]
         if not items:
             continue
-        details.append(f"{_say(key).capitalize()}: {_say(', '.join(str(v) for v in items))}")
+        if key in lk.specs:
+            label, text = lk.label(key), ", ".join(lk.value(key, v) for v in items)
+        elif key.endswith(("_code", "_codes")):
+            label, text = _say(key).capitalize(), ", ".join(str(v) for v in items)
+        else:
+            label, text = _say(key).capitalize(), _say(", ".join(_arg_text(v) for v in items))
+        details.append(f"{label}: {text}")
         if len(details) == LOOKED_UP_DETAIL_CAP:
             break
     what = _say(entry["name"])
@@ -646,7 +660,7 @@ def _index_match(records: list[dict[str, Any]], db: Session | None = None) -> di
         "held": [m.get("plain") or _say(m.get("entry")) for m in matches if m.get("held")],
         "not_from_lists": leftover,
         "failed": bool(event.get("failed")),
-        "looked_up": _looked_up(records),
+        "looked_up": _looked_up(records, lk),
     }
 
 

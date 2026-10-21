@@ -212,6 +212,7 @@ export function IndexMatchSection({
             type="button"
             variant="ghost"
             size="sm"
+            aria-expanded={showDetails}
             onClick={() => setShowDetails((v) => !v)}
           >
             {showDetails ? 'Hide details' : 'Show details'}

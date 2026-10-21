@@ -29,7 +29,7 @@ LIST_NAMES = {"specs": "Specifications", "attachment_types": "File types", "cert
 HOW = {
     "specs": (
         "A word of the message matches a value, its name or a synonym from Product Specifications, "
-        "or a code ending like -FRG; close spellings count too."
+        "or a code ending like \u2011FRG; close spellings count too."
     ),
     "attachment_types": "A word matches a file type's code, name, its words or an alias keyword; close spellings count too.",
     "certification_types": (

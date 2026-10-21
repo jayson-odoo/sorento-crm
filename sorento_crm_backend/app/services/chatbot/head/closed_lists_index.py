@@ -364,6 +364,8 @@ _FILE_SOURCES = {
 }
 _SPEC_ITEM = re.compile(r"^(?:spec|flag) (?P<key>\S+) = (?P<val>.*?)(?: \((?P<disp>[^()]*)\))?$")
 _TYPE_ITEM = re.compile(r"^product type (?P<disp>.*) \(\S+ = .*\)$")
+_NUMBER_ITEM = re.compile(r"^spec (?P<key>\S+) \(a number\)$")
+_HOLDING_TAIL = re.compile(r', holding ".*"$')
 _SIZE_ITEM = re.compile(r"^size (?P<size>.*?)(?: \(no dimension named\))?$")
 
 
@@ -377,15 +379,19 @@ def _spec_labels(db: "Session", hidden: frozenset[str]) -> dict[str, str]:
 def _plain_item(item: str, labels: dict[str, str]) -> tuple[str, str]:
     """A candidate item in plain words and where it comes from (CHAT-INDEX-VIZ contract v2)."""
     if item.startswith("set code "):
-        return item[len("set code "):], "from the product sets"
+        return _HOLDING_TAIL.sub("", item[len("set code "):]), "from the product sets"
     if item.startswith("code "):
-        return item[len("code "):], "from the product codes"
+        return _HOLDING_TAIL.sub("", item[len("code "):]), "from the product codes"
     if item.startswith("product type "):
         found = _TYPE_ITEM.match(item)
         return "Product type: " + (found["disp"] if found else item[len("product type "):]), "from the product type list"
     if item.startswith("size "):
         found = _SIZE_ITEM.match(item)
         return "Size: " + (found["size"] if found else item[len("size "):]), "from the product sizes"
+    bare = _NUMBER_ITEM.match(item)
+    if bare:
+        label = labels.get(bare["key"]) or bare["key"].replace("_", " ").capitalize()
+        return f"{label}: a number", f"from the product {label.lower()} list"
     found = _SPEC_ITEM.match(item)
     if found:
         key, val, disp = found["key"], found["val"], found["disp"]
@@ -444,7 +450,7 @@ def block_with_matches(
         if line in sent or line in named:
             continue
         named.append(line)
-        ending = f" (code ending -{word.upper()})"
+        ending = f" (code ending \u2011{word.upper()})"
         for item in items:
             plain, source = _plain_item(item, labels)
             matches.append(_match(word, "Specifications", item, line, plain=plain, source=source + ending))

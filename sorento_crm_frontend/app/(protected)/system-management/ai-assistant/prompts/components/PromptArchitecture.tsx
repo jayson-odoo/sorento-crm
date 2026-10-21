@@ -80,11 +80,14 @@ export function PromptArchitecture({
         </Badge>
       </div>
 
-      <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-start">
+      <div
+        className="grid gap-2 sm:grid-cols-3 2xl:grid-cols-6"
+        data-testid="architecture-flow"
+      >
         {BOXES.map((label, i) => (
           <div
             key={label}
-            className="flex min-w-0 flex-col items-center gap-2 sm:flex-1 sm:flex-row sm:items-start"
+            className="flex min-w-0 flex-col items-center gap-2 sm:flex-row sm:items-start"
           >
             <div className="w-full min-w-0 rounded-md border p-2 sm:flex-1">
               <div className="text-xs font-medium">{label}</div>
@@ -97,7 +100,7 @@ export function PromptArchitecture({
                   aria-hidden
                 />
                 <ArrowRight
-                  className="mt-2 hidden size-4 shrink-0 text-muted-foreground sm:block"
+                  className={`mt-2 hidden size-4 shrink-0 text-muted-foreground ${i % 3 === 2 ? '2xl:block' : 'sm:block'}`}
                   aria-hidden
                 />
               </>
@@ -160,7 +163,7 @@ export function PromptArchitecture({
                   data-label="Size each message"
                   className={`py-1 pe-2 text-end tabular-nums ${CELL}`}
                 >
-                  {fmtSize(l.sent_each_message_size)}
+                  {l.checked_only ? '-' : fmtSize(l.sent_each_message_size)}
                 </td>
                 <td
                   data-label="Full list size"

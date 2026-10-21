@@ -498,7 +498,7 @@ export function PromptDetail({ name }: { name: string }) {
                   />
                 </div>
               )}
-              <VarChips validation={validation} declared={declared} />
+              {editorMode !== 'architecture' ? <VarChips validation={validation} declared={declared} /> : null}
 
               {diffOpen ? (
                 <div className="space-y-2 rounded-md border p-3">
