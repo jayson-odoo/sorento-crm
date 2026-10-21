@@ -426,7 +426,7 @@ def block_with_matches(
     entry sent (the word, which list it is on, the entry, whether the word only spells it
     closely, whether it is a held product's own line, and the line it sits on): what the
     per-turn trace shows."""
-    from app.services.chatbot.head.candidates import CAP_LINES, HEADER, candidate_lines
+    from app.services.chatbot.head.candidates import HEADER, candidate_lines, shown_entries
 
     held = list(dict.fromkeys(str(h) for h in held_ids or [] if h))[:CAP_HELD_PRODUCTS]
     file_named, file_held = _file_matches(db, message, held)
@@ -435,7 +435,7 @@ def block_with_matches(
     labels = _spec_labels(db, hidden)
     matches: list[dict] = []
     lines = candidate_lines(entries)
-    for entry in [e for e in entries if e.items][:CAP_LINES]:
+    for entry in shown_entries(entries):
         line = f'- "{entry.gram}": ' + "; ".join(entry.items)
         for item in entry.items:
             near = item.startswith("near ")
