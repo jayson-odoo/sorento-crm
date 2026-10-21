@@ -398,7 +398,8 @@ def test_a_reset_that_names_its_own_domain_still_plans_that_domains_fetch(gate):
     task = ht.stock_task([(c, None) for c in OLDER], opened_at_turn=2, touched_at_turn=2)
     focus = Focus(products=ht.product_rows(*OLDER), domains=["inventory"], tasks=(task,))
     state = replace(ht.state(focus, turn_no=5), state_path=gate)
-    v = verdict(domain_hint="order", intent_hint="check_order", entities=[], topic_reset=True, order_status="outstanding")
+    v = verdict(domain_hint="order", intent_hint="check_order", entities=[], topic_reset=True, order_status="outstanding",
+                domain_in_message=True)
     if gate:
         v["state_changes"] = [{"op": "new_subject", "axis": None, "position": None}]
     _state, plan = _turn(state, v)
