@@ -198,6 +198,22 @@ def test_the_sales_word_on_an_order_ask_is_not_a_switch_off_the_held_order_list(
     assert out.state.focus.domains == ["order"]
 
 
+@pytest.mark.parametrize("order_status", ["outstanding", None])
+def test_near_miss_an_order_ask_echoing_the_held_sales_status_is_still_a_switch(order_status) -> None:
+    """Review should-fix 1: the held status echoed back (`status` equal to the State's) is not
+    the message's own report kind, so an outstanding / order ask under `order` after a held top
+    selling ranking is still the switch to `order` (the echo cleared, as r10 clears it)."""
+    from app.services.chatbot.turn.state import Focus
+    from tests.chatbot._turn_helpers import verdict
+
+    focus = Focus(domains=["sales"], status="top_selling", sales_channel="dealer", sort={"by": "qty", "dir": "desc"})
+    out = _apply_state(focus, verdict(domain_hint="order", intent_hint="check_order", status="top_selling",
+                                      order_status=order_status, state_changes=KEEP))
+    assert out.valid is True, out.log
+    assert out.state.focus.domains == ["order"], out.state.focus.domains
+    assert out.state.focus.status is None and out.verdict.get("status") is None, (out.state.focus, out.verdict)
+
+
 def test_near_miss_a_real_domain_switch_off_a_held_report_still_drops_its_frame() -> None:
     from tests.chatbot._turn_helpers import verdict
 
@@ -252,7 +268,7 @@ def test_step5_state_on_the_ask_typed_again_reruns_the_held_report_with_its_chan
 def test_step6_state_on_measure_and_basis_after_the_rerun_refine_the_report(console) -> None:
     """d7be934d: "qty, delivered" right after step 5 re-runs the held report delivered, with the
     channel, brand and period held; it is never read as a period."""
-    _state_on(console)
+    ran = _state_on(console)
     _step3(console)
     console.say(_live_refine(basis="ordered", state_changes=[{"op": "set", "axis": "status", "position": None}]),
                 "ordered")
@@ -265,6 +281,7 @@ def test_step6_state_on_measure_and_basis_after_the_rerun_refine_the_report(cons
         _live_refine(basis="delivered", state_changes=[{"op": "answer", "axis": None, "position": None}]),
         "qty, delivered",
     )
+    assert ran, "harness: the State path never ran"
     assert "as a period" not in text and PERIOD_Q not in text, text
     assert len(calls) == 1, (text, calls)
     assert calls[0]["basis"] == "delivered" and calls[0]["channel"] == "dealer", calls
