@@ -84,6 +84,10 @@ import {
   contributionMatchesSearch,
   confirmLinesByOrder,
   remarkFor,
+  autocountChangeClause,
+  autocountChangeNotes,
+  autocountChangeSentence,
+  confirmButtonLabel,
   confirmSummaryFor,
   decisionHeaderText,
   orderListRows,
@@ -264,35 +268,59 @@ function pressHasSomething(
   );
 }
 
+/** The note lines of what a press's AutoCount change retired (`lines_retired`), for one order. */
+function retiredNote(result: BoardBatchResult, createdAt: string | null) {
+  const retired = result.lines_retired ?? [];
+  const itemCodes = [
+    ...new Set(retired.map((line) => line.item_code).filter((code): code is string => Boolean(code))),
+  ].sort();
+  return { count: retired.length, itemCodes, createdAt };
+}
+
 /**
- * One order's line in the Confirm / Simulate results (PLAN-BATCH-HELD-CANCEL, UAC U3/U4): what
- * the press did, in order - applied the pending AutoCount change, then the Cancel SO transfer or
- * the revision it confirmed. Never "commits after ..." without the step that gets there.
+ * One order's line in the Confirm / Simulate results (PLAN-BATCH-HELD-CANCEL UAC U3/U4;
+ * PLAN-BATCH-COUNT-DISPLAY D3/D4): what the press did with the DECISIONS - the Cancel SO transfer
+ * or the revision it confirmed. The AutoCount change it applied is one separate note
+ * (`autocountChangeSentence`), unless that change is all the press did: then it is the sentence.
  */
-function resultSentence(result: BoardBatchResult, simulated: boolean): string {
+function resultSentence(
+  result: BoardBatchResult,
+  simulated: boolean,
+  createdAt: string | null,
+): string {
   if (!result.ok) return result.error ?? 'refused';
-  const parts: string[] = [];
-  if (result.planning_change_applied) {
-    parts.push(simulated ? 'would apply the AutoCount change' : 'applied the AutoCount change');
-  }
   const cancelled = result.lines_cancelled?.length ?? 0;
   const confirmed = result.lines_confirmed?.length ?? 0;
   const handedOver = result.inquiry_rows_created ?? 0;
   const lines = (count: number) => `${count} line${count === 1 ? '' : 's'}`;
   if (cancelled > 0 && confirmed === 0 && handedOver === 0) {
-    parts.push(
-      simulated
-        ? `would transfer ${lines(cancelled)} to Cancel SO`
-        : `${lines(cancelled)} transferred to Cancel SO`,
-    );
-  } else if (!result.planning_change_applied || confirmed > 0 || handedOver > 0) {
-    parts.push(
-      simulated
-        ? `would confirm as revision ${result.decision_revision}`
-        : `confirmed as revision ${result.decision_revision} (${handedOver} purchase row${handedOver === 1 ? '' : 's'} handed over)`,
-    );
+    return simulated
+      ? `would transfer ${lines(cancelled)} to Cancel SO`
+      : `${lines(cancelled)} transferred to Cancel SO`;
   }
-  return parts.join('; ');
+  if (result.planning_change_applied && confirmed === 0 && handedOver === 0) {
+    const note = autocountChangeSentence(
+      retiredNote(result, createdAt),
+      simulated ? 'simulated' : 'confirmed',
+      false,
+    );
+    return note.charAt(0).toLowerCase() + note.slice(1);
+  }
+  return simulated
+    ? `would confirm as revision ${result.decision_revision}`
+    : `confirmed as revision ${result.decision_revision} (${handedOver} purchase row${handedOver === 1 ? '' : 's'} handed over)`;
+}
+
+/** Whether a result's AutoCount change gets its own note (it is not already the sentence). */
+function retiredNoteApart(result: BoardBatchResult): boolean {
+  if (!result.ok || !result.planning_change_applied || !(result.lines_retired?.length ?? 0)) {
+    return false;
+  }
+  return (
+    (result.lines_cancelled?.length ?? 0) > 0 ||
+    (result.lines_confirmed?.length ?? 0) > 0 ||
+    (result.inquiry_rows_created ?? 0) > 0
+  );
 }
 
 function rowAxisFrom(value: string | null): BoardRowAxis {
@@ -1257,6 +1285,16 @@ export function FulfilmentBoardPanel({
       unadoptedSalesOrderIds,
       batchNamedKeys,
     ],
+  );
+  // PLAN-BATCH-COUNT-DISPLAY (D2, crew ruling b): the lines pending AutoCount changes retire,
+  // per order - not in the count, said once in the note beside the button.
+  const autocountNotes = React.useMemo(
+    () =>
+      autocountChangeNotes(allContributions, draftWithoutPreMark).map((note) => ({
+        ...note,
+        createdAt: (note.soNumber && bySoNumber.get(note.soNumber)?.batch.created_at) || null,
+      })),
+    [allContributions, draftWithoutPreMark, bySoNumber],
   );
 
   /**
@@ -2804,14 +2842,14 @@ export function FulfilmentBoardPanel({
                     size="sm"
                     data-testid="board-confirm"
                     disabled={
-                      confirmSummary.toConfirm === 0 ||
+                      (confirmSummary.toConfirm === 0 && autocountNotes.length === 0) ||
                       confirmingAll ||
                       Boolean(confirmBlockedReason)
                     }
                     title={confirmBlockedReason ?? undefined}
                     onClick={() => setGuideOpen(true)}
                   >
-                    {`Confirm (${confirmSummary.toConfirm})`}
+                    {confirmButtonLabel(confirmSummary.toConfirm, autocountNotes.length)}
                   </Button>
                 </>
               }
@@ -2894,6 +2932,28 @@ export function FulfilmentBoardPanel({
         </Alert>
       )}
 
+      {autocountNotes.length > 0 && (
+        <div
+          data-testid="board-autocount-change-note"
+          className="space-y-0.5 rounded-lg border border-border px-3 py-2.5 text-sm break-words text-muted-foreground"
+        >
+          {autocountNotes.length === 1 ? (
+            <p>{autocountChangeSentence(autocountNotes[0], 'board', confirmSummary.toConfirm > 0)}</p>
+          ) : (
+            <>
+              <p>{`${confirmSummary.toConfirm > 0 ? 'Also applies' : 'Applies'} the AutoCount change on ${autocountNotes.length} orders`}</p>
+              <ul className="space-y-0.5">
+                {autocountNotes.map((note) => (
+                  <li key={note.salesOrderId}>
+                    {`${note.soNumber ?? ''}: ${autocountChangeClause(note)}`}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
+
       {batchResults && (
         <div
           data-testid="board-confirm-results"
@@ -2918,6 +2978,8 @@ export function FulfilmentBoardPanel({
                 (candidate) => candidate.project_sales_order_id === result.pso_id,
               );
               const label = order?.so_number ?? result.so_number ?? result.pso_id;
+              // PLAN-BATCH-COUNT-DISPLAY: the date the note names is this order's batch.
+              const createdAt = bySoNumber.get(label)?.batch.created_at ?? null;
               // A refusal names the LINES it refused, not just the order: the fix is on one
               // row, and "SO404352: refused" sends a planner to read thirty of them.
               const failing = result.failing_lines ?? [];
@@ -2939,7 +3001,7 @@ export function FulfilmentBoardPanel({
                           : 'text-destructive'
                     }`}
                   >
-                    {`${label}: ${resultSentence(result, simulated)}`}
+                    {`${label}: ${resultSentence(result, simulated, createdAt)}`}
                   </span>
                   {simulated &&
                     result.ok &&
@@ -2985,17 +3047,17 @@ export function FulfilmentBoardPanel({
                       ))}
                     </ul>
                   )}
-                  {result.ok && result.lines_retired && result.lines_retired.length > 0 && (
-                    <ul
-                      data-testid={`board-retired-lines-${result.pso_id}`}
-                      className="space-y-0.5"
+                  {retiredNoteApart(result) && (
+                    <p
+                      data-testid={`board-retired-note-${result.pso_id}`}
+                      className="text-sm break-words text-muted-foreground"
                     >
-                      <li className="text-sm break-words">
-                        {`${simulated ? 'Would be retired' : 'Retired'} by the AutoCount change: ${result.lines_retired
-                          .map((line) => `line ${line.line_no ?? '?'} ${line.item_code ?? ''}`.trim())
-                          .join(' · ')}`}
-                      </li>
-                    </ul>
+                      {autocountChangeSentence(
+                        retiredNote(result, createdAt),
+                        simulated ? 'simulated' : 'confirmed',
+                        true,
+                      )}
+                    </p>
                   )}
                   {result.ok && result.lines_cancelled && result.lines_cancelled.length > 0 && (
                     <ul

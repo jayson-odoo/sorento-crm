@@ -444,10 +444,7 @@ export function pressPostsContribution(
     role.kind === 'post' ||
     role.kind === 'withdraw' ||
     role.kind === 'cancel_so' ||
-    role.kind === 'split_edit' ||
-    // PLAN-BATCH-HELD-CANCEL (U1): a line the book cancelled is one the press retires, and
-    // Confirm counts it, so Saved names it too: Saved (N) and Confirm (N) are one population.
-    role.kind === 'cancelled'
+    role.kind === 'split_edit'
   ) {
     return true;
   }
@@ -913,8 +910,10 @@ function countsInPress(
     batchBlocked,
     options?.batchNamedKeys,
   );
+  // PLAN-BATCH-COUNT-DISPLAY (owner ruling 21 Oct 2026 ~16:15): decisions only. A line the
+  // pending AutoCount change retires (role `cancelled`) is not counted; it is the one note
+  // `autocountChangeNotes` builds, and the press still posts its order's batch.
   if (
-    role.kind === 'cancelled' ||
     role.kind === 'withdraw' ||
     role.kind === 'post' ||
     role.kind === 'cancel_so' ||
@@ -928,6 +927,106 @@ function countsInPress(
     return unadopted === undefined || unadopted.has(contribution.sales_order_id);
   }
   return false;
+}
+
+/**
+ * PLAN-BATCH-COUNT-DISPLAY (D2): per sales order, the lines a pending AutoCount change retires
+ * (role `cancelled`: the book cancelled them and nobody decided them). The count leaves them out;
+ * the board and the results say them in ONE note instead.
+ */
+export interface AutocountChangeNote {
+  salesOrderId: string;
+  soNumber: string | null;
+  count: number;
+  itemCodes: string[];
+}
+
+export function autocountChangeNotes(
+  contributions: BoardContribution[],
+  draft: BoardDraft,
+  excludeKeys?: ReadonlySet<string>,
+): AutocountChangeNote[] {
+  const byOrder = new Map<string, AutocountChangeNote>();
+  for (const contribution of contributions) {
+    if (excludedFromPress(contribution, excludeKeys)) continue;
+    if (pressRoleFor(contribution, draft[contribution.key], false).kind !== 'cancelled') continue;
+    const note = byOrder.get(contribution.sales_order_id) ?? {
+      salesOrderId: contribution.sales_order_id,
+      soNumber: contribution.so_number ?? null,
+      count: 0,
+      itemCodes: [],
+    };
+    note.count += 1;
+    if (contribution.item_code && !note.itemCodes.includes(contribution.item_code)) {
+      note.itemCodes.push(contribution.item_code);
+    }
+    byOrder.set(contribution.sales_order_id, note);
+  }
+  return [...byOrder.values()].map((note) => ({ ...note, itemCodes: [...note.itemCodes].sort() }));
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** "24 Sep" from a batch's `created_at` (its calendar date as written). */
+function dayMonth(iso: string): string {
+  const [, month, day] = iso.slice(0, 10).split('-').map(Number);
+  return `${day} ${MONTHS[month - 1]}`;
+}
+
+type NoteLines = { count: number; itemCodes: string[]; createdAt?: string | null };
+
+function oldLines(note: NoteLines): string {
+  const codes =
+    note.itemCodes.length > 3
+      ? `${note.itemCodes.slice(0, 3).join(', ')} and ${note.itemCodes.length - 3} more`
+      : note.itemCodes.join(', ');
+  return `${note.count} old line${note.count === 1 ? '' : 's'}${codes ? ` (${codes})` : ''}`;
+}
+
+/** Where a pending change is named in a note: its batch date, or plainly "pending". */
+function changeFrom(note: NoteLines): string {
+  return note.createdAt
+    ? `the AutoCount change from ${dayMonth(note.createdAt)}`
+    : 'the pending AutoCount change';
+}
+
+export type AutocountNoteMode = 'board' | 'simulated' | 'confirmed';
+
+/**
+ * The one note sentence (D2-D5): "Also applies the AutoCount change from 24 Sep: 10 old lines
+ * (SRTWCX8840-S-RL) are retired". `also` when the same press carries decisions for the order.
+ */
+export function autocountChangeSentence(
+  note: NoteLines,
+  mode: AutocountNoteMode,
+  also: boolean,
+): string {
+  const one = note.count === 1;
+  const [verb, retired] =
+    mode === 'board'
+      ? [also ? 'Also applies' : 'Applies', one ? 'is retired' : 'are retired']
+      : mode === 'simulated'
+        ? [also ? 'Would also apply' : 'Would apply', 'would be retired']
+        : [also ? 'Also applied' : 'Applied', one ? 'was retired' : 'were retired'];
+  return `${verb} ${changeFrom(note)}: ${oldLines(note)} ${retired}`;
+}
+
+/** One order's line under a board note naming several orders: "from 24 Sep, 10 old lines (...) are retired". */
+export function autocountChangeClause(note: NoteLines): string {
+  const from = note.createdAt ? `from ${dayMonth(note.createdAt)}, ` : '';
+  return `${from}${oldLines(note)} ${note.count === 1 ? 'is' : 'are'} retired`;
+}
+
+/**
+ * The Confirm button's label (crew ruling (b), 21 Oct 2026): the decisions it confirms, or, when
+ * there are none but pending AutoCount changes would be applied, what it does instead. Never an
+ * enabled "Confirm (0)".
+ */
+export function confirmButtonLabel(toConfirm: number, changeOrders: number): string {
+  if (toConfirm > 0 || changeOrders === 0) return `Confirm (${toConfirm})`;
+  return changeOrders === 1
+    ? 'Apply AutoCount change'
+    : `Apply AutoCount changes (${changeOrders} orders)`;
 }
 
 /**
