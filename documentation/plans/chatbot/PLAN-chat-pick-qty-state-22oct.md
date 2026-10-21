@@ -1,9 +1,9 @@
 # PLAN: CHAT-PICK-QTY-STATE - the state path keeps the old path's pick / quantity / clear safeguards (parity)
 
-**Status:** Review (22 Oct 2026). Rebased onto main after the owner's rollback of chat release #1823 (#1826):
-prod runs reverted main + prompt v63, so v63 is the priority path and the state-heading path second. Track: SMALL FIX
-(crew rescope 22 Oct: parity, not new behaviour). Red-first, kill-proof, one reviewer; the parser gold set rode on the
-#1823-only harness and is kept on branch `crew/chat-pick-qty-state-pre1826` for the re-land.
+**Status:** Review (22 Oct 2026). #1825 is the chat RE-RELEASE branch (crew decision 22 Oct): main d400da75db +
+re-applied #1823 (9e23244cc6, the base of crew/explore-1022) + this lane's fixes; both prompt paths are gates (v63 old
+path, v92 state path). The prod-only focus_diff fix ships separately as #1827 off plain main. Track: SMALL FIX. Red-first,
+kill-proof per slice, one reviewer. Backups: crew/chat-pick-qty-state-pre1826 (on #1823), -reverted-base (on main).
 **UAC:** `chat-pick-qty-state-acceptance-criteria.md` (alongside). Evidence (local only, never committed): crew incident
 file `prod-chat-1022-pick-qty.md` (owner's prod turn table, 22 Oct 00:00 MYT).
 
@@ -75,16 +75,18 @@ Out of scope: discontinued candidates in did-you-mean (bug 5 of the incident), t
   s11 26 Sep). Fact for a later lane, not changed here: the HT26 strip runs only on inventory/incoming turns
   (engine.py:7828-7833; tests/chatbot/test_stock_ask_ht26_dealer_no_escalation.py:216 pins a promotion turn unstripped).
 
-## Slices (on reverted main, head 1e89107adb)
-1. task.run resume arm: the parser's answer, applied to the stored question (`positions`), wins over the resume rule
-   (red 56b383324d, fix e423c9481b, keyed on positions 1e89107adb). Both paths.
-2. One bare-number predicate for both paths, `chat_state.bare_position_quantity`, called by the old path and by main's
-   state-path pick loop (chat_state.py ~663-669) (red 1a3ab4b58e, red on main f3577cf834, fix bbad9753de).
-3. Topic reset on the state path drops the stored list (red e47f774f29, fix 69281935f6).
-4. Numbered did-you-mean keeps its roster over the zero-stock offer, answer_bridge.py `apply_crossdomain_hit` (red
+## Slices (re-release base, head after 2c98063e07)
+1. task.run resume arm: the parser's answer, applied to the stored question (decide() ANSWER: a fitting pick or a yes),
+   wins over the resume rule (red 56b383324d + 3ba6639897, fix e423c9481b + e407a181dc). Both paths.
+2. One bare-number predicate for both paths, `chat_state.bare_position_quantity`, called by the old path and by the
+   state-path pick loop only while the quantities question is open (red 1a3ab4b58e + 0a28eaa5ad, fix 144f39068e +
+   3a6cdba69e). The #1823 quoted-list rule is kept.
+3. A topic reset on the state path drops the stored list (red e47f774f29, fix 69281935f6); focus_diff diffs the union of
+   keys (red d7420debfe, fix 5864e17f0e; prod copy #1827).
+4. A numbered did-you-mean keeps its roster over the zero-stock offer, answer_bridge.py `apply_crossdomain_hit` (red
    c0655a9a59, fix 0091b1f24f).
 5. The parser's item quantities answer the quantity question in pick mode too, apply.py `_open_question_answer` (red
-   fe70fe1a08, fix 1d2e6c6554). Pre-existing on both paths; found by the live v63 replay.
+   fe70fe1a08, fix 1d2e6c6554).
 
 ## Coordination
 REPORT-SMART-L (#1816) and CHAT-CLOSED-LISTS-L (#1755) touch turn/apply.py, chat_state.py, task.py; keep the diff to
