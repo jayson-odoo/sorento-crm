@@ -424,3 +424,40 @@ def test_a_cancel_to_an_escalation_offer_keeps_the_held_customer_and_product():
     new_state, _plan = _turn(state, v)
     assert [c.get("canonical_code") for c in new_state.focus.customers] == ["ZZC001"], new_state.focus.customers
     assert [p.get("canonical_code") for p in new_state.focus.products] == ["SRTBF101"], new_state.focus.products
+
+
+# --- fix 7: a decline of an offer that comes with the message's own ask ---------------------------------
+
+
+def _detail_offer_state(gate: bool):
+    from app.services.chatbot.turn import pending as turn_pending
+
+    offer = turn_pending.ask(
+        "outstanding_detail", [{"position": 1, "label": "Delivery order list", "entity_type": "scope", "payload": {}}],
+        asked_at_turn=4, expects="yes_no",
+    )
+    focus = Focus(domains=["order"])
+    return replace(ht.state(focus, pending=offer, turn_no=5), state_path=gate)
+
+
+@GATES
+def test_a_decline_of_an_offer_with_the_messages_own_ask_still_plans_the_ask(gate):
+    v = verdict(
+        domain_hint="order", intent_hint="check_order", domain_in_message=True, order_status="outstanding",
+        entities=[], topic_reset=True, is_affirmative=False,
+    )
+    if gate:
+        v["state_changes"] = [{"op": "new_subject", "axis": None, "position": None}]
+    state, plan = _turn(_detail_offer_state(gate), v)
+    assert state.pending is None
+    assert [s.domain for s in plan.fetch] == ["order"], [s.domain for s in plan.fetch]
+
+
+@GATES
+def test_guard_a_bare_never_mind_over_the_offer_is_still_only_a_decline(gate):
+    v = verdict(domain_hint=None, entities=[], topic_reset=True, is_affirmative=False)
+    if gate:
+        v["state_changes"] = [{"op": "close_question", "axis": None, "position": None}]
+    state, plan = _turn(_detail_offer_state(gate), v)
+    assert state.pending is None
+    assert not plan.fetch
