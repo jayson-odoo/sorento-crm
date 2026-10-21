@@ -386,3 +386,40 @@ def _customer_parse_stock(gate: bool):
     if gate:
         v["state_changes"] = [{"op": "close_question", "axis": None, "position": None}]
     return v
+
+
+# --- reviewer N1 / N2 on the cancel-as-reset rule -----------------------------------------------------
+
+
+@GATES
+def test_a_reset_that_names_its_own_domain_still_plans_that_domains_fetch(gate):
+    """"never mind, outstanding orders?": a reset AND a new ask. The refusal of an empty fetch is
+    for a reset with nothing of its own, never for one that names a domain."""
+    task = ht.stock_task([(c, None) for c in OLDER], opened_at_turn=2, touched_at_turn=2)
+    focus = Focus(products=ht.product_rows(*OLDER), domains=["inventory"], tasks=(task,))
+    state = replace(ht.state(focus, turn_no=5), state_path=gate)
+    v = verdict(domain_hint="order", intent_hint="check_order", entities=[], topic_reset=True, order_status="outstanding")
+    if gate:
+        v["state_changes"] = [{"op": "new_subject", "axis": None, "position": None}]
+    _state, plan = _turn(state, v)
+    assert [s.domain for s in plan.fetch] == ["order"], [s.domain for s in plan.fetch]
+
+
+def test_a_cancel_to_an_escalation_offer_keeps_the_held_customer_and_product():
+    from app.services.chatbot.turn import pending as turn_pending
+
+    offer = turn_pending.ask(
+        "team_pick", [{"position": 1, "label": "Yes", "entity_type": "team", "payload": {}}],
+        team="warehouse", asked_at_turn=4, expects="yes_no",
+    )
+    customer = {"raw": "ZZC001", "hint": "customer", "canonical_code": "ZZC001", "uuid": ht.uuid_of("ZZC001"),
+                "current_message": False, "confident": True}
+    focus = Focus(customers=[customer], products=ht.product_rows("SRTBF101"), domains=["inventory"])
+    state = replace(ht.state(focus, pending=offer, turn_no=5), state_path=False)
+    v = verdict(
+        domain_hint="inventory", intent_hint="check_stock", entities=[], topic_reset=False, is_affirmative=False,
+        open_question_answer={"mode": "cancel", "picked": [], "items": [], "qty_for_all": None},
+    )
+    new_state, _plan = _turn(state, v)
+    assert [c.get("canonical_code") for c in new_state.focus.customers] == ["ZZC001"], new_state.focus.customers
+    assert [p.get("canonical_code") for p in new_state.focus.products] == ["SRTBF101"], new_state.focus.products
