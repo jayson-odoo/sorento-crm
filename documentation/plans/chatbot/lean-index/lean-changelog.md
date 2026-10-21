@@ -65,3 +65,25 @@ example. Size: v89 70,453 chars / 18,318 tokens; v90 71,220 / 18,506 (o200k_base
    - old: `` - `continuation` false; `reference_target`, `po_refs`, ``
    - new: `` - `continuation` true when the message only asks for more of the set the last reply listed (see
      R-P1-02), else false; `reference_target`, `po_refs`, ``
+
+# v91 candidate (`parser-v91.txt`): v90 plus two wording fixes from the v90 battery controls
+
+Size: v90 71,220 chars / 18,506 tokens; v91 71,402 / 18,548 (o200k_base). Every `{{variable}}` kept.
+
+6. (A) R1, R-X-04 MEANING (line 25): a correctly spelled kind word came back as its label, not its code; the value
+   is the item's code as listed. (B) R3, R-P1-02 CARRY (line 55) and R-X-06 OUT (line 344): "more <file type> of
+   <code>" continued the set; only a message that names nothing new continues.
+   - (A) old: `, and a misspelled word names the listed item the word means (a status, a promotion or flyer kind, a
+     file type, any value on a list):`
+   - (A) new: `, and a word, misspelled or not, names the listed item it means (a status, a promotion or flyer kind, a
+     file type, any value on a list) by that item's code exactly as its list line gives it, never its label:`
+   - (B) R-P1-02 old: `a message that only asks for more of them, in any language or spelling, continues that same set:
+     `continuation` true (R-X-06) and keep, with the held domain and no entity or file type of its own; never a new
+     ask.`
+   - (B) R-P1-02 new: `a message that only asks for more of them and names nothing new, in any language or spelling,
+     continues that same set: `continuation` true (R-X-06) and keep, with the held domain; a message that also names
+     a product, a file type, a filter or any other new thing is a new ask (`continuation` false).`
+   - (B) R-X-06 old: `` - `continuation` true when the message only asks for more of the set the last reply listed (see
+     R-P1-02), else false; ``
+   - (B) R-X-06 new: `` - `continuation` true when the message only asks for more of the set the last reply listed and
+     names nothing new (see R-P1-02), else false; ``
