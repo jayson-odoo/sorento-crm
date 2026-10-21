@@ -272,19 +272,23 @@ def apply_crossdomain_hit(
 
         # ESCALATION-CONTROL: staff and a barred contact alike get no offer.
         is_staff = not offers_escalation(profile)
-        text = _apply_crossdomain_render(answer.text, result, answered=True, include_offer=not is_staff)
+        # CHAT-PICK-QTY-STATE (owner, crew-relayed): a reply that already carries a question of
+        # its own (a numbered did-you-mean) keeps it and the rung prints WITHOUT the offer
+        # sentence, so the next number still answers that question and not a bare Yes.
+        own_question = answer.question
+        text = _apply_crossdomain_render(
+            answer.text, result, answered=True, include_offer=not is_staff and own_question is None
+        )
         if text == answer.text:
             return answer
         # #1262 slice 11 (F8): staff get the rung's own rendered block (the text
         # change above still fires) but no escalation offer ARMED either - a
         # `team_pick` with no visible sentence pointing at it is the same "offer
         # nobody was shown" gap the composer's own arm closes.
-        #
-        # Reviewer N-d: no `else answer.question` arm otherwise, because it was
-        # unreachable - `_apply_crossdomain_render` changed the text, and that is the
-        # SAME `_xdBlock` `any`/`block` gate `_crossdomain_offer_pending` reads, so
-        # the pending is never `None` past the equality check above.
-        question = None if is_staff else _crossdomain_offer_pending(result, asked_at_turn=asked_at_turn)
+        if own_question is not None:
+            question = own_question
+        else:
+            question = None if is_staff else _crossdomain_offer_pending(result, asked_at_turn=asked_at_turn)
         return replace(answer, text=text, question=question)
     except Exception:  # noqa: BLE001 - a disclosure bug must never block the answer
         logger.warning(
