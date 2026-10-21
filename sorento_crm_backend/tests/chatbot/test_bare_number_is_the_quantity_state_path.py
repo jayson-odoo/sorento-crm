@@ -85,6 +85,16 @@ def _two_pcs(gate: bool):
     return v
 
 
+def _two_pcs_on_the_entity():
+    """The live v92 parse of `2 pcs`: the count rides on the product entity, no position, no op."""
+    entity = ht.asked(HELD, 2)
+    return verdict(
+        domain_hint="inventory", intent_hint="check_stock", entity_op="reuse",
+        entities=[entity], reference_positions=[],
+        open_question_answer={"mode": None, "picked": [], "items": [], "qty_for_all": None},
+    )
+
+
 def _is_two_of_the_held_product(new_state, plan):
     codes = [row["canonical_code"] for spec in ht.inventory_specs(plan) for row in spec.entities]
     assert "C9109A" not in codes, f"the stale list row was picked: {codes}"
@@ -123,3 +133,9 @@ def test_guard_quoting_the_did_you_mean_message_picks_its_row():
     new_state, plan = _turn(state, _two(True))
     codes = [row["canonical_code"] for spec in ht.inventory_specs(plan) for row in spec.entities]
     assert codes == ["C9109A"], codes
+
+
+@GATES
+def test_guard_two_pcs_as_a_quantity_on_the_product_entity(gate):
+    new_state, plan = _turn(_state(gate), _two_pcs_on_the_entity())
+    _is_two_of_the_held_product(new_state, plan)

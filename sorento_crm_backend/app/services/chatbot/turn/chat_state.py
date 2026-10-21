@@ -16,9 +16,10 @@ from uuid import UUID
 
 from app.services.chatbot.turn import question as question_mod
 from app.services.chatbot.turn import task as task_mod
+from app.services.chatbot.turn.decide import names_its_own_domain
 from app.services.chatbot.turn.pending import ESCALATION_OFFER_KINDS
 from app.services.chatbot.turn.pending import ask as pending_ask
-from app.services.chatbot.turn.pending import offered_companies, option_entities
+from app.services.chatbot.turn.pending import is_roster, offered_companies, option_entities
 from app.services.chatbot.turn.state import Focus, State, Subject
 
 OPS: tuple[str, ...] = (
@@ -886,6 +887,118 @@ def quotes_the_list(state: State) -> bool:
     return any(isinstance(r, dict) and r.get("shown_at_turn") == quoted for r in state.focus.last_list or [])
 
 
+def stated_quantity(value: Any) -> int | None:
+    """A quantity the message stated, or None. Mirrors `turn/task.py::_number`."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value.strip().lstrip("+").isdigit():
+        return int(value.strip())
+    return None
+
+
+def message_states_a_quantity(verdict: dict[str, Any]) -> bool:
+    if stated_quantity(verdict.get("demand_qty")) is not None:
+        return True
+    return any(
+        isinstance(e, dict) and stated_quantity(e.get("quantity")) is not None
+        for e in verdict.get("entities") or []
+    )
+
+
+def names_a_product(verdict: dict[str, Any]) -> bool:
+    return any(
+        isinstance(e, dict)
+        and e.get("current_message") is True
+        and e.get("hint") in (None, "product")
+        for e in verdict.get("entities") or []
+    )
+
+
+def stock_task_owed_a_number(focus: Focus) -> Any:
+    """The stock check a bare number is for, or None: one still asking its quantities
+    (any number of products - round 6, "one number like 10 to apply to all"), or a
+    one-product check just answered (the number revises it, round 5)."""
+    for task in focus.tasks or ():
+        if task.kind != "stock_qty":
+            continue
+        if task.status == task_mod.OPEN and task.slots:
+            return task
+        if task.status == task_mod.ANSWERED and len(task.slots) == 1:
+            return task
+    return None
+
+
+def lone_position(verdict: dict[str, Any]) -> int | None:
+    """The one position this message names and nothing else beside it: no quantity, no
+    product of its own, no proceed and no reset."""
+    raw = verdict.get("reference_positions")
+    positions = [
+        int(p) for p in (raw if isinstance(raw, list) else [])
+        if isinstance(p, (int, float)) and not isinstance(p, bool)
+    ]
+    if len(positions) != 1 or positions[0] < 1:
+        return None
+    if (
+        message_states_a_quantity(verdict)
+        or names_a_product(verdict)
+        or verdict.get("proceed_anyway") is True
+        or verdict.get("topic_reset") is True
+    ):
+        return None
+    return positions[0]
+
+
+def stock_pick(pending: Any) -> bool:
+    """Is the open question a stock pick (owner hand test 26 Sep, slice 2 and F1): the
+    which-one question `turn/task.py::after_reply` asks over a product family, or the
+    dealer's did-you-mean? Both carry the typed quantity on their own payload."""
+    return pending is not None and bool((pending.payload or {}).get("stock_pick"))
+
+
+def stock_task_is_the_current_question(state: State, task: Any, verdict: dict[str, Any]) -> bool:
+    """Issue #1352, the chained-question rule (owner ruling, 29 Sep 2026): the engine
+    judges a message against the CURRENT question first, and earlier rosters stay stored
+    underneath for a later pick.
+
+    "incoming srtwc286" -> "4" -> "check stock" -> "How many units of SRTWC286-SH-NEW?"
+    leaves the product roster stored (sticky, contract 36) AND the stock task asking.
+    The task was touched after the roster was asked, so it is the question the next bare
+    number answers: "5" is SRTWC286-SH-NEW's quantity, never variant 5 off the roster
+    underneath (the scout's trace T4 fetched incoming for SRTWC286-SH-NEW-150). A message
+    that names its own domain is not a bare answer to either and is left to the judgement
+    in `_answer_pending`. A stored pick with no turn stamp, or one asked at or after the
+    task, is still the current question: today's behaviour.
+    """
+    pending = state.pending
+    if pending is None or stock_pick(pending) or not is_roster(pending.kind):
+        return False
+    if names_its_own_domain(verdict):
+        return False
+    asked = pending.asked_at_turn
+    touched = max(task.opened_at_turn or 0, task.touched_at_turn or 0)
+    return isinstance(asked, int) and touched > asked
+
+
+def bare_position_quantity(state: State, verdict: dict[str, Any]) -> int | None:
+    """The quantity a bare number is, or None: the one number this message names over a stock
+    check still owed (or just answered) its quantity. ONE predicate for both paths: the old
+    path's `apply._bare_position_is_the_quantity` writes it onto `demand_qty`, and the pick loop
+    of `apply_changes` leaves that position alone (it is not a pick on an older list)."""
+    task = stock_task_owed_a_number(state.focus)
+    if task is None:
+        return None
+    if getattr(state, "state_path", False) and quotes_the_list(state):
+        # CHAT-STATE r7 (owner r40 case 12, 20 Oct): a reply quoting the message that showed
+        # the list points at that list, so the owed how-many takes nothing. Without a quote
+        # an open how-many still outranks a newer list (owner 20 Oct ~07:40).
+        return None
+    if state.pending is not None and not stock_task_is_the_current_question(state, task, verdict):
+        return None
+    return lone_position(verdict)
+
+
 def set_aside(state: State, slots: dict[str, str]) -> State:
     """The slots the parser said `skip` for, taken off the focus for this turn and kept on
     the state so the tail can put them back. The stored focus never loses them."""
@@ -1350,7 +1463,14 @@ def apply_changes(
     nothing_open = listed or (open_question is None and not _focus_questions(focus))
     roster_picks: list[int] = []
     data_picks: list[dict[str, Any]] = []
+    # A bare number over an owed stock quantity is the quantity (the old path's safeguard, one
+    # predicate): it is not a pick on an older list, so the pick loop leaves it to `apply`.
+    bare_quantity = bare_position_quantity(state, verdict)
+    left_to_apply = False
     for position in picks:
+        if bare_quantity is not None and position == bare_quantity and position not in options:
+            left_to_apply = True
+            continue
         if listed and position in rows and _pickable(rows[position], True):
             data_picks.append(rows[position])
         elif position in options:
@@ -1452,6 +1572,11 @@ def apply_changes(
         out, _ = question_mod.without_phantom_answer(
             out, open_question=None, positions_read_elsewhere=positions_read_elsewhere, focus_has_product=False
         )
+    if left_to_apply and not roster_picks:
+        # The position stays in the parse exactly as the parser read it: `apply` turns it into
+        # the quantity (`_bare_position_is_the_quantity`), as it does off the state path.
+        out[question_mod.ANSWER_KEY] = verdict.get(question_mod.ANSWER_KEY)
+        out[question_mod.POSITIONS_KEY] = list(verdict.get(question_mod.POSITIONS_KEY) or [])
     company = _answered_company(state.pending, verdict) if answering else None
     if company is not None:
         # An `answer` naming one of the companies the escalation offer showed accepts the
