@@ -2976,7 +2976,7 @@ def _open_pick_answer(state: State, verdict: dict[str, Any], trace: Trace) -> tu
         verdict["is_affirmative"] = False
         verdict["reference_positions"] = []
         verdict["broaden_axis"] = None
-        if mode == "cancel":
+        if mode == "cancel" and is_roster(pending.kind):
             # The same rule `_open_question_answer` applies with no stored question: a cancel is a
             # topic reset, so whatever the question's own arm returns, the reset still runs.
             verdict["topic_reset"] = True
@@ -3817,7 +3817,9 @@ def _apply(
         # Ported from PR #1118 (not merged), review round 9 finding 4 / D34 round 11:
         # a bare quantity with nothing open, or a cancel that names nothing, is not a
         # subject - see `_narrow_and_plan`'s own comment on `refuse_empty_subject`.
-        refuse_any_empty=verdict.get("topic_reset") is True and not entities,
+        refuse_any_empty=(
+            verdict.get("topic_reset") is True and not entities and not names_its_own_domain(verdict)
+        ),
         refuse_empty_subject=(
             (
                 decision.kind == CARRY
