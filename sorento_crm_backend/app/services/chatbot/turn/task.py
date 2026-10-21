@@ -538,12 +538,12 @@ def run(
     turn.
 
     `decision_kind` is `decide()`'s own reading of this message; `positions` are the
-    option numbers it picked (unused while `TASK_KINDS` has one entry - kept on the
-    signature so a caller that already threads them through does not need an arm of
-    its own). `pending` is the stored open question: when the parser's
-    `open_question_answer` answers it (mode not null), the answer is that question's and
-    the resume arm does not fire, so a pick on a did-you-mean never wakes an older task
-    of the same domain (its status is left as it was). Nothing here reads a word.
+    option numbers it picked. `pending` is the stored open question: when the parser's
+    answer, applied to it (`positions` non-empty), picked one of its options, the answer is
+    that question's and the resume arm does not fire, so a pick on a did-you-mean never
+    wakes an older task of the same domain (its status is left as it was). A pick that did
+    not fit the stored question applied nothing and blocks nothing. Nothing here reads a
+    word.
     """
     rules: list[str] = []
     tasks = tuple(tasks)
@@ -552,10 +552,7 @@ def run(
         return TaskOutcome(tasks=(), rules=())
 
     named_domain = verdict.get("domain_hint")
-    oqa = verdict.get("open_question_answer")
-    answers_pending = (
-        pending is not None and isinstance(oqa, dict) and oqa.get("mode") is not None
-    )
+    answers_pending = pending is not None and bool(positions)
 
     # (1) Close or park on a topic reset. A reset aimed at a task's OWN domain ends
     # it; one aimed elsewhere parks it, and the focus keeps the task through the wipe
