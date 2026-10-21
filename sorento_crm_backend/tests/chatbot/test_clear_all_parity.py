@@ -260,7 +260,7 @@ def test_a_new_subject_that_carries_nothing_resets_and_a_next_bare_number_resume
     assert not [t for t in state.focus.tasks if t.status in ("open", "parked")], state.focus.tasks
     assert state.pending is None and not state.focus.last_list
     v = verdict(domain_hint="inventory", intent_hint="check_stock", entities=[], reference_positions=[2],
-                entity_op="reuse", state_changes=[{"op": "pick", "axis": None, "position": 2}])
+                entity_op="reuse")
     _state2, plan2 = _turn(state, v)
     assert plan2.trace.task_question is None, plan2.trace.task_question
 

@@ -1722,7 +1722,17 @@ def apply_changes(
                     and not any(str(sl.label).casefold() in named_products for sl in t.slots))
         )
     out["entities"] = entities
-
+    if (
+        "new_subject" in ops
+        and not set_axes
+        and not data_picks
+        and not answering
+        and not any(e.get("current_message") is not False for e in entities if isinstance(e, dict))
+        and not _message_domains(out)
+    ):
+        # The prompt's own mirror rule: a new_subject over which nothing carries IS a reset
+        # ("start over"), so the existing reset machinery runs (task close, list and question drop).
+        out["topic_reset"] = True
     led = (
         "answer" if answering
         else "new_ask" if new_subject
