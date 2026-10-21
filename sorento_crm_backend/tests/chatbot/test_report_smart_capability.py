@@ -266,5 +266,5 @@ def test_e5_customers_per_agent_ranks_by_the_count(console) -> None:
 def test_e5_a_count_answer_to_the_metric_question_settles_it(console) -> None:
     text, calls = console.say(_ask(order_status="sales_ranking", group_by="brand", top_n=5, basis="delivered"), "top 5 brands")
     assert calls == [], (text, calls)
-    text, calls = console.say(_reply(measure="orders"), "by number of orders")
+    text, calls = console.say(_reply(measure="orders"), "orders")
     assert len(calls) == 1 and calls[0]["measure"] == "orders", (text, calls)

@@ -190,11 +190,14 @@ def _resolve_top_n(_db: Any, _word: str, extras: dict[str, Any]) -> rf.Resolved:
 #: selling key `rank_by` (a bare reply under the question parses as a top selling reading).
 METRIC_FROM_RANK_BY = {"quantity": "qty", "amount": "amount"}
 BASES = ("delivered", "ordered", "outstanding")
+#: The measures the parser's `measure` may name: the two sums and (REPORT-SMART-1021) the
+#: counts (`reports.ask.COUNT_MEASURES`: customers, orders, products).
+METRICS = ("qty", "amount", "customers", "orders", "products")
 
 
 def metric_from(parse_output: dict[str, Any]) -> str | None:
     """The metric the parser read: `measure`, else `rank_by` (quantity is qty); None if neither."""
-    if parse_output.get("measure") in ("qty", "amount"):
+    if parse_output.get("measure") in METRICS:
         return parse_output["measure"]
     return METRIC_FROM_RANK_BY.get(parse_output.get("rank_by"))
 
@@ -207,7 +210,7 @@ def basis_from(parse_output: dict[str, Any]) -> str | None:
 def _resolve_metric(_db: Any, _word: str, extras: dict[str, Any]) -> rf.Resolved:
     """An answering turn's metric: the PARSER's own reading of the reply (`reply_metric`)."""
     metric = extras.get("reply_metric")
-    return rf.Resolved("ok", value=metric, label=metric) if metric in ("qty", "amount") else rf.Resolved("unknown")
+    return rf.Resolved("ok", value=metric, label=metric) if metric in METRICS else rf.Resolved("unknown")
 
 
 def _resolve_basis(_db: Any, _word: str, extras: dict[str, Any]) -> rf.Resolved:
@@ -279,13 +282,17 @@ _ANALYSIS_BASES = frozenset({"delivered", "ordered"})
 
 def by_capability(verdict: dict[str, Any]) -> dict[str, Any]:
     """Engine seam, before grounding (REPORT-SMART-1021 step 2): a sales figure ask whose
-    `group_by` its kind's tool cannot draw (`CAN_DRAW`) but the report ask can is a sales
-    ranking, read whole by `settle`: its filters, period, count, metric and basis, with every
-    missing one asked in one numbered reply. A breakdown (no count, no direction, from a kind
-    that is not a ranking) lists every row. Parser fields only; anything else is unchanged."""
+    `group_by` its kind's tool cannot draw (`CAN_DRAW`) but the report ask can, or whose
+    `measure` is a count (step 3: only the report ask counts), is a sales ranking, read whole
+    by `settle`: its filters, period, count, metric and basis, with every missing one asked in
+    one numbered reply. A breakdown (no count, no direction, from a kind that is not a
+    ranking) lists every row. Parser fields only; anything else is unchanged."""
     status = jsc.js_string(verdict.get("order_status") or "").strip()
     raw_group = jsc.js_string(verdict.get("group_by") or "").strip().lower()
-    if status not in CAN_DRAW or raw_group in CAN_DRAW[status] or raw_group not in GROUP_BY:
+    if status not in CAN_DRAW or (raw_group and raw_group not in GROUP_BY):
+        return verdict
+    counted = verdict.get("measure") in METRICS[2:]
+    if raw_group in CAN_DRAW[status] and not counted:
         return verdict
     out = {
         **{k: v for k, v in verdict.items() if k not in ("status", "document")},
@@ -813,7 +820,7 @@ def _refine(
     args.update(filters)
     if parse_output.get("basis") in ("ordered", "delivered", "outstanding"):
         args["basis"] = parse_output["basis"]
-    if parse_output.get("measure") in ("qty", "amount"):
+    if parse_output.get("measure") in METRICS:
         args["measure"] = parse_output["measure"]
     top_n = parse_output.get("top_n")
     if top_n is None:
