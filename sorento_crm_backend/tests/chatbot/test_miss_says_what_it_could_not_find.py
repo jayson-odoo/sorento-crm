@@ -439,6 +439,12 @@ class TestASetReadOffAMissedTokenIsNotCarried:
         """Control (reviewer finding 2): "which tap has cert ZZQ9917" names the set with
         the customer's OWN class word; the reply lists it and names the missed code, so
         the carry stays for the follow-up count. The reply and the carry agree."""
+        # CHAT-RELEASE-1021 (crew answer (b) on #1809): a file / certificate set longer than one page
+        # is listed only with the composer on (off, it is withheld as on main:
+        # tests/chatbot/test_set_file_send_cap.py), so this listing scenario runs with it on.
+        from tests.chatbot.test_composers_stock_xd import _set_gate
+
+        _set_gate(monkeypatch, True)
         from tests.chatbot.test_counted_set_no_paging import _tap_cert_verdict
 
         verdict = _tap_cert_verdict()
@@ -448,7 +454,8 @@ class TestASetReadOffAMissedTokenIsNotCarried:
         )
         assert isinstance(set_page, dict) and set_page["set_key"]["scope_terms"] == ["tap"], set_page
         assert "Here's what you want: taps with certificates (7, showing 1 to 5)" in reply, reply
-        assert "I could not find ZZQ9917." in reply, reply
+        # Composer on: its one miss wording (CHAT-COMPOSER S3a, owner-tested in EXPLORE-1021).
+        assert "Couldn't find ZZQ9917." in reply, reply
 
 
 class TestATurnWithoutAResolveOutcomeStillAnswers:
