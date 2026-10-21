@@ -362,7 +362,7 @@ def names_own_subject(verdict: dict[str, Any]) -> bool:
 
 
 def _message_domains(verdict: dict[str, Any], held_status: str | None = None) -> list[str]:
-    from app.services.chatbot.contracts import ORDER_OR_SALES_DOMAINS
+    from app.services.chatbot.contracts import ORDER_OR_SALES_DOMAINS, SALES_DOMAIN
     from app.services.chatbot.turn_runtime import report_domain
 
     def named(v: dict[str, Any]) -> list[str]:
@@ -375,8 +375,9 @@ def _message_domains(verdict: dict[str, Any], held_status: str | None = None) ->
         # turn writes them (`turn_runtime.report_domain`: a sales figure status is `sales`, `sales`
         # with none is `order`), so a sales ask under the prompt's `order` is no switch off the
         # held `sales` report (which would drop its frame). Any other domain stands as named, and
-        # a `status` echoing the held one is not the message's own report kind (review should-fix 1).
-        if held_status and verdict.get("status") == held_status:
+        # a `status` echoing the held one never turns `order` into `sales` (review should-fix 1);
+        # under `sales` the prompt has the parser repeat it, so it stands there.
+        if held_status and verdict.get("status") == held_status and SALES_DOMAIN not in domains:
             verdict = {**verdict, "status": None}
         return named(report_domain(verdict))
     return domains
