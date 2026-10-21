@@ -4799,8 +4799,8 @@ def _run_stages_body(  # noqa: PLR0915
                 "model": parser_config.model,
                 "prompt_sha256": _parser_prompt_sha256(parser_config),
                 "provider": getattr(parser_config, "provider", None),
-                # The parser call sends no reasoning effort, so None is the recorded truth.
-                "reasoning_effort": None,
+                # LEAN: the stored effort this parse used ("off" sends none; sent on OpenAI only).
+                "reasoning_effort": getattr(parser_config, "reasoning_effort", "off"),
                 "code_sha": GIT_SHA,
                 # A replay miss fails here: the console check must not read it as a live
                 # spend (LLM-TEST-COST).
@@ -4871,8 +4871,8 @@ def _run_stages_body(  # noqa: PLR0915
             "model": parser_config.model,
             "prompt_sha256": _parser_prompt_sha256(parser_config),
             "provider": getattr(parser_config, "provider", None),
-            # The parser call sends no reasoning effort, so None is the recorded truth.
-            "reasoning_effort": None,
+            # LEAN: the stored effort this parse used ("off" sends none; sent on OpenAI only).
+            "reasoning_effort": getattr(parser_config, "reasoning_effort", "off"),
             "code_sha": GIT_SHA,
             "tokens": int(parser_usage.get("total_tokens") or 0),
             # Chatbot memory lane A (contract section 6): the provider's own split,

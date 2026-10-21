@@ -767,6 +767,12 @@ class SystemSetting(Base):
     chatbot_closed_lists_mode = Column(
         String(16), nullable=False, server_default="block", default="block"
     )
+    # LEAN: the reasoning effort the parser's OpenAI call asks for: `off` (the default: none sent,
+    # as before) | `minimal` | `low` | `medium` | `high`; anything else reads as `off`
+    # (`head/parser.reasoning_effort_setting`). Read per parse, so a flip reaches the next turn.
+    chatbot_parser_reasoning_effort = Column(
+        String(16), nullable=False, server_default="off", default="off"
+    )
 
 
 class UserQuickAccess(Base):

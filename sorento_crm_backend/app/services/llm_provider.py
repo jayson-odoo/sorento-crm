@@ -39,6 +39,9 @@ class ChatResult:
     # The part of `prompt_tokens` the provider served from its prompt cache (billed at a
     # discount). 0 when the provider reports none (LLM-TEST-COST).
     cached_tokens: int = 0
+    # The part of `completion_tokens` spent reasoning (OpenAI `completion_tokens_details`); None when the
+    # provider reports none.
+    reasoning_tokens: Optional[int] = None
 
 
 @dataclass
@@ -403,6 +406,7 @@ class OpenAIProvider:
         json_schema_name: Optional[str] = None,
         timeout: Optional[float] = None,
         prompt_cache_key: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> ChatResult:
         from app.services import llm_cassette
 
@@ -437,6 +441,9 @@ class OpenAIProvider:
         # covers only what decides the answer.
         if prompt_cache_key:
             kwargs["prompt_cache_key"] = prompt_cache_key
+        # Only when the caller sets one (the chatbot parser's stored setting); none is sent otherwise.
+        if reasoning_effort:
+            kwargs["reasoning_effort"] = reasoning_effort
 
         def live() -> Any:
             # A caller-set timeout turns the SDK's own retries off: the caller owns the retry
@@ -481,6 +488,7 @@ class OpenAIProvider:
         total_tokens = int(getattr(usage, "total_tokens", prompt_tokens + completion_tokens) or 0)
         details = getattr(usage, "prompt_tokens_details", None)
         cached_tokens = int(getattr(details, "cached_tokens", 0) or 0)
+        reasoning = getattr(getattr(usage, "completion_tokens_details", None), "reasoning_tokens", None)
 
         return ChatResult(
             content=content,
@@ -490,6 +498,7 @@ class OpenAIProvider:
             tool_calls=normalized_calls,
             raw=completion,
             cached_tokens=cached_tokens,
+            reasoning_tokens=int(reasoning) if isinstance(reasoning, (int, float)) else None,
         )
 
     def embed(self, text: str) -> list[float]:
