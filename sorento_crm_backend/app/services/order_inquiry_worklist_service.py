@@ -200,7 +200,9 @@ EXPORT_HEADINGS = (
     # OI-RESERVE-PILL-QTY round 2 (owner ruling 21 Oct 2026, "we just need more
     # visibility"): the reserve figures right beside QTY, so a 170 line with a 70 reserve
     # request never reads as one number. Inserted, not appended, on that ruling; the
-    # planning-board worksheet keeps its own ten columns (`WORKSHEET_HEADINGS`).
+    # planning-board worksheet keeps its own ten columns (`WORKSHEET_HEADINGS`). Checked
+    # first: nothing in this repo reads the sheet back by position - the importer finds
+    # every column by its heading (`project_order_inquiry_reader.py` `_header_map`).
     "REQUESTED RESERVE",
     "RESERVED",
     "TOTAL QTY",
@@ -209,8 +211,10 @@ EXPORT_HEADINGS = (
     "SUPPLIER",
     "PO NO ",
     "LOCATION",
-    # APPENDED, never inserted: their own filters and habits are keyed on the columns
-    # above being where they have always been (`PLAN-scm-oi-handshake.md` section 4).
+    # APPENDED after LOCATION (`PLAN-scm-oi-handshake.md` section 4): their own filters
+    # and habits are keyed on the columns above. The one exception is the owner's own
+    # ruling above (REQUESTED RESERVE / RESERVED beside QTY, 21 Oct 2026); any other new
+    # column still goes after these, never between them.
     "ACKNOWLEDGED",
     # Fix round (22 Sep): parity with the grid's own S3 columns (AC-D15) - the SAME
     # row-level Taken/Remaining the grid has shown since S3, never the retired
