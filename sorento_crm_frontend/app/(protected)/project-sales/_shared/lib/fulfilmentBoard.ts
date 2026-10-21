@@ -39,6 +39,7 @@ import {
   suggestionWithReasons,
 } from './boardAmend';
 import { formatDateTimeInMalaysia, parseDateTimeAsUTC, timeAgo } from '@/lib/helpers';
+import { SHORT_MONTHS } from './boardChangeAnnotations';
 import { fromMinor, toMinor } from './supplyComposition';
 import { unpostableNotices } from './unpostableNotices';
 
@@ -965,12 +966,16 @@ export function autocountChangeNotes(
   return [...byOrder.values()].map((note) => ({ ...note, itemCodes: [...note.itemCodes].sort() }));
 }
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** Malaysia is UTC+8 all year (no daylight saving). */
+const MYT_OFFSET_MS = 8 * 60 * 60 * 1000;
 
-/** "24 Sep" from a batch's `created_at` (its calendar date as written). */
+/**
+ * "24 Sep" from a batch's `created_at`, a naive UTC timestamp, read as the Malaysia calendar
+ * date (reviewer round 1: a change uploaded before 08:00 MYT is the previous UTC day).
+ */
 function dayMonth(iso: string): string {
-  const [, month, day] = iso.slice(0, 10).split('-').map(Number);
-  return `${day} ${MONTHS[month - 1]}`;
+  const date = new Date(parseDateTimeAsUTC(iso).getTime() + MYT_OFFSET_MS);
+  return `${date.getUTCDate()} ${SHORT_MONTHS[date.getUTCMonth()]}`;
 }
 
 type NoteLines = { count: number; itemCodes: string[]; createdAt?: string | null };
@@ -983,11 +988,10 @@ function oldLines(note: NoteLines): string {
   return `${note.count} old line${note.count === 1 ? '' : 's'}${codes ? ` (${codes})` : ''}`;
 }
 
-/** Where a pending change is named in a note: its batch date, or plainly "pending". */
-function changeFrom(note: NoteLines): string {
-  return note.createdAt
-    ? `the AutoCount change from ${dayMonth(note.createdAt)}`
-    : 'the pending AutoCount change';
+/** The change a note names: by its batch date; undated, "pending" only while it still is. */
+function changeFrom(note: NoteLines, mode: AutocountNoteMode): string {
+  if (note.createdAt) return `the AutoCount change from ${dayMonth(note.createdAt)}`;
+  return mode === 'board' ? 'the pending AutoCount change' : 'the AutoCount change';
 }
 
 export type AutocountNoteMode = 'board' | 'simulated' | 'confirmed';
@@ -1008,13 +1012,30 @@ export function autocountChangeSentence(
       : mode === 'simulated'
         ? [also ? 'Would also apply' : 'Would apply', 'would be retired']
         : [also ? 'Also applied' : 'Applied', one ? 'was retired' : 'were retired'];
-  return `${verb} ${changeFrom(note)}: ${oldLines(note)} ${retired}`;
+  if (note.count === 0) return `${verb} ${changeFrom(note, mode)}`;
+  return `${verb} ${changeFrom(note, mode)}: ${oldLines(note)} ${retired}`;
 }
 
 /** One order's line under a board note naming several orders: "from 24 Sep, 10 old lines (...) are retired". */
 export function autocountChangeClause(note: NoteLines): string {
   const from = note.createdAt ? `from ${dayMonth(note.createdAt)}, ` : '';
   return `${from}${oldLines(note)} ${note.count === 1 ? 'is' : 'are'} retired`;
+}
+
+/**
+ * The note beside the button and in the guide (D2, crew ruling b): one order reads the one
+ * sentence; several read how many orders get an AutoCount change applied, then one line each.
+ */
+export function autocountBoardNote(
+  notes: (NoteLines & { soNumber: string | null })[],
+  also: boolean,
+): string[] {
+  if (notes.length === 0) return [];
+  if (notes.length === 1) return [autocountChangeSentence(notes[0], 'board', also)];
+  return [
+    `${also ? 'Also applies' : 'Applies'} the AutoCount change on ${notes.length} orders`,
+    ...notes.map((note) => `${note.soNumber ?? ''}: ${autocountChangeClause(note)}`),
+  ];
 }
 
 /**

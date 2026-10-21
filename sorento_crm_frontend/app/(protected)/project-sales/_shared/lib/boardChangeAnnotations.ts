@@ -130,7 +130,7 @@ export interface BoardChangeAnnotation {
  * lightbox that spelled the same month differently two lines apart would read as two
  * different facts.
  */
-const SHORT_MONTHS = [
+export const SHORT_MONTHS = [
   'Jan',
   'Feb',
   'Mar',

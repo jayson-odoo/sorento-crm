@@ -84,7 +84,7 @@ import {
   contributionMatchesSearch,
   confirmLinesByOrder,
   remarkFor,
-  autocountChangeClause,
+  autocountBoardNote,
   autocountChangeNotes,
   autocountChangeSentence,
   confirmButtonLabel,
@@ -564,6 +564,16 @@ export function FulfilmentBoardPanel({
     }
     return out;
   }, [loadedBatches]);
+
+  /**
+   * PLAN-BATCH-COUNT-DISPLAY (reviewer round 1): every batch date this board has seen, per SO.
+   * Never emptied, so the results of a Confirm still name the change by its date after the
+   * board's re-read drops the now-applied batch from `bySoNumber`.
+   */
+  const seenBatchDates = React.useRef(new Map<string, string>());
+  for (const [soNumber, entry] of bySoNumber) {
+    seenBatchDates.current.set(soNumber, entry.batch.created_at);
+  }
 
   /** The one batch this order belongs to, or null - a `replan`/applied lookup never guesses. */
   const batchIdBySoNumber = React.useMemo(() => {
@@ -2937,20 +2947,9 @@ export function FulfilmentBoardPanel({
           data-testid="board-autocount-change-note"
           className="space-y-0.5 rounded-lg border border-border px-3 py-2.5 text-sm break-words text-muted-foreground"
         >
-          {autocountNotes.length === 1 ? (
-            <p>{autocountChangeSentence(autocountNotes[0], 'board', confirmSummary.toConfirm > 0)}</p>
-          ) : (
-            <>
-              <p>{`${confirmSummary.toConfirm > 0 ? 'Also applies' : 'Applies'} the AutoCount change on ${autocountNotes.length} orders`}</p>
-              <ul className="space-y-0.5">
-                {autocountNotes.map((note) => (
-                  <li key={note.salesOrderId}>
-                    {`${note.soNumber ?? ''}: ${autocountChangeClause(note)}`}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
+          {autocountBoardNote(autocountNotes, confirmSummary.toConfirm > 0).map((line) => (
+            <p key={line}>{line}</p>
+          ))}
         </div>
       )}
 
@@ -2978,8 +2977,9 @@ export function FulfilmentBoardPanel({
                 (candidate) => candidate.project_sales_order_id === result.pso_id,
               );
               const label = order?.so_number ?? result.so_number ?? result.pso_id;
-              // PLAN-BATCH-COUNT-DISPLAY: the date the note names is this order's batch.
-              const createdAt = bySoNumber.get(label)?.batch.created_at ?? null;
+              // PLAN-BATCH-COUNT-DISPLAY: the date the note names is this order's batch, as seen
+              // when the press ran (the re-read after Confirm no longer names an applied batch).
+              const createdAt = seenBatchDates.current.get(label) ?? null;
               // A refusal names the LINES it refused, not just the order: the fix is on one
               // row, and "SO404352: refused" sends a planner to read thirty of them.
               const failing = result.failing_lines ?? [];
@@ -3617,6 +3617,8 @@ export function FulfilmentBoardPanel({
       {guideOpen ? (
         <ConfirmGuideDialog
           pages={guidePages}
+          autocountNote={autocountBoardNote(autocountNotes, guidePages.length > 0)}
+          applyLabel={confirmButtonLabel(0, autocountNotes.length)}
           runConfirm={runConfirmAll}
           saveRemarks={saveLineRemarks}
           onClose={closeGuide}
