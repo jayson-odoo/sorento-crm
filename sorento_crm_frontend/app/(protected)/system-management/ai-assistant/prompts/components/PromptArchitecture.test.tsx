@@ -146,7 +146,14 @@ describe('PromptArchitecture', () => {
     const cells = Array.from(container.querySelectorAll('tbody td'));
     expect(cells.length).toBeGreaterThan(0);
     for (const cell of cells) expect(cell.getAttribute('data-label'), cell.textContent ?? '').toBeTruthy();
-    expect(container.querySelector('.overflow-x-auto')).toBeNull();
+    // On a phone the rows stack, so nothing scrolls sideways there; between sm
+    // and a wide screen each table still sits in its own scroller (S4-04).
+    const tables = Array.from(container.querySelectorAll('table'));
+    expect(tables).toHaveLength(2);
+    for (const table of tables) {
+      expect(table).toHaveClass('max-sm:block');
+      expect(table.parentElement).toHaveClass('overflow-x-auto');
+    }
   });
 
   it('lays the six flow boxes out three to a row from sm and six to a row only from 2xl', () => {

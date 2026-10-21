@@ -111,108 +111,112 @@ export function PromptArchitecture({
 
       <div className="space-y-1">
         <h3 className="text-sm font-medium">Lists</h3>
-        <table className="w-full text-xs max-sm:block">
-          <thead className="max-sm:hidden">
-            <tr className="border-b text-muted-foreground">
-              <th className="py-1 pe-2 text-start font-medium">List</th>
-              <th className="py-1 pe-2 text-start font-medium">Comes from</th>
-              <th className="py-1 pe-2 text-start font-medium">
-                How a message is matched
-              </th>
-              <th className="py-1 pe-2 text-end font-medium">Entries</th>
-              <th className="py-1 pe-2 text-end font-medium">
-                Size each message
-              </th>
-              <th className="py-1 text-end font-medium">Full list size</th>
-            </tr>
-          </thead>
-          <tbody className="max-sm:block">
-            {data.lists.map((l) => (
-              <tr
-                key={l.key}
-                className="border-b align-top last:border-0 max-sm:block max-sm:py-2"
-              >
-                <td data-label="List" className={`py-1 pe-2 ${CELL}`}>
-                  {l.name}
-                </td>
-                <td data-label="Comes from" className={`py-1 pe-2 ${CELL}`}>
-                  {l.href ? (
-                    <Link
-                      href={l.href}
-                      className="text-primary underline-offset-2 hover:underline"
-                    >
-                      {l.source}
-                    </Link>
-                  ) : (
-                    l.source
-                  )}
-                </td>
-                <td
-                  data-label="How a message is matched"
-                  className={`py-1 pe-2 ${CELL} max-sm:flex-col max-sm:gap-0.5`}
-                >
-                  {l.how}
-                </td>
-                <td
-                  data-label="Entries"
-                  className={`py-1 pe-2 text-end tabular-nums ${CELL}`}
-                >
-                  {fmt(l.entries)}
-                </td>
-                <td
-                  data-label="Size each message"
-                  className={`py-1 pe-2 text-end tabular-nums ${CELL}`}
-                >
-                  {l.checked_only ? '-' : fmtSize(l.sent_each_message_size)}
-                </td>
-                <td
-                  data-label="Full list size"
-                  className={`py-1 text-end tabular-nums ${CELL}`}
-                >
-                  {l.checked_only ? '-' : fmtSize(l.full_list_size)}
-                </td>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs max-sm:block">
+            <thead className="max-sm:hidden">
+              <tr className="border-b text-muted-foreground">
+                <th className="py-1 pe-2 text-start font-medium">List</th>
+                <th className="py-1 pe-2 text-start font-medium">Comes from</th>
+                <th className="py-1 pe-2 text-start font-medium">
+                  How a message is matched
+                </th>
+                <th className="py-1 pe-2 text-end font-medium">Entries</th>
+                <th className="py-1 pe-2 text-end font-medium">
+                  Size each message
+                </th>
+                <th className="py-1 text-end font-medium">Full list size</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="max-sm:block">
+              {data.lists.map((l) => (
+                <tr
+                  key={l.key}
+                  className="border-b align-top last:border-0 max-sm:block max-sm:py-2"
+                >
+                  <td data-label="List" className={`py-1 pe-2 ${CELL}`}>
+                    {l.name}
+                  </td>
+                  <td data-label="Comes from" className={`py-1 pe-2 ${CELL}`}>
+                    {l.href ? (
+                      <Link
+                        href={l.href}
+                        className="text-primary underline-offset-2 hover:underline"
+                      >
+                        {l.source}
+                      </Link>
+                    ) : (
+                      l.source
+                    )}
+                  </td>
+                  <td
+                    data-label="How a message is matched"
+                    className={`py-1 pe-2 ${CELL} max-sm:flex-col max-sm:gap-0.5`}
+                  >
+                    {l.how}
+                  </td>
+                  <td
+                    data-label="Entries"
+                    className={`py-1 pe-2 text-end tabular-nums ${CELL}`}
+                  >
+                    {fmt(l.entries)}
+                  </td>
+                  <td
+                    data-label="Size each message"
+                    className={`py-1 pe-2 text-end tabular-nums ${CELL}`}
+                  >
+                    {l.checked_only ? '-' : fmtSize(l.sent_each_message_size)}
+                  </td>
+                  <td
+                    data-label="Full list size"
+                    className={`py-1 text-end tabular-nums ${CELL}`}
+                  >
+                    {l.checked_only ? '-' : fmtSize(l.full_list_size)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="space-y-1">
         <h3 className="text-sm font-medium">What the bot is given</h3>
-        <table className="w-full text-xs max-sm:block">
-          <thead className="max-sm:hidden">
-            <tr className="border-b text-muted-foreground">
-              <th className="py-1 pe-2 text-start font-medium">Part</th>
-              <th className="py-1 text-end font-medium">Size</th>
-            </tr>
-          </thead>
-          <tbody className="max-sm:block">
-            {data.groups.map((g) => (
-              <tr
-                key={g.name}
-                className="border-b last:border-0 max-sm:block max-sm:py-2"
-              >
-                <td data-label="Part" className={`py-1 pe-2 ${CELL}`}>
-                  {g.name}
-                </td>
-                <td data-label="Size" className={`py-1 ${CELL}`}>
-                  <div className="flex items-center justify-end gap-2">
-                    <div
-                      className="hidden h-1.5 w-24 rounded bg-muted sm:block"
-                      aria-hidden
-                    >
-                      <div
-                        className="h-full rounded bg-primary/60"
-                        style={{ width: `${g.share * 100}%` }}
-                      />
-                    </div>
-                    <span className="tabular-nums">{fmtSize(g.size)}</span>
-                  </div>
-                </td>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs max-sm:block">
+            <thead className="max-sm:hidden">
+              <tr className="border-b text-muted-foreground">
+                <th className="py-1 pe-2 text-start font-medium">Part</th>
+                <th className="py-1 text-end font-medium">Size</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="max-sm:block">
+              {data.groups.map((g) => (
+                <tr
+                  key={g.name}
+                  className="border-b last:border-0 max-sm:block max-sm:py-2"
+                >
+                  <td data-label="Part" className={`py-1 pe-2 ${CELL}`}>
+                    {g.name}
+                  </td>
+                  <td data-label="Size" className={`py-1 ${CELL}`}>
+                    <div className="flex items-center justify-end gap-2">
+                      <div
+                        className="hidden h-1.5 w-24 rounded bg-muted sm:block"
+                        aria-hidden
+                      >
+                        <div
+                          className="h-full rounded bg-primary/60"
+                          style={{ width: `${g.share * 100}%` }}
+                        />
+                      </div>
+                      <span className="tabular-nums">{fmtSize(g.size)}</span>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
