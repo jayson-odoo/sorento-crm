@@ -1,7 +1,7 @@
 """LEAN: the parser's reasoning effort is a stored setting, off by default, sent only when set.
 
-`system_settings.chatbot_parser_reasoning_effort` = 'off' (default) | 'minimal' | 'low' | 'medium' | 'high';
-anything else reads as 'off'. `parser.resolve_config` reads it on every call (no cache, like
+`system_settings.chatbot_parser_reasoning_effort` = 'off' (default) | 'low' only for now (round 1 review S1: minimal, medium and high are unmeasured
+and medium / high risk exhausting max_completion_tokens 2048); anything else reads as 'off'. `parser.resolve_config` reads it on every call (no cache, like
 `chatbot_closed_lists_mode`), carries it as `ParserConfig.reasoning_effort`, and `parse` puts it on the
 OpenAI request ONLY when it is not 'off'. The SDK kwarg pinned is `reasoning_effort="low"` on
 `client.chat.completions.create` (the codebase uses Chat Completions: `_create_chat_completion`,
@@ -138,7 +138,7 @@ def test_explicit_off_sends_no_reasoning_key(session_factory, monkeypatch, opena
 
 # ---- set ----
 
-@pytest.mark.parametrize("effort", ["minimal", "low", "medium", "high"])
+@pytest.mark.parametrize("effort", ["low"])
 def test_a_set_effort_rides_the_openai_request(session_factory, monkeypatch, openai, effort):
     _seed_prompt(session_factory, monkeypatch)
     _set_effort(session_factory, effort)
@@ -158,7 +158,7 @@ def test_flipping_the_row_between_two_parses_reaches_the_next_call(session_facto
     assert [kw.get("reasoning_effort") for kw in openai.sent] == [None, "low", None], openai.sent
 
 
-@pytest.mark.parametrize("junk", ["turbo", "LOW ", "", "none", "xhigh"])
+@pytest.mark.parametrize("junk", ["turbo", "LOW ", "", "none", "xhigh", "minimal", "medium", "high"])
 def test_an_unknown_value_reads_as_off(session_factory, monkeypatch, openai, junk):
     _seed_prompt(session_factory, monkeypatch)
     _set_effort(session_factory, junk)
@@ -257,3 +257,99 @@ def test_a_migration_adds_the_column_with_default_off():
     text = open(hits[0], encoding="utf-8").read()
     assert "ADD COLUMN IF NOT EXISTS chatbot_parser_reasoning_effort" in text, text
     assert "DEFAULT 'off'" in text and "NOT NULL" in text, text
+
+
+# ---- review round: B1 adapter memory, S3 reasoning tokens in the trace, N1 trace = what was sent, N2 cassette ----
+
+class _Refusal(Exception):
+    def __init__(self, msg, param, code):
+        super().__init__(msg)
+        self.param, self.code = param, code
+
+
+class _Gpt5Client:
+    """Refuses `temperature` whenever `reasoning_effort` is present (accepts it otherwise);
+    optionally refuses `reasoning_effort` itself."""
+
+    def __init__(self, refuse_effort: bool = False):
+        self.sent: list[dict[str, Any]] = []
+        self.refuse_effort = refuse_effort
+        self.chat = types.SimpleNamespace(completions=types.SimpleNamespace(create=self.create))
+
+    def create(self, **kw):
+        self.sent.append(dict(kw))
+        if kw.get("reasoning_effort") and self.refuse_effort:
+            raise _Refusal("Error code: 400 - Unsupported parameter: 'reasoning_effort' is not supported with this model.",
+                           "reasoning_effort", "unsupported_parameter")
+        if kw.get("reasoning_effort") and "temperature" in kw:
+            raise _Refusal("Error code: 400 - Unsupported value: 'temperature' does not support 0.0 with this model.",
+                           "temperature", "unsupported_value")
+        usage = types.SimpleNamespace(prompt_tokens=1, completion_tokens=1, total_tokens=2,
+                                      prompt_tokens_details=None, completion_tokens_details=None)
+        msg = types.SimpleNamespace(content="{}", tool_calls=None)
+        return types.SimpleNamespace(choices=[types.SimpleNamespace(message=msg)], usage=usage)
+
+
+def _drive(monkeypatch, client, efforts, model="gpt-5.4-mini-zz"):
+    monkeypatch.setattr(llm_provider, "_OPENAI_REJECTED_PARAMS", {})
+    provider = llm_provider.OpenAIProvider(api_key="sk-x", default_model=model)
+    monkeypatch.setattr(provider, "_client", lambda **kw: client)
+    finals = []
+    for effort in efforts:
+        before = len(client.sent)
+        provider.chat([{"role": "user", "content": "hi"}], temperature=0.0, model=model, max_tokens=2048,
+                      reasoning_effort=None if effort == "off" else effort)
+        finals.append(client.sent[-1])
+        assert len(client.sent) > before
+    return finals
+
+
+def test_b1_a_refused_temperature_on_a_low_call_does_not_strip_it_from_later_off_calls(monkeypatch):
+    finals = _drive(monkeypatch, _Gpt5Client(), ["off", "low", "off"])
+    assert [f.get("temperature") for f in finals] == [0.0, None, 0.0], finals
+    assert [f.get("reasoning_effort") for f in finals] == [None, "low", None], finals
+
+
+def test_b1_a_refused_reasoning_effort_does_not_strip_anything_from_later_off_calls(monkeypatch):
+    finals = _drive(monkeypatch, _Gpt5Client(refuse_effort=True), ["low", "off"])
+    assert "reasoning_effort" not in finals[0], finals
+    assert finals[1].get("temperature") == 0.0 and "reasoning_effort" not in finals[1], finals
+    assert finals[1].get("max_completion_tokens") == 2048, finals
+
+
+def _trace_facts(session_factory, stub_access, monkeypatch, output) -> dict[str, Any]:
+    monkeypatch.setattr(parser_mod, "parse", lambda config, block: output)
+    monkeypatch.setattr(engine_mod, "_contact_company_scope", lambda f, c: frozenset({DEFAULT_COMPANY_ID}))
+    monkeypatch.setattr(MCPRuntimeClient, "call_tool", lambda self, name, args: json.dumps({"ok": True, "items": []}))
+    stub_access()
+    result = engine_mod.run_turn(_envelope(message=_message("zzqwerty")), session_factory=session_factory)
+    row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
+    return next(r["facts"] for r in (row.trace or []) if isinstance(r, dict) and r.get("stage") == "understood")
+
+
+def test_s3_the_trace_records_the_reasoning_tokens_the_provider_reported(session_factory, seeded, stub_access, monkeypatch):
+    _seed_prompt(session_factory, monkeypatch)
+    _set_effort(session_factory, "low")
+    usage = {"provider": "openai", "model": "gpt-test", "prompt_tokens": 100, "completion_tokens": 40,
+             "total_tokens": 140, "cached_tokens": 0, "reasoning_tokens": 37}
+    output = parser_mod.ParsedOutput(_parser_output(intent_hint="check_stock", domain_hint="inventory",
+                                                    user_goal="ask", entities=[]), usage)
+    facts = _trace_facts(session_factory, stub_access, monkeypatch, output)
+    assert facts.get("reasoning_tokens") == 37, facts
+
+
+def test_n1_the_trace_says_off_when_the_provider_is_not_openai_even_if_the_row_says_low(session_factory, seeded, stub_access, monkeypatch):
+    _seed_prompt(session_factory, monkeypatch, provider="gemini")
+    _set_effort(session_factory, "low")
+    output = _parser_output(intent_hint="check_stock", domain_hint="inventory", user_goal="ask", entities=[])
+    facts = _trace_facts(session_factory, stub_access, monkeypatch, output)
+    assert facts.get("reasoning_effort") == "off", facts
+
+
+def test_n2_the_cassette_key_separates_an_effort_from_none():
+    from app.services import llm_cassette
+
+    base = {"model": "gpt-test", "messages": [{"role": "user", "content": "hi"}]}
+    assert llm_cassette.chat_key({**base, "reasoning_effort": "low"}) != llm_cassette.chat_key(base)
+    # an off call (no effort, or None) keeps the key every existing recording was made under
+    assert llm_cassette.chat_key({**base, "reasoning_effort": None}) == llm_cassette.chat_key(base)

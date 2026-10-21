@@ -1143,3 +1143,20 @@ def test_a_forced_effort_on_a_provider_other_than_openai_is_refused_before_any_p
 def test_cli_reasoning_effort_choices(bad):
     with pytest.raises(SystemExit):
         pg.main([*_BASE, "--reasoning-effort", bad])
+
+
+def test_rows_record_the_reasoning_tokens_the_provider_reported(session_factory, monkeypatch):
+    from app.services.chatbot.head import parser as parser_mod
+
+    usage = {"provider": "openai", "model": "m", "prompt_tokens": 100, "cached_tokens": 0,
+             "completion_tokens": 40, "total_tokens": 140, "reasoning_tokens": 37}
+    out = _usage_run(session_factory, monkeypatch,
+                     lambda config, block: parser_mod.ParsedOutput({"status": None, "entities": []}, usage))
+    assert out[0]["reasons"] == [], out
+    assert out[0].get("reasoning_tokens") == 37, out
+
+
+def test_a_parse_that_reports_no_reasoning_tokens_records_none(session_factory, monkeypatch):
+    out = _usage_run(session_factory, monkeypatch, lambda config, block: {"status": None, "entities": []})
+    assert "reasoning_tokens" in out[0] and out[0]["reasoning_tokens"] is None, out
+    assert "reasoning_tokens" in pg.USAGE_KEYS
