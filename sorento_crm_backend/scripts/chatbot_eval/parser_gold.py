@@ -2,15 +2,16 @@
 
 usage (cwd = the backend dir of the checkout under test):
   python -m scripts.chatbot_eval.parser_gold live --gold F --out F --max-usd X --require-key-last4 XXXX \
-      --prompt-version-id ID --repeats N [--closed-lists-mode block|index] [--reasoning-effort off|low|medium|high]
+      --prompt-version-id ID --repeats N [--closed-lists-mode block|index]
+      [--reasoning-effort off|minimal|low|medium|high]
       (calls ONLY the parser, on the pinned prompt version, with the user turn the engine builds for a fresh
       turn and the candidate block when the version carries CLOSED LISTS; every DB session is rolled back; spend
       is capped by --max-usd and only a provider key ending with --require-key-last4 may spend.
       --closed-lists-mode forces `chatbot_closed_lists_mode` for this process only, never in the DB; without it
       the DB value is used. The header line and every row name the mode the run used: off when the version
-      carries no CLOSED LISTS section. --reasoning-effort adds that effort to the parser's OpenAI request for this
-      process only ("off" is sent as "none"); without it none is sent, as the engine sends none. Header and rows
-      record it, null when not forced)
+      carries no CLOSED LISTS section. --reasoning-effort forces the stored parser setting
+      `chatbot_parser_reasoning_effort` for this process only, never in the DB ("off" sends none, as the setting's
+      off does); without it the DB value is used. Header and rows record the effort the parse read)
 
 Imports only the stdlib at module level and `app.*` inside functions, like replay.py. Output rows carry ids,
 the pass flag, the reasons, the spend and the parse's own routing fields; each row's entities carry `raw`,
@@ -27,10 +28,6 @@ import re
 import sys
 import time
 from typing import Any
-
-#: `--reasoning-effort` -> the OpenAI `reasoning_effort` value sent. The parser call itself sends none
-#: (head/parser.py `parse` -> llm_call.chat; llm_provider.OpenAIProvider.chat builds no such key).
-REASONING_EFFORTS = {"off": "none", "low": "low", "medium": "medium", "high": "high"}
 
 #: The parse's own cost, as the provider reported it on the result's `usage` (None when it reported none).
 USAGE_KEYS = ("prompt_tokens", "cached_tokens", "completion_tokens")
@@ -316,22 +313,17 @@ def _forced_mode(mode: str | None) -> Any:
 
 @contextlib.contextmanager
 def _forced_effort(effort: str | None) -> Any:
-    """The OpenAI request the parser call makes carries `reasoning_effort` while the run lasts (the one seam
-    OpenAIProvider.chat sends through, `llm_provider._create_chat_completion`); nothing is written. None sends
-    none, as the engine does."""
+    """`chatbot_parser_reasoning_effort` forced for this process while the run lasts (the reader the parser's
+    `resolve_config` calls, `parser.reasoning_effort_setting`, answers `effort`); the database is never written
+    and the provider request is the product's own. None leaves the DB value."""
     if effort is None:
         yield
         return
     from unittest import mock
 
-    from app.services import llm_provider
+    from app.services.chatbot.head import parser
 
-    real = llm_provider._create_chat_completion
-
-    def create(client: Any, kwargs: dict) -> Any:
-        return real(client, {**kwargs, "reasoning_effort": REASONING_EFFORTS[effort]})
-
-    with mock.patch.object(llm_provider, "_create_chat_completion", create):
+    with mock.patch.object(parser, "reasoning_effort_setting", lambda db: effort):
         yield
 
 
@@ -339,8 +331,8 @@ def run_live(rows: list[dict[str, Any]], *, session_factory: Any, version_id: st
              require_key_last4: str, on_row: Any = None, closed_lists_mode: str | None = None,
              on_start: Any = None, reasoning_effort: str | None = None) -> list[dict[str, Any]]:
     """Each gold message x `repeats` through the parser alone; stops cleanly at the spend cap or a wrong key.
-    `closed_lists_mode` ("block" | "index") forces the mode in-process, `reasoning_effort` (a REASONING_EFFORTS
-    key) the parser call's effort; `on_start` gets the run header."""
+    `closed_lists_mode` ("block" | "index") forces the mode in-process, `reasoning_effort` (one of
+    `parser.REASONING_EFFORTS`) the stored parser effort; `on_start` gets the run header."""
     from app.services.chatbot import engine
     from app.services.chatbot.head import closed_lists_index, parser
     from scripts.chatbot_eval import replay
@@ -348,8 +340,8 @@ def run_live(rows: list[dict[str, Any]], *, session_factory: Any, version_id: st
 
     if closed_lists_mode is not None and closed_lists_mode not in closed_lists_index.MODES:
         raise ValueError(f"closed_lists_mode must be one of {sorted(closed_lists_index.MODES)}")
-    if reasoning_effort is not None and reasoning_effort not in REASONING_EFFORTS:
-        raise ValueError(f"reasoning_effort must be one of {sorted(REASONING_EFFORTS)}")
+    if reasoning_effort is not None and reasoning_effort not in parser.REASONING_EFFORTS:
+        raise ValueError(f"reasoning_effort must be one of {sorted(parser.REASONING_EFFORTS)}")
     register_company_scope_listeners()  # idempotent; without it set_company_scope filters nothing
 
     if not replay._valid_last4(require_key_last4):
@@ -376,17 +368,19 @@ def run_live(rows: list[dict[str, Any]], *, session_factory: Any, version_id: st
                 finally:
                     db.close()
                 mode = _mode_used(config)
+                effort = getattr(config, "reasoning_effort", "off")
                 if reasoning_effort is not None and config.provider != "openai":
                     raise ValueError(f"reasoning_effort is forced on OpenAI only, not {config.provider!r}")
                 if on_start is not None:
                     on_start({"prompt_version": config.prompt_version, "closed_lists_mode": mode,
-                              "forced": closed_lists_mode is not None, "reasoning_effort": reasoning_effort})
+                              "forced": closed_lists_mode is not None, "reasoning_effort": effort,
+                              "reasoning_forced": reasoning_effort is not None})
                 for case in rows:
                     for repeat in range(repeats):
                         before = total["usd"]
                         row: dict[str, Any] = {
                             "id": case["id"], "repeat": repeat, "prompt_version": config.prompt_version,
-                            "closed_lists_mode": mode, "reasoning_effort": reasoning_effort,
+                            "closed_lists_mode": mode, "reasoning_effort": effort,
                         }
                         try:
                             parsed = _parse_one(case["message"], config, factory, context=case.get("context"))
@@ -452,7 +446,7 @@ def _cmd_live(args: argparse.Namespace) -> int:
 
         def header(info: dict[str, Any]) -> None:
             forced = "forced" if info["forced"] else "from the db"
-            effort = f"{info['reasoning_effort']} (forced)" if info["reasoning_effort"] else "none sent"
+            effort = f"{info['reasoning_effort']} ({'forced' if info['reasoning_forced'] else 'from the db'})"
             print(f"prompt_version {info['prompt_version']} closed_lists_mode {info['closed_lists_mode']} ({forced})"
                   f" reasoning_effort {effort}", flush=True)
 
@@ -482,7 +476,7 @@ def main(argv: list[str] | None = None) -> int:
     live.add_argument("--prompt-version-id", default=None)
     live.add_argument("--repeats", type=int, default=None)
     live.add_argument("--closed-lists-mode", choices=("block", "index"), default=None)
-    live.add_argument("--reasoning-effort", choices=tuple(REASONING_EFFORTS), default=None)
+    live.add_argument("--reasoning-effort", choices=("off", "minimal", "low", "medium", "high"), default=None)
     args = ap.parse_args(argv)
     return _cmd_live(args)
 
