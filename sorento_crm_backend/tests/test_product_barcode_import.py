@@ -615,7 +615,7 @@ def test_media_members_do_not_count_toward_the_xml_cap(client, monkeypatch):
 
     monkeypatch.setattr(svc, "_MAX_UNCOMPRESSED_BYTES", 1024 * 1024)
     data = _rewrite_zip(_xlsx([["Product Code", "Barcode"], ["X", EAN_A]]), lambda n, b: b,
-                        extra={"xl/media/image1.png": b"\0" * (2 * 1024 * 1024)})
+                        extra={"xl/media/image1.png": b"\x89PNG\r\n\x1a\n" + b"\0" * (2 * 1024 * 1024)})
     assert _post(client, "preview", data).status_code == 200
 
 
@@ -705,3 +705,42 @@ def test_a_lying_small_dimension_does_not_drop_data_rows(client, db, refs):
     data = _rewrite_zip(_xlsx(rows), edit)
     body = _post(client, "preview", data).json()
     assert [r["status"] for r in body["rows"]] == ["new"]
+
+
+def test_a_non_picture_member_under_xl_media_counts(client, monkeypatch):
+    from app.services import product_barcode_import_service as svc
+
+    monkeypatch.setattr(svc, "_MAX_UNCOMPRESSED_BYTES", 1024 * 1024)
+    data = _rewrite_zip(_xlsx([["Product Code", "Barcode"], ["X", EAN_A]]), lambda n, b: b,
+                        extra={"xl/media/image1.png": b"<xml>" + b"\0" * (2 * 1024 * 1024)})
+    assert _post(client, "preview", data).status_code == 400
+
+
+def test_a_sheet_disguised_under_xl_media_counts(client, monkeypatch):
+    from app.services import product_barcode_import_service as svc
+
+    monkeypatch.setattr(svc, "_MAX_UNCOMPRESSED_BYTES", 1024 * 1024)
+
+    def edit(name, blob):
+        if name == "xl/worksheets/sheet1.xml":
+            return blob.replace(b"<sheetData>", b"<!--" + b"x" * (2 * 1024 * 1024) + b"--><sheetData>")
+        return blob.replace(b"worksheets/sheet1.xml", b"media/sheet1.xml")
+
+    import zipfile
+
+    src = zipfile.ZipFile(io.BytesIO(_xlsx([["Product Code", "Barcode"], ["X", EAN_A]])))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+        for item in src.infolist():
+            new_name = "xl/media/sheet1.xml" if item.filename == "xl/worksheets/sheet1.xml" else item.filename
+            zf.writestr(new_name, edit(item.filename, src.read(item.filename)))
+    assert _post(client, "preview", out.getvalue()).status_code == 400
+
+
+def test_leading_spaces_are_trimmed_before_the_cell_is_cut(client, db, refs):
+    stem = unique_code("BCW2", alpha=True)
+    _mk(db, refs, f"{stem}-W")
+    body = _post(client, "preview", _xlsx([
+        ["Product Code", "Barcode"], [" " * 300 + f"{stem}-W", EAN_A],
+    ])).json()
+    assert body["rows"][0]["status"] == "new"
