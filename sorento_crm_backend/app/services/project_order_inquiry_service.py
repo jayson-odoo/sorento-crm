@@ -5166,7 +5166,13 @@ class ProjectOrderInquiryService:
                 # The decision's words when the KIND of decision moved (Buy to Use BRW, a
                 # new part) or nothing above says anything; a pure date or quantity move of
                 # the same decision reads as today's settle line did ("DELAY, ORDER 3").
-                if not same_kinds or not pieces:
+                # A donor move also reads its decision words, so the new donor is named
+                # beside any date or quantity word (OI-ORDERBACK-LOCATION, owner 21 Oct 2026).
+                if (
+                    not same_kinds
+                    or not pieces
+                    or _borrow_donors(before) != _borrow_donors(now)
+                ):
                     pieces.append(remark)
                 if ("qty" not in was or raised is not None) and taken_back > _ZERO:
                     # The rows of this line told purchasing to cancel something they hold
