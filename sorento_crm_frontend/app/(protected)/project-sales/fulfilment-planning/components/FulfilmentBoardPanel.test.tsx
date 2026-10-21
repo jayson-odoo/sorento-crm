@@ -423,6 +423,43 @@ describe('FulfilmentBoardPanel: the header', () => {
       'flex-wrap',
     );
   });
+
+  /**
+   * BOARD-ROWS-GRID-ONLY (owner, 21 Oct 2026): the Rows and date selectors only shape the
+   * grid, so in List they are not drawn at all and take no header space, on any width. The
+   * choices themselves live on the panel, so a round trip through List keeps them.
+   */
+  it('draws the Rows and date selectors only in Grid, keeping the choices across a toggle', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+    currentSearchParams = new URLSearchParams('scope=all');
+
+    renderPanel();
+    const actions = await screen.findByTestId('board-header-actions');
+    await waitFor(() =>
+      expect(within(actions).getByRole('button', { name: 'List' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      ),
+    );
+    expect(within(actions).queryByLabelText('rows')).not.toBeInTheDocument();
+    expect(within(actions).queryByLabelText('granularity')).not.toBeInTheDocument();
+    expect(within(actions).queryByText('Rows')).not.toBeInTheDocument();
+    expect(within(actions).getByRole('button', { name: 'Grid' })).toBeInTheDocument();
+
+    fireEvent.click(within(actions).getByRole('button', { name: 'Grid' }));
+    fireEvent.change(within(actions).getByLabelText('rows'), { target: { value: 'customer' } });
+    fireEvent.change(within(actions).getByLabelText('granularity'), {
+      target: { value: 'month' },
+    });
+
+    fireEvent.click(within(actions).getByRole('button', { name: 'List' }));
+    expect(within(actions).queryByLabelText('rows')).not.toBeInTheDocument();
+    expect(within(actions).queryByLabelText('granularity')).not.toBeInTheDocument();
+
+    fireEvent.click(within(actions).getByRole('button', { name: 'Grid' }));
+    expect(within(actions).getByLabelText('rows')).toHaveValue('customer');
+    expect(within(actions).getByLabelText('granularity')).toHaveValue('month');
+  });
 });
 
 describe('FulfilmentBoardPanel: the axes', () => {
