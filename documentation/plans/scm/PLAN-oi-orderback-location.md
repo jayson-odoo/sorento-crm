@@ -38,7 +38,8 @@ Status: in review on PR #1815. Track: small fix (no migration, no auth, no UI ch
   line's own location shows the donor in the preview but not in the email; that edge predates
   this lane.
 - Reviewer S2 (not taken): a resent Order back BUY row whose `stock_location` went stale after
-  the SO line's location moved would read `ORDER BACK <old location>`. Rows are restamped with
-  the line (`ProjectSupplyService._restamp_stock_location`), and gating the donor on the
-  "Order-back:" note instead would drop it from older borrow rows. Trigger to revisit: a real
-  resend that names a stale location.
+  the SO line's location moved would read `ORDER BACK <old location>`. A Confirm whose location
+  differs from the row's supersedes it with a fresh row at the new location (the settle gate,
+  `project_order_inquiry_service.py:2502`), so only a location move with no Confirm followed by
+  a resend can reach it; gating the donor on the "Order-back:" note instead would drop it from
+  older borrow rows. Trigger to revisit: a real resend that names a stale location.
