@@ -1,9 +1,10 @@
 # PLAN: gear Split delivery shows a line's confirmed remark (OI-SPLIT-GEAR-REMARK)
 
-Status: planned 21 Oct. Small fix track (frontend only, no migration, no auth or RBAC change). Next: red
-test commit, fix, reviewer, browser 1280/375 on the crew copy.
+Status: PR #1810. Small fix track (frontend only, no migration, no auth or RBAC change). Red-first in three
+rounds (416ed08e3e + f1a50520e5, 72efa950a8, 017c64538a), fixes 3d0c23701b, 09b0022b73, 2ffab3203f, kill held
+each round; reviewer READY on 2ffab3203f (UAC H1-H10). Next: browser 1280/375 on the crew copy, CI.
 
-UAC: `oi-split-gear-remark-21oct-acceptance-criteria.md` (H1-H6; this plan does not restate it).
+UAC: `oi-split-gear-remark-21oct-acceptance-criteria.md` (H1-H10; this plan does not restate it).
 
 ## Journey
 
