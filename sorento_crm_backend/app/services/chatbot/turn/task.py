@@ -532,7 +532,6 @@ def run(
     positions: list[int] | None = None,
     pending: Any = None,
     turn_no: int = 0,
-    class_ask: bool = False,
 ) -> TaskOutcome:
     """Every task rule, in the order the plan names: claims -> fill, complete ->
     fetch, park, resume, close. One function, so the arms cannot disagree about one
@@ -541,8 +540,7 @@ def run(
     `decision_kind` is `decide()`'s own reading of this message; `positions` are the
     option numbers it picked (unused while `TASK_KINDS` has one entry - kept on the
     signature so a caller that already threads them through does not need an arm of
-    its own). `class_ask` is the caller's reading that the message names its own class
-    (`apply._apply`, off the state gate only). Nothing here reads a word.
+    its own). Nothing here reads a word.
     """
     rules: list[str] = []
     tasks = tuple(tasks)
@@ -595,7 +593,7 @@ def run(
             out.append(task)
             continue
         if task.status == ANSWERED:
-            revised = _revised(task, verdict, turn_no, class_ask=class_ask)
+            revised = _revised(task, verdict, turn_no)
             if revised is not None and fetch is None:
                 # Owner hand test 26 Sep, slice 5 (T8, T13): "how about 100?" after
                 # SRTGV332-DIY x 20 was answered is the same product at a new quantity.
@@ -672,12 +670,7 @@ def run(
                 question = impl.question(filled)
                 question_domain = filled.domain
             continue
-        # A brand pick the state path made (`set_brand` as a list) re-runs the offered set; it is
-        # not the task's topic again. Main's own single-string `set_brand` is left as it was.
-        if (
-            task.domain and task.domain == named_domain and _only_task_slots(task, verdict)
-            and not isinstance(verdict.get("set_brand"), list)
-        ):
+        if task.domain and task.domain == named_domain and _only_task_slots(task, verdict):
             # (3) resume: the task's own topic, named again with nothing new. Only
             # what is still missing is asked; nothing is asked twice.
             resumed = replace(task, status=OPEN, touched_at_turn=turn_no)
@@ -715,7 +708,7 @@ def run(
     )
 
 
-def _revised(task: Task, verdict: dict[str, Any], turn_no: int, *, class_ask: bool = False) -> Task | None:
+def _revised(task: Task, verdict: dict[str, Any], turn_no: int) -> Task | None:
     """The answered one-product check at the bare number this message states, or None.
 
     One product only: "how about 100?" after a two-product answer does not say which
@@ -736,9 +729,6 @@ def _revised(task: Task, verdict: dict[str, Any], turn_no: int, *, class_ask: bo
         )
         return replace(task, status=OPEN, touched_at_turn=turn_no, slots=slots)
     if len(task.slots) != 1:
-        return None
-    if class_ask:
-        # A message naming its own class is a new ask, not the held product at a new number.
         return None
     bare = _number(verdict.get("demand_qty"))
     if bare is None:
