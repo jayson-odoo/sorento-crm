@@ -324,8 +324,9 @@ export function ConfirmGuideDialog({
                   </div>
                   {editable.rest.lines.length > 0 ? (
                     <div className="overflow-hidden rounded-lg border border-border">
+                      {/* The order's read is loaded: its SO date is every row's (owner, SO427002). */}
                       <SplitLinesSheet
-                        payload={null}
+                        payload={splitRead?.data ?? null}
                         soNumber={page.soNumber}
                         sheet={editable.rest}
                       />
@@ -363,19 +364,16 @@ export function ConfirmGuideDialog({
               {pages.length === 0 ? (
                 <p className="text-sm break-words">Nothing has been sent yet.</p>
               ) : null}
-              <Button
-                type="button"
-                data-testid="confirm-guide-confirm"
-                disabled={posting}
-                onClick={() => void pressConfirm()}
-              >
-                {pages.length > 0 ? `Confirm ${plural(pages.length, 'order')}` : applyLabel}
-              </Button>
             </div>
           ) : null}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 border-t border-border px-5 py-3">
+        {/* OI-SPLIT-CONFIRM-POLISH (owner, 21 Oct): Cancel far left; the step's action at the
+            right, Back immediately left of it. */}
+        <div
+          data-testid="confirm-guide-footer"
+          className="flex flex-wrap items-center gap-2 border-t border-border px-5 py-3"
+        >
           {dirty ? (
             <p className="w-full text-xs text-muted-foreground">
               Save or undo your split changes first
@@ -411,7 +409,16 @@ export function ConfirmGuideDialog({
             >
               {nextLabel}
             </Button>
-          ) : null}
+          ) : (
+            <Button
+              type="button"
+              data-testid="confirm-guide-confirm"
+              disabled={posting}
+              onClick={() => void pressConfirm()}
+            >
+              {pages.length > 0 ? `Confirm ${plural(pages.length, 'order')}` : applyLabel}
+            </Button>
+          )}
         </div>
       </DialogContent>
     </Dialog>
