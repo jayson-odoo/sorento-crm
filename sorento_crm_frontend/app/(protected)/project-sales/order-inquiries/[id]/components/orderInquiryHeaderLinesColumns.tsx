@@ -31,7 +31,11 @@ import {
   ReservePill,
 } from '../../../_shared/components/OrderInquiryVerbPill';
 import { OrderInquiryStockGrid } from '../../../_shared/components/OrderInquiryStockGrid';
-import { formatInquiryQty, raisedKindLabel } from '../../../_shared/lib/orderInquiryWorklist';
+import {
+  formatInquiryQty,
+  isInquiryBuyRow,
+  raisedKindLabel,
+} from '../../../_shared/lib/orderInquiryWorklist';
 import {
   lineConfirmationOf,
   lineFooterTotals,
@@ -540,11 +544,13 @@ function quantityColumn({
   };
 }
 
-/** The row whose reserve figures the line prints - the State cell's own pill reads the
- * same `primary`, and only while the line has a live row. */
-function reserveRowOf(row: OrderInquiryLineRow): OrderInquiryWorklistRow | null {
-  const line = lineOf(row);
-  return line.liveRows.length > 0 ? line.primary : null;
+/** The line's reserve figure: summed over its live buy rows, the same fold Taken and
+ * Requested use (`orderInquiryLineFold.ts`), so the columns beside them agree. */
+function lineReserveQty(row: OrderInquiryLineRow, field: 'requested_qty' | 'reserved_qty') {
+  const total = lineOf(row)
+    .liveRows.filter((live) => isInquiryBuyRow(live.verb))
+    .reduce((sum, live) => sum + (Number(live[field] ?? '0') || 0), 0);
+  return String(total);
 }
 
 export function useOrderInquiryHeaderLinesColumns({
@@ -729,12 +735,12 @@ export function useOrderInquiryHeaderLinesColumns({
       // AC-ND-3..5b (owner ruling 26 Sep, G4): SO Qty, Requested, Taken, Remaining - the
       // line's own sums (`orderInquiryLineFold.ts`), no Was / now annotation (G1).
       // OI-RESERVE-PILL-QTY round 2: Reserve requested and Reserved sit right after
-      // Requested, the shared columns the Lines list uses, reading the same primary row
-      // the State cell's reserve pill reads.
+      // Requested, the shared columns the Lines list uses, summed over the line's live
+      // buy rows.
       ...QUANTITY_COLUMNS.slice(0, 2).map(quantityColumn),
       ...orderInquiryReserveQtyColumns<OrderInquiryLineRow>({
-        requestedOf: (row) => reserveRowOf(row)?.requested_qty,
-        reservedOf: (row) => reserveRowOf(row)?.reserved_qty,
+        requestedOf: (row) => lineReserveQty(row, 'requested_qty'),
+        reservedOf: (row) => lineReserveQty(row, 'reserved_qty'),
       }),
       ...QUANTITY_COLUMNS.slice(2).map(quantityColumn),
       {

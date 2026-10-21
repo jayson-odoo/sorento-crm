@@ -444,3 +444,26 @@ def test_excel_remark_names_the_origin_by_its_core_line_number(api):
     got = _plan_rows(heads, rows)
     assert _has_block(got, [(10.0, D_A, 6.0, D_A, "REMAIN"), (None, None, 4.0, D_B, "DELAY")]), got
     assert _has_block(got, [(12.0, D_A, 8.0, D_A, "REMAIN"), (None, None, 4.0, D_B, "DELAY")]), got
+
+
+def test_a_split_lines_reserve_figures_print_once_on_its_first_row(api):
+    """OI-RESERVE-PILL-QTY round 2 (review S1): REQUESTED RESERVE / RESERVED are the line's,
+    like TAKEN / REMAINING / SUGGESTED - printed on the split line's first row only, never
+    repeated on every split (which would read as a reserve per split)."""
+    from app.services.order_inquiry_reserve_service import OrderInquiryReserveService
+
+    s = _order(api, [(10, 10, D_A)])
+    _confirm_all(s)
+    row = _order_row(s.world, s.line[10])
+    OrderInquiryReserveService(s.db).create_request(
+        inquiry_id=row.order_inquiry_id,
+        rows=[{"row_id": row.id, "qty_requested": "7", "warehouse_id": s.world.own_wh.id}],
+        note=None,
+        actor_user_id=None,
+    )
+    s.db.commit()
+    _save(s, {10: [_sp(4, D_A, on=_on(s, 10)), _sp(6, D_B, on=_on(s, 10))]})
+    heads, rows = _sheet_rows(s)
+    assert len(rows) == 2, rows
+    at = heads.index("REQUESTED RESERVE")
+    assert [r[at] for r in rows] == [7.0, None], [r[at] for r in rows]

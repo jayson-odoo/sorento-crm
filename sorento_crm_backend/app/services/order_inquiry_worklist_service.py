@@ -3592,6 +3592,10 @@ class OrderInquiryWorklistService:
                         "change_date": plan_row.new_date,
                         "split_remark": plan_row.remark,
                         "split_figures": figures if first else ("", "", ""),
+                        # The line's reserve figures, like `split_figures`: on its first
+                        # row only, never repeated per split.
+                        "requested_qty": row.get("requested_qty") if first else None,
+                        "reserved_qty": row.get("reserved_qty") if first else None,
                         # The line's rows stay together, in their own order.
                         "plan_key": (plan.base_date or date.max, line_id, index),
                     }

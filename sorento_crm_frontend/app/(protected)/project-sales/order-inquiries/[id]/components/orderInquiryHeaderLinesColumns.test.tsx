@@ -935,6 +935,29 @@ describe('OI-RESERVE-PILL-QTY round 2: the line reads Requested, Reserve request
     expect(screen.getByText('-')).toBeInTheDocument();
   });
 
+  it('a line with several live rows sums them, like Taken does (review S2)', () => {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const column = (id: string) =>
+      result.current.find((c) => (c as { id?: string }).id === id) as {
+        cell: (context: unknown) => React.ReactNode;
+      };
+    const [lineRow] = toLineRows(
+      foldInquiryLines([
+        linesRow({ id: 'a', so_line_id: 'sol-1', qty: '100', reserve_state: 'requested', requested_qty: '70', reserved_qty: '0' }),
+        linesRow({ id: 'b', so_line_id: 'sol-1', qty: '70', reserve_state: 'reserved', requested_qty: '0', reserved_qty: '25' }),
+        linesRow({ id: 'c', so_line_id: 'sol-1', qty: '9', reserve_state: 'requested', requested_qty: '5', reserved_qty: '0' }),
+      ]),
+    );
+    render(
+      <>
+        <span data-testid="req">{column('reserve_requested').cell({ row: { original: lineRow } })}</span>
+        <span data-testid="res">{column('reserved').cell({ row: { original: lineRow } })}</span>
+      </>,
+    );
+    expect(screen.getByTestId('req')).toHaveTextContent('75');
+    expect(screen.getByTestId('res')).toHaveTextContent('25');
+  });
+
   it('Reserved prints the reserved qty once CS has reserved', () => {
     render(
       <>
