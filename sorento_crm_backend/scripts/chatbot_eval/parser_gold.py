@@ -3,7 +3,7 @@
 usage (cwd = the backend dir of the checkout under test):
   python -m scripts.chatbot_eval.parser_gold live --gold F --out F --max-usd X --require-key-last4 XXXX \
       --prompt-version-id ID --repeats N [--closed-lists-mode block|index]
-      [--reasoning-effort off|minimal|low|medium|high]
+      [--reasoning-effort off|low]
       (calls ONLY the parser, on the pinned prompt version, with the user turn the engine builds for a fresh
       turn and the candidate block when the version carries CLOSED LISTS; every DB session is rolled back; spend
       is capped by --max-usd and only a provider key ending with --require-key-last4 may spend.
@@ -30,7 +30,7 @@ import time
 from typing import Any
 
 #: The parse's own cost, as the provider reported it on the result's `usage` (None when it reported none).
-USAGE_KEYS = ("prompt_tokens", "cached_tokens", "completion_tokens")
+USAGE_KEYS = ("prompt_tokens", "cached_tokens", "completion_tokens", "reasoning_tokens")
 
 EXPECT_KEYS = frozenset({
     "status", "not_status", "domain_hint", "intent_hint", "product", "no_attribute", "customer", "canonical",
@@ -476,7 +476,8 @@ def main(argv: list[str] | None = None) -> int:
     live.add_argument("--prompt-version-id", default=None)
     live.add_argument("--repeats", type=int, default=None)
     live.add_argument("--closed-lists-mode", choices=("block", "index"), default=None)
-    live.add_argument("--reasoning-effort", choices=("off", "minimal", "low", "medium", "high"), default=None)
+    # The stored setting's values (head/parser.REASONING_EFFORTS; app is not imported before the args parse).
+    live.add_argument("--reasoning-effort", choices=("off", "low"), default=None)
     args = ap.parse_args(argv)
     return _cmd_live(args)
 
