@@ -32,7 +32,6 @@ import {
   useSaveChatbotTierOrder,
 } from './hooks/useChatbotMemoryAndTierOrder';
 import type {
-  ChatbotClosedListsMode,
   ChatbotDirectIngressMode,
   ChatbotMemorySettings,
   ChatbotSettings,
@@ -70,12 +69,6 @@ const DIRECT_INGRESS_OPTIONS: { value: ChatbotDirectIngressMode; label: string }
   { value: 'off', label: 'Off' },
   { value: 'contacts', label: 'Listed contacts' },
   { value: 'all', label: 'All contacts' },
-];
-
-// CHAT-RELEASE-1021: the two release switches (owner, 21 Oct 2026).
-const CLOSED_LISTS_OPTIONS: { value: ChatbotClosedListsMode; label: string }[] = [
-  { value: 'block', label: 'Block (full lists)' },
-  { value: 'index', label: 'Index (per-turn matches)' },
 ];
 
 export default function ChatbotSettingsPage() {
@@ -189,34 +182,6 @@ export default function ChatbotSettingsPage() {
                 else set('chatbot_ordering_enabled', false);
               }}
             />
-          </div>
-          <div className="flex items-center justify-between gap-4">
-            <Label htmlFor="chatbot-composer" className="font-normal cursor-pointer">
-              Reply composer
-            </Label>
-            <Switch
-              id="chatbot-composer"
-              checked={draft.chatbot_composer_enabled}
-              onCheckedChange={(next) => set('chatbot_composer_enabled', next === true)}
-            />
-          </div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-            <Label htmlFor="chatbot-closed-lists" className="font-normal">
-              Closed lists
-            </Label>
-            <div className="w-full sm:w-56">
-              <SearchableSelect
-                id="chatbot-closed-lists"
-                value={draft.chatbot_closed_lists_mode}
-                options={CLOSED_LISTS_OPTIONS}
-                onChange={(next) =>
-                  set(
-                    'chatbot_closed_lists_mode',
-                    (next || 'block') as ChatbotClosedListsMode,
-                  )
-                }
-              />
-            </div>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
             <Label htmlFor="chatbot-direct-ingress" className="font-normal">

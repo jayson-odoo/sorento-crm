@@ -872,12 +872,7 @@ def _qty(value: float) -> str:
 
 def _currency(value: Any) -> str:
     code = str(value or "").strip().upper()
-    if code in ("", "MYR", "RM"):
-        from app.services.chatbot import composers
-
-        # CHAT-COMPOSER M2: one currency word for the ringgit (R13).
-        return "MYR" if composers.enabled() else "RM"
-    return code
+    return "RM" if code in ("", "MYR", "RM") else code
 
 
 # --------------------------------------------------------------------------- #

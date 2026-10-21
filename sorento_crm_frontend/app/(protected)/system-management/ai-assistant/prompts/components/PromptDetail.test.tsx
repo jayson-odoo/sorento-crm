@@ -16,7 +16,6 @@ const useSetLabel = vi.fn();
 const useDryRun = vi.fn();
 const useHasPermission = vi.fn();
 const useRegistryVariables = vi.fn();
-const usePromptArchitecture = vi.fn();
 
 vi.mock('../../hooks/useAIAssistantPrompts', () => ({
   usePromptVersions: () => usePromptVersions(),
@@ -30,7 +29,6 @@ vi.mock('../../hooks/useAIAssistantPrompts', () => ({
   usePromptKeys: () => usePromptKeys(),
   useSetAgentModel: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useRegistryVariables: () => useRegistryVariables(),
-  usePromptArchitecture: (...args: unknown[]) => usePromptArchitecture(...args),
 }));
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: () => useHasPermission(),
@@ -114,7 +112,6 @@ beforeEach(() => {
   useSetLabel.mockReturnValue({ mutate: labelMutate, isPending: false });
   useDryRun.mockReturnValue({ mutate: vi.fn(), isPending: false, data: undefined, isError: false });
   useRegistryVariables.mockReset().mockReturnValue({ data: [], isLoading: false, isError: false });
-  usePromptArchitecture.mockReset().mockReturnValue({ data: undefined, isLoading: true, isError: false });
 });
 afterEach(() => cleanup());
 
@@ -469,69 +466,5 @@ describe('PromptDetail full screen editor (PROMPT-EDITOR-FULLSCREEN)', () => {
       expect(headings).toEqual(['RULES:', '# Output', '== PRICE TERMS (decisive) ==']);
       expect(preview.textContent).toContain('current one a | b');
     });
-  });
-});
-
-describe('PromptDetail Architecture tab (CHAT-INDEX-VIZ FE-2)', () => {
-  function renderFor(name: string, registry: string[]) {
-    usePromptVersions.mockReturnValue({
-      data: { ...META, name, registry_variables: registry },
-      isLoading: false,
-      isError: false,
-    });
-    usePromptVersion.mockReturnValue({ data: { ...BASE, name }, isLoading: false, isError: false });
-    useRegistryVariables.mockReturnValue({ data: [], isLoading: false, isError: false });
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    return render(
-      <QueryClientProvider client={client}>
-        <PromptDetail name={name} />
-      </QueryClientProvider>,
-    );
-  }
-
-  it('shows the Architecture tab for the semantic parser only', () => {
-    renderFor('chatbot_semantic_parser', ['domains']);
-    expect(screen.getByTestId('editor-mode-architecture')).toHaveTextContent('Architecture');
-  });
-
-  it('hides the Architecture tab for any other key, registry variables or not', () => {
-    renderFor('chatbot_clarifier', ['domains']);
-    expect(screen.queryByTestId('editor-mode-architecture')).toBeNull();
-    cleanup();
-    renderFor('router', []);
-    expect(screen.queryByTestId('editor-mode-architecture')).toBeNull();
-  });
-
-  it('opens the architecture view for the shown version and keeps the chip editor mounted but hidden', () => {
-    usePromptArchitecture.mockReturnValue({
-      data: {
-        version: 2, mode: 'block', uses_closed_lists: false, total_size: 10,
-        groups: [{ name: 'Rules', size: 10, share: 1 }], lists: [],
-      },
-      isLoading: false,
-      isError: false,
-    });
-    renderFor('chatbot_semantic_parser', ['domains']);
-    fireEvent.mouseDown(screen.getByTestId('editor-mode-architecture'), { button: 0 });
-    expect(screen.getByTestId('prompt-architecture')).toBeInTheDocument();
-    expect(screen.getByTestId('chip-editor-pane')).toBeInTheDocument();
-    expect(screen.getByTestId('chip-editor-pane').hidden).toBe(true);
-    const lastCall = usePromptArchitecture.mock.calls.at(-1)!;
-    expect(lastCall[0]).toBe('chatbot_semantic_parser');
-    expect(lastCall[1]).toBe(2);
-  });
-
-  it('hides the variable chips while the Architecture tab is selected and brings them back on Edit', () => {
-    usePromptArchitecture.mockReturnValue({
-      data: { version: 2, mode: 'block', uses_closed_lists: false, total_size: 10, groups: [{ name: 'Rules', size: 10, share: 1 }], lists: [] },
-      isLoading: false,
-      isError: false,
-    });
-    renderFor('chatbot_semantic_parser', ['domains']);
-    expect(screen.getByTestId('var-chips')).toBeInTheDocument();
-    fireEvent.mouseDown(screen.getByTestId('editor-mode-architecture'), { button: 0 });
-    expect(screen.queryByTestId('var-chips')).toBeNull();
-    fireEvent.mouseDown(screen.getByTestId('editor-mode-edit'), { button: 0 });
-    expect(screen.getByTestId('var-chips')).toBeInTheDocument();
   });
 });

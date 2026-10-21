@@ -111,8 +111,6 @@ class ResolveGateServices:
     access_types: AccessTypesFn
     resolve_entity: ResolveEntityFn
     probe: ProbeFn
-    #: CHAT-CODE-LOOKUP R2: which product set ids the contact may be told about (None: unread).
-    visible_sets: Callable[[list[str]], set[str]] | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -510,37 +508,27 @@ def resolve_warehouse_token(db: Session, token: str) -> list[str]:
     contact's own company than there would be for widening the product lookup, and a
     contact with no `respond_contact_companies` row already gets zero rows there too -
     a genuinely UNMAPPED contact fails closed everywhere in the turn, not selectively.
-
-    One `warehouses` read, ordered (code, company) so an exact match across companies is the same
-    code every time; the rule itself is `warehouse_codes_for`.
     """
+    from sqlalchemy import func
+
     from app.models.inventory import Warehouse
 
-    if not (token or "").strip():
-        return []
-    rows = db.query(Warehouse.warehouse_code).order_by(Warehouse.warehouse_code, Warehouse.company_id).all()
-    return warehouse_codes_for(token, [code for (code,) in rows])
-
-
-def warehouse_codes_for(token: str, codes: list[str]) -> list[str]:
-    """D5's rule over `codes` (the `warehouses` rows read): the one code equal to `token`, case
-    aside; else every code whose part after its LAST `-` equals it; else nothing."""
-    word = (token or "").strip().lower()
+    word = (token or "").strip()
     if not word:
         return []
-    exact = [code for code in codes if code and code.lower() == word]
+    exact = (
+        db.query(Warehouse.warehouse_code)
+        .filter(func.lower(Warehouse.warehouse_code) == word.lower())
+        .first()
+    )
     if exact:
-        return exact[:1]
-    return [code for code in codes if code and "-" in code and code.rsplit("-", 1)[-1].lower() == word]
-
-
-def _visible_sets(db: Session) -> Callable[[list[str]], set[str]]:
-    def call(ids: list[str]) -> set[str]:
-        from app.services.chatbot.head.candidates import visible_set_ids
-
-        return visible_set_ids(db, ids)
-
-    return call
+        return [exact[0]]
+    suffix = word.lower()
+    return [
+        code
+        for (code,) in db.query(Warehouse.warehouse_code).all()
+        if "-" in code and code.rsplit("-", 1)[-1].lower() == suffix
+    ]
 
 
 def production_services(db: Session, *, space_id: str | None = None) -> ResolveGateServices:
@@ -555,7 +543,6 @@ def production_services(db: Session, *, space_id: str | None = None) -> ResolveG
         access_types=_access_types(db, default_space_id=space_id),
         resolve_entity=_resolve_entity(db),
         probe=_probe(db),
-        visible_sets=_visible_sets(db),
     )
 
 
