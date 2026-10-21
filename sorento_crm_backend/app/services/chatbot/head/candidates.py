@@ -29,6 +29,9 @@ HEADER = "Candidates for words of this message (each says what it is; pick one o
 
 CAP_PER_WORD = 5
 CAP_LINES = 12
+#: The ceiling on the lines a message gets once exact existing codes ride past `CAP_LINES` (a large
+#: paste lists the first of them in message order).
+CAP_CODE_LINES = 60
 #: Words with a digit read for codes holding them / spelt near them, per message (one
 #: query each); every other word costs nothing beyond the one whole-code query.
 CODE_WORDS_PER_MESSAGE = 6
@@ -613,7 +616,8 @@ def shown_entries(entries: list[WordCandidates]) -> list[WordCandidates]:
     exact existing code (one short line each). The cap limits non-code words and near-code lines;
     a typed code that exists is never dropped, whatever its place in the message."""
     kept = [entry for entry in entries if entry.items]
-    return kept[:CAP_LINES] + [entry for entry in kept[CAP_LINES:] if _names_an_exact_code(entry)]
+    extra = [entry for entry in kept[CAP_LINES:] if _names_an_exact_code(entry)]
+    return kept[:CAP_LINES] + extra[: max(0, CAP_CODE_LINES - CAP_LINES)]
 
 
 def listed_codes(entries: list[WordCandidates]) -> frozenset[str]:
