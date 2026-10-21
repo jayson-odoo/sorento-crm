@@ -1734,14 +1734,18 @@ jobs:
     # Not a hang guard: vitest itself exits teardownTimeout (10s) after closing.
     timeout-minutes: 20
     # The FULL vitest suite (~950 files / ~10.5k tests) on a 2-vCPU runner was
-    # the single longest gate (19.5 min). Split into 4 shards that run in
+    # the single longest gate (19.5 min). Split into shards that run in
     # parallel matrix jobs instead of one job iterating serially; together
     # they cover the exact same suite (vitest's `--shard` partitions the full
     # collected file list, nothing runs twice or is dropped).
+    # 5 shards since 21 Oct (PLAN-vitest-shard2-fix-21oct.md): at 1751 files
+    # the 4 shards ran 15:00 / >20 / 19:02 / 18:34 in release 39522177768 and
+    # shard 2 hit the cap twice with no hang in it. vitest splits by file
+    # COUNT, not weight, so the fix is a fifth shard, not this timeout.
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -1766,7 +1770,7 @@ jobs:
       # a test that fails three times in a row still blocks the deploy.
       - name: Run vitest suite (executing gate)
         working-directory: sorento_crm_frontend
-        run: npx vitest run --shard=${{ matrix.shard }}/4
+        run: npx vitest run --shard=${{ matrix.shard }}/5
 
   # Type-checks application code on the runner, in parallel with the test
   # gates, instead of inside the Docker build (see next.config.mjs and the
