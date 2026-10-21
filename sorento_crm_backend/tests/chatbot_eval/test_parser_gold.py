@@ -1024,70 +1024,122 @@ def test_typo_battery_file_shape_and_counts():
     assert any(r["expect"].get("is_active") is False for i, r in by_id.items() if i.startswith("tb-c4-ctl-"))
 
 
-# --- LEAN v90: --reasoning-effort forces the parser call's effort in-process (never the DB) ----------------------
+# --- LEAN: --reasoning-effort forces the STORED parser setting in-process (never the DB, never the provider) ------
 
 
-def _effort_run(session_factory, monkeypatch, effort, *, provider="openai", on_start=None):
-    """Run one row; the stubbed parse sends a request through the OpenAI seam the parser call uses
-    (`llm_provider._create_chat_completion`, called by OpenAIProvider.chat) to a fake client."""
+def _effort_version(session_factory, monkeypatch, provider: str = "openai") -> str:
+    """An unlabelled parser version and a stubbed provider config, so the REAL `resolve_config` runs."""
     import types
+    import uuid
 
-    from app.services import llm_provider
+    from app.models.ai_prompt import AIPromptVersion
+    from app.services import ai_assistant_service, llm_provider
     from app.services.chatbot.head import parser as parser_mod
 
-    sent: list[dict] = []
+    db = session_factory()
+    vid = str(uuid.uuid4())
+    db.add(AIPromptVersion(id=vid, name=parser_mod.PROMPT_KEY, version=43, type="text",
+                           template="Rules for {{current_date}}.", variables=["current_date"]))
+    db.commit()
+    service = types.SimpleNamespace(get=lambda: types.SimpleNamespace(provider=provider, model="gpt-test"))
+    monkeypatch.setattr(ai_assistant_service, "AIAssistantConfigService", lambda d: service)
+    monkeypatch.setattr(llm_provider, "resolve_api_key", lambda config, provider: "sk-test")
+    return vid
 
-    class _Client:
-        chat = types.SimpleNamespace(completions=types.SimpleNamespace(
-            create=lambda **kw: sent.append(kw) or types.SimpleNamespace()))
+
+def _stored_effort(session_factory, value: str | None = None) -> str | None:
+    """Set the stored setting (when `value`), and return what the DB holds."""
+    from app.models.user import SystemSetting
+
+    db = session_factory()
+    row = db.query(SystemSetting).first()
+    if value is not None:
+        if row is None:
+            row = SystemSetting()
+            db.add(row)
+        row.chatbot_parser_reasoning_effort = value
+        db.commit()
+    return row.chatbot_parser_reasoning_effort if row is not None else None
+
+
+def _effort_gold(session_factory, monkeypatch, effort, *, provider="openai", on_start=None):
+    from app.services.chatbot.head import parser as parser_mod
+
+    vid = _effort_version(session_factory, monkeypatch, provider)
+    seen: list[str] = []
 
     def parse(config, block):
-        llm_provider._create_chat_completion(_Client(), {"model": "gpt-test", "messages": []})
+        seen.append(config.reasoning_effort)
         return {"status": None, "entities": []}
 
-    config = parser_mod.ParserConfig(system_prompt="x", prompt_version=1, provider=provider, model="m", api_key="k")
-    monkeypatch.setattr(parser_mod, "resolve_config", lambda db, **kw: config)
     monkeypatch.setattr(parser_mod, "parse", parse)
     out = pg.run_live([{"id": "e", "message": "ZZA100 price", "expect": {}}], session_factory=session_factory,
-                      version_id="1", repeats=1, max_usd=5.0, require_key_last4="WXYZ", reasoning_effort=effort,
+                      version_id=vid, repeats=1, max_usd=5.0, require_key_last4="WXYZ", reasoning_effort=effort,
                       on_start=on_start)
-    return out, sent
+    return out, seen
 
 
-@pytest.mark.parametrize(("effort", "sent_as"), [("low", "low"), ("medium", "medium"), ("high", "high"),
-                                                   ("off", "none")])
-def test_a_forced_effort_reaches_the_parser_request_and_every_row(effort, sent_as, session_factory, monkeypatch):
-    from app.services import llm_provider
+@pytest.mark.parametrize("effort", ["off", "minimal", "low", "medium", "high"])
+def test_a_forced_effort_is_the_stored_setting_the_parse_reads(effort, session_factory, monkeypatch,
+                                                               _fresh_prompt_caches):
+    from app.services.chatbot.head import parser as parser_mod
 
-    real = llm_provider._create_chat_completion
+    real = parser_mod.reasoning_effort_setting
+    _stored_effort(session_factory, "medium" if effort != "medium" else "high")
     headers: list[dict] = []
-    out, sent = _effort_run(session_factory, monkeypatch, effort, on_start=headers.append)
+    out, seen = _effort_gold(session_factory, monkeypatch, effort, on_start=headers.append)
     assert out[0]["reasons"] == [], out
-    assert [kw.get("reasoning_effort") for kw in sent] == [sent_as], sent
+    assert seen == [effort], seen
     assert out[0]["reasoning_effort"] == effort, out
-    assert headers and headers[0]["reasoning_effort"] == effort, headers
-    assert llm_provider._create_chat_completion is real
+    assert headers and headers[0]["reasoning_effort"] == effort and headers[0]["reasoning_forced"] is True, headers
+    assert parser_mod.reasoning_effort_setting is real
 
 
-def test_without_the_flag_no_effort_is_sent_and_rows_say_so(session_factory, monkeypatch):
+def test_without_the_flag_the_stored_setting_is_used_and_rows_say_so(session_factory, monkeypatch,
+                                                                     _fresh_prompt_caches):
+    _stored_effort(session_factory, "medium")
     headers: list[dict] = []
-    out, sent = _effort_run(session_factory, monkeypatch, None, on_start=headers.append)
-    assert sent and "reasoning_effort" not in sent[0], sent
-    assert out[0]["reasoning_effort"] is None, out
-    assert headers[0]["reasoning_effort"] is None, headers
+    out, seen = _effort_gold(session_factory, monkeypatch, None, on_start=headers.append)
+    assert seen == ["medium"], seen
+    assert out[0]["reasoning_effort"] == "medium", out
+    assert headers[0]["reasoning_effort"] == "medium" and headers[0]["reasoning_forced"] is False, headers
 
 
-def test_an_unknown_effort_is_refused():
+def test_the_forced_effort_never_writes_system_settings(session_factory, monkeypatch, _fresh_prompt_caches):
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session
+
+    from app.models.user import SystemSetting
+
+    _stored_effort(session_factory, "off")
+    written: list[str] = []
+
+    def spy(session, _ctx, _instances):
+        written.extend(type(o).__name__ for o in [*session.new, *session.dirty] if isinstance(o, SystemSetting))
+
+    event.listen(Session, "before_flush", spy)
+    try:
+        out, seen = _effort_gold(session_factory, monkeypatch, "high")
+    finally:
+        event.remove(Session, "before_flush", spy)
+    assert seen == ["high"] and written == [], (seen, written)
+    assert _stored_effort(session_factory) == "off"
+
+
+@pytest.mark.parametrize("bad", ["max", "none", "xhigh"])
+def test_an_unknown_effort_is_refused(bad):
     with pytest.raises(ValueError):
         pg.run_live([], session_factory=None, version_id="1", repeats=1, max_usd=1.0, require_key_last4="WXYZ",
-                    reasoning_effort="max")
+                    reasoning_effort=bad)
 
 
-def test_a_forced_effort_on_a_provider_other_than_openai_is_refused_before_any_parse(session_factory, monkeypatch):
+def test_a_forced_effort_on_a_provider_other_than_openai_is_refused_before_any_parse(session_factory, monkeypatch,
+                                                                                     _fresh_prompt_caches):
     with pytest.raises(ValueError):
-        _effort_run(session_factory, monkeypatch, "low", provider="anthropic")
+        _effort_gold(session_factory, monkeypatch, "low", provider="gemini")
 
 
-def test_cli_reasoning_effort_choices(tmp_path):
+@pytest.mark.parametrize("bad", ["max", "none"])
+def test_cli_reasoning_effort_choices(bad):
     with pytest.raises(SystemExit):
-        pg.main([*_BASE, "--reasoning-effort", "max"])
+        pg.main([*_BASE, "--reasoning-effort", bad])
