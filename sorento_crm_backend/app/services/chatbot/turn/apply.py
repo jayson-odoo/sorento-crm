@@ -2828,6 +2828,13 @@ def _open_question_answer(
     if not isinstance(answer, dict) or state.pending is not None:
         return False
     mode = answer.get("mode")
+    if mode == "pick" and any(
+        isinstance(item, dict) and item.get("qty") is not None for item in answer.get("items") or []
+    ):
+        # The parser placed a quantity on a line of the open quantities question: those items
+        # are the answer, whatever mode label it gave (with a stored pending the pick readers
+        # run first and this is never reached).
+        mode = "fill"
     if mode not in ("fill", "all", "done", "cancel"):
         return False
     task = _open_question_task(state.focus)
