@@ -214,6 +214,21 @@ def test_near_miss_an_order_ask_echoing_the_held_sales_status_is_still_a_switch(
     assert out.state.focus.status is None and out.verdict.get("status") is None, (out.state.focus, out.verdict)
 
 
+def test_near_miss_a_sales_ask_repeating_the_held_status_stays_on_the_held_sales() -> None:
+    """Review round 2: the prompt has the parser repeat the held `status` under `sales`
+    (`head/parser_template.py`); the echo never turns that `sales` into an order ask, so the
+    held top selling ranking is not switched away."""
+    from app.services.chatbot.turn.state import Focus
+    from tests.chatbot._turn_helpers import verdict
+
+    focus = Focus(domains=["sales"], status="top_selling", sort={"by": "qty", "dir": "desc"})
+    out = _apply_state(focus, verdict(domain_hint="sales", intent_hint="check_order", status="top_selling",
+                                      state_changes=KEEP))
+    assert out.valid is True, out.log
+    assert out.state.focus.domains == ["sales"], out.state.focus.domains
+    assert out.state.focus.status == "top_selling", out.state.focus
+
+
 def test_near_miss_a_real_domain_switch_off_a_held_report_still_drops_its_frame() -> None:
     from tests.chatbot._turn_helpers import verdict
 
