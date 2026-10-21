@@ -117,6 +117,20 @@ def _fold(value: Any) -> str:
     return re.sub(r"[^0-9a-z]", "", str(value or "").casefold())
 
 
+def _answer_fields(answer: Any) -> dict[str, Any] | None:
+    """The parse's `open_question_answer` as a row records it: mode, picked, items."""
+    if not isinstance(answer, dict):
+        return None
+    return {k: answer.get(k) for k in ("mode", "picked", "items")}
+
+
+def _state_change_fields(changes: Any) -> list[dict[str, Any]] | None:
+    """The parse's `state_changes` as a row records them, or None when the prompt has none."""
+    if not isinstance(changes, list):
+        return None
+    return [{k: c.get(k) for k in ("op", "axis", "position")} for c in changes if isinstance(c, dict)]
+
+
 def _warehouse_raws(entities: list[dict[str, Any]]) -> list[Any]:
     return [e.get("raw") for e in entities if e.get("hint") == "warehouse"]
 
@@ -448,6 +462,9 @@ def run_live(rows: list[dict[str, Any]], *, session_factory: Any, version_id: st
                                 passed=passed, reasons=reasons,
                                 **{k: verdict.get(k) for k in ("status", "domain_hint", "intent_hint", "requested_attributes", "entities")},
                                 warehouse=_warehouse_raws(entities),
+                                **{k: verdict.get(k) for k in ("topic_reset", "entity_op", "broaden_axis", "reference_positions")},
+                                open_question_answer=_answer_fields(verdict.get("open_question_answer")),
+                                state_changes=_state_change_fields(verdict.get("state_changes")),
                             )
                         except replay._CapStop as stop:
                             total["stop"] = total.get("stop") or stop.reason

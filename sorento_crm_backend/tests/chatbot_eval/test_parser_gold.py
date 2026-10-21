@@ -1306,3 +1306,25 @@ def test_load_gold_types_products_only(tmp_path):
     for bad in ("ZZA100", [1], None):
         with pytest.raises(ValueError):
             _loads(tmp_path, {"products_only": bad})
+
+
+def test_run_live_rows_carry_the_answer_and_state_fields(session_factory, monkeypatch):
+    from app.services.chatbot.head import parser as parser_mod
+
+    monkeypatch.setattr(parser_mod, "resolve_config", lambda db, **kw: _config())
+    verdict = {
+        "topic_reset": True, "entity_op": "clear", "broaden_axis": "all", "reference_positions": [2],
+        "open_question_answer": {"mode": "pick", "picked": [2], "items": [{"qty": 2}], "qty_for_all": None},
+        "state_changes": [{"op": "pick", "axis": None, "position": 2, "extra": "x"}],
+    }
+    monkeypatch.setattr(pg, "_parse_one", lambda message, config, factory, context=None: dict(verdict))
+    run = lambda: pg.run_live([{"id": "a", "message": "m", "expect": {}}], session_factory=session_factory,  # noqa: E731
+                              version_id="1", repeats=1, max_usd=5.0, require_key_last4="WXYZ")
+    row = run()[0]
+    assert (row["topic_reset"], row["entity_op"], row["broaden_axis"], row["reference_positions"]) == (
+        True, "clear", "all", [2])
+    assert row["open_question_answer"] == {"mode": "pick", "picked": [2], "items": [{"qty": 2}]}
+    assert row["state_changes"] == [{"op": "pick", "axis": None, "position": 2}]
+    verdict.pop("state_changes"), verdict.pop("open_question_answer")
+    row = run()[0]
+    assert row["state_changes"] is None and row["open_question_answer"] is None
