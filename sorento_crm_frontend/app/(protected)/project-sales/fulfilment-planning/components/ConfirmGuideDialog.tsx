@@ -174,7 +174,7 @@ export function ConfirmGuideDialog({
           .map(readOnlyWords),
       ),
     };
-  }, [page, reading, readFailed, unready, splitRead?.data]);
+  }, [page, reading, readFailed, splitRead?.data]);
 
   // UAC B4: a Save that left the last page's order out of this Confirm drops its page; the
   // guide moves on to the Confirm step (an earlier page's drop shows the next order by index).
