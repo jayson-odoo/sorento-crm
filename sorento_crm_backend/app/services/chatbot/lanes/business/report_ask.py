@@ -144,6 +144,19 @@ def _label(d: date) -> str:
     return f"{d.day} {d.strftime('%b %Y')}"
 
 
+#: REPORT-SMART-1021 step 5: said when the parser wrote the period in words ("SEP 2026"), not
+#: as dates: asked, never run over a period nobody can read, never echoed back.
+UNREADABLE_PERIOD_LINE = "I couldn't read that period. " + PERIOD_QUESTION
+
+
+def unreadable_period(parse_output: dict[str, Any]) -> bool:
+    """Did the parser fill a date field with something that is not a date?"""
+    return any(
+        jsc.truthy(parse_output.get(key)) and _day(parse_output.get(key)) is None
+        for key in ("date_filter_start", "date_filter_end")
+    )
+
+
 def period_from(start: Any, end: Any) -> rf.Resolved | None:
     """The parser's two dates as the settled period. A start alone ("since September") runs
     to today, Malaysia time; an end alone is no period (1b code review N2: it is asked)."""

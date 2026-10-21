@@ -2117,6 +2117,12 @@ def run_fetch(
                     {"domain": domain, "skipped": "not_granted", "needs": _SALES_REPORT_GRANT},
                 )
             return _sales_report_not_enabled()
+        if order_status_raw != report_ask.ASK_NAME and report_ask.unreadable_period(parse_output):
+            # REPORT-SMART-1021 step 5: a period in words is asked, never run or echoed (the
+            # sales ranking asks it through its own required fields).
+            if trace is not None:
+                trace.add("report_period", {"unreadable": True, "order_status": order_status_raw})
+            return _fixed_reply(report_ask.UNREADABLE_PERIOD_LINE)
 
     has_customer = (
         any(isinstance(e, dict) and e.get("entity_type") == "customer" for e in entities)

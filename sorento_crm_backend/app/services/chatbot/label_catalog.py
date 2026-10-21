@@ -335,6 +335,9 @@ LABELS: dict[str, dict[str, str]] = {
     "Sorry, I didn't get that. What would you like to change in the ranking?": {"ms": 'Maaf, saya tidak faham. Apa yang anda mahu ubah dalam senarai kedudukan?', "zh": '抱歉，我没听明白。您想如何调整排名？'},
     'Low stock report is not enabled for your account.': {"ms": 'Laporan stok rendah tidak diaktifkan untuk akaun anda.', "zh": '您的账户未开通低库存报告。'},
     'Could not run the low stock report right now.': {"ms": 'Laporan stok rendah tidak dapat dijalankan sekarang.', "zh": '暂时无法生成低库存报告。'},
+    # REPORT-SMART-1021 step 5: a report failure is a plain sentence.
+    'Could not run the top selling report right now.': {"ms": 'Laporan jualan terlaris tidak dapat dijalankan sekarang.', "zh": '暂时无法生成畅销报告。'},
+    "I couldn't read that period. Which period? For example this month, September, 2026, or 1 to 15 Sep.": {"ms": "Saya tidak dapat membaca tempoh itu. Tempoh yang mana? Contohnya bulan ini, September, 2026, atau 1 hingga 15 Sep.", "zh": "我无法识别该时间段。请问是哪个时间段？例如本月、九月、2026 年，或 9 月 1 日至 15 日。"},
     'Both': {"ms": 'Kedua-duanya', "zh": '两者'},
     'Which customer is this outstanding report for?': {"ms": 'Laporan tertunggak ini untuk pelanggan mana?', "zh": '这份未完成报告是哪个客户的？'},
     'Which category do you mean? Reply with one code: {codes}': {"ms": 'Kategori mana yang anda maksudkan? Balas dengan satu kod: {codes}', "zh": '您指的是哪个类别？请回复一个代码：{codes}'},
@@ -669,6 +672,8 @@ INLINE = frozenset(
         "Sorry, I didn't get that. What would you like to change in the ranking?",
         "Low stock report is not enabled for your account.",
         "Could not run the low stock report right now.",
+        "Could not run the top selling report right now.",
+        "I couldn't read that period. Which period? For example this month, September, 2026, or 1 to 15 Sep.",
         "Which customer is this outstanding report for?",
         "Which category do you mean? Reply with one code: {codes}",
         "I could not match any product code in that photo.",

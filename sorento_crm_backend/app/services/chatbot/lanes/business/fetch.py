@@ -3038,6 +3038,10 @@ def _forms_browse_ask(e: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any] 
     }
 
 
+#: The line for a `crm_top_selling_report` result the presenter never rendered.
+_TOP_SELLING_ERROR_TEXT = "Could not run the top selling report right now."
+
+
 def _top_selling_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
     """PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 9. The
     presenter's minimal envelope (`presenters._top_selling_envelope`) is the reply
@@ -3063,8 +3067,12 @@ def _top_selling_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
             envelope.get("result_type") == "top_selling" and bool(text.strip())
         )
     else:
-        text = result if isinstance(result, str) else jsc.js_string(result)
-        has_result = bool(text.strip())
+        # REPORT-SMART-1021 step 5: the render never happened (a raised tool call's own error
+        # text, or a body with nothing rendered). Its text is never the reply ("Error
+        # executing tool ... INVALID_UUID", `[object Object]`): one plain sentence is, and it
+        # is no miss either (there is nothing to escalate about a failed run).
+        text = _TOP_SELLING_ERROR_TEXT
+        has_result = True
     notes = [jsc.js_string(n) for n in jsc.array(semantic_input.get("top_selling_notes")) if jsc.truthy(n)]
     if notes and text.strip():
         text = "\n".join(notes) + "\n\n" + text
