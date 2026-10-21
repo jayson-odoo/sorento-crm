@@ -81,7 +81,8 @@ class PromotionsPdfService:
                 )
                 for link in links:
                     att = getattr(link, "attachment", None)
-                    if att is None:
+                    if att is None or getattr(att, "is_deleted", False):
+                        # A soft-deleted file is never served, the export included.
                         continue
                     label = (
                         getattr(att, "original_filename", None)
