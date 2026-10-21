@@ -541,8 +541,12 @@ def run(
     `decision_kind` is `decide()`'s own reading of this message; `positions` are the
     option numbers it picked (unused while `TASK_KINDS` has one entry - kept on the
     signature so a caller that already threads them through does not need an arm of
-    its own). `class_ask` is the caller's reading that the message names its own class
-    (`apply._apply`, off the state gate only). Nothing here reads a word.
+    its own). `pending` is the stored open question: when the parser's
+    `open_question_answer` answers it (mode not null), the answer is that question's and
+    the resume arm does not fire, so a pick on a did-you-mean never wakes an older task
+    of the same domain (its status is left as it was). `class_ask` is the caller's
+    reading that the message names its own class (`apply._apply`, off the state gate
+    only). Nothing here reads a word.
     """
     rules: list[str] = []
     tasks = tuple(tasks)
@@ -551,6 +555,10 @@ def run(
         return TaskOutcome(tasks=(), rules=())
 
     named_domain = verdict.get("domain_hint")
+    oqa = verdict.get("open_question_answer")
+    answers_pending = (
+        pending is not None and isinstance(oqa, dict) and oqa.get("mode") is not None
+    )
 
     # (1) Close or park on a topic reset. A reset aimed at a task's OWN domain ends
     # it; one aimed elsewhere parks it, and the focus keeps the task through the wipe
@@ -677,6 +685,7 @@ def run(
         if (
             task.domain and task.domain == named_domain and _only_task_slots(task, verdict)
             and not isinstance(verdict.get("set_brand"), list)
+            and not answers_pending
         ):
             # (3) resume: the task's own topic, named again with nothing new. Only
             # what is still missing is asked; nothing is asked twice.
