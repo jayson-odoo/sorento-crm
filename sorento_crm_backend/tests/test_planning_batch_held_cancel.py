@@ -395,3 +395,23 @@ def test_control_a_batch_retire_without_held_cancels_still_emails(api, monkeypat
 
     assert result["planning_change_applied"] is True
     assert len(_handover_calls(calls)) == 1
+
+
+def test_control_a_cancel_the_batch_does_not_name_still_emails_beside_the_batch(api, monkeypatch):
+    """Reviewer round 2: only a HELD cancel is silent. A Cancel SO on a line the pending change
+    does not name rode along with the batch press before this fix (AC-C23) and still emails."""
+    from .test_order_inquiry_handover_automation import _handover_calls
+
+    client, world = api
+    db = world.db
+    calls = _spy(api, monkeypatch)
+    w = _world(client, world, n_old=1, n_cancel=0, n_covered=1, n_open=1)
+    _core, line = w["open"][0]
+    db.delete(w["rows"].pop(line.id))
+    db.commit()
+    _live_row_on(world, w, line)
+    calls.clear()
+
+    _press(client, w, cancel=w["open"])
+
+    assert len(_handover_calls(calls)) == 1
