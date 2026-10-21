@@ -1264,3 +1264,45 @@ def test_open_question_object_is_valid_and_rendered_as_json(tmp_path, session_fa
         monkeypatch.setattr(turn_runtime, fn, lambda db: None)
     pg._parse_one("2", _config(state_block=False), session_factory, {"open_question": oq})
     assert parser_mod.open_question_line(oq) in seen["block"].splitlines()
+
+
+def test_a_quoted_message_reaches_the_user_block_and_adds_no_state_block(session_factory, monkeypatch):
+    from app.services.chatbot import turn_runtime
+    from app.services.chatbot.head import parser as parser_mod
+
+    seen = {}
+    monkeypatch.setattr(parser_mod, "parse", lambda cfg, block: seen.setdefault("block", block) or {})
+    for fn in ("active_brands", "promotion_kind_rows", "product_type_names", "product_detail_values"):
+        monkeypatch.setattr(turn_runtime, fn, lambda db: None)
+    quote = "Did you mean: 1. ZZA100 2. ZZA200"
+    pg._parse_one("2", _config(state_block=True), session_factory, {"reply_to": quote})
+    lines = seen["block"].splitlines()
+    assert f"reply to: {quote}" in lines
+    assert "State:" not in lines
+
+
+def test_load_gold_accepts_a_reply_to_and_refuses_a_non_text_one(tmp_path):
+    ok = json.dumps({"id": "c", "message": "2", "expect": {}, "context": {"reply_to": "quoted text"}})
+    assert pg.load_gold(_write(tmp_path, [ok]))[0]["context"]["reply_to"] == "quoted text"
+    bad = json.dumps({"id": "c", "message": "2", "expect": {}, "context": {"reply_to": 5}})
+    with pytest.raises(ValueError):
+        pg.load_gold(_write(tmp_path, [bad]))
+
+
+def test_products_only_limits_the_product_entities():
+    def v(*codes, hint="product"):
+        return {"entities": [{"hint": hint, "canonical_code": c} for c in codes]}
+
+    assert pg.grade_parse(v("zza-100", "ZZA200"), {"products_only": ["ZZA100", "ZZA200", "ZZA300"]})[0]
+    assert pg.grade_parse(v(), {"products_only": ["ZZA100"]})[0]
+    assert pg.grade_parse(v(), {"products_only": []})[0]
+    assert pg.grade_parse(v("ZZA100", hint="customer"), {"products_only": []})[0]
+    assert not pg.grade_parse(v("ZZA100", "ZZB900"), {"products_only": ["ZZA100"]})[0]
+    assert not pg.grade_parse(v("ZZA100"), {"products_only": []})[0]
+
+
+def test_load_gold_types_products_only(tmp_path):
+    assert _loads(tmp_path, {"products_only": ["ZZA100"]}) == {"products_only": ["ZZA100"]}
+    for bad in ("ZZA100", [1], None):
+        with pytest.raises(ValueError):
+            _loads(tmp_path, {"products_only": bad})

@@ -33,6 +33,7 @@ from typing import Any
 USAGE_KEYS = ("prompt_tokens", "cached_tokens", "completion_tokens", "reasoning_tokens")
 
 EXPECT_KEYS = frozenset({
+    "products_only",
     "status", "not_status", "domain_hint", "intent_hint", "product", "no_attribute", "customer", "canonical",
     "attributes_only", "attributes_include", "attachment_types", "warehouse", "promotion_kind", "is_active",
     "continues", "topic_reset", "answer_mode", "picked", "reference_positions", "entity_op", "broaden_axis",
@@ -40,6 +41,7 @@ EXPECT_KEYS = frozenset({
 })
 #: LEAN v90: the type each of these expect values must have (null allowed where listed).
 _EXPECT_TYPES: dict[str, tuple[type, ...]] = {
+    "products_only": (list,),
     "is_active": (bool, type(None)),
     "continues": (bool,),
     "promotion_kind": (str, type(None)),
@@ -56,7 +58,7 @@ _EXPECT_TYPES: dict[str, tuple[type, ...]] = {
 #: value is the text as the user block shows it, or null.
 #: `last_list` and `pending_task` are the State block's own rendered values; `open_question` may be the
 #: JSON object the real State line and `parser.open_question_line` both dump.
-CONTEXT_KEYS = frozenset({"previous_reply", "subject", "open_question", "last_list", "pending_task"})
+CONTEXT_KEYS = frozenset({"previous_reply", "subject", "open_question", "last_list", "pending_task", "reply_to"})
 
 
 def _valid_context(context: Any) -> bool:
@@ -99,6 +101,8 @@ def load_gold(path: Any) -> list[dict[str, Any]]:
             bad = [k for k, types in _EXPECT_TYPES.items() if k in expect and not isinstance(expect[k], types)]
             if bad:
                 raise ValueError(f"line {n}: {bad[0]} has the wrong type")
+            if "products_only" in expect and not all(isinstance(c, str) for c in expect["products_only"]):
+                raise ValueError(f"line {n}: products_only must be a list of product codes")
             if "context" in row and not _valid_context(row["context"]):
                 raise ValueError(f"line {n}: context must map {sorted(CONTEXT_KEYS)} to text or null")
             seen.add(row["id"])
@@ -192,6 +196,13 @@ def grade_parse(verdict: dict[str, Any], expect: dict[str, Any]) -> tuple[bool, 
         want = {_fold(w) for w in expect["warehouse"] or []}
         if got != want:
             reasons.append(f"warehouse raws {sorted(got)} != {sorted(want)}")
+    if "products_only" in expect:
+        allowed = {_fold(c) for c in expect["products_only"]}
+        stray = sorted(
+            {_fold(e.get("canonical_code")) for e in entities if e.get("hint") == "product"} - allowed
+        )
+        if stray:
+            reasons.append(f"product entities outside the allowed set: {stray}")
     answer = verdict.get("open_question_answer")
     answer = answer if isinstance(answer, dict) else {}
     if "topic_reset" in expect and (verdict.get("topic_reset") is True) is not expect["topic_reset"]:
@@ -298,11 +309,13 @@ def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] 
     )
     state = _state_block(held) if config.state_block and held_any else None
     layers = context_mod.ContextLayers(
-        level="off", profile_facts=None, summaries=None, earlier_messages=None,
+        # A quote renders only in the layered (non-off) layout, as the engine's levels do; a row
+        # without one keeps the legacy byte-identical block.
+        level="conversation" if held.get("reply_to") else "off", profile_facts=None, summaries=None, earlier_messages=None,
         previous_response=held.get("previous_reply"),
         current_subject=None if state else held.get("subject"),
         pending_kind=None, pending_options=None, settings_profile_line=None,
-        current_message=latest_user_message, reply_to=None, media_line=None, brands=brands,
+        current_message=latest_user_message, reply_to=held.get("reply_to"), media_line=None, brands=brands,
         promotion_kinds=promotion_kinds,
         product_types=product_types, product_details=product_details, candidate_lines=lines,
         open_question_line=None if state else parser.open_question_line(held.get("open_question")),
