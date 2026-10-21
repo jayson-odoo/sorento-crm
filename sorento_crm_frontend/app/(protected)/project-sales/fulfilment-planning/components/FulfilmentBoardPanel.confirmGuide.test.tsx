@@ -1328,3 +1328,133 @@ describe('OI-SPLIT-GEAR-REMARK guide Review page: confirmed remark vs the server
     expect(within(page).queryByText('edited')).not.toBeInTheDocument();
   });
 });
+
+/*
+ * OI-SPLIT-CONFIRM-POLISH (owner, 21 Oct 2026), on an order shaped like SO426513: two C-FH14
+ * lines at BRW-ED, both saved decisions, not confirmed. Line 1 (40) has 20 moved onto line 2's
+ * date (19/10/2026), the case the owner's screenshots showed.
+ */
+describe('OI-SPLIT-CONFIRM-POLISH: the Review split page', () => {
+  const FH1 = demand({ project_line_id: 'pl-1-1', line_no: 1, item_code: 'C-FH14', fulfilment_location: 'BRW-ED', qty: '40' });
+  const FH2 = demand({
+    project_line_id: 'pl-1-2',
+    line_no: 2,
+    item_code: 'C-FH14',
+    fulfilment_location: 'BRW-ED',
+    qty: '20',
+    required_date: '2026-10-19',
+  });
+  const fhLine = (no: number, qty: number, date: string, splits: ReturnType<typeof wireSplit>[] = []) =>
+    wireLine(no, 'C-FH14', qty, date, {
+      line_id: `pl-1-${no}`,
+      location: 'BRW-ED',
+      split_state: 'acting',
+      split_view: { status: 'saved' },
+      splits,
+    });
+  const FH_READ = () => ({
+    ...splitRead('pso-so-1', 'SO000001', []),
+    lines: [
+      fhLine(1, 40, '2026-09-20', [
+        wireSplit('fh-a', 20, '2026-09-20', 'pl-1-1'),
+        wireSplit('fh-b', 20, '2026-10-19', 'pl-1-2'),
+      ]),
+      fhLine(2, 20, '2026-10-19'),
+    ],
+  });
+  const FH_UNSPLIT_READ = () => ({
+    ...splitRead('pso-so-1', 'SO000001', []),
+    lines: [fhLine(1, 40, '2026-09-20'), fhLine(2, 20, '2026-10-19')],
+  });
+  const fhBoard = () =>
+    withDraft(withSplitEdited(boardOf([FH1, FH2]), ['pl-1-1']), ['pl-1-1', 'pl-1-2'], {
+      'pl-1-1': 'ORDER',
+      'pl-1-2': 'USE BRW',
+    });
+  const WARNING = 'Save or undo your split changes first';
+
+  async function openFh(read: () => unknown = FH_READ) {
+    serveSplits({ 'pso-so-1': read() });
+    await mountWith(fhBoard(), ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-1');
+    return page;
+  }
+  const headers = (page: HTMLElement) =>
+    within(page)
+      .getAllByRole('columnheader')
+      .map((th) => th.textContent?.trim() || th.getAttribute('aria-label') || '');
+  const expectClean = (page: HTMLElement) => {
+    expect(within(page).getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(within(page).getByRole('button', { name: 'Undo' })).toBeDisabled();
+    expect(screen.getByTestId('confirm-guide-next')).toBeEnabled();
+    expect(screen.queryByText(WARNING)).not.toBeInTheDocument();
+  };
+
+  it('1: no drag handle, no grip column and no draggable "N left" chip on the page', async () => {
+    const page = await openFh();
+    expect(page.querySelector('[data-drag-handle]')).toBeNull();
+    expect(within(page).queryByRole('button', { name: /^Drag / })).not.toBeInTheDocument();
+    expect(headers(page)).not.toContain('Drag');
+    // a gap still reads "N left", as text
+    typeQty(1, 1, '15');
+    expect(within(page).getByTestId('balance-1')).toHaveTextContent('5 left');
+    expect(page.querySelector('[data-drag-handle]')).toBeNull();
+  });
+
+  it('2: the editable split columns read BREAKDOWN QTY and BREAKDOWN DATE; the email columns are unchanged', async () => {
+    const page = await openFh();
+    const names = headers(page).map((h) => h.toLowerCase());
+    expect(names).toEqual(
+      expect.arrayContaining(['qty', 'new qty', 'delivery date', 'new date', 'breakdown qty', 'breakdown date', 'remark']),
+    );
+    expect(names).not.toContain('change quantity');
+    expect(names).not.toContain('change date');
+  });
+
+  it('3: opens clean on a saved split: Save and Undo off, Next: Confirm on, no warning', async () => {
+    const page = await openFh();
+    expectClean(page);
+  });
+
+  it('3: opens clean on unsplit saved lines too, and stays clean after clicking through every cell', async () => {
+    const page = await openFh(FH_UNSPLIT_READ);
+    expectClean(page);
+    for (const button of within(page).queryAllByRole('button', { name: /^Split line \d+ (quantity|date)$/ })) {
+      await userEvent.click(button);
+      await userEvent.click(screen.getByTestId('confirm-guide-steps'));
+    }
+    for (const field of Array.from(page.querySelectorAll<HTMLElement>('input, textarea'))) {
+      await userEvent.click(field);
+      await userEvent.click(screen.getByTestId('confirm-guide-steps'));
+    }
+    expectClean(page);
+  });
+
+  it('3: the warning shows only after a real edit, and Undo puts the page back to clean', async () => {
+    const page = await openFh();
+    expectClean(page);
+    typeQty(1, 1, '15');
+    expect(screen.getByText(WARNING)).toBeInTheDocument();
+    expect(screen.getByTestId('confirm-guide-next')).toBeDisabled();
+    fireEvent.click(within(page).getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expectClean(page));
+  });
+
+  it('4: every data column has a resize handle on its header edge; dragging it widens the column', async () => {
+    const page = await openFh();
+    const ths = within(page).getAllByRole('columnheader');
+    const qtyTh = ths.find((th) => th.textContent?.trim().toLowerCase() === 'qty')!;
+    const handle = qtyTh.querySelector<HTMLElement>('.cursor-col-resize');
+    expect(handle).not.toBeNull();
+    const before = parseFloat(qtyTh.style.width);
+    expect(before).toBeGreaterThan(0);
+    fireEvent.mouseDown(handle!, { clientX: 100 });
+    fireEvent.mouseMove(document, { clientX: 160 });
+    fireEvent.mouseUp(document, { clientX: 160 });
+    await waitFor(() => expect(parseFloat(qtyTh.style.width)).toBe(before + 60));
+    const named = ths.filter((th) => th.textContent?.trim());
+    for (const th of named) expect(th.querySelector('.cursor-col-resize')).not.toBeNull();
+  });
+});
