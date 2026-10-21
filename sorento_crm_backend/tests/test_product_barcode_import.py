@@ -441,3 +441,137 @@ def test_preview_names_the_active_company(client, db, refs):
     set_company_scope(db, frozenset({cid}))
     body = _post(client, "preview", _xlsx([["Product Code", "Barcode"], ["NOPE", EAN_A]])).json()
     assert body["companies"] == ["ZZT Mocha Test Sdn Bhd"]
+
+
+# --------------------------------------------------------------------------- caps, scope, token
+def _xlsx_with_row(row_no: int, rows: list[list]) -> bytes:
+    """A normal workbook whose last row/cell refs are rewritten to `row_no` (past Excel's max)."""
+    import re
+    import zipfile
+
+    src = zipfile.ZipFile(io.BytesIO(_xlsx(rows)))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+        for item in src.infolist():
+            blob = src.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                xml = blob.decode()
+                last = len(rows)
+                xml = re.sub(rf'<row r="{last}"', f'<row r="{row_no}"', xml)
+                xml = re.sub(rf'<c r="([A-Z]+){last}"', rf'<c r="\g<1>{row_no}"', xml)
+                blob = xml.encode()
+            zf.writestr(item, blob)
+    return out.getvalue()
+
+
+def test_sheet_row_past_excel_max_is_refused_quickly(client):
+    import time
+
+    data = _xlsx_with_row(1048577, [["Product Code", "Barcode"], ["X", EAN_A]])
+    start = time.monotonic()
+    res = _post(client, "preview", data)
+    assert res.status_code == 400, res.text
+    assert time.monotonic() - start < 10
+
+
+def test_csv_over_50000_rows_is_refused(client):
+    rows = [["Product Code", "Barcode"]] + [[f"C{i}", EAN_A] for i in range(50001)]
+    res = _post(client, "preview", _csv(rows), name="b.csv")
+    assert res.status_code == 400, res.text
+    assert "50,000" in res.json()["detail"]
+
+
+def test_uncompressed_size_cap_refuses_a_workbook(client, monkeypatch):
+    from app.services import product_barcode_import_service as svc
+
+    monkeypatch.setattr(svc, "_MAX_UNCOMPRESSED_BYTES", 10)
+    res = _post(client, "preview", _xlsx([["Product Code", "Barcode"], ["X", EAN_A]]))
+    assert res.status_code == 400, res.text
+
+
+def _company(db, name):
+    from app.models.company import Company
+
+    cid = str(uuid.uuid4())
+    db.add(Company(id=cid, name=name, code=unique_code("C")[:50]))
+    db.flush()
+    return cid
+
+
+def test_token_is_bound_to_the_company_scope(client, db, refs):
+    from app.models.base import set_company_scope
+
+    a, b = _company(db, "ZZT A"), _company(db, "ZZT B")
+    stem = unique_code("BCQ", alpha=True)
+    _mk(db, refs, f"{stem}-Q")
+    data = _xlsx([["Product Code", "Barcode"], [f"{stem}-Q", EAN_A]])
+    set_company_scope(db, frozenset({a}))
+    token = _post(client, "preview", data).json()["preview_token"]
+    set_company_scope(db, frozenset({b}))
+    res = client.post(f"{BASE}/apply", files={"file": ("b.xlsx", data, "application/octet-stream")},
+                      data={"preview_token": token})
+    assert res.status_code == 409, res.text
+
+
+def test_token_from_another_user_is_refused(client, db, refs):
+    from app.services import product_barcode_import_service as svc
+
+    stem = unique_code("BCO", alpha=True)
+    pid = _mk(db, refs, f"{stem}-O")
+    data = _xlsx([["Product Code", "Barcode"], [f"{stem}-O", EAN_A]])
+    token = svc.preview_token(data, str(uuid.uuid4()), db)
+    res = client.post(f"{BASE}/apply", files={"file": ("b.xlsx", data, "application/octet-stream")},
+                      data={"preview_token": token})
+    assert res.status_code == 409, res.text
+    assert _barcode(db, pid) is None
+
+
+def test_same_code_in_two_companies_writes_only_the_scoped_one(client, db, refs):
+    from app.models.base import set_company_scope
+
+    a, b = _company(db, "ZZT A"), _company(db, "ZZT B")
+    code = unique_code("BCX", alpha=True)
+    ids = {}
+    for key, cid in (("a", a), ("b", b)):
+        pid = str(uuid.uuid4())
+        db.add(Product(id=pid, product_code=code, product_name=f"N {key}", category_id=refs[0],
+                       base_uom_id=refs[1], list_price=0, is_active=True, company_id=cid,
+                       barcode=EAN_B if key == "b" else None))
+        ids[key] = pid
+    db.flush()
+    set_company_scope(db, frozenset({a}))
+    data = _xlsx([["Product Code", "Barcode"], [code, EAN_A]])
+    body = _post(client, "preview", data).json()
+    assert body["rows"][0]["status"] == "new"
+    assert body["rows"][0]["warnings"] == []
+    res = _apply(client, data)
+    assert res.status_code == 200 and res.json()["applied"] == 1, res.text
+    assert _barcode(db, ids["a"]) == EAN_A
+    assert _barcode(db, ids["b"]) == EAN_B
+
+
+def test_non_ascii_preview_token_is_409_not_500(client, db, refs):
+    stem = unique_code("BCY", alpha=True)
+    _mk(db, refs, f"{stem}-Y")
+    data = _xlsx([["Product Code", "Barcode"], [f"{stem}-Y", EAN_A]])
+    res = client.post(f"{BASE}/apply", files={"file": ("b.xlsx", data, "application/octet-stream")},
+                      data={"preview_token": "toké"})
+    assert res.status_code == 409, res.text
+
+
+def test_csv_field_over_the_csv_limit_is_400(client):
+    data = b"Product Code,Barcode\n" + b"A," + b"9" * 140000 + b"\n"
+    res = _post(client, "preview", data, name="b.csv")
+    assert res.status_code == 400, res.text
+
+
+def test_sheet_that_fails_while_rows_are_read_is_400(client, monkeypatch):
+    import openpyxl.worksheet._read_only as ro
+
+    def boom(self, *a, **k):
+        raise ValueError("broken sheet")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(ro.ReadOnlyWorksheet, "_cells_by_row", boom)
+    res = _post(client, "preview", _xlsx([["Product Code", "Barcode"], ["X", EAN_A]]))
+    assert res.status_code == 400, res.text

@@ -318,3 +318,35 @@ describe('BarcodeImportDialog company', () => {
     ).toBeInTheDocument();
   });
 });
+
+describe('BarcodeImportDialog fix round', () => {
+  it('picking a different file after a Test disables Apply again', async () => {
+    previewBarcodeImport.mockResolvedValue(OUTCOME);
+    openDialog();
+    pickAndTest();
+    expect(
+      await screen.findByRole('button', { name: 'Apply 2 barcodes' }),
+    ).toBeEnabled();
+    const input = document.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    fireEvent.change(input, {
+      target: { files: [new File(['y'], 'other.xlsx')] },
+    });
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+  });
+
+  it('orders the preview columns Product code, Status, Barcode', async () => {
+    previewBarcodeImport.mockResolvedValue(OUTCOME);
+    openDialog();
+    pickAndTest();
+    await screen.findByText('SRT-A');
+    const headers = Array.from(document.querySelectorAll('th')).map((h) =>
+      (h.textContent || '').trim(),
+    );
+    const at = (label: string) => headers.findIndex((h) => h === label);
+    expect(at('Product')).toBeGreaterThanOrEqual(0);
+    expect(at('Status')).toBeGreaterThan(at('Product'));
+    expect(at('Barcode')).toBeGreaterThan(at('Status'));
+  });
+});
