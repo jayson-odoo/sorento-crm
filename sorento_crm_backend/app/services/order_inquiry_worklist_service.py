@@ -228,6 +228,7 @@ EXPORT_HEADINGS = (
     "REMARK",
 )
 
+
 # The two routes a row can be attributed by, joined ONCE through a coalesce rather than
 # twice through two aliases of `customers`. The precedence is the same either way - the
 # billed project party first, the core sales order's own customer when there is none -
@@ -3402,6 +3403,16 @@ class OrderInquiryWorklistService:
         filename = f"order-inquiry-{date.today().isoformat()}.xlsx"
         return filename, buffer.getvalue()
 
+    def export_pdf(self, **filters) -> Tuple[str, bytes]:
+        """`export_xlsx`'s sheet as a PDF (OI-DOWNLOAD, owner: "the pdf needs to be like Excel
+        la, just in pdf format ... 1 table"): the same title, header row and rows, from the same
+        `_sheet_values`, in the house style (`app/services/order_inquiry_pdf.py`)."""
+        from app.services import order_inquiry_pdf
+
+        filename = f"order-inquiry-{date.today().isoformat()}.pdf"
+        values = self._sheet_values(self._all_rows(**filters))
+        return filename, order_inquiry_pdf.render_pdf(EXPORT_HEADINGS, values)
+
     def _all_rows(self, **filters) -> List[Dict[str, Any]]:
         """The same set the list serves, unpaged, in the workbook's own order.
 
@@ -3580,6 +3591,17 @@ class OrderInquiryWorklistService:
         sheet = workbook.create_sheet(title=title[:31])
         sheet.append([EXPORT_TITLE])
         sheet.append(list(columns))
+        for values in self._sheet_values(rows, columns=columns):
+            sheet.append(values)
+        _style_sheet(sheet, columns)
+
+    def _sheet_values(
+        self, rows: Sequence[Dict[str, Any]], *, columns: Sequence[str] = EXPORT_HEADINGS
+    ) -> List[List[Any]]:
+        """The sheet's data rows under `columns`, in the sheet's order - the ONE source the
+        workbook (`_write_sheet`) and the PDF (`export_pdf`, OI-DOWNLOAD owner ruling: "the pdf
+        needs to be like Excel la") both print."""
+        out: List[List[Any]] = []
         # Without CHANGE QUANTITY (the 10-column worksheet) a split line's rows print each
         # row's own qty and date (AC-G13), never a blank QTY.
         own_figures = "CHANGE QUANTITY" not in columns
@@ -3641,4 +3663,57 @@ class OrderInquiryWorklistService:
                 # `columns` may be a PREFIX of `EXPORT_HEADINGS` (Lane C's worksheet, no
                 # ACKNOWLEDGED / TAKEN / REMAINING) - cut the row to match so the sheet
                 # never carries more cells than it has headings for.
-                sheet.append(values[: len(columns)])
+                out.append(values[: len(columns)])
+        return out
+
+
+#: OI-DOWNLOAD (owner, 21 Oct: "nicer, like the LOW STOCK REPORT"): each heading's width, by
+#: NAME so a cut column list (the 10-column worksheet) or a heading added later keeps its own;
+#: a heading not listed takes `_EXPORT_DEFAULT_WIDTH`.
+_EXPORT_WIDTHS = {
+    "SO DATE": 12,
+    "S/O NO": 14,
+    "ITEM CODE": 18,
+    "QTY": 9,
+    "TOTAL QTY": 11,
+    "DELIVERY DATE": 13,
+    "PROJECT/CUSTOMER": 40,
+    "SUPPLIER": 24,
+    "PO NO ": 16,
+    "LOCATION": 14,
+    "ACKNOWLEDGED": 16,
+    "TAKEN": 10,
+    "REMAINING": 12,
+    "SUGGESTED": 20,
+    "CHANGE QUANTITY": 12,
+    "CHANGE DATE": 13,
+    "REMARK": 30,
+}
+_EXPORT_DEFAULT_WIDTH = 14
+_EXPORT_DATE_HEADINGS = frozenset({"SO DATE", "DELIVERY DATE", "CHANGE DATE"})
+
+
+def _style_sheet(sheet, columns: Sequence[str]) -> None:
+    """The house style (`app.services.excel_style`, the LOW STOCK REPORT's look) on the OI
+    sheet: the title row bold, the heading row (row 2) dark with white bold text, every table
+    cell bordered and wrapped, frozen under the headings, dates dd/mm/yyyy. Columns, their
+    order and every value are untouched."""
+    from openpyxl.styles import Font
+    from openpyxl.utils import get_column_letter
+
+    from app.services import excel_style
+
+    sheet["A1"].font = Font(bold=True, size=13)
+    excel_style.style_table(
+        sheet,
+        header_row=2,
+        widths={
+            get_column_letter(index): _EXPORT_WIDTHS.get(heading, _EXPORT_DEFAULT_WIDTH)
+            for index, heading in enumerate(columns, start=1)
+        },
+        date_columns=[
+            index
+            for index, heading in enumerate(columns, start=1)
+            if heading in _EXPORT_DATE_HEADINGS
+        ],
+    )

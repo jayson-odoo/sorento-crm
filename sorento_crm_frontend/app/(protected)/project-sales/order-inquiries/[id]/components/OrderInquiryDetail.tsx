@@ -50,6 +50,7 @@ import {
   useCommitOrderInquiryReserve,
   useReserveNoticeRecipients,
   useExportOrderInquiryXlsx,
+  useExportOrderInquiryPdf,
   useOrderInquiryHandshake,
   useOrderInquiryHeaderDetail,
   useOrderInquiryHeaderLines,
@@ -128,6 +129,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   const { acknowledge, unacknowledge } = useOrderInquiryHandshake();
   const autoPlace = useAutoPlaceOrderInquiryRows();
   const exportXlsx = useExportOrderInquiryXlsx(id);
+  const exportPdf = useExportOrderInquiryPdf(id);
 
   const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
   const [chooseDocumentOpen, setChooseDocumentOpen] = useState(false);
@@ -888,6 +890,13 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                   >
                     <Download className="size-4" aria-hidden />
                     Export Excel
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={exportPdf.isPending}
+                    onSelect={exportPdf.isPending ? undefined : () => exportPdf.mutate()}
+                  >
+                    <Printer className="size-4" aria-hidden />
+                    {exportPdf.isPending ? 'Preparing…' : 'Print / Download PDF'}
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onSelect={(e) => {

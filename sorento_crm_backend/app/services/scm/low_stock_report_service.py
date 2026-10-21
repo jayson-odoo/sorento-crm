@@ -375,7 +375,7 @@ def build_low_stock_view(db: Session, *, run_id: Optional[str],
 
 
 def _write_workbook(view: dict, widths: list[int]) -> bytes:
-    """Write the model's sheets, styled like `summary_order_service.write_sheet` (dark bold
+    """Write the model's sheets in the house style (`app.services.excel_style`: dark bold
     white header, thin border and top-aligned wrapped text on every cell, frozen at A2, the
     column widths), in openpyxl's WRITE-ONLY mode (owner ruling 26 Sep, Q8).
 
@@ -389,13 +389,11 @@ def _write_workbook(view: dict, widths: list[int]) -> bytes:
 
     from openpyxl import Workbook
     from openpyxl.cell import WriteOnlyCell
-    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
 
+    from app.services import excel_style
+
     wb = Workbook(write_only=True)
-    thin = Side(style="thin")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-    wrap = Alignment(wrap_text=True, vertical="top")
 
     columns = view["columns"]
     rows = view["rows"]
@@ -408,11 +406,11 @@ def _write_workbook(view: dict, widths: list[int]) -> bytes:
             ws.column_dimensions[get_column_letter(i + 1)].width = width
         if header_style is None:
             probe = WriteOnlyCell(ws)
-            probe.border = border
-            probe.alignment = wrap
+            probe.border = excel_style.border()
+            probe.alignment = excel_style.wrap()
             body_style = copy(probe._style)
-            probe.font = Font(bold=True, color="FFFFFFFF")
-            probe.fill = PatternFill("solid", fgColor="FF404040")
+            probe.font = excel_style.header_font()
+            probe.fill = excel_style.header_fill()
             header_style = copy(probe._style)
 
         def _cells(values, style):
