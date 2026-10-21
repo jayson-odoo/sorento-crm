@@ -35,3 +35,33 @@ Size (template text): v77 142,657 chars / 35,651 tokens; v88 70,537 / 18,347; le
   two separate files; it does not equate them.
 - Line 200: `a spec sheet` is listed beside `drawings` as its own file.
 - Lines 133, 140, 231: spec values and the bare-spec attribute rule; no file mapping.
+
+# v90 candidate (`parser-v90.txt`): v89 (`parser-lean.txt`) plus four general reading rules
+
+Each rule is worded once, in the section that already states the related rule; no word list, no conversation
+example. Size: v89 70,453 chars / 18,318 tokens; v90 71,220 / 18,506 (o200k_base). Every `{{variable}}` kept.
+
+1. R1, R-X-04 MEANING (line 25): the typo precedent generalised to listed items.
+   - old: `any case, short form or misspelling: "oustaning" is outstanding,`
+   - new: `any case, short form or misspelling, and a misspelled word names the listed item the word means (a status,
+     a promotion or flyer kind, a file type, any value on a list): "oustaning" is outstanding,`
+2. R2, R-P2-04 CONF (line 151, v90 152): spelling never lowers `confident`; the false reasons are unchanged.
+   - old: `` `confident` is true when raw is one cleanly typed referent: a single word, ``
+   - new: `` `confident` is true when raw is one cleanly typed referent, whatever its spelling (one word read as
+     exactly one listed item is confident, misspelled or not): a single word, ``
+3. R3, R-P1-02 CARRY (new bullet after line 54, v90 55): no paging rule existed; added beside the continuation
+   rules.
+   - old: (none)
+   - new: `- After a reply that listed a page of items, a message that only asks for more of them, in any language or
+     spelling, continues that same set: `continuation` true (R-X-06) and keep, with the held domain and no entity
+     or file type of its own; never a new ask.`
+4. R4, R-P3-08 ACTIVE (line 269, v90 270): a negated lifecycle or status word flips; linked to R-P3-06 STATUS.
+   - old: `null otherwise, the default ("show me Sorento promotions" is null).`
+   - new: `null otherwise, the default ("show me Sorento promotions" is null). A negated lifecycle or status word
+     means its opposite: a negated inactive word is true, a negated active word false, and a negated order status
+     word is never that status (see R-P3-06).`
+5. R3's output field, R-X-06 OUT (line 343, v90 344): paging runs only on `continuation` true
+   (`turn_runtime.with_set_more`), which v89 declared always false.
+   - old: `` - `continuation` false; `reference_target`, `po_refs`, ``
+   - new: `` - `continuation` true when the message only asks for more of the set the last reply listed (see
+     R-P1-02), else false; `reference_target`, `po_refs`, ``
