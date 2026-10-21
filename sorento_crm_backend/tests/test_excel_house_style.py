@@ -82,7 +82,8 @@ _ROW = {
 
 
 def test_oi_workbook_wears_the_house_style_with_its_columns_unchanged():
-    ws = _oi_workbook([dict(_ROW)])
+    second = {**_ROW, "so_number": "SO394881", "change_date": date(2026, 11, 2)}
+    ws = _oi_workbook([dict(_ROW), second])
 
     # Same title row and headings as before, in the same places.
     assert ws["A1"].value == EXPORT_TITLE and ws["A1"].font.bold
@@ -94,13 +95,17 @@ def test_oi_workbook_wears_the_house_style_with_its_columns_unchanged():
     # under the headings, explicit widths, dates dd/mm/yyyy.
     for cell in ws[2]:
         _assert_house_header(cell)
-    for cell in ws[3]:
-        _assert_house_body(cell)
+    for row in (3, 4):
+        for cell in ws[row]:
+            _assert_house_body(cell)
     assert ws.freeze_panes == "A3"
     assert ws.column_dimensions["G"].width == 40  # PROJECT/CUSTOMER
     assert ws["A3"].number_format == excel_style.DATE_FORMAT  # SO DATE
     assert ws["F3"].number_format == excel_style.DATE_FORMAT  # DELIVERY DATE
     assert ws["D3"].number_format == "General"  # QTY stays a plain number
+    change_date = ws.cell(row=4, column=EXPORT_HEADINGS.index("CHANGE DATE") + 1)
+    assert change_date.value is not None
+    assert change_date.number_format == excel_style.DATE_FORMAT
 
 
 def test_oi_workbook_widths_follow_the_heading_not_the_position():
