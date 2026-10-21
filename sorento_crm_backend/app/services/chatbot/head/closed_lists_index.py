@@ -20,6 +20,7 @@ Warehouses are no index line: their closed list is checked at grounding (`head/g
 """
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -238,6 +239,12 @@ def _named(grams: set[str], keys: list[str]) -> bool:
     return _named_by(grams, keys) is not None
 
 
+def _type_name(row: dict) -> str:
+    from app.services import chatbot_prompt_vars as pv
+
+    return str(row.get("type_name") or pv._item(row))
+
+
 def _file_matches(db: "Session", message: str, held_ids: list[str]) -> tuple[list[dict], list[dict]]:
     """`file_lines`, with the list each line belongs to and the gram that named it: the named
     items as {"line", "list", "word", "near"} and the held items as {"line", "list"}, uncapped."""
@@ -254,18 +261,18 @@ def _file_matches(db: "Session", message: str, held_ids: list[str]) -> tuple[lis
     named: list[dict] = []
     held: list[dict] = []
 
-    def add(line: str, list_name: str, hit: tuple[str, bool] | None, held_here: bool) -> None:
+    def add(line: str, list_name: str, plain: str, hit: tuple[str, bool] | None, held_here: bool) -> None:
         if hit is not None:
-            named.append({"line": line, "list": list_name, "word": hit[0], "near": hit[1]})
+            named.append({"line": line, "list": list_name, "word": hit[0], "near": hit[1], "plain": plain})
         if held_here:
-            held.append({"line": line, "list": list_name})
+            held.append({"line": line, "list": list_name, "plain": plain})
 
     for row in pv._file_type_rows(db):
-        add(pv.file_type_line(row, aliases), "File types", _named_by(grams, type_keys(row)), pv._item(row).casefold() in held_types)
+        add(pv.file_type_line(row, aliases), "File types", _type_name(row), _named_by(grams, type_keys(row)), pv._item(row).casefold() in held_types)
     for row in pv._cert_kind_rows(db):
-        add(pv.cert_kind_line(row, aliases), "Certificates", _named_by(grams, type_keys(row)), pv._item(row).casefold() in held_types)
+        add(pv.cert_kind_line(row, aliases), "Certificates", _type_name(row), _named_by(grams, type_keys(row)), pv._item(row).casefold() in held_types)
     for name, words in pv._cert_schemes(db):
-        add(pv.cert_scheme_line(name, words), "Certificate schemes", _named_by(grams, [name, *words]), name.casefold() in held_schemes)
+        add(pv.cert_scheme_line(name, words), "Certificate schemes", name, _named_by(grams, [name, *words]), name.casefold() in held_schemes)
     return named, held
 
 
@@ -349,8 +356,57 @@ def _item_list(item: str) -> str:
     return next((name for prefix, name in _ITEM_LISTS if item.startswith(prefix)), "Other")
 
 
-def _match(word: str | None, list_name: str, entry: str, line: str, *, near: bool = False, held: bool = False) -> dict:
-    return {"word": word, "list": list_name, "entry": entry, "close_spelling": near, "held": held, "line": line}
+HELD_SOURCE = "on record for the held product"
+_FILE_SOURCES = {
+    "File types": "from the file type list",
+    "Certificates": "from the certificate list",
+    "Certificate schemes": "from the certificate scheme list",
+}
+_SPEC_ITEM = re.compile(r"^(?:spec|flag) (?P<key>\S+) = (?P<val>.*?)(?: \((?P<disp>[^()]*)\))?$")
+_TYPE_ITEM = re.compile(r"^product type (?P<disp>.*) \(\S+ = .*\)$")
+_SIZE_ITEM = re.compile(r"^size (?P<size>.*?)(?: \(no dimension named\))?$")
+
+
+def _spec_labels(db: "Session", hidden: frozenset[str]) -> dict[str, str]:
+    """Registry key -> its label, for the plain value of a spec item."""
+    from app.services.chatbot.head.candidates import _registry
+
+    return {row.spec_key: str(row.label) for row in _registry(db, hidden) if row.label}
+
+
+def _plain_item(item: str, labels: dict[str, str]) -> tuple[str, str]:
+    """A candidate item in plain words and where it comes from (CHAT-INDEX-VIZ contract v2)."""
+    if item.startswith("set code "):
+        return item[len("set code "):], "from the product sets"
+    if item.startswith("code "):
+        return item[len("code "):], "from the product codes"
+    if item.startswith("product type "):
+        found = _TYPE_ITEM.match(item)
+        return "Product type: " + (found["disp"] if found else item[len("product type "):]), "from the product type list"
+    if item.startswith("size "):
+        found = _SIZE_ITEM.match(item)
+        return "Size: " + (found["size"] if found else item[len("size "):]), "from the product sizes"
+    found = _SPEC_ITEM.match(item)
+    if found:
+        key, val, disp = found["key"], found["val"], found["disp"]
+        if val.lower() in ("true", "false"):
+            label = labels.get(key) or disp or key.replace("_", " ").capitalize()
+            value = "yes" if val.lower() == "true" else "no"
+        else:
+            label = labels.get(key) or key.replace("_", " ").capitalize()
+            value = disp or val
+        return f"{label}: {value}", f"from the product {label.lower()} list"
+    return item, ""
+
+
+def _match(
+    word: str | None, list_name: str, entry: str, line: str, *,
+    near: bool = False, held: bool = False, plain: str | None = None, source: str = "",
+) -> dict:
+    return {
+        "word": word, "list": list_name, "entry": entry, "close_spelling": near, "held": held, "line": line,
+        "plain": entry if plain is None else plain, "source": source,
+    }
 
 
 def block_with_matches(
@@ -370,6 +426,7 @@ def block_with_matches(
     file_named, file_held = _file_matches(db, message, held)
     suffixes = _code_suffix_matches(db, _grams(message), hidden)
 
+    labels = _spec_labels(db, hidden)
     matches: list[dict] = []
     lines = candidate_lines(entries)
     for entry in [e for e in entries if e.items][:CAP_LINES]:
@@ -377,7 +434,8 @@ def block_with_matches(
         for item in entry.items:
             near = item.startswith("near ")
             text = item[len("near "):] if near else item
-            matches.append(_match(entry.gram, _item_list(text), text, line, near=near))
+            plain, source = _plain_item(text, labels)
+            matches.append(_match(entry.gram, _item_list(text), text, line, near=near, plain=plain, source=source))
 
     out = list(lines)
     sent = set(out)
@@ -386,7 +444,10 @@ def block_with_matches(
         if line in sent or line in named:
             continue
         named.append(line)
-        matches += [_match(word, "Specifications", item, line) for item in items]
+        ending = f" (code ending -{word.upper()})"
+        for item in items:
+            plain, source = _plain_item(item, labels)
+            matches.append(_match(word, "Specifications", item, line, plain=plain, source=source + ending))
     capped = list(dict.fromkeys(m["line"] for m in file_named))[:CAP_FILE_LINES]
     first = {}
     for m in file_named:
@@ -394,7 +455,7 @@ def block_with_matches(
     file_seen = [line for line in capped if line not in sent and line not in named]
     for line in file_seen:
         m = first[line]
-        matches.append(_match(m["word"], m["list"], line, line, near=m["near"]))
+        matches.append(_match(m["word"], m["list"], line, line, near=m["near"], plain=m["plain"], source=_FILE_SOURCES[m["list"]]))
     named += file_seen
     if named:
         out = [*(out or [HEADER]), *named]
@@ -404,7 +465,11 @@ def block_with_matches(
     held_lines = [*held_texts, *spec_held]
     if held_lines:
         out += [HELD_HEADER, *held_lines]
-        matches += [_match(None, HELD_LIST, line, line, held=True) for line in [*held_texts, *spec_held]]
+        plain_of = {m["line"]: m["plain"] for m in file_held}
+        matches += [_match(None, HELD_LIST, line, line, held=True, plain=plain_of[line], source=HELD_SOURCE) for line in held_texts]
+        for line in spec_held:
+            plain = "; ".join(_plain_item(item, labels)[0] for item in line.split("; "))
+            matches.append(_match(None, HELD_LIST, line, line, held=True, plain=plain, source=HELD_SOURCE))
     return out, matches
 
 

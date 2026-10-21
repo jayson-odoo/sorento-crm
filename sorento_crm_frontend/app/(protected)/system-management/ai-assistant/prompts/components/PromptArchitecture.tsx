@@ -5,26 +5,23 @@ import { ArrowDown, ArrowRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { usePromptArchitecture } from '../../hooks/useAIAssistantPrompts';
-import type { PromptArchitectureSection } from '../../services/aiPromptsService';
-
-const KIND_LABEL: Record<PromptArchitectureSection['kind'], string> = {
-  text: 'Text',
-  filled_from_data: 'Filled from data',
-  closed_lists: 'Closed lists',
-};
 
 const BOXES = [
   "Customer's message",
   'Matched list entries',
-  'What the parser got',
-  'What it understood',
+  'What the bot was given',
+  'What the bot understood',
   'Kept or dropped',
+  'What the bot looked up',
 ];
 
 const CELL =
   'max-sm:flex max-sm:justify-between max-sm:gap-3 max-sm:py-0.5 before:text-muted-foreground before:content-[attr(data-label)] sm:before:content-none';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
+/** 35700 -> "35.7k"; under 1000 as is. */
+const fmtSize = (n: number) =>
+  n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 
 export function PromptArchitecture({
   name,
@@ -51,7 +48,6 @@ export function PromptArchitecture({
   const listNames = data.lists
     .filter((l) => !l.checked_only)
     .map((l) => l.name);
-  const largest = Math.max(1, ...data.sections.map((s) => s.tokens));
 
   const note = (i: number) =>
     i === 1 ? (
@@ -70,8 +66,8 @@ export function PromptArchitecture({
     <div className="space-y-5" data-testid="prompt-architecture">
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-sm">
-          v{data.version} sends about {fmt(data.total_tokens)} tokens to the
-          parser on every message.
+          Each message, v{data.version} gives the bot about{' '}
+          {fmtSize(data.total_size)} of instructions and lists.
         </p>
         <Badge
           variant={indexed ? 'success' : 'secondary'}
@@ -112,111 +108,108 @@ export function PromptArchitecture({
 
       <div className="space-y-1">
         <h3 className="text-sm font-medium">Lists</h3>
-        <div>
-          <table className="w-full text-xs max-sm:block">
-            <thead className="max-sm:hidden">
-              <tr className="border-b text-start text-muted-foreground">
-                <th className="py-1 pe-2 text-start font-medium">List</th>
-                <th className="py-1 pe-2 text-start font-medium">Comes from</th>
-                <th className="py-1 pe-2 text-end font-medium">Entries</th>
-                <th className="py-1 pe-2 text-end font-medium">
-                  Sent each message
-                </th>
-                <th className="py-1 text-end font-medium">Full list</th>
-              </tr>
-            </thead>
-            <tbody className="max-sm:block">
-              {data.lists.map((l) => (
-                <tr
-                  key={l.key}
-                  className="border-b last:border-0 max-sm:block max-sm:py-2"
+        <table className="w-full text-xs max-sm:block">
+          <thead className="max-sm:hidden">
+            <tr className="border-b text-muted-foreground">
+              <th className="py-1 pe-2 text-start font-medium">List</th>
+              <th className="py-1 pe-2 text-start font-medium">Comes from</th>
+              <th className="py-1 pe-2 text-start font-medium">
+                How a message is matched
+              </th>
+              <th className="py-1 pe-2 text-end font-medium">Entries</th>
+              <th className="py-1 pe-2 text-end font-medium">
+                Size each message
+              </th>
+              <th className="py-1 text-end font-medium">Full list size</th>
+            </tr>
+          </thead>
+          <tbody className="max-sm:block">
+            {data.lists.map((l) => (
+              <tr
+                key={l.key}
+                className="border-b align-top last:border-0 max-sm:block max-sm:py-2"
+              >
+                <td data-label="List" className={`py-1 pe-2 ${CELL}`}>
+                  {l.name}
+                </td>
+                <td data-label="Comes from" className={`py-1 pe-2 ${CELL}`}>
+                  {l.href ? (
+                    <Link
+                      href={l.href}
+                      className="text-primary underline-offset-2 hover:underline"
+                    >
+                      {l.source}
+                    </Link>
+                  ) : (
+                    l.source
+                  )}
+                </td>
+                <td
+                  data-label="How a message is matched"
+                  className={`py-1 pe-2 ${CELL} max-sm:flex-col max-sm:gap-0.5`}
                 >
-                  <td data-label="List" className={`py-1 pe-2 ${CELL}`}>
-                    {l.name}
-                  </td>
-                  <td data-label="Comes from" className={`py-1 pe-2 ${CELL}`}>
-                    {l.href ? (
-                      <Link
-                        href={l.href}
-                        className="text-primary underline-offset-2 hover:underline"
-                      >
-                        {l.source}
-                      </Link>
-                    ) : (
-                      l.source
-                    )}
-                  </td>
-                  <td
-                    data-label="Entries"
-                    className={`py-1 pe-2 text-end tabular-nums ${CELL}`}
-                  >
-                    {fmt(l.entries)}
-                  </td>
-                  <td
-                    data-label="Sent each message"
-                    className={`py-1 pe-2 text-end tabular-nums ${CELL}`}
-                  >
-                    {fmt(l.sent_each_message_tokens)}
-                  </td>
-                  <td
-                    data-label="Full list"
-                    className={`py-1 text-end tabular-nums ${CELL}`}
-                  >
-                    {l.checked_only ? '-' : fmt(l.full_list_tokens)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  {l.how}
+                </td>
+                <td
+                  data-label="Entries"
+                  className={`py-1 pe-2 text-end tabular-nums ${CELL}`}
+                >
+                  {fmt(l.entries)}
+                </td>
+                <td
+                  data-label="Size each message"
+                  className={`py-1 pe-2 text-end tabular-nums ${CELL}`}
+                >
+                  {fmtSize(l.sent_each_message_size)}
+                </td>
+                <td
+                  data-label="Full list size"
+                  className={`py-1 text-end tabular-nums ${CELL}`}
+                >
+                  {l.checked_only ? '-' : fmtSize(l.full_list_size)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       <div className="space-y-1">
-        <h3 className="text-sm font-medium">Sections</h3>
-        <div>
-          <table className="w-full text-xs max-sm:block">
-            <thead className="max-sm:hidden">
-              <tr className="border-b text-muted-foreground">
-                <th className="py-1 pe-2 text-start font-medium">Section</th>
-                <th className="py-1 pe-2 text-start font-medium">Kind</th>
-                <th className="py-1 text-end font-medium">Tokens</th>
-              </tr>
-            </thead>
-            <tbody className="max-sm:block">
-              {data.sections.map((s) => (
-                <tr
-                  key={s.title}
-                  className="border-b last:border-0 max-sm:block max-sm:py-2"
-                >
-                  <td
-                    data-label="Section"
-                    className={`max-w-[16rem] truncate py-1 pe-2 max-sm:max-w-none max-sm:whitespace-normal ${CELL}`}
-                    title={s.title}
-                  >
-                    {s.title}
-                  </td>
-                  <td data-label="Kind" className={`py-1 pe-2 ${CELL}`}>
-                    {KIND_LABEL[s.kind]}
-                  </td>
-                  <td data-label="Tokens" className={`py-1 ${CELL}`}>
-                    <div className="flex items-center justify-end gap-2">
+        <h3 className="text-sm font-medium">What the bot is given</h3>
+        <table className="w-full text-xs max-sm:block">
+          <thead className="max-sm:hidden">
+            <tr className="border-b text-muted-foreground">
+              <th className="py-1 pe-2 text-start font-medium">Part</th>
+              <th className="py-1 text-end font-medium">Size</th>
+            </tr>
+          </thead>
+          <tbody className="max-sm:block">
+            {data.groups.map((g) => (
+              <tr
+                key={g.name}
+                className="border-b last:border-0 max-sm:block max-sm:py-2"
+              >
+                <td data-label="Part" className={`py-1 pe-2 ${CELL}`}>
+                  {g.name}
+                </td>
+                <td data-label="Size" className={`py-1 ${CELL}`}>
+                  <div className="flex items-center justify-end gap-2">
+                    <div
+                      className="hidden h-1.5 w-24 rounded bg-muted sm:block"
+                      aria-hidden
+                    >
                       <div
-                        className="hidden h-1.5 w-24 rounded bg-muted sm:block"
-                        aria-hidden
-                      >
-                        <div
-                          className="h-full rounded bg-primary/60"
-                          style={{ width: `${(s.tokens / largest) * 100}%` }}
-                        />
-                      </div>
-                      <span className="tabular-nums">{fmt(s.tokens)}</span>
+                        className="h-full rounded bg-primary/60"
+                        style={{ width: `${g.share * 100}%` }}
+                      />
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                    <span className="tabular-nums">{fmtSize(g.size)}</span>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );

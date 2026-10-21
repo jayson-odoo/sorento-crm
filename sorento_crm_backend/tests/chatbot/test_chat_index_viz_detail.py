@@ -233,7 +233,7 @@ def _result(hint: str, to: Any, *, raw: str = "zzw", note_from: str | None = Non
     ("product", "category", "changed", "Changed: read as a product type"),
     ("category", "listed product type: Basin", "changed", "Changed: read as the product type Basin"),
     ("category", "Order", "changed", "Changed: read as Order"),
-    ("category", "zz_type", "changed", "Changed: read as zz_type"),
+    ("category", "zz_type", "changed", "Changed: read as zz type"),
     ("specification", [{"key": "", "label": "", "said": "", "value": None}], "changed", "Changed"),
 ])
 def test_grounding_note_wording(hint, to, outcome, text):
@@ -301,7 +301,7 @@ def test_split_note_skips_empty_pieces_and_never_prints_none():
 def test_every_hint_reads_as_plain_words(hint, words):
     im = _im(words=["ali"], matches=[], entities=[_entity("ali", hint)], changes=[])
     [item] = im["not_from_lists"]
-    assert item["text"] == f'"ali" as {words}'
+    assert item["text"] == f'"ali" read as {words}'
     assert "_" not in item["text"]
 
 

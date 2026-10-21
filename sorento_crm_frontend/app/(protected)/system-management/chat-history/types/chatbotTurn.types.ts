@@ -500,8 +500,10 @@ export interface IndexMatchWord {
 }
 
 export interface IndexMatchEntry {
-  list: string;
-  entry: string;
+  /** The entry in plain words, e.g. "Finish: French Gold". */
+  plain: string;
+  /** Where it comes from, e.g. "from the product finish list". */
+  source: string;
   close_spelling: boolean;
 }
 
@@ -521,6 +523,8 @@ export interface IndexMatch {
   held: string[];
   not_from_lists: { text: string; outcome: IndexMatchOutcome; result: string }[];
   failed: boolean;
+  /** The turn's tool call in plain words; null when the bot looked nothing up. */
+  looked_up: { what: string; details: string[] } | null;
 }
 
 export interface TurnDetail {

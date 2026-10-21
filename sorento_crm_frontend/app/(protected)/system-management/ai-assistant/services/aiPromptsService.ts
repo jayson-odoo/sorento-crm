@@ -182,10 +182,11 @@ export interface DryRunResponse {
 }
 
 /** CHAT-INDEX-VIZ: what the parser prompt sends on every message, section by section. */
-export interface PromptArchitectureSection {
-  title: string;
-  tokens: number;
-  kind: 'text' | 'filled_from_data' | 'closed_lists';
+export interface PromptArchitectureGroup {
+  name: string;
+  size: number;
+  /** 0..1 of the total. */
+  share: number;
 }
 
 export interface PromptArchitectureList {
@@ -193,9 +194,11 @@ export interface PromptArchitectureList {
   name: string;
   source: string;
   href: string;
+  /** One plain sentence on how a message is matched against this list. */
+  how: string;
   entries: number;
-  sent_each_message_tokens: number;
-  full_list_tokens: number;
+  sent_each_message_size: number;
+  full_list_size: number;
   checked_only?: boolean;
 }
 
@@ -203,8 +206,8 @@ export interface PromptArchitecture {
   version: number;
   mode: 'index' | 'block';
   uses_closed_lists: boolean;
-  total_tokens: number;
-  sections: PromptArchitectureSection[];
+  total_size: number;
+  groups: PromptArchitectureGroup[];
   lists: PromptArchitectureList[];
 }
 

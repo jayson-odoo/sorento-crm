@@ -118,6 +118,18 @@ GROUPS = ["Rules", "Examples", "Product lists", "Lists from other settings"]
 HEADINGS = ("PRICE TERMINOLOGY", "SELF_REFERENCE", "CLOSED LISTS", "EXAMPLES", "TODAY", "BRANDS")
 
 
+def _seed_lists(db) -> None:
+    """CI's database has no data: give the full lists some text so block mode has a size."""
+    from app.models.product_spec import ProductSpecRegistry
+
+    for i in range(40):
+        db.add(ProductSpecRegistry(id=str(uuid.uuid4()), spec_key=f"zz_archkey_{i:02d}_long_name", label=f"ZZ Arch Key {i:02d} long label",
+                                   data_type="enum", allowed_values=["zzarchvalone"], synonyms={"zzarchvalone": ["zz arch one"]}))
+    db.flush()
+    pv.clear_cache()
+    assert len(pv.render_value(db, "specs")) > 600
+
+
 def _groups(body: dict) -> dict[str, dict]:
     return {g["name"]: g for g in body["groups"]}
 
@@ -187,6 +199,7 @@ def test_realistic_template_groups(client, pg_db):
 
 
 def test_index_vs_block_changes_only_the_product_lists_group(client, pg_db):
+    _seed_lists(pg_db)
     number = _version(pg_db, REALISTIC)
     _mode(pg_db, "index")
     idx = _groups(_get(client, number).json())
@@ -243,6 +256,7 @@ def test_block_mode_sends_the_full_lists(client, pg_db):
 
 def test_a_template_without_the_closed_lists_section_sends_the_lists_whole_even_in_index_mode(client, pg_db):
     _mode(pg_db, "index")
+    _seed_lists(pg_db)
     template = "== PRICE ==\nplain\n== SPECS ==\n{{specs}}\n"
     body = _get(client, _version(pg_db, template)).json()
     assert body["mode"] == "index"
