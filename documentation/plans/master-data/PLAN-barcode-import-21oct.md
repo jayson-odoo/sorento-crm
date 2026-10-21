@@ -1,6 +1,6 @@
 # PLAN: Import barcodes from Excel (BARCODE-IMPORT)
 
-Status: building. Track: small fix track (size S+, no migration, no new permission; reuses
+Status: building (PR #1811); BE + FE done, browser pass done, in review. Track: small fix track (size S+, no migration, no new permission; reuses
 `master_data.products.edit`). Owner request 21 Oct 2026.
 UAC: `barcode-import-acceptance-criteria.md`.
 
@@ -25,10 +25,13 @@ overwrites name/brand/price, so it cannot be reused for one column.
   barcode columns by common header names (case-insensitive), classify each row:
   `new`, `change`, `same`, `unknown_code`, `blank_barcode`, `too_long` (error, >100);
   warnings `duplicate` (barcode on another product or twice in the file) and `not_ean13`
-  (EAN-13 checksum, port of `lib/dealer-kit/barcode.ts`). Apply writes only new + change rows
+  (EAN-13 checksum, Python port of `lib/dealer-kit/barcode.ts`; the TS copy stays for the tag
+  editor). Two extra skip statuses: `repeated_code` (same code twice in the file, first row
+  wins) and `ambiguous_code` (code matches more than one product in the caller's company scope). Apply writes only new + change rows
   in one transaction, one `audit_logs` row per product changed.
-- Routes `POST /api/v1/master-data/products/barcode-import/{preview,apply}` (multipart) and
-  `GET .../barcode-import/template`; all gated by `master_data.products.edit`.
+- Routes `POST /api/v1/master-data/products/barcode-import/{preview,apply}` (multipart), both
+  gated by `master_data.products.edit`. The template is generated in the browser (two headers),
+  no endpoint.
 - FE: Products list > Actions > "Import barcodes" dialog: pick file, Test (preview table with
   counts and per-row status, columns used), Apply, result counts. Template download.
 

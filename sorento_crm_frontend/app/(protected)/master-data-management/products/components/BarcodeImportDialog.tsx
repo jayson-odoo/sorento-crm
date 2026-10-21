@@ -70,16 +70,33 @@ function downloadTemplate() {
   );
 }
 
+function BarcodeValue({
+  value,
+  className,
+}: {
+  value: string;
+  className?: string;
+}) {
+  return (
+    <span
+      className={`block truncate whitespace-nowrap ${className ?? ''}`}
+      title={value}
+    >
+      {value}
+    </span>
+  );
+}
+
 function BarcodeCell({ row }: { row: BarcodeImportRow }) {
   if (row.status === 'change') {
     return (
-      <span>
-        <span className="text-muted-foreground line-through">
-          {row.old_barcode}
-        </span>
-        {' -> '}
-        {row.new_barcode}
-      </span>
+      <>
+        <BarcodeValue
+          value={row.old_barcode ?? ''}
+          className="text-muted-foreground line-through"
+        />
+        <BarcodeValue value={`-> ${row.new_barcode ?? ''}`} />
+      </>
     );
   }
   if (row.status === 'repeated_code') {
@@ -89,7 +106,8 @@ function BarcodeCell({ row }: { row: BarcodeImportRow }) {
       </span>
     );
   }
-  return <span>{row.new_barcode ?? row.old_barcode ?? ''}</span>;
+  const value = row.new_barcode ?? row.old_barcode;
+  return value ? <BarcodeValue value={value} /> : null;
 }
 
 function OutcomePanel({
@@ -180,7 +198,7 @@ function OutcomePanel({
                       </div>
                     ) : null}
                   </td>
-                  <td className="max-w-[220px] break-all px-2 py-1.5 tabular-nums">
+                  <td className="max-w-[200px] px-2 py-1.5 tabular-nums">
                     <BarcodeCell row={r} />
                   </td>
                   <td className="px-2 py-1.5">
