@@ -164,10 +164,6 @@ _PURCHASING_NOTIFY_PENDING_KEY = "oi_purchasing_notify_pending"
 #: (`PLAN-scm-oi-handover-email.md`) queued mid-transaction and fired once the session
 #: actually commits - see `_record_handover` / `register_order_inquiry_post_commit_dispatch`.
 _HANDOVER_PENDING_KEY = "oi_handover_pending"
-#: Owner ruling (b), 21 Oct 2026 (PLAN-BATCH-HELD-CANCEL): no Cancel SO and no line the book
-#: cancelled puts a line in any automated email; purchasing sees those rows cancelled in the
-#: CRM. Read by `record_cancelled_lines` and the planning-change retire (`_retire_inquiry_rows`).
-EMAIL_CANCEL_SO_LINES = False
 #: Per sales order, the lines the last `record_saved_lines` told (review B1).
 _SAVED_TOLD_KEY = "oi_saved_lines_told"
 #: OI-LINE-SPLIT: per origin line, what `_apply_split_links` moved to another line in the
@@ -5025,12 +5021,6 @@ class ProjectOrderInquiryService:
                 for item in queue
                 if not (item.get("pso_id") == pso_id and item.get("so_line_id") in ids)
             ]
-        # Owner ruling (b), 21 Oct 2026 (PLAN-BATCH-HELD-CANCEL): a line transferred to Cancel
-        # SO puts NO line in any automated email. What this commit queued for these lines is
-        # dropped above; the CANCEL line below is no longer queued. An email whose only
-        # content was these lines is therefore not sent at all.
-        if not EMAIL_CANCEL_SO_LINES:
-            return
         for mirror, core in cancelled:
             open_qty = max(
                 _dec(getattr(core, "qty_ordered", None)) - _dec(getattr(core, "qty_delivered", None)),
@@ -5712,8 +5702,8 @@ class ProjectOrderInquiryService:
         still-owed rows (raised, partly linked or placed; ORDER / ORDER_BACK; not released to
         stock) are cancelled the way the cancel balance zero-need branch of
         `_settle_row_in_place` cancels one: placements go back, a reason note is appended,
-        and purchasing sees it in the CRM (no automated email, owner ruling (b), 21 Oct
-        2026). `cancelled` is `(core line id, reason)` pairs. Actioned and CANCEL_BALANCE rows are left for
+        and purchasing hears about it through the post-commit handover queue. `cancelled`
+        is `(core line id, reason)` pairs. Actioned and CANCEL_BALANCE rows are left for
         `flag_rows_for_cancelled_lines`. In the caller's transaction.
         """
         reason_by_core = {str(cid): reason for cid, reason in cancelled if cid}
@@ -5746,12 +5736,6 @@ class ProjectOrderInquiryService:
             row.note = f"{row.note}; {stamp}" if row.note else stamp
             self._drop_suggested_links([row])
             self.db.flush()
-            # Owner ruling (b), 21 Oct 2026 (PLAN-BATCH-HELD-CANCEL): "no Cancel SO sends any
-            # automated email". The row is cancelled and its links go back above, so
-            # purchasing sees it in the CRM; no handover line and no changed-with-links
-            # automation is queued for it.
-            if not EMAIL_CANCEL_SO_LINES:
-                continue
             if links:
                 inquiry = (
                     self.db.query(OrderInquiry)

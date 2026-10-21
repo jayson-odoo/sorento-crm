@@ -207,6 +207,31 @@ def test_q1_a_retire_uncovers_only_the_retired_lines_with_or_without_a_composed_
     assert _covered(db, w["order"]) == expected
     assert _states(db, w, "old") == {"applied"}
     assert _states(db, w, "covered") == {"applied"}
+    # The composed added line routes through its own row (linked to its mirror line), so the
+    # row is applied; an uncomposed one stays pending (Q2: never close an uncovered line).
+    assert _states(db, w, "open") == ({"applied"} if composed else {"pending"})
+
+
+def test_crew_item_3_a_press_that_only_retires_an_uncovered_line_is_not_refused(api):
+    """Reviewer round 1: the board posts `{batch_id, lines: [], cancelled_lines: []}` for an
+    order whose only counted line is one the book cancelled. When no revision covers that
+    line the apply writes no revision, and the press read "Nothing on this planning change
+    could be confirmed" although it had applied the row."""
+    client, world = api
+    db = world.db
+    w = _world(client, world, n_old=0, n_cancel=0, n_covered=1, n_open=1)
+    _core, line = w["open"][0]
+    # The book cancelled the uncovered line: a `cancelled` row on it, nothing confirmed there.
+    row = w["rows"][line.id]
+    row.kind = "cancelled"
+    row.project_line_id = line.id
+    db.commit()
+
+    result = _press(client, w)
+
+    assert result["planning_change_applied"] is True
+    assert [r["line_no"] for r in result["lines_retired"]] == [line.line_no]
+    assert _states(db, w, "open") == {"applied"}
 
 
 def test_q2_an_added_row_on_a_line_nobody_confirmed_stays_pending(api):
@@ -223,13 +248,13 @@ def test_q2_an_added_row_on_a_line_nobody_confirmed_stays_pending(api):
 
 
 # --------------------------------------------------------------------------- #
-# Owner ruling (b), 21 Oct 2026 ~15:50 MYT, everywhere: "no Cancel SO sends any automated
-# email" ("B, I thought we had B all this while"). A Cancel SO (board or AutoCount draft) and a
-# line the book cancelled put NO line in any automated email and fire no changed-with-links
-# automation; a press that also confirms ordinary lines still emails those lines only; an email
-# whose only content would be cancels is not sent. Purchasing sees the rows cancelled in the CRM
-# and keeps the in-app "Planning change applied" notice. Resend never prints a cancelled row:
-# pinned by tests/test_oi_handover_resend.py::test_preview_single_rebuilds_open_rows_marked_resent.
+# Owner ruling (a), 21 Oct 2026 ~16:00 MYT (crew relay): ONLY the press this fix enables is
+# silent. An order whose Cancel SO a pending AutoCount change held (board-saved or an AutoCount
+# Cancel SO draft) gets the change applied and those cancels sent with NO cancel or retire line
+# in any automated email and no changed-with-links automation; purchasing sees the rows
+# cancelled in the CRM and keeps the in-app "Planning change applied" notice. A normal Cancel SO
+# still emails its CANCEL list (8 Oct rule, #1530) and a batch retire without held cancels still
+# prints its CANCEL ALL lines (#1806).
 # --------------------------------------------------------------------------- #
 
 CHANGED_WITH_LINKS = "order_inquiry_changed_with_links"
@@ -324,9 +349,10 @@ def _mail(calls, db, outbox_before):
 
 
 @pytest.mark.parametrize("source", ["board", "autocount_cancel"])
-def test_a_cancel_so_press_sends_no_automated_email(api, monkeypatch, source):
-    """No pending change at all: a manual Cancel SO, or confirming an AutoCount-cancel draft."""
-    from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow
+def test_control_a_normal_cancel_so_press_still_emails(api, monkeypatch, source):
+    """No pending change: a manual Cancel SO, or confirming an AutoCount-cancel draft, still
+    hands its CANCEL list to purchasing (8 Oct rule, #1530)."""
+    from .test_order_inquiry_handover_automation import _handover_calls
 
     client, world = api
     calls = _spy(api, monkeypatch)
@@ -334,9 +360,8 @@ def test_a_cancel_so_press_sends_no_automated_email(api, monkeypatch, source):
         client, world, n_old=0, n_cancel=1, n_covered=1, n_open=0,
         autocount=source == "autocount_cancel",
     )
-    row = _live_row_on(world, w, w["cancel"][0][1])
+    _live_row_on(world, w, w["cancel"][0][1])
     calls.clear()
-    outbox_before = _outbox_count(world.db)
 
     response = client.post(
         f"{BASE}/fulfilment-planning/confirm-all",
@@ -354,65 +379,19 @@ def test_a_cancel_so_press_sends_no_automated_email(api, monkeypatch, source):
     )
 
     assert response.status_code == 200, response.text
-    assert _mail(calls, world.db, outbox_before) == ([], [], 0)
-    world.db.expire_all()
-    assert world.db.get(OrderInquiryRow, row.id).state == INQUIRY_CANCELLED
+    assert len(_handover_calls(calls)) == 1
 
 
-def test_a_batch_retire_sends_no_automated_email(api, monkeypatch):
-    """The book cancelled two confirmed lines; the press retires them (#1806's CANCEL ALL)."""
-    from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow
-
-    client, world = api
-    calls = _spy(api, monkeypatch)
-    w = _world(client, world, n_old=2, n_cancel=0, n_covered=1, n_open=0)
-    db = world.db
-    old_rows = (
-        db.query(OrderInquiryRow)
-        .filter(OrderInquiryRow.so_line_id.in_([m.id for _c, m in w["old"]]))
-        .all()
-    )
-    assert old_rows
-    calls.clear()
-    outbox_before = _outbox_count(db)
-
-    result = _press(client, w)
-
-    assert result["planning_change_applied"] is True
-    assert _mail(calls, db, outbox_before) == ([], [], 0)
-    db.expire_all()
-    assert {db.get(OrderInquiryRow, r.id).state for r in old_rows} == {INQUIRY_CANCELLED}
-
-
-def test_a_mixed_press_emails_its_order_lines_without_cancel_lines(api, monkeypatch):
-    """Cancel SO on one line beside a Buy confirmed on another: one handover, no CANCEL line."""
+def test_control_a_batch_retire_without_held_cancels_still_emails(api, monkeypatch):
+    """The book cancelled two confirmed lines and nothing was held: #1806's retire lines go."""
     from .test_order_inquiry_handover_automation import _handover_calls
 
     client, world = api
     calls = _spy(api, monkeypatch)
-    w = _world(client, world, n_old=0, n_cancel=1, n_covered=0, n_open=1)
-    _live_row_on(world, w, w["cancel"][0][1])
+    w = _world(client, world, n_old=2, n_cancel=0, n_covered=1, n_open=0)
     calls.clear()
 
-    response = client.post(
-        f"{BASE}/fulfilment-planning/confirm-all",
-        json={
-            "orders": [
-                {
-                    "pso_id": w["order"].id,
-                    "lines": [_line_payload(w["open"][0][1].id, buy_qty=QTY)],
-                    "cancelled_lines": [
-                        {"project_line_id": w["cancel"][0][1].id, "reason": REASON}
-                    ],
-                }
-            ]
-        },
-    )
+    result = _press(client, w)
 
-    assert response.status_code == 200, response.text
-    handovers = _handover_calls(calls)
-    assert len(handovers) == 1
-    lines = handovers[0]["context"]["handover"]["lines"]
-    assert lines, "the confirmed Buy is still handed over"
-    assert all("CANCEL" not in (line.get("remark") or "") for line in lines), lines
-    assert any("ORDER" in (line.get("remark") or "") for line in lines), lines
+    assert result["planning_change_applied"] is True
+    assert len(_handover_calls(calls)) == 1
