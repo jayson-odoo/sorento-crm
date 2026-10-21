@@ -94,7 +94,11 @@ Out of scope: discontinued candidates in did-you-mean (bug 5 of the incident), t
    pending-answer early returns: no stored pending survives it (red 11f22ea3bd, fix 4b448ea9d5; wipe test 0b2acf5dcf red on
    83adba6fa9; the stored list goes too, red e29ccba680, fix 12169924ff); on the state path a `new_subject` that carries
    nothing (no set, pick, entity or domain) is a topic reset, as the v92 prompt's own mirror rule says (red 68ac500604,
-   fix 8a438c49d2).
+   fix 8a438c49d2); a cancel answer to a stored pick roster (did-you-mean, customer pick) is a topic reset on both paths
+   (red 7fca04595a, fix 758a046d13, narrowed after review: a reset that names its own domain still fetches, a cancel to an
+   escalation offer only declines; red 2c5d2a757f + 97924673e0, fix 1cbd6052e2).
+   Open for the owner: on the state path a reset keeps a held customer (#1823 CARRY keeps customers across new_subject;
+   the old path's reset keeps tier and brands only).
    Parser gold set widened to 68 rows in 8 classes (3e91d6ebe6); x1: v63 67/68, v92 65/68.
    Old-path gaps NOT changed: v63 stores no numbered data list (tail.py ~188, state path only), so a row number over a
    multi-product answer cannot pick on v63; v63's file-kind question has no numbered kinds without closed lists
