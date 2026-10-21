@@ -213,10 +213,12 @@ describe('PurchaseOrderDetail - states', () => {
     expect(screen.queryByText('Back to purchase orders')).toBeNull();
   });
 
+  // A 404 is the read answering null (`getPurchaseOrder`), not an error.
   it('names what is missing rather than rendering an empty shell', () => {
-    usePurchaseOrder.mockReturnValue({ data: null, isLoading: false, isError: true });
+    usePurchaseOrder.mockReturnValue({ data: null, isLoading: false, isError: false });
     renderDetail();
     expect(screen.getByText('Purchase order not found')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull();
     expect(screen.queryByText('Back to purchase orders')).toBeNull();
   });
 
@@ -253,13 +255,6 @@ describe('PurchaseOrderDetail - states', () => {
     expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull();
   });
 
-  it('a 404 (the read answers null) keeps the not-found card, with no Retry', () => {
-    usePurchaseOrder.mockReturnValue({ data: null, isLoading: false, isError: false });
-    renderDetail();
-    expect(screen.getByText('Purchase order not found')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull();
-  });
-
   it('a failed background refetch keeps the order already on screen', () => {
     usePurchaseOrder.mockReturnValue({
       data: po(),
@@ -275,7 +270,17 @@ describe('PurchaseOrderDetail - states', () => {
 
   it.each([
     ['loading', { data: undefined, isLoading: true, isError: false }],
-    ['failed', { data: null, isLoading: false, isError: true }],
+    ['not found', { data: null, isLoading: false, isError: false }],
+    [
+      'failed',
+      {
+        data: undefined,
+        isLoading: false,
+        isError: true,
+        error: Object.assign(new Error('Internal server error'), { status: 500 }),
+        refetch: vi.fn(),
+      },
+    ],
   ])('while %s, the purchase-order route has exactly one Back', async (_, state) => {
     usePurchaseOrder.mockReturnValue(state);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
