@@ -1245,8 +1245,8 @@ _OI_XLSX_CONTENT_TYPE = (
 
 def _oi_export(db, fmt: str, filters: dict) -> tuple[str, bytes, str, str]:
     """`(fallback filename, bytes, content type, storage key suffix)` for one OI export.
-    OI-DOWNLOAD (`PLAN-oi-download-21oct.md`): `fmt="pdf"` prints the SAME rows in the OI
-    email's layout; `"xlsx"` (the default, so a job queued before the PDF existed renders
+    OI-DOWNLOAD (`PLAN-oi-download-21oct.md`): `fmt="pdf"` prints the workbook's own table
+    (same header row and rows) as a PDF; `"xlsx"` (the default, so a job queued before the PDF existed renders
     exactly as it did) is the email's own workbook."""
     from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
+from html.parser import HTMLParser
 
 from sqlalchemy import text
 
@@ -339,8 +340,6 @@ def test_worklist_pdf_task_never_prints_another_companys_rows(api, monkeypatch):
 # (owner, 21 Oct: "the pdf needs to be like Excel la, just in pdf format ... 1 table")
 # --------------------------------------------------------------------------- #
 
-from html.parser import HTMLParser
-
 
 class _Tables(HTMLParser):
     def __init__(self):
@@ -438,7 +437,9 @@ def test_pdf_wears_the_house_style_landscape_with_a_repeating_header():
     html = _pdf_html(_SHEET_ROWS)
 
     assert "size: A4 landscape" in html
-    assert "display: table-header-group" in html  # header row repeats on every page
+    # The header row is the table's <thead>, which repeats on every page.
+    assert "display: table-header-group" in html
+    assert html.count("<thead>") == 1 and "<thead><tr><th>SO DATE</th>" in html
     assert "#404040" in html and "#ffffff" in html.lower()  # dark header, white text
     assert "1px solid" in html and "wrap" in html
 
@@ -449,6 +450,13 @@ def test_pdf_with_no_rows_is_still_the_one_table_with_its_header():
     from app.services.order_inquiry_worklist_service import EXPORT_HEADINGS
 
     assert parsed.tables == 1 and parsed.rows[0] == list(EXPORT_HEADINGS)
+
+
+def test_cell_text_never_leaves_a_trailing_dot():
+    from app.services.order_inquiry_pdf import cell_text
+
+    assert cell_text(2.0000001) == "2"
+    assert cell_text(2.5) == "2.5"
 
 
 def test_pdf_escapes_text():

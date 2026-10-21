@@ -621,8 +621,9 @@ def export_order_inquiry_worklist_pdf(
     db: Session = Depends(get_db),
 ):
     """OI-DOWNLOAD (`PLAN-oi-download-21oct.md`): the lines list's Print / Download PDF -
-    the filtered rows the Export Excel above prints, in the OI email's layout, through My
-    Downloads (the Purchase Request PDF's shape). Sends no email."""
+    the Export Excel above as a PDF (owner: "like Excel la, just in pdf format"): one table,
+    the same header row and filtered rows, through My Downloads (the Purchase Request PDF's
+    shape). Sends no email."""
     return _queue_worklist_export(payload, current_user, db, fmt="pdf")
 
 
@@ -710,9 +711,9 @@ def export_order_inquiry_header_pdf(
     db: Session = Depends(get_db),
 ):
     """OI-DOWNLOAD (`PLAN-oi-download-21oct.md`): the OI detail page's Print / Download PDF
-    - the OI email's layout (S/O table on top, then the item lines) off the rows its Export
-    Excel prints, through My Downloads like `POST /procurement/purchase-requests/{id}/export/
-    pdf`, named like it (`order-inquiry-<OI no>.pdf`). Sends no email."""
+    - its Export Excel as a PDF (one table, the same header row and rows), through My
+    Downloads like `POST /procurement/purchase-requests/{id}/export/pdf`, named like it
+    (`order-inquiry-<OI no>.pdf`). Sends no email."""
     return _queue_header_export(inquiry_id, current_user, db, fmt="pdf")
 
 

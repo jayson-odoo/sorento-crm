@@ -21,8 +21,6 @@ from typing import Any, Sequence
 
 from app.services import excel_style
 
-TITLE = "ORDER INQUIRY"
-
 
 def cell_text(value: Any) -> str:
     """A sheet cell as the workbook shows it: blank for none, dates dd/mm/yyyy, a whole
@@ -32,7 +30,7 @@ def cell_text(value: Any) -> str:
     if isinstance(value, (date, datetime)):
         return value.strftime("%d/%m/%Y")
     if isinstance(value, (float, Decimal)):
-        return str(int(value)) if value == int(value) else format(value, "f").rstrip("0")
+        return str(int(value)) if value == int(value) else format(value, "f").rstrip("0").rstrip(".")
     return str(value)
 
 
@@ -50,6 +48,7 @@ def _widths(columns: Sequence[str]) -> list[float]:
 
 def build_html(columns: Sequence[str], values: Sequence[Sequence[Any]]) -> str:
     """The document HTML, without WeasyPrint - what the tests assert on."""
+    from app.services.order_inquiry_worklist_service import EXPORT_TITLE
     colgroup = "".join(f'<col style="width:{w}%"/>' for w in _widths(columns))
     head = "".join(f"<th>{escape(str(column))}</th>" for column in columns)
     body = "".join(
@@ -72,7 +71,7 @@ def build_html(columns: Sequence[str], values: Sequence[Sequence[Any]]) -> str:
   th {{ background: {fill}; color: {font}; font-weight: bold; font-size: 6px;
         overflow-wrap: normal; word-break: keep-all; }}
 </style></head><body>
-<h1>{TITLE}</h1>
+<h1>{escape(EXPORT_TITLE)}</h1>
 <table><colgroup>{colgroup}</colgroup><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>
 </body></html>"""
 
