@@ -584,6 +584,10 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    * The Lines grid's `Request to reserve N` pill and the tick's default stage both
    * read N off this. */
   requested_qty?: string;
+  /** OI-RESERVE-PILL-QTY (owner, 21 Oct 2026): what purchasing last asked CS to reserve
+   * off this row, kept after CS answers so a partial answer shows both numbers; "0" when
+   * nothing was asked. The Reserve requested column reads this, not `requested_qty`. */
+  asked_reserve_qty?: string;
   /** OI-BULK-RESERVE v4: the open request row's warehouse id and code; null with no open
    * request. The Lines page's Decide drafts read them. */
   reserve_warehouse_id?: string | null;

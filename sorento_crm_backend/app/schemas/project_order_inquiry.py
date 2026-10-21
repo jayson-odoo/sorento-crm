@@ -573,6 +573,10 @@ class OrderInquiryWorklistRow(BaseModel):
     #: read N off this, not off a second lookup. Declared here because `response_model`
     #: silently drops a field it has not been told about.
     requested_qty: str = "0"
+    #: OI-RESERVE-PILL-QTY (owner, 21 Oct 2026): what purchasing last asked CS to reserve
+    #: off this row, kept after CS answers (a partial answer shows both numbers); "0" when
+    #: nothing was asked. Declared here because `response_model` drops undeclared fields.
+    asked_reserve_qty: str = "0"
     #: OI-BULK-RESERVE v4 (B2): the open request row's warehouse id and code, null when no
     #: request is open. Declared here because `response_model` drops undeclared fields.
     reserve_warehouse_id: Optional[str] = None
