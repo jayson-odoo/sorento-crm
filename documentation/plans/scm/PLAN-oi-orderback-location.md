@@ -1,33 +1,32 @@
-# PLAN: OI email ORDER BACK row shows the refill (donor) location
+# PLAN: OI email ORDER BACK names its refill (donor) location
 
-Status: Plan - behaviour card filed as crew-ask, waiting on the owner. Track: small fix (no migration, no auth, no UI).
+Status: implemented on PR #1815 (reviewer pending). Track: small fix (no migration, no auth, no UI change beyond the email words).
 
-## Owner ruling 21 Oct (option B)
+## Owner ruling (21 Oct 2026 ~11:50 MYT, option A; replaces the 11:40 option B)
 
-In the Order Inquiry handover email an ORDER BACK row prints the location the stock is ordered
-back to (the donor, the OI row's own `stock_location`), as the OI Excel already does
-(`order_inquiry_worklist_service.py:733`). This reverses the 13/14 Oct "line's own location" rule
-for ORDER BACK only. REMARK stays as it is (no donor words in it).
+- LOCATION and the subject stay exactly as today: the SO line's own location (13/14 Oct rule).
+- ONE row per saved line, no splitting ("I already can split manually when I confirm").
+- REMARK names the donor of every ORDER BACK part whose donor differs from the row's LOCATION,
+  in the `USE <location>` style:
+  - SO426913 (ORDER 4 at BRW-IR turned Borrow 4 from BRW-BB): `ORDER BACK BRW-BB, CANCEL ORDER 4`
+  - two donors: `ORDER BACK BRW-X 6 & ORDER BACK BRW-Y 4`
+  - Use + Borrow: `USE BRW-BB 6 & ORDER BACK BRW-KL 4`
+  - donor moved X to Y: `ORDER BACK BRW-Y` (X not told)
+  - borrow from the line's own location: `ORDER BACK`
+  - rejected borrow: `CANCEL ALL` (unchanged)
+- Resend uses the same function and rule. The OI Excel is unchanged.
 
-## Where the email reads the line's own location today
+## Code
 
-- Row path: `ProjectOrderInquiryService._handover_line` swaps an `ORDER_BACK` row's donor for the
-  SO line location (`project_order_inquiry_service.py:4482-4493`).
-- Saved-line path (Confirm): `saved_line_remark` returns the SO line location for every part
-  (`project_order_inquiry_service.py:550-575`, `_saved_line_parts` :677-696); `_queue_saved_line`
-  prints it in LOCATION and the subject (`stock_location` on the queued item).
-- `_borrow_donors` (:745) and `record_saved_lines` (:4590-4597) treat a donor move as "same
-  line, own location".
-- Subject: `_build_handover_context` (:14052-14060) - one named location -> `<loc> @ <SO>`,
-  otherwise the bare SO list.
-- Resend (`oi_handover_resend`) rebuilds open rows through `_handover_line`, so it follows the
-  row path.
+- `_saved_line_parts(..., name_donors=True)` from `saved_line_remark` only. `_decision_words` and
+  `_saved_decision_key` keep the unnamed words, so a donor move is still the same kind of decision
+  (`record_saved_lines` donor-move branch unchanged).
+- `handover_remark(..., donor=)`: a raised ORDER BACK row line names its `stock_location` when it
+  differs from the LOCATION printed (`_handover_line`); used by Confirm row lines and resend.
+- The planning board's "Confirm sends" preview (`saved_draft_remark`) goes through
+  `saved_line_remark`, so it shows the same words.
 
-## Open questions
+## Tests
 
-Filed on the PR as `crew-ask` (behaviour card). Implementation starts once answered.
-
-## Tests (red first)
-
-To be listed once the card is answered: email rows + subject + resend for the SO426913 shape
-(ORDER at IR cancelled, ORDER BACK from BB raised), a same-location borrow, a two-donor borrow.
+`tests/test_oi_saved_line_email.py` (OI-ORDERBACK-LOCATION section and the updated donor tests),
+`tests/test_oi_orderback_location.py` (resend).
