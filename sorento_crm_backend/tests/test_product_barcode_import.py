@@ -7,6 +7,7 @@ Postgres only (tests/_pg_fixture.py); every test seeds its own products.
 from __future__ import annotations
 
 import io
+import os
 import uuid
 
 import pytest
@@ -615,7 +616,7 @@ def test_media_members_do_not_count_toward_the_xml_cap(client, monkeypatch):
 
     monkeypatch.setattr(svc, "_MAX_UNCOMPRESSED_BYTES", 1024 * 1024)
     data = _rewrite_zip(_xlsx([["Product Code", "Barcode"], ["X", EAN_A]]), lambda n, b: b,
-                        extra={"xl/media/image1.png": b"\x89PNG\r\n\x1a\n" + b"\0" * (2 * 1024 * 1024)})
+                        extra={"xl/media/image1.png": b"\x89PNG\r\n\x1a\n" + os.urandom(2 * 1024 * 1024)})
     assert _post(client, "preview", data).status_code == 200
 
 
@@ -744,3 +745,19 @@ def test_leading_spaces_are_trimmed_before_the_cell_is_cut(client, db, refs):
         ["Product Code", "Barcode"], [" " * 300 + f"{stem}-W", EAN_A],
     ])).json()
     assert body["rows"][0]["status"] == "new"
+
+
+def test_a_compressible_member_that_only_looks_like_a_picture_counts(client, monkeypatch):
+    from app.services import product_barcode_import_service as svc
+
+    monkeypatch.setattr(svc, "_MAX_UNCOMPRESSED_BYTES", 1024 * 1024)
+
+    def edit(name, blob):
+        if name == "xl/styles.xml":
+            return b"\x89PNG\r\n\x1a\n" + b"\0" * (2 * 1024 * 1024)
+        return blob
+
+    data = _rewrite_zip(_xlsx([["Product Code", "Barcode"], ["X", EAN_A]]), edit)
+    res = _post(client, "preview", data)
+    assert res.status_code == 400
+    assert res.json()["detail"] == "This workbook is too large to read."
