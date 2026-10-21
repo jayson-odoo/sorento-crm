@@ -97,6 +97,8 @@ Out of scope: discontinued candidates in did-you-mean (bug 5 of the incident), t
    fix 8a438c49d2); a cancel answer to a stored pick roster (did-you-mean, customer pick) is a topic reset on both paths
    (red 7fca04595a, fix 758a046d13, narrowed after review: a reset that names its own domain still fetches, a cancel to an
    escalation offer only declines; red 2c5d2a757f + 97924673e0, fix 1cbd6052e2).
+   A decline of an offer that comes with the message's own ask ("never mind, outstanding orders?") still plans the ask
+   (red abe97e08f8, fix 87945ce913; pre-existing on the old path).
    Open for the owner: on the state path a reset keeps a held customer (#1823 CARRY keeps customers across new_subject;
    the old path's reset keeps tier and brands only).
    Parser gold set widened to 68 rows in 8 classes (3e91d6ebe6); x1: v63 67/68, v92 65/68.
