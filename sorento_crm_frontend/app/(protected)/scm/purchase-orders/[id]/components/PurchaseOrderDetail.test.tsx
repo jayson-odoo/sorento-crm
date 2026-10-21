@@ -220,6 +220,59 @@ describe('PurchaseOrderDetail - states', () => {
     expect(screen.queryByText('Back to purchase orders')).toBeNull();
   });
 
+  // PO-DETAIL-ERROR-STATE: only a missing order reads "not found".
+  it('any other failure says it could not load, with the reason and a Retry that refetches', () => {
+    const refetch = vi.fn();
+    usePurchaseOrder.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: Object.assign(new Error('The server took too long to answer.'), { status: undefined }),
+      refetch,
+      isFetching: false,
+    });
+    renderDetail();
+    expect(screen.queryByText('Purchase order not found')).toBeNull();
+    expect(screen.getByText('Could not load this purchase order')).toBeInTheDocument();
+    expect(screen.getByText('The server took too long to answer.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Retry/ }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('a refusal renders the access-denied state, not "not found"', () => {
+    usePurchaseOrder.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: Object.assign(new Error('Permission required: scm.dashboard.view'), { status: 403 }),
+      refetch: vi.fn(),
+    });
+    renderDetail();
+    expect(screen.getByText("You don't have access to this page")).toBeInTheDocument();
+    expect(screen.queryByText('Purchase order not found')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull();
+  });
+
+  it('a 404 (the read answers null) keeps the not-found card, with no Retry', () => {
+    usePurchaseOrder.mockReturnValue({ data: null, isLoading: false, isError: false });
+    renderDetail();
+    expect(screen.getByText('Purchase order not found')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull();
+  });
+
+  it('a failed background refetch keeps the order already on screen', () => {
+    usePurchaseOrder.mockReturnValue({
+      data: po(),
+      isLoading: false,
+      isError: true,
+      error: Object.assign(new Error('Internal server error'), { status: 500 }),
+      refetch: vi.fn(),
+    });
+    renderDetail();
+    expect(screen.queryByText('Could not load this purchase order')).toBeNull();
+    expect(screen.queryByText('Purchase order not found')).toBeNull();
+  });
+
   it.each([
     ['loading', { data: undefined, isLoading: true, isError: false }],
     ['failed', { data: null, isLoading: false, isError: true }],
