@@ -12,9 +12,9 @@
  *   without a manual refresh.
  */
 import React from 'react';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
@@ -101,8 +101,19 @@ function proposals(
   return { ...batch(), groups: [], ...overrides };
 }
 
+/** Moves the fake clock and lets react-query's resulting fetches and renders settle. */
+async function advance(ms: number) {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('useFlyerSpecBatchesQuery, the 3 s poll (AC-D.8)', () => {
@@ -118,8 +129,10 @@ describe('useFlyerSpecBatchesQuery, the 3 s poll (AC-D.8)', () => {
   });
 
   it('polls every 3s while a batch is proposing, and stops once none is', async () => {
-    // Real timers: react-query's own refetch scheduling runs through a real
-    // setTimeout, and `waitFor` polls with real timers too.
+    // Fake timers, advanced by hand: the interval is real product timing, and
+    // waiting it out for real cost this file ~19 s of an already-full CI shard.
+    // No `waitFor` here - it cannot see vitest's fake clock and would hang.
+    vi.useFakeTimers();
     mockList.mockResolvedValueOnce([batch({ status: 'proposing' })]);
     mockList.mockResolvedValue([batch({ status: 'proposed' })]);
 
@@ -127,36 +140,41 @@ describe('useFlyerSpecBatchesQuery, the 3 s poll (AC-D.8)', () => {
       wrapper: wrapperWith(freshClient()),
     });
 
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    // Reading `data` here also subscribes the hook to it: react-query re-renders
+    // only for the result fields a render has read.
+    await advance(0);
+    expect(result.current.data?.[0]?.status).toBe('proposing');
     expect(mockList).toHaveBeenCalledTimes(1);
 
-    await waitFor(
-      () => expect(result.current.data?.[0]?.status).toBe('proposed'),
-      {
-        timeout: 4500,
-      },
-    );
+    // Not before the interval: the poll is 3 s, not "as soon as possible".
+    await advance(2900);
+    expect(mockList).toHaveBeenCalledTimes(1);
+
+    await advance(200);
+    expect(result.current.data?.[0]?.status).toBe('proposed');
     expect(mockList).toHaveBeenCalledTimes(2);
 
     // Nothing left proposing: refetchInterval resolves to false, so no third
-    // GET turns up even after another full poll interval elapses.
-    await new Promise((resolve) => setTimeout(resolve, 3200));
+    // GET turns up even after several more poll intervals.
+    await advance(10_000);
     expect(mockList).toHaveBeenCalledTimes(2);
-  }, 10000);
+  });
 
   it('never polls when nothing is proposing to begin with', async () => {
+    vi.useFakeTimers();
     mockList.mockResolvedValue([batch({ status: 'proposed' })]);
 
     const { result } = renderHook(() => useFlyerSpecBatchesQuery(), {
       wrapper: wrapperWith(freshClient()),
     });
 
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    await advance(0);
+    expect(result.current.isSuccess).toBe(true);
     expect(mockList).toHaveBeenCalledTimes(1);
 
-    await new Promise((resolve) => setTimeout(resolve, 3200));
+    await advance(10_000);
     expect(mockList).toHaveBeenCalledTimes(1);
-  }, 10000);
+  });
 });
 
 describe('useFlyerSpecProposalsQuery, the 3 s poll (AC-D.8)', () => {
@@ -179,6 +197,7 @@ describe('useFlyerSpecProposalsQuery, the 3 s poll (AC-D.8)', () => {
   });
 
   it('polls every 3s while the batch is proposing, and stops once it settles', async () => {
+    vi.useFakeTimers();
     mockGet.mockResolvedValueOnce(proposals({ status: 'proposing' }));
     mockGet.mockResolvedValue(proposals({ status: 'proposed' }));
 
@@ -186,31 +205,36 @@ describe('useFlyerSpecProposalsQuery, the 3 s poll (AC-D.8)', () => {
       wrapper: wrapperWith(freshClient()),
     });
 
-    await waitFor(() => expect(result.current.data?.status).toBe('proposing'));
+    await advance(0);
+    expect(result.current.data?.status).toBe('proposing');
     expect(mockGet).toHaveBeenCalledTimes(1);
 
-    await waitFor(() => expect(result.current.data?.status).toBe('proposed'), {
-      timeout: 4500,
-    });
+    await advance(2900);
+    expect(mockGet).toHaveBeenCalledTimes(1);
+
+    await advance(200);
+    expect(result.current.data?.status).toBe('proposed');
     expect(mockGet).toHaveBeenCalledTimes(2);
 
-    await new Promise((resolve) => setTimeout(resolve, 3200));
+    await advance(10_000);
     expect(mockGet).toHaveBeenCalledTimes(2);
-  }, 10000);
+  });
 
   it('does not poll a batch that is already settled', async () => {
+    vi.useFakeTimers();
     mockGet.mockResolvedValue(proposals({ status: 'failed' }));
 
     const { result } = renderHook(() => useFlyerSpecProposalsQuery('r-1'), {
       wrapper: wrapperWith(freshClient()),
     });
 
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    await advance(0);
+    expect(result.current.isSuccess).toBe(true);
     expect(mockGet).toHaveBeenCalledTimes(1);
 
-    await new Promise((resolve) => setTimeout(resolve, 3200));
+    await advance(10_000);
     expect(mockGet).toHaveBeenCalledTimes(1);
-  }, 10000);
+  });
 });
 
 describe('useProposeFlyerSpecs', () => {
