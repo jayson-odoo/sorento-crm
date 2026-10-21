@@ -264,6 +264,37 @@ function pressHasSomething(
   );
 }
 
+/**
+ * One order's line in the Confirm / Simulate results (PLAN-BATCH-HELD-CANCEL, UAC U3/U4): what
+ * the press did, in order - applied the pending AutoCount change, then the Cancel SO transfer or
+ * the revision it confirmed. Never "commits after ..." without the step that gets there.
+ */
+function resultSentence(result: BoardBatchResult, simulated: boolean): string {
+  if (!result.ok) return result.error ?? 'refused';
+  const parts: string[] = [];
+  if (result.planning_change_applied) {
+    parts.push(simulated ? 'would apply the AutoCount change' : 'applied the AutoCount change');
+  }
+  const cancelled = result.lines_cancelled?.length ?? 0;
+  const confirmed = result.lines_confirmed?.length ?? 0;
+  const handedOver = result.inquiry_rows_created ?? 0;
+  const lines = (count: number) => `${count} line${count === 1 ? '' : 's'}`;
+  if (cancelled > 0 && confirmed === 0 && handedOver === 0) {
+    parts.push(
+      simulated
+        ? `would transfer ${lines(cancelled)} to Cancel SO`
+        : `${lines(cancelled)} transferred to Cancel SO`,
+    );
+  } else if (!result.planning_change_applied || confirmed > 0 || handedOver > 0) {
+    parts.push(
+      simulated
+        ? `would confirm as revision ${result.decision_revision}`
+        : `confirmed as revision ${result.decision_revision} (${handedOver} purchase row${handedOver === 1 ? '' : 's'} handed over)`,
+    );
+  }
+  return parts.join('; ');
+}
+
 function rowAxisFrom(value: string | null): BoardRowAxis {
   return ROW_AXES.includes(value as BoardRowAxis) ? (value as BoardRowAxis) : 'product';
 }
@@ -1454,6 +1485,15 @@ export function FulfilmentBoardPanel({
             // amendment does. An UNCOVERED reject has nothing active to withdraw and is left
             // out, exactly as before.
             if (decision?.verdict === 'rejected') return Boolean(contribution.covered);
+            // PLAN-BATCH-HELD-CANCEL (crew item 3): a line the book cancelled is retired by
+            // posting its order's pending change, and Confirm counts it: it admits its order.
+            if (
+              contribution.cancelled &&
+              !contribution.cancelled_at &&
+              !awaitsCancelSo(contribution)
+            ) {
+              return true;
+            }
             // 8 Sep 2026 ruling (reverses R11): an untouched, uncovered line is undecided,
             // not agreed - it does not put its order in the batch on its account alone.
             if (!contribution.covered && !decision) return false;
@@ -1615,6 +1655,9 @@ export function FulfilmentBoardPanel({
         // see `pendingBatchSalesOrderIds`). Computed straight off the contributions, never
         // off `rejectedCoveredLineIdsFor`'s own (deliberately empty, on a batched order)
         // result.
+        // PLAN-BATCH-HELD-CANCEL: a saved Cancel SO is never held (it rides in
+        // `cancelledLines` above, named by the pending change or not); only a staged
+        // rejection still waits, because the server refuses `rejected_line_ids` beside a batch.
         const heldBackByBatch = orderBatchId
           ? contributions.filter(
               (contribution) =>
@@ -1622,12 +1665,8 @@ export function FulfilmentBoardPanel({
                 !excludeKeys.has(contribution.key) &&
                 !contribution.unplannable &&
                 Boolean(contribution.project_line_id) &&
-                ((contribution.covered &&
-                  draftWithoutPreMark[contribution.key]?.verdict === 'rejected') ||
-                  (!contribution.covered &&
-                    (!contribution.cancelled || awaitsCancelSo(contribution)) &&
-                    batchNamedKeys.has(contribution.key) &&
-                    draftWithoutPreMark[contribution.key]?.verdict === 'cancelled')),
+                contribution.covered &&
+                draftWithoutPreMark[contribution.key]?.verdict === 'rejected',
             )
           : [];
         // S4: said OUT LOUD, named per line THROUGH `failing_lines` (the same shape a
@@ -1645,32 +1684,17 @@ export function FulfilmentBoardPanel({
         // `rejectedLineIds`, both already computed above).
         if (heldBackByBatch.length > 0) {
           const postingSomethingElse = lines.length > 0 || rejectedLineIds.length > 0;
-          const heldCancels = heldBackByBatch.some(
-            (contribution) => draftWithoutPreMark[contribution.key]?.verdict === 'cancelled',
-          );
-          const heldRejects = heldBackByBatch.some(
-            (contribution) => draftWithoutPreMark[contribution.key]?.verdict !== 'cancelled',
-          );
-          const heldWhat =
-            heldCancels && heldRejects
-              ? 'staged rejection and saved Cancel SO'
-              : heldCancels
-                ? 'saved Cancel SO'
-                : 'staged rejection';
           skipped.push({
             pso_id: orderPsoId,
             so_number: soNumber,
             ok: false,
             heldBack: true,
             error: postingSomethingElse
-              ? `was confirmed, but its ${heldWhat} could not ride along with the pending change; it commits after the change is applied.`
-              : `has a ${heldWhat} that commits after the pending change is applied.`,
+              ? 'was confirmed, but its staged rejection could not ride along with the pending change; it commits after the change is applied.'
+              : 'has a staged rejection that commits after the pending change is applied.',
             failing_lines: heldBackByBatch.map((contribution) => ({
               line_no: contribution.line_no,
-              reason:
-                draftWithoutPreMark[contribution.key]?.verdict === 'cancelled'
-                  ? 'Cancel SO is saved; it commits after the pending change is applied.'
-                  : 'rejection is staged; it commits after the pending change is applied.',
+              reason: 'rejection is staged; it commits after the pending change is applied.',
             })),
           } as BoardBatchResult);
         }
@@ -1695,11 +1719,24 @@ export function FulfilmentBoardPanel({
             ),
         );
         if (splitEdited) splitEditPsoIds.add(orderPsoId);
+        // PLAN-BATCH-HELD-CANCEL (crew item 3): a line the book cancelled has no body line;
+        // posting the order's pending change is what retires it, and Confirm counted it.
+        const retiresBookCancelled =
+          Boolean(orderBatchId) &&
+          contributions.some(
+            (contribution) =>
+              contribution.sales_order_id === salesOrderId &&
+              !excludedFromPress(contribution, excludeKeys) &&
+              contribution.cancelled &&
+              !contribution.cancelled_at &&
+              !awaitsCancelSo(contribution),
+          );
         if (
           lines.length === 0 &&
           rejectedLineIds.length === 0 &&
           cancelledLines.length === 0 &&
-          !splitEdited
+          !splitEdited &&
+          !retiresBookCancelled
         ) {
           // The held-back note above already said why, when that is the whole reason -
           // the generic "had no line..." sentence would only repeat it more vaguely.
@@ -2902,15 +2939,7 @@ export function FulfilmentBoardPanel({
                           : 'text-destructive'
                     }`}
                   >
-                    {result.ok && (result.lines_cancelled?.length ?? 0) > 0 &&
-                    (result.lines_confirmed?.length ?? 0) === 0 &&
-                    (result.inquiry_rows_created ?? 0) === 0
-                      ? `${label}: ${simulated ? 'would transfer ' : ''}${result.lines_cancelled?.length} line${result.lines_cancelled?.length === 1 ? '' : 's'}${simulated ? '' : ' transferred'} to Cancel SO`
-                      : result.ok
-                      ? simulated
-                        ? `${label}: would confirm as revision ${result.decision_revision}`
-                        : `${label}: confirmed as revision ${result.decision_revision} (${result.inquiry_rows_created ?? 0} purchase row${(result.inquiry_rows_created ?? 0) === 1 ? '' : 's'} handed over)`
-                      : `${label}: ${result.error ?? 'refused'}`}
+                    {`${label}: ${resultSentence(result, simulated)}`}
                   </span>
                   {simulated &&
                     result.ok &&
@@ -2956,6 +2985,18 @@ export function FulfilmentBoardPanel({
                       ))}
                     </ul>
                   )}
+                  {result.ok && result.lines_retired && result.lines_retired.length > 0 && (
+                    <ul
+                      data-testid={`board-retired-lines-${result.pso_id}`}
+                      className="space-y-0.5"
+                    >
+                      <li className="text-sm break-words">
+                        {`${simulated ? 'Would be retired' : 'Retired'} by the AutoCount change: ${result.lines_retired
+                          .map((line) => `line ${line.line_no ?? '?'} ${line.item_code ?? ''}`.trim())
+                          .join(' · ')}`}
+                      </li>
+                    </ul>
+                  )}
                   {result.ok && result.lines_cancelled && result.lines_cancelled.length > 0 && (
                     <ul
                       data-testid={`board-cancelled-lines-${result.pso_id}`}
@@ -2963,7 +3004,11 @@ export function FulfilmentBoardPanel({
                     >
                       <li className="text-sm break-words">
                         {`${simulated ? 'Would transfer' : 'Transferred'} to Cancel SO: ${result.lines_cancelled
-                          .map((line) => `line ${line.line_no ?? '?'} ${line.item_code ?? ''}`.trim())
+                          .map((line) =>
+                            `line ${line.line_no ?? '?'} ${line.item_code ?? ''}${
+                              line.reason ? ` (${line.reason})` : ''
+                            }`.trim(),
+                          )
                           .join(' · ')}`}
                       </li>
                     </ul>

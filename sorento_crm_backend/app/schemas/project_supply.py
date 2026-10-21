@@ -489,6 +489,8 @@ class ConfirmedLine(BaseModel):
 class CancelledLineEcho(BaseModel):
     line_no: Optional[int] = None
     item_code: Optional[str] = None
+    #: Why it went to Cancel SO (an AutoCount Cancel SO draft's reason names its document).
+    reason: Optional[str] = None
 
 
 class ConfirmResult(BaseModel):
@@ -511,6 +513,10 @@ class ConfirmResult(BaseModel):
     lines_withdrawn: List[ConfirmedLine] = []
     #: The lines this press transferred to Cancel SO (`ConfirmSupplyBody.cancelled_lines`).
     lines_cancelled: List[CancelledLineEcho] = []
+    #: PLAN-BATCH-HELD-CANCEL: whether this press applied a pending AutoCount change to the
+    #: order, and the lines that change retired (the book cancelled them).
+    planning_change_applied: bool = False
+    lines_retired: List[CancelledLineEcho] = []
     #: The physical movements this confirmation raised, and how many it could NOT write
     #: (`PLAN-scm-cs-planning-uat.md` section E). The transfer write is best-effort so a
     #: failure cannot fail a promise already made, but a movement nobody was told about is
@@ -702,6 +708,9 @@ class ConfirmManyOrderResult(BaseModel):
     lines_withdrawn: Optional[List[ConfirmedLine]] = None
     #: The per-order twin of `ConfirmResult.lines_cancelled` (SO-CANCEL-LINE).
     lines_cancelled: Optional[List[CancelledLineEcho]] = None
+    #: The per-order twins of `ConfirmResult.planning_change_applied` / `lines_retired`.
+    planning_change_applied: Optional[bool] = None
+    lines_retired: Optional[List[CancelledLineEcho]] = None
     #: The movements this order's confirmation raised, and how many could NOT be written -
     #: the same pair the single-order `ConfirmResult` carries. The board's toast reads "N
     #: lines confirmed, T transfers proposed", and T comes from here.
