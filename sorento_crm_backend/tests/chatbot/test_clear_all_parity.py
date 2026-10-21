@@ -76,3 +76,16 @@ def test_clear_all_leaves_no_task_no_list_no_question(gate):
     assert new_state.pending is None
     assert question_mod.open_question(new_state.pending, new_state.focus.tasks) is None
     assert not ht.inventory_specs(plan)
+
+
+def test_the_focus_diff_of_a_reset_that_drops_the_list_is_whole():
+    """`turn_runtime.focus_diff` runs on every turn's before/after focus. The wire form leaves
+    an empty `last_list` out, so a reset that drops a stored list must still diff (it raised
+    KeyError: 'last_list' live) and the diff names the list as cleared."""
+    from app.services.chatbot.turn_runtime import focus_diff
+
+    state = _state(True)
+    new_state, _plan = _turn(state, _clear_all(True))
+    diff = focus_diff(state.focus, new_state.focus)
+    assert "last_list" in diff
+    assert diff["last_list"]["before"] and not diff["last_list"]["after"]
