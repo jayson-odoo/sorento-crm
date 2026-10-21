@@ -73,6 +73,8 @@ describe('AC-B3-1: the Lines tab reads Product, Qty, Taken, Remaining, Delivery 
       // replace Qty.
       'No.',
       'Product',
+      // OI-SPLIT-VIEW (UAC B1): the "Split" chip column sits right after Product.
+      'Split',
       'Confirmed',
       'SO Qty',
       'Requested',
@@ -812,9 +814,11 @@ describe('W1 line confirmation column', () => {
     const ids = result.current.map((column) => (column as { id?: string; accessorKey?: string }).id ?? (column as { accessorKey?: string }).accessorKey);
     const productIndex = ids.indexOf('item_code');
     const confirmationIndex = ids.indexOf('confirmation');
+    // OI-SPLIT-VIEW (UAC B1): the Split column sits between Product and Confirmed.
+    expect(ids[productIndex + 1]).toBe('split');
     const soQtyIndex = ids.indexOf('so_qty');
     expect(productIndex).toBeGreaterThanOrEqual(0);
-    expect(confirmationIndex).toBe(productIndex + 1);
+    expect(confirmationIndex).toBe(productIndex + 2);
     expect(soQtyIndex).toBe(confirmationIndex + 1);
     const confirmationColumn = result.current.find(
       (c) => (c as { id?: string }).id === 'confirmation',

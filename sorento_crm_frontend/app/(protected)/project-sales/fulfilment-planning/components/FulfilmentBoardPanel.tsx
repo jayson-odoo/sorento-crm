@@ -13,6 +13,7 @@ import {
   List,
   PackageSearch,
   Settings,
+  Split,
   Undo2,
 } from 'lucide-react';
 import {
@@ -77,7 +78,12 @@ import {
   boardAxis,
   bucketLabelText,
   pressPostsContribution,
+  pressAppliesSplitEdit,
+  excludedFromPress,
+  splitEditsToConfirm,
   contributionMatchesSearch,
+  confirmLinesByOrder,
+  remarkFor,
   confirmSummaryFor,
   decisionHeaderText,
   orderListRows,
@@ -102,6 +108,7 @@ import type {
   BoardGranularity,
   BoardRowAxis,
   ConfirmManyOrderResult,
+  PreviewInquiryRow,
 } from '../../_shared/types/fulfilmentPlanning.types';
 import type {
   PlanningChangeBatch,
@@ -120,6 +127,9 @@ import { PlanningHistorySheet } from './PlanningHistorySheet';
 import { PlanningRefusalTable, hasReasonCode } from './PlanningRefusalTable';
 import { FulfilmentBoardListView } from './FulfilmentBoardListView';
 import { LineSplitDialog } from './LineSplitDialog';
+import { BoardOrderSplitsDialog } from './BoardOrderSplitsDialog';
+import { ConfirmGuideDialog, type ConfirmGuidePage } from './ConfirmGuideDialog';
+import { VERB_LABEL } from '../../_shared/components/OrderInquiryVerbPill';
 import { LineSplitOpenerContext, type LineSplitOpener } from './lineSplitOpener';
 import { FulfilmentBoardMatrix } from './FulfilmentBoardMatrix';
 import { DecisionStrip } from './DecisionStrip';
@@ -224,6 +234,15 @@ const ROW_AXIS_NOUNS: Record<BoardRowAxis, string> = {
 const ROW_AXES: BoardRowAxis[] = ['product', 'sales_order', 'customer', 'project'];
 
 /**
+ * What one Simulate "Would write" row tells purchasing: its verb in the words the board
+ * prints, CANCEL for a row the press retires (`state` cancelled, UAC E1).
+ */
+function previewRowRemark(row: PreviewInquiryRow): string {
+  if (row.state === 'cancelled') return 'CANCEL';
+  return VERB_LABEL[row.verb] ?? row.verb;
+}
+
+/**
  * Whether an order's answer holds anything the press would act on: lines confirmed or
  * withdrawn, a Cancel SO, already-fulfilled lines whose stale decision it clears, or a
  * pending planning change it applies. The real press and Simulate share this one predicate.
@@ -231,8 +250,11 @@ const ROW_AXES: BoardRowAxis[] = ['product', 'sales_order', 'customer', 'project
 function pressHasSomething(
   answer: ConfirmManyOrderResult | undefined,
   order: { cancelled_lines: unknown[]; batch_id: string | null },
+  /** OI-SPLIT-VIEW (UAC A4): the order carries a saved split edit the server applies. */
+  splitEdited = false,
 ): boolean {
   return (
+    splitEdited ||
     (answer?.lines_confirmed?.length ?? 0) > 0 ||
     (answer?.lines_withdrawn?.length ?? 0) > 0 ||
     (answer?.lines_cancelled?.length ?? 0) > 0 ||
@@ -554,6 +576,13 @@ export function FulfilmentBoardPanel({
     psoId: string;
     focusLineId?: string;
   } | null>(null);
+  /** OI-SPLIT-VIEW (UAC D1): the board gear's "View splits <SO>", one order at a time. */
+  const [viewSplits, setViewSplits] = React.useState<{ psoId: string; soNumber: string } | null>(
+    null,
+  );
+  const closeViewSplits = React.useCallback(() => setViewSplits(null), []);
+  /** UAC B8: the board gear, where the View splits popup hands focus back on close. */
+  const boardActionsRef = React.useRef<HTMLButtonElement | null>(null);
   const psoIdBySalesOrder = React.useMemo(
     () =>
       new Map(
@@ -920,6 +949,11 @@ export function FulfilmentBoardPanel({
         // `saveLineDraft`'s own option carries, since this is nothing but a pass-through to it.
         silent?: boolean;
         onFailure?: (message: string) => void;
+        /**
+         * OI-SPLIT-GUIDE (UAC F26): keep the decision the server answered with as this line's
+         * local draft (a remark save reads back what was stored, not what was sent).
+         */
+        adoptSaved?: boolean;
       },
     ): Promise<boolean> => {
       let hadPrevious = false;
@@ -952,9 +986,12 @@ export function FulfilmentBoardPanel({
           // until Confirm freezes a revision.
           pendingSaves.current.add(key);
           try {
-            await saveLineDraft(key, decision, contribution?.sources, {
+            const saved = await saveLineDraft(key, decision, contribution?.sources, {
               silent: options?.silent,
             });
+            if (options?.adoptSaved && saved?.decision) {
+              setDraft((current) => ({ ...current, [key]: saved.decision }));
+            }
           } finally {
             pendingSaves.current.delete(key);
           }
@@ -1306,6 +1343,41 @@ export function FulfilmentBoardPanel({
     () => (board.data?.orders ?? []).filter((order) => order.undo),
     [board.data],
   );
+  // OI-SPLIT-VIEW (UAC D1, D2): the per-order gear items, for every order with a planning
+  // record (the split sheet needs one).
+  const plannedOrders = React.useMemo(
+    () =>
+      (board.data?.orders ?? []).filter(
+        (order): order is typeof order & { project_sales_order_id: string } =>
+          Boolean(order.project_sales_order_id),
+      ),
+    [board.data],
+  );
+  // OI-SPLIT-VIEW (UAC A3): per order, the lines whose saved split edit the next Confirm
+  // applies, as "line <AutoCount no> <item>": exactly the split-edited lines the count above
+  // includes (`splitEditsToConfirm` reads `confirmSummaryFor`'s own rule and draft).
+  const splitEditsByOrder = React.useMemo(() => {
+    const out = new Map<string, string[]>();
+    for (const contribution of splitEditsToConfirm(
+      allContributions,
+      draftWithoutPreMark,
+      pendingBatchSalesOrderIds,
+      { unadoptedSalesOrderIds, batchNamedKeys },
+    )) {
+      const labels = out.get(contribution.sales_order_id) ?? [];
+      labels.push(
+        `line ${contribution.so_line_no ?? contribution.line_no} ${contribution.item_code}`,
+      );
+      out.set(contribution.sales_order_id, labels);
+    }
+    return out;
+  }, [
+    allContributions,
+    draftWithoutPreMark,
+    pendingBatchSalesOrderIds,
+    unadoptedSalesOrderIds,
+    batchNamedKeys,
+  ]);
 
   const confirmMany = useConfirmManyMutation();
   const previewConfirmMany = usePreviewConfirmManyMutation();
@@ -1362,8 +1434,20 @@ export function FulfilmentBoardPanel({
         contributions
           .filter((contribution) => {
             if (contribution.unplannable) return false;
-            if (excludeKeys.has(contribution.key)) return false;
+            // OI-SPLIT-VIEW (UAC A10): a split-edited line cannot be unticked.
+            if (excludedFromPress(contribution, excludeKeys)) return false;
             const decision = draftWithoutPreMark[contribution.key];
+            // OI-SPLIT-VIEW (UAC A4): a saved split edit confirms its order on its own.
+            if (
+              pressAppliesSplitEdit(
+                contribution,
+                decision,
+                pendingBatchSalesOrderIds.has(contribution.sales_order_id),
+                batchNamedKeys,
+              )
+            ) {
+              return true;
+            }
             // A COVERED reject is a WITHDRAWAL this press carries out (owner ruling 23 Sep
             // 2026, `PLAN-board-reject-on-confirmed-line.md`: "we should confirm the
             // rejection") - its order belongs in the batch on that account alone, same as an
@@ -1465,6 +1549,7 @@ export function FulfilmentBoardPanel({
       // reported instead, in the same place a server refusal is reported, so a press that
       // deliberately skipped it does not read as a press that did nothing.
       const skipped: BoardBatchResult[] = [];
+      const splitEditPsoIds = new Set<string>();
       for (const salesOrderId of wantedOrders) {
         const psoId = psoIdBySalesOrder.get(salesOrderId);
         const standing = liveBoard.orders.find(
@@ -1596,7 +1681,26 @@ export function FulfilmentBoardPanel({
         // because a press whose `orders` came out empty with an empty `skipped` never set
         // `batchResults` at all. It is reported beside every other order's outcome instead,
         // in the wording the notice above the block already uses for the lines themselves.
-        if (lines.length === 0 && rejectedLineIds.length === 0 && cancelledLines.length === 0) {
+        // OI-SPLIT-VIEW (UAC A4): a saved split edit is posted as its order with no line of
+        // its own; the server applies every split-edited line of an order it confirms.
+        const splitEdited = contributions.some(
+          (contribution) =>
+            contribution.sales_order_id === salesOrderId &&
+            !excludedFromPress(contribution, excludeKeys) &&
+            pressAppliesSplitEdit(
+              contribution,
+              draftWithoutPreMark[contribution.key],
+              Boolean(orderBatchId),
+              batchNamedKeys,
+            ),
+        );
+        if (splitEdited) splitEditPsoIds.add(orderPsoId);
+        if (
+          lines.length === 0 &&
+          rejectedLineIds.length === 0 &&
+          cancelledLines.length === 0 &&
+          !splitEdited
+        ) {
           // The held-back note above already said why, when that is the whole reason -
           // the generic "had no line..." sentence would only repeat it more vaguely.
           if (heldBackByBatch.length > 0) continue;
@@ -1640,6 +1744,7 @@ export function FulfilmentBoardPanel({
         orders,
         skipped,
         contributions,
+        splitEditPsoIds,
         body: bodyBatchId ? { orders, batch_id: bodyBatchId } : { orders },
       };
     },
@@ -1671,9 +1776,12 @@ export function FulfilmentBoardPanel({
    * throughout - a `Change proposed` line nobody has saved is the SAME "nothing to post" case
    * as a line nobody has touched, so its order never enters the batch on its account alone and
    * its batch row stays pending server-side.
+   *
+   * OI-SPLIT-GUIDE (UAC F6): the guided Confirm's last step runs this press unchanged. It
+   * resolves false when a call failed (the guide stays open), true once the press finished.
    */
-  const runConfirmAll = React.useCallback(async () => {
-    if (!board.data) return;
+  const runConfirmAll = React.useCallback(async (): Promise<boolean> => {
+    if (!board.data) return false;
     setConfirmingAll(true);
     setBatchResults(null);
     setSimulated(false);
@@ -1686,12 +1794,12 @@ export function FulfilmentBoardPanel({
       const built = await buildConfirmOrders(new Set());
       if (!built) {
         if (confirmSummary.toConfirm > 0) toast.error('Nothing could be sent for this press');
-        return;
+        return true;
       }
       const { skipped, contributions } = built;
       if (built.orders.length === 0) {
         if (skipped.length > 0) setBatchResults(skipped);
-        return;
+        return true;
       }
       // DRY RUN FIRST (FULFIL-CONFIRM-SCOPE): the server runs this very body and rolls it back,
       // answering per order which lines it would confirm or withdraw. The press then posts the
@@ -1715,7 +1823,7 @@ export function FulfilmentBoardPanel({
           }
           // An order whose named lines are all already fulfilled confirms nothing new, but the REAL
           // press clears their stale decisions (the dry run rolled that back), so it is still posted.
-          if (pressHasSomething(dryRun, order)) {
+          if (pressHasSomething(dryRun, order, built.splitEditPsoIds.has(order.pso_id))) {
             return true;
           }
           refusals.push({
@@ -1749,7 +1857,7 @@ export function FulfilmentBoardPanel({
       const body = built.body.batch_id ? { orders, batch_id: built.body.batch_id } : { orders };
       if (orders.length === 0) {
         setBatchResults([...skipped, ...refusals]);
-        return;
+        return true;
       }
 
       const posted = await confirmMany.mutateAsync(body);
@@ -1896,9 +2004,11 @@ export function FulfilmentBoardPanel({
         }
         return next;
       });
+      return true;
     } catch {
       // The mutation's own `onError` already toasted the message; nothing here is left to say.
       // Caught only so the rejection does not float unhandled past this async click handler.
+      return false;
     } finally {
       setConfirmingAll(false);
     }
@@ -1910,6 +2020,137 @@ export function FulfilmentBoardPanel({
     previewConfirmMany,
     confirmSummary,
   ]);
+
+  /**
+   * OI-SPLIT-GUIDE (UAC F25, F26): one line's Remark facts, one rule for the guide's pages and
+   * the board's own Split delivery: the purchasing email's words (`saved_remark`), the
+   * planner's own remark kept in the line's saved decision, and whether it is kept there (an
+   * Approve or Amend draft; a line with none keeps its remark as a split, as before).
+   */
+  const remarkFactsOf = React.useCallback(
+    (contribution: BoardContribution) => {
+      const decision = draftWithoutPreMark[contribution.key] ?? contribution.draft?.decision;
+      return {
+        words: contribution.saved_remark ?? null,
+        // UAC F32: the saved decision's remark ('' = cleared), else the confirmed one. A
+        // non-editable line (Reject, Cancel, ...) with a draft has none: the server's words
+        // win there (OI-SPLIT-GEAR-REMARK H7).
+        own:
+          decision === undefined || decision.verdict === 'approved' || decision.verdict === 'amended'
+            ? remarkFor(contribution, decision) || null
+            : null,
+        editable: decision?.verdict === 'approved' || decision?.verdict === 'amended',
+      };
+    },
+    [draftWithoutPreMark],
+  );
+
+  /**
+   * OI-SPLIT-GUIDE (UAC F26): a saved line's own remark is kept in its saved decision (the
+   * same save every decision on the board takes), never as a one-row split.
+   */
+  const saveLineRemarks = React.useCallback(
+    async (changes: ReadonlyMap<string, string>) => {
+      for (const [key, remark] of changes) {
+        const current =
+          draftWithoutPreMark[key] ??
+          allContributions.find((contribution) => contribution.key === key)?.draft?.decision;
+        if (!current) continue;
+        // '' is kept: a cleared remark must not fall back to the confirmed one (UAC F32).
+        const ok = await decide(key, { ...current, remark }, { quiet: true, adoptSaved: true });
+        if (!ok) throw new Error('The remark could not be saved.');
+      }
+      if (changes.size > 0) {
+        toast.success(changes.size === 1 ? 'Remark saved' : `${changes.size} remarks saved`);
+        // The email's words for the line follow what was stored: read the board again.
+        void board.refetch();
+      }
+    },
+    [draftWithoutPreMark, allContributions, decide, board],
+  );
+
+  /**
+   * OI-SPLIT-GUIDE: Confirm (N) opens the guided Confirm (UAC A1), one page per order this
+   * press covers, in board order, listing the lines it covers (UAC F2, F4).
+   */
+  const [guideOpen, setGuideOpen] = React.useState(false);
+  const closeGuide = React.useCallback(() => setGuideOpen(false), []);
+  const guidePages = React.useMemo<ConfirmGuidePage[]>(() => {
+    const covered = confirmLinesByOrder(
+      allContributions,
+      draftWithoutPreMark,
+      pendingBatchSalesOrderIds,
+      { unadoptedSalesOrderIds, batchNamedKeys },
+    );
+    return (board.data?.orders ?? []).flatMap((order) => {
+      const lines = covered.get(order.sales_order_id);
+      if (!lines) return [];
+      return [
+        {
+          psoId: order.project_sales_order_id ?? null,
+          soNumber: order.so_number,
+          covered: lines.map((line) => {
+            // UAC F25, F26: the planner's own remark lives in the line's saved decision.
+            const facts = remarkFactsOf(line);
+            return {
+              lineId: line.project_line_id ?? null,
+              key: line.key,
+              lineNo: line.so_line_no ?? line.line_no,
+              itemCode: line.item_code,
+              location: line.fulfilment_location ?? '',
+              qty: Number(line.qty) || 0,
+              date: line.required_date ?? null,
+              savedRemark: facts.words,
+              ownRemark: facts.own,
+              remarkEditable: facts.editable,
+            };
+          }),
+        },
+      ];
+    });
+  }, [
+    board.data,
+    allContributions,
+    draftWithoutPreMark,
+    pendingBatchSalesOrderIds,
+    unadoptedSalesOrderIds,
+    batchNamedKeys,
+    remarkFactsOf,
+  ]);
+
+  /**
+   * OI-SPLIT-GUIDE (UAC F26): the board's own Split delivery gets the same Remark facts for
+   * the open order's lines with a saved decision, so a saved line's remark is kept in its
+   * draft there too, never as a one-row split.
+   */
+  const dialogRemarks = React.useMemo(() => {
+    if (!lineSplit) return null;
+    const remarks = new Map<string, { words: string | null; own: string | null; editable: boolean }>();
+    const keys = new Map<string, string>();
+    for (const contribution of allContributions) {
+      const lineId = contribution.project_line_id;
+      if (!lineId || psoIdBySalesOrder.get(contribution.sales_order_id) !== lineSplit.psoId)
+        continue;
+      const facts = remarkFactsOf(contribution);
+      // OI-SPLIT-GEAR-REMARK: a line with no draft still hands over its confirmed remark
+      // (display only); only a draft line is saved through its decision.
+      if (!facts.editable && !facts.own) continue;
+      remarks.set(lineId, facts);
+      if (facts.editable) keys.set(lineId, contribution.key);
+    }
+    return {
+      remarks: remarks as ReadonlyMap<string, { words: string | null; own: string | null; editable: boolean }>,
+      save: (changes: ReadonlyMap<string, string>) =>
+        saveLineRemarks(
+          new Map(
+            [...changes].flatMap(([lineId, remark]) => {
+              const key = keys.get(lineId);
+              return key ? [[key, remark] as const] : [];
+            }),
+          ),
+        ),
+    };
+  }, [lineSplit, allContributions, psoIdBySalesOrder, remarkFactsOf, saveLineRemarks]);
 
   /**
    * SIMULATE CONFIRM (admin): the body Confirm would post, sent to the server's dry run. A
@@ -1946,7 +2187,9 @@ export function FulfilmentBoardPanel({
         const labelled = standing ? { ...result, so_number: standing.so_number } : result;
         const posted = built.orders[index];
         // The same "nothing to confirm" reading the real press gives an ok order.
-        return result.ok && posted && !pressHasSomething(result, posted)
+        return result.ok &&
+          posted &&
+          !pressHasSomething(result, posted, built.splitEditPsoIds.has(posted.pso_id))
           ? ({
               ...labelled,
               ok: false,
@@ -2350,6 +2593,7 @@ export function FulfilmentBoardPanel({
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
+                ref={boardActionsRef}
                 type="button"
                 size="sm"
                 variant="outline"
@@ -2406,6 +2650,34 @@ export function FulfilmentBoardPanel({
                   nothing on the board is undoable (AC-UC-04). A refused order keeps its
                   entry so purchasing's reason is where the planner is already looking,
                   rather than a control that silently is not there (AC-UC-03). */}
+              {plannedOrders.length > 0 && (
+                <>
+                  <DropdownMenuSeparator />
+                  {plannedOrders.map((order) => (
+                    <React.Fragment key={order.sales_order_id}>
+                      <DropdownMenuItem
+                        onSelect={() =>
+                          setLineSplit({ open: true, psoId: order.project_sales_order_id })
+                        }
+                      >
+                        <Split className="size-4" aria-hidden />
+                        {`Split delivery ${order.so_number}`}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={() =>
+                          setViewSplits({
+                            psoId: order.project_sales_order_id,
+                            soNumber: order.so_number,
+                          })
+                        }
+                      >
+                        <Split className="size-4" aria-hidden />
+                        {`View splits ${order.so_number}`}
+                      </DropdownMenuItem>
+                    </React.Fragment>
+                  ))}
+                </>
+              )}
               {undoableOrders.length > 0 && (
                 <>
                   <DropdownMenuSeparator />
@@ -2500,7 +2772,7 @@ export function FulfilmentBoardPanel({
                       Boolean(confirmBlockedReason)
                     }
                     title={confirmBlockedReason ?? undefined}
-                    onClick={() => void runConfirmAll()}
+                    onClick={() => setGuideOpen(true)}
                   >
                     {`Confirm (${confirmSummary.toConfirm})`}
                   </Button>
@@ -2510,6 +2782,23 @@ export function FulfilmentBoardPanel({
           ) : null}
         </div>
       </div>
+
+      {/* OI-SPLIT-VIEW (UAC A3): the saved split edits this Confirm applies, per order. */}
+      {splitEditsByOrder.size > 0 ? (
+        <div data-testid="board-split-edits" className="space-y-0.5 text-sm">
+          {[...splitEditsByOrder.entries()].map(([salesOrderId, labels]) => (
+            <div key={salesOrderId} className="flex flex-wrap gap-x-2">
+              {splitEditsByOrder.size > 1 ? (
+                <span className="font-medium">
+                  {board.data?.orders.find((order) => order.sales_order_id === salesOrderId)
+                    ?.so_number ?? ''}
+                </span>
+              ) : null}
+              <span className="break-words">{`Split edits to confirm: ${labels.join(', ')}`}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {/* Why Confirm is off, when it is - stated, never a dead button. */}
       {confirmBlockedReason ? (
@@ -2633,14 +2922,19 @@ export function FulfilmentBoardPanel({
                       <li className="text-sm font-medium">Would write</li>
                       {(result.inquiry_rows ?? []).map((row, index) => (
                         <li key={`row-${index}`} className="text-sm break-words">
-                          {`line ${row.line_no ?? '?'} ${row.item_code ?? ''}: ${row.verb} ${formatQty(String(row.qty))}${
+                          {`line ${row.so_line_no ?? row.line_no ?? '?'} ${row.item_code ?? ''}: ${previewRowRemark(row)} ${formatQty(String(row.qty))}${
                             row.stock_location ? ` at ${row.stock_location}` : ''
-                          }${row.is_new === false ? ' (settles an existing row)' : ''}`}
+                          }${
+                            // A row the press retires is a CANCEL, not a settle (UAC E1).
+                            row.is_new === false && row.state !== 'cancelled'
+                              ? ' (settles an existing row)'
+                              : ''
+                          }`}
                         </li>
                       ))}
                       {(result.transfers ?? []).map((move, index) => (
                         <li key={`move-${index}`} className="text-sm break-words">
-                          {`line ${move.line_no ?? '?'}: ${move.kind} ${formatQty(String(move.qty))} ${
+                          {`line ${move.so_line_no ?? move.line_no ?? '?'}: ${move.kind} ${formatQty(String(move.qty))} ${
                             move.from_location ?? '?'
                           } -> ${move.to_location ?? '?'}`}
                         </li>
@@ -3205,11 +3499,29 @@ export function FulfilmentBoardPanel({
           initialSoId={historySoId}
         />
       )}
+      {viewSplits ? (
+        <BoardOrderSplitsDialog
+          psoId={viewSplits.psoId}
+          soNumber={viewSplits.soNumber}
+          onClose={closeViewSplits}
+          returnFocusRef={boardActionsRef}
+        />
+      ) : null}
+      {guideOpen ? (
+        <ConfirmGuideDialog
+          pages={guidePages}
+          runConfirm={runConfirmAll}
+          saveRemarks={saveLineRemarks}
+          onClose={closeGuide}
+        />
+      ) : null}
       {lineSplit ? (
         <LineSplitDialog
           open={lineSplit.open}
           psoId={lineSplit.psoId}
           focusLineId={lineSplit.focusLineId}
+          lineRemarks={dialogRemarks?.remarks}
+          onSaveRemarks={dialogRemarks?.save}
           onOpenChange={(next) =>
             setLineSplit((current) => (current ? { ...current, open: next } : current))
           }

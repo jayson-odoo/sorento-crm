@@ -361,7 +361,7 @@ describe('AC-S2-6b: Plan additionally requires demand_class === project', () => 
 
     openGear();
     const items = screen.getAllByRole('menuitem').map((item) => (item.textContent ?? '').trim());
-    expect(items).toEqual(['Edit', 'Delete']);
+    expect(items).toEqual(['Edit', 'View splits', 'Delete']);
   });
 
   it('AC-S2-6b-2: permission + project demand_class -> Plan link present', () => {
@@ -384,7 +384,7 @@ describe('AC-S2-7: Edit moved into the gear, above Delete', () => {
 
     openGear();
     const items = screen.getAllByRole('menuitem').map((item) => (item.textContent ?? '').trim());
-    expect(items).toEqual(['Edit', 'Delete']);
+    expect(items).toEqual(['Edit', 'View splits', 'Delete']);
 
     fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }));
 

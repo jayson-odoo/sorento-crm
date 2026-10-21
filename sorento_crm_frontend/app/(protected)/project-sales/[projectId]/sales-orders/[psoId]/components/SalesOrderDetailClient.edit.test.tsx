@@ -432,7 +432,7 @@ describe('deleting the draft', () => {
 
     await waitFor(() => expect(deleteProjectSalesOrder).toHaveBeenCalledWith('so-1'));
     await waitFor(() =>
-      expect(push).toHaveBeenCalledWith('/project-sales/p1?tab=sales-orders'),
+      expect(push).toHaveBeenCalledWith('/project-sales/p1?tab=orders'),
     );
   });
 

@@ -435,6 +435,11 @@ class SalesOrderService:
         # cell), so this is the detail screen's own seam onto the same "where it went"
         # fact the board's dialog reads. Same gate: the list has no column for it.
         planning_changes = self._line_planning_changes(so) if line_planning else {}
+        # OI-SPLIT-VIEW (UAC B1): each line's split popup, off the one serializer the OI
+        # reads use. Same gate: the list has no column for it.
+        split_views = self._line_split_views(so) if line_planning else {}
+        # OI-SPLIT-VIEW (UAC E5): the split sheet payload the read-only popups draw. Same gate.
+        line_splits = self._line_splits(so) if line_planning else None
         # AC-CANCEL-CRM (owner hand test): which AutoCount Cancel SO documents make up each
         # line's `qty_cancelled`, and how each was matched. One read for the order.
         from app.models.autocount_cancel import AutocountCancelLine
@@ -529,6 +534,7 @@ class SalesOrderService:
                 # caller asked for them (`line_planning`), and null on a line nobody has
                 # raised or decided anything on - which is most of the book.
                 "order_inquiry": inquiries.get(str(ln.id)),
+                "split_view": split_views.get(str(ln.id)),
                 # AC-I9 / S7: WHERE this line's Buy sits - the order-inquiry link(s) a
                 # PROJECT line carries first, then a RETAIL line's own SPO coverage (S7,
                 # AC-G2..G6) after them. `None` when NEITHER exists (no inquiry row covers
@@ -616,6 +622,7 @@ class SalesOrderService:
             "line_count": len(lines),
             "open_line_count": open_lines,
             "lines": lines,
+            "line_splits": line_splits,
             # Where the order came from. `inquiry` is its own answer because an order Joey's
             # sheet created is one CS has never seen, and a buyer looking at the list is
             # entitled to know which of the two he is reading.
@@ -718,6 +725,49 @@ class SalesOrderService:
                 "rejected_at": entry.get("rejected_at"),
             }
         return out
+
+    def _line_split_views(self, so: SalesOrder) -> dict[str, dict]:
+        """OI-SPLIT-VIEW (UAC B1, B5): `core line id -> split_view` for the lines of this order
+        whose planning mirror has saved splits (`LineSplitService.split_views`, the one
+        serializer). The mirror is found by `core_sales_order_line_id`; an order with no
+        project order has none."""
+        from app.services.project_line_split_service import LineSplitService
+
+        core_ids = [str(ln.id) for ln in so.lines]
+        if not core_ids:
+            return {}
+        mirror_to_core = {
+            str(mirror_id): str(core_id)
+            for mirror_id, core_id in self.db.query(
+                ProjectSalesOrderLine.id, ProjectSalesOrderLine.core_sales_order_line_id
+            )
+            .filter(ProjectSalesOrderLine.core_sales_order_line_id.in_(core_ids))
+            .all()
+        }
+        if not mirror_to_core:
+            return {}
+        views = LineSplitService(self.db).split_views(list(mirror_to_core))
+        return {mirror_to_core[mirror_id]: view for mirror_id, view in views.items()}
+
+    def _line_splits(self, so: SalesOrder) -> Optional[dict]:
+        """OI-SPLIT-VIEW (UAC E5): the order's split sheet (`LineSplitService.read`, the payload
+        `GET .../line-splits` serves) when a line of its project order has saved splits, else
+        `None`. Scoped like the rest of this read; no project order means no splits."""
+        from app.models.project_so import ProjectSalesOrder, SOLineSplit
+        from app.services.project_line_split_service import LineSplitService
+
+        # One project order per core order (`so_id` is unique where set).
+        order = self.db.query(ProjectSalesOrder).filter(ProjectSalesOrder.so_id == so.id).first()
+        if order is None:
+            return None
+        has_splits = (
+            self.db.query(SOLineSplit.id)
+            .filter(SOLineSplit.project_sales_order_id == str(order.id))
+            .first()
+        )
+        if has_splits is None:
+            return None
+        return LineSplitService(self.db).read(order)
 
     def _line_planning_changes(self, so: SalesOrder) -> dict[str, dict]:
         """The latest planning-change row for each of this order's lines, WITHIN the
