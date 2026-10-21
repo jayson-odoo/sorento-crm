@@ -195,9 +195,9 @@ def _pdf_text(pdf_bytes: bytes) -> str:
         return "\n".join(page.get_text() for page in doc)
 
 
-def test_detail_pdf_task_renders_the_email_layout(api, monkeypatch):
-    """The real task + render: a PDF whose text carries the email's S/O table and its
-    item lines, stored as `application/pdf` under the OI's own download row."""
+def test_detail_pdf_task_renders_the_excel_sheet(api, monkeypatch):
+    """The real task + render: a PDF of the OI Excel sheet (its headings and the row's
+    values), stored as `application/pdf` under the OI's own download row."""
     from app.services.download_service import DownloadService
     from app.tasks import export_tasks
 
@@ -227,9 +227,10 @@ def test_detail_pdf_task_renders_the_email_layout(api, monkeypatch):
     assert f"exports/order-inquiry-pdf/{dl.id}/" in captured["path"], captured["path"]
     assert captured["bytes"][:4] == b"%PDF"
     pdf = _pdf_text(captured["bytes"])
-    for heading in ("ORDER INQUIRY", "S/O NO", "SO DATE", "CUSTOMER", "PROJECT",
-                    "LOCATION", "ITEM CODE", "QTY", "DELIVERY", "REMARK"):
-        assert heading in pdf, f"{heading!r} missing from the PDF: {pdf}"
+    flat = " ".join(pdf.split())
+    for heading in ("ORDER INQUIRY", "SO DATE", "S/O NO", "ITEM CODE", "QTY", "SUPPLIER",
+                    "LOCATION", "ACKNOWLEDGED", "REMARK"):
+        assert heading in flat, f"{heading!r} missing from the PDF: {flat}"
     assert seeded["core"].so_number in pdf
     assert "03/09/2026" in pdf
     assert item_code in pdf and "BRW-BB" in pdf
@@ -333,64 +334,124 @@ def test_worklist_pdf_task_never_prints_another_companys_rows(api, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# Layout (pure): the email's columns and split-row rule
+# Layout (pure): the Excel sheet as a PDF - one table, the xlsx's own header and rows
+# (owner, 21 Oct: "the pdf needs to be like Excel la, just in pdf format ... 1 table")
 # --------------------------------------------------------------------------- #
 
-
-def test_layout_one_block_per_so_and_split_rows_follow_the_email():
-    from app.services.order_inquiry_pdf import build_html, orders
-
-    rows = [
-        {"so_number": "SO2", "so_date": date(2026, 9, 2), "customer_name": "B CO",
-         "project_title": "P2", "so_line_id": "l2", "item_code": "B1", "location": "KL",
-         "qty": "5", "delivery_date": date(2026, 10, 1), "split_remark": "ORDER"},
-        {"so_number": "SO1", "so_date": date(2026, 9, 1), "customer_name": "A CO",
-         "project_title": "P1", "so_line_id": "l1", "item_code": "A1", "location": "JB",
-         "qty": "10", "delivery_date": date(2026, 10, 5), "change_qty": 4,
-         "change_date": date(2026, 11, 1), "split_remark": "SPLIT 1",
-         "plan_key": (date(2026, 10, 5), "l1", 0)},
-        {"so_number": "SO1", "so_date": date(2026, 9, 1), "customer_name": "A CO",
-         "project_title": "P1", "so_line_id": "l1", "item_code": "A1", "location": "JB",
-         "qty": None, "delivery_date": None, "change_qty": 6, "change_date": None,
-         "split_remark": "SPLIT 2", "plan_key": (date(2026, 10, 5), "l1", 1)},
-    ]
-
-    built = orders(rows)
-
-    assert [o["so_number"] for o in built] == ["SO1", "SO2"]
-    first, second = built[0]["lines"]
-    assert first == {"location": "JB", "item_code": "A1", "qty": "10", "new_qty": "4",
-                     "delivery": "05/10/2026", "new_date": "01/11/2026", "remark": "SPLIT 1"}
-    # A split line's later row: LOCATION / ITEM CODE / QTY / DELIVERY blank (AC-G6, AC-G11).
-    assert second["location"] == second["item_code"] == second["qty"] == second["delivery"] == ""
-    assert second["new_qty"] == "6" and second["remark"] == "SPLIT 2"
-
-    html = build_html(rows)
-    # NEW QTY / NEW DATE only on the S/O whose lines moved, as the email.
-    so1, so2 = html.split('<div class="so">')[1:]
-    assert "NEW QTY" in so1 and "NEW DATE" in so1
-    assert "NEW QTY" not in so2 and "NEW DATE" not in so2
-    assert "01/09/2026" in so1 and "A CO" in so1 and "P1" in so1
+from html.parser import HTMLParser
 
 
-def test_layout_lines_follow_the_so_line_number_like_the_email():
-    """`_handover_sort_key`: SO line number ascending, a row naming no line last."""
-    from app.services.order_inquiry_pdf import orders
+class _Tables(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.tables = 0
+        self.rows: list[list[str]] = []
+        self._cell: list[str] | None = None
 
-    rows = [
-        {"so_number": "SO1", "so_line_no": None, "so_line_id": None, "item_code": "AAA"},
-        {"so_number": "SO1", "so_line_no": 2, "so_line_id": "f-uuid", "item_code": "BBB"},
-        {"so_number": "SO1", "so_line_no": 1, "so_line_id": "z-uuid", "item_code": "ZZZ"},
-        {"so_number": "SO1", "so_line_no": 10, "so_line_id": "a-uuid", "item_code": "CCC"},
-    ]
+    def handle_starttag(self, tag, attrs):
+        if tag == "table":
+            self.tables += 1
+        elif tag == "tr":
+            self.rows.append([])
+        elif tag in ("th", "td"):
+            self._cell = []
 
-    codes = [line["item_code"] for line in orders(rows)[0]["lines"]]
+    def handle_endtag(self, tag):
+        if tag in ("th", "td") and self._cell is not None:
+            self.rows[-1].append("".join(self._cell))
+            self._cell = None
 
-    assert codes == ["ZZZ", "BBB", "CCC", "AAA"]
+    def handle_data(self, data):
+        if self._cell is not None:
+            self._cell.append(data)
 
 
-def test_layout_escapes_text():
-    from app.services.order_inquiry_pdf import build_html
+_SHEET_ROWS = [
+    {"so_date": date(2025, 12, 1), "so_number": "SO380096", "item_code": "CWCY605",
+     "qty": "5", "delivery_date": date(2026, 8, 3), "supplier": "TAIYANG",
+     "project_customer": "SHING SOON HENG HARDWARE SDN BHD / LOT 1940 / MUAR",
+     "location": "BRW-BB", "split_remark": "ORDER"},
+    {"so_date": date(2025, 12, 1), "so_number": "SO380096", "item_code": "CWCY605",
+     "qty": "3", "delivery_date": date(2026, 9, 1), "supplier": "TAIYANG",
+     "project_customer": "SHING SOON HENG HARDWARE SDN BHD / LOT 1940 / MUAR",
+     "location": "BRW-BB"},
+    {"so_date": date(2026, 9, 14), "so_number": "SO394881", "item_code": "TGB1200W",
+     "qty": "12", "delivery_date": None, "supplier": None,
+     "project_customer": "BUIMACO SDN BHD / TUJU RESIDENCE", "location": "KLANG"},
+]
 
-    html = build_html([{"so_number": "SO<1>", "item_code": "<b>x</b>", "split_remark": "a&b"}])
+
+def _xlsx_rows(rows):
+    """The OI workbook's own header + data rows, read back from the real writer."""
+    from openpyxl import Workbook
+
+    from app.services.order_inquiry_worklist_service import (
+        EXPORT_TITLE, OrderInquiryWorklistService,
+    )
+
+    wb = Workbook()
+    wb.remove(wb.active)
+    OrderInquiryWorklistService(db=None)._write_sheet(wb, EXPORT_TITLE, rows)
+    ws = wb[EXPORT_TITLE]
+    return [[cell.value for cell in row] for row in ws.iter_rows(min_row=2)]
+
+
+def _pdf_html(rows):
+    from app.services import order_inquiry_pdf
+    from app.services.order_inquiry_worklist_service import (
+        EXPORT_HEADINGS, OrderInquiryWorklistService,
+    )
+
+    values = OrderInquiryWorklistService(db=None)._sheet_values(rows)
+    return order_inquiry_pdf.build_html(EXPORT_HEADINGS, values)
+
+
+def test_pdf_is_one_table_whose_header_is_the_xlsx_header_row():
+    html = _pdf_html(_SHEET_ROWS)
+    parsed = _Tables()
+    parsed.feed(html)
+
+    xlsx = _xlsx_rows(_SHEET_ROWS)
+    assert parsed.tables == 1, f"expected ONE table, got {parsed.tables}"
+    assert parsed.rows[0] == list(xlsx[0]), parsed.rows[0]
+    assert len(parsed.rows) == len(xlsx), "one PDF row per xlsx row"
+
+
+def test_pdf_rows_are_the_xlsx_rows_cell_for_cell():
+    from app.services.order_inquiry_pdf import cell_text
+
+    parsed = _Tables()
+    parsed.feed(_pdf_html(_SHEET_ROWS))
+    xlsx = _xlsx_rows(_SHEET_ROWS)
+
+    assert parsed.rows[1:] == [[cell_text(v) for v in row] for row in xlsx[1:]]
+    # Spot values the way a reader sees them: dd/mm/yyyy dates, whole quantities, the
+    # TOTAL QTY on the last row of a supplier + item code run.
+    flat = [cell for row in parsed.rows[1:] for cell in row]
+    assert "01/12/2025" in flat and "03/08/2026" in flat
+    assert "8" in flat  # TOTAL QTY of the CWCY605 run (5 + 3)
+    assert "5" in flat and "5.0" not in flat
+
+
+def test_pdf_wears_the_house_style_landscape_with_a_repeating_header():
+    html = _pdf_html(_SHEET_ROWS)
+
+    assert "size: A4 landscape" in html
+    assert "display: table-header-group" in html  # header row repeats on every page
+    assert "#404040" in html and "#ffffff" in html.lower()  # dark header, white text
+    assert "1px solid" in html and "wrap" in html
+
+
+def test_pdf_with_no_rows_is_still_the_one_table_with_its_header():
+    parsed = _Tables()
+    parsed.feed(_pdf_html([]))
+    from app.services.order_inquiry_worklist_service import EXPORT_HEADINGS
+
+    assert parsed.tables == 1 and parsed.rows[0] == list(EXPORT_HEADINGS)
+
+
+def test_pdf_escapes_text():
+    from app.services import order_inquiry_pdf
+
+    html = order_inquiry_pdf.build_html(("A", "B"), [["<b>x</b>", "a&b"]])
     assert "<b>x</b>" not in html and "&lt;b&gt;x&lt;/b&gt;" in html and "a&amp;b" in html

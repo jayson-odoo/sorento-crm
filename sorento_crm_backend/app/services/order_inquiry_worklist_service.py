@@ -3404,12 +3404,14 @@ class OrderInquiryWorklistService:
         return filename, buffer.getvalue()
 
     def export_pdf(self, **filters) -> Tuple[str, bytes]:
-        """The same rows as `export_xlsx`, printed in the OI email's layout (OI-DOWNLOAD,
-        `app/services/order_inquiry_pdf.py`)."""
+        """`export_xlsx`'s sheet as a PDF (OI-DOWNLOAD, owner: "the pdf needs to be like Excel
+        la, just in pdf format ... 1 table"): the same title, header row and rows, from the same
+        `_sheet_values`, in the house style (`app/services/order_inquiry_pdf.py`)."""
         from app.services import order_inquiry_pdf
 
         filename = f"order-inquiry-{date.today().isoformat()}.pdf"
-        return filename, order_inquiry_pdf.render_pdf(self._all_rows(**filters))
+        values = self._sheet_values(self._all_rows(**filters))
+        return filename, order_inquiry_pdf.render_pdf(EXPORT_HEADINGS, values)
 
     def _all_rows(self, **filters) -> List[Dict[str, Any]]:
         """The same set the list serves, unpaged, in the workbook's own order.
@@ -3589,6 +3591,17 @@ class OrderInquiryWorklistService:
         sheet = workbook.create_sheet(title=title[:31])
         sheet.append([EXPORT_TITLE])
         sheet.append(list(columns))
+        for values in self._sheet_values(rows, columns=columns):
+            sheet.append(values)
+        _style_sheet(sheet, columns)
+
+    def _sheet_values(
+        self, rows: Sequence[Dict[str, Any]], *, columns: Sequence[str] = EXPORT_HEADINGS
+    ) -> List[List[Any]]:
+        """The sheet's data rows under `columns`, in the sheet's order - the ONE source the
+        workbook (`_write_sheet`) and the PDF (`export_pdf`, OI-DOWNLOAD owner ruling: "the pdf
+        needs to be like Excel la") both print."""
+        out: List[List[Any]] = []
         # Without CHANGE QUANTITY (the 10-column worksheet) a split line's rows print each
         # row's own qty and date (AC-G13), never a blank QTY.
         own_figures = "CHANGE QUANTITY" not in columns
@@ -3650,8 +3663,8 @@ class OrderInquiryWorklistService:
                 # `columns` may be a PREFIX of `EXPORT_HEADINGS` (Lane C's worksheet, no
                 # ACKNOWLEDGED / TAKEN / REMAINING) - cut the row to match so the sheet
                 # never carries more cells than it has headings for.
-                sheet.append(values[: len(columns)])
-        _style_sheet(sheet, columns)
+                out.append(values[: len(columns)])
+        return out
 
 
 #: OI-DOWNLOAD (owner, 21 Oct: "nicer, like the LOW STOCK REPORT"): each heading's width, by
