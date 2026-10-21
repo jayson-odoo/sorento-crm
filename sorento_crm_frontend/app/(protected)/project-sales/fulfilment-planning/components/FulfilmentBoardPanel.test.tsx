@@ -5374,6 +5374,49 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
     expect(block).not.toHaveTextContent('pending');
   });
 
+  it('COUNT-DISPLAY (crew audit c): a decision on one order beside two change-only orders reads Confirm (1) and names both changes', async () => {
+    getPlanningChangeBatch.mockResolvedValue({
+      id: 'b-1',
+      created_at: '2026-09-01T00:00:00Z',
+      applied_at: null,
+      applied_by_name: null,
+      orders: [
+        { so_number: 'SO398322', rows: [{ id: 'pcr-b', project_line_id: 'pl-so-b-2', applied_state: 'pending' }] },
+        { so_number: 'SO400001', rows: [{ id: 'pcr-c', project_line_id: 'pl-so-c-3', applied_state: 'pending' }] },
+      ],
+    });
+    const built = allSaved(
+      boardOf([
+        demand({ line_no: 1 }),
+        demand({ sales_order_id: 'so-b', so_number: 'SO398322', line_no: 2, item_code: 'ZZT-B' }),
+        demand({ sales_order_id: 'so-c', so_number: 'SO400001', line_no: 3, item_code: 'ZZT-C' }),
+      ]),
+    );
+    getPlanningBoard.mockResolvedValue(
+      withContribution(
+        {
+          ...built,
+          orders: built.orders.map((order) =>
+            order.sales_order_id === 'so-a' ? order : { ...order, pending_change_batch_id: 'b-1' },
+          ),
+        },
+        (entry) => entry.sales_order_id !== 'so-a',
+        (entry) => ({ ...entry, cancelled: true, covered: false, draft: null }),
+      ),
+    );
+    renderPanel(['SO403340', 'SO398322', 'SO400001']);
+    await waitFor(() =>
+      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent(
+        'SO398322: from 1 Sep, 1 old line (ZZT-B) is retired',
+      ),
+    );
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)');
+    const note = screen.getByTestId('board-autocount-change-note');
+    expect(note).toHaveTextContent('Also applies the AutoCount change on 2 orders');
+    expect(note).toHaveTextContent('SO400001: from 1 Sep, 1 old line (ZZT-C) is retired');
+    expect(note).not.toHaveTextContent('SO403340');
+  });
+
   it('COUNT-DISPLAY (crew ruling b): two orders with only pending changes read Apply AutoCount changes (2 orders)', async () => {
     getPlanningChangeBatch.mockResolvedValue({
       id: 'b-1',
