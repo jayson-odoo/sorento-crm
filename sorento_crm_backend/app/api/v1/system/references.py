@@ -39,6 +39,7 @@ from app.services.entity_resolver import (
     token_word_coverage_for_rows,
 )
 from app.services import resolver_code_reader as _resolver_code_reader
+from app.services.product_spec_understanding import CHAT_TURN_MODEL_TIMEOUT_SECONDS
 from app.services.error_handler import AppException
 
 
@@ -1873,6 +1874,7 @@ def _unknown_value_members(
         allow_model=False,
         user_id=current_user.get("id"),
         log_usage=False,
+        model_timeout=CHAT_TURN_MODEL_TIMEOUT_SECONDS,
     )
     brand_entry = next((e for e in specs if e.get("key") == "brand"), None)
     specs = _without_hidden_specs([e for e in specs if e.get("key") not in ("brand", key)], hidden)
@@ -3468,6 +3470,7 @@ def resolve_reference_post(
             allow_model=False,
             user_id=current_user.get("id"),
             log_usage=not payload.dry_run,
+            model_timeout=CHAT_TURN_MODEL_TIMEOUT_SECONDS,
         )
         specs = _with_parser_brand(specs, payload.brand_tokens)
         # Owner a35818889 (b): a hidden key the customer NAMED (a strict entry) never narrows the set;
@@ -3746,6 +3749,7 @@ def resolve_reference_post(
                 # D14: a dry run reads the sentence exactly the same way and simply does
                 # not write the usage row for it.
                 log_usage=not payload.dry_run,
+                model_timeout=CHAT_TURN_MODEL_TIMEOUT_SECONDS,
             )
         )
         specs = _with_parser_brand(specs, payload.brand_tokens)

@@ -448,10 +448,17 @@ def test_w2_the_owner_sequence_30_then_10_lists_31_to_40(chat, world, monkeypatc
 # --------------------------------------------------------------------------- #
 
 
-def test_w3_which_basin_has_cert_after_a_water_closet_set_is_a_new_certificate_set(chat, world, small_list):
+def test_w3_which_basin_has_cert_after_a_water_closet_set_is_a_new_certificate_set(chat, world, small_list, monkeypatch):
     """Owner turns 1 to 4, the exact sequence: the fourth answered "Product:
     SRTWC286-SH-NEW-P, SRTWC286-SH-P, ..." (the carried water closet codes). The parser
     reads the listed codes back off the conversation as earlier-turn entities."""
+    # CHAT-RELEASE-1021 (crew answer (b) on #1809): a file / certificate set longer than one page
+    # is listed only with the composer on (off, it is withheld as on main:
+    # tests/chatbot/test_set_file_send_cap.py), so this listing scenario runs with it on.
+    from tests.chatbot.test_composers_stock_xd import _set_gate
+
+    _set_gate(monkeypatch, True)
+
     chat.say("which water closet has stock, p trap", _wc_ptrap())
     page1 = chat.say("2", _bare(top_n=2))
     page2 = chat.say("2", _bare(top_n=2))
@@ -484,12 +491,19 @@ def test_w3_which_basin_has_cert_after_a_water_closet_set_is_a_new_certificate_s
     "carried", ["clean", "old_class_words", "old_codes"], ids=["parser_clean", "parser_carries_old_words", "parser_carries_old_codes"]
 )
 def test_w3_a_new_class_word_replaces_the_carried_set_whatever_the_parser_carries(
-    chat, world, small_list, carried
+    chat, world, small_list, carried, monkeypatch
 ):
     """The live parser can hand the earlier subject back with `current_message: false`
     beside the new class word: the old class and spec words, or the old set's codes it
     read off the listed rows. The new word still starts a new set, and nothing of the
     old set is named (owner turn 4 printed "Product: SRTWC286-SH-NEW-P, ...")."""
+    # CHAT-RELEASE-1021 (crew answer (b) on #1809): a file / certificate set longer than one page
+    # is listed only with the composer on (off, it is withheld as on main:
+    # tests/chatbot/test_set_file_send_cap.py), so this listing scenario runs with it on.
+    from tests.chatbot.test_composers_stock_xd import _set_gate
+
+    _set_gate(monkeypatch, True)
+
     chat.say("which water closet has stock, p trap", _wc_ptrap())
     chat.say("2", _bare(top_n=2))
     old = {

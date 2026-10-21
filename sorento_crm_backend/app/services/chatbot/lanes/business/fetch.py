@@ -634,13 +634,17 @@ def _set_page(
     build_header: Any,
     cap: int,
     end_note: str = "",
+    file_cap: int | None = None,
 ) -> tuple[str | None, dict[str, int], list[Any] | None]:
     """CHAT-COMPOSER: one set page as ONE WhatsApp message. The page ends where the product
     code changes (every company row of a listed code rides with it) at the last block that keeps
     the reply (header, rows, the "more" line, other brands, footer) within
     `sets.MESSAGE_MAX_CHARS`, also after ms / zh localization; the header states the range of
     codes actually listed and the "more" line the products the next page will show. Returns
-    `(reply, window, answers)`; `reply` is None when nothing differs from the plain page."""
+    `(reply, window, answers)`; `reply` is None when nothing differs from the plain page.
+
+    `file_cap` (CHAT-RELEASE-1021): the page also ends where the files of its rows would pass
+    it, so a page never sends more than one page of files (`_page_files`)."""
     from app.services.chatbot.composers import sets as composers_sets
 
     pre, post = msg[:rows_start], msg[rows_end:]
@@ -686,12 +690,15 @@ def _set_page(
         for k in range(n_rows, 0, -1)
         if k == n_rows or _row_code(row_items[k - 1]) != _row_code(row_items[k])
     ]
+    def files_fit(k: int) -> bool:
+        return file_cap is None or len(_row_file_urls(row_items[:k])) <= file_cap
+
     full, n_full = assemble(n_rows)
     text, n, k = full, n_full, n_rows
     for candidate in ends:
         text, n = assemble(candidate) if candidate != n_rows else (full, n_full)
         k = candidate
-        if width(text) <= composers_sets.MESSAGE_MAX_CHARS:
+        if width(text) <= composers_sets.MESSAGE_MAX_CHARS and files_fit(candidate):
             break
     window = {
         "first": offset + 1,
@@ -703,6 +710,33 @@ def _set_page(
     answers = list(source[: row_idx[k - 1] + 1]) if cut else None
     unchanged = text == f"{build_header(n_full)}\n\n{msg.strip()}" and not cut
     return (None if unchanged else text), window, answers
+
+
+def _row_file_urls(rows: list[Any]) -> list[str]:
+    """The distinct file urls of printed rows, in row order (the presenter's `file_urls`)."""
+    urls: dict[str, None] = {}
+    for it in rows:
+        for u in jsc.array(jsc.get(it, "file_urls")):
+            if isinstance(u, str) and u:
+                urls.setdefault(u, None)
+    return list(urls)
+
+
+def _page_files(attachments: list[Any], rows: list[Any], cap: int) -> list[Any]:
+    """CHAT-RELEASE-1021 (crew review of #1809): what a counted set's page sends. Only the files
+    of the rows it lists, and no more than `cap` of them (the capped-list page size), cut at a
+    product boundary so a product's files go out together or on its own page. Rows that carry
+    no `file_urls` say nothing about which file is whose, so then only the cap applies."""
+    if not any(jsc.array(jsc.get(it, "file_urls")) for it in rows):
+        return list(attachments[:cap])
+    keep: list[str] = []
+    for it in rows:
+        urls = [u for u in jsc.array(jsc.get(it, "file_urls")) if isinstance(u, str) and u and u not in keep]
+        if keep and len(keep) + len(urls) > cap:
+            break
+        keep.extend(urls)
+    wanted = set(keep[:cap])
+    return [a for a in attachments if isinstance(a, dict) and a.get("url") in wanted]
 
 
 def _set_list_size(semantic_input: Any) -> int:
@@ -3911,6 +3945,10 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     set_header: str | None = None
     set_window: dict[str, int] | None = None
     page_items: list[Any] | None = None
+    # CHAT-RELEASE-1021 (crew answer (b) on #1809): composer off, a file / certificate set
+    # longer than one page is withheld as main withholds it - the count, no rows, no files -
+    # since nothing there pages it and listing it would send every listed product's files.
+    set_withheld = False
     if predicate is not None:
         from app.services.chatbot.lanes.business import answer as answer_mod
 
@@ -3938,7 +3976,13 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         # W4: a page that continues a list starts past what was already listed.
         offset = int(jsc.get(predicate, "offset") or 0)
         remaining = max(qualifying_total - offset, 0)
-        if named is None:
+        from app.services.chatbot import composers
+
+        file_leg = bool(jsc.get(require, "certificate") or jsc.get(require, "attachment_type"))
+        if named is None and file_leg and qualifying_total > answer_mod.SET_LIST_MAX and not composers.enabled():
+            shown = 0
+            set_withheld = True
+        elif named is None:
             # SET-STOCK-RENDER (owner, 16 Oct 2026: "it should be unified" with the code
             # answer): a set longer than one reply lists its first `SET_LIST_MAX`, never a
             # breakdown by the next attribute; the header says "showing 1 to 50".
@@ -3950,7 +3994,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         # cap rendered fewer PRODUCTS than were sent, and the header must say
         # "Here are the first N" over those, never claim the list is complete.
         rendered = _rendered_product_count(e.get("items") or [])
-        if rendered is not None and rendered < shown:
+        if rendered is not None and rendered < shown and not set_withheld:
             shown = rendered
         header = answer_mod.build_set_header(
             qualifying_total,
@@ -4028,8 +4072,11 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
                 ),
                 cap=answer_mod.SET_LIST_MAX,
                 end_note=end_note,
+                file_cap=answer_mod.SET_LIST_MAX,
             )
-        if paged_msg is not None:
+        if set_withheld:
+            msg = f"{header}\n\n{other_brands}" if other_brands else header
+        elif paged_msg is not None:
             msg = paged_msg
             set_header = msg.split("\n\n", 1)[0]
         else:
@@ -4080,6 +4127,21 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     }
     if set_window is not None:
         out["set_window"] = set_window
+    from app.services.chatbot import composers
+
+    set_files: list[Any] | None = [] if set_withheld else None
+    if set_withheld:
+        out["answers"] = []
+    elif predicate is not None and e.get("attachments") and composers.enabled():
+        from app.services.chatbot.lanes.business import answer as answer_mod
+
+        # CHAT-RELEASE-1021: a counted set sends the files of the products this page lists, at
+        # most one page of them; the rest is never sent at once (crew review of #1809).
+        set_files = _page_files(
+            e.get("attachments") or [],
+            page_items if page_items is not None else (e.get("items") or []),
+            answer_mod.SET_LIST_MAX,
+        )
     # Spread-in, not defaulted: a reply with no summary keeps EXACTLY the keys it has today.
     if qs_render:
         out["summary_items"] = page_items if page_items is not None else e["summary_items"]
@@ -4087,7 +4149,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         out["groups"] = e["groups"]
     out.update(
         {
-            "attachments": e.get("attachments") or [],
+            "attachments": set_files if set_files is not None else (e.get("attachments") or []),
             "action_links": e.get("action_links") or [],
             "last_updated_at": e.get("last_updated_at") or None,
             "has_result": bool(jsc.truthy(e.get("has_result"))),

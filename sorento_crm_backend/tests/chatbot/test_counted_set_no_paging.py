@@ -234,6 +234,13 @@ def test_more_after_a_listed_set_pages_nothing(session_factory, stub_parser, stu
 def test_a_longer_set_states_the_count_asks_and_lists_nothing(
     session_factory, stub_parser, stub_access, seven_taps, monkeypatch
 ):
+    # CHAT-RELEASE-1021 (crew answer (b) on #1809): a file / certificate set longer than one page
+    # is listed only with the composer on (off, it is withheld as on main:
+    # tests/chatbot/test_set_file_send_cap.py), so this listing scenario runs with it on.
+    from tests.chatbot.test_composers_stock_xd import _set_gate
+
+    _set_gate(monkeypatch, True)
+
     from app.services.chatbot.lanes.business import answer
 
     monkeypatch.setattr(answer, "SET_LIST_MAX", 5)
