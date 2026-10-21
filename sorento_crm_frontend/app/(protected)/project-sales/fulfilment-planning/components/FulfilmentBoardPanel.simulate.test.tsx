@@ -118,6 +118,7 @@ import {
   type BoardDemandLine,
 } from '../../_shared/lib/__testsupport__/boardFixture';
 import type { PlanningBoard } from '../../_shared/types/fulfilmentPlanning.types';
+import * as planningChangeService from '../../_shared/services/planningChangeService';
 
 const TODAY = '2026-08-18';
 
@@ -648,5 +649,88 @@ describe('fix round: simulated wording and number formatting (R7-R10)', () => {
     const results = await screen.findByTestId('board-confirm-results');
     expect(within(results).getByText(/SO403340:? has nothing to confirm/)).toBeInTheDocument();
     expect(within(results).queryByText(/would confirm as revision/)).toBeNull();
+  });
+});
+
+// PLAN-BATCH-HELD-CANCEL (owner ruling (a), 21 Oct 2026; UAC U4): Simulate shows the plan the real
+// press carries out on an order with a pending AutoCount change and a saved Cancel SO on a line the
+// change names (SO394881): apply the change, transfer the line. Before the fix it read "0 of 0
+// orders would confirm" and "commits after the pending change is applied".
+describe('BATCH-HELD-CANCEL U4: Simulate on a pending change with a saved Cancel SO it names', () => {
+  function heldCancelBoard(): PlanningBoard {
+    const board = adoptedBoard();
+    const cancelOnLine2 = <T extends { line_no?: number | null }>(entry: T): T =>
+      entry.line_no === 2
+        ? {
+            ...entry,
+            covered: false,
+            draft: {
+              decision: { verdict: 'cancelled' as const, reason: 'CANCEL ORDER' },
+              saved_by: 'Test Planner',
+              saved_at: '2026-09-08T00:00:00Z',
+            },
+          }
+        : entry.line_no === 1
+          ? { ...entry, cancelled: true, covered: false, draft: null }
+          : entry;
+    return {
+      ...board,
+      orders: board.orders.map((order) => ({ ...order, pending_change_batch_id: 'b-1' })),
+      cells: board.cells.map((cell) => ({
+        ...cell,
+        contributions: cell.contributions.map(cancelOnLine2),
+      })),
+      contributions: board.contributions.map(cancelOnLine2),
+    };
+  }
+
+  it('reads 1 of 1 orders would confirm and names the apply and the transfer', async () => {
+    vi.mocked(planningChangeService.getPlanningChangeBatch).mockResolvedValue({
+      id: 'b-1',
+      created_at: '2026-09-01T00:00:00Z',
+      applied_at: null,
+      applied_by_name: null,
+      orders: [
+        {
+          so_number: 'SO403340',
+          rows: [
+            { id: 'pcr-1', project_line_id: 'pl-so-a-1', applied_state: 'pending' },
+            { id: 'pcr-2', project_line_id: 'pl-so-a-2', applied_state: 'pending' },
+          ],
+        },
+      ],
+    } as never);
+    getPlanningBoard.mockResolvedValue(heldCancelBoard());
+    simulateConfirm.mockResolvedValue({
+      results: [
+        okSimulated({
+          decision_revision: 4,
+          lines_confirmed: [],
+          inquiry_rows: [],
+          transfers: [],
+          lines_cancelled: [{ line_no: 2, item_code: 'TPE-9204' }],
+          lines_retired: [{ line_no: 1, item_code: 'WESERP10B' }],
+          planning_change_applied: true,
+        }),
+      ],
+    });
+    renderPanel();
+    await pressSimulate();
+    await waitFor(() => expect(simulateConfirm).toHaveBeenCalledTimes(1));
+    const [body] = simulateConfirm.mock.calls[0] as [
+      { orders: { batch_id: string | null; cancelled_lines: { project_line_id: string }[] }[] },
+    ];
+    expect(body.orders[0].batch_id).toBe('b-1');
+    expect(body.orders[0].cancelled_lines.map((line) => line.project_line_id)).toEqual([
+      'pl-so-a-2',
+    ]);
+    const results = await screen.findByTestId('board-confirm-results');
+    expect(results).toHaveTextContent('Simulation, nothing was saved: 1 of 1 orders would confirm');
+    // PLAN-BATCH-COUNT-DISPLAY D3: the order sentence is the decisions; the change is one note.
+    expect(results).toHaveTextContent('SO403340: would transfer 1 line to Cancel SO');
+    expect(results).toHaveTextContent(
+      'Would also apply the AutoCount change from 1 Sep: 1 old line (WESERP10B) would be retired',
+    );
+    expect(results).not.toHaveTextContent(/commits after the pending change/);
   });
 });
