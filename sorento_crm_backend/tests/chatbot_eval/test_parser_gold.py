@@ -1079,13 +1079,13 @@ def _effort_gold(session_factory, monkeypatch, effort, *, provider="openai", on_
     return out, seen
 
 
-@pytest.mark.parametrize("effort", ["off", "minimal", "low", "medium", "high"])
+@pytest.mark.parametrize("effort", ["off", "low"])
 def test_a_forced_effort_is_the_stored_setting_the_parse_reads(effort, session_factory, monkeypatch,
                                                                _fresh_prompt_caches):
     from app.services.chatbot.head import parser as parser_mod
 
     real = parser_mod.reasoning_effort_setting
-    _stored_effort(session_factory, "medium" if effort != "medium" else "high")
+    _stored_effort(session_factory, "low" if effort == "off" else "off")
     headers: list[dict] = []
     out, seen = _effort_gold(session_factory, monkeypatch, effort, on_start=headers.append)
     assert out[0]["reasons"] == [], out
@@ -1097,12 +1097,12 @@ def test_a_forced_effort_is_the_stored_setting_the_parse_reads(effort, session_f
 
 def test_without_the_flag_the_stored_setting_is_used_and_rows_say_so(session_factory, monkeypatch,
                                                                      _fresh_prompt_caches):
-    _stored_effort(session_factory, "medium")
+    _stored_effort(session_factory, "low")
     headers: list[dict] = []
     out, seen = _effort_gold(session_factory, monkeypatch, None, on_start=headers.append)
-    assert seen == ["medium"], seen
-    assert out[0]["reasoning_effort"] == "medium", out
-    assert headers[0]["reasoning_effort"] == "medium" and headers[0]["reasoning_forced"] is False, headers
+    assert seen == ["low"], seen
+    assert out[0]["reasoning_effort"] == "low", out
+    assert headers[0]["reasoning_effort"] == "low" and headers[0]["reasoning_forced"] is False, headers
 
 
 def test_the_forced_effort_never_writes_system_settings(session_factory, monkeypatch, _fresh_prompt_caches):
@@ -1119,14 +1119,14 @@ def test_the_forced_effort_never_writes_system_settings(session_factory, monkeyp
 
     event.listen(Session, "before_flush", spy)
     try:
-        out, seen = _effort_gold(session_factory, monkeypatch, "high")
+        out, seen = _effort_gold(session_factory, monkeypatch, "low")
     finally:
         event.remove(Session, "before_flush", spy)
-    assert seen == ["high"] and written == [], (seen, written)
+    assert seen == ["low"] and written == [], (seen, written)
     assert _stored_effort(session_factory) == "off"
 
 
-@pytest.mark.parametrize("bad", ["max", "none", "xhigh"])
+@pytest.mark.parametrize("bad", ["max", "none", "xhigh", "minimal", "medium", "high"])
 def test_an_unknown_effort_is_refused(bad):
     with pytest.raises(ValueError):
         pg.run_live([], session_factory=None, version_id="1", repeats=1, max_usd=1.0, require_key_last4="WXYZ",
@@ -1139,7 +1139,7 @@ def test_a_forced_effort_on_a_provider_other_than_openai_is_refused_before_any_p
         _effort_gold(session_factory, monkeypatch, "low", provider="gemini")
 
 
-@pytest.mark.parametrize("bad", ["max", "none"])
+@pytest.mark.parametrize("bad", ["max", "none", "medium"])
 def test_cli_reasoning_effort_choices(bad):
     with pytest.raises(SystemExit):
         pg.main([*_BASE, "--reasoning-effort", bad])
