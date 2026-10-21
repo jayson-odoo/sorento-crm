@@ -293,7 +293,11 @@ def test_a_strict_entry_on_a_hidden_key_is_dropped_from_the_set(session_factory,
 
     text_ = ((r.reply or {}).get("text") or "").lower()
     assert _fetched(calls) != [ids["ZZBS-W"]], (r.reply, calls)
-    assert "width" not in text_, text_
+    # CHAT-RELEASE-1021: amended to owner ruling a35818889 (b), "b follow policy" (20 Oct 2026,
+    # pinned in test_attribute_asks_round8's HIDDEN_THICKNESS tests): a hidden key the customer
+    # names never narrows, and the reply says it once as "<Label>: not available", nowhere else.
+    assert text_.count("*width:* not available") == 1, text_
+    assert text_.count("width") == 1, text_
 
 
 def test_guard_a_hidden_unrelated_key_changes_nothing(session_factory, seeded, stub_access, monkeypatch):

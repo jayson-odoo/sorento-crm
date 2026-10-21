@@ -349,7 +349,9 @@ def test_the_recount_after_how_many_keeps_the_dealers_stock_visibility(
     stub_parser(_bare_verdict(top_n=1, continuation=True, user_goal="show 1"))
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=2, text="1")
 
-    assert one_line_header(text) == "Here's what you want: taps with stock (2)", text
+    # CHAT-RELEASE-1021: amended to SET-STOCK-RENDER UAC SSR-14 (owner, 16 Oct 2026; `answer.py`
+    # set header docstring): every continuation page, the last included, says which ones.
+    assert one_line_header(text) == "Here's what you want: taps with stock (2, showing 2 to 2)", text
     asked = {pid for c in calls[before:] for pid in (c["args"].get("product_ids") or [])}
     assert taps[1].id not in asked, asked
     assert asked <= {taps[0].id, taps[2].id} and len(asked) == 1, asked
@@ -407,7 +409,9 @@ def test_a_bare_count_answers_the_question_whatever_the_parser_made_of_it(
     # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026: never a paging question): the
     # seven taps are one brand and nothing else splits them, so the first answer lists
     # what fits (5 of 7) and the count typed next continues: the last 2, count bare.
-    assert one_line_header(text) == "Here's what you want: taps with certificates (7)", text
+    # CHAT-RELEASE-1021: amended to SET-STOCK-RENDER UAC SSR-14 (owner, 16 Oct 2026; `answer.py`
+    # set header docstring): every continuation page, the last included, says which ones.
+    assert one_line_header(text) == "Here's what you want: taps with certificates (7, showing 6 to 7)", text
     assert len(_s4_codes_in(text)) == 2, text
     assert len(calls) == before + 1 and len(calls[-1]["args"]["product_ids"]) == 2, calls
 
@@ -468,4 +472,6 @@ def test_a_count_that_names_nothing_still_arms_the_question(
     # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026: never a paging question): the
     # seven taps are one brand and nothing else splits them, so the first answer lists
     # what fits (5 of 7) and the count typed next continues: the last 2, count bare.
-    assert one_line_header(text) == "Here's what you want: taps with certificates (7)", text
+    # CHAT-RELEASE-1021: amended to SET-STOCK-RENDER UAC SSR-14 (owner, 16 Oct 2026; `answer.py`
+    # set header docstring): every continuation page, the last included, says which ones.
+    assert one_line_header(text) == "Here's what you want: taps with certificates (7, showing 6 to 7)", text
