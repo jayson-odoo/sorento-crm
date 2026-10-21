@@ -252,6 +252,11 @@ def _load_attachments_by_promotion_ids(
             _joinedload(PromotionAttachment.attachment).joinedload(Attachment.attachment_type)
         )
         .filter(PromotionAttachment.promotion_id.in_(promotion_ids))
+        # A soft-deleted file is gone for every surface (owner run 21 Oct: a flyer deleted in
+        # July was still sent).
+        .filter(
+            PromotionAttachment.attachment.has(Attachment.is_deleted.is_(False))
+        )
         .order_by(
             PromotionAttachment.sort_order.asc().nulls_last(),
             PromotionAttachment.created_at.asc(),

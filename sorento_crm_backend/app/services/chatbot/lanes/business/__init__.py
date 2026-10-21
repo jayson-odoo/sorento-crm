@@ -1470,7 +1470,7 @@ def run_fetch(
     picked = bool((tier_gate or {}).get("tier_pick"))
     narrow = {
         **{k: v for k, v in (parse_output.get("promo_filter") or {}).items() if v and picked},
-        **{k: v for k, v in _turn_runtime.promo_filter(parse_output, db, gate).items() if v},
+        **{k: v for k, v in _turn_runtime.promo_filter(parse_output, db, gate, tier_pick=picked).items() if v},
     }
     for key, values in narrow.items():
         semantic_input[key] = list(values)
