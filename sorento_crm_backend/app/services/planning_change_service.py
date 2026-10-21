@@ -3961,6 +3961,7 @@ def _retire_inquiry_rows(
     Returns THE ROWS IT CANCELLED, by id, and the shift below takes exactly those: a row
     somebody cancelled last month is not this apply's to move documents off."""
     from app.services.project_order_inquiry_service import (
+        EMAIL_CANCEL_SO_LINES,
         ProjectOrderInquiryService,
         _record_cancel,
     )
@@ -3987,7 +3988,10 @@ def _retire_inquiry_rows(
             _record_cancel(db, row, "planning_change_retired", actor_user_id=actor)
             row.note = note
             cancelled.append(str(row.id))
-        if row.verb in _TOLD_ON_RETIRE:
+        # Owner ruling (b), 21 Oct 2026 (PLAN-BATCH-HELD-CANCEL): a line the book cancelled
+        # puts no CANCEL ALL line in any automated email (#1806 told it); the row is
+        # cancelled above and purchasing sees it in the CRM.
+        if EMAIL_CANCEL_SO_LINES and row.verb in _TOLD_ON_RETIRE:
             service._record_handover(
                 row, kind="cancelled", was={"qty": was_qty}, actor_user_id=actor
             )
