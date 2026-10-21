@@ -153,3 +153,76 @@ def test_a_cancel_answer_over_a_did_you_mean_or_quantities_resets_on_both_paths(
     assert new_state.pending is None, new_state.pending
     assert not new_state.focus.last_list
     assert not ht.inventory_specs(plan)
+
+
+# --- a topic reset wins over whatever the pending-answer branch returned -----------------------------
+# Live v63: (a) a reset the pending branch calls "not an answer" left the old did-you-mean stored;
+# (b) a reset read as a decline of an escalate-offer did-you-mean returned before the reset wipe.
+
+
+def _miss_focus(tasks=()):
+    miss = {"raw": "Clb109a", "hint": "product", "canonical_code": "CLB109A", "current_message": False,
+            "confident": True}
+    return Focus(products=[miss], domains=["inventory"], tasks=tasks)
+
+
+def _reset_state(gate: bool, case: str):
+    from app.services.chatbot.turn import pending as turn_pending
+
+    pending = _did_you_mean_pending()
+    if case == "offer_decline":
+        pending = turn_pending.ask(
+            "product_pick", list(pending.options), team="warehouse", asked_at_turn=4,
+            payload={**pending.payload, "escalate_offered": True},
+        )
+    tasks = () if case == "offer_decline" else (
+        ht.stock_task([(c, None) for c in OLDER], opened_at_turn=2, touched_at_turn=2),
+    )
+    return replace(ht.state(_miss_focus(tasks), pending=pending, turn_no=5), state_path=gate)
+
+
+def _reset_parse(gate: bool, case: str, *, topic_reset: bool = True):
+    declined = case == "offer_decline"
+    v = verdict(
+        domain_hint="inventory", intent_hint="check_stock", entities=[], topic_reset=topic_reset,
+        is_affirmative=False if declined else None,
+        open_question_answer={"mode": "cancel" if declined else None, "picked": [], "items": [], "qty_for_all": None},
+    )
+    if gate:
+        v["state_changes"] = [{"op": "close_question", "axis": None, "position": None}]
+    return v
+
+
+@GATES
+@pytest.mark.parametrize("case", ["not_an_answer", "offer_decline"])
+def test_a_topic_reset_drops_the_stored_question_and_wipes_the_focus(gate, case):
+    state, plan = _turn(_reset_state(gate, case), _reset_parse(gate, case))
+    assert state.pending is None, state.pending
+    assert not state.focus.products, state.focus.products
+    # the next bare number picks nothing from the old did-you-mean
+    v = verdict(domain_hint="inventory", intent_hint="check_stock", entities=[], reference_positions=[2],
+                entity_op="reuse")
+    if gate:
+        v["state_changes"] = [{"op": "pick", "axis": None, "position": 2}]
+    _state2, plan2 = _turn(state, v)
+    codes = [row.get("canonical_code") for spec in plan2.fetch for row in spec.entities]
+    assert "C9109A" not in codes and "CLB109A" not in codes, codes
+
+
+@GATES
+def test_guard_a_decline_without_a_topic_reset_keeps_todays_behaviour(gate):
+    from app.services.chatbot.turn import pending as turn_pending
+
+    state = replace(
+        ht.state(_miss_focus(), pending=_did_you_mean_pending(), turn_no=5), state_path=gate
+    )
+    v = verdict(
+        domain_hint="inventory", intent_hint="check_stock", entities=[], topic_reset=False, is_affirmative=False,
+        open_question_answer={"mode": "no", "picked": [], "items": [], "qty_for_all": None},
+    )
+    if gate:
+        v["state_changes"] = [{"op": "answer", "axis": None, "position": None}]
+    new_state, plan = _turn(state, v)
+    assert "stock_pick_declined" in plan.trace.rules_fired
+    assert plan.trace.task_question == "Please refer to your salesman."
+    assert not [p for p in new_state.focus.products if not p.get("uuid")]
