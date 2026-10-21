@@ -141,3 +141,49 @@ def test_a_cancelled_unanswered_request_asks_for_nothing(api):
 
     heads, rows = _sheet(world)
     assert rows["CANCELLED40"][heads.index("REQUESTED RESERVE")] is None
+
+
+def test_a_balance_request_after_a_partial_answer_counts_the_ask_once(api):
+    """R5 (review round 3): asked 70, CS reserved 50, then purchasing asks for the 20 still
+    short. The line has asked for 70 in all, not 20: the column reads 70 / 50 while the
+    balance request is open and 70 / 70 once it is answered - the same "counting a later
+    balance request once" rule `commit_request` caps an amendment against (36 asked / 10
+    got, then 26 asked = 36)."""
+    from .test_order_inquiry_worklist import LIST
+
+    client, world = api
+    row = _open_row(world, qty="170", item_code="CB315")
+    service = _service(world.db)
+
+    def ask(qty):
+        service.create_request(
+            inquiry_id=world.inquiry.id,
+            rows=[{"row_id": row.id, "qty_requested": qty, "warehouse_id": world.site.id}],
+            note=None,
+            actor_user_id=world.requester,
+        )
+        world.db.commit()
+
+    def answer(qty):
+        service.commit_request(
+            inquiry_id=world.inquiry.id,
+            reserves=[{"row_id": row.id, "warehouse_id": world.site.id, "qty_reserved": qty, "reason": "short"}],
+            amendments=[],
+            actor_user_id=world.reserver,
+        )
+        world.db.commit()
+
+    def figures():
+        response = client.get(LIST, params={"query": "CB315"})
+        assert response.status_code == 200, response.text
+        (r,) = [r for r in response.json()["data"] if r["item_code"] == "CB315"]
+        return r["asked_reserve_qty"], r["reserved_qty"]
+
+    ask("70")
+    answer("50")
+    ask("20")
+    assert figures() == ("70", "50")
+    answer("20")
+    assert figures() == ("70", "70")
+    heads, rows = _sheet(world)
+    assert rows["CB315"][heads.index("REQUESTED RESERVE")] == 70.0

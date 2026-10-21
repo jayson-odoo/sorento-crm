@@ -37,7 +37,7 @@ from decimal import Decimal
 from itertools import groupby
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import Date, String, case, cast, func, or_, select, text
+from sqlalchemy import Date, String, and_, case, cast, func, or_, select, text
 from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.orm import Session, aliased
 
@@ -504,12 +504,46 @@ _OPEN_REQUEST_QTY = (
     .limit(1)
     .scalar_subquery()
 )
-#: OI-RESERVE-PILL-QTY (owner ruling 21 Oct 2026): what purchasing last ASKED CS to
-#: reserve off this row, kept once CS answers so a partial answer (asked 70, reserved 50)
-#: still shows both numbers - `_OPEN_REQUEST_QTY` above drops to nothing the moment the row
-#: is answered. A request cancelled before its row was answered asks for nothing.
-_ASKED_RESERVE_QTY = (
+#: OI-RESERVE-PILL-QTY (owner ruling 21 Oct 2026): what purchasing has ASKED CS to reserve
+#: off this row, kept once CS answers so a partial answer (asked 70, reserved 50) still
+#: shows both numbers - `_OPEN_REQUEST_QTY` above drops to nothing the moment the row is
+#: answered. A later balance request counts once, the same rule `commit_request` caps an
+#: amendment against (`order_inquiry_reserve_service.py`): the latest request row's own
+#: ask plus what CS kept on every earlier answered row, capped at the row's qty (asked 70,
+#: got 50, then 20 asked = 70, not 20). A request cancelled before its row was answered
+#: asks for nothing.
+_ASKED_REQUEST_ROW = and_(
+    OrderInquiryReserveRequestRow.row_id == OrderInquiryRow.id,
+    or_(
+        OrderInquiryReserveRequestRow.qty_reserved.isnot(None),
+        OrderInquiryReserveRequest.state != "cancelled",
+    ),
+)
+_ASKED_LATEST_ORDINAL = (
+    select(func.max(OrderInquiryReserveRequest.ordinal))
+    .select_from(OrderInquiryReserveRequestRow)
+    .join(
+        OrderInquiryReserveRequest,
+        OrderInquiryReserveRequest.id == OrderInquiryReserveRequestRow.request_id,
+    )
+    .where(_ASKED_REQUEST_ROW)
+    .correlate(OrderInquiryRow)
+    .scalar_subquery()
+)
+_ASKED_LATEST_QTY = (
     select(OrderInquiryReserveRequestRow.qty_requested)
+    .select_from(OrderInquiryReserveRequestRow)
+    .join(
+        OrderInquiryReserveRequest,
+        OrderInquiryReserveRequest.id == OrderInquiryReserveRequestRow.request_id,
+    )
+    .where(_ASKED_REQUEST_ROW, OrderInquiryReserveRequest.ordinal == _ASKED_LATEST_ORDINAL)
+    .correlate(OrderInquiryRow)
+    .limit(1)
+    .scalar_subquery()
+)
+_ASKED_EARLIER_KEPT = (
+    select(func.coalesce(func.sum(OrderInquiryReserveRequestRow.qty_reserved), 0))
     .select_from(OrderInquiryReserveRequestRow)
     .join(
         OrderInquiryReserveRequest,
@@ -517,15 +551,17 @@ _ASKED_RESERVE_QTY = (
     )
     .where(
         OrderInquiryReserveRequestRow.row_id == OrderInquiryRow.id,
-        or_(
-            OrderInquiryReserveRequestRow.qty_reserved.isnot(None),
-            OrderInquiryReserveRequest.state != "cancelled",
-        ),
+        OrderInquiryReserveRequestRow.qty_reserved.isnot(None),
+        OrderInquiryReserveRequest.ordinal < _ASKED_LATEST_ORDINAL,
     )
     .correlate(OrderInquiryRow)
-    .order_by(OrderInquiryReserveRequest.ordinal.desc())
-    .limit(1)
     .scalar_subquery()
+)
+# NULL when nothing was asked: Postgres LEAST skips a NULL argument, so it would
+# otherwise fall back to the row's own qty.
+_ASKED_RESERVE_QTY = case(
+    (_ASKED_LATEST_ORDINAL.is_(None), None),
+    else_=func.least(_ASKED_LATEST_QTY + _ASKED_EARLIER_KEPT, OrderInquiryRow.qty),
 )
 #: OI-BULK-RESERVE v4 (B2): the OPEN request row's warehouse id and code, same open-row
 #: conditions and latest ordinal as `_OPEN_REQUEST_QTY`, for the Lines page's Decide drafts.
