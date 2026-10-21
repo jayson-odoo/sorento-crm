@@ -13,6 +13,8 @@ not unique by design (`app/models/product.py`), so a duplicate is a warning, nev
 from __future__ import annotations
 
 import csv
+import hashlib
+import hmac
 import io
 import re
 from typing import Any, Iterable, Optional
@@ -21,6 +23,7 @@ from fastapi import HTTPException, UploadFile, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models.product import Product
 from app.services.audit_service import audit_event
 
@@ -29,6 +32,7 @@ _MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 ALLOWED_EXTENSIONS = (".xlsx", ".csv")
 #: Title lines above the table are allowed; the header is the first row naming both columns.
 _HEADER_SCAN_ROWS = 20
+_FLUSH_CHUNK = 1000
 
 # Normalized header (lowercase, non-alphanumerics collapsed to one space).
 _CODE_HEADERS = (
@@ -38,12 +42,19 @@ _CODE_HEADERS = (
 _BARCODE_HEADERS = (
     "barcode", "bar code", "ean", "ean13", "ean 13", "upc", "gtin", "barcode no",
 )
+_NOTE_HEADERS = ("note", "notes", "remark", "remarks", "comment", "comments")
+#: A header naming one of these is never the code or barcode column, however it starts:
+#: the owner's sheet carries "Barcode Image" (pictures, empty cells) beside "Barcode (EAN-13)".
+_NEVER_WORDS = {"image", "images", "picture", "photo", "img", "name", "description", "desc"}
+
+#: Text Excel writes for a long number it re-saved as CSV ("9.55103E+12"); the digits are gone.
+_SCIENTIFIC = re.compile(r"^\d+(?:\.\d+)?[eE]\+?\d+$")
 
 #: Statuses that write. Everything else is skipped by apply.
 WRITES = ("new", "change")
 STATUSES = (
     "new", "change", "same", "unknown_code", "ambiguous_code", "repeated_code",
-    "blank_barcode", "too_long",
+    "blank_barcode", "too_long", "scientific",
 )
 WARNINGS = ("duplicate", "not_ean13")
 
@@ -79,10 +90,11 @@ async def read_barcode_upload(file: UploadFile) -> tuple[bytes, str]:
     return data, name
 
 
-def _rows(data: bytes, name: str) -> Iterable[tuple]:
+def _sheets(data: bytes, name: str) -> Iterable[Iterable[tuple]]:
+    """Each sheet's rows. A workbook is searched sheet by sheet for the header row."""
     if name.endswith(".csv"):
         text_data = data.decode("utf-8-sig", errors="replace")
-        return (tuple(r) for r in csv.reader(io.StringIO(text_data)))
+        return [(tuple(r) for r in csv.reader(io.StringIO(text_data)))]
     import openpyxl
 
     try:
@@ -90,7 +102,7 @@ def _rows(data: bytes, name: str) -> Iterable[tuple]:
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="This file could not be read as an Excel workbook.") from exc
-    return wb.active.iter_rows(values_only=True)
+    return [ws.iter_rows(values_only=True) for ws in wb.worksheets]
 
 
 def _cell(value: Any) -> str:
@@ -108,16 +120,29 @@ def _norm_header(value: Any) -> str:
     return re.sub(r"[^a-z0-9]+", " ", _cell(value).lower()).strip()
 
 
-def _find_columns(row: tuple) -> tuple[Optional[int], Optional[int]]:
+def _find_columns(row: tuple) -> tuple[Optional[int], Optional[int], Optional[int]]:
+    """(code, barcode, note) column positions. An exact alias wins over one the header only
+    starts with ("Barcode (EAN-13)"), and an earlier alias over a later one, so "Product
+    Code" beats a bare "Code"."""
     normed = [_norm_header(c) for c in row]
+    usable = [i for i, h in enumerate(normed) if h and not (set(h.split()) & _NEVER_WORDS)]
 
-    def pick(names: tuple[str, ...]) -> Optional[int]:
-        for n in names:  # earlier alias wins, so "Product Code" beats a bare "Code"
-            if n in normed:
-                return normed.index(n)
+    def pick(names: tuple[str, ...], exclude: set[int]) -> Optional[int]:
+        for n in names:
+            for i in usable:
+                if i not in exclude and normed[i] == n:
+                    return i
+        for n in names:
+            for i in usable:
+                if i not in exclude and normed[i].startswith(n + " "):
+                    return i
         return None
 
-    return pick(_CODE_HEADERS), pick(_BARCODE_HEADERS)
+    code = pick(_CODE_HEADERS, set())
+    barcode = pick(_BARCODE_HEADERS, {code} if code is not None else set())
+    taken = {i for i in (code, barcode) if i is not None}
+    note = pick(_NOTE_HEADERS, taken)
+    return code, barcode, note
 
 
 def _products_by_code(db: Session, codes: set[str]) -> dict[str, list[Product]]:
@@ -135,61 +160,69 @@ def _products_by_code(db: Session, codes: set[str]) -> dict[str, list[Product]]:
     return out
 
 
-def _barcode_holders(db: Session, barcodes: set[str]) -> dict[str, set[str]]:
-    """Product ids already holding each barcode."""
-    out: dict[str, set[str]] = {}
+def _barcode_holders(db: Session, barcodes: set[str]) -> dict[str, dict[str, str]]:
+    """Products already holding each barcode, as {barcode: {product id: product code}}."""
+    out: dict[str, dict[str, str]] = {}
     keys = list(barcodes)
     for i in range(0, len(keys), 1000):
         rows = (
-            db.query(func.btrim(Product.barcode), Product.id)
+            db.query(func.btrim(Product.barcode), Product.id, Product.product_code)
             .filter(func.btrim(Product.barcode).in_(keys[i:i + 1000]))
             .all()
         )
-        for bc, pid in rows:
-            out.setdefault(bc, set()).add(str(pid))
+        for bc, pid, code in rows:
+            out.setdefault(bc, {})[str(pid)] = code
     return out
 
 
 def resolve(db: Session, data: bytes, name: str) -> dict[str, Any]:
     """Classify every line of the file. Writes nothing; `_writes` carries what apply would."""
-    rows = iter(_rows(data, name))
-    code_col = barcode_col = None
+    code_col = barcode_col = note_col = None
     header: tuple = ()
     header_row = 0
-    for idx, row in enumerate(rows, start=1):
-        if idx > _HEADER_SCAN_ROWS:
+    rows: Iterable[tuple] = iter(())
+    half: tuple[Optional[int], Optional[int]] = (None, None)
+    for sheet in _sheets(data, name):
+        rows = iter(sheet)
+        for idx, row in enumerate(rows, start=1):
+            if idx > _HEADER_SCAN_ROWS:
+                break
+            c, b, n = _find_columns(row or ())
+            if c is not None and b is not None:
+                code_col, barcode_col, note_col, header, header_row = c, b, n, row, idx
+                break
+            if (c is not None or b is not None) and half == (None, None):
+                # Remember a half-match so the message can say which column is missing.
+                half = (c, b)
+        if header_row:
             break
-        c, b = _find_columns(row or ())
-        if c is not None and b is not None:
-            code_col, barcode_col, header, header_row = c, b, row, idx
-            break
-        if c is not None or b is not None:
-            # Remember a half-match so the message can say which column is missing.
-            code_col, barcode_col = c, b
     if header_row == 0:
+        code_col, barcode_col = half
         missing = [n for n, col in (("product code", code_col), ("barcode", barcode_col))
                    if col is None]
         return {
             "readable": False, "missing_columns": missing or ["product code", "barcode"],
-            "code_column": None, "barcode_column": None, "total_rows": 0,
+            "code_column": None, "barcode_column": None, "note_column": None, "total_rows": 0,
             "counts": {k: 0 for k in STATUSES + WARNINGS}, "rows": [], "_writes": [],
         }
 
-    parsed: list[tuple[int, str, str]] = []
+    def at(row: tuple, col: Optional[int]) -> str:
+        return _cell(row[col]) if col is not None and col < len(row) else ""
+
+    parsed: list[tuple[int, str, str, str]] = []
     for idx, row in enumerate(rows, start=header_row + 1):
         row = row or ()
-        code = _cell(row[code_col]) if code_col < len(row) else ""
-        barcode = _cell(row[barcode_col]) if barcode_col < len(row) else ""
+        code, barcode = at(row, code_col), at(row, barcode_col)
         if not code and not barcode:
             continue
-        parsed.append((idx, code, barcode))
+        parsed.append((idx, code, barcode, at(row, note_col)))
 
-    products = _products_by_code(db, {c.upper() for _, c, _ in parsed if c})
-    holders = _barcode_holders(db, {b for _, _, b in parsed if b and len(b) <= MAX_BARCODE_LEN})
+    products = _products_by_code(db, {c.upper() for _, c, _, _ in parsed if c})
+    holders = _barcode_holders(db, {b for _, _, b, _ in parsed if b and len(b) <= MAX_BARCODE_LEN})
 
     seen_codes: dict[str, int] = {}
     out_rows: list[dict[str, Any]] = []
-    for row_no, code, barcode in parsed:
+    for row_no, code, barcode, note in parsed:
         key = code.upper()
         matches = products.get(key, []) if code else []
         product = matches[0] if len(matches) == 1 else None
@@ -204,6 +237,8 @@ def resolve(db: Session, data: bytes, name: str) -> dict[str, Any]:
             st = "blank_barcode"
         elif len(barcode) > MAX_BARCODE_LEN:
             st = "too_long"
+        elif _SCIENTIFIC.match(barcode):
+            st = "scientific"
         elif old is None:
             st = "new"
         elif old == barcode:
@@ -218,22 +253,27 @@ def resolve(db: Session, data: bytes, name: str) -> dict[str, Any]:
             "product_code": product.product_code if product else code,
             "product_name": product.product_name if product else None,
             "product_id": str(product.id) if product else None,
+            "_product": product,
             "old_barcode": old,
             "new_barcode": barcode or None,
             "status": st,
             "warnings": [],
             "repeated_of_row": seen_codes.get(key) if st == "repeated_code" else None,
+            "duplicate_of": [],
+            "note": note or None,
         })
 
     # Warnings only on rows that carry a usable barcode for a known product.
     candidates = [r for r in out_rows if r["status"] in ("new", "change", "same")]
-    in_file: dict[str, set[str]] = {}
+    in_file: dict[str, dict[str, str]] = {}
     for r in candidates:
-        in_file.setdefault(r["new_barcode"], set()).add(r["product_id"])
+        in_file.setdefault(r["new_barcode"], {})[r["product_id"]] = r["product_code"]
     for r in candidates:
-        others = (holders.get(r["new_barcode"], set()) | in_file[r["new_barcode"]]) - {r["product_id"]}
-        if others:
+        sharing = {**holders.get(r["new_barcode"], {}), **in_file[r["new_barcode"]]}
+        sharing.pop(r["product_id"], None)
+        if sharing:
             r["warnings"].append("duplicate")
+            r["duplicate_of"] = sorted(sharing.values())[:5]
         if not is_valid_ean13(r["new_barcode"]):
             r["warnings"].append("not_ean13")
 
@@ -242,14 +282,16 @@ def resolve(db: Session, data: bytes, name: str) -> dict[str, Any]:
         counts[r["status"]] += 1
         for w in r["warnings"]:
             counts[w] += 1
-    writes = [(r["product_id"], r["new_barcode"]) for r in out_rows if r["status"] in WRITES]
+    writes = [(r["_product"], r["new_barcode"]) for r in out_rows if r["status"] in WRITES]
     for r in out_rows:
         r.pop("product_id")
+        r.pop("_product")
     return {
         "readable": True,
         "missing_columns": [],
         "code_column": _cell(header[code_col]),
         "barcode_column": _cell(header[barcode_col]),
+        "note_column": _cell(header[note_col]) if note_col is not None else None,
         "total_rows": len(out_rows),
         "counts": counts,
         "rows": out_rows,
@@ -257,9 +299,26 @@ def resolve(db: Session, data: bytes, name: str) -> dict[str, Any]:
     }
 
 
-def preview(db: Session, data: bytes, name: str) -> dict[str, Any]:
+def preview_token(data: bytes, user_id: Any) -> str:
+    """Proof that this user previewed exactly these bytes. Apply refuses a file without one,
+    so nothing is written that nobody has seen the per-row statuses of."""
+    digest = hashlib.sha256(data).hexdigest()
+    key = (settings.jwt_secret or "").encode()
+    return hmac.new(key, f"barcode-import:{user_id}:{digest}".encode(), hashlib.sha256).hexdigest()
+
+
+def check_preview_token(data: bytes, user_id: Any, token: Optional[str]) -> None:
+    if not token or not hmac.compare_digest(token, preview_token(data, user_id)):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Test this file before applying it.",
+        )
+
+
+def preview(db: Session, data: bytes, name: str, user_id: Any = None) -> dict[str, Any]:
     out = resolve(db, data, name)
     out.pop("_writes")
+    out["preview_token"] = preview_token(data, user_id)
     return out
 
 
@@ -268,17 +327,15 @@ def apply(db: Session, data: bytes, name: str) -> dict[str, Any]:
     """Write the new and changed barcodes. Does not commit; the route owns the transaction.
 
     An ORM update per product, so the audit flush listener writes one `product` row each
-    with the old and new barcode, labelled with this verb.
+    with the old and new barcode, labelled with this verb. The bulk ORM paths would not do:
+    they itemise only `BULK_AUDIT_CAP` rows per statement. Flushed in chunks so a full
+    catalogue (~12k rows) never holds every pending change and audit row at once.
     """
     out = resolve(db, data, name)
     writes = out.pop("_writes")
-    if writes:
-        by_id = {
-            str(p.id): p
-            for p in db.query(Product).filter(Product.id.in_([pid for pid, _ in writes])).all()
-        }
-        for pid, barcode in writes:
-            by_id[pid].barcode = barcode
+    for i in range(0, len(writes), _FLUSH_CHUNK):
+        for product, barcode in writes[i:i + _FLUSH_CHUNK]:
+            product.barcode = barcode
         db.flush()
     out["applied"] = len(writes)
     return out

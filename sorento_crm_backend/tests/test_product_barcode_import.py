@@ -109,6 +109,16 @@ def _post(client, path, data: bytes, name="barcodes.xlsx"):
     return client.post(f"{BASE}/{path}", files={"file": (name, data, "application/octet-stream")})
 
 
+def _apply(client, data: bytes, name="barcodes.xlsx"):
+    """Preview, then apply with the token the preview returned (the only way apply runs)."""
+    token = _post(client, "preview", data, name).json()["preview_token"]
+    return client.post(
+        f"{BASE}/apply",
+        files={"file": (name, data, "application/octet-stream")},
+        data={"preview_token": token},
+    )
+
+
 def _by_code(body):
     return {r["product_code"]: r for r in body["rows"]}
 
@@ -242,7 +252,7 @@ def test_apply_writes_only_new_and_change(client, db, refs):
         [f"{stem}-NOPE", "9555123400066"],
         [f"{stem}-LONG", "X" * 101],
     ]
-    res = _post(client, "apply", _xlsx(rows))
+    res = _apply(client, _xlsx(rows))
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["applied"] == 2
@@ -258,7 +268,7 @@ def test_apply_is_audited_per_product(client, db, refs):
     stem = unique_code("BCU", alpha=True)
     chg = _mk(db, refs, f"{stem}-CHG", barcode=EAN_A)
     same = _mk(db, refs, f"{stem}-SAME", barcode=EAN_B)
-    res = _post(client, "apply", _xlsx([
+    res = _apply(client, _xlsx([
         ["Product Code", "Barcode"], [f"{stem}-CHG", EAN_C], [f"{stem}-SAME", EAN_B],
     ]))
     assert res.status_code == 200, res.text
@@ -292,7 +302,7 @@ def test_both_endpoints_need_products_edit(perm_client, db, refs):
 def test_repeated_code_keeps_first_row_only(client, db, refs):
     stem = unique_code("BCR", alpha=True)
     pid = _mk(db, refs, f"{stem}-R")
-    body = _post(client, "apply", _xlsx([
+    body = _apply(client, _xlsx([
         ["Product Code", "Barcode"], [f"{stem}-R", EAN_A], [f"{stem}-r", EAN_B],
     ])).json()
     assert [r["status"] for r in body["rows"]] == ["new", "repeated_code"]
@@ -314,7 +324,7 @@ def test_title_lines_above_header_are_skipped(client, db, refs):
 def test_blank_first_row_does_not_claim_the_code(client, db, refs):
     stem = unique_code("BCK", alpha=True)
     pid = _mk(db, refs, f"{stem}-K")
-    body = _post(client, "apply", _xlsx([
+    body = _apply(client, _xlsx([
         ["Product Code", "Barcode"], [f"{stem}-K", ""], [f"{stem}-K", EAN_A],
     ])).json()
     assert [r["status"] for r in body["rows"]] == ["blank_barcode", "new"]
@@ -327,7 +337,94 @@ def test_code_matching_two_products_is_skipped(client, db, refs):
     stem = unique_code("BCM", alpha=True)
     upper = _mk(db, refs, f"{stem}-AMB")
     lower = _mk(db, refs, f"{stem}-amb")
-    body = _post(client, "apply", _xlsx([["Product Code", "Barcode"], [f"{stem}-AMB", EAN_A]])).json()
+    body = _apply(client, _xlsx([["Product Code", "Barcode"], [f"{stem}-AMB", EAN_A]])).json()
     assert body["rows"][0]["status"] == "ambiguous_code"
     assert body["applied"] == 0
     assert _barcode(db, upper) is None and _barcode(db, lower) is None
+
+
+# --------------------------------------------------------------------------- crew audit round
+def test_owner_sheet_headers(client, db, refs):
+    """The owner's real header row: 'Barcode (EAN-13)' is the barcode, never 'Barcode Image'
+    (pictures, empty cells), and 'Note' is carried onto the row."""
+    stem = unique_code("BCH", alpha=True)
+    _mk(db, refs, f"{stem}-OLD")
+    _mk(db, refs, f"{stem}-NEW")
+    body = _post(client, "preview", _xlsx([
+        ["No.", "Product Code", "Barcode (EAN-13)", "Barcode Image", "Note"],
+        [1, f"{stem}-OLD", EAN_A, None, None],
+        [2, f"{stem}-NEW", EAN_A, None, f"Same barcode as {stem}-OLD"],
+    ])).json()
+    assert body["readable"] is True
+    assert body["code_column"] == "Product Code"
+    assert body["barcode_column"] == "Barcode (EAN-13)"
+    assert body["note_column"] == "Note"
+    by = _by_code(body)
+    assert [by[f"{stem}-{c}"]["status"] for c in ("OLD", "NEW")] == ["new", "new"]
+    assert by[f"{stem}-NEW"]["note"] == f"Same barcode as {stem}-OLD"
+    assert by[f"{stem}-OLD"]["note"] is None
+    # The intentional share is explained: each row names its partner.
+    assert by[f"{stem}-OLD"]["duplicate_of"] == [f"{stem}-NEW"]
+    assert by[f"{stem}-NEW"]["duplicate_of"] == [f"{stem}-OLD"]
+    assert body["counts"]["duplicate"] == 2
+
+
+def test_barcode_image_column_alone_is_not_a_barcode(client):
+    body = _post(client, "preview", _xlsx([["Product Code", "Barcode Image"], ["X", None]])).json()
+    assert body["readable"] is False
+    assert body["missing_columns"] == ["barcode"]
+
+
+def test_duplicate_names_the_product_already_holding_it(client, db, refs):
+    stem = unique_code("BCG", alpha=True)
+    _mk(db, refs, f"{stem}-HOLD", barcode=EAN_B)
+    _mk(db, refs, f"{stem}-P")
+    body = _post(client, "preview", _xlsx([["Product Code", "Barcode"], [f"{stem}-P", EAN_B]])).json()
+    assert body["rows"][0]["duplicate_of"] == [f"{stem}-HOLD"]
+
+
+def test_scientific_notation_text_is_skipped(client, db, refs):
+    stem = unique_code("BCS", alpha=True)
+    pid = _mk(db, refs, f"{stem}-S")
+    data = _csv([["Product Code", "Barcode"], [f"{stem}-S", "9.55103E+12"]])
+    body = _post(client, "preview", data, name="b.csv").json()
+    assert body["rows"][0]["status"] == "scientific"
+    assert body["counts"]["scientific"] == 1
+    out = _apply(client, data, name="b.csv").json()
+    assert out["applied"] == 0
+    assert _barcode(db, pid) is None
+
+
+def test_header_on_a_later_sheet(client, db, refs):
+    import openpyxl
+
+    stem = unique_code("BCW", alpha=True)
+    _mk(db, refs, f"{stem}-W")
+    wb = openpyxl.Workbook()
+    wb.active.append(["Read me first"])
+    ws = wb.create_sheet("Barcodes")
+    ws.append(["Product Code", "Barcode"])
+    ws.append([f"{stem}-W", EAN_A])
+    buf = io.BytesIO()
+    wb.save(buf)
+    body = _post(client, "preview", buf.getvalue()).json()
+    assert body["readable"] is True and body["rows"][0]["status"] == "new"
+
+
+def test_apply_refuses_without_a_preview_of_the_same_file(client, db, refs):
+    stem = unique_code("BCZ", alpha=True)
+    pid = _mk(db, refs, f"{stem}-Z")
+    data = _xlsx([["Product Code", "Barcode"], [f"{stem}-Z", EAN_A]])
+    other = _xlsx([["Product Code", "Barcode"], [f"{stem}-Z", EAN_B]])
+    files = lambda d: {"file": ("b.xlsx", d, "application/octet-stream")}  # noqa: E731
+
+    assert client.post(f"{BASE}/apply", files=files(data)).status_code == 409
+    token_for_other = _post(client, "preview", other).json()["preview_token"]
+    res = client.post(f"{BASE}/apply", files=files(data), data={"preview_token": token_for_other})
+    assert res.status_code == 409
+    assert _barcode(db, pid) is None
+
+    token = _post(client, "preview", data).json()["preview_token"]
+    res = client.post(f"{BASE}/apply", files=files(data), data={"preview_token": token})
+    assert res.status_code == 200 and res.json()["applied"] == 1
+    assert _barcode(db, pid) == EAN_A
