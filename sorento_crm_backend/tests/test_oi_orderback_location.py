@@ -1,7 +1,7 @@
-"""OI-ORDERBACK-LOCATION (owner ruling 21 Oct 2026, option B): an email row that tells an
-ORDER BACK prints LOCATION = where the stock is ordered back to, the donor (the OI row's own
-`stock_location`), the same as the OI Excel (`order_inquiry_worklist_service._LOCATION`).
-It reverses the 13/14 Oct "the SO line's own location" rule for ORDER BACK rows only.
+"""OI-ORDERBACK-LOCATION (owner ruling 21 Oct 2026 ~11:50 MYT, option A): LOCATION stays the
+SO line's own location (13/14 Oct rule) and REMARK names the donor an ORDER BACK is ordered
+back to, in the `USE <location>` style, whenever it differs from LOCATION: "ORDER BACK BRW-BB".
+A borrow from the line's own location reads plain "ORDER BACK". One row per saved line.
 
 Real case: SO426913 line 96, SRTUB206 x4, SO line at BRW-IR, OI row 2 ORDER_BACK at BRW-BB.
 The email read BRW-IR, the Excel BRW-BB, and the purchaser was confused.
@@ -38,7 +38,7 @@ def _cells(body_html, item_code):
     return [re.sub(r"<[^>]+>", "", td).strip() for td in re.findall(r"<td\b.*?</td>", row, flags=re.S)]
 
 
-def test_resend_of_an_order_back_row_prints_the_donor_not_the_so_line(rs):
+def test_resend_of_an_order_back_row_names_the_donor_in_remark(rs):
     client, world = rs
     _automation(world)
     inquiry = _oi(world)
@@ -50,9 +50,26 @@ def test_resend_of_an_order_back_row_prints_the_donor_not_the_so_line(rs):
 
     email = _ok(client.post(PREVIEW, json={"inquiry_ids": [inquiry.id]}))["emails"][0]
 
-    assert email["subject"].startswith("OI: BRW-BB @ "), email["subject"]
+    assert email["subject"].startswith("OI: BRW-IR @ "), email["subject"]
     cells = _cells(email["body_html"], "ZZT-SRTUB206")
-    assert "BRW-BB" in cells and "BRW-IR" not in cells, cells
+    assert "BRW-IR" in cells, cells
+    assert "ORDER BACK BRW-BB" in cells, cells
+
+
+def test_resend_of_an_order_back_row_at_the_lines_own_location_names_nothing(rs):
+    client, world = rs
+    _automation(world)
+    inquiry = _oi(world)
+    so_line = _so_line(world, inquiry, location="BRW-IR")
+    row = _line(world, inquiry, qty="4", item="ZZT-SRTUB208", location="BRW-IR")
+    row.verb = IV_ORDER_BACK
+    row.so_line_id = so_line.id
+    world.db.commit()
+
+    email = _ok(client.post(PREVIEW, json={"inquiry_ids": [inquiry.id]}))["emails"][0]
+
+    cells = _cells(email["body_html"], "ZZT-SRTUB208")
+    assert "ORDER BACK" in cells and not any("ORDER BACK BRW" in c for c in cells), cells
 
 
 def test_resend_of_a_plain_order_row_keeps_its_own_location(rs):
