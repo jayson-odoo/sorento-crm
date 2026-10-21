@@ -200,7 +200,8 @@ def test_owner_case_so424764_saved_two_sends_two_not_three(api):
     all_rows = _holes(world, inquiry_id, live=False)
     assert len(all_rows) == 3, "no cancelled copy of the DIY order-back was left behind"
     assert sorted(item["item_code"] for item in _TOLD) == ["C-FH14", "CGB9032B"], _TOLD
-    assert _remarks(_TOLD) == ["ORDER BACK", "ORDER BACK"]
+    # OI-ORDERBACK-LOCATION (owner, 21 Oct 2026): REMARK names each hole's donor.
+    assert sorted(_remarks(_TOLD)) == ["ORDER BACK BRW-BB", "ORDER BACK BRW-CC"]
     assert created == 2, "only the two new order-backs count as raised"
 
 
@@ -271,7 +272,7 @@ def test_a_moved_location_cancels_the_old_pile_and_raises_the_new(api):
     (new,) = _holes(world, inquiry_id)
     assert new.stock_location == "BRW-ZZ"
     assert _remarks(_told_about(old)) == ["CANCEL ALL"]
-    assert _remarks(_told_about(new)) == ["ORDER BACK"], [
+    assert _remarks(_told_about(new)) == ["ORDER BACK BRW-ZZ"], [
         (i["row_id"], i["line"]["remark"]) for i in _TOLD
     ]
 

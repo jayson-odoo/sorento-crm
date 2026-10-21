@@ -61,13 +61,14 @@ def test_use_own_location_reads_use_and_the_location():
     )
 
 
-def test_a_borrow_reads_order_back_at_the_lines_own_location():
-    """Owner, 13 Oct: just ORDER BACK; STOCK LOCATION is the SO line's own location, which
-    is where it is ordered back to."""
-    assert saved_line_remark(_snap(_borrow("10", "MWH-BB"))) == ("ORDER BACK", "BRW-IB")
+def test_a_borrow_names_its_donor_at_the_lines_own_location():
+    """STOCK LOCATION is the SO line's own location (owner, 13 Oct); REMARK names where it is
+    ordered back to, the donor (owner, 21 Oct 2026, OI-ORDERBACK-LOCATION)."""
+    assert saved_line_remark(_snap(_borrow("10", "MWH-BB"))) == ("ORDER BACK MWH-BB", "BRW-IB")
     assert saved_line_remark(_snap(_borrow("10", "DC1-BB", rung="group_borrow"))) == (
-        "ORDER BACK", "BRW-IB",
+        "ORDER BACK DC1-BB", "BRW-IB",
     )
+    assert saved_line_remark(_snap(_borrow("10", "BRW-IB"))) == ("ORDER BACK", "BRW-IB")
 
 
 def test_borrow_incoming_reads_the_document_number():
@@ -160,7 +161,8 @@ def test_a_newly_short_reserve_is_not_a_change_to_tell():
 
 def test_a_first_borrow_reads_its_decision_not_its_donor_hole_row():
     """Review S2: a first Confirm's Borrow whose donor hole row told one line prints the
-    decision line (ORDER BACK, the line's qty, the line's own location), not the hole."""
+    decision line (ORDER BACK <donor>, the line's qty, the line's own location), not the
+    hole."""
     from types import SimpleNamespace
     from uuid import uuid4
 
@@ -187,7 +189,7 @@ def test_a_first_borrow_reads_its_decision_not_its_donor_hole_row():
         )
         (told,) = db.info[_HANDOVER_PENDING_KEY]
         assert (told["line"]["remark"], told["line"]["qty"], told["line"]["location"]) == (
-            "ORDER BACK", "10", "BRW-IB",
+            "ORDER BACK MWH-BB", "10", "BRW-IB",
         ), told["line"]
 
 

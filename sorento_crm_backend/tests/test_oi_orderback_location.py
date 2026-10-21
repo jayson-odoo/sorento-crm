@@ -8,6 +8,7 @@ The email read BRW-IR, the Excel BRW-BB, and the purchaser was confused.
 """
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 
 from app.models.project_so import IV_ORDER, IV_ORDER_BACK, ProjectSalesOrderLine
@@ -30,12 +31,11 @@ def _so_line(world, inquiry, *, location):
 
 def _cells(body_html, item_code):
     """The text cells of the email row that names `item_code`."""
-    import re
-
     row = next(
         tr for tr in re.findall(r"<tr\b.*?</tr>", body_html, flags=re.S) if item_code in tr
     )
-    return [re.sub(r"<[^>]+>", "", td).strip() for td in re.findall(r"<td\b.*?</td>", row, flags=re.S)]
+    cells = re.findall(r"<td\b.*?</td>", row, flags=re.S)
+    return [re.sub(r"<[^>]+>", "", td).strip() for td in cells]
 
 
 def test_resend_of_an_order_back_row_names_the_donor_in_remark(rs):

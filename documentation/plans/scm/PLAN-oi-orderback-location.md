@@ -1,6 +1,6 @@
 # PLAN: OI email ORDER BACK names its refill (donor) location
 
-Status: implemented on PR #1815 (reviewer pending). Track: small fix (no migration, no auth, no UI change beyond the email words).
+Status: in review on PR #1815. Track: small fix (no migration, no auth, no UI change beyond the email words); the small fix track has no separate UAC file, the owner's ruling below is the acceptance list.
 
 ## Owner ruling (21 Oct 2026 ~11:50 MYT, option A; replaces the 11:40 option B)
 
@@ -30,3 +30,15 @@ Status: implemented on PR #1815 (reviewer pending). Track: small fix (no migrati
 
 `tests/test_oi_saved_line_email.py` (OI-ORDERBACK-LOCATION section and the updated donor tests),
 `tests/test_oi_orderback_location.py` (resend).
+
+## Review notes
+
+- The planning board's "Confirm sends" preview now names the donor too (UAC F3: the preview
+  is the email's words). Where the board has no own location for a line, a borrow from that
+  line's own location shows the donor in the preview but not in the email; that edge predates
+  this lane.
+- Reviewer S2 (not taken): a resent Order back BUY row whose `stock_location` went stale after
+  the SO line's location moved would read `ORDER BACK <old location>`. Rows are restamped with
+  the line (`ProjectSupplyService._restamp_stock_location`), and gating the donor on the
+  "Order-back:" note instead would drop it from older borrow rows. Trigger to revisit: a real
+  resend that names a stale location.

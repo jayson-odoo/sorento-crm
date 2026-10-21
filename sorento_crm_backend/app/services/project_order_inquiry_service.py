@@ -4632,8 +4632,8 @@ class ProjectOrderInquiryService:
             if unchanged and _borrow_donors(before) != _borrow_donors(now):
                 # Only a Borrow's donor moved (owner, 13 Oct 2026, re-confirmed 14 Oct): a
                 # changed decision, told as its one line at the line's own location (REMARK
-                # names the new donor), never as its rows' lines at the donors. The old donor's CANCEL ALL is the same
-                # order back moved, not an order taken back.
+                # names the new donor), never as its rows' lines at the donors. The old
+                # donor's CANCEL ALL is the same order back moved, not an order taken back.
                 self._queue_saved_line(pso_id, line, now, before, actor_user_id=actor_user_id)
                 continue
             same_kind = before is not None and _decision_words(before) == _decision_words(now)
