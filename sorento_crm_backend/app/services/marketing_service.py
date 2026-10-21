@@ -253,7 +253,7 @@ def _load_attachments_by_promotion_ids(
         )
         .filter(PromotionAttachment.promotion_id.in_(promotion_ids))
         # A soft-deleted file is never served (owner run 21 Oct: a flyer deleted in July was
-        # still sent). The admin detail tab reads `get_by_promotion`, unfiltered, to unlink it.
+        # still sent). The admin detail tab reads `get_promotion_attachments_by_promotion`, unfiltered, to unlink it.
         .filter(
             PromotionAttachment.attachment.has(Attachment.is_deleted.is_(False))
         )
