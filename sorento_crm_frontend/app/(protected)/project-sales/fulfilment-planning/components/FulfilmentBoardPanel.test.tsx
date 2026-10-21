@@ -467,6 +467,31 @@ describe('FulfilmentBoardPanel: the header', () => {
     expect(within(actions).getByLabelText('rows')).toHaveValue('customer');
     expect(within(actions).getByLabelText('granularity')).toHaveValue('month');
   });
+
+  /** Crew ruling (21 Oct 2026): the day-window buttons belong to the grid as well. */
+  it('draws Earlier days / Later days only in Grid under By day', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()], {}, 'day'));
+    currentSearchParams = new URLSearchParams('scope=all&granularity=day');
+
+    renderPanel();
+    const actions = await screen.findByTestId('board-header-actions');
+    await waitFor(() =>
+      expect(within(actions).getByRole('button', { name: 'List' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      ),
+    );
+    expect(within(actions).queryByRole('button', { name: 'Earlier days' })).not.toBeInTheDocument();
+    expect(within(actions).queryByRole('button', { name: 'Later days' })).not.toBeInTheDocument();
+
+    fireEvent.click(within(actions).getByRole('button', { name: 'Grid' }));
+    expect(within(actions).getByRole('button', { name: 'Earlier days' })).toBeInTheDocument();
+    expect(within(actions).getByRole('button', { name: 'Later days' })).toBeInTheDocument();
+    expect(within(actions).getByLabelText('granularity')).toHaveValue('day');
+
+    fireEvent.click(within(actions).getByRole('button', { name: 'List' }));
+    expect(within(actions).queryByRole('button', { name: 'Earlier days' })).not.toBeInTheDocument();
+  });
 });
 
 describe('FulfilmentBoardPanel: the axes', () => {

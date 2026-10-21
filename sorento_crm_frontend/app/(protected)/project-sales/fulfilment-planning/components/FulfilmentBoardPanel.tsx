@@ -2547,7 +2547,9 @@ export function FulfilmentBoardPanel({
           data-testid="board-header-actions"
           className="flex w-full flex-wrap items-center gap-2 sm:w-auto"
         >
-          {granularity === 'day' && (
+          {/* Grid only too (crew ruling, 21 Oct 2026): they move the grid's day window, which
+              List never draws, so in List they would refetch for nothing. */}
+          {view === 'grid' && granularity === 'day' && (
             <>
               <Button type="button" variant="outline" size="sm" onClick={() => shiftWindow(-1)}>
                 Earlier days
