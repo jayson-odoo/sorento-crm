@@ -210,7 +210,8 @@ def resolve(db: Session, data: bytes, name: str) -> dict[str, Any]:
             st = "same"
         else:
             st = "change"
-        if code and key not in seen_codes:
+        # A blank first row does not claim the code: a later row for it still writes.
+        if code and barcode and key not in seen_codes:
             seen_codes[key] = row_no
         out_rows.append({
             "row": row_no,

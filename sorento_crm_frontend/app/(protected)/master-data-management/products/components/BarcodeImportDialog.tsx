@@ -1,6 +1,11 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ColumnDef,
+  getCoreRowModel,
+  useReactTable,
+} from '@tanstack/react-table';
 import { Download, LoaderCircle, TestTube } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -17,6 +22,9 @@ import {
 } from '@/components/ui/dialog';
 import { FileDropzone } from '@/components/common/FileDropzone';
 import { CountTile } from '@/components/common/CountTile';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridTable } from '@/components/ui/data-grid-table';
 import { generateExcelFile } from '@/lib/excel-utils';
 import { toast } from '@/lib/toast';
 import {
@@ -48,7 +56,10 @@ const STATUS: Record<
   change: { label: 'Change', variant: 'primary' },
   same: { label: 'Same', variant: 'secondary' },
   unknown_code: { label: 'Unknown code', variant: 'outline' },
-  ambiguous_code: { label: 'Code in several companies', variant: 'outline' },
+  ambiguous_code: {
+    label: 'Code matches several products',
+    variant: 'outline',
+  },
   repeated_code: { label: 'Repeated code', variant: 'outline' },
   blank_barcode: { label: 'Blank barcode', variant: 'outline' },
   too_long: { label: 'Too long', variant: 'destructive' },
@@ -60,14 +71,14 @@ const WARNING_LABEL = {
 } as const;
 
 function downloadTemplate() {
-  void generateExcelFile(
+  generateExcelFile(
     [{}],
     [
       { key: 'Product Code', label: 'Product Code', selected: true },
       { key: 'Barcode', label: 'Barcode', selected: true },
     ],
     'barcode_import_template.xlsx',
-  );
+  ).catch(() => toast.error('Could not create the template'));
 }
 
 function BarcodeValue({
@@ -108,6 +119,115 @@ function BarcodeCell({ row }: { row: BarcodeImportRow }) {
   }
   const value = row.new_barcode ?? row.old_barcode;
   return value ? <BarcodeValue value={value} /> : null;
+}
+
+const PREVIEW_COLUMNS: ColumnDef<BarcodeImportRow>[] = [
+  {
+    id: 'row',
+    header: ({ column }) => (
+      <DataGridColumnHeader title="Row" column={column} />
+    ),
+    cell: ({ row }) => (
+      <span className="tabular-nums text-muted-foreground">
+        {row.original.row}
+      </span>
+    ),
+    size: 64,
+    enableSorting: false,
+    meta: { headerTitle: 'Row' },
+  },
+  {
+    id: 'product',
+    header: ({ column }) => (
+      <DataGridColumnHeader title="Product" column={column} />
+    ),
+    cell: ({ row }) => (
+      <>
+        <span
+          className="block truncate font-medium"
+          title={row.original.product_code}
+        >
+          {row.original.product_code || '(blank)'}
+        </span>
+        {row.original.product_name ? (
+          <span
+            className="block truncate text-xs text-muted-foreground"
+            title={row.original.product_name}
+          >
+            {row.original.product_name}
+          </span>
+        ) : null}
+      </>
+    ),
+    size: 200,
+    enableSorting: false,
+    meta: { headerTitle: 'Product' },
+  },
+  {
+    id: 'barcode',
+    header: ({ column }) => (
+      <DataGridColumnHeader title="Barcode" column={column} />
+    ),
+    cell: ({ row }) => (
+      <div className="tabular-nums">
+        <BarcodeCell row={row.original} />
+      </div>
+    ),
+    size: 180,
+    enableSorting: false,
+    meta: { headerTitle: 'Barcode' },
+  },
+  {
+    id: 'status',
+    header: ({ column }) => (
+      <DataGridColumnHeader title="Status" column={column} />
+    ),
+    cell: ({ row }) => (
+      <div className="flex flex-wrap gap-1">
+        <Badge
+          variant={STATUS[row.original.status].variant}
+          appearance="light"
+          size="sm"
+        >
+          {STATUS[row.original.status].label}
+        </Badge>
+        {row.original.warnings.map((w) => (
+          <Badge key={w} variant="warning" appearance="light" size="sm">
+            {WARNING_LABEL[w]}
+          </Badge>
+        ))}
+      </div>
+    ),
+    size: 200,
+    enableSorting: false,
+    meta: { headerTitle: 'Status' },
+  },
+];
+
+function PreviewGrid({ rows }: { rows: BarcodeImportRow[] }) {
+  const columns = useMemo(() => PREVIEW_COLUMNS, []);
+  const table = useReactTable({
+    columns,
+    data: rows,
+    getRowId: (r) => String(r.row),
+    getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
+  });
+  return (
+    <DataGrid
+      table={table}
+      recordCount={rows.length}
+      isLoading={false}
+      tableLayout={{
+        width: 'fixed',
+        columnsResizable: true,
+        scrollerMaxHeight: '20rem',
+      }}
+    >
+      <DataGridTable />
+    </DataGrid>
+  );
 }
 
 function OutcomePanel({
@@ -165,69 +285,7 @@ function OutcomePanel({
         <CountTile label="Duplicate" value={c.duplicate} />
         <CountTile label="Not EAN-13 valid" value={c.not_ean13} />
       </div>
-      {outcome.rows.length ? (
-        <div className="max-h-80 overflow-auto rounded-lg border">
-          <table className="w-full min-w-[560px] text-sm">
-            <thead className="sticky top-0 bg-muted text-left text-xs text-muted-foreground">
-              <tr>
-                <th className="px-2 py-1.5 font-medium">Row</th>
-                <th className="px-2 py-1.5 font-medium">Product</th>
-                <th className="px-2 py-1.5 font-medium">Barcode</th>
-                <th className="px-2 py-1.5 font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {outcome.rows.map((r) => (
-                <tr key={r.row} className="border-t align-top">
-                  <td className="px-2 py-1.5 tabular-nums text-muted-foreground">
-                    {r.row}
-                  </td>
-                  <td className="max-w-[200px] px-2 py-1.5">
-                    <div
-                      className="truncate font-medium"
-                      title={r.product_code}
-                    >
-                      {r.product_code || '(blank)'}
-                    </div>
-                    {r.product_name ? (
-                      <div
-                        className="truncate text-xs text-muted-foreground"
-                        title={r.product_name}
-                      >
-                        {r.product_name}
-                      </div>
-                    ) : null}
-                  </td>
-                  <td className="max-w-[200px] px-2 py-1.5 tabular-nums">
-                    <BarcodeCell row={r} />
-                  </td>
-                  <td className="px-2 py-1.5">
-                    <div className="flex flex-wrap gap-1">
-                      <Badge
-                        variant={STATUS[r.status].variant}
-                        appearance="light"
-                        size="sm"
-                      >
-                        {STATUS[r.status].label}
-                      </Badge>
-                      {r.warnings.map((w) => (
-                        <Badge
-                          key={w}
-                          variant="warning"
-                          appearance="light"
-                          size="sm"
-                        >
-                          {WARNING_LABEL[w]}
-                        </Badge>
-                      ))}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : null}
+      {outcome.rows.length ? <PreviewGrid rows={outcome.rows} /> : null}
     </div>
   );
 }
@@ -317,9 +375,8 @@ export function BarcodeImportDialog({
       <DialogContent className="max-w-3xl">
         <DialogHeader>
           <DialogTitle>Import barcodes</DialogTitle>
-          <DialogDescription>
-            A sheet with a product code column and a barcode column (.xlsx or
-            .csv).
+          <DialogDescription className="sr-only">
+            Upload a product code and barcode sheet
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-4">

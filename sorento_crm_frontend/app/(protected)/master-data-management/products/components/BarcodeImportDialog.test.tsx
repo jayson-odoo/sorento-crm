@@ -28,6 +28,11 @@ vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 
+const generateExcelFile = vi.fn().mockResolvedValue(undefined);
+vi.mock('@/lib/excel-utils', () => ({
+  generateExcelFile: (...a: unknown[]) => generateExcelFile(...a),
+}));
+
 const previewBarcodeImport = vi.fn();
 const applyBarcodeImport = vi.fn();
 
@@ -204,5 +209,19 @@ describe('BarcodeImportDialog', () => {
     expect(
       await screen.findByText(/No barcode column found/),
     ).toBeInTheDocument();
+  });
+});
+
+describe('BarcodeImportDialog template', () => {
+  it('downloads a two-column template', async () => {
+    openDialog();
+    fireEvent.click(screen.getByRole('button', { name: /Download template/i }));
+    await waitFor(() => expect(generateExcelFile).toHaveBeenCalled());
+    const [, columns, filename] = generateExcelFile.mock.calls[0];
+    expect((columns as { label: string }[]).map((c) => c.label)).toEqual([
+      'Product Code',
+      'Barcode',
+    ]);
+    expect(filename).toBe('barcode_import_template.xlsx');
   });
 });

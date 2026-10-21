@@ -309,3 +309,25 @@ def test_title_lines_above_header_are_skipped(client, db, refs):
     ])).json()
     assert body["readable"] is True
     assert body["rows"][0]["row"] == 4 and body["rows"][0]["status"] == "new"
+
+
+def test_blank_first_row_does_not_claim_the_code(client, db, refs):
+    stem = unique_code("BCK", alpha=True)
+    pid = _mk(db, refs, f"{stem}-K")
+    body = _post(client, "apply", _xlsx([
+        ["Product Code", "Barcode"], [f"{stem}-K", ""], [f"{stem}-K", EAN_A],
+    ])).json()
+    assert [r["status"] for r in body["rows"]] == ["blank_barcode", "new"]
+    assert _barcode(db, pid) == EAN_A
+
+
+def test_code_matching_two_products_is_skipped(client, db, refs):
+    # The unique index is (company_id, product_code), case-sensitive; the import matches
+    # trimmed and case-insensitive, so `abc` and `ABC` in one company are both hits.
+    stem = unique_code("BCM", alpha=True)
+    upper = _mk(db, refs, f"{stem}-AMB")
+    lower = _mk(db, refs, f"{stem}-amb")
+    body = _post(client, "apply", _xlsx([["Product Code", "Barcode"], [f"{stem}-AMB", EAN_A]])).json()
+    assert body["rows"][0]["status"] == "ambiguous_code"
+    assert body["applied"] == 0
+    assert _barcode(db, upper) is None and _barcode(db, lower) is None
