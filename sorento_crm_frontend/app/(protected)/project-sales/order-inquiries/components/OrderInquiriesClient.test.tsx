@@ -89,6 +89,7 @@ const getOrderInquiryWorklistSummary = vi.fn();
 // goes async (My Downloads) - the sync `downloadOrderInquiryWorklistXlsx` blob fetch is
 // retired from THIS screen (the sync GET route itself stays for one release elsewhere).
 const exportOrderInquiryWorklistXlsx = vi.fn();
+const exportOrderInquiryWorklistPdf = vi.fn();
 const autoPlaceOrderInquiryRows = vi.fn();
 const getUnplaceAllPreview = vi.fn();
 const unplaceAllOrderInquiryRows = vi.fn();
@@ -106,6 +107,8 @@ vi.mock('../../_shared/services/orderInquiryService', () => ({
     getOrderInquiryWorklistSummary(...args),
   exportOrderInquiryWorklistXlsx: (...args: unknown[]) =>
     exportOrderInquiryWorklistXlsx(...args),
+  exportOrderInquiryWorklistPdf: (...args: unknown[]) =>
+    exportOrderInquiryWorklistPdf(...args),
   autoPlaceOrderInquiryRows: (...args: unknown[]) =>
     autoPlaceOrderInquiryRows(...args),
   getUnplaceAllPreview: (...args: unknown[]) => getUnplaceAllPreview(...args),
@@ -1126,6 +1129,42 @@ describe('Unlink all (S2/S3/N1, carried over unchanged from the handshake plan)'
       "You don't have permission to unlink rows",
     );
     expect(getUnplaceAllPreview).not.toHaveBeenCalled();
+  });
+});
+
+describe('Print / Download PDF: the filtered rows, in the OI email layout (OI-DOWNLOAD)', () => {
+  it('sends the active filters to the PDF export and toasts My Downloads', async () => {
+    currentSearchParams = new URLSearchParams('ack=rejected');
+    exportOrderInquiryWorklistPdf.mockResolvedValue({
+      id: 'dl-p', kind: 'order_inquiry_worklist_pdf', status: 'pending',
+      filename: 'order-inquiries-21102026.pdf',
+    });
+    renderClient();
+    await screen.findByText('SO385126');
+
+    openActionsMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: /print \/ download pdf/i }));
+
+    await waitFor(() =>
+      expect(exportOrderInquiryWorklistPdf).toHaveBeenCalledWith(
+        expect.objectContaining({ ack: 'rejected' }),
+      ),
+    );
+    expect(exportOrderInquiryWorklistXlsx).not.toHaveBeenCalled();
+    await waitFor(() => expect(toastSuccessSpy).toHaveBeenCalled());
+    expect(toastSuccessSpy.mock.calls[0][0]).toMatch(/my downloads/i);
+  });
+
+  it('shows an error toast when the PDF fails to start', async () => {
+    exportOrderInquiryWorklistPdf.mockRejectedValueOnce(new Error('A PDF is already queued'));
+    renderClient();
+    await screen.findByText('SO385126');
+
+    openActionsMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: /print \/ download pdf/i }));
+
+    await waitFor(() => expect(toastErrorSpy).toHaveBeenCalled());
+    expect(toastErrorSpy.mock.calls.at(-1)?.[0]).toMatch(/already queued/i);
   });
 });
 

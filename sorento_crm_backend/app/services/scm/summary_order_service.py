@@ -1693,31 +1693,15 @@ def write_sheet(ws, columns, rows: list[tuple], widths: dict) -> None:
     caller's own row builder (numbers for quantities, `_xlsx_safe_text` for strings) - this
     function only writes what it is given, styled like the paper sheet (S14, AC-S14.6): a
     dark bold white header, a thin border and wrapped text on every cell, frozen at A2, the
-    caller's explicit column widths.
+    caller's explicit column widths. The style itself is `app.services.excel_style`'s.
     """
-    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from app.services import excel_style
 
     ws.append(list(columns))
     for r in rows:
         ws.append(list(r))
 
-    thin = Side(style="thin")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-    wrap = Alignment(wrap_text=True, vertical="top")
-    header_font = Font(bold=True, color="FFFFFFFF")
-    header_fill = PatternFill("solid", fgColor="FF404040")
-
-    for row in ws.iter_rows(min_row=1, max_row=ws.max_row):
-        for cell in row:
-            cell.border = border
-            cell.alignment = wrap
-    for cell in ws[1]:
-        cell.font = header_font
-        cell.fill = header_fill
-
-    ws.freeze_panes = "A2"
-    for col, width in widths.items():
-        ws.column_dimensions[col].width = width
+    excel_style.style_table(ws, widths=widths)
 
 
 def _render_export_xlsx(rows: list[tuple]) -> bytes:
