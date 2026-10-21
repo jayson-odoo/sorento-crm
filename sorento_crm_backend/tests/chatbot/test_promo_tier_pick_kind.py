@@ -128,3 +128,66 @@ def test_a_deleted_promotion_file_is_never_served(session_factory, monkeypatch):
     promo = next(p for p in served["data"] if str(p.id) == ids["promo"])
     names = {a.attachment.original_filename for a in promo.attachments}
     assert names == {LIVE_FILE}, names
+
+
+def test_a_level_named_beside_the_brand_is_still_fetched_at_that_level(session_factory, monkeypatch):
+    """Scope of fault 2's rule: "dealer for sorento" types the brand, so the menu's position is not
+    taken as its answer, but the level it names is read on its own (the parser's access level):
+    the fetch runs at Dealer, by kind and brand, and the menu is not asked again."""
+    ids = _world(session_factory)
+    captured = _mcp(monkeypatch, session_factory)
+    n = _menu(session_factory, monkeypatch, ids, captured)
+    answer = _qf(kind="a3_flyer", typed="sorento")
+    answer["entities"] = answer["entities"] + [
+        {"raw": "dealer", "hint": "tier", "canonical_code": "dealer", "current_message": True, "confident": True}
+    ]
+    answer["access_levels"] = ["Sorento Dealer"]
+    answer["open_question_answer"] = {"mode": "pick", "picked": [2], "items": [], "qty_for_all": None}
+    reply, _ = _say(session_factory, monkeypatch, answer, "dealer for sorento", "zzt-tpk-level")
+    assert not reply.startswith("Which access level"), reply
+    fetches = _fetches(captured, n)
+    assert fetches and all(
+        a.get("access_levels") == ["Sorento Dealer"] and a.get("promotion_types") == ["a3_flyer"]
+        and a.get("brand_ids") == [str(ids["srt"])]
+        for a in fetches
+    ), captured[n:]
+    # The reply over this fetch is still the older "Couldn't find" miss (base 9d64921e gives the
+    # same), which is outside this lane; only the pick is pinned here.
+
+
+def test_the_promotion_attachments_list_never_lists_a_deleted_file(session_factory):
+    """Fault 3, the second read: `crm_marketing_promotion_attachments_list`'s service."""
+    from app.services.marketing_service import PromotionAttachmentService
+
+    ids = _world(session_factory)
+    db = session_factory()
+    db.query(Promotion.id).first()  # a fresh test session answers its first ORM read empty
+    result = PromotionAttachmentService(db).list_promotion_attachments(promotion_id=ids["promo"])
+    names = {row.attachment.original_filename for row in result["data"]}
+    assert names == {LIVE_FILE}, names
+
+
+def test_the_promotions_pdf_export_skips_a_deleted_file(session_factory, monkeypatch):
+    """Fault 3, the third read: the export merges the live file and never downloads the
+    deleted one."""
+    import fitz
+
+    from app.services import promotions_pdf_service as pdf_mod
+
+    ids = _world(session_factory)
+    page = fitz.open()
+    page.new_page()
+    one_page = page.tobytes()
+    downloaded: list[str] = []
+
+    class _Backend:
+        def download_file(self, key):
+            downloaded.append(key)
+            return one_page
+
+    monkeypatch.setattr(pdf_mod, "extract_key", lambda path: path)
+    monkeypatch.setattr(pdf_mod, "get_backend", lambda provider: _Backend())
+    db = session_factory()
+    db.query(Promotion.id).first()  # a fresh test session answers its first ORM read empty
+    pdf_mod.PromotionsPdfService(db).render_pdf([ids["promo"]])
+    assert downloaded == [f"/tmp/{LIVE_FILE}"], downloaded
