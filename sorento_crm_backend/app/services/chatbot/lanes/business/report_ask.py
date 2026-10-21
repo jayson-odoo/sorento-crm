@@ -257,6 +257,48 @@ SALES_RANKING_ASK = rf.register(rf.AskType(
 # --------------------------------------------------------------------------- #
 
 
+#: REPORT-SMART-1021 capability table: the axes (the parser's `group_by`, "" for none) each
+#: other report kind's own tool can draw. The parser names the kind and the axis; CODE picks
+#: the tool from both (owner 15 Oct 2026: "not very smart and dynamic"). An axis the kind's
+#: tool cannot draw but `crm_report_ask` can (`GROUP_BY`) is this ask's.
+CAN_DRAW = {
+    # `crm_sales_analysis`: the company's totals by channel, month or year
+    # (`fetch.SALES_ANALYSIS_GROUP_BY`).
+    "sales_analysis": frozenset({"", "year", "month"}),
+    # `crm_sales_report`: one subject's sales, month by month.
+    "sales_report": frozenset({"", "month"}),
+    # `crm_top_selling_report`: items or categories ranked.
+    "top_selling": frozenset({"", "product", "category"}),
+}
+#: A breakdown the parser did not read as a ranking (a sales analysis or report by an axis,
+#: "sales for all agents") lists every row, never asked "how many": up to this many.
+BREAKDOWN_TOP_N = 100
+#: The analysis's basis key (`sales_basis`) and the bases the report ask has of it.
+_ANALYSIS_BASES = frozenset({"delivered", "ordered"})
+
+
+def by_capability(verdict: dict[str, Any]) -> dict[str, Any]:
+    """Engine seam, before grounding (REPORT-SMART-1021 step 2): a sales figure ask whose
+    `group_by` its kind's tool cannot draw (`CAN_DRAW`) but the report ask can is a sales
+    ranking, read whole by `settle`: its filters, period, count, metric and basis, with every
+    missing one asked in one numbered reply. A breakdown (no count, no direction, from a kind
+    that is not a ranking) lists every row. Parser fields only; anything else is unchanged."""
+    status = jsc.js_string(verdict.get("order_status") or "").strip()
+    raw_group = jsc.js_string(verdict.get("group_by") or "").strip().lower()
+    if status not in CAN_DRAW or raw_group in CAN_DRAW[status] or raw_group not in GROUP_BY:
+        return verdict
+    out = {**{k: v for k, v in verdict.items() if k not in ("status", "document")}, **SALES_RANKING_ASK.reroute}
+    if basis_from(out) is None and verdict.get("sales_basis") in _ANALYSIS_BASES:
+        out["basis"] = verdict["sales_basis"]
+    if (
+        status != "top_selling"
+        and verdict.get("top_n") is None
+        and verdict.get("rank_direction") not in ("top", "bottom")
+    ):
+        out["top_n"] = BREAKDOWN_TOP_N
+    return out
+
+
 def hold_words(verdict: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Engine seam before grounding, a `sales_ranking` verdict: its brand, sales agent and
     category entities, held out of the descriptor grounding and handed back after it."""
@@ -348,6 +390,18 @@ def names_its_own_ask(verdict: dict[str, Any], open_slot: dict[str, Any] | None 
     return GROUP_BY.get(raw_group, raw_group) != held
 
 
+def restates_the_ask(verdict: dict[str, Any]) -> bool:
+    """REPORT-SMART-1021 (#1721 hand test step 7): a verdict flagged `ranking_refine` that
+    names its own `group_by`, or that the parser marked `new_subject`, is the whole ask typed
+    again, not a refine: a refine names only the fields it changes, `group_by` null (prompt
+    R-X-05). It starts a new report frame, so the held basis and measure are not carried.
+    Parser fields only."""
+    if verdict.get("ranking_refine") is not True:
+        return False
+    ops = {jsc.js_string(c.get("op") or "") for c in jsc.array(verdict.get("state_changes")) if isinstance(c, dict)}
+    return bool(jsc.js_string(verdict.get("group_by") or "").strip()) or "new_subject" in ops
+
+
 def as_held_refine(verdict: dict[str, Any], frame: Any) -> dict[str, Any]:
     """Engine seam, chat fix PR-B S3: with a report held (`Focus.sales_ranking_frame`: a ranking or
     a total that ran, from a single ask or a multi-ask), the parser's refine (`ranking_refine`)
@@ -357,6 +411,8 @@ def as_held_refine(verdict: dict[str, Any], frame: Any) -> dict[str, Any]:
     status = jsc.js_string(verdict.get("order_status") or "").strip()
     if verdict.get("ranking_refine") is not True or not isinstance(frame, dict) or not frame or status == ASK_NAME:
         return verdict
+    if restates_the_ask(verdict):
+        return verdict  # a re-typed ask is its own report type's new ask, never the held one re-run
     return {
         **{k: v for k, v in verdict.items() if k not in ("status", "document")},
         **SALES_RANKING_ASK.reroute,
@@ -674,6 +730,9 @@ def settle(
     # A refine never changes the axis: a verdict naming another axis than the held ranking's
     # is not one, whatever its `ranking_refine` says (crew live pass, 8 Oct 2026).
     new_axis = bool(frame) and bool(raw_group) and GROUP_BY.get(raw_group, raw_group) != frame.get("group_by")
+    if not new_axis and restates_the_ask(parse_output):
+        # The same axis typed again is a new ask (a new frame): read whole, nothing held.
+        parse_output = {**parse_output, "ranking_refine": False}
     if parse_output.get("ranking_refine") is True and frame and not new_axis:
         return _refine(db, parse_output, frame, dealer=dealer)
     if drill in ("scoped", "unsure") or (new_axis and drill != "global" and _dict(frame.get("shown"))):
