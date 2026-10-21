@@ -801,7 +801,8 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
             # ask carries (a later bare number must not re-run it into the same did-you-mean). A
             # product the ask also named and resolved stays.
             focus.products = [
-                row for row in focus.products or [] if not (isinstance(row, dict) and not row.get("uuid"))
+                row for row in focus.products or []
+                if not (isinstance(row, dict) and not (row.get("uuid") or row.get("uuids")))
             ]
             focus.domains = ["inventory"]
             return (
