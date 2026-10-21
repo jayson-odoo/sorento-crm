@@ -619,7 +619,10 @@ def test_every_company_id_table_is_registered():
     # + 1 (OI-LINE-SPLIT): `so_line_splits`, one company's own delivery splits of an SO line;
     #   read by order within the company = 165.
     # + 1 (SR-CORE #1718): `sample_requests`, one company's sample requests = 166.
-    expected_owned = 166
+    # + 3 (SALES-TARGET-DEALER): `sales.target_accounts` (a dealer target's counted accounts),
+    #   `sales.target_tier_rates` (a tier's per-account rate) and `sales.point_ratios` (one
+    #   company's dated point-to-RM ratio); each is one company's own scheme data = 169.
+    expected_owned = 169
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )
