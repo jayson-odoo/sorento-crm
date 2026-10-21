@@ -31,7 +31,7 @@
 14. A 12k-row file previews without freezing: the table shows rows needing attention first
     (toggle to show all), paged 50 at a time; apply writes in chunks inside one transaction.
 15. Size limits (security review 21 Oct): a sheet reaching past row 1,048,576, more than
-    50,000 non-empty data rows, more than 20 MB of workbook XML (pictures under xl/media/ do
-    not count) or an unreadable file is refused with a plain 400. Only the first 64 columns
+    50,000 non-empty data rows, more than 20 MB of unpacked workbook parts (a part counts unless
+    it is a real picture: PNG/JPEG/GIF header and barely compressed) or an unreadable file is refused with a plain 400. Only the first 64 columns
     and the first 10 sheets are read, the sheet's declared size is not trusted, and each cell
     is cut to 256 characters. Parsing runs off the event loop.
