@@ -337,7 +337,6 @@ type PressRole =
   | { kind: 'cancelled' }
   | { kind: 'withdraw' }
   | { kind: 'cancel_so'; reason: string }
-  | { kind: 'blocked_cancel' }
   | { kind: 'blocked_reject' }
   | { kind: 'stale' }
   | { kind: 'post'; line: ConfirmLine }
@@ -360,10 +359,9 @@ function pressRoleFor(
       if ((contribution.covered && contribution.decision) || !contribution.project_line_id) {
         return { kind: 'skip' };
       }
-      // `cancelled_lines` is refused beside a batch, like a staged rejection.
-      if (batchBlocked && (batchNamedKeys ? batchNamedKeys.has(contribution.key) : true)) {
-        return { kind: 'blocked_cancel' };
-      }
+      // PLAN-BATCH-HELD-CANCEL (owner ruling (a), 21 Oct 2026): never held by a pending
+      // change, named or not. The server transfers it in the same press that applies the
+      // change; holding it waited for an apply nothing ever ran (SO394881).
       return { kind: 'cancel_so', reason: (decision.reason ?? '').trim() };
     }
   }
@@ -446,7 +444,10 @@ export function pressPostsContribution(
     role.kind === 'post' ||
     role.kind === 'withdraw' ||
     role.kind === 'cancel_so' ||
-    role.kind === 'split_edit'
+    role.kind === 'split_edit' ||
+    // PLAN-BATCH-HELD-CANCEL (U1): a line the book cancelled is one the press retires, and
+    // Confirm counts it, so Saved names it too: Saved (N) and Confirm (N) are one population.
+    role.kind === 'cancelled'
   ) {
     return true;
   }
@@ -1221,7 +1222,6 @@ export interface ConfirmDialogCancelled {
   item_code: string;
 }
 
-const BLOCKED_CANCEL_REASON = 'Transfer to Cancel SO is held until the pending change is applied';
 const BLOCKED_REJECT_REASON = 'staged rejection is held until the pending change is applied';
 
 /**
@@ -1291,9 +1291,6 @@ export function confirmDialogRowsFor(
         break;
       case 'cancel_so':
         rows.push(rowFor('cancelled', 'Cancel SO'));
-        break;
-      case 'blocked_cancel':
-        notPosted.push({ ...identity, reason: BLOCKED_CANCEL_REASON });
         break;
       case 'blocked_reject':
         notPosted.push({ ...identity, reason: BLOCKED_REJECT_REASON });

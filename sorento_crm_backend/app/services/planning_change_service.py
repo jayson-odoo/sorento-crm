@@ -4409,6 +4409,85 @@ def _refuse_dropped_named_lines(
     )
 
 
+def link_rows_to_mirror_lines(db: Session, rows: Sequence[PlanningChangeRow]) -> None:
+    """PLAN-BATCH-HELD-CANCEL: an `added` row is written with no `project_line_id` (its
+    mirror line does not exist yet when the book is read). Once the order carries that line,
+    link it: the board already reads the row's line off `proposal.project_line_id`, and a
+    row that cannot name its line can never be decided, applied or closed (SO394881's 30
+    `added` rows kept its batch open, and the board holding the order, for a month)."""
+    unlinked = [
+        r
+        for r in rows
+        if not r.project_line_id
+        and r.core_line_id
+        and r.applied_state == PLANNING_CHANGE_STATE_PENDING
+    ]
+    if not unlinked:
+        return
+    mirrors = {
+        (str(pso_id), str(core_id)): str(line_id)
+        for line_id, pso_id, core_id in db.query(
+            ProjectSalesOrderLine.id,
+            ProjectSalesOrderLine.project_sales_order_id,
+            ProjectSalesOrderLine.core_sales_order_line_id,
+        )
+        .filter(
+            ProjectSalesOrderLine.core_sales_order_line_id.in_(
+                list({str(r.core_line_id) for r in unlinked})
+            )
+        )
+        .all()
+    }
+    for r in unlinked:
+        line_id = mirrors.get((str(r.project_sales_order_id), str(r.core_line_id)))
+        if line_id:
+            r.project_line_id = line_id
+    db.flush()
+
+
+def _settle_answered_rows(
+    db: Session, order_rows: Sequence[PlanningChangeRow], covered_line_ids: set
+) -> None:
+    """PLAN-BATCH-HELD-CANCEL (crew ruling Q2, 21 Oct 2026): an undecided pending row the
+    order has already answered is closed here, per row, so a batch whose rows are all
+    resolved gets `applied_at` and stops holding the order:
+
+    * its sales-order line is cancelled (a Cancel SO, or the book) - superseded, the same
+      reason a decided row on such a line already gets below;
+    * it is an `added` row whose line the active revision already covers (CS confirmed the
+      new line through an ordinary press) - applied: there is nothing left to decide.
+
+    A row whose line is NOT covered stays pending: CS has not decided that line yet."""
+    pending = [
+        r
+        for r in order_rows
+        if r.applied_state == PLANNING_CHANGE_STATE_PENDING
+        and r.kind != "cancelled"
+        and r.decision is None
+    ]
+    if not pending:
+        return
+    core_ids = [str(r.core_line_id) for r in pending if r.core_line_id]
+    cancelled_core_ids = (
+        {
+            str(line_id)
+            for (line_id,) in db.query(SalesOrderLine.id)
+            .filter(SalesOrderLine.id.in_(core_ids), SalesOrderLine.line_status == "cancelled")
+            .all()
+        }
+        if core_ids
+        else set()
+    )
+    for r in pending:
+        if r.core_line_id and str(r.core_line_id) in cancelled_core_ids:
+            r.applied_state = PLANNING_CHANGE_STATE_SUPERSEDED
+            r.applied_reason = "the sales-order line is cancelled"
+        elif r.kind == "added" and r.project_line_id and str(r.project_line_id) in covered_line_ids:
+            r.applied_state = PLANNING_CHANGE_STATE_APPLIED
+            r.applied_reason = "the line is already confirmed"
+    db.flush()
+
+
 def _apply_one_order(
     db: Session,
     supply,
@@ -4445,6 +4524,9 @@ def _apply_one_order(
     # None and hide it behind the generic fallback every time.
     previous_frozen_for_report = supply.frozen_lines_of(latest_decision)
     previous_decision_id_for_report = str(latest_decision.id) if latest_decision else None
+
+    link_rows_to_mirror_lines(db, order_rows)
+    _settle_answered_rows(db, order_rows, {str(line_id) for line_id in frozen})
 
     # Confirm or Amend, and a line the book CANCELLED - nothing else is applied (AC-C7).
     # A row still undecided is simply left pending: the batch waits for CS.
@@ -4739,12 +4821,21 @@ def _apply_one_order(
         # None when every line it named was already fulfilled (#1362 item 3): nothing
         # was written, so nothing was revised.
         revised = revision_no is not None
-    elif active_decision is not None and (replanned or retired):
-        supply.supersede_for_material_change(
+    elif active_decision is not None and uncover_line_ids:
+        # Crew ruling Q1 (PLAN-BATCH-HELD-CANCEL, 21 Oct 2026): ONLY the lines this batch
+        # retires or re-opens leave the revision, exactly as `confirm(uncover_line_ids=...)`
+        # above does when the press also composed a line; every other confirmed line is
+        # carried. Superseding the whole revision here sent every confirmed line of the order
+        # back to review whenever the press happened to compose nothing (SO394881).
+        # `uncover_lines` still retires the revision outright when nothing else is covered.
+        supply.uncover_lines(
             order,
-            "Every covered line moved to Replan or Retire in a planning change batch.",
+            uncover_line_ids,
+            actor_user_id=str(actor or active_decision.confirmed_by or ""),
+            reason="The book changed or cancelled this line in a planning change batch.",
         )
         revised = True
+        revision_no = current_revision_no(db, pso_id)
 
     # NOW the closed lines' placements move to the surviving row of the same product on the
     # same order (AC-P3-6). After the confirm, so the survivor already carries its new
