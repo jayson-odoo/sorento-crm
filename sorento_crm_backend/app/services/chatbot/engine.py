@@ -1136,6 +1136,8 @@ def _candidate_lines(
     *,
     code_lookup: bool = False,
     index: bool = False,
+    matches_out: list | None = None,
+    failed_out: list | None = None,
 ) -> tuple[list[str] | None, frozenset[str], dict[str, dict[str, Any]]]:
     """The candidate block for the message's OWN line (`UserTurn.own_text`: the quoted reply
     under it is not this message's words, the line grounding reads too). It only advises the
@@ -1144,8 +1146,11 @@ def _candidate_lines(
 
     `index` (CLOSED-LISTS-INDEX-MODE): the block is `head/closed_lists_index.block` (the word
     matches beside the candidate lines, the held products' own lines under their own heading),
-    built in its own savepoint so a failure there keeps the candidate lines."""
+    built in its own savepoint so a failure there keeps the candidate lines. CHAT-INDEX-VIZ:
+    `matches_out` gets the matches `block_with_matches` reports; `failed_out` gets True when
+    the index step failed."""
     message = user_turn.own_text
+    entries: list = []
     try:
         with db.begin_nested():
             entries = (
@@ -1165,10 +1170,14 @@ def _candidate_lines(
         return lines, codes, picks
     try:
         with db.begin_nested():
-            indexed = closed_lists_index.block(db, lines or [], message, held_ids, hidden)
+            indexed, matches = closed_lists_index.block_with_matches(db, entries, message, held_ids, hidden)
+        if matches_out is not None:
+            matches_out.extend(matches)
     except Exception:  # noqa: BLE001 - advisory block, never a failed turn
         logger.warning("chatbot: closed lists index lines failed; parsing without them", exc_info=True)
         indexed = []
+        if failed_out is not None:
+            failed_out.append(True)
     return (indexed or lines), codes, picks
 
 
@@ -4691,6 +4700,8 @@ def _run_stages_body(  # noqa: PLR0915
             if parser_config.closed_lists
             else frozenset()
         )
+        index_matches: list[dict] = []
+        index_failed: list[bool] = []
         candidate_lines, listed_codes, pick_info = (
             _candidate_lines(
                 db,
@@ -4699,6 +4710,8 @@ def _run_stages_body(  # noqa: PLR0915
                 hidden_spec,
                 code_lookup=parser_config.code_lookup,
                 index=parser_config.closed_lists_index,
+                matches_out=index_matches,
+                failed_out=index_failed,
             )
             if parser_config.closed_lists
             else (None, frozenset(), {})
@@ -4902,6 +4915,11 @@ def _run_stages_body(  # noqa: PLR0915
         raw={"parser_raw": parser_raw, "derived": verdict},
     )
     turn_trace.add("prompt_text", {"text": user_block})
+    if parser_config.closed_lists_index:
+        turn_trace.add(
+            "closed_lists_index",
+            {"words": candidates_mod._tokens(user_turn.own_text), "matches": index_matches, "failed": bool(index_failed)},
+        )
     if phantom_answer:
         raw_positions = parser_raw.get("reference_positions")
         positions_kept = bool(raw_positions) and verdict.get("reference_positions") == raw_positions

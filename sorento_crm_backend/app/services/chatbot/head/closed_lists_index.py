@@ -20,6 +20,7 @@ Warehouses are no index line: their closed list is checked at grounding (`head/g
 """
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -211,30 +212,42 @@ def _grams(message: str) -> set[str]:
     return out
 
 
-def _named(grams: set[str], keys: list[str]) -> bool:
-    """Does the message name one of `keys` (a code, name or word on file): exactly, or spelt
-    near it the way the candidate lines read near spellings (same word count, pg_trgm score)."""
+def _named_by(grams: set[str], keys: list[str]) -> tuple[str, bool] | None:
+    """The gram of the message that names one of `keys` (a code, name or word on file), and
+    whether it did so only by near spelling (same word count, pg_trgm score); None when none does."""
     from app.services.chatbot.head.candidates import MIN_NEAR_CHARS, NEAR_PHRASE, _phrase, similarity, trigrams
 
     folded = {k for k in (_phrase(key) for key in keys) if k}
-    if grams & folded:
-        return True
-    for key in folded:
+    exact = sorted(grams & folded, key=lambda g: (-len(g.split()), g))
+    if exact:
+        return exact[0], False
+    for key in sorted(folded):
         if len(key.replace(" ", "")) < MIN_NEAR_CHARS:
             continue
         size = len(key.split())
         key_trigrams = trigrams(key)
-        for gram in grams:
+        for gram in sorted(grams):
             if len(gram.split()) == size and len(gram.replace(" ", "")) >= MIN_NEAR_CHARS:
                 if similarity(trigrams(gram), key_trigrams) >= NEAR_PHRASE:
-                    return True
-    return False
+                    return gram, True
+    return None
 
 
-def file_lines(db: "Session", message: str, held_ids: list[str]) -> tuple[list[str], list[str]]:
-    """The File type, Certificate kind and Certificate scheme lines (the `{{attachment_types}}`
-    / `{{certification_types}}` wording), in list order: those for the items the message's words
-    name, and those for the items the held products have on record. An item can be in both."""
+def _named(grams: set[str], keys: list[str]) -> bool:
+    """Does the message name one of `keys`: exactly, or spelt near it the way the candidate
+    lines read near spellings."""
+    return _named_by(grams, keys) is not None
+
+
+def _type_name(row: dict) -> str:
+    from app.services import chatbot_prompt_vars as pv
+
+    return str(row.get("type_name") or pv._item(row))
+
+
+def _file_matches(db: "Session", message: str, held_ids: list[str]) -> tuple[list[dict], list[dict]]:
+    """`file_lines`, with the list each line belongs to and the gram that named it: the named
+    items as {"line", "list", "word", "near"} and the held items as {"line", "list"}, uncapped."""
     from app.services import chatbot_prompt_vars as pv
 
     grams = _grams(message)
@@ -245,21 +258,33 @@ def file_lines(db: "Session", message: str, held_ids: list[str]) -> tuple[list[s
     def type_keys(row: dict) -> list[str]:
         return [pv._item(row), str(row.get("type_name") or ""), *pv._type_words(row, aliases)]
 
-    named: list[str] = []
-    held: list[str] = []
+    named: list[dict] = []
+    held: list[dict] = []
+
+    def add(line: str, list_name: str, plain: str, hit: tuple[str, bool] | None, held_here: bool) -> None:
+        if hit is not None:
+            named.append({"line": line, "list": list_name, "word": hit[0], "near": hit[1], "plain": plain})
+        if held_here:
+            held.append({"line": line, "list": list_name, "plain": plain})
+
     for row in pv._file_type_rows(db):
-        line = pv.file_type_line(row, aliases)
-        named += [line] if _named(grams, type_keys(row)) else []
-        held += [line] if pv._item(row).casefold() in held_types else []
+        add(pv.file_type_line(row, aliases), "File types", _type_name(row), _named_by(grams, type_keys(row)), pv._item(row).casefold() in held_types)
     for row in pv._cert_kind_rows(db):
-        line = pv.cert_kind_line(row, aliases)
-        named += [line] if _named(grams, type_keys(row)) else []
-        held += [line] if pv._item(row).casefold() in held_types else []
+        add(pv.cert_kind_line(row, aliases), "Certificates", _type_name(row), _named_by(grams, type_keys(row)), pv._item(row).casefold() in held_types)
     for name, words in pv._cert_schemes(db):
-        line = pv.cert_scheme_line(name, words)
-        named += [line] if _named(grams, [name, *words]) else []
-        held += [line] if name.casefold() in held_schemes else []
-    return list(dict.fromkeys(named))[:CAP_FILE_LINES], list(dict.fromkeys(held))[:CAP_FILE_LINES]
+        add(pv.cert_scheme_line(name, words), "Certificate schemes", name, _named_by(grams, [name, *words]), name.casefold() in held_schemes)
+    return named, held
+
+
+def file_lines(db: "Session", message: str, held_ids: list[str]) -> tuple[list[str], list[str]]:
+    """The File type, Certificate kind and Certificate scheme lines (the `{{attachment_types}}`
+    / `{{certification_types}}` wording), in list order: those for the items the message's words
+    name, and those for the items the held products have on record. An item can be in both."""
+    named, held = _file_matches(db, message, held_ids)
+    return (
+        list(dict.fromkeys(m["line"] for m in named))[:CAP_FILE_LINES],
+        list(dict.fromkeys(m["line"] for m in held))[:CAP_FILE_LINES],
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -293,11 +318,10 @@ def code_suffix_forms(db: "Session", hidden: frozenset[str] = frozenset()) -> di
     return forms
 
 
-def code_suffix_lines(db: "Session", grams: set[str], hidden: frozenset[str] = frozenset()) -> list[str]:
-    """The spec values a word of the message names exactly as a registry code-suffix short form
-    (`code_suffix_forms`), one candidate line per word in the candidate lines'
-    `- "word": spec K = V (label)` format."""
-    out: list[str] = []
+def _code_suffix_matches(db: "Session", grams: set[str], hidden: frozenset[str] = frozenset()) -> list[tuple[str, str, list[str]]]:
+    """Per word a message gram names as a registry code-suffix short form: (word, its candidate
+    line, the spec items on it)."""
+    out: list[tuple[str, str, list[str]]] = []
     for word, pairs in code_suffix_forms(db, hidden).items():
         if word not in grams:
             continue
@@ -305,8 +329,154 @@ def code_suffix_lines(db: "Session", grams: set[str], hidden: frozenset[str] = f
         for row, value in pairs:
             items += [item for item in _spec_items(row, value) if item not in items]
         if items:
-            out.append(f'- "{word}": ' + "; ".join(items))
+            out.append((word, f'- "{word}": ' + "; ".join(items), items))
     return out
+
+
+def code_suffix_lines(db: "Session", grams: set[str], hidden: frozenset[str] = frozenset()) -> list[str]:
+    """The spec values a word of the message names exactly as a registry code-suffix short form
+    (`code_suffix_forms`), one candidate line per word in the candidate lines'
+    `- "word": spec K = V (label)` format."""
+    return [line for _word, line, _items in _code_suffix_matches(db, grams, hidden)]
+
+
+HELD_LIST = "On record for the held product"
+
+_ITEM_LISTS = (
+    ("set code ", "Products"),
+    ("code ", "Products"),
+    ("product type ", "Product types"),
+    ("spec ", "Specifications"),
+    ("flag", "Specifications"),
+    ("size ", "Sizes"),
+)
+
+
+def _item_list(item: str) -> str:
+    return next((name for prefix, name in _ITEM_LISTS if item.startswith(prefix)), "Other")
+
+
+HELD_SOURCE = "on record for the held product"
+_FILE_SOURCES = {
+    "File types": "from the file type list",
+    "Certificates": "from the certificate list",
+    "Certificate schemes": "from the certificate scheme list",
+}
+_SPEC_ITEM = re.compile(r"^(?:spec|flag) (?P<key>\S+) = (?P<val>.*?)(?: \((?P<disp>[^()]*)\))?$")
+_TYPE_ITEM = re.compile(r"^product type (?P<disp>.*) \(\S+ = .*\)$")
+_NUMBER_ITEM = re.compile(r"^spec (?P<key>\S+) \(a number\)$")
+_HOLDING_TAIL = re.compile(r', holding ".*"$')
+_SIZE_ITEM = re.compile(r"^size (?P<size>.*?)(?: \(no dimension named\))?$")
+
+
+def _spec_labels(db: "Session", hidden: frozenset[str]) -> dict[str, str]:
+    """Registry key -> its label, for the plain value of a spec item."""
+    from app.services.chatbot.head.candidates import _registry
+
+    return {row.spec_key: str(row.label) for row in _registry(db, hidden) if row.label}
+
+
+def _plain_item(item: str, labels: dict[str, str]) -> tuple[str, str]:
+    """A candidate item in plain words and where it comes from (CHAT-INDEX-VIZ contract v2)."""
+    if item.startswith("set code "):
+        return _HOLDING_TAIL.sub("", item[len("set code "):]), "from the product sets"
+    if item.startswith("code "):
+        return _HOLDING_TAIL.sub("", item[len("code "):]), "from the product codes"
+    if item.startswith("product type "):
+        found = _TYPE_ITEM.match(item)
+        return "Product type: " + (found["disp"] if found else item[len("product type "):]), "from the product type list"
+    if item.startswith("size "):
+        found = _SIZE_ITEM.match(item)
+        return "Size: " + (found["size"] if found else item[len("size "):]), "from the product sizes"
+    bare = _NUMBER_ITEM.match(item)
+    if bare:
+        label = labels.get(bare["key"]) or bare["key"].replace("_", " ").capitalize()
+        return f"{label}: a number", f"from the product {label.lower()} list"
+    found = _SPEC_ITEM.match(item)
+    if found:
+        key, val, disp = found["key"], found["val"], found["disp"]
+        if val.lower() in ("true", "false"):
+            label = labels.get(key) or disp or key.replace("_", " ").capitalize()
+            value = "yes" if val.lower() == "true" else "no"
+        else:
+            label = labels.get(key) or key.replace("_", " ").capitalize()
+            value = disp or val
+        return f"{label}: {value}", f"from the product {label.lower()} list"
+    return item, ""
+
+
+def _match(
+    word: str | None, list_name: str, entry: str, line: str, *,
+    near: bool = False, held: bool = False, plain: str | None = None, source: str = "",
+) -> dict:
+    return {
+        "word": word, "list": list_name, "entry": entry, "close_spelling": near, "held": held, "line": line,
+        "plain": entry if plain is None else plain, "source": source,
+    }
+
+
+def block_with_matches(
+    db: "Session",
+    entries: list[Any],
+    message: str,
+    held_ids: list[str] | None,
+    hidden: frozenset[str] = frozenset(),
+) -> tuple[list[str], list[dict]]:
+    """`block()`'s lines for the `candidates.shortlist` result `entries`, and one match dict per
+    entry sent (the word, which list it is on, the entry, whether the word only spells it
+    closely, whether it is a held product's own line, and the line it sits on): what the
+    per-turn trace shows."""
+    from app.services.chatbot.head.candidates import CAP_LINES, HEADER, candidate_lines
+
+    held = list(dict.fromkeys(str(h) for h in held_ids or [] if h))[:CAP_HELD_PRODUCTS]
+    file_named, file_held = _file_matches(db, message, held)
+    suffixes = _code_suffix_matches(db, _grams(message), hidden)
+
+    labels = _spec_labels(db, hidden)
+    matches: list[dict] = []
+    lines = candidate_lines(entries)
+    for entry in [e for e in entries if e.items][:CAP_LINES]:
+        line = f'- "{entry.gram}": ' + "; ".join(entry.items)
+        for item in entry.items:
+            near = item.startswith("near ")
+            text = item[len("near "):] if near else item
+            plain, source = _plain_item(text, labels)
+            matches.append(_match(entry.gram, _item_list(text), text, line, near=near, plain=plain, source=source))
+
+    out = list(lines)
+    sent = set(out)
+    named: list[str] = []
+    for word, line, items in suffixes:
+        if line in sent or line in named:
+            continue
+        named.append(line)
+        ending = f" (code ending \u2011{word.upper()})"
+        for item in items:
+            plain, source = _plain_item(item, labels)
+            matches.append(_match(word, "Specifications", item, line, plain=plain, source=source + ending))
+    capped = list(dict.fromkeys(m["line"] for m in file_named))[:CAP_FILE_LINES]
+    first = {}
+    for m in file_named:
+        first.setdefault(m["line"], m)
+    file_seen = [line for line in capped if line not in sent and line not in named]
+    for line in file_seen:
+        m = first[line]
+        matches.append(_match(m["word"], m["list"], line, line, near=m["near"], plain=m["plain"], source=_FILE_SOURCES[m["list"]]))
+    named += file_seen
+    if named:
+        out = [*(out or [HEADER]), *named]
+
+    held_texts = [*dict.fromkeys(m["line"] for m in file_held)][:CAP_FILE_LINES]
+    spec_held = held_spec_lines(db, held, hidden)
+    held_lines = [*held_texts, *spec_held]
+    if held_lines:
+        out += [HELD_HEADER, *held_lines]
+        plain_of = {m["line"]: m["plain"] for m in file_held}
+        matches += [_match(None, HELD_LIST, line, line, held=True, plain=plain_of[line], source=HELD_SOURCE) for line in held_texts]
+        for line in spec_held:
+            plain = "; ".join(_plain_item(item, labels)[0] for item in line.split("; "))
+            matches.append(_match(None, HELD_LIST, line, line, held=True, plain=plain, source=HELD_SOURCE))
+    return out, matches
 
 
 def block(
