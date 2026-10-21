@@ -757,7 +757,7 @@ export function FulfilmentBoardPanel({
     [board.data, dayWindow],
   );
 
-  const { adopt } = useFulfilmentPlanningMutations();
+  const { adopt, ensure } = useFulfilmentPlanningMutations();
   const { save: saveLineDraft, remove: removeLineDraft } = useLineDraftMutation();
 
   // NO PER-ORDER CONFIRM (R11). The board used to carry one Confirm per sales order in a
@@ -2160,6 +2160,43 @@ export function FulfilmentBoardPanel({
    */
   const [guideOpen, setGuideOpen] = React.useState(false);
   const closeGuide = React.useCallback(() => setGuideOpen(false), []);
+  /**
+   * OI-SPLIT-CONFIRM-POLISH (owner, SO426939): Review split is ALWAYS the editable sheet. An
+   * order nobody has adopted has no planning record (so no split read and no + Split), so the
+   * guide gives it one as it opens: the board's own idempotent adopt (one record and its mirror
+   * lines, nothing sent anywhere), then one board re-read for the mirror line ids. The adopt's
+   * answer wins over the re-read, as it does for the press (`buildConfirmOrders`).
+   */
+  const [guideAdopted, setGuideAdopted] = React.useState<ReadonlyMap<string, string>>(
+    () => new Map(),
+  );
+  const [guidePrep, setGuidePrep] = React.useState<{ running: boolean; error: string | null }>({
+    running: false,
+    error: null,
+  });
+  const prepareGuide = React.useCallback(
+    async (salesOrderIds: string[]) => {
+      if (salesOrderIds.length === 0) return;
+      setGuidePrep({ running: true, error: null });
+      const adopted = new Map<string, string>();
+      try {
+        for (const salesOrderId of salesOrderIds) {
+          const result = await ensure.mutateAsync(salesOrderId);
+          if (result?.project_sales_order_id) adopted.set(salesOrderId, result.project_sales_order_id);
+        }
+        await board.refetch();
+        setGuidePrep({ running: false, error: null });
+      } catch (error) {
+        setGuidePrep({
+          running: false,
+          error: (error instanceof Error && error.message) || 'This order could not be made ready to split.',
+        });
+      } finally {
+        if (adopted.size > 0) setGuideAdopted((current) => new Map([...current, ...adopted]));
+      }
+    },
+    [ensure, board],
+  );
   const guidePages = React.useMemo<ConfirmGuidePage[]>(() => {
     const covered = confirmLinesByOrder(
       allContributions,
@@ -2172,7 +2209,8 @@ export function FulfilmentBoardPanel({
       if (!lines) return [];
       return [
         {
-          psoId: order.project_sales_order_id ?? null,
+          psoId: order.project_sales_order_id ?? guideAdopted.get(order.sales_order_id) ?? null,
+          salesOrderId: order.sales_order_id,
           soNumber: order.so_number,
           soDate: order.so_date ?? null,
           covered: lines.map((line) => {
@@ -2202,7 +2240,16 @@ export function FulfilmentBoardPanel({
     unadoptedSalesOrderIds,
     batchNamedKeys,
     remarkFactsOf,
+    guideAdopted,
   ]);
+  const unplannedGuideOrders = React.useMemo(
+    () => guidePages.filter((page) => !page.psoId).map((page) => page.salesOrderId),
+    [guidePages],
+  );
+  const openGuide = () => {
+    setGuideOpen(true);
+    void prepareGuide(unplannedGuideOrders);
+  };
 
   /**
    * OI-SPLIT-GUIDE (UAC F26): the board's own Split delivery gets the same Remark facts for
@@ -2858,7 +2905,7 @@ export function FulfilmentBoardPanel({
                       Boolean(confirmBlockedReason)
                     }
                     title={confirmBlockedReason ?? undefined}
-                    onClick={() => setGuideOpen(true)}
+                    onClick={openGuide}
                   >
                     {confirmButtonLabel(confirmSummary.toConfirm, autocountNotes.length)}
                   </Button>
@@ -3622,6 +3669,9 @@ export function FulfilmentBoardPanel({
           applyLabel={confirmButtonLabel(0, autocountNotes.length)}
           runConfirm={runConfirmAll}
           saveRemarks={saveLineRemarks}
+          preparing={guidePrep.running}
+          prepareError={guidePrep.error}
+          onRetryPrepare={() => void prepareGuide(unplannedGuideOrders)}
           onClose={closeGuide}
         />
       ) : null}

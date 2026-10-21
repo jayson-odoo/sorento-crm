@@ -1424,7 +1424,7 @@ describe('OI-SPLIT-CONFIRM-POLISH: an order nobody adopted opens Review split ed
     finish({ project_sales_order_id: 'pso-so-9', so_number: 'SO426939', review_state: 'in_review', already_adopted: false });
   });
 
-  it('a failed adopt says so with a Retry, and Retry gets the editable sheet', async () => {
+  it('a failed adopt says so with a Retry above the order\'s lines, Next stays on, and Retry gets the editable sheet', async () => {
     let adopted = false;
     adoptSalesOrder.mockRejectedValueOnce(new Error('Could not start planning SO426939'));
     getPlanningBoard.mockImplementation(async () => soBoard(adopted));
@@ -1435,8 +1435,11 @@ describe('OI-SPLIT-CONFIRM-POLISH: an order nobody adopted opens Review split ed
     await openConfirmGuide();
     const page = await screen.findByTestId('confirm-guide-split-page');
     expect(await within(page).findByRole('alert')).toHaveTextContent('Could not start planning SO426939');
-    expect(within(page).queryByRole('table', { name: 'Split delivery sheet' })).not.toBeInTheDocument();
-    expect(screen.getByTestId('confirm-guide-next')).toBeDisabled();
+    // the order's lines stay listed (what the Confirm covers), and one order that cannot be
+    // planned never holds up the rest of the Confirm: the press names it in its results
+    expect(firstCells(page)).toEqual(['20/10/2026', '20/10/2026', '20/10/2026']);
+    expect(within(page).queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('confirm-guide-next')).toBeEnabled();
     adoptSalesOrder.mockImplementation(async () => {
       adopted = true;
       return { project_sales_order_id: 'pso-so-9', so_number: 'SO426939', review_state: 'in_review', already_adopted: false };
@@ -1444,6 +1447,37 @@ describe('OI-SPLIT-CONFIRM-POLISH: an order nobody adopted opens Review split ed
     fireEvent.click(within(page).getByRole('button', { name: 'Retry' }));
     await within(page).findByRole('button', { name: 'Undo' });
     expect(within(page).getAllByRole('button', { name: /^Add a split to line \d+$/ })).toHaveLength(3);
+  });
+
+  it('phone header (375): the page header shows the same SO date, DD/MM/YYYY, phone-only', async () => {
+    serveAdoption();
+    window.innerWidth = 375;
+    window.dispatchEvent(new Event('resize'));
+    renderPanel(['SO426939']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByRole('button', { name: 'Undo' });
+    const header = within(page).getByTestId('confirm-guide-so-date');
+    expect(header).toHaveTextContent(/^20\/10\/2026$/);
+    // phone-only: the desktop sheet already has its SO DATE column
+    expect(header).toHaveClass('md:hidden');
+    // the same value the sheet's SO DATE cells print
+    expect(firstCells(page)).toEqual(['20/10/2026', '20/10/2026', '20/10/2026']);
+    window.innerWidth = 1024;
+  });
+
+  it('phone header: no SO date anywhere, no header date', async () => {
+    getPlanningBoard.mockImplementation(async () => soBoard(true, null));
+    serveSplits({ 'pso-so-9': { ...SO9_READ(), so_date: null } });
+    renderPanel(['SO426939']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByRole('button', { name: 'Undo' });
+    expect(within(page).queryByTestId('confirm-guide-so-date')).not.toBeInTheDocument();
   });
 
   it('an order that already has its planning record is not adopted again', async () => {

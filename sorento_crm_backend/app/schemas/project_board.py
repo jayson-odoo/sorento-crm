@@ -1241,6 +1241,8 @@ class BoardOrderStanding(BaseModel):
     #: sales order yet, which is what lets the screen state that rather than guess it.
     project_sales_order_id: Optional[str] = None
     so_number: str
+    #: OI-SPLIT-CONFIRM-POLISH: the core sales order's document date (`sales_orders.order_date`).
+    so_date: Optional[date] = None
     customer_name: Optional[str] = None
     line_count: int
     #: Always 0 from the server: the verdicts live in the board's client draft (13.4).

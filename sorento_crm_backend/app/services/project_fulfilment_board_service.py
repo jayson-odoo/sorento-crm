@@ -5748,6 +5748,10 @@ class FulfilmentBoardService:
                     #: order at all, never merely because no single line carried a mirror.
                     "project_sales_order_id": adopted_by_so.get(row.sales_order_id),
                     "so_number": row.so_number,
+                    #: OI-SPLIT-CONFIRM-POLISH: the core order's document date, the same value
+                    #: the split read's `so_date` carries, so the guided Confirm can print SO
+                    #: DATE before (or without) a split read.
+                    "so_date": row.order_date,
                     "customer_name": row.customer_name,
                     "line_count": 0,
                     "decided_count": 0,
