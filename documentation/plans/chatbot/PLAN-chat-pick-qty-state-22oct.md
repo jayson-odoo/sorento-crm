@@ -7,9 +7,13 @@ file `prod-chat-1022-pick-qty.md` (owner's prod turn table, 22 Oct 00:00 MYT).
 
 ## Goal
 With the `## Conversation state and state_changes` heading in the parser template (prod v64 = `lean-index/parser-v92.txt`),
-the chatbot gives the SAME result the old decide() path (prod v63, no state heading) gives today for:
-1. a pick answer (`1`, a code, a quoted pick) to an open did-you-mean: answers the picked product, never resumes a
-   parked task;
+the chatbot gives the SAME result the old decide() path (prod v63, no state heading) gives today for 2 and 3; 1 is a
+defect on BOTH paths (owner retest on v63, 22 Oct 01:13 MYT: `1` on a did-you-mean resumed the open one-slot task left
+by the earlier v92 loop):
+1. a pick answer (`1`, a code, a quoted pick) to an open did-you-mean: answers the picked product, never resumes an
+   older (open or parked) task. Fix in task.run: when the parser returns an open_question_answer for the stored open
+   question, that answer wins and the resume rule (task.py:677-696, from #1247 bc0e6e2601) does not fire. No new rule,
+   no keyword check: the override is removed;
 2. a bare number answering "How many units of X?": it is the quantity, not a pick on an older list;
 3. "clear all": whatever the old path does today.
 Out of scope: discontinued candidates in did-you-mean (bug 5 of the incident), the "Last time" recap wording.
