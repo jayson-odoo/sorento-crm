@@ -1,6 +1,6 @@
 # PLAN: Chatbot console "Index match" view (CHAT-INDEX-VIZ)
 
-Status: Plan (behaviour card + mockup pending owner approval). Track: M, LEAD pattern (no build before mock approval).
+Status: Build (owner approved mock v2 21 Oct, simplicity bar; contract chat-index-viz-20oct-contract.md). Track: M, LEAD pattern.
 
 Owner ask (21 Oct): see, for one console turn, how the closed-list index connects to the parser:
 message tokens -> matched index entries (with source table/row/synonym) -> lines injected into the
