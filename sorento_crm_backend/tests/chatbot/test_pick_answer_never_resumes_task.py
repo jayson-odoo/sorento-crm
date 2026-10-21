@@ -177,11 +177,11 @@ def _declined_state(gate: bool, *, resolved: bool = False):
     return replace(ht.state(focus, pending=_did_you_mean(), turn_no=5), state_path=gate)
 
 
-def _decline_verdict():
+def _decline_verdict(mode="cancel"):
     return verdict(
         domain_hint="inventory", intent_hint="check_stock", entities=[], is_affirmative=False,
         entity_op="clear", broaden_axis="all",
-        open_question_answer={"mode": "cancel", "picked": [], "items": [], "qty_for_all": None},
+        open_question_answer={"mode": mode, "picked": [], "items": [], "qty_for_all": None},
     )
 
 
@@ -204,7 +204,7 @@ def test_a_declined_did_you_mean_drops_its_unresolved_token_and_a_bare_two_does_
 @pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
 def test_guard_a_declined_did_you_mean_keeps_a_resolved_product_the_ask_also_named(gate):
     state, _plan = _run(
-        _declined_state(gate, resolved=True), _decline_verdict(),
+        _declined_state(gate, resolved=True), _decline_verdict("no"),
         [{"op": "close_question", "axis": None, "position": None}],
     )
     assert [p.get("canonical_code") for p in state.focus.products] == ["SRTBF101"], state.focus.products
@@ -236,5 +236,5 @@ def test_guard_a_declined_did_you_mean_keeps_a_resolved_row_that_carries_uuids_o
            "current_message": False, "confident": True}
     focus = Focus(products=[_miss_row(), row], domains=["inventory"])
     state = replace(ht.state(focus, pending=_did_you_mean(), turn_no=5), state_path=gate)
-    new_state, _plan = _run(state, _decline_verdict(), [{"op": "close_question", "axis": None, "position": None}])
+    new_state, _plan = _run(state, _decline_verdict("no"), [{"op": "close_question", "axis": None, "position": None}])
     assert [p.get("canonical_code") for p in new_state.focus.products] == ["SRTBF101"], new_state.focus.products

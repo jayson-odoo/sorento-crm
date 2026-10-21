@@ -1088,6 +1088,15 @@ def _focus_rules(
         kept = {k: getattr(focus, k) for k in RESET_KEEPS}
         focus = Focus(**kept)
         trace.rules_fired.append("reset_on_topic")
+    elif (
+        verdict.get("topic_reset")
+        and not entities
+        and (verdict.get("open_question_answer") or {}).get("mode") == "cancel"
+    ):
+        # A cancel answer is the reset the old path's wipe is, whatever ops the state path read:
+        # nothing carried (the held customers and products, the list) outlives it.
+        focus = replace(Focus(**{k: getattr(focus, k) for k in RESET_KEEPS}), tasks=focus.tasks)
+        trace.rules_fired.append("reset_on_topic")
     elif verdict.get("topic_reset") and focus.last_list:
         # CHAT-STATE: the ops decide what the prior state keeps, but a reset also ends the stored
         # list, as the wipe above does off the state path: a bare number after "clear all" must
@@ -2357,6 +2366,7 @@ def _narrow_and_plan(
     candidates: dict[str, list[dict[str, Any]]] | None = None,
     unplaced: frozenset[str] | set[str] | None = None,
     refuse_empty_subject: bool = False,
+    refuse_any_empty: bool = False,
     held_product_uuids: frozenset[str] = frozenset(),
 ) -> Plan:
     denied: list[str] = []
@@ -2491,7 +2501,8 @@ def _narrow_and_plan(
                 and not entities
                 and not filters
                 and not date_window
-                and name in _REFUSES_EMPTY_SUBJECT
+                # A reset is not an ask in ANY domain: nothing left to scope the carried one by.
+                and (name in _REFUSES_EMPTY_SUBJECT or refuse_any_empty)
             ):
                 # D5(b): no entity, no filter, no date window - nothing to scope this
                 # domain's fetch by at all, on a MULTI-domain ask ("stock and
@@ -2965,6 +2976,10 @@ def _open_pick_answer(state: State, verdict: dict[str, Any], trace: Trace) -> tu
         verdict["is_affirmative"] = False
         verdict["reference_positions"] = []
         verdict["broaden_axis"] = None
+        if mode == "cancel":
+            # The same rule `_open_question_answer` applies with no stored question: a cancel is a
+            # topic reset, so whatever the question's own arm returns, the reset still runs.
+            verdict["topic_reset"] = True
         trace.rules_fired.append(f"open_question_answer_{mode}")
         return state, True
     if mode == "yes":
@@ -3802,6 +3817,7 @@ def _apply(
         # Ported from PR #1118 (not merged), review round 9 finding 4 / D34 round 11:
         # a bare quantity with nothing open, or a cancel that names nothing, is not a
         # subject - see `_narrow_and_plan`'s own comment on `refuse_empty_subject`.
+        refuse_any_empty=verdict.get("topic_reset") is True and not entities,
         refuse_empty_subject=(
             (
                 decision.kind == CARRY
