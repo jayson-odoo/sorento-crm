@@ -196,3 +196,102 @@ detail "No architecture view for this prompt". Service function in a new module
   tokens, 404s, permission.
 - vitest: `IndexMatchSection.test.tsx`, `PromptArchitecture.test.tsx`, PromptDetail tab visible
   only for the parser key.
+
+## v2 amendment (crew audit of 727d0ae23, 21 Oct): plainer, and the tool step back
+
+Audit: the Sections table showed 79 raw prompt headings ("entities[].quantity", "SELF_REFERENCE"
+labelled Closed lists at 6,175 because `{{specs}}` sits under it); per-turn values were raw
+(`spec finish = french_gold`); "parser" / "tokens" were on screen; the mock's last step (the tool
+call) was missing. This amendment replaces the parts it names; everything else above stands.
+
+### On-screen words (additions to the wording table)
+
+- Never on screen: "parser", "token(s)", "grounding", any `snake_case` key. Say "the bot",
+  "what the bot understood", "size".
+- The failed line becomes: "The matching step failed on this turn; the bot ran without it."
+
+### BE-1 (match dicts gain two plain fields, written at trace time)
+
+Every match dict also carries `"plain"` and `"source"` (computed in `block_with_matches`, which has
+the registry rows):
+
+| Match | plain | source |
+|---|---|---|
+| spec value (candidate, code suffix, held) | "<Label>: <display>" e.g. "Finish: French Gold" | "from the product <label lower> list" (code suffix adds " (code ending -FRG)") |
+| numeric spec | "<Label>: <number>" | same |
+| flag spec | "<Label>: yes" / "<Label>: no" | same |
+| product type | "Product type: <display>" | "from the product type list" |
+| product code | "<CODE> (<name>)" as the item shows it, without the leading "code " | "from the product codes" |
+| set code | "<CODE> (<name>)" | "from the product sets" |
+| size | "Size: <N> <unit>" | "from the product sizes" |
+| file type | the type name | "from the file type list" |
+| certificate kind | the kind name | "from the certificate list" |
+| certificate scheme | the scheme name | "from the certificate scheme list" |
+| held (any of the above) | as above | "on record for the held product" |
+
+### BE-2 (`index_match`, plain values, tool step)
+
+- `rows[].matched[]` = `{plain, source, close_spelling}` (fall back to `entry` / `list` for an older
+  event without them). `parser_got` keeps the raw lines (shown only behind the toggle).
+- `understood[].text` in plain words, using `db` when given (registry labels + `value_labels`,
+  attachment type names; without `db`, the key with "_" -> " " and the value as is):
+  `"frg" read as Finish: French Gold`, `"zzkt71ss" read as product ZZKT71SS`,
+  `"basin" read as product type Basin`, `"drawing" read as file type ZZ Technical Drawing`,
+  `"ce" read as certificate scheme CE`, `"frg" read as a warehouse`, `"ali" read as a sales agent`.
+  No hint: `"basin"`.
+- `result[].text`: "Changed: read as Finish: White" (labels and value labels as above);
+  "Kept: on the file type list (ZZ Technical Drawing)" (the type name, not the code).
+- `held[]` = plain strings ("Finish: Chrome").
+- NEW `looked_up`: from the turn's `tool` event, `null` when none:
+  `{"what": "<tool name, '_' -> ' ', first letter upper>", "details": ["<Key>: <value>", ...]}`;
+  details from `args` in order, key "_" -> " " capitalised, lists joined ", ", skipping null / "" /
+  [] / dict values / any value that looks like a UUID; at most 8.
+
+### BE-3 (architecture: groups, not headings)
+
+`sections` is replaced by `groups`, at most these four, in this order, each
+`{"name", "size", "share"}` (`size` = round(chars / 4); `share` = size / total, 0..1), a group with
+size 0 omitted:
+
+1. "Rules": the template's own text (variables removed), minus the example lines.
+2. "Examples": the template's own text lines that hold a quoted phrase followed by `->`
+   (regex `"[^"\n]+"\s*->`), counted whole-line.
+3. "Product lists": the rendered `{{specs}}`, `{{attachment_types}}`, `{{certification_types}}`
+   wherever they sit (the index pointer lines in index mode on a CLOSED LISTS version, the full
+   lists otherwise).
+4. "Lists from other settings": every other rendered registry variable (`{{current_date}}` counts
+   under Rules).
+
+`total_size` replaces `total_tokens` (= sum of the groups). Each `lists[]` item gains `"how"`, one
+plain sentence:
+- Specifications: "A word of the message matches a value, its name or a synonym from Product
+  Specifications, or a code ending like -FRG; close spellings count too."
+- File types: "A word matches a file type's code, name, its words or an alias keyword; close
+  spellings count too."
+- Certificates: "A word matches a certificate kind or a certificate scheme by its name or words;
+  close spellings count too."
+- Warehouses: "Not sent to the bot; a warehouse the bot reads is checked against the warehouse
+  list (the exact code, or the part after the last dash)."
+`sent_each_message_tokens` / `full_list_tokens` are renamed `sent_each_message_size` /
+`full_list_size`.
+
+### FE-1 (per-turn section)
+
+- Visible columns, exactly: "Word", "Matched list entry", "What the bot understood",
+  "Kept or dropped". The entry cell shows `plain` and, muted, `source` (and "close spelling").
+- One toggle button above the rows, "Show details" / "Hide details": when on, each row also shows
+  "What the bot was given" with the raw `parser_got` lines (monospace). Off by default.
+- After the rows: "What the bot looked up" with `looked_up.what` and its details; absent when
+  `looked_up` is null.
+- Held collapsible text unchanged ("Also sent: N lines on record for the held product"), plain lines.
+
+### FE-2 (Architecture tab)
+
+- Summary: "Each message, v<version> gives the bot about <total_size formatted 35.7k> of
+  instructions and lists." + the same badge as before.
+- Flow, six boxes, exactly: "Customer's message" -> "Matched list entries" -> "What the bot was
+  given" -> "What the bot understood" -> "Kept or dropped" -> "What the bot looked up".
+- Lists table columns: "List", "Comes from", "How a message is matched", "Entries",
+  "Size each message", "Full list size".
+- "What the bot is given" table: "Part", "Size" (formatted like the summary, with a bar), at most
+  the four groups. No heading names anywhere.
