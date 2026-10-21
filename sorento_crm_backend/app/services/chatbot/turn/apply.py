@@ -1025,6 +1025,10 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
             # contract 36, and used to fall all the way through to "the generic rules
             # settle it" below with no lane composed at all - silence, not an
             # acknowledgement).
+            if names_its_own_domain(verdict or {}):
+                # "never mind, outstanding orders?": the offer is declined (the pending drops) and
+                # the message's own ask is still planned, so nothing short-circuits to "Okay, noted."
+                return focus, None, None, False
             trace.lane = "offer_declined"
             return focus, None, Plan(domains=[], fetch=[], ask=None, denied=[], trace=trace), False
         return focus, None, None, False
