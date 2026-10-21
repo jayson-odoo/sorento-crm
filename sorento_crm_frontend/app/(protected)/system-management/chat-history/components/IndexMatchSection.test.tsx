@@ -87,7 +87,9 @@ describe('IndexMatchSection', () => {
     render(<IndexMatchSection indexMatch={fixture()} />);
     expect(screen.queryByText(RAW_LINE)).toBeNull();
     expect(screen.queryByText('What the bot was given')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Show details' })).toHaveAttribute('aria-expanded', 'false');
     fireEvent.click(screen.getByRole('button', { name: 'Show details' }));
+    expect(screen.getByRole('button', { name: 'Hide details' })).toHaveAttribute('aria-expanded', 'true');
     const frg = screen.getByTestId('index-row-frg');
     expect(within(frg).getByText('What the bot was given')).toBeInTheDocument();
     expect(within(frg).getByText(RAW_LINE)).toBeInTheDocument();

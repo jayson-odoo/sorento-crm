@@ -520,4 +520,18 @@ describe('PromptDetail Architecture tab (CHAT-INDEX-VIZ FE-2)', () => {
     expect(lastCall[0]).toBe('chatbot_semantic_parser');
     expect(lastCall[1]).toBe(2);
   });
+
+  it('hides the variable chips while the Architecture tab is selected and brings them back on Edit', () => {
+    usePromptArchitecture.mockReturnValue({
+      data: { version: 2, mode: 'block', uses_closed_lists: false, total_size: 10, groups: [{ name: 'Rules', size: 10, share: 1 }], lists: [] },
+      isLoading: false,
+      isError: false,
+    });
+    renderFor('chatbot_semantic_parser', ['domains']);
+    expect(screen.getByTestId('var-chips')).toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByTestId('editor-mode-architecture'), { button: 0 });
+    expect(screen.queryByTestId('var-chips')).toBeNull();
+    fireEvent.mouseDown(screen.getByTestId('editor-mode-edit'), { button: 0 });
+    expect(screen.getByTestId('var-chips')).toBeInTheDocument();
+  });
 });

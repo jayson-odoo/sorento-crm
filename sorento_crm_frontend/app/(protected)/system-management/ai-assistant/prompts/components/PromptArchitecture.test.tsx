@@ -119,11 +119,11 @@ describe('PromptArchitecture', () => {
     expect(link.getAttribute('href')).toBe('/master-data-management/product-specifications');
   });
 
-  it('shows "-" for the full list of a checked-only list', () => {
+  it('shows "-" for both sizes of a checked-only list', () => {
     render(<PromptArchitecture name="chatbot_semantic_parser" version={77} />);
     const warehouses = rowOf('Warehouses');
     expect(warehouses).toHaveTextContent('9');
-    expect(within(warehouses).getByText('-')).toBeInTheDocument();
+    expect(within(warehouses).getAllByText('-')).toHaveLength(2);
     expect(within(rowOf('Specifications')).queryByText('-')).toBeNull();
   });
 
@@ -147,6 +147,13 @@ describe('PromptArchitecture', () => {
     expect(cells.length).toBeGreaterThan(0);
     for (const cell of cells) expect(cell.getAttribute('data-label'), cell.textContent ?? '').toBeTruthy();
     expect(container.querySelector('.overflow-x-auto')).toBeNull();
+  });
+
+  it('lays the six flow boxes out three to a row from sm and six to a row only from 2xl', () => {
+    render(<PromptArchitecture name="chatbot_semantic_parser" version={77} />);
+    const flow = screen.getByTestId('architecture-flow');
+    expect(flow.className).toContain('sm:grid-cols-3');
+    expect(flow.className).toContain('2xl:grid-cols-6');
   });
 
   it('shows one error line when the architecture cannot be loaded', () => {

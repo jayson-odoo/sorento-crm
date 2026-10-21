@@ -350,10 +350,10 @@ def test_looked_up_is_none_without_a_tool_event():
 
 
 def test_looked_up_names_the_tool_and_lists_plain_details_in_order():
-    args = {"product_code": "ZZP1", "warehouse_codes": ["ZZA", "ZZB"], "limit": 5, "note": "", "none": None,
+    args = {"product_code": "ZZP1", "warehouse_codes": ["ZZA", "ZZB"], "min_qty": 5, "note": "", "none": None,
             "empty": [], "nested": {"x": 1}}
     im = _im(words=["frg"], matches=[FRG], tool=_tool(args))
-    assert im["looked_up"] == {"what": "Check stock levels", "details": ["Product code: ZZP1", "Warehouse codes: ZZA, ZZB", "Limit: 5"]}
+    assert im["looked_up"] == {"what": "Check stock levels", "details": ["Product code: ZZP1", "Warehouse codes: ZZA, ZZB", "Min qty: 5"]}
 
 
 def test_looked_up_skips_uuid_looking_values_and_caps_at_eight_details():
@@ -401,7 +401,7 @@ def test_no_on_screen_text_has_snake_case_or_internal_words():
     matches = [_match("frg", "Specifications", "x", plain="Finish: French gold", source="from the product finish list"),
                _match("drw", "File types", "y", plain="ZZ Drawing", source="from the file type list")]
     im = _im(words=["frg", "drw"], matches=matches, entities=entities, changes=changes,
-             tool=_tool({"product_code": "ZZP1", "warehouse_codes": ["a_b"]}, name="check_stock_levels"))
+             tool=_tool({"product_code": "ZZP1", "warehouse_codes": ["zza"]}, name="check_stock_levels"))
     blob = " ".join(_texts(im))
     assert not re.search(r"[A-Za-z]_[A-Za-z]", blob), blob
     for word in ("parser", "token", "grounding"):
@@ -439,9 +439,42 @@ def test_db_labels_and_type_names_are_used_when_a_session_is_given(session_facto
     ]
     matches = [_match("frg", "Specifications", "x"), _match("drawing", "File types", "y")]
     row = _row(words=["frg", "drawing"], matches=matches, entities=entities, changes=changes)
+    row.trace.append({"kind": "tool", "at": NOW.isoformat(), "name": "find_products",
+                      "args": {"zz_dbfinish": "zz_gold"}, "envelope": {}, "ms": 1})
     im = compose_trace_detail(row, db)["index_match"]
+    assert im["looked_up"]["details"] == ["ZZ Db Finish: ZZ Gold Label"]
     by_word = {r["word"]: r for r in im["rows"]}
     assert by_word["frg"]["understood"] == [{"text": '"frg" read as ZZ Db Finish: ZZ Gold Label'}]
     assert by_word["frg"]["result"] == [{"outcome": "changed", "text": "Changed: read as ZZ Db Finish: ZZ Gold Label"}]
     assert by_word["drawing"]["understood"] == [{"text": '"drawing" read as file type ZZ Technical Drawing'}]
     assert by_word["drawing"]["result"] == [{"outcome": "kept", "text": "Kept: on the file type list (ZZ Technical Drawing)"}]
+
+
+# --------------------------------------------------------------------------- #
+# v2.1: codes and the customer's words stay as stored; looked-up polish
+# --------------------------------------------------------------------------- #
+
+
+def test_codes_and_the_customers_words_keep_their_underscores():
+    text, _ = _one(_entity("zzw", "product", canonical_code="SB_K4013"))
+    assert text == '"zzw" read as product SB_K4013'
+    text, _ = _one(_entity("zzw", "customer", canonical_code="KL_2"))
+    assert text == '"zzw" read as a customer: KL_2'
+    text, _ = _one(_entity("zzw", "", canonical_code="SO_2024_001"))
+    assert text == '"zzw": SO_2024_001'
+    to = [{"key": "", "label": "", "said": "ib_frg", "value": None}]
+    _text, res = _one(_entity("zzw", "specification"), changes=[{"from": "specification", "raw": "zzw", "to": to}])
+    assert res == {"outcome": "changed", "text": "Changed: read as ib_frg"}
+
+
+def test_looked_up_code_args_stay_verbatim_but_other_values_lose_underscores():
+    args = {"product_code": "SB_K4013", "warehouse_codes": ["SO_2024_001", "KL_2"], "stock_state": "in_stock"}
+    im = _im(words=["frg"], matches=[FRG], tool=_tool(args))
+    assert im["looked_up"]["details"] == ["Product code: SB_K4013", "Warehouse codes: SO_2024_001, KL_2", "Stock state: in stock"]
+
+
+def test_looked_up_skips_plumbing_args_and_reads_booleans_yes_no():
+    args = {"contact_id": "c1", "space_id": "s1", "dry_run": False, "limit": 5, "offset": 0, "in_stock_only": True,
+            "include_cost": False, "brand": "ZZ Brand"}
+    im = _im(words=["frg"], matches=[FRG], tool=_tool(args))
+    assert im["looked_up"]["details"] == ["In stock only: yes", "Include cost: no", "Brand: ZZ Brand"]

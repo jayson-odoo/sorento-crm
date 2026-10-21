@@ -272,7 +272,7 @@ def test_how_a_message_is_matched_is_one_plain_sentence_per_list(client, pg_db):
     lists = {item["key"]: item for item in _get(client, _version(pg_db, CLOSED_TEMPLATE)).json()["lists"]}
     assert lists["specs"]["how"] == (
         "A word of the message matches a value, its name or a synonym from Product Specifications, "
-        "or a code ending like -FRG; close spellings count too."
+        "or a code ending like \u2011FRG; close spellings count too."
     )
     assert lists["attachment_types"]["how"] == (
         "A word matches a file type's code, name, its words or an alias keyword; close spellings count too."

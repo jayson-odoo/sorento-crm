@@ -273,7 +273,7 @@ def test_code_suffix_plain_and_source_name_the_code_ending(session_factory):
     _lines, matches = _call(db, [], "frg stock")
     [hit] = [m for m in matches if m["word"] == "frg"]
     assert hit["plain"].startswith("Finish: ") and "_" not in hit["plain"], hit
-    assert hit["source"] == "from the product finish list (code ending -FRG)"
+    assert hit["source"] == "from the product finish list (code ending \u2011FRG)"
 
 
 def test_file_type_certificate_and_scheme_plain_and_source(session_factory):
@@ -297,3 +297,57 @@ def test_held_matches_are_plain_and_say_they_are_on_record(session_factory):
     assert "ZZ Idx Drawing" in plains, plains
     assert any(p.startswith("Idx Visible: ") for p in plains), plains
     assert not any("_" in p or p.startswith("spec ") for p in plains), plains
+
+
+# --------------------------------------------------------------------------- #
+# v2.1: every item shape reads plain; codes stay as stored
+# --------------------------------------------------------------------------- #
+
+#: Every item shape `candidates.py` can emit (read from its source), each with and without `near `.
+SHAPES = [
+    "code ZZIDXP1 (ZZT ZZIDXP1)",
+    "code ZZIDXP1",
+    'code ZZIDXP1 (ZZT ZZIDXP1), holding "idxp1"',
+    "set code ZZSET1 (ZZ Set)",
+    'set code ZZSET1, holding "set1"',
+    "product type Basin (class = basin)",
+    "spec finish = white (White)",
+    "spec zz_numkey = 12",
+    "spec zz_numkey (a number)",
+    "flag zz_flag = true (ZZ Flag)",
+    "size 600 mm",
+    "size 600 mm (no dimension named)",
+]
+
+
+@pytest.mark.parametrize("shape", [*SHAPES, *[f"near {s}" for s in SHAPES]])
+def test_every_item_shape_reads_plain_with_a_source(session_factory, shape):
+    db = _world(session_factory)
+    entry = candidates.WordCandidates(gram="zzw", position=0, items=[shape])
+    _lines, matches = _call(db, [entry], "zzw")
+    [m] = matches
+    assert m["plain"] and m["source"], m
+    assert "_" not in m["plain"], m
+    assert not m["plain"].startswith(("spec ", "code ", "set code ", "size ", "flag ", "near ")), m
+    assert "holding" not in m["plain"], m
+
+
+def test_numeric_key_named_with_no_number_reads_label_a_number(session_factory):
+    db = _world(session_factory)
+    entry = candidates.WordCandidates(gram="zzw", position=0, items=["spec zz_numkey (a number)"])
+    _lines, matches = _call(db, [entry], "zzw")
+    assert (matches[0]["plain"], matches[0]["source"]) == ("Zz numkey: a number", "from the product zz numkey list")
+
+
+def test_holding_tail_is_dropped_from_plain_but_the_source_stays(session_factory):
+    db = _world(session_factory)
+    entry = candidates.WordCandidates(gram="zzw", position=0, items=['code ZZIDXP1 (ZZT ZZIDXP1), holding "idxp1"'])
+    _lines, matches = _call(db, [entry], "zzw")
+    assert (matches[0]["plain"], matches[0]["source"]) == ("ZZIDXP1 (ZZT ZZIDXP1)", "from the product codes")
+
+
+def test_codes_keep_their_underscores_in_plain(session_factory):
+    db = _world(session_factory)
+    entry = candidates.WordCandidates(gram="zzw", position=0, items=["code SB_K4013 (ZZ Basin)", "set code SO_2024_001 (ZZ Set)"])
+    _lines, matches = _call(db, [entry], "zzw")
+    assert [m["plain"] for m in matches] == ["SB_K4013 (ZZ Basin)", "SO_2024_001 (ZZ Set)"]
