@@ -1,8 +1,9 @@
 """LEAN: the reasoning effort of the chatbot parser's OpenAI call, a stored setting.
 
-`system_settings.chatbot_parser_reasoning_effort` (`off` | `minimal` | `low` | `medium` | `high`, default
-`off`). `off` sends no reasoning effort, which is what every install does today; anything else is put on the
-parser's OpenAI request. Read per parse by `head/parser.resolve_config`.
+`system_settings.chatbot_parser_reasoning_effort` (`off` | `low`, default `off`; anything else reads as `off`,
+widened only per the trigger at `head/parser.REASONING_EFFORTS`). `off` sends no reasoning effort, which is what
+every install does today; `low` is put on the parser's OpenAI request. Read per parse by
+`head/parser.resolve_config`.
 
 Additive only and idempotent (`IF NOT EXISTS`) so the shared dev DB, which converges through `create_all`, can
 take it in any order.

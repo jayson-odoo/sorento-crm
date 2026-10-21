@@ -5,7 +5,8 @@
 --   psql "$EXPLORE_DATABASE_URL" -v ON_ERROR_STOP=1 -f documentation/plans/chatbot/lean-index/explore-reasoning.sql
 --
 -- Idempotent (`IF NOT EXISTS`). Default `off` sends no reasoning effort, as today. To try an effort afterwards:
---   UPDATE system_settings SET chatbot_parser_reasoning_effort = 'low';   -- off | minimal | low | medium | high
+--   UPDATE system_settings SET chatbot_parser_reasoning_effort = 'low';   -- off | low; anything else reads as off
+--   (widen only per the trigger at head/parser.py REASONING_EFFORTS)
 
 \set ON_ERROR_STOP on
 
