@@ -35,6 +35,11 @@ from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests.chatbot.conftest import session_factory  # noqa: F401
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, _parser_output, seeded, stub_access  # noqa: F401
 
+def _full_emission() -> dict[str, Any]:
+    """A complete emission for the real `parse`: `_parser_output` plus the top-level keys it lacks."""
+    return {**_parser_output(), "asks": None, "topic_reset": False}
+
+
 TEMPLATE = "Rules for {{current_date}}."
 
 
@@ -97,7 +102,7 @@ class _OpenAIRecorder:
         usage = types.SimpleNamespace(prompt_tokens=100, completion_tokens=40, total_tokens=140,
                                       prompt_tokens_details=types.SimpleNamespace(cached_tokens=0),
                                       completion_tokens_details=details)
-        message = types.SimpleNamespace(content=json.dumps(_parser_output()), tool_calls=None)
+        message = types.SimpleNamespace(content=json.dumps(_full_emission()), tool_calls=None)
         return types.SimpleNamespace(choices=[types.SimpleNamespace(message=message)], usage=usage, model="gpt-test")
 
 
@@ -175,7 +180,7 @@ def test_a_non_openai_provider_never_receives_the_openai_kwarg(session_factory, 
                  response_format=None, json_schema=None, json_schema_name=None, timeout=None,
                  prompt_cache_key=None):
             seen.append({"called": True})
-            return types.SimpleNamespace(content=json.dumps(_parser_output()), prompt_tokens=1,
+            return types.SimpleNamespace(content=json.dumps(_full_emission()), prompt_tokens=1,
                                          completion_tokens=1, total_tokens=2, cached_tokens=0, tool_calls=[])
 
     monkeypatch.setattr(llm_provider, "get_provider", lambda provider, api_key, model=None: _Gemini())
