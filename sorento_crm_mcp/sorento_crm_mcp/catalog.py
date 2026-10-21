@@ -865,7 +865,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "or products with a sale ('how many dealers sell product Y'); ask the person which measure when they did not say, as for top_n. `basis` "
             "delivered | ordered | outstanding; ask the person which basis when they did not say. "
             "`compare_to` previous_period (the same number of days just before) | last_year (the "
-            "same dates a year earlier), only when the person asks to compare: every row and the "
+            "same dates a year earlier), only when the person asks to compare, never with group_by month: every row and the "
             "total then carry `prev` and `change_pct` on the sort measure. "
             "Every basis is sales "
             "order lines, each dated by its required date, else its SO date: delivered = the "

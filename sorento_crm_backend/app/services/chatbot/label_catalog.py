@@ -336,6 +336,7 @@ LABELS: dict[str, dict[str, str]] = {
     'Low stock report is not enabled for your account.': {"ms": 'Laporan stok rendah tidak diaktifkan untuk akaun anda.', "zh": '您的账户未开通低库存报告。'},
     'Could not run the low stock report right now.': {"ms": 'Laporan stok rendah tidak dapat dijalankan sekarang.', "zh": '暂时无法生成低库存报告。'},
     # REPORT-SMART-1021 step 5: a report failure is a plain sentence.
+    "I can't compare a month by month breakdown yet. Ask for the total, or split by another dimension.": {"ms": "Saya belum dapat membandingkan pecahan bulan demi bulan. Minta jumlah keseluruhan, atau pecahkan mengikut dimensi lain.", "zh": "暂时无法对比逐月明细。请查看总计，或按其他维度拆分。"},
     'Could not run the top selling report right now.': {"ms": 'Laporan jualan terlaris tidak dapat dijalankan sekarang.', "zh": '暂时无法生成畅销报告。'},
     "I couldn't read that period. Which period? For example this month, September, 2026, or 1 to 15 Sep.": {"ms": "Saya tidak dapat membaca tempoh itu. Tempoh yang mana? Contohnya bulan ini, September, 2026, atau 1 hingga 15 Sep.", "zh": "我无法识别该时间段。请问是哪个时间段？例如本月、九月、2026 年，或 9 月 1 日至 15 日。"},
     'Both': {"ms": 'Kedua-duanya', "zh": '两者'},
@@ -673,6 +674,7 @@ INLINE = frozenset(
         "Low stock report is not enabled for your account.",
         "Could not run the low stock report right now.",
         "Could not run the top selling report right now.",
+        "I can't compare a month by month breakdown yet. Ask for the total, or split by another dimension.",
         "I couldn't read that period. Which period? For example this month, September, 2026, or 1 to 15 Sep.",
         "Which customer is this outstanding report for?",
         "Which category do you mean? Reply with one code: {codes}",

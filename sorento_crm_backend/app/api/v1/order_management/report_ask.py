@@ -307,6 +307,9 @@ def report_ask(
     compare_norm = (compare_to or "").strip().lower() or None
     if compare_norm is not None and compare_norm not in ask.COMPARE_TO:
         raise _unprocessable(f"Unknown compare_to '{compare_to}'", "unknown_compare_to", _allowed(ask.COMPARE_TO))
+    if compare_norm is not None and (group_by or "").strip().lower() == "month":
+        # Rows are matched by name and a month's name is its month: nothing would match.
+        raise _unprocessable("compare_to does not apply to a month breakdown", "compare_by_month", "compare_to")
     channel_norm = (channel or "").strip().lower() or None
     if channel_norm is not None and channel_norm not in _CHANNELS:
         raise _unprocessable(f"Unknown channel value '{channel}'", "invalid_channel", _allowed(_CHANNELS))

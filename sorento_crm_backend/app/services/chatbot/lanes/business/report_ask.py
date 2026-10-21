@@ -208,6 +208,10 @@ BASES = ("delivered", "ordered", "outstanding")
 METRICS = ("qty", "amount", "customers", "orders", "products")
 #: REPORT-SMART-1021 step 4: what the parser's `compare_to` may name (`reports.ask.COMPARE_TO`).
 COMPARE_TO = ("previous_period", "last_year")
+#: Review S1: a month trend is not compared (its months never match the earlier window's).
+COMPARE_BY_MONTH_LINE = (
+    "I can't compare a month by month breakdown yet. Ask for the total, or split by another dimension."
+)
 
 
 def metric_from(parse_output: dict[str, Any]) -> str | None:
@@ -291,6 +295,8 @@ CAN_DRAW = {
 #: A breakdown the parser did not read as a ranking (a sales analysis or report by an axis,
 #: "sales for all agents") lists every row, never asked "how many": up to this many.
 BREAKDOWN_TOP_N = 100
+#: The keys `by_capability` writes; stripped from every verdict first, so no parse sets them.
+CAPABILITY_KEYS = ("capability_from", "report_breakdown")
 #: The analysis's basis key (`sales_basis`) and the bases the report ask has of it.
 _ANALYSIS_BASES = frozenset({"delivered", "ordered"})
 
@@ -302,6 +308,8 @@ def by_capability(verdict: dict[str, Any]) -> dict[str, Any]:
     by `settle`: its filters, period, count, metric and basis, with every missing one asked in
     one numbered reply. A breakdown (no count, no direction, from a kind that is not a
     ranking) lists every row. Parser fields only; anything else is unchanged."""
+    # Engine keys only this seam writes: never taken from the parser's own emission.
+    verdict = {k: v for k, v in verdict.items() if k not in CAPABILITY_KEYS}
     status = jsc.js_string(verdict.get("order_status") or "").strip()
     raw_group = jsc.js_string(verdict.get("group_by") or "").strip().lower()
     if status not in CAN_DRAW or (raw_group and raw_group not in GROUP_BY):
@@ -317,12 +325,10 @@ def by_capability(verdict: dict[str, Any]) -> dict[str, Any]:
     }
     if basis_from(out) is None and verdict.get("sales_basis") in _ANALYSIS_BASES:
         out["basis"] = verdict["sales_basis"]
-    if (
-        status != "top_selling"
-        and verdict.get("top_n") is None
-        and verdict.get("rank_direction") not in ("top", "bottom")
-    ):
-        out["top_n"] = BREAKDOWN_TOP_N
+    if status != "top_selling" and verdict.get("rank_direction") not in ("top", "bottom"):
+        # Review B2: a flag, never a count on the verdict. Only a FRESH ask with no count of its
+        # own reads it (`settle`); an answer to an open question or a refine never does.
+        out["report_breakdown"] = True
     return out
 
 
@@ -798,6 +804,10 @@ def settle(
         # Not a valid ask: no axis and nothing to total. Say what can be ranked and open nothing.
         return None, CATALOGUE_LINE
     top_n = parse_output.get("top_n")
+    if top_n is None and parse_output.get("report_breakdown") is True and args.get("group_by"):
+        top_n = BREAKDOWN_TOP_N  # a breakdown lists every row (`by_capability`)
+    if args.get("compare_to") and args.get("group_by") == "month":
+        return None, COMPARE_BY_MONTH_LINE
     given = {**_given_choices(args), **_given_top_n(args, top_n)}
     period = period_from(parse_output.get("date_filter_start"), parse_output.get("date_filter_end")) or held_period
     if period is not None and parse_output.get("ranking_refine") is not True:
@@ -841,6 +851,8 @@ def _refine(
         args["measure"] = parse_output["measure"]
     if parse_output.get("compare_to") in COMPARE_TO:
         args["compare_to"] = parse_output["compare_to"]
+    if args.get("compare_to") and args.get("group_by") == "month":
+        return None, COMPARE_BY_MONTH_LINE
     top_n = parse_output.get("top_n")
     if top_n is None:
         top_n = frame.get("top_n")
