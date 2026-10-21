@@ -297,3 +297,21 @@ def test_a_reset_on_an_early_returning_answer_path_wipes_the_focus():
     new_state, plan = apply(state, v, build_policy())
     assert "stock_pick_declined" in plan.trace.rules_fired
     assert new_state.focus.products == [], new_state.focus.products
+
+
+def test_a_state_path_reset_on_an_early_return_drops_a_list_that_is_not_the_questions_options():
+    rows = [
+        {"position": i, "label": f"SRTWT{i}", "code": f"SRTWT{i}", "uuid": ht.uuid_of(f"SRTWT{i}"),
+         "entity_type": "product", "shown_at_turn": 4}
+        for i in range(1, 12)
+    ]
+    focus = Focus(products=[_miss_row()], domains=["inventory"], last_list=rows)
+    state = replace(ht.state(focus, pending=_did_you_mean_pending(), turn_no=5), state_path=True)
+    v = verdict(
+        domain_hint="inventory", intent_hint="check_stock", entities=[], topic_reset=True, is_affirmative=False,
+        open_question_answer={"mode": "cancel", "picked": [], "items": [], "qty_for_all": None},
+        state_changes=[{"op": "close_question", "axis": None, "position": None}],
+    )
+    new_state, plan = _turn(state, v)
+    assert "stock_pick_declined" in plan.trace.rules_fired
+    assert not new_state.focus.last_list, new_state.focus.last_list
