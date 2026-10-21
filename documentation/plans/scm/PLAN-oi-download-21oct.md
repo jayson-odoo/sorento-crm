@@ -1,6 +1,6 @@
 # PLAN-oi-download-21oct: Order Inquiry download (Excel | PDF), like the Purchase Request
 
-Status: in progress (small fix track: no migration, no auth/RBAC change, no new ingest surface)
+Status: in review (small fix track: no migration, no auth/RBAC change, no new ingest surface)
 
 Owner, 21 Oct ~22:10 MYT: "our order inquiry need to support download either excel / pdf, just
 like purchase request and sponsorship form".
@@ -33,3 +33,14 @@ like purchase request and sponsorship form".
   header table + item lines; unknown id 404.
 - list route queues `order_inquiry_worklist_pdf` with the filters; the rendered rows follow them.
 - no email dispatch on either path.
+
+## Add-on (owner, 21 Oct ~22:55 MYT): the OI Excel in the LOW STOCK REPORT's look
+
+"our excel format needs to be nicer ... one of the success ones is the LOW STOCK REPORT ... we
+should unify this". The look (dark bold white header, thin borders, wrapped top-aligned text,
+frozen panes, explicit widths) was spelled out twice (`summary_order_service.write_sheet`,
+`low_stock_report_service._write_workbook`); it now lives once in `app/services/excel_style.py`
+and both use it (byte-identical output). The OI workbook (`OrderInquiryWorklistService.
+_write_sheet`: the email attachment and both downloads) wears it with per-heading widths and
+dd/mm/yyyy dates. Columns and values unchanged (EXPORT_HEADINGS not edited; #1822 adds its
+columns there and they take the default width).
