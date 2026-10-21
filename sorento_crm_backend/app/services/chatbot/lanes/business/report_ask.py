@@ -206,6 +206,8 @@ BASES = ("delivered", "ordered", "outstanding")
 #: The measures the parser's `measure` may name: the two sums and (REPORT-SMART-1021) the
 #: counts (`reports.ask.COUNT_MEASURES`: customers, orders, products).
 METRICS = ("qty", "amount", "customers", "orders", "products")
+#: REPORT-SMART-1021 step 4: what the parser's `compare_to` may name (`reports.ask.COMPARE_TO`).
+COMPARE_TO = ("previous_period", "last_year")
 
 
 def metric_from(parse_output: dict[str, Any]) -> str | None:
@@ -609,6 +611,8 @@ def _fresh_args(
     channel = parse_output.get("sales_channel")
     if channel in ("dealer", "project"):
         args["channel"] = channel
+    if parse_output.get("compare_to") in COMPARE_TO:
+        args["compare_to"] = parse_output["compare_to"]
 
     filters, line = _word_filters(db, parse_output)
     if filters is None:
@@ -646,7 +650,7 @@ def _fresh_args(
 
 
 #: The keys `_fresh_args` always sets (or an axis); any other key it sets is a filter.
-_NON_FILTER_ARGS = frozenset({"basis", "measure", "sort", "group_by"})
+_NON_FILTER_ARGS = frozenset({"basis", "measure", "sort", "group_by", "compare_to"})
 
 
 def _given_top_n(args: dict[str, Any], top_n: Any) -> dict[str, Any]:
@@ -835,6 +839,8 @@ def _refine(
         args["basis"] = parse_output["basis"]
     if parse_output.get("measure") in METRICS:
         args["measure"] = parse_output["measure"]
+    if parse_output.get("compare_to") in COMPARE_TO:
+        args["compare_to"] = parse_output["compare_to"]
     top_n = parse_output.get("top_n")
     if top_n is None:
         top_n = frame.get("top_n")

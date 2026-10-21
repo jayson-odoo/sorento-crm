@@ -28,12 +28,24 @@ class ReportAskRow(BaseModel):
     keys: List[str] = []
     # REPORT-SMART-1021: a count measure's distinct count (customers, orders, products).
     count: Optional[int] = None
+    # REPORT-SMART-1021 `compare_to`: the earlier window's figures and the change in percent
+    # on the sort measure (None when the earlier figure is zero).
+    prev: Optional["ReportAskFigures"] = None
+    change_pct: Optional[float] = None
+
+
+class ReportAskFigures(BaseModel):
+    qty: int
+    amount: float
+    count: Optional[int] = None
 
 
 class ReportAskTotal(BaseModel):
     qty: int
     amount: float
     count: Optional[int] = None
+    prev: Optional[ReportAskFigures] = None
+    change_pct: Optional[float] = None
 
 
 class ReportAskResponse(BaseModel):
@@ -52,6 +64,9 @@ class ReportAskResponse(BaseModel):
     more: int = 0
     total_count: int = 0
     total: ReportAskTotal
+    compare_to: Optional[str] = None
+    compare_from: Optional[str] = None
+    compare_until: Optional[str] = None
 
 
 class ReportAskChatRow(BaseModel):

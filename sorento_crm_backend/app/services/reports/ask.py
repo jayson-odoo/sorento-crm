@@ -304,6 +304,57 @@ def run_ask(
     return body
 
 
+# ----------------------------------------------------------------------- compare (REPORT-SMART-1021)
+
+#: What a sales ask may be compared with: the same number of days just before the period, or
+#: the same dates a year earlier.
+COMPARE_TO = ("previous_period", "last_year")
+
+
+def compare_window(compare_to: str, date_from: date, date_to: date) -> tuple[date, date]:
+    """The earlier window `compare_to` names. A 29 Feb a year back is 28 Feb."""
+    from datetime import timedelta
+
+    if compare_to == "previous_period":
+        until = date_from - timedelta(days=1)
+        return until - (date_to - date_from), until
+
+    def year_back(d: date) -> date:
+        try:
+            return d.replace(year=d.year - 1)
+        except ValueError:
+            return d.replace(year=d.year - 1, day=28)
+
+    return year_back(date_from), year_back(date_to)
+
+
+def _change_pct(now: Any, before: Any) -> Optional[float]:
+    now, before = Decimal(str(now or 0)), Decimal(str(before or 0))
+    if not before:
+        return None
+    return float(((now - before) * 100 / before).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+
+
+def attach_compare(body: dict[str, Any], earlier: dict[str, Any], measure: str) -> dict[str, Any]:
+    """The earlier window's figures on every row of `body` (by name; a row the earlier window
+    did not sell is zero there) and on the total, with the change on the sort measure. The
+    ranking stays the period's own: a row only the earlier window has is not added."""
+    key = "count" if measure in COUNT_MEASURES else measure
+    zero = {"qty": 0, "amount": 0.0, **({"count": 0} if key == "count" else {})}
+    by_name = {r["name"]: r for r in earlier.get("rows") or []}
+    for row in body.get("rows") or []:
+        before = by_name.get(row["name"])
+        prev = {k: before.get(k, 0) for k in zero} if before else dict(zero)
+        row["prev"] = prev
+        row["change_pct"] = _change_pct(row.get(key), prev.get(key))
+    total = body.get("total") or {}
+    prev_total = {k: (earlier.get("total") or {}).get(k, 0) for k in zero}
+    total["prev"] = prev_total
+    total["change_pct"] = _change_pct(total.get(key), prev_total.get(key))
+    body["total"] = total
+    return body
+
+
 # ----------------------------------------------------------------------- chat (CA-3)
 
 NO_ASKS = f"No asks in that period. Chat data starts {chat_asks.TRACES_BEGIN.day} Sep 2026."

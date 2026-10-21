@@ -864,6 +864,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "products (what the ranking sorts by), the last three COUNT distinct customers, orders "
             "or products with a sale ('how many dealers sell product Y'); ask the person which measure when they did not say, as for top_n. `basis` "
             "delivered | ordered | outstanding; ask the person which basis when they did not say. "
+            "`compare_to` previous_period (the same number of days just before) | last_year (the "
+            "same dates a year earlier), only when the person asks to compare: every row and the "
+            "total then carry `prev` and `change_pct` on the sort measure. "
             "Every basis is sales "
             "order lines, each dated by its required date, else its SO date: delivered = the "
             "quantity transferred to a DO, capped at ordered; ordered = the whole line; "
@@ -907,7 +910,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "date_from", "date_to", "basis", "measure", "group_by", "top_n", "sort",
             "product_code", "product_ids", "brand_ids", "category_ids", "sales_agent_ids",
             "customer_ids", "warehouse_codes", "channel", "contact_id", "space_id",
-            "customer_agent_ids", "dataset", "subjects", "askers",
+            "customer_agent_ids", "dataset", "subjects", "askers", "compare_to",
         ),
         domain="orders",
         related_tools=("crm_sales_report", "crm_top_selling_report"),

@@ -58,7 +58,7 @@ _PARAMS = frozenset(
     {
         "date_from", "date_to", "basis", "measure", "group_by", "top_n", "sort", "product_code",
         "product_ids", "brand_ids", "category_ids", "sales_agent_ids", "customer_ids", "warehouse_codes",
-        "channel", "contact_id", "space_id", "customer_agent_ids", "dataset",
+        "channel", "contact_id", "space_id", "customer_agent_ids", "dataset", "compare_to",
     }
 )
 #: The chat dataset's own query keys (CA-3); any other is 422 `unknown_param`.
@@ -184,8 +184,27 @@ def _echo(
     return [{"key": key, "label": ask.FILTER_LABELS[key], "values": values} for key, values in out if values]
 
 
+#: REPORT-SMART-1021: keys a sales body carries only when counted or compared, so a body
+#: that is neither stays what every caller already reads.
+_OPTIONAL_KEYS = ("count", "prev", "change_pct", "compare_to", "compare_from", "compare_until")
+
+
+def _drop_unset(part: dict, compared: bool) -> dict:
+    for key in _OPTIONAL_KEYS:
+        # A compared body keeps `change_pct` None: the earlier figure was zero ("new").
+        if part.get(key, 0) is None and not (compared and key == "change_pct"):
+            part.pop(key)
+    return part
+
+
 def _response(data: dict) -> JSONResponse:
-    return JSONResponse(content=ReportAskResponse(**data).model_dump(mode="json"))
+    content = ReportAskResponse(**data).model_dump(mode="json")
+    compared = content.get("compare_to") is not None
+    _drop_unset(content, compared)
+    _drop_unset(content["total"], compared)
+    for row in content["rows"]:
+        _drop_unset(row, compared)
+    return JSONResponse(content=content)
 
 
 @router.get("/report-ask")
@@ -221,6 +240,9 @@ def report_ask(
     warehouse_codes: Optional[list[str]] = Query(None),
     channel: Optional[str] = Query(None, description="dealer | project"),
     dataset: str = Query("sales", description="sales (default) | chat."),
+    compare_to: Optional[str] = Query(
+        None, description="previous_period (the same number of days just before) | last_year (the same dates)."
+    ),
     subjects: Optional[list[str]] = Query(None, description="Chat only: subject (domain) codes."),
     askers: Optional[list[str]] = Query(None, description="Chat only: dealer | salesperson | staff | unclassified."),
     contact_id: Optional[str] = Query(None, description="Respond.io contact id. Required with space_id."),
@@ -282,6 +304,9 @@ def report_ask(
         raise _unprocessable("A ranking needs top_n", "top_n_required")
     if top_n is not None and not 1 <= top_n <= TOP_SELLING_N_CEILING:
         raise _unprocessable(f"top_n must be between 1 and {TOP_SELLING_N_CEILING}", "top_n_out_of_range")
+    compare_norm = (compare_to or "").strip().lower() or None
+    if compare_norm is not None and compare_norm not in ask.COMPARE_TO:
+        raise _unprocessable(f"Unknown compare_to '{compare_to}'", "unknown_compare_to", _allowed(ask.COMPARE_TO))
     channel_norm = (channel or "").strip().lower() or None
     if channel_norm is not None and channel_norm not in _CHANNELS:
         raise _unprocessable(f"Unknown channel value '{channel}'", "invalid_channel", _allowed(_CHANNELS))
@@ -448,20 +473,19 @@ def report_ask(
     from app.services.stock_visibility import resolve_policy
 
     policy = resolve_policy(db, resolved, space_id) if resolved else None
-    data = ask.run_ask(
-        db,
-        basis=basis_norm,
-        measure=measure_norm,
-        group_by=group_norm,
-        date_from=date_from,
-        date_to=date_to,
-        filters=filters,
-        warehouse_codes=codes,
-        policy=policy,
-        company_grants=grants,
-        sort=sort_norm,
-        top_n=top_n,
+    run = dict(
+        basis=basis_norm, measure=measure_norm, group_by=group_norm, filters=filters, warehouse_codes=codes,
+        policy=policy, company_grants=grants, sort=sort_norm,
     )
+    data = ask.run_ask(db, date_from=date_from, date_to=date_to, top_n=top_n, **run)
+    if compare_norm is not None and data.get("status") == "ok":
+        # REPORT-SMART-1021: the earlier window, every row (matched by name), one call.
+        earlier_from, earlier_to = ask.compare_window(compare_norm, date_from, date_to)
+        earlier = ask.run_ask(db, date_from=earlier_from, date_to=earlier_to, top_n=None, **run)
+        data = ask.attach_compare(data, earlier, measure_norm)
+        common.update(
+            compare_to=compare_norm, compare_from=earlier_from.isoformat(), compare_until=earlier_to.isoformat()
+        )
     return _response({**data, **common, "filters": echo})
 
 

@@ -3419,6 +3419,22 @@ def _ask_figures(figures: dict, measure: Any) -> str:
     return f"{pcs}, {rm}" if measure == "qty" else f"{rm}, {pcs}"
 
 
+def _ask_before(figures: dict, measure: Any) -> str:
+    """REPORT-SMART-1021 `compare_to`: " (before <the sort measure's earlier figure>, +x%)",
+    or "new" when the earlier figure is zero; "" when the body compares with nothing."""
+    prev = figures.get("prev")
+    if not isinstance(prev, dict):
+        return ""
+    if measure in _ASK_COUNT_UNITS:
+        one, many = _ASK_COUNT_UNITS[measure]
+        count = int(prev.get("count") or 0)
+        earlier = f"{count:,} {one if count == 1 else many}"
+    else:
+        earlier = _ask_pcs(prev.get("qty")) if measure == "qty" else _ask_rm(prev.get("amount"))
+    change = figures.get("change_pct")
+    return f" (before {earlier}, {'new' if change is None else f'{float(change):+.1f}%'})"
+
+
 def _ask_month(value: Any) -> str:
     """`2026-09` as `Sep 2026`; anything unreadable as it came."""
     try:
@@ -3472,8 +3488,10 @@ def _report_ask(body: dict) -> str:
         for f in body.get("filters") or []
     ]
     facts.append(f"Period: {_chat_date(body.get('date_from'))} to {_chat_date(body.get('date_to'))}")
+    if body.get("compare_to") and body.get("compare_from"):
+        facts.append(f"Compared with: {_chat_date(body.get('compare_from'))} to {_chat_date(body.get('compare_until'))}")
     measure = body.get("measure")
-    figures = _ask_figures(body.get("total") or {}, measure)
+    figures = _ask_figures(body.get("total") or {}, measure) + _ask_before(body.get("total") or {}, measure)
     basis = body.get("basis_label")
     group_by = body.get("group_by")
     if not group_by:
@@ -3496,9 +3514,9 @@ def _report_ask(body: dict) -> str:
     for row in rows:
         if group_by == "month":
             # A trend, not a ranking: its months in date order, no rank number.
-            lines.append(f"{_ask_month(row.get('name'))} {_ask_figures(row, measure)}")
+            lines.append(f"{_ask_month(row.get('name'))} {_ask_figures(row, measure)}{_ask_before(row, measure)}")
         else:
-            lines.append(f"{row.get('rank')}. {row.get('name')} {_ask_figures(row, measure)}")
+            lines.append(f"{row.get('rank')}. {row.get('name')} {_ask_figures(row, measure)}{_ask_before(row, measure)}")
     if more > 0:
         lines.append(f"and {more} more")
     lines.append(f"Total {figures}")
