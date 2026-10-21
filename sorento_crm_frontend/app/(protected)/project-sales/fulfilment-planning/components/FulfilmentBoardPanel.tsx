@@ -2559,32 +2559,38 @@ export function FulfilmentBoardPanel({
           )}
           {/* Labelled in words, because "Product / Sales order / Customer / Project" in a bare
               select says nothing about what it does to the grid. The captain wrote it as
-              "Rows: Product | Sales order | Customer | Project", so that is what it reads. */}
-          <div className="flex w-full items-center gap-2 sm:w-auto">
-            <label htmlFor="rows" className="text-sm text-muted-foreground">
-              Rows
-            </label>
-            <div className="w-full sm:w-40">
-              <SearchableSelect
-                id="rows"
-                value={rowAxis}
-                onChange={(value) => setRowAxis(value as BoardRowAxis)}
-                options={ROW_AXIS_OPTIONS}
-              />
-            </div>
-          </div>
-          <div className="w-full sm:w-44">
-            <SearchableSelect
-              value={granularity}
-              onChange={(value) => {
-                // A window belongs to the view that scrolled it; carrying it into week or month
-                // would silently pin those to a date the planner never chose.
-                setDayWindow(undefined);
-                setGranularity(value as BoardGranularity);
-              }}
-              options={GRANULARITY_OPTIONS}
-            />
-          </div>
+              "Rows: Product | Sales order | Customer | Project", so that is what it reads.
+              Grid only (owner, 21 Oct 2026): both selectors shape the grid alone, so in List
+              they take no header space. The choices are panel state, so they survive a toggle. */}
+          {view === 'grid' && (
+            <>
+              <div className="flex w-full items-center gap-2 sm:w-auto">
+                <label htmlFor="rows" className="text-sm text-muted-foreground">
+                  Rows
+                </label>
+                <div className="w-full sm:w-40">
+                  <SearchableSelect
+                    id="rows"
+                    value={rowAxis}
+                    onChange={(value) => setRowAxis(value as BoardRowAxis)}
+                    options={ROW_AXIS_OPTIONS}
+                  />
+                </div>
+              </div>
+              <div className="w-full sm:w-44">
+                <SearchableSelect
+                  value={granularity}
+                  onChange={(value) => {
+                    // A window belongs to the view that scrolled it; carrying it into week or
+                    // month would silently pin those to a date the planner never chose.
+                    setDayWindow(undefined);
+                    setGranularity(value as BoardGranularity);
+                  }}
+                  options={GRANULARITY_OPTIONS}
+                />
+              </div>
+            </>
+          )}
           {/* Grid | List (D2): "how do I review it" - the grid answers what a product owes by
               date, the list answers what is about to be committed, across every order, in one
               scan. A toggle, not two screens, because it is the same draft either way. */}
