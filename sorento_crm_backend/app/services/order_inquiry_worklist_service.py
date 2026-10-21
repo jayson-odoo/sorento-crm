@@ -3402,6 +3402,14 @@ class OrderInquiryWorklistService:
         filename = f"order-inquiry-{date.today().isoformat()}.xlsx"
         return filename, buffer.getvalue()
 
+    def export_pdf(self, **filters) -> Tuple[str, bytes]:
+        """The same rows as `export_xlsx`, printed in the OI email's layout (OI-DOWNLOAD,
+        `app/services/order_inquiry_pdf.py`)."""
+        from app.services import order_inquiry_pdf
+
+        filename = f"order-inquiry-{date.today().isoformat()}.pdf"
+        return filename, order_inquiry_pdf.render_pdf(self._all_rows(**filters))
+
     def _all_rows(self, **filters) -> List[Dict[str, Any]]:
         """The same set the list serves, unpaged, in the workbook's own order.
 
