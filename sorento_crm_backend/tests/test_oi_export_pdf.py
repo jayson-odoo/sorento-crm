@@ -228,12 +228,13 @@ def test_detail_pdf_task_renders_the_excel_sheet(api, monkeypatch):
     assert captured["bytes"][:4] == b"%PDF"
     pdf = _pdf_text(captured["bytes"])
     flat = " ".join(pdf.split())
+    squashed = "".join(pdf.split())  # a long test code may wrap inside its cell
     for heading in ("ORDER INQUIRY", "SO DATE", "S/O NO", "ITEM CODE", "QTY", "SUPPLIER",
                     "LOCATION", "ACKNOWLEDGED", "REMARK"):
         assert heading in flat, f"{heading!r} missing from the PDF: {flat}"
-    assert seeded["core"].so_number in pdf
-    assert "03/09/2026" in pdf
-    assert item_code in pdf and "BRW-BB" in pdf
+    assert seeded["core"].so_number in squashed
+    assert "03/09/2026" in squashed
+    assert item_code in squashed and "BRW-BB" in squashed
     row = DownloadService(db).get(str(dl.id))
     assert row.status == "ready" and row.filename == "order-inquiry-OI.pdf"
     assert sent == []
@@ -291,7 +292,7 @@ def test_worklist_pdf_task_prints_only_the_filtered_rows(api, monkeypatch):
     assert result["status"] == "ready", result
     assert captured["content_type"] == "application/pdf"
     assert f"exports/order-inquiry-worklist-pdf/{dl.id}/" in captured["path"]
-    pdf = _pdf_text(captured["bytes"])
+    pdf = "".join(_pdf_text(captured["bytes"]).split())  # cells may wrap
     assert f"{MARKER}-KEEPME" in pdf and kept["core"].so_number in pdf
     assert f"{MARKER}-DROPME" not in pdf and dropped["core"].so_number not in pdf
 
@@ -328,7 +329,7 @@ def test_worklist_pdf_task_never_prints_another_companys_rows(api, monkeypatch):
     )
 
     assert result["status"] == "ready", result
-    pdf = _pdf_text(captured["bytes"])
+    pdf = "".join(_pdf_text(captured["bytes"]).split())  # cells may wrap
     assert ours["core"].so_number in pdf
     assert theirs["core"].so_number not in pdf
 
