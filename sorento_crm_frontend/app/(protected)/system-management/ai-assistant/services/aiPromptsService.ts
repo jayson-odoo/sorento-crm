@@ -227,8 +227,11 @@ export async function getPromptVersions(name: string): Promise<PromptVersionsRes
   return r.json();
 }
 
+/** Served by the chatbot module's own read surface, not the core prompts router. */
+const CHATBOT_PROMPTS_BASE = '/api/v1/system/chatbot/prompts';
+
 export async function getPromptArchitecture(name: string, version: number): Promise<PromptArchitecture> {
-  const r = await apiFetch(`${BASE}/${encodeURIComponent(name)}/versions/${version}/architecture`);
+  const r = await apiFetch(`${CHATBOT_PROMPTS_BASE}/${encodeURIComponent(name)}/versions/${version}/architecture`);
   if (!r.ok) throw new Error(await extractApiError(r, 'Failed to load the architecture'));
   return r.json();
 }
