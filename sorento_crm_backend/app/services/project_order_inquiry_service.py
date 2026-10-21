@@ -164,6 +164,13 @@ _PURCHASING_NOTIFY_PENDING_KEY = "oi_purchasing_notify_pending"
 #: (`PLAN-scm-oi-handover-email.md`) queued mid-transaction and fired once the session
 #: actually commits - see `_record_handover` / `register_order_inquiry_post_commit_dispatch`.
 _HANDOVER_PENDING_KEY = "oi_handover_pending"
+#: PLAN-BATCH-HELD-CANCEL (owner ruling (a), 21 Oct 2026 ~16:00 MYT): set on the session for
+#: ONE order's write by the board press that applies a pending AutoCount change together with
+#: the Cancel SO that change used to hold. While set, no cancel or retire line goes into the
+#: handover email and no changed-with-links automation fires; purchasing sees the rows cancelled
+#: in the CRM. A normal Cancel SO still emails its CANCEL list (8 Oct rule, #1530). Widening the
+#: rule is setting this flag at another caller.
+QUIET_CANCELS_KEY = "oi_quiet_cancels"
 #: Per sales order, the lines the last `record_saved_lines` told (review B1).
 _SAVED_TOLD_KEY = "oi_saved_lines_told"
 #: OI-LINE-SPLIT: per origin line, what `_apply_split_links` moved to another line in the
@@ -4316,6 +4323,8 @@ class ProjectOrderInquiryService:
         `product_spec_write.py`'s bypass backstop already uses for the same reason: real
         work, off the transaction this write cannot afford to poison.
         """
+        if self.db.info.get(QUIET_CANCELS_KEY):
+            return
         if not had_link:
             return
         try:
@@ -4378,6 +4387,8 @@ class ProjectOrderInquiryService:
     ) -> None:
         """Queue `handover_item`'s line on this write's handover email, tagged with the
         transaction it was earned under (see `handover_item` for the line itself)."""
+        if kind == "cancelled" and self.db.info.get(QUIET_CANCELS_KEY):
+            return
         item = self.handover_item(
             row,
             kind=kind,
@@ -5021,6 +5032,9 @@ class ProjectOrderInquiryService:
                 for item in queue
                 if not (item.get("pso_id") == pso_id and item.get("so_line_id") in ids)
             ]
+        # PLAN-BATCH-HELD-CANCEL (ruling (a)): the held-cancel press queues no CANCEL line.
+        if self.db.info.get(QUIET_CANCELS_KEY):
+            return
         for mirror, core in cancelled:
             open_qty = max(
                 _dec(getattr(core, "qty_ordered", None)) - _dec(getattr(core, "qty_delivered", None)),

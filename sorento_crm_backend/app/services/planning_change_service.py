@@ -4793,7 +4793,14 @@ def _apply_one_order(
     confirm_result: Optional[dict] = None
     settled_in_place: List[str] = []
     auto_place_products: List[str] = []
-    if confirm_lines:
+    # Crew ruling Q1 (PLAN-BATCH-HELD-CANCEL, 21 Oct 2026): a press that composed nothing but
+    # retires (or re-opens) covered lines while other covered lines survive goes through the
+    # SAME confirm as a composed press - a revision naming no line, with `uncover_line_ids`
+    # taking only those lines out, the presser as its author, and the auto-place deferred for
+    # the link shift below (AC-P3-6). It used to supersede the whole revision, sending every
+    # confirmed line of the order back to review (SO394881).
+    survivors = set(frozen) - set(uncover_line_ids)
+    if confirm_lines or (active_decision is not None and uncover_line_ids and survivors):
         # AC-E2 (Slice E, one signal): the borrow-hold release `challenge_if_drifted` used
         # to perform for the WHOLE decision on drift is already covered without a call
         # here - a line THIS BATCH names in the confirm is retired by `confirm()`'s own
@@ -4822,20 +4829,12 @@ def _apply_one_order(
         # was written, so nothing was revised.
         revised = revision_no is not None
     elif active_decision is not None and uncover_line_ids:
-        # Crew ruling Q1 (PLAN-BATCH-HELD-CANCEL, 21 Oct 2026): ONLY the lines this batch
-        # retires or re-opens leave the revision, exactly as `confirm(uncover_line_ids=...)`
-        # above does when the press also composed a line; every other confirmed line is
-        # carried. Superseding the whole revision here sent every confirmed line of the order
-        # back to review whenever the press happened to compose nothing (SO394881).
-        # `uncover_lines` still retires the revision outright when nothing else is covered.
-        supply.uncover_lines(
+        # Every covered line leaves: no revision is left to carry anything.
+        supply.supersede_for_material_change(
             order,
-            uncover_line_ids,
-            actor_user_id=str(actor or active_decision.confirmed_by or ""),
-            reason="The book changed or cancelled this line in a planning change batch.",
+            "Every covered line moved to Replan or Retire in a planning change batch.",
         )
         revised = True
-        revision_no = current_revision_no(db, pso_id)
 
     # NOW the closed lines' placements move to the surviving row of the same product on the
     # same order (AC-P3-6). After the confirm, so the survivor already carries its new
