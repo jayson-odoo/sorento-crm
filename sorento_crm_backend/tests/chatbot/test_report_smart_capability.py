@@ -226,3 +226,45 @@ def test_dealer_a_product_breakdown_of_its_own_sales_runs_on_the_report_ask(deal
         "my top 5 products by qty delivered september",
     )
     assert len(calls) == 1 and calls[0]["group_by"] == "product", (text, calls)
+
+
+# ---------------------------------------------------------------- example 5: how many dealers (step 3)
+#
+# Needs the parser's `measure` enum to carry customers | orders | products (lines handed to
+# crew for CHAT-CLOSED-LISTS-L); the lane reads the field whatever report kind it rides on.
+
+
+@pytest.mark.parametrize(
+    "status, body",
+    [
+        ("sales_report", "我们一共有多少个经销商卖这个产品"),
+        ("sales_ranking", "how many dealers bought this product this year"),  # paraphrase
+    ],
+    ids=["zh_sales_report", "paraphrase_ranking"],
+)
+def test_e5_how_many_dealers_sell_a_product_is_a_customer_count(console, status, body) -> None:
+    text, calls = console.say(
+        _ask(_e(PRODUCT_CODE, "product"), order_status=status, group_by=None, measure="customers",
+             basis="delivered", **YEAR_2026),
+        body,
+    )
+    assert len(calls) == 1, (text, calls)
+    args = calls[0]
+    assert args["measure"] == "customers" and not args.get("group_by"), args
+    assert args["product_code"] == PRODUCT_CODE, args
+
+
+def test_e5_customers_per_agent_ranks_by_the_count(console) -> None:
+    text, calls = console.say(
+        _ask(order_status="sales_ranking", group_by="sales_agent", top_n=5, rank_direction="top",
+             measure="customers", basis="ordered"),
+        "which 5 agents have the most dealers ordering in september",
+    )
+    assert len(calls) == 1 and calls[0]["measure"] == "customers", (text, calls)
+
+
+def test_e5_a_count_answer_to_the_metric_question_settles_it(console) -> None:
+    text, calls = console.say(_ask(order_status="sales_ranking", group_by="brand", top_n=5, basis="delivered"), "top 5 brands")
+    assert calls == [], (text, calls)
+    text, calls = console.say(_reply(measure="orders"), "by number of orders")
+    assert len(calls) == 1 and calls[0]["measure"] == "orders", (text, calls)
