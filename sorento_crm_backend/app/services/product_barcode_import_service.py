@@ -42,7 +42,12 @@ _MAX_SHEET_ROWS = 1_048_576
 #: Non-empty data rows per file. The catalogue is ~12k products.
 _MAX_DATA_ROWS = 50_000
 #: Sum of the workbook archive's uncompressed members; guards a zip bomb under 25 MB.
-_MAX_UNCOMPRESSED_BYTES = 200 * 1024 * 1024
+#: Pictures (xl/media/) are never parsed in read-only mode, so they do not count; the XML
+#: does (openpyxl holds roughly 75x its size in memory).
+_MAX_UNCOMPRESSED_BYTES = 20 * 1024 * 1024
+_MAX_CELL_CHARS = 256
+_MAX_COLS = 64
+_MAX_HEADER_SHEETS = 10
 
 # Normalized header (lowercase, non-alphanumerics collapsed to one space).
 _CODE_HEADERS = (
@@ -121,12 +126,14 @@ def _sheets(data: bytes, name: str) -> Iterable[Iterable[tuple]]:
     """Each sheet's rows. A workbook is searched sheet by sheet for the header row."""
     if name.endswith(".csv"):
         text_data = data.decode("utf-8-sig", errors="replace")
-        return [_guarded(tuple(r) for r in csv.reader(io.StringIO(text_data)))]
+        return [_guarded(tuple(r[:_MAX_COLS]) for r in csv.reader(io.StringIO(text_data)))]
     import openpyxl
 
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
-            if sum(i.file_size for i in zf.infolist()) > _MAX_UNCOMPRESSED_BYTES:
+            xml_bytes = sum(i.file_size for i in zf.infolist()
+                            if not i.filename.startswith("xl/media/"))
+            if xml_bytes > _MAX_UNCOMPRESSED_BYTES:
                 raise _bad_request("This workbook is too large to read.")
     except HTTPException:
         raise
@@ -136,7 +143,14 @@ def _sheets(data: bytes, name: str) -> Iterable[Iterable[tuple]]:
         wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True, read_only=True)
     except Exception as exc:
         raise _bad_request("This file could not be read as an Excel workbook.") from exc
-    return [_guarded(ws.iter_rows(values_only=True)) for ws in wb.worksheets]
+    return [_guarded(_sheet_rows(ws)) for ws in wb.worksheets[:_MAX_HEADER_SHEETS]]
+
+
+def _sheet_rows(ws: Any) -> Iterable[tuple]:
+    # The declared <dimension> is not trusted: a small lie drops real rows, a wide one
+    # builds enormous empty rows.
+    ws.reset_dimensions()
+    return ws.iter_rows(values_only=True, max_col=_MAX_COLS)
 
 
 def _cell(value: Any) -> str:
@@ -147,7 +161,7 @@ def _cell(value: Any) -> str:
         return str(value)
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
-    return str(value).strip()
+    return str(value)[:_MAX_CELL_CHARS].strip()
 
 
 def _norm_header(value: Any) -> str:

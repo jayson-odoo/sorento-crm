@@ -36,10 +36,14 @@ async def apply_barcode_import(
     db: Session = Depends(get_db),
     user: dict = Depends(_EDIT),
 ) -> dict[str, Any]:
-    """Write only the New and Change rows, in one transaction. Refused (409) unless the same
-    user previewed the same bytes."""
+    """Write only the New and Change rows, in one transaction. Refused (409) unless the token
+    covers this file, user and active company."""
     data, name = await svc.read_barcode_upload(file)
     await run_in_threadpool(svc.check_preview_token, data, user.get("id"), preview_token, db)
-    out = await run_in_threadpool(svc.apply, db, data, name)
-    db.commit()
-    return out
+
+    def _apply_and_commit() -> dict[str, Any]:
+        out = svc.apply(db, data, name)
+        db.commit()
+        return out
+
+    return await run_in_threadpool(_apply_and_commit)
