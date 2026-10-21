@@ -27,6 +27,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 }));
 
 const getPlanningBoard = vi.fn();
+const adoptSalesOrder = vi.fn();
 const confirmSupply = vi.fn();
 const confirmMany = vi.fn();
 const previewConfirmMany = vi.fn();
@@ -37,7 +38,7 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   listFulfilmentPlanning: vi.fn(),
   getReconciliation: vi.fn(),
   rerunReconciliation: vi.fn(),
-  adoptSalesOrder: vi.fn(),
+  adoptSalesOrder: (...args: unknown[]) => adoptSalesOrder(...args),
   getSupply: vi.fn(),
   confirmSupply: (...args: unknown[]) => confirmSupply(...args),
   confirmMany: (...args: unknown[]) => confirmMany(...args),
@@ -1338,17 +1339,32 @@ describe('OI-SPLIT-GEAR-REMARK guide Review page: confirmed remark vs the server
  * Review split as the READ-ONLY sheet (no split read, no Undo/Save), and SO DATE was blank on
  * every row. The board's order carries the SO date; every sheet on the page prints it.
  */
-describe('OI-SPLIT-CONFIRM-POLISH: SO date on the read-only Review split (SO426939)', () => {
-  const RO_LINES = [
-    demand({ sales_order_id: 'so-9', so_number: 'SO426939', project_sales_order_id: null, project_line_id: 'pl-9-1', line_no: 1, item_code: 'SRTWC8613-RL', fulfilment_location: 'BRW-BB', qty: '1115', required_date: '2030-01-01' }),
-    demand({ sales_order_id: 'so-9', so_number: 'SO426939', project_sales_order_id: null, project_line_id: 'pl-9-2', line_no: 2, item_code: 'SRTWT907SS', fulfilment_location: 'BRW-BB', qty: '1115', required_date: '2030-01-01' }),
-    demand({ sales_order_id: 'so-9', so_number: 'SO426939', project_sales_order_id: null, project_line_id: 'pl-9-3', line_no: 3, item_code: 'WESERP10B', fulfilment_location: 'BRW-BB', qty: '1115', required_date: '2030-01-01' }),
-  ];
+describe('OI-SPLIT-CONFIRM-POLISH: an order nobody adopted opens Review split editable (SO426939)', () => {
+  const RO = (no: number, item: string) =>
+    demand({
+      sales_order_id: 'so-9',
+      so_number: 'SO426939',
+      project_sales_order_id: null,
+      project_line_id: `pl-9-${no}`,
+      line_no: no,
+      item_code: item,
+      fulfilment_location: 'BRW-BB',
+      qty: '1115',
+      required_date: '2030-01-01',
+    });
+  const RO_LINES = [RO(1, 'SRTWC8613-RL'), RO(2, 'SRTWT907SS'), RO(3, 'WESERP10B')];
   const firstCells = (page: HTMLElement) =>
     Array.from(page.querySelectorAll('tbody[data-line-id]')).map((body) => body.querySelector('td')?.textContent ?? '');
 
-  function unadoptedBoard(soDate: string | null) {
+  /** SO426939 as the board states it: saved decisions on all three lines. */
+  function soBoard(adopted: boolean, soDate: string | null = '2026-10-20') {
     const board = withDraft(boardOf(RO_LINES), ['pl-9-1', 'pl-9-2', 'pl-9-3'], { 'pl-9-1': 'ORDER' });
+    if (adopted) {
+      return {
+        ...board,
+        orders: board.orders.map((o) => ({ ...o, project_sales_order_id: 'pso-so-9', so_date: soDate })),
+      } as unknown as Board;
+    }
     return mapContributions(
       {
         ...board,
@@ -1357,27 +1373,93 @@ describe('OI-SPLIT-CONFIRM-POLISH: SO date on the read-only Review split (SO4269
       (entry) => ({ ...entry, project_line_id: null, project_sales_order_id: null }),
     );
   }
+  const SO9_READ = () => ({
+    ...splitRead('pso-so-9', 'SO426939', []),
+    so_date: '2026-10-20',
+    lines: [
+      wireLine(1, 'SRTWC8613-RL', 1115, '2030-01-01', { line_id: 'pl-9-1', location: 'BRW-BB', split_view: { status: 'saved' } }),
+      wireLine(2, 'SRTWT907SS', 1115, '2030-01-01', { line_id: 'pl-9-2', location: 'BRW-BB', split_view: { status: 'saved' } }),
+      wireLine(3, 'WESERP10B', 1115, '2030-01-01', { line_id: 'pl-9-3', location: 'BRW-BB', split_view: { status: 'saved' } }),
+    ],
+  });
 
-  it('the read-only sheet prints the board order\'s SO date on every row', async () => {
-    await mountWith(unadoptedBoard('2026-10-20'), ['SO426939']);
+  /** The board reads unadopted until the guide's adopt lands, adopted after it. */
+  function serveAdoption() {
+    let adopted = false;
+    adoptSalesOrder.mockImplementation(async () => {
+      adopted = true;
+      return { project_sales_order_id: 'pso-so-9', so_number: 'SO426939', review_state: 'in_review', already_adopted: false };
+    });
+    getPlanningBoard.mockImplementation(async () => soBoard(adopted));
+    serveSplits({ 'pso-so-9': SO9_READ() });
+  }
+
+  it('first open: the guide gives the order its planning record, then shows the EDITABLE sheet with + Split', async () => {
+    serveAdoption();
+    renderPanel(['SO426939']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
     await openConfirmGuide();
     const page = await screen.findByTestId('confirm-guide-split-page');
-    await within(page).findByTestId('split-line-1');
-    // the read-only summary: no Undo / Save toolbar
-    expect(within(page).queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+    await within(page).findByRole('button', { name: 'Undo' });
+    expect(adoptSalesOrder).toHaveBeenCalledTimes(1);
+    expect(adoptSalesOrder).toHaveBeenCalledWith('so-9');
+    expect(within(page).getAllByRole('button', { name: /^Split line \d+ quantity$/ })).toHaveLength(3);
+    expect(within(page).getAllByRole('button', { name: /^Add a split to line \d+$/ })).toHaveLength(3);
     expect(firstCells(page)).toEqual(['20/10/2026', '20/10/2026', '20/10/2026']);
-    expect(getLineSplits).not.toHaveBeenCalled();
+    expect(screen.getByTestId('confirm-guide-next')).toBeEnabled();
   });
 
-  it('an order with no SO date anywhere still renders, with SO DATE empty', async () => {
-    await mountWith(unadoptedBoard(null), ['SO426939']);
+  it('never shows the read-only sheet while the order is being made ready: a skeleton, Next off', async () => {
+    let finish: (value: unknown) => void = () => undefined;
+    adoptSalesOrder.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    getPlanningBoard.mockImplementation(async () => soBoard(false));
+    renderPanel(['SO426939']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
     await openConfirmGuide();
     const page = await screen.findByTestId('confirm-guide-split-page');
-    await within(page).findByTestId('split-line-1');
-    expect(firstCells(page)).toEqual(['', '', '']);
+    expect(within(page).queryByRole('table', { name: 'Split delivery sheet' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('confirm-guide-next')).toBeDisabled();
+    finish({ project_sales_order_id: 'pso-so-9', so_number: 'SO426939', review_state: 'in_review', already_adopted: false });
   });
 
-  it('with a split read, the read\'s SO date wins over the board\'s (editable sheet)', async () => {
+  it('a failed adopt says so with a Retry, and Retry gets the editable sheet', async () => {
+    let adopted = false;
+    adoptSalesOrder.mockRejectedValueOnce(new Error('Could not start planning SO426939'));
+    getPlanningBoard.mockImplementation(async () => soBoard(adopted));
+    serveSplits({ 'pso-so-9': SO9_READ() });
+    renderPanel(['SO426939']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    expect(await within(page).findByRole('alert')).toHaveTextContent('Could not start planning SO426939');
+    expect(within(page).queryByRole('table', { name: 'Split delivery sheet' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('confirm-guide-next')).toBeDisabled();
+    adoptSalesOrder.mockImplementation(async () => {
+      adopted = true;
+      return { project_sales_order_id: 'pso-so-9', so_number: 'SO426939', review_state: 'in_review', already_adopted: false };
+    });
+    fireEvent.click(within(page).getByRole('button', { name: 'Retry' }));
+    await within(page).findByRole('button', { name: 'Undo' });
+    expect(within(page).getAllByRole('button', { name: /^Add a split to line \d+$/ })).toHaveLength(3);
+  });
+
+  it('an order that already has its planning record is not adopted again', async () => {
+    getPlanningBoard.mockImplementation(async () => soBoard(true));
+    serveSplits({ 'pso-so-9': SO9_READ() });
+    renderPanel(['SO426939']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByRole('button', { name: 'Undo' });
+    expect(adoptSalesOrder).not.toHaveBeenCalled();
+    expect(firstCells(page)).toEqual(['20/10/2026', '20/10/2026', '20/10/2026']);
+  });
+
+  it('with a split read, the read\'s SO date wins over the board\'s', async () => {
     serveSplits({ 'pso-so-1': { ...LINE3_READ(), so_date: '2026-10-21' } });
     const board = oneDraftBoard();
     await mountWith(
@@ -1387,7 +1469,6 @@ describe('OI-SPLIT-CONFIRM-POLISH: SO date on the read-only Review split (SO4269
     await openConfirmGuide();
     const page = await screen.findByTestId('confirm-guide-split-page');
     await within(page).findByTestId('split-line-3');
-    expect(within(page).getByRole('button', { name: 'Undo' })).toBeInTheDocument();
     expect(firstCells(page)).toEqual(['21/10/2026']);
   });
 });
