@@ -188,7 +188,9 @@ describe('the note sentence, reviewer round 1', () => {
         'board',
         false,
       ),
-    ).toBe('Applies the AutoCount change from 24 Sep: 1 old line (CB110) is retired');
+    ).toBe(
+      'Applies the AutoCount change from 24 Sep: 1 old line (CB110) is retired',
+    );
   });
 
   it('never calls an applied or simulated change pending', () => {
@@ -213,8 +215,18 @@ describe('the note sentence, reviewer round 1', () => {
 });
 
 describe('the board note lines for one order and for several (D2, crew ruling b)', () => {
-  const one = { soNumber: 'SO394881', count: 10, itemCodes: ['SRTWCX8840-S-RL'], createdAt: '2026-09-24T06:36:12' };
-  const two = { soNumber: 'SO415685', count: 1, itemCodes: ['CB110'], createdAt: '2026-09-24T06:36:12' };
+  const one = {
+    soNumber: 'SO394881',
+    count: 10,
+    itemCodes: ['SRTWCX8840-S-RL'],
+    createdAt: '2026-09-24T06:36:12',
+  };
+  const two = {
+    soNumber: 'SO415685',
+    count: 1,
+    itemCodes: ['CB110'],
+    createdAt: '2026-09-24T06:36:12',
+  };
 
   it('one order: the one sentence', () => {
     expect(autocountBoardNote([one], true)).toEqual([
