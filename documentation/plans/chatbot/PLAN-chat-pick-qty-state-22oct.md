@@ -87,6 +87,15 @@ Out of scope: discontinued candidates in did-you-mean (bug 5 of the incident), t
    c0655a9a59, fix 0091b1f24f).
 5. The parser's item quantities answer the quantity question in pick mode too, apply.py `_open_question_answer` (red
    fe70fe1a08, fix 1d2e6c6554).
+6. Overnight (EVAL-BENCH class battery, 22 Oct): the small-talk recap's "Last time" reads closed episodes only (red
+   8b63d41bf3, fix dd6827c43f); a declared cancel / decline of the stored question blocks resume and keeps its decline
+   arm on the state path (red b57ee374fd, fix a8f483fd82; R1 35638c9ff3: only with a stored question); a declined
+   did-you-mean drops its unresolved token (red f084f1a4bd, fix 83adba6fa9; R2 1dcdadee2a); a topic reset wins over the
+   pending-answer early returns: no stored pending survives it (red 11f22ea3bd, fix 4b448ea9d5).
+   Parser gold set widened to 68 rows in 8 classes (3e91d6ebe6); x1: v63 67/68, v92 65/68.
+   Old-path gaps NOT changed: v63 stores no numbered data list (tail.py ~188, state path only), so a row number over a
+   multi-product answer cannot pick on v63; v63's file-kind question has no numbered kinds without closed lists
+   (engine.py ~7744).
 
 ## Coordination
 REPORT-SMART-L (#1816) and CHAT-CLOSED-LISTS-L (#1755) touch turn/apply.py, chat_state.py, task.py; keep the diff to
