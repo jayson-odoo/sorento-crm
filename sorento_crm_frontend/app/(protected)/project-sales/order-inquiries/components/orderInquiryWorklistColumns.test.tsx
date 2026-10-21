@@ -2173,6 +2173,6 @@ describe('OI-RESERVE-PILL-QTY (CS report 21 Oct 2026): the Instruction cell rese
     );
 
     const row = screen.getByTestId('row-row-reserved');
-    expect(within(row).getByText(/Reserved 12/)).toBeInTheDocument();
+    expect(within(row).getByText('Reserved 12')).toBeInTheDocument();
   });
 });
