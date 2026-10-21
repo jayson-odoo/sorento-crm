@@ -279,3 +279,21 @@ def test_guard_a_new_subject_with_a_product_of_its_own_is_not_a_reset():
     assert "reset_on_topic" not in plan.trace.rules_fired
     codes = [row["canonical_code"] for spec in ht.inventory_specs(plan) for row in spec.entities]
     assert codes == ["ELP3754"], codes
+
+
+# --- the reset wipe on an early-returning answer path -------------------------------------------------
+
+
+def test_a_reset_on_an_early_returning_answer_path_wipes_the_focus():
+    """Only the wipe decides: a did-you-mean cancelled with topic_reset true and a domain of its own
+    returns from `_answer_pending` before `_focus_rules`; the held codes must still go."""
+    task = ht.stock_task([(c, None) for c in ("SRTBF101", "SRTBF102")], opened_at_turn=2, touched_at_turn=2)
+    focus = Focus(products=ht.product_rows("SRTBF101", "SRTBF102"), domains=["inventory"], tasks=(task,))
+    state = replace(ht.state(focus, pending=_did_you_mean_pending(), turn_no=5), state_path=False)
+    v = verdict(
+        domain_hint="promotion", entities=[], topic_reset=True, is_affirmative=False,
+        open_question_answer={"mode": "cancel", "picked": [], "items": [], "qty_for_all": None},
+    )
+    new_state, plan = apply(state, v, build_policy())
+    assert "stock_pick_declined" in plan.trace.rules_fired
+    assert new_state.focus.products == [], new_state.focus.products
