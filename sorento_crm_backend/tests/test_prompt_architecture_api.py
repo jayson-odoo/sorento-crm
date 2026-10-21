@@ -12,6 +12,7 @@ import uuid
 from datetime import date
 
 import pytest
+from fastapi import Depends
 from fastapi.testclient import TestClient
 
 import app.main  # noqa: F401  isort:skip - registers every model before any query
@@ -243,6 +244,18 @@ def test_a_template_without_the_closed_lists_section_sends_the_lists_whole_even_
 
 
 def test_warehouses_are_checked_only(client, pg_db):
+    from app.models.base import set_company_scope
+    from app.services.company_scope_resolver import apply_company_scope
+
+    # A real request scopes its session to the caller's companies (`apply_company_scope`);
+    # warehouses is a scoped table, so an unscoped session sees no rows at all (fail closed).
+    scope = frozenset({DEFAULT_COMPANY_ID})
+
+    def _scoped(_db=Depends(get_db)):
+        set_company_scope(_db, scope)
+
+    app.dependency_overrides[apply_company_scope] = _scoped
+    set_company_scope(pg_db, scope)
     _mode(pg_db, "index")
     for code in ("ZZARCH-1", "ZZARCH-2"):
         pg_db.add(Warehouse(id=str(uuid.uuid4()), warehouse_code=code, warehouse_name=f"ZZ {code}", company_id=DEFAULT_COMPANY_ID))
