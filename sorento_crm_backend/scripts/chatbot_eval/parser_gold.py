@@ -310,6 +310,7 @@ def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] 
     from app.services.chatbot.head import parser
     from app.services.chatbot.turn import context as context_mod
     from app.services.company_scope import DEFAULT_COMPANY_ID
+    from app.services.reports.ask import SALES_CHANNELS
 
     user_turn, latest_user_message = _fresh_turn(message)
     db = factory()
@@ -341,6 +342,7 @@ def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] 
         pending_kind=None, pending_options=None, settings_profile_line=None,
         current_message=latest_user_message, reply_to=held.get("reply_to"), media_line=None, brands=brands,
         promotion_kinds=promotion_kinds,
+        sales_channels=list(SALES_CHANNELS),  # REPORT-SMART-L S2 A'': the engine's always-on Sales channels line
         product_types=product_types, product_details=product_details, candidate_lines=lines,
         open_question_line=None if state else parser.open_question_line(held.get("open_question")),
         state_block=state,
