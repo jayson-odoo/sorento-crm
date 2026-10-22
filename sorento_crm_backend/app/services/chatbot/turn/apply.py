@@ -2827,7 +2827,7 @@ def _open_question_answer(
       named as not checked (the list pasted back with blanks, "that's it", "itu saja").
     * all: `qty_for_all` on every line of the list ("3 for all of them"), asked or just
       answered.
-    * cancel: not read here; a cancel that names nothing is a reset (`_is_reset`), which
+    * cancel: not read here; a cancel that names nothing is a reset (`is_reset`), which
       closed the question before this ran.
 
     Written onto the verdict as the fields the task step already reads
@@ -2851,7 +2851,7 @@ def _open_question_answer(
         # run first and this is never reached).
         mode = "fill"
     if mode not in ("fill", "all", "done"):
-        # A cancel is no answer here: `_is_reset` read it before any reader ran.
+        # A cancel is no answer here: `is_reset` read it before any reader ran.
         return False
     task = _open_question_task(state.focus)
     if task is None:
@@ -3276,7 +3276,7 @@ def _hand_on_unanswered_lists(asked: Any, specs: list[Any], verdict: dict[str, A
     trace.rules_fired.append("stock_pick_lists_still_open")
 
 
-def _is_reset(verdict: dict[str, Any]) -> bool:
+def is_reset(verdict: dict[str, Any]) -> bool:
     """The ONE reading of a reset (release gate #1829, crew ruling): the parser's `topic_reset`,
     or a cancel answer that names nothing (no entity, no position, no pick, no item with a
     quantity). A "no" is the open question's own decline, never a reset. Parser fields only."""
@@ -3365,7 +3365,7 @@ def _apply(
     only: a roster is never built out of a word that matched nothing."""
     trace = Trace()
     # Release gate #1829: the reset is read once, here, before every reader of the answer.
-    reset = _is_reset(verdict)
+    reset = is_reset(verdict)
     if reset:
         state = _reset(state, verdict, trace)
     # PR #1247 round 8: the parser's declared answer to the open stock question comes

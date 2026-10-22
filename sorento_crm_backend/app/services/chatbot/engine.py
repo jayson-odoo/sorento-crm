@@ -91,6 +91,7 @@ from app.services.chatbot.turn import tail as turn_tail
 from app.services.chatbot.turn import task as turn_task
 from app.services.chatbot.turn.apply import apply as _apply_state
 from app.services.chatbot.turn.apply import is_product_shaped_entity
+from app.services.chatbot.turn.apply import is_reset
 from app.services.chatbot.turn.apply import record_top_selling_asked
 from app.services.chatbot.turn.decide import EVERYTHING, broaden_kind, broaden_level
 from app.services.chatbot.turn.policy import load_policy
@@ -4163,6 +4164,21 @@ def _clarifier_memory_slice(memory_intake: dict[str, Any]) -> str:
             lines = []
 
 
+def _small_talk_ctx(ctx: dict[str, Any], verdict: dict[str, Any], state: Any) -> dict[str, Any]:
+    """Release gate #1829 (contact 04): a reset's small talk is about the state the reset left, so
+    the model is shown that state (no open question, offer, team, task or stored list), never the
+    session from before the turn. Every other turn's ctx is returned as it is."""
+    if not is_reset(verdict):
+        return ctx
+    session = jsc.get(ctx, "session") or {}
+    after = {
+        **session_state.five_keys(session),
+        "focus": turn_state.focus_to_wire(state.focus),
+        "open_question": turn_pending.to_wire(state.pending),
+    }
+    return {**ctx, "session": {**session, "session_vars": after}}
+
+
 def _fallback_context(
     db: Session,
     *,
@@ -6573,7 +6589,9 @@ def _run_stages_body(  # noqa: PLR0915
                     # V1-DOC-SCOPE slice 3: the clarifier asks the resolver itself, so a held
                     # contact's customer rows are dropped here too.
                     resolve_gate._without_customer_rows(resolved_for_prompt)
-                clarifier_prompt = casual.construct_user_prompt(ctx, resolved_for_prompt)
+                clarifier_prompt = casual.construct_user_prompt(
+                    _small_talk_ctx(ctx, verdict, state_out), resolved_for_prompt
+                )
                 clarifier_config = casual.resolve_clarifier_config(
                     db,
                     override_version_id=_prompt_override(
