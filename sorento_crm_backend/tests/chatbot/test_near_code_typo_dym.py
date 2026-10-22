@@ -489,7 +489,7 @@ def _with_matches_ahead(monkeypatch, c: EngineConsole, token: str, codes: list[s
 
 
 @PATHS
-def test_q1_the_pick_leads_the_did_you_mean_ahead_of_non_exact_matches(session_factory, monkeypatch, stub_access, gate):  # noqa: F811
+def test_q1_end_to_end_reply_offers_the_pick_first_with_non_exact_matches_ahead(session_factory, monkeypatch, stub_access, gate):  # noqa: F811
     c, _ = _console(session_factory, monkeypatch, stub_access, f"+600000260{int(gate)}", gate)
     _with_matches_ahead(monkeypatch, c, "srttw8259gm", ["VLDWT8259-GM", "MCM7721-GM", "CB3109A"])
     text = c.say("srttw8259gm in stock?", _ask("srttw8259gm", "SRTWT8259-GM", gate))
@@ -519,3 +519,31 @@ def test_q1_seam_the_pick_leads_d1s_candidates_ahead_of_non_exact_matches():
     offered = [m["canonical_code"] for m in answer_mod._cap3(answer_mod.miss_token_candidates(res, ["product"]))]
     assert offered[0] == "SRTWT8259-GM", offered
     assert offered.count("SRTWT8259-GM") == 1, offered
+
+
+def test_q1_seam_the_stock_probe_planner_mirrors_d1s_candidates_with_the_pick_first():
+    """Reviewer should-fix: the stock-probe planner (`miss_suggest._token_candidates`, which must
+    mirror the composer's own list exactly) reads the parser's pick first as D1's
+    `miss_token_candidates` does, so the codes probed for stock are the codes the offer shows.
+    Same resolution as the seam test above: three non-exact matches ahead of the pick."""
+    from app.services.chatbot.head.grounding import NEAR_PICK_KEY
+    from app.services.chatbot.lanes.business import answer as answer_mod
+    from app.services.chatbot.lanes.business import miss_suggest, resolve_gate
+
+    def row(code, tier, similarity=None):
+        return {"entity_type": "product", "canonical_code": code, "uuid": f"zzt-{code}", "match_tier": tier,
+                "similarity": similarity}
+
+    pick = row("SRTWT8259-GM", "trgm", 0.5)
+    parser = {"entities": [{"raw": "srttw8259gm", "hint": "product", "canonical_code": None, NEAR_PICK_KEY: pick}]}
+    res = {"token": "srttw8259gm", "resolved": False, "ambiguous": False,
+           "matches": [row("VLDWT8259-GM", "prefix"), row("MCM7721-GM", "prefix"), row("CB3109A", "substring")],
+           "alternatives": [row("SRT209-GM", "trgm", 0.31), dict(pick)]}
+    resolve_gate.pick_near_code_first(parser, {"resolutions": [res]})
+    composed = [m["canonical_code"] for m in answer_mod.miss_token_candidates(res, ["product"])]
+    for uuid_keyed in (False, True):
+        planned = [m["canonical_code"] for m in
+                   miss_suggest._token_candidates(res, allowed_types=["product"], uuid_keyed=uuid_keyed)]
+        assert planned[0] == "SRTWT8259-GM", (uuid_keyed, planned)
+        assert planned.count("SRTWT8259-GM") == 1, (uuid_keyed, planned)
+        assert planned == composed, (uuid_keyed, planned, composed)
