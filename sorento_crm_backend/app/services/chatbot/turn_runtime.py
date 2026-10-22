@@ -6066,7 +6066,11 @@ def envelope_of(
     rows = fetched.get("answers")
     figures = [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
     files = fetched.get("attachments")
-    has_result = bool(fetched.get("has_result")) and bool(figures)
+    # REPORT-SMART-L S5-2: a sales ranking carries no `figures`; the rows it printed (the frame's
+    # `shown`) are its result, so an answered ranking is not remembered as a miss.
+    frame = fetched.get("sales_ranking_frame")
+    ranked = bool(frame.get("shown", {}).get("rows")) if isinstance(frame, dict) and isinstance(frame.get("shown"), dict) else False
+    has_result = bool(fetched.get("has_result")) and (bool(figures) or ranked)
     envelope: dict[str, Any] = {
         "domain": spec.domain,
         "denied": refused,
