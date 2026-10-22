@@ -520,7 +520,10 @@ def pick_near_code_first(parser: dict[str, Any], resolved: dict[str, Any]) -> No
     """Q1 (owner ruling (a), 23 Oct 2026): for a product whose corrected pick grounding set aside
     (`grounding.NEAR_PICK_KEY`, the resolver's own trigram row for it), the raw token's resolution
     offers that pick FIRST, then its other close codes: the did-you-mean (`answer.build_suggest_offer`,
-    `miss_token_candidates`, D1's cap of 3) reads the alternatives in this order. In place."""
+    `miss_token_candidates`, D1's cap of 3) reads the alternatives in this order. D1 lists the
+    resolution's matches before its alternatives, so the row also rides the resolution itself
+    (`NEAR_PICK_KEY`), which D1 reads first. Never into `matches`: the gate reads those as found
+    entities and D1 drops what the gate found. In place."""
     from app.services.chatbot.head.grounding import NEAR_PICK_KEY
     from app.services.chatbot.turn.state import token_key
 
@@ -539,6 +542,7 @@ def pick_near_code_first(parser: dict[str, Any], resolved: dict[str, Any]) -> No
                     if not (isinstance(a, dict) and token_key(str(a.get("canonical_code") or "")) == pick)
                 ]
                 res["alternatives"] = [row, *others]
+                res[NEAR_PICK_KEY] = row
 
 
 def _token_of(entity: Any) -> Any:
