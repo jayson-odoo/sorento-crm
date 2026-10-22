@@ -668,13 +668,12 @@ def _hidden_parity(session_factory, monkeypatch, *, typed: str, asked: str):
     return control, asked_out
 
 
-def test_ac19_a_hidden_only_link_is_never_named_and_reads_as_no_link(session_factory, monkeypatch) -> None:
-    """SEAT-COVER-HIDDEN (owner, 23 Oct) amends AC-19: links that are all hidden answer with the
-    no-link line, as a code on no link does; the hidden product is still never named."""
-    _c, (a_reply, a_calls) = _hidden_parity(session_factory, monkeypatch, typed=HID_CAB, asked=HID_CAB)
-    assert a_calls == [], a_calls
-    assert a_reply.strip() == f"No mirror is on record for {HID_CAB}.", a_reply
-    assert HID_MIRROR not in a_reply and f"Mirror for {HID_CAB}" not in a_reply, a_reply
+def test_ac19_a_hidden_only_link_is_never_named_and_the_turn_runs_as_typed(session_factory, monkeypatch) -> None:
+    (c_reply, c_calls), (a_reply, a_calls) = _hidden_parity(session_factory, monkeypatch, typed=HID_CAB, asked=HID_CAB)
+    assert c_calls and a_calls == c_calls, (a_calls, c_calls)
+    assert a_reply == c_reply, (a_reply, c_reply)
+    assert HID_MIRROR not in a_reply and "on record" not in a_reply, a_reply
+    assert f"Mirror for {HID_CAB}" not in a_reply and "is on record for" not in a_reply, a_reply
 
 
 def test_ac19_with_one_visible_and_two_hidden_accessories_the_line_names_only_the_visible(session_factory, monkeypatch) -> None:

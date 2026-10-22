@@ -325,21 +325,22 @@ def as_linked_products(
     for i in anchors:
         products = by_code.get(normalize_code(entity_code(entities[i])), [])
         linked: list[tuple[str, str, str]] = []
+        hidden = False
         for p in products:
             for kind in KINDS:
                 for side, found in reads[kind].items():
                     for other in found.get(str(p.id), []):
-                        if str(other.id) in visible and other.product_code and all(
-                            other.product_code != c for c, _k, _s in linked
-                        ):
+                        if str(other.id) not in visible:
+                            hidden = True
+                        elif other.product_code and all(other.product_code != c for c, _k, _s in linked):
                             linked.append((other.product_code, kind, side))
         if linked:
             # Code order, the same on every database: `accessories_for` orders by the column's
             # collation, and en_US puts SRTSCBD333A-UF before SRTSCBD333-UF where C does not.
             replaced[i] = sorted(linked, key=lambda t: normalize_code(t[0]))
+        elif hidden:
+            unknown.append(entity_code(entities[i]))  # links that are all hidden: as typed
         elif products:
-            # SEAT-COVER-HIDDEN (owner, 23 Oct): links that are all hidden read as no link (the
-            # no-link line); the hidden product is still never named (AC-19).
             unlinked.append(products[0])
         else:
             unknown.append(entity_code(entities[i]))

@@ -8,8 +8,9 @@ matched". Plan `documentation/plans/chatbot/PLAN-seat-cover-hidden-23oct.md`.
 
 * A said `fits` drops the entity whose raw is the fits value as a file type, and an empty
   `file_word` clears the file ask, whether or not a code was replaced.
-* A visible WC whose seat cover links are all hidden answers with the existing no-link line
-  (`FITS_NONE_LINE`), the hidden cover never named; a WC on no link already does.
+* A WC whose seat cover links are all hidden still runs on as typed (#1710 AC-19, crew answer
+  23 Oct: the hidden cover is never named and no "no seat cover on record" is claimed), now as
+  the bare WC code with no file ask. A WC on no link keeps the no-link line.
 
 Harness from `test_seat_as_product.py`: the parse is mocked, the resolver and answer path are
 real. Fake ZZT codes only.
@@ -80,14 +81,17 @@ def _attachments(verdict: dict[str, Any]) -> list[Any]:
 
 
 @pytest.mark.parametrize("canonical", FILE_TYPES)
-def test_a_wc_whose_only_cover_is_hidden_gets_the_no_link_line(session_factory, canonical) -> None:
+def test_a_wc_whose_only_cover_is_hidden_runs_on_as_typed_with_no_file_ask(session_factory, canonical) -> None:
     from app.services.chatbot.lanes.business import find as find_lane
 
     _seed(session_factory)
-    _out, lines = find_lane.as_linked_products(
+    out, lines = find_lane.as_linked_products(
         _scoped(session_factory), _file_verdict(WC_HID, canonical), message=f"seat cover for {WC_HID}",
     )
-    assert lines == [f"No seat cover is on record for {WC_HID}."], lines
+    assert lines == []
+    assert _codes(out) == [WC_HID]
+    assert _attachments(out) == [], out["entities"]
+    assert out["domain_hint"] is None and out["intent_hint"] is None
 
 
 @pytest.mark.parametrize("canonical", FILE_TYPES)
@@ -151,38 +155,58 @@ def test_a_visible_cover_control_still_swaps_and_drops_the_file_type(session_fac
 
 
 @pytest.mark.parametrize("canonical", FILE_TYPES)
-@pytest.mark.parametrize("wc", [WC_HID, WC_NOLINK])
-def test_the_turn_is_the_no_link_line_and_nothing_is_fetched(session_factory, monkeypatch, wc, canonical) -> None:
+def test_the_no_link_turn_is_the_no_link_line_and_nothing_is_fetched(session_factory, monkeypatch, canonical) -> None:
     _seed(session_factory)
     _seed_contact(session_factory, variables={})
     reply, calls = _turn(
-        session_factory, monkeypatch, text=f"seat cover for {wc}", msg_id="ZZT-sch-none",
+        session_factory, monkeypatch, text=f"seat cover for {WC_NOLINK}", msg_id="ZZT-sch-none",
         domain_hint="product_attachment", intent_hint="check_product_attachment",
-        entities=[_product(wc), _as_type(canonical)], find=FITS, domain_in_message=True,
+        entities=[_product(WC_NOLINK), _as_type(canonical)], find=FITS, domain_in_message=True,
     )
     assert calls == [], calls
-    assert reply.strip() == f"No seat cover is on record for {wc}.", reply
-    assert COVER_HID not in reply and "file" not in reply.lower(), reply
+    assert reply.strip() == f"No seat cover is on record for {WC_NOLINK}.", reply
 
 
-def test_the_family_turn_is_the_bare_family_code_turn(session_factory, monkeypatch) -> None:
-    """"seat cover for <family>" misread with a photo type answers as the bare family code does
-    (the resolver's own variant picker), never a file-annotated picker."""
+def _bare_parity(session_factory, monkeypatch, code: str, canonical: str):
+    """The fit ask misread as a file ask against the same code typed bare on a fresh contact."""
     _seed(session_factory)
     _seed_contact(session_factory, variables={})
     conn = session_factory().get_bind()
-    conn.exec_driver_sql("SAVEPOINT zzt_sch_family")
-    c_reply, c_calls = _turn(
-        session_factory, monkeypatch, text=FAMILY, msg_id="ZZT-sch-family-control",
-        domain_hint=None, intent_hint=None, entities=[_product(FAMILY)], domain_in_message=False,
+    conn.exec_driver_sql("SAVEPOINT zzt_sch_bare")
+    control = _turn(
+        session_factory, monkeypatch, text=code, msg_id="ZZT-sch-bare-control",
+        domain_hint=None, intent_hint=None, entities=[_product(code)], domain_in_message=False,
     )
-    conn.exec_driver_sql("ROLLBACK TO SAVEPOINT zzt_sch_family")
-    a_reply, a_calls = _turn(
-        session_factory, monkeypatch, text=f"seat cover for {FAMILY}", msg_id="ZZT-sch-family-asked",
+    conn.exec_driver_sql("ROLLBACK TO SAVEPOINT zzt_sch_bare")
+    asked = _turn(
+        session_factory, monkeypatch, text=f"seat cover for {code}", msg_id="ZZT-sch-bare-asked",
         domain_hint="product_attachment", intent_hint="check_product_attachment",
-        entities=[_product(FAMILY), _as_type("photo")], find=FITS, domain_in_message=True,
+        entities=[_product(code), _as_type(canonical)], find=FITS, domain_in_message=True,
     )
-    assert "Photos" not in a_reply and "kind of file" not in a_reply, a_reply
+    return control, asked
+
+
+def _assert_no_file_ask(reply: str) -> None:
+    lowered = reply.lower()
+    assert "kind of file" not in lowered and "installation guide" not in lowered, reply
+    assert "certificat" not in lowered and "photo" not in lowered and "escalat" not in lowered, reply
+
+
+@pytest.mark.parametrize("canonical", FILE_TYPES)
+def test_the_hidden_cover_turn_is_the_bare_wc_turn_with_no_file_ask(session_factory, monkeypatch, canonical) -> None:
+    (c_reply, c_calls), (a_reply, a_calls) = _bare_parity(session_factory, monkeypatch, WC_HID, canonical)
+    _assert_no_file_ask(a_reply)
+    assert COVER_HID not in a_reply and "on record" not in a_reply, a_reply
+    assert a_calls == c_calls, (a_calls, c_calls)
+    assert a_reply == c_reply, (a_reply, c_reply)
+
+
+@pytest.mark.parametrize("canonical", FILE_TYPES)
+def test_the_family_turn_is_the_bare_family_code_turn(session_factory, monkeypatch, canonical) -> None:
+    """"seat cover for <family>" misread with a file type answers as the bare family code does
+    (the resolver's own variant picker), never a file-annotated picker."""
+    (c_reply, c_calls), (a_reply, a_calls) = _bare_parity(session_factory, monkeypatch, FAMILY, canonical)
+    _assert_no_file_ask(a_reply)
     assert a_calls == c_calls, (a_calls, c_calls)
     assert a_reply == c_reply, (a_reply, c_reply)
 
