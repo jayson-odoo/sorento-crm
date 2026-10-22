@@ -859,16 +859,12 @@ def settle(
         parse_output = {**parse_output, "ranking_refine": False}
     if parse_output.get("ranking_refine") is True and frame and not new_axis:
         return _refine(db, parse_output, frame, entities, dealer=dealer)
-    if drill in ("scoped", "unsure") or (
-        new_axis and drill != "global" and _dict(frame.get("shown")) and not frame.get("stale")
-    ):
-        # No reading on a new axis right after a ranking is asked, never guessed (owner rule); a frame
-        # a failed ask left behind (`stale`) is not right after one: that axis is its own ask.
-        reading = drill if drill in ("scoped", "unsure") else "unsure"
-        drilled = _drill(db, parse_output, frame, entities, reading=reading, dealer=dealer)
+    if drill == "scoped":
+        # Owner ruling B (23 Oct): only the parser's `scoped` narrows to the rows on screen. A new axis
+        # read as global, unsure or not at all runs across all (below), and the header says so.
+        drilled = _drill(db, parse_output, frame, entities, reading=drill, dealer=dealer)
         if drilled is not None:
             return drilled
-        # Unsure with nothing above to narrow by: the global reading is the only one left.
     held_period: rf.Resolved | None = None
     held_product: dict[str, Any] = {}
     if new_axis and parse_output.get("ranking_refine") is True:
@@ -906,7 +902,11 @@ def settle(
         # A refine with no ranking held has nothing to refine: it is a fresh ask, and a
         # period alone never runs a total (it asks).
         given["period"] = period
-    return rf.collect(db, SALES_RANKING_ASK, given=given, extras={"args": args, "top_n": top_n}), None
+    extras: dict[str, Any] = {"args": args, "top_n": top_n}
+    if new_axis and _dict(frame.get("shown")) and not frame.get("stale") and frame.get("group_by") in AXIS_NOUNS:
+        # Owner ruling B: after a ranking, a new axis runs across all, and the header line says so.
+        extras["note"] = f"Across all {AXIS_NOUNS[frame['group_by']][1]}"
+    return rf.collect(db, SALES_RANKING_ASK, given=given, extras=extras), None
 
 
 def _refine(

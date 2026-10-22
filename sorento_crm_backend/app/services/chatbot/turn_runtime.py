@@ -2103,10 +2103,10 @@ def lane_parse_output(
         out["top_selling"] = dict(focus.top_selling)
     # REPORT-ENGINE: the held sales ranking frame rides on a sales ranking verdict the parser
     # did not read as its own global ask (REPORT-DRILLDOWN: a refine, a drill, or no reading,
-    # which the lane asks about rather than guess); any other verdict never sees it.
+    # which the lane asks about rather than guess); any other verdict never sees it. Owner
+    # ruling B (REPORT-SMART-L S6): a global reading sees it too, so its answer can say "Across all".
     if (
         jsc.js_string(out.get("order_status") or "").strip() == "sales_ranking"
-        and out.get("ranking_drill") != "global"
         and focus is not None
         and focus.sales_ranking_frame
     ):
