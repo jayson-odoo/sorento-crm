@@ -330,3 +330,224 @@ def test_guard_a_thanks_is_still_small_talk(turn, gate):
     assert t.casual_calls, "the small-talk model was not called"
     assert (result.reply or {}).get("text") != ACK["en"]
     assert "reset_turn" not in t.trace_of(result)
+
+
+# --- round 8: the seam's two predicates, narrowed, and the episode a reset closes ----------------------
+#
+# Opus reviewer + captain measurement on a7736d3402: `entity_op` clear (the parser's "all" / broaden
+# signal), a `clear` op (one part of the subject) and a `new_subject` op beside a domain the message
+# names were read as resets, and the seam answered before the memory episode write. Rules (brief round
+# 8): a reset is `topic_reset`, a cancel, or a `new_subject` naming no domain of its own; a domain the
+# message names, `asks`, `top_n`, `rank_by`, `basis`, `sort_by`, `group_by`, a named `broaden_axis`,
+# `scope_intent`, `query_brands`, a `set` op, `qty_for_all` or a hand-off / history / idea message type
+# also state something new and keep today's path. A reset closes the episode as the routed reset did.
+
+
+def _customer_pick():
+    options = [
+        {"position": i, "label": f"ZZC00{i}", "code": f"ZZC00{i}", "uuid": ht.uuid_of(f"ZZC00{i}"),
+         "entity_type": "customer", "payload": {}}
+        for i in (1, 2, 3)
+    ]
+    pending = turn_pending.ask("customer_pick", options, asked_at_turn=1, expects="pick",
+                               payload={"domain": "order", "domains": ["order"]})
+    return {
+        "focus": focus_to_wire(Focus(domains=["order"])),
+        "open_question": turn_pending.to_wire(pending),
+        "ideation": None,
+        "access_levels": [],
+        "contains_flyer": False,
+        "reply_language": None,
+    }
+
+
+def _no_answer(mode=None):
+    return {"mode": mode, "picked": [], "items": [], "qty_for_all": None}
+
+
+def _read(ops, **fields):
+    """One guard's parse: every field "said nothing" except the ones given; `ops` is the v92
+    `state_changes` (the state path only)."""
+    base = dict(message_type="business_query", domain_hint=None, intent_hint=None, entities=[], entity_op=None,
+                topic_reset=False, scope_intent=None, match_mode=None, broaden_axis=None,
+                open_question_answer=_no_answer())
+    base.update(fields)
+    return _parser_output(**base), ops
+
+
+#: (stored context, words, parse fields, v92 ops, paths): none of these is a reset, each routes as at
+#: b173c6e8c4. `None` paths means both.
+GUARDS = {
+    # "all" over a numbered customer picker (outstanding, sales report, top selling): the picker's all.
+    "all_over_a_customer_picker": ("customer_pick", "all", dict(
+        message_type="casual", entity_op="clear", broaden_axis="all", scope_intent="broaden"), [], None),
+    # Availability "all" / "all of them" over the product list: a broaden alone (S30, S31).
+    "all_over_a_product_pick": ("C18", "all", dict(
+        domain_hint="inventory", intent_hint="check_stock", entity_op="clear", broaden_axis="all",
+        open_question_answer=_no_answer("all")), [], None),
+    "all_of_them_as_a_broaden_alone": ("C18", "all of them", dict(
+        domain_hint="inventory", intent_hint="check_stock", entity_op="clear", broaden_axis="all"), [], None),
+    "show_all_stock": ("nothing_open", "show all stock", dict(
+        domain_hint="inventory", intent_hint="check_stock", domain_in_message=True, entity_op="clear",
+        broaden_axis="all", scope_intent="broaden"), [_op("new_subject")], None),
+    # v92: a new subject beside a domain the message names is a new ask.
+    "any_promotions": ("C28", "any promotions?", dict(
+        domain_hint="promotion", intent_hint="check_promotion", domain_in_message=True), [_op("new_subject")], [True]),
+    "top_10_sellers": ("C28", "top 10 sellers", dict(
+        domain_hint="order", intent_hint="check_order", domain_in_message=True, top_n=10), [_op("new_subject")], [True]),
+    "sort_by_price": ("C28", "sort by price", dict(
+        domain_hint="master_products", intent_hint="check_product", domain_in_message=True,
+        requested_attributes=[]), [_op("new_subject")], [True]),
+    # One part of the subject widened: no reset.
+    "for_all_customers": ("C03", "for all customers", dict(
+        domain_hint="inventory", intent_hint="check_stock", entity_op="clear", broaden_axis="customer",
+        broaden_to="all"), [_op("clear", "customer")], None),
+    "any_brand": ("C03", "any brand", dict(
+        domain_hint="inventory", intent_hint="check_stock", entity_op="clear", broaden_axis="brand",
+        broaden_to="all"), [_op("clear", "brand")], None),
+    # A reset AND a new ask: the ask is answered.
+    "never_mind_any_promotions": ("C28", "never mind, any promotions?", dict(
+        domain_hint="promotion", intent_hint="check_promotion", domain_in_message=True, topic_reset=True),
+        [_op("new_subject")], None),
+    "cancel_talk_to_a_person": ("C04", "cancel, talk to a person", dict(
+        message_type="request_for_help", open_question_answer=_no_answer("cancel")), [_op("close_question")], None),
+    "an_idea": ("nothing_open", "I have an idea: a dark mode for the dealer portal", dict(
+        domain_hint="ideate", intent_hint="submit_idea", entity_op="clear"), [], None),
+    "a_cold_all_of_them": ("nothing_open", "all of them", dict(
+        message_type="clarification", entity_op="clear", broaden_axis="all", scope_intent="broaden"), [], None),
+}
+
+#: The lane each guard took at b173c6e8c4 (no seam), on both paths (measured 22 Oct).
+B173_LANE = {
+    "all_over_a_customer_picker": "business_query", "all_over_a_product_pick": "business_query",
+    "all_of_them_as_a_broaden_alone": "business_query", "show_all_stock": "business_query",
+    "any_promotions": "check_promotion", "top_10_sellers": "business_query", "sort_by_price": "business_query",
+    "for_all_customers": "business_query", "any_brand": "business_query",
+    "never_mind_any_promotions": "check_promotion", "cancel_talk_to_a_person": None, "an_idea": "ideate",
+    "a_cold_all_of_them": "clarify_menu",
+}
+
+GUARD_CASES = [
+    (name, gate)
+    for name, spec in GUARDS.items()
+    for gate in (spec[4] if spec[4] is not None else [False, True])
+]
+
+
+@pytest.mark.parametrize(
+    "name,gate", GUARD_CASES, ids=[f"{n}-{'state_path' if g else 'old_path'}" for n, g in GUARD_CASES]
+)
+def test_round8_guard_no_reset_keeps_todays_path(turn, name, gate):
+    context, words, fields, ops, _paths = GUARDS[name]
+    t = turn(gate)
+    emission, ops = _read(ops, **fields)
+    if gate:
+        emission["state_changes"] = ops
+    stored = _customer_pick() if context == "customer_pick" else _stored(context)
+    result = t.say(stored, emission, words)
+    assert (result.reply or {}).get("text") != ACK["en"], (result.branch_kind, (result.reply or {}).get("text"))
+    assert "reset_turn" not in t.trace_of(result), "the reset seam answered a turn that is no reset"
+    assert t.plans, "apply never ran: the turn did not take today's path"
+    assert result.branch_kind == B173_LANE[name], (result.branch_kind, (result.reply or {}).get("text"))
+
+
+# --- round 8: a reset closes the memory episode, as the routed reset did --------------------------------
+
+
+class Conversation(Turn):
+    """Several turns on ONE stored contact (`Turn.say` seeds a fresh contact row every call)."""
+
+    def seed(self, session_vars: dict[str, Any]) -> None:
+        db = self.session_factory()
+        db.execute(
+            text("INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
+                 "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"),
+            {"cid": str(CONTACT_ID), "phone": "+60000000019", "sv": json.dumps(session_vars)},
+        )
+        db.commit()
+
+    def run(self, emission: dict[str, Any], words: str, message_id: str, **envelope_overrides):
+        gate = self.gate
+
+        def fake_resolve_config(db, *, current_date, override_version_id=None):
+            cfg = parser_mod.ParserConfig(system_prompt="stub", prompt_version=1, provider="openai",
+                                          model="gpt-test", api_key="sk-test")
+            return dataclasses.replace(cfg, state_block=True) if gate else cfg
+
+        from app.services.ai_assistant_service import MCPRuntimeClient
+
+        self.monkeypatch.setattr(parser_mod, "resolve_config", fake_resolve_config)
+        self.monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: emission)
+        self.monkeypatch.setattr(MCPRuntimeClient, "call_tool", lambda client, name, args: json.dumps({"answers": []}))
+        self.stub_access()
+        env = _envelope(**envelope_overrides)
+        env.message["message"]["messageId"] = message_id
+        env.message["message"]["message"]["text"] = words
+        return engine_mod.run_turn(env, session_factory=self.session_factory)
+
+    def frames(self, is_test: bool):
+        from app.models.conversation_frame import ConversationFrame
+
+        return (
+            self.session_factory().query(ConversationFrame)
+            .filter(ConversationFrame.contact_respond_id == str(CONTACT_ID), ConversationFrame.is_test.is_(is_test))
+            .all()
+        )
+
+    def memory_episodes(self, result) -> dict[str, Any]:
+        row = self.session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
+        records = [r for r in (row.trace or []) if isinstance(r, dict) and r.get("kind") == "memory"]
+        assert records, "no memory record on the turn"
+        return records[-1].get("episodes") or {}
+
+
+def _stock_ask(code: str, gate: bool) -> dict[str, Any]:
+    emission = _parser_output(domain_hint="inventory", intent_hint="check_stock", entities=[_stated(code)],
+                              entity_op="replace", topic_reset=False, scope_intent=None, match_mode=None,
+                              open_question_answer=_no_answer())
+    if gate:
+        emission["state_changes"] = [_op("new_subject"), _op("set", "product")]
+    return emission
+
+
+@pytest.fixture()
+def conversation(session_factory, monkeypatch, stub_access, _stub_casual_llm):  # noqa: F811
+    def make(gate: bool) -> Conversation:
+        return Conversation(session_factory, monkeypatch, stub_access, _stub_casual_llm, gate=gate)
+
+    return make
+
+
+@CASES
+def test_round8_a_reset_after_live_turns_closes_the_episode(conversation, gate, shape):
+    c = conversation(gate)
+    c.seed(_stored("nothing_open"))
+    first = c.run(_stock_ask(FOUR[0], gate), f"check stock {FOUR[0]}", "ZZT-r8-ep-1")
+    second = c.run(_stock_ask(FOUR[1], gate), f"check stock {FOUR[1]}", "ZZT-r8-ep-2")
+    reset = c.run(_clear_all("C28", shape), "clear all", "ZZT-r8-ep-3")
+    assert (reset.reply or {}).get("text") == ACK["en"], (reset.branch_kind, (reset.reply or {}).get("text"))
+    frames = c.frames(is_test=False)
+    assert len(frames) == 1, f"a reset after two live turns closes one episode, got {len(frames)}"
+    assert list(frames[0].turn_ids) == [first.turn_id, second.turn_id], list(frames[0].turn_ids)
+    assert frames[0].close_reason == "topic_switch", frames[0].close_reason
+    written = c.memory_episodes(reset).get("written")
+    assert isinstance(written, dict) and written.get("trigger") == "topic_reset", written
+    assert written.get("turn_count") == 2, written
+
+
+@pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
+def test_round8_a_console_dry_run_reset_writes_one_is_test_frame_and_nothing_else(conversation, gate):
+    c = conversation(gate)
+    c.seed(_stored("nothing_open"))
+    console = {"is_test": True, "ingress": "console"}
+    c.run(_stock_ask(FOUR[0], gate), f"check stock {FOUR[0]}", "ZZT-r8-console-1", **console)
+    usage_before = c.session_factory().execute(text("SELECT count(*) FROM ai_assistant_usage_logs")).scalar()
+    stored_before = c.stored_after()
+    reset = c.run(_clear_all("C28", STATE[0] if gate else OLD[0]), "clear all", "ZZT-r8-console-2", **console)
+    assert (reset.reply or {}).get("text") == ACK["en"], (reset.branch_kind, (reset.reply or {}).get("text"))
+    frames = c.frames(is_test=True)
+    assert len(frames) == 1, f"a console dry run reset writes one is_test frame, got {len(frames)}"
+    assert not c.frames(is_test=False), "a console dry run wrote a live frame"
+    usage_after = c.session_factory().execute(text("SELECT count(*) FROM ai_assistant_usage_logs")).scalar()
+    assert usage_after == usage_before, "a console dry run must write nothing outside chatbot.turns"
+    assert c.stored_after() == stored_before, "a console dry run saved the session"
