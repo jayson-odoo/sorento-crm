@@ -282,3 +282,50 @@ def test_a_granted_agent_link_only_contact_keeps_todays_behaviour(client, db):
     db.commit()
     body = _ok(client, contact, group_by="customer", top_n=10)
     assert _total(body) == ALL_TOTAL, body
+
+
+# ------------------------------------------------------------------ 9. the echo says the run is narrowed to the asker's own customers
+
+_BOOK_KEYS = {"book", "mine", "own_customers", "my_customers", "my_book"}
+
+
+def _book_entries(body):
+    """Echo entries marking the book narrowing: a book-like key, or a label naming the asker's own customers."""
+    import re
+
+    return [
+        f for f in body.get("filters") or []
+        if f.get("key") in _BOOK_KEYS or re.search(r"\b(my|own)\b.*\bcustomers\b|\bbook\b", str(f.get("label", "")), re.I)
+    ]
+
+
+@pytest.mark.parametrize("group_by", [None, "customer", "brand"])
+def test_a_granted_salesperson_with_mine_gets_the_book_echo(client, db, group_by):
+    w = _world(db)
+    body = _ok(client, _salesperson(db, w, granted=True), group_by=group_by, top_n=10 if group_by else None, mine=True)
+    assert len(_book_entries(body)) == 1, body["filters"]
+
+
+@pytest.mark.parametrize("mine", MINE)
+@pytest.mark.parametrize("group_by", [None, "customer", "brand"])
+def test_an_ungranted_salesperson_always_gets_the_book_echo(client, db, mine, group_by):
+    w = _world(db)
+    body = _ok(client, _salesperson(db, w, granted=False), group_by=group_by, top_n=10 if group_by else None, mine=mine)
+    assert len(_book_entries(body)) == 1, body["filters"]
+
+
+@pytest.mark.parametrize("mine", [None, False])
+def test_near_miss_a_granted_salesperson_without_mine_gets_no_book_echo(client, db, mine):
+    w = _world(db)
+    body = _ok(client, _salesperson(db, w, granted=True), group_by="customer", top_n=10, mine=mine)
+    assert _book_entries(body) == [], body["filters"]
+
+
+@pytest.mark.parametrize("mine", [None, True])
+def test_near_miss_a_granted_staff_contact_gets_no_book_echo(client, db, mine):
+    _world(db)
+    contact = _contact(db, granted=True)
+    link_user(db, contact)
+    db.commit()
+    body = _ok(client, contact, group_by="customer", top_n=10, mine=mine)
+    assert _book_entries(body) == [], body["filters"]

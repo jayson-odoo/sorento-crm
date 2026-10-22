@@ -188,3 +188,31 @@ def test_ac4_near_miss_an_outstanding_order_ask_drops_the_held_sales_frame() -> 
                                                order_status="outstanding", state_changes=[SWITCH]))
     assert out.valid is True, out.log
     assert out.state.focus.sales_ranking_frame is None
+
+
+# ---- near miss: a top selling ask onto the same sales domain is not a refine of the held ranking ----
+
+TOP_SELLING_BODIES = [
+    "top 5 selling items this month", "best selling 5 items this month", "本月 top 5 畅销产品",
+    "5 item paling laku bulan ini", "top 5 items sold this month lah", "这个月卖最好的 5 个产品",
+    "item paling banyak jual bulan ni, top 5", "top 5 hot selling items October",
+]
+OCT = {"date_filter_start": "2026-10-01", "date_filter_end": "2026-10-31"}
+
+
+@pytest.mark.parametrize("hint", ["sales", "order"])
+@pytest.mark.parametrize("body", TOP_SELLING_BODIES)
+def test_near_miss_a_top_selling_ask_after_a_ranking_runs_the_top_selling_tool(console, monkeypatch, body, hint) -> None:
+    from tests.chatbot.test_report_ask_lane import TOOL, _names, _say_all
+
+    ran = _state_on(console)
+    _step3(console)
+    qf = _rank(
+        domain_hint=hint, intent_hint="check_order", order_status="top_selling", ranking_refine=False,
+        entities=[], group_by=None, top_n=5, measure=None, basis="delivered", rank_by="amount",
+        rank_group="item", rank_direction="top", state_changes=[SWITCH], **OCT,
+    )
+    text, log = _say_all(console, monkeypatch, qf, body)
+    assert ran, "harness: the State path never ran"
+    assert "crm_top_selling_report" in _names(log), (_names(log), text)
+    assert TOOL not in _names(log), (_names(log), text)
