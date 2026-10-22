@@ -4152,7 +4152,7 @@ class ProjectSupplyService:
             # Same stock, same ranking (sorted above), told as a location (D2). Less a
             # donor only its agent's authorisation could release (B1). Confirm no longer
             # refuses one a planner picks anyway (BORROW-CONFIRM-MATCH, 22 Oct 2026); the
-            # list still leaves it out (owner, option (a)).
+            # list still leaves it out (crew, 22 Oct: confirm-only, the list unchanged).
             return [
                 _location_only(candidate)
                 for candidate in out
@@ -7144,7 +7144,10 @@ class ProjectSupplyService:
         # either (BORROW-CONFIRM-MATCH, owner ruling 22 Oct 2026: "confirm should be lenient
         # also, confirm should match the dropdown"). The planner picked it, so it confirms;
         # the donor is not over-committed, because this line's hold pins the units first
-        # and the donor queues against what is left (`assign()`), reading short.
+        # and the donor queues against what is left (`assign()`), reading short. With the
+        # switch ON, a borrow posted without the donor's SO is a location borrow too
+        # (`_names_its_order`), so it confirms the same way: only a borrow that NAMES the
+        # donor order is asked who authorised it.
         if by_order and self._needs_authorisation(fact, donor_core_line_id):
             if not _states_an_authorisation(item.reason):
                 refuse(

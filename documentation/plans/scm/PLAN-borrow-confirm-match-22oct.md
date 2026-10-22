@@ -1,6 +1,6 @@
 # PLAN: Confirm accepts every Borrow the list offers (BORROW-CONFIRM-MATCH)
 
-Status: in progress, small fix track (S, no migration, no RBAC change), lane crew/borrow-confirm-match.
+Status: in review, PR #1830, small fix track (S, no migration, no RBAC change), lane crew/borrow-confirm-match.
 UAC: `borrow-confirm-match-22oct-acceptance-criteria.md`.
 
 ## Journey
@@ -36,17 +36,18 @@ the server's "Nothing was written": the held-back note is worded before the serv
    named, switch ON) keeps the "say who authorised it" rule. Every other check stays: product,
    location, ownership group, still open demand, the per-donor-line ledger.
 2. BE: the list's B1 filter comments no longer say "confirm refuses it". The filters themselves
-   stay (crew ask filed: option (b) would drop them so the list offers more).
+   stay (crew, 22 Oct: confirm-only; dropping them would make the list offer more).
 3. FE: the held-back note is settled after the server answers: "was confirmed, but ..." only when
    the same order has an ok result; otherwise the not-confirmed wording.
 
 ## Tests (red first)
 
-- pytest `tests/scm/test_borrow_location_only.py`: the B1 crafted confirm is now ACCEPTED and the
-  allocation carries the donor id; the donor reads short in the assignment afterwards.
+- pytest `tests/scm/test_borrow_location_only.py`: a same-agent donor ranked ahead confirms as a
+  location borrow and then reads short (group-borrow and SO401624-shaped step-2 worlds); both list
+  filters still leave it off the list.
 - vitest: held-back wording when the server refused the order vs confirmed it.
 
 ## Trigger for more
 
-If the owner wants option (b) (list offers same-agent ahead-ranked stock too), drop the two list
+If the owner wants the list widened too (same-agent ahead-ranked stock offered), drop the two list
 filters in a follow-up.
