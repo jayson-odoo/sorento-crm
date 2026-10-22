@@ -1303,7 +1303,7 @@ def _focus_rules(
     _broaden(focus, verdict, decision, by_kind, carried_rows, trace)
 
     document = verdict.get("document")
-    status = verdict.get("status")
+    status = delivery_status(verdict)
     # Read before the v3 `status` overwrites it: "outstanding" in that key alone left a
     # ranking with no hop and no carried filters (PR #1273 round 7).
     was_ranking = focus.status == TOP_SELLING_STATUS
@@ -1642,6 +1642,23 @@ TOP_SELLING_REPORT_HOPS = frozenset(
 #: The outstanding asks (`order_status`): after a ranking each is the ordinary
 #: outstanding ask with the ranked codes as its products (fix lane round 8).
 TOP_SELLING_OUTSTANDING_HOPS = frozenset({"outstanding", "so_outstanding", "do_outstanding", "outstanding_both"})
+
+
+#: The values the parser's `status` field takes (`head/parser.py`: "outstanding", "delivered", or null).
+DELIVERY_STATUSES = frozenset({"outstanding", "delivered"})
+
+
+def delivery_status(verdict: dict[str, Any]) -> str | None:
+    """The verdict's delivery status (REPORT-SMART-L S3-4): the parser fills it in `status` OR in
+    `order_status`, so every reader that WRITES it (the focus, the lane's parse output) takes the
+    same value. `order_status` also names report kinds (sales_ranking, top_selling, ...), and the
+    projected buckets (so_outstanding, ...), which are no delivery status: only the values of
+    `status`'s own vocabulary count. Parser fields only."""
+    status = verdict.get("status")
+    if status:
+        return status
+    order_status = verdict.get("order_status")
+    return order_status if order_status in DELIVERY_STATUSES else None
 
 
 def _is_report_hop(verdict: dict[str, Any]) -> bool:

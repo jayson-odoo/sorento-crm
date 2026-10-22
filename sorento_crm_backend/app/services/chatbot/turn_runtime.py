@@ -39,7 +39,7 @@ from app.services.chatbot.contracts import (
     SALES_REPORT_GROUP_BYS,
     named_count,
 )
-from app.services.chatbot.turn.apply import names_its_own_ask
+from app.services.chatbot.turn.apply import delivery_status, names_its_own_ask
 from app.services.chatbot.turn.chat_state import CARRIED_QUANTITY_KEY
 from app.services.chatbot.turn.decide import RESTATED_KINDS_KEY, picked_positions
 from app.services.chatbot.turn.pending import (
@@ -2041,7 +2041,7 @@ def lane_parse_output(
     document = list(out.get("document") or [])
     if focus is not None and not document:
         document = list(focus.document)
-    status = out.get("status") or (focus.status if focus is not None else None)
+    status = delivery_status(out) or (focus.status if focus is not None else None)
     if status:
         key = (",".join(sorted(document)), status)
         out["order_status"] = _DOCUMENT_STATUS_TO_ORDER_STATUS.get(key, status)
