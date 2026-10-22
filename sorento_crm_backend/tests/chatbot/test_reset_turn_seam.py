@@ -608,3 +608,110 @@ def test_round9_contact_01s_shape_inventory_beside_all_over_an_inventory_session
     stored = _stored("C01")
     result = t.say(stored, _beside_all("inventory", "check_stock", gate), "clear all")
     _assert_the_reset_turn(t, result, stored)
+
+
+# --- round 10: a reset wins over broaden --------------------------------------------------------------
+#
+# Crew audit 22 Oct on 789c8cc1f1: "clear all" parsed with topic_reset true AND scope_intent "broaden"
+# skipped the seam (round 8 counted scope_intent broaden as stated), fell to the old path and got the
+# low_signal small-talk "Last time ..." reply. Crew rule: when topic_reset is true, neither scope_intent
+# broaden nor broaden_axis all states anything. A domain the session does not hold, a named broaden
+# axis, and scope_intent broaden without topic_reset still count.
+
+#: The held domain of each stored context (None: the session holds no domain).
+HELD_DOMAIN = {"C04": "inventory", "C28": "inventory", "C13": "order", "nothing_open": None}
+R10_SHAPES = {
+    "broaden": dict(scope_intent="broaden", broaden_axis=None),
+    "broaden_all": dict(scope_intent="broaden", broaden_axis="all"),
+}
+
+
+def _reset_beside_broaden(shape: str, domain: str | None, gate: bool) -> dict[str, Any]:
+    named = dict(domain_hint=domain, intent_hint=None, domain_in_message=True) if domain else dict(
+        domain_hint=None, intent_hint=None)
+    emission = _parser_output(
+        user_goal="clear all", entities=[], entity_op="clear", topic_reset=True, match_mode=None,
+        open_question_answer=_no_answer(), **R10_SHAPES[shape], **named,
+    )
+    if gate:
+        emission["state_changes"] = [_op("clear", "customer"), _op("clear", "period")]
+    return emission
+
+
+R10_CASES = [
+    (context, shape, with_domain, gate)
+    for context, held in HELD_DOMAIN.items()
+    for shape in R10_SHAPES
+    for with_domain in ([False, True] if held else [False])
+    for gate in (False, True)
+]
+
+
+@pytest.mark.parametrize(
+    "context,shape,with_domain,gate", R10_CASES,
+    ids=[f"{c}-{s}-{'held_domain' if d else 'no_domain'}-{'state_path' if g else 'old_path'}"
+         for c, s, d, g in R10_CASES],
+)
+def test_round10_a_reset_beside_broaden_is_one_reset_turn(turn, context, shape, with_domain, gate):
+    t = turn(gate)
+    stored = _stored(context)
+    domain = HELD_DOMAIN[context] if with_domain else None
+    result = t.say(stored, _reset_beside_broaden(shape, domain, gate), "clear all")
+    assert "Last time" not in ((result.reply or {}).get("text") or ""), (result.reply or {}).get("text")
+    _assert_the_reset_turn(t, result, stored)
+
+
+def _lane_actions_tools(t: Turn, result) -> dict[str, Any]:
+    return {
+        "lane": result.branch_kind,
+        "actions": [a.get("kind") for a in result.actions or []],
+        "tools": sorted({name for name, _ in t.tool_calls}),
+    }
+
+
+#: What each round 10 guard did at b173c6e8c4 (no seam), both paths (measured 22 Oct).
+B173_R10 = {
+    "show_me_everything": {"lane": "business_query", "actions": ["send_message"], "tools": []},
+    "never_mind_all_promotions_broaden": {"lane": "check_promotion", "actions": ["send_message"], "tools": []},
+    "reset_with_a_named_axis": {"lane": "low_signal", "actions": ["send_message"], "tools": []},
+}
+
+
+def _r10_guard(name: str, gate: bool) -> tuple[str, dict[str, Any], str]:
+    if name == "show_me_everything":
+        # No reset: a widening of the held stock ask.
+        emission = _parser_output(
+            domain_hint="inventory", intent_hint="check_stock", domain_in_message=True, entities=[],
+            entity_op="clear", broaden_axis="all", scope_intent="broaden", topic_reset=False, match_mode=None,
+            open_question_answer=_no_answer(),
+        )
+        ops, context, words = [], "C28", "show me everything"
+    elif name == "never_mind_all_promotions_broaden":
+        emission = _parser_output(
+            domain_hint="promotion", intent_hint="check_promotion", domain_in_message=True, entities=[],
+            entity_op="clear", broaden_axis="all", scope_intent="broaden", topic_reset=True, match_mode=None,
+            open_question_answer=_no_answer(),
+        )
+        ops, context, words = [_op("new_subject")], "C28", "never mind, all promotions"
+    else:
+        emission = _parser_output(
+            domain_hint="inventory", intent_hint="check_stock", entities=[], entity_op="clear",
+            broaden_axis="customer", broaden_to="all", scope_intent=None, topic_reset=True, match_mode=None,
+            open_question_answer=_no_answer(),
+        )
+        ops, context, words = [_op("clear", "customer")], "C03", "forget it, for all customers"
+    if gate:
+        emission["state_changes"] = ops
+    return context, emission, words
+
+
+@pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
+@pytest.mark.parametrize("name", list(B173_R10))
+def test_round10_guard_routes_as_at_b173(turn, name, gate):
+    t = turn(gate)
+    context, emission, words = _r10_guard(name, gate)
+    result = t.say(_stored(context), emission, words)
+    assert (result.reply or {}).get("text") != ACK["en"], (result.branch_kind, (result.reply or {}).get("text"))
+    assert "reset_turn" not in t.trace_of(result), "the reset seam answered a turn that is no reset"
+    assert t.plans, "apply never ran: the turn did not take today's path"
+    assert _lane_actions_tools(t, result) == B173_R10[name], _lane_actions_tools(t, result)
