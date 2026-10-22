@@ -495,9 +495,31 @@ def test_a_cancel_naming_a_line_with_a_domain_word_runs_as_its_own_ask(gate):
     v = _own_ask(reset=False, entity=_stated(FOUR[1]), mode="cancel")
     if gate:
         v["state_changes"] = [_op("close_question"), _op("set", "product")]
-    _new_state, plan = _turn(_session("quantities_question", gate), v)
+    new_state, plan = _turn(_session("quantities_question", gate), v)
     assert "refused_empty_subject" not in plan.trace.rules_fired, plan.trace.rules_fired
     assert _fetched_codes(plan) == [[FOUR[1]]], (_fetched_codes(plan), plan.trace.task_question, plan.trace.rules_fired)
+    # Crew ruling: the cancel closes the stock check whose question it cancelled, open or parked.
+    left = [(t.status, [sl.label for sl in t.slots]) for t in new_state.focus.tasks
+            if t.kind == "stock_qty" and {sl.label for sl in t.slots} & set(FOUR)]
+    assert not left, left
+
+
+@GATES
+def test_guard_a_cancel_with_its_own_ask_leaves_an_unrelated_parked_task_as_it_was(gate):
+    """Only the stock check whose question was open closes; a parked check of another domain is
+    no part of the cancelled question."""
+    session = _session("quantities_question", gate)
+    other = replace(
+        ht.stock_task([(c, None) for c in OTHER], status="parked", opened_at_turn=1, touched_at_turn=1),
+        domain="incoming",
+    )
+    state = replace(session, focus=replace(session.focus, tasks=(*session.focus.tasks, other)))
+    v = _own_ask(reset=False, entity=_stated(FOUR[1]), mode="cancel")
+    if gate:
+        v["state_changes"] = [_op("close_question"), _op("set", "product")]
+    new_state, plan = _turn(state, v)
+    assert _fetched_codes(plan) == [[FOUR[1]]], (_fetched_codes(plan), plan.trace.rules_fired)
+    assert other in new_state.focus.tasks, new_state.focus.tasks
 
 
 @GATES
