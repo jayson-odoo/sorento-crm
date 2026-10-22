@@ -115,6 +115,16 @@ def _assert_kept(session_factory, stub_access, monkeypatch, typed, pick, ids):
     assert not _refused(notes), notes
 
 
+def _assert_did_you_mean_pick_first(session_factory, stub_access, monkeypatch, typed, pick, ids):
+    """Owner Q1 ruling (23 Oct 2026): the corrected near code is offered first in the did-you-mean,
+    never answered as if typed."""
+    result, calls, _notes = _run(session_factory, stub_access, monkeypatch, typed, pick, code_lookup=True)
+    text = _text(result)
+    assert f'Couldn\'t find "{typed}" (product). Did you mean:' in text, text
+    assert f"1. {pick}" in text, text
+    assert [ids[pick]] not in _stock_ids(calls), calls
+
+
 def test_a_true_tie_between_near_codes_refuses_the_pick(session_factory, seeded, stub_access, monkeypatch):
     typed, a, b = "ZZCM77741", "ZZMC77741", "ZZMD77741"
     assert _sim(typed.lower(), a) == _sim(typed.lower(), b)
@@ -124,20 +134,25 @@ def test_a_true_tie_between_near_codes_refuses_the_pick(session_factory, seeded,
     _assert_refused(session_factory, stub_access, monkeypatch, typed, a, ids)
 
 
-def test_a_pick_that_beats_the_other_near_code_is_kept(session_factory, seeded, stub_access, monkeypatch):
+def test_a_pick_that_beats_the_other_near_code_asks_did_you_mean_with_the_pick_first(
+    session_factory, seeded, stub_access, monkeypatch
+):
+    """Re-pinned by the owner Q1 ruling (23 Oct 2026)."""
     typed, hi, lo = "ZZCM88851", "ZZMC88851", "ZZFAL88851"
     assert _sim(typed.lower(), hi) > _sim(typed.lower(), lo) >= 0.30
     ids = _seed(session_factory, hi, lo)
 
-    _assert_kept(session_factory, stub_access, monkeypatch, typed, hi, ids)
+    _assert_did_you_mean_pick_first(session_factory, stub_access, monkeypatch, typed, hi, ids)
 
 
-def test_the_lower_scoring_pick_is_still_kept(session_factory, seeded, stub_access, monkeypatch):
+def test_the_lower_scoring_pick_asks_did_you_mean_with_that_pick_first(session_factory, seeded, stub_access, monkeypatch):
+    """Re-pinned by the owner Q1 ruling (23 Oct 2026): the parser's pick leads even over a higher
+    trigram score."""
     typed, hi, lo = "ZZCM88852", "ZZMC88852", "ZZFAL88852"
     assert _sim(typed.lower(), hi) > _sim(typed.lower(), lo) >= 0.30
     ids = _seed(session_factory, hi, lo)
 
-    _assert_kept(session_factory, stub_access, monkeypatch, typed, lo, ids)
+    _assert_did_you_mean_pick_first(session_factory, stub_access, monkeypatch, typed, lo, ids)
 
 
 def test_several_holders_with_no_exact_code_refuse_a_holder_pick(session_factory, seeded, stub_access, monkeypatch):
