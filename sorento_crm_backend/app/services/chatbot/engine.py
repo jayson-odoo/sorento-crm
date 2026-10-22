@@ -91,7 +91,6 @@ from app.services.chatbot.turn import tail as turn_tail
 from app.services.chatbot.turn import task as turn_task
 from app.services.chatbot.turn.apply import apply as _apply_state
 from app.services.chatbot.turn.apply import is_product_shaped_entity
-from app.services.chatbot.turn.apply import is_reset
 from app.services.chatbot.turn.apply import record_top_selling_asked
 from app.services.chatbot.turn.decide import EVERYTHING, broaden_kind, broaden_level
 from app.services.chatbot.turn.policy import load_policy
@@ -4168,7 +4167,9 @@ def _small_talk_ctx(ctx: dict[str, Any], verdict: dict[str, Any], state: Any) ->
     """Release gate #1829 (contact 04): a reset's small talk is about the state the reset left, so
     the model is shown that state (no open question, offer, team, task or stored list), never the
     session from before the turn. Every other turn's ctx is returned as it is."""
-    if not is_reset(verdict, state):
+    if verdict.get("topic_reset") is not True:
+        # Every reset wrote `topic_reset` (`apply._reset`); the state after apply is not the one
+        # `apply` judged, so the reading is never made again here.
         return ctx
     session = jsc.get(ctx, "session") or {}
     after = {

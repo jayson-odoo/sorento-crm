@@ -558,6 +558,9 @@ def run(
     # A decline is an answer too ("none of them", "start over"), to a STORED question: with nothing
     # stored, a "no" answers the task's own question and resume re-asks it.
     answers_pending = pending is not None and (decision_kind == "answer" or declined)
+    # A cancel that is no reset names an ask of its own ("batal, stock SRTZA102 instead"): that ask
+    # runs, and the question it cancelled is never resumed in its place (release gate #1829, N1).
+    cancelled = isinstance(oqa, dict) and oqa.get("mode") == "cancel"
 
     # (1) A topic reset never reaches here with a task: `apply._reset` closed every one,
     # whatever domain the reset names (release gate #1829).
@@ -670,6 +673,7 @@ def run(
             task.domain and task.domain == named_domain and _only_task_slots(task, verdict)
             and not isinstance(verdict.get("set_brand"), list)
             and not answers_pending
+            and not cancelled
         ):
             # (3) resume: the task's own topic, named again with nothing new. Only
             # what is still missing is asked; nothing is asked twice.

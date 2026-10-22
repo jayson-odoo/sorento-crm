@@ -1092,7 +1092,7 @@ def _focus_rules(
         kept = {k: getattr(focus, k) for k in RESET_KEEPS}
         focus = Focus(**kept)
         trace.rules_fired.append("reset_on_topic")
-    elif verdict.get("topic_reset") and not _names_a_subject(verdict):
+    elif verdict.get("topic_reset") and not _states_an_entity(verdict):
         # A reset that names nothing of its own is the old path's wipe, whatever ops the state
         # path read and whatever the answer mode: nothing carried (the held customers and
         # products, the list) outlives it (release gate #1829).
@@ -3286,30 +3286,42 @@ def _question_codes(state: State) -> set[str]:
     return {v.strip().casefold() for v in values if isinstance(v, str) and v.strip()}
 
 
+def _stated(entity: Any) -> bool:
+    """An entity THIS message states, for the reset code: anything but the parser's echo of a
+    held row (`current_message` false). The schema allows null, which is stated."""
+    return isinstance(entity, dict) and entity.get("current_message") is not False
+
+
+def _states_an_entity(verdict: dict[str, Any]) -> bool:
+    return any(_stated(e) for e in verdict.get("entities") or [])
+
+
 def entities_a_reset_keeps(verdict: dict[str, Any], state: State) -> list[dict[str, Any]]:
-    """What a message names of its own beside the open question: an entity it states
-    (`current_message` true, `_names_a_subject`'s sense) that is not one of the question's own
-    options or lines. A carried echo, or the line a cancel points at, names nothing."""
+    """The entities a reset plans as its own ask (rule 4). On a `topic_reset`, every stated one,
+    on the open question's list or not. On a cancel, the stated ones off that list: the on-list
+    names of a cancel only point at the question it closes. An echo is never kept."""
+    stated = [e for e in verdict.get("entities") or [] if _stated(e)]
+    if verdict.get("topic_reset") is True:
+        return stated
     codes = _question_codes(state)
-    return [
-        e for e in verdict.get("entities") or []
-        if isinstance(e, dict) and e.get("current_message") is True and not (_codes_named(e) & codes)
-    ]
+    return [e for e in stated if not (_codes_named(e) & codes)]
 
 
 def is_reset(verdict: dict[str, Any], state: State) -> bool:
     """The ONE reading of a reset (release gate #1829, crew ruling): the parser's `topic_reset`,
-    or a cancel answer that names nothing of its own (`entities_a_reset_keeps` empty, no position,
-    no pick, no item with a quantity). A "no" is the open question's own decline, never a reset.
-    Parser fields only. Read before the state applier runs (`chat_state.apply_changes`) and again
-    here, where the applier has written its reading onto `topic_reset`."""
+    or a cancel answer that names nothing of its own: no stated entity off the open question's
+    own options or lines (an on-list one counts too when the message names its own domain), no
+    position, no pick, no item with a quantity. A "no" is the open question's own decline, never
+    a reset. Parser fields only. Read before the state applier runs (`chat_state.apply_changes`)
+    and again here, where the applier has written its reading onto `topic_reset`."""
     if verdict.get("topic_reset") is True:
         return True
     answer = verdict.get(OPEN_QUESTION_ANSWER)
     if not isinstance(answer, dict) or answer.get("mode") != "cancel":
         return False
+    named = _states_an_entity(verdict) if names_its_own_domain(verdict) else entities_a_reset_keeps(verdict, state)
     return not (
-        entities_a_reset_keeps(verdict, state)
+        named
         or verdict.get("reference_positions")
         or answer.get("picked")
         or any(isinstance(item, dict) and item.get("qty") is not None for item in answer.get("items") or [])
@@ -3322,8 +3334,8 @@ def _reset(state: State, verdict: dict[str, Any], trace: Trace) -> State:
     (open or parked, whatever domain the message names) and the stored list goes. A closed stock
     check takes the products it was about with it (D23); what THIS message names of its own is
     written after, by `_focus_rules`, and nothing else it carries is."""
-    verdict["topic_reset"] = True
     verdict["entities"] = entities_a_reset_keeps(verdict, state)
+    verdict["topic_reset"] = True
     verdict["is_affirmative"] = None
     escalation = verdict.get("escalation")
     if isinstance(escalation, dict):
@@ -3641,7 +3653,7 @@ def _apply(
         )
 
     asks = verdict.get("asks") or []
-    if reset and not _names_a_subject(verdict) and not names_its_own_domain(verdict):
+    if reset and not _states_an_entity(verdict) and not names_its_own_domain(verdict):
         # Release gate #1829: a reset that names nothing of its own plans nothing - no fetch,
         # no ask, so no empty-fetch refusal either: the reset is acknowledged, as on main.
         domains = []

@@ -1627,6 +1627,10 @@ def apply_changes(
             names_own = any(e.get("current_message") is not False for e in _entities(out))
             if open_question.get("kind") == question_mod.QUANTITIES and set(ops) == {"close_question"} and not names_own:
                 out[question_mod.ANSWER_KEY] = {**question_mod.NO_ANSWER, "mode": "cancel"}
+            elif (verdict.get(question_mod.ANSWER_KEY) or {}).get("mode") == "cancel":
+                # The parser's own cancel of the stock question rides on with the ask the message
+                # names beside it, so `apply` never resumes the cancelled question in its place.
+                out[question_mod.ANSWER_KEY] = verdict.get(question_mod.ANSWER_KEY)
         elif open_question is not None and (verdict.get(question_mod.ANSWER_KEY) or {}).get("mode") in ("no", "cancel"):
             # The parser declared an answer to the stored question that closes it: a "no" is its
             # decline, which its own arm answers as off the state path ("none of them" over a
