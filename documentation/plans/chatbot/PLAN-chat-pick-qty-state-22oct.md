@@ -1,9 +1,13 @@
 # PLAN: CHAT-PICK-QTY-STATE - the state path keeps the old path's pick / quantity / clear safeguards (parity)
 
-**Status:** Review (22 Oct 2026). #1825 is the chat RE-RELEASE branch (crew decision 22 Oct): main d400da75db +
-re-applied #1823 (9e23244cc6, the base of crew/explore-1022) + this lane's fixes; both prompt paths are gates (v63 old
-path, v92 state path). The prod-only focus_diff fix ships separately as #1827 off plain main. Track: SMALL FIX. Red-first,
-kill-proof per slice, one reviewer. Backups: crew/chat-pick-qty-state-pre1826 (on #1823), -reverted-base (on main).
+**Status:** Hand test (23 Oct 2026). The re-release shipped as #1829 (squash a24e1ae609 on main, with the reset seam
+rounds 1-12). #1825 is now the NEXT round on top of main: P5/P8 (find.py / candidates.py), rounds 13-14 ('clear all' over
+an open tier_pick / product_pick roster is a reset), Q1 near-code did-you-mean with the parser pick first (owner ruling (a),
+crew (d), widened to a pick the alternatives cap cut when the raw did not resolve), and the carried product across a domain
+switch (a switch that types its own subject drops the held product; a typed customer / warehouse only on an explicit switch
+that does not refer back). Reasoning per round: #1825 crew-notes. Both prompt paths are gates (v63 old path, v92 state
+path). EVAL-BENCH gate PASS on d21211b82c; owner hand test on the combined :3105 build. Track: M, lead pattern (tester red,
+coder, Opus reviewer per round). Backups: crew/chat-pick-qty-state-pre1826 (on #1823), -reverted-base (on main).
 **UAC:** `chat-pick-qty-state-acceptance-criteria.md` (alongside). Evidence (local only, never committed): crew incident
 file `prod-chat-1022-pick-qty.md` (owner's prod turn table, 22 Oct 00:00 MYT).
 
