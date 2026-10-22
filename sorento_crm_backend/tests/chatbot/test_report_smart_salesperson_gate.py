@@ -116,9 +116,20 @@ REFUSED_KINDS = [
 def test_a_salesperson_without_the_grant_is_still_refused_the_top_selling_and_sales_report_kinds(
     console_no_grant, monkeypatch, body, shape
 ) -> None:
+    from app.services.chatbot.trace import TurnTrace
+
+    events: list[tuple[str, dict[str, Any]]] = []
+    real_add = TurnTrace.add
+
+    def spy(self: Any, kind: str, payload: dict[str, Any]) -> None:
+        events.append((kind, dict(payload)))
+        return real_add(self, kind, payload)
+
+    monkeypatch.setattr(TurnTrace, "add", spy)
     _make_salesperson(console_no_grant)
     qf = _rank(domain_hint="order", intent_hint="check_order", **{"measure": None, **shape})
     text, log = _say_all(console_no_grant, monkeypatch, qf, body)
+    assert any(k == "domain_grant" and p.get("skipped") == "not_granted" for k, p in events), events
     assert text.strip(), text  # the refusal is localised, so only the tool calls are pinned
     assert not [n for n in _names(log) if n in (TOOL, "crm_top_selling_report", "crm_sales_report")], _names(log)
 

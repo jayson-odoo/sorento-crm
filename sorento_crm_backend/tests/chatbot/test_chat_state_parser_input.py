@@ -427,13 +427,13 @@ def test_r2_closed_lists_alone_sends_its_own_schema_without_state_changes(monkey
 
 
 def test_r2_state_alone_sends_the_state_schema_object(monkeypatch, session_factory):
-    config, schema = _sent_schema(monkeypatch, session_factory, f"Rules {{{{current_date}}}}\n{HEADING_LINE}\n")
+    config, schema = _sent_schema(monkeypatch, session_factory, f"Rules {{{{current_date}}}} compare_to\n{HEADING_LINE}\n")
     assert config.state_block is True and config.closed_lists is False
     assert schema is parser_mod.PARSE_OUTPUT_JSON_SCHEMA_WITH_STATE
 
 
 def test_r2_neither_section_sends_the_base_schema_object(monkeypatch, session_factory):
-    config, schema = _sent_schema(monkeypatch, session_factory, "Rules {{current_date}}.\n")
+    config, schema = _sent_schema(monkeypatch, session_factory, "Rules {{current_date}} compare_to.\n")
     assert config.state_block is False and config.closed_lists is False
     assert schema is parser_mod.PARSE_OUTPUT_JSON_SCHEMA
 
