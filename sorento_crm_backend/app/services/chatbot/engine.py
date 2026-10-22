@@ -3968,6 +3968,7 @@ def _memory_intake(
     dry_run: bool,
     turn_id: str | None = None,
     console: bool = False,
+    test_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Everything `context.assemble` needs beyond what `turn_runtime.load_profile`
     already reads, loaded once at intake and timed as `memory_ms` (contract section
@@ -4041,10 +4042,27 @@ def _memory_intake(
             started=started,
             turn_id=turn_id,
             console=console,
+            test_run_id=test_run_id,
         )
     except Exception:  # noqa: BLE001 - a memory read failure degrades, never fails the turn
         logger.warning("chatbot: memory intake failed", exc_info=True)
         return _degraded("intake_error")
+
+
+def _frame_in_run(db: Session, frame: Any, test_run_id: str) -> bool:
+    """Does this closed frame hold a turn of the console run `test_run_id`? (`turn_ids` joined to
+    the stored envelopes' `test_run_id`.)"""
+    from app.models.chatbot_turn import ChatbotTurn
+
+    ids = [str(i) for i in frame.turn_ids or []]
+    if not ids:
+        return False
+    return (
+        db.query(ChatbotTurn.id)
+        .filter(ChatbotTurn.id.in_(ids), ChatbotTurn.envelope["test_run_id"].astext == str(test_run_id))
+        .first()
+        is not None
+    )
 
 
 def _memory_intake_resolved(
@@ -4057,6 +4075,7 @@ def _memory_intake_resolved(
     started: float,
     turn_id: str | None = None,
     console: bool = False,
+    test_run_id: str | None = None,
 ) -> dict[str, Any]:
     from app.models.access import RespondContact
     from app.models.chatbot_turn import ChatbotTurn
@@ -4089,6 +4108,9 @@ def _memory_intake_resolved(
             .limit(3)
             .all()
         )
+        if dry_run and console and test_run_id:
+            # REPORT-SMART-L S5-1: a console Reset starts fresh: only frames made of this run's turns.
+            frames = [f for f in frames if _frame_in_run(db, f, test_run_id)]
         summaries = [memory_mod.frame_line(f) for f in frames]
         read_frames = [{"id": f.id} for f in frames]
         newest_frame = frames[0] if frames else None
@@ -4116,6 +4138,8 @@ def _memory_intake_resolved(
             # The console's world is console turns only, not other dry runs of the
             # same contact (Prompts screen, API) - S15.
             live_query = live_query.filter(ChatbotTurn.ingress == "console")
+            if test_run_id:
+                live_query = live_query.filter(ChatbotTurn.envelope["test_run_id"].astext == str(test_run_id))
         if newest_frame is not None:
             live_query = live_query.filter(ChatbotTurn.created_at > newest_frame.last_activity_at)
         live_turns = live_query.order_by(ChatbotTurn.created_at.desc()).limit(3).all()
@@ -4526,6 +4550,7 @@ def _run_stages_body(  # noqa: PLR0915
             contact_respond_id=contact_respond_id,
             ingress=envelope.ingress,
             is_test=bool(dry_run),
+            test_run_id=envelope.test_run_id,
         )
         # Chatbot memory lane A (contract section 3/6.6): the last 3 closed-frame
         # summaries, the live episode's earlier messages and the profile slice -
@@ -4537,6 +4562,7 @@ def _run_stages_body(  # noqa: PLR0915
             dry_run=dry_run,
             turn_id=turn_id,
             console=envelope.ingress == "console",
+            test_run_id=envelope.test_run_id,
         )
         # Security review 26 Sep 2026 (B1): the ONE contact this turn resolved to,
         # already workspace-scoped and lock-safe - every later fact write in this
@@ -4551,6 +4577,7 @@ def _run_stages_body(  # noqa: PLR0915
             contact_respond_id=contact_respond_id,
             ingress=envelope.ingress,
             is_test=bool(dry_run),
+            test_run_id=envelope.test_run_id,
         )
         # `parser_config` is resolved AFTER media intake, not here: AC-1810's "no
         # parser call" means no parser SETUP either - a media-denied turn (no API

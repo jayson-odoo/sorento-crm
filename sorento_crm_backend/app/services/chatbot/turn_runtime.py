@@ -305,7 +305,7 @@ _CONSOLE_INGRESS = "console"
 
 
 def previous_reply_text(
-    db: Session, *, contact_respond_id: str, ingress: str | None, is_test: bool
+    db: Session, *, contact_respond_id: str, ingress: str | None, is_test: bool, test_run_id: str | None = None
 ) -> str | None:
     """The text this contact was last answered with, for the parser's `Previous response:`.
 
@@ -334,6 +334,9 @@ def previous_reply_text(
         )
         if str(ingress or "") == _CONSOLE_INGRESS:
             query = query.filter(ChatbotTurn.ingress == _CONSOLE_INGRESS)
+            if test_run_id:
+                # REPORT-SMART-L S5-1: a console Reset is a new run id; only this run's turns are history.
+                query = query.filter(ChatbotTurn.envelope["test_run_id"].astext == str(test_run_id))
         else:
             query = query.filter(ChatbotTurn.ingress != _CONSOLE_INGRESS)
         # PR #1353 fix round 3: `created_at` is Postgres `now()`, the TRANSACTION's start,
@@ -380,6 +383,7 @@ def recent_exchanges(
     ingress: str | None,
     is_test: bool,
     limit: int = 3,
+    test_run_id: str | None = None,
 ) -> list[tuple[str, str]]:
     """The last `limit` completed exchanges with this contact, oldest first, as (what
     the contact said, what the bot answered) - the parser's "Recent exchanges" lines
@@ -400,6 +404,9 @@ def recent_exchanges(
         )
         if str(ingress or "") == _CONSOLE_INGRESS:
             query = query.filter(ChatbotTurn.ingress == _CONSOLE_INGRESS)
+            if test_run_id:
+                # REPORT-SMART-L S5-1: a console Reset is a new run id; only this run's turns are history.
+                query = query.filter(ChatbotTurn.envelope["test_run_id"].astext == str(test_run_id))
         else:
             query = query.filter(ChatbotTurn.ingress != _CONSOLE_INGRESS)
         rows = query.order_by(*_newest_turn_first(ChatbotTurn)).limit(limit * 2).all()
