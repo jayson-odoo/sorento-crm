@@ -1,6 +1,6 @@
 # PLAN: owner console turns 22 Oct, fix round on #1816 (lane REPORT-SMART-L, round S2)
 
-Status: built D, E, B, C, A'', F'' (cc3ccfd1a5), review round 1 fixes in progress; replay waits the v96 id. Track: L (prompt candidate, resolver/state guards). Branch
+Status: S2 built + reviewer READY (1ed44f3e59); replay + delivery A/B done 23 Oct; round S3 in progress (crew go 23 Oct, (a) without the drill change, cap USD 0.6): plan + UAC, red tests next. Track: L (prompt candidate, resolver/state guards).
 `claude/report-smart-1021-r2xexf` (on `crew/chat-release-1022`), base head afd7f70605. Diagnosis (13 turns, prompt v94,
 code 65c2025c05): `crew/state/eval/report-smart-v92/owner-1022-diagnosis.md` (crew-only). UAC:
 `report-smart-owner-1022-acceptance-criteria.md`.
@@ -64,3 +64,52 @@ naming the Sales channels line (+277 chars). Non-production; the owner publishes
 Red-first per item (`test(red):` commits), kill test per fix, touched suites `-n 2`, reviewer (+ security-reviewer
 if a seam touches access), then the owner's 13 turns replayed on v95 + this head (paid, cap USD 1), before / after
 table to crew (crew-only path, no contact names or ids).
+
+## Round S3 (crew go 23 Oct: replay turns 2, 7, 8, 9 + year; delivery prompt r2)
+
+Evidence: replay `crew/state/eval/report-smart-v92/replay/after.md` (v96 12eb406f, code 1ed44f3e59, Index x2 + Block),
+delivery A/B `crew/state/eval/report-smart-v92/delivery/results.md` (v96 vs v97 94eb6108). Causes read from the stored
+turns (chatbot.turns on the crew copy).
+
+### ARCHITECTURE
+
+- Layer: the head honours the parser's verdict. No keyword list, no token rule, no new match tier, no post-parser
+  domain override. Every code item reads a parser field.
+- Shared mechanism (S3-2, S3-3): a word the parser already put in a NON-entity field of the same verdict
+  (`sales_channel`; the period) is that field, never an entity. One seam: where verdict entities enter the report
+  words and the resolver (engine.py:5989-6005 filter, report_ask.py:605-606 `_word_filters`). Extends the S2 guard
+  (a sales_agent word equal to `sales_channel`) to every entity hint, and to the period.
+- S3-1 uses the existing required-ask contract (`answered_by_parser`, required_fields.py:135), as the other asks do.
+- Classes fixed: (1) a report ask whose open question the parser never sees, so its held values are dropped on the
+  answer; (2) a channel word read as an entity of any kind; (3) a year read as a product next to the same year read
+  as the period.
+- Not in S3: the drill rule (report_ask.py:821-826, owner question filed); C2 resolver shield (deferred, S1).
+
+### Items
+
+- S3-1 PERIOD (CODE). `SALES_RANKING_ASK` (report_ask.py:259-276) is registered without `answered_by_parser`, so
+  `of_required_ask` (turn/question.py:107) returns None, the State says "open question: none" (chat_state.py:297),
+  `reply_verdict` drops the slot on the shape path (required_fields.py:381, :423) and the held period goes with it
+  (turn 2: "Which period?" after "in 2026"). Fix: the ranking ask is answered by the parser; the Open question states
+  the owed fields and the held values; the `scope` slot gets a FieldSpec so it is stated too (question.py:110-112).
+- S3-2 CHANNEL WORD (CODE). Guards cover a hint that is a parser field (engine.py:5989-6005) and a sales_agent word
+  equal to `sales_channel` (report_ask.py:605-606); 'Project' hinted brand / category passes and reads "I don't know
+  'Project' as a brand." Fix: an entity whose raw equals the verdict's own `sales_channel` (casefold; values from
+  reports/ask.SALES_CHANNELS) is that channel, whatever its hint: dropped before the report words, the resolver and a
+  kind pick.
+- S3-3 YEAR (CODE, wording waits crew's ask of 23 Oct). The parser takes the index candidate '2026' (MGB5020-26)
+  next to period 2026; grounding refuses the canonical (grounding.py:866-873) and the resolver's substring tier
+  (entity_resolver.py:2070-2091) fans '2026' out to 9 codes. The substring tier is deliberate for mid-code partials
+  (tests/test_product_code_resolution.py:267), so the fix is not in the tiers. Proposed: a product entity whose raw is
+  the year of the verdict's own period (both ends in that year) is the period, dropped at the S3-2 seam.
+- S3-P PROMPT v98 (= v96 + r2, NON-production): delivery DO-list text phrased without the extra field names and the
+  v96 WHEN wording kept (v97 left `status` null on 12/24 WHEN asks, apply.py:1306/1320 read `status` only, and
+  regressed the channel class 21/24 -> 13/24); the year rule on the Candidates rule (a candidate line for the
+  message's own period word is no pick); `group_by` channel only when the channels themselves are ranked (a channel
+  value alone under a held ranking is a refine). v92 needs the delivery edit at the same lines 107, 233, 261.
+
+### Gates (S3)
+
+Red-first per item (tester writes from the UAC, coder makes green, kill test per fix), touched suites `-n 2`,
+reviewer. Re-measure, cap USD 0.6: v98 on the delivery gold, parser_when_deliver, the channel class x2 and the 13-turn
+replay (Index), plus report slice half 1 if the cap holds; table to crew.

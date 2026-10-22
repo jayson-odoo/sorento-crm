@@ -18,3 +18,20 @@ Plan: `PLAN-report-smart-owner-1022.md`.
   State holds; with none live, the reply says there is no current one.
 - AC-F2 (data + prompt lines). With the brand_alias row, the Known brands line shows "SORENTO (SRT)" in both modes and "srt" resolves to the Sorento brand.
 - AC-R. The owner's 13 turns replayed on v96 + this head (Index mode; the 3 flyer turns also in Block mode): before / after table; no turn worse than before.
+
+## Round S3 (23 Oct)
+
+- AC-S3-1. "top salesppl in 2026 for <code>" asks only what is missing (how many, measure, basis); the reply
+  "Top 5, by qty, delivered" runs the ranking for 2026 by sales agent; never "Which period?". The parser's State shows
+  the ranking question as the Open question with the held period. A reply that is a fresh ask of its own still
+  replaces the question.
+- AC-S3-2. Under a held ranking, a verdict with `sales_channel` project and an entity 'Project' hinted brand,
+  category, customer or sales_agent re-runs with Channel: Project; never "I don't know 'Project' as a ...", never a pick
+  list. Near misses: an entity whose raw is not the channel value ('Project Hardware') still resolves; with
+  `sales_channel` null the entity is untouched.
+- AC-S3-3 (wording waits crew). "Top 5 salesppl in 2026 for <code>" with the parser's period 2026 and an entity
+  '2026' hinted product ranks over the <code> family only; the header never lists codes that only hold '2026'.
+  Near miss: the same entity with a period in another year is kept.
+- AC-S3-P. Prompt v98 measured on the crew copy: delivery gold not below v97 (9/11); parser_when_deliver raw `status`
+  not below v96 (22/24); channel class rs92-c-* not below v96 (x2); the 13 owner turns: 2, 7, 8, 9 better, none worse
+  than the v96 replay.
