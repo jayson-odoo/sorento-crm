@@ -20,7 +20,7 @@ from app.services.chatbot.turn.decide import names_its_own_domain
 from app.services.chatbot.turn.pending import ESCALATION_OFFER_KINDS
 from app.services.chatbot.turn.pending import ask as pending_ask
 from app.services.chatbot.turn.pending import is_roster, offered_companies, option_entities
-from app.services.chatbot.turn.state import Focus, State, Subject
+from app.services.chatbot.turn.state import KIND_FIELD_MAP, Focus, State, Subject
 
 OPS: tuple[str, ...] = (
     "keep", "new_subject", "set", "clear", "pick", "answer", "switch_domain", "close_question",
@@ -355,10 +355,12 @@ def _has_field(verdict: dict[str, Any], axis: str) -> bool:
 
 
 def names_own_subject(verdict: dict[str, Any]) -> bool:
-    """CHAT-STATE r8: this message names its own subject: a product or a brand it typed (a `set`
-    on either axis is backed by exactly such an entity, `_has_field`). The parser's echo of a
-    held row (`current_message` false) names nothing."""
-    return bool({"product", "brand"} & _named_kinds(verdict))
+    """CHAT-STATE r8: this message names its own subject: an entity it typed of a subject kind,
+    the kinds `state.KIND_FIELD_MAP` holds (product, customer, warehouse, brand; a `set` on any
+    of those axes is backed by exactly such an entity, `_has_field`). CHAT-PICK-QTY-STATE crew
+    ruling (a): a typed customer or warehouse is a subject as much as a product or a brand. Tier
+    is no subject kind. The parser's echo of a held row (`current_message` false) names nothing."""
+    return bool(KIND_FIELD_MAP.keys() & _named_kinds(verdict))
 
 
 def _message_domains(verdict: dict[str, Any]) -> list[str]:
