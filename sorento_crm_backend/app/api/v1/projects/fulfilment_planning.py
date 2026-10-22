@@ -62,6 +62,7 @@ from app.services.project_classification_evidence import classification_evidence
 from app.services import confirm_simulation  # noqa: F401 - registers the engine commit guard
 from app.services import project_line_draft_service
 from app.services.project_fulfilment_board_service import FulfilmentBoardService
+from app.services.project_line_split_service import display_line_nos
 from app.services.project_so_adoption_service import ProjectSOAdoptionService
 from app.services.project_so_draft_service import ProjectSODraftService
 from app.services.project_so_reconciliation_service import (
@@ -863,6 +864,7 @@ def _simulate_on(sim: Session, payload: SimulateConfirmBody, current_user: dict)
         )
         return {
             "line_no": mirror.line_no if mirror is not None else None,
+            "so_line_no": display_line_nos(sim, [line_id]).get(line_id),
             "item_code": code,
             "project_line_id": line_id,
             "error": error,
@@ -1180,7 +1182,10 @@ def _reasons_for_rejected_lines(
                 code="board_line_reject_reason_required",
             )
         reasons[str(project_line_id)] = reason
-        sentences.append(f"Line {mirror.line_no} rejected: {reason}")
+        sentences.append(
+            f"Line {display_line_nos(db, [str(project_line_id)]).get(str(project_line_id))} "
+            f"rejected: {reason}"
+        )
     return reasons, "; ".join(sentences)
 
 
@@ -1294,10 +1299,12 @@ def _withdrawn_entries(db: Session, service: ProjectSupplyService, order, line_i
         if product_ids
         else {}
     )
+    so_nos = display_line_nos(db, list(by_id))
     return [
         {
             "project_line_id": str(line_id),
             "line_no": by_id[str(line_id)].line_no if str(line_id) in by_id else None,
+            "so_line_no": so_nos.get(str(line_id)),
             "item_code": codes.get(str(by_id[str(line_id)].product_id or ""))
             if str(line_id) in by_id
             else None,

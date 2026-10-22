@@ -336,6 +336,7 @@ def test_a_decided_donors_document_moves_and_its_revision_is_reissued_minus_that
         )
         by_id = {str(d.id): d for d in donor_decisions}
         original = by_id[str(donor_decision_1_id)]
+        asker_ref = order.provisional_ref
         fresh = [d for d in donor_decisions if str(d.id) != str(donor_decision_1_id)]
 
         links = (
@@ -351,7 +352,9 @@ def test_a_decided_donors_document_moves_and_its_revision_is_reissued_minus_that
 
     # The ORIGINAL revision falls, naming the asker as the reason.
     assert original.state == DECISION_SUPERSEDED
-    assert (original.superseded_reason or "").startswith("Borrowed by SO")
+    assert (original.superseded_reason or "").startswith(
+        f"Borrowed by {asker_ref} line "
+    ), original.superseded_reason
     # A FRESH active revision is issued for what is left of the donor's order (line B).
     assert len(fresh) == 1, [d.state for d in donor_decisions]
     assert fresh[0].state == DECISION_ACTIVE

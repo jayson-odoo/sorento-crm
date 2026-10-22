@@ -59,6 +59,8 @@ export interface BoardDemandLine {
   customer_name?: string | null;
   project_label?: string | null;
   line_no: number;
+  /** AutoCount's own number for the line (the core line's), beside the planning `line_no`. */
+  so_line_no?: number | null;
   item_code: string;
   /** The product's own name, which the board's search matches as well as the code. */
   product_name?: string | null;
@@ -712,6 +714,7 @@ export function buildBoard(
       customer_name: line.customer_name ?? null,
       project_label: line.project_label ?? null,
       line_no: line.line_no,
+      so_line_no: line.so_line_no ?? null,
       item_code: line.item_code,
       qty: line.qty,
       qty_ordered: line.qty_ordered ?? null,

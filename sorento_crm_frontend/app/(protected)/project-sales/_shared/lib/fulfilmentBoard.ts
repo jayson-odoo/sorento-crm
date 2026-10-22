@@ -1914,6 +1914,30 @@ export function failingLineText(line: {
   return `${soLineLabel(line)}${line.item_code ? `, ${line.item_code}` : ''}: ${line.reason}`;
 }
 
+/** A batch-blocked withdrawal's note when the same press also confirmed the order. */
+export const HELD_BACK_BESIDE_CONFIRM =
+  'was confirmed, but its staged rejection could not ride along with the pending change; it commits after the change is applied.';
+/** The same note when nothing of the order was written. */
+export const HELD_BACK_ALONE =
+  'has a staged rejection that commits after the pending change is applied.';
+
+/**
+ * BORROW-CONFIRM-MATCH (owner, 22 Oct 2026, SO401624): a held-back note is built before the
+ * server answers, so "was confirmed" is settled here, once the answers are in - kept only when
+ * that same order came back ok. A refused order ("Nothing was written") or one never posted
+ * reads the not-confirmed wording.
+ */
+export function settleHeldBackNotes<
+  T extends { pso_id: string; ok: boolean; heldBack?: boolean; error?: string | null },
+>(results: T[]): T[] {
+  const confirmed = new Set(results.filter((r) => r.ok).map((r) => r.pso_id));
+  return results.map((r) =>
+    r.heldBack && r.error === HELD_BACK_BESIDE_CONFIRM && !confirmed.has(r.pso_id)
+      ? { ...r, error: HELD_BACK_ALONE }
+      : r,
+  );
+}
+
 /**
  * #1362 (owner, 29 Sep 2026: "i think we are too restrictive already"): what a CONFIRMED
  * order's result still has to tell the planner, one line each. A line held back by the

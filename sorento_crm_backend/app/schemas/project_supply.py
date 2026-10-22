@@ -206,6 +206,8 @@ class SupplyLadderOption(BaseModel):
 class SupplyLine(BaseModel):
     project_line_id: str
     line_no: int
+    #: The number a person reads (`so_line_no` rule): AutoCount's own, else `line_no`.
+    so_line_no: Optional[int] = None
     #: The PLANNING UNIT this line was composed in (ladder v6): this order's lines for the
     #: same item, the same fulfilment location and the same delivery date are ONE quantity,
     #: covered whole from stock or bought whole. The unit's total, and how many lines it is.
@@ -483,11 +485,13 @@ class ConfirmException(BaseModel):
 class ConfirmedLine(BaseModel):
     project_line_id: str
     line_no: Optional[int] = None
+    so_line_no: Optional[int] = None
     item_code: Optional[str] = None
 
 
 class CancelledLineEcho(BaseModel):
     line_no: Optional[int] = None
+    so_line_no: Optional[int] = None
     item_code: Optional[str] = None
     #: Why it went to Cancel SO (an AutoCount Cancel SO draft's reason names its document).
     reason: Optional[str] = None
@@ -663,6 +667,7 @@ class SimulatedLineError(BaseModel):
     """One line the Simulate confirm probe found failing on its own, with the raw reason."""
 
     line_no: Optional[int] = None
+    so_line_no: Optional[int] = None
     item_code: Optional[str] = None
     project_line_id: str
     error: str
