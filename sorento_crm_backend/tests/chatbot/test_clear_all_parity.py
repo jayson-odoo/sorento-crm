@@ -458,7 +458,7 @@ def _detail_offer_state(gate: bool):
 
 
 @GATES
-def test_a_decline_of_an_offer_with_the_messages_own_ask_still_plans_the_ask(gate):
+def test_a_cancel_of_an_offer_with_the_messages_own_ask_still_plans_the_ask(gate):
     v = verdict(
         domain_hint="order", intent_hint="check_order", domain_in_message=True, order_status="outstanding",
         entities=[], topic_reset=True, is_affirmative=False,
@@ -471,7 +471,7 @@ def test_a_decline_of_an_offer_with_the_messages_own_ask_still_plans_the_ask(gat
 
 
 @GATES
-def test_guard_a_bare_never_mind_over_the_offer_is_still_only_a_decline(gate):
+def test_guard_a_bare_never_mind_over_the_offer_closes_it_unanswered(gate):
     v = verdict(domain_hint=None, entities=[], topic_reset=True, is_affirmative=False)
     if gate:
         v["state_changes"] = [{"op": "close_question", "axis": None, "position": None}]
