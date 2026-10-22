@@ -4209,12 +4209,15 @@ def _reset_signals(verdict: dict[str, Any], parser_raw: Any = None) -> list[str]
 _RESET_MESSAGE_TYPES = frozenset({None, "", "business_query", "casual", "clarification", "confirmation", "unknown", "low_signal"})
 
 
-def _stated_beside_a_reset(verdict: dict[str, Any], held_domains: tuple[str, ...] = ()) -> list[str]:
+def _stated_beside_a_reset(
+    verdict: dict[str, Any], held_domains: tuple[str, ...] = (), signals: tuple[str, ...] = ()
+) -> list[str]:
     """What the message states of its own, one per line: anything here makes a reset signal
     the start of an ask, which keeps today's path. A carried echo (`current_message` false), a
     carried domain and a plain business query state nothing; `broaden_axis` all is the "all" of
     "clear all" itself (every measured v63 "clear all" carries it), a widening to everything is
-    `scope_intent` broaden when the parser read no `topic_reset` (round 10: a reset wins)."""
+    `scope_intent` broaden when the parser read no `topic_reset` and no cancel (rounds 10-11).
+    `signals` are `_reset_signals`' own names for this verdict."""
     answer = verdict.get("open_question_answer") if isinstance(verdict.get("open_question_answer"), dict) else {}
     low_stock = verdict.get("low_stock") if isinstance(verdict.get("low_stock"), dict) else {}
     ops = {c.get("op") for c in verdict.get("state_changes") or [] if isinstance(c, dict)}
@@ -4238,10 +4241,10 @@ def _stated_beside_a_reset(verdict: dict[str, Any], held_domains: tuple[str, ...
         "sort_by": bool(verdict.get("sort_by")),
         "group_by": bool(verdict.get("group_by")),
         "broaden_axis": verdict.get("broaden_axis") not in (None, "", "all"),
-        # Round 10 (crew audit 22 Oct): a reset wins over broaden; without topic_reset a broaden
-        # ("show me everything") is an ask.
+        # Rounds 10-11: a reset wins over broaden, `topic_reset` or a declared cancel (read as
+        # `_reset_signals` reads it); without either a broaden ("show me everything") is an ask.
         "scope_intent": bool(verdict.get("scope_intent"))
-        and not (verdict.get("topic_reset") is True and verdict.get("scope_intent") == "broaden"),
+        and not ({"topic_reset", "cancel"} & set(signals) and verdict.get("scope_intent") == "broaden"),
         "query_brands": bool(verdict.get("query_brands")),
         "set_op": "set" in ops,
         "message_type": verdict.get("message_type") not in _RESET_MESSAGE_TYPES,
@@ -4375,7 +4378,7 @@ def _reset_turn(
     no lane, fetch, tool, escalation, hand-off, small-talk model or recap. None for every other
     turn (and for a contact the access check refuses), which runs today's path untouched."""
     signals = _reset_signals(verdict, parser_raw)
-    if not signals or _stated_beside_a_reset(verdict, tuple(state_in.focus.domains or ())):
+    if not signals or _stated_beside_a_reset(verdict, tuple(state_in.focus.domains or ()), tuple(signals)):
         return None
     routed = turn_runtime.with_routing_agent_default(verdict, pending=None)
     suggested_agent = jsc.get(routed.get("routing"), "suggested_agent")
