@@ -1,6 +1,6 @@
 # PLAN: owner console turns 22 Oct, fix round on #1816 (lane REPORT-SMART-L, round S2)
 
-Status: S3 + S3-4 + review fixes built, reviewer READY at 128d840a6d (pushed); waits the owner's drill answer, the prompt choice and the owner hand test. Track: L (prompt candidate, resolver/state guards).
+Status: S3 reviewer READY at 128d840a6d; round S4 (crew go 23 Oct, deadline 06:30 MYT) in progress: compare_to reply + flyer kind label. Track: L (prompt candidate, resolver/state guards).
 `claude/report-smart-1021-r2xexf` (on `crew/chat-release-1022`), base head afd7f70605. Diagnosis (13 turns, prompt v94,
 code 65c2025c05): `crew/state/eval/report-smart-v92/owner-1022-diagnosis.md` (crew-only). UAC:
 `report-smart-owner-1022-acceptance-criteria.md`.
@@ -124,6 +124,17 @@ turns (chatbot.turns on the crew copy).
   tests guard the `delivery_status` narrowing, `lane_parse_output` directly, and the year rule's both-ends condition.
   Noted: the chat_state.py:1614 change also lets low stock (the only other `about` ask) take a declared fill with a
   KEEP or switch_domain op on the state path, as LOWSTOCK-SEMANTIC and the off-state path already do.
+
+- Round S4 (EVAL-BENCH v100 measure on 911fa7d96c, causes in crew/state/eval/report-smart-v92/explore1023-diagnosis.md):
+  S4-1 'compare with last year' under the open basis question: the shape path takes the reply as the answer
+  (required_fields.py:391, :414-428), `settle` (report_ask.py:822-838) reads only period / count / measure / basis, so
+  `collect` uses the whole message as the basis word (required_fields.py:309-321, miss line :200). Fix: a reply that
+  sets one of the ask's own args (the parser's `compare_to`) and fills no owed field adds that arg and re-asks the
+  owed fields, no "I don't know" line, no miss; `of_required_ask` states the held args (turn/question.py:127-130).
+  S4-2 the promotion access level question names the parser's `promotion_kind` (label built from entity raws only,
+  answer.py:327-334), from the same source as the Promotion kinds line (turn/context.py:132-142).
+  Parser items (23 'For product <code>' refine, 42 'top N dealers selling X') go to a prompt candidate after the
+  owner's test.
 
 ### Gates (S3)
 

@@ -41,3 +41,12 @@ Plan: `PLAN-report-smart-owner-1022.md`.
   follow-up "and <another code>?" re-runs the outstanding ask for that code; with `document` [DO] it reaches the DO
   outstanding path exactly as `status` outstanding + [DO] does (never "SO, DO or both?" for a contact with the SO
   grant). Near misses: `status` outstanding with `order_status` null, `status` delivered, and both null behave as today.
+
+## Round S4 (23 Oct)
+
+- AC-S4-1. With the ranking question open (basis owed) after "top 5 salesman this year vs last year", the reply
+  "compare with last year" (parser: compare_to last_year, no owed field filled) keeps the comparison and asks only the
+  owed fields again; never "I don't know 'compare with last year' as a basis". The parser's Open question shows the
+  held comparison. Near miss: a reply that fills the basis ("delivered") runs the ranking with the comparison.
+- AC-S4-2. The access level question for a flyer ask names the kind the parser set ("a3 flyer") with the brand, whether
+  or not a flyer entity survived grounding. Near miss: an ask with no promotion_kind is worded as today.
