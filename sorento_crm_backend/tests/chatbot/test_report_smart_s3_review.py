@@ -78,7 +78,7 @@ def test_review_1b_a_stray_channel_entity_in_the_answer_does_not_drop_the_open_s
     assert len(calls) == 1, (text, calls)  # today: an ungrouped channel total, cb6635 lost
     args = calls[0]
     _family_only(None, args)
-    assert args["channel"] == "project", args
+    assert "channel" not in args, args  # AC-HT8-16: an answer's channel is ignored
 
 
 def test_review_4_the_year_rule_needs_both_period_ends_in_the_year(console) -> None:
