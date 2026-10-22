@@ -93,6 +93,10 @@ class ParserConfig:
     json_schema: dict[str, Any] | None = None
     # CHAT-STATE: the prompt in use asks for `state_changes` (set by `resolve_config` in S5).
     state_block: bool = False
+    # REPORT-SMART-L: the prompt in use declares `compare_to`, so the schema offers the count
+    # measures and the `compare_to` property; a version that never describes them is not forced
+    # to emit them (`without_report_fields`). True keeps the extended schema for a bare config.
+    report_fields: bool = True
     # PARSER-TEMPLATE F1-A: the version is the consolidated template (`head/parser_template`),
     # whose rules decide what the engine's own re-readings of the message used to.
     template: bool = False
@@ -810,7 +814,21 @@ TOLERATED_ABSENT: frozenset[str] = frozenset(
 )
 
 
-def closed_lists_schema(items: list[str], *, state: bool = False) -> dict[str, Any]:
+#: What a prompt version that never declares `compare_to` is offered for `measure`.
+_OLD_MEASURES = ["qty", "amount", None]
+
+
+def without_report_fields(schema: dict[str, Any]) -> dict[str, Any]:
+    """A copy of `schema` as it was before the count measures and `compare_to`: `measure` is
+    qty | amount | null and `compare_to` is neither a property nor required."""
+    out = copy.deepcopy(schema)
+    out["properties"]["measure"]["enum"] = list(_OLD_MEASURES)
+    out["properties"].pop("compare_to", None)
+    out["required"] = [k for k in out["required"] if k != "compare_to"]
+    return out
+
+
+def closed_lists_schema(items: list[str], *, state: bool = False, report_fields: bool = True) -> dict[str, Any]:
     """The strict schema of a CLOSED LISTS version: the production one (the CHAT-STATE one
     when the version also asks for `state_changes`), with each entity's `listed_item` held
     to the items the lists render (a JSON enum) or null. The provider then guarantees the
@@ -827,7 +845,7 @@ def closed_lists_schema(items: list[str], *, state: bool = False) -> dict[str, A
         {"type": ["string", "null"], "enum": [*items, NOT_LISTED, None]} if items else {"type": "null"}
     )
     entity["required"] = [*entity["required"], "listed_item"]
-    return schema
+    return schema if report_fields else without_report_fields(schema)
 
 
 #: The stored parser reasoning efforts; anything else (a typo, "none", an effort this list does not hold) is `off`.
@@ -903,11 +921,13 @@ def resolve_config(
 
     # CHAT-STATE: the literal on the prompt text (never on a message) opts the turn in.
     state_block = HEADING in (raw_template or "")
+    # REPORT-SMART-L: the schema follows the prompt, as `state_block` does.
+    report_fields = "compare_to" in (raw_template or "")
     json_schema = None
     if closed_lists:
         from app.services.chatbot_prompt_vars import closed_list_enum
 
-        json_schema = closed_lists_schema(closed_list_enum(db), state=state_block)
+        json_schema = closed_lists_schema(closed_list_enum(db), state=state_block, report_fields=report_fields)
     return ParserConfig(
         system_prompt=system_prompt,
         prompt_version=prompt_version,
@@ -918,6 +938,7 @@ def resolve_config(
         code_lookup=closed_lists and code_lookup_prompt.gate_on(raw_template),
         json_schema=json_schema,
         state_block=state_block,
+        report_fields=report_fields,
         template=TEMPLATE_MARKER in (raw_template or ""),
         closed_lists_index=index_mode,
         reasoning_effort=reasoning_effort_setting(db),
@@ -1175,6 +1196,12 @@ def assert_emission(emission: dict) -> None:
         )
 
 
+def _base_schema(config: ParserConfig) -> dict[str, Any]:
+    """The production schema for `config`: with or without `state_changes`, with or without the report fields."""
+    schema = PARSE_OUTPUT_JSON_SCHEMA_WITH_STATE if config.state_block else PARSE_OUTPUT_JSON_SCHEMA
+    return schema if config.report_fields else without_report_fields(schema)
+
+
 def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
     """One structured-output call. Raises `ParserError`; never returns a default.
 
@@ -1201,8 +1228,7 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
             messages,
             temperature=0.0,
             max_tokens=PARSER_MAX_TOKENS,
-            json_schema=config.json_schema
-            or (PARSE_OUTPUT_JSON_SCHEMA_WITH_STATE if config.state_block else PARSE_OUTPUT_JSON_SCHEMA),
+            json_schema=config.json_schema or _base_schema(config),
             json_schema_name=PARSE_OUTPUT_SCHEMA_NAME,
             # One cache bucket per published prompt version: every parse on it shares
             # the same static prefix (OpenAI only; the others ignore it).

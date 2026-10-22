@@ -837,6 +837,26 @@ def sales_analysis_company_reply(verdict: Any, pending: Any) -> dict[str, Any] |
     }
 
 
+def sales_figure_decision(
+    db: Any, contact_respond_id: Any, space_id: Any, *, order_status: str, granted: bool
+) -> str:
+    """`granted`, `salesperson_book` or `not_granted` for a sales figure ask. The ONE rule
+    (`contact_asker.may_ask_sales_ranking`) applies only to a verdict that runs on the report-ask
+    tool (`sales_ranking`); every other sales figure ask (top selling, sales report, the sales
+    analysis tool) needs the grant, as before. The contact is the one the seam already resolves."""
+    if granted:
+        return "granted"
+    if order_status != report_ask.ASK_NAME or db is None or not contact_respond_id or not str(contact_respond_id).strip():
+        return "not_granted"
+    from app.services import contact_asker
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+    resolved = resolve_contact_with_null_workspace_fallback(
+        db, contact_id=str(contact_respond_id).strip(), space_id=(str(space_id).strip() or None) if space_id else None
+    )
+    return contact_asker.may_ask_sales_ranking(db, str(resolved) if resolved else None, granted=False)[0]
+
+
 def _office_staff(db: Any, contact_respond_id: Any, space_id: Any) -> bool:
     """Is the turn's contact office staff (an active office access type,
     `contact_customer_scope.is_office_staff`)? False when it resolves to no one (fail closed)."""
@@ -1928,7 +1948,18 @@ def run_fetch(
         access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
         granted_raw = access_ctx.get("attributes")
         granted = set(granted_raw) if isinstance(granted_raw, list) else set()
-        if need not in granted:
+        decision = (
+            sales_figure_decision(
+                db, contact_id, space_id, granted=False,
+                order_status=jsc.js_string(parse_output.get("order_status") or "").strip(),
+            )
+            if need == _SALES_REPORT_GRANT and need not in granted
+            else "granted" if need in granted else "not_granted"
+        )
+        if decision == "salesperson_book":
+            if trace is not None:
+                trace.add("domain_grant", {"domain": domain, "decision": decision, "needs": need})
+        elif need not in granted:
             if trace is not None:
                 trace.add("domain_grant", {"domain": domain, "skipped": "not_granted", "needs": need})
             if need == chat_report.GRANT:
@@ -2110,13 +2141,18 @@ def run_fetch(
         access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
         granted_raw = access_ctx.get("attributes")
         granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
-        if _SALES_REPORT_GRANT not in granted:
+        decision = sales_figure_decision(
+            db, contact_id, space_id, order_status=order_status_raw, granted=_SALES_REPORT_GRANT in granted
+        )
+        if decision == "not_granted":
             if trace is not None:
                 trace.add(
                     "domain_grant",
                     {"domain": domain, "skipped": "not_granted", "needs": _SALES_REPORT_GRANT},
                 )
             return _sales_report_not_enabled()
+        if decision == "salesperson_book" and trace is not None:
+            trace.add("domain_grant", {"domain": domain, "decision": decision, "needs": _SALES_REPORT_GRANT})
         if order_status_raw != report_ask.ASK_NAME and report_ask.unreadable_period(parse_output):
             # REPORT-SMART-1021 step 5: a period in words is asked, never run or echoed (the
             # sales ranking asks it through its own required fields).

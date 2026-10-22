@@ -5769,6 +5769,21 @@ def _run_stages_body(  # noqa: PLR0915
             and _SALES_REPORT_GRANT not in set(access.get("attributes") or [])
         )
         if sales_report_grant_refused:
+            # REPORT-SMART-L: the sales ranking has ONE 'may ask' rule, shared with the route
+            # (`contact_asker.may_ask_sales_ranking`): a live salesperson with a book passes.
+            from app.services.chatbot.lanes.business import sales_figure_decision
+
+            _decision = sales_figure_decision(
+                db, contact_respond_id, default_space_id(db), granted=False,
+                order_status=jsc.js_string(parsed_output.get("order_status") or "").strip(),
+            )
+            sales_report_grant_refused = _decision != "salesperson_book"
+            if not sales_report_grant_refused:
+                turn_trace.add(
+                    "domain_grant",
+                    {"domain": verdict.get("domain_hint"), "decision": _decision, "needs": _SALES_REPORT_GRANT},
+                )
+        if sales_report_grant_refused:
             # Same event shape `lanes.business.run_fetch`'s own sales-report grant
             # check emits (`__init__.py:1216`), so an operator reading the trace sees
             # one denial shape regardless of which seam refused it.

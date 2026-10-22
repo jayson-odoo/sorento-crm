@@ -94,16 +94,6 @@ def _agent_values(raw: Optional[list[str]], param_name: str) -> Optional[list[st
     return out or None
 
 
-def _own_book(db: Session, resolved: Any) -> Optional[set[str]]:
-    """The customer ids of a salesperson contact's own book: the customers whose card agent is a
-    `sales_agents` row linked to the contact. None when the contact has no agent link."""
-    with company_scope(db, None):
-        agent_ids = [str(i) for (i,) in db.query(SalesAgent.id).filter(SalesAgent.contact_id == str(resolved)).all()]
-        if not agent_ids:
-            return None
-        return {str(i) for (i,) in db.query(Customer.id).filter(Customer.sales_agent_id.in_(agent_ids)).all()}
-
-
 def _rate_limit_setting(db: Session) -> tuple[int, int]:
     """`(limit, window_minutes)` from System Settings, read per request so a change on the
     Chatbot media page applies on the next report with no restart. A limit of 0 means no limit."""
@@ -367,11 +357,9 @@ def report_ask(
     granted = GRANT in keys
     # A salesperson is narrowed to its own book: when granted only on `mine`, when not granted
     # always (it needs an agent link with customers; the agent axes are then refused).
-    book: Optional[set[str]] = None
-    if resolved and contact_asker.is_salesperson_user(db, str(resolved)):
-        # A LIVE CRM user with the salesperson role only (a bare agent link grants nothing here).
-        book = _own_book(db, resolved)
-    if not granted and not book:
+    # The one rule the chatbot seams share (`contact_asker.may_ask_sales_ranking`).
+    decision, book = contact_asker.may_ask_sales_ranking(db, str(resolved) if resolved else None, granted=granted)
+    if decision == "not_granted":
         raise AppException(403, "Sales report is not enabled for your account.", code="sales_report_not_enabled")
     if not granted and (group_norm == "sales_agent" or agents or card_agents):
         raise AppException(403, _DEALER_MESSAGE, code="report_dimension_not_allowed")
@@ -667,7 +655,7 @@ def _chat_report_ask(
     customers = scoped if scoped is not None else named_customers
     scope_customers: list[str] | None = list(scoped) if scoped is not None else None
     # Narrowed to its own book only when it has an agent link; a salesperson without one sees all.
-    own = _own_book(db, resolved) if asker == "salesperson" else None
+    own = contact_asker.own_book(db, str(resolved)) if asker == "salesperson" else None
     scoped_book = own is not None
     if scoped_book:
         customers = [c for c in (named_customers or own) if c in own]
