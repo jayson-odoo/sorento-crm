@@ -516,6 +516,31 @@ def _names_a_typed_code(parse_output: dict[str, Any]) -> bool:
     return False
 
 
+def pick_near_code_first(parser: dict[str, Any], resolved: dict[str, Any]) -> None:
+    """Q1 (owner ruling (a), 23 Oct 2026): for a product whose corrected pick grounding set aside
+    (`grounding.NEAR_PICK_KEY`, the resolver's own trigram row for it), the raw token's resolution
+    offers that pick FIRST, then its other close codes: the did-you-mean (`answer.build_suggest_offer`,
+    `miss_token_candidates`, D1's cap of 3) reads the alternatives in this order. In place."""
+    from app.services.chatbot.head.grounding import NEAR_PICK_KEY
+    from app.services.chatbot.turn.state import token_key
+
+    resolutions = resolved.get("resolutions")
+    if not isinstance(resolutions, list):
+        return
+    for entity in parser.get("entities") or []:
+        row = entity.get(NEAR_PICK_KEY) if isinstance(entity, dict) else None
+        if not isinstance(row, dict):
+            continue
+        token, pick = _token_of(entity), token_key(str(row.get("canonical_code") or ""))
+        for res in resolutions:
+            if isinstance(res, dict) and res.get("token") == token:
+                others = [
+                    a for a in res.get("alternatives") or []
+                    if not (isinstance(a, dict) and token_key(str(a.get("canonical_code") or "")) == pick)
+                ]
+                res["alternatives"] = [row, *others]
+
+
 def _token_of(entity: Any) -> Any:
     """`String(x.canonical_code ?? '').trim() || (x.raw ?? '')`, product-folded.
 
@@ -1578,6 +1603,11 @@ def run(
         carried_domain=jsc.get(_prev_variables(ctx), "domain_hint"),
         message=jsc.get(jsc.get(jsc.get(jsc.get(ctx, "text"), "message"), "message"), "text"),
     )
+
+    # Q1 (owner ruling (a), 23 Oct 2026): a typed code the parser corrected asks did-you-mean, the
+    # parser's pick first.
+    if isinstance(resolved, dict):
+        pick_near_code_first(parser, resolved)
 
     resolved_snapshot = _snapshot(resolved)
 

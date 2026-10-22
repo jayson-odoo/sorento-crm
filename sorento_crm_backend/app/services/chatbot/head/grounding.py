@@ -33,6 +33,7 @@ or code change.
 """
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -467,6 +468,46 @@ def _corrected_class(db: "Session", text: str, vocab: Vocabulary) -> str:
 #: The entity kind of a product the customer named (a code, or a product's own name).
 _PRODUCT_HINT = "product"
 
+logger = logging.getLogger(__name__)
+
+#: Q1 (owner ruling (a), 23 Oct 2026): the parser's corrected pick, as the resolver's own row, on a
+#: product entity whose canonical_code was dropped; `resolve_gate.pick_near_code_first` offers it
+#: first in the did-you-mean the raw then asks.
+NEAR_PICK_KEY = "near_pick"
+
+
+def _pick_as_trgm_neighbour(db: "Session", raw: str, pick: str) -> dict[str, Any] | None:
+    """The resolver's own row for the parser's `pick` when it is a trigram neighbour of the typed
+    `raw`, else None: the raw is resolved once through the resolve route the business lane calls,
+    product only, with no model read (semantic, spec and phrase fallbacks off)."""
+    # Measured (23 Oct, lane catalogue): code typos show the pick as a trgm neighbour of the raw (11/11); name asks never do.
+    from app.services.chatbot.lanes.business import services as business_services
+    from app.services.chatbot.lanes.business.resolve_gate import _LOOKUP_LIMIT, _token_of
+    from app.services.chatbot.turn.state import token_key
+
+    body = {
+        "query": raw, "tokens": [_token_of({"raw": raw, "hint": _PRODUCT_HINT})], "raw_tokens": [raw],
+        "match_mode": "or", "allowed_entity_types": [_PRODUCT_HINT], "fallback_to_all_types": False,
+        "limit": _LOOKUP_LIMIT, "exact_match": True,
+        "semantic_fallback": False, "spec_fallback": False, "understand_phrase": False,
+    }
+    try:
+        result = business_services.production_services(db).resolve_entity(body)
+    except Exception:  # noqa: BLE001 - a failed lookup answers as today
+        logger.warning("chatbot: the near-code check did not resolve %r", raw, exc_info=True)
+        return None
+    resolutions = result.get("resolutions") if isinstance(result, dict) else None
+    resolution = resolutions[0] if isinstance(resolutions, list) and resolutions else {}
+    wanted = token_key(pick)
+    for row in resolution.get("alternatives") or []:
+        if (
+            isinstance(row, dict)
+            and str(row.get("match_tier") or "").lower() == "trgm"
+            and token_key(str(row.get("canonical_code") or "")) == wanted
+        ):
+            return dict(row)
+    return None
+
 
 def _names_a_class_not_a_code(raw: str, vocab: Vocabulary) -> bool:
     """A `product` token that is words only, no code among them, one of which is a class or
@@ -750,6 +791,8 @@ def ground(
     pick_info: dict[str, dict[str, Any]] | None = None,
     held_ids: list[str] | None = None,
     hidden_keys: frozenset[str] = frozenset(),
+    roster_codes: frozenset[str] | None = None,
+    answers_question: bool = False,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """The verdict with every descriptor grounded, and a note per change for the trace.
 
@@ -774,7 +817,14 @@ def ground(
     `pick_info` (CHAT-CODE-LOOKUP R2-4, `candidates.pick_info`): a kept pick is still refused
     (canonical dropped, raw kept, noted) on a TRUE TIE (another near code on the word's line
     has the pick's exact score) or SEVERAL HOLDERS (two or more listed codes hold the word and
-    none equals it). The scores are the shortlist's own; nothing here compares spellings."""
+    none equals it). The scores are the shortlist's own; nothing here compares spellings.
+
+    `roster_codes` (Q1, owner ruling (a), 23 Oct 2026; None skips the step): the stored question's
+    option codes, folded. A product the parser corrected from a typed code (raw and canonical_code
+    differ after `token_key` folding) whose pick is a trigram neighbour of the raw
+    (`_pick_as_trgm_neighbour`) keeps its raw and loses its canonical, so the did-you-mean asks, the
+    pick first (`NEAR_PICK_KEY`). A raw that is one of the options, a turn answering the stored
+    question by position or pick (`answers_question`) and a carried entity are never corrections."""
     entities = verdict.get("entities")
     if not isinstance(entities, list) or not entities:
         return verdict, []
@@ -870,6 +920,23 @@ def ground(
                         "to": "canonical refused: " + ("tied near codes" if tie else "several codes hold the word"),
                     })
                     entity = {**entity, "canonical_code": None}
+                    canonical = ""
+        if (
+            roster_codes is not None
+            and not answers_question
+            and hint == _PRODUCT_HINT
+            and canonical
+            and raw
+            and entity.get("current_message") is not False
+        ):
+            from app.services.chatbot.turn.state import token_key
+
+            typed = token_key(raw)
+            if typed != token_key(canonical) and typed not in roster_codes:
+                near = _pick_as_trgm_neighbour(db, raw, canonical)
+                if near is not None:
+                    notes.append({"from": hint, "raw": raw, "to": f"did you mean: {canonical} (a typed code corrected)"})
+                    entity = {**entity, "canonical_code": None, NEAR_PICK_KEY: near}
                     canonical = ""
         if hint == _PRODUCT_HINT and _names_a_class_not_a_code(raw, vocab):
             # Fix round 10 on PR #833 (owner, 28 Sep 2026: "i tried to search like gunmetal

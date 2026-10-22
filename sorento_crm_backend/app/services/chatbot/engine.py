@@ -5371,6 +5371,21 @@ def _run_stages_body(  # noqa: PLR0915
     if reset_result is not None:
         return reset_result
 
+    # Q1 (owner ruling (a), 23 Oct 2026): what the stored question lets a typed word answer, read
+    # before the state applier closes or rewrites it. A raw that is one of its option codes, or a
+    # turn that answers it by position or pick, is a pick, never a corrected typo (`grounding.ground`).
+    near_code_roster = frozenset(
+        turn_state.token_key(str(option.get(field)))
+        for option in (getattr(state_in.pending, "options", None) or [])
+        if isinstance(option, dict)
+        for field in ("code", "label")
+        if option.get(field)
+    )
+    stored_answer = verdict.get("open_question_answer") if isinstance(verdict.get("open_question_answer"), dict) else {}
+    near_code_answering = state_in.pending is not None and bool(
+        verdict.get("reference_positions") or stored_answer.get("picked")
+    )
+
     # CHAT-STATE seam: the parser's `state_changes`, applied ONCE, before every post-parse
     # rewrite, APPLY and both of its re-entries (they all read `state_in` / `verdict`, so
     # writing the change into those two makes the re-entries idempotent). On when the
@@ -5560,6 +5575,8 @@ def _run_stages_body(  # noqa: PLR0915
             pick_info=pick_info if parser_config.code_lookup else None,
             held_ids=[str(p["uuid"]) for p in state_in.focus.products if isinstance(p, dict) and p.get("uuid")],
             hidden_keys=hidden_spec,
+            roster_codes=near_code_roster,
+            answers_question=near_code_answering,
         )
     # H1: the ONE strip, on the grounding output: grounding re-derives specs from the raw words
     # over the whole registry, so this covers the parser's own emission too.
