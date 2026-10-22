@@ -96,12 +96,7 @@ def _own_book(db: Session, resolved: Any) -> Optional[set[str]]:
     """The customer ids of a salesperson contact's own book: the customers whose card agent is a
     `sales_agents` row linked to the contact. None when the contact has no agent link."""
     with company_scope(db, None):
-        agent_ids = [
-            str(i)
-            for (i,) in db.query(SalesAgent.id)
-            .filter(SalesAgent.contact_id == str(resolved), SalesAgent.is_active.is_(True))
-            .all()
-        ]
+        agent_ids = [str(i) for (i,) in db.query(SalesAgent.id).filter(SalesAgent.contact_id == str(resolved)).all()]
         if not agent_ids:
             return None
         return {str(i) for (i,) in db.query(Customer.id).filter(Customer.sales_agent_id.in_(agent_ids)).all()}
