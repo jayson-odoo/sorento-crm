@@ -11,10 +11,12 @@ justification that earned them there.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
+
+from app.services.project_supply_service import ProjectSupplyService
 
 from .._pg_fixture import blank_session
 from ..test_fulfilment_board import (
@@ -31,6 +33,13 @@ from ..test_fulfilment_board import (
 from ..test_so_supply_confirmation import _stock
 from .test_borrow_location_only import _set_borrow_order
 from .test_borrow_own_location import _confirm, _held_at, _own_world
+from .test_project_supply_service_ladder import (
+    _group_sites,
+    _lead_time,
+    _seed_line,
+    _warehouse,
+    _world,
+)
 
 REQUIRED = date(2026, 9, 3)
 BUCKET = "2026-08-31"
@@ -169,3 +178,51 @@ def test_confirm_a_borrow_at_a_location_with_nothing_free_passes_short():
         notices = body["stock_short_notices"]
         assert len(notices) == 1 and "10 short" in notices[0]["reason"], notices
         assert _held_at(db, world, elsewhere) == Decimal("0")
+
+
+# --------------------------------------------------------------------------- beyond the window
+
+
+def test_confirm_accepts_a_hand_picked_borrow_on_a_line_beyond_the_reserve_window():
+    """Owner ruling (b), 22 Oct 2026, on SO401624 line 224's shape (SRTWB242, BRW-BB, due
+    2027-06-07, 90 days of lead time): beyond the reserve window the ladder still composes a
+    Buy and walks no borrow rung, but the Borrow LIST is offered, and a donor a planner picks
+    from it confirms. End to end: read off the sheet, picked, confirmed, held."""
+    with blank_session() as db:
+        company_id, eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        elsewhere = _warehouse(db, f"ZZTHP-{_uid()[:4]}")
+        _stock(db, product, own, on_hand=0)
+        _stock(db, product, elsewhere, on_hand=650)
+        _lead_time(db, product, 90)
+        order, line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="441",
+            # 174 days out, against 90 of lead time plus the 14-day buffer: well beyond.
+            required_date=date.today() + timedelta(days=174),
+        )
+
+        sheet_line = ProjectSupplyService(db).proposal_for(order)["lines"][0]
+        # The auto-proposal is unchanged: a Buy of the whole line, by the rule.
+        assert [c["kind"] for c in sheet_line["components"]] == ["buy"]
+        assert "beyond the lead time window" in sheet_line["components"][0]["reason"]
+        # The list is offered: the location with stock first, the own location last.
+        codes = [c["warehouse_code"] for c in sheet_line["borrow_candidates"]]
+        assert codes == [elsewhere.warehouse_code, own.warehouse_code], codes
+        picked = sheet_line["borrow_candidates"][0]
+
+        world = {"eling": eling, "product": product, "order": order, "line": line}
+        body = _confirm(
+            db,
+            world,
+            borrow=[
+                {
+                    "source": picked["source"],
+                    "warehouse_id": picked["warehouse_id"],
+                    "qty": "441",
+                    "reason": "Stock is there now; the customer wants it early.",
+                }
+            ],
+        )
+        assert not body.get("stock_short_notices"), body.get("stock_short_notices")
+        assert _held_at(db, world, elsewhere) == Decimal("441")
