@@ -2,6 +2,11 @@
 
 import * as React from 'react';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
+import {
+  getCoreRowModel,
+  useReactTable,
+  type ColumnDef,
+} from '@tanstack/react-table';
 import { Check, CirclePlus, GripVertical, Plus, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -19,6 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { DataGridTableHeadRowCellResize } from '@/components/ui/data-grid-table';
 import { cn } from '@/lib/utils';
 import {
   changeOf,
@@ -84,6 +90,8 @@ type DataAttributes = { [key: `data-${string}`]: string | undefined };
 const DESKTOP_ONLY = 'max-md:hidden';
 const GRIP_STICKY = 'max-md:sticky max-md:left-0';
 const ITEM_STICKY = 'max-md:sticky max-md:left-[28px]';
+/** With no grip column (read-only, or no drag) the item column pins at the left edge. */
+const NO_GRIP_ITEM_STICKY = 'max-md:sticky max-md:left-0';
 
 /**
  * Fixed widths except REMARK, which takes the rest: the sheet fills the 1240px page at 1280 with
@@ -108,9 +116,11 @@ const COLUMNS: Array<{
   { key: 'newQty', label: 'New qty', width: 56 },
   { key: 'date', label: 'Delivery date', width: 96 },
   { key: 'newDate', label: 'New date', width: 96 },
-  { key: 'changeQty', label: 'Change quantity', width: 80, change: true },
+  // OI-SPLIT-CONFIRM-POLISH (owner, 21 Oct 2026): "Breakdown", not "Change", so an untouched
+  // line does not read as changed.
+  { key: 'changeQty', label: 'Breakdown qty', width: 80, change: true },
   // DD/MM/YYYY in full beside the calendar button and the widest pill (ADVANCE).
-  { key: 'changeDate', label: 'Change date', width: 236, change: true },
+  { key: 'changeDate', label: 'Breakdown date', width: 236, change: true },
   { key: 'remark', label: 'Remark', change: true },
   { key: 'balance', label: 'Balance', width: 88 },
   { key: 'remove', label: '', width: 34, aria: 'Remove' },
@@ -122,12 +132,23 @@ const COLUMNS: Array<{
  * pins at the left edge on a phone.
  */
 const READ_ONLY_DROPPED = new Set(['grip', 'balance', 'remove']);
-const READ_ONLY_ITEM_STICKY = 'max-md:sticky max-md:left-0';
-const READ_ONLY_COLUMNS = COLUMNS.filter(
-  (column) => !READ_ONLY_DROPPED.has(column.key),
-).map((column) =>
-  column.key === 'item' ? { ...column, className: READ_ONLY_ITEM_STICKY } : column,
-);
+const withoutColumns = (dropped: ReadonlySet<string>) =>
+  COLUMNS.filter((column) => !dropped.has(column.key)).map((column) =>
+    column.key === 'item' ? { ...column, className: NO_GRIP_ITEM_STICKY } : column,
+  );
+const READ_ONLY_COLUMNS = withoutColumns(READ_ONLY_DROPPED);
+/** OI-SPLIT-CONFIRM-POLISH: the edit sheet with no drag (the guided Confirm): no grip column. */
+const NO_DRAG_COLUMNS = withoutColumns(new Set(['grip']));
+
+/**
+ * Never resized: the grip and remove buttons, and REMARK, which takes whatever width the other
+ * columns leave (dragging any other column's edge moves it).
+ */
+const FIXED_COLUMNS = new Set(['grip', 'remark', 'remove']);
+/** The narrowest a dragged column gets. */
+const MIN_COLUMN_WIDTH = 40;
+/** What REMARK keeps once columns are dragged wider: the sheet scrolls sideways instead. */
+const REMARK_MIN_WIDTH = 100;
 
 const CELL =
   'h-9 border-b border-e border-border bg-background px-1.5 py-1 text-center align-middle text-xs';
@@ -270,7 +291,7 @@ function DateCell({
 }
 
 /**
- * An unsplit line's CHANGE QUANTITY / CHANGE DATE cell (UAC A4): its own base qty or date as a
+ * An unsplit line's BREAKDOWN QTY / BREAKDOWN DATE cell (UAC A4): its own base qty or date as a
  * plain value (base, also inside Confirm), a button that splits the line on click or a typed key.
  */
 const RemainButton = ({
@@ -414,6 +435,8 @@ interface LineBlockProps {
   line: SplitLine;
   /** OI-SPLIT-VIEW (UAC E2): values as text, no grip, Balance, + Split, remove or click-to-edit. */
   readOnly: boolean;
+  /** OI-SPLIT-CONFIRM-POLISH: rows and "N left" can be dragged (no grip column when not). */
+  canDrag: boolean;
   incomingRows: IncomingRow[];
   /** The draft changed this line's splits or the splits dropped on it: AutoCount's extra is stale. */
   extraStale: boolean;
@@ -434,6 +457,7 @@ interface LineBlockProps {
 const LineBlock = React.memo(function LineBlock({
   line,
   readOnly: sheetReadOnly,
+  canDrag,
   incomingRows,
   extraStale,
   soNumber,
@@ -453,6 +477,7 @@ const LineBlock = React.memo(function LineBlock({
   const delivered = Boolean(line.deliveredInFull);
   const added = isAddedLine(line);
   const locked = added || delivered;
+  const grip = !sheetReadOnly && canDrag;
   const remain = !locked && !open && readsRemain(line);
   const allOwn = locked ? [] : splitsOf(line);
   // Variant B (AC-G2): a split dropped on another line is drawn under that line, so this
@@ -490,7 +515,7 @@ const LineBlock = React.memo(function LineBlock({
         className={cn(
           BASE_CELL,
           top,
-          sheetReadOnly ? READ_ONLY_ITEM_STICKY : ITEM_STICKY,
+          grip ? ITEM_STICKY : NO_GRIP_ITEM_STICKY,
           'max-md:z-[1]',
         )}
       >
@@ -564,6 +589,10 @@ const LineBlock = React.memo(function LineBlock({
               0
               <Check aria-hidden className="size-3.5" />
             </span>
+          ) : gap > 0 && !grip ? (
+            <span className="inline-flex items-center whitespace-nowrap rounded-full border border-warning/40 bg-warning/10 px-2 py-px font-semibold tabular-nums text-warning">
+              {`${gap} left`}
+            </span>
           ) : gap > 0 ? (
             <DragHandle
               id={`drag-rest:${line.lineId}`}
@@ -587,8 +616,9 @@ const LineBlock = React.memo(function LineBlock({
 
   const gripCell = cn(CELL, top, GRIP_STICKY, 'max-md:z-[1] px-0');
   const changeCell = cn(CELL, top);
-  // The grip and remove columns are the edit sheet's; the read-only sheet has neither.
-  const emptyGrip = sheetReadOnly ? null : (
+  // The grip and remove columns are the edit sheet's; the read-only sheet has neither, and a
+  // sheet with no drag has no grip.
+  const emptyGrip = !grip ? null : (
     <TableCell data-pinned="" className={gripCell} />
   );
   const emptyRemove = sheetReadOnly ? null : <TableCell className={changeCell} />;
@@ -677,6 +707,7 @@ const LineBlock = React.memo(function LineBlock({
     const only = splits[0];
     body = (
       <TableRow className="border-0 hover:bg-transparent">
+        {grip ? (
         <TableCell data-pinned="" className={gripCell}>
           <DragHandle
             id={`drag-line:${line.lineId}`}
@@ -690,6 +721,7 @@ const LineBlock = React.memo(function LineBlock({
             className="inline-flex h-7 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
           />
         </TableCell>
+        ) : null}
         {baseCells}
         <TableCell className={changeCell}>
           <RemainButton
@@ -812,6 +844,7 @@ const LineBlock = React.memo(function LineBlock({
         data-origin-line-id={origin.lineId}
         className="border-0 hover:bg-transparent"
       >
+        {grip ? (
         <TableCell
           data-pinned=""
           className={cn(cell, GRIP_STICKY, 'max-md:z-[1] px-0')}
@@ -825,6 +858,7 @@ const LineBlock = React.memo(function LineBlock({
             className="inline-flex h-7 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
           />
         </TableCell>
+        ) : null}
         {first ? baseCells : null}
         <TableCell className={cell}>
           <QtyInput
@@ -898,9 +932,9 @@ const LineBlock = React.memo(function LineBlock({
           data-extra-row=""
           className="border-0 hover:bg-transparent"
         >
-          {sheetReadOnly ? null : (
+          {grip ? (
             <TableCell data-pinned="" className={cn(CELL, GRIP_STICKY, 'max-md:z-[1] px-0')} />
-          )}
+          ) : null}
           <TableCell className={cn(CELL, 'tabular-nums font-semibold')}>
             {extraQty}
           </TableCell>
@@ -1009,6 +1043,7 @@ export function focusCell(cell: Element | null): boolean {
 }
 
 const NO_ROWS: IncomingRow[] = [];
+const NO_LINES: SplitLine[] = [];
 
 /** Every other line's split sitting on each line, in sheet order (variant B rows, AC-G2). */
 function incomingRowsByLine(lines: SplitLine[]): Map<string, IncomingRow[]> {
@@ -1037,6 +1072,7 @@ export function LineSplitSheet({
   flashLineId,
   handlers,
   readOnly = false,
+  canDrag = true,
 }: {
   /** The lines on screen (search and filter applied), in sheet order. */
   lines: SplitLine[];
@@ -1057,6 +1093,11 @@ export function LineSplitSheet({
    * "+ Split", remove, click-to-edit cell or keyboard editing. The handlers are never called.
    */
   readOnly?: boolean;
+  /**
+   * OI-SPLIT-CONFIRM-POLISH (owner, 21 Oct 2026): false on the guided Confirm's page: no grip
+   * column and a plain "N left", so nothing there can be dragged. The board gear keeps it.
+   */
+  canDrag?: boolean;
 }) {
   const lineById = React.useMemo(
     () => new Map(allLines.map((line) => [line.lineId, line])),
@@ -1139,7 +1180,38 @@ export function LineSplitSheet({
     () => new Set(allLines.map((line) => line.location)).size > 1,
     [allLines],
   );
-  const columns = readOnly ? READ_ONLY_COLUMNS : COLUMNS;
+  const columns = readOnly ? READ_ONLY_COLUMNS : canDrag ? COLUMNS : NO_DRAG_COLUMNS;
+  // OI-SPLIT-CONFIRM-POLISH: columns resize by dragging a header's edge, through TanStack's
+  // column sizing and the DataGrid's own handle (`components/ui/data-grid-table.tsx`
+  // `DataGridTableHeadRowCellResize`, the pattern every list page uses). Only widths are
+  // tracked here: the body rows stay this sheet's own merged blocks.
+  const sizingColumns = React.useMemo<ColumnDef<SplitLine>[]>(
+    () =>
+      columns.map((column) => ({
+        id: column.key,
+        size: column.width ?? REMARK_MIN_WIDTH,
+        minSize: MIN_COLUMN_WIDTH,
+        enableResizing: !FIXED_COLUMNS.has(column.key),
+      })),
+    [columns],
+  );
+  const sizing = useReactTable<SplitLine>({
+    data: NO_LINES,
+    columns: sizingColumns,
+    getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
+  });
+  const headers = sizing.getHeaderGroups()[0]?.headers ?? [];
+  // Once a column is dragged the sheet is at least as wide as its columns, so a wider column
+  // never squeezes REMARK below its minimum; a phone leaves out the columns it hides.
+  const resized = Object.keys(sizing.getState().columnSizing).length > 0;
+  const total = sizing.getTotalSize();
+  const phoneTotal =
+    total -
+    headers
+      .filter((header, index) => columns[index]?.className === DESKTOP_ONLY)
+      .reduce((sum, header) => sum + header.getSize(), 0);
   const lastOfDragGroup = drag
     ? lines.reduce(
         (last, line, index) =>
@@ -1154,20 +1226,34 @@ export function LineSplitSheet({
       data-split-sheet=""
       data-read-only={readOnly ? 'true' : undefined}
       onKeyDown={readOnly ? undefined : onKeyDown}
+      style={
+        resized
+          ? ({
+              '--sheet-min': `${total}px`,
+              '--sheet-min-phone': `${phoneTotal}px`,
+            } as React.CSSProperties)
+          : undefined
+      }
       className={cn(
         'table-fixed border-separate border-spacing-0 text-xs',
-        readOnly
-          ? 'min-w-[1030px] max-md:min-w-[850px]'
-          : 'min-w-[1180px] max-md:min-w-[1000px]',
+        resized
+          ? 'min-w-(--sheet-min) max-md:min-w-(--sheet-min-phone)'
+          : readOnly
+            ? 'min-w-[1030px] max-md:min-w-[850px]'
+            : 'min-w-[1180px] max-md:min-w-[1000px]',
       )}
     >
       <TableHeader className="[&_tr]:border-0">
         <TableRow className="border-0 hover:bg-transparent">
-          {columns.map((column) => (
+          {columns.map((column, index) => {
+            const header = headers[index];
+            // REMARK has no width of its own: it takes the rest.
+            const width = column.width === undefined ? undefined : header?.getSize();
+            return (
             <TableHead
               key={column.key}
               aria-label={column.aria}
-              style={{ width: column.width }}
+              style={{ width }}
               className={cn(
                 'sticky top-0 z-[2] h-auto border-b border-e border-border px-1.5 py-2 text-center text-2xs font-semibold uppercase leading-tight tracking-wide whitespace-normal text-foreground/70',
                 column.change ? 'bg-muted' : 'bg-background',
@@ -1178,8 +1264,12 @@ export function LineSplitSheet({
               )}
             >
               {column.label}
+              {header?.column.getCanResize() ? (
+                <DataGridTableHeadRowCellResize header={header} />
+              ) : null}
             </TableHead>
-          ))}
+            );
+          })}
         </TableRow>
       </TableHeader>
       {lines.map((line, index) => {
@@ -1193,6 +1283,7 @@ export function LineSplitSheet({
             <LineBlock
               line={line}
               readOnly={readOnly}
+              canDrag={canDrag}
               incomingRows={incomingRows.get(line.lineId) ?? NO_ROWS}
               extraStale={staleExtra.has(line.lineId)}
               soNumber={soNumber}

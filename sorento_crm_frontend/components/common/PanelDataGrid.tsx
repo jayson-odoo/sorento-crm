@@ -95,7 +95,8 @@ export function PanelDataGrid<TRow extends object>({
   rows: TRow[];
   getRowId?: (row: TRow) => string;
   /** Drives per-user column order and visibility. See docs/LISTING-COLUMN-PREFERENCES.md. */
-  listingKey: string;
+  /** `null` turns column preferences off (data-grid.tsx), e.g. while permissions load. */
+  listingKey: string | null;
   isLoading?: boolean;
   /** The read's error. With no rows it renders no-access or message + Retry (lever L2). */
   error?: unknown;

@@ -2181,6 +2181,52 @@ register(
 )
 
 
+def _delete_new_product_application(db: Session, payload: dict):
+    from app.services import new_product_application_service
+
+    # Applicant's own Draft only; re-checked here because the state can change inside the window.
+    new_product_application_service.delete_draft(
+        db, _entity_id(payload), str(payload.get("requested_by_id") or "")
+    )
+    return {"message": "Deleted"}
+
+
+register(
+    FormAction(
+        key="new_product_application.delete",
+        entity_types=("new_product_application",),
+        execute=_delete_new_product_application,
+        # Destructive: a hard delete of the applicant's draft and its lines.
+        window=WINDOW_DESTRUCTIVE,
+        permission=OWN_RECORD,
+        label="Delete draft",
+    )
+)
+
+
+def _unlink_new_product_application_attachment(db: Session, payload: dict):
+    from app.services import new_product_application_service
+
+    # The applicant's own link on an editable application; re-checked here because the state
+    # can change inside the window. Only the link goes: the file stays in the library.
+    new_product_application_service.unlink_attachment(
+        db, _entity_id(payload), str(payload.get("requested_by_id") or "")
+    )
+    return {"message": "Unlinked"}
+
+
+register(
+    FormAction(
+        key="new_product_application_attachment.unlink",
+        entity_types=("new_product_application_attachment",),
+        execute=_unlink_new_product_application_attachment,
+        window=WINDOW_REVERSIBLE,
+        permission=OWN_RECORD,
+        label="Unlink attachment",
+    )
+)
+
+
 def _void_price_tag_request(db: Session, payload: dict):
     from app.services.price_tag_request_service import (
         PriceTagRequestService,

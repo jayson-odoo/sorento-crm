@@ -1505,21 +1505,24 @@ def test_the_workbook_is_one_sheet_for_every_delivery_month_with_their_heading_r
     assert book.sheetnames == ["ORDER INQUIRY"]
     sheet = book["ORDER INQUIRY"]
     assert sheet.cell(row=1, column=1).value == "ORDER INQUIRY"
-    assert [cell.value for cell in sheet[2][:9]] == [
+    assert [cell.value for cell in sheet[2][:11]] == [
         "SO DATE",
         "S/O NO",
         "ITEM CODE",
         "QTY",
+        # OI-RESERVE-PILL-QTY round 2 (owner, 21 Oct 2026): the reserve figures beside QTY.
+        "REQUESTED RESERVE",
+        "RESERVED",
         "TOTAL QTY",
         "DELIVERY DATE",
         "PROJECT/CUSTOMER",
         "SUPPLIER",
         "PO NO ",
     ]
-    assert sheet.cell(row=2, column=10).value == "LOCATION"
+    assert sheet.cell(row=2, column=12).value == "LOCATION"
     assert sheet.max_row == 2 + 3
     delivery_dates = [
-        sheet.cell(row=r, column=6).value for r in range(3, sheet.max_row + 1)
+        sheet.cell(row=r, column=8).value for r in range(3, sheet.max_row + 1)
     ]
     assert {
         value.date() if hasattr(value, "date") else value for value in delivery_dates
@@ -1541,7 +1544,7 @@ def test_the_workbooks_supplier_is_the_source_pos_on_a_via_spo_row(api):
     assert response.status_code == 200, response.text
     book = openpyxl.load_workbook(io.BytesIO(response.content))
     suppliers = {
-        sheet.cell(row=r, column=8).value
+        sheet.cell(row=r, column=10).value
         for sheet in book.worksheets
         for r in range(3, sheet.max_row + 1)
     }
@@ -1593,8 +1596,8 @@ def test_total_qty_totals_the_supplier_and_item_run_not_the_item_across_supplier
 
     book = openpyxl.load_workbook(io.BytesIO(response.content))
     sheet = book["ORDER INQUIRY"]
-    body = [[cell.value for cell in row[:9]] for row in sheet.iter_rows(min_row=3)]
-    assert [(row[7], row[2], row[3], row[4]) for row in body] == [
+    body = [[cell.value for cell in row[:11]] for row in sheet.iter_rows(min_row=3)]
+    assert [(row[9], row[2], row[3], row[6]) for row in body] == [
         (supplier_a.supplier_name, abc, 10.0, None),
         (supplier_a.supplier_name, abc, 4.0, 14.0),
         (supplier_a.supplier_name, dfe, 5.0, None),

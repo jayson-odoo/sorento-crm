@@ -18,6 +18,7 @@ import {
 } from '../../_shared/components/LineSplitInfo';
 import { useLineSplitsReads } from '../../_shared/hooks/useLineSplits';
 import { LineSplitEditor, type LineSplitEditorHandle } from './LineSplitEditor';
+import { formatSplitDate } from '../lib/lineSplitModel';
 
 /** One line this Confirm covers, as the board states it, with its editable remark (UAC F25). */
 export type ConfirmGuideLine = CoveredSheetLine & {
@@ -31,7 +32,11 @@ export type ConfirmGuideLine = CoveredSheetLine & {
 export interface ConfirmGuidePage {
   /** The order's planning record; null until the press adopts it (nothing to read yet). */
   psoId: string | null;
+  /** The core sales order: what the board adopts when the page has no planning record yet. */
+  salesOrderId: string;
   soNumber: string;
+  /** The board's SO date for the order (`YYYY-MM-DD`); null when the board has none. */
+  soDate?: string | null;
   /** The lines this Confirm covers on the order, as the board states them (UAC F2, F10). */
   covered: ConfirmGuideLine[];
 }
@@ -70,18 +75,38 @@ const plural = (count: number, one: string, many = `${one}s`) =>
  */
 export function ConfirmGuideDialog({
   pages,
+  autocountNote = [],
+  applyLabel = 'Apply AutoCount change',
   runConfirm,
   saveRemarks,
+  preparing = false,
+  prepareErrors,
+  onRetryPrepare,
   onClose,
 }: {
   /** The orders of this Confirm, in board order; re-read live, so a page drops once saved away. */
   pages: ConfirmGuidePage[];
+  /**
+   * PLAN-BATCH-COUNT-DISPLAY (reviewer round 1): the board's AutoCount change note, said again on
+   * the Confirm step. With no page (no decision, only pending changes) it is the whole press, and
+   * the title and button read `applyLabel` instead of "Confirm 0 orders".
+   */
+  autocountNote?: string[];
+  applyLabel?: string;
   runConfirm: () => Promise<boolean>;
   /**
    * UAC F26: keeps saved lines' remarks in their saved decisions (board line key -> remark,
    * '' = the default words); rejects when one could not be saved.
    */
   saveRemarks: (changes: ReadonlyMap<string, string>) => Promise<void>;
+  /**
+   * OI-SPLIT-CONFIRM-POLISH (owner, SO426939): the board is giving the orders with no planning
+   * record one (so their page is the editable sheet, never the read-only one), or that failed.
+   */
+  preparing?: boolean;
+  /** Per core sales order id: why it could not be made ready (the server's sentence). */
+  prepareErrors?: ReadonlyMap<string, string>;
+  onRetryPrepare?: () => void;
   onClose: () => void;
 }) {
   const [step, setStep] = React.useState<Step>(() =>
@@ -98,14 +123,26 @@ export function ConfirmGuideDialog({
   const reads = useLineSplitsReads(pages.map((entry) => entry.psoId));
   const splitRead = step.kind === 'review' && page ? reads[step.index] : undefined;
   const reading = Boolean(page?.psoId) && Boolean(splitRead?.isPending);
+  // A page with no planning record waits for the board's adopt, never shown read-only while it
+  // runs. Only a FAILED adopt leaves its lines read-only, under the error and its Retry, and
+  // the guide can still move on: the press names that order in its results, and one order
+  // that cannot be planned never holds up the others.
+  const unready = Boolean(page && !page.psoId && preparing);
+  const prepareError =
+    page && !page.psoId && !preparing ? prepareErrors?.get(page.salesOrderId) ?? null : null;
+  const prepareFailed = Boolean(prepareError);
   const readFailed = Boolean(splitRead?.isError);
+  // OI-SPLIT-CONFIRM-POLISH (owner, SO426939): the ONE SO date every sheet on the page prints:
+  // the order's split read, else the board's (an order nobody adopted has no read at all).
+  const soDate = splitRead?.data?.so_date ?? page?.soDate ?? null;
+  const sheetHead = page ? { so_number: page.soNumber, so_date: soDate } : null;
   // The page's sheet: split lines from the split read, every other covered line one row.
   const sheet = React.useMemo(
     () =>
-      page && !reading && !readFailed
+      page && !reading && !readFailed && !unready
         ? coveredSheetLines(splitRead?.data ?? null, page.covered.map(readOnlyWords))
         : null,
-    [page, reading, readFailed, splitRead?.data],
+    [page, reading, readFailed, unready, splitRead?.data],
   );
   // UAC F18: what the page edits (covered lines the split read lists) and what stays a
   // read-only row (a covered line the read does not list, or every line with no read).
@@ -148,7 +185,10 @@ export function ConfirmGuideDialog({
     if (step.kind === 'review' && step.index >= pages.length) setStep({ kind: 'confirm' });
   }, [step, pages.length]);
 
-  /** Cancel: the explicit way out, which writes nothing (UAC A2, F23). */
+  /**
+   * Cancel: the explicit way out, which confirms and sends nothing (UAC A2, F23). An order the
+   * guide adopted as it opened keeps its planning record (OI-SPLIT-CONFIRM-POLISH, owner).
+   */
   const close = React.useCallback(() => {
     if (posting) return;
     onClose();
@@ -197,7 +237,7 @@ export function ConfirmGuideDialog({
       : null;
   // UAC F14: a page is never "seen" before its split read has loaded.
   const nextEnabled =
-    step.kind === 'review' && Boolean(page) && !reading && !readFailed && !dirty;
+    step.kind === 'review' && Boolean(page) && !reading && !readFailed && !unready && !dirty;
 
   return (
     <Dialog
@@ -214,7 +254,9 @@ export function ConfirmGuideDialog({
       >
         <DialogHeader className="mb-0 space-y-2 border-b border-border px-5 pt-4 pb-3 pe-12 text-start sm:text-start">
           <DialogTitle className="truncate text-base">
-            {`Confirm ${pages.map((entry) => entry.soNumber).join(', ')}`}
+            {pages.length > 0
+              ? `Confirm ${pages.map((entry) => entry.soNumber).join(', ')}`
+              : applyLabel}
           </DialogTitle>
           <div data-testid="confirm-guide-steps">
             <WizardSteps steps={STEPS} currentId={step.kind} />
@@ -235,6 +277,16 @@ export function ConfirmGuideDialog({
             >
               <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2">
                 <span className="text-base font-semibold">{page.soNumber}</span>
+                {/* Owner ruling (21 Oct): a phone hides the SO DATE column, so the page header
+                    says it, from the same one SO date every sheet prints. */}
+                {soDate ? (
+                  <span
+                    data-testid="confirm-guide-so-date"
+                    className="text-xs text-muted-foreground tabular-nums md:hidden"
+                  >
+                    {formatSplitDate(soDate)}
+                  </span>
+                ) : null}
                 <Badge variant="warning" appearance="light" size="sm">
                   Saved, not confirmed
                 </Badge>
@@ -242,7 +294,27 @@ export function ConfirmGuideDialog({
                   {plural(sheet ? sheet.lines.length : page.covered.length, 'line')}
                 </span>
               </div>
-              {readFailed ? (
+              {prepareFailed ? (
+                <div
+                  data-testid="confirm-guide-prepare-error"
+                  className="flex flex-col items-start gap-2 text-sm"
+                >
+                  <span role="alert" className="break-words">
+                    {prepareError}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={onRetryPrepare}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              ) : null}
+              {unready ? (
+                <SectionSkeleton rows={4} />
+              ) : readFailed ? (
                 <div
                   data-testid="confirm-guide-split-error"
                   className="flex flex-col items-start gap-2 py-4 text-sm"
@@ -271,6 +343,8 @@ export function ConfirmGuideDialog({
                       active
                       onlyLineIds={editable.onlyLineIds}
                       lineRemarks={editable.remarks}
+                      // OI-SPLIT-CONFIRM-POLISH: no drag-to-reorder on the Review split page.
+                      canDrag={false}
                       onSaveRemarks={(changes) =>
                         saveRemarks(
                           new Map(
@@ -312,7 +386,7 @@ export function ConfirmGuideDialog({
                   {editable.rest.lines.length > 0 ? (
                     <div className="overflow-hidden rounded-lg border border-border">
                       <SplitLinesSheet
-                        payload={null}
+                        payload={sheetHead}
                         soNumber={page.soNumber}
                         sheet={editable.rest}
                       />
@@ -322,7 +396,7 @@ export function ConfirmGuideDialog({
               ) : sheet ? (
                 <div className="overflow-hidden rounded-lg border border-border">
                   <SplitLinesSheet
-                    payload={splitRead?.data ?? null}
+                    payload={sheetHead}
                     soNumber={page.soNumber}
                     sheet={sheet}
                   />
@@ -335,24 +409,31 @@ export function ConfirmGuideDialog({
 
           {step.kind === 'confirm' ? (
             <div className="space-y-3">
-              <p className="text-sm break-words">
-                {`${plural(pages.length, 'order')}: ${pages
-                  .map((entry) => `${entry.soNumber} (${plural(entry.covered.length, 'line')})`)
-                  .join(', ')}. Nothing has been sent yet.`}
-              </p>
-              <Button
-                type="button"
-                data-testid="confirm-guide-confirm"
-                disabled={posting}
-                onClick={() => void pressConfirm()}
-              >
-                {`Confirm ${plural(pages.length, 'order')}`}
-              </Button>
+              {pages.length > 0 ? (
+                <p className="text-sm break-words">
+                  {`${plural(pages.length, 'order')}: ${pages
+                    .map((entry) => `${entry.soNumber} (${plural(entry.covered.length, 'line')})`)
+                    .join(', ')}. Nothing has been sent yet.`}
+                </p>
+              ) : null}
+              {autocountNote.map((line) => (
+                <p key={line} className="text-sm break-words">
+                  {line}
+                </p>
+              ))}
+              {pages.length === 0 ? (
+                <p className="text-sm break-words">Nothing has been sent yet.</p>
+              ) : null}
             </div>
           ) : null}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 border-t border-border px-5 py-3">
+        {/* OI-SPLIT-CONFIRM-POLISH (owner, 21 Oct): Cancel far left; the step's action at the
+            right, Back immediately left of it. */}
+        <div
+          data-testid="confirm-guide-footer"
+          className="flex flex-wrap items-center gap-2 border-t border-border px-5 py-3"
+        >
           {dirty ? (
             <p className="w-full text-xs text-muted-foreground">
               Save or undo your split changes first
@@ -388,7 +469,16 @@ export function ConfirmGuideDialog({
             >
               {nextLabel}
             </Button>
-          ) : null}
+          ) : (
+            <Button
+              type="button"
+              data-testid="confirm-guide-confirm"
+              disabled={posting}
+              onClick={() => void pressConfirm()}
+            >
+              {pages.length > 0 ? `Confirm ${plural(pages.length, 'order')}` : applyLabel}
+            </Button>
+          )}
         </div>
       </DialogContent>
     </Dialog>

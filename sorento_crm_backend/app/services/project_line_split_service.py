@@ -272,9 +272,7 @@ class LineFacts:
     def line_no(self) -> Optional[int]:
         """The number staff know the line by: AutoCount's own (the core line's Seq, what the
         board prints), the mirror's only when there is no core line."""
-        if self.core is not None and self.core.line_no is not None:
-            return self.core.line_no
-        return self.line.line_no
+        return so_line_no(self.core.line_no if self.core is not None else None, self.line.line_no)
 
     @property
     def cancelled(self) -> bool:
@@ -1502,6 +1500,13 @@ def _audit_split(split: Any) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------- purchasing outputs
+
+
+def so_line_no(core_no: Optional[int], mirror_no: Optional[int]) -> Optional[int]:
+    """The number staff know a line by (#1362 item 5): AutoCount's own off the core line, the
+    planning mirror's only when the core carries none. `display_line_nos` is the same rule
+    over many mirror ids; this is it for a site that already holds the core row."""
+    return core_no if core_no is not None else mirror_no
 
 
 def display_line_nos(db: Session, line_ids: Iterable[str]) -> Dict[str, Optional[int]]:

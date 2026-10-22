@@ -152,7 +152,8 @@ def test_c1_confirm_all_cancels_the_line_and_echoes_it(api):
     assert result["ok"] is True, result
     assert result["lines_cancelled"] == [
         # PLAN-BATCH-HELD-CANCEL: the echo carries the reason too.
-        {"line_no": 10, "item_code": product_a.product_code, "reason": REASON}
+        # SO-LINE-NUMBERS: and the number the order carries, beside the sheet's own.
+        {"line_no": 10, "so_line_no": 10, "item_code": product_a.product_code, "reason": REASON}
     ]
     row = _raw(world.db, core_a.id)
     assert row.line_status == "cancelled"
@@ -176,7 +177,8 @@ def test_c1_single_confirm_route_also_cancels(api):
     assert response.status_code == 200, response.text
     assert response.json()["lines_cancelled"] == [
         # PLAN-BATCH-HELD-CANCEL: the echo carries the reason too.
-        {"line_no": 10, "item_code": product_a.product_code, "reason": REASON}
+        # SO-LINE-NUMBERS: and the number the order carries, beside the sheet's own.
+        {"line_no": 10, "so_line_no": 10, "item_code": product_a.product_code, "reason": REASON}
     ]
     assert _raw(world.db, core_a.id).line_status == "cancelled"
 

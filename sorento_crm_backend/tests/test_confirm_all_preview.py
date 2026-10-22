@@ -550,6 +550,9 @@ def _withdrawn_entry(world, line):
     return {
         "project_line_id": line.id,
         "line_no": line.line_no,
+        # SO-LINE-NUMBERS AC-10: the core line here carries no number of its own (or the
+        # same one), so the number a person reads is the mirror's, never null.
+        "so_line_no": line.line_no,
         "item_code": world.product.product_code,
     }
 

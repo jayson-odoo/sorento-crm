@@ -865,6 +865,14 @@ class _LineFacts:
     def pool_code(self) -> Optional[str]:
         return self.pool.warehouse_code if self.pool else None
 
+    @property
+    def so_line_no(self) -> Optional[int]:
+        """The number a person reads for this line (`so_line_no` rule): the core line's
+        AutoCount number, `line_no` above only when the core carries none."""
+        from app.services.project_line_split_service import so_line_no
+
+        return so_line_no(self.core.line_no if self.core is not None else None, self.line_no)
+
 
 class _BorrowLedger:
     """What is still borrowable as one confirmation's lines are checked in turn.
@@ -1359,19 +1367,22 @@ class ProjectSupplyService:
             str((snap or {}).get("core_line_id"))
             for snap in (active.line_snapshots or [] if active is not None else [])
         }
+        from app.services.project_line_split_service import so_line_no
+
         for mirror, core, _reason in picked:
             if awaits_cancel_so(core):
                 continue
+            named = so_line_no(core.line_no, mirror.line_no)
             if core.line_status == "cancelled":
                 raise AppException(
                     status_code=409,
-                    message=f"Line {mirror.line_no} is already cancelled.",
+                    message=f"Line {named} is already cancelled.",
                     code="supply_cancel_already_cancelled",
                 )
             if str(core.id) in covered_ids:
                 raise AppException(
                     status_code=409,
-                    message=f"Line {mirror.line_no} is confirmed. Reject it first.",
+                    message=f"Line {named} is confirmed. Reject it first.",
                     code="supply_cancel_line_covered",
                 )
         now = datetime.utcnow()
@@ -1387,7 +1398,14 @@ class ProjectSupplyService:
                 code = self.db.query(Product.product_code).filter(Product.id == product_id).scalar()
             # The reason rides back (PLAN-BATCH-HELD-CANCEL): an AutoCount Cancel SO draft's
             # reason names its document, and the board's results say which one.
-            echo.append({"line_no": mirror.line_no, "item_code": code, "reason": reason})
+            echo.append(
+                {
+                    "line_no": mirror.line_no,
+                    "so_line_no": so_line_no(core.line_no, mirror.line_no),
+                    "item_code": code,
+                    "reason": reason,
+                }
+            )
         self.db.flush()
         project_line_draft_service.delete_drafts_for_lines(
             self.db,
@@ -1567,11 +1585,13 @@ class ProjectSupplyService:
         never outside anything: there is no delivery date to be beyond, and deciding on a date
         nobody stated is exactly the guess the rest of this engine refuses to make.
 
-        PUBLIC because the verdict has three readers and must never have three answers: the
-        ladder that skips two rungs on it, the sheet that offers no donor beside it, and the
-        board that has to say so on the row and in the trail. The board read it as "nothing
-        free at L, and borrowing is possible from ..." on SO414341 precisely because it had no
-        way to ask.
+        PUBLIC because the verdict has readers that must never have different answers: the
+        ladder that skips two rungs on it, and the board that has to say so on the row and in
+        the trail. The board read it as "nothing free at L, and borrowing is possible from ..."
+        on SO414341 precisely because it had no way to ask.
+
+        The sheet's and the board's donor LISTS do not read it: a planner may still pick a
+        Borrow by hand beyond the window (owner ruling (b), 22 Oct 2026, BORROW-ZERO-FREE).
         """
         if fact.required_date is None:
             return False
@@ -4103,6 +4123,8 @@ class ProjectSupplyService:
         pool_codes = {
             (w.warehouse_code or "") for w in self._site_pool_warehouses().values()
         }
+        from app.services.project_line_split_service import so_line_no
+
         out: List[Dict[str, Any]] = []
         for row in result.lines:
             line = row.line
@@ -4135,7 +4157,7 @@ class ProjectSupplyService:
                         "location": code,
                         "qty": qty,
                         "donor_so_number": line.so_number or None,
-                        "donor_line_no": line.line_no,
+                        "donor_line_no": so_line_no(line.core_line_no, line.line_no),
                         "donor_agent_code": line.agent_code,
                         "donor_core_line_id": str(line.key),
                         "donor_required_date": line.required_date,
@@ -4148,7 +4170,9 @@ class ProjectSupplyService:
         out.sort(key=self._donor_order)
         if location_only or not self.borrow_from_order:
             # Same stock, same ranking (sorted above), told as a location (D2). Less a
-            # donor only its agent's authorisation could release (B1): confirm refuses it.
+            # donor only its agent's authorisation could release (B1). Confirm no longer
+            # refuses one a planner picks anyway (BORROW-CONFIRM-MATCH, 22 Oct 2026); the
+            # list still leaves it out (crew, 22 Oct: confirm-only, the list unchanged).
             return [
                 _location_only(candidate)
                 for candidate in out
@@ -4256,6 +4280,8 @@ class ProjectSupplyService:
         my_agent = mine.line.agent_code if mine is not None else None
         my_line_keys = {str(key) for key in self._unit_line_ids(fact)}
 
+        from app.services.project_line_split_service import so_line_no
+
         # What each event still has on the table: what nobody has spoken for (free plus this
         # asker's own share) first, then each eligible donor's hold of it in R19's order.
         # Keyed by event, because ONE document is the unit here.
@@ -4290,7 +4316,7 @@ class ProjectSupplyService:
                     {
                         "qty": qty,
                         "donor_so_number": row.line.so_number or None,
-                        "donor_line_no": row.line.line_no,
+                        "donor_line_no": so_line_no(row.line.core_line_no, row.line.line_no),
                         "donor_agent_code": row.line.agent_code,
                         "donor_core_line_id": str(row.line.key),
                         "donor_required_date": row.line.required_date,
@@ -4482,6 +4508,8 @@ class ProjectSupplyService:
             self._group_pile_members_cache[cache_key] = []
             return []
         warehouse_ids = [str(w.id) for w in locations.values()]
+        from app.services.project_line_split_service import so_line_no
+
         rows = (
             self.db.query(
                 SalesOrderLine, SalesOrder, SalesAgent.sales_agent,
@@ -4522,6 +4550,9 @@ class ProjectSupplyService:
                     "sales_order_id": str(line.sales_order_id),
                     "so_number": order.so_number or "",
                     "line_no": line_no,
+                    # What the donor's order calls the line; `line_no` stays the mirror's
+                    # (the pile order's tie-break reads it).
+                    "so_line_no": so_line_no(line.line_no, line_no),
                     "open_qty": open_qty,
                     "required_date": line.required_date or order.requested_delivery_date,
                     "order_date": order.order_date,
@@ -4609,7 +4640,7 @@ class ProjectSupplyService:
                     "location_rank": 0 if location == fact.own_code else 1,
                     "qty": member["open_qty"],
                     "donor_so_number": member.get("so_number") or None,
-                    "donor_line_no": member.get("line_no"),
+                    "donor_line_no": member.get("so_line_no"),
                     "donor_agent_code": member.get("donor_agent_code"),
                     "donor_core_line_id": member.get("line_id"),
                     "required_date": member.get("required_date"),
@@ -5027,6 +5058,7 @@ class ProjectSupplyService:
                 for option in options
             ],
             "line_no": line.line_no,
+            "so_line_no": fact.so_line_no,
             #: The PLANNING UNIT this line was composed in (ladder v6): this order's lines
             #: for the same item, location and delivery date are one quantity, covered whole
             #: from stock or bought whole. `1` and the line's own quantity when it was
@@ -5075,12 +5107,12 @@ class ProjectSupplyService:
             # Ranked against what this line still has to cover - the Buy the ladder just
             # proposed - because that is the quantity a donor would be asked for (13.11).
             # An unplannable line is offered nobody's stock: there is no need to rank against.
-            # Neither is a line beyond its reserve window (the ATP rule): rungs 4 and 5 are
-            # not walked for it, so a donor list beside it would OFFER the one thing the rule
-            # exists to refuse.
+            # A line beyond its reserve window IS offered the list (owner ruling (b), 22 Oct
+            # 2026, BORROW-ZERO-FREE): rungs 4 and 5 are still not walked for it, so nothing
+            # is composed, but a planner may pick a donor by hand and Confirm accepts it.
             "borrow_candidates": (
                 []
-                if fact.unplannable_reason or self.outside_reserve_window(fact)
+                if fact.unplannable_reason
                 else self._borrow_candidates(
                     fact,
                     need=sum(
@@ -5517,6 +5549,7 @@ class ProjectSupplyService:
                 invalid.append(
                     {
                         "line_no": line.line_no,
+                        "so_line_no": facts[str(line.id)].so_line_no,
                         "item_code": item_codes.get(str(line.id)),
                         "reason": "This line appears twice in the composition.",
                     }
@@ -7083,10 +7116,9 @@ class ProjectSupplyService:
         if fact.core is not None and str(line.id) == str(fact.core.id):
             refuse(invalid, "A line cannot borrow from itself.")
             return
-        # The CORE `SalesOrderLine` carries no line number of its own (that is the
-        # PROJECT mirror's `line_no`); named off the confirm payload's own
-        # `donor_line_no`, round-tripped from the proposal that offered this donor,
-        # the same way `_borrow_shortfalls` names it in the order-back note.
+        # Named off the confirm payload's own `donor_line_no` (the donor's SO line number),
+        # round-tripped from the proposal that offered this donor, the same way
+        # `_borrow_shortfalls` names it in the order-back note.
         donor_line_no = getattr(item, "donor_line_no", None)
         line_text = f" line {donor_line_no}" if donor_line_no is not None else ""
         # "Borrow from another order" OFF (S2): a refusal names the location, never the
@@ -7135,16 +7167,16 @@ class ProjectSupplyService:
         # BELOW this line needs nothing extra - that is ordinary group borrow, which the v2
         # ladder took automatically - so demanding a reason for it would make a mandatory
         # field a rubber stamp.
-        if self._needs_authorisation(fact, donor_core_line_id):
-            if not by_order:
-                # B1: a location borrow asks nobody, so stock only an authorisation could
-                # release is not this line's to take. It is never offered under OFF.
-                refuse(
-                    invalid,
-                    f"{held} is held for an order ranked ahead of this line, so it "
-                    "cannot be borrowed.",
-                )
-                return
+        #
+        # A LOCATION borrow (`by_order` False) asks nobody and is not refused on rank
+        # either (BORROW-CONFIRM-MATCH, owner ruling 22 Oct 2026: "confirm should be lenient
+        # also, confirm should match the dropdown"). The planner picked it, so it confirms;
+        # the donor is not over-committed, because this line's hold pins the units first
+        # and the donor queues against what is left (`assign()`), reading short. With the
+        # switch ON, a borrow posted without the donor's SO is a location borrow too
+        # (`_names_its_order`), so it confirms the same way: only a borrow that NAMES the
+        # donor order is asked who authorised it.
+        if by_order and self._needs_authorisation(fact, donor_core_line_id):
             if not _states_an_authorisation(item.reason):
                 refuse(
                     invalid,
@@ -7529,6 +7561,7 @@ class ProjectSupplyService:
                 {
                     "project_line_id": str(line.id),
                     "line_no": line.line_no,
+                    "so_line_no": fact.so_line_no,
                     "item_code": fact.item_code,
                 }
                 for (line, _entry, fact) in checked
@@ -7707,7 +7740,7 @@ class ProjectSupplyService:
         sense if taking its stock also takes back the promise made against it: a decision
         that still says `Reserve 30 at MWH-IB` beside stock that has just been handed to
         somebody else is a lie the next board build would print. So the donor's active
-        revision is superseded with the borrower NAMED - `Borrowed by SO<asker> line <n>` -
+        revision is superseded with the borrower NAMED - `Borrowed by <asker ref> line <SO line>` -
         and its line is re-proposed the next time anybody looks at it (`_apply_frozen` has
         nothing to apply), with its ORDER_BACK already raised at its own required date by
         `_borrow_shortfalls`.
@@ -7758,6 +7791,9 @@ class ProjectSupplyService:
             )
             .all()
         )
+        from app.services.project_line_split_service import display_line_nos
+
+        borrower_nos = display_line_nos(self.db, [str(line.id) for line in by_donor.values()])
         for core_line_id, donor_line_id, decision in rows:
             borrower = by_donor.get(str(core_line_id))
             if borrower is None or decision.state != DECISION_ACTIVE:
@@ -7765,7 +7801,7 @@ class ProjectSupplyService:
             self._reissue_without_line(
                 decision,
                 str(donor_line_id),
-                reason=f"Borrowed by SO{reference} line {borrower.line_no}",
+                reason=f"Borrowed by {reference} line {borrower_nos.get(str(borrower.id))}",
             )
 
     def _reissue_without_line(
@@ -8173,7 +8209,7 @@ class ProjectSupplyService:
                         "stock_location": code,
                         "note": (
                             f"Order-back: {donor_so_number}{line_text} lent "
-                            f"{qty_text(qty)} to {reference} line {line.line_no}"
+                            f"{qty_text(qty)} to {reference} line {fact.so_line_no}"
                             f"{agent_text}"
                         ),
                     }
@@ -8223,7 +8259,7 @@ class ProjectSupplyService:
                     continue
                 pile = pile_for(line, fact, str(item.warehouse_id))
                 pile["borrowed"] += qty
-                pile["lines"].append(line.line_no)
+                pile["lines"].append(fact.so_line_no)
                 pile["group"] = donor_group
         if not piles:
             return order_backs
@@ -8297,12 +8333,13 @@ class ProjectSupplyService:
                         "qty": _ZERO,
                         "required_date": fact.required_date or line.delivery_date,
                         "stock_location": warehouse.warehouse_code if warehouse else "",
+                        "so_line_no": fact.so_line_no,
                     }
                 back["qty"] += qty
         for back in backs.values():
             back["note"] = (
                 f"Order-back: {back['stock_location']} lent {qty_text(back['qty'])} to "
-                f"{reference} line {back['line'].line_no}"
+                f"{reference} line {back['so_line_no']}"
             )
         return list(backs.values())
 
@@ -10251,6 +10288,8 @@ class ProjectSupplyService:
         replaced, whose own holds `_free_stock` deliberately does not net - see
         `_decided_elsewhere`.
         """
+        from app.services.project_line_split_service import so_line_no
+
         pids = [pid for pid in product_ids if pid]
         wids = [wid for wid in warehouse_ids if wid]
         if not pids or not wids:
@@ -10270,6 +10309,7 @@ class ProjectSupplyService:
                 SalesOrder.customer_id,
                 SalesOrder.requested_delivery_date,
                 ProjectSalesOrderLine.line_no,
+                SalesOrderLine.line_no.label("core_line_no"),
             )
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .outerjoin(
@@ -10315,6 +10355,7 @@ class ProjectSupplyService:
                     "sales_order_id": str(row.sales_order_id),
                     "customer_id": str(row.customer_id) if row.customer_id else None,
                     "line_no": row.line_no,
+                    "so_line_no": so_line_no(row.core_line_no, row.line_no),
                     "line_id": str(row.id),
                     "open_qty": open_qty,
                     "required_date": row.required_date or row.requested_delivery_date,
@@ -10604,10 +10645,11 @@ class ProjectSupplyService:
         committed_at: Dict[str, Decimal] = {}
         for (held_warehouse, _project), qty in holds_here.items():
             committed_at[held_warehouse] = committed_at.get(held_warehouse, _ZERO) + qty
+        # BORROW-ZERO-FREE (owner, 22 Oct 2026, "not available also can borrow"): every
+        # location carrying a stock row for the item is a choice, 0 free included. Confirm
+        # records what is not free there short, the same as the own location below.
         warehouse_ids = [
-            warehouse_id
-            for warehouse_id, qty in free_here.items()
-            if qty > _ZERO and warehouse_id not in inside
+            warehouse_id for warehouse_id in free_here if warehouse_id not in inside
         ]
         warehouses = self._warehouses(warehouse_ids)
         for warehouse_id in sorted(warehouse_ids):
@@ -11084,6 +11126,13 @@ class ProjectSupplyService:
         """
 
         def compare(left: Dict[str, Any], right: Dict[str, Any]) -> int:
+            # BORROW-ZERO-FREE: a location with nothing free is listed, but behind every row
+            # with stock. Availability nets what the book owes, not what is reserved or held,
+            # so a fully spoken-for pile can read MORE available than one with 7 free, and
+            # recommending it recommends a borrow Confirm records short in full.
+            has_free = _dec(left["free_qty"]) > _ZERO, _dec(right["free_qty"]) > _ZERO
+            if has_free[0] != has_free[1]:
+                return -1 if has_free[0] else 1
             for name in ("available_after_need", "available_qty"):
                 a, b = _dec(left[name]), _dec(right[name])
                 if a != b:

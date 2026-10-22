@@ -199,6 +199,25 @@ describe('BorrowAddDialog', () => {
     expect(screen.getByText('SRT501-CP')).toBeInTheDocument();
   });
 
+  it('titles the dialog with the SO line number, not the planning order\'s own (SO-LINE-NUMBERS AC-1)', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    render(
+      <QueryClientProvider client={client}>
+        <BorrowAddDialog
+          lineNo={11}
+          soLineNo={224}
+          itemCode="SRTWB242"
+          candidates={[OTHER_LOCATION]}
+          onDone={onDone}
+          onAdd={onAdd}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText('Borrow for line 224')).toBeInTheDocument();
+    expect(screen.queryByText('Borrow for line 11')).not.toBeInTheDocument();
+  });
+
   it('says "This item" rather than nothing when the line carries no item code', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
     render(

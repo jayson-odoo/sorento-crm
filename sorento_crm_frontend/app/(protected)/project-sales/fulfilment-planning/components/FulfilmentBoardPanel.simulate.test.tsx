@@ -709,6 +709,7 @@ describe('BATCH-HELD-CANCEL U4: Simulate on a pending change with a saved Cancel
           inquiry_rows: [],
           transfers: [],
           lines_cancelled: [{ line_no: 2, item_code: 'TPE-9204' }],
+          lines_retired: [{ line_no: 1, item_code: 'WESERP10B' }],
           planning_change_applied: true,
         }),
       ],
@@ -725,8 +726,10 @@ describe('BATCH-HELD-CANCEL U4: Simulate on a pending change with a saved Cancel
     ]);
     const results = await screen.findByTestId('board-confirm-results');
     expect(results).toHaveTextContent('Simulation, nothing was saved: 1 of 1 orders would confirm');
+    // PLAN-BATCH-COUNT-DISPLAY D3: the order sentence is the decisions; the change is one note.
+    expect(results).toHaveTextContent('SO403340: would transfer 1 line to Cancel SO');
     expect(results).toHaveTextContent(
-      'SO403340: would apply the AutoCount change; would transfer 1 line to Cancel SO',
+      'Would also apply the AutoCount change from 1 Sep: 1 old line (WESERP10B) would be retired',
     );
     expect(results).not.toHaveTextContent(/commits after the pending change/);
   });

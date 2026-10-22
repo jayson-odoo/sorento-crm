@@ -24,6 +24,7 @@ import {
   type DraftLine,
 } from '../../_shared/lib/supplyComposition';
 import { poolShareLimitsFromLine } from '../../_shared/lib/poolShare';
+import { soLineNoText } from '../../_shared/lib/fulfilmentBoard';
 import { BoardLadderOptionsTable, debtMonthLabel } from './BoardLadderOptionsTable';
 import { BorrowAddDialog } from './BorrowAddDialog';
 import { ClassificationProofPopover } from './ClassificationProofPopover';
@@ -123,7 +124,7 @@ export function SupplyLineCard({
       <header className="flex flex-col gap-1 border-b border-border px-3 py-2.5 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="truncate text-sm font-medium">
-            {`Line ${line.line_no}${line.item_code ? ` · ${line.item_code}` : ''}`}
+            {`Line ${soLineNoText(line)}${line.item_code ? ` · ${line.item_code}` : ''}`}
           </div>
           <div className="truncate text-sm text-muted-foreground" title={line.description ?? ''}>
             {line.description || 'No description'}
@@ -253,7 +254,7 @@ export function SupplyLineCard({
                       step="any"
                       value={row.qty}
                       error={quantityError(row.qty)}
-                      aria-label={`Reserve at ${row.location ?? 'the fulfilment location'} on line ${line.line_no}`}
+                      aria-label={`Reserve at ${row.location ?? 'the fulfilment location'} on line ${soLineNoText(line)}`}
                       onChange={(event) => {
                         const next = [...draft.reserve];
                         next[index] = { ...row, qty: event.target.value };
@@ -288,7 +289,7 @@ export function SupplyLineCard({
                         step="any"
                         value={row.qty}
                         error={quantityError(row.qty)}
-                        aria-label={`Borrow from ${row.donor_project_ref ?? row.warehouse_code} on line ${line.line_no}`}
+                        aria-label={`Borrow from ${row.donor_project_ref ?? row.warehouse_code} on line ${soLineNoText(line)}`}
                         onChange={(event) => {
                           const next = [...draft.borrow];
                           next[index] = { ...row, qty: event.target.value };
@@ -305,7 +306,7 @@ export function SupplyLineCard({
                         type="button"
                         mode="icon"
                         variant="dim"
-                        aria-label={`Remove the borrow from ${row.donor_project_ref ?? row.warehouse_code} on line ${line.line_no}`}
+                        aria-label={`Remove the borrow from ${row.donor_project_ref ?? row.warehouse_code} on line ${soLineNoText(line)}`}
                         onClick={() =>
                           setBorrow(draft.borrow.filter((entry) => entry.key !== row.key))
                         }
@@ -366,7 +367,7 @@ export function SupplyLineCard({
                   step="any"
                   value={draft.buy_qty}
                   error={quantityError(draft.buy_qty)}
-                  aria-label={`Buy on line ${line.line_no}`}
+                  aria-label={`Buy on line ${soLineNoText(line)}`}
                   onChange={(event) => onChange({ ...draft, buy_qty: event.target.value })}
                   className="h-8 w-28 tabular-nums"
                 />
@@ -435,6 +436,7 @@ export function SupplyLineCard({
       {adding && (
         <BorrowAddDialog
           lineNo={line.line_no}
+          soLineNo={line.so_line_no}
           itemCode={line.item_code}
           lineId={line.project_line_id}
           candidates={line.borrow_candidates}
@@ -467,7 +469,7 @@ function BlockedLineCard({
       <header className="flex flex-col gap-1 border-b border-border px-3 py-2.5 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="truncate text-sm font-medium">
-            {`Line ${line.line_no}${line.item_code ? ` · ${line.item_code}` : ''}`}
+            {`Line ${soLineNoText(line)}${line.item_code ? ` · ${line.item_code}` : ''}`}
           </div>
           <div className="truncate text-sm text-muted-foreground" title={line.description ?? ''}>
             {line.description || 'No description'}

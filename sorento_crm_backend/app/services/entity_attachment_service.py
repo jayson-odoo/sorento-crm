@@ -293,6 +293,14 @@ class EntityAttachmentService:
             created_by=created_by,
         )
 
+    def get_link(self, link_id: str) -> Optional[EntityAttachmentLink]:
+        """The link row, or None (also for an id that is not a UUID)."""
+        try:
+            uuid.UUID(str(link_id))
+        except ValueError:
+            return None
+        return self.db.query(EntityAttachmentLink).filter(EntityAttachmentLink.id == link_id).first()
+
     def delete_link(self, link_id: str, entity_type: Optional[str] = None) -> EntityAttachmentLink:
         q = self.db.query(EntityAttachmentLink).filter(EntityAttachmentLink.id == link_id)
         if entity_type:
