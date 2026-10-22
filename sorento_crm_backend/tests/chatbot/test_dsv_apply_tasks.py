@@ -137,7 +137,7 @@ def test_apply_stock_qty_topic_reset_with_no_domain_hint_also_closes():
     assert state2.focus.tasks == ()
 
 
-def test_apply_stock_qty_topic_reset_aimed_elsewhere_parks_not_closes():
+def test_apply_stock_qty_topic_reset_aimed_elsewhere_closes_not_parks():
     from app.services.chatbot.turn.apply import apply
     from app.services.chatbot.turn.state import Focus
 
@@ -151,9 +151,7 @@ def test_apply_stock_qty_topic_reset_aimed_elsewhere_parks_not_closes():
 
     state2, _plan = apply(_state(focus), v, build_policy())
 
-    stock = _task_of_kind(state2.focus, "stock_qty")
-    assert stock.status == "parked"
-    assert _slot_values(stock) == {"uuid-a": 5, "uuid-c": None}, "the slots ride unchanged"
+    assert state2.focus.tasks == (), state2.focus.tasks
 
 
 # --------------------------------------------------------------------------- #
