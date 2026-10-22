@@ -7739,7 +7739,7 @@ class ProjectSupplyService:
         sense if taking its stock also takes back the promise made against it: a decision
         that still says `Reserve 30 at MWH-IB` beside stock that has just been handed to
         somebody else is a lie the next board build would print. So the donor's active
-        revision is superseded with the borrower NAMED - `Borrowed by SO<asker> line <n>` -
+        revision is superseded with the borrower NAMED - `Borrowed by <asker ref> line <SO line>` -
         and its line is re-proposed the next time anybody looks at it (`_apply_frozen` has
         nothing to apply), with its ORDER_BACK already raised at its own required date by
         `_borrow_shortfalls`.
@@ -7800,7 +7800,7 @@ class ProjectSupplyService:
             self._reissue_without_line(
                 decision,
                 str(donor_line_id),
-                reason=f"Borrowed by SO{reference} line {borrower_nos.get(str(borrower.id))}",
+                reason=f"Borrowed by {reference} line {borrower_nos.get(str(borrower.id))}",
             )
 
     def _reissue_without_line(
