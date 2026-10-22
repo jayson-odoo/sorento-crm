@@ -398,8 +398,16 @@ def test_a_reset_naming_nothing_wipes_what_was_held_and_the_next_stock_ask_fetch
         assert new_state.focus.products == [], (shape, new_state.focus.products)
         follow = verdict(domain_hint="inventory", intent_hint="check_stock", entities=[])
         if gate:
+            # After a full reset nothing is shown, so the applier runs its first-ask path (no
+            # state gate, by design): the follow-up goes through it without `_turn`'s gate check.
             follow["state_changes"] = []
-        _after, plan2 = _turn(new_state, follow)
+            applied = chat_state.apply_changes(
+                new_state, follow, open_question=question_mod.open_question(new_state.pending, new_state.focus.tasks),
+                domains=DOMAINS, kinds=KINDS, brands=[], positions_read_elsewhere=False,
+            )
+            _after, plan2 = apply(applied.state, applied.verdict, build_policy())
+        else:
+            _after, plan2 = _turn(new_state, follow)
         held = {"ZZC001", TWENTY[0]}
         fetched = {e.get("canonical_code") for spec in plan2.fetch for e in spec.entities}
         assert not fetched & held, (shape, fetched)
