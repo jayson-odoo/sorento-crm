@@ -115,7 +115,9 @@ def test_a_reset_small_talk_model_sees_no_offer_team_task_or_list(
     assert not (shown.get("focus") or {}).get("tasks"), (shown.get("focus") or {}).get("tasks")
     assert not (shown.get("focus") or {}).get("last_list"), (shown.get("focus") or {}).get("last_list")
     assert "variables" not in shown, shown.get("variables")
-    for word in ("team_pick", "warehouse", "stock_qty"):
+    # The offer's kind and its hand-over team, and the parked task's kind. (The focus wire always
+    # carries an empty `"warehouse": []` location axis, so the bare word is no signal.)
+    for word in ("team_pick", '"team":"warehouse"', "stock_qty"):
         assert word not in prompt, (word, prompt)
 
 
