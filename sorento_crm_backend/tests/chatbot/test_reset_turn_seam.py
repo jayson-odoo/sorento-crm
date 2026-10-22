@@ -1004,3 +1004,23 @@ def test_round12b_guard_routes_as_at_b173(turn, name, gate):
     assert (result.reply or {}).get("text") != ACK["en"], (result.branch_kind, (result.reply or {}).get("text"))
     assert "reset_turn" not in t.trace_of(result), "the reset seam answered a turn that is no reset"
     assert _lane_actions_tools(t, result) == B173_R12B[name], _lane_actions_tools(t, result)
+
+
+# --- round 12c: family false is the exact code alone, no widening -------------------------------------
+#
+# Reviewer condition on a906aca2f2: `family` is a required parser field (true, false or null); false
+# means the exact code alone, so the EVAL-BENCH contacts 01 / 02 read may carry it and is still a reset.
+
+
+@pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
+def test_round12c_the_all_broaden_with_family_false_over_nothing_open_is_one_reset_turn(turn, resolver_calls, gate):
+    t = turn(gate)
+    stored = _held_subject()
+    result = t.say(stored, _measured_all_broaden(gate, family=False), "clear all")
+    reply = (result.reply or {}).get("text") or ""
+    assert reply == ACK["en"], (result.branch_kind, reply)
+    assert "every stock" not in reply, reply
+    assert not t.tool_calls, t.tool_calls
+    assert not resolver_calls, resolver_calls
+    assert not t.casual_calls, "a model was called on a reset turn"
+    _assert_the_reset_turn(t, result, stored)
