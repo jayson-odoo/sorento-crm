@@ -1113,7 +1113,7 @@ describe('decideComposition: the six Decide items (D1, AC-5 to AC-9, AC-51)', ()
     expect(result.warning).toBe('only 0 free at BRW-BB');
   });
 
-  it('AC-9: skips a location short of the whole line', () => {
+  it('BORROW-ZERO-FREE (owner 22 Oct): a location short of the whole line is never capped, saved short', () => {
     const row = decideRow({
       borrow_candidates: [
         {
@@ -1122,6 +1122,55 @@ describe('decideComposition: the six Decide items (D1, AC-5 to AC-9, AC-51)', ()
           warehouse_id: 'wh-ir',
           free_qty: '30',
           donor_impact: { free_before: '30', free_after_full_borrow: '0', committed_qty: '0' },
+        },
+      ],
+    });
+
+    const result = decideComposition(row, 'borrow_other', 'DC1-IR');
+    expect(result.skip).toBeUndefined();
+    expect(result.borrow).toEqual([
+      expect.objectContaining({ warehouse_id: 'wh-ir', warehouse_code: 'DC1-IR', qty: '100' }),
+    ]);
+    expect(result.warning).toBe('only 30 free at DC1-IR');
+  });
+
+  it('BORROW-ZERO-FREE (owner 22 Oct): a location with nothing free is a Borrow too, saved short', () => {
+    const empty = {
+      source: 'other_location' as const,
+      warehouse_code: 'MWH-IR',
+      warehouse_id: 'wh-mwh-ir',
+      free_qty: '0',
+      donor_impact: { free_before: '0', free_after_full_borrow: '0', committed_qty: '0' },
+      donor_so_number: null,
+      donor_core_line_id: null,
+    };
+    const result = decideComposition(
+      decideRow({ qty: '5', fulfilment_warehouse_id: 'wh-own', borrow_candidates: [empty] }),
+      'borrow_other',
+      'MWH-IR',
+    );
+
+    expect(result.skip).toBeUndefined();
+    expect(result.borrow).toEqual([
+      expect.objectContaining({ warehouse_id: 'wh-mwh-ir', warehouse_code: 'MWH-IR', qty: '5' }),
+    ]);
+    expect(result.warning).toBe('only 0 free at MWH-IR');
+  });
+
+  it('BORROW-ZERO-FREE: a location reached only through donor lines is still skipped on an over-ask', () => {
+    // Confirm refuses an over-ask on a donor line (`_check_group_borrow`); only a plain
+    // location row is recorded short, so with none there is nowhere for the rest to ride.
+    const row = decideRow({
+      borrow_candidates: [
+        {
+          source: 'other_location',
+          warehouse_code: 'DC1-IR',
+          warehouse_id: 'wh-ir',
+          free_qty: '30',
+          donor_impact: { free_before: '30', free_after_full_borrow: '0', committed_qty: '0' },
+          rung: 'order_borrow',
+          donor_so_number: null,
+          donor_core_line_id: 'core-a',
         },
       ],
     });
@@ -1355,7 +1404,13 @@ describe('decideComposition: the measured null-id payload never double counts a 
       'X',
     );
 
-    expect(result.skip).toBe('only 4 free at X');
+    // BORROW-ZERO-FREE (owner 22 Oct): never capped, so the line is saved short on the
+    // plain location row - but the bin is still one pile of 4, never 8 or 16.
+    expect(result.skip).toBeUndefined();
+    expect(result.warning).toBe('only 4 free at X');
+    expect((result.borrow ?? []).map((b) => [b.source, b.warehouse_id, b.qty])).toEqual([
+      ['other_location', 'wh-x', '6'],
+    ]);
   });
 
   it('with the donor lines the board now carries, covers 6 as 4 + 2 off the two lines', () => {

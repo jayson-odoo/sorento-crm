@@ -470,7 +470,7 @@ class _Row:
         self.borrow_candidates = []
         # The ATP reserve window verdict for this line (`ProjectSupplyService
         # .outside_reserve_window`), read once and then answered the same way by the sentence
-        # on the row, by its donor list and by its trail.
+        # on the row and by its trail. Not by its donor list (owner ruling (b), 22 Oct 2026).
         self.outside_reserve_window = False
         # Warehouse CODE -> id, for the locations this line's Reserve may name. A confirm
         # component addresses a warehouse by id and the screen reads a code, so the pair has
@@ -2952,13 +2952,10 @@ class FulfilmentBoardService:
             # captain's flow is "borrow instead of taking the reserved stock", and a line met
             # from its own Reserve had no donors on it, so Amend said nobody held any and
             # offered no Borrow. A need of 0 ranks the donors by availability alone.
-            # EXCEPT beyond the reserve window, where the two borrow rungs are not walked at
-            # all: offering the donors anyway is offering the one move the rule forbids.
-            row.borrow_candidates = (
-                []
-                if row.outside_reserve_window
-                else self._donors_for(borrow_cache, row, fact, bought)
-            )
+            # Beyond the reserve window too (owner ruling (b), 22 Oct 2026, BORROW-ZERO-FREE):
+            # the two borrow rungs are still not walked and the trail still names nobody
+            # (`_trail` reads the window itself), but a planner may pick a donor by hand.
+            row.borrow_candidates = self._donors_for(borrow_cache, row, fact, bought)
 
             # THE TRAIL FIRST, and the sources from what it offered. The Buy's own
             # sentence names where a person could still borrow from, and the only honest
@@ -3000,12 +2997,8 @@ class FulfilmentBoardService:
             row.outside_reserve_window = self.supply.outside_reserve_window(
                 fact, as_of=as_of
             )
-            row.borrow_candidates = (
-                []
-                if row.outside_reserve_window
-                else self._donors_for(
-                    borrow_cache, row, fact, row.proposed.get(BUY, _ZERO)
-                )
+            row.borrow_candidates = self._donors_for(
+                borrow_cache, row, fact, row.proposed.get(BUY, _ZERO)
             )
             # Amend on a covered line reads the same flags a proposal states: a discontinued
             # product needs a Buy reason whether or not the line was decided before.

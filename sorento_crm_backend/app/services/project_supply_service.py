@@ -1567,11 +1567,13 @@ class ProjectSupplyService:
         never outside anything: there is no delivery date to be beyond, and deciding on a date
         nobody stated is exactly the guess the rest of this engine refuses to make.
 
-        PUBLIC because the verdict has three readers and must never have three answers: the
-        ladder that skips two rungs on it, the sheet that offers no donor beside it, and the
-        board that has to say so on the row and in the trail. The board read it as "nothing
-        free at L, and borrowing is possible from ..." on SO414341 precisely because it had no
-        way to ask.
+        PUBLIC because the verdict has readers that must never have different answers: the
+        ladder that skips two rungs on it, and the board that has to say so on the row and in
+        the trail. The board read it as "nothing free at L, and borrowing is possible from ..."
+        on SO414341 precisely because it had no way to ask.
+
+        The sheet's and the board's donor LISTS do not read it: a planner may still pick a
+        Borrow by hand beyond the window (owner ruling (b), 22 Oct 2026, BORROW-ZERO-FREE).
         """
         if fact.required_date is None:
             return False
@@ -5075,12 +5077,12 @@ class ProjectSupplyService:
             # Ranked against what this line still has to cover - the Buy the ladder just
             # proposed - because that is the quantity a donor would be asked for (13.11).
             # An unplannable line is offered nobody's stock: there is no need to rank against.
-            # Neither is a line beyond its reserve window (the ATP rule): rungs 4 and 5 are
-            # not walked for it, so a donor list beside it would OFFER the one thing the rule
-            # exists to refuse.
+            # A line beyond its reserve window IS offered the list (owner ruling (b), 22 Oct
+            # 2026, BORROW-ZERO-FREE): rungs 4 and 5 are still not walked for it, so nothing
+            # is composed, but a planner may pick a donor by hand and Confirm accepts it.
             "borrow_candidates": (
                 []
-                if fact.unplannable_reason or self.outside_reserve_window(fact)
+                if fact.unplannable_reason
                 else self._borrow_candidates(
                     fact,
                     need=sum(
@@ -10604,10 +10606,11 @@ class ProjectSupplyService:
         committed_at: Dict[str, Decimal] = {}
         for (held_warehouse, _project), qty in holds_here.items():
             committed_at[held_warehouse] = committed_at.get(held_warehouse, _ZERO) + qty
+        # BORROW-ZERO-FREE (owner, 22 Oct 2026, "not available also can borrow"): every
+        # location carrying a stock row for the item is a choice, 0 free included. Confirm
+        # records what is not free there short, the same as the own location below.
         warehouse_ids = [
-            warehouse_id
-            for warehouse_id, qty in free_here.items()
-            if qty > _ZERO and warehouse_id not in inside
+            warehouse_id for warehouse_id in free_here if warehouse_id not in inside
         ]
         warehouses = self._warehouses(warehouse_ids)
         for warehouse_id in sorted(warehouse_ids):
@@ -11084,6 +11087,13 @@ class ProjectSupplyService:
         """
 
         def compare(left: Dict[str, Any], right: Dict[str, Any]) -> int:
+            # BORROW-ZERO-FREE: a location with nothing free is listed, but behind every row
+            # with stock. Availability nets what the book owes, not what is reserved or held,
+            # so a fully spoken-for pile can read MORE available than one with 7 free, and
+            # recommending it recommends a borrow Confirm records short in full.
+            has_free = _dec(left["free_qty"]) > _ZERO, _dec(right["free_qty"]) > _ZERO
+            if has_free[0] != has_free[1]:
+                return -1 if has_free[0] else 1
             for name in ("available_after_need", "available_qty"):
                 a, b = _dec(left[name]), _dec(right[name])
                 if a != b:
