@@ -84,7 +84,7 @@ def test_s5_1_a_reset_run_sees_nothing_from_before_the_reset(rec) -> None:
     rec.session_vars = {}  # Reset: a new run id and empty session vars
     _text, block = rec.say_in("zzt-run-2", _product_ask(), "ZZR2 first")
     assert "ZZR1" not in block, block
-    assert "Previous response: (none)" in block, block
+    assert "Previous response: \n" in block, block  # the renderer's empty form (turn/context.py)
     assert "Recent conversations" not in block, block
 
 
