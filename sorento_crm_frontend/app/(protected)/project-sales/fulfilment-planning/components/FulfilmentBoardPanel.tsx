@@ -97,6 +97,9 @@ import {
   cancelledLinesFor,
   confirmNoticeLines,
   failingLineText,
+  HELD_BACK_ALONE,
+  HELD_BACK_BESIDE_CONFIRM,
+  settleHeldBackNotes,
   shiftedDayWindow,
   soLineLabel,
   unpostableDecidedFor,
@@ -1737,9 +1740,9 @@ export function FulfilmentBoardPanel({
             so_number: soNumber,
             ok: false,
             heldBack: true,
-            error: postingSomethingElse
-              ? 'was confirmed, but its staged rejection could not ride along with the pending change; it commits after the change is applied.'
-              : 'has a staged rejection that commits after the pending change is applied.',
+            // Settled against the server's answer (`settleHeldBackNotes`): "was confirmed"
+            // survives only when the order actually came back ok.
+            error: postingSomethingElse ? HELD_BACK_BESIDE_CONFIRM : HELD_BACK_ALONE,
             failing_lines: heldBackByBatch.map((contribution) => ({
               line_no: contribution.line_no,
               reason: 'rejection is staged; it commits after the pending change is applied.',
@@ -1883,7 +1886,7 @@ export function FulfilmentBoardPanel({
       }
       const { skipped, contributions } = built;
       if (built.orders.length === 0) {
-        if (skipped.length > 0) setBatchResults(skipped);
+        if (skipped.length > 0) setBatchResults(settleHeldBackNotes(skipped));
         return true;
       }
       // DRY RUN FIRST (FULFIL-CONFIRM-SCOPE): the server runs this very body and rolls it back,
@@ -1941,7 +1944,7 @@ export function FulfilmentBoardPanel({
         });
       const body = built.body.batch_id ? { orders, batch_id: built.body.batch_id } : { orders };
       if (orders.length === 0) {
-        setBatchResults([...skipped, ...refusals]);
+        setBatchResults(settleHeldBackNotes([...skipped, ...refusals]));
         return true;
       }
 
@@ -1983,7 +1986,7 @@ export function FulfilmentBoardPanel({
           ]),
         ),
       );
-      setBatchResults([...skipped, ...refusals, ...result.results]);
+      setBatchResults(settleHeldBackNotes([...skipped, ...refusals, ...result.results]));
 
       // What the press produced, in the three numbers a planner is about to act on (D3):
       // the promises made, the movements somebody now has to approve (the panel below lists
@@ -2353,7 +2356,7 @@ export function FulfilmentBoardPanel({
           : labelled;
       });
       setSimulated(true);
-      setBatchResults([...skipped, ...named]);
+      setBatchResults(settleHeldBackNotes([...skipped, ...named]));
     } catch {
       // The mutation's own `onError` already toasted the message.
     } finally {

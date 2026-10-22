@@ -41,13 +41,21 @@ describe('settleHeldBackNotes', () => {
   });
 
   it('drops it when the order was never posted (dry run left nothing to confirm)', () => {
-    const nothing = { pso_id: PSO, ok: false, heldBack: true, error: 'has nothing to confirm' };
+    const nothing = {
+      pso_id: PSO,
+      ok: false,
+      heldBack: true,
+      error: 'has nothing to confirm',
+    };
     const [settled] = settleHeldBackNotes([note, nothing]);
     expect(settled.error).toBe(HELD_BACK_ALONE);
   });
 
   it("does not take another order's success as this order's", () => {
-    const [settled] = settleHeldBackNotes([note, { pso_id: 'pso-other', ok: true }]);
+    const [settled] = settleHeldBackNotes([
+      note,
+      { pso_id: 'pso-other', ok: true },
+    ]);
     expect(settled.error).toBe(HELD_BACK_ALONE);
   });
 });
