@@ -726,3 +726,93 @@ def test_q1w_guard_a_name_ask_with_a_parser_pick_is_answered_directly(session_fa
     assert "Did you mean" not in text, text
     assert text.startswith("Stock summary") and f"*Product Code:* {code}" in text, text
     assert _stocked(c, 0) == [code], _stocked(c, 0)
+
+
+# --- the same correction with a quantity (EVAL-BENCH mini gate, v92 live miss) --------------------------
+#
+# Live turn 'Srtwc8066-sh-250 50pc' (a dealer, availability mode, composers on): the pick was fetched
+# with requested_quantities {pick: 50} and the reply was "SRTWC8036-SH-250 x 50: ... Couldn't find
+# Srtwc8066-sh-250." Expected (crew (a)): the did-you-mean with the pick first, as without a quantity;
+# no "x 50" line for the pick on this turn; never a "Couldn't find X." line without its suggestions;
+# the 50 kept for the follow-up pick. Driven as the live contact: availability mode, composers on.
+
+QTY_SHAPES = pytest.mark.parametrize("shape", ["entity_quantity", "demand_qty"])
+
+
+def _dealer_cap_console(session_factory, monkeypatch, stub_access, phone: str, gate: bool):  # noqa: F811
+    from app.config import settings
+
+    c, resolves = _cap_console(session_factory, monkeypatch, stub_access, phone, gate)
+    monkeypatch.setattr(turn_runtime, "_stock_availability_only", lambda *a, **k: True)
+    monkeypatch.setattr(settings, "chat_composer_enabled", True, raising=False)
+    c.stock_on_hand = None
+    return c, resolves
+
+
+def _ask_qty(raw: str, pick: str, gate: bool, shape: str, qty: int = 50) -> dict[str, Any]:
+    v = _ask(raw, pick, gate)
+    if shape == "entity_quantity":
+        v["entities"][0]["quantity"] = qty
+    else:
+        v["demand_qty"] = qty
+    return v
+
+
+def _asked_quantities(c: EngineConsole, since: int = 0) -> list[Any]:
+    return [a.get("requested_quantities") for name, a in c.tool_calls[since:] if name == STOCK
+            and a.get("requested_quantities")]
+
+
+def _no_bare_miss_line(text: str) -> None:
+    """A "Couldn't find X." line only ever rides with its suggestions."""
+    if "Couldn't find" in text:
+        assert "Did you mean" in text, f"a 'Couldn't find' line with no suggestions: {text!r}"
+
+
+@PATHS
+@QTY_SHAPES
+def test_q1w_a_corrected_code_with_a_quantity_asks_did_you_mean_with_the_pick_first(
+    session_factory, monkeypatch, stub_access, gate, shape  # noqa: F811
+):
+    """W6 (entity_quantity) / W6b (demand_qty), both paths."""
+    c, _ = _dealer_cap_console(session_factory, monkeypatch, stub_access, f"+60000028{len(shape) % 10}{int(gate)}", gate)
+    text = c.say(f"{CAP_RAW} 50pc", _ask_qty(CAP_RAW, CAP_PICK, gate, shape))
+    assert "Did you mean" in text, text
+    assert f"{CAP_PICK} x 50" not in text and "x 50" not in text, f"the pick was answered with the quantity: {text!r}"
+    offered = _offered(c)
+    assert offered[0] == CAP_PICK and offered.count(CAP_PICK) == 1, offered
+    assert _asked_quantities(c) == [], ("the pick was fetched with the quantity", _asked_quantities(c))
+    # The only stock call is the did-you-mean's own has-it probe, over the offered codes in order.
+    assert _stocked(c, 0) == offered, _stocked(c, 0)
+    _no_bare_miss_line(text)
+
+
+@PATHS
+@QTY_SHAPES
+def test_q1w_the_pick_after_the_did_you_mean_answers_the_kept_quantity(
+    session_factory, monkeypatch, stub_access, gate, shape  # noqa: F811
+):
+    """W7: "1" answers the pick at the 50 the corrected message gave, with no re-ask and no
+    left-over "Couldn't find <raw>." line (the raw was answered by the pick)."""
+    c, _ = _dealer_cap_console(session_factory, monkeypatch, stub_access, f"+60000029{len(shape) % 10}{int(gate)}", gate)
+    c.say(f"{CAP_RAW} 50pc", _ask_qty(CAP_RAW, CAP_PICK, gate, shape))
+    since = len(c.tool_calls)
+    text = c.say("1", _pick(gate, 1))
+    assert f"{CAP_PICK} x 50" in text, text
+    assert "how many" not in text.lower(), text
+    assert _asked_quantities(c, since) in ([{c.uuid_of[CAP_PICK]: 50}], [f'{{"{c.uuid_of[CAP_PICK]}":50}}']), (
+        _asked_quantities(c, since))
+    _no_bare_miss_line(text)
+
+
+@PATHS
+@QTY_SHAPES
+def test_q1w_guard_a_correctly_typed_code_with_a_quantity_answers_directly(
+    session_factory, monkeypatch, stub_access, gate, shape  # noqa: F811
+):
+    """Guard: 'SRTWC8036-SH-250 50pc' (raw == canonical) answers the stock line x 50, unchanged."""
+    c, _ = _dealer_cap_console(session_factory, monkeypatch, stub_access, f"+60000030{len(shape) % 10}{int(gate)}", gate)
+    text = c.say(f"{CAP_PICK} 50pc", _ask_qty(CAP_PICK, CAP_PICK, gate, shape))
+    assert text.startswith(f"{CAP_PICK} x 50:"), text
+    assert "Did you mean" not in text and "Couldn't find" not in text, text
+    assert _asked_quantities(c) in ([{c.uuid_of[CAP_PICK]: 50}], [f'{{"{c.uuid_of[CAP_PICK]}":50}}']), _asked_quantities(c)
