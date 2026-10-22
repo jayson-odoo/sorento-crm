@@ -37,3 +37,7 @@ Plan: `PLAN-report-smart-owner-1022.md`.
 - AC-S3-P. Prompt v98 measured on the crew copy: delivery gold not below v97 (9/11); parser_when_deliver raw `status`
   not below v96 (22/24); channel class rs92-c-* not below v96 (x2); the 13 owner turns: 2, 7, 8, 9 better, none worse
   than the v96 replay.
+- AC-S3-4. A WHEN ask parsed with `order_status` outstanding and `status` null keeps outstanding in the State, so the
+  follow-up "and <another code>?" re-runs the outstanding ask for that code; with `document` [DO] it reaches the DO
+  outstanding path exactly as `status` outstanding + [DO] does (never "SO, DO or both?" for a contact with the SO
+  grant). Near misses: `status` outstanding with `order_status` null, `status` delivered, and both null behave as today.

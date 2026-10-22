@@ -108,6 +108,15 @@ turns (chatbot.turns on the crew copy).
   message's own period word is no pick); `group_by` channel only when the channels themselves are ranked (a channel
   value alone under a held ranking is a refine). v92 needs the delivery edit at the same lines 107, 233, 261.
 
+- S3-4 STATUS READERS (CODE, crew (a) 23 Oct). The parser fills the delivery status in `status` or in `order_status`
+  (v97 / v100 left `status` null on 9-12 of 24 WHEN asks, `order_status` outstanding on all). Readers disagree:
+  decide.py:683, chat_state.py:503, apply.py:1652/1661/1717 read `status or order_status`; apply.py:1306/1320/1324 and
+  `lane_parse_output` (turn_runtime.py:2043-2049) read `status` only, so focus.status drops outstanding (a follow-up
+  cannot repeat it) and a named DO never becomes do_outstanding. Fix: every reader takes the same value, `status` or
+  `order_status`, through one place.
+- Prompt candidate after S3-P: v100 (699cb49d, NON-production) = v97 + v99's channel `group_by` line and Candidates
+  year line (v98 0ee024ce and v99 412ed671 measured and set aside; numbers in crew state).
+
 ### Gates (S3)
 
 Red-first per item (tester writes from the UAC, coder makes green, kill test per fix), touched suites `-n 2`,
