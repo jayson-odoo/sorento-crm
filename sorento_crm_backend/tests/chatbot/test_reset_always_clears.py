@@ -157,6 +157,19 @@ V92 = {
                                   changes=[_op("close_question"), _op("new_subject")]),
     "v92_clear_slots": dict(topic_reset=True, mode=None, entity_op="clear", broaden_axis="all",
                             changes=[_op("clear", "customer"), _op("clear", "period")]),
+    # Reviewer B1: a cancel beside ops other than a lone close_question. The state applier
+    # strips the answer of a turn its ops do not answer, so the reset is read before it runs.
+    "v92_clear_product_close": dict(topic_reset=False, mode="cancel", domain_hint="inventory",
+                                    intent_hint="check_stock",
+                                    changes=[_op("clear", "product"), _op("close_question")]),
+    "v92_clear_product": dict(topic_reset=False, mode="cancel", domain_hint="inventory",
+                              intent_hint="check_stock", changes=[_op("clear", "product")]),
+    "v92_clear_slots_cancel": dict(topic_reset=False, mode="cancel", domain_hint="inventory",
+                                   intent_hint="check_stock",
+                                   changes=[_op("clear", "customer"), _op("clear", "period")]),
+    "v92_new_subject_clear_customer": dict(topic_reset=False, mode="cancel", domain_hint="inventory",
+                                           intent_hint="check_stock",
+                                           changes=[_op("new_subject"), _op("clear", "customer")]),
 }
 
 
@@ -182,8 +195,16 @@ def _cases(state_shapes):
     )
 
 
-ON_A_TASK_OR_OFFER = ["v92_close", "v92_new_subject", "v92_close_new_subject", "v92_clear_slots"]
-ON_A_TIER_PICK = ["v92_answer", "v92_new_subject", "v92_close_new_subject", "v92_clear_slots"]
+CANCEL_BESIDE_OTHER_OPS = [
+    "v92_clear_product_close", "v92_clear_product", "v92_clear_slots_cancel", "v92_new_subject_clear_customer",
+]
+ON_A_TASK_OR_OFFER = [
+    "v92_close", "v92_new_subject", "v92_close_new_subject", "v92_clear_slots", "v92_answer",
+    *CANCEL_BESIDE_OTHER_OPS,
+]
+ON_A_TIER_PICK = [
+    "v92_answer", "v92_new_subject", "v92_close_new_subject", "v92_clear_slots", *CANCEL_BESIDE_OTHER_OPS,
+]
 
 
 def _turn(state, v):
@@ -299,3 +320,101 @@ def test_guard_a_no_over_an_offer_is_still_a_decline(gate):
     assert plan.trace.lane == "escalation_declined", (plan.trace.lane, plan.trace.rules_fired)
     assert "answer_pending_decline" in plan.trace.rules_fired
     assert new_state.pending is None
+
+
+# --- round 3 (reviewer S1 to S4b) ---------------------------------------------------------------------
+
+#: One reset read per gate: the v63 cancel on the old path, the v92 close on the state path.
+RESET_READ = {False: "v63_cancel", True: "v92_close"}
+
+
+@GATES
+@pytest.mark.parametrize("context", ["offer_and_parked_task", "offer_with_a_held_customer"])
+@pytest.mark.parametrize("flag", ["escalation_declined", "is_escalation_confirmation"])
+def test_a_reset_over_an_offer_reads_no_escalation_flag(gate, context, flag):
+    """S1: the parser's escalation flags ride on a reset parse too; the offer closes unanswered,
+    so neither "Escalation declined." nor a hand-over comes of them."""
+    v = _clear_all(RESET_READ[gate])
+    v["escalation"] = {**(v.get("escalation") or {}), flag: True}
+    v["is_affirmative"] = flag == "is_escalation_confirmation"
+    _assert_the_reset(*_turn(_session(context, gate), v))
+
+
+def _echo(code):
+    """The parser's echo of a held row: `current_message` false, so this message names nothing."""
+    return {"raw": code, "hint": "product", "canonical_code": code, "uuid": ht.uuid_of(code),
+            "current_message": False, "confident": True}
+
+
+@GATES
+@pytest.mark.parametrize("shape", ["cancel", "reset"])
+def test_an_echo_of_a_held_line_names_nothing_and_the_reset_fetches_nothing(gate, shape):
+    """S2: a carried echo (`current_message` false) is not naming. A cancel beside one is a reset,
+    and a reset never writes the echo back to fetch it."""
+    if gate:
+        v = _clear_all("v92_close" if shape == "cancel" else "v92_new_subject")
+    else:
+        v = _clear_all("v63_cancel" if shape == "cancel" else "v63_reset")
+    v["entities"] = [_echo(TWENTY[4])]
+    new_state, plan = _turn(_session("offer_and_parked_task", gate), v)
+    _assert_the_reset(new_state, plan)
+    held = [p.get("canonical_code") for p in new_state.focus.products]
+    assert TWENTY[4] not in held, ("the echo was written back to be fetched next", held)
+
+
+@GATES
+def test_a_cancel_naming_a_line_of_the_open_quantities_question_is_a_reset(gate):
+    """S4b ("batal SRTZA102"): an entity that is one of the open question's own lines names
+    nothing new; the cancel resets and the line is dropped, never fetched or asked."""
+    typed = {"raw": FOUR[1], "hint": "product", "canonical_code": FOUR[1], "current_message": True,
+             "confident": True, "hint_confident": True}
+    v = _clear_all(RESET_READ[gate])
+    v["entities"] = [typed]
+    _assert_the_reset(*_turn(_session("quantities_question", gate), v))
+
+
+@GATES
+def test_guard_a_cancel_naming_a_product_off_the_open_question_is_not_a_reset(gate):
+    """S4b's other half (rule 4, fix 7): a product the question does not list is a new ask."""
+    typed = {"raw": "ZZP999", "hint": "product", "canonical_code": "ZZP999", "uuid": ht.uuid_of("ZZP999"),
+             "current_message": True, "confident": True, "hint_confident": True}
+    v = _clear_all(RESET_READ[gate])
+    v["entities"] = [typed]
+    _new_state, plan = _turn(_session("quantities_question", gate), v)
+    codes = [e.get("canonical_code") for spec in plan.fetch for e in spec.entities]
+    assert "ZZP999" in codes, (codes, plan.trace.rules_fired)
+
+
+@GATES
+@pytest.mark.parametrize("context", ["offer_with_a_held_customer", "offer"])
+def test_a_reset_naming_nothing_wipes_what_was_held_and_the_next_stock_ask_fetches_none_of_it(gate, context):
+    """S3: whatever the mode, a reset naming nothing leaves nothing held (only the tier and the
+    brands, as the old path's wipe), so a following "stock?" fetches no held customer or product."""
+    shapes = ("v63_reset", "v63_cancel") if not gate else ("v92_new_subject", "v92_clear_slots")
+    for shape in shapes:
+        new_state, plan = _turn(_session(context, gate), _clear_all(shape))
+        _assert_the_reset(new_state, plan)
+        assert new_state.focus.customers == [], (shape, new_state.focus.customers)
+        assert new_state.focus.products == [], (shape, new_state.focus.products)
+        follow = verdict(domain_hint="inventory", intent_hint="check_stock", entities=[])
+        if gate:
+            follow["state_changes"] = []
+        _after, plan2 = _turn(new_state, follow)
+        held = {"ZZC001", TWENTY[0]}
+        fetched = {e.get("canonical_code") for spec in plan2.fetch for e in spec.entities}
+        assert not fetched & held, (shape, fetched)
+
+
+def test_a_reset_that_closes_a_stock_check_drops_the_products_it_was_about():
+    """The stock-check product clear inside the reset, on its own: a state-path reset that names a
+    brand of its own (so no wipe runs) still leaves none of the closed check's products held."""
+    tasks = (ht.stock_task([(c, None) for c in FOUR], status="open", opened_at_turn=3, touched_at_turn=4),)
+    focus = Focus(customers=[_customer()], products=ht.product_rows(*FOUR), domains=["inventory"], tasks=tasks)
+    state = replace(ht.state(focus, turn_no=5), state_path=True)
+    brand = {"raw": "mocha", "hint": "brand", "canonical_code": "MOCHA", "current_message": True, "confident": True}
+    v = verdict(entities=[brand], topic_reset=True, open_question_answer=_answer(None))
+    v["state_changes"] = [_op("clear", "customer")]
+    new_state, plan = _turn(state, v)
+    assert not new_state.focus.tasks, new_state.focus.tasks
+    assert new_state.focus.products == [], new_state.focus.products
+    assert "task_close_clears_products" in plan.trace.rules_fired, plan.trace.rules_fired
