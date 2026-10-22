@@ -14,7 +14,17 @@ import {
 
 const PSO = 'pso-401624';
 
-const note = {
+type Entry = {
+  pso_id: string;
+  so_number?: string;
+  ok: boolean;
+  heldBack?: boolean;
+  error?: string | null;
+};
+
+const settle = (entries: Entry[]) => settleHeldBackNotes(entries);
+
+const note: Entry = {
   pso_id: PSO,
   so_number: 'SO401624',
   ok: false,
@@ -29,14 +39,14 @@ describe('settleHeldBackNotes', () => {
       ok: false,
       error: '1 line cannot be confirmed. Nothing was written.',
     };
-    const [settled, server] = settleHeldBackNotes([note, refused]);
+    const [settled, server] = settle([note, refused]);
     expect(settled.error).toBe(HELD_BACK_ALONE);
     expect(settled.error).not.toContain('was confirmed');
     expect(server).toBe(refused);
   });
 
   it('keeps "was confirmed" when the same order came back ok', () => {
-    const [settled] = settleHeldBackNotes([note, { pso_id: PSO, ok: true }]);
+    const [settled] = settle([note, { pso_id: PSO, ok: true }]);
     expect(settled.error).toBe(HELD_BACK_BESIDE_CONFIRM);
   });
 
@@ -47,15 +57,12 @@ describe('settleHeldBackNotes', () => {
       heldBack: true,
       error: 'has nothing to confirm',
     };
-    const [settled] = settleHeldBackNotes([note, nothing]);
+    const [settled] = settle([note, nothing]);
     expect(settled.error).toBe(HELD_BACK_ALONE);
   });
 
   it("does not take another order's success as this order's", () => {
-    const [settled] = settleHeldBackNotes([
-      note,
-      { pso_id: 'pso-other', ok: true },
-    ]);
+    const [settled] = settle([note, { pso_id: 'pso-other', ok: true }]);
     expect(settled.error).toBe(HELD_BACK_ALONE);
   });
 });
