@@ -97,11 +97,11 @@ turns (chatbot.turns on the crew copy).
   'Project' as a brand." Fix: an entity whose raw equals the verdict's own `sales_channel` (casefold; values from
   reports/ask.SALES_CHANNELS) is that channel, whatever its hint: dropped before the report words, the resolver and a
   kind pick.
-- S3-3 YEAR (CODE, wording waits crew's ask of 23 Oct). The parser takes the index candidate '2026' (MGB5020-26)
-  next to period 2026; grounding refuses the canonical (grounding.py:866-873) and the resolver's substring tier
-  (entity_resolver.py:2070-2091) fans '2026' out to 9 codes. The substring tier is deliberate for mid-code partials
-  (tests/test_product_code_resolution.py:267), so the fix is not in the tiers. Proposed: a product entity whose raw is
-  the year of the verdict's own period (both ends in that year) is the period, dropped at the S3-2 seam.
+- S3-3 YEAR (CODE, crew (a) 23 Oct). The parser takes the index candidate '2026' (MGB5020-26) next to period 2026;
+  grounding refuses the canonical (grounding.py:866-873) and the resolver's substring tier (entity_resolver.py:2070-2091)
+  fans '2026' out to 9 codes. The substring tier stays untouched (deliberate for mid-code partials,
+  tests/test_product_code_resolution.py:267). Fix: a product entity whose raw equals the year the parser set as the
+  period (date_filter_start / date_filter_end) is dropped at the S3-2 seam; no period set, or another year: kept.
 - S3-P PROMPT v98 (= v96 + r2, NON-production): delivery DO-list text phrased without the extra field names and the
   v96 WHEN wording kept (v97 left `status` null on 12/24 WHEN asks, apply.py:1306/1320 read `status` only, and
   regressed the channel class 21/24 -> 13/24); the year rule on the Candidates rule (a candidate line for the

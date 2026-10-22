@@ -29,9 +29,11 @@ Plan: `PLAN-report-smart-owner-1022.md`.
   category, customer or sales_agent re-runs with Channel: Project; never "I don't know 'Project' as a ...", never a pick
   list. Near misses: an entity whose raw is not the channel value ('Project Hardware') still resolves; with
   `sales_channel` null the entity is untouched.
-- AC-S3-3 (wording waits crew). "Top 5 salesppl in 2026 for <code>" with the parser's period 2026 and an entity
-  '2026' hinted product ranks over the <code> family only; the header never lists codes that only hold '2026'.
-  Near miss: the same entity with a period in another year is kept.
+- AC-S3-3 (crew 23 Oct). A product entity whose raw equals the year the parser itself set as the period
+  (date_filter_start and date_filter_end in that year) is dropped: "Top 5 salesppl in 2026 for <code>" ranks over the
+  <code> family only and the header never lists codes that only hold '2026'. The resolver's substring tier is untouched:
+  a partial code ('WC7601') still answers its family. A year typed with NO period set stays as-is; the same entity
+  with a period in another year stays as-is.
 - AC-S3-P. Prompt v98 measured on the crew copy: delivery gold not below v97 (9/11); parser_when_deliver raw `status`
   not below v96 (22/24); channel class rs92-c-* not below v96 (x2); the 13 owner turns: 2, 7, 8, 9 better, none worse
   than the v96 replay.
