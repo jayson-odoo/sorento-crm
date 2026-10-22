@@ -29,7 +29,7 @@ from app.services.chatbot.turn import context as context_mod
 from app.services.chatbot.turn import question as question_mod
 from app.services.chatbot.turn import task as task_mod
 from app.services.product_compatibility_service import KINDS
-from app.services.reports.ask import COMPARE_TO, SALES_MEASURES
+from app.services.reports.ask import COMPARE_TO, SALES_CHANNELS, SALES_MEASURES
 
 logger = logging.getLogger(__name__)
 
@@ -281,7 +281,7 @@ def _build_base_json_schema() -> dict[str, Any]:
             # prompt version that never emits this key still post-processes with it
             # reading as null; the field is genuinely conditional (emitted only on a
             # sales report ask) either way.
-            "sales_channel": {"type": ["string", "null"], "enum": ["dealer", "project", None]},
+            "sales_channel": {"type": ["string", "null"], "enum": [*SALES_CHANNELS, None]},
             # PLAN-chatbot-top-x-hot-selling-24sep.md "Parser (S4)": the top selling ask's
             # three axes, each nullable and each an ENUM for the reason `group_by` gives
             # (no earlier prompt version emits them, so no working turn produces a value

@@ -338,17 +338,19 @@ def _file_type_rows(db: Session) -> list[dict]:
 _WORD_SEPARATORS = _re_mod.compile(r"\s*[,;/]\s*")
 
 
-def _alias_words(db: Session) -> dict[str, list[str]]:
-    """The owner's `attachment_type_alias` lookup set (System > Lookup Sets): per option
-    value (an attachment type's name or code, case aside) its keywords."""
+def _alias_words(db: Session, set_key: str = "attachment_type_alias") -> dict[str, list[str]]:
+    """The owner's alias lookup set `set_key` (System > Lookup Sets; `attachment_type_alias`,
+    or `brand_alias` for a brand's short forms): per option value (an attachment type's name or
+    code, a brand's code, case aside) its keywords."""
     out: dict[str, list[str]] = {}
     rows = db.execute(
         sql(
             "SELECT o.value, k.keyword FROM lookup_sets s "
             "JOIN lookup_options o ON o.set_id = s.id AND o.is_active "
             "JOIN lookup_option_keywords k ON k.option_id = o.id "
-            "WHERE s.set_key = 'attachment_type_alias' AND s.is_active "
-        )
+            "WHERE s.set_key = :set_key AND s.is_active "
+        ),
+        {"set_key": set_key},
     )
     for value, keyword in rows:
         if value and keyword and keyword.strip():

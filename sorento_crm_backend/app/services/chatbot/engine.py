@@ -39,6 +39,7 @@ from app.config import settings
 from app.models.base import set_brand_scope, set_company_scope
 from app.models.chatbot_turn import ChatbotTurn
 from app.services import llm_cassette
+from app.services.reports.ask import SALES_CHANNELS
 from app.services.chatbot import direct_ingress, dispatch, jsc, llm_call, media_intake, send_order, trace as trace_mod
 from app.services.chatbot import user_turn as user_turn_mod
 from app.services.chatbot.contracts import (
@@ -4809,6 +4810,7 @@ def _run_stages_body(  # noqa: PLR0915
         open_question_line=parser.open_question_line(open_question),
         brands=brands,
         promotion_kinds=promotion_kinds,
+        sales_channels=list(SALES_CHANNELS),
         product_types=product_types,
         product_details=product_details,
         recent_exchanges=recent,
@@ -5984,6 +5986,24 @@ def _run_stages_body(  # noqa: PLR0915
                         **resolver_parse_output,
                         "domain_hint": fanout_domain,
                     }
+            # REPORT-SMART-L S2 (A''): a word whose hint is not an entity kind but is one of the
+            # parser's own verdict fields (a channel word read as `sales_channel`) is never probed,
+            # so it can never arm a kind pick. Word hints the resolver expands (product_type,
+            # certificate) and the report lane's own (sales agent, brand, category) are not fields.
+            kind_names = {k.kind for k in policy.kinds} | set(report_ask.WORD_HINTS)
+            resolver_parse_output = {
+                **resolver_parse_output,
+                "entities": [
+                    e
+                    for e in resolver_parse_output.get("entities") or []
+                    if not (
+                        isinstance(e, dict)
+                        and e.get("hint")
+                        and e.get("hint") not in kind_names
+                        and e.get("hint") in parser.PARSE_OUTPUT_JSON_SCHEMA["properties"]
+                    )
+                ],
+            }
             resolver_ctx = {
                 **ctx,
                 "parse": {**(ctx.get("parse") or {}), "output": resolver_parse_output},

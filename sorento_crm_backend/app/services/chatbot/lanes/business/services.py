@@ -799,14 +799,22 @@ def resolve_brand_token(db: Session, token: str, *, exact_only: bool = False) ->
     """Brands a word names, `(id, brand_name)`, from the live `brands` table (the list
     PR #1301 reads for its `Known brands` line). An exact brand name or code wins;
     otherwise, unless `exact_only`, a brand whose name is a whole word of the message's
-    word ("sorento brand" names Sorento)."""
+    word ("sorento brand" names Sorento). A brand's short form (`brand_alias`) is an exact match."""
     from app.models.product import Brand
 
     word = _norm(token)
     if not word:
         return []
     rows = db.query(Brand.id, Brand.brand_name, Brand.brand_code).order_by(Brand.brand_name).all()
-    exact = [(str(r[0]), r[1]) for r in rows if word in (_norm(r[1]), _norm(r[2]))]
+    # A short form the owner keeps as data (lookup set `brand_alias`, value = brand code) is an exact name.
+    from app.services.chatbot_prompt_vars import _alias_words
+
+    aliases = _alias_words(db, "brand_alias")
+    exact = [
+        (str(r[0]), r[1])
+        for r in rows
+        if word in (_norm(r[1]), _norm(r[2])) or word in {_norm(a) for a in aliases.get(_norm(r[2]), [])}
+    ]
     if exact or exact_only:
         return exact
     return [(str(r[0]), r[1]) for r in rows if _whole_word_run(r[1] or "", word)]

@@ -309,6 +309,9 @@ def run_ask(
 #: What a sales ask may be compared with: the same number of days just before the period, or
 #: the same dates a year earlier.
 COMPARE_TO = ("previous_period", "last_year")
+#: The sales channels a sales report filters by: the route, the parser schema and the parser's
+#: `Sales channels:` line all read this one tuple.
+SALES_CHANNELS = ("dealer", "project")
 
 
 def compare_window(compare_to: str, date_from: date, date_to: date) -> tuple[date, date]:

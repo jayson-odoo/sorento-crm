@@ -535,6 +535,10 @@ def active_brands(db: Session) -> list[dict[str, Any]]:
         .order_by(Brand.brand_name)
         .all()
     )
+    from app.services.chatbot_prompt_vars import _alias_words
+
+    # The owner's short forms (`brand_alias`, value = brand code) ride on the row for the Known brands line.
+    aliases = _alias_words(db, "brand_alias")
     return [
         {
             "id": row.id,
@@ -542,6 +546,7 @@ def active_brands(db: Session) -> list[dict[str, Any]]:
             "brand_code": row.brand_code,
             "company_id": row.company_id,
             "is_active": row.is_active,
+            "aliases": aliases.get(str(row.brand_code or "").strip().casefold(), []),
         }
         for row in rows
     ]
@@ -613,7 +618,13 @@ def promo_filter(
             for m in jsc.array(r.get("matches"))
         )
     }
-    product_tokens = [e for e in entities or [] if isinstance(e, dict) and e.get("hint") in (None, "", "product")]
+    # REPORT-SMART-L S2 (F): only a product typed THIS message counts; the codes the held family
+    # re-emits (`head/held_family.py`, marked `held_family`) are the State's, not the asker's.
+    product_tokens = [
+        e
+        for e in entities or []
+        if isinstance(e, dict) and e.get("hint") in (None, "", "product") and not e.get("held_family")
+    ]
     typed_product = bool(placed & set(_typed_by_token(product_tokens)))
     terms = [] if typed_product else [t.lower() for t in class_scope_terms(parse_output)]
     if not typed_product:

@@ -1088,7 +1088,21 @@ def without_kept_aside(verdict: dict[str, Any]) -> dict[str, Any]:
     rows = [e for e in verdict.get("entities") or [] if isinstance(e, dict)]
     if not any(e.get(KEPT_ASIDE) for e in rows):
         return verdict
-    return {**verdict, "entities": [e for e in verdict.get("entities") or [] if not (isinstance(e, dict) and e.get(KEPT_ASIDE))]}
+    # REPORT-SMART-L S2 (F): a brand beside a promotion kind or a flyer is that ask's subject
+    # (the promotions read narrows by it), so the parser's own `promotion_kind` / `contains_flyer`
+    # keeps it on the verdict; the fetch input still sets it aside (`fetch_entities`).
+    # With no product typed this message (the held family's members are marked, not typed).
+    promo_ask = (bool(verdict.get("promotion_kind")) or verdict.get("contains_flyer") is True) and not any(
+        e.get("hint") == "product" and e.get("current_message") is not False and not e.get("held_family") for e in rows
+    )
+    return {
+        **verdict,
+        "entities": [
+            e
+            for e in verdict.get("entities") or []
+            if not (isinstance(e, dict) and e.get(KEPT_ASIDE) and not (promo_ask and e.get("hint") == "brand"))
+        ],
+    }
 
 
 def _typed_row(entity: dict[str, Any], hint: str) -> dict[str, Any] | None:

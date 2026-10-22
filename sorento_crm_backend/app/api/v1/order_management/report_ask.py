@@ -46,7 +46,8 @@ GRANT = "sales_orders.sales_report"
 _DEFAULT_RATE_LIMIT = 10
 _DEFAULT_RATE_WINDOW_MINUTES = 10
 _DEALER_MESSAGE = "That breakdown is not available for your account."
-_CHANNELS = {"dealer": "Dealer", "project": "Project team"}
+_CHANNEL_LABELS = {"dealer": "Dealer", "project": "Project team"}
+_CHANNELS = {c: _CHANNEL_LABELS[c] for c in ask.SALES_CHANNELS}
 #: The route's default basis for a direct API caller that names none. The chatbot lane never
 #: relies on it: it asks the basis and always sends one.
 DEFAULT_BASIS = "delivered"
