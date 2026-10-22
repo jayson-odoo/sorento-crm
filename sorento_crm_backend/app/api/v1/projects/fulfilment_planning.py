@@ -1299,10 +1299,12 @@ def _withdrawn_entries(db: Session, service: ProjectSupplyService, order, line_i
         if product_ids
         else {}
     )
+    so_nos = display_line_nos(db, list(by_id))
     return [
         {
             "project_line_id": str(line_id),
             "line_no": by_id[str(line_id)].line_no if str(line_id) in by_id else None,
+            "so_line_no": so_nos.get(str(line_id)),
             "item_code": codes.get(str(by_id[str(line_id)].product_id or ""))
             if str(line_id) in by_id
             else None,
