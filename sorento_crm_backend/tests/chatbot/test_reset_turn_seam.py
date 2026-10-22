@@ -715,3 +715,66 @@ def test_round10_guard_routes_as_at_b173(turn, name, gate):
     assert "reset_turn" not in t.trace_of(result), "the reset seam answered a turn that is no reset"
     assert t.plans, "apply never ran: the turn did not take today's path"
     assert _lane_actions_tools(t, result) == B173_R10[name], _lane_actions_tools(t, result)
+
+
+# --- round 10, measured: the v63 reset+broaden parse over an open offer and a filled+parked check ---------
+#
+# Measured live 22 Oct (3 of 9 runs over offer shapes): "clear all" read as topic_reset true, a cancel,
+# scope_intent broaden, broaden_axis all, entity_op clear, no domain, domain_in_message false and a
+# plain business query. The state path gets the same read with no state ops.
+
+FILLED, EMPTY = "CWCX605-RL-SOFT", "CWCX605-RL"
+PARKED = ["BRSHP7098BW-1-07", "M311", "M312"]
+
+
+def _measured_stored(context: str) -> dict[str, Any]:
+    pending = None
+    if context == "C01":
+        # An open warehouse escalation offer (one option, Yes), nothing else held.
+        focus = Focus()
+        pending = _team_offer()
+    else:
+        # C30: the open stock check, line 1 filled and line 2 owed, beside a parked one of other codes.
+        open_task = ht.stock_task([(FILLED, 10), (EMPTY, None)], status="open", opened_at_turn=2, touched_at_turn=2)
+        parked = ht.stock_task([(c, None) for c in PARKED], status="parked", opened_at_turn=1, touched_at_turn=1)
+        focus = Focus(products=ht.product_rows(FILLED, EMPTY), domains=["inventory"], tasks=(open_task, parked),
+                      last_list=_rows([FILLED, EMPTY]))
+    return {
+        "focus": focus_to_wire(focus),
+        "open_question": turn_pending.to_wire(pending),
+        "ideation": None,
+        "access_levels": [],
+        "contains_flyer": False,
+        "reply_language": None,
+    }
+
+
+def _measured_reset_broaden(gate: bool) -> dict[str, Any]:
+    emission = _parser_output(
+        topic_reset=True, open_question_answer=_no_answer("cancel"), scope_intent="broaden", broaden_axis="all",
+        entity_op="clear", domain_hint=None, intent_hint=None, domain_in_message=False,
+        message_type="business_query", user_goal="clear all", entities=[], match_mode=None,
+    )
+    if gate:
+        emission["state_changes"] = []
+    return emission
+
+
+@pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
+@pytest.mark.parametrize("context", ["C01", "C30"])
+def test_round10_measured_reset_broaden_parse_resets_everything(turn, context, gate):
+    t = turn(gate)
+    stored = _measured_stored(context)
+    result = t.say(stored, _measured_reset_broaden(gate), "clear all")
+    reply = (result.reply or {}).get("text") or ""
+    assert reply == ACK["en"], (result.branch_kind, reply)
+    assert "That would search every stock" not in reply, reply
+    assert "How many units" not in reply, reply
+    assert not t.tool_calls, t.tool_calls
+    assert not t.casual_calls, "a model was called on a reset turn"
+    after = t.stored_after()
+    assert after.get("open_question") is None, after.get("open_question")
+    focus = after.get("focus") or {}
+    assert not focus.get("tasks"), focus.get("tasks")
+    assert not focus.get("last_list"), focus.get("last_list")
+    _assert_the_reset_turn(t, result, stored)
