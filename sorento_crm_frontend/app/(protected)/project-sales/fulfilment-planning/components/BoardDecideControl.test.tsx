@@ -500,6 +500,29 @@ describe('BoardDecideControl: Borrow from another order follows the switch (BR1)
     expect(within(select).getByText('BRW-BB')).toBeInTheDocument();
   });
 
+  it('lists a location with nothing free in the bulk Borrow picker (owner, 22 Oct: not available also can borrow)', async () => {
+    const empty = {
+      ...nameless,
+      warehouse_code: 'MWH-IR',
+      warehouse_id: 'wh-mwh-ir',
+      free_qty: '0',
+      donor_core_line_id: null,
+      rung: null,
+    };
+    renderControl({
+      contributions: [
+        row({ fulfilment_warehouse_id: 'wh-own', borrow_candidates: [nameless, empty] }),
+      ],
+    });
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Borrow' }));
+
+    const dialog = await screen.findByRole('dialog');
+    const select = within(dialog).getByLabelText('donor-or-location');
+    expect(within(select).getByText('DC1-IR')).toBeInTheDocument();
+    expect(within(select).getByText('MWH-IR')).toBeInTheDocument();
+  });
+
   it('lists the own location when it is the only candidate (the screenshot: No results found)', async () => {
     const own = {
       ...nameless,

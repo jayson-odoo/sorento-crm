@@ -36,7 +36,6 @@ import {
   borrowCandidatesOf,
   canQuickSave,
   decideComposition,
-  isOwnLocationBorrow,
   suggestedDecisionFor,
   type DecideComposition,
   type DecideWay,
@@ -140,10 +139,9 @@ function pickerOptions(
         if (candidate.donor_so_number) seen.add(candidate.donor_so_number);
       } else if (
         candidate.source === 'other_location' &&
-        !candidate.donor_so_number &&
-        // The line's own location is always listed, at 0 free and never capped (owner, 14
-        // Oct, overriding BORROW-OWN-LOC review S5); any other location only with stock.
-        (toMinor(candidate.free_qty) > 0 || isOwnLocationBorrow(row, candidate))
+        // Every location is listed, 0 free included, and never capped (owner, 14 Oct for the
+        // own location, 22 Oct for every other: "not available also can borrow").
+        !candidate.donor_so_number
       ) {
         // K8: a donor-named candidate is an order borrow, never a location's.
         seen.add(candidate.warehouse_code);

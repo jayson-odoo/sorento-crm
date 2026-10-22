@@ -420,7 +420,7 @@ describe('menu.config - Project Sales Admin', () => {
 // ---------------------------------------------------------------------------
 
 describe('menu.config - Procurement > Supply Chain sub-group (AC-A1)', () => {
-  it('keeps Suppliers, Product-Suppliers, Packing Lists, SPO Allocations, GRN, Picking Lines, Stock Inquiries in position, then adds Supply Chain', () => {
+  it('keeps Suppliers, Product-Suppliers, Packing Lists, SPO Allocations, GRN, Picking Lines, Stock Inquiries, New Product Applications in position, then adds Supply Chain', () => {
     const procurement = findGroup(MENU_SIDEBAR, 'Procurement');
     expect(procurement).toBeDefined();
     const titles = procurement!.children!.map((item) => item.title);
@@ -435,6 +435,8 @@ describe('menu.config - Procurement > Supply Chain sub-group (AC-A1)', () => {
       'GRN',
       'Picking Lines',
       'Stock Inquiries',
+      // NEW-PRODUCT-APP: right after Stock Inquiries, the record it starts from.
+      'New Product Applications',
       'Supply Chain',
     ]);
   });
