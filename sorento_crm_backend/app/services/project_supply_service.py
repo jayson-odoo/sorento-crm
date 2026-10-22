@@ -1567,9 +1567,10 @@ class ProjectSupplyService:
         never outside anything: there is no delivery date to be beyond, and deciding on a date
         nobody stated is exactly the guess the rest of this engine refuses to make.
 
-        PUBLIC because the verdict has three readers and must never have three answers: the
-        ladder that skips two rungs on it, the sheet that offers no donor beside it, and the
-        board that has to say so on the row and in the trail. The board read it as "nothing
+        PUBLIC because the verdict has readers that must never have different answers: the
+        ladder that skips two rungs on it, and the board that has to say so on the row and in
+        the trail. (The sheet and board donor LISTS no longer read it: a planner may pick a
+        Borrow by hand beyond the window, owner ruling (b), 22 Oct 2026.) The board read it as "nothing
         free at L, and borrowing is possible from ..." on SO414341 precisely because it had no
         way to ask.
         """
@@ -5075,12 +5076,12 @@ class ProjectSupplyService:
             # Ranked against what this line still has to cover - the Buy the ladder just
             # proposed - because that is the quantity a donor would be asked for (13.11).
             # An unplannable line is offered nobody's stock: there is no need to rank against.
-            # Neither is a line beyond its reserve window (the ATP rule): rungs 4 and 5 are
-            # not walked for it, so a donor list beside it would OFFER the one thing the rule
-            # exists to refuse.
+            # A line beyond its reserve window IS offered the list (owner ruling (b), 22 Oct
+            # 2026, BORROW-ZERO-FREE): rungs 4 and 5 are still not walked for it, so nothing
+            # is composed, but a planner may pick a donor by hand and Confirm accepts it.
             "borrow_candidates": (
                 []
-                if fact.unplannable_reason or self.outside_reserve_window(fact)
+                if fact.unplannable_reason
                 else self._borrow_candidates(
                     fact,
                     need=sum(
