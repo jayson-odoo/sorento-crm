@@ -5336,6 +5336,9 @@ def _run_stages_body(  # noqa: PLR0915
         # Security S1: these keys are the ENGINE's own; one the parser emitted (the
         # Anthropic path does not enforce the schema's additionalProperties) is dropped.
         verdict = {k: v for k, v in verdict.items() if k not in required_fields.ENGINE_KEYS}
+        # REPORT-SMART-L S3: a word the parser put in a field of this verdict (the channel, the
+        # period year) is that field, never an entity: dropped once, before any reader counts it.
+        verdict = report_ask.drop_field_words(verdict)
         open_ask = state_in.focus.required_ask
         state_in.focus.required_ask = None
         if (open_ask or {}).get("ask") == report_ask.ASK_NAME and report_ask.names_its_own_ask(
@@ -5376,7 +5379,7 @@ def _run_stages_body(  # noqa: PLR0915
         scope_replay = copy.deepcopy(verdict)
         # REPORT-ENGINE slice 1b: a fresh sales ranking's brand / sales agent / category
         # words, kept away from the generic resolver for the lane (`report_ask_words`).
-        verdict = report_ask.take_words(report_ask.drop_field_words(verdict), _message_text)
+        verdict = report_ask.take_words(verdict, _message_text)
         # CA-3: a fresh chat report's product words are the lane's, not the generic resolver's.
         verdict = chat_report.take_words(verdict)
         # LOWSTOCK-SEMANTIC: the low stock ask's own words ride the parser's `low_stock`
