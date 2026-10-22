@@ -458,3 +458,64 @@ def test_q1_guard_a_sibling_variant_pick_answers_the_picked_variant(session_fact
     text = c.say("2", _pick(gate, 2))
     observed = {"reply": text, "stocked": _stocked(c, 0), "resolve_calls": len(resolves.tokens)}
     assert observed == B173_Q1[f"sibling_variant_pick|{'state_path' if gate else 'old_path'}"], observed
+
+
+# --- reviewer should-fix: the pick leads even with non-exact matches ahead of it -----------------------
+#
+# D1 lists a resolution's `matches` before its `alternatives` (`answer.miss_token_candidates`), so a
+# pick moved to the front of the alternatives alone fell out of the offer's top 3 behind three
+# non-exact matches (reviewer probe). The lane's own resolution of the raw is given three non-exact
+# matches here (the grounding check's own lookup, model reads off, is left as it is).
+
+
+def _with_matches_ahead(monkeypatch, c: EngineConsole, token: str, codes: list[str]) -> None:
+    from app.api.v1.system import references as references_mod
+
+    real = references_mod.resolve_reference_post
+
+    def spy(payload, *a, **k):
+        out = real(payload, *a, **k)
+        if payload.semantic_fallback is not False and token in (payload.tokens or []):
+            for res in out.get("resolutions") or []:
+                if isinstance(res, dict) and res.get("token") == token:
+                    rows = [{"entity_type": "product", "canonical_code": code, "uuid": c.uuid_of[code],
+                             "match_tier": "prefix", "similarity": None, "display": {"product_code": code}}
+                            for code in codes]
+                    res["matches"] = rows + list(res.get("matches") or [])
+                    res["resolved"] = False
+        return out
+
+    monkeypatch.setattr(references_mod, "resolve_reference_post", spy)
+
+
+@PATHS
+def test_q1_the_pick_leads_the_did_you_mean_ahead_of_non_exact_matches(session_factory, monkeypatch, stub_access, gate):  # noqa: F811
+    c, _ = _console(session_factory, monkeypatch, stub_access, f"+600000260{int(gate)}", gate)
+    _with_matches_ahead(monkeypatch, c, "srttw8259gm", ["VLDWT8259-GM", "MCM7721-GM", "CB3109A"])
+    text = c.say("srttw8259gm in stock?", _ask("srttw8259gm", "SRTWT8259-GM", gate))
+    assert 'Couldn\'t find "srttw8259gm" (product). Did you mean' in text, text
+    assert _offered(c)[0] == "SRTWT8259-GM", _offered(c)
+
+
+def test_q1_seam_the_pick_leads_d1s_candidates_ahead_of_non_exact_matches():
+    """The reviewer's probe at the seam both paths share (`resolve_gate.pick_near_code_first` then D1's
+    `miss_token_candidates` and cap of 3): three non-exact matches ahead of the pick in the raw token's
+    resolution. Through run_turn the stock lane's offer drops such matches downstream (the test above),
+    so the order is pinned here, where D1 reads it."""
+    from app.services.chatbot.head.grounding import NEAR_PICK_KEY
+    from app.services.chatbot.lanes.business import answer as answer_mod
+    from app.services.chatbot.lanes.business import resolve_gate
+
+    def row(code, tier, similarity=None):
+        return {"entity_type": "product", "canonical_code": code, "uuid": f"zzt-{code}", "match_tier": tier,
+                "similarity": similarity}
+
+    pick = row("SRTWT8259-GM", "trgm", 0.5)
+    parser = {"entities": [{"raw": "srttw8259gm", "hint": "product", "canonical_code": None, NEAR_PICK_KEY: pick}]}
+    res = {"token": "srttw8259gm", "resolved": False, "ambiguous": False,
+           "matches": [row("VLDWT8259-GM", "prefix"), row("MCM7721-GM", "prefix"), row("CB3109A", "substring")],
+           "alternatives": [row("SRT209-GM", "trgm", 0.31), dict(pick)]}
+    resolve_gate.pick_near_code_first(parser, {"resolutions": [res]})
+    offered = [m["canonical_code"] for m in answer_mod._cap3(answer_mod.miss_token_candidates(res, ["product"]))]
+    assert offered[0] == "SRTWT8259-GM", offered
+    assert offered.count("SRTWT8259-GM") == 1, offered
