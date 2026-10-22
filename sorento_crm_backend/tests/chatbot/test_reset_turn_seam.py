@@ -836,3 +836,119 @@ def test_round11_guard_cancel_show_all_promotions_over_a_stock_session_runs_prom
     assert "reset_turn" not in t.trace_of(result), "the reset seam answered a turn that names its own domain"
     assert t.plans, "apply never ran: the turn did not take today's path"
     assert _lane_actions_tools(t, result) == B173_CANCEL_ALL_PROMOTIONS, _lane_actions_tools(t, result)
+
+
+# --- round 12: an all-broaden over a session with nothing open is a reset --------------------------------
+#
+# EVAL-BENCH trace (contacts 01, 02, 30): the v63 "clear all" read as a plain business query,
+# topic_reset false, entity_op clear, broaden_axis all, broaden_to all, scope_intent null, no domain,
+# domain_in_message false, no answer, no entity, over a session with nothing open, no task and no list
+# but a held subject. No reset signal fired: reuse_alive, broaden_all_clears_product, then the "That
+# would search every stock we have" refusal (01, 02), or with the held product rows unsettled the
+# resolver re-read them into a 10-line "How many units for each?" task (30). Captain ruling (option A):
+# an all-broaden with scope_intent null and no domain or asks of its own, stating nothing else, over a
+# session with no open question, no task of any status and no last_list, is a reset; a held subject is
+# allowed. Synthetic codes stand in for the trace's.
+
+HELD_TEN = TWENTY[:10]
+
+
+def _measured_all_broaden(gate: bool, **overrides) -> dict[str, Any]:
+    fields = dict(
+        message_type="business_query", topic_reset=False, entity_op="clear", broaden_axis="all", broaden_to="all",
+        scope_intent=None, domain_hint=None, intent_hint=None, domain_in_message=False,
+        open_question_answer=_no_answer(), entities=[], reference_positions=[], demand_qty=None, match_mode=None,
+        user_goal="clear all",
+    )
+    fields.update(overrides)
+    emission = _parser_output(**fields)
+    if gate:
+        emission["state_changes"] = []
+    return emission
+
+
+def _held_subject(settled: bool = True) -> dict[str, Any]:
+    """Products and the inventory domain held, nothing open, no task, no list. `settled` false: the
+    product rows carry no uuid, so a turn that reuses them sends them back to the resolver."""
+    rows = ht.product_rows(*HELD_TEN)
+    if not settled:
+        rows = [{k: v for k, v in row.items() if k != "uuid"} for row in rows]
+    return {
+        "focus": focus_to_wire(Focus(products=rows, domains=["inventory"])),
+        "open_question": None,
+        "ideation": None,
+        "access_levels": [],
+        "contains_flyer": False,
+        "reply_language": None,
+    }
+
+
+@pytest.fixture()
+def resolver_calls(monkeypatch):
+    """Every entity resolver call the turn makes (the references route and the assistant service)."""
+    from app.api.v1.system import references as references_mod
+    from app.services import ai_assistant_service
+
+    calls: list[Any] = []
+    for mod in (references_mod, ai_assistant_service):
+        real = mod.resolve_references
+
+        def spy(*a, _real=real, **k):
+            calls.append(a[1:2])
+            return _real(*a, **k)
+
+        monkeypatch.setattr(mod, "resolve_references", spy)
+    return calls
+
+
+@pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
+@pytest.mark.parametrize("settled", [True, False], ids=["contacts_01_02_settled_rows", "contact_30_unsettled_rows"])
+def test_round12_an_all_broaden_over_nothing_open_is_one_reset_turn(turn, resolver_calls, settled, gate):
+    t = turn(gate)
+    stored = _held_subject(settled)
+    result = t.say(stored, _measured_all_broaden(gate), "clear all")
+    reply = (result.reply or {}).get("text") or ""
+    assert reply == ACK["en"], (result.branch_kind, reply)
+    assert "every stock" not in reply, reply
+    assert "How many units" not in reply, reply
+    assert not t.tool_calls, t.tool_calls
+    assert not resolver_calls, resolver_calls
+    assert not t.casual_calls, "a model was called on a reset turn"
+    focus = t.stored_after().get("focus") or {}
+    assert not focus.get("tasks"), focus.get("tasks")
+    assert not focus.get("products"), focus.get("products")
+    _assert_the_reset_turn(t, result, stored)
+
+
+_STOCK_TOOLS = ["crm_incoming_stock_list", "crm_inventory_stock_balance_list"]
+
+#: Round 12 guards: what each did at b173c6e8c4 (no seam), both paths (measured 22 Oct).
+B173_R12 = {
+    "show_me_everything_over_a_held_subject": {"lane": "business_query", "actions": ["send_message"], "tools": []},
+    "show_all_stock_names_its_domain": {"lane": "business_query", "actions": ["send_message"], "tools": []},
+    "the_all_broaden_over_an_open_picker": {"lane": "business_query", "actions": ["send_message"], "tools": _STOCK_TOOLS},
+    "the_all_broaden_over_an_open_task": {"lane": "business_query", "actions": ["send_message"], "tools": []},
+}
+
+
+def _r12_guard(name: str, gate: bool) -> tuple[dict[str, Any], dict[str, Any], str]:
+    if name == "show_me_everything_over_a_held_subject":
+        return _held_subject(), _measured_all_broaden(gate, scope_intent="broaden"), "show me everything"
+    if name == "show_all_stock_names_its_domain":
+        return _held_subject(), _measured_all_broaden(
+            gate, domain_hint="inventory", intent_hint="check_stock", domain_in_message=True), "show all stock"
+    if name == "the_all_broaden_over_an_open_picker":
+        return _stored("C18"), _measured_all_broaden(gate), "all"
+    return _stored("C28"), _measured_all_broaden(gate), "all"
+
+
+@pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
+@pytest.mark.parametrize("name", list(B173_R12))
+def test_round12_guard_routes_as_at_b173(turn, name, gate):
+    t = turn(gate)
+    stored, emission, words = _r12_guard(name, gate)
+    result = t.say(stored, emission, words)
+    assert (result.reply or {}).get("text") != ACK["en"], (result.branch_kind, (result.reply or {}).get("text"))
+    assert "reset_turn" not in t.trace_of(result), "the reset seam answered a turn that is no reset"
+    assert t.plans, "apply never ran: the turn did not take today's path"
+    assert _lane_actions_tools(t, result) == B173_R12[name], _lane_actions_tools(t, result)
