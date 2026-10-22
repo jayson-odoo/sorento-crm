@@ -1,6 +1,6 @@
 # PLAN: owner console turns 22 Oct, fix round on #1816 (lane REPORT-SMART-L, round S2)
 
-Status: S2 built + reviewer READY (1ed44f3e59); replay + delivery A/B done 23 Oct; round S3 in progress (crew go 23 Oct, (a) without the drill change, cap USD 0.6): plan + UAC, red tests next. Track: L (prompt candidate, resolver/state guards).
+Status: S3 + S3-4 built and pushed (dd535e7c81); reviewer NOT READY (1 blocker: field-word drop runs after names_its_own_ask), review-fix round in progress. Track: L (prompt candidate, resolver/state guards).
 `claude/report-smart-1021-r2xexf` (on `crew/chat-release-1022`), base head afd7f70605. Diagnosis (13 turns, prompt v94,
 code 65c2025c05): `crew/state/eval/report-smart-v92/owner-1022-diagnosis.md` (crew-only). UAC:
 `report-smart-owner-1022-acceptance-criteria.md`.
@@ -112,10 +112,18 @@ turns (chatbot.turns on the crew copy).
   (v97 / v100 left `status` null on 9-12 of 24 WHEN asks, `order_status` outstanding on all). Readers disagree:
   decide.py:683, chat_state.py:503, apply.py:1652/1661/1717 read `status or order_status`; apply.py:1306/1320/1324 and
   `lane_parse_output` (turn_runtime.py:2043-2049) read `status` only, so focus.status drops outstanding (a follow-up
-  cannot repeat it) and a named DO never becomes do_outstanding. Fix: every reader takes the same value, `status` or
-  `order_status`, through one place.
+  cannot repeat it) and a named DO never becomes do_outstanding. Fix as built (81d890adf7): the delivery-status writers
+  (the focus write, `lane_parse_output`) read one helper, `delivery_status` (turn/apply.py): `status`, else
+  `order_status` when it is outstanding or delivered. The readers that must also see report kinds (decide.py:683,
+  chat_state.py:503, apply.py:1652/1661/1719) keep reading `status or order_status` directly.
 - Prompt candidate after S3-P: v100 (699cb49d, NON-production) = v97 + v99's channel `group_by` line and Candidates
   year line (v98 0ee024ce and v99 412ed671 measured and set aside; numbers in crew state).
+
+- Review round (reviewer NOT READY on dd535e7c81): the field-word drop must run before `names_its_own_ask`
+  (engine.py:5341 reads the entities first, so a stray year or channel entity on the answer turn drops the open slot);
+  tests guard the `delivery_status` narrowing, `lane_parse_output` directly, and the year rule's both-ends condition.
+  Noted: the chat_state.py:1614 change also lets low stock (the only other `about` ask) take a declared fill with a
+  KEEP or switch_domain op on the state path, as LOWSTOCK-SEMANTIC and the off-state path already do.
 
 ### Gates (S3)
 
