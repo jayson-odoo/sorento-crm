@@ -5336,7 +5336,9 @@ def _run_stages_body(  # noqa: PLR0915
         verdict = {k: v for k, v in verdict.items() if k not in required_fields.ENGINE_KEYS}
         open_ask = state_in.focus.required_ask
         state_in.focus.required_ask = None
-        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and report_ask.names_its_own_ask(verdict, open_ask):
+        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and report_ask.names_its_own_ask(
+            verdict, open_ask, parser_ops=(remembered_before.get("_chat_state") or {}).get("changes")
+        ):
             open_ask = None  # a new sales ranking ask, not the answer to the open question
         if (open_ask or {}).get("ask") == chat_report.ASK_NAME and not verdict.get("order_status"):
             # The reply to a chat report question is read ONCE by the extractor, with the open ask;

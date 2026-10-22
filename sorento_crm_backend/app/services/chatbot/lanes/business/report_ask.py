@@ -377,7 +377,9 @@ def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
     return {**verdict, "entities": kept, "report_ask_words": words}
 
 
-def names_its_own_ask(verdict: dict[str, Any], open_slot: dict[str, Any] | None = None) -> bool:
+def names_its_own_ask(
+    verdict: dict[str, Any], open_slot: dict[str, Any] | None = None, *, parser_ops: Any = ()
+) -> bool:
     """Engine seam before `required_fields.reply_verdict`: a `sales_ranking` verdict that is not a
     refine is a NEW ask, so an open period / how many question is dropped, not answered by it, when
     it names a current-message filter entity or a `group_by` DIFFERENT from the one the open slot
@@ -388,7 +390,12 @@ def names_its_own_ask(verdict: dict[str, Any], open_slot: dict[str, Any] | None 
     entity, or the ask itself): "i want to see the top customer" under the basis question is
     never read as a failed basis answer. And a parse that FILLS an open field is the answer: its
     `group_by` is not the slot's axis changing (the parser's axis on an answering turn was noise
-    12 of 14 live turns, PR-B replay 16 Oct: "top 5" read as sales_agent under a customer ask)."""
+    12 of 14 live turns, PR-B replay 16 Oct: "top 5" read as sales_agent under a customer ask).
+
+    REPORT-SMART-L: a reply that fills an open field and carries the parser's `answer` op is the
+    answer whatever entities it repeats (the held brand echoed under "By quantity or by amount?").
+    The applier pops `state_changes` before the engine seam (and rejects an `answer` that has no
+    open question), so the engine passes the ops it logged as `parser_ops`."""
     status = jsc.js_string(verdict.get("capability_from") or verdict.get("order_status") or "").strip()
     named = any(
         isinstance(e, dict) and e.get("current_message") is not False and jsc.js_string(e.get("hint") or "").strip()
@@ -414,8 +421,10 @@ def names_its_own_ask(verdict: dict[str, Any], open_slot: dict[str, Any] | None 
         # bare refine ("ordered") still is.
         return named or restates_the_ask(verdict)
     if named:
-        return True
-    raw_group = jsc.js_string(verdict.get("group_by") or "").strip().lower()
+        # The parser's `answer` op on a reply that fills an open field is the answer even when it
+        # repeats the held brand or category as current-message entities (live turn, parser v92).
+        return not (fills and _carries_answer_op(verdict, parser_ops))
+    raw_group =jsc.js_string(verdict.get("group_by") or "").strip().lower()
     # A reply filling only the period and naming another axis is a new ask (review round 8);
     # one filling the count, metric or basis is the answer (16 Oct: its axis is parser noise).
     if not raw_group or set(filled) - {"period"}:
@@ -427,6 +436,14 @@ def names_its_own_ask(verdict: dict[str, Any], open_slot: dict[str, Any] | None 
         return GROUP_BY.get(raw_group, raw_group) not in (scope.get("source"), _dict(scope.get("scoped")).get("args", {}).get("group_by"))
     held = _dict(extras.get("args")).get("group_by")
     return GROUP_BY.get(raw_group, raw_group) != held
+
+
+def _carries_answer_op(verdict: dict[str, Any], parser_ops: Any = ()) -> bool:
+    """The parser's `answer` state change, read from `state_changes` like `restates_the_ask`, or
+    from the ops the engine logged; a `new_subject` or `set` alongside it keeps the reply a new ask."""
+    changes = [*jsc.array(verdict.get("state_changes")), *jsc.array(parser_ops)]
+    ops = {jsc.js_string(c.get("op") or "") for c in changes if isinstance(c, dict)}
+    return "answer" in ops and not ops & {"new_subject", "set"}
 
 
 def restates_the_ask(verdict: dict[str, Any]) -> bool:
