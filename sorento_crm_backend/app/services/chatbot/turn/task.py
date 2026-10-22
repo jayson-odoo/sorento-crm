@@ -561,9 +561,10 @@ def run(
     # A cancel that is no reset names an ask of its own ("batal, stock SRTZA102 instead"): that ask
     # runs, and the question it cancelled is never resumed in its place (release gate #1829, N1).
     cancelled = isinstance(oqa, dict) and oqa.get("mode") == "cancel"
-    if cancelled:
+    if cancelled and pending is None:
         # Crew ruling (N1): the cancel closes the stock check whose question it cancelled (the open
-        # one); a parked check is no part of that question and stays as it was.
+        # one, with no other question stored: a stored one is what a cancel answers then); a
+        # parked check is no part of that question and stays as it was.
         asked = next((t for t in tasks if t.kind == "stock_qty" and t.status == OPEN and t.slots), None)
         if asked is not None:
             tasks = tuple(t for t in tasks if t is not asked)
