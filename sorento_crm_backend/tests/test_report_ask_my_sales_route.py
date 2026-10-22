@@ -217,3 +217,68 @@ def test_a_salesperson_without_an_agent_link_and_no_grant_is_refused(client, db,
     w = _world(db)
     contact = _salesperson(db, w, granted=False, agent=False)
     _refused(_ask(client, contact, group_by="customer", top_n=10, mine=mine))
+
+
+# ------------------------------------------------------------------ 8. security: the no-grant book needs a LIVE salesperson user
+
+
+def _agent_link_only(db, w, *, user_status=None, trashed=False):
+    contact = _contact(db, granted=False)
+    if user_status is not None:
+        give_role(db, link_user(db, contact, status=user_status, trashed=trashed), "salesperson")
+    book = link_agent(db, contact, "ZZT Book Agent")
+    w.in1.sales_agent_id = book.id
+    w.in2.sales_agent_id = book.id
+    db.commit()
+    return contact
+
+
+@pytest.mark.parametrize("mine", [None, True])
+def test_an_agent_link_without_a_crm_user_and_no_grant_is_refused(client, db, mine):
+    w = _world(db)
+    contact = _agent_link_only(db, w)
+    _refused(_ask(client, contact, group_by="customer", top_n=10, mine=mine), codes=("sales_report_not_enabled",))
+
+
+@pytest.mark.parametrize("mine", [None, True])
+def test_an_inactive_salesperson_user_without_the_grant_is_refused(client, db, mine):
+    w = _world(db)
+    contact = _agent_link_only(db, w, user_status="INACTIVE")
+    _refused(_ask(client, contact, group_by="customer", top_n=10, mine=mine), codes=("sales_report_not_enabled",))
+
+
+@pytest.mark.parametrize("mine", [None, True])
+def test_a_trashed_salesperson_user_without_the_grant_is_refused(client, db, mine):
+    w = _world(db)
+    contact = _agent_link_only(db, w, user_status="ACTIVE", trashed=True)
+    _refused(_ask(client, contact, group_by="customer", top_n=10, mine=mine), codes=("sales_report_not_enabled",))
+
+
+def test_a_salesperson_also_linked_to_an_outside_customer_gets_only_linked_and_book(client, db):
+    w = _world(db)
+    contact = _salesperson(db, w, granted=False)
+    _link(db, contact, w.in1)
+    _link(db, contact, w.out)
+    db.commit()
+    body = _ok(client, contact, group_by="brand", top_n=10)
+    assert _total(body) == D("100.00") and len(body["rows"]) == 1, body
+
+
+def test_a_salesperson_linked_only_outside_the_book_gets_zero_rows(client, db):
+    w = _world(db)
+    contact = _salesperson(db, w, granted=False)
+    _link(db, contact, w.out)
+    db.commit()
+    resp = _ask(client, contact, group_by="brand", top_n=10)
+    assert resp.status_code != 200 or (_total(resp.json()) == 0 and not resp.json()["rows"]), resp.text
+
+
+def test_a_granted_agent_link_only_contact_keeps_todays_behaviour(client, db):
+    w = _world(db)
+    contact = _contact(db, granted=True)
+    book = link_agent(db, contact, "ZZT Book Agent")
+    w.in1.sales_agent_id = book.id
+    w.in2.sales_agent_id = book.id
+    db.commit()
+    body = _ok(client, contact, group_by="customer", top_n=10)
+    assert _total(body) == ALL_TOTAL, body
