@@ -130,6 +130,9 @@ def of_required_ask(slot: Any) -> dict[str, Any] | None:
         held = (slot.get("values") if isinstance(slot.get("values"), dict) else {})
         obj["owed"] = [f.name for f in ask.fields if f.required and f.name not in held]
         obj["held"] = {k: v.get("value") for k, v in held.items() if isinstance(v, dict) and v.get("value") is not None}
+        compare = (extras.get("args") if isinstance(extras.get("args"), dict) else {}).get("compare_to")
+        if compare:
+            obj["held"]["compare_to"] = compare  # a held arg of the ask (the rankings' comparison)
     if options:
         obj["options"] = options
     return obj

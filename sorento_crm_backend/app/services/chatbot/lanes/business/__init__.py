@@ -1914,6 +1914,7 @@ def run_fetch(
         )
         if db is not None:
             collected["live_brands"] = _turn_runtime.active_brands(db)  # for the menu's brand echo
+            collected["live_promotion_kinds"] = _turn_runtime.promotion_kind_rows(db)  # and the kind's name
         seen = collected.get("tier_availability")
         if isinstance(seen, dict) and seen and not any(seen.values()) and not collected.get("tier_probe_failed"):
             none_live = _nothing_live_of_kind(semantic_input, db, services, collected)

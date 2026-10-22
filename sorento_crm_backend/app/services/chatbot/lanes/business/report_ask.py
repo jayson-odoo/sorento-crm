@@ -819,6 +819,11 @@ def settle(
                 **{name: {"value": got.value, "label": got.label} for name, got in filled.items()},
             }
             return rf.collect(db, SALES_RANKING_ASK, slot={**slot, "values": values}, given=held), None
+        if parse_output.get("compare_to") in COMPARE_TO:
+            # REPORT-SMART-L S4-1: a reply that sets the comparison and fills no owed field adds the
+            # comparison to the held args and asks the owed fields again: no miss, no basis word.
+            held_args = {**args, "compare_to": parse_output["compare_to"]}
+            return rf.collect(db, SALES_RANKING_ASK, slot=slot, given=held, extras={"args": held_args}), None
         reply_dates = {"start": parse_output.get("date_filter_start"), "end": parse_output.get("date_filter_end")}
         outcome = rf.collect(
             db,
