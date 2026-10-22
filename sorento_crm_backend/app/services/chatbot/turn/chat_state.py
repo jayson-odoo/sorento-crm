@@ -974,19 +974,22 @@ def stock_pick(pending: Any) -> bool:
     return pending is not None and bool((pending.payload or {}).get("stock_pick"))
 
 
-def _settles_the_stock_pick(
+def _settles_the_typed_miss(
     pending: Any, roster_picks: list[int], verdict: dict[str, Any], ops: list[Any]
 ) -> bool:
-    """Does this turn answer the stored stock pick (the did-you-mean or which-one list a typed
-    code opened, `stock_pick`) with one of its product options: a pick of one, or a yes over
-    its one option (`apply._answer_pending`'s `stock_pick_yes`)?"""
-    if not stock_pick(pending):
+    """Does this turn answer the stored question with a product option, the way
+    `apply._answer_pending` puts that option in place of the held products: a pick whose first
+    option is a product (`_set_kind_field` with the option's kind; a did-you-mean or which-one
+    roster, staff or dealer), or a yes over a stock pick's one option (`stock_pick_yes`; a yes
+    over a staff roster accepts its escalation offer, it picks nothing)?"""
+    if pending is None:
         return False
     options = [o for o in pending.options or [] if isinstance(o, dict)]
-    if any(o.get("position") in roster_picks and o.get("entity_type") == "product" for o in options):
-        return True
+    matched = [o for o in options if o.get("position") in roster_picks]
+    if matched:
+        return matched[0].get("entity_type") == "product"
     said_yes = "answer" in ops and (verdict.get(question_mod.ANSWER_KEY) or {}).get("mode") == "yes"
-    return said_yes and len(options) == 1 and options[0].get("entity_type") == "product"
+    return said_yes and stock_pick(pending) and len(options) == 1 and options[0].get("entity_type") == "product"
 
 
 def stock_task_is_the_current_question(state: State, task: Any, verdict: dict[str, Any]) -> bool:
@@ -1737,14 +1740,14 @@ def apply_changes(
             option = next((o for o in (state.pending.options if state.pending else []) if o.get("position") == position), None)
             if option and option.get("entity_type"):
                 picked_kinds.add(str(option["entity_type"]))
-    if _settles_the_stock_pick(state.pending, roster_picks, verdict, ops):
-        # The stock pick's product option answers it (a pick, or a yes over its one option):
-        # `apply._answer_pending` puts the option in place of the held products, so a held word
-        # that never resolved (the typed miss the did-you-mean was asked about) is settled by it
-        # and retired here, before the Subject is built: the old path's fetch, read off the focus
-        # `apply` leaves, never hands it over. The same rows `apply`'s decline arm retires when
-        # the dealer says none of them. Held as a token, it went to the resolver again and its
-        # miss was printed beside the answer.
+    if _settles_the_typed_miss(state.pending, roster_picks, verdict, ops):
+        # A product option answers the stored question (a pick, or a yes over a stock pick's one
+        # option): `apply._answer_pending` puts the option in place of the held products, so a
+        # held word that never resolved (the typed miss the did-you-mean was asked about) is
+        # settled by it and retired here, before the Subject is built: the old path's fetch, read
+        # off the focus `apply` leaves, never hands it over. The same rows `apply`'s stock pick
+        # decline arm retires when the dealer says none of them. Held as a token, it went to the
+        # resolver again and its miss was printed beside the answer.
         focus.products = [
             row for row in focus.products
             if not (isinstance(row, dict) and not (row.get("uuid") or row.get("uuids")))
