@@ -10,7 +10,7 @@ Plan: `PLAN-report-smart-v92-1022.md`. Script: the owner's 21 Oct script (`laneb
 - AC3 (step 9). A refine right after a breakdown keeps the breakdown's count and period. Never "Which period? How
   many?".
 - AC4 (real switch). A message naming another domain (stock, outstanding orders) still drops the held report.
-- AC5 (step 6). A brand or category word held for a sales figure ask is never offered back as a customer pick.
+- AC5 (step 6), DEFERRED with C2 (trigger in the plan). A brand or category word held for a sales figure ask is never offered back as a customer pick.
 - AC6 (step 5, parser). A whole ranking typed again with "dealer sales only" parses with the report kind in
   `order_status`; it re-runs or asks the missing choices, never a customer picker.
 - AC7 (step 8, parser). A fresh ask in a new conversation carries no channel, measure, basis or axis the message did
@@ -21,7 +21,7 @@ Plan: `PLAN-report-smart-v92-1022.md`. Script: the owner's 21 Oct script (`laneb
 - AC10 (compare). "... vs last month" / "compared with last year" runs `compare_to` previous_period / last_year; a
   month-by-month breakdown is never compared (says so).
 - AC11 ("my sales"). A salesperson contact (linked CRM user with the salesperson role) asking "my sales ..." gets only
-  their customers' sales (customers whose sales agent is linked to that contact). A dealer gets only its linked
+  their customers' sales (customers whose sales agent is linked to that contact), and the reply's filter lines say so. A dealer gets only its linked
   customers, as today. Staff with the sales report grant get the full report. An unknown contact gets the refusal it
   gets today. The sales_agent axis and agent filters need the grant.
 - AC12 (rate limit). Unchanged: per contact, System Settings value; the reply says so when it trips.

@@ -1,6 +1,6 @@
 # PLAN: sales reports on parser v92 (lane REPORT-SMART-L, round S1, 22 Oct)
 
-Status: building (C1 red tests), plan crew-note 6332909610, decisions relayed 22 Oct. Track: L (parser prompt fields, report access
+Status: built C1, A1 (security PASS 6bb39f8a16), P1/P3a; review round 1 NOT READY, fix round in progress; plan crew-note 6332909610. Track: L (parser prompt fields, report access
 scope change, cross-lane prompt coordination). Branch `claude/report-smart-1021-r2xexf` rebuilt on
 `crew/chat-release-1022` 237424152b (merge #1721 + 23 lane commits, head c925b50327, one alembic head). UAC:
 `report-smart-v92-1022-acceptance-criteria.md`.
@@ -36,13 +36,14 @@ rejected.
 
 ARCHITECTURE. Layers: the State's domain reading (one normalisation for both sides) and the parser prompt (fields and
 rules). Shared mechanism: `turn_runtime.report_domain` (the one report-domain normalisation) applied at apply()'s one
-verdict entry, where `coerce_domain_hint` already runs (turn/apply.py:3410), so every writer of a sales verdict stores
-`sales`. Other classes fixed: every sales figure ask answered through a required-field question (ranking, total,
+verdict entry was tried and dropped (review round 1); the sales ranking reroute itself names `sales`, so every writer
+of a sales ranking verdict stores it. Other classes fixed: every sales figure ask answered through a required-field question (ranking, total,
 analysis, top selling), every explicit `switch_domain` the parser emits onto the held domain. Special cases removed:
 none added; no message words read.
 
-- C1 (steps 4, 9; code). (a) apply() entry normalises the report domain (`report_domain`) next to
-  `coerce_domain_hint`, so an answering turn's rerouted `order` is stored as `sales`. (b) `chat_state.apply_changes`:
+- C1 (steps 4, 9; code). (a) `SALES_RANKING_ASK.reroute` names domain `sales` (report_ask.py:262), so an answering
+  turn, a capability reroute and a held refine all store `sales` (review round 1: an apply()-entry normalisation next to
+  `coerce_domain_hint` undid the ideation and chat report reroutes, so it is not used). (b) `chat_state.apply_changes`:
   a `switch_domain` whose target domains are all held is no switch (logged as `switch_onto_held`); only a target not
   held drops the domain-bound axes. Tests: chat_state unit + state-on console (`_state_on`) with the v92 shapes.
 - C2 (step 6; code), DEFERRED. Step 6 is a consequence of step 5's parse (the category re-typed as a customer and
@@ -59,15 +60,19 @@ none added; no message words read.
   goes in `order_status`, never `intent_hint`; Recent exchanges never fill `sales_channel`, `measure`, `basis` or
   `group_by` when no State holds them; "dealer" as the ranked noun is `group_by customer`, channel null; a bare refine
   of the report on screen carries no `switch_domain`.
-- P3 (measure). One candidate prompt version (v92 + P1 + P2) registered by crew / EVAL-BENCH; parser gold rows
+- P3 (measure). The baseline is v92 on THIS head's schema (the schema now allows the count measures and `compare_to`).
+  One candidate prompt version (v92 + P1 + P2) registered by crew / EVAL-BENCH; parser gold rows
   (`scripts/chatbot_eval/gold/`, >= 8 per case, generic wording) + the hidden set, v92 vs candidate, then the 10 script
   turns replayed live on the candidate. Budget: rows x repeats parser calls, under 300 calls/lane/day.
 - A1 ("my sales", ruling 2). Report-ask route (api/v1/order_management/report_ask.py): classify the asker with
   `contact_asker.classify` (services/contact_asker.py:135). A salesperson (role-user linked to the contact) is
   narrowed to customers whose `sales_agent_id` is the agent linked to that contact (`sales_agents.contact_id`), the
   chat-report route's pattern (report_ask.py:633-645). "My sales" comes off the parser's `self_reference`
-  (head/parser.py:336). The sales_agent axis and agent filters stay behind GRANT (:43, :354). Access tests: dealer,
-  salesperson, staff, unknown contact; security-reviewer runs.
+  (head/parser.py:336). The sales_agent axis and agent filters stay behind GRANT (:43, :354). Salesperson = a LIVE CRM
+  user with the salesperson role (`contact_asker.is_salesperson_user`); an agent link alone grants nothing; a
+  customer-linked salesperson sees linked AND book. A narrowed run says so in its filter echo. A granted salesperson
+  with no agent link stays unscoped (as the chat route). Access tests: dealer, salesperson, staff, unknown contact;
+  security-reviewer PASS at 6bb39f8a16.
 - R1 (rate limit, check only). Per Respond contact, fixed window, 10 reports / 10 minutes, fails open when Redis is
   down (services/rate_limit.py:41-66; report_ask.py:378, :383, :611); configurable in System Settings
   (`report_ask_rate_limit`, `report_ask_rate_window_minutes`, models/user.py:640-641; 0 = unlimited). No code change
