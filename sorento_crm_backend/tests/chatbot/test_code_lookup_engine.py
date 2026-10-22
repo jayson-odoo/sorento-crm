@@ -111,15 +111,17 @@ def test_closed_lists_only_the_user_turn_has_no_near_line_below_the_floor(sessio
     assert "near code" not in block
 
 
-def test_a_pick_on_the_block_is_answered_with_no_did_you_mean(session_factory, seeded, stub_access, monkeypatch):
+def test_a_near_code_pick_on_the_block_asks_did_you_mean_with_the_pick_first(session_factory, seeded, stub_access, monkeypatch):
+    """Re-pinned by the owner Q1 ruling (23 Oct 2026): a parser-corrected near code (the pick among
+    the typed raw's trgm alternatives) gets the did-you-mean, the pick first, never a stock answer."""
     ids = _seed(session_factory)
 
     result, _block, calls = _run(session_factory, stub_access, monkeypatch, _verdict(MEANT), code_lookup=True)
 
     text = (result.reply or {}).get("text") or ""
-    assert _stock_ids(calls) and _stock_ids(calls)[0] == [ids[MEANT]], calls
-    assert MEANT in text, text
-    assert "Did you mean" not in text and "Which product do you mean" not in text, text
+    assert f'Couldn\'t find "{TYPED}" (product). Did you mean:' in text, text
+    assert f"1. {MEANT}" in text, text
+    assert [ids[MEANT]] not in _stock_ids(calls), calls
 
 
 def test_a_pick_not_on_the_block_behaves_as_without_a_pick(session_factory, seeded, stub_access, monkeypatch):

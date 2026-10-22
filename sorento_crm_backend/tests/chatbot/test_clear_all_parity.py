@@ -145,10 +145,12 @@ def _cancel_parse(gate: bool):
 @pytest.mark.parametrize("context", ["did_you_mean", "quantities"])
 def test_a_cancel_answer_over_a_did_you_mean_or_quantities_resets_on_both_paths(gate, context):
     new_state, plan = _turn(_cancel_state(gate, context), _cancel_parse(gate))
-    # A cancel over a did-you-mean is the decline of that question ("none of them"): the dealer is
-    # referred to the salesman on BOTH paths. Over the quantities question it asks nothing.
-    expected = "Please refer to your salesman." if context == "did_you_mean" else None
-    assert plan.trace.task_question == expected, plan.trace.task_question
+    # A cancel that names nothing is a reset on BOTH paths (release gate #1829): the stored
+    # did-you-mean closes unanswered, so nothing is referred. Over the quantities question it asks
+    # nothing.
+    assert plan.trace.task_question is None, plan.trace.task_question
+    if context == "did_you_mean":
+        assert "reset_closes_the_question" in plan.trace.rules_fired, plan.trace.rules_fired
     assert not [t for t in new_state.focus.tasks if t.status == "open"], new_state.focus.tasks
     assert new_state.pending is None, new_state.pending
     assert not new_state.focus.last_list
@@ -295,7 +297,7 @@ def test_a_reset_on_an_early_returning_answer_path_wipes_the_focus():
         open_question_answer={"mode": "cancel", "picked": [], "items": [], "qty_for_all": None},
     )
     new_state, plan = apply(state, v, build_policy())
-    assert "stock_pick_declined" in plan.trace.rules_fired
+    assert "reset_closes_the_question" in plan.trace.rules_fired
     assert new_state.focus.products == [], new_state.focus.products
 
 
@@ -313,7 +315,7 @@ def test_a_state_path_reset_on_an_early_return_drops_a_list_that_is_not_the_ques
         state_changes=[{"op": "close_question", "axis": None, "position": None}],
     )
     new_state, plan = _turn(state, v)
-    assert "stock_pick_declined" in plan.trace.rules_fired
+    assert "reset_closes_the_question" in plan.trace.rules_fired
     assert not new_state.focus.last_list, new_state.focus.last_list
 
 
@@ -406,7 +408,7 @@ def test_a_reset_that_names_its_own_domain_still_plans_that_domains_fetch(gate):
     assert [s.domain for s in plan.fetch] == ["order"], [s.domain for s in plan.fetch]
 
 
-def test_a_cancel_to_an_escalation_offer_keeps_the_held_customer_and_product():
+def _escalation_offer_state():
     from app.services.chatbot.turn import pending as turn_pending
 
     offer = turn_pending.ask(
@@ -416,12 +418,27 @@ def test_a_cancel_to_an_escalation_offer_keeps_the_held_customer_and_product():
     customer = {"raw": "ZZC001", "hint": "customer", "canonical_code": "ZZC001", "uuid": ht.uuid_of("ZZC001"),
                 "current_message": False, "confident": True}
     focus = Focus(customers=[customer], products=ht.product_rows("SRTBF101"), domains=["inventory"])
-    state = replace(ht.state(focus, pending=offer, turn_no=5), state_path=False)
-    v = verdict(
+    return replace(ht.state(focus, pending=offer, turn_no=5), state_path=False)
+
+
+def _escalation_offer_answer(mode: str):
+    return verdict(
         domain_hint="inventory", intent_hint="check_stock", entities=[], topic_reset=False, is_affirmative=False,
-        open_question_answer={"mode": "cancel", "picked": [], "items": [], "qty_for_all": None},
+        open_question_answer={"mode": mode, "picked": [], "items": [], "qty_for_all": None},
     )
-    new_state, _plan = _turn(state, v)
+
+
+def test_a_cancel_naming_nothing_over_an_escalation_offer_is_a_reset():
+    new_state, plan = _turn(_escalation_offer_state(), _escalation_offer_answer("cancel"))
+    assert new_state.pending is None, new_state.pending
+    assert new_state.focus.customers == [], new_state.focus.customers
+    assert new_state.focus.products == [], new_state.focus.products
+    assert plan.trace.lane not in ("escalation", "escalation_declined"), plan.trace.lane
+
+
+def test_a_no_over_an_escalation_offer_declines_and_keeps_the_held_customer_and_product():
+    new_state, plan = _turn(_escalation_offer_state(), _escalation_offer_answer("no"))
+    assert plan.trace.lane == "escalation_declined", plan.trace.lane
     assert [c.get("canonical_code") for c in new_state.focus.customers] == ["ZZC001"], new_state.focus.customers
     assert [p.get("canonical_code") for p in new_state.focus.products] == ["SRTBF101"], new_state.focus.products
 
@@ -441,7 +458,7 @@ def _detail_offer_state(gate: bool):
 
 
 @GATES
-def test_a_decline_of_an_offer_with_the_messages_own_ask_still_plans_the_ask(gate):
+def test_a_cancel_of_an_offer_with_the_messages_own_ask_still_plans_the_ask(gate):
     v = verdict(
         domain_hint="order", intent_hint="check_order", domain_in_message=True, order_status="outstanding",
         entities=[], topic_reset=True, is_affirmative=False,
@@ -454,7 +471,7 @@ def test_a_decline_of_an_offer_with_the_messages_own_ask_still_plans_the_ask(gat
 
 
 @GATES
-def test_guard_a_bare_never_mind_over_the_offer_is_still_only_a_decline(gate):
+def test_guard_a_bare_never_mind_over_the_offer_closes_it_unanswered(gate):
     v = verdict(domain_hint=None, entities=[], topic_reset=True, is_affirmative=False)
     if gate:
         v["state_changes"] = [{"op": "close_question", "axis": None, "position": None}]

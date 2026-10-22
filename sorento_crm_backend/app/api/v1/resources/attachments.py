@@ -660,6 +660,16 @@ async def delete_attachment_link(
     db: Session = Depends(get_db),
 ):
     """Delete an entity-attachment link (e.g. unlink a packing list from an attachment)."""
+    # The STORED type decides, not the query value (a blank one would skip delete_link's filter).
+    link = EntityAttachmentService(db).get_link(link_id)
+    stored = link.entity_type if link else None
+    if "new_product_application" in ((entity_type or "").strip(), stored):
+        # Its unlink is a deferred pending action with its own owner and lock rules.
+        raise AppException(
+            status_code=409,
+            message="Unlink this file from the application itself: it has its own unlink.",
+            code="NEW_PRODUCT_APPLICATION_OWN_UNLINK",
+        )
     try:
         service = EntityAttachmentService(db)
         service.delete_link(link_id, entity_type=entity_type)
