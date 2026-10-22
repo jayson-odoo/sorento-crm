@@ -520,7 +520,6 @@ class TaskOutcome:
     question: str | None = None
     question_domain: str | None = None
     parked_kinds: tuple[str, ...] = ()
-    closed_kinds: tuple[str, ...] = ()
     rules: tuple[str, ...] = ()
 
 
@@ -560,23 +559,8 @@ def run(
     # stored, a "no" answers the task's own question and resume re-asks it.
     answers_pending = pending is not None and (decision_kind == "answer" or declined)
 
-    # (1) Close or park on a topic reset. A reset aimed at a task's OWN domain ends
-    # it; one aimed elsewhere parks it, and the focus keeps the task through the wipe
-    # (`apply._focus_rules` empties every other axis).
-    if verdict.get("topic_reset") is True:
-        kept: list[Task] = []
-        closed: list[str] = []
-        for task in tasks:
-            aimed_here = not named_domain or task.domain == named_domain
-            if aimed_here or task.status == ANSWERED:
-                closed.append(task.kind)
-                rules.append(f"task_closed_on_reset_{task.kind}")
-                continue
-            kept.append(replace(task, status=PARKED))
-            rules.append(f"task_parked_{task.kind}")
-        return TaskOutcome(
-            tasks=tuple(kept), closed_kinds=tuple(closed), rules=tuple(rules)
-        )
+    # (1) A topic reset never reaches here with a task: `apply._reset` closed every one,
+    # whatever domain the reset names (release gate #1829).
 
     # Owner hand test 26 Sep, slice 4 (T14): a message that names a product the task
     # does NOT hold is a stock question of its own, never a fill. Claimed, the task's
