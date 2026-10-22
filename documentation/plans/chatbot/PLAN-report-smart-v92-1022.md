@@ -1,6 +1,6 @@
 # PLAN: sales reports on parser v92 (lane REPORT-SMART-L, round S1, 22 Oct)
 
-Status: plan, posted to #1816 for crew; code starts after the crew-note. Track: L (parser prompt fields, report access
+Status: building (C1 red tests), plan crew-note 6332909610, decisions relayed 22 Oct. Track: L (parser prompt fields, report access
 scope change, cross-lane prompt coordination). Branch `claude/report-smart-1021-r2xexf` rebuilt on
 `crew/chat-release-1022` 237424152b (merge #1721 + 23 lane commits, head c925b50327, one alembic head). UAC:
 `report-smart-v92-1022-acceptance-criteria.md`.
@@ -45,9 +45,12 @@ none added; no message words read.
   `coerce_domain_hint`, so an answering turn's rerouted `order` is stored as `sales`. (b) `chat_state.apply_changes`:
   a `switch_domain` whose target domains are all held is no switch (logged as `switch_onto_held`); only a target not
   held drops the domain-bound axes. Tests: chat_state unit + state-on console (`_state_on`) with the v92 shapes.
-- C2 (step 6; code). The held brand / category words of a sales figure ask stay the lane's (`report_ask_words`) and
-  never go back to the generic resolver from `Focus.extra` on a sales figure verdict (the top selling shield at
-  engine.py:5909 widened to `SALES_FIGURE_STATUSES`).
+- C2 (step 6; code), DEFERRED. Step 6 is a consequence of step 5's parse (the category re-typed as a customer and
+  held in `Focus.extra`, engine.py:5881). Trigger to build it: step 5 still parses its kind outside `order_status` on
+  the measured candidate. Then: the held brand / category words of a sales figure ask never go back to the generic
+  resolver (the top selling shield at engine.py:5909 widened to `SALES_FIGURE_STATUSES`).
+- P3a (eval tooling). `scripts/chatbot_eval/parser_gold.py` EXPECT_KEYS gains `order_status`, `group_by`, `measure`,
+  `compare_to`, `sales_channel`, `ranking_refine`, so the report gold rows can be scored.
 - P1 (parser, additive, ruling 1). Schema `measure` enum qty|amount|customers|orders|products, new `compare_to`
   previous_period|last_year (head/parser.py:319 schema, `required`, TOLERATED_ABSENT); prompt lines in
   head/parser_template.py (:316 measure sentence, :362 closed list) as in crew-note 6308995565. The lane already reads
@@ -70,15 +73,15 @@ none added; no message words read.
   (`report_ask_rate_limit`, `report_ask_rate_window_minutes`, models/user.py:640-641; 0 = unlimited). No code change
   proposed; eval copies set the limit to 0.
 
-## Open questions (crew-note, recommendation first)
+## Decisions (crew relaying the owner's 22 Oct rulings)
 
-1. Salesperson WITHOUT the sales report grant: (a) may ask "my sales" (own customers, any axis but sales_agent),
-   (b) still 403. Recommend (a): ruling 2 says the grant gates the full agent ranking, not own-customer sales.
-2. Salesperson WITH the grant: (a) "my sales" narrows to own customers, a plain ask stays unscoped, (b) always
-   narrowed. Recommend (a).
-3. P2 lines: (a) I draft and measure them in the same candidate as P1, CHAT-CLOSED-LISTS-L reviews and owns the merge,
-   (b) CHAT-CLOSED-LISTS-L writes them. Recommend (a): one measured candidate, one owner of the prompt file.
-4. Rate limit: (a) no change, (b) key it on the linked CRM user instead of the contact. Recommend (a).
+1. Salesperson WITHOUT the sales report grant: own customers, any axis except the sales_agent ranking (Q1 a).
+2. Salesperson WITH the grant: "my sales" (`self_reference`) narrows to own customers; a plain ask stays unscoped
+   (Q2 a).
+3. Prompt: I draft the P2 rule lines with the P1 fields in ONE candidate template, additive and few, no override
+   rules; measured on parser gold + hidden + the 25-conversation report set; EVAL-BENCH reviews the measure
+   (CHAT-CLOSED-LISTS-L on standby); the owner publishes any new version himself after seeing the numbers (Q3 a).
+4. Rate limit: no change (Q4 a).
 
 ## Out (named)
 
