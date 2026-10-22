@@ -249,8 +249,19 @@ CASES = pytest.mark.parametrize(
 )
 
 
-@CASES
-@pytest.mark.parametrize("context", CONTEXTS)
+CLEAR_ALL_CASES = [
+    (context, gate, shape)
+    for gate, shape in [(False, s) for s in OLD] + [(True, s) for s in STATE]
+    for context in CONTEXTS
+    # Excluded: a constructed C01 x v92-customer-order cross the parser was never measured producing.
+    if (context, shape) != ("C01", "v92_new_subject_clear_customer")
+]
+
+
+@pytest.mark.parametrize(
+    "context,gate,shape", CLEAR_ALL_CASES,
+    ids=[f"{c}-{'state_path' if g else 'old_path'}-{s}" for c, g, s in CLEAR_ALL_CASES],
+)
 def test_clear_all_is_one_reset_turn(turn, context, gate, shape):
     t = turn(gate)
     stored = _stored(context)
@@ -551,3 +562,49 @@ def test_round8_a_console_dry_run_reset_writes_one_is_test_frame_and_nothing_els
     usage_after = c.session_factory().execute(text("SELECT count(*) FROM ai_assistant_usage_logs")).scalar()
     assert usage_after == usage_before, "a console dry run must write nothing outside chatbot.turns"
     assert c.stored_after() == stored_before, "a console dry run saved the session"
+
+
+# --- round 9: a domain beside "all" is the held one only when the session holds it --------------------
+#
+# Reviewer S2 on 207fb5d5de: "never mind, all promotions" (topic_reset, domain promotion, broaden_axis
+# all) over a stock session got the acknowledgement, because the round 8 carve-out read every domain
+# beside "all" as the held one. Captain ruling (option B): the carve-out holds only when the session
+# already holds that domain, contact 01's own shape (inventory over an inventory session).
+
+
+def _beside_all(domain: str, intent: str, gate: bool) -> dict[str, Any]:
+    emission = _parser_output(
+        domain_hint=domain, intent_hint=intent, domain_in_message=True, topic_reset=True, entities=[],
+        entity_op="clear", broaden_axis="all", scope_intent=None, match_mode=None,
+        open_question_answer=_no_answer(),
+    )
+    if gate:
+        emission["state_changes"] = [_op("new_subject")]
+    return emission
+
+
+#: What "never mind, all promotions" over a stock session did at b173c6e8c4 (no seam), both paths.
+B173_ALL_PROMOTIONS = {"lane": "check_promotion", "actions": ["send_message"], "tools": []}
+
+
+@pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
+def test_round9_guard_never_mind_all_promotions_over_a_stock_session_runs_the_promotion_lane(turn, gate):
+    t = turn(gate)
+    result = t.say(_stored("C28"), _beside_all("promotion", "check_promotion", gate), "never mind, all promotions")
+    assert (result.reply or {}).get("text") != ACK["en"], (result.branch_kind, (result.reply or {}).get("text"))
+    assert "reset_turn" not in t.trace_of(result), "the reset seam answered a turn that names its own domain"
+    assert t.plans, "apply never ran: the turn did not take today's path"
+    observed = {
+        "lane": result.branch_kind,
+        "actions": [a.get("kind") for a in result.actions or []],
+        "tools": sorted({name for name, _ in t.tool_calls}),
+    }
+    assert observed == B173_ALL_PROMOTIONS, observed
+
+
+@pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
+def test_round9_contact_01s_shape_inventory_beside_all_over_an_inventory_session_still_resets(turn, gate):
+    t = turn(gate)
+    stored = _stored("C01")
+    result = t.say(stored, _beside_all("inventory", "check_stock", gate), "clear all")
+    _assert_the_reset_turn(t, result, stored)
