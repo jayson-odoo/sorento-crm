@@ -1746,6 +1746,7 @@ export function FulfilmentBoardPanel({
             error: postingSomethingElse ? HELD_BACK_BESIDE_CONFIRM : HELD_BACK_ALONE,
             failing_lines: heldBackByBatch.map((contribution) => ({
               line_no: contribution.line_no,
+              so_line_no: contribution.so_line_no,
               reason: 'rejection is staged; it commits after the pending change is applied.',
             })),
           } as BoardBatchResult);

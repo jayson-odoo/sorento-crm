@@ -100,11 +100,13 @@ export function PileQueueDialog({
       },
       {
         id: 'line_no',
-        accessorFn: (row) => row.so_line_no ?? row.line_no ?? 0,
+        // `line_no` is the planning mirror's, null for a core line nobody adopted: that row is
+        // "Not planned" whatever number AutoCount gave it.
+        accessorFn: (row) => (row.line_no == null ? 0 : (row.so_line_no ?? row.line_no)),
         header: ({ column }) => <DataGridColumnHeader title="Line" column={column} />,
         cell: ({ row }) => (
           <span className={cellClass(row.original, position)}>
-            {soLineNoText(row.original) || 'Not planned'}
+            {row.original.line_no == null ? 'Not planned' : soLineNoText(row.original)}
           </span>
         ),
         size: 100,

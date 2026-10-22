@@ -1372,16 +1372,17 @@ class ProjectSupplyService:
         for mirror, core, _reason in picked:
             if awaits_cancel_so(core):
                 continue
+            named = so_line_no(core.line_no, mirror.line_no)
             if core.line_status == "cancelled":
                 raise AppException(
                     status_code=409,
-                    message=f"Line {so_line_no(core.line_no, mirror.line_no)} is already cancelled.",
+                    message=f"Line {named} is already cancelled.",
                     code="supply_cancel_already_cancelled",
                 )
             if str(core.id) in covered_ids:
                 raise AppException(
                     status_code=409,
-                    message=f"Line {so_line_no(core.line_no, mirror.line_no)} is confirmed. Reject it first.",
+                    message=f"Line {named} is confirmed. Reject it first.",
                     code="supply_cancel_line_covered",
                 )
         now = datetime.utcnow()

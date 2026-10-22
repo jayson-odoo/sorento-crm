@@ -2474,7 +2474,13 @@ def _row_is_superseded(db: Session, row: PlanningChangeRow) -> bool:
     return row_is_overtaken(row, current_revision_no(db, str(row.project_sales_order_id)))
 
 
-def row_out(db: Session, row: PlanningChangeRow) -> dict:
+def row_out(
+    db: Session, row: PlanningChangeRow, so_nos: Optional[Dict[str, Optional[int]]] = None
+) -> dict:
+    """`so_nos` is `display_line_nos` read once for a whole batch (`get_batch`); a single
+    row looks its own up."""
+    if so_nos is None:
+        so_nos = display_line_nos(db, [row.project_line_id])
     applied_state = row.applied_state
     if applied_state == PLANNING_CHANGE_STATE_PENDING and _row_is_superseded(db, row):
         applied_state = PLANNING_CHANGE_STATE_SUPERSEDED
@@ -2483,9 +2489,7 @@ def row_out(db: Session, row: PlanningChangeRow) -> dict:
         "project_line_id": str(row.project_line_id) if row.project_line_id else None,
         "line_no": row.line_no or 0,
         # The number the customer's order carries; `line_no` stays the sheet's own address.
-        "so_line_no": display_line_nos(db, [row.project_line_id]).get(
-            str(row.project_line_id), row.line_no
-        ),
+        "so_line_no": so_nos.get(str(row.project_line_id), row.line_no),
         "item_code": row.item_code or "",
         "product_name": row.product_name,
         "kind": row.kind,
@@ -2538,6 +2542,7 @@ def get_batch(db: Session, batch_id: str) -> dict:
     by_order: Dict[str, List[PlanningChangeRow]] = defaultdict(list)
     for r in rows:
         by_order[str(r.project_sales_order_id)].append(r)
+    so_nos = display_line_nos(db, [r.project_line_id for r in rows])
 
     orders_map: Dict[str, ProjectSalesOrder] = {}
     if by_order:
@@ -2565,7 +2570,7 @@ def get_batch(db: Session, batch_id: str) -> dict:
                 "customer_name": customer_name,
                 "project_label": project_label,
                 "revision_no": revision_no,
-                "rows": [row_out(db, r) for r in order_rows],
+                "rows": [row_out(db, r, so_nos) for r in order_rows],
                 "is_adopted": bool(order.so_id) and order.project_id is None,
                 "core_sales_order_id": str(order.so_id) if order.so_id else None,
                 "project_id": str(order.project_id) if order.project_id else None,
