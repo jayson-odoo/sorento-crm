@@ -1296,10 +1296,10 @@ def _record_cancel(
             )
         order_id = ctx["order"][row.order_inquiry_id]
         if row.so_line_id and row.so_line_id not in ctx["line"]:
-            ctx["line"][row.so_line_id] = (
-                db.query(ProjectSalesOrderLine.line_no)
-                .filter(ProjectSalesOrderLine.id == row.so_line_id)
-                .scalar()
+            from app.services.project_line_split_service import display_line_nos
+
+            ctx["line"][row.so_line_id] = display_line_nos(db, [row.so_line_id]).get(
+                str(row.so_line_id)
             )
         line_no = ctx["line"].get(row.so_line_id) if row.so_line_id else None
     qty = _dec(row.qty)

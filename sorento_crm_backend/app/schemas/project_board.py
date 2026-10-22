@@ -1002,6 +1002,8 @@ class PileQueueLine(BaseModel):
     #: Null until the order has been adopted onto a planning record: an un-mirrored line has no
     #: line number of its own, and inventing one would name a line that does not exist.
     line_no: Optional[int] = None
+    #: What the order calls the line (AutoCount's number), the mirror's `line_no` without one.
+    so_line_no: Optional[int] = None
     customer_name: Optional[str] = None
     qty: str
     required_date: Optional[date] = None
