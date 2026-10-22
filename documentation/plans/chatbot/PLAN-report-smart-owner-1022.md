@@ -1,6 +1,6 @@
 # PLAN: owner console turns 22 Oct, fix round on #1816 (lane REPORT-SMART-L, round S2)
 
-Status: S3 reviewer READY at 128d840a6d; round S4 (crew go 23 Oct, deadline 06:30 MYT) in progress: compare_to reply + flyer kind label. Track: L (prompt candidate, resolver/state guards).
+Status: S4 reviewer READY at e390d38362; round S5 (crew order 23 Oct: root causes of the EXPLORE-1023 section 6 misses) in progress: console history bounded to the run, a ranking frame remembers its answer. Track: L (prompt candidate, resolver/state guards).
 `claude/report-smart-1021-r2xexf` (on `crew/chat-release-1022`), base head afd7f70605. Diagnosis (13 turns, prompt v94,
 code 65c2025c05): `crew/state/eval/report-smart-v92/owner-1022-diagnosis.md` (crew-only). UAC:
 `report-smart-owner-1022-acceptance-criteria.md`.
@@ -135,6 +135,20 @@ turns (chatbot.turns on the crew copy).
   answer.py:327-334), from the same source as the Promotion kinds line (turn/context.py:132-142).
   Parser items (23 'For product <code>' refine, 42 'top N dealers selling X') go to a prompt candidate after the
   owner's test.
+
+- Round S5 (causes: crew/state/eval/report-smart-v92/explore1023b-rootcause.md). The S2-S4 lines rendered on every live
+  row (v100, render sha 05cdc9c968); the misses are parser readings driven by the history it is given.
+  S5-1 CONSOLE HISTORY. The console Reset (useChatbotConsole.ts:190-195, console_service.py:218-221) clears State only;
+  `recent_exchanges` (turn_runtime.py:376-419), `previous_reply_text` (:307-345) and the Recent conversations frames
+  (engine.py:4080-4093; frames close only on a topic switch, :6485-6495) still carry the talk from before the Reset,
+  against console_service.py:197-201 ("this contact remembers nothing"). Fix: on a console turn, the three history
+  readers take only turns of the current test run. Real contacts unchanged.
+  S5-2 RANKING FRAME. A sales ranking envelope has figures [] so has_result is False (turn_runtime.py:6062), miss = the
+  codes (:6096), missed ['sales'] (engine.py:7812), and the digest writes "Asked about sales for X, but nothing was found"
+  (episode_digest.py:225-227, :466) also when the ranking answered. Fix: a ranking that returned ranked rows has a
+  result.
+  Parser lines (template 53 'for product X' refine, 297 'top N dealers selling X', 310 a flyer ask is a promotion ask)
+  go to a v101 candidate with gold rows after the owner's test.
 
 ### Gates (S3)
 

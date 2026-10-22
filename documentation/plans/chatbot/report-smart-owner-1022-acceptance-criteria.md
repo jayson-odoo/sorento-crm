@@ -50,3 +50,11 @@ Plan: `PLAN-report-smart-owner-1022.md`.
   held comparison. Near miss: a reply that fills the basis ("delivered") runs the ranking with the comparison.
 - AC-S4-2. The access level question for a flyer ask names the kind the parser set ("a3 flyer") with the brand, whether
   or not a flyer entity survived grounding. Near miss: an ask with no promotion_kind is worded as today.
+
+## Round S5 (23 Oct)
+
+- AC-S5-1. After a console Reset (a new test run id, empty session vars), the parser's user block carries no Recent
+  exchanges, no Previous response and no Recent conversations line from before the Reset; turns of the current run still
+  appear. A real (non-console) contact's history is unchanged.
+- AC-S5-2. A sales ranking that returned ranked rows is remembered as answered: its Recent conversations line never says
+  "nothing was found"; a ranking that returned no rows still does.
