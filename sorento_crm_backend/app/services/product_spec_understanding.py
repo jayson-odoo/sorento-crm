@@ -85,6 +85,13 @@ _NEGATION_WINDOW = 15
 # message, so it is on the latency path of a WhatsApp reply.
 _MAX_OUTPUT_TOKENS = 700
 _TEMPERATURE = 0.0
+# The chatbot turn's budget for this reading: the resolver code reader's own
+# (`resolver_code_reader.BUDGET_SECONDS`), which runs just before it on the same reply. Without
+# it the SDK default applies: 600 s and two silent retries (CHAT-LATENCY-SCOUT). A timeout takes
+# the provider-failure arm below, so the turn goes on with the literal reading instead of
+# waiting. Only the chatbot's resolve endpoint passes it (`model_timeout`); the CRM's own
+# Product Specifications preview asks with no timeout, as before (CHAT-RELEASE-1021).
+CHAT_TURN_MODEL_TIMEOUT_SECONDS = 3.0
 
 # The prompt lives in the AI prompt registry under the agent name below, so it is
 # editable and versioned in the UI alongside every other agent's. The hardcoded copy
@@ -521,6 +528,7 @@ def derive_search_inputs(
     user_id: str | None = None,
     registry_rows=None,
     log_usage: bool = True,
+    model_timeout: float | None = None,
 ) -> tuple[list[dict], list[str], list[dict], Understanding | None]:
     """Read the sentence, then let the caller's own extraction win over it.
 
@@ -546,6 +554,7 @@ def derive_search_inputs(
         allow_model=allow_model,
         registry_rows=registry_rows,
         log_usage=log_usage,
+        model_timeout=model_timeout,
     )
     # A spec the caller pinned by hand always wins: they saw the whole sentence
     # (or the screen), this saw one phrase.
@@ -567,6 +576,7 @@ def understand_phrase(
     allow_model: bool = True,
     registry_rows=None,
     log_usage: bool = True,
+    model_timeout: float | None = None,
 ) -> Understanding:
     """Map a customer's sentence onto registry specs, semantically where possible.
 
@@ -637,6 +647,7 @@ def understand_phrase(
             temperature=_TEMPERATURE,
             max_tokens=_MAX_OUTPUT_TOKENS,
             response_format={"type": "json_object"},
+            timeout=model_timeout,
         )
         payload = json.loads(result.content or "{}")
     except Exception as exc:  # noqa: BLE001 - any provider failure degrades, never raises

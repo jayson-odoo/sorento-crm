@@ -40,6 +40,7 @@ from app.models.base import set_brand_scope, set_company_scope
 from app.models.chatbot_turn import ChatbotTurn
 from app.services import llm_cassette
 from app.services.chatbot import direct_ingress, dispatch, jsc, llm_call, media_intake, send_order, trace as trace_mod
+from app.services.chatbot import user_turn as user_turn_mod
 from app.services.chatbot.contracts import (
     BUSINESS_BRANCH_KINDS,
     CRM_COMPLETED_BRANCH_KINDS,
@@ -59,7 +60,8 @@ from app.services.customer_group_service import family_overrides
 from app.services.error_handler import AppException
 from app.utils.build_info import GIT_SHA
 from app.services.ledger_family import customer_groups
-from app.services.chatbot.head import grounding, parser
+from app.services.chatbot.head import candidates as candidates_mod, closed_lists_index, grounding, held_family, parser, scheme_index
+from app.services.chatbot.head import access as access_mod
 from app.services.chatbot.head.access import check_access, default_space_id
 from app.services.chatbot.head.build_ctx import build_ctx
 from app.services.chatbot.lanes import business, canned as canned_lanes, casual
@@ -73,6 +75,7 @@ from app.services.chatbot.usage import CLARIFIER_FEATURE, record_parser_usage, r
 # is everything that has to touch a database or a tool on its behalf.
 from app.services.chatbot import label_catalog, language as language_mod, session_state, turn_runtime
 from app.services.chatbot import quick_reply_guard
+from app.services.chatbot.composers import sets as composers_sets
 from app.services.chatbot.turn import pending as turn_pending
 from app.services.chatbot.turn import chat_state
 from app.services.chatbot.turn import question as turn_question
@@ -88,8 +91,8 @@ from app.services.chatbot.turn import tail as turn_tail
 from app.services.chatbot.turn import task as turn_task
 from app.services.chatbot.turn.apply import apply as _apply_state
 from app.services.chatbot.turn.apply import is_product_shaped_entity
-from app.services.chatbot.turn.apply import record_top_selling_asked
-from app.services.chatbot.turn.decide import EVERYTHING, broaden_kind, broaden_level
+from app.services.chatbot.turn.apply import RESET_KEEPS, record_top_selling_asked
+from app.services.chatbot.turn.decide import EVERYTHING, broaden_kind, broaden_level, names_its_own_domain
 from app.services.chatbot.turn.policy import load_policy
 from app.services.chatbot.turn.route import route as turn_route
 # Module level and by name, the same shape `app/api/v1/external/media.py` uses for its own
@@ -181,7 +184,7 @@ def split_marked_message(text: str) -> list[str]:
 
 #: WhatsApp's per-message ceiling as the MCP presenter keeps it
 #: (`sorento_crm_mcp.presenters.WHATSAPP_MESSAGE_MAX_CHARS`, under WhatsApp's own 4096).
-WHATSAPP_MESSAGE_MAX_CHARS = 3900
+WHATSAPP_MESSAGE_MAX_CHARS = composers_sets.MESSAGE_MAX_CHARS
 
 
 def _product_family(db: Any, code: str) -> list[dict[str, str]]:
@@ -496,7 +499,9 @@ _ETA_WORDS = re.compile(
 )
 
 
-def _as_a_stock_ask_by_its_own_words(verdict: dict[str, Any], message: str) -> dict[str, Any]:
+def _as_a_stock_ask_by_its_own_words(
+    verdict: dict[str, Any], message: str, template: bool = False
+) -> dict[str, Any]:
     """AVAIL-MODE-REPLIES (tester re-run on 2eb2a00ef): the live parser intermittently read
     a plain "CWCX611 x 300" as `check_incoming` and the dealer was told "ETA not confirmed
     yet". A message whose own words name a product WITH a quantity and no ETA word is a
@@ -505,7 +510,12 @@ def _as_a_stock_ask_by_its_own_words(verdict: dict[str, Any], message: str) -> d
 
     The cloud live-parser pass at 2ff7f5e9 saw the same misread the other way: "srt5764 xx
     10" read as a product-info ask (`check_product` / `master_products`), which answered
-    with the staff did-you-mean and an escalation offer. That reading is put back too."""
+    with the staff did-you-mean and an escalation offer. That reading is put back too.
+
+    PARSER-TEMPLATE F1-A: under the consolidated template (`template`) the prompt's own
+    R-P1-03 decides the domain of a stated quantity, so the parser's verdict stands."""
+    if template:
+        return verdict
     misread = {"incoming", "master_products"}
     incoming = (
         verdict.get("intent_hint") in ("check_incoming", "check_product")
@@ -677,7 +687,13 @@ def _exact_codes_only(
         # compared here ("TAP SRTWT5608" with canonical_code null: the token is
         # "tapsrtwt5608", the placed code "srtwt5608"); the maps stay keyed by the token.
         code = (read_values or {}).get(fold) or fold
-        exact = [c for c in candidates if code_of(c) == code]
+        # CHAT-CODE-LOOKUP R2: a member of the product set the customer typed (the gate puts
+        # `set_code` on its rows) belongs to that token.
+        exact = [
+            c for c in candidates
+            if code_of(c) == code
+            or any(turn_state.token_key(sc) == code for sc in (c.get("set_codes") or [c.get("set_code")]) if sc)
+        ]
         family: list[dict[str, Any]] = []
         if turn_task.code_or_number(code):
             family = [c for c in candidates if code_of(c).startswith(code)] or [
@@ -1080,6 +1096,91 @@ def _contact_brand_scope(factory: SessionFactory, contact_respond_id: str) -> fr
         db.close()
 
 
+_ENGINE_ENTITY_KEYS = ("listed", "certificate_uuids", "parent_kind", "parent_kind_uuid", "parent_kind_name", "class_hint")
+
+
+def closed_lists_verdict(verdict: dict[str, Any], *, gate: bool) -> dict[str, Any]:
+    """CHAT-CLOSED-LISTS: a verdict parsed by a CLOSED LISTS version says so, so the lanes
+    read the parser's listed picks and none of the word fallbacks (card R2/R5). The key is
+    the engine's alone: one a harness emission carried is dropped when the gate is off."""
+    if gate:
+        return {**verdict, "closed_lists": True}
+    return {k: v for k, v in verdict.items() if k != "closed_lists"} if "closed_lists" in verdict else verdict
+
+
+def code_lookup_verdict(verdict: dict[str, Any], *, gate: bool) -> dict[str, Any]:
+    """CHAT-CODE-LOOKUP: a verdict parsed by a CODE LOOKUP version says so, so later lanes
+    can read it. Like `closed_lists_verdict`, the key is the engine's alone."""
+    if gate:
+        return {**verdict, "code_lookup": True}
+    return {k: v for k, v in verdict.items() if k != "code_lookup"} if "code_lookup" in verdict else verdict
+
+
+def _strip_hidden_spec_entities(verdict: dict[str, Any], hidden: frozenset[str]) -> dict[str, Any]:
+    """H1: a spec entity on a contact-hidden key is dropped. Runs once, on the grounding output
+    (the parser's own emission and what grounding re-derives from raw words alike), before
+    `turn_apply`, the only writer of spec entities into the focus."""
+    entities = verdict.get("entities")
+    if not hidden or not isinstance(entities, list):
+        return verdict
+    # Grounding binds on the stripped key, so the compare is on the stripped key too.
+    kept = [e for e in entities if not (isinstance(e, dict) and str(e.get("spec_key") or "").strip() in hidden)]
+    return verdict if len(kept) == len(entities) else {**verdict, "entities": kept}
+
+
+def _candidate_lines(
+    db: Session,
+    user_turn: Any,
+    held_ids: list[str] | None = None,
+    hidden: frozenset[str] = frozenset(),
+    *,
+    code_lookup: bool = False,
+    index: bool = False,
+    matches_out: list | None = None,
+    failed_out: list | None = None,
+) -> tuple[list[str] | None, frozenset[str], dict[str, dict[str, Any]]]:
+    """The candidate block for the message's OWN line (`UserTurn.own_text`: the quoted reply
+    under it is not this message's words, the line grounding reads too). It only advises the
+    parser, so a failure leaves it out and the turn goes on (savepoint: the session stays usable).
+    Also the codes the block lists, for grounding's product pick check under CODE LOOKUP.
+
+    `index` (CLOSED-LISTS-INDEX-MODE): the block is `head/closed_lists_index.block` (the word
+    matches beside the candidate lines, the held products' own lines under their own heading),
+    built in its own savepoint so a failure there keeps the candidate lines. CHAT-INDEX-VIZ:
+    `matches_out` gets the matches `block_with_matches` reports; `failed_out` gets True when
+    the index step failed."""
+    message = user_turn.own_text
+    entries: list = []
+    try:
+        with db.begin_nested():
+            entries = (
+                candidates_mod.shortlist(db, message, held_ids, hidden=hidden, code_lookup=True)
+                if code_lookup
+                else candidates_mod.shortlist(db, message, held_ids, hidden=hidden)
+            )
+            lines, codes, picks = (
+                candidates_mod.candidate_lines(entries),
+                candidates_mod.listed_codes(entries),
+                candidates_mod.pick_info(entries) if code_lookup else {},
+            )
+    except Exception:  # noqa: BLE001 - advisory block, never a failed turn
+        logger.warning("chatbot: candidate shortlist failed; parsing without it", exc_info=True)
+        lines, codes, picks = None, frozenset(), {}
+    if not index:
+        return lines, codes, picks
+    try:
+        with db.begin_nested():
+            indexed, matches = closed_lists_index.block_with_matches(db, entries, message, held_ids, hidden)
+        if matches_out is not None:
+            matches_out.extend(matches)
+    except Exception:  # noqa: BLE001 - advisory block, never a failed turn
+        logger.warning("chatbot: closed lists index lines failed; parsing without them", exc_info=True)
+        indexed = []
+        if failed_out is not None:
+            failed_out.append(True)
+    return (indexed or lines), codes, picks
+
+
 def _scoped_factory(
     factory: SessionFactory, scope: frozenset, brand_scope: frozenset | None = None
 ) -> SessionFactory:
@@ -1166,6 +1267,17 @@ def _reply_to_message_id(envelope: Envelope) -> str | None:
     return str(value) if value not in (None, "") else None
 
 
+def _typed_text(user_turn: Any) -> str:
+    """The folded text the customer typed this turn: every line of their own text up to the
+    `reply to:` block `build_latest_user_message` appends, plus the codes read from the media."""
+    own = [user_turn.own_text]
+    for line in user_turn.quoted_text.split("\n"):
+        if line.lstrip().lower().startswith("reply to:"):
+            break
+        own.append(line)
+    return turn_state.token_key(" ".join([*own, *user_turn.media]))
+
+
 def turn_apply(state_in: Any, *args: Any, **kwargs: Any) -> Any:
     """APPLY, keeping the QUOTED-REPLY live-question aside (R4) on the state it returns:
     APPLY builds a fresh `State`, which would otherwise drop it."""
@@ -1236,8 +1348,11 @@ def _quoted_context(
         "open_question"
     )
     facts.update(found=True, via=found.via, turn_id=found.turn_id, same_as_live=same)
+    # CHAT-STATE r7: which bot turn the quote names rides on the State, swapped or not (a quote of
+    # the newest turn swaps nothing), so the list that turn showed can be the referent.
+    quoted_turn_no = found.turn_no if isinstance(found.turn_no, int) else None
     if same:
-        return state_in, facts
+        return dataclasses_replace(state_in, quoted_turn_no=quoted_turn_no), facts
     pending = turn_runtime.tick_pending(turn_pending.from_wire(found.open_question))
     if (
         pending is not None
@@ -1250,6 +1365,7 @@ def _quoted_context(
             state_in,
             focus=turn_state.focus_from_wire(found.focus),
             pending=pending,
+            quoted_turn_no=quoted_turn_no,
             quoted_live={
                 "pending": state_in.pending,
                 "focus": state_in.focus,
@@ -4047,6 +4163,360 @@ def _clarifier_memory_slice(memory_intake: dict[str, Any]) -> str:
             lines = []
 
 
+def _names_a_domain(verdict: dict[str, Any]) -> bool:
+    """Release gate #1829, round 8: did THIS message name a domain of its own
+    (`decide.names_its_own_domain`)? Not beside a widening to everything (`broaden_axis` all):
+    widening keeps the held `domain_hint` (parser R-P3-09), so that domain is the held one, the
+    shape "clear all" itself carried at contact 01 (domain inventory, `domain_in_message`). The
+    `new_subject` signal's reading; the stated-beside check reads `_states_a_domain`."""
+    return names_its_own_domain(verdict) and verdict.get("broaden_axis") != "all"
+
+
+def _states_a_domain(verdict: dict[str, Any], held_domains: tuple[str, ...]) -> bool:
+    """Release gate #1829, round 9 (reviewer S2, captain ruling option B): a domain stated beside
+    a reset. Beside a widening to everything it is the held one only when the session already
+    holds it (contact 01: inventory over an inventory session); "never mind, all promotions" over
+    a stock session names promotion of its own. Round 10: `scope_intent` broaden is the same
+    widening (a reset beside it is "clear all", crew audit 22 Oct)."""
+    held_widening = (
+        (verdict.get("broaden_axis") == "all" or verdict.get("scope_intent") == "broaden")
+        and not verdict.get("asks")
+        and verdict.get("domain_hint") in held_domains
+    )
+    return names_its_own_domain(verdict) and not held_widening
+
+
+def _all_broaden_over_nothing_open(verdict: dict[str, Any], state: Any) -> bool:
+    """Release gate #1829, round 12 (EVAL-BENCH contacts 01, 02, 30; captain ruling option A): an
+    all-broaden (`entity_op` clear or `broaden_axis` all) with `scope_intent` null and no domain or
+    asks of its own (any `domain_hint`, so an idea's ideate stays out), over a session with no open
+    question, no task of any status and no stored list, has nothing to widen: it is "clear all". A
+    held subject is allowed (the trace's turns held products and the inventory domain). Whether the
+    message states anything else is the seam's own `_stated_beside_a_reset`. Round 12b (reviewer
+    B1 / S1): a question the focus holds (`chat_state._focus_questions`: a set clarify, the count
+    question, the other-brands offer, a top selling question) or a set being listed is open too,
+    and a family widening (`broaden_to` other than all, `family` true) is stated; round 12c:
+    `family` false is the exact code alone, no widening."""
+    if state is None:
+        return False
+    focus = state.focus
+    return (
+        (verdict.get("entity_op") == "clear" or verdict.get("broaden_axis") == "all")
+        and not verdict.get("scope_intent")
+        and verdict.get("broaden_to") in (None, "", "all")
+        and verdict.get("family") is not True
+        and not chat_state._message_domains(verdict)
+        and state.pending is None
+        and not focus.tasks
+        and not focus.last_list
+        and not focus.required_ask
+        and not chat_state._focus_questions(focus)
+        and not focus.set_page
+    )
+
+
+def _reset_signals(verdict: dict[str, Any], parser_raw: Any = None, state: Any = None) -> list[str]:
+    """Release gate #1829, rounds 7-8 (crew rulings, design note 6335681391): the parser fields
+    that mark a reset, one per line, so one can be dropped with a one-line change. Parser fields
+    only. The cancel is read off the parser's own emission: with nothing open the phantom drop
+    (`turn_question.without_phantom_answer`) has already taken it off the verdict. `entity_op`
+    clear (the "all" / broaden signal) and a `clear` op (one part of the subject) are no reset."""
+    said = parser_raw if isinstance(parser_raw, dict) else verdict
+    answer = said.get("open_question_answer") if isinstance(said.get("open_question_answer"), dict) else {}
+    ops = {c.get("op") for c in verdict.get("state_changes") or [] if isinstance(c, dict)}
+    signals = {
+        "topic_reset": verdict.get("topic_reset") is True,
+        "cancel": answer.get("mode") == "cancel",
+        # The chat_state mirror rule: a new subject over which nothing carries IS a reset.
+        "new_subject_naming_no_domain": "new_subject" in ops and not _names_a_domain(verdict),
+        "all_broaden_over_nothing_open": _all_broaden_over_nothing_open(verdict, state),
+    }
+    return [name for name, on in signals.items() if on]
+
+
+#: The message types a reset may carry and still state nothing: the casual kinds and a plain
+#: business query. Any other (a hand-off, a history question, an idea) is an ask of its own.
+_RESET_MESSAGE_TYPES = frozenset({None, "", "business_query", "casual", "clarification", "confirmation", "unknown", "low_signal"})
+
+
+def _stated_beside_a_reset(
+    verdict: dict[str, Any], held_domains: tuple[str, ...] = (), signals: tuple[str, ...] = ()
+) -> list[str]:
+    """What the message states of its own, one per line: anything here makes a reset signal
+    the start of an ask, which keeps today's path. A carried echo (`current_message` false), a
+    carried domain and a plain business query state nothing; `broaden_axis` all is the "all" of
+    "clear all" itself (every measured v63 "clear all" carries it), a widening to everything is
+    `scope_intent` broaden when the parser read no `topic_reset` and no cancel (rounds 10-11).
+    `signals` are `_reset_signals`' own names for this verdict."""
+    answer = verdict.get("open_question_answer") if isinstance(verdict.get("open_question_answer"), dict) else {}
+    low_stock = verdict.get("low_stock") if isinstance(verdict.get("low_stock"), dict) else {}
+    ops = {c.get("op") for c in verdict.get("state_changes") or [] if isinstance(c, dict)}
+    stated = {
+        "entity": any(isinstance(e, dict) and e.get("current_message") is not False for e in verdict.get("entities") or []),
+        "status": bool(verdict.get("status") or verdict.get("order_status")),
+        "document": bool(verdict.get("document")),
+        "sales_channel": bool(verdict.get("sales_channel")),
+        "low_stock": any(v not in (None, "", []) for v in low_stock.values()),
+        "date_window": bool(verdict.get("date_mode") or verdict.get("date_filter_start") or verdict.get("date_filter_end")),
+        "attributes": bool(verdict.get("requested_attributes")),
+        "quantity": verdict.get("demand_qty") is not None,
+        "positions": bool(verdict.get("reference_positions")),
+        "picked": bool(answer.get("picked")),
+        "item_qty": any(isinstance(i, dict) and i.get("qty") is not None for i in answer.get("items") or []),
+        "qty_for_all": answer.get("qty_for_all") is not None,
+        "domain": _states_a_domain(verdict, held_domains),
+        "top_n": verdict.get("top_n") is not None,
+        "rank_by": bool(verdict.get("rank_by")),
+        "basis": bool(verdict.get("basis")),
+        "sort_by": bool(verdict.get("sort_by")),
+        "group_by": bool(verdict.get("group_by")),
+        "broaden_axis": verdict.get("broaden_axis") not in (None, "", "all"),
+        # Rounds 10-11: a reset wins over broaden, `topic_reset` or a declared cancel (read as
+        # `_reset_signals` reads it); without either a broaden ("show me everything") is an ask.
+        "scope_intent": bool(verdict.get("scope_intent"))
+        and not ({"topic_reset", "cancel"} & set(signals) and verdict.get("scope_intent") == "broaden"),
+        "query_brands": bool(verdict.get("query_brands")),
+        "set_op": "set" in ops,
+        "message_type": verdict.get("message_type") not in _RESET_MESSAGE_TYPES,
+    }
+    return [name for name, on in stated.items() if on]
+
+
+def _close_the_episode(
+    db: Session,
+    envelope: Envelope,
+    *,
+    verdict: dict[str, Any],
+    this_domain: str | None,
+    dry_run: bool,
+    contact_respond_id: str,
+    turn_id: str,
+    remembered_before: dict[str, Any],
+) -> None:
+    """The one memory episode write of a turn, for the routed path and the reset seam alike
+    (release gate #1829, round 8: the seam answers before routing, and a reset still closes
+    the topic it ended). `this_domain` is the domain the turn's plan acted on (None on the
+    seam, which plans nothing). Stashes `_episode_written` and `_facts_tallied` on
+    `remembered_before` for the turn's memory trace."""
+    contact_pk = remembered_before.get("_contact_pk")
+    # AC-1546 / chatbot memory lane A (contract section 3): the episode belongs to
+    # the topic that just CLOSED, and a topic closes because the customer changed
+    # subject - not because this turn's lane went on to answer. Written HERE, where
+    # the reset is decided, so a turn whose fetch failed or whose lane refused
+    # still remembers the topic it ended. Once per turn, never mid-topic.
+    #
+    # Human intervention closes nothing (Q2 ruling): the topic is whatever it was
+    # when the bot resumes. D14's third named exception (Q15) is the one write a
+    # dry run may make: a CONSOLE turn writes an `is_test=true` frame of its own
+    # world; every other dry run (clone/replay/harness) writes nothing.
+    is_console_dry_run = dry_run and envelope.ingress == "console"
+    written_frame = None
+    # Fix lane round 3 (R1, owner hand test 28 Sep 2026): the parser's
+    # `topic_reset` alone never closed "check stock X" then "incoming X" (same
+    # product, so it reads as a follow-up). A turn whose plan names a different
+    # domain from the open conversation's newest one is the other switch
+    # (`episode_digest.close_trigger`, the backfill's same rule).
+    may_write_episode = (not dry_run or is_console_dry_run) and not _is_human_intervened(envelope)
+    open_domain = None
+    if may_write_episode and this_domain and verdict.get("topic_reset") is not True:
+        try:
+            open_domain = memory_mod.open_topic_domain(
+                db,
+                contact_respond_id=contact_respond_id,
+                is_test=dry_run,
+                exclude_turn_id=turn_id,
+            )
+        except Exception:  # noqa: BLE001 - a lost episode is never a lost turn
+            logger.warning("chatbot: the open topic read did not run", exc_info=True)
+    close_trigger = episode_digest_mod.close_trigger(verdict, this_domain, open_domain)
+    if close_trigger is not None and may_write_episode:
+        try:
+            written_frame = memory_mod.write_episode_for_reset(
+                db,
+                contact_respond_id=contact_respond_id,
+                is_test=dry_run,
+                resetting_turn_id=turn_id,
+            )
+        except Exception:  # noqa: BLE001 - a lost episode is never a lost turn
+            logger.warning("chatbot: the episode write did not run", exc_info=True)
+    # Stashed on the shared `before` box (the same object `_run_answer` and
+    # `_run_entities_only_arm` already receive as `remembered_before`) so
+    # `_record_memory_trace`, several call frames later, can report what THIS turn
+    # closed without a new parameter threaded through every arm between here and
+    # there.
+    remembered_before["_episode_written"] = (
+        {
+            "id": written_frame.id,
+            "turn_count": len(written_frame.turn_ids or []),
+            "close_reason": written_frame.close_reason,
+            "summary": written_frame.summary,
+            "trigger": close_trigger,
+            "domain": getattr(written_frame, "domain", None),
+        }
+        if written_frame is not None
+        else None
+    )
+
+    # AC-MEM032: the tally runs after the episode write above has committed -
+    # never before, since it reads the newest CLOSED frames and a frame this
+    # turn just wrote is one of them. Round 3 (PLAN 6.0, AC-MEM049): facts are
+    # learned and saved at EVERY context level, Off included - the level decides
+    # only what the bot READS, never what it LEARNS. Episodes themselves are
+    # ALSO written whatever the level, staff still see everything either way; the
+    # one gate that still applies is B2's own (never on a dry run).
+    # Stashed on `before` the same way `_episode_written` is, so `_run_answer`'s
+    # tail can fold it into the turn's own `facts_saved` trace line.
+    if written_frame is not None and not dry_run and contact_pk is not None:
+        try:
+            tallied = profile_facts_mod.tally(
+                db, contact_respond_id, is_test=dry_run, contact_pk=contact_pk
+            )
+            remembered_before["_facts_tallied"] = [
+                {"key": f["key"], "source": f["source"]} for f in tallied
+            ]
+        except Exception:  # noqa: BLE001 - a lost tally is never a lost turn
+            logger.warning("chatbot: the profile tally did not run", exc_info=True)
+
+
+def _reset_turn(
+    envelope: Envelope,
+    *,
+    verdict: dict[str, Any],
+    parser_raw: Any,
+    state_in: Any,
+    session_block: Any,
+    remembered_before: dict[str, Any],
+    recalled: list[dict[str, Any]],
+    user_turn: Any,
+    profile: Any,
+    known_phone: str | None,
+    parser_usage: dict[str, Any],
+    parse_started: Any,
+    session_factory: SessionFactory,
+    turn_trace: Any,
+    turn_id: str,
+    contact_respond_id: str,
+    dry_run: bool,
+    actions: list[dict[str, Any]],
+    stage: list[str],
+) -> TurnResult | None:
+    """Release gate #1829, round 7: ONE reset seam, right after the parse and before the state
+    applier, apply, routing or any lane, so nothing the parser carried beside the reset (a
+    domain, a message type) can route the turn. A reset that states nothing new closes the open
+    question (any kind, offers included), every task and the stored list, resets the focus to
+    RESET_KEEPS, saves the session and answers ONE fixed acknowledgement in the reply language:
+    no lane, fetch, tool, escalation, hand-off, small-talk model or recap. None for every other
+    turn (and for a contact the access check refuses), which runs today's path untouched."""
+    signals = _reset_signals(verdict, parser_raw, state_in)
+    if not signals or _stated_beside_a_reset(verdict, tuple(state_in.focus.domains or ()), tuple(signals)):
+        return None
+    routed = turn_runtime.with_routing_agent_default(verdict, pending=None)
+    suggested_agent = jsc.get(routed.get("routing"), "suggested_agent")
+    with _session(session_factory) as db:
+        access = check_access(db, agent_code=suggested_agent, contact_id=contact_respond_id, space_id=default_space_id(db))
+        if access.get("allowed") is not True:
+            # The refusal is the access stage's own answer, on today's path.
+            return None
+        stage[0] = "access"
+        _record_parser_usage(
+            db, usage=parser_usage, started=parse_started, contact_respond_id=contact_respond_id,
+            dry_run=dry_run, answered=True, turn_id=turn_id,
+        )
+        turn_trace.record(
+            "access",
+            summary=f"Access allowed for {access.get('agent_name') or suggested_agent}.",
+            why="The contact must be granted the agent this turn would use before anything is answered.",
+            facts={"agent": suggested_agent, "allowed": True, "decision": access.get("decision")},
+            raw=access,
+        )
+        from app.services.chatbot import copy as copy_mod
+
+        reply_language = _turn_language(user_turn, remembered_before, profile)
+        ack = copy_mod.resolve(db).render_in("reset_ack", reply_language)
+        # Round 8: a reset closes the topic it ended, exactly as the routed reset did. A cancel or
+        # a new subject naming nothing is a topic reset too (the chat_state mirror rule).
+        verdict["topic_reset"] = True
+        _close_the_episode(
+            db,
+            envelope,
+            verdict=verdict,
+            this_domain=None,
+            dry_run=dry_run,
+            contact_respond_id=contact_respond_id,
+            turn_id=turn_id,
+            remembered_before=remembered_before,
+        )
+    stage[0] = "routed"
+    item = _stamp_item(access, "low_signal", {})
+    item["reply_language"] = reply_language
+    closed = {
+        "open_question": getattr(state_in.pending, "kind", None),
+        "tasks": len(state_in.focus.tasks or ()),
+        "last_list": bool(state_in.focus.last_list),
+    }
+    turn_trace.add("reset_turn", {"signals": signals, "closed": closed})
+    turn_trace.record(
+        "routed",
+        summary="Reset: the conversation was cleared and acknowledged.",
+        why="The parser read a reset that states nothing new, so nothing is looked up or handed on.",
+        facts={"lane": "low_signal", "rule": "reset_turn", "signals": signals, "closed": closed},
+        raw={"item": item},
+    )
+    reset_state = turn_state.State(
+        focus=turn_state.Focus(**{k: getattr(state_in.focus, k) for k in RESET_KEEPS}),
+        pending=None,
+        profile=state_in.profile,
+        turn_no=state_in.turn_no,
+        ideation=state_in.ideation,
+    )
+    ctx = build_ctx(
+        contact=_contact_block(envelope, known_phone),
+        text=_tf_message(envelope),
+        session=session_block,
+        parse={"output": verdict, "_parser_raw": parser_raw},
+        access=access,
+        media=getattr(envelope, "media", None),
+    )[0]["json"]["ctx"]
+    return _run_answer(
+        turn_id=turn_id,
+        ctx=ctx,
+        item=item,
+        branch_kind="low_signal",
+        actions=actions,
+        answer=turn_compose.Answer(text=ack),
+        state=reset_state,
+        remembered_before=remembered_before,
+        dry_run=dry_run,
+        session_factory=session_factory,
+        turn_trace=turn_trace,
+        stage=stage,
+        contact_respond_id=contact_respond_id,
+        verdict=verdict,
+        recalled=recalled,
+        chat_console=_chat_console(envelope),
+    )
+
+
+def _small_talk_ctx(ctx: dict[str, Any], verdict: dict[str, Any], state: Any) -> dict[str, Any]:
+    """Release gate #1829 (contact 04): a reset's small talk is about the state the reset left, so
+    the model is shown that state (no open question, offer, team, task or stored list), never the
+    session from before the turn. Contacts 13 and 18: nor the parse's intent and domain, which
+    let the clarifier promise a check nobody runs. Every other turn's ctx is returned as it is."""
+    if verdict.get("topic_reset") is not True:
+        # Every reset wrote `topic_reset` (`apply._reset`); the state after apply is not the one
+        # `apply` judged, so the reading is never made again here.
+        return ctx
+    session = jsc.get(ctx, "session") or {}
+    after = {
+        **session_state.five_keys(session),
+        "focus": turn_state.focus_to_wire(state.focus),
+        "open_question": turn_pending.to_wire(state.pending),
+    }
+    parse = jsc.get(ctx, "parse") or {}
+    output = {**(jsc.get(parse, "output") or {}), "intent_hint": None, "domain_hint": None}
+    return {**ctx, "session": {**session, "session_vars": after}, "parse": {**parse, "output": output}}
+
+
 def _fallback_context(
     db: Session,
     *,
@@ -4085,6 +4555,15 @@ def _fallback_context(
         current_turn_id=turn_id,
         level=level,
     )
+    # "Last time" is a CLOSED episode: the open conversation is today's, never the time before.
+    last_time = memory_mod.history_items(
+        db,
+        contact_respond_id=contact_respond_id,
+        is_test=dry_run,
+        current_turn_id=turn_id,
+        level=level,
+        include_open=False,
+    )
     facts = memory_intake.get("profile_facts") if level == "full" else None
     usual_sites = _as_list(_fact_value(facts, "usual_sites"))
 
@@ -4114,7 +4593,7 @@ def _fallback_context(
         kind=kind,
         level=level,
         history=history if kind == "history" else [],
-        last_time=history[0] if history else None,
+        last_time=last_time[0] if last_time else None,
         usual_products=_as_list(_fact_value(facts, "usual_products")),
         usual_site=usual_sites[0] if usual_sites else None,
         customer=customer,
@@ -4326,6 +4805,9 @@ def _run_stages_body(  # noqa: PLR0915
         if dry_run:
             session_block = _inject_harness_session(session_block, envelope)
         latest_user_message = build_latest_user_message(envelope, session_block)
+        # CHAT-STATE r6 S6: what the customer sent, read ONCE for the turn (webhook and direct
+        # ingress alike); every first-line reader takes it rather than re-splitting the text.
+        user_turn = user_turn_mod.from_envelope(envelope, session_block)
         # -- stage A's three shelves (PLAN "State: three shelves, one writer each") --- #
         policy = load_policy(db)
         # Roster cap (PLAN-chatbot-answer-half-reattach.md, owner ruling 20 Sep 2026):
@@ -4510,7 +4992,7 @@ def _run_stages_body(  # noqa: PLR0915
                 "replied",
                 summary=f"Replied: {reply_text}" if reply_text else "Sent no reply; the burst repeat stayed silent.",
                 why="The reply is the media intake's own denial text, never the customer's words.",
-                facts={"lane": "media_denied", "sections": 0, "asking": None, "files": 0},
+                facts={"lane": "media_denied", "sections": 0, "asking": None, "files": 0, "shown_codes": None},
                 raw={"reply": {"text": reply_text}},
             )
             turn_trace.record(
@@ -4550,6 +5032,7 @@ def _run_stages_body(  # noqa: PLR0915
         # (`needs_clarification` no longer nulls it - service.py's own change), or
         # the transcript verbatim - never the url, never the envelope's own text.
         latest_user_message = outcome.rendered_text or ""
+        user_turn = user_turn_mod.with_media_read(user_turn, latest_user_message)
 
     # Resolved HERE, not inside the `received` session block above: a media-denied
     # turn returned before this line and never needed a provider configured for a
@@ -4566,8 +5049,36 @@ def _run_stages_body(  # noqa: PLR0915
         # no cache, so an operator's table edit reaches the very next turn.
         brands = turn_runtime.active_brands(db)
         promotion_kinds = turn_runtime.promotion_kind_rows(db)
-        product_types = turn_runtime.product_type_names(db)
-        product_details = turn_runtime.product_detail_values(db)
+        # CLOSED-LISTS-INDEX-MODE: the two full catalogue lines are indexed instead (the
+        # candidate lines name the product types and spec values the words say; the index
+        # lines the held products' own values), so index mode reads neither.
+        product_types = None if parser_config.closed_lists_index else turn_runtime.product_type_names(db)
+        product_details = None if parser_config.closed_lists_index else turn_runtime.product_detail_values(db)
+        # CHAT-CLOSED-LISTS: what is on file under the words of this message, for a
+        # version carrying the CLOSED LISTS section only (code shortlists, the parser picks).
+        # H1: the contact's hidden spec keys (the real policy, `head/access`), read once here and
+        # applied at the parser's two entries (the block it is shown, the spec entities it emits).
+        hidden_spec = (
+            frozenset(access_mod._hidden_spec_keys(db, contact_id=str(contact_respond_id), space_id=default_space_id(db)))
+            if parser_config.closed_lists
+            else frozenset()
+        )
+        index_matches: list[dict] = []
+        index_failed: list[bool] = []
+        candidate_lines, listed_codes, pick_info = (
+            _candidate_lines(
+                db,
+                user_turn,
+                [str(p["uuid"]) for p in state_in.focus.products if isinstance(p, dict) and p.get("uuid")],
+                hidden_spec,
+                code_lookup=parser_config.code_lookup,
+                index=parser_config.closed_lists_index,
+                matches_out=index_matches,
+                failed_out=index_failed,
+            )
+            if parser_config.closed_lists
+            else (None, frozenset(), {})
+        )
 
     # -- B PARSER (NO DB SESSION IS OPEN HERE) ------------------------------ #
     # One call, one schema. What comes back IS the verdict - a plain dict, validated once
@@ -4615,6 +5126,7 @@ def _run_stages_body(  # noqa: PLR0915
         product_types=product_types,
         product_details=product_details,
         recent_exchanges=recent,
+        candidate_lines=candidate_lines,
         state_block=state_block,
     )
     user_block, context_report = context_mod.assemble(context_layers)
@@ -4642,6 +5154,15 @@ def _run_stages_body(  # noqa: PLR0915
             # because this is the seam that skipped it.
             parser.assert_emission(parser_raw)
         verdict: dict[str, Any] = dict(parser_raw)
+        # `listed`, `certificate_uuids`, `class_hint` and the `parent_kind*` keys are the ENGINE's own entity keys
+        # (grounding and the scheme index set them). One the parser emitted (the Anthropic path does not enforce
+        # additionalProperties) is dropped before any reader.
+        verdict.pop("dropped_kinds", None)
+        if isinstance(verdict.get("entities"), list):
+            verdict["entities"] = [
+                {k: v for k, v in e.items() if k not in _ENGINE_ENTITY_KEYS} if isinstance(e, dict) else e
+                for e in verdict["entities"]
+            ]
         # CHATBOT-EMPTY-ROUTE-PICK: a declared answer to a question that was never
         # asked (no `Open question:` line went to the parser) is dropped before any
         # reader, and the `understood` record below shows the drop as `derived`.
@@ -4665,8 +5186,8 @@ def _run_stages_body(  # noqa: PLR0915
                 "model": parser_config.model,
                 "prompt_sha256": _parser_prompt_sha256(parser_config),
                 "provider": getattr(parser_config, "provider", None),
-                # The parser call sends no reasoning effort, so None is the recorded truth.
-                "reasoning_effort": None,
+                # LEAN: the effort the parser call SENT ("off": none, also for a provider other than OpenAI).
+                "reasoning_effort": parser.sent_reasoning_effort(parser_config),
                 "code_sha": GIT_SHA,
                 # A replay miss fails here: the console check must not read it as a live
                 # spend (LLM-TEST-COST).
@@ -4737,8 +5258,8 @@ def _run_stages_body(  # noqa: PLR0915
             "model": parser_config.model,
             "prompt_sha256": _parser_prompt_sha256(parser_config),
             "provider": getattr(parser_config, "provider", None),
-            # The parser call sends no reasoning effort, so None is the recorded truth.
-            "reasoning_effort": None,
+            # LEAN: the effort the parser call SENT ("off": none, also for a provider other than OpenAI).
+            "reasoning_effort": parser.sent_reasoning_effort(parser_config),
             "code_sha": GIT_SHA,
             "tokens": int(parser_usage.get("total_tokens") or 0),
             # Chatbot memory lane A (contract section 6): the provider's own split,
@@ -4748,6 +5269,12 @@ def _run_stages_body(  # noqa: PLR0915
             # LLM-TEST-COST: the prompt-cache hit, and whether this parse was live,
             # recorded or replayed (`off` everywhere but a test run).
             "cached_tokens": int(parser_usage.get("cached_tokens") or 0),
+            # LEAN: the part of completion_tokens spent reasoning, only when the provider reported it.
+            **(
+                {"reasoning_tokens": parser_usage["reasoning_tokens"]}
+                if parser_usage.get("reasoning_tokens") is not None
+                else {}
+            ),
             "llm_cassette": llm_cassette.mode_label(),
             "parser_bypassed": parser_bypassed,
             "recalled_frames": len(recalled),
@@ -4757,6 +5284,11 @@ def _run_stages_body(  # noqa: PLR0915
         raw={"parser_raw": parser_raw, "derived": verdict},
     )
     turn_trace.add("prompt_text", {"text": user_block})
+    if parser_config.closed_lists_index:
+        turn_trace.add(
+            "closed_lists_index",
+            {"words": candidates_mod._tokens(user_turn.own_text), "matches": index_matches, "failed": bool(index_failed)},
+        )
     if phantom_answer:
         raw_positions = parser_raw.get("reference_positions")
         positions_kept = bool(raw_positions) and verdict.get("reference_positions") == raw_positions
@@ -4781,6 +5313,32 @@ def _run_stages_body(  # noqa: PLR0915
     # stage (AC-105/R5/H44's own "no routing" shape).
     turn_trace.add("context", context_report)
 
+    # Release gate #1829, round 7: the ONE reset seam, before the state applier, apply, routing
+    # and every lane (`_reset_turn`).
+    reset_result = _reset_turn(
+        envelope,
+        verdict=verdict,
+        parser_raw=parser_raw,
+        state_in=state_in,
+        session_block=session_block,
+        remembered_before=remembered_before,
+        recalled=recalled,
+        user_turn=user_turn,
+        profile=profile,
+        known_phone=known_phone,
+        parser_usage=parser_usage,
+        parse_started=parse_started,
+        session_factory=session_factory,
+        turn_trace=turn_trace,
+        turn_id=turn_id,
+        contact_respond_id=contact_respond_id,
+        dry_run=dry_run,
+        actions=actions,
+        stage=stage,
+    )
+    if reset_result is not None:
+        return reset_result
+
     # CHAT-STATE seam: the parser's `state_changes`, applied ONCE, before every post-parse
     # rewrite, APPLY and both of its re-entries (they all read `state_in` / `verdict`, so
     # writing the change into those two makes the re-entries idempotent). On when the
@@ -4788,6 +5346,13 @@ def _run_stages_body(  # noqa: PLR0915
     # today's turn untouched.
     # A dry-run mock emission opts in by carrying the key (null counts as present).
     state_path = bool(parser_config.state_block or (parser_bypassed and "state_changes" in verdict))
+    # CHAT-STATE r6 S4: the contact's document scope and the verdict drawn from it (may it see
+    # other customers' rows or documents), decided ONCE on the state path, from one profile,
+    # here for the Subject, and reused below by the customer scope read and by
+    # `customer_docs_hidden`, so the Subject never disagrees with what the turn hides. None off
+    # the state path.
+    turn_doc_scope: tuple[Any, bool] | None = None
+    turn_docs_hidden: bool | None = None
     if state_path:
         state_in = dataclasses_replace(state_in, state_path=True)
         with _session(session_factory) as hygiene_db:
@@ -4800,6 +5365,18 @@ def _run_stages_body(  # noqa: PLR0915
                     ),
                 ),
             )
+            turn_doc_scope = business_services.customer_scope_and_staff(
+                hygiene_db, contact_respond_id, business_services.fetch_space_id(hygiene_db)
+            )
+        # Who this contact is, for the applier to write onto the Subject: its company scope, and
+        # `customer` hidden when it may not see other customers' rows or documents (the verdict
+        # `customer_docs_hidden` below reuses, V1-DOC-SCOPE). Nothing is scoped or hidden here.
+        turn_docs_hidden = _customer_docs_hidden(*turn_doc_scope, state_in.profile)
+        state_in = dataclasses_replace(
+            state_in,
+            company_scope=frozenset(str(c) for c in contact_scope or ()),
+            hidden_keys=frozenset({"customer"}) if turn_docs_hidden else frozenset(),
+        )
         shown_view = chat_state.view(state_in, open_question)
         state_log: dict[str, Any] = {
             "shown": chat_state.render(shown_view),
@@ -4824,7 +5401,46 @@ def _run_stages_body(  # noqa: PLR0915
                 state_in = chat_state.set_aside(applied.state, applied.log.get("slots") or {})
                 verdict = applied.verdict
             else:
+                # A rejected change set changes nothing, but the turn is still on the state
+                # path: the input State with its Subject (held axes, this message's said values).
+                state_in = applied.state
                 verdict = applied.verdict
+            # R4-A on any state turn, a rejected one included (S5: it replaces the text
+            # rewriter `with_brand_from_offer` there): a brand the parser read that the last
+            # answer offered.
+            picked = chat_state.offered_brand_picks(state_in, verdict, brands)
+            if picked:
+                # R4-A: the held products' brands are read here; the narrow-or-re-run decision
+                # and the Subject it leaves are the applier module's (`pick_offered_brands`).
+                brand_of: dict[str, str] = {}
+                held_keys = [str(r["uuid"]) for r in chat_state.held_products(state_in)]
+                if held_keys:
+                    from app.models.product import Brand, Product
+
+                    try:
+                        with _session(session_factory) as brand_db:
+                            brand_of = {
+                                str(pid): name
+                                for pid, name in brand_db.query(Product.id, Brand.brand_name)
+                                .join(Brand, Brand.id == Product.brand_id)
+                                .filter(Product.id.in_(held_keys))
+                                .all()
+                            }
+                    except Exception:  # noqa: BLE001 - an advisory narrowing, never a failed turn
+                        logger.warning("chatbot: offered brand narrowing failed; the turn goes on without it", exc_info=True)
+                state_in, verdict = chat_state.pick_offered_brands(state_in, verdict, picked, brand_of)
+            class_rows = chat_state.class_said_over_held(state_in)
+            if class_rows:
+                # Lead decision S3 / review round 4: a class said over held products, whatever the
+                # op, keeps the members of that class (read from the data here) and drops the
+                # others (`keep_class_members`).
+                try:
+                    with _session(session_factory) as class_db:
+                        members = _class_members(class_db, class_rows, list(state_in.subject.product_ids))
+                except Exception:  # noqa: BLE001 - an advisory narrowing, never a failed turn
+                    logger.warning("chatbot: class membership read failed; the held products stay", exc_info=True)
+                    members = set(state_in.subject.product_ids)
+                state_in = chat_state.keep_class_members(state_in, members)
         remembered_before["_chat_state"] = state_log
     state_led = state_in.state_led is not None
     answering = state_in.state_led == "answer"
@@ -4845,34 +5461,47 @@ def _run_stages_body(  # noqa: PLR0915
     # #865 round 6 (R3): a reply naming one of the companies an open escalation offer
     # showed ("mocha", "srt", "yes please escalate to sorento team") picks it - n8n's
     # deterministic company-pick tier, with the parser's own pick as the validated fallback.
+    # CHAT-STATE r6 S5 (AC-S5-1): under the state gate (`State.state_gate`: the applier read
+    # the ops over a shown State, a rejected change set included) no text rewriter runs; each outcome comes from an op or a
+    # parse field instead: the company pick and the clarify answer from the `answer` op filling
+    # the asked slot, the row count from the parser's `top_n`, the offered brand from the R4-A
+    # pick (`chat_state.pick_offered_brands`), a class word's new set from `new_subject` / a
+    # class said over the held set. Off the state path every rewriter runs as before.
+    state_gate = state_in.state_gate
     if not state_led or answering:
-        verdict = turn_runtime.with_company_pick(
-            verdict, pending=state_in.pending, message=latest_user_message
-        )
-        # Reviewer S1 on PR #833: the answer to "how many should I show?" must not rest on
-        # the parser filling `top_n` for a bare "10" - its prompt has no example of one, and
-        # its positional rule pulls a bare number toward `reference_positions`.
-        # Round 4 R5 on PR #833: the answer to an open clarify re-runs the ask it was about.
-        verdict = turn_runtime.with_clarify_answer(
-            verdict, latest_user_message, carried=state_in.focus.set_clarify
-        )
+        if not state_gate:
+            verdict = turn_runtime.with_company_pick(
+                verdict, pending=state_in.pending, message=latest_user_message
+            )
+            # Reviewer S1 on PR #833: the answer to "how many should I show?" must not rest
+            # on the parser filling `top_n` for a bare "10" - its prompt has no example of
+            # one, and its positional rule pulls a bare number toward `reference_positions`.
+            # Round 4 R5 on PR #833: the answer to an open clarify re-runs the ask it was about.
+            verdict = turn_runtime.with_clarify_answer(
+                verdict, latest_user_message, carried=state_in.focus.set_clarify
+            )
         verdict = _with_account_answer(verdict, state_in.focus.set_clarify)
         # CHAT-STATE: an option the parser declared picked is not a row count.
-        if not (state_led and (verdict.get("open_question_answer") or {}).get("mode") == "pick"):
+        if not state_gate and not (state_led and (verdict.get("open_question_answer") or {}).get("mode") == "pick"):
             verdict = turn_runtime.with_set_count_from_text(
                 verdict, latest_user_message, carried=state_in.focus.set_page
             )
         # Round 7 on PR #833 (owner hand test, item 6): a brand the last set answer offered
         # narrows that set.
-        verdict = turn_runtime.with_brand_from_offer(
-            verdict, latest_user_message, carried=state_in.focus.set_page
-        )
+        if not state_led and not state_gate:
+            verdict = turn_runtime.with_brand_from_offer(
+                verdict, latest_user_message, carried=state_in.focus.set_page
+            )
+    # CHAT-COMPOSER: a "more" pages the set the last reply listed, on a state-led turn too.
+    verdict = turn_runtime.with_set_more(verdict, carried=state_in.focus.set_page)
     # ATTACH-SET-BRAND-FOLLOWUP round 2 (live console pass, 7 Oct 2026): an echo of a row
     # the focus already holds settled is the carry restated, not an axis to rewrite with
     # an unsettled copy.
     verdict = turn_runtime.without_restated_rows(verdict, state_in.focus)
-    # Round 3 W3 on PR #833: a class word of this message's own starts a new set.
-    verdict = turn_runtime.with_new_set_words(verdict)
+    if not state_gate:
+        # Round 3 W3 on PR #833: a class word of this message's own starts a new set. On the
+        # state path the applier already dropped the parser's echoes of earlier rows.
+        verdict = turn_runtime.with_new_set_words(verdict)
     # Fix round 8 on PR #833 (owner retest of round 7): every descriptor the parser
     # emitted is grounded against the specification registry, after the clarify answer
     # is substituted (so "p trap" answering "t trap" is read as the choice it is) and
@@ -4890,8 +5519,88 @@ def _run_stages_body(  # noqa: PLR0915
     verdict, _ranking_words = _report_ask.hold_words(verdict)
     with _session(session_factory) as grounding_db:
         verdict, grounding_notes = grounding.ground(
-            grounding_db, verdict, message=latest_user_message.split("\n", 1)[0] if isinstance(latest_user_message, str) else None
+            grounding_db,
+            verdict,
+            message=user_turn.own_text,
+            closed_lists=parser_config.closed_lists,
+            closed_lists_index=parser_config.closed_lists_index,
+            listed_codes=listed_codes if parser_config.code_lookup else None,
+            pick_info=pick_info if parser_config.code_lookup else None,
+            held_ids=[str(p["uuid"]) for p in state_in.focus.products if isinstance(p, dict) and p.get("uuid")],
+            hidden_keys=hidden_spec,
         )
+    # H1: the ONE strip, on the grounding output: grounding re-derives specs from the raw words
+    # over the whole registry, so this covers the parser's own emission too.
+    verdict = _strip_hidden_spec_entities(verdict, hidden_spec)
+    verdict = closed_lists_verdict(verdict, gate=parser_config.closed_lists)
+    verdict = code_lookup_verdict(verdict, gate=parser_config.code_lookup)
+    held_none_match: dict[str, Any] | None = None
+    scheme_none_in_scope: str | None = None
+    # The held products the two seams below read, taken once before either changes the verdict.
+    held_for_family = _held_for_the_seams(state_in, verdict, for_family=True)
+    held_for_scheme = _held_for_the_seams(state_in, verdict, for_family=False)
+    if parser_config.closed_lists and held_for_family:
+        # SPEC-OVER-HELD: a spec said about a held product narrows that product's family
+        # (`head/held_family.py`). A read failure leaves the verdict as it was.
+        try:
+            with _session(session_factory) as family_db:
+                verdict, family_note = held_family.narrow_held_family(family_db, verdict, held_for_family, hidden_keys=hidden_spec)
+        except Exception:  # noqa: BLE001 - an advisory narrowing, never a failed turn
+            logger.warning("chatbot: held family narrowing failed; the turn goes on without it", exc_info=True)
+            family_note = None
+        if family_note:
+            if state_in.subject is not None:
+                # The members it landed on are the held subject now, the held quantity on each
+                # (AC-S3-4, the applier module). Off the state path nothing carries a quantity.
+                state_in, verdict = chat_state.held_family_landed(state_in, verdict, family_note.get("matched") or [])
+            if family_note.get("matched"):
+                # The narrowing named exact members (full codes): the resolver's prefix probe
+                # must not widen them again ("SRTWC286-SH-P" also placed SRTWC286-SH-PP), so
+                # the turn reads exact codes only (`_exact_codes_only`, `family: false`).
+                verdict = {**verdict, "family": False}
+            turn_trace.add("held_family", family_note)
+            if family_note.get("none_match"):
+                held_none_match = {
+                    "held": [p.get("canonical_code") for p in state_in.focus.products if isinstance(p, dict) and p.get("canonical_code")],
+                    "said": [
+                        str(e.get("raw") or "").strip()
+                        for e in verdict.get("entities") or []
+                        if isinstance(e, dict)
+                        and e.get("current_message") is not False
+                        and str(e.get("hint") or "").strip().lower() in ("specification", "spec", "brand")
+                        and str(e.get("raw") or "").strip()
+                    ],
+                }
+    if parser_config.closed_lists:
+        # SCHEME-INDEX: a listed scheme about products indexes their certificates, never
+        # empties the answer (`head/scheme_index.py`). A read failure leaves the verdict.
+        try:
+            with _session(session_factory) as scheme_db:
+                # Under the state gate a listed scheme the focus holds is indexed again for the
+                # products asked now (its certificates are derived from scheme and products).
+                held_scheme = next(
+                    (r for r in (state_in.focus.extra or {}).get("certificate") or []
+                     if isinstance(r, dict) and r.get("listed") == "cert_scheme"),
+                    None,
+                ) if state_in.state_gate else None
+                verdict, scheme_note = scheme_index.index_scheme(scheme_db, verdict, held_for_scheme, held_scheme)
+                # Held products are only added to the verdict later, so a held one (a uuid) is
+                # read here: the scheme path with no product never runs over a held subject.
+                if scheme_note is None and not any(isinstance(p, dict) and p.get("uuid") for p in held_for_scheme):
+                    verdict, scheme_note = scheme_index.scheme_without_product(scheme_db, verdict)
+        except Exception:  # noqa: BLE001 - an advisory reading, never a failed turn
+            logger.warning("chatbot: scheme index failed; the turn goes on without it", exc_info=True)
+            scheme_note = None
+        if scheme_note:
+            turn_trace.add("scheme_index", scheme_note)
+            if scheme_note.get("none_in_scope"):
+                scheme_none_in_scope = scheme_note["scheme"]
+            if scheme_note.get("none_match") and scheme_note.get("products"):
+                held_none_match = {"held": list(scheme_note["products"]), "said": [], "scheme": scheme_note["scheme"]}
+    if state_in.subject is not None:
+        # The words a `keep` set aside were read by the seams above; they are not a change, so
+        # they leave the verdict here with their mark (no later step, store or session sees either).
+        verdict = chat_state.without_kept_aside(verdict)
     if _ranking_words:
         verdict = {**verdict, "entities": [*(verdict.get("entities") or []), *_ranking_words]}
     if grounding_notes:
@@ -5006,7 +5715,7 @@ def _run_stages_body(  # noqa: PLR0915
         # R2 (round 7): read before the verdict below can change the conversation.
         in_ranking_conversation = _in_ranking_conversation(state_in.focus)
         top_selling_rule = None
-        if not state_led:
+        if not state_led and not state_gate:
             verdict, state_in, top_selling_rule = _top_selling_verdict(
                 db, verdict, state_in, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
             )
@@ -5031,7 +5740,7 @@ def _run_stages_body(  # noqa: PLR0915
 
         order_list_was_open = order_list_mod.is_open_order_list(state_in.focus)
         order_list_rule = None
-        if not state_led:
+        if not state_led and not state_gate:
             verdict, state_in, order_list_rule = order_list_mod.order_list_verdict(
                 db, verdict, state_in, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
             )
@@ -5098,15 +5807,16 @@ def _run_stages_body(  # noqa: PLR0915
         # PR #1353 fix round 3: a bare position over an open roster is read by the
         # engine, and its positions win over the parser's (turn 3f56a40d: "2" read as 1).
         # Not while a stock quantity asked AFTER the roster is the current question:
-        # there the bare number is that quantity (`apply._stock_task_is_the_current_question`).
-        from app.services.chatbot.turn.apply import (
-            _stock_task_is_the_current_question,
-            _stock_task_owed_a_number,
+        # there the bare number is that quantity (`chat_state.stock_task_is_the_current_question`).
+        from app.services.chatbot.turn.chat_state import (
+            stock_task_is_the_current_question as _stock_task_is_the_current_question,
+            stock_task_owed_a_number as _stock_task_owed_a_number,
         )
 
         if getattr(getattr(state_in, "profile", None), "stock_availability_only", False):
             typed = jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
-            stock_ask = _as_a_stock_ask_by_its_own_words(verdict, typed)
+            # S5: the stock-ask regex stands down under the state gate (the parser's intent).
+            stock_ask = verdict if state_gate else _as_a_stock_ask_by_its_own_words(verdict, typed, template=parser_config.template)
             if stock_ask is not verdict:
                 turn_trace.add("stock_ask_by_its_own_words", {"parser_intent": verdict.get("intent_hint")})
                 verdict = stock_ask
@@ -5331,8 +6041,8 @@ def _run_stages_body(  # noqa: PLR0915
         # to its links for documents (a linked staff user too, but for the in-process
         # number lookups), and a contact with none sees no customer document (owner rule:
         # unlinked != customer). A customer PO ref keeps the tier rule.
-        doc_scope, doc_staff = business_services.customer_scope_and_staff(
-            db, contact_respond_id, space_id_for_turn
+        doc_scope, doc_staff = turn_doc_scope if turn_doc_scope is not None else (
+            business_services.customer_scope_and_staff(db, contact_respond_id, space_id_for_turn)
         )
         customer_scope = (
             doc_scope
@@ -5417,7 +6127,10 @@ def _run_stages_body(  # noqa: PLR0915
         )
         # The grant opens the report's customers, never their delivery orders: the picker's DO
         # probe stays off for any unlinked contact that is not document staff.
-        customer_docs_hidden = doc_scope is None and not (doc_staff or is_staff_profile(state_out.profile))
+        customer_docs_hidden = (
+            turn_docs_hidden if turn_docs_hidden is not None
+            else _customer_docs_hidden(doc_scope, doc_staff, state_out.profile)
+        )
         unlinked_held = customer_docs_hidden and not granted_report_turn
 
         top_selling_updates: dict[str, Any] = {}
@@ -5425,6 +6138,7 @@ def _run_stages_body(  # noqa: PLR0915
         gate_input: dict[str, Any] | None = None
         account_question: str | None = None
         resolved_kinds: dict[str, dict[str, int]] = {}
+        exact_kinds: dict[str, dict[str, int]] = {}
         compatible_entities: list[dict[str, Any]] = []
         predicate: dict[str, Any] | None = None
         resolved_candidates: dict[str, list[dict[str, Any]]] = {}
@@ -5497,11 +6211,21 @@ def _run_stages_body(  # noqa: PLR0915
             # product lookup. That rule lives where the predicate is attached to a fetch
             # (`turn_runtime.make_tool_runner`: a fetch already scoped to a resolved
             # product takes no set predicate), not here.
-            resolver_parse_output = turn_runtime.with_carried_entities(
-                (ctx.get("parse") or {}).get("output") or {},
-                state_out.focus,
-                unsettled_only=plan.ask is None,
-            )
+            if state_in.subject is not None:
+                # CHAT-STATE r6 S2: on the state path the fetch input is the Subject's, one
+                # mapping; no carried-entities rule runs (AC-S2-4).
+                resolver_parse_output = chat_state.fetch_entities(
+                    state_in.subject,
+                    (ctx.get("parse") or {}).get("output") or {},
+                    state_out.focus,
+                    unsettled_only=plan.ask is None,
+                )
+            else:
+                resolver_parse_output = turn_runtime.with_carried_entities(
+                    (ctx.get("parse") or {}).get("output") or {},
+                    state_out.focus,
+                    unsettled_only=plan.ask is None,
+                )
             resolver_parse_output = _without_carried_domain_on_a_roster_pick(
                 resolver_parse_output, plan.trace.rules_fired
             )
@@ -5620,9 +6344,13 @@ def _run_stages_body(  # noqa: PLR0915
                     skip_customer_probe=customer_docs_hidden,
                     scope_linked=_reference_scope(doc_scope, state_out.profile, doc_staff=doc_staff),
                     po_ref_scope_linked=_reference_scope(doc_scope, state_out.profile),
+                    # Under the state gate a listed scheme's rows stay beside an unplaced word: the
+                    # Subject (round 6) says what the fetch is about, the guess rule does not.
+                    listed_scheme_placed=state_in.state_gate,
                 )
             )
             resolved_kinds = resolve_outcome.resolved_kinds
+            exact_kinds = resolve_outcome.exact_kinds
             compatible_entities = resolve_outcome.compatible_entities
             predicate = resolve_outcome.predicate
             resolved_candidates = resolve_outcome.resolved_candidates
@@ -5833,6 +6561,8 @@ def _run_stages_body(  # noqa: PLR0915
                     resolved_kinds,
                     resolved_candidates,
                     frozenset(unplaced_tokens),
+                    exact=exact_kinds,
+                    typed=_typed_text(user_turn),
                 )
                 state_out.focus.relation = seat_relation
             if (
@@ -5890,6 +6620,8 @@ def _run_stages_body(  # noqa: PLR0915
                     resolved_kinds,
                     resolved_candidates,
                     frozenset(unplaced_tokens),
+                    exact=exact_kinds,
+                    typed=_typed_text(user_turn),
                 )
                 state_out.focus.relation = seat_relation
             # Round 4 R5: a clarify this turn is about to ask keeps the ask, so its answer
@@ -5925,6 +6657,15 @@ def _run_stages_body(  # noqa: PLR0915
                     for cid, name, code in customer_scope["linked"]
                     if cid in scope_ids
                 ]
+
+        if state_in.subject is not None:
+            # CHAT-STATE r6 AC-S1-8 / AC-S1-11: the one settle step, after the resolver and its
+            # re-entry: a token it placed makes the Subject `ids`, one it could not place is kept
+            # in `unplaced` (the trace logs the settled Subject).
+            state_out = chat_state.settle_subject(
+                state_out, state_in.subject, unplaced_tokens=unplaced_tokens,
+                log=remembered_before.get("_chat_state"),
+            )
 
         # D ROUTE. Two facts outrank the plan and neither is IN one: a refused access
         # agent (contract 58, fail closed) and the stock-denial switch, which is decided
@@ -5985,7 +6726,7 @@ def _run_stages_body(  # noqa: PLR0915
         # CHAT-LANGUAGE: this turn's reply language, from the message's own words first. Pure,
         # so every arm has it (`run_tail` carries `item["reply_language"]` to the next turn);
         # the business lane below recomputes it once its codes and names are known.
-        item["reply_language"] = _turn_language(latest_user_message, remembered_before, profile)
+        item["reply_language"] = _turn_language(user_turn, remembered_before, profile)
 
         # Owner ruling, hand pass 10 (21 Sep 2026, `test_rearch_r10_handpass10_
         # replay.py::TestHandPass10PromotionAskRepeatsAfterATierPick`): a fresh
@@ -5997,86 +6738,17 @@ def _run_stages_body(  # noqa: PLR0915
         # special-case it: `profile_facts.set_tier` and this call site are gone,
         # a resolved tier is never persisted onto the contact row, and every ask
         # still resolves fresh off `narrow.py`'s own turn-scoped state.
-        contact_pk = remembered_before.get("_contact_pk")
-
-        # AC-1546 / chatbot memory lane A (contract section 3): the episode belongs to
-        # the topic that just CLOSED, and a topic closes because the customer changed
-        # subject - not because this turn's lane went on to answer. Written HERE, where
-        # the reset is decided, so a turn whose fetch failed or whose lane refused
-        # still remembers the topic it ended. Once per turn, never mid-topic.
-        #
-        # Human intervention closes nothing (Q2 ruling): the topic is whatever it was
-        # when the bot resumes. D14's third named exception (Q15) is the one write a
-        # dry run may make: a CONSOLE turn writes an `is_test=true` frame of its own
-        # world; every other dry run (clone/replay/harness) writes nothing.
-        is_console_dry_run = dry_run and envelope.ingress == "console"
-        written_frame = None
-        # Fix lane round 3 (R1, owner hand test 28 Sep 2026): the parser's
-        # `topic_reset` alone never closed "check stock X" then "incoming X" (same
-        # product, so it reads as a follow-up). A turn whose plan names a different
-        # domain from the open conversation's newest one is the other switch
-        # (`episode_digest.close_trigger`, the backfill's same rule).
         this_domain = str(plan.domains[0]) if plan.domains else None
-        may_write_episode = (not dry_run or is_console_dry_run) and not _is_human_intervened(envelope)
-        open_domain = None
-        if may_write_episode and this_domain and verdict.get("topic_reset") is not True:
-            try:
-                open_domain = memory_mod.open_topic_domain(
-                    db,
-                    contact_respond_id=contact_respond_id,
-                    is_test=dry_run,
-                    exclude_turn_id=turn_id,
-                )
-            except Exception:  # noqa: BLE001 - a lost episode is never a lost turn
-                logger.warning("chatbot: the open topic read did not run", exc_info=True)
-        close_trigger = episode_digest_mod.close_trigger(verdict, this_domain, open_domain)
-        if close_trigger is not None and may_write_episode:
-            try:
-                written_frame = memory_mod.write_episode_for_reset(
-                    db,
-                    contact_respond_id=contact_respond_id,
-                    is_test=dry_run,
-                    resetting_turn_id=turn_id,
-                )
-            except Exception:  # noqa: BLE001 - a lost episode is never a lost turn
-                logger.warning("chatbot: the episode write did not run", exc_info=True)
-        # Stashed on the shared `before` box (the same object `_run_answer` and
-        # `_run_entities_only_arm` already receive as `remembered_before`) so
-        # `_record_memory_trace`, several call frames later, can report what THIS turn
-        # closed without a new parameter threaded through every arm between here and
-        # there.
-        remembered_before["_episode_written"] = (
-            {
-                "id": written_frame.id,
-                "turn_count": len(written_frame.turn_ids or []),
-                "close_reason": written_frame.close_reason,
-                "summary": written_frame.summary,
-                "trigger": close_trigger,
-                "domain": getattr(written_frame, "domain", None),
-            }
-            if written_frame is not None
-            else None
+        _close_the_episode(
+            db,
+            envelope,
+            verdict=verdict,
+            this_domain=this_domain,
+            dry_run=dry_run,
+            contact_respond_id=contact_respond_id,
+            turn_id=turn_id,
+            remembered_before=remembered_before,
         )
-
-        # AC-MEM032: the tally runs after the episode write above has committed -
-        # never before, since it reads the newest CLOSED frames and a frame this
-        # turn just wrote is one of them. Round 3 (PLAN 6.0, AC-MEM049): facts are
-        # learned and saved at EVERY context level, Off included - the level decides
-        # only what the bot READS, never what it LEARNS. Episodes themselves are
-        # ALSO written whatever the level, staff still see everything either way; the
-        # one gate that still applies is B2's own (never on a dry run).
-        # Stashed on `before` the same way `_episode_written` is, so `_run_answer`'s
-        # tail can fold it into the turn's own `facts_saved` trace line.
-        if written_frame is not None and not dry_run and contact_pk is not None:
-            try:
-                tallied = profile_facts_mod.tally(
-                    db, contact_respond_id, is_test=dry_run, contact_pk=contact_pk
-                )
-                remembered_before["_facts_tallied"] = [
-                    {"key": f["key"], "source": f["source"]} for f in tallied
-                ]
-            except Exception:  # noqa: BLE001 - a lost tally is never a lost turn
-                logger.warning("chatbot: the profile tally did not run", exc_info=True)
 
         turn_trace.add(
             "apply",
@@ -6212,7 +6884,9 @@ def _run_stages_body(  # noqa: PLR0915
                     # V1-DOC-SCOPE slice 3: the clarifier asks the resolver itself, so a held
                     # contact's customer rows are dropped here too.
                     resolve_gate._without_customer_rows(resolved_for_prompt)
-                clarifier_prompt = casual.construct_user_prompt(ctx, resolved_for_prompt)
+                clarifier_prompt = casual.construct_user_prompt(
+                    _small_talk_ctx(ctx, verdict, state_out), resolved_for_prompt
+                )
                 clarifier_config = casual.resolve_clarifier_config(
                     db,
                     override_version_id=_prompt_override(
@@ -6271,7 +6945,7 @@ def _run_stages_body(  # noqa: PLR0915
             pre_question: Any = None
             if vague or (verdict.get("family") is None and len(turn_sub_asks._sub_asks(verdict)) >= 2):
                 reply_language = _turn_language(
-                    latest_user_message,
+                    user_turn,
                     remembered_before,
                     state_out.profile,
                     strip=[
@@ -6329,7 +7003,7 @@ def _run_stages_body(  # noqa: PLR0915
             and turn_sub_asks.wants(verdict, state_in.pending)
         ):
             reply_language = _turn_language(
-                latest_user_message,
+                user_turn,
                 remembered_before,
                 state_out.profile,
                 strip=[
@@ -6612,6 +7286,17 @@ def _run_stages_body(  # noqa: PLR0915
         # already says whether a pick is needed or a tier settles automatically, so this
         # fetch runs from a ONE-SPEC plan built for the occasion rather than waiting on
         # `narrow.py`'s now-shadowed ask.
+        if (
+            scheme_none_in_scope
+            and answer is None
+            and branch_kind == "business_query"
+            and completes_here
+            and not (sales_report_grant_refused or customer_scope_refused)
+        ):
+            # SCHEME-NONE-IN-SCOPE: nothing held, and no certificate of the listed scheme in
+            # this contact's scope. Said plainly; nothing is fetched.
+            answer = turn_compose.Answer(text=f"No {scheme_none_in_scope} certificate on record.")
+            turn_trace.add("scheme_none_in_scope", {"scheme": scheme_none_in_scope})
         fetch_plan = plan
         if (
             answer is None
@@ -6659,7 +7344,7 @@ def _run_stages_body(  # noqa: PLR0915
             # CHAT-LANGUAGE: the words of this turn that are data (codes, customer names) must
             # not decide the language, and the catalog is read once, here, with the db open.
             reply_language = _turn_language(
-                latest_user_message,
+                user_turn,
                 remembered_before,
                 state_out.profile,
                 strip=[
@@ -6907,6 +7592,7 @@ def _run_stages_body(  # noqa: PLR0915
                         dealer_stock_ask=_dealer_stock_ask(state_out, plan),
                         dealer_incoming_ask=_dealer_incoming_ask(state_out, plan),
                         product_token_missed=miss_on_typed_product,
+                        localizer=localizer,
                     )
                     if answer is not None:
                         bridge_answered = True
@@ -7103,23 +7789,15 @@ def _run_stages_body(  # noqa: PLR0915
                 class_terms = turn_runtime.class_scope_terms(verdict)
                 qualifying = int((predicate or {}).get("qualifying_total") or 0)
                 asked = named_count(verdict.get("top_n"))
-                withheld = (
-                    predicate is not None
-                    and plan.fetch
-                    and spec_tier
-                    and qualifying > business_answer.SET_LIST_MAX
-                    and asked is None
-                    and bool((predicate or {}).get("breakdown"))
-                )
-                # Fix round 9 on PR #833: a long set nothing splits lists what fits, and
-                # is carried like a named count so "another N" continues it.
+                # Fix round 9 on PR #833: a long set lists what fits, and is carried like
+                # a named count so "another N" continues it (SET-STOCK-RENDER, owner 16
+                # Oct 2026: every long set, never withheld for a breakdown).
                 listed_to_the_limit = (
                     predicate is not None
                     and plan.fetch
                     and spec_tier
                     and qualifying > business_answer.SET_LIST_MAX
                     and asked is None
-                    and not withheld
                 )
                 # W4 (owner hand test round 2): a set listed only in part (the customer
                 # named fewer than qualify) is carried too, so their own "another N"
@@ -7131,6 +7809,33 @@ def _run_stages_body(  # noqa: PLR0915
                     and asked is not None
                     and min(asked, business_answer.SET_LIST_MAX) < qualifying
                 )
+                # CHAT-COMPOSER: a page cut by the one-message budget leaves products unlisted even
+                # in a set of 50 or fewer; a described set whose leg qualifies nothing names the
+                # first page of its matching products. Both are carried so a bare "more" pages.
+                from app.services.chatbot import composers
+
+                window = envelopes[0].get("set_window") if envelopes else None
+                window_last = (
+                    int(window["last"]) if isinstance(window, dict) and window.get("last") else None
+                )
+                members = (predicate or {}).get("members") if isinstance(predicate, dict) else None
+                members_total = int((members or {}).get("total") or 0) if isinstance(members, dict) else 0
+                members_listed = len((members or {}).get("codes") or []) if isinstance(members, dict) else 0
+                cut_small = bool(
+                    predicate is not None
+                    and plan.fetch
+                    and spec_tier
+                    and window_last is not None
+                    and window_last < qualifying
+                    and not (listed_to_the_limit or partly_listed)
+                )
+                members_paged = bool(
+                    composers.enabled()
+                    and predicate is not None
+                    and plan.fetch
+                    and not qualifying
+                    and members_total > members_listed > 0
+                )
                 paged = bool(plan.fetch) and isinstance(plan.fetch[0].filters.get("set_page"), dict)
                 # ROGUE-CONVO-REVIEW (owner ruling Q4): a set the spec tier read off the
                 # words INSIDE an unplaced product token is not what the customer asked
@@ -7141,9 +7846,19 @@ def _run_stages_body(  # noqa: PLR0915
                 # has cert ZZQ9917") is listed by the reply and stays carried, so the
                 # follow-up count continues it; only the missed code is named beside it.
                 # `miss_on_typed_product` is the one computation beside the resolve outcome.
-                if paged:
+                # CHAT-COMPOSER: a page cut to one message listed fewer than the limit; the carry
+                # moves past what was actually printed.
+                lane_carry = window.get("carry") if isinstance(window, dict) else None
+                if composers.enabled() and plan.fetch and isinstance(lane_carry, dict):
+                    # CHAT-COMPOSER Lists: the lane that printed the "more" line wrote its own carry.
+                    state_out.focus.set_page = {"set_key": {**lane_carry, "domain": plan.fetch[0].domain}}
+                elif paged:
                     # A page of a carried set: the runner hands back where it stopped.
                     state_out.focus.set_page = envelopes[0].get("set_carry") if envelopes else None
+                    if window_last is not None and isinstance(state_out.focus.set_page, dict):
+                        key = state_out.focus.set_page.get("set_key")
+                        if isinstance(key, dict) and int(key.get("shown") or 0) > window_last:
+                            state_out.focus.set_page = {"set_key": {**key, "shown": window_last}}
                     # ATTACH-SET-BRAND-FOLLOWUP round 2 (owner hand test on the local
                     # copy, 7 Oct 2026): the rows the page LISTED are the subject now.
                     # The page turn never ran the resolver, so nothing settled the focus
@@ -7161,7 +7876,22 @@ def _run_stages_body(  # noqa: PLR0915
                             state_out.focus.extra.pop(kind, None)
                 elif miss_on_typed_product and not class_terms:
                     state_out.focus.set_page = None
-                elif withheld or partly_listed or listed_to_the_limit:
+                elif members_paged:
+                    state_out.focus.set_page = turn_runtime.set_page_carry(
+                        {**predicate, "qualifying_total": members_total},
+                        plan.fetch[0],
+                        class_terms,
+                        access_levels=(envelopes[0].get("access_levels_used") if envelopes else None),
+                        shown=members_listed,
+                    )
+                    if isinstance(state_out.focus.set_page, dict):
+                        # The leg stays in the key: the next page is this miss list's next members.
+                        state_out.focus.set_page["set_key"]["miss_list"] = True
+                        # ...and the offer's team is the first page's, not the "more" message's.
+                        first_team = (verdict.get("routing") or {}).get("suggested_team")
+                        if first_team:
+                            state_out.focus.set_page["set_key"]["offer_team"] = first_team
+                elif partly_listed or listed_to_the_limit or cut_small:
                     state_out.focus.set_page = turn_runtime.set_page_carry(
                         predicate,
                         plan.fetch[0],
@@ -7170,8 +7900,8 @@ def _run_stages_body(  # noqa: PLR0915
                             envelopes[0].get("access_levels_used") if envelopes else None
                         ),
                         shown=(
-                            0
-                            if withheld
+                            window_last
+                            if window_last is not None
                             else business_answer.SET_LIST_MAX
                             if listed_to_the_limit
                             else min(asked, business_answer.SET_LIST_MAX)
@@ -7333,6 +8063,15 @@ def _run_stages_body(  # noqa: PLR0915
                     focus=dataclasses_replace(state_out.focus, customers=focus_customers_named),
                 )
             ask = plan.ask
+            if parser_config.closed_lists and ask.kind == "attachment_type_ask":
+                # CHAT-CLOSED-LISTS card R3: the file types the product really has, as the
+                # roster the tail stores, so the reply's numbers are what "2" answers.
+                offered = turn_runtime.file_type_ask(db, ask, state_out.focus)
+                if offered is not ask:
+                    # The tail stores the question the Answer carries, so the options
+                    # printed here are the ones a bare "2" answers.
+                    ask = offered
+                    turn_trace.add("file_type_ask", {"options": len(offered.options)})
             if (
                 ask.kind == "customer_pick"
                 and not _roster_is_outstanding(verdict, state_out.focus)
@@ -7387,6 +8126,25 @@ def _run_stages_body(  # noqa: PLR0915
             answer = turn_compose.Answer(
                 text=account_question or str((customer_scope or {}).get("refusal") or "")
             )
+
+        if (
+            held_none_match
+            and answer is not None
+            and lane_error_text is None
+            and branch_kind == "business_query"
+            and not (customer_scope_refused or sales_report_grant_refused)
+        ):
+            # FILTER-OVER-HELD (crew ruling (a), 18 Oct 2026): no member of the held family
+            # carries what the message names. Said plainly, from that data check alone; never
+            # the held products' own rows as if they matched, never the catalogue's set.
+            held_codes = ", ".join(dict.fromkeys(held_none_match["held"]))
+            said = " ".join(dict.fromkeys(held_none_match["said"])) or "that"
+            # HELD-WITHOUT-SCHEME: the filter was a certificate scheme the products hold none of.
+            scheme_none = held_none_match.get("scheme")
+            answer = turn_compose.Answer(
+                text=f"{held_codes}: no {scheme_none} certificate on record." if scheme_none else f"{held_codes}: none on record with {said}."
+            )
+            turn_trace.add("held_none_match", {"held": held_none_match["held"], "said": held_none_match["said"]})
 
     if answer is not None and lane_error_text is None:
         if _dealer_stock_ask(state_out, plan) or _dealer_incoming_ask(state_out, plan):
@@ -7650,6 +8408,7 @@ def _run_stages_body(  # noqa: PLR0915
             recalled=recalled,
             fallback=fallback_ctx,
             chat_console=_chat_console(envelope),
+            user_turn=user_turn,
         )
 
     return TurnResult(
@@ -7730,6 +8489,39 @@ def _without_escalation_offer(answer: Any) -> Any:
     return dataclasses_replace(answer, text=text, question=question, offer=None)
 
 
+def _only_shown(codes: list[str] | None, text: Any) -> list[str] | None:
+    """The codes this reply's own text shows (case-insensitive whole code token), de-duplicated, in order."""
+    shown = str(text or "")
+    kept = [
+        code
+        for code in dict.fromkeys(codes or [])
+        if re.search(rf"(?<![\w-]){re.escape(code)}(?![\w-])", shown, re.IGNORECASE)
+    ]
+    return kept or None
+
+
+def _replied_shown_codes(answer: Any) -> list[str] | None:
+    """CHAT-CODE-LOOKUP R2-7 (trace only): the question's listed codes plus the answer's own list, kept
+    only when this turn's reply text shows them (a re-armed carried roster lists more than the reply)."""
+    codes = [*(_shown_codes(answer.question) or []), *(getattr(answer, "shown_codes", None) or [])]
+    return _only_shown(codes, answer.text)
+
+
+def _shown_codes(question: Any) -> list[str] | None:
+    """CHAT-CODE-LOOKUP R2-7 (trace only): the product codes a picker, did-you-mean or related list
+    shows, in display order, read off the question built from that same list; None when none."""
+    if question is None:
+        return None
+    # The escalation lane's own product did-you-mean is a team_pick over product options that keep
+    # their code in the payload.
+    codes = []
+    for o in question.options:
+        code = o.get("code") or (o.get("payload") or {}).get("product_code")
+        if o.get("entity_type") in ("product", "product_set") and code:
+            codes.append(str(code))
+    return codes or None
+
+
 def _dealer_refers_to_salesman(answer: Any, localizer: Any = None) -> Any:
     from app.services.chatbot import dealer_stock as dealer_mod
 
@@ -7782,8 +8574,37 @@ def _stock_ask_reply(
         ],
         demand_qty=verdict.get("demand_qty"),
     )
-    state_out.focus.tasks = reply.tasks
-    if [spec.domain for spec in fetch_plan.fetch] != ["inventory"]:
+    from app.services.chatbot import composers
+
+    domains = [spec.domain for spec in fetch_plan.fetch]
+    entities = [e for e in (verdict.get("entities") or []) if isinstance(e, dict)]
+    # CHAT-COMPOSER Q1: a stock leg carried from an earlier turn (no entity of this message)
+    # beside another domain's answer opens no quantity task and prints no bare question.
+    carried_leg = bool(
+        composers.enabled()
+        and domains != ["inventory"]
+        and entities
+        and all(e.get("current_message") is False for e in entities)
+        and not (verdict.get("domain_in_message") is True and verdict.get("domain_hint") == "inventory")
+    )
+    removed = False
+    if carried_leg:
+        from app.services.chatbot.composers import misses as composers_misses
+
+        # The bare question, in English or as the catalogue words it, wherever it sits.
+        asked_forms = composers_misses.bare_question_forms()
+        paragraphs = getattr(answer, "text", "").split("\n\n")
+        kept = [p for p in paragraphs if p.strip() not in asked_forms]
+        removed = len(kept) != len(paragraphs)
+        if removed:
+            answer = dataclasses_replace(answer, text="\n\n".join(kept))
+    # A task is dropped only with its question: never a question without its task.
+    state_out.focus.tasks = (
+        tuple(t for t in reply.tasks if not (t.kind == "stock_qty" and t.opened_at_turn == turn_no))
+        if removed
+        else reply.tasks
+    )
+    if domains != ["inventory"]:
         return answer
     block_seen = any(
         isinstance(envelope, dict) and envelope.get("stock_availability")
@@ -7814,9 +8635,14 @@ def _stock_ask_reply(
     misses = _unplaced_tokens(envelopes)
     if not text and not misses:
         return answer
-    parts = _stock_answer_lines(envelopes)
+    from app.services.chatbot import composers
+    from app.services.chatbot.composers import stock as composers_stock
+
+    parts = _stock_answer_lines(envelopes, full=composers.enabled())
     if misses:
-        parts.append(f"Couldn't find: {', '.join(misses)}.")
+        miss_line = composers_stock.miss_line(misses)
+        if miss_line:
+            parts.append(miss_line)
     if text:
         parts.append(text)
     question = (
@@ -7838,13 +8664,20 @@ def _dealer_names_the_miss(answer: Any, envelopes: list[dict[str, Any]]) -> Any:
     line). A reply without that line (a total miss, already named) is left as it is."""
     text = getattr(answer, "text", "") or ""
     misses = _unplaced_tokens(envelopes)
-    if not misses or not _COMPOSE_MISS.search(text):
+    # CHAT-COMPOSER: compose stamped the exact miss sentence it printed (gate on only).
+    stamped = getattr(answer, "miss_text", "") or ""
+    if stamped and not text.rstrip().endswith(stamped):
+        stamped = ""
+    if not misses or not (stamped or _COMPOSE_MISS.search(text)):
         return answer
     from app.services.chatbot.turn import refer
     from app.services.chatbot.turn.task import REFER_TO_SALESMAN
 
-    blocks = _COMPOSE_MISS.sub("", text).rstrip().split("\n\n")
-    line = f"Couldn't find: {', '.join(misses)}."
+    stripped = text.rstrip()[: -len(stamped)] if stamped else _COMPOSE_MISS.sub("", text)
+    blocks = stripped.rstrip().split("\n\n")
+    from app.services.chatbot.composers import stock as composers_stock
+
+    line = composers_stock.miss_line(misses)
     if blocks and blocks[-1].strip() == REFER_TO_SALESMAN:
         # The refer line stays last, printed through its one helper.
         head = "\n\n".join(b for b in blocks[:-1] if b.strip())
@@ -7852,8 +8685,9 @@ def _dealer_names_the_miss(answer: Any, envelopes: list[dict[str, Any]]) -> Any:
     return dataclasses_replace(answer, text="\n\n".join(p for p in (*blocks, line) if p.strip()))
 
 
-def _stock_answer_lines(envelopes: list[dict[str, Any]]) -> list[str]:
-    """The answered lines the presenter printed ("<code> x <Q>: ..."), in the order asked."""
+def _stock_answer_lines(envelopes: list[dict[str, Any]], *, full: bool = False) -> list[str]:
+    """The answered lines the presenter printed ("<code> x <Q>: ..."), in the order asked.
+    `full` (CHAT-COMPOSER) prints each as its whole block: marker and alternatives too."""
     lines: list[str] = []
     for envelope in envelopes or []:
         if not isinstance(envelope, dict) or not envelope.get("stock_availability"):
@@ -7862,7 +8696,12 @@ def _stock_answer_lines(envelopes: list[dict[str, Any]]) -> list[str]:
             flags = item.get("flags") if isinstance(item, dict) else None
             title = item.get("title") if isinstance(item, dict) else None
             if isinstance(flags, dict) and flags.get("branch") and not flags.get("needs_quantity") and title:
-                lines.append(str(title))
+                if full:
+                    from app.services.chatbot.composers import stock as composers_stock
+
+                    lines.append(composers_stock.dealer_block(item))
+                else:
+                    lines.append(str(title))
     return lines
 
 
@@ -7994,6 +8833,7 @@ def _run_answer(
             # any of them did not go as links (owner hand test, 9 Oct 2026).
             "file_mode": file_mode,
             "file_mode_fallback": file_fallback,
+            "shown_codes": _replied_shown_codes(answer),
         },
         raw={"reply": reply},
     )
@@ -8644,6 +9484,64 @@ def _readable_customers(db: Any, rows: Any, contact_respond_id: Any, has_company
     return kept
 
 
+def _customer_docs_hidden(doc_scope: Any, doc_staff: bool, profile: Any) -> bool:
+    """V1-DOC-SCOPE: an unlinked contact that is not document staff (nor office tier) owns no
+    customer, so it may not see other customers' rows or documents. The ONE rule both the
+    Subject's hidden keys and the turn's `customer_docs_hidden` are drawn from."""
+    return doc_scope is None and not (doc_staff or is_staff_profile(profile))
+
+
+def _held_for_the_seams(state_in: Any, verdict: dict[str, Any], *, for_family: bool) -> list[dict[str, Any]]:
+    """The held products the held-family narrowing and the scheme index read. On the state path
+    the Subject's, as the ops left them (`chat_state.held_products`). Off the state path the rule
+    those seams always had, unchanged (state-off is byte-identical): a message whose own entity
+    the parser hinted `category` / `product_type` is about that class, so no held product. The
+    rule of `class_named.py` (CHAT-CLOSED-LISTS R6-3): a spec grounding made out of that class
+    keeps it as `class_hint`, so it names the class too."""
+    if state_in.subject is not None:
+        return chat_state.held_products(state_in, for_family=for_family)
+    from app.services.chatbot import class_named
+
+    names_a_class = class_named.names_own_class(verdict.get("entities") or [])
+    return [] if names_a_class else list(state_in.focus.products)
+
+
+def _class_members(db: Session, class_rows: list[dict[str, Any]], held_ids: list[str]) -> set[str]:
+    """The held products whose category is of the class the rows name, through the catalogue's
+    class vocabulary (`services.resolve_category_class`, the stock ask's own); a row carrying a
+    category key counts it directly, and a row whose word does not resolve is tried by its
+    code. A class the catalogue does not know says nothing about membership: every held
+    product stays. Data only: membership is never read off the word itself."""
+    from sqlalchemy import func, or_
+
+    from app.models.product import Product, ProductCategory
+
+    category_ids: set[str] = {str(r["uuid"]) for r in class_rows if r.get("uuid")}
+    labels: set[str] = set()
+    for row in class_rows:
+        for word in (row.get("value"), row.get("canonical_code")):
+            ids, names = business_services.resolve_category_class(db, str(word or ""))
+            if ids or names:
+                category_ids.update(ids)
+                labels.update(n.casefold() for n in names)
+                break
+    if not held_ids:
+        return set()
+    if not (category_ids or labels):
+        return set(held_ids)
+    member_of = [
+        *([Product.category_id.in_(sorted(category_ids))] if category_ids else []),
+        *([func.lower(ProductCategory.class_label).in_(sorted(labels))] if labels else []),
+    ]
+    rows = (
+        db.query(Product.id)
+        .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
+        .filter(Product.id.in_(held_ids), or_(*member_of))
+        .all()
+    )
+    return {str(pid) for (pid,) in rows}
+
+
 def _state_log(before: dict[str, Any], state: Any, answer: Any) -> dict[str, Any]:
     """CHAT-STATE: the memory event's `state` key, `{shown, before, changes, rejected, after}`;
     empty off the state path. `after` is the view of the state this turn leaves behind."""
@@ -8661,9 +9559,14 @@ def _state_log(before: dict[str, Any], state: Any, answer: Any) -> dict[str, Any
                 focus.last_list,
                 question=getattr(answer, "question", None),
                 sections=getattr(answer, "sections", None) or [],
+                turn_no=state.turn_no,
             ),
         )
-    after_state = dataclasses_replace(state, focus=focus, pending=getattr(answer, "question", None) or state.pending)
+    # The view as the NEXT turn's parser sees it: the turn counter has moved on by one.
+    after_state = dataclasses_replace(
+        state, focus=focus, pending=getattr(answer, "question", None) or state.pending,
+        turn_no=(state.turn_no or 0) + 1, quoted_turn_no=None,  # the next turn quotes nothing yet
+    )
     after = chat_state.view(
         after_state, turn_question.open_question(after_state.pending, focus.tasks, focus.required_ask)
     )
@@ -8821,6 +9724,7 @@ def _run_casual_lane(
     recalled: list[dict[str, Any]] | None = None,
     fallback: Any = None,
     chat_console: bool = False,
+    user_turn: Any,
 ) -> TurnResult:
     """The `low_signal` lane, from the model call to the closed turn (AC-401, AC-403).
 
@@ -8879,7 +9783,7 @@ def _run_casual_lane(
             answer_shape = said.shape
             text = said.text
             if fallback is not None and (said.shape == "ack" or fallback.kind == "history"):
-                reply_language = _fallback_language(ctx, fallback, remembered_before, said.language)
+                reply_language = _fallback_language(user_turn, fallback, remembered_before, said.language)
                 ack = said.text.strip()
                 # AC-MEM081: an ack stating a figure, code, price or date its own
                 # input never had is replaced by the canned one for the language.
@@ -8920,7 +9824,7 @@ def _run_casual_lane(
             logger.warning("chatbot turn %s: clarifier usage log failed", turn_id, exc_info=True)
     if failed is not None and fallback is not None and fallback.kind == "history" and fallback.copy is not None:
         # The history list needs no model: behind the canned ack it still answers.
-        reply_language = _fallback_language(ctx, fallback, remembered_before, None)
+        reply_language = _fallback_language(user_turn, fallback, remembered_before, None)
         text = fallback_mod.compose(
             fallback.copy.render_in("fallback_ack", reply_language), fallback, fallback.copy, reply_language
         )
@@ -9867,14 +10771,15 @@ def _ask_localizer(ask: Any, db: Session, item: Mapping[str, Any], *, dry_run: b
 
 
 def _fallback_language(
-    ctx: Any, fallback: Any, remembered_before: Mapping[str, Any] | None, said_language: str | None
+    user_turn: Any, fallback: Any, remembered_before: Mapping[str, Any] | None, said_language: str | None
 ) -> str:
     """The fallback reply's language: one the contact STATED this turn, then the message's own
-    words, the clarifier's reading, the conversation's last language, the saved fact."""
+    words (`UserTurn.typed_line`, what they typed), the clarifier's reading, the conversation's
+    last language, the saved fact."""
     stated = next((s.get("value") for s in fallback.noted if s.get("key") == "language"), None)
     return fallback_mod.pick_language(
         stated,
-        language_mod.detect(_ctx_message_text(ctx).split("\n")[0]),
+        language_mod.detect(user_turn.typed_line),
         said_language,
         (remembered_before or {}).get("reply_language"),
         fallback.saved_language,
@@ -9882,17 +10787,17 @@ def _fallback_language(
 
 
 def _turn_language(
-    latest_user_message: str,
+    user_turn: Any,
     remembered_before: Mapping[str, Any],
     profile: Any,
     *,
     strip: Any = (),
 ) -> str:
-    """`language.for_turn` on the typed line (the quoted `reply to:` line is not the customer's
-    words), against a copy so `remembered_before` stays the state the turn started with."""
+    """`language.for_turn` on the customer's own line (`UserTurn.own_text`: the quoted
+    `reply to:` line is not their words), against a copy so `remembered_before` stays the
+    state the turn started with."""
     carried = {"reply_language": remembered_before.get("reply_language")}
-    first_line = (latest_user_message or "").split("\n")[0]
-    return language_mod.for_turn(first_line, carried, getattr(profile, "language", None), strip=strip)
+    return language_mod.for_turn(user_turn.own_text, carried, getattr(profile, "language", None), strip=strip)
 
 
 def _ctx_message_text(ctx: Any) -> str:
@@ -10211,26 +11116,9 @@ def _label_attachments(files: list, rows: list[tuple[Any, list[str]]]) -> list:
     PHOTO-SEND-CAP R2: every file is one WhatsApp message, and the same picture uploaded
     twice has two urls and one `fileHash` (sha256 of the bytes). An entry with no hash
     dedupes on its url alone, exactly as before."""
-    kept: list[Any] = []
-    seen_urls: set[Any] = set()
-    seen_hashes: set[str] = set()
-    for entry in files:
-        if not isinstance(entry, dict):
-            kept.append(entry)
-            continue
-        url = entry.get("url")
-        if not jsc.truthy(url):
-            # D9 (8 Sep 2026): a file with no link is listed in the answer (the presenter
-            # says "(file link unavailable right now)") but never sent - a send with no
-            # url is a dead action, not a delivery.
-            continue
-        file_hash = jsc.nullish_str(entry.get("fileHash")).strip()
-        if url in seen_urls or (file_hash and file_hash in seen_hashes):
-            continue
-        seen_urls.add(url)
-        if file_hash:
-            seen_hashes.add(file_hash)
-        kept.append(entry)
+    from app.services.chatbot.composers import files as composers_files
+
+    kept = composers_files.sendable(files)
 
     groups: dict[str, list[int]] = {}
     for index, entry in enumerate(kept):
@@ -10434,6 +11322,7 @@ def run_tail(
             "file_mode": file_mode,
             "file_mode_fallback": file_fallback,
             "files": len(src_files) if isinstance(src_files, list) else 0,
+            "shown_codes": _only_shown(_shown_codes(question), reply["text"]),
         },
         raw={"reply": reply},
     )
@@ -10464,7 +11353,10 @@ def run_tail(
     if getattr(state, "state_path", False):
         # CHAT-STATE: a turn the parser's `state_changes` led records the list it showed.
         tail_focus = dataclasses_replace(
-            tail_focus, last_list=turn_tail.last_list_after(tail_focus.last_list, question=question, sections=[])
+            tail_focus,
+            last_list=turn_tail.last_list_after(
+                tail_focus.last_list, question=question, sections=[], turn_no=state.turn_no
+            ),
         )
     payload = {
         "focus": turn_state.focus_to_wire(tail_focus),
@@ -10821,7 +11713,7 @@ def _complete_canned_lane(
             "replied",
             summary=f"Refused: {trace_mod.lane_words(branch_kind).lower()}.",
             why="The contact is not granted the agent this turn would have used.",
-            facts={"lane": branch_kind},
+            facts={"lane": branch_kind, "shown_codes": None},
             raw={"reply": reply},
         )
         turn_trace.record(
