@@ -134,7 +134,7 @@ def test_oi_workbook_widths_follow_the_heading_not_the_position():
     ws = _oi_workbook([dict(_ROW)], columns=WORKSHEET_HEADINGS)
 
     assert ws.column_dimensions[_letter("PROJECT/CUSTOMER", WORKSHEET_HEADINGS)].width == 40
-    assert ws.column_dimensions[_letter("LOCATION", WORKSHEET_HEADINGS)].width == 14
+    assert ws.column_dimensions[_letter("SUPPLIER", WORKSHEET_HEADINGS)].width == 24
     assert ws.cell(row=3, column=_col("LOCATION", WORKSHEET_HEADINGS)).value == "BRW-BB"
 
     # Values are printed by heading, so an unknown heading has no value to print; the style
