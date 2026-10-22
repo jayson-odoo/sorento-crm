@@ -139,3 +139,99 @@ def test_guard_small_talk_that_is_not_a_reset_still_sees_the_stored_session(
     assert result.branch_kind == "low_signal", result.branch_kind
     assert _stub_casual_llm, "the small-talk model was not called"
     assert _shown_session(_stub_casual_llm[-1]["user_prompt"]) == _stored_session()
+
+
+# --- G2 (contacts 13 and 18): a reset's small talk is not told the parse's carried domain ---------
+# The clarifier prompt allows "the system will check and respond shortly" when intent_hint and
+# domain_hint are both non-null; on a reset nothing is checked, so the model is shown both null.
+
+
+def _stored_question(kind: str) -> dict[str, Any]:
+    if kind == "customer_order_pick":
+        options = [
+            {"position": i, "label": f"SO90000{i}", "code": f"SO90000{i}", "uuid": ht.uuid_of(f"SO90000{i}"),
+             "entity_type": "customer_order", "payload": {}}
+            for i in (1, 2)
+        ]
+        pending = turn_pending.ask(kind, options, asked_at_turn=1, expects="pick",
+                                   payload={"domain": "order", "domains": ["order"]})
+        focus = Focus(domains=["order"])
+    else:
+        options = [
+            {"position": i, "label": c, "code": c, "uuid": ht.uuid_of(c), "uuids": [ht.uuid_of(c)],
+             "entity_type": "product", "payload": {}}
+            for i, c in enumerate(TWENTY[:3], 1)
+        ]
+        pending = turn_pending.ask(kind, options, asked_at_turn=1, expects="pick",
+                                   payload={"domain": "inventory", "domains": ["inventory"]})
+        focus = Focus(products=ht.product_rows(TWENTY[0]), domains=["inventory"])
+    return {**_stored_session(), "focus": focus_to_wire(focus), "open_question": turn_pending.to_wire(pending)}
+
+
+def _say_over(session_factory, monkeypatch, stub_access, gate, session_vars, emission, words):  # noqa: F811
+    _seed(session_factory, session_vars)
+    _stub_parser(monkeypatch, gate, emission)
+    stub_access()
+    env = _envelope()
+    env.message["message"]["message"]["text"] = words
+    return engine_mod.run_turn(env, session_factory=session_factory)
+
+
+def _field(prompt: str, name: str) -> str:
+    line = next(row for row in prompt.splitlines() if row.startswith(f"{name}: "))
+    return line[len(f"{name}: "):].strip()
+
+
+RESET_OVER = pytest.mark.parametrize(
+    "question,domain,intent",
+    [("customer_order_pick", "order", "check_order"), ("product_pick", "product", "check_product")],
+    ids=["customer_order_pick", "product_pick"],
+)
+
+
+@GATES
+@RESET_OVER
+def test_a_reset_small_talk_model_is_shown_no_intent_or_domain(
+    session_factory, monkeypatch, stub_access, _stub_casual_llm, gate, question, domain, intent  # noqa: F811
+):
+    emission = _parser_output(
+        intent_hint=intent, domain_hint=domain, scope_intent=None, user_goal="clear all", match_mode=None,
+        entities=[], entity_op="clear", broaden_axis="all", topic_reset=True, scope_exclusive=None,
+        contains_flyer=None, correction=None, escalation={"is_escalation_confirmation": None, "company_pick": None},
+        open_question_answer={"mode": None, "picked": [], "items": [], "qty_for_all": None},
+    )
+    if gate:
+        emission["state_changes"] = [
+            {"op": "close_question", "axis": None, "position": None},
+            {"op": "new_subject", "axis": None, "position": None},
+        ]
+    result = _say_over(session_factory, monkeypatch, stub_access, gate, _stored_question(question), emission, "clear all")
+    assert result.branch_kind == "low_signal", result.branch_kind
+    assert _stub_casual_llm, "the small-talk model was not called"
+    prompt = _stub_casual_llm[-1]["user_prompt"]
+    assert _field(prompt, "intent_hint") == "null", prompt
+    assert _field(prompt, "domain_hint") == "null", prompt
+    assert not _shown_session(prompt).get("open_question"), prompt
+
+
+@GATES
+def test_guard_small_talk_that_is_not_a_reset_still_shows_the_parse_intent_and_domain(
+    session_factory, monkeypatch, stub_access, _stub_casual_llm, gate  # noqa: F811
+):
+    """A bare "60" with nothing open is no subject (D34): it goes to small talk without being a
+    reset, and the model sees the parse's own intent and domain and the stored session as before."""
+    emission = _parser_output(
+        intent_hint="check_stock", domain_hint="inventory", scope_intent=None, user_goal="60", match_mode=None,
+        entities=[], entity_op=None, demand_qty=60, topic_reset=False, scope_exclusive=None, contains_flyer=None,
+        correction=None, escalation={"is_escalation_confirmation": None, "company_pick": None},
+        open_question_answer={"mode": None, "picked": [], "items": [], "qty_for_all": None},
+    )
+    if gate:
+        emission["state_changes"] = []
+    empty = {**_stored_session(), "focus": focus_to_wire(Focus()), "open_question": None}
+    result = _say_over(session_factory, monkeypatch, stub_access, gate, empty, emission, "60")
+    assert result.branch_kind == "low_signal", result.branch_kind
+    prompt = _stub_casual_llm[-1]["user_prompt"]
+    assert _field(prompt, "intent_hint") == "check_stock", prompt
+    assert _field(prompt, "domain_hint") == "inventory", prompt
+    assert _shown_session(prompt) == empty
