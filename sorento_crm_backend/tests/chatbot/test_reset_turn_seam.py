@@ -396,8 +396,6 @@ GUARDS = {
     "all_over_a_product_pick": ("C18", "all", dict(
         domain_hint="inventory", intent_hint="check_stock", entity_op="clear", broaden_axis="all",
         open_question_answer=_no_answer("all")), [], None),
-    "all_of_them_as_a_broaden_alone": ("C18", "all of them", dict(
-        domain_hint="inventory", intent_hint="check_stock", entity_op="clear", broaden_axis="all"), [], None),
     "show_all_stock": ("nothing_open", "show all stock", dict(
         domain_hint="inventory", intent_hint="check_stock", domain_in_message=True, entity_op="clear",
         broaden_axis="all", scope_intent="broaden"), [_op("new_subject")], None),
@@ -431,7 +429,7 @@ GUARDS = {
 #: The lane each guard took at b173c6e8c4 (no seam), on both paths (measured 22 Oct).
 B173_LANE = {
     "all_over_a_customer_picker": "business_query", "all_over_a_product_pick": "business_query",
-    "all_of_them_as_a_broaden_alone": "business_query", "show_all_stock": "business_query",
+    "show_all_stock": "business_query",
     "any_promotions": "check_promotion", "top_10_sellers": "business_query", "sort_by_price": "business_query",
     "for_all_customers": "business_query", "any_brand": "business_query",
     "never_mind_any_promotions": "check_promotion", "cancel_talk_to_a_person": None, "an_idea": "ideate",
@@ -926,7 +924,6 @@ _STOCK_TOOLS = ["crm_incoming_stock_list", "crm_inventory_stock_balance_list"]
 B173_R12 = {
     "show_me_everything_over_a_held_subject": {"lane": "business_query", "actions": ["send_message"], "tools": []},
     "show_all_stock_names_its_domain": {"lane": "business_query", "actions": ["send_message"], "tools": []},
-    "the_all_broaden_over_an_open_picker": {"lane": "business_query", "actions": ["send_message"], "tools": _STOCK_TOOLS},
     "the_all_broaden_over_an_open_task": {"lane": "business_query", "actions": ["send_message"], "tools": []},
 }
 
@@ -937,8 +934,6 @@ def _r12_guard(name: str, gate: bool) -> tuple[dict[str, Any], dict[str, Any], s
     if name == "show_all_stock_names_its_domain":
         return _held_subject(), _measured_all_broaden(
             gate, domain_hint="inventory", intent_hint="check_stock", domain_in_message=True), "show all stock"
-    if name == "the_all_broaden_over_an_open_picker":
-        return _stored("C18"), _measured_all_broaden(gate), "all"
     return _stored("C28"), _measured_all_broaden(gate), "all"
 
 
@@ -1098,3 +1093,33 @@ def test_round13_guard_a_real_answer_to_the_tier_question_answers_its_picks(turn
     assert "reset_turn" not in t.trace_of(result), "the reset seam answered a pick"
     assert t.plans, "apply never ran: the pick did not take today's path"
     assert _lane_actions_tools(t, result) == B173_R13[words], _lane_actions_tools(t, result)
+
+
+# --- round 13 re-pin: two former guards are the measured "clear all" reading -------------------------
+#
+# Captain OK on #1825 (round 13): the no-pick entity_op clear over a picker is the measured "clear
+# all" reading; v63's real "all" answers carry picks (tier 9/9, product picker 9/9). The round 8
+# guard "all of them as a broaden alone" and the round 12 guard "the all-broaden over an open picker"
+# keep their exact parse and stored picker (C18, an open product_pick) and are resets now.
+
+
+def _r13_repinned(name: str, gate: bool) -> tuple[dict[str, Any], dict[str, Any], str]:
+    if name == "all_of_them_as_a_broaden_alone":
+        emission, ops = _read([], domain_hint="inventory", intent_hint="check_stock", entity_op="clear",
+                              broaden_axis="all")
+        if gate:
+            emission["state_changes"] = ops
+        return _stored("C18"), emission, "all of them"
+    return _stored("C18"), _measured_all_broaden(gate), "all"
+
+
+@pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
+@pytest.mark.parametrize("name", ["all_of_them_as_a_broaden_alone", "the_all_broaden_over_an_open_picker"])
+def test_round13_a_former_guard_no_pick_clear_over_a_picker_is_one_reset_turn(turn, name, gate):
+    t = turn(gate)
+    stored, emission, words = _r13_repinned(name, gate)
+    result = t.say(stored, emission, words)
+    assert (result.reply or {}).get("text") == ACK["en"], (result.branch_kind, (result.reply or {}).get("text"))
+    assert t.stored_after().get("open_question") is None, "the picker stayed open"
+    assert not t.tool_calls, t.tool_calls
+    _assert_the_reset_turn(t, result, stored)
