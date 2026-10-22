@@ -105,6 +105,14 @@ Out of scope: discontinued candidates in did-you-mean (bug 5 of the incident), t
    Old-path gaps NOT changed: v63 stores no numbered data list (tail.py ~188, state path only), so a row number over a
    multi-product answer cannot pick on v63; v63's file-kind question has no numbered kinds without closed lists
    (engine.py ~7744).
+7. Round after the freeze (dc66a1646c, owner Q3: code only, no prompt lines): a kind-less fit filter that links nothing
+   is no fit ask when the parser marked it a file ask (`fits.file_word` filled), lanes/business/find.py, so "photo of
+   <code> basin" sends the photo and "what goes with <unlinked code>" keeps its no-link line (red f845ae4eba +
+   32a4d4baa9 / 31e341047a, fix a81f8a16a9 + 94fe505694); every exact existing code keeps its candidate line past the
+   12-word cap, at most 60 lines in all, head/candidates.py `shown_entries` / CAP_CODE_LINES (red bc5cd9d683 +
+   166da27902 + 31e341047a, fix f8d0e91f23 + 4769ccf32a). Dropped with reasons on #1825: P2 (owner Q2 keeps the recap),
+   P3 / P4 (prompt only: v92 also emits `entity_op clear` + `broaden_axis all` for "show me everything"), P7 (both
+   halves in the shared resolver probes). P9 did not reproduce. P1 (near-code boundary) waits for owner Q1.
 
 ## Coordination
 REPORT-SMART-L (#1816) and CHAT-CLOSED-LISTS-L (#1755) touch turn/apply.py, chat_state.py, task.py; keep the diff to
