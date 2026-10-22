@@ -778,3 +778,61 @@ def test_round10_measured_reset_broaden_parse_resets_everything(turn, context, g
     assert not focus.get("tasks"), focus.get("tasks")
     assert not focus.get("last_list"), focus.get("last_list")
     _assert_the_reset_turn(t, result, stored)
+
+
+# --- round 11: a cancel wins over broaden too ----------------------------------------------------------
+#
+# Reviewer grid proof on 58e2fbee45: the v63 "clear all" over an offer read as topic_reset FALSE, a
+# cancel, scope_intent broaden, broaden_axis all, entity_op clear, no domain, domain_in_message false,
+# a plain business query missed the seam (round 10 lifted broaden only beside topic_reset), fell to the
+# apply reset and the small-talk "Last time ..." reply: the likely route to contact 30 run 2's re-asked
+# quantity list. Rule: scope_intent broaden states nothing beside topic_reset OR a declared cancel.
+
+
+def _measured_cancel_broaden(gate: bool, domain: str | None = None) -> dict[str, Any]:
+    emission = {**_measured_reset_broaden(gate), "topic_reset": False}
+    if domain:
+        emission.update(domain_hint=domain, intent_hint="check_stock", domain_in_message=True)
+    return emission
+
+
+#: (context, the held domain stated beside the cancel or None).
+R11_CASES = [(c, d, g) for c, d in [("C01", None), ("C30", None), ("C30", "inventory")] for g in (False, True)]
+
+
+@pytest.mark.parametrize(
+    "context,domain,gate", R11_CASES,
+    ids=[f"{c}-{'held_domain' if d else 'no_domain'}-{'state_path' if g else 'old_path'}" for c, d, g in R11_CASES],
+)
+def test_round11_measured_cancel_broaden_parse_resets_everything(turn, context, domain, gate):
+    t = turn(gate)
+    stored = _measured_stored(context)
+    result = t.say(stored, _measured_cancel_broaden(gate, domain), "clear all")
+    reply = (result.reply or {}).get("text") or ""
+    assert reply == ACK["en"], (result.branch_kind, reply)
+    assert "How many units" not in reply, reply
+    assert "Last time" not in reply, reply
+    assert not t.casual_calls, "the small-talk model was called on a reset turn"
+    assert not (t.stored_after().get("focus") or {}).get("tasks"), "a task was left"
+    _assert_the_reset_turn(t, result, stored)
+
+
+#: "cancel, show all promotions" over a stock session with an open offer, at b173c6e8c4 (both paths).
+B173_CANCEL_ALL_PROMOTIONS = {"lane": "check_promotion", "actions": ["send_message"], "tools": []}
+
+
+@pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
+def test_round11_guard_cancel_show_all_promotions_over_a_stock_session_runs_promotions(turn, gate):
+    t = turn(gate)
+    emission = _parser_output(
+        topic_reset=False, open_question_answer=_no_answer("cancel"), scope_intent="broaden", broaden_axis="all",
+        entity_op="clear", domain_hint="promotion", intent_hint="check_promotion", domain_in_message=True,
+        message_type="business_query", user_goal="show all promotions", entities=[], match_mode=None,
+    )
+    if gate:
+        emission["state_changes"] = [_op("close_question"), _op("new_subject")]
+    result = t.say(_stored("C04"), emission, "cancel, show all promotions")
+    assert (result.reply or {}).get("text") != ACK["en"], (result.branch_kind, (result.reply or {}).get("text"))
+    assert "reset_turn" not in t.trace_of(result), "the reset seam answered a turn that names its own domain"
+    assert t.plans, "apply never ran: the turn did not take today's path"
+    assert _lane_actions_tools(t, result) == B173_CANCEL_ALL_PROMOTIONS, _lane_actions_tools(t, result)
