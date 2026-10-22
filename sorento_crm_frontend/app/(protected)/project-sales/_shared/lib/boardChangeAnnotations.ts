@@ -406,7 +406,7 @@ export function annotationOf(
   return {
     rowId: row.id,
     soNumber,
-    lineNo: row.line_no,
+    lineNo: row.so_line_no ?? row.line_no,
     itemCode: row.item_code,
     kind: row.kind,
     closed,

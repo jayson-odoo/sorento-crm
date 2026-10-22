@@ -413,6 +413,8 @@ export interface SupplyFrozenLine {
 export interface SupplyLine {
   project_line_id: string;
   line_no: number;
+  /** AutoCount's own line number (the SO line number), `line_no` when it has none. */
+  so_line_no?: number | null;
   item_code?: string | null;
   /** Addressing only, never rendered - what the Proof button asks the classification
    * evidence endpoint with. */
@@ -673,6 +675,8 @@ export interface CancelledLineBody {
 /** A line a press transferred to Cancel SO, as the server echoes it. */
 export interface CancelledLineEcho {
   line_no?: number | null;
+  /** AutoCount's own line number (the SO line number), `line_no` when it has none. */
+  so_line_no?: number | null;
   item_code?: string | null;
   /** Why it went to Cancel SO ("AutoCount Cancel SO <doc>" for an AutoCount draft). */
   reason?: string | null;
@@ -689,6 +693,8 @@ export interface ConfirmException {
 export interface ConfirmedLine {
   project_line_id: string;
   line_no?: number | null;
+  /** AutoCount's own line number (the SO line number), `line_no` when it has none. */
+  so_line_no?: number | null;
   item_code?: string | null;
 }
 
@@ -2466,6 +2472,8 @@ export interface PileQueueLine {
   so_number: string;
   /** Null until the order has been adopted: an un-mirrored line has no line number. */
   line_no?: number | null;
+  /** AutoCount's own line number (the SO line number), `line_no` when it has none. */
+  so_line_no?: number | null;
   customer_name?: string | null;
   qty: string;
   required_date?: string | null;
@@ -2687,6 +2695,8 @@ export interface PreviewTransfer {
 /** One line the admin Simulate probe found failing on its own, with the server's raw reason. */
 export interface SimulatedLineError {
   line_no?: number | null;
+  /** AutoCount's own line number (the SO line number), `line_no` when it has none. */
+  so_line_no?: number | null;
   item_code?: string | null;
   project_line_id: string;
   error: string;

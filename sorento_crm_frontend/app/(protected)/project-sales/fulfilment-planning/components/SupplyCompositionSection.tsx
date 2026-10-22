@@ -26,6 +26,7 @@ import {
   type DraftLine,
 } from '../../_shared/lib/supplyComposition';
 import { poolShareLimitsFromLine } from '../../_shared/lib/poolShare';
+import { soLineNoText } from '../../_shared/lib/fulfilmentBoard';
 import { ConfirmProjectSoDialog } from './ConfirmProjectSoDialog';
 import { SupplyLineCard } from './SupplyLineCard';
 
@@ -136,7 +137,7 @@ export function SupplyCompositionSection({
         .filter((line) => line.fulfilment_location_missing)
         .map(
           (line) =>
-            `Line ${line.line_no}${line.item_code ? `, ${line.item_code}` : ''}: no fulfilment location on the sales order line.`,
+            `Line ${soLineNoText(line)}${line.item_code ? `, ${line.item_code}` : ''}: no fulfilment location on the sales order line.`,
         ),
     [plannableLines],
   );

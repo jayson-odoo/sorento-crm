@@ -61,7 +61,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app.models.inventory import Warehouse
 from app.models.stock_transfer import TRANSFER_MOVED, StockTransfer
@@ -101,6 +101,7 @@ from app.models.projects import Project
 from app.models.scm import ItemClassification
 from app.models.user import User
 from app.services.error_handler import AppException
+from app.services.project_line_split_service import display_line_nos
 from app.services.scm import order_link_service
 from app.services.scm.front_planning_engine import (
     BORROW,
@@ -2433,6 +2434,7 @@ def explain_refusal(db: Session, pso_id: str, batch_id: str) -> List[dict]:
         .all()
     )
     revision = current_revision_no(db, str(pso_id))
+    so_nos = display_line_nos(db, [r.project_line_id for r in rows])
     out: List[dict] = []
     for row in rows:
         reason_applied = row.applied_reason or ""
@@ -2456,7 +2458,7 @@ def explain_refusal(db: Session, pso_id: str, batch_id: str) -> List[dict]:
         }[code]
         out.append(
             {
-                "so_line_no": row.line_no,
+                "so_line_no": so_nos.get(str(row.project_line_id), row.line_no),
                 "item_code": row.item_code,
                 "reason_code": code,
                 "reason": reason,
@@ -2472,7 +2474,13 @@ def _row_is_superseded(db: Session, row: PlanningChangeRow) -> bool:
     return row_is_overtaken(row, current_revision_no(db, str(row.project_sales_order_id)))
 
 
-def row_out(db: Session, row: PlanningChangeRow) -> dict:
+def row_out(
+    db: Session, row: PlanningChangeRow, so_nos: Optional[Dict[str, Optional[int]]] = None
+) -> dict:
+    """`so_nos` is `display_line_nos` read once for a whole batch (`get_batch`); a single
+    row looks its own up."""
+    if so_nos is None:
+        so_nos = display_line_nos(db, [row.project_line_id])
     applied_state = row.applied_state
     if applied_state == PLANNING_CHANGE_STATE_PENDING and _row_is_superseded(db, row):
         applied_state = PLANNING_CHANGE_STATE_SUPERSEDED
@@ -2480,6 +2488,8 @@ def row_out(db: Session, row: PlanningChangeRow) -> dict:
         "id": str(row.id),
         "project_line_id": str(row.project_line_id) if row.project_line_id else None,
         "line_no": row.line_no or 0,
+        # The number the customer's order carries; `line_no` stays the sheet's own address.
+        "so_line_no": so_nos.get(str(row.project_line_id), row.line_no),
         "item_code": row.item_code or "",
         "product_name": row.product_name,
         "kind": row.kind,
@@ -2532,6 +2542,7 @@ def get_batch(db: Session, batch_id: str) -> dict:
     by_order: Dict[str, List[PlanningChangeRow]] = defaultdict(list)
     for r in rows:
         by_order[str(r.project_sales_order_id)].append(r)
+    so_nos = display_line_nos(db, [r.project_line_id for r in rows])
 
     orders_map: Dict[str, ProjectSalesOrder] = {}
     if by_order:
@@ -2559,7 +2570,7 @@ def get_batch(db: Session, batch_id: str) -> dict:
                 "customer_name": customer_name,
                 "project_label": project_label,
                 "revision_no": revision_no,
-                "rows": [row_out(db, r) for r in order_rows],
+                "rows": [row_out(db, r, so_nos) for r in order_rows],
                 "is_adopted": bool(order.so_id) and order.project_id is None,
                 "core_sales_order_id": str(order.so_id) if order.so_id else None,
                 "project_id": str(order.project_id) if order.project_id else None,
@@ -3232,6 +3243,7 @@ def _document_links_by_row(
 
 
 def _record_redeal_intent(
+    db: Session,
     row: PlanningChangeRow,
     component: dict,
     *,
@@ -3283,7 +3295,8 @@ def _record_redeal_intent(
         freed = min(freed, sum((_dec(share.get("qty")) for share in shares), _ZERO))
         if freed <= _ZERO:
             return []
-    where = f"{so_number} line {row.line_no or '?'}"
+    so_line = display_line_nos(db, [row.project_line_id]).get(str(row.project_line_id), row.line_no)
+    where = f"{so_number} line {so_line or '?'}"
 
     # One notice per document and state, not per purchase-order line: a placement split
     # across two lines of one purchase order is one instruction to purchasing.
@@ -3452,11 +3465,12 @@ def _move_reserve(
     location = next(
         (entry.get("location") for entry in held_reserve if entry.get("location")), None
     )
+    so_line = display_line_nos(db, [row.project_line_id]).get(str(row.project_line_id), row.line_no)
     if not warehouse_id:
         raise AppException(
             status_code=409,
             message=(
-                f"{so_number} line {row.line_no or '?'}: the reserve it gives up names no "
+                f"{so_number} line {so_line or '?'}: the reserve it gives up names no "
                 "warehouse, so there is nothing to move."
             ),
             code="planning_change_reallocation_no_warehouse",
@@ -3482,7 +3496,7 @@ def _move_reserve(
         .filter(ProjectSalesOrderLine.id == receiving_line_id)
         .scalar()
     )
-    reason = f"Reallocated from {so_number} line {row.line_no or '?'}"
+    reason = f"Reallocated from {so_number} line {so_line or '?'}"
     db.add(
         SOLineAllocation(
             so_line_id=receiving_line_id,
@@ -3677,7 +3691,7 @@ def _execute_reallocations(
                 ))
             else:
                 done[str(row.id)]["released_documents"].extend(_record_redeal_intent(
-                    row, component, so_number=so_number, document_links=document_links,
+                    db, row, component, so_number=so_number, document_links=document_links,
                 ))
     return {
         row_id: {key: words for key, words in said.items() if words}
@@ -4381,12 +4395,16 @@ def _refuse_dropped_named_lines(
     from app.services.project_supply_service import SupplyLinesRefused
 
     rows_by_line = {str(r.project_line_id): r for r in order_rows if r.project_line_id}
+    # The rows carry their session, so the guard keeps the signature its callers have.
+    session = object_session(order_rows[0]) if order_rows else None
+    so_nos = display_line_nos(session, dropped) if session is not None else {}
     failing = []
     for line_id in dropped:
         r = rows_by_line.get(line_id)
         failing.append(
             {
                 "line_no": r.line_no if r is not None else None,
+                "so_line_no": so_nos.get(line_id, r.line_no if r is not None else None),
                 "item_code": r.item_code if r is not None else None,
                 "reason": (
                     (r.applied_reason if r is not None else None)
@@ -4395,7 +4413,7 @@ def _refuse_dropped_named_lines(
             }
         )
     named = ", ".join(
-        f"line {f['line_no']}" + (f" ({f['item_code']})" if f["item_code"] else "")
+        f"line {f['so_line_no']}" + (f" ({f['item_code']})" if f["item_code"] else "")
         for f in failing
     )
     raise SupplyLinesRefused(

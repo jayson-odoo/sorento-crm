@@ -16,6 +16,7 @@ import { NumberInput } from '@/components/ui/number-input';
 import { numberFieldError } from '@/lib/number-field';
 import { Label } from '@/components/ui/label';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
+import { soLineNoText } from '../../_shared/lib/fulfilmentBoard';
 import { drawAcross } from '../../_shared/lib/boardAmend';
 import { CellStockTable, type DonorLocationRow } from './CellStockTable';
 import type { BorrowCandidate } from '../../_shared/types/fulfilmentPlanning.types';
@@ -60,6 +61,7 @@ function qtyError(raw: string) {
 
 export function BorrowAddDialog({
   lineNo,
+  soLineNo,
   itemCode,
   lineId,
   candidates,
@@ -67,7 +69,9 @@ export function BorrowAddDialog({
   onAdd,
   onAddMany,
 }: {
+  /** The planning address, for element ids. What a person reads is `soLineNo`. */
   lineNo: number;
+  soLineNo?: number | null;
   itemCode?: string | null;
   /** The mirror line this borrow is FOR, so its own rows are marked `This line` in the
    * ledger a source row expands into. Absent on a caller with no mirror line yet. */
@@ -180,7 +184,7 @@ export function BorrowAddDialog({
     <Dialog open onOpenChange={(next) => !next && onDone()}>
       <DialogContent className="max-h-[92vh] w-full max-w-5xl overflow-hidden">
         <DialogHeader>
-          <DialogTitle>Borrow for line {lineNo}</DialogTitle>
+          <DialogTitle>Borrow for line {soLineNoText({ so_line_no: soLineNo, line_no: lineNo })}</DialogTitle>
           <DialogDescription>{itemCode ?? 'This item'}</DialogDescription>
         </DialogHeader>
 

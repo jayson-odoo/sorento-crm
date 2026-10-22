@@ -1333,6 +1333,7 @@ export function BoardLineDecisionPanel({
       {adding && (
         <BorrowAddDialog
           lineNo={contribution.line_no}
+          soLineNo={contribution.so_line_no}
           itemCode={contribution.item_code}
           lineId={contribution.project_line_id}
           candidates={candidates}
@@ -1347,6 +1348,7 @@ export function BoardLineDecisionPanel({
       {addingReserve && (
         <ReserveAddDialog
           lineNo={contribution.line_no}
+          soLineNo={contribution.so_line_no}
           itemCode={contribution.item_code}
           locations={reserveCandidates}
           // S-1 (fix round 7): NOT `open - total` while Buy follows the remainder - `total`

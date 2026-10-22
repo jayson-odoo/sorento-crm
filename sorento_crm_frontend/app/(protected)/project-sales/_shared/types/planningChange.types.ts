@@ -246,6 +246,8 @@ export interface PlanningChangeRow {
    */
   project_line_id?: string | null;
   line_no: number;
+  /** The number the customer's sales order carries; `line_no` is the sheet's own address. */
+  so_line_no?: number | null;
   item_code: string;
   product_name?: string | null;
   kind: PlanningChangeKind;

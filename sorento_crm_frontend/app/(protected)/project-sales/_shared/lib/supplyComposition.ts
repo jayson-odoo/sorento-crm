@@ -13,6 +13,7 @@
  * balanced rather than as 0.0000000000000004 over.
  */
 import { numberFieldError } from '@/lib/number-field';
+import { soLineNoText } from './fulfilmentBoard';
 import type {
   BorrowSource,
   ConfirmLine,
@@ -93,6 +94,8 @@ export interface DraftReserve {
 export interface DraftLine {
   project_line_id: string;
   line_no: number;
+  /** AutoCount's own line number, what a person reads; `line_no` when it has none. */
+  so_line_no?: number | null;
   item_code?: string | null;
   open_qty: string;
   timely_spo_qty: string;
@@ -116,6 +119,7 @@ export function draftFromLine(line: SupplyLine): DraftLine {
   return {
     project_line_id: line.project_line_id,
     line_no: line.line_no,
+    so_line_no: line.so_line_no ?? null,
     item_code: line.item_code,
     open_qty: line.open_qty,
     timely_spo_qty: fromMinor(timely),
@@ -323,7 +327,7 @@ export function lineBlockers(
   options?: { mixAllowed?: boolean },
 ): string[] {
   const blockers: string[] = [];
-  const subject = `Line ${draft.line_no}${draft.item_code ? `, ${draft.item_code}` : ''}`;
+  const subject = `Line ${soLineNoText(draft)}${draft.item_code ? `, ${draft.item_code}` : ''}`;
   const balance = lineBalance(draft);
 
   const typed = [
