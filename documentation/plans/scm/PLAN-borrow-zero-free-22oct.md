@@ -1,6 +1,7 @@
 # PLAN: Borrow lists locations with 0 free stock (BORROW-ZERO-FREE, 22 Oct 2026)
 
-Status: in progress (small fix track: under ~300 lines, no migration, no auth/RBAC change).
+Status: in progress, review + browser pass (small fix track: under ~300 lines, no migration,
+no auth/RBAC change).
 Lane: BORROW-ZERO-FREE, branch `crew/borrow-zero-free`, base origin/main d04536d258.
 UAC: `borrow-zero-free-22oct-acceptance-criteria.md` (alongside).
 
@@ -24,15 +25,21 @@ whole donor list: board `project_fulfilment_board_service.py:2957-2961` / `:3003
 owner's screenshot. Ungated, `_borrow_candidates` on the dev copy returns MWH-BB (43 free) and
 the own BRW-BB (0 free, available -1294).
 
-The window gate is NOT changed in this lane until crew relays the owner's answer (asked 22 Oct).
+Owner ruling (b), 22 Oct ~11:00: drop the window gate for the Borrow LIST only, on the board,
+the per-order sheet and the Decide Borrow dropdown. The ladder still skips the borrow rungs
+beyond the window, so auto-proposals and the "borrowing is possible from" trail note are
+unchanged. Confirm must accept a hand-picked Borrow on such a line (proved end to end).
 
 ## Change (step 2)
 
 1. Backend `_borrow_candidates` (`project_supply_service.py:10607-10612`): drop `qty > _ZERO`
    on the free-stock rows. Every location outside the Reserve pool that carries a `stock` row
    for the item at a drawable (planning or pool) location is listed, `free_qty` 0 when nothing
-   is free; signed `available_qty` unchanged. Ranking unchanged (`_ranked`), so a location with
-   stock still heads the list.
+   is free; signed `available_qty` unchanged. `_ranked` gains a first key, "has free stock",
+   so a 0-free row never takes the recommended head: availability nets what the book owes, not
+   what is reserved or held, so a fully spoken-for pile can read more available than one with 7
+   free (`test_fulfilment_board.py` covered-line test caught it). Every row listed before this
+   lane had free > 0, so their order is unchanged.
 2. Other-project holds (`:10645-10650`) keep `qty > _ZERO`: a hold is a PROJECT donor, and a
    held quantity of 0 (`held_qty_expr` caps at what is still owed, `:251-266`, so every
    delivered allocation reads 0) names a project that holds nothing. The location itself is
@@ -44,7 +51,12 @@ The window gate is NOT changed in this lane until crew relays the owner's answer
    already does and as "Add a borrow" already does (`BorrowAddDialog.tsx` over-ask). Without it
    a 0-free pick skips every row ("only 0 free at X"), which is the cap the owner ruled out.
    Confirm already records a plain location borrow short (`project_supply_service.py:6773-6788`).
-5. Unchanged on purpose: the trail note "borrowing is possible from" (board `:3471`, keeps
+5. Ruling (b): board `project_fulfilment_board_service.py` (plannable and covered rows) and
+   sheet `project_supply_service.py` `borrow_candidates` no longer blank on
+   `outside_reserve_window`; the sheet still blanks an unplannable line. `_trail` reads the
+   window itself, so the note and the walked rungs are unchanged. Confirm reads the window
+   only for own-arrival credit (`:6178-6182`), never for a manual Borrow.
+6. Unchanged on purpose: the trail note "borrowing is possible from" (board `:3471`, keeps
    free>0: never name a place with nothing free); Reserve "Add location" filter
    (`BoardLineDecisionPanel.tsx:292-301`).
 
@@ -52,6 +64,10 @@ The window gate is NOT changed in this lane until crew relays the owner's answer
 
 - pytest: a location outside the Reserve pool with a stock row at 0 free is a Borrow candidate
   (free 0, signed available); a location with stock still ranks ahead of it.
+- pytest: a 0-free location never takes the recommended head from one with stock.
+- pytest (ruling b): beyond the window the board (plannable + covered) and the sheet offer the
+  list, the proposal is still a whole-line Buy, and a donor picked off the sheet confirms and is
+  held (SO401624 line 224 shape: 441 due today + 174 d, 90 d lead).
 - vitest: Decide Borrow-location picker lists a 0-free location; picking it saves the line as a
   location borrow carrying the whole quantity with the short warning (not skipped).
 

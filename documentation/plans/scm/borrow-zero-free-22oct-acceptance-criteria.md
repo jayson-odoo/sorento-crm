@@ -17,4 +17,8 @@ Plan: `PLAN-borrow-zero-free-22oct.md`.
 - AC-6: The trail note "borrowing is possible from ..." still names only places with something
   free.
 - AC-7: Reserve "Add location" is unchanged.
-- AC-8: A line beyond its reserve window is unchanged until the owner rules on the gate.
+- AC-8 (owner ruling (b), 22 Oct): a line beyond its reserve window is offered the same Borrow
+  list (board, per-order sheet, Decide dropdown); its proposal is still a whole-line Buy with the
+  "beyond the lead time window" sentence and the trail names nobody to borrow from.
+- AC-9: a Borrow hand-picked on a line beyond the window confirms and holds the stock.
+- AC-10: a 0-free location is never the recommended row while any listed row has stock.
