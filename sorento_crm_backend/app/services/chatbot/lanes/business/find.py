@@ -217,6 +217,13 @@ def as_linked_products(
         if value and message and value.casefold() not in message.casefold():
             value = ""
         said = bool(value)
+        if said:
+            # SEAT-COVER-HIDDEN (live, prod v63, 23 Oct): "seat cover for <WC>" also tagged
+            # "seat cover" as an Installation Guide / certificate / photo. A turn that runs on as
+            # typed (a family code, a typo) must not carry that file ask either, so the rule the
+            # swap applies runs here, whether or not a code is replaced.
+            verdict = _without_relation_file_ask(verdict, items["fits"])
+            entities = list(jsc.array(verdict.get("entities")))
     elif carried_relation and (_bare_continuation(verdict, entities) or echo_turn):
         said = False
     else:
@@ -318,22 +325,21 @@ def as_linked_products(
     for i in anchors:
         products = by_code.get(normalize_code(entity_code(entities[i])), [])
         linked: list[tuple[str, str, str]] = []
-        hidden = False
         for p in products:
             for kind in KINDS:
                 for side, found in reads[kind].items():
                     for other in found.get(str(p.id), []):
-                        if str(other.id) not in visible:
-                            hidden = True
-                        elif other.product_code and all(other.product_code != c for c, _k, _s in linked):
+                        if str(other.id) in visible and other.product_code and all(
+                            other.product_code != c for c, _k, _s in linked
+                        ):
                             linked.append((other.product_code, kind, side))
         if linked:
             # Code order, the same on every database: `accessories_for` orders by the column's
             # collation, and en_US puts SRTSCBD333A-UF before SRTSCBD333-UF where C does not.
             replaced[i] = sorted(linked, key=lambda t: normalize_code(t[0]))
-        elif hidden:
-            unknown.append(entity_code(entities[i]))  # links that are all hidden: as typed
         elif products:
+            # SEAT-COVER-HIDDEN (owner, 23 Oct): links that are all hidden read as no link (the
+            # no-link line); the hidden product is still never named (AC-19).
             unlinked.append(products[0])
         else:
             unknown.append(entity_code(entities[i]))
@@ -372,34 +378,37 @@ def as_linked_products(
              "linked_from": entity_code(entity), "linked_as": side, "linked_kind": kind}
             for code, kind, side in replaced[i]
         ]
-    linked = {**verdict, "entities": out}
-    fits_item = items.get("fits") or {}
+    return _without_relation_file_ask({**verdict, "entities": out}, items.get("fits") or {}), []
+
+
+def _without_relation_file_ask(verdict: dict[str, Any], fits_item: dict[str, Any]) -> dict[str, Any]:
+    """`verdict` with the file ask the relation's own word made dropped: a fits ask is never a
+    file ask unless the parser names a file word (SEAT-COVER-HIDDEN, owner 23 Oct)."""
     relation_word = jsc.js_string(fits_item.get("value") or "").strip().casefold()
     if relation_word:
         # Crew audit: "<WC> seat cover files" came back with the relation's own word ("seat
         # cover", the parser's fits value) also tagged as a file type (Installation Guide). Two of
         # the parser's own fields name the same word; as the relation it names no file type.
-        linked["entities"] = [
-            e for e in linked["entities"]
+        verdict = {**verdict, "entities": [
+            e for e in jsc.array(verdict.get("entities"))
             if not (
                 isinstance(e, dict)
                 and e.get("hint") == "attachment_type"
                 and jsc.js_string(e.get("raw") or "").strip().casefold() == relation_word
             )
-        ]
+        ]}
     if "file_word" in fits_item and not jsc.js_string(fits_item.get("file_word") or "").strip():
         # The parser says THIS message asks for no file (crew v94 check 2: v94 read "seat cover" as
         # an Installation Guide / "which kind of file?" ask). The relation's word is no file type,
-        # so the turn is the bare linked codes: no attachment type of this message, and a file
-        # domain is left to the engine's own continuation (null), as a bare code's is.
-        linked["entities"] = [
-            e for e in linked["entities"]
+        # so the turn is the bare codes: no attachment type of this message, and a file domain is
+        # left to the engine's own continuation (null), as a bare code's is.
+        verdict = {**verdict, "entities": [
+            e for e in jsc.array(verdict.get("entities"))
             if not (isinstance(e, dict) and e.get("hint") == "attachment_type" and e.get("current_message") is not False)
-        ]
-        if linked.get("domain_hint") == "product_attachment":
-            linked["domain_hint"] = None
-            linked["intent_hint"] = None
-    return linked, []
+        ]}
+        if verdict.get("domain_hint") == "product_attachment":
+            verdict = {**verdict, "domain_hint": None, "intent_hint": None}
+    return verdict
 
 
 def fit_lines(entities: list[Any], localizer: Any = None) -> list[str]:

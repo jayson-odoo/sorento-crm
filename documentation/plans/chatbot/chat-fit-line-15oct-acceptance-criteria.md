@@ -62,8 +62,8 @@ their own `ZZT*` products and links (CI's DB is empty).
 - AC-18 Link fields on a parser entity (`linked_from`, `linked_as`, `linked_kind`) are ignored:
   only the resolution sets them, so a crafted message never prints a fit line.
 - AC-19 A linked product the chatbot may not answer with (`chat_searchable_products()`: not
-  searchable, or a hidden category) is never named: it is dropped; with none left the turn runs
-  on as typed (no line, no claim).
+  searchable, or a hidden category) is never named: it is dropped; with none left the reply is
+  the AC-5 no-link line (amended by SEAT-COVER-HIDDEN, owner 23 Oct; it used to run on as typed).
 - AC-20 In a zh / ms turn the fit-line templates translate only the fit line itself; any other
   line of the usual answer ("This soft-close seat fits most round WCs.", "Mirror for bathroom:
   LED") is left exactly as it is today.
