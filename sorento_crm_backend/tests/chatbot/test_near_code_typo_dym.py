@@ -271,21 +271,16 @@ B173_Q1: dict[str, Any] = {'carried_entity|old_path': {'reply': 'Stock summary f
                                                               'SRT209-GM',
                                                               'SRT769-GM',
                                                               'SRTWT8259-GM']},
+ # Re-pinned (crew-note 6349899950, lead approved): a did-you-mean pick never reports the typed miss
+ # it settled, so the state path replies exactly as its old-path twin.
  'position_pick_over_the_did_you_mean|state_path': {'reply': 'Stock summary for the requested products.\n'
                                                              '\n'
                                                              '1. *Product Code:* SRTWT8259-GM\n'
                                                              '*Total:* 12\n'
                                                              '*BRW:* 12\n'
                                                              '\n'
-                                                             '_Data last updated: 29/09/2026 01:00:00_\n'
-                                                             '\n'
-                                                             'Couldn\'t find "srttw8259gm" (product). Did '
-                                                             'you mean:\n'
-                                                             '2. SRT209-GM\n'
-                                                             '3. SRT769-GM\n'
-                                                             'Reply with a code to continue, or would you '
-                                                             'like me to escalate to warehouse team?',
-                                                    'resolve_calls': 2,
+                                                             '_Data last updated: 29/09/2026 01:00:00_',
+                                                    'resolve_calls': 1,
                                                     'stocked': ['SRTWT8259-GM',
                                                                 'SRT209-GM',
                                                                 'SRT769-GM',
@@ -816,3 +811,67 @@ def test_q1w_guard_a_correctly_typed_code_with_a_quantity_answers_directly(
     assert text.startswith(f"{CAP_PICK} x 50:"), text
     assert "Did you mean" not in text and "Couldn't find" not in text, text
     assert _asked_quantities(c) in ([{c.uuid_of[CAP_PICK]: 50}], [f'{{"{c.uuid_of[CAP_PICK]}":50}}']), _asked_quantities(c)
+
+
+# --- a did-you-mean pick never reports the typed miss it settled (no quantity; dealer or staff) ---------
+#
+# The pick (or a yes over a one-option did-you-mean) settles the typed word the did-you-mean was asked
+# about: the follow-up answers the picked product only, with no "Couldn't find <raw>" anywhere.
+
+
+def _yes(gate: bool) -> dict[str, Any]:
+    v = verdict(message_type="business_query", domain_hint="inventory", domain_in_message=False, is_affirmative=True,
+                open_question_answer=answer("yes"))
+    if gate:
+        v["state_changes"] = [{"op": "answer", "axis": None, "position": None}]
+    return v
+
+
+def _no_miss_line(text: str) -> None:
+    assert "Couldn't find" not in text, f"the settled typed miss was reported again: {text!r}"
+
+
+@PATHS
+def test_q1w_dealer_a_pick_off_the_cap_did_you_mean_asks_how_many_of_the_pick(session_factory, monkeypatch, stub_access, gate):  # noqa: F811
+    """W8: 'Srtwc8066-sh-250 stock' (the cap case, no quantity) -> did-you-mean -> '1'."""
+    c, _ = _dealer_cap_console(session_factory, monkeypatch, stub_access, f"+600000310{int(gate)}", gate)
+    c.say(f"{CAP_RAW} stock", _ask(CAP_RAW, CAP_PICK, gate))
+    assert _offered(c)[0] == CAP_PICK, _offered(c)
+    text = c.say("1", _pick(gate, 1))
+    assert f"How many units of {CAP_PICK}?" in text, text
+    _no_miss_line(text)
+
+
+@PATHS
+def test_q1w_dealer_a_pick_off_the_clb109a_did_you_mean_asks_how_many_of_that_code(session_factory, monkeypatch, stub_access, gate):  # noqa: F811
+    """W8b: 'Clb109a stock' (no parser pick) -> did-you-mean -> '1'."""
+    c, _ = _dealer_cap_console(session_factory, monkeypatch, stub_access, f"+600000311{int(gate)}", gate)
+    c.say("Clb109a stock", _ask("Clb109a", None, gate))
+    first = _offered(c)[0]
+    assert first in {"CL8109A", "C9109A", "CB3109A"}, _offered(c)
+    text = c.say("1", _pick(gate, 1))
+    assert f"How many units of {first}?" in text, text
+    _no_miss_line(text)
+
+
+@PATHS
+def test_q1w_dealer_yes_over_a_one_option_did_you_mean_asks_how_many_of_that_product(session_factory, monkeypatch, stub_access, gate):  # noqa: F811
+    """W8c: 'ELP3753 stock' -> "Did you mean ELP3754?" (one product option) -> 'yes'."""
+    c, _ = _dealer_cap_console(session_factory, monkeypatch, stub_access, f"+600000312{int(gate)}", gate)
+    c.say("ELP3753 stock", _ask("ELP3753", None, gate))
+    assert _offered(c) == ["ELP3754"], _offered(c)
+    text = c.say("yes", _yes(gate))
+    assert "How many units of ELP3754?" in text, text
+    _no_miss_line(text)
+
+
+@PATHS
+def test_q1w_staff_a_pick_off_the_cap_did_you_mean_answers_the_pick_only(session_factory, monkeypatch, stub_access, gate):  # noqa: F811
+    """W9: the staff stock view of W8: the stock summary for the pick, nothing else."""
+    c, _ = _cap_console(session_factory, monkeypatch, stub_access, f"+600000313{int(gate)}", gate)
+    c.say(f"{CAP_RAW} stock", _ask(CAP_RAW, CAP_PICK, gate))
+    assert _offered(c)[0] == CAP_PICK, _offered(c)
+    text = c.say("1", _pick(gate, 1))
+    assert text.startswith("Stock summary") and f"*Product Code:* {CAP_PICK}" in text, text
+    assert "SRTWC8066" not in text, f"the other near codes rode the pick's answer: {text!r}"
+    _no_miss_line(text)
