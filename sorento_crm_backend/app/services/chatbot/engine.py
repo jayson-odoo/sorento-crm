@@ -7741,6 +7741,16 @@ def _run_stages_body(  # noqa: PLR0915
                     if jsc.js_string(parsed_output.get("order_status") or "").strip() == "sales_ranking"
                     else None,
                 )
+                if (
+                    state_out.focus.sales_ranking_frame
+                    and jsc.js_string(parsed_output.get("order_status") or "").strip() == "sales_ranking"
+                    and not state_out.focus.required_ask
+                    and not any(isinstance(e, dict) and isinstance(e.get("sales_ranking_frame"), dict) for e in envelopes or [])
+                ):
+                    # REPORT-SMART-L S2 (C): a sales ranking turn that neither ran nor asked a
+                    # field failed (a line was said), so the held frame is from an earlier ranking;
+                    # the lane never reads a new axis against it as a drill.
+                    state_out.focus.sales_ranking_frame = {**state_out.focus.sales_ranking_frame, "stale": True}
                 # LOWSTOCK-SEMANTIC (crew root cause, 4 Oct 2026): the filters a low stock
                 # report was built with outlive the turn, so "taiyang only" narrows it.
                 low_stock_frame = next(

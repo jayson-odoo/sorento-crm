@@ -103,6 +103,7 @@ NOT_A_SOURCE_LINES = {
 DRILL_MAX_KEYS = 50
 TOO_MANY_LINE = "That is more than {max} {plural} to narrow by. Ask for the top {max} or fewer first."
 NO_KEYS_LINE = "I can't narrow by {name} above. Ask again naming the {plural} you want."
+MIXED_PRODUCTS_LINE = "That matches several different products. Which product do you mean?"
 NOT_IN_ROWS_LINE = "{name} is not one of the {plural} above."
 SCOPE_GIVE_UP = (
     "I still can't tell which you meant. Ask again in one message, "
@@ -121,7 +122,7 @@ _AXIS_FILTERS = {
     "channel": ("channel",),
 }
 #: The frame keys that are not route params.
-_FRAME_ONLY = ("date_from", "date_to", "top_n", "shown")
+_FRAME_ONLY = ("date_from", "date_to", "top_n", "shown", "stale")
 
 
 def _dict(value: Any) -> dict[str, Any]:
@@ -617,6 +618,31 @@ def _word_filters(
     return out, None
 
 
+def _product_args(entities: Any) -> tuple[dict[str, Any] | None, str | None]:
+    """The route's product param for the product entities a message named, or the one line to
+    say instead. 1b code review S4: the sales report's PREFIX rule (S19), so "SRT5674" covers
+    "SRT5674-N"; several codes travel as the prefix they share."""
+    from app.services.chatbot.lanes.business.fetch import (
+        _SALES_REPORT_MIN_PREFIX,
+        outstanding_product_codes,
+        sales_report_product_code,
+        shared_code_prefix,
+    )
+
+    products = [e for e in jsc.array(entities) if isinstance(e, dict) and e.get("entity_type") == "product"]
+    found = outstanding_product_codes(products, {})
+    if len(found) > 1 and len(shared_code_prefix(found)) < _SALES_REPORT_MIN_PREFIX:
+        # A word that fanned out to unrelated codes is never frozen on the first of them: the
+        # route takes the whole set as `product_ids`; past its cap (or with no resolved row)
+        # the product is asked, never guessed.
+        ids = _gate_ids(products, "product")
+        if not ids or len(ids) > DRILL_MAX_KEYS:
+            return None, MIXED_PRODUCTS_LINE
+        return {"product_ids": ids}, None
+    code = sales_report_product_code(products, {})
+    return ({"product_code": code} if code else {}), None
+
+
 def _fresh_args(
     db: Any, parse_output: dict[str, Any], entities: Any, *, dealer: bool = False
 ) -> tuple[dict[str, Any] | None, str | None]:
@@ -657,14 +683,10 @@ def _fresh_args(
     if customer_ids:
         args["customer_ids"] = customer_ids
     if "product" in kinds:
-        # 1b code review S4: the sales report's PREFIX rule (S19), so "SRT5674" covers
-        # "SRT5674-N"; several codes travel as the prefix they share.
-        from app.services.chatbot.lanes.business.fetch import sales_report_product_code
-
-        products = [e for e in jsc.array(entities) if isinstance(e, dict) and e.get("entity_type") == "product"]
-        code = sales_report_product_code(products, {})
-        if code:
-            args["product_code"] = code
+        product_args, line = _product_args(entities)
+        if product_args is None:
+            return None, line
+        args.update(product_args)
 
     codes: list[str] = []
     for e in _current_entities(parse_output, "warehouse"):
@@ -794,9 +816,12 @@ def settle(
         # The same axis typed again is a new ask (a new frame): read whole, nothing held.
         parse_output = {**parse_output, "ranking_refine": False}
     if parse_output.get("ranking_refine") is True and frame and not new_axis:
-        return _refine(db, parse_output, frame, dealer=dealer)
-    if drill in ("scoped", "unsure") or (new_axis and drill != "global" and _dict(frame.get("shown"))):
-        # No reading on a new axis right after a ranking is asked, never guessed (owner rule).
+        return _refine(db, parse_output, frame, entities, dealer=dealer)
+    if drill in ("scoped", "unsure") or (
+        new_axis and drill != "global" and _dict(frame.get("shown")) and not frame.get("stale")
+    ):
+        # No reading on a new axis right after a ranking is asked, never guessed (owner rule); a frame
+        # a failed ask left behind (`stale`) is not right after one: that axis is its own ask.
         reading = drill if drill in ("scoped", "unsure") else "unsure"
         drilled = _drill(db, parse_output, frame, entities, reading=reading, dealer=dealer)
         if drilled is not None:
@@ -843,11 +868,11 @@ def settle(
 
 
 def _refine(
-    db: Any, parse_output: dict[str, Any], frame: dict[str, Any], *, dealer: bool = False
+    db: Any, parse_output: dict[str, Any], frame: dict[str, Any], entities: Any = (), *, dealer: bool = False
 ) -> tuple[rf.Outcome | None, str | None]:
     """The parser said this message only refines the sales ranking that ran (`ranking_refine`):
     the held route args re-run with ONLY the keys the verdict changed (count, period, basis,
-    measure). A dealer's refine passes the same check a fresh ask does, over the HELD args."""
+    measure; a product named on it replaces the held one). A dealer's refine passes the same check a fresh ask does, over the HELD args."""
     if dealer:
         from app.services.reports.ask import DEALER_KEYS
 
@@ -870,6 +895,14 @@ def _refine(
     if filters is None:
         return None, line
     args.update(filters)
+    if "product" in _current_kinds(parse_output):
+        product_args, line = _product_args(entities)
+        if product_args is None:
+            return None, line
+        if product_args:
+            for key in ("product_code", "product_ids"):
+                args.pop(key, None)
+            args.update(product_args)
     if parse_output.get("basis") in ("ordered", "delivered", "outstanding"):
         args["basis"] = parse_output["basis"]
     if parse_output.get("measure") in METRICS:

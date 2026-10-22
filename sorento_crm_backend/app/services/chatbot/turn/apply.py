@@ -2383,6 +2383,7 @@ def _narrow_and_plan(
     refuse_empty_subject: bool = False,
     refuse_any_empty: bool = False,
     held_product_uuids: frozenset[str] = frozenset(),
+    skip_customer_narrowing: bool = False,
 ) -> Plan:
     denied: list[str] = []
     ask: Pending | None = None
@@ -2408,6 +2409,8 @@ def _narrow_and_plan(
         domain_ask_kind = None
         domain_ask_options: list[dict[str, Any]] = []
         for kind, policy_value in row.narrowing.items():
+            if kind == "customer" and skip_customer_narrowing:
+                continue
             outcome = narrow_decide(
                 kind=kind,
                 policy_value=policy_value,
@@ -3822,6 +3825,15 @@ def _apply(
         unplaced,
         # HELD-FAMILY: the products the conversation held BEFORE this message; none when
         # the parser read the message as asking for the whole family.
+        # REPORT-SMART-L S2 (B): a sales ranking reads current-message customers only (the lane's
+        # own rule), so a carried customer is never re-asked by the customer narrowing.
+        skip_customer_narrowing=verdict.get("order_status") == "sales_ranking"
+        and not any(
+            isinstance(e, dict)
+            and e.get("current_message") is not False
+            and str(e.get("hint") or e.get("entity_type") or "") == "customer"
+            for e in verdict.get("entities") or []
+        ),
         held_product_uuids=(
             frozenset()
             if verdict.get("family") is True or verdict.get("broaden_to") or not verdict.get("closed_lists")

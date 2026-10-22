@@ -2600,11 +2600,19 @@ def sales_report_product_code(entities: Any, semantic_input: Any) -> str:
         return ""
     if len(codes) == 1:
         return codes[0]
+    shared = shared_code_prefix(codes)
+    return shared if len(shared) >= _SALES_REPORT_MIN_PREFIX else codes[0]
+
+
+def shared_code_prefix(codes: list[str]) -> str:
+    """The longest prefix every code shares, or "" when there is none (or no code)."""
+    if not codes:
+        return ""
     shared = codes[0]
     for code in codes[1:]:
         while shared and not code.upper().startswith(shared.upper()):
             shared = shared[:-1]
-    return shared if len(shared) >= _SALES_REPORT_MIN_PREFIX else codes[0]
+    return shared
 
 
 #: The offer BLOCK the presenter appended, in either form: R9's single sentence, or the
