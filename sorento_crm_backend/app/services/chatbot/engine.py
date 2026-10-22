@@ -4195,7 +4195,8 @@ def _all_broaden_over_nothing_open(verdict: dict[str, Any], state: Any) -> bool:
     message states anything else is the seam's own `_stated_beside_a_reset`. Round 12b (reviewer
     B1 / S1): a question the focus holds (`chat_state._focus_questions`: a set clarify, the count
     question, the other-brands offer, a top selling question) or a set being listed is open too,
-    and a family widening (`broaden_to` other than all, a set `family`) is stated."""
+    and a family widening (`broaden_to` other than all, `family` true) is stated; round 12c:
+    `family` false is the exact code alone, no widening."""
     if state is None:
         return False
     focus = state.focus
@@ -4203,7 +4204,7 @@ def _all_broaden_over_nothing_open(verdict: dict[str, Any], state: Any) -> bool:
         (verdict.get("entity_op") == "clear" or verdict.get("broaden_axis") == "all")
         and not verdict.get("scope_intent")
         and verdict.get("broaden_to") in (None, "", "all")
-        and verdict.get("family") is None
+        and verdict.get("family") is not True
         and not chat_state._message_domains(verdict)
         and state.pending is None
         and not focus.tasks
