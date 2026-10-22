@@ -102,23 +102,38 @@ def _clear_all(gate: bool) -> dict[str, Any]:
     return emission
 
 
+ACK_EN = "Okay, I've cleared that. What would you like to check?"
+
+
+def _saved_session(session_factory) -> dict[str, Any]:
+    return session_factory().execute(
+        text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :cid"), {"cid": str(CONTACT_ID)}
+    ).scalar() or {}
+
+
+def _assert_the_reset_keeps_nothing_open(session_factory, result, casual_calls) -> None:
+    """Release gate #1829, round 8 ruling: a reset is the seam's turn, so no casual / clarifier
+    model is called, the reply is the reset acknowledgement and nothing stays open."""
+    assert not casual_calls, "a casual / clarifier model was called on a reset turn"
+    assert (result.reply or {}).get("text") == ACK_EN, (result.branch_kind, (result.reply or {}).get("text"))
+    saved = _saved_session(session_factory)
+    assert saved.get("open_question") is None, saved.get("open_question")
+    focus = saved.get("focus") or {}
+    assert not focus.get("tasks"), focus.get("tasks")
+    assert not focus.get("last_list"), focus.get("last_list")
+    # The offer's kind and its hand-over team. (The focus wire always carries an empty
+    # `"warehouse": []` location axis, so the bare word is no signal.)
+    wire = json.dumps(saved, separators=(",", ":"))
+    for word in ("team_pick", '"team":"warehouse"'):
+        assert word not in wire, (word, wire)
+
+
 @GATES
-def test_a_reset_small_talk_model_sees_no_offer_team_task_or_list(
+def test_a_reset_over_an_offer_calls_no_small_talk_model_and_keeps_nothing_open(
     session_factory, monkeypatch, stub_access, _stub_casual_llm, gate  # noqa: F811
 ):
     result = _say(session_factory, monkeypatch, stub_access, gate, _clear_all(gate), "clear all")
-    assert result.branch_kind == "low_signal", result.branch_kind
-    assert _stub_casual_llm, "the small-talk model was not called"
-    prompt = _stub_casual_llm[-1]["user_prompt"]
-    shown = _shown_session(prompt)
-    assert not shown.get("open_question"), shown.get("open_question")
-    assert not (shown.get("focus") or {}).get("tasks"), (shown.get("focus") or {}).get("tasks")
-    assert not (shown.get("focus") or {}).get("last_list"), (shown.get("focus") or {}).get("last_list")
-    assert "variables" not in shown, shown.get("variables")
-    # The offer's kind and its hand-over team, and the parked task's kind. (The focus wire always
-    # carries an empty `"warehouse": []` location axis, so the bare word is no signal.)
-    for word in ("team_pick", '"team":"warehouse"', "stock_qty"):
-        assert word not in prompt, (word, prompt)
+    _assert_the_reset_keeps_nothing_open(session_factory, result, _stub_casual_llm)
 
 
 @GATES
@@ -141,9 +156,9 @@ def test_guard_small_talk_that_is_not_a_reset_still_sees_the_stored_session(
     assert _shown_session(_stub_casual_llm[-1]["user_prompt"]) == _stored_session()
 
 
-# --- G2 (contacts 13 and 18): a reset's small talk is not told the parse's carried domain ---------
-# The clarifier prompt allows "the system will check and respond shortly" when intent_hint and
-# domain_hint are both non-null; on a reset nothing is checked, so the model is shown both null.
+# --- G2 (contacts 13 and 18): a reset over an open pick is the seam's turn ------------------------
+# Round 8 ruling: the parse's carried domain never reaches a model, because no casual / clarifier
+# model is called on a reset at all.
 
 
 def _stored_question(kind: str) -> dict[str, Any]:
@@ -191,7 +206,7 @@ RESET_OVER = pytest.mark.parametrize(
 
 @GATES
 @RESET_OVER
-def test_a_reset_small_talk_model_is_shown_no_intent_or_domain(
+def test_a_reset_over_a_pick_calls_no_small_talk_model_and_keeps_nothing_open(
     session_factory, monkeypatch, stub_access, _stub_casual_llm, gate, question, domain, intent  # noqa: F811
 ):
     emission = _parser_output(
@@ -206,12 +221,7 @@ def test_a_reset_small_talk_model_is_shown_no_intent_or_domain(
             {"op": "new_subject", "axis": None, "position": None},
         ]
     result = _say_over(session_factory, monkeypatch, stub_access, gate, _stored_question(question), emission, "clear all")
-    assert result.branch_kind == "low_signal", result.branch_kind
-    assert _stub_casual_llm, "the small-talk model was not called"
-    prompt = _stub_casual_llm[-1]["user_prompt"]
-    assert _field(prompt, "intent_hint") == "null", prompt
-    assert _field(prompt, "domain_hint") == "null", prompt
-    assert not _shown_session(prompt).get("open_question"), prompt
+    _assert_the_reset_keeps_nothing_open(session_factory, result, _stub_casual_llm)
 
 
 @GATES
