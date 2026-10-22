@@ -1024,3 +1024,77 @@ def test_round12c_the_all_broaden_with_family_false_over_nothing_open_is_one_res
     assert not resolver_calls, resolver_calls
     assert not t.casual_calls, "a model was called on a reset turn"
     _assert_the_reset_turn(t, result, stored)
+
+
+# --- round 13: a no-pick entity_op clear over an open picker is a reset ----------------------------------
+#
+# EVAL-BENCH contacts 09 / 10 (c7874eb742): the v63 "clear all" read (business query, topic_reset
+# false, mode null, entity_op clear, broaden_axis all, broaden_to all, scope_intent null, no entity,
+# no position, no pick) over a stored promotion tier_pick: contact 09 (no domain) re-sent every tier's
+# files and kept the question open; contact 10 (the tier question's own promotion domain carried,
+# domain_in_message false, a product held) hit "That would search every promotion we have". Measured
+# live 22 Oct (x3 each): a real answer to a picker ("all", "semua", "all of them", "1 and 2") always
+# carries its picks, a "clear all" never does. Crew ruling (option b): entity_op clear with no answer
+# to the open roster (no pick, position or item, mode null or cancel), stating nothing else, is a
+# reset; the roster's own domain may ride along when domain_in_message is not true.
+
+
+def _tier_session(*, held_product: bool) -> dict[str, Any]:
+    from app.services.chatbot import answer_bridge
+
+    rows = [{"code": v, "label": label, "value": v} for v, label in
+            (("office", "Office"), ("dealer", "Dealer"), ("end_user", "End user"))]
+    pending = answer_bridge._tier_options(rows, asked_at_turn=1)
+    focus = Focus(products=ht.product_rows("SRTZQ053"), domains=["promotion"]) if held_product else Focus()
+    return {"focus": focus_to_wire(focus), "open_question": turn_pending.to_wire(pending), "ideation": None,
+            "access_levels": [], "contains_flyer": False, "reply_language": None}
+
+
+R13_CASES = [("contact_09_no_domain", None, False), ("contact_10_roster_domain_and_a_held_product", "promotion", True)]
+
+
+@pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
+@pytest.mark.parametrize("name,domain,held", R13_CASES, ids=[c[0] for c in R13_CASES])
+def test_round13_a_no_pick_clear_over_the_tier_question_is_one_reset_turn(turn, name, domain, held, gate):
+    t = turn(gate)
+    stored = _tier_session(held_product=held)
+    emission = _measured_all_broaden(gate, **({"domain_hint": domain} if domain else {}))
+    result = t.say(stored, emission, "clear all")
+    reply = (result.reply or {}).get("text") or ""
+    assert reply == ACK["en"], (result.branch_kind, reply)
+    assert "every promotion" not in reply, reply
+    assert not t.tool_calls, t.tool_calls
+    assert t.stored_after().get("open_question") is None, "the tier question stayed open"
+    _assert_the_reset_turn(t, result, stored)
+
+
+def _tier_answer(positions: list[int], gate: bool) -> dict[str, Any]:
+    """The measured v63 answer to the tier question: mode pick with the picks, entity_op reuse."""
+    emission = _parser_output(
+        message_type="business_query", topic_reset=False, entity_op="reuse", broaden_axis=None, scope_intent=None,
+        domain_hint="promotion", intent_hint="check_promotion", domain_in_message=False, entities=[],
+        reference_positions=list(positions), match_mode=None,
+        open_question_answer={"mode": "pick", "picked": list(positions), "items": [], "qty_for_all": None},
+    )
+    if gate:
+        emission["state_changes"] = [{"op": "pick", "axis": None, "position": p} for p in positions]
+    return emission
+
+
+#: Each tier answer at b173c6e8c4 (no seam), both paths (measured 22 Oct).
+B173_R13: dict[str, Any] = {
+    words: {"lane": "check_promotion", "actions": ["send_message"], "tools": []}
+    for words in ("all", "semua", "all of them", "1 and 2")
+}
+
+
+@pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
+@pytest.mark.parametrize("words", list(B173_R13))
+def test_round13_guard_a_real_answer_to_the_tier_question_answers_its_picks(turn, words, gate):
+    t = turn(gate)
+    positions = [1, 2] if words == "1 and 2" else [1, 2, 3]
+    result = t.say(_tier_session(held_product=False), _tier_answer(positions, gate), words)
+    assert (result.reply or {}).get("text") != ACK["en"], (result.branch_kind, (result.reply or {}).get("text"))
+    assert "reset_turn" not in t.trace_of(result), "the reset seam answered a pick"
+    assert t.plans, "apply never ran: the pick did not take today's path"
+    assert _lane_actions_tools(t, result) == B173_R13[words], _lane_actions_tools(t, result)
