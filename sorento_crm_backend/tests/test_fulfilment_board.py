@@ -5949,10 +5949,15 @@ def test_a_covered_line_still_carries_the_donors_it_could_be_amended_to():
         assert contribution["so_qty_ahead"] is None
         candidates = contribution["borrow_candidates"]
         # The frozen donor's 43 is now a confirmed hold and out of its free stock, so it is
-        # not offered again; the spare location is. The line's own location is offered last
-        # as a plain location borrow (BORROW-OWN-LOC, owner 13 Oct 2026).
+        # offered at 0 free (BORROW-ZERO-FREE, owner 22 Oct 2026), BEHIND the spare location
+        # with stock, which keeps the head. The line's own location is offered last as a
+        # plain location borrow (BORROW-OWN-LOC, owner 13 Oct 2026).
         assert [c["warehouse_code"] for c in candidates] == [
-            spare.warehouse_code, world["own"].warehouse_code,
+            spare.warehouse_code, world["donor"].warehouse_code, world["own"].warehouse_code,
+        ]
+        assert candidates[1]["free_qty"] == "0"
+        assert [c["warehouse_code"] for c in candidates if c.get("recommended")] == [
+            spare.warehouse_code
         ]
         assert candidates[0]["warehouse_id"] == str(spare.id)
         assert candidates[0]["free_qty"] == "7"

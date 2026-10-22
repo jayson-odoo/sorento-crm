@@ -89,6 +89,37 @@ def test_a_location_with_a_stock_row_and_nothing_free_is_still_a_borrow_choice(e
         assert empty.warehouse_code not in offered, offered
 
 
+def test_a_location_with_nothing_free_never_takes_the_head_from_one_with_stock():
+    """Availability nets what the book owes, not what is reserved or held, so a location whose
+    whole stock is spoken for can read MORE available than one with 7 free. The 0-free row is
+    listed, but behind every row with stock: picking it would be recorded short in full."""
+    with blank_session() as db:
+        sfx = _uid()[:6]
+        product = _product(db, f"ZZT-{sfx}")
+        own = _board_warehouse(db, f"ZZTO{sfx}")
+        spoken = _board_warehouse(db, f"ZZTA{sfx}")
+        spare = _board_warehouse(db, f"ZZTS{sfx}")
+        _board_stock(db, product, own, on_hand=0)
+        # 30 on hand, all 30 reserved: 0 free, 30 available.
+        _board_stock(db, product, spoken, on_hand=30, reserved=30)
+        _board_stock(db, product, spare, on_hand=7)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=REQUIRED, warehouse=own)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, BUCKET)["contributions"][0]
+        candidates = contribution["borrow_candidates"]
+        assert [c["warehouse_code"] for c in candidates] == [
+            spare.warehouse_code,
+            spoken.warehouse_code,
+            own.warehouse_code,
+        ], [(c["warehouse_code"], c["free_qty"], c["available_qty"]) for c in candidates]
+        assert [c["warehouse_code"] for c in candidates if c.get("recommended")] == [
+            spare.warehouse_code
+        ]
+
+
 def test_an_oversold_location_is_listed_with_its_signed_availability():
     """The owner's screenshot shape: nothing on hand and owed elsewhere. Listed too, and says
     how far short it is: the signed `available_qty`, never floored to 0 (13.11)."""
