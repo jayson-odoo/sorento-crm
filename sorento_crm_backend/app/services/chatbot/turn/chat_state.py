@@ -974,6 +974,21 @@ def stock_pick(pending: Any) -> bool:
     return pending is not None and bool((pending.payload or {}).get("stock_pick"))
 
 
+def _settles_the_stock_pick(
+    pending: Any, roster_picks: list[int], verdict: dict[str, Any], ops: list[Any]
+) -> bool:
+    """Does this turn answer the stored stock pick (the did-you-mean or which-one list a typed
+    code opened, `stock_pick`) with one of its product options: a pick of one, or a yes over
+    its one option (`apply._answer_pending`'s `stock_pick_yes`)?"""
+    if not stock_pick(pending):
+        return False
+    options = [o for o in pending.options or [] if isinstance(o, dict)]
+    if any(o.get("position") in roster_picks and o.get("entity_type") == "product" for o in options):
+        return True
+    said_yes = "answer" in ops and (verdict.get(question_mod.ANSWER_KEY) or {}).get("mode") == "yes"
+    return said_yes and len(options) == 1 and options[0].get("entity_type") == "product"
+
+
 def stock_task_is_the_current_question(state: State, task: Any, verdict: dict[str, Any]) -> bool:
     """Issue #1352, the chained-question rule (owner ruling, 29 Sep 2026): the engine
     judges a message against the CURRENT question first, and earlier rosters stay stored
@@ -1722,6 +1737,18 @@ def apply_changes(
             option = next((o for o in (state.pending.options if state.pending else []) if o.get("position") == position), None)
             if option and option.get("entity_type"):
                 picked_kinds.add(str(option["entity_type"]))
+    if _settles_the_stock_pick(state.pending, roster_picks, verdict, ops):
+        # The stock pick's product option answers it (a pick, or a yes over its one option):
+        # `apply._answer_pending` puts the option in place of the held products, so a held word
+        # that never resolved (the typed miss the did-you-mean was asked about) is settled by it
+        # and retired here, before the Subject is built: the old path's fetch, read off the focus
+        # `apply` leaves, never hands it over. The same rows `apply`'s decline arm retires when
+        # the dealer says none of them. Held as a token, it went to the resolver again and its
+        # miss was printed beside the answer.
+        focus.products = [
+            row for row in focus.products
+            if not (isinstance(row, dict) and not (row.get("uuid") or row.get("uuids")))
+        ]
     if picked_kinds:
         # A pick consumes the name it points at: a typed entity of the picked kind that no
         # `set` claims is not a second subject.
