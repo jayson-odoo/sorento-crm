@@ -1,6 +1,6 @@
 # PLAN: owner console turns 22 Oct, fix round on #1816 (lane REPORT-SMART-L, round S2)
 
-Status: S3 + S3-4 built and pushed (dd535e7c81); reviewer NOT READY (1 blocker: field-word drop runs after names_its_own_ask), review-fix round in progress. Track: L (prompt candidate, resolver/state guards).
+Status: S3 + S3-4 + review fixes built, reviewer READY at 128d840a6d (pushed); waits the owner's drill answer, the prompt choice and the owner hand test. Track: L (prompt candidate, resolver/state guards).
 `claude/report-smart-1021-r2xexf` (on `crew/chat-release-1022`), base head afd7f70605. Diagnosis (13 turns, prompt v94,
 code 65c2025c05): `crew/state/eval/report-smart-v92/owner-1022-diagnosis.md` (crew-only). UAC:
 `report-smart-owner-1022-acceptance-criteria.md`.
