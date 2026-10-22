@@ -1569,10 +1569,11 @@ class ProjectSupplyService:
 
         PUBLIC because the verdict has readers that must never have different answers: the
         ladder that skips two rungs on it, and the board that has to say so on the row and in
-        the trail. (The sheet and board donor LISTS no longer read it: a planner may pick a
-        Borrow by hand beyond the window, owner ruling (b), 22 Oct 2026.) The board read it as "nothing
-        free at L, and borrowing is possible from ..." on SO414341 precisely because it had no
-        way to ask.
+        the trail. The board read it as "nothing free at L, and borrowing is possible from ..."
+        on SO414341 precisely because it had no way to ask.
+
+        The sheet's and the board's donor LISTS do not read it: a planner may still pick a
+        Borrow by hand beyond the window (owner ruling (b), 22 Oct 2026, BORROW-ZERO-FREE).
         """
         if fact.required_date is None:
             return False

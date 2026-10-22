@@ -1,7 +1,7 @@
 # PLAN: Borrow lists locations with 0 free stock (BORROW-ZERO-FREE, 22 Oct 2026)
 
-Status: in progress, review + browser pass (small fix track: under ~300 lines, no migration,
-no auth/RBAC change).
+Status: built, reviewer READY, browser PASS; waiting on owner hand test + CI (small fix track:
+under ~300 lines, no migration, no auth/RBAC change).
 Lane: BORROW-ZERO-FREE, branch `crew/borrow-zero-free`, base origin/main d04536d258.
 UAC: `borrow-zero-free-22oct-acceptance-criteria.md` (alongside).
 
@@ -75,3 +75,18 @@ unchanged. Confirm must accept a hand-picked Borrow on such a line (proved end t
 
 Kill test on both; reviewer; agent-browser 1280 + 375 on the board and the per-order sheet;
 laneboard hand-test script; crew report --handtest.
+
+## Evidence (22 Oct 2026)
+
+- Red-first: `dfb965de26`, `a9b53565e6`, `ea06348b7f` (tests only), each before its fix commit
+  (`72507eaf43`, `779f9d4aaf`). Kill test: the four source files reset to main turn 9 pytest and
+  4 vitest red; the reviewer's own six single-mutation kills each turned their tests red.
+- Touched suites on a throwaway DB: 627 + 165 pytest passed; 281 vitest passed.
+- Reviewer (Opus): READY, no blocking findings.
+- agent-browser on the crew test copy (build 33edc0826), SO401624 line 224, 1280 and 375:
+  board `Add a borrow` lists MWH-BB 43 (Recommended), DC1-BB 0, MWH-IR 0, BRW-IR 0 / -2, BRW-BB
+  last; Decide > Borrow offers BRW-BB, BRW-IR, DC1-BB, MWH-BB, MWH-IR, and MWH-IR saves short
+  ("1 saved as Borrow · 1 short: SRTWB242 line 11 (only 0 free at MWH-IR)", draft undone, nothing
+  confirmed); Suggested stays Buy 501; per-order sheet lists MWH-BB, BRW-BB (bin merge of the
+  own row with later orders' rows, existing `BorrowAddDialog` behaviour), DC1-BB, MWH-IR, BRW-IR;
+  no sideways scroll at 375; all /api/v1 calls 200.
