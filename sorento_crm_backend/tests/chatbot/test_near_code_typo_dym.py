@@ -134,7 +134,9 @@ def test_q1_a_corrected_typed_code_asks_did_you_mean_with_the_pick_first(
     offered = _offered(c)
     assert offered[0] == pick, offered
     assert set(offered[1:3]) <= others and len(offered) <= 3, offered
-    assert not _stocked(c, 0), "a corrected typo was answered as if typed"
+    assert "Stock summary" not in text, "a corrected typo was answered as if typed"
+    # The only stock call is the did-you-mean's own has-it probe, over the offered codes in order.
+    assert _stocked(c, 0) == offered, _stocked(c, 0)
 
 
 @PATHS
@@ -433,6 +435,9 @@ def _guard(name: str, c: EngineConsole, gate: bool) -> str:
 GUARDS = ["exact_same", "exact_case_dash", "exact_space", "substring_8259", "prefix_with_colour",
           "name_resolving_to_nothing", "carried_entity", "position_pick_over_the_did_you_mean",
           "code_typed_off_the_did_you_mean"]
+#: The guards whose raw differs from the parser's pick: the rule resolves that raw ONCE more and
+#: then answers as today. Every other guard makes no extra resolver call.
+ONE_RAW_LOOKUP = {"substring_8259", "prefix_with_colour", "name_resolving_to_nothing"}
 
 
 @PATHS
@@ -441,7 +446,9 @@ def test_q1_guard_answers_as_today(session_factory, monkeypatch, stub_access, ga
     c, resolves = _console(session_factory, monkeypatch, stub_access, f"+60000024{GUARDS.index(name):02d}{int(gate)}", gate)
     text = _guard(name, c, gate)
     observed = {"reply": text, "stocked": _stocked(c, 0), "resolve_calls": len(resolves.tokens)}
-    assert observed == B173_Q1[f"{name}|{'state_path' if gate else 'old_path'}"], observed
+    expected = dict(B173_Q1[f"{name}|{'state_path' if gate else 'old_path'}"])
+    expected["resolve_calls"] += 1 if name in ONE_RAW_LOOKUP else 0
+    assert observed == expected, observed
 
 
 @PATHS
