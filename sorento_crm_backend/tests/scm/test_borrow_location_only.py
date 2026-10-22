@@ -569,14 +569,13 @@ def test_settings_api_reads_false_by_default_and_a_put_persists_true(api, api_db
 # --------------------------------------------------------------------------- fix round 1
 
 
-def test_b1_off_a_donor_needing_authorisation_is_not_offered_and_a_crafted_confirm_names_no_so():
+def test_b1_off_a_donor_needing_authorisation_is_not_offered():
     """B1: under OFF nobody can be asked "who authorised it", so a same-agent donor ranked
-    above this line is not offered, and a confirm naming it anyway is refused in the
-    location's words (S2), authorisation or not."""
-    from .test_project_supply_service_ladder import _borrow_body, _same_agent_world
+    above this line is not offered."""
+    from .test_project_supply_service_ladder import _same_agent_world
 
     with blank_session() as db:
-        _company_id, eling, order, line, donor_cline, own = _same_agent_world(db)
+        _company_id, _eling, order, _line, donor_cline, _own = _same_agent_world(db)
         proposal = ProjectSupplyService(db).proposal_for(order)
         offered = [
             c
@@ -585,18 +584,48 @@ def test_b1_off_a_donor_needing_authorisation_is_not_offered_and_a_crafted_confi
         ]
         assert offered == [], offered
 
-        with pytest.raises(AppException) as refused:
-            ProjectSupplyService(db).confirm(
-                order,
-                _borrow_body(
-                    line, own, donor_cline, "Authorised by agent CYNDI: on the phone."
-                ),
-                actor_user_id=eling,
-            )
 
-    reason = refused.value.detail["failing_lines"][0]["reason"]
-    assert "SO920001" not in reason, reason
-    assert own.warehouse_code in reason, reason
+def test_off_a_same_agent_donor_ranked_ahead_confirms_and_the_donor_goes_short():
+    """BORROW-CONFIRM-MATCH (owner, 22 Oct 2026, prod SO401624 line 304): Confirm refused
+    "Later-order stock at BRW-BB is held for an order ranked ahead of this line, so it
+    cannot be borrowed." for a Borrow the planner had picked. Ruling (b): Confirm is as
+    lenient as the list. Under OFF a location borrow asks nobody, so rank is not a reason to
+    refuse it - and no "authorised by" either.
+
+    The donor is not silently over-committed: the borrow pins the bin's units to THIS line,
+    so the donor ranked ahead queues against what is left and reads short (UAC-2), and the
+    order-back hangs on this line, as for any location borrow."""
+    from app.models.product import Product
+    from app.services.scm.supply_assignment import STATUS_COVERED
+
+    from .test_project_supply_service_ladder import _borrow_body, _same_agent_world
+
+    with blank_session() as db:
+        _company_id, eling, order, line, donor_cline, own = _same_agent_world(db)
+        product = db.get(Product, donor_cline.product_id)
+        _stock(db, product, own, on_hand=90)
+        db.commit()
+
+        def status_of(core_line_id):
+            result = ProjectSupplyService(db).planning_assignments([str(product.id)])[
+                str(product.id)
+            ]
+            return next(r.status for r in result.lines if r.line.key == str(core_line_id))
+
+        assert status_of(donor_cline.id) == STATUS_COVERED, "ranked ahead, it had the 90"
+
+        ProjectSupplyService(db).confirm(
+            order,
+            _borrow_body(line, own, donor_cline, "Site is waiting, planner's call."),
+            actor_user_id=eling,
+        )
+        db.commit()
+
+        assert status_of(donor_cline.id) != STATUS_COVERED, "the donor gave its 90 away"
+        rows = _order_backs(db)
+        assert [str(r.so_line_id) for r in rows] == [str(line.id)], rows
+        assert rows[0].stock_location == own.warehouse_code
+        assert "SO920001" not in (rows[0].note or ""), rows[0].note
 
 
 def _second_asker(db, world, *, line_no=1):
