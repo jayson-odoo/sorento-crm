@@ -276,9 +276,12 @@ MEMBER_CLARIFY = (
     "Both *Mocha* and *Sorento* teams are listed - reply a number, a name, or the company "
     "(*Mocha* / *Sorento*) and I'll assign automatically."
 )
-PLAIN_CLARIFY = (
-    "Both *Mocha* and *Sorento* teams are listed - reply with the company (Mocha / Sorento) "
+# The plain (no picker) copy names the companies in the routing pool's order, which follows
+# the unordered product rows (see BOTH_CHECKED above), so either order is the same copy.
+PLAIN_CLARIFY = tuple(
+    f"Both *{a}* and *{b}* teams are listed - reply with the company ({a} / {b}) "
     "and I'll assign automatically."
+    for a, b in ((MOCHA, SORENTO), (SORENTO, MOCHA))
 )
 
 
@@ -590,7 +593,7 @@ class TestR3BothMissWithNoPicker:
     def test_yes_clarifies_with_the_plain_copy(self, conversation):
         conv = self._offer(conversation)
         result = conv.say("yes", _yes())
-        assert PLAIN_CLARIFY in _said(result), _said(result)
+        assert any(copy in _said(result) for copy in PLAIN_CLARIFY), _said(result)
         assert "a number" not in _said(result)
 
     def test_yes_then_sorento_routes_to_sorento(self, conversation):
@@ -617,7 +620,7 @@ class TestR5OfferHold:
         offered = conv.open_question()
         result = conv.say("asdkjh", _reply())
         assert result.branch_kind == "offer_hold", result.branch_kind
-        assert (result.reply or {}).get("text") == PLAIN_CLARIFY, result.reply
+        assert (result.reply or {}).get("text") in PLAIN_CLARIFY, result.reply
         assert conv.last_lane == []
         held = conv.open_question()
         held["payload"].pop("ttl", None)  # AC-816: the offer's own clock still ticks
