@@ -426,3 +426,100 @@ def test_a_reset_that_closes_a_stock_check_drops_the_products_it_was_about():
     assert not new_state.focus.tasks, new_state.focus.tasks
     assert new_state.focus.products == [], new_state.focus.products
     assert "task_close_clears_products" in plan.trace.rules_fired, plan.trace.rules_fired
+
+
+# --- round 4 (reviewer N1, N2, N4) ----------------------------------------------------------------
+
+
+def _stated(code, current_message=True):
+    return {"raw": code, "hint": "product", "canonical_code": code, "uuid": ht.uuid_of(code),
+            "current_message": current_message, "confident": True, "hint_confident": True}
+
+
+def _own_ask(*, reset: bool, entity, mode=None, own_domain=True):
+    """A message with its own stock ask beside the reset or the cancel ("forget the rest, just
+    check SRTZA101"; "batal, stock SRTZA102 instead")."""
+    v = verdict(domain_hint="inventory", intent_hint="check_stock", entities=[entity], entity_op="replace",
+                topic_reset=reset, domain_in_message=own_domain, open_question_answer=_answer(mode))
+    return v
+
+
+def _fetched_codes(plan):
+    return [[e.get("canonical_code") for e in spec.entities] for spec in plan.fetch]
+
+
+def _product_pick():
+    return turn_pending.ask(
+        "product_pick",
+        [{"position": i, "label": c, "code": c, "uuid": ht.uuid_of(c), "uuids": [ht.uuid_of(c)],
+          "entity_type": "product", "payload": {}} for i, c in enumerate(TWENTY[:3], 1)],
+        asked_at_turn=4, expects="pick", payload={"domain": "inventory", "domains": ["inventory"]},
+    )
+
+
+@GATES
+def test_a_reset_that_states_a_line_of_the_quantities_question_fetches_it(gate):
+    """N2: "forget the rest, just check SRTZA101" names a line of the open check on a
+    `topic_reset`; the on-list test is only for reading a cancel, so the line is the reset's own
+    ask: every task closes and SRTZA101 is fetched, never the empty-fetch refusal."""
+    v = _own_ask(reset=True, entity=_stated(FOUR[0]))
+    if gate:
+        v["state_changes"] = [_op("new_subject"), _op("set", "product")]
+    new_state, plan = _turn(_session("quantities_question", gate), v)
+    assert not new_state.focus.tasks, new_state.focus.tasks
+    assert "refused_empty_subject" not in plan.trace.rules_fired, plan.trace.rules_fired
+    assert _fetched_codes(plan) == [[FOUR[0]]], (_fetched_codes(plan), plan.trace.rules_fired)
+
+
+@GATES
+def test_a_reset_that_states_an_option_of_the_stored_question_fetches_it(gate):
+    """N2: an option code of the stored question, stated on a `topic_reset`, is the reset's own
+    ask: the question closes unanswered (no pick) and the code is fetched."""
+    focus = Focus(products=ht.product_rows(TWENTY[0]), domains=["inventory"],
+                  last_list=_rows(TWENTY[:3]) if gate else None)
+    state = replace(ht.state(focus, pending=_product_pick(), turn_no=5), state_path=gate)
+    v = _own_ask(reset=True, entity=_stated(TWENTY[1]))
+    if gate:
+        v["state_changes"] = [_op("new_subject"), _op("set", "product")]
+    new_state, plan = _turn(state, v)
+    assert new_state.pending is None, new_state.pending
+    assert not [r for r in plan.trace.rules_fired if r in ANSWER_RULES], plan.trace.rules_fired
+    assert "refused_empty_subject" not in plan.trace.rules_fired, plan.trace.rules_fired
+    assert _fetched_codes(plan) == [[TWENTY[1]]], (_fetched_codes(plan), plan.trace.rules_fired)
+
+
+@GATES
+def test_a_cancel_naming_a_line_with_a_domain_word_runs_as_its_own_ask(gate):
+    """N1: "batal, stock SRTZA102 instead": the line comes with a domain word of its own, so the
+    cancel names something and is no reset; the turn runs as its ask and fetches SRTZA102."""
+    v = _own_ask(reset=False, entity=_stated(FOUR[1]), mode="cancel")
+    if gate:
+        v["state_changes"] = [_op("close_question"), _op("set", "product")]
+    _new_state, plan = _turn(_session("quantities_question", gate), v)
+    assert "refused_empty_subject" not in plan.trace.rules_fired, plan.trace.rules_fired
+    assert _fetched_codes(plan) == [[FOUR[1]]], (_fetched_codes(plan), plan.trace.task_question, plan.trace.rules_fired)
+
+
+@GATES
+def test_a_reset_stating_a_product_with_current_message_null_fetches_it(gate):
+    """N4: the parser schema allows `current_message: null`; only false is an echo. A reset that
+    states "check ZZP999" with null still fetches it."""
+    v = _own_ask(reset=True, entity=_stated("ZZP999", current_message=None))
+    if gate:
+        v["state_changes"] = [_op("new_subject"), _op("set", "product")]
+    new_state, plan = _turn(_session("quantities_question", gate), v)
+    assert not new_state.focus.tasks, new_state.focus.tasks
+    assert "refused_empty_subject" not in plan.trace.rules_fired, plan.trace.rules_fired
+    assert _fetched_codes(plan) == [["ZZP999"]], (_fetched_codes(plan), plan.trace.rules_fired)
+
+
+@GATES
+def test_guard_an_echo_on_a_reset_with_a_domain_word_is_still_dropped(gate):
+    """An echo (`current_message` false) of a line is never the reset's ask, domain word or not."""
+    v = _own_ask(reset=True, entity=_stated(FOUR[0], current_message=False))
+    if gate:
+        v["state_changes"] = [_op("new_subject")]
+    new_state, plan = _turn(_session("quantities_question", gate), v)
+    assert not new_state.focus.tasks, new_state.focus.tasks
+    assert FOUR[0] not in [c for codes in _fetched_codes(plan) for c in codes], _fetched_codes(plan)
+    assert FOUR[0] not in [p.get("canonical_code") for p in new_state.focus.products], new_state.focus.products
