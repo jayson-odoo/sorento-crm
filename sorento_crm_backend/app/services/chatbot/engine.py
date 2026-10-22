@@ -4166,7 +4166,8 @@ def _clarifier_memory_slice(memory_intake: dict[str, Any]) -> str:
 def _small_talk_ctx(ctx: dict[str, Any], verdict: dict[str, Any], state: Any) -> dict[str, Any]:
     """Release gate #1829 (contact 04): a reset's small talk is about the state the reset left, so
     the model is shown that state (no open question, offer, team, task or stored list), never the
-    session from before the turn. Every other turn's ctx is returned as it is."""
+    session from before the turn. Contacts 13 and 18: nor the parse's intent and domain, which
+    let the clarifier promise a check nobody runs. Every other turn's ctx is returned as it is."""
     if verdict.get("topic_reset") is not True:
         # Every reset wrote `topic_reset` (`apply._reset`); the state after apply is not the one
         # `apply` judged, so the reading is never made again here.
@@ -4177,7 +4178,9 @@ def _small_talk_ctx(ctx: dict[str, Any], verdict: dict[str, Any], state: Any) ->
         "focus": turn_state.focus_to_wire(state.focus),
         "open_question": turn_pending.to_wire(state.pending),
     }
-    return {**ctx, "session": {**session, "session_vars": after}}
+    parse = jsc.get(ctx, "parse") or {}
+    output = {**(jsc.get(parse, "output") or {}), "intent_hint": None, "domain_hint": None}
+    return {**ctx, "session": {**session, "session_vars": after}, "parse": {**parse, "output": output}}
 
 
 def _fallback_context(
