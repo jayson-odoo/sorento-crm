@@ -476,14 +476,11 @@ logger = logging.getLogger(__name__)
 NEAR_PICK_KEY = "near_pick"
 
 
-def _pick_as_trgm_neighbour(db: "Session", raw: str, pick: str) -> dict[str, Any] | None:
-    """The resolver's own row for the parser's `pick` when it is a trigram neighbour of the typed
-    `raw`, else None: the raw is resolved once through the resolve route the business lane calls,
-    product only, with no model read (semantic, spec and phrase fallbacks off)."""
-    # Measured (23 Oct, lane catalogue): code typos show the pick as a trgm neighbour of the raw (11/11); name asks never do.
+def _product_resolution(db: "Session", raw: str) -> dict[str, Any]:
+    """`raw`'s own resolution through the resolve route the business lane calls, product only,
+    with no model read (semantic, spec and phrase fallbacks off). Raises what the route raises."""
     from app.services.chatbot.lanes.business import services as business_services
     from app.services.chatbot.lanes.business.resolve_gate import _LOOKUP_LIMIT, _token_of
-    from app.services.chatbot.turn.state import token_key
 
     body = {
         "query": raw, "tokens": [_token_of({"raw": raw, "hint": _PRODUCT_HINT})], "raw_tokens": [raw],
@@ -491,13 +488,34 @@ def _pick_as_trgm_neighbour(db: "Session", raw: str, pick: str) -> dict[str, Any
         "limit": _LOOKUP_LIMIT, "exact_match": True,
         "semantic_fallback": False, "spec_fallback": False, "understand_phrase": False,
     }
+    result = business_services.production_services(db).resolve_entity(body)
+    resolutions = result.get("resolutions") if isinstance(result, dict) else None
+    first = resolutions[0] if isinstance(resolutions, list) and resolutions else None
+    return first if isinstance(first, dict) else {}
+
+
+def _pick_as_trgm_neighbour(db: "Session", raw: str, pick: str) -> dict[str, Any] | None:
+    """The resolver's own row for the parser's `pick` when it is a trigram neighbour of the typed
+    `raw`, else None: the raw is resolved once (`_product_resolution`).
+
+    Q1 widening (crew ruling (a), 23 Oct 2026): a raw that resolved nothing whose alternatives
+    cut the pick (same-family rows skip the resolver's floor and fill its alternatives cap) still
+    has the pick as a near code when the pick scores at least `ENTITY_MISS_SUGGEST_FLOOR` against
+    the raw, scored as `entity_resolver._trgm_lookup` scores. Its row then comes from the
+    resolver too (the pick's own resolution), offered as that trigram neighbour. A raw that
+    resolved (a narrowing to one prefix match included) answers as today."""
+    # Measured (23 Oct, lane catalogue): code typos show the pick as a trgm neighbour of the raw (11/11); name asks never do.
+    from sqlalchemy import text
+
+    from app.services.chatbot.lanes.business.resolve_gate import _token_of
+    from app.services.chatbot.turn.state import token_key
+    from app.services.entity_resolver import ENTITY_MISS_SUGGEST_FLOOR, _norm_sql, _strip_all_ws
+
     try:
-        result = business_services.production_services(db).resolve_entity(body)
+        resolution = _product_resolution(db, raw)
     except Exception:  # noqa: BLE001 - a failed lookup answers as today
         logger.warning("chatbot: the near-code check did not resolve %r", raw, exc_info=True)
         return None
-    resolutions = result.get("resolutions") if isinstance(result, dict) else None
-    resolution = resolutions[0] if isinstance(resolutions, list) and resolutions else {}
     wanted = token_key(pick)
     for row in resolution.get("alternatives") or []:
         if (
@@ -506,6 +524,26 @@ def _pick_as_trgm_neighbour(db: "Session", raw: str, pick: str) -> dict[str, Any
             and token_key(str(row.get("canonical_code") or "")) == wanted
         ):
             return dict(row)
+    if resolution.get("resolved") is True or resolution.get("matches"):
+        return None
+    token = str(_token_of({"raw": raw, "hint": _PRODUCT_HINT}) or "")
+    pn = _strip_all_ws(token).lower() or token.lower()
+    try:
+        with db.begin_nested():
+            score = db.execute(
+                text(f"SELECT similarity({_norm_sql('CAST(:code AS text)')}, :pn)"), {"code": pick, "pn": pn}
+            ).scalar()
+        if score is None or float(score) < ENTITY_MISS_SUGGEST_FLOOR:
+            return None
+        own = _product_resolution(db, pick)
+    except Exception:  # noqa: BLE001 - a failed lookup answers as today
+        logger.warning("chatbot: the near-code check did not score %r against %r", pick, raw, exc_info=True)
+        return None
+    for row in own.get("matches") or []:
+        if isinstance(row, dict) and token_key(str(row.get("canonical_code") or "")) == wanted:
+            # The resolver's row for the pick, offered as the raw's trigram neighbour with its score
+            # (D1 and the probe planner never offer an `exact` row: it would have resolved).
+            return {**row, "match_tier": "trgm", "similarity": float(score)}
     return None
 
 
