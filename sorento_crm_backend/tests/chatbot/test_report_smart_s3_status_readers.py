@@ -181,3 +181,9 @@ def test_s3_4_near_miss_a_sales_ranking_verdict_still_runs_the_ranking_not_outst
     )
     assert _outstanding(calls) == [], calls
     assert [a for n, a in calls if n == "crm_report_ask"], (text, calls)
+    assert not _focus_status(rec), rec.session_vars.get("focus")  # a ranking is no delivery status
+
+
+def test_s3_4_near_miss_a_projected_bucket_in_order_status_alone_leaves_the_focus_status_empty(rec) -> None:
+    _run_when(rec, order_status="so_outstanding")
+    assert not _focus_status(rec), rec.session_vars.get("focus")
