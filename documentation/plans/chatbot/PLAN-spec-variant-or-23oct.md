@@ -1,6 +1,6 @@
 # PLAN: SPEC-VARIANT-OR - a spec that narrows one code to 2+ variants ORs them
 
-Status: in progress (small fix track: backend only, no migration, no auth change)
+Status: in review (small fix track: backend only, no migration, no auth change), PR #1833
 
 ## Problem
 
@@ -13,19 +13,34 @@ listed the -SH-UF* rows, P trap ones included. The two-product-codes-means-OR ru
 (`lanes/business/resolve_gate.py`, `resolve_entity_body`) runs before the narrowing and never
 sees the variants.
 
-## Fix
+## Fix (all in `references.py`)
 
-In `_narrowed_payload`, after both narrowings: when one typed code was replaced by 2+ variant
-codes and every token left is a product (a narrowing output, or an original token the caller
-typed as a product), switch `match_mode` to "or". The same rule as the gate's: several
-product codes name that many products, one product cannot be several codes. A token of
-another kind (a customer) keeps AND, as the gate does.
+1. `_picked_variants`: the variant codes a narrowing picked are the tokens it added, minus a
+   bare code that is a typed token cut short (`narrow_code_tokens`'s fallback for a folded
+   "Srtwc7604ptrap" whose words picked nothing; that is the typed family, not a variant).
+2. `_variants_or`, at the end of `_narrowed_payload`: when the narrowing picked a variant and
+   every token left is a product (a code the narrowing put in, or a token the caller typed as
+   a product), `match_mode` goes to "or". The gate's own rule: several product codes name
+   that many products. A token of another kind (a customer) keeps AND, as the gate does.
+3. `_keep_exact_variants`, in `resolve_reference_post` after `_resolve_input`, OR mode only:
+   each picked variant's token keeps its exact-code product match. OR alone answers each
+   token's prefix family (the -SH token finds every -SH-* row). A token with no exact match
+   is left as answered; two exact rows (one code in two companies) stay ambiguous.
+
+Pins were not used for the exact match: a pin outside the resolver's company scope is a 400.
 
 ## Tests (red first, `tests/chatbot/test_trap_spec_search.py`)
 
-- one code + grounded S trap 250 -> exactly the two 250 variants through the route
-- a spec narrowing to 1 code unchanged
-- a spec matching no variant unchanged
-- two typed codes still OR
+- one code + grounded S trap 250 -> exactly the two 250 variants through the route, both
+  resolved (code word in the message, and the carried-product shape)
+- a spec narrowing to 1 code keeps the mode
+- a spec matching no variant leaves the request unchanged
+- a spec narrowing beside a customer keeps AND
+- two typed codes still OR (gate regression pin)
+- a bare code the narrowing falls back to keeps its family (reviewer's scenario)
 
-Out of scope: glued tokens ("SRTWC8354-250MM"), dim_length vs trap_length pick.
+## Out of scope
+
+- Glued tokens ("SRTWC8354-250MM"), dim_length vs trap_length pick (INDEX-HYBRID scout).
+- "SRTWC8354 s trap 250 for HANLIM": with a customer beside the code the request stays AND,
+  so the two variants still intersect there. Follow-up if it shows up in a real turn.

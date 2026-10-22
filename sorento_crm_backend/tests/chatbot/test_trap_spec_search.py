@@ -525,3 +525,23 @@ def test_two_typed_codes_still_or():
         },
     }
     assert resolve_entity_body(ctx)["match_mode"] == "or"
+
+
+def test_a_bare_code_the_narrowing_falls_back_to_keeps_its_family(client, family):
+    """Reviewer on SPEC-VARIANT-OR: `narrow_code_tokens` swaps "ZZTWC9000qqq" (words that
+    pick nothing) for its bare code. That is the typed family, not a picked variant, so
+    its answer is not cut to the one exact row."""
+    family.product("ZZTWC9000", "SORENTO WATER CLOSET S-TRAP 250MM", stock=1)
+    family.product("ZZTWC9000-P", "SORENTO WATER CLOSET P-TRAP 180MM", stock=1)
+    body = {
+        "query": "ZZTWC9000 qqq\nZZTWC286-SH stock",
+        "tokens": ["ZZTWC9000qqq", "ZZTWC286-SH"],
+        "allowed_entity_types": ["product", "product"],
+        "match_mode": "or",
+        "dry_run": True,
+    }
+    response = client.post(ENDPOINT, json=body)
+    assert response.status_code == 200, response.text
+    by_token = {r.get("token"): r for r in response.json().get("resolutions") or []}
+    codes = sorted(m.get("canonical_code") for m in by_token["ZZTWC9000"].get("matches") or [])
+    assert codes == ["ZZTWC9000", "ZZTWC9000-P"], response.json()
