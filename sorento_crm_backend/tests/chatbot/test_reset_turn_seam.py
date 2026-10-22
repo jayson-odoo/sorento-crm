@@ -1139,3 +1139,23 @@ def test_round13_a_former_guard_no_pick_clear_over_a_picker_is_one_reset_turn(tu
     assert t.stored_after().get("open_question") is None, "the picker stayed open"
     assert not t.tool_calls, t.tool_calls
     _assert_the_reset_turn(t, result, stored)
+
+
+# --- round 14: the picker reset reads only the rosters measured on v63 -------------------------------
+#
+# Reviewer should-fix on round 13: clear_over_an_open_picker covered every roster, but v63 is measured
+# (a real "all" answer carries its picks) only for the tier roster and the product roster (did-you-mean
+# and stock picks). Captain ruling: limit it to those kinds. An unmeasured roster keeps today's path.
+
+#: The same no-pick entity_op clear read over an open customer_order_pick, at b173c6e8c4 (both paths).
+B173_R14_CUSTOMER_ORDER_PICK = {"lane": "business_query", "actions": ["send_message"], "tools": []}
+
+
+@pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
+def test_round14_guard_a_no_pick_clear_over_an_unmeasured_roster_keeps_todays_path(turn, gate):
+    t = turn(gate)
+    result = t.say(_stored("C13"), _measured_all_broaden(gate), "clear all")
+    assert (result.reply or {}).get("text") != ACK["en"], (result.branch_kind, (result.reply or {}).get("text"))
+    assert "reset_turn" not in t.trace_of(result), "the reset seam answered over an unmeasured roster"
+    assert t.plans, "apply never ran: the turn did not take today's path"
+    assert _lane_actions_tools(t, result) == B173_R14_CUSTOMER_ORDER_PICK, _lane_actions_tools(t, result)
