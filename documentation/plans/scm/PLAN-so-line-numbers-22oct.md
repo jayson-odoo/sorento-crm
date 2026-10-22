@@ -1,7 +1,8 @@
 # PLAN: Fulfilment planning names SO line numbers, not internal line numbers (SO-LINE-NUMBERS, 22 Oct 2026)
 
-Status: building (Track: small fix - under ~300 lines, no migration, no auth/RBAC change, no
-new ingest surface).
+Status: built, PR #1831; review round 1 (NOT READY, 2 must-fix) fixed in round 2, re-review
+pending; hand test filed (Track: small fix - no migration, no auth/RBAC change, no new ingest
+surface; breadth past ~300 lines from ~40 one-expression seams plus tests).
 Lane: SO-LINE-NUMBERS, branch `crew/so-line-numbers`, base origin/main 3c2199d48f.
 UAC: `so-line-numbers-22oct-acceptance-criteria.md` (alongside).
 Plan created: 2026-10-22T13:20:00Z
@@ -104,3 +105,21 @@ brief sized it S) and the PR says so.
 
 Keys, html ids, sort orders and anything else a user never reads keep the internal number.
 Notes already written to the DB are history and are not rewritten.
+
+## Review round 1 (reviewer on 8f2a6746c5) and what round 2 did
+
+- Must-fix: the board Decide/Amend seeders (`boardAmend.ts` `draftFromSources` / `frozenDraft`)
+  and the FE-built held-back failing line (`FulfilmentBoardPanel.tsx`) carried no `so_line_no`.
+  Both fixed.
+- Should-fix: `row_out` ran one `display_line_nos` per row; `get_batch` now reads the batch's
+  numbers once. A wire test reads `so_line_no` back through the batch endpoint, and every new
+  field's schema declaration is pinned.
+- Found in round 2: the withdrawn-line echo (`fulfilment_planning.py` `_withdrawn_entries`)
+  sent no `so_line_no`; it now does, like `lines_confirmed`. Exact echo dicts in
+  `test_so_cancel_line.py`, `test_confirm_echoes_lines_confirmed.py` and
+  `test_confirm_all_preview.py` extended for the new field.
+- Pile queue: a core line with no planning mirror keeps "Not planned"; a planned row shows and
+  sorts by its SO number.
+- Left as is (nits): the history and change lists keep their existing internal-number order;
+  the inline `so_line_no ?? line_no` spots that predate this lane stay.
+
