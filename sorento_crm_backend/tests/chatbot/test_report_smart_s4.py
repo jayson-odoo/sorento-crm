@@ -103,3 +103,34 @@ def test_s4_2_near_miss_no_promotion_kind_is_worded_as_today(session_factory, mo
     _seed_world(session_factory, sorento_live_flyer=True)
     reply, _ = _say(session_factory, monkeypatch, _flyer_qf(None), "srt promotion", "zzt-s4-nokind")
     assert reply.splitlines()[0] == "Which access level do you need for Sorento?", reply
+
+
+# ---------------------------------------------------------------- S4 review round
+
+
+def test_s4_review_a_month_ranking_answered_with_a_comparison_gets_the_compare_by_month_line(console) -> None:
+    from app.services.chatbot.lanes.business.report_ask import COMPARE_BY_MONTH_LINE
+
+    _state_on(console)
+    text, calls = console.say(
+        _first(group_by="month", compare_to=None), "top 5 months this year by qty")
+    assert calls == [], ("setup: the first ask must ask the basis", text, calls)
+    text, calls = console.say(_compare_reply(), "compare with last year")
+    assert text == COMPARE_BY_MONTH_LINE, text
+    text2, calls2 = console.say(_answer(basis="delivered", top_n=None, measure=None), "delivered")
+    every = calls + calls2
+    assert not any(c.get("group_by") == "month" and c.get("compare_to") for c in every), every
+
+
+def test_s4_review_guard_a_comparison_only_the_reply_adds_carries_to_the_run(console) -> None:
+    _state_on(console)
+    text, calls = console.say(_first(compare_to=None), "top 5 salesman this year by qty")
+    assert calls == [], ("setup: the first ask must ask the basis", text, calls)
+    text, calls = console.say(_compare_reply(), "compare with last year")
+    assert calls == [] and "I don't know" not in text, (text, calls)
+    assert "delivered" in text.lower() and "ordered" in text.lower(), text
+    text, calls = console.say(_answer(basis="delivered", top_n=None, measure=None), "delivered")
+    assert len(calls) == 1, (text, calls)
+    args = calls[0]
+    assert args.get("compare_to") == "last_year" and args["basis"] == "delivered", args
+    assert args["group_by"] == "sales_agent", args
