@@ -1,6 +1,6 @@
 # PLAN: sales reports on parser v92 (lane REPORT-SMART-L, round S1, 22 Oct)
 
-Status: built C1, A1 (security PASS 6bb39f8a16), P1/P3a; review round 1 NOT READY, fix round in progress; plan crew-note 6332909610. Track: L (parser prompt fields, report access
+Status: built C1, A1, P1/P3a; reviewer READY 036b69c757, security PASS 6bb39f8a16; waits the P3 measure (EVAL-BENCH) and the owner publishing a prompt version; plan crew-note 6332909610. Track: L (parser prompt fields, report access
 scope change, cross-lane prompt coordination). Branch `claude/report-smart-1021-r2xexf` rebuilt on
 `crew/chat-release-1022` 237424152b (merge #1721 + 23 lane commits, head c925b50327, one alembic head). UAC:
 `report-smart-v92-1022-acceptance-criteria.md`.
