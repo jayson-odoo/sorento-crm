@@ -1,6 +1,6 @@
 # PLAN - New product application (NEW-PRODUCT-APP)
 
-Lane NEW-PRODUCT-APP, size L. Status: Build (v5 table form after the owner hand test FAIL on 20 Oct; v4 below). v4: reviewer
+Lane NEW-PRODUCT-APP, size L. Status: Merge-ready (v5 table form; owner hand test PASS 22 Oct "can merge"; v4 below). v4: reviewer
 READY, security findings fixed, browser pass on the crew test copy done, owner hand test next. v1-v3 flow built and reviewed
 earlier. Owner OKed card + mock v3 on 18 Oct (Q1 = portal too); crew PQ1 (b), PQ2 (a); owner then OKed mock v4 (18 Oct
 12:14) with D1-D4 = yes and PQ1 = yes. v4 was rebuilt from the PR head because the cloud lane's v4 commits never reached
