@@ -58,3 +58,15 @@ Plan: `PLAN-report-smart-owner-1022.md`.
   appear. A real (non-console) contact's history is unchanged.
 - AC-S5-2. A sales ranking that returned ranked rows is remembered as answered: its Recent conversations line never says
   "nothing was found"; a ranking that returned no rows still does.
+
+## Round S6 (23 Oct, owner ruling: after a ranking = (B))
+
+- AC-S6-1. With a ranking on screen ("Top 5 of N sales agents by delivered sales", product, channel, period), a message
+  that ranks a new axis with `ranking_drill` null, unsure or global ("by customer", "Project customer") runs that ranking
+  across all, and its header carries "Across all sales agents" (the noun of the ranking that was on screen); never the
+  question "... of the 5 sales agents above, or across all ...?".
+- AC-S6-2. `ranking_drill` scoped ("their customers", "of these agents", "only those 5") narrows to the rows on screen,
+  as today; no "Across all" line.
+- AC-S6-3. Near misses: a refine of the ranking on screen (same axis, "Dealer sales only") and a fresh ask with no
+  ranking shown carry no "Across all" line and behave as today; a scope question already held in a session is still
+  answered as today.

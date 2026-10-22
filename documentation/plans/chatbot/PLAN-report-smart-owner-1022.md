@@ -1,6 +1,6 @@
 # PLAN: owner console turns 22 Oct, fix round on #1816 (lane REPORT-SMART-L, round S2)
 
-Status: S4 reviewer READY at e390d38362; round S5 (crew order 23 Oct: root causes of the EXPLORE-1023 section 6 misses) in progress: console history bounded to the run, a ranking frame remembers its answer. Track: L (prompt candidate, resolver/state guards).
+Status: S5 reviewer READY at e7332aeec0; round S6 (owner ruling 23 Oct: after a ranking = (B), run across all) in progress. Track: L (prompt candidate, resolver/state guards).
 `claude/report-smart-1021-r2xexf` (on `crew/chat-release-1022`), base head afd7f70605. Diagnosis (13 turns, prompt v94,
 code 65c2025c05): `crew/state/eval/report-smart-v92/owner-1022-diagnosis.md` (crew-only). UAC:
 `report-smart-owner-1022-acceptance-criteria.md`.
@@ -149,6 +149,18 @@ turns (chatbot.turns on the crew copy).
   result.
   Parser lines (template 53 'for product X' refine, 297 'top N dealers selling X', 310 a flyer ask is a promotion ask)
   go to a v101 candidate with gold rows after the owner's test.
+
+- Round S6 (OWNER RULING 23 Oct, the drill question filed in round S3): after a ranking, a message that changes what is
+  ranked or adds a filter without "of these" / "across all" runs ACROSS ALL and the header says so ("Across all sales
+  agents"); "their customers" / "of these agents" / "only those 5" narrow to the list on screen.
+  ARCHITECTURE: report lane, honours the parser's `ranking_drill` (scoped | global | unsure | null, head/parser.py:323).
+  Today `settle` reads a new axis after a shown ranking with drill null or unsure as "unsure" and asks the scope
+  question (report_ask.py:862-867, `_unsure_line` :986, `_drill` :996-1080). Fix: only `scoped` narrows (today's scoped
+  branch); global, unsure and null run the global branch, and the answer carries one header line naming the population
+  of the ranking that was on screen ("Across all <its group_by noun>"). No scope question is asked any more; a scope
+  slot already held by a session is still answered. Not changed: a refine of the ranking on screen (same axis,
+  ranking_refine true), a fresh ask with no ranking shown. Prompt: "only those N" as a scoped example goes into the
+  v101 candidate (template line 300 lists "these", "their", "above").
 
 ### Gates (S3)
 
