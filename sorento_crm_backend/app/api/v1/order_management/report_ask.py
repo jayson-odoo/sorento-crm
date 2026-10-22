@@ -96,7 +96,12 @@ def _own_book(db: Session, resolved: Any) -> Optional[set[str]]:
     """The customer ids of a salesperson contact's own book: the customers whose card agent is a
     `sales_agents` row linked to the contact. None when the contact has no agent link."""
     with company_scope(db, None):
-        agent_ids = [str(i) for (i,) in db.query(SalesAgent.id).filter(SalesAgent.contact_id == str(resolved)).all()]
+        agent_ids = [
+            str(i)
+            for (i,) in db.query(SalesAgent.id)
+            .filter(SalesAgent.contact_id == str(resolved), SalesAgent.is_active.is_(True))
+            .all()
+        ]
         if not agent_ids:
             return None
         return {str(i) for (i,) in db.query(Customer.id).filter(Customer.sales_agent_id.in_(agent_ids)).all()}
@@ -366,7 +371,8 @@ def report_ask(
     # A salesperson is narrowed to its own book: when granted only on `mine`, when not granted
     # always (it needs an agent link with customers; the agent axes are then refused).
     book: Optional[set[str]] = None
-    if resolved and contact_asker.classify(db, str(resolved)) == "salesperson":
+    if resolved and contact_asker.is_salesperson_user(db, str(resolved)):
+        # A LIVE CRM user with the salesperson role only (a bare agent link grants nothing here).
         book = _own_book(db, resolved)
     if not granted and not book:
         raise AppException(403, "Sales report is not enabled for your account.", code="sales_report_not_enabled")
@@ -463,9 +469,14 @@ def report_ask(
             product_filter = [i for i in named_products if i in by_prefix]
         product_names = sorted({by_id[i] for i in product_filter} or set(by_id.values()))
     customers = scoped if scoped is not None else named_customers
-    if narrowed and scoped is None:
-        # Inside the book; an empty result is zero rows in `run_ask`, never "no filter".
-        customers = [c for c in (named_customers or sorted(book)) if c in book]
+    if narrowed:
+        # Inside the book (and the contact's own customers when it is customer-linked too); an
+        # empty result is zero rows in `run_ask`, never "no filter".
+        customers = (
+            [c for c in scoped if c in book]
+            if scoped is not None
+            else [c for c in (named_customers or sorted(book)) if c in book]
+        )
     echo = _echo(
         db,
         grants,
