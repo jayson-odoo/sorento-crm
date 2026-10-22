@@ -4215,16 +4215,23 @@ def _all_broaden_over_nothing_open(verdict: dict[str, Any], state: Any) -> bool:
     )
 
 
+#: Release gate #1829, round 14: the rosters whose v63 "all" answers are measured to carry a pick
+#: (the tier roster; the product roster, did-you-mean and stock picks).
+#: Extend a kind only once v63 is measured giving its real 'all' answers a pick.
+RESET_OVER_PICKER_KINDS: frozenset[str] = frozenset({"tier_pick", "product_pick"})
+
+
 def _clear_over_an_open_picker(verdict: dict[str, Any], answer: dict[str, Any], state: Any) -> bool:
     """Release gate #1829, round 13 (EVAL-BENCH contacts 09 / 10, crew ruling option b): `entity_op`
     clear that gives NO answer to the open roster (no pick, position or item; mode null or cancel)
     is "clear all". Measured live (v63, 22 Oct): a real answer to a picker ("all", "semua", "all of
     them", "1 and 2") always carries its picks. The roster's own domain may ride along when
-    `domain_in_message` is not true (contact 10); a held subject is allowed. A question the focus
+    `domain_in_message` is not true (contact 10); a held subject is allowed. Round 14: only the rosters
+    `RESET_OVER_PICKER_KINDS` names, the ones measured on v63. A question the focus
     holds (round 12b) is no roster here. Whether the message states anything else is the seam's
     own `_stated_beside_a_reset`."""
     pending = getattr(state, "pending", None)
-    if pending is None or not turn_pending.is_roster(pending.kind) or not pending.options:
+    if pending is None or pending.kind not in RESET_OVER_PICKER_KINDS or not pending.options:
         return False
     if verdict.get("entity_op") != "clear":
         return False
