@@ -337,3 +337,94 @@ def test_8_guard_a_customer_roster_pick_with_a_switch_and_its_typed_name_never_r
     assert _products(a.state.focus) == [HELD], f"a pick rebuilt the subject: {_products(a.state.focus)}"
     _s, plan = apply(a.state, a.verdict, build_policy())
     assert "open_question_answer_pick" in plan.trace.rules_fired, plan.trace.rules_fired
+
+
+# =========================================================================== round 2
+# Lead ruling (parity with the old path, r8 untouched): on the STATE path a typed CUSTOMER or
+# WAREHOUSE starts a new subject on a switch only when (a) the switch is explicit (`switch_domain`
+# in the ops OR `domain_in_message` true) AND (b) the message does not refer back
+# (`anaphora.backward_reference` not true, the field `decide.backward_reference` reads on the old
+# path). A typed product / brand keeps the r8 behaviour exactly. `names_own_subject` stays widened.
+def _said(domain: str, ents: list[dict[str, Any]], ops: list[dict[str, Any]], *, in_message: bool,
+          refers_back: bool, **over: Any) -> dict[str, Any]:
+    v = verdict(domain_hint=domain, intent_hint=None, domain_in_message=in_message, entity_op="replace_combine",
+                topic_reset=False, entities=ents, anaphora={"backward_reference": refers_back}, **over)
+    v["state_changes"] = ops
+    return v
+
+
+def _kept_and_refined(v: dict[str, Any]) -> None:
+    out = _apply(_held_focus(), v)
+    assert _products(out.state.focus) == [HELD], f"the held product was dropped: {_products(out.state.focus)}"
+    assert _subject_products(out) == [f"u-{HELD}"], _subject_products(out)
+    assert out.state.state_led == "refine", f"led {out.state.state_led!r}, parity with the old path says refine"
+    new_state, plan = apply(out.state, out.verdict, build_policy())
+    assert (plan.trace.decision or {}).get("kind") == "refine", plan.trace.decision
+    assert _products(new_state.focus) == [HELD], _products(new_state.focus)
+
+
+SET_CUSTOMER_WITH = {
+    "switch_domain": [_op("switch_domain"), _op("set", "customer")],
+    "keep": [_op("keep"), _op("set", "customer")],
+}
+
+
+# --------------------------------------------------------------------------- R1 (RED)
+@pytest.mark.parametrize("ops", sorted(SET_CUSTOMER_WITH))
+def test_r2_1_state_path_a_typed_customer_that_refers_back_keeps_the_held_product(ops):
+    """State-path twin of test_7_guard_old_path_with_a_backward_reference: "delivery of it for
+    <customer>" points back at the held product."""
+    _kept_and_refined(_said("order", [_typed(TYPED, "customer")], list(SET_CUSTOMER_WITH[ops]),
+                            in_message=True, refers_back=True))
+
+
+# --------------------------------------------------------------------------- R2 (RED)
+def test_r2_2_state_path_a_typed_warehouse_that_refers_back_keeps_the_held_product():
+    """"incoming of it to frg"."""
+    _kept_and_refined(_said("incoming", [_typed("frg", "warehouse", code="FRG")],
+                            [_op("switch_domain"), _op("set", "warehouse")], in_message=True, refers_back=True))
+
+
+# --------------------------------------------------------------------------- R3 (RED)
+def test_r2_3_state_path_an_implicit_switch_typing_a_customer_keeps_the_held_product():
+    """No `switch_domain`, no domain word of its own (`domain_in_message` false), no backward
+    reference: parity with the old path's `refines_standing_subject` row (turn/decide.py)."""
+    _kept_and_refined(_said("order", [_typed(TYPED, "customer")], [_op("set", "customer")],
+                            in_message=False, refers_back=False))
+
+
+# --------------------------------------------------------------------------- R4 (guard)
+@pytest.mark.parametrize("ops", [[_op("set", "customer")], [_op("keep"), _op("set", "customer")]],
+                         ids=["set-customer", "keep-set-customer"])
+def test_r2_4_guard_a_domain_word_with_no_switch_op_and_no_reference_back_still_drops(ops):
+    """`domain_in_message` true is an explicit switch with or without the `switch_domain` op."""
+    out = _apply(_held_focus(), _said("order", [_typed(TYPED, "customer")], list(ops), in_message=True,
+                                      refers_back=False))
+    assert _products(out.state.focus) == [], _products(out.state.focus)
+    assert _subject_products(out) == [], _subject_products(out)
+    assert out.state.state_led == "new_ask", out.state.state_led
+
+
+# --------------------------------------------------------------------------- R5 (guard, r8 pinned as measured)
+def test_r2_5_guard_a_typed_product_that_refers_back_on_a_switch_is_r8_unchanged():
+    """Measured at bb74ae5b76: r8 reads no backward reference for a typed product; the held one
+    is dropped and the typed one is the whole subject."""
+    new = "SRTWC286-SH"
+    out = _apply(_held_focus(), _said("inventory", [_typed(new, "product", code=new)],
+                                      [_op("switch_domain"), _op("set", "product")], in_message=True, refers_back=True))
+    assert _products(out.state.focus) == [], _products(out.state.focus)
+    assert _subject_products(out) == [new], _subject_products(out)
+    assert out.state.state_led == "new_ask", out.state.state_led
+    new_state, plan = apply(out.state, out.verdict, build_policy())
+    assert (plan.trace.decision or {}).get("kind") == "new_ask", plan.trace.decision
+    assert _products(new_state.focus) == [new], _products(new_state.focus)
+
+
+def test_r2_5_guard_a_typed_brand_that_refers_back_on_a_switch_is_r8_unchanged():
+    """Measured at bb74ae5b76: the brand-named switch drops the held product, backward reference or not."""
+    out = _apply(_held_focus(), _said("promotion", [_typed("srt", "brand", code="SRT")],
+                                      [_op("switch_domain"), _op("set", "brand")], in_message=True, refers_back=True,
+                                      contains_flyer=True))
+    assert _products(out.state.focus) == [], _products(out.state.focus)
+    assert _subject_products(out) == [], _subject_products(out)
+    assert out.state.state_led == "new_ask", out.state.state_led
