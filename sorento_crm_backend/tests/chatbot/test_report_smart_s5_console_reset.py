@@ -111,3 +111,81 @@ def test_s5_1_near_miss_a_non_console_contact_still_sees_its_earlier_turns(sessi
                   capture_user_block=blocks, matches={})
     assert "ZZW1 first" in blocks[-1], blocks[-1]
     assert "Previous response: (none)" not in blocks[-1], blocks[-1]
+
+
+# ---------------------------------------------------------------- Recent conversations frames
+
+
+def _memory_on(session_factory) -> None:
+    from app.models.user import SystemSetting
+
+    db = session_factory()
+    try:
+        row = db.query(SystemSetting).first()
+        if row is None:
+            row = SystemSetting()
+            db.add(row)
+        row.chatbot_memory = {"enabled": True, "default_level": "episodes"}
+        db.commit()
+    finally:
+        db.close()
+
+
+def _closed_frame(session_factory, *, summary: str, run_id: str | None, is_test: bool = True) -> None:
+    """A closed conversation frame whose turn_ids are the contact's stored turns of `run_id`
+    (those whose envelope carries that test_run_id); every stored turn when `run_id` is None."""
+    import uuid
+    from datetime import datetime, timezone
+
+    from app.models.access import RespondContact
+    from app.models.chatbot_turn import ChatbotTurn
+    from app.models.conversation_frame import ConversationFrame
+
+    db = session_factory()
+    try:
+        turns = db.query(ChatbotTurn).filter(
+            ChatbotTurn.contact_respond_id == str(CONTACT_ID), ChatbotTurn.status == "done").all()
+        ids = [str(t.id) for t in turns if run_id is None or (t.envelope or {}).get("test_run_id") == run_id]
+        assert ids, ("harness: no stored turn of the run", run_id)
+        contact = db.query(RespondContact).filter(RespondContact.respond_io_id == str(CONTACT_ID)).one()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        db.add(ConversationFrame(
+            id=str(uuid.uuid4()), contact_id=str(CONTACT_ID), space_id="364817", channel="whatsapp",
+            contact_respond_id=str(CONTACT_ID), domain="master_products", status="closed", close_reason="reset",
+            summary=summary, turn_ids=ids, is_test=is_test, opened_at=now, started_at=now,
+            last_activity_at=now, closed_at=now,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_s5_1_a_frame_made_of_turns_from_before_the_reset_is_not_shown(rec, session_factory) -> None:
+    _memory_on(session_factory)
+    rec.say_in("zzt-run-1", _product_ask(), "ZZR1 check SRTWT7408")
+    _closed_frame(session_factory, summary="ZZFRAME1 asked about SRTWT7408", run_id="zzt-run-1")
+    rec.session_vars = {}
+    _text, block = rec.say_in("zzt-run-2", _product_ask(), "ZZR2 first")
+    assert "ZZFRAME1" not in block, block
+
+
+def test_s5_1_near_miss_a_frame_made_of_the_current_runs_turns_shows_on_a_later_turn(rec, session_factory) -> None:
+    _memory_on(session_factory)
+    rec.say_in("zzt-run-2", _product_ask(), "ZZR2 first")
+    _closed_frame(session_factory, summary="ZZFRAME2 asked about SRTWT7408", run_id="zzt-run-2")
+    _text, block = rec.say_in("zzt-run-2", _product_ask(), "ZZR2 second")
+    assert "ZZFRAME2" in block, block
+
+
+def test_s5_1_near_miss_a_non_console_contacts_frame_is_still_shown(session_factory, monkeypatch) -> None:
+    from tests.chatbot.test_outstanding_lane import _run_turn, _seed_contact
+
+    _memory_on(session_factory)
+    _seed_contact(session_factory, variables={})
+    blocks: list[str] = []
+    _run_turn(session_factory, monkeypatch, qf=_product_ask(), text_body="ZZW1 first", msg_id="zzt-s5-f1",
+              capture_user_block=blocks, matches={})
+    _closed_frame(session_factory, summary="ZZFRAME3 asked about SRTWT7408", run_id=None, is_test=False)
+    _run_turn(session_factory, monkeypatch, qf=_product_ask(), text_body="ZZW2 second", msg_id="zzt-s5-f2",
+              capture_user_block=blocks, matches={})
+    assert "ZZFRAME3" in blocks[-1], blocks[-1]
