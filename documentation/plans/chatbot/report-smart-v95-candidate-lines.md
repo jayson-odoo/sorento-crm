@@ -1,4 +1,6 @@
-# Candidate prompt v95: REPORT-SMART-L round S2 (22 Oct)
+# Candidate prompt v95: REPORT-SMART-L round S2 (22 Oct), SUPERSEDED by v96
+
+Superseded (owner ruling 22 Oct 23:20): the A and F lines below were hand-written values; they are replaced by the always-on Sales channels line and the brand_alias data (plan section A'' / F''). v96 = v94 + the E line, the year line and one sentence naming the Sales channels line (`crew/state/eval/report-smart-v92/candidate_v96.txt`).
 
 Base: parser prompt v94 (id 99f70258, published by the owner; = candidate r2). Candidate: v94 with 5 lines extended and 1 added (+610 chars), additive only, no override rule. Full text for EVAL-BENCH / the replay: `crew/state/eval/report-smart-v92/candidate_v95.txt`; the owner publishes.
 

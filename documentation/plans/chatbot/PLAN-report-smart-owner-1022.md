@@ -1,6 +1,6 @@
 # PLAN: owner console turns 22 Oct, fix round on #1816 (lane REPORT-SMART-L, round S2)
 
-Status: plan; red-first per item in the order below. Track: L (prompt candidate, resolver/state guards). Branch
+Status: built D, E, B, C, A'', F'' (cc3ccfd1a5), review round 1 fixes in progress; replay waits the v96 id. Track: L (prompt candidate, resolver/state guards). Branch
 `claude/report-smart-1021-r2xexf` (on `crew/chat-release-1022`), base head afd7f70605. Diagnosis (13 turns, prompt v94,
 code 65c2025c05): `crew/state/eval/report-smart-v92/owner-1022-diagnosis.md` (crew-only). UAC:
 `report-smart-owner-1022-acceptance-criteria.md`.
@@ -32,28 +32,32 @@ regex over message words; parser fields only.
   typed THIS message (held_family output, head/held_family.py:193, is not typed; turn_runtime.py:616-658); Sorento's SRT
   short code on the Known brands line (built from the live brand list, turn_runtime.py:512; data or code, measured).
 
-## A' / F' (owner direction 23:05, design via crew 22 Oct): values from the closed-list index, not prompt lines
+## A'' / F'' as shipped (owner ruling 22 Oct 23:20: ALWAYS-ON full lines in both closed-list modes)
 
-The v95 A and F prompt lines are paused. Facts: the index covers specs, file types and certificates
-(closed_lists_index.py:248-276, :418; engine.py:1171-1181); Known brands is a full line in both modes
-(turn/context.py:100-116, "Name (brand_code)"); no brand alias exists (Sorento's brand_code on the copy is SORENTO);
-the one alias set is `attachment_type_alias` (chatbot_prompt_vars.py:341-357); `sales_channel` is a parser enum.
+Index matching is spelling only (closed_lists_index.py:218-237), so the channel and brand values are always-on lines in
+Block and Index mode, never index-matched; the 23:05 index design is superseded.
 
-- A'. A "Sales channels" closed list from the code's channel source (scm/demand_class.py DEMAND_CLASSES, with
-  PROJECT_SEGMENTS as its match words): Block mode prints the full line, Index mode prints the matched channel line
-  through the same match path as file types (+ a SYSTEM_BLANKS pointer). The template rule names the list. The guard
-  stays: a channel value, or any entity whose hint is not an entity kind, never reaches the resolver or a kind pick.
-- F'. Brand aliases as data: the alias lookup-set reader generalised to a `brand_alias` set (option value = brand_code,
-  keywords = short forms). The Known brands line shows the alias in both modes, Index also prints the matched alias
-  line, and `resolve_brand_token` (lanes/business/services.py:798-811) takes an alias as an exact match. No migration:
-  the set and its SRT row are data (System > Lookup Sets); idempotent SQL for the copy DB goes to crew.
-- F code halves stay: the brand-subject check counts only products typed THIS message; the promotion kind and brand
-  reach the tool even when products are held.
+- A''. A "Sales channels" line in the parser's user turn (turn/context.py, beside Known brands and Promotion kinds)
+  from one source, `reports/ask.SALES_CHANNELS` (dealer, project), which also feeds the parser schema's `sales_channel`
+  enum and the report route's channel labels (the SCM demand classes are a different vocabulary). The template's
+  sales_channel rule names the line. Guard: an entity whose hint is a parser output field (not an entity kind) never
+  reaches the resolver or a kind pick. Code half of AC-A1: a stray word equal to the channel the same verdict set is
+  never refused as a sales agent (review round 1).
+- F''. Brand short forms as data: the alias lookup-set reader takes the set key; a `brand_alias` set (option value =
+  brand_code, keywords = short forms) prints on the Known brands line as "Name (code, alias...)" ("SORENTO (SRT)";
+  no alias: "Name (code)" as before) and every brand lookup takes an alias (`resolve_brand_token`, the flyer brand
+  filter's `exact_brand_rows`). No migration; release data step: the set + SORENTO -> SRT row (System > Lookup Sets).
+- F code halves: codes held_family re-emits are not typed products, so a brand + kind flyer ask sends the kind and the
+  brand, not the held products.
+- Named: B1's no-row pick guard was dropped (kind-pick answers hold the raw value by contract,
+  test_samantha_26sep_s8_kind_pick_siblings t4); B2 (no pre-lane customer narrowing for a sales ranking with no
+  current-message customer) removes the poisoning. D also covers the per-product sales report (asks which product).
 
-## Prompt candidate v95
+## Prompt candidate v96
 
-`crew/state/eval/report-smart-v92/candidate_v95.txt` = v94 (id 99f70258, exported `base_v94.txt`) + the E and year lines
-(the A and F lines are paused: see A' / F'), additive, few. Non-production; the owner publishes.
+v95 (registered, non-production) carried hand-written A / F lines and is superseded by v96:
+`crew/state/eval/report-smart-v92/candidate_v96.txt` = v94 + the E line, the year line and one sales_channel sentence
+naming the Sales channels line (+277 chars). Non-production; the owner publishes.
 
 ## Gates
 
