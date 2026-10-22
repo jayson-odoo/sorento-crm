@@ -16,7 +16,7 @@ from uuid import UUID
 
 from app.services.chatbot.turn import question as question_mod
 from app.services.chatbot.turn import task as task_mod
-from app.services.chatbot.turn.decide import names_its_own_domain
+from app.services.chatbot.turn.decide import backward_reference, domain_in_message, names_its_own_domain
 from app.services.chatbot.turn.pending import ESCALATION_OFFER_KINDS
 from app.services.chatbot.turn.pending import ask as pending_ask
 from app.services.chatbot.turn.pending import is_roster, offered_companies, option_entities
@@ -361,6 +361,21 @@ def names_own_subject(verdict: dict[str, Any]) -> bool:
     ruling (a): a typed customer or warehouse is a subject as much as a product or a brand. Tier
     is no subject kind. The parser's echo of a held row (`current_message` false) names nothing."""
     return bool(KIND_FIELD_MAP.keys() & _named_kinds(verdict))
+
+
+def _switch_names_new_subject(verdict: dict[str, Any], ops: list[Any]) -> bool:
+    """Does this switch's typed subject start a new subject? A typed product or brand does,
+    exactly as CHAT-STATE r8 has it. A typed customer or warehouse (the rest of the subject
+    kinds) does only on an explicit switch (the `switch_domain` op or the message's own domain
+    word) that does not refer back: CHAT-PICK-QTY-STATE round 2 lead ruling, parity with the old
+    path's rows in `decide` (`domain_in_message` NEW_ASK, `domain_in_message_anaphora` and
+    `refines_standing_subject` REFINE)."""
+    if not names_own_subject(verdict):
+        return False
+    if {"product", "brand"} & _named_kinds(verdict):
+        return True
+    explicit = "switch_domain" in ops or domain_in_message(verdict) is True
+    return explicit and not backward_reference(verdict)
 
 
 def _message_domains(verdict: dict[str, Any]) -> list[str]:
@@ -1523,9 +1538,12 @@ def apply_changes(
     # A bare switch keeps the held subject whole (only the domain-bound axes drop, below). A switch
     # never rebuilds when this turn answers the open question (a pick of its option, an `answer`):
     # a pick may carry the last turn's domain and the option's own code (r8 review B2); only the
-    # explicit `new_subject` op still rebuilds and closes it.
+    # explicit `new_subject` op still rebuilds and closes it. A typed customer or warehouse
+    # rebuilds only on an explicit switch that does not refer back (`_switch_names_new_subject`).
     answers_the_question = bool(roster_picks) or slot_pick is not None or "answer" in ops
-    new_subject = "new_subject" in ops or (switching and not answers_the_question and names_own_subject(verdict))
+    new_subject = "new_subject" in ops or (
+        switching and not answers_the_question and _switch_names_new_subject(verdict, ops)
+    )
     if new_subject:
         window = focus.date_window if NEW_SUBJECT_KEEPS_PERIOD else None
         focus = Focus(
