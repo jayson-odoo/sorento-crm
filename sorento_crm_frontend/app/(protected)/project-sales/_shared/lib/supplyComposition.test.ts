@@ -174,6 +174,16 @@ describe('lineBlockers', () => {
     ]);
   });
 
+  it('names the SO line number, not the planning order\'s own (SO-LINE-NUMBERS AC-7)', () => {
+    expect(
+      lineBlockers(draft({ line_no: 11, so_line_no: 224, open_qty: '100', buy_qty: '80' })),
+    ).toEqual(['Line 224, CB6633: the components are short of the open quantity by 20.']);
+  });
+
+  it('carries the SO line number from the supply line into the draft', () => {
+    expect(draftFromLine(line({ line_no: 11, so_line_no: 224 })).so_line_no).toBe(224);
+  });
+
   it('names the line by number alone when it carries no item code', () => {
     expect(
       lineBlockers(draft({ item_code: null, open_qty: '100', buy_qty: '80' })),

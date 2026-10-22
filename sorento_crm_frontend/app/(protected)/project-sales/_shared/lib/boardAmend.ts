@@ -187,6 +187,7 @@ function draftFromSources(
   return {
     project_line_id: contribution.project_line_id ?? '',
     line_no: contribution.line_no,
+    so_line_no: contribution.so_line_no ?? null,
     item_code: contribution.item_code,
     // The PLAN quantity: what the editor balances against, and what the server's own
     // check compares the posted composition to. Not `qty_outstanding`, which since the
@@ -251,6 +252,7 @@ function frozenDraft(
   return {
     project_line_id: contribution.project_line_id ?? '',
     line_no: contribution.line_no,
+    so_line_no: contribution.so_line_no ?? null,
     item_code: contribution.item_code,
     // The PLAN quantity: what the editor balances against, and what the server's own
     // check compares the posted composition to. Not `qty_outstanding`, which since the

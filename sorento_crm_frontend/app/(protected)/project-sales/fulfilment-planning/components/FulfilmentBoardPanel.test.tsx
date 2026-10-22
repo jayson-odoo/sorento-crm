@@ -4741,6 +4741,52 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     expect(block).toHaveTextContent('line 9 SRTWT6808');
   });
 
+  it('names the already-fulfilled lines by SO number while the held-back filter still matches the planning number (SO-LINE-NUMBERS AC-7)', async () => {
+    getPlanningBoard.mockResolvedValue(
+      allSaved(
+        boardOf([
+          demand({ line_no: 6, so_line_no: 224, item_code: 'SRTWT6808' }),
+          demand({ line_no: 9, so_line_no: 304, item_code: 'SRTWT6808' }),
+        ]),
+      ),
+    );
+    previewConfirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          preview: true,
+          revision_no: null,
+          lines_confirmed: [],
+          lines_withdrawn: [],
+          lines_held_back: [{ line_no: 9, so_line_no: 304, item_code: 'SRTWT6808', reason: 'only 3 free' }],
+          lines_fulfilled_skipped: 1,
+        },
+      ],
+    });
+    confirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          decision_revision: null,
+          lines_confirmed: [],
+          lines_carried: 0,
+          lines_held_back: [{ line_no: 9, so_line_no: 304, item_code: 'SRTWT6808', reason: 'only 3 free' }],
+          lines_fulfilled_skipped: 1,
+        },
+      ],
+    });
+
+    renderPanel(['SO403340']);
+    await walkConfirmGuide();
+
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const block = await screen.findByTestId('board-confirm-results');
+    expect(block).toHaveTextContent('1 line already fulfilled, decision cleared: line 224 SRTWT6808');
+    expect(block).not.toHaveTextContent('cleared: line 224 SRTWT6808 \u00b7');
+  });
+
   it('shows a "nothing to confirm" entry for an order the dry run answers with nothing at all', async () => {
     getPlanningBoard.mockResolvedValue(twoLines());
     previewConfirmMany.mockResolvedValue({

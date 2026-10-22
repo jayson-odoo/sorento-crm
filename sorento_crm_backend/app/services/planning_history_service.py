@@ -30,6 +30,7 @@ from app.models.project_so import (
     SOSupplyDecision,
 )
 from app.services.planning_change_service import change_text
+from app.services.project_line_split_service import display_line_nos
 from app.services.project_service import resolve_user_names
 
 #: The window around a revision in which a row it raised was created (AC-W10).
@@ -168,12 +169,15 @@ def _revisions(db: Session, ids: List[str]) -> List[dict]:
     rows_by_order: Dict[str, List[OrderInquiryRow]] = defaultdict(list)
     for row, pso_id in rows:
         rows_by_order[str(pso_id)].append(row)
-    line_no = {
-        str(line_id): no
-        for line_id, no in db.query(ProjectSalesOrderLine.id, ProjectSalesOrderLine.line_no)
-        .filter(ProjectSalesOrderLine.project_sales_order_id.in_(ids))
-        .all()
-    }
+    line_no = display_line_nos(
+        db,
+        [
+            str(line_id)
+            for (line_id,) in db.query(ProjectSalesOrderLine.id)
+            .filter(ProjectSalesOrderLine.project_sales_order_id.in_(ids))
+            .all()
+        ],
+    )
     # The CANCEL audit rows that name a revision: who/why, exact.
     recorded: Dict[tuple, dict] = {}
     audit_rows = (
@@ -321,6 +325,7 @@ def _updates(db: Session, ids: List[str]) -> List[dict]:
         .order_by(PlanningChangeRow.line_no.asc(), PlanningChangeRow.created_at.asc())
         .all()
     )
+    so_nos = display_line_nos(db, [row.project_line_id for row, _batch in rows])
     grouped: Dict[tuple, dict] = {}
     for row, batch in rows:
         key = (str(batch.id), str(row.project_sales_order_id))
@@ -341,7 +346,7 @@ def _updates(db: Session, ids: List[str]) -> List[dict]:
         event["counts"][state] += 1
         event["lines"].append(
             {
-                "so_line_no": row.line_no,
+                "so_line_no": so_nos.get(str(row.project_line_id), row.line_no),
                 "item_code": row.item_code,
                 "kind": row.kind,
                 "change": change_text(row),
