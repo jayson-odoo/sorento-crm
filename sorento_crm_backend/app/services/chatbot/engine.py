@@ -4167,8 +4167,22 @@ def _names_a_domain(verdict: dict[str, Any]) -> bool:
     """Release gate #1829, round 8: did THIS message name a domain of its own
     (`decide.names_its_own_domain`)? Not beside a widening to everything (`broaden_axis` all):
     widening keeps the held `domain_hint` (parser R-P3-09), so that domain is the held one, the
-    shape "clear all" itself carried at contact 01 (domain inventory, `domain_in_message`)."""
+    shape "clear all" itself carried at contact 01 (domain inventory, `domain_in_message`). The
+    `new_subject` signal's reading; the stated-beside check reads `_states_a_domain`."""
     return names_its_own_domain(verdict) and verdict.get("broaden_axis") != "all"
+
+
+def _states_a_domain(verdict: dict[str, Any], held_domains: tuple[str, ...]) -> bool:
+    """Release gate #1829, round 9 (reviewer S2, captain ruling option B): a domain stated beside
+    a reset. Beside a widening to everything it is the held one only when the session already
+    holds it (contact 01: inventory over an inventory session); "never mind, all promotions" over
+    a stock session names promotion of its own."""
+    held_widening = (
+        verdict.get("broaden_axis") == "all"
+        and not verdict.get("asks")
+        and verdict.get("domain_hint") in held_domains
+    )
+    return names_its_own_domain(verdict) and not held_widening
 
 
 def _reset_signals(verdict: dict[str, Any], parser_raw: Any = None) -> list[str]:
@@ -4194,7 +4208,7 @@ def _reset_signals(verdict: dict[str, Any], parser_raw: Any = None) -> list[str]
 _RESET_MESSAGE_TYPES = frozenset({None, "", "business_query", "casual", "clarification", "confirmation", "unknown", "low_signal"})
 
 
-def _stated_beside_a_reset(verdict: dict[str, Any]) -> list[str]:
+def _stated_beside_a_reset(verdict: dict[str, Any], held_domains: tuple[str, ...] = ()) -> list[str]:
     """What the message states of its own, one per line: anything here makes a reset signal
     the start of an ask, which keeps today's path. A carried echo (`current_message` false), a
     carried domain and a plain business query state nothing; `broaden_axis` all is the "all" of
@@ -4216,7 +4230,7 @@ def _stated_beside_a_reset(verdict: dict[str, Any]) -> list[str]:
         "picked": bool(answer.get("picked")),
         "item_qty": any(isinstance(i, dict) and i.get("qty") is not None for i in answer.get("items") or []),
         "qty_for_all": answer.get("qty_for_all") is not None,
-        "domain": _names_a_domain(verdict),
+        "domain": _states_a_domain(verdict, held_domains),
         "top_n": verdict.get("top_n") is not None,
         "rank_by": bool(verdict.get("rank_by")),
         "basis": bool(verdict.get("basis")),
@@ -4357,7 +4371,7 @@ def _reset_turn(
     no lane, fetch, tool, escalation, hand-off, small-talk model or recap. None for every other
     turn (and for a contact the access check refuses), which runs today's path untouched."""
     signals = _reset_signals(verdict, parser_raw)
-    if not signals or _stated_beside_a_reset(verdict):
+    if not signals or _stated_beside_a_reset(verdict, tuple(state_in.focus.domains or ())):
         return None
     routed = turn_runtime.with_routing_agent_default(verdict, pending=None)
     suggested_agent = jsc.get(routed.get("routing"), "suggested_agent")
