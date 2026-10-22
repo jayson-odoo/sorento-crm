@@ -50,7 +50,7 @@ def _fresh_caches():
 @pytest.mark.parametrize("body", ["zzqwerty", "top 5 salesppl this year", "前5 销售员", "5 jurujual teratas"])
 @pytest.mark.parametrize("mode", ["block", "index"])
 def test_a1_the_user_turn_carries_the_full_sales_channels_line_in_both_modes(session_factory, seeded, stub_access, monkeypatch, mode, body):
-    from app.services.scm.demand_class import DEMAND_CLASSES
+    from app.services.chatbot.head.parser import PARSE_OUTPUT_JSON_SCHEMA
 
     _seed_world(session_factory)
     _set_mode(session_factory, mode)
@@ -58,9 +58,11 @@ def test_a1_the_user_turn_carries_the_full_sales_channels_line_in_both_modes(ses
     lines = _lines(block, "Sales channels")
     assert len(lines) == 1, block
     joined = lines[0].casefold()
-    assert "dealer" in joined, lines
-    for value in DEMAND_CLASSES:
+    channels = [v for v in PARSE_OUTPUT_JSON_SCHEMA["properties"]["sales_channel"]["enum"] if v]
+    assert channels, "harness: the schema lists no sales channel"
+    for value in channels:
         assert value.casefold() in joined, (value, lines)
+    assert "retail" not in joined, lines  # the SCM demand class is not a sales channel
 
 
 # ---------------------------------------------------------------- A' (3) the guard
