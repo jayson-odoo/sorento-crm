@@ -145,6 +145,13 @@ class AskType:
     #: its own question. The slot still names the first as `asking`; the ask's own lane reads
     #: an answer that settles any of them. False keeps one field per reply.
     ask_all: bool = False
+    #: Fields that exist only as an asked slot (never collected by `collect`): stated to the
+    #: parser as the Open question like any field (`turn/question.of_required_ask`).
+    slot_fields: tuple[FieldSpec, ...] = ()
+    #: With `answered_by_parser`: a reply the parser declared NO answer for is still read by the
+    #: original capture (`_reply_verdict_by_shape`), so a declared answer is honoured and an
+    #: undeclared short reply is not lost (REPORT-SMART-L S3-1, the rankings' ask).
+    shape_fallback: bool = False
 
 
 #: Every registered ask type, by name (`register`). The engine seam reads the open slot's
@@ -378,11 +385,11 @@ def reply_verdict(
     # STUCK-QTY-LOOP pending-question rule): only a declared answer is the answer. Anything
     # else is a new question, which always wins (a whole new low stock ask included: it
     # settles from its own words), and "clear" is the parser's `topic_reset` with no answer.
-    if not ask.answered_by_parser:
-        return _reply_verdict_by_shape(verdict, slot, text, ask)
     answer = verdict.get("open_question_answer")
     mode = answer.get("mode") if isinstance(answer, dict) else None
     answers = mode in ANSWER_MODES
+    if not ask.answered_by_parser or (ask.shape_fallback and not answers):
+        return _reply_verdict_by_shape(verdict, slot, text, ask)
     if not (text or "").strip() or not answers:
         return verdict, "required_ask_dropped"
     rerouted = {

@@ -5376,7 +5376,7 @@ def _run_stages_body(  # noqa: PLR0915
         scope_replay = copy.deepcopy(verdict)
         # REPORT-ENGINE slice 1b: a fresh sales ranking's brand / sales agent / category
         # words, kept away from the generic resolver for the lane (`report_ask_words`).
-        verdict = report_ask.take_words(verdict, _message_text)
+        verdict = report_ask.take_words(report_ask.drop_field_words(verdict), _message_text)
         # CA-3: a fresh chat report's product words are the lane's, not the generic resolver's.
         verdict = chat_report.take_words(verdict)
         # LOWSTOCK-SEMANTIC: the low stock ask's own words ride the parser's `low_stock`

@@ -1608,8 +1608,11 @@ def apply_changes(
         out[question_mod.ANSWER_KEY] = dict(question_mod.NO_ANSWER)
         out[question_mod.POSITIONS_KEY] = []
     elif not answering:
+        # A required-field question (`about`) is stated to the parser, so its declared fill is no
+        # phantom even when the parse carries no `answer` op (REPORT-SMART-L S3-1).
         out, _ = question_mod.without_phantom_answer(
-            out, open_question=None, positions_read_elsewhere=positions_read_elsewhere, focus_has_product=False
+            out, open_question=open_question if (open_question or {}).get("about") else None,
+            positions_read_elsewhere=positions_read_elsewhere, focus_has_product=False
         )
     if left_to_apply and not roster_picks:
         # The position stays in the parse exactly as the parser read it: `apply` turns it into

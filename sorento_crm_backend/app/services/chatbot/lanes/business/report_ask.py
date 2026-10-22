@@ -256,9 +256,18 @@ TOP_N = rf.FieldSpec(name="top_n", noun="number", question=TOP_N_QUESTION, resol
 METRIC = rf.FieldSpec(name="metric", noun="measure", question=ranking_ask.METRIC_LINE, question_fn=_metric_question, resolve=_resolve_metric, allow_all=False)
 BASIS = rf.FieldSpec(name="basis", noun="basis", question=ranking_ask.RANKING_BASIS_LINE, question_fn=_basis_question, resolve=_resolve_basis, allow_all=False)
 
+#: The scope question's slot (`asking == "scope"`, the drill ask): its words ride on the slot's
+#: extras; the spec only lets the parser be shown it as the Open question (REPORT-SMART-L S3-1).
+SCOPE = rf.FieldSpec(name="scope", noun="scope", question="", resolve=lambda _db, _word, _extras: rf.Resolved("unknown"), allow_all=False)
+
 SALES_RANKING_ASK = rf.register(rf.AskType(
     name=ASK_NAME,
     fields=(PERIOD, TOP_N, METRIC, BASIS),
+    slot_fields=(SCOPE,),
+    # REPORT-SMART-L S3-1: the parser is shown the question (owed fields + held values) and
+    # its declared answer (mode fill) runs the ask, as the low stock report's.
+    answered_by_parser=True,
+    shape_fallback=True,
     reroute={
         "message_type": "business_query",
         "domain_hint": "sales",
@@ -332,6 +341,31 @@ def by_capability(verdict: dict[str, Any]) -> dict[str, Any]:
         # own reads it (`settle`); an answer to an open question or a refine never does.
         out["report_breakdown"] = True
     return out
+
+
+def drop_field_words(verdict: dict[str, Any]) -> dict[str, Any]:
+    """Engine seam, before the report words, the resolver and any kind pick (REPORT-SMART-L S3-2,
+    S3-3): an entity whose raw is a word the parser already put in a field of the SAME verdict is
+    that field, never an entity. A word equal to the verdict's own `sales_channel` (whatever its
+    hint) is the channel; a product whose raw is the year the parser set as the period (start and
+    end both in that year) is the period. No channel, no period, or another year: untouched."""
+    entities = verdict.get("entities")
+    if not isinstance(entities, list) or not entities:
+        return verdict
+    channel = jsc.js_string(verdict.get("sales_channel") or "").strip().casefold()
+    start, end = jsc.js_string(verdict.get("date_filter_start") or ""), jsc.js_string(verdict.get("date_filter_end") or "")
+    year = start[:4] if len(start) >= 4 and start[:4] == end[:4] and start[:4].isdigit() else ""
+
+    def is_field_word(e: Any) -> bool:
+        if not isinstance(e, dict):
+            return False
+        raw = " ".join(jsc.js_string(e.get("raw") or "").split()).casefold()
+        if not raw:
+            return False
+        return raw == channel or (raw == year and jsc.js_string(e.get("hint") or "").strip().lower() == "product")
+
+    kept = [e for e in entities if not is_field_word(e)]
+    return verdict if len(kept) == len(entities) else {**verdict, "entities": kept}
 
 
 def hold_words(verdict: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:

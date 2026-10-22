@@ -107,9 +107,11 @@ def of_required_ask(slot: Any) -> dict[str, Any] | None:
     if ask is None or not ask.answered_by_parser:
         # Only an ask whose replies the parser reads (the low stock report) is stated.
         return None
-    field = next((f for f in (ask.fields if ask else ()) if f.name == slot.get("asking")), None)
+    field = next((f for f in (*ask.fields, *ask.slot_fields) if f.name == slot.get("asking")), None)
     if field is None:
         return None
+    extras = slot.get("extras") if isinstance(slot.get("extras"), dict) else {}
+    own = extras.get(field.name) if isinstance(extras.get(field.name), dict) else {}
     options = [
         {"position": i, "code": str(o[1])}
         for i, o in enumerate(slot.get("options") or [], start=1)
@@ -118,9 +120,16 @@ def of_required_ask(slot: Any) -> dict[str, Any] | None:
     obj: dict[str, Any] = {
         "kind": PICK_ONE if options else FREE,
         "about": ask.name,
-        "question": field.question,
+        # A slot-only field (the rankings' scope) carries its own question on the slot.
+        "question": own.get("question") or field.question,
         "owed": [field.name],
     }
+    if ask.ask_all and field in ask.fields:
+        # One reply asked every missing detail, so every one is owed, and the values the
+        # ask already holds ride with the question (the parser reads them, never re-asks).
+        held = (slot.get("values") if isinstance(slot.get("values"), dict) else {})
+        obj["owed"] = [f.name for f in ask.fields if f.required and f.name not in held]
+        obj["held"] = {k: v.get("value") for k, v in held.items() if isinstance(v, dict) and v.get("value") is not None}
     if options:
         obj["options"] = options
     return obj
