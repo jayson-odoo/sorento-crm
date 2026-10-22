@@ -40,9 +40,12 @@ EXPECT_KEYS = frozenset({
     "state_ops_include", "state_ops_exclude",
     # REPORT-SMART-L v92: the report fields, each compared with the parse field of the same name.
     "order_status", "group_by", "measure", "compare_to", "sales_channel", "ranking_refine",
+    # REPORT-SMART-L delivery gold: the paper codes list (["DO"]), plain equality.
+    "document",
 })
 #: The expect keys read straight off the verdict (null means null or absent).
-_REPORT_KEYS = ("order_status", "group_by", "measure", "compare_to", "sales_channel", "ranking_refine")
+_REPORT_KEYS = ("order_status", "group_by", "measure", "compare_to", "sales_channel", "ranking_refine",
+                "document")
 #: LEAN v90: the type each of these expect values must have (null allowed where listed).
 _EXPECT_TYPES: dict[str, tuple[type, ...]] = {
     "products_only": (list,),
@@ -467,7 +470,8 @@ def run_live(rows: list[dict[str, Any]], *, session_factory: Any, version_id: st
                             entities = [e for e in verdict.get("entities") or [] if isinstance(e, dict)]
                             row.update(
                                 passed=passed, reasons=reasons,
-                                **{k: verdict.get(k) for k in ("status", "domain_hint", "intent_hint", "requested_attributes", "entities")},
+                                **{k: verdict.get(k) for k in ("status", "domain_hint", "intent_hint", "requested_attributes", "entities",
+                                                  "document", "order_status")},
                                 warehouse=_warehouse_raws(entities),
                                 **{k: verdict.get(k) for k in ("topic_reset", "entity_op", "broaden_axis", "reference_positions")},
                                 open_question_answer=_answer_fields(verdict.get("open_question_answer")),
