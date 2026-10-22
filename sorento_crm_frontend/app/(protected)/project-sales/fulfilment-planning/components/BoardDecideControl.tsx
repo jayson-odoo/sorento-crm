@@ -40,7 +40,7 @@ import {
   type DecideComposition,
   type DecideWay,
 } from '../../_shared/lib/boardAmend';
-import { matchesSuggestion } from '../../_shared/lib/fulfilmentBoard';
+import { matchesSuggestion, soLineNoText } from '../../_shared/lib/fulfilmentBoard';
 import { toMinor } from '../../_shared/lib/supplyComposition';
 import { LABELS } from '../../_shared/lib/supplyVocabulary';
 import type {
@@ -310,7 +310,7 @@ export function BoardDecideControl({
         const skipped: SkippedEntry[] = [];
         const short: SkippedEntry[] = [];
         const labelFor = (row: BoardContribution) =>
-          `${row.item_code} line ${row.line_no}`;
+          `${row.item_code} line ${soLineNoText(row)}`;
 
         for (const row of tickedRows) {
           if (chosenWay === 'suggested') {

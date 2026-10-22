@@ -505,7 +505,7 @@ class StockTransferService:
                 SalesAgent.id,
                 SalesAgent.sales_agent,
                 SalesAgent.person_label,
-                ProjectSalesOrderLine.line_no,
+                func.coalesce(SalesOrderLine.line_no, ProjectSalesOrderLine.line_no),
                 SOSupplyDecision.revision_no,
                 _ApprovedBy.c.name,
                 _MovedBy.c.name,

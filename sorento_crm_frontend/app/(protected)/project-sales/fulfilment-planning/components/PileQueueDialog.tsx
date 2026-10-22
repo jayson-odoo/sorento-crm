@@ -17,7 +17,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { usePileQueue } from '../../_shared/hooks/useFulfilmentPlanning';
-import { aheadFactorLabel } from '../../_shared/lib/fulfilmentBoard';
+import { aheadFactorLabel, soLineNoText } from '../../_shared/lib/fulfilmentBoard';
 import type { PileQueueLine } from '../../_shared/types/fulfilmentPlanning.types';
 import { BoardRankPopover } from './BoardRankPopover';
 
@@ -100,11 +100,11 @@ export function PileQueueDialog({
       },
       {
         id: 'line_no',
-        accessorFn: (row) => row.line_no ?? 0,
+        accessorFn: (row) => row.so_line_no ?? row.line_no ?? 0,
         header: ({ column }) => <DataGridColumnHeader title="Line" column={column} />,
         cell: ({ row }) => (
           <span className={cellClass(row.original, position)}>
-            {row.original.line_no ?? 'Not planned'}
+            {soLineNoText(row.original) || 'Not planned'}
           </span>
         ),
         size: 100,
