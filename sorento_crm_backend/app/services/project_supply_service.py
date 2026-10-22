@@ -4150,7 +4150,9 @@ class ProjectSupplyService:
         out.sort(key=self._donor_order)
         if location_only or not self.borrow_from_order:
             # Same stock, same ranking (sorted above), told as a location (D2). Less a
-            # donor only its agent's authorisation could release (B1): confirm refuses it.
+            # donor only its agent's authorisation could release (B1). Confirm no longer
+            # refuses one a planner picks anyway (BORROW-CONFIRM-MATCH, 22 Oct 2026); the
+            # list still leaves it out (crew, 22 Oct: confirm-only, the list unchanged).
             return [
                 _location_only(candidate)
                 for candidate in out
@@ -7137,16 +7139,16 @@ class ProjectSupplyService:
         # BELOW this line needs nothing extra - that is ordinary group borrow, which the v2
         # ladder took automatically - so demanding a reason for it would make a mandatory
         # field a rubber stamp.
-        if self._needs_authorisation(fact, donor_core_line_id):
-            if not by_order:
-                # B1: a location borrow asks nobody, so stock only an authorisation could
-                # release is not this line's to take. It is never offered under OFF.
-                refuse(
-                    invalid,
-                    f"{held} is held for an order ranked ahead of this line, so it "
-                    "cannot be borrowed.",
-                )
-                return
+        #
+        # A LOCATION borrow (`by_order` False) asks nobody and is not refused on rank
+        # either (BORROW-CONFIRM-MATCH, owner ruling 22 Oct 2026: "confirm should be lenient
+        # also, confirm should match the dropdown"). The planner picked it, so it confirms;
+        # the donor is not over-committed, because this line's hold pins the units first
+        # and the donor queues against what is left (`assign()`), reading short. With the
+        # switch ON, a borrow posted without the donor's SO is a location borrow too
+        # (`_names_its_order`), so it confirms the same way: only a borrow that NAMES the
+        # donor order is asked who authorised it.
+        if by_order and self._needs_authorisation(fact, donor_core_line_id):
             if not _states_an_authorisation(item.reason):
                 refuse(
                     invalid,
