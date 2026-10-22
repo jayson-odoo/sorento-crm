@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.services.ai_prompt_registry import agent_model, get_prompt, render, render_resolved
 from app.services.chatbot.contracts import ParserOutputError  # noqa: F401 - re-export
+from app.services.chatbot.lanes.business.report_ask import COMPARE_TO, METRICS
 from app.services.chatbot.turn import context as context_mod
 from app.services.chatbot.turn import question as question_mod
 from app.services.chatbot.turn import task as task_mod
@@ -316,7 +317,10 @@ def _build_base_json_schema() -> dict[str, Any]:
             # axis read as about the rows the last ranking printed ("scoped"), its own ask
             # ("global"), or either ("unsure", asked). Same exemption as `ranking_refine`.
             "ranking_drill": {"type": ["string", "null"], "enum": ["scoped", "global", "unsure", None]},
-            "measure": {"type": ["string", "null"], "enum": ["qty", "amount", None]},
+            "measure": {"type": ["string", "null"], "enum": [*METRICS, None]},
+            # REPORT-SMART-L v92: the earlier window a ranking is compared with. Same shape and
+            # exemption as `measure`.
+            "compare_to": {"type": ["string", "null"], "enum": [*COMPARE_TO, None]},
             # PLAN-retail-sales-reports-26sep S1: the sales analysis's basis and the
             # company named. Required for strict mode and tolerated absent, exactly as
             # `sales_channel` above (no recorded emission carries them).
@@ -671,6 +675,7 @@ def _build_base_json_schema() -> dict[str, Any]:
             "ranking_refine",
             "ranking_drill",
             "measure",
+            "compare_to",
             "sales_basis",
             "sales_company",
             "promotion_kind",
@@ -776,6 +781,7 @@ TOLERATED_ABSENT: frozenset[str] = frozenset(
         "ranking_refine",
         "ranking_drill",
         "measure",
+        "compare_to",
         "sales_basis",
         "sales_company",
         "promotion_kind",

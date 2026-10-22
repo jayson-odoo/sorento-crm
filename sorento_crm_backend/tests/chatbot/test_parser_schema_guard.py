@@ -138,6 +138,8 @@ MEASURED_VERDICT_READS: dict[str, str] = {
     # ("qty" | "amount" | null). 47 declared keys -> 49.
     "ranking_refine": "app/services/chatbot/engine.py",
     "measure": "app/services/chatbot/lanes/business/report_ask.py",
+    # REPORT-SMART-L v92: the compared window (`_fresh_args`, `_refine`). 59 -> 60.
+    "compare_to": "app/services/chatbot/lanes/business/report_ask.py",
     # 4 Oct 2026 (LOWSTOCK-SEMANTIC): the low stock filters, read by
     # `lanes/business/low_stock_ask.reading`. 48 declared keys -> 49.
     "low_stock": "app/services/chatbot/lanes/business/low_stock_ask.py",
@@ -164,7 +166,7 @@ MEASURED_VERDICT_READS: dict[str, str] = {
 }
 
 
-def test_measured_read_set_matches_the_59_declared_keys():
+def test_measured_read_set_matches_the_60_declared_keys():
     """The table above is complete and has no typo - every declared key is measured read
     exactly once, and the table names nothing DECLARED_KEYS does not also carry. Catches a
     stale table before it can hide a real drift in the two tests below."""

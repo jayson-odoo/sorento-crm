@@ -38,7 +38,11 @@ EXPECT_KEYS = frozenset({
     "attributes_only", "attributes_include", "attachment_types", "warehouse", "promotion_kind", "is_active",
     "continues", "topic_reset", "answer_mode", "picked", "reference_positions", "entity_op", "broaden_axis",
     "state_ops_include", "state_ops_exclude",
+    # REPORT-SMART-L v92: the report fields, each compared with the parse field of the same name.
+    "order_status", "group_by", "measure", "compare_to", "sales_channel", "ranking_refine",
 })
+#: The expect keys read straight off the verdict (null means null or absent).
+_REPORT_KEYS = ("order_status", "group_by", "measure", "compare_to", "sales_channel", "ranking_refine")
 #: LEAN v90: the type each of these expect values must have (null allowed where listed).
 _EXPECT_TYPES: dict[str, tuple[type, ...]] = {
     "products_only": (list,),
@@ -238,6 +242,9 @@ def grade_parse(verdict: dict[str, Any], expect: dict[str, Any]) -> tuple[bool, 
         present = [o for o in expect.get("state_ops_exclude") or [] if o in ops]
         if present:
             reasons.append(f"state_changes carry forbidden ops {present}")
+    for key in _REPORT_KEYS:
+        if key in expect and verdict.get(key) != expect[key]:
+            reasons.append(f"{key} {verdict.get(key)!r} != {expect[key]!r}")
     return (not reasons, reasons)
 
 
