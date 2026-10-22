@@ -179,7 +179,7 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
     'Reconciliation lines in a sheet body. Already scrollerMaxHeight={false}',
   ],
   [
-    'app/(protected)/project-sales/fulfilment-planning/components/PileQueueDialog.tsx:289',
+    'app/(protected)/project-sales/fulfilment-planning/components/PileQueueDialog.tsx:291',
     'Pile queue in a dialog body. Already scrollerMaxHeight={false}',
   ],
   [
