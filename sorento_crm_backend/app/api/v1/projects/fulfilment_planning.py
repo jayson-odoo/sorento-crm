@@ -1205,6 +1205,24 @@ def _restamp_superseded_reason(db: Session, before_id, reason: str) -> None:
         db.flush()
 
 
+def _applied_rows(db: Session, batch_id: str, order) -> list:
+    """This order's rows of `batch_id` an apply has carried out (PLAN-BATCH-HELD-CANCEL)."""
+    from app.models.planning_change import PlanningChangeRow
+    from app.services.planning_change_service import PLANNING_CHANGE_STATE_APPLIED
+
+    # The app session runs `autoflush=False`: what the apply just wrote is pending ORM state.
+    db.flush()
+    return (
+        db.query(PlanningChangeRow)
+        .filter(
+            PlanningChangeRow.batch_id == batch_id,
+            PlanningChangeRow.project_sales_order_id == str(order.id),
+            PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_APPLIED,
+        )
+        .all()
+    )
+
+
 def _withdrawal_only_result(
     db: Session, service: ProjectSupplyService, order, rejected_line_ids: list
 ) -> Dict[str, Any]:
@@ -1405,35 +1423,12 @@ def _confirm_with_possible_rejects(
             ),
             code="board_reject_not_supported_in_batch",
         )
-    # SO-CANCEL-LINE: whole lines transferred to Cancel SO. Refused beside a batch BEFORE
-    # anything is looked up, for the same reason as the withdrawal above.
+    # SO-CANCEL-LINE: whole lines transferred to Cancel SO. PLAN-BATCH-HELD-CANCEL (owner
+    # ruling (a), 21 Oct 2026): a cancel rides along with a pending change even when the
+    # batch names its line - the press transfers it BEFORE the apply below, so the apply
+    # closes that line's row ("the sales-order line is cancelled") instead of composing it.
+    # Holding it waited for an apply nothing ever ran (SO394881).
     cancelled_lines = list(getattr(payload, "cancelled_lines", None) or [])
-    if batch_id and cancelled_lines:
-        # A cancel rides along with a pending change unless the batch NAMES that line.
-        from app.models.planning_change import PlanningChangeRow
-
-        named_by_batch = (
-            db.query(PlanningChangeRow.project_line_id)
-            .filter(
-                PlanningChangeRow.batch_id == batch_id,
-                # A superseded row is retired (the board's `isRetiredChangeRow`): it names nothing.
-                PlanningChangeRow.applied_state != "superseded",
-                PlanningChangeRow.project_line_id.in_(
-                    [str(x.project_line_id) for x in cancelled_lines]
-                ),
-            )
-            .first()
-        )
-        if named_by_batch is not None:
-            raise AppException(
-                status_code=422,
-                message=(
-                    "A pending planning change names this line, so it cannot also be "
-                    "transferred to Cancel SO. Apply the change first, then transfer the "
-                    "line and confirm again."
-                ),
-                code="board_cancel_not_supported_in_batch",
-            )
     both = named & {str(x.project_line_id) for x in cancelled_lines}
     if both:
         raise AppException(
@@ -1451,12 +1446,24 @@ def _confirm_with_possible_rejects(
         else []
     )
     if batch_id:
+        applied_before = {row.id for row in _applied_rows(db, batch_id, order)}
         with UndoJournal(db) as journal:
             body = confirm_batch()
         if body is None:
             body = _withdrawal_only_result(db, service, order, [])
         else:
             _attach_undo_journal(db, order, journal, before_id)
+        # PLAN-BATCH-HELD-CANCEL: what this press did to the AutoCount change, said by the
+        # rows it applied, so the board never claims an apply that did not happen.
+        applied_now = [
+            row for row in _applied_rows(db, batch_id, order) if row.id not in applied_before
+        ]
+        body["planning_change_applied"] = bool(applied_now)
+        body["lines_retired"] = [
+            {"line_no": row.line_no, "item_code": row.item_code}
+            for row in sorted(applied_now, key=lambda r: r.line_no or 0)
+            if row.kind == "cancelled"
+        ]
     elif getattr(payload, "lines", None):
         with UndoJournal(db) as journal:
             body = service.confirm(
@@ -1640,7 +1647,10 @@ def _confirm_a_planning_change(
     """
     from app.models.planning_change import PlanningChangeRow
     from app.services import planning_change_service
-    from app.services.planning_change_service import PLANNING_CHANGE_STATE_APPLIED
+    from app.services.planning_change_service import (
+        PLANNING_CHANGE_STATE_APPLIED,
+        PLANNING_CHANGE_STATE_PENDING,
+    )
     from app.services.project_supply_service import SupplyLinesRefused
 
     batch_id = payload.batch_id
@@ -1669,6 +1679,12 @@ def _confirm_a_planning_change(
     # planning change could be confirmed", or confirmed the rest of the order WITHOUT the
     # line. Those lines are ordinary decisions now: they ride in `extra`, the same as a
     # line the batch never named.
+    pending_before = {
+        row.id for row in rows if row.applied_state == PLANNING_CHANGE_STATE_PENDING
+    }
+    # PLAN-BATCH-HELD-CANCEL: an `added` row names its line once the order carries it, so a
+    # press deciding that line routes through the row (and applies it) instead of `extra`.
+    planning_change_service.link_rows_to_mirror_lines(db, rows)
     current_revision = planning_change_service.current_revision_no(db, str(order.id))
     by_line = {
         str(row.project_line_id): row
@@ -1713,9 +1729,18 @@ def _confirm_a_planning_change(
     ]
     outcome = (result.get("outcomes") or {}).get(str(order.id))
     confirmed = (outcome or {}).get("confirm_result")
-    if confirmed is None and not failed and getattr(payload, "cancelled_lines", None):
-        # The batch press simply had nothing to confirm and the press carried Cancel SO
-        # lines: the caller answers with the cancel-only result (no revision).
+    applied_now = any(
+        row.applied_state == PLANNING_CHANGE_STATE_APPLIED
+        for row in rows
+        if row.id in pending_before
+    )
+    if confirmed is None and not failed and (
+        getattr(payload, "cancelled_lines", None) or applied_now
+    ):
+        # The batch press had nothing to confirm, but it carried Cancel SO lines or applied
+        # this order's rows (PLAN-BATCH-HELD-CANCEL, reviewer round 1: a book-cancelled line
+        # no revision covers is retired with no revision written): the caller answers with
+        # the cancel-only result (no revision) instead of refusing work that was done.
         return None
     if confirmed is None:
         message = (

@@ -43,7 +43,7 @@ beforeEach(() => {
 });
 
 describe('a line delivered in full', () => {
-  it('is listed with QTY 301, DELIVERY DATE 20/09/2026 and "Delivered 301" in CHANGE QUANTITY', async () => {
+  it('is listed with QTY 301, DELIVERY DATE 20/09/2026 and "Delivered 301" in BREAKDOWN QTY', async () => {
     await renderDialog();
     await sheet();
     const text = block(32).textContent ?? '';

@@ -286,6 +286,9 @@ def test_the_export_carries_no_raise_history_column(raise_history_api):
         "S/O NO",
         "ITEM CODE",
         "QTY",
+        # OI-RESERVE-PILL-QTY round 2 (owner, 21 Oct 2026): the reserve figures beside QTY.
+        "REQUESTED RESERVE",
+        "RESERVED",
         "TOTAL QTY",
         "DELIVERY DATE",
         "PROJECT/CUSTOMER",

@@ -674,6 +674,8 @@ export interface CancelledLineBody {
 export interface CancelledLineEcho {
   line_no?: number | null;
   item_code?: string | null;
+  /** Why it went to Cancel SO ("AutoCount Cancel SO <doc>" for an AutoCount draft). */
+  reason?: string | null;
 }
 
 export interface ConfirmException {
@@ -719,6 +721,10 @@ export interface ConfirmResult {
   lines_withdrawn?: ConfirmedLine[] | null;
   /** The lines this press transferred to Cancel SO. */
   lines_cancelled?: CancelledLineEcho[] | null;
+  /** PLAN-BATCH-HELD-CANCEL: this press applied the order's pending AutoCount change. */
+  planning_change_applied?: boolean | null;
+  /** The lines that change retired (the book cancelled them). */
+  lines_retired?: CancelledLineEcho[] | null;
   /** How many of the confirmed lines were flagged as a suspected system problem (R10). */
   suspected_issues?: number | null;
   /**
@@ -1955,6 +1961,11 @@ export interface BoardOrderStanding {
    */
   project_sales_order_id?: string | null;
   customer_name?: string | null;
+  /**
+   * OI-SPLIT-CONFIRM-POLISH: the core sales order's document date (`YYYY-MM-DD`), the same value
+   * the split read's `so_date` carries; the guided Confirm prints it when there is no read.
+   */
+  so_date?: string | null;
   /** Lines of this order inside the SELECTION - never only the ones a window is showing. */
   line_count: number;
   /** How many of those lines carry a verdict in the draft. The client's, never the server's. */
@@ -2694,6 +2705,10 @@ export interface ConfirmManyOrderResult {
   lines_withdrawn?: ConfirmedLine[] | null;
   /** The lines this press transferred to Cancel SO. */
   lines_cancelled?: CancelledLineEcho[] | null;
+  /** PLAN-BATCH-HELD-CANCEL: this press applied the order's pending AutoCount change. */
+  planning_change_applied?: boolean | null;
+  /** The lines that change retired (the book cancelled them). */
+  lines_retired?: CancelledLineEcho[] | null;
   transfers?: PreviewTransfer[] | null;
   pso_id: string;
   ok: boolean;

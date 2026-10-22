@@ -31,7 +31,11 @@ import {
   ReservePill,
 } from '../../../_shared/components/OrderInquiryVerbPill';
 import { OrderInquiryStockGrid } from '../../../_shared/components/OrderInquiryStockGrid';
-import { formatInquiryQty, raisedKindLabel } from '../../../_shared/lib/orderInquiryWorklist';
+import {
+  formatInquiryQty,
+  isInquiryBuyRow,
+  raisedKindLabel,
+} from '../../../_shared/lib/orderInquiryWorklist';
 import {
   lineConfirmationOf,
   lineFooterTotals,
@@ -44,6 +48,7 @@ import {
   documentsOf,
   ItemCodeCell,
   LocationCell,
+  orderInquiryReserveQtyColumns,
   orderInquirySuggestedColumn,
   RaisedCell,
   SupplierCell,
@@ -509,6 +514,45 @@ const QUANTITY_COLUMNS: {
   { id: 'remaining', title: 'Remaining', field: 'remaining' },
 ];
 
+/** The SO Qty / Requested / Taken / Remaining column for one `QUANTITY_COLUMNS` entry. */
+function quantityColumn({
+  id,
+  title,
+  field,
+}: (typeof QUANTITY_COLUMNS)[number]): ColumnDef<OrderInquiryLineRow> {
+  return {
+    id,
+    accessorFn: (row) => lineOf(row)[field],
+    header: ({ column }) => <DataGridColumnHeader title={title} column={column} />,
+    size: id === 'requested' || id === 'remaining' ? 120 : 100,
+    meta: { headerTitle: title, skeleton: <Skeleton className="h-4 w-10" /> },
+    cell: ({ row }) => {
+      // A row that names no sales order line has no SO Qty (L17).
+      const value = lineOf(row.original)[field];
+      return (
+        <span className="tabular-nums">
+          {value == null ? '-' : formatInquiryQty(String(value))}
+        </span>
+      );
+    },
+    footer: ({ table }) => (
+      <LineFooter
+        rows={table.getPrePaginationRowModel().rows.map((r) => r.original)}
+        field={field}
+      />
+    ),
+  };
+}
+
+/** The line's reserve figure: summed over its live buy rows, the same fold Taken and
+ * Requested use (`orderInquiryLineFold.ts`), so the columns beside them agree. */
+function lineReserveQty(row: OrderInquiryLineRow, field: 'asked_reserve_qty' | 'reserved_qty') {
+  const total = lineOf(row)
+    .liveRows.filter((live) => isInquiryBuyRow(live.verb))
+    .reduce((sum, live) => sum + (Number(live[field] ?? '0') || 0), 0);
+  return String(total);
+}
+
 export function useOrderInquiryHeaderLinesColumns({
   canReserve,
   stagedByRowId,
@@ -690,30 +734,15 @@ export function useOrderInquiryHeaderLinesColumns({
       },
       // AC-ND-3..5b (owner ruling 26 Sep, G4): SO Qty, Requested, Taken, Remaining - the
       // line's own sums (`orderInquiryLineFold.ts`), no Was / now annotation (G1).
-      ...QUANTITY_COLUMNS.map(
-        ({ id, title, field }): ColumnDef<OrderInquiryLineRow> => ({
-          id,
-          accessorFn: (row) => lineOf(row)[field],
-          header: ({ column }) => <DataGridColumnHeader title={title} column={column} />,
-          size: id === 'requested' || id === 'remaining' ? 120 : 100,
-          meta: { headerTitle: title, skeleton: <Skeleton className="h-4 w-10" /> },
-          cell: ({ row }) => {
-            // A row that names no sales order line has no SO Qty (L17).
-            const value = lineOf(row.original)[field];
-            return (
-              <span className="tabular-nums">
-                {value == null ? '-' : formatInquiryQty(String(value))}
-              </span>
-            );
-          },
-          footer: ({ table }) => (
-            <LineFooter
-              rows={table.getPrePaginationRowModel().rows.map((r) => r.original)}
-              field={field}
-            />
-          ),
-        }),
-      ),
+      // OI-RESERVE-PILL-QTY round 2: Reserve requested and Reserved sit right after
+      // Requested, the shared columns the Lines list uses, summed over the line's live
+      // buy rows.
+      ...QUANTITY_COLUMNS.slice(0, 2).map(quantityColumn),
+      ...orderInquiryReserveQtyColumns<OrderInquiryLineRow>({
+        requestedOf: (row) => lineReserveQty(row, 'asked_reserve_qty'),
+        reservedOf: (row) => lineReserveQty(row, 'reserved_qty'),
+      }),
+      ...QUANTITY_COLUMNS.slice(2).map(quantityColumn),
       {
         accessorKey: 'delivery_date',
         header: ({ column }) => <DataGridColumnHeader title="Delivery date" column={column} />,

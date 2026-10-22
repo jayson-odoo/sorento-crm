@@ -46,7 +46,7 @@ describe('LineSplitSheet readOnly: same sheet, no controls (E1, E2)', () => {
     const heads = Array.from(table.querySelectorAll('thead th')).map((th) => (th.textContent ?? '').trim());
     expect(heads).toEqual([
       'SO date', 'S/O no', 'Item code', 'Location', 'Qty', 'New qty',
-      'Delivery date', 'New date', 'Change quantity', 'Change date', 'Remark',
+      'Delivery date', 'New date', 'Breakdown qty', 'Breakdown date', 'Remark',
     ]);
   });
 

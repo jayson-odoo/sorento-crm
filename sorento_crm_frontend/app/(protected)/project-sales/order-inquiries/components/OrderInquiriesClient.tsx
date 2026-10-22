@@ -17,6 +17,7 @@ import {
   Link2,
   List,
   PackageSearch,
+  Printer,
   RotateCcw,
   Undo2,
   Unlink,
@@ -116,6 +117,7 @@ import { deliveryMonthLabel } from '../../_shared/lib/orderInquiryWorklist';
 import {
   autoPlaceOrderInquiryRows,
   exportOrderInquiryWorklistXlsx,
+  exportOrderInquiryWorklistPdf,
   unplaceOrderInquiryRow,
 } from '../../_shared/services/orderInquiryService';
 import type {
@@ -501,6 +503,7 @@ export function OrderInquiriesClient({
     null,
   );
   const [exporting, setExporting] = React.useState(false);
+  const [exportingPdf, setExportingPdf] = React.useState(false);
   const [autoPlacing, setAutoPlacing] = React.useState(false);
   const [unplacingAll, setUnplacingAll] = React.useState(false);
   // Unlink selected asks first, like every other detach on this page (the ADR's own
@@ -1374,6 +1377,19 @@ export function OrderInquiriesClient({
     }
   }
 
+  // OI-DOWNLOAD: the same filtered rows as Export Excel, in the OI email's layout.
+  async function handleExportPdf() {
+    setExportingPdf(true);
+    try {
+      await exportOrderInquiryWorklistPdf(listFilters);
+      toast.success('Preparing PDF… it will appear in My Downloads.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to start PDF export');
+    } finally {
+      setExportingPdf(false);
+    }
+  }
+
   // A pressed CARD counts as a filter here even though it lives on the strip rather than
   // in this popover: it narrows exactly what the rest of these narrow, so leaving it out
   // hid "Clear filters" from the one person who most needs it - somebody who pressed Buy,
@@ -1837,6 +1853,13 @@ export function OrderInquiriesClient({
           icon: Download,
           disabled: exporting,
           onClick: () => void handleExport(),
+        },
+        {
+          key: 'export-pdf',
+          label: exportingPdf ? 'Preparing…' : 'Print / Download PDF',
+          icon: Printer,
+          disabled: exportingPdf,
+          onClick: () => void handleExportPdf(),
         },
         ...parkedSendActions,
       ]}

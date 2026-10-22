@@ -736,7 +736,7 @@ def generate_oi_worksheet(download_id: str, run_id: str, user_id: str) -> dict:
     The row set is the run's own Start Plan scope (`demand.run_scope_oi_rows`, C2/C4a -
     the SAME helper the order sheet's Project qty column reads, so the two can never list
     a different row set for the same run), printed through the worklist's own writer with
-    the worksheet's 10-column slice (`EXPORT_HEADINGS[:10]`, C3 - no ACKNOWLEDGED / TAKEN
+    the worksheet's 10 columns (`WORKSHEET_HEADINGS`, C3 - no ACKNOWLEDGED / TAKEN
     / REMAINING).
 
     `_record_failure` on any exception, never raising into RQ: a poisoned job retries for
@@ -778,7 +778,7 @@ def generate_oi_worksheet(download_id: str, run_id: str, user_id: str) -> dict:
             raise AppException(404, "That plan does not exist.")
 
         from app.services.order_inquiry_worklist_service import (
-            EXPORT_HEADINGS,
+            WORKSHEET_HEADINGS,
             OrderInquiryWorklistService,
         )
         from app.services.scm.demand import run_scope_oi_rows
@@ -792,7 +792,7 @@ def generate_oi_worksheet(download_id: str, run_id: str, user_id: str) -> dict:
         row_ids = [r["row_id"] for r in scope_rows]
 
         fallback_filename, file_bytes = OrderInquiryWorklistService(db).export_xlsx(
-            row_ids=row_ids, columns=EXPORT_HEADINGS[:10],
+            row_ids=row_ids, columns=WORKSHEET_HEADINGS,
         )
         filename = filename or fallback_filename
         content_type = (
@@ -1242,7 +1242,25 @@ _OI_XLSX_CONTENT_TYPE = (
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
 
-def generate_order_inquiry_xlsx(download_id: str, inquiry_id: str, user_id: str) -> dict:
+
+def _oi_export(db, fmt: str, filters: dict) -> tuple[str, bytes, str, str]:
+    """`(fallback filename, bytes, content type, storage key suffix)` for one OI export.
+    OI-DOWNLOAD (`PLAN-oi-download-21oct.md`): `fmt="pdf"` prints the workbook's own table
+    (same header row and rows) as a PDF; `"xlsx"` (the default, so a job queued before the PDF existed renders
+    exactly as it did) is the email's own workbook."""
+    from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
+
+    service = OrderInquiryWorklistService(db)
+    if fmt == "pdf":
+        filename, file_bytes = service.export_pdf(**filters)
+        return filename, file_bytes, "application/pdf", "-pdf"
+    filename, file_bytes = service.export_xlsx(**filters)
+    return filename, file_bytes, _OI_XLSX_CONTENT_TYPE, ""
+
+
+def generate_order_inquiry_xlsx(
+    download_id: str, inquiry_id: str, user_id: str, *, fmt: str = "xlsx",
+) -> dict:
     """Render one OI header's own workbook (Lane B, AC-B1/AC-B2), store it, update the
     download row. Mirrors `generate_order_sheet` line for line: `mark_processing`,
     render, upload, `mark_ready` - `_record_failure` on any exception, never raising
@@ -1289,20 +1307,18 @@ def generate_order_inquiry_xlsx(download_id: str, inquiry_id: str, user_id: str)
         row = svc.get(download_id)
         filename = row.filename if row else None
 
-        from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
-
-        fallback_filename, file_bytes = OrderInquiryWorklistService(db).export_xlsx(
-            inquiry_id=inquiry_id,
+        fallback_filename, file_bytes, content_type, suffix = _oi_export(
+            db, fmt, {"inquiry_id": inquiry_id},
         )
         filename = filename or fallback_filename
 
         provider = default_provider()
         backend = get_backend(provider)
-        key = f"exports/order-inquiry/{download_id}/{filename}"
+        key = f"exports/order-inquiry{suffix}/{download_id}/{filename}"
         stored_key, _signed = backend.upload_file(
             file_content=file_bytes,
             file_path=key,
-            content_type=_OI_XLSX_CONTENT_TYPE,
+            content_type=content_type,
         )
 
         svc.mark_ready(
@@ -1326,7 +1342,12 @@ def generate_order_inquiry_xlsx(download_id: str, inquiry_id: str, user_id: str)
 
 
 def generate_order_inquiry_worklist_xlsx(
-    download_id: str, filters: dict, user_id: str, *, company_id: Optional[str] = None,
+    download_id: str,
+    filters: dict,
+    user_id: str,
+    *,
+    company_id: Optional[str] = None,
+    fmt: str = "xlsx",
 ) -> dict:
     """Render the OI worklist's filtered workbook (Lane B, AC-B2/AC-B6), store it,
     update the download row. Same shape as `generate_order_inquiry_xlsx` above, minus
@@ -1359,20 +1380,18 @@ def generate_order_inquiry_worklist_xlsx(
         row = svc.get(download_id)
         filename = row.filename if row else None
 
-        from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
-
-        fallback_filename, file_bytes = OrderInquiryWorklistService(db).export_xlsx(
-            **(filters or {}),
+        fallback_filename, file_bytes, content_type, suffix = _oi_export(
+            db, fmt, dict(filters or {}),
         )
         filename = filename or fallback_filename
 
         provider = default_provider()
         backend = get_backend(provider)
-        key = f"exports/order-inquiry-worklist/{download_id}/{filename}"
+        key = f"exports/order-inquiry-worklist{suffix}/{download_id}/{filename}"
         stored_key, _signed = backend.upload_file(
             file_content=file_bytes,
             file_path=key,
-            content_type=_OI_XLSX_CONTENT_TYPE,
+            content_type=content_type,
         )
 
         svc.mark_ready(

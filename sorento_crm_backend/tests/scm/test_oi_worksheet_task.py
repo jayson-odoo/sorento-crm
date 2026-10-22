@@ -33,7 +33,7 @@ def test_c4_generate_oi_worksheet_marks_ready(scm_app, monkeypatch):
     from app.models.inventory import Warehouse
     from app.models.product import Product
     from app.services.order_inquiry_worklist_service import (
-        EXPORT_HEADINGS,
+        WORKSHEET_HEADINGS,
         OrderInquiryWorklistService,
     )
     from app.tasks import export_tasks
@@ -86,7 +86,7 @@ def test_c4_generate_oi_worksheet_marks_ready(scm_app, monkeypatch):
 
     # S1: the writer was called with the worksheet's own 10-column slice and the EXACT
     # row ids `run_scope_oi_rows` returns for this run - not "some row_ids", this run's.
-    assert captured.get("columns") == EXPORT_HEADINGS[:10], captured.get("columns")
+    assert captured.get("columns") == WORKSHEET_HEADINGS, captured.get("columns")
     assert captured.get("row_ids") == [leg["row"].id], captured.get("row_ids")
 
 

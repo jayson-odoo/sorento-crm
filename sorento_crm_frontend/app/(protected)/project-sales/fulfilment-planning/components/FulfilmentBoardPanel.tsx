@@ -84,6 +84,10 @@ import {
   contributionMatchesSearch,
   confirmLinesByOrder,
   remarkFor,
+  autocountBoardNote,
+  autocountChangeNotes,
+  autocountChangeSentence,
+  confirmButtonLabel,
   confirmSummaryFor,
   decisionHeaderText,
   orderListRows,
@@ -261,6 +265,61 @@ function pressHasSomething(
     order.cancelled_lines.length > 0 ||
     (answer?.lines_fulfilled_skipped ?? 0) > 0 ||
     Boolean(order.batch_id)
+  );
+}
+
+/** The note lines of what a press's AutoCount change retired (`lines_retired`), for one order. */
+function retiredNote(result: BoardBatchResult, createdAt: string | null) {
+  const retired = result.lines_retired ?? [];
+  const itemCodes = [
+    ...new Set(retired.map((line) => line.item_code).filter((code): code is string => Boolean(code))),
+  ].sort();
+  return { count: retired.length, itemCodes, createdAt };
+}
+
+/**
+ * One order's line in the Confirm / Simulate results (PLAN-BATCH-HELD-CANCEL UAC U3/U4;
+ * PLAN-BATCH-COUNT-DISPLAY D3/D4): what the press did with the DECISIONS - the Cancel SO transfer
+ * or the revision it confirmed. The AutoCount change it applied is one separate note
+ * (`autocountChangeSentence`), unless that change is all the press did: then it is the sentence.
+ */
+function resultSentence(
+  result: BoardBatchResult,
+  simulated: boolean,
+  createdAt: string | null,
+): string {
+  if (!result.ok) return result.error ?? 'refused';
+  const cancelled = result.lines_cancelled?.length ?? 0;
+  const confirmed = result.lines_confirmed?.length ?? 0;
+  const handedOver = result.inquiry_rows_created ?? 0;
+  const lines = (count: number) => `${count} line${count === 1 ? '' : 's'}`;
+  if (cancelled > 0 && confirmed === 0 && handedOver === 0) {
+    return simulated
+      ? `would transfer ${lines(cancelled)} to Cancel SO`
+      : `${lines(cancelled)} transferred to Cancel SO`;
+  }
+  if (result.planning_change_applied && confirmed === 0 && handedOver === 0) {
+    const note = autocountChangeSentence(
+      retiredNote(result, createdAt),
+      simulated ? 'simulated' : 'confirmed',
+      false,
+    );
+    return note.charAt(0).toLowerCase() + note.slice(1);
+  }
+  return simulated
+    ? `would confirm as revision ${result.decision_revision}`
+    : `confirmed as revision ${result.decision_revision} (${handedOver} purchase row${handedOver === 1 ? '' : 's'} handed over)`;
+}
+
+/** Whether a result's AutoCount change gets its own note (it is not already the sentence). */
+function retiredNoteApart(result: BoardBatchResult): boolean {
+  if (!result.ok || !result.planning_change_applied || !(result.lines_retired?.length ?? 0)) {
+    return false;
+  }
+  return (
+    (result.lines_cancelled?.length ?? 0) > 0 ||
+    (result.lines_confirmed?.length ?? 0) > 0 ||
+    (result.inquiry_rows_created ?? 0) > 0
   );
 }
 
@@ -506,6 +565,16 @@ export function FulfilmentBoardPanel({
     return out;
   }, [loadedBatches]);
 
+  /**
+   * PLAN-BATCH-COUNT-DISPLAY (reviewer round 1): every batch date this board has seen, per SO.
+   * Never emptied, so the results of a Confirm still name the change by its date after the
+   * board's re-read drops the now-applied batch from `bySoNumber`.
+   */
+  const seenBatchDates = React.useRef(new Map<string, string>());
+  for (const [soNumber, entry] of bySoNumber) {
+    seenBatchDates.current.set(soNumber, entry.batch.created_at);
+  }
+
   /** The one batch this order belongs to, or null - a `replan`/applied lookup never guesses. */
   const batchIdBySoNumber = React.useMemo(() => {
     const map = new Map<string, string>();
@@ -688,7 +757,7 @@ export function FulfilmentBoardPanel({
     [board.data, dayWindow],
   );
 
-  const { adopt } = useFulfilmentPlanningMutations();
+  const { adopt, ensure } = useFulfilmentPlanningMutations();
   const { save: saveLineDraft, remove: removeLineDraft } = useLineDraftMutation();
 
   // NO PER-ORDER CONFIRM (R11). The board used to carry one Confirm per sales order in a
@@ -1227,6 +1296,16 @@ export function FulfilmentBoardPanel({
       batchNamedKeys,
     ],
   );
+  // PLAN-BATCH-COUNT-DISPLAY (D2, crew ruling b): the lines pending AutoCount changes retire,
+  // per order - not in the count, said once in the note beside the button.
+  const autocountNotes = React.useMemo(
+    () =>
+      autocountChangeNotes(allContributions, draftWithoutPreMark).map((note) => ({
+        ...note,
+        createdAt: (note.soNumber && bySoNumber.get(note.soNumber)?.batch.created_at) || null,
+      })),
+    [allContributions, draftWithoutPreMark, bySoNumber],
+  );
 
   /**
    * AC-DT-1/AC-DT-4 (`PLAN-oi-decision-trail-ui.md`): "Revision N, confirmed by <name>,
@@ -1454,6 +1533,15 @@ export function FulfilmentBoardPanel({
             // amendment does. An UNCOVERED reject has nothing active to withdraw and is left
             // out, exactly as before.
             if (decision?.verdict === 'rejected') return Boolean(contribution.covered);
+            // PLAN-BATCH-HELD-CANCEL (crew item 3): a line the book cancelled is retired by
+            // posting its order's pending change, and Confirm counts it: it admits its order.
+            if (
+              contribution.cancelled &&
+              !contribution.cancelled_at &&
+              !awaitsCancelSo(contribution)
+            ) {
+              return true;
+            }
             // 8 Sep 2026 ruling (reverses R11): an untouched, uncovered line is undecided,
             // not agreed - it does not put its order in the batch on its account alone.
             if (!contribution.covered && !decision) return false;
@@ -1615,6 +1703,9 @@ export function FulfilmentBoardPanel({
         // see `pendingBatchSalesOrderIds`). Computed straight off the contributions, never
         // off `rejectedCoveredLineIdsFor`'s own (deliberately empty, on a batched order)
         // result.
+        // PLAN-BATCH-HELD-CANCEL: a saved Cancel SO is never held (it rides in
+        // `cancelledLines` above, named by the pending change or not); only a staged
+        // rejection still waits, because the server refuses `rejected_line_ids` beside a batch.
         const heldBackByBatch = orderBatchId
           ? contributions.filter(
               (contribution) =>
@@ -1622,12 +1713,8 @@ export function FulfilmentBoardPanel({
                 !excludeKeys.has(contribution.key) &&
                 !contribution.unplannable &&
                 Boolean(contribution.project_line_id) &&
-                ((contribution.covered &&
-                  draftWithoutPreMark[contribution.key]?.verdict === 'rejected') ||
-                  (!contribution.covered &&
-                    (!contribution.cancelled || awaitsCancelSo(contribution)) &&
-                    batchNamedKeys.has(contribution.key) &&
-                    draftWithoutPreMark[contribution.key]?.verdict === 'cancelled')),
+                contribution.covered &&
+                draftWithoutPreMark[contribution.key]?.verdict === 'rejected',
             )
           : [];
         // S4: said OUT LOUD, named per line THROUGH `failing_lines` (the same shape a
@@ -1645,32 +1732,17 @@ export function FulfilmentBoardPanel({
         // `rejectedLineIds`, both already computed above).
         if (heldBackByBatch.length > 0) {
           const postingSomethingElse = lines.length > 0 || rejectedLineIds.length > 0;
-          const heldCancels = heldBackByBatch.some(
-            (contribution) => draftWithoutPreMark[contribution.key]?.verdict === 'cancelled',
-          );
-          const heldRejects = heldBackByBatch.some(
-            (contribution) => draftWithoutPreMark[contribution.key]?.verdict !== 'cancelled',
-          );
-          const heldWhat =
-            heldCancels && heldRejects
-              ? 'staged rejection and saved Cancel SO'
-              : heldCancels
-                ? 'saved Cancel SO'
-                : 'staged rejection';
           skipped.push({
             pso_id: orderPsoId,
             so_number: soNumber,
             ok: false,
             heldBack: true,
             error: postingSomethingElse
-              ? `was confirmed, but its ${heldWhat} could not ride along with the pending change; it commits after the change is applied.`
-              : `has a ${heldWhat} that commits after the pending change is applied.`,
+              ? 'was confirmed, but its staged rejection could not ride along with the pending change; it commits after the change is applied.'
+              : 'has a staged rejection that commits after the pending change is applied.',
             failing_lines: heldBackByBatch.map((contribution) => ({
               line_no: contribution.line_no,
-              reason:
-                draftWithoutPreMark[contribution.key]?.verdict === 'cancelled'
-                  ? 'Cancel SO is saved; it commits after the pending change is applied.'
-                  : 'rejection is staged; it commits after the pending change is applied.',
+              reason: 'rejection is staged; it commits after the pending change is applied.',
             })),
           } as BoardBatchResult);
         }
@@ -1695,11 +1767,24 @@ export function FulfilmentBoardPanel({
             ),
         );
         if (splitEdited) splitEditPsoIds.add(orderPsoId);
+        // PLAN-BATCH-HELD-CANCEL (crew item 3): a line the book cancelled has no body line;
+        // posting the order's pending change is what retires it, and Confirm counted it.
+        const retiresBookCancelled =
+          Boolean(orderBatchId) &&
+          contributions.some(
+            (contribution) =>
+              contribution.sales_order_id === salesOrderId &&
+              !excludedFromPress(contribution, excludeKeys) &&
+              contribution.cancelled &&
+              !contribution.cancelled_at &&
+              !awaitsCancelSo(contribution),
+          );
         if (
           lines.length === 0 &&
           rejectedLineIds.length === 0 &&
           cancelledLines.length === 0 &&
-          !splitEdited
+          !splitEdited &&
+          !retiresBookCancelled
         ) {
           // The held-back note above already said why, when that is the whole reason -
           // the generic "had no line..." sentence would only repeat it more vaguely.
@@ -2075,6 +2160,64 @@ export function FulfilmentBoardPanel({
    */
   const [guideOpen, setGuideOpen] = React.useState(false);
   const closeGuide = React.useCallback(() => setGuideOpen(false), []);
+  /**
+   * OI-SPLIT-CONFIRM-POLISH (owner, SO426939): Review split is ALWAYS the editable sheet. An
+   * order nobody has adopted has no planning record (so no split read and no + Split), so the
+   * guide gives it one as it opens: the board's own idempotent adopt (one record and its mirror
+   * lines, nothing sent anywhere), then one board re-read for the mirror line ids. The adopt's
+   * answer wins over the re-read, as it does for the press (`buildConfirmOrders`).
+   */
+  const [guideAdopted, setGuideAdopted] = React.useState<ReadonlyMap<string, string>>(
+    () => new Map(),
+  );
+  // Per order: why it could not be made ready (core sales order id -> the server's sentence).
+  const [guidePrep, setGuidePrep] = React.useState<{
+    running: boolean;
+    errors: ReadonlyMap<string, string>;
+  }>({ running: false, errors: new Map() });
+  // One run at a time: a guide reopened (or a Retry pressed) while one runs joins it, so two
+  // adopts never race for one order.
+  const guidePrepRun = React.useRef<Promise<void> | null>(null);
+  const prepareGuide = React.useCallback(
+    (salesOrderIds: string[]) => {
+      if (salesOrderIds.length === 0 || guidePrepRun.current) return;
+      const run = (async () => {
+        setGuidePrep({ running: true, errors: new Map() });
+        const adopted = new Map<string, string>();
+        const errors = new Map<string, string>();
+        // Every order is tried: one that cannot be planned never holds up the others.
+        for (const salesOrderId of salesOrderIds) {
+          try {
+            const result = await ensure.mutateAsync(salesOrderId);
+            if (result?.project_sales_order_id) {
+              adopted.set(salesOrderId, result.project_sales_order_id);
+            }
+          } catch (error) {
+            errors.set(
+              salesOrderId,
+              (error instanceof Error && error.message) ||
+                'This order could not be made ready to split.',
+            );
+          }
+        }
+        // The re-read brings the mirror line ids every adopted order's sheet edits.
+        if (adopted.size > 0) {
+          try {
+            await board.refetch();
+          } catch {
+            // The board's own read failure is shown by the board.
+          }
+          setGuideAdopted((current) => new Map([...current, ...adopted]));
+        }
+        setGuidePrep({ running: false, errors });
+      })();
+      guidePrepRun.current = run;
+      void run.finally(() => {
+        guidePrepRun.current = null;
+      });
+    },
+    [ensure, board],
+  );
   const guidePages = React.useMemo<ConfirmGuidePage[]>(() => {
     const covered = confirmLinesByOrder(
       allContributions,
@@ -2087,8 +2230,10 @@ export function FulfilmentBoardPanel({
       if (!lines) return [];
       return [
         {
-          psoId: order.project_sales_order_id ?? null,
+          psoId: order.project_sales_order_id ?? guideAdopted.get(order.sales_order_id) ?? null,
+          salesOrderId: order.sales_order_id,
           soNumber: order.so_number,
+          soDate: order.so_date ?? null,
           covered: lines.map((line) => {
             // UAC F25, F26: the planner's own remark lives in the line's saved decision.
             const facts = remarkFactsOf(line);
@@ -2116,7 +2261,16 @@ export function FulfilmentBoardPanel({
     unadoptedSalesOrderIds,
     batchNamedKeys,
     remarkFactsOf,
+    guideAdopted,
   ]);
+  const unplannedGuideOrders = React.useMemo(
+    () => guidePages.filter((page) => !page.psoId).map((page) => page.salesOrderId),
+    [guidePages],
+  );
+  const openGuide = () => {
+    setGuideOpen(true);
+    prepareGuide(unplannedGuideOrders);
+  };
 
   /**
    * OI-SPLIT-GUIDE (UAC F26): the board's own Split delivery gets the same Remark facts for
@@ -2462,7 +2616,9 @@ export function FulfilmentBoardPanel({
           data-testid="board-header-actions"
           className="flex w-full flex-wrap items-center gap-2 sm:w-auto"
         >
-          {granularity === 'day' && (
+          {/* Grid only too (crew ruling, 21 Oct 2026): they move the grid's day window, which
+              List never draws, so in List they would refetch for nothing. */}
+          {view === 'grid' && granularity === 'day' && (
             <>
               <Button type="button" variant="outline" size="sm" onClick={() => shiftWindow(-1)}>
                 Earlier days
@@ -2474,32 +2630,38 @@ export function FulfilmentBoardPanel({
           )}
           {/* Labelled in words, because "Product / Sales order / Customer / Project" in a bare
               select says nothing about what it does to the grid. The captain wrote it as
-              "Rows: Product | Sales order | Customer | Project", so that is what it reads. */}
-          <div className="flex w-full items-center gap-2 sm:w-auto">
-            <label htmlFor="rows" className="text-sm text-muted-foreground">
-              Rows
-            </label>
-            <div className="w-full sm:w-40">
-              <SearchableSelect
-                id="rows"
-                value={rowAxis}
-                onChange={(value) => setRowAxis(value as BoardRowAxis)}
-                options={ROW_AXIS_OPTIONS}
-              />
-            </div>
-          </div>
-          <div className="w-full sm:w-44">
-            <SearchableSelect
-              value={granularity}
-              onChange={(value) => {
-                // A window belongs to the view that scrolled it; carrying it into week or month
-                // would silently pin those to a date the planner never chose.
-                setDayWindow(undefined);
-                setGranularity(value as BoardGranularity);
-              }}
-              options={GRANULARITY_OPTIONS}
-            />
-          </div>
+              "Rows: Product | Sales order | Customer | Project", so that is what it reads.
+              Grid only (owner, 21 Oct 2026): both selectors shape the grid alone, so in List
+              they take no header space. The choices are panel state, so they survive a toggle. */}
+          {view === 'grid' && (
+            <>
+              <div className="flex w-full items-center gap-2 sm:w-auto">
+                <label htmlFor="rows" className="text-sm text-muted-foreground">
+                  Rows
+                </label>
+                <div className="w-full sm:w-40">
+                  <SearchableSelect
+                    id="rows"
+                    value={rowAxis}
+                    onChange={(value) => setRowAxis(value as BoardRowAxis)}
+                    options={ROW_AXIS_OPTIONS}
+                  />
+                </div>
+              </div>
+              <div className="w-full sm:w-44">
+                <SearchableSelect
+                  value={granularity}
+                  onChange={(value) => {
+                    // A window belongs to the view that scrolled it; carrying it into week or
+                    // month would silently pin those to a date the planner never chose.
+                    setDayWindow(undefined);
+                    setGranularity(value as BoardGranularity);
+                  }}
+                  options={GRANULARITY_OPTIONS}
+                />
+              </div>
+            </>
+          )}
           {/* Grid | List (D2): "how do I review it" - the grid answers what a product owes by
               date, the list answers what is about to be committed, across every order, in one
               scan. A toggle, not two screens, because it is the same draft either way. */}
@@ -2767,14 +2929,14 @@ export function FulfilmentBoardPanel({
                     size="sm"
                     data-testid="board-confirm"
                     disabled={
-                      confirmSummary.toConfirm === 0 ||
+                      (confirmSummary.toConfirm === 0 && autocountNotes.length === 0) ||
                       confirmingAll ||
                       Boolean(confirmBlockedReason)
                     }
                     title={confirmBlockedReason ?? undefined}
-                    onClick={() => setGuideOpen(true)}
+                    onClick={openGuide}
                   >
-                    {`Confirm (${confirmSummary.toConfirm})`}
+                    {confirmButtonLabel(confirmSummary.toConfirm, autocountNotes.length)}
                   </Button>
                 </>
               }
@@ -2857,6 +3019,17 @@ export function FulfilmentBoardPanel({
         </Alert>
       )}
 
+      {autocountNotes.length > 0 && (
+        <div
+          data-testid="board-autocount-change-note"
+          className="space-y-0.5 rounded-lg border border-border px-3 py-2.5 text-sm break-words text-muted-foreground"
+        >
+          {autocountBoardNote(autocountNotes, confirmSummary.toConfirm > 0).map((line) => (
+            <p key={line}>{line}</p>
+          ))}
+        </div>
+      )}
+
       {batchResults && (
         <div
           data-testid="board-confirm-results"
@@ -2881,6 +3054,9 @@ export function FulfilmentBoardPanel({
                 (candidate) => candidate.project_sales_order_id === result.pso_id,
               );
               const label = order?.so_number ?? result.so_number ?? result.pso_id;
+              // PLAN-BATCH-COUNT-DISPLAY: the date the note names is this order's batch, as seen
+              // when the press ran (the re-read after Confirm no longer names an applied batch).
+              const createdAt = seenBatchDates.current.get(label) ?? null;
               // A refusal names the LINES it refused, not just the order: the fix is on one
               // row, and "SO404352: refused" sends a planner to read thirty of them.
               const failing = result.failing_lines ?? [];
@@ -2902,15 +3078,7 @@ export function FulfilmentBoardPanel({
                           : 'text-destructive'
                     }`}
                   >
-                    {result.ok && (result.lines_cancelled?.length ?? 0) > 0 &&
-                    (result.lines_confirmed?.length ?? 0) === 0 &&
-                    (result.inquiry_rows_created ?? 0) === 0
-                      ? `${label}: ${simulated ? 'would transfer ' : ''}${result.lines_cancelled?.length} line${result.lines_cancelled?.length === 1 ? '' : 's'}${simulated ? '' : ' transferred'} to Cancel SO`
-                      : result.ok
-                      ? simulated
-                        ? `${label}: would confirm as revision ${result.decision_revision}`
-                        : `${label}: confirmed as revision ${result.decision_revision} (${result.inquiry_rows_created ?? 0} purchase row${(result.inquiry_rows_created ?? 0) === 1 ? '' : 's'} handed over)`
-                      : `${label}: ${result.error ?? 'refused'}`}
+                    {`${label}: ${resultSentence(result, simulated, createdAt)}`}
                   </span>
                   {simulated &&
                     result.ok &&
@@ -2956,6 +3124,18 @@ export function FulfilmentBoardPanel({
                       ))}
                     </ul>
                   )}
+                  {retiredNoteApart(result) && (
+                    <p
+                      data-testid={`board-retired-note-${result.pso_id}`}
+                      className="text-sm break-words text-muted-foreground"
+                    >
+                      {autocountChangeSentence(
+                        retiredNote(result, createdAt),
+                        simulated ? 'simulated' : 'confirmed',
+                        true,
+                      )}
+                    </p>
+                  )}
                   {result.ok && result.lines_cancelled && result.lines_cancelled.length > 0 && (
                     <ul
                       data-testid={`board-cancelled-lines-${result.pso_id}`}
@@ -2963,7 +3143,11 @@ export function FulfilmentBoardPanel({
                     >
                       <li className="text-sm break-words">
                         {`${simulated ? 'Would transfer' : 'Transferred'} to Cancel SO: ${result.lines_cancelled
-                          .map((line) => `line ${line.line_no ?? '?'} ${line.item_code ?? ''}`.trim())
+                          .map((line) =>
+                            `line ${line.line_no ?? '?'} ${line.item_code ?? ''}${
+                              line.reason ? ` (${line.reason})` : ''
+                            }`.trim(),
+                          )
                           .join(' · ')}`}
                       </li>
                     </ul>
@@ -3510,8 +3694,13 @@ export function FulfilmentBoardPanel({
       {guideOpen ? (
         <ConfirmGuideDialog
           pages={guidePages}
+          autocountNote={autocountBoardNote(autocountNotes, guidePages.length > 0)}
+          applyLabel={confirmButtonLabel(0, autocountNotes.length)}
           runConfirm={runConfirmAll}
           saveRemarks={saveLineRemarks}
+          preparing={guidePrep.running}
+          prepareErrors={guidePrep.errors}
+          onRetryPrepare={() => prepareGuide(unplannedGuideOrders)}
           onClose={closeGuide}
         />
       ) : null}

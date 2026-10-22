@@ -1055,7 +1055,12 @@ def focus_diff(before: Focus, after: Focus) -> dict[str, Any]:
     from app.services.chatbot.turn.state import focus_to_wire
 
     left, right = focus_to_wire(before), focus_to_wire(after)
-    return {key: {"before": left[key], "after": right[key]} for key in left if left[key] != right[key]}
+    # `focus_to_wire` leaves an empty `last_list` out, so a key can exist on one side only.
+    return {
+        key: {"before": left.get(key), "after": right.get(key)}
+        for key in {**left, **right}
+        if left.get(key) != right.get(key)
+    }
 
 
 # --------------------------------------------------------------------------- #
