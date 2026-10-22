@@ -78,6 +78,8 @@ _FILTER_PARAMS = (
 )
 #: The echo's name for the "(no agent)" key in an agent filter (REPORT-DRILLDOWN).
 _NO_AGENT_NAME = "(no agent)"
+#: The echo line of a run limited to the asking salesperson's own customers.
+_BOOK_LABEL, _BOOK_VALUE = "Limited to", "your customers"
 
 
 def _agent_values(raw: Optional[list[str]], param_name: str) -> Optional[list[str]]:
@@ -485,6 +487,8 @@ def report_ask(
         channel=channel_norm,
         card_agents=card_agents,
     )
+    if narrowed:
+        echo.append({"key": "book", "label": _BOOK_LABEL, "values": [_BOOK_VALUE]})
 
     filters: dict[str, list[str]] = {}
     if customers or narrowed:

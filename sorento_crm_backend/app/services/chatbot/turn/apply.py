@@ -3412,16 +3412,6 @@ def _apply(
         trace.rules_fired.append("domain_hint_coerced")
         verdict = {**verdict, "domain_hint": coerced_domain_hint}
 
-    # REPORT-SMART-L v92: a report ask's reroute (`SALES_RANKING_ASK`) lays `order` on the
-    # verdict after the routing seam ran, so the same read is made here, at the one entry,
-    # and the State stores the report's own domain. Local import: turn_runtime imports apply.
-    from app.services.chatbot.turn_runtime import report_domain
-
-    reported = report_domain(verdict)
-    if (reported.get("domain_hint"), reported.get("asks")) != (verdict.get("domain_hint"), verdict.get("asks")):
-        trace.rules_fired.append("report_domain_applied")
-        verdict = reported
-
     # The same shape, one line down: a hallucinated escalation confirmation over a message
     # that names its own question (owner report, 8 Sep 2026). Decided here so the three
     # readers of that flag cannot disagree about one turn.

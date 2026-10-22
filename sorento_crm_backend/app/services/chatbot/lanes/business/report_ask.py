@@ -23,6 +23,7 @@ from typing import Any
 
 from app.services.chatbot import jsc
 from app.services.chatbot import required_fields as rf
+from app.services.reports import ask as reports_ask
 from app.services.sales_report_service import TOP_SELLING_N_CEILING
 from app.services.chatbot.lanes.business import ranking_ask
 from app.services.chatbot.lanes.business import services as business_services
@@ -207,7 +208,7 @@ BASES = ("delivered", "ordered", "outstanding")
 #: counts (`reports.ask.COUNT_MEASURES`: customers, orders, products).
 METRICS = ("qty", "amount", "customers", "orders", "products")
 #: REPORT-SMART-1021 step 4: what the parser's `compare_to` may name (`reports.ask.COMPARE_TO`).
-COMPARE_TO = ("previous_period", "last_year")
+COMPARE_TO = reports_ask.COMPARE_TO
 #: Review S1: a month trend is not compared (its months never match the earlier window's).
 COMPARE_BY_MONTH_LINE = (
     "I can't compare a month by month breakdown yet. Ask for the total, or split by another dimension."
@@ -259,7 +260,7 @@ SALES_RANKING_ASK = rf.register(rf.AskType(
     fields=(PERIOD, TOP_N, METRIC, BASIS),
     reroute={
         "message_type": "business_query",
-        "domain_hint": "order",
+        "domain_hint": "sales",
         "intent_hint": "check_order",
         "order_status": ASK_NAME,
     },
