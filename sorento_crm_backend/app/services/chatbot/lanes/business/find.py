@@ -181,7 +181,8 @@ def as_linked_products(
     """`verdict` with every named code that sits on a `fits` link replaced by its linked codes
     (each marked `linked_from` and `linked_as`, the side listed), and the lines that are the whole reply when nothing was
     replaced (empty otherwise). Nothing else changes: the domain, the intent, every other key
-    and every other entity stay the parser's.
+    and every other entity stay the parser's, except the file ask the relation's own word made
+    (`_without_relation_file_ask`), dropped whenever a said `fits` is read.
 
     `carried_codes` are the conversation's product codes (`focus.products`): the subject of
     "which seat cover fits it?", whose parse names no code. With neither, the reply asks for
@@ -384,32 +385,38 @@ def as_linked_products(
 
 def _without_relation_file_ask(verdict: dict[str, Any], fits_item: dict[str, Any]) -> dict[str, Any]:
     """`verdict` with the file ask the relation's own word made dropped: a fits ask is never a
-    file ask unless the parser names a file word (SEAT-COVER-HIDDEN, owner 23 Oct)."""
+    file ask unless the parser names a file word (SEAT-COVER-HIDDEN, owner 23 Oct). The same
+    object when nothing is dropped (the engine traces a resolution only when the verdict changed)."""
+    entities = list(jsc.array(verdict.get("entities")))
+    kept = entities
+    out = verdict
     relation_word = jsc.js_string(fits_item.get("value") or "").strip().casefold()
     if relation_word:
         # Crew audit: "<WC> seat cover files" came back with the relation's own word ("seat
         # cover", the parser's fits value) also tagged as a file type (Installation Guide). Two of
         # the parser's own fields name the same word; as the relation it names no file type.
-        verdict = {**verdict, "entities": [
-            e for e in jsc.array(verdict.get("entities"))
+        kept = [
+            e for e in kept
             if not (
                 isinstance(e, dict)
                 and e.get("hint") == "attachment_type"
                 and jsc.js_string(e.get("raw") or "").strip().casefold() == relation_word
             )
-        ]}
+        ]
     if "file_word" in fits_item and not jsc.js_string(fits_item.get("file_word") or "").strip():
         # The parser says THIS message asks for no file (crew v94 check 2: v94 read "seat cover" as
         # an Installation Guide / "which kind of file?" ask). The relation's word is no file type,
         # so the turn is the bare codes: no attachment type of this message, and a file domain is
         # left to the engine's own continuation (null), as a bare code's is.
-        verdict = {**verdict, "entities": [
-            e for e in jsc.array(verdict.get("entities"))
+        kept = [
+            e for e in kept
             if not (isinstance(e, dict) and e.get("hint") == "attachment_type" and e.get("current_message") is not False)
-        ]}
+        ]
         if verdict.get("domain_hint") == "product_attachment":
-            verdict = {**verdict, "domain_hint": None, "intent_hint": None}
-    return verdict
+            out = {**out, "domain_hint": None, "intent_hint": None}
+    if len(kept) != len(entities):
+        out = {**out, "entities": kept}
+    return out
 
 
 def fit_lines(entities: list[Any], localizer: Any = None) -> list[str]:
