@@ -91,7 +91,7 @@ from app.services.chatbot.turn import tail as turn_tail
 from app.services.chatbot.turn import task as turn_task
 from app.services.chatbot.turn.apply import apply as _apply_state
 from app.services.chatbot.turn.apply import is_product_shaped_entity
-from app.services.chatbot.turn.apply import record_top_selling_asked
+from app.services.chatbot.turn.apply import RESET_KEEPS, record_top_selling_asked
 from app.services.chatbot.turn.decide import EVERYTHING, broaden_kind, broaden_level
 from app.services.chatbot.turn.policy import load_policy
 from app.services.chatbot.turn.route import route as turn_route
@@ -4163,6 +4163,149 @@ def _clarifier_memory_slice(memory_intake: dict[str, Any]) -> str:
             lines = []
 
 
+def _reset_signals(verdict: dict[str, Any]) -> list[str]:
+    """Release gate #1829, round 7 (crew ruling, design note 6335681391): the parser fields that
+    mark a reset, one per line, so one can be dropped with a one-line change. Parser fields only."""
+    answer = verdict.get("open_question_answer") if isinstance(verdict.get("open_question_answer"), dict) else {}
+    ops = {c.get("op") for c in verdict.get("state_changes") or [] if isinstance(c, dict)}
+    signals = {
+        "topic_reset": verdict.get("topic_reset") is True,
+        "cancel": answer.get("mode") == "cancel",
+        "entity_op_clear": verdict.get("entity_op") == "clear",
+        "op_clear": "clear" in ops,
+        "op_new_subject": "new_subject" in ops,
+    }
+    return [name for name, on in signals.items() if on]
+
+
+def _stated_beside_a_reset(verdict: dict[str, Any]) -> list[str]:
+    """What the message states of its own, one per line: anything here makes a reset signal
+    the start of an ask, which keeps today's path. A carried echo (`current_message` false) and
+    a domain or message type alone state nothing."""
+    answer = verdict.get("open_question_answer") if isinstance(verdict.get("open_question_answer"), dict) else {}
+    low_stock = verdict.get("low_stock") if isinstance(verdict.get("low_stock"), dict) else {}
+    stated = {
+        "entity": any(isinstance(e, dict) and e.get("current_message") is not False for e in verdict.get("entities") or []),
+        "status": bool(verdict.get("status") or verdict.get("order_status")),
+        "document": bool(verdict.get("document")),
+        "sales_channel": bool(verdict.get("sales_channel")),
+        "low_stock": any(v not in (None, "", []) for v in low_stock.values()),
+        "date_window": bool(verdict.get("date_mode") or verdict.get("date_filter_start") or verdict.get("date_filter_end")),
+        "attributes": bool(verdict.get("requested_attributes")),
+        "quantity": verdict.get("demand_qty") is not None,
+        "positions": bool(verdict.get("reference_positions")),
+        "picked": bool(answer.get("picked")),
+        "item_qty": any(isinstance(i, dict) and i.get("qty") is not None for i in answer.get("items") or []),
+    }
+    return [name for name, on in stated.items() if on]
+
+
+def _reset_turn(
+    envelope: Envelope,
+    *,
+    verdict: dict[str, Any],
+    parser_raw: Any,
+    state_in: Any,
+    session_block: Any,
+    remembered_before: dict[str, Any],
+    recalled: list[dict[str, Any]],
+    user_turn: Any,
+    profile: Any,
+    known_phone: str | None,
+    parser_usage: dict[str, Any],
+    parse_started: Any,
+    session_factory: SessionFactory,
+    turn_trace: Any,
+    turn_id: str,
+    contact_respond_id: str,
+    dry_run: bool,
+    actions: list[dict[str, Any]],
+    stage: list[str],
+) -> TurnResult | None:
+    """Release gate #1829, round 7: ONE reset seam, right after the parse and before the state
+    applier, apply, routing or any lane, so nothing the parser carried beside the reset (a
+    domain, a message type) can route the turn. A reset that states nothing new closes the open
+    question (any kind, offers included), every task and the stored list, resets the focus to
+    RESET_KEEPS, saves the session and answers ONE fixed acknowledgement in the reply language:
+    no lane, fetch, tool, escalation, hand-off, small-talk model or recap. None for every other
+    turn (and for a contact the access check refuses), which runs today's path untouched."""
+    signals = _reset_signals(verdict)
+    if not signals or _stated_beside_a_reset(verdict):
+        return None
+    routed = turn_runtime.with_routing_agent_default(verdict, pending=None)
+    suggested_agent = jsc.get(routed.get("routing"), "suggested_agent")
+    with _session(session_factory) as db:
+        access = check_access(db, agent_code=suggested_agent, contact_id=contact_respond_id, space_id=default_space_id(db))
+        if access.get("allowed") is not True:
+            # The refusal is the access stage's own answer, on today's path.
+            return None
+        stage[0] = "access"
+        _record_parser_usage(
+            db, usage=parser_usage, started=parse_started, contact_respond_id=contact_respond_id,
+            dry_run=dry_run, answered=True, turn_id=turn_id,
+        )
+        turn_trace.record(
+            "access",
+            summary=f"Access allowed for {access.get('agent_name') or suggested_agent}.",
+            why="The contact must be granted the agent this turn would use before anything is answered.",
+            facts={"agent": suggested_agent, "allowed": True, "decision": access.get("decision")},
+            raw=access,
+        )
+        from app.services.chatbot import copy as copy_mod
+
+        reply_language = _turn_language(user_turn, remembered_before, profile)
+        ack = copy_mod.resolve(db).render_in("reset_ack", reply_language)
+    stage[0] = "routed"
+    item = _stamp_item(access, "low_signal", {})
+    item["reply_language"] = reply_language
+    closed = {
+        "open_question": getattr(state_in.pending, "kind", None),
+        "tasks": len(state_in.focus.tasks or ()),
+        "last_list": bool(state_in.focus.last_list),
+    }
+    turn_trace.add("reset_turn", {"signals": signals, "closed": closed})
+    turn_trace.record(
+        "routed",
+        summary="Reset: the conversation was cleared and acknowledged.",
+        why="The parser read a reset that states nothing new, so nothing is looked up or handed on.",
+        facts={"lane": "low_signal", "rule": "reset_turn", "signals": signals, "closed": closed},
+        raw={"item": item},
+    )
+    reset_state = turn_state.State(
+        focus=turn_state.Focus(**{k: getattr(state_in.focus, k) for k in RESET_KEEPS}),
+        pending=None,
+        profile=state_in.profile,
+        turn_no=state_in.turn_no,
+        ideation=state_in.ideation,
+    )
+    ctx = build_ctx(
+        contact=_contact_block(envelope, known_phone),
+        text=_tf_message(envelope),
+        session=session_block,
+        parse={"output": verdict, "_parser_raw": parser_raw},
+        access=access,
+        media=getattr(envelope, "media", None),
+    )[0]["json"]["ctx"]
+    return _run_answer(
+        turn_id=turn_id,
+        ctx=ctx,
+        item=item,
+        branch_kind="low_signal",
+        actions=actions,
+        answer=turn_compose.Answer(text=ack),
+        state=reset_state,
+        remembered_before=remembered_before,
+        dry_run=dry_run,
+        session_factory=session_factory,
+        turn_trace=turn_trace,
+        stage=stage,
+        contact_respond_id=contact_respond_id,
+        verdict=verdict,
+        recalled=recalled,
+        chat_console=_chat_console(envelope),
+    )
+
+
 def _small_talk_ctx(ctx: dict[str, Any], verdict: dict[str, Any], state: Any) -> dict[str, Any]:
     """Release gate #1829 (contact 04): a reset's small talk is about the state the reset left, so
     the model is shown that state (no open question, offer, team, task or stored list), never the
@@ -4978,6 +5121,32 @@ def _run_stages_body(  # noqa: PLR0915
     # itself become the trace's last entry instead of the failed `understood`
     # stage (AC-105/R5/H44's own "no routing" shape).
     turn_trace.add("context", context_report)
+
+    # Release gate #1829, round 7: the ONE reset seam, before the state applier, apply, routing
+    # and every lane (`_reset_turn`).
+    reset_result = _reset_turn(
+        envelope,
+        verdict=verdict,
+        parser_raw=parser_raw,
+        state_in=state_in,
+        session_block=session_block,
+        remembered_before=remembered_before,
+        recalled=recalled,
+        user_turn=user_turn,
+        profile=profile,
+        known_phone=known_phone,
+        parser_usage=parser_usage,
+        parse_started=parse_started,
+        session_factory=session_factory,
+        turn_trace=turn_trace,
+        turn_id=turn_id,
+        contact_respond_id=contact_respond_id,
+        dry_run=dry_run,
+        actions=actions,
+        stage=stage,
+    )
+    if reset_result is not None:
+        return reset_result
 
     # CHAT-STATE seam: the parser's `state_changes`, applied ONCE, before every post-parse
     # rewrite, APPLY and both of its re-entries (they all read `state_in` / `verdict`, so
