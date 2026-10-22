@@ -1520,6 +1520,11 @@ def apply_changes(
             out["asks"] = []
     switch_to = _message_domains(out, focus.status)
     held = list(focus.domains or [])
+    # REPORT-SMART-L v92: a `switch_domain` onto the domain already held is no switch.
+    onto_held = "switch_domain" in ops and bool(switch_to) and all(d in held for d in switch_to)
+    if onto_held:
+        log["switch_onto_held"] = True
+    # It still rebuilds when the message names its own subject (r8 CARRY): only the domain-bound drop is skipped.
     switching = "switch_domain" in ops or bool(held and switch_to and not any(d in held for d in switch_to))
     # CHAT-STATE r8 CARRY (owner run 20 Oct): a message that names its own subject on a switch
     # starts a new subject whatever op the parser picked, so `switch_domain` and `new_subject`
@@ -1542,7 +1547,7 @@ def apply_changes(
         )
         pending = None
         held = []
-    if "switch_domain" in ops or (held and switch_to and not any(d in held for d in switch_to)):
+    if ("switch_domain" in ops and not onto_held) or (held and switch_to and not any(d in held for d in switch_to)):
         held_values = {
             "channel": ("sales_channel", focus.sales_channel),
             "status": ("status", focus.status),
