@@ -225,3 +225,72 @@ def test_the_history_sheet_names_so_line_numbers(api, monkeypatch):
     assert 592 not in {l["so_line_no"] for l in rev1["lines"]}
     assert 1700 in {l["so_line_no"] for l in rev2["lines"]}, rev2["lines"]
     assert [l["so_line_no"] for l in update["lines"]] == [1592], update["lines"]
+
+
+# --------------------------------------------------------------------- review round 1
+
+
+def test_a_batch_reads_its_rows_so_numbers_in_one_lookup_and_sends_them_over_the_wire(
+    api, monkeypatch, _cleanup_refusal_audit_rows  # noqa: F811
+):
+    """`get_batch` resolved each row's SO number with a query of its own (N rows, N extra
+    queries on the board's batch fetch), and no test read `so_line_no` back through the
+    endpoint's `response_model`, which drops an undeclared field silently."""
+    from app.models.planning_change import PlanningChangeRow
+    from app.services import planning_change_service
+
+    _as_role(monkeypatch, "admin")
+    fx = _order_with_change(api, line_no=592, seen=_cleanup_refusal_audit_rows)
+    db = fx["world"].db
+    _renumber(db, fx["line"], 604)
+    row = fx["row"]
+    db.add(
+        PlanningChangeRow(
+            **{
+                column.name: getattr(row, column.name)
+                for column in PlanningChangeRow.__table__.columns
+                if column.name not in ("id", "created_at", "updated_at")
+            }
+        )
+    )
+    db.commit()
+
+    calls = []
+    real = planning_change_service.display_line_nos
+
+    def counting(session, line_ids):
+        calls.append(list(line_ids))
+        return real(session, line_ids)
+
+    monkeypatch.setattr(planning_change_service, "display_line_nos", counting)
+    detail = fx["client"].get(f"/api/v1/project-sales/planning-changes/{fx['batch'].id}")
+
+    assert detail.status_code == 200, detail.text
+    rows = [r for order in detail.json()["orders"] for r in order["rows"]]
+    assert [r["so_line_no"] for r in rows] == [604, 604], rows
+    assert [r["line_no"] for r in rows] == [592, 592], "the sheet's own address (AC-9)"
+    assert len(calls) == 1, calls
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        "app.schemas.planning_change:PlanningChangeRow",
+        "app.schemas.project_board:PileQueueLine",
+        "app.schemas.project_supply:SupplyLine",
+        "app.schemas.project_supply:ConfirmedLine",
+        "app.schemas.project_supply:CancelledLineEcho",
+        "app.schemas.project_supply:SimulatedLineError",
+    ],
+)
+def test_every_payload_that_carries_the_so_number_declares_it(schema):
+    """`response_model` drops an undeclared field without a word (CLAUDE.md lesson), so a
+    schema that loses `so_line_no` puts the internal number back on screen."""
+    import importlib
+
+    module, name = schema.split(":")
+    model = getattr(importlib.import_module(module), name)
+    out = model.model_construct(so_line_no=224).model_dump(include={"so_line_no"})
+
+    assert "so_line_no" in model.model_fields, schema
+    assert out == {"so_line_no": 224}, schema

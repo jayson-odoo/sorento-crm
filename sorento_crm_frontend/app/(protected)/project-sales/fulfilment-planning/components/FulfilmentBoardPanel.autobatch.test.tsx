@@ -722,7 +722,7 @@ describe("S4: a covered line's staged reject on a batched order does not ride al
     } as BoardDemandLine;
   }
 
-  function boardWithBatchBlockedReject() {
+  function boardWithBatchBlockedReject(a9: Partial<BoardDemandLine> = {}) {
     return withRejectedContribution(
       withSavedContribution(
         withPendingBatch(
@@ -736,6 +736,7 @@ describe("S4: a covered line's staged reject on a batched order does not ride al
                   borrow: [],
                   buy_qty: '10',
                 },
+                ...a9,
               }),
               demandB(),
             ],
@@ -790,6 +791,29 @@ describe("S4: a covered line's staged reject on a batched order does not ride al
     expect(
       await screen.findByText(
         'Line 9: rejection is staged; it commits after the pending change is applied.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('names the held-back withdrawal by its SO line number (SO-LINE-NUMBERS review round 1, must-fix 2)', async () => {
+    getPlanningBoard.mockResolvedValue(boardWithBatchBlockedReject({ so_line_no: 304 }));
+    getPlanningChangeBatch.mockResolvedValue(BATCH_A);
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-so-381896', ok: true, decision_revision: 1 }],
+    });
+
+    renderPanel(null, ['SO381895', 'SO381896']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    await waitFor(() => expect(getPlanningChangeBatch).toHaveBeenCalledWith(BATCH_A.id));
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'),
+    );
+
+    await pressPreviewThenConfirm();
+
+    expect(
+      await screen.findByText(
+        'Line 304: rejection is staged; it commits after the pending change is applied.',
       ),
     ).toBeInTheDocument();
   });

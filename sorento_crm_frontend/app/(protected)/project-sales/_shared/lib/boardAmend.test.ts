@@ -1552,3 +1552,40 @@ describe('decideComposition: the delivered part needs no free stock (OI-CLOSED-L
 afterEach(() => {
   borrowKinds.shownApart = false;
 });
+
+/**
+ * SO-LINE-NUMBERS review round 1, must-fix 1: the board's Decide / Amend panel builds its
+ * draft here, and `lineBlockers` names the line off the draft. Without `so_line_no` the
+ * blocker read "Line 11, SRTWB242" for SO401624's SO line 224, on both seeders.
+ */
+describe('SO-LINE-NUMBERS: the board draft carries the SO line number', () => {
+  const sourced = { line_no: 11, so_line_no: 224, item_code: 'SRTWB242' };
+
+  it('on an uncovered line, beside the planning order’s own number', () => {
+    const draft = amendDraftFrom(contributionOf({ 'SRTWB242|BRW-BB': '40' }, sourced));
+
+    expect(draft.line_no).toBe(11);
+    expect(draft.so_line_no).toBe(224);
+  });
+
+  it('on a covered line, opened on what was decided', () => {
+    const draft = amendDraftFrom(
+      contributionOf(
+        {},
+        {
+          ...sourced,
+          decision: {
+            revision_no: 1,
+            timely_spo_qty: '0',
+            reserve: [],
+            borrow: [],
+            buy_qty: '100',
+          },
+        },
+      ),
+    );
+
+    expect(draft.line_no).toBe(11);
+    expect(draft.so_line_no).toBe(224);
+  });
+});
