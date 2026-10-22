@@ -952,3 +952,55 @@ def test_round12_guard_routes_as_at_b173(turn, name, gate):
     assert "reset_turn" not in t.trace_of(result), "the reset seam answered a turn that is no reset"
     assert t.plans, "apply never ran: the turn did not take today's path"
     assert _lane_actions_tools(t, result) == B173_R12[name], _lane_actions_tools(t, result)
+
+
+# --- round 12b: an all-broaden answering a question the focus holds is no reset ----------------------
+#
+# Reviewer B1 / S1 on 9f156ca06b: all_broaden_over_nothing_open also fired over the questions the bot
+# keeps on the focus rather than as a stored pending (a set clarify, the count question, the
+# other-brands offer, a top selling question), and beside a family widening ("all variants").
+
+
+def _focus_session(focus: Focus) -> dict[str, Any]:
+    return {"focus": focus_to_wire(focus), "open_question": None, "ideation": None, "access_levels": [],
+            "contains_flyer": False, "reply_language": None}
+
+
+_WC_KEY = {"domain": "inventory", "set_noun": "water closets", "access_levels": []}
+
+#: The focus-held questions (and a partly listed set), each over the inventory domain.
+FOCUS_HELD = {
+    "set_clarify": Focus(domains=["inventory"], set_clarify={"kind": "brand", "options": ["Sorento", "Mocha"]}),
+    "count_question": Focus(domains=["inventory"], set_page={"set_key": {**_WC_KEY, "total": 9, "shown": 0}}),
+    "other_brands_offer": Focus(domains=["inventory"], set_page={"set_key": {
+        **_WC_KEY, "total": 5, "shown": 5, "other_brands": [{"brand": "Mocha", "count": 2}]}, "page": 1}),
+    "top_selling_asked": Focus(domains=["order"], top_selling={"asked": {"slot": "basis"}}),
+    "partly_listed_set": Focus(domains=["inventory"], set_page={"set_key": {**_WC_KEY, "total": 9, "shown": 5},
+                                                                "page": 1}),
+}
+
+#: Each guard's lane, actions and tools at b173c6e8c4 (no seam), both paths (measured 22 Oct).
+B173_R12B: dict[str, Any] = {
+    **{name: {"lane": "business_query", "actions": ["send_message"], "tools": []} for name in FOCUS_HELD},
+    "all_variants_broaden_to": {"lane": "business_query", "actions": ["send_message"], "tools": []},
+    "all_variants_family": {"lane": "business_query", "actions": ["send_message"], "tools": _STOCK_TOOLS},
+}
+
+
+def _r12b_guard(name: str, gate: bool) -> tuple[dict[str, Any], dict[str, Any], str]:
+    if name in FOCUS_HELD:
+        return _focus_session(FOCUS_HELD[name]), _measured_all_broaden(gate, broaden_to=None), "all"
+    if name == "all_variants_broaden_to":
+        return _held_subject(), _measured_all_broaden(gate, broaden_to="family"), "all variants"
+    return _held_subject(), _measured_all_broaden(gate, broaden_to=None, family=True), "the whole family"
+
+
+@pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
+@pytest.mark.parametrize("name", list(B173_R12B))
+def test_round12b_guard_routes_as_at_b173(turn, name, gate):
+    t = turn(gate)
+    stored, emission, words = _r12b_guard(name, gate)
+    result = t.say(stored, emission, words)
+    assert (result.reply or {}).get("text") != ACK["en"], (result.branch_kind, (result.reply or {}).get("text"))
+    assert "reset_turn" not in t.trace_of(result), "the reset seam answered a turn that is no reset"
+    assert _lane_actions_tools(t, result) == B173_R12B[name], _lane_actions_tools(t, result)
