@@ -240,10 +240,12 @@ def test_c_a_new_axis_after_a_failed_ask_is_its_own_ask_never_the_scope_question
     assert calls and calls[0]["group_by"] == "customer" and not calls[0].get("customer_agent_ids"), (text, calls)
 
 
-def test_c_near_miss_the_parsers_unsure_still_asks_the_scope_question(console) -> None:
+def test_c_near_miss_the_parsers_unsure_runs_across_all_not_the_scope_question(console) -> None:
+    # Owner ruling B (23 Oct, reverses the old unsure scope question): unsure runs across all.
     ran = _state_on(console)
     _held_ranking(console)
     console.say(FAILED_ASKS["unknown_axis"](), "top 5 for zzt")
     text, calls = console.say(_customers_ask(ranking_drill="unsure"), "top 10 customers")
     assert ran, "harness: the State path never ran"
-    assert calls == [] and SCOPE_Q in text, (text, calls)
+    assert SCOPE_Q not in text, (text, calls)
+    assert calls and calls[0]["group_by"] == "customer" and not calls[0].get("customer_agent_ids"), (text, calls)
