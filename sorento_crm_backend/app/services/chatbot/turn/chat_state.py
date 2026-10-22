@@ -1318,6 +1318,13 @@ def apply_changes(
     Returns the new `State` (with `state_led` set) and the verdict with `state_changes`
     popped; an invalid change returns the inputs unchanged with the reasons in the log.
     `log["slots"]` is the stance stated per held slot, `{axis: op}`."""
+    from app.services.chatbot.turn.apply import entities_a_reset_keeps, is_reset
+
+    if is_reset(verdict, state):
+        # Release gate #1829 (B1): the reset is read off the parser's own verdict before any op
+        # runs (an op mix that answers nothing would strip a cancel below), so the applier and
+        # `apply` read one reset, and nothing the reset drops reaches the ops.
+        verdict = {**verdict, "topic_reset": True, "entities": entities_a_reset_keeps(verdict, state)}
     changes = verdict.get("state_changes")
     shown = view(state, open_question)
     log: dict[str, Any] = {
@@ -1621,9 +1628,11 @@ def apply_changes(
             if open_question.get("kind") == question_mod.QUANTITIES and set(ops) == {"close_question"} and not names_own:
                 out[question_mod.ANSWER_KEY] = {**question_mod.NO_ANSWER, "mode": "cancel"}
         elif open_question is not None and (verdict.get(question_mod.ANSWER_KEY) or {}).get("mode") in ("no", "cancel"):
-            # The parser declared a decline of the stored question: its own arm answers it, as it
-            # does off the state path ("none of them" over a did-you-mean), so the question stays
-            # for that arm and the declared answer is kept.
+            # The parser declared an answer to the stored question that closes it: a "no" is its
+            # decline, which its own arm answers as off the state path ("none of them" over a
+            # did-you-mean); a cancel that names nothing is a reset (`apply.is_reset`, read at the
+            # top), which `apply` closes unanswered. Either way the question stays for `apply`
+            # and the declared answer is kept.
             out[question_mod.ANSWER_KEY] = verdict.get(question_mod.ANSWER_KEY)
             if _same_list([i for i in (_list_item(r) for r in focus.last_list or [] if isinstance(r, dict)) if i], open_question):
                 # The declined question's options WERE the stored list: it goes with them.

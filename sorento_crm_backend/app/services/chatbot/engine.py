@@ -4168,7 +4168,7 @@ def _small_talk_ctx(ctx: dict[str, Any], verdict: dict[str, Any], state: Any) ->
     """Release gate #1829 (contact 04): a reset's small talk is about the state the reset left, so
     the model is shown that state (no open question, offer, team, task or stored list), never the
     session from before the turn. Every other turn's ctx is returned as it is."""
-    if not is_reset(verdict):
+    if not is_reset(verdict, state):
         return ctx
     session = jsc.get(ctx, "session") or {}
     after = {

@@ -1092,13 +1092,10 @@ def _focus_rules(
         kept = {k: getattr(focus, k) for k in RESET_KEEPS}
         focus = Focus(**kept)
         trace.rules_fired.append("reset_on_topic")
-    elif (
-        verdict.get("topic_reset")
-        and not entities
-        and (verdict.get("open_question_answer") or {}).get("mode") == "cancel"
-    ):
-        # A cancel answer is the reset the old path's wipe is, whatever ops the state path read:
-        # nothing carried (the held customers and products, the list) outlives it.
+    elif verdict.get("topic_reset") and not _names_a_subject(verdict):
+        # A reset that names nothing of its own is the old path's wipe, whatever ops the state
+        # path read and whatever the answer mode: nothing carried (the held customers and
+        # products, the list) outlives it (release gate #1829).
         focus = replace(Focus(**{k: getattr(focus, k) for k in RESET_KEEPS}), tasks=focus.tasks)
         trace.rules_fired.append("reset_on_topic")
 
@@ -2951,8 +2948,10 @@ def _open_pick_answer(state: State, verdict: dict[str, Any], trace: Trace) -> tu
       the same message ("the first one, I need 2") rides on a stock pick and is stamped
       onto the product the pick settles (`_spend_stock_pick`), so nothing re-asks it.
     * yes: `is_affirmative` true, for a question that has one option or expects yes/no.
-    * no / cancel: `is_affirmative` false: the decline the question's own arm answers
-      ("none of them" to a dealer's did-you-mean is "Please refer to your salesman.").
+    * no: `is_affirmative` false: the decline the question's own arm answers ("none of
+      them" to a dealer's did-you-mean is "Please refer to your salesman."). A cancel that
+      names nothing of its own is a reset (`is_reset`), which closed the question before this
+      ran; one that names something is read the same way as a "no".
 
     Only the fields `decide()` and `_answer_pending` already read are written, so every
     guard they keep (no handover on a position over a yes/no offer) still holds. Returns
@@ -3276,17 +3275,41 @@ def _hand_on_unanswered_lists(asked: Any, specs: list[Any], verdict: dict[str, A
     trace.rules_fired.append("stock_pick_lists_still_open")
 
 
-def is_reset(verdict: dict[str, Any]) -> bool:
+def _question_codes(state: State) -> set[str]:
+    """The open question's own options (code, label) or, with none stored, the open stock
+    check's own lines (slot key, label), folded."""
+    if state.pending is not None:
+        values = [v for o in state.pending.options for v in (o.get("code"), o.get("label"))]
+    else:
+        task = _open_question_task(state.focus)
+        values = [v for slot in (task.slots if task else ()) for v in (slot.key, slot.label)]
+    return {v.strip().casefold() for v in values if isinstance(v, str) and v.strip()}
+
+
+def entities_a_reset_keeps(verdict: dict[str, Any], state: State) -> list[dict[str, Any]]:
+    """What a message names of its own beside the open question: an entity it states
+    (`current_message` true, `_names_a_subject`'s sense) that is not one of the question's own
+    options or lines. A carried echo, or the line a cancel points at, names nothing."""
+    codes = _question_codes(state)
+    return [
+        e for e in verdict.get("entities") or []
+        if isinstance(e, dict) and e.get("current_message") is True and not (_codes_named(e) & codes)
+    ]
+
+
+def is_reset(verdict: dict[str, Any], state: State) -> bool:
     """The ONE reading of a reset (release gate #1829, crew ruling): the parser's `topic_reset`,
-    or a cancel answer that names nothing (no entity, no position, no pick, no item with a
-    quantity). A "no" is the open question's own decline, never a reset. Parser fields only."""
+    or a cancel answer that names nothing of its own (`entities_a_reset_keeps` empty, no position,
+    no pick, no item with a quantity). A "no" is the open question's own decline, never a reset.
+    Parser fields only. Read before the state applier runs (`chat_state.apply_changes`) and again
+    here, where the applier has written its reading onto `topic_reset`."""
     if verdict.get("topic_reset") is True:
         return True
     answer = verdict.get(OPEN_QUESTION_ANSWER)
     if not isinstance(answer, dict) or answer.get("mode") != "cancel":
         return False
     return not (
-        verdict.get("entities")
+        entities_a_reset_keeps(verdict, state)
         or verdict.get("reference_positions")
         or answer.get("picked")
         or any(isinstance(item, dict) and item.get("qty") is not None for item in answer.get("items") or [])
@@ -3295,10 +3318,16 @@ def is_reset(verdict: dict[str, Any]) -> bool:
 
 def _reset(state: State, verdict: dict[str, Any], trace: Trace) -> State:
     """A reset, before any reader of the answer, on both paths: the stored question closes and is
-    never answered (no accept, no decline, no pick), every task closes (open or parked, whatever
-    domain the message names) and the stored list goes. A closed stock check takes the products
-    it was about with it (D23); what THIS message names is written after, by `_focus_rules`."""
+    never answered (no accept, no decline, no pick, no escalation flag read), every task closes
+    (open or parked, whatever domain the message names) and the stored list goes. A closed stock
+    check takes the products it was about with it (D23); what THIS message names of its own is
+    written after, by `_focus_rules`, and nothing else it carries is."""
     verdict["topic_reset"] = True
+    verdict["entities"] = entities_a_reset_keeps(verdict, state)
+    verdict["is_affirmative"] = None
+    escalation = verdict.get("escalation")
+    if isinstance(escalation, dict):
+        verdict["escalation"] = {**escalation, "escalation_declined": None, "is_escalation_confirmation": None}
     focus = replace(state.focus, tasks=(), last_list=None, required_ask=None)
     if state.pending is not None:
         trace.rules_fired.append("reset_closes_the_question")
@@ -3365,7 +3394,7 @@ def _apply(
     only: a roster is never built out of a word that matched nothing."""
     trace = Trace()
     # Release gate #1829: the reset is read once, here, before every reader of the answer.
-    reset = is_reset(verdict)
+    reset = is_reset(verdict, state)
     if reset:
         state = _reset(state, verdict, trace)
     # PR #1247 round 8: the parser's declared answer to the open stock question comes
@@ -3612,7 +3641,7 @@ def _apply(
         )
 
     asks = verdict.get("asks") or []
-    if reset and not entities and not names_its_own_domain(verdict):
+    if reset and not _names_a_subject(verdict) and not names_its_own_domain(verdict):
         # Release gate #1829: a reset that names nothing of its own plans nothing - no fetch,
         # no ask, so no empty-fetch refusal either: the reset is acknowledged, as on main.
         domains = []
@@ -3822,8 +3851,9 @@ def _apply(
             )
         ),
         # Ported from PR #1118 (not merged), review round 9 finding 4 / D34 round 11:
-        # a bare quantity with nothing open, or a cancel that names nothing, is not a
-        # subject - see `_narrow_and_plan`'s own comment on `refuse_empty_subject`.
+        # a bare quantity with nothing open, or a reset that names a domain and no subject,
+        # is not a subject (a reset naming nothing plans no domain at all, above) - see
+        # `_narrow_and_plan`'s own comment on `refuse_empty_subject`.
         refuse_empty_subject=(
             (
                 decision.kind == CARRY
