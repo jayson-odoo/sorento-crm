@@ -1364,3 +1364,31 @@ def test_report_gold_v92_loads_and_covers_the_cases():
     rows = pg.load_gold(V92_GOLD)
     for prefix in ("a1", "a2", "a3", "a4", "b1", "b2", "b3", "c", "d", "e", "f"):
         assert sum(r["id"].startswith(f"rs92-{prefix}-") for r in rows) >= 8, prefix
+
+
+# --- REPORT-SMART-L delivery gold: the document field is gradable and recorded --------------------------------
+
+
+def test_grade_document_is_plain_equality():
+    ok, reasons = pg.grade_parse({"document": ["DO"]}, {"document": ["DO"]})
+    assert ok, reasons
+    for got in (["SO"], []):
+        ok, reasons = pg.grade_parse({"document": got}, {"document": ["DO"]})
+        assert not ok and any("document" in r for r in reasons), (got, reasons)
+
+
+def test_load_gold_accepts_a_document_expect_key(tmp_path):
+    rows = pg.load_gold(_write(tmp_path, [_row("a", "x", {"document": ["DO"]})]))
+    assert rows[0]["expect"] == {"document": ["DO"]}
+
+
+def test_run_live_rows_record_document_and_order_status(session_factory, monkeypatch):
+    from app.services.chatbot.head import parser as parser_mod
+
+    monkeypatch.setattr(parser_mod, "resolve_config", lambda db, **kw: _config())
+    verdict = {"entities": [], "document": ["DO"], "order_status": "delivered"}
+    monkeypatch.setattr(pg, "_parse_one", lambda message, config, factory, context=None: dict(verdict))
+    out = pg.run_live([{"id": "a", "message": "m", "expect": {"document": ["DO"]}}], session_factory=session_factory,
+                      version_id="1", repeats=1, max_usd=5.0, require_key_last4="WXYZ")
+    assert out[0]["passed"] is True, out
+    assert out[0]["document"] == ["DO"] and out[0]["order_status"] == "delivered", out
