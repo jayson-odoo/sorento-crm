@@ -427,6 +427,8 @@ def test_a_code_with_s_trap_250_answers_exactly_its_two_250_variants(client, fam
     response = client.post(ENDPOINT, json=body)
     assert response.status_code == 200, response.text
     assert _route_codes(response.json()) == ["ZZTWC8354-SH", "ZZTWC8354-SH-UF"], response.json()
+    # Each variant is its own answered product, not a which-one pick.
+    assert all(r.get("resolved") for r in response.json().get("resolutions") or []), response.json()
 
 
 def test_the_grounded_values_alone_answer_the_two_variants(client, family_8354):
@@ -445,6 +447,8 @@ def test_the_grounded_values_alone_answer_the_two_variants(client, family_8354):
     response = client.post(ENDPOINT, json=body)
     assert response.status_code == 200, response.text
     assert _route_codes(response.json()) == ["ZZTWC8354-SH", "ZZTWC8354-SH-UF"], response.json()
+    # Each variant is its own answered product, not a which-one pick.
+    assert all(r.get("resolved") for r in response.json().get("resolutions") or []), response.json()
 
 
 def _request(**fields):
