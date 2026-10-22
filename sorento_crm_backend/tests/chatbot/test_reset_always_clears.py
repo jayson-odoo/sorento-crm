@@ -488,13 +488,27 @@ def test_a_reset_that_states_an_option_of_the_stored_question_fetches_it(gate):
     assert _fetched_codes(plan) == [[TWENTY[1]]], (_fetched_codes(plan), plan.trace.rules_fired)
 
 
-@GATES
-def test_a_cancel_naming_a_line_with_a_domain_word_runs_as_its_own_ask(gate):
+N1_STATE_OPS = {
+    "close_set": [_op("close_question"), _op("set", "product")],
+    # Reviewer R4-1: the declared cancel rides through ops that do not answer the question too.
+    "set": [_op("set", "product")],
+    "new_subject_set": [_op("new_subject"), _op("set", "product")],
+    "keep": [_op("keep")],
+}
+N1_CASES = pytest.mark.parametrize(
+    "gate,ops",
+    [(False, None)] + [(True, name) for name in N1_STATE_OPS],
+    ids=["old_path"] + [f"state_path-{name}" for name in N1_STATE_OPS],
+)
+
+
+@N1_CASES
+def test_a_cancel_naming_a_line_with_a_domain_word_runs_as_its_own_ask(gate, ops):
     """N1: "batal, stock SRTZA102 instead": the line comes with a domain word of its own, so the
     cancel names something and is no reset; the turn runs as its ask and fetches SRTZA102."""
     v = _own_ask(reset=False, entity=_stated(FOUR[1]), mode="cancel")
     if gate:
-        v["state_changes"] = [_op("close_question"), _op("set", "product")]
+        v["state_changes"] = N1_STATE_OPS[ops]
     new_state, plan = _turn(_session("quantities_question", gate), v)
     assert "refused_empty_subject" not in plan.trace.rules_fired, plan.trace.rules_fired
     assert _fetched_codes(plan) == [[FOUR[1]]], (_fetched_codes(plan), plan.trace.task_question, plan.trace.rules_fired)
@@ -545,3 +559,23 @@ def test_guard_an_echo_on_a_reset_with_a_domain_word_is_still_dropped(gate):
     assert not new_state.focus.tasks, new_state.focus.tasks
     assert FOUR[0] not in [c for codes in _fetched_codes(plan) for c in codes], _fetched_codes(plan)
     assert FOUR[0] not in [p.get("canonical_code") for p in new_state.focus.products], new_state.focus.products
+
+
+def test_a_cancel_of_a_stored_offer_with_its_own_ask_leaves_the_open_check_as_a_no_does():
+    """R4-2 (old path): "batal, stock ZZP999" answers the stored offer, not the stock check, so
+    the check is not closed by the cancel; it ends exactly as it does when the same turn says no
+    (parked)."""
+    offer_and_check = replace(
+        _session("quantities_question", False), pending=_offer(),
+    )
+
+    def run(mode):
+        v = _own_ask(reset=False, entity=_stated("ZZP999"), mode=mode)
+        v["is_affirmative"] = False
+        return _turn(offer_and_check, v)
+
+    no_state, _no_plan = run("no")
+    cancel_state, cancel_plan = run("cancel")
+    assert "task_closed_on_cancel_stock_qty" not in cancel_plan.trace.rules_fired, cancel_plan.trace.rules_fired
+    assert [t.status for t in no_state.focus.tasks] == ["parked"], no_state.focus.tasks
+    assert cancel_state.focus.tasks == no_state.focus.tasks, (cancel_state.focus.tasks, no_state.focus.tasks)
