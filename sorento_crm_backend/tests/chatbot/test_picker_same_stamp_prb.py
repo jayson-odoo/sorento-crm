@@ -21,7 +21,8 @@ def _turn(session_factory, monkeypatch, *, with_do: tuple[str, ...], tag: str, d
     from app.services.chatbot.lanes.business.services import ResolveGateServices
     from tests.chatbot.conftest import validating_resolve_entity
     from tests.chatbot.test_engine import _parser_output
-    from tests.chatbot.test_outstanding_lane import _run_turn, _seed_contact
+    from tests.chatbot._turn_helpers import make_office_access_type, make_office_tier
+    from tests.chatbot.test_outstanding_lane import CONTACT_ID, _run_turn, _seed_contact
 
     probes: list[Any] = []
 
@@ -44,6 +45,9 @@ def _turn(session_factory, monkeypatch, *, with_do: tuple[str, ...], tag: str, d
         probe=probe,
     )
     _seed_contact(session_factory, variables={})
+    # V1-DOC-SCOPE hides DO stamps from an unlinked non-staff contact: this one is office staff.
+    make_office_tier(session_factory, CONTACT_ID)
+    make_office_access_type(session_factory, CONTACT_ID)
     result, captured = _run_turn(
         session_factory,
         monkeypatch,
