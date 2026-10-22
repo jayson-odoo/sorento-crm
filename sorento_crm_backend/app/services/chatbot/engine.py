@@ -4176,9 +4176,10 @@ def _states_a_domain(verdict: dict[str, Any], held_domains: tuple[str, ...]) -> 
     """Release gate #1829, round 9 (reviewer S2, captain ruling option B): a domain stated beside
     a reset. Beside a widening to everything it is the held one only when the session already
     holds it (contact 01: inventory over an inventory session); "never mind, all promotions" over
-    a stock session names promotion of its own."""
+    a stock session names promotion of its own. Round 10: `scope_intent` broaden is the same
+    widening (a reset beside it is "clear all", crew audit 22 Oct)."""
     held_widening = (
-        verdict.get("broaden_axis") == "all"
+        (verdict.get("broaden_axis") == "all" or verdict.get("scope_intent") == "broaden")
         and not verdict.get("asks")
         and verdict.get("domain_hint") in held_domains
     )
@@ -4213,7 +4214,7 @@ def _stated_beside_a_reset(verdict: dict[str, Any], held_domains: tuple[str, ...
     the start of an ask, which keeps today's path. A carried echo (`current_message` false), a
     carried domain and a plain business query state nothing; `broaden_axis` all is the "all" of
     "clear all" itself (every measured v63 "clear all" carries it), a widening to everything is
-    `scope_intent` broaden."""
+    `scope_intent` broaden when the parser read no `topic_reset` (round 10: a reset wins)."""
     answer = verdict.get("open_question_answer") if isinstance(verdict.get("open_question_answer"), dict) else {}
     low_stock = verdict.get("low_stock") if isinstance(verdict.get("low_stock"), dict) else {}
     ops = {c.get("op") for c in verdict.get("state_changes") or [] if isinstance(c, dict)}
@@ -4237,7 +4238,10 @@ def _stated_beside_a_reset(verdict: dict[str, Any], held_domains: tuple[str, ...
         "sort_by": bool(verdict.get("sort_by")),
         "group_by": bool(verdict.get("group_by")),
         "broaden_axis": verdict.get("broaden_axis") not in (None, "", "all"),
-        "scope_intent": bool(verdict.get("scope_intent")),
+        # Round 10 (crew audit 22 Oct): a reset wins over broaden; without topic_reset a broaden
+        # ("show me everything") is an ask.
+        "scope_intent": bool(verdict.get("scope_intent"))
+        and not (verdict.get("topic_reset") is True and verdict.get("scope_intent") == "broaden"),
         "query_brands": bool(verdict.get("query_brands")),
         "set_op": "set" in ops,
         "message_type": verdict.get("message_type") not in _RESET_MESSAGE_TYPES,
