@@ -494,6 +494,20 @@ class Conversation(Turn):
         env.message["message"]["message"]["text"] = words
         return engine_mod.run_turn(env, session_factory=self.session_factory)
 
+    def stamp_before_now(self, turn_id: str, minutes: int) -> None:
+        """Every session of one test shares one outer transaction, so every turn's created_at is
+        that transaction's now(): turns would tie in the episode's ORDER BY created_at. A live
+        turn stamped `minutes` before now() keeps its place, ahead of the reset turn's own."""
+        from datetime import timedelta
+
+        from sqlalchemy import func
+
+        db = self.session_factory()
+        db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).update(
+            {"created_at": func.now() - timedelta(minutes=minutes)}, synchronize_session=False
+        )
+        db.commit()
+
     def frames(self, is_test: bool):
         from app.models.conversation_frame import ConversationFrame
 
@@ -533,6 +547,8 @@ def test_round8_a_reset_after_live_turns_closes_the_episode(conversation, gate, 
     c.seed(_stored("nothing_open"))
     first = c.run(_stock_ask(FOUR[0], gate), f"check stock {FOUR[0]}", "ZZT-r8-ep-1")
     second = c.run(_stock_ask(FOUR[1], gate), f"check stock {FOUR[1]}", "ZZT-r8-ep-2")
+    c.stamp_before_now(first.turn_id, 2)
+    c.stamp_before_now(second.turn_id, 1)
     reset = c.run(_clear_all("C28", shape), "clear all", "ZZT-r8-ep-3")
     assert (reset.reply or {}).get("text") == ACK["en"], (reset.branch_kind, (reset.reply or {}).get("text"))
     frames = c.frames(is_test=False)
