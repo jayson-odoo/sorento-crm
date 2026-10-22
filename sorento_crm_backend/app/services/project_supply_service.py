@@ -10604,10 +10604,11 @@ class ProjectSupplyService:
         committed_at: Dict[str, Decimal] = {}
         for (held_warehouse, _project), qty in holds_here.items():
             committed_at[held_warehouse] = committed_at.get(held_warehouse, _ZERO) + qty
+        # BORROW-ZERO-FREE (owner, 22 Oct 2026, "not available also can borrow"): every
+        # location carrying a stock row for the item is a choice, 0 free included. Confirm
+        # records what is not free there short, the same as the own location below.
         warehouse_ids = [
-            warehouse_id
-            for warehouse_id, qty in free_here.items()
-            if qty > _ZERO and warehouse_id not in inside
+            warehouse_id for warehouse_id in free_here if warehouse_id not in inside
         ]
         warehouses = self._warehouses(warehouse_ids)
         for warehouse_id in sorted(warehouse_ids):
@@ -11084,6 +11085,13 @@ class ProjectSupplyService:
         """
 
         def compare(left: Dict[str, Any], right: Dict[str, Any]) -> int:
+            # BORROW-ZERO-FREE: a location with nothing free is listed, but behind every row
+            # with stock. Availability nets what the book owes, not what is reserved or held,
+            # so a fully spoken-for pile can read MORE available than one with 7 free, and
+            # recommending it recommends a borrow Confirm records short in full.
+            has_free = _dec(left["free_qty"]) > _ZERO, _dec(right["free_qty"]) > _ZERO
+            if has_free[0] != has_free[1]:
+                return -1 if has_free[0] else 1
             for name in ("available_after_need", "available_qty"):
                 a, b = _dec(left[name]), _dec(right[name])
                 if a != b:
