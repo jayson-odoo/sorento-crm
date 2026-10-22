@@ -203,12 +203,13 @@ def _assert_the_reset(new_state, plan):
     assert new_state.pending is None, new_state.pending
     assert question_mod.open_question(new_state.pending, new_state.focus.tasks) is None
     assert plan.trace.lane not in ANSWER_LANES, (plan.trace.lane, rules)
-    answered = [r for r in rules if r in ANSWER_RULES]
+    answered = [r for r in rules if r in ANSWER_RULES or r.startswith("open_question_answer_")]
     assert not answered, ("the stored question was answered", answered)
     # Rule 2: every task closes, the open one and the parked one, and the stored list goes.
     assert not new_state.focus.tasks, [(t.status, [s.label for s in t.slots][:3]) for t in new_state.focus.tasks]
     assert not new_state.focus.last_list, "the stored list survived the reset"
-    # Rule 3: main's reset plan. Nothing fetched (so no empty-fetch refusal), nothing asked.
+    # Rule 3: main's reset plan. The empty-fetch refusal never fires, nothing is fetched or asked.
+    assert "refused_empty_subject" not in rules, rules
     assert plan.fetch == [], [(s.domain, [e.get("canonical_code") for e in s.entities]) for s in plan.fetch]
     assert plan.ask is None, plan.ask
     assert plan.trace.task_question is None, plan.trace.task_question
