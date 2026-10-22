@@ -103,7 +103,9 @@ def test_a_donor_order_borrow_names_so_numbers_in_the_donor_note_and_the_superse
             )
             .all()
         ]
-        reason = f"Borrowed by SO{_reference(world_['asker'])} line {ASKER_SO_LINE}"
+        # The reference already carries its own "SO" (`provisional_ref = core.so_number`,
+        # `project_so_adoption_service.py:370`); the reason never doubles it.
+        reason = f"Borrowed by {_reference(world_['asker'])} line {ASKER_SO_LINE}"
         asker_ref = _reference(world_["asker"])
 
     # AC-4: the candidate the dialog lists names the donor's SO line.
