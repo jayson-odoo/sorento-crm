@@ -564,6 +564,7 @@ def _config(**kw):
 
 def test_parse_one_without_a_context_builds_todays_block_byte_equal(session_factory, monkeypatch):
     from app.services.chatbot.turn import context as context_mod
+    from app.services.reports.ask import SALES_CHANNELS
 
     block = _capture(monkeypatch, session_factory, _config())
     expected, _ = context_mod.assemble(context_mod.ContextLayers(
@@ -571,6 +572,7 @@ def test_parse_one_without_a_context_builds_todays_block_byte_equal(session_fact
         current_subject=None, pending_kind=None, pending_options=None, settings_profile_line=None,
         # The engine's own `Current user message` text (`engine.build_latest_user_message`).
         current_message="ZZA100 x 5\n\n", reply_to=None, media_line=None, brands=None, promotion_kinds=None,
+        sales_channels=list(SALES_CHANNELS),
         product_types=None, product_details=None, candidate_lines=None,
     ))
     assert block == expected
