@@ -547,3 +547,182 @@ def test_q1_seam_the_stock_probe_planner_mirrors_d1s_candidates_with_the_pick_fi
         assert planned[0] == "SRTWT8259-GM", (uuid_keyed, planned)
         assert planned.count("SRTWT8259-GM") == 1, (uuid_keyed, planned)
         assert planned == composed, (uuid_keyed, planned, composed)
+
+
+# --- crew ruling (ii), lead reading (a): the pick the alternatives cap cut ---------------------------------
+#
+# The resolver keeps at most `_ALTERNATIVES_CAP` (5) alternatives per unresolved token, and the typed code's
+# own model family leads them, exempt from the floor. Measured miss: raw "Srtwc8066-sh-250", v92 pick
+# SRTWC8036-SH-250; the alternatives were the five SRTWC8066-SH-* rows, the pick was cut, and the bot
+# answered SRTWC8036-SH-250 directly. Rule: when the raw did NOT resolve, the pick also counts as a near
+# code when its trigram similarity to the raw (the resolver's own score, `similarity(_norm_sql(code), pn)`,
+# pn the raw with dashes and spaces stripped, lowered) is at least ENTITY_MISS_SUGGEST_FLOOR, cap or no
+# cap. A raw that resolves answers as today.
+
+CAP_RAW = "Srtwc8066-sh-250"
+CAP_PICK = "SRTWC8036-SH-250"
+CAP_FAMILY = ["SRTWC8066-SH-MG", "SRTWC8066-SH-MK", "SRTWC8066-SH-MW", "SRTWC8066-SH-UF", "SRTWC8066-SH-SC"]
+INLET = "SRTUB668-BACK INLET"
+NAMED = ("SRTZZ5501-WH", "ZZT Aurora Lumen")
+
+
+def _seed_codes(session_factory, names: dict[str, str]) -> dict[str, str]:
+    """`{code: product name}` under a category of its own; returns `{uuid: code}`."""
+    from app.models.product import Product, ProductCategory, UnitOfMeasure
+    from tests.chatbot.test_rearch_s3_attribute_first import SORENTO
+
+    db = session_factory()
+    db.info["company_scope"] = frozenset({SORENTO})
+    tag = uuid.uuid4().hex[:6]
+    cat = ProductCategory(id=str(uuid.uuid4()), category_code=f"ZZTC-q1w-{tag}", category_name="ZZT Q1W",
+                          class_label="q1w", search_synonyms=[])
+    uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code=f"ZZTU-q1w-{tag}", uom_name="ZZT uom")
+    db.add_all([cat, uom])
+    db.flush()
+    by_uuid: dict[str, str] = {}
+    for code, name in names.items():
+        pid = str(uuid.uuid4())
+        by_uuid[pid] = code
+        db.add(Product(id=pid, product_code=code, product_name=name, category_id=cat.id, base_uom_id=uom.id,
+                       list_price=1))
+    db.commit()
+    return by_uuid
+
+
+def _cap_rows() -> dict[str, str]:
+    return {code: f"ZZT {code}" for code in [*CAP_FAMILY, CAP_PICK, INLET]} | {NAMED[0]: NAMED[1]}
+
+
+def _scoped(session_factory):
+    from tests.chatbot.test_rearch_s3_attribute_first import SORENTO
+
+    db = session_factory()
+    db.info["company_scope"] = frozenset({SORENTO})
+    return db
+
+
+def _raw_resolution(db, raw: str) -> dict[str, Any]:
+    """The raw's own resolution, as the business lane asks the resolve route (product only, no model read)."""
+    from app.services.chatbot.lanes.business import services as business_services
+    from app.services.chatbot.lanes.business.resolve_gate import _LOOKUP_LIMIT, _token_of
+
+    body = {
+        "query": raw, "tokens": [_token_of({"raw": raw, "hint": "product"})], "raw_tokens": [raw],
+        "match_mode": "or", "allowed_entity_types": ["product"], "fallback_to_all_types": False,
+        "limit": _LOOKUP_LIMIT, "exact_match": True,
+        "semantic_fallback": False, "spec_fallback": False, "understand_phrase": False,
+    }
+    return business_services.production_services(db).resolve_entity(body)["resolutions"][0]
+
+
+def _similarity(db, code: str, raw: str) -> float:
+    """The resolver's own trigram score of `code` against the typed `raw` (`_trgm_lookup`)."""
+    from sqlalchemy import text
+
+    from app.services.entity_resolver import _norm_sql, _strip_all_ws
+
+    pn = _strip_all_ws(raw).lower()
+    return float(db.execute(text(f"SELECT similarity({_norm_sql('CAST(:c AS text)')}, :pn)"),
+                            {"c": code, "pn": pn}).scalar())
+
+
+def _cap_console(session_factory, monkeypatch, stub_access, phone: str, gate: bool):  # noqa: F811
+    c, resolves = _console(session_factory, monkeypatch, stub_access, phone, gate)
+    c.codes.update(_seed_codes(session_factory, _cap_rows()))
+    c.uuid_of = {code: pid for pid, code in c.codes.items()}
+    return c, resolves
+
+
+def test_q1w_seam_a_corrected_code_the_cap_cut_is_a_near_pick_and_leads_d1(session_factory):
+    """W1 (red). Grounding marks the cut pick a near pick, and D1's candidates list it first, once."""
+    from app.services.chatbot.head import grounding
+    from app.services.chatbot.lanes.business import answer as answer_mod
+    from app.services.chatbot.lanes.business import resolve_gate
+    from app.services.entity_resolver import ENTITY_MISS_SUGGEST_FLOOR
+
+    _seed_codes(session_factory, _cap_rows())
+    db = _scoped(session_factory)
+    res = _raw_resolution(db, CAP_RAW)
+    alternatives = [a.get("canonical_code") for a in res.get("alternatives") or []]
+    # The measured shape: the raw resolves to nothing, the family fills the cap, the pick is cut.
+    assert res.get("resolved") is False and not res.get("matches"), res
+    assert sorted(alternatives) == sorted(CAP_FAMILY) and CAP_PICK not in alternatives, alternatives
+    assert _similarity(db, CAP_PICK, CAP_RAW) >= ENTITY_MISS_SUGGEST_FLOOR, _similarity(db, CAP_PICK, CAP_RAW)
+
+    typed = {**entity(CAP_RAW, hint="product"), "canonical_code": CAP_PICK}
+    grounded, _notes = grounding.ground(db, stock(typed), message=f"{CAP_RAW} stock", roster_codes=frozenset())
+    (row,) = grounded["entities"]
+    near = row.get(grounding.NEAR_PICK_KEY)
+    assert isinstance(near, dict) and near.get("canonical_code") == CAP_PICK, (
+        "the corrected pick the cap cut was not marked a near pick", row)
+    assert row.get("canonical_code") is None, row
+
+    resolve_gate.pick_near_code_first(grounded, {"resolutions": [res]})
+    offered = [m["canonical_code"] for m in answer_mod._cap3(answer_mod.miss_token_candidates(res, ["product"]))]
+    assert offered[0] == CAP_PICK, offered
+    assert offered.count(CAP_PICK) == 1, offered
+
+
+@PATHS
+def test_q1w_a_corrected_code_the_cap_cut_asks_did_you_mean_with_the_pick_first(
+    session_factory, monkeypatch, stub_access, gate  # noqa: F811
+):
+    """W2 (red), both paths: not a direct answer."""
+    c, _ = _cap_console(session_factory, monkeypatch, stub_access, f"+600000270{int(gate)}", gate)
+    text = c.say(f"{CAP_RAW} stock", _ask(CAP_RAW, CAP_PICK, gate))
+    assert f'Couldn\'t find "{CAP_RAW}" (product). Did you mean:' in text, text
+    assert f"1. {CAP_PICK}" in text, text
+    offered = _offered(c)
+    assert offered[0] == CAP_PICK and offered.count(CAP_PICK) == 1, offered
+    assert "Stock summary" not in text, "a corrected code the cap cut was answered as if typed"
+
+
+@PATHS
+@pytest.mark.parametrize("far", ["SRT209-GM", "SRTWC287-S-150"], ids=["clearly_far", "just_under_the_floor"])
+def test_q1w_guard_a_far_pick_outside_the_cap_is_answered_directly(session_factory, monkeypatch, stub_access, gate, far):  # noqa: F811
+    """W3 (guard): a pick under the floor is not a near code, cap or no cap. Scored in the test by the
+    resolver's own expression (measured 0.14 and 0.27; SRTWC286-SH-200 scores 0.32, a near code)."""
+    from app.services.entity_resolver import ENTITY_MISS_SUGGEST_FLOOR
+
+    c, _ = _cap_console(session_factory, monkeypatch, stub_access, f"+60000027{len(far) % 10}{int(gate)}", gate)
+    db = _scoped(session_factory)
+    assert far not in [a.get("canonical_code") for a in _raw_resolution(db, CAP_RAW).get("alternatives") or []]
+    score = _similarity(db, far, CAP_RAW)
+    assert score < ENTITY_MISS_SUGGEST_FLOOR, (far, score)
+    text = c.say(f"{CAP_RAW} stock", _ask(CAP_RAW, far, gate))
+    assert "Did you mean" not in text, text
+    assert text.startswith("Stock summary") and f"*Product Code:* {far}" in text, text
+    assert _stocked(c, 0) == [far], _stocked(c, 0)
+
+
+@PATHS
+@pytest.mark.parametrize("raw,pick", [("SRTUB668-BACK INLT", INLET), ("SRTWT8259 gun metal", "SRTWT8259-GM")],
+                         ids=["inlt_typo_word", "code_and_colour_words"])
+def test_q1w_guard_a_raw_that_resolves_by_narrowing_is_answered_directly(
+    session_factory, monkeypatch, stub_access, gate, raw, pick  # noqa: F811
+):
+    """W4 (guard): the raw resolves to one prefix match, so the pick is answered as today, though it
+    scores above the floor (only the resolved raw keeps it out)."""
+    from app.services.entity_resolver import ENTITY_MISS_SUGGEST_FLOOR
+
+    c, _ = _cap_console(session_factory, monkeypatch, stub_access, f"+60000027{2 + len(raw) % 2}{int(gate)}", gate)
+    db = _scoped(session_factory)
+    res = _raw_resolution(db, raw)
+    assert res.get("resolved") is True and [m.get("canonical_code") for m in res.get("matches") or []] == [pick], res
+    assert _similarity(db, pick, raw) >= ENTITY_MISS_SUGGEST_FLOOR, _similarity(db, pick, raw)
+    text = c.say(f"{raw} stock", _ask(raw, pick, gate))
+    assert "Did you mean" not in text, text
+    assert text.startswith("Stock summary") and f"*Product Code:* {pick}" in text, text
+    assert _stocked(c, 0) == [pick], _stocked(c, 0)
+
+
+@PATHS
+def test_q1w_guard_a_name_ask_with_a_parser_pick_is_answered_directly(session_factory, monkeypatch, stub_access, gate):  # noqa: F811
+    """W5 (guard): words, no code."""
+    code, name = NAMED
+    raw = name.removeprefix("ZZT ").lower()
+    c, _ = _cap_console(session_factory, monkeypatch, stub_access, f"+600000275{int(gate)}", gate)
+    text = c.say(f"{raw} stock", _ask(raw, code, gate))
+    assert "Did you mean" not in text, text
+    assert text.startswith("Stock summary") and f"*Product Code:* {code}" in text, text
+    assert _stocked(c, 0) == [code], _stocked(c, 0)
