@@ -4186,7 +4186,28 @@ def _states_a_domain(verdict: dict[str, Any], held_domains: tuple[str, ...]) -> 
     return names_its_own_domain(verdict) and not held_widening
 
 
-def _reset_signals(verdict: dict[str, Any], parser_raw: Any = None) -> list[str]:
+def _all_broaden_over_nothing_open(verdict: dict[str, Any], state: Any) -> bool:
+    """Release gate #1829, round 12 (EVAL-BENCH contacts 01, 02, 30; captain ruling option A): an
+    all-broaden (`entity_op` clear or `broaden_axis` all) with `scope_intent` null and no domain or
+    asks of its own (any `domain_hint`, so an idea's ideate stays out), over a session with no open
+    question, no task of any status and no stored list, has nothing to widen: it is "clear all". A
+    held subject is allowed (the trace's turns held products and the inventory domain). Whether the
+    message states anything else is the seam's own `_stated_beside_a_reset`."""
+    if state is None:
+        return False
+    focus = state.focus
+    return (
+        (verdict.get("entity_op") == "clear" or verdict.get("broaden_axis") == "all")
+        and not verdict.get("scope_intent")
+        and not chat_state._message_domains(verdict)
+        and state.pending is None
+        and not focus.tasks
+        and not focus.last_list
+        and not focus.required_ask
+    )
+
+
+def _reset_signals(verdict: dict[str, Any], parser_raw: Any = None, state: Any = None) -> list[str]:
     """Release gate #1829, rounds 7-8 (crew rulings, design note 6335681391): the parser fields
     that mark a reset, one per line, so one can be dropped with a one-line change. Parser fields
     only. The cancel is read off the parser's own emission: with nothing open the phantom drop
@@ -4200,6 +4221,7 @@ def _reset_signals(verdict: dict[str, Any], parser_raw: Any = None) -> list[str]
         "cancel": answer.get("mode") == "cancel",
         # The chat_state mirror rule: a new subject over which nothing carries IS a reset.
         "new_subject_naming_no_domain": "new_subject" in ops and not _names_a_domain(verdict),
+        "all_broaden_over_nothing_open": _all_broaden_over_nothing_open(verdict, state),
     }
     return [name for name, on in signals.items() if on]
 
@@ -4377,7 +4399,7 @@ def _reset_turn(
     RESET_KEEPS, saves the session and answers ONE fixed acknowledgement in the reply language:
     no lane, fetch, tool, escalation, hand-off, small-talk model or recap. None for every other
     turn (and for a contact the access check refuses), which runs today's path untouched."""
-    signals = _reset_signals(verdict, parser_raw)
+    signals = _reset_signals(verdict, parser_raw, state_in)
     if not signals or _stated_beside_a_reset(verdict, tuple(state_in.focus.domains or ()), tuple(signals)):
         return None
     routed = turn_runtime.with_routing_agent_default(verdict, pending=None)
