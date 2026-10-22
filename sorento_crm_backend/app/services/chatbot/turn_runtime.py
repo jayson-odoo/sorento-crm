@@ -851,9 +851,10 @@ def _osa_distance(a: str, b: str) -> int:
 
 
 def _brand_row_keys(row: dict[str, Any]) -> set[str]:
+    # The owner's short forms (`brand_alias`, on the row) are exact names, as `resolve_brand_token` reads them.
     out = {
-        " ".join(jsc.nullish_str(row.get(k)).casefold().split())
-        for k in ("brand_name", "brand_code")
+        " ".join(jsc.nullish_str(v).casefold().split())
+        for v in (row.get("brand_name"), row.get("brand_code"), *(row.get("aliases") or []))
     }
     out.discard("")
     return out

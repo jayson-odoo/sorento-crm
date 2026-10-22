@@ -2604,6 +2604,11 @@ def sales_report_product_code(entities: Any, semantic_input: Any) -> str:
     return shared if len(shared) >= _SALES_REPORT_MIN_PREFIX else codes[0]
 
 
+def is_mixed_code_set(codes: list[str]) -> bool:
+    """Several codes that share no usable prefix: a word that fanned out to unrelated products."""
+    return len(codes) > 1 and len(shared_code_prefix(codes)) < _SALES_REPORT_MIN_PREFIX
+
+
 def shared_code_prefix(codes: list[str]) -> str:
     """The longest prefix every code shares, or "" when there is none (or no code)."""
     if not codes:

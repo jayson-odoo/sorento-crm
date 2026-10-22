@@ -2307,6 +2307,12 @@ def run_fetch(
         # other sales ask of a scoped contact runs. Its reply is TEXT (the presenter's
         # month blocks), never a file.
         tool_name = "crm_sales_report"
+        if fetch_mod.is_mixed_code_set(fetch_mod.outstanding_product_codes(entities, semantic_input)):
+            # REPORT-SMART-L S2 (D): a word that fanned out to unrelated codes is asked about, never
+            # frozen on the first of them; a shared-prefix family keeps sending its prefix.
+            from app.services.chatbot.lanes.business.report_ask import MIXED_PRODUCTS_LINE
+
+            return _fixed_reply(MIXED_PRODUCTS_LINE)
         if order_status_raw == "sales_analysis":
             tool_item = {"name": tool_name, "_tool_pick": {"source": "customer_scope_sales_report"}}
             # A linked STAFF contact is not forced by the engine (not enforced), so its

@@ -110,13 +110,18 @@ def known_brands_line(brands: list[dict[str, Any]] | None) -> str | None:
         if not name or name in seen:
             continue
         seen.add(name)
-        # The code, then the owner's short forms (`brand_alias`): any entry equal to the name
-        # (case aside) or already printed is dropped.
+        # The code, then the owner's short forms (`brand_alias`). With no short form the pair is
+        # `name (code)` as ever; with one, any entry equal to the name (case aside) or already
+        # printed is dropped.
+        aliases = (row or {}).get("aliases") or []
         shown: list[str] = []
-        for entry in [code, *((row or {}).get("aliases") or [])]:
+        for entry in [code, *aliases]:
             entry = str(entry or "").strip()
-            if entry and entry.casefold() != name.casefold() and entry.casefold() not in {s.casefold() for s in shown}:
-                shown.append(entry)
+            if not entry or entry.casefold() in {s.casefold() for s in shown}:
+                continue
+            if aliases and entry.casefold() == name.casefold():
+                continue
+            shown.append(entry)
         pairs.append(f"{name} ({', '.join(shown)})" if shown else name)
     if not pairs:
         return None

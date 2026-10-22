@@ -3825,6 +3825,13 @@ def _apply(
         unplaced,
         # HELD-FAMILY: the products the conversation held BEFORE this message; none when
         # the parser read the message as asking for the whole family.
+        held_product_uuids=(
+            frozenset()
+            if verdict.get("family") is True or verdict.get("broaden_to") or not verdict.get("closed_lists")
+            else frozenset(
+                str(p["uuid"]) for p in state.focus.products or [] if isinstance(p, dict) and p.get("uuid")
+            )
+        ),
         # REPORT-SMART-L S2 (B): a sales ranking reads current-message customers only (the lane's
         # own rule), so a carried customer is never re-asked by the customer narrowing.
         skip_customer_narrowing=verdict.get("order_status") == "sales_ranking"
@@ -3833,13 +3840,6 @@ def _apply(
             and e.get("current_message") is not False
             and str(e.get("hint") or e.get("entity_type") or "") == "customer"
             for e in verdict.get("entities") or []
-        ),
-        held_product_uuids=(
-            frozenset()
-            if verdict.get("family") is True or verdict.get("broaden_to") or not verdict.get("closed_lists")
-            else frozenset(
-                str(p["uuid"]) for p in state.focus.products or [] if isinstance(p, dict) and p.get("uuid")
-            )
         ),
         # Ported from PR #1118 (not merged), review round 9 finding 4 / D34 round 11:
         # a bare quantity with nothing open, or a cancel that names nothing, is not a

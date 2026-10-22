@@ -602,6 +602,8 @@ def _word_filters(
                     return None, f"'{word}' matches several {SEVERAL_NOUNS[hint]}: {listed}. Ask again naming one."
                 ids.extend(i for i in found if i not in ids)
                 continue
+            if hint == "sales_agent" and word.casefold() == jsc.js_string(parse_output.get("sales_channel") or "").casefold():
+                continue  # the channel word the verdict already set (`sales_channel`), not a person
             found, names = _resolve_word(db, hint, word)
             if not found:
                 return None, f"I don't know '{word}' as a {WORD_HINTS[hint]}."
@@ -623,15 +625,14 @@ def _product_args(entities: Any) -> tuple[dict[str, Any] | None, str | None]:
     say instead. 1b code review S4: the sales report's PREFIX rule (S19), so "SRT5674" covers
     "SRT5674-N"; several codes travel as the prefix they share."""
     from app.services.chatbot.lanes.business.fetch import (
-        _SALES_REPORT_MIN_PREFIX,
+        is_mixed_code_set,
         outstanding_product_codes,
         sales_report_product_code,
-        shared_code_prefix,
     )
 
     products = [e for e in jsc.array(entities) if isinstance(e, dict) and e.get("entity_type") == "product"]
     found = outstanding_product_codes(products, {})
-    if len(found) > 1 and len(shared_code_prefix(found)) < _SALES_REPORT_MIN_PREFIX:
+    if is_mixed_code_set(found):
         # A word that fanned out to unrelated codes is never frozen on the first of them: the
         # route takes the whole set as `product_ids`; past its cap (or with no resolved row)
         # the product is asked, never guessed.
@@ -872,7 +873,8 @@ def _refine(
 ) -> tuple[rf.Outcome | None, str | None]:
     """The parser said this message only refines the sales ranking that ran (`ranking_refine`):
     the held route args re-run with ONLY the keys the verdict changed (count, period, basis,
-    measure; a product named on it replaces the held one). A dealer's refine passes the same check a fresh ask does, over the HELD args."""
+    measure; a product named on it replaces the held one). A dealer's refine passes the same
+    check a fresh ask does, over the HELD args."""
     if dealer:
         from app.services.reports.ask import DEALER_KEYS
 

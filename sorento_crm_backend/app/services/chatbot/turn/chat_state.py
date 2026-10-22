@@ -66,7 +66,7 @@ _DOMAIN_BOUND = (
 )
 
 #: Keys that are machine identity, never printed.
-_HIDDEN_KEYS = frozenset({"uuid", "uuids", "id", "key", "payload"})
+_HIDDEN_KEYS = frozenset({"uuid", "uuids", "id", "key", "payload", "stale"})
 
 
 
@@ -1084,7 +1084,8 @@ def without_kept_aside(verdict: dict[str, Any]) -> dict[str, Any]:
     """The verdict with the words a `keep` set aside taken out, once the seams that read the
     message's own words (held-family narrowing, scheme index) have run: they are not a change,
     so nothing after this point (APPLY, the fetch, a stored clarify, the session) sees them
-    or their mark. The verdict itself when nothing was set aside."""
+    or their mark. The verdict itself when nothing was set aside. A brand beside a promotion kind
+    or a flyer (no product typed this message) is that ask's subject and stays, mark and all."""
     rows = [e for e in verdict.get("entities") or [] if isinstance(e, dict)]
     if not any(e.get(KEPT_ASIDE) for e in rows):
         return verdict

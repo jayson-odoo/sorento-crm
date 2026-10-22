@@ -5989,8 +5989,8 @@ def _run_stages_body(  # noqa: PLR0915
             # REPORT-SMART-L S2 (A''): a word whose hint is not an entity kind but is one of the
             # parser's own verdict fields (a channel word read as `sales_channel`) is never probed,
             # so it can never arm a kind pick. Word hints the resolver expands (product_type,
-            # certificate) and the report lane's own (sales agent, brand, category) are not fields.
-            kind_names = {k.kind for k in policy.kinds} | set(report_ask.WORD_HINTS)
+            # certificate) and the policy's own kinds (sales agent, brand, category) are not fields.
+            kind_names = {k.kind for k in policy.kinds}
             resolver_parse_output = {
                 **resolver_parse_output,
                 "entities": [
