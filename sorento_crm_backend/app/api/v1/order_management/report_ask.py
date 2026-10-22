@@ -58,7 +58,7 @@ _PARAMS = frozenset(
     {
         "date_from", "date_to", "basis", "measure", "group_by", "top_n", "sort", "product_code",
         "product_ids", "brand_ids", "category_ids", "sales_agent_ids", "customer_ids", "warehouse_codes",
-        "channel", "contact_id", "space_id", "customer_agent_ids", "dataset", "compare_to",
+        "channel", "contact_id", "space_id", "customer_agent_ids", "dataset", "compare_to", "mine",
     }
 )
 #: The chat dataset's own query keys (CA-3); any other is 422 `unknown_param`.
@@ -90,6 +90,16 @@ def _agent_values(raw: Optional[list[str]], param_name: str) -> Optional[list[st
     ids = parse_uuid_list([p for p in pieces if p.lower() != ask.NO_AGENT_KEY], param_name=param_name) or []
     out = ids + ([ask.NO_AGENT_KEY] if none else [])
     return out or None
+
+
+def _own_book(db: Session, resolved: Any) -> Optional[set[str]]:
+    """The customer ids of a salesperson contact's own book: the customers whose card agent is a
+    `sales_agents` row linked to the contact. None when the contact has no agent link."""
+    with company_scope(db, None):
+        agent_ids = [str(i) for (i,) in db.query(SalesAgent.id).filter(SalesAgent.contact_id == str(resolved)).all()]
+        if not agent_ids:
+            return None
+        return {str(i) for (i,) in db.query(Customer.id).filter(Customer.sales_agent_id.in_(agent_ids)).all()}
 
 
 def _rate_limit_setting(db: Session) -> tuple[int, int]:
@@ -243,6 +253,7 @@ def report_ask(
     compare_to: Optional[str] = Query(
         None, description="previous_period (the same number of days just before) | last_year (the same dates)."
     ),
+    mine: bool = Query(False, description="A salesperson's own customers only."),
     subjects: Optional[list[str]] = Query(None, description="Chat only: subject (domain) codes."),
     askers: Optional[list[str]] = Query(None, description="Chat only: dealer | salesperson | staff | unclassified."),
     contact_id: Optional[str] = Query(None, description="Respond.io contact id. Required with space_id."),
@@ -351,8 +362,17 @@ def report_ask(
 
     resolved = resolve_contact_with_null_workspace_fallback(db, contact_id=contact_id, space_id=space_id)
     keys = granted_keys(db, resolved) if resolved else []
-    if GRANT not in keys:
+    granted = GRANT in keys
+    # A salesperson is narrowed to its own book: when granted only on `mine`, when not granted
+    # always (it needs an agent link with customers; the agent axes are then refused).
+    book: Optional[set[str]] = None
+    if resolved and contact_asker.classify(db, str(resolved)) == "salesperson":
+        book = _own_book(db, resolved)
+    if not granted and not book:
         raise AppException(403, "Sales report is not enabled for your account.", code="sales_report_not_enabled")
+    if not granted and (group_norm == "sales_agent" or agents or card_agents):
+        raise AppException(403, _DEALER_MESSAGE, code="report_dimension_not_allowed")
+    narrowed = book is not None and (mine or not granted)
 
     # Brand scope off the contact this route already resolved, whatever the key: the router
     # dependency stamps it only for the legacy shared key (security H1). Stamped before any
@@ -442,12 +462,16 @@ def report_ask(
             by_prefix = set(product_filter)
             product_filter = [i for i in named_products if i in by_prefix]
         product_names = sorted({by_id[i] for i in product_filter} or set(by_id.values()))
+    customers = scoped if scoped is not None else named_customers
+    if narrowed and scoped is None:
+        # Inside the book; an empty result is zero rows in `run_ask`, never "no filter".
+        customers = [c for c in (named_customers or sorted(book)) if c in book]
     echo = _echo(
         db,
         grants,
         product_code=code,
         product_names=product_names,
-        customers=named_customers,
+        customers=[c for c in named_customers if c in set(customers)] if narrowed and named_customers else named_customers,
         brands=brands,
         categories=categories,
         agents=agents,
@@ -457,8 +481,7 @@ def report_ask(
     )
 
     filters: dict[str, list[str]] = {}
-    customers = scoped if scoped is not None else named_customers
-    if customers:
+    if customers or narrowed:
         filters["customer"] = customers
     if product_filter is not None:
         filters["product"] = product_filter
@@ -633,19 +656,11 @@ def _chat_report_ask(
             raise AppException(403, _DEALER_MESSAGE, code="report_dimension_not_allowed")
     customers = scoped if scoped is not None else named_customers
     scope_customers: list[str] | None = list(scoped) if scoped is not None else None
-    scoped_book = False
-    if asker == "salesperson":
-        # Narrowed to its own book only when it has an agent link; a salesperson without one sees all.
-        with company_scope(db, None):
-            agent_ids = [str(i) for (i,) in db.query(SalesAgent.id).filter(SalesAgent.contact_id == str(resolved)).all()]
-        scoped_book = bool(agent_ids)
+    # Narrowed to its own book only when it has an agent link; a salesperson without one sees all.
+    own = _own_book(db, resolved) if asker == "salesperson" else None
+    scoped_book = own is not None
     if scoped_book:
-        with company_scope(db, None):
-            own = (
-                {str(i) for (i,) in db.query(Customer.id).filter(Customer.sales_agent_id.in_(agent_ids)).all()}
-                if agent_ids else set()
-            )
-            customers = [c for c in (named_customers or own) if c in own]
+        customers = [c for c in (named_customers or own) if c in own]
         scope_customers = sorted(own)
 
     grants = {

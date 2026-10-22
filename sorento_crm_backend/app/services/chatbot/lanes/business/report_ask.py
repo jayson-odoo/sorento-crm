@@ -624,6 +624,8 @@ def _fresh_args(
         args["channel"] = channel
     if parse_output.get("compare_to") in COMPARE_TO:
         args["compare_to"] = parse_output["compare_to"]
+    if parse_output.get("self_reference") is True:
+        args["mine"] = True
 
     filters, line = _word_filters(db, parse_output)
     if filters is None:
@@ -661,7 +663,7 @@ def _fresh_args(
 
 
 #: The keys `_fresh_args` always sets (or an axis); any other key it sets is a filter.
-_NON_FILTER_ARGS = frozenset({"basis", "measure", "sort", "group_by", "compare_to"})
+_NON_FILTER_ARGS = frozenset({"basis", "measure", "sort", "group_by", "compare_to", "mine"})
 
 
 def _given_top_n(args: dict[str, Any], top_n: Any) -> dict[str, Any]:
@@ -856,6 +858,8 @@ def _refine(
         args["measure"] = parse_output["measure"]
     if parse_output.get("compare_to") in COMPARE_TO:
         args["compare_to"] = parse_output["compare_to"]
+    if parse_output.get("self_reference") is True:
+        args["mine"] = True
     if args.get("compare_to") and args.get("group_by") == "month":
         return None, COMPARE_BY_MONTH_LINE
     top_n = parse_output.get("top_n")

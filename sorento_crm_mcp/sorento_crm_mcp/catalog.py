@@ -867,6 +867,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "`compare_to` previous_period (the same number of days just before) | last_year (the "
             "same dates a year earlier), only when the person asks to compare, never with group_by month: every row and the "
             "total then carry `prev` and `change_pct` on the sort measure. "
+            "`mine` true only when the person says my / our own sales: a salesperson is narrowed to their own customers. "
             "Every basis is sales "
             "order lines, each dated by its required date, else its SO date: delivered = the "
             "quantity transferred to a DO, capped at ordered; ordered = the whole line; "
@@ -910,7 +911,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "date_from", "date_to", "basis", "measure", "group_by", "top_n", "sort",
             "product_code", "product_ids", "brand_ids", "category_ids", "sales_agent_ids",
             "customer_ids", "warehouse_codes", "channel", "contact_id", "space_id",
-            "customer_agent_ids", "dataset", "subjects", "askers", "compare_to",
+            "customer_agent_ids", "dataset", "subjects", "askers", "compare_to", "mine",
         ),
         domain="orders",
         related_tools=("crm_sales_report", "crm_top_selling_report"),
