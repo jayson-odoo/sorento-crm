@@ -167,14 +167,6 @@ class Focus:
     # `{"term", "options", "ask"}`, read only by that question's answer ("tap" after "Did
     # you mean tap or wash basin?") and cleared by every other turn.
     set_clarify: dict[str, Any] | None = None
-    # PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 8: a top selling
-    # ask's own axes (`rank_by`, `basis`, `rank_group`, `top_n`, the category words and a
-    # picked row's `detail_code` / `category_code`), carried while `status ==
-    # "top_selling"`. The metric, grain, basis and count questions are answered in a
-    # SECOND message that names only the answer, so the ask they complete has to be
-    # somewhere; `turn/apply._top_selling_rules` is its one writer. One slot, not four
-    # fields: every key lives and dies with the one ask.
-    top_selling: dict[str, Any] | None = None
     # LOWSTOCK-FILTER-ASK: the question `required_fields` left open (the slot it returned),
     # read and consumed by `required_fields.reply_verdict` on the NEXT message only. One
     # turn long: a lane that asks again hands back a fresh one.
@@ -379,7 +371,6 @@ def focus_to_wire(focus: Focus) -> dict[str, Any]:
     wire["sort"] = dict(focus.sort) if focus.sort else None
     wire["set_page"] = focus.set_page
     wire["set_clarify"] = focus.set_clarify
-    wire["top_selling"] = dict(focus.top_selling) if focus.top_selling else None
     wire["required_ask"] = dict(focus.required_ask) if focus.required_ask else None
     wire["sales_ranking_frame"] = dict(focus.sales_ranking_frame) if focus.sales_ranking_frame else None
     wire["low_stock"] = dict(focus.low_stock) if focus.low_stock else None
@@ -432,7 +423,10 @@ def focus_from_wire(raw: Any) -> Focus:
     status = raw.get("status")
     if not isinstance(status, str):
         status = raw.get("order_status")
-    focus.status = status if isinstance(status, str) else None
+    # REPORT-SMART-L R4a: `top_selling` is the retired top selling lane's status (its slot,
+    # `top_selling`, is not read back either); a session stored before the deploy loads with
+    # no status, and its next ranking runs on the report engine.
+    focus.status = status if isinstance(status, str) and status != "top_selling" else None
     channel = raw.get("sales_channel")
     focus.sales_channel = channel if isinstance(channel, str) else None
     window = raw.get("date_window")
@@ -443,8 +437,6 @@ def focus_from_wire(raw: Any) -> Focus:
     focus.set_page = page if isinstance(page, dict) else None
     clarify = raw.get("set_clarify")
     focus.set_clarify = clarify if isinstance(clarify, dict) else None
-    top_selling = raw.get("top_selling")
-    focus.top_selling = dict(top_selling) if isinstance(top_selling, dict) else None
     required_ask = raw.get("required_ask")
     focus.required_ask = dict(required_ask) if isinstance(required_ask, dict) else None
     frame = raw.get("sales_ranking_frame")

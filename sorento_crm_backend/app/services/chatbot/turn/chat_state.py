@@ -62,7 +62,7 @@ def unclear_slot_default() -> str:
 
 #: Axes tied to the domain they were asked in; a domain switch drops them.
 _DOMAIN_BOUND = (
-    "status", "document", "sort", "sales_channel", "top_selling", "sales_ranking_frame", "low_stock", "set_page",
+    "status", "document", "sort", "sales_channel", "sales_ranking_frame", "low_stock", "set_page",
 )
 
 #: Keys that are machine identity, never printed.
@@ -158,11 +158,10 @@ def _subject(focus: Focus) -> dict[str, Any]:
         "report": [
             f"{label} {pairs}".strip()
             for label, pairs in (
-                ("top_selling", _pairs(focus.top_selling)),
                 ("sales_ranking_frame", _pairs(focus.sales_ranking_frame)),
                 ("low_stock", _pairs(focus.low_stock)),
             )
-            if pairs or (label == "top_selling" and focus.status == "top_selling")
+            if pairs
         ],
         "relation": _clean(focus.relation),
     }
@@ -234,9 +233,6 @@ def _open_question(focus: Focus, oq: dict[str, Any] | None, pending: Any = None,
         extras["how_many"] = _count_question(focus)
     if _offered_brands(focus):
         extras["other_brands"] = _plain(_offered_brands(focus))
-    asked = (focus.top_selling or {}).get("asked") if isinstance(focus.top_selling, dict) else None
-    if asked:
-        extras["asked"] = _plain(asked)
     extras = {k: v for k, v in extras.items() if v}
     if not obj and not extras:
         return None
@@ -426,7 +422,7 @@ def _clear_axis(focus: Focus, axis: str) -> None:
     elif axis == "domain":
         focus.domains = []
     elif axis == "report":
-        focus.top_selling = focus.sales_ranking_frame = focus.low_stock = None
+        focus.sales_ranking_frame = focus.low_stock = None
     elif axis == "relation":
         focus.relation = None
     elif axis == "sort":
@@ -561,7 +557,7 @@ def _held(focus: Focus, axis: str) -> bool:
     if axis == "domain":
         return bool(focus.domains)
     if axis == "report":
-        return bool(focus.top_selling or focus.sales_ranking_frame or focus.low_stock)
+        return bool(focus.sales_ranking_frame or focus.low_stock)
     if axis == "relation":
         return bool(focus.relation)
     if axis == "sort":
@@ -862,13 +858,8 @@ def held_family_landed(state: State, verdict: dict[str, Any], matched: list[str]
 
 def _focus_questions(focus: Focus) -> bool:
     """A question the focus itself holds for one turn: a clarify, the other-brands offer, the
-    count question, a top selling question."""
-    return bool(
-        focus.set_clarify
-        or _offered_brands(focus)
-        or _count_question(focus)
-        or (isinstance(focus.top_selling, dict) and focus.top_selling.get("asked"))
-    )
+    count question."""
+    return bool(focus.set_clarify or _offered_brands(focus) or _count_question(focus))
 
 
 #: CHAT-STATE r7: the row kinds a pick fetches by the row's own id (`lanes/business/fetch.py`
@@ -1669,8 +1660,6 @@ def apply_changes(
         elif open_question is not None:
             pending, focus.required_ask = None, None
         focus.set_clarify = None
-        if isinstance(focus.top_selling, dict) and "asked" in focus.top_selling:
-            focus.top_selling = {k: v for k, v in focus.top_selling.items() if k != "asked"}
         if _offered_brands(focus):
             key = {k: v for k, v in focus.set_page["set_key"].items() if k != "other_brands"}
             focus.set_page = {**focus.set_page, "set_key": key}

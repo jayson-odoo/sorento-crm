@@ -178,16 +178,13 @@ def without_phantom_answer(
     that exists, and the positions that ride with a pick index nothing either. Both
     go, here, before any reader: `apply._open_pick_answer` and `decide.picked_positions`
     already guard on `state.pending`, but `gate.py`'s `pick_applied` (a non-empty
-    `reference_positions` suppresses "Which customer do you mean?") and the stock and
-    top-selling position readers do not all share that guard.
+    `reference_positions` suppresses "Which customer do you mean?") and the stock
+    position readers do not all share that guard.
 
-    `positions_read_elsewhere`: two questions are not `Open question:` objects yet are
+    `positions_read_elsewhere`: a question that is not an `Open question:` object yet is
     answered by a position - the ideation lane's media menu (`ideation.pending_media`,
-    read by `lanes/ideate.py::build_arguments` as `reference_positions`) and the top
-    selling questions ("How many?", "By quantity or by amount?", "Customer or sales
-    agent?", `focus.top_selling.asked`, read by `turn/apply.py::record_top_selling_asked`
-    and its `top_selling_position_is_*` rules, so "the first one" answers them). While
-    one of those is outstanding the positions stay and only the declared answer goes.
+    read by `lanes/ideate.py::build_arguments` as `reference_positions`). While it is
+    outstanding the positions stay and only the declared answer goes.
 
     `focus_has_product`: a bare number with nothing open and a product in focus is
     "that product again" (owner ruling, round 4 hand test: "1" after the escalation

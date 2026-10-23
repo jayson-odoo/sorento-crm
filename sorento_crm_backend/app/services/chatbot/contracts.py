@@ -718,9 +718,6 @@ class Focus(BaseModel):
     set_page: dict[str, Any] | None = None
     # Round 4 R5: the ask an open clarify question was about, `{term, options, ask}`.
     set_clarify: dict[str, Any] | None = None
-    # PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 8: the top selling
-    # ask's own axes while `status == "top_selling"` (`turn/state.py::Focus.top_selling`).
-    top_selling: dict[str, Any] | None = None
     # LOWSTOCK-FILTER-ASK: the question `required_fields` left open, one turn long
     # (`turn/state.py::Focus.required_ask`).
     required_ask: dict[str, Any] | None = None
