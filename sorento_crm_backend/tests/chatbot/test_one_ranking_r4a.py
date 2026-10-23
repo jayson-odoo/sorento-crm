@@ -43,7 +43,7 @@ def test_r4a_1_a_pre_deploy_focus_loads_without_a_top_selling_slot_or_status() -
     from app.services.chatbot.turn.state import focus_from_wire
 
     focus = focus_from_wire({"domains": ["order"], "status": "top_selling", "top_selling": dict(OLD_SLOT)})
-    assert not focus.top_selling, focus.top_selling
+    assert getattr(focus, "top_selling", None) is None, focus.top_selling
     assert focus.status is None, focus.status
 
 
