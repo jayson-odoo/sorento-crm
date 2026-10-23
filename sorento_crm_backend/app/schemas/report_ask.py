@@ -26,6 +26,8 @@ class ReportAskRow(BaseModel):
     # "(no agent)" row), so a follow-up can rank within exactly the rows printed. Empty for a
     # channel or month row (not a drill source).
     keys: List[str] = []
+    # REPORT-SMART-L R3a: a category row's code (the top selling reply printed a category by its code).
+    code: Optional[str] = None
     # REPORT-SMART-1021: a count measure's distinct count (customers, orders, products).
     count: Optional[int] = None
     # REPORT-SMART-1021 `compare_to`: the earlier window's figures and the change in percent

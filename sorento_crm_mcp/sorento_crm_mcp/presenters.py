@@ -3511,16 +3511,23 @@ def _report_ask(body: dict) -> str:
     of = f" of {count:,}" if count > len(rows) else ""
     by = f"{measure}, {basis}" if measure in _ASK_COUNT_UNITS else basis
     lines = [f"{lead} {len(rows)}{of} {plural} by {by}", *facts]
+    items = group_by in ("product", "category")
+    if items and body.get("sort") == "asc":
+        # REPORT-SMART-L R3a: what the top selling reply said of a least sold ranking (an item that sold nothing is never ranked).
+        lines.insert(1, TOP_SELLING_NO_SALE_LINE.replace("Items", "Categories") if group_by == "category" else TOP_SELLING_NO_SALE_LINE)
     for row in rows:
         if group_by == "month":
             # A trend, not a ranking: its months in date order, no rank number.
             lines.append(f"{_ask_month(row.get('name'))} {_ask_figures(row, measure)}{_ask_before(row, measure)}")
         else:
-            lines.append(f"{row.get('rank')}. {row.get('name')} {_ask_figures(row, measure)}{_ask_before(row, measure)}")
+            label = row.get("code") if group_by == "category" and _filled(row.get("code")) else row.get("name")
+            lines.append(f"{row.get('rank')}. {label} {_ask_figures(row, measure)}{_ask_before(row, measure)}")
     if more > 0:
         lines.append(f"and {more} more")
     lines.append(f"Total {figures}")
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    # Length never cuts an item or category list: split between rows into WhatsApp-sized parts (as top selling did).
+    return "\n\n".join(whatsapp_parts(text)) if items else text
 
 
 #: The measure as the head line says it, by the route's `measure`.

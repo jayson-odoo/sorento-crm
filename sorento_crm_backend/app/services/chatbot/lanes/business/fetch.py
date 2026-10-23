@@ -3161,7 +3161,9 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
             frame["shown"] = drill
     return {
         "sales_ranking_frame": frame,
-        "response": text or _REPORT_ASK_ERROR_TEXT,
+        # REPORT-SMART-L R3a: the fixed lines (filter labels, header words) follow the contact's language, as
+        # every other answer's do (AC-CL33); rank lines and figures pass through unchanged, English is byte-identical.
+        "response": ((ctx or {}).get("localizer") or IDENTITY).lines(text or _REPORT_ASK_ERROR_TEXT),
         "response_intro": None,
         "answers": [],
         "attachments": [],

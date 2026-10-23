@@ -182,6 +182,30 @@ def _row_keys(db: Session, group_by: str, names: list[str], company_grants: Any)
     return {n: sorted(set(ids)) for n, ids in out.items()}
 
 
+def _category_codes(db: Session, names: list[str], company_grants: Any) -> dict[str, str]:
+    """The category code beside each printed category name (REPORT-SMART-L R3a: the top selling reply
+    printed a category by its code), inside the contact's companies; a name with no code is absent."""
+    from app.models.base import company_scope
+    from app.models.product import ProductCategory
+
+    grants = sorted(str(c) for c in company_grants or ())
+    if not names or not grants:
+        return {}
+    with company_scope(db, None):
+        rows = (
+            db.query(ProductCategory.category_name, ProductCategory.category_code)
+            .filter(ProductCategory.category_name.in_(names),
+                    (ProductCategory.company_id.in_(grants)) | (ProductCategory.company_id.is_(None)))
+            .order_by(ProductCategory.category_code)
+            .all()
+        )
+    out: dict[str, str] = {}
+    for name, code in rows:
+        if code and name not in out:
+            out[name] = str(code)
+    return out
+
+
 #: The delivered dataset's raw channel values, as the ordered dataset already prints them.
 _CHANNEL_NAMES = {"retail": "Dealer", "project": "Project team"}
 
@@ -292,10 +316,12 @@ def run_ask(
 
     shown = ranked[:top_n] if top_n else ranked
     keys = _row_keys(db, group_by, [r[0] for r in shown], company_grants)
+    codes = _category_codes(db, [r[0] for r in shown], company_grants) if group_by == "category" else {}
     body["rows"] = [
         {
             "rank": i, "name": name, "qty": _qty(qty), "amount": _money_edge(amount), "keys": keys.get(name, []),
             **({"count": int(count)} if counted else {}),
+            **({"code": codes[name]} if codes.get(name) else {}),
         }
         for i, (name, qty, amount, count) in enumerate(shown, start=1)
     ]
