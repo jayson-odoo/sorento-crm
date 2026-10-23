@@ -52,7 +52,7 @@ def _held(args: dict[str, Any], *, drop: str | None) -> None:
 
 
 @pytest.mark.parametrize("shape", ["refine", "new_axis"])
-@pytest.mark.parametrize("axis", ["channel", "product", "date"])
+@pytest.mark.parametrize("axis", ["channel", "product"])  # date: out of R0, the route requires a period
 def test_or0_a_widened_axis_is_dropped_and_the_rest_is_held(console, shape, axis) -> None:
     _state_on(console)
     _ranking(console)
