@@ -47,7 +47,6 @@ from app.services.chatbot.contracts import (
     CRM_COMPLETED_BRANCH_KINDS,
     DIRECT_INGRESS,
     ORDER_OR_SALES_DOMAINS,
-    SALES_DOMAIN,
     SELF_CLOSING_BRANCH_KINDS,
     TURN_FAILURE_STAGES,
     Envelope,
@@ -92,8 +91,6 @@ from app.services.chatbot.turn import tail as turn_tail
 from app.services.chatbot.turn import task as turn_task
 from app.services.chatbot.turn.apply import apply as _apply_state
 from app.services.chatbot.turn.apply import is_product_shaped_entity
-from app.services.chatbot.turn.apply import record_top_selling_asked
-from app.services.chatbot.turn.decide import EVERYTHING, broaden_kind, broaden_level
 from app.services.chatbot.turn.policy import load_policy
 from app.services.chatbot.turn.route import route as turn_route
 # Module level and by name, the same shape `app/api/v1/external/media.py` uses for its own
@@ -2153,46 +2150,6 @@ def _roster_is_outstanding(verdict: dict[str, Any], focus: Any) -> bool:
     return jsc.nullish_str(getattr(focus, "status", None)).strip() in OUTSTANDING_ORDER_STATUS
 
 
-def _top_selling_dealer_scope(
-    db: Session,
-    parse_output: dict[str, Any],
-    focus: Any,
-    contact_respond_id: Any,
-    space_id: str | None,
-) -> dict[str, Any]:
-    """Reviewer S2 on PR #1273 (owner: a dealer sees only its own customers; ruling
-    pending owner confirmation). A linked dealer contact's top selling ask never
-    reaches the generic customer resolver, whose picker lists every matching
-    customer's name before the route could refuse. Its customer words are matched
-    against its OWN ledgers only (`business_services.top_selling_dealer_ledgers`):
-    all matched, the ranking runs on those ledgers (`dealer_customer_ids` on the slot);
-    any word matching none of them, the lane refuses with the plain line and fetches
-    nothing (`dealer_refused`). Staff and unlinked contacts are untouched here."""
-    slot = focus.top_selling if isinstance(focus.top_selling, dict) else None
-    if slot is not None:
-        slot.pop("dealer_refused", None)
-    own = business_services.top_selling_dealer_ledgers(db, contact_respond_id, space_id)
-    if own is None:
-        return parse_output
-    entities = [e for e in (parse_output.get("entities") or []) if isinstance(e, dict)]
-
-    def _is_customer(e: dict[str, Any]) -> bool:
-        return e.get("hint") == "customer" or e.get("entity_type") == "customer"
-
-    words = [jsc.js_string(e.get("raw")) for e in entities if _is_customer(e) and jsc.truthy(e.get("raw"))]
-    focus.customers = []
-    if slot is None:
-        slot = focus.top_selling = {}
-    if words:
-        ids = business_services.top_selling_dealer_customer_ids(own, words)
-        if ids is None:
-            slot["dealer_refused"] = True
-            slot.pop("dealer_customer_ids", None)
-        else:
-            slot["dealer_customer_ids"] = ids
-    return {**parse_output, "entities": [e for e in entities if not _is_customer(e)]}
-
-
 def _reference_scope(
     customer_scope: dict[str, Any] | None, profile: Any, *, doc_staff: bool = False
 ) -> list[Any] | None:
@@ -2253,8 +2210,8 @@ def _customer_scope_gate(
     turn's customers: the matched ones, or all of them for a message naming none
     (`self_reference` and a bare ask alike). Words carried from an earlier turn are never
     matched, so a refusal cannot lock the turns after it. `self_reference` ("my", "me",
-    "our") means the links for staff too. Unlinked contacts, staff without "my" and top
-    selling (its own block, `_top_selling_dealer_scope`) are untouched.
+    "our") means the links for staff too. Unlinked contacts and staff without "my" are
+    untouched.
 
     V1-DOC-SCOPE slice 3 (owner rule: unlinked != customer): an unlinked contact that is not
     document staff owns no customer, but it is held AFTER the resolver, not here on the
@@ -2262,7 +2219,7 @@ def _customer_scope_gate(
     picker or its DO probe, and a word typed this message that only matched customers refuses
     the turn with the no-link line. A brand the parser tagged a customer ("cabana stock",
     owner Q1) is still the brand."""
-    if not scope or focus.status == "top_selling":
+    if not scope:
         return parse_output, None, False, None
     self_reference = verdict.get("self_reference") is True
     enforced = bool(scope.get("enforced"))
@@ -2551,712 +2508,11 @@ def _pass_scope_gate(
     return {**payload, "gate": gate}
 
 
-def _top_selling_narrowing(
-    db: Session, parse_output: dict[str, Any], focus: Any, *, dealer: bool
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Owner retest of top selling (27 Sep 2026, PR #1273): the words that narrow a
-    ranking never reach the generic resolver, which read "fanny" (a sales agent) and
-    "sorento" (a brand) as customers and answered "Could not find" for a brand under
-    `order`. Returns the resolver's input without them, and the slot updates this
-    message makes (`_apply_top_selling_updates` writes them after the resolver, so the
-    resolver's re-entry into APPLY cannot drop them).
-
-    * hint `category`: stripped; the lane resolves it (`category_words`, AC-1954).
-    * hint `brand`, or a `customer` word that IS a brand's name or code: the brand
-      filter (`brand_ids`); a word naming no brand is said once (`unknown`).
-    * hint `sales_agent`: the agent filter (`agent_ids`); unknown is said once.
-    * hint `customer` naming a sales agent: the agent, unless a customer carries the
-      word too, then one question asks which (`who`). A dealer never has the customer
-      table searched (its customer words are its own ledgers, `_top_selling_dealer_scope`).
-    Only this message's own words are resolved; a carried row of these hints is just
-    kept away from the resolver."""
-    entities = [e for e in (parse_output.get("entities") or []) if isinstance(e, dict)]
-    updates: dict[str, Any] = {}
-    kept: list[dict[str, Any]] = []
-    unknown: list[list[str]] = []
-
-    def _add(key: str, ids: list[str]) -> None:
-        bucket = updates.setdefault(key, [])
-        bucket.extend(i for i in ids if i not in bucket)
-
-    for e in entities:
-        hint = jsc.js_string(e.get("hint") or e.get("entity_type") or "")
-        raw = jsc.js_string(e.get("raw") or "").strip()
-        current = e.get("current_message") is not False and not e.get("uuid")
-        if hint == "category":
-            continue
-        if hint not in ("brand", "sales_agent", "customer"):
-            kept.append(e)
-            continue
-        if not current or not raw:
-            if hint == "customer":
-                kept.append(e)
-            continue
-        if hint == "brand":
-            brands = business_services.resolve_brand_token(db, raw)
-            if brands:
-                _add("brand_ids", [b[0] for b in brands])
-            else:
-                unknown.append(["brand", raw])
-            continue
-        if hint == "sales_agent":
-            agents = business_services.resolve_sales_agent_token(db, raw)
-            if agents:
-                _add("agent_ids", [a[0] for a in agents])
-            else:
-                unknown.append(["sales agent", raw])
-            continue
-        brands = business_services.resolve_brand_token(db, raw, exact_only=True)
-        if brands:
-            _add("brand_ids", [b[0] for b in brands])
-            continue
-        agents = [] if dealer else business_services.resolve_sales_agent_token(db, raw)
-        if not agents:
-            kept.append(e)
-            updates["customer_named"] = True
-            continue
-        customers = business_services.customers_named(db, raw)
-        if customers:
-            updates["who"] = {
-                "word": raw,
-                "customer_ids": [c[0] for c in customers],
-                "customer_label": customers[0][1] if len(customers) == 1 else None,
-                "agent_ids": [a[0] for a in agents],
-                "agent_label": ", ".join(a[1] for a in agents),
-            }
-        else:
-            _add("agent_ids", [a[0] for a in agents])
-    if unknown:
-        updates["unknown"] = unknown
-    return {**parse_output, "entities": kept}, updates
-
-
-def _without_carried_words(parse_output: dict[str, Any]) -> dict[str, Any]:
-    """The resolver's input on a report a ranking handed over to (`focus.top_selling.
-    hop`, PR #1273 round 7). What the ranking resolved is carried as resolved entities
-    (the customer ids and labels on the focus); a word is never looked up again, least of
-    all under another kind: "Jayden", the ranking's sales agent, came back from the
-    customer resolver as SAMPLE JAYDEN, and "wt" as two customers whose names hold the
-    letters. So a sales agent, category or brand word (the report cannot filter by them;
-    `apply._hop_to_report` says so in one line) and any carried word with no id are
-    dropped here."""
-    kept = [
-        e
-        for e in (parse_output.get("entities") or [])
-        if isinstance(e, dict)
-        and jsc.js_string(e.get("hint") or e.get("entity_type") or "") not in ("sales_agent", "category", "brand")
-        and (e.get("current_message") is not False or e.get("uuid"))
-    ]
-    return {**parse_output, "entities": kept}
-
-
-def _apply_top_selling_updates(focus: Any, updates: dict[str, Any]) -> None:
-    """Write `_top_selling_narrowing`'s updates onto the ranking's slot. A new agent,
-    brand or customer word replaces that axis (the ranking is narrowed by what the
-    customer names NOW, owner retest 27 Sep 2026)."""
-    if not updates or focus.status != "top_selling":
-        return
-    slot = focus.top_selling if isinstance(focus.top_selling, dict) else {}
-    for key in ("agent_ids", "brand_ids"):
-        if key in updates:
-            slot[key] = list(updates[key])
-    if updates.get("customer_named"):
-        slot.pop("customer_ids", None)
-    if "who" in updates:
-        slot["who"] = dict(updates["who"])
-    if updates.get("unknown"):
-        slot["unknown"] = [*(slot.get("unknown") or []), *[list(u) for u in updates["unknown"]]]
-    focus.top_selling = slot
-
-
-#: The words of the options "Do you mean customer X or sales agent Y? Reply 1 for the
-#: customer, 2 for the sales agent." prints (`lanes/business._top_selling_ask_who`),
-#: and the option each names. A reply carrying one of them picks that option, as a typed
-#: label picks any other printed list (owner retest of round 4, 27 Sep 2026, R2).
-#: Round 9 (owner hand test after round 8, 28 Sep 2026): "salesman" and "saleman" fell
-#: to the low signal greeting; the other words people call either side mean the same.
-TOP_SELLING_WHO_WORDS = {
-    "customer": 1, "client": 1,
-    "sales": 2, "agent": 2, "salesman": 2, "salesmen": 2, "salesperson": 2, "rep": 2,
-}
-_WORD_RE = re.compile(r"[a-z]+")
-#: Words this short are matched exactly: one edit from "rep" is too many other words.
-_WHO_TYPO_MIN_LEN = 4
-
-
-def _words(text: str) -> list[str]:
-    return _WORD_RE.findall((text or "").lower())
-
-
-def _one_edit_apart(a: str, b: str) -> bool:
-    """One insertion, deletion, substitution or swap of two neighbouring letters."""
-    if a == b or abs(len(a) - len(b)) > 1:
-        return a == b
-    if len(a) == len(b):
-        diff = [i for i in range(len(a)) if a[i] != b[i]]
-        return len(diff) == 1 or (
-            len(diff) == 2 and diff[1] == diff[0] + 1 and a[diff[0]] == b[diff[1]] and a[diff[1]] == b[diff[0]]
-        )
-    short, long_ = (a, b) if len(a) < len(b) else (b, a)
-    return any(long_[:i] + long_[i + 1 :] == short for i in range(len(long_)))
-
-
-def _who_word(word: str, *, typos: bool) -> int | None:
-    """The option a word of the reply names, a typo one edit away included when `typos`."""
-    if word in TOP_SELLING_WHO_WORDS:
-        return TOP_SELLING_WHO_WORDS[word]
-    if not typos or len(word) < _WHO_TYPO_MIN_LEN:
-        return None
-    near = {
-        option
-        for known, option in TOP_SELLING_WHO_WORDS.items()
-        if len(known) >= _WHO_TYPO_MIN_LEN + 1 and _one_edit_apart(word, known)
-    }
-    return near.pop() if len(near) == 1 else None
-
-
-def _top_selling_who_answer(db: Session, text: str, verdict: dict[str, Any], who: dict[str, Any]) -> int | None:
-    """Which option of the open "customer or sales agent?" question this message
-    picks: 1, 2, 0 for "neither" (the parser's own `is_affirmative: false`), or None
-    when it answers something else. Round 9: a short reply is also read for typos of
-    the option words ("saleman") and for the customer name or the agent's code or
-    person label the question named ("WT", "SAMPLE - WILLIAM")."""
-    bare = (text or "").strip()
-    if bare in ("1", "2"):
-        return int(bare)
-    short = len(bare.split()) <= _TOP_SELLING_ANSWER_WORDS
-    picked = {p for p in (_who_word(w, typos=short) for w in _words(text)) if p is not None}
-    if 2 in picked:
-        return 2
-    if picked == {1}:
-        return 1
-    if short and bare:
-        agents = {i for i, _ in business_services.resolve_sales_agent_token(db, bare)} & set(who.get("agent_ids") or [])
-        customers = {i for i, _ in business_services.customers_named(db, bare)} & set(who.get("customer_ids") or [])
-        if agents and not customers:
-            return 2
-        if customers and not agents:
-            return 1
-    hints = {e.get("hint") for e in (verdict.get("entities") or []) if isinstance(e, dict)}
-    if "sales_agent" in hints:
-        return 2
-    if verdict.get("is_affirmative") is False:
-        return 0
-    return None
-
-
-#: The options each ranking question prints (`lanes/business._top_selling_question`,
-#: and the route's how-many reply), as the parser key its answer sets, the option words
-#: and the values in the order the question lists them, so "1" / "2" is that option
-#: (owner retest of round 5, 27 Sep 2026: "amount" under "By quantity or by amount?"
-#: was read as a new order ask and the order list ran).
-TOP_SELLING_OPTION_ANSWERS: dict[str, tuple[str, dict[str, str], tuple[str, ...]]] = {
-    "metric": (
-        "rank_by",
-        {"qty": "quantity", "quantity": "quantity", "units": "quantity",
-         "amount": "amount", "amt": "amount", "value": "amount", "rm": "amount"},
-        ("quantity", "amount"),
-    ),
-    "group": (
-        "rank_group",
-        {"item": "item", "items": "item", "product": "item", "products": "item",
-         "categories": "category", "category": "category"},
-        ("item", "category"),
-    ),
-    "basis": (
-        "basis",
-        {"delivered": "delivered", "delivery": "delivered", "transferred": "delivered", "do": "delivered",
-         "ordered": "ordered", "order": "ordered", "orders": "ordered", "booked": "ordered"},
-        ("delivered", "ordered"),
-    ),
-}
-#: An answer longer than this names more than the option; it is bound only when the
-#: parser itself read it as the ranking.
-_TOP_SELLING_ANSWER_WORDS = 4
-_COUNT_RE = re.compile(r"^(?:top\s+)?(\d{1,3})$")
-
-
-def _top_selling_question_answer(text: str, verdict: dict[str, Any], asked: Any) -> dict[str, Any] | None:
-    """The parser keys the answer to the ranking question the last reply asked
-    (`focus.top_selling.asked`), read off that question's own printed options, or None
-    when the message does not answer it. The question lives on the focus, which the
-    console carries between dry runs exactly as the contact's session does on WhatsApp,
-    so the answer binds the same way on both (owner retest of round 5, 27 Sep 2026)."""
-    bare = " ".join((text or "").lower().replace(",", " ").split()).strip(" .!?")
-    words = _words(text)
-    short = len(bare.split()) <= _TOP_SELLING_ANSWER_WORDS
-    own = jsc.js_string(verdict.get("order_status") or "").strip() == "top_selling"
-    if asked in TOP_SELLING_OPTION_ANSWERS:
-        key, options, order = TOP_SELLING_OPTION_ANSWERS[asked]
-        if verdict.get(key) in order:
-            return None
-        if bare in ("1", "2"):
-            return {key: order[int(bare) - 1]}
-        picked = {options[w] for w in words if w in options}
-        if len(picked) == 1 and (short or own):
-            return {key: picked.pop()}
-        return None
-    if asked == "how_many":
-        match = _COUNT_RE.match(bare)
-        if match and verdict.get("top_n") is None and int(match.group(1)) >= 1:
-            return {"top_n": int(match.group(1))}
-        return None
-    if asked == "category":
-        # "Which category do you mean? Reply with one code: ..." - the reply is the code.
-        if bare and not bare.isdigit() and short and not verdict.get("entities"):
-            return {"entities": [{
-                "raw": (text or "").strip().strip(" .!?"), "hint": "category", "canonical_code": None,
-                "current_message": True, "confident": True, "hint_confident": True,
-            }]}
-        return None
-    return None
-
-
-#: The parser keys that answer each open top selling question (`focus.top_selling.asked`), and
-#: the values each takes: the metric off `rank_by`, or the sales ranking's `measure` key.
-_TOP_SELLING_FILLS = {"metric": ("rank_by",), "basis": ("basis",), "metric_basis": ("rank_by", "basis")}
-_MEASURE_TO_RANK_BY = {"qty": "quantity", "amount": "amount"}
-
-
-def _fills_open_top_selling_question(focus: Any, verdict: dict[str, Any]) -> dict[str, Any]:
-    """Chat fix PR-B S2b: the top selling keys a NON top selling parse fills for the metric or
-    basis question the last reply asked, or {} when it fills none or names something of its own
-    (then it is a new ask): an entity (or a sales ranking's own words, `report_ask_words`).
-    Parser fields only, never the words."""
-    slot = focus.top_selling if isinstance(focus.top_selling, dict) else None
-    asked = slot.get("asked") if slot else None
-    if focus.status != "top_selling" or asked not in _TOP_SELLING_FILLS:
-        return {}
-    if jsc.js_string(verdict.get("order_status") or "").strip() == "top_selling":
-        return {}  # the ranking's own reading: `turn/apply._top_selling_rules` reads it
-    if any(
-        isinstance(e, dict) and e.get("current_message") is not False and jsc.js_string(e.get("hint") or "").strip()
-        for e in verdict.get("entities") or []
-    ):
-        return {}
-    words = verdict.get("report_ask_words")
-    if isinstance(words, dict) and any(jsc.array(v) for v in words.values()):
-        return {}
-    # The parse's `group_by` is not read: on an answering turn it is noise (12 of 14 live
-    # turns, PR-B replay 16 Oct), and the open question's axis wins (review S2b).
-    reading = {
-        "rank_by": verdict.get("rank_by") if verdict.get("rank_by") in ("quantity", "amount")
-        else _MEASURE_TO_RANK_BY.get(verdict.get("measure")),
-        "basis": verdict.get("basis") if verdict.get("basis") in ("delivered", "ordered") else None,
-    }
-    return {key: reading[key] for key in _TOP_SELLING_FILLS[asked] if reading[key]}
-
-
-def _as_ranking_answer(verdict: dict[str, Any], **keys: Any) -> dict[str, Any]:
-    """`verdict` re-read as a refinement of the ranking on screen: the top selling ask,
-    no ask of its own, only its category and brand words kept."""
-    kept = [
-        e for e in (verdict.get("entities") or [])
-        if isinstance(e, dict) and e.get("hint") in ("category", "brand")
-    ]
-    out = {
-        **verdict,
-        "message_type": "business_query",
-        "domain_hint": SALES_DOMAIN,
-        "intent_hint": "check_order",
-        "order_status": "top_selling",
-        "domain_in_message": None,
-        "reference_positions": [],
-        "entities": kept,
-        "asks": None,
-        # Never a document, a report status or a pick of the list on screen (PR #1273
-        # round 7: "sales order?" arrived as `open_question_answer` picking row 1).
-        "status": None,
-        "document": None,
-        "is_affirmative": None,
-        "open_question_answer": dict(_NO_OPEN_QUESTION_ANSWER),
-    }
-    out.update(keys)
-    return out
-
-
-_NO_OPEN_QUESTION_ANSWER = turn_question.NO_ANSWER
-
-
 def _positions_read_elsewhere(state: Any) -> bool:
     """Is a question that is NOT an `Open question:` object still waiting on a position
-    (`turn_question.without_phantom_answer`): the ideation media menu, or one of the top
-    selling questions the last reply asked (`focus.top_selling.asked`)."""
+    (`turn_question.without_phantom_answer`): the ideation media menu."""
     ideation = state.ideation if isinstance(state.ideation, dict) else {}
-    asked = (state.focus.top_selling or {}).get("asked") if isinstance(state.focus.top_selling, dict) else None
-    return bool(ideation.get("pending_media")) or bool(asked)
-
-#: Ranking words (PR #1273 round 7: "top 10 hot selling item by william in q1 2026" was
-#: read as an order ask and fell into "Could not find order"). A rank word, an optional
-#: count and up to two more words, then a selling word: "top 10 hot selling", "worst 20
-#: selling", "most sold", "best sellers". "sold to hanlim" or "what did we sell" alone is
-#: not a ranking and is left to the parser.
-_RANKING_WORDS_RE = re.compile(
-    r"\b(?:top|best|worst|worse|worsr|bottom|least|most|highest|lowest|hot|cold)\b"
-    r"(?:\s+\d{1,3})?(?:\s+[a-z]+){0,2}?\s+(?:selling|sold|sellers?)\b"
-)
-_RANKING_COUNT_RE = re.compile(r"\b(?:top|best|worst|worse|worsr|bottom|least|lowest)\s+(\d{1,3})\b")
-_RANKING_BOTTOM_WORDS = frozenset({"worst", "worse", "worsr", "bottom", "least", "lowest", "cold"})
-
-
-def _ranking_words_claim(verdict: dict[str, Any], text: str) -> dict[str, Any] | None:
-    """`verdict` re-read as the top selling ask when the message says one in so many
-    words and the parser read it as something else; None otherwise. The parser's own
-    entities and dates stand; the count and the direction are read off the words only
-    when the parser gave none. A person ask is never claimed."""
-    if jsc.js_string(verdict.get("order_status") or "").strip() == "top_selling":
-        return None
-    if verdict.get("message_type") == "request_for_help":
-        return None
-    lowered = (text or "").lower()
-    if not _RANKING_WORDS_RE.search(lowered):
-        return None
-    out = {
-        **verdict,
-        "message_type": "business_query",
-        "domain_hint": SALES_DOMAIN,
-        "intent_hint": "check_order",
-        "order_status": "top_selling",
-        "domain_in_message": True,
-        "status": None,
-        "document": None,
-        "reference_positions": [],
-        "is_affirmative": None,
-        "open_question_answer": dict(_NO_OPEN_QUESTION_ANSWER),
-        "asks": None,
-    }
-    count = _RANKING_COUNT_RE.search(lowered)
-    if out.get("top_n") is None and count and int(count.group(1)) >= 1:
-        out["top_n"] = int(count.group(1))
-    if out.get("rank_direction") is None and _RANKING_BOTTOM_WORDS & set(_words(lowered)):
-        out["rank_direction"] = "bottom"
-    return out
-
-
-#: The basis words (PR #1273 round 7: "sales order?" was read as a pick of row 1, and
-#: "based on sales order" left the basis on Delivered). A message made of one of these
-#: and the filler below switches the ranking on screen to that basis. "can show me the
-#: DO" is not one (round 5: the delivery order report), and neither is anything naming
-#: more than the basis.
-TOP_SELLING_BASIS_WORDS: dict[tuple[str, ...], str] = {
-    ("sales", "order"): "ordered",
-    ("sales", "orders"): "ordered",
-    ("so",): "ordered",
-    ("ordered",): "ordered",
-    ("delivery", "order"): "delivered",
-    ("delivery", "orders"): "delivered",
-    ("do",): "delivered",
-    ("delivered",): "delivered",
-    ("delivery",): "delivered",
-}
-_BASIS_FILLER = frozenset({
-    "based", "base", "basis", "on", "by", "in", "use", "using", "terms", "of", "i", "mean", "what", "about",
-    "how", "then", "ok", "okay", "instead", "switch", "to", "please", "pls", "rank", "ranked", "ranking",
-})
-
-
-def _basis_words(text: str) -> str | None:
-    words = [w for w in _words(text) if w not in _BASIS_FILLER]
-    return TOP_SELLING_BASIS_WORDS.get(tuple(words))
-
-
-#: The words a period alone is said in ("2025?", "july", "q1 2026", "in 2024", "last
-#: year"), and the filler around them. PR #1273 round 7: over an open ranking a period
-#: re-runs the ranking for it (round 5 R7), whatever the parser made of the message.
-_MONTH_WORDS = frozenset({
-    "jan", "january", "feb", "february", "mar", "march", "apr", "april", "may", "jun", "june", "jul", "july",
-    "aug", "august", "sep", "sept", "september", "oct", "october", "nov", "november", "dec", "december",
-})
-_PERIOD_WORDS = _MONTH_WORDS | {"q1", "q2", "q3", "q4", "ytd", "quarter", "year", "month", "week", "today", "yesterday"}
-_PERIOD_FILLER = frozenset({
-    "in", "for", "of", "the", "what", "about", "how", "then", "ok", "okay", "i", "mean", "only", "just",
-    "and", "to", "from", "until", "till", "please", "pls", "last", "this", "next", "year", "month",
-    "quarter", "week",
-})
-_PERIOD_TOKEN_RE = re.compile(r"[a-z]+\d*|\d+")
-
-
-def _period_only(text: str) -> bool:
-    """Is the message only a period: a year, a month or a quarter (with filler)?"""
-    tokens = _PERIOD_TOKEN_RE.findall((text or "").lower())
-    if not tokens:
-        return False
-    named = False
-    for token in tokens:
-        if token.isdigit():
-            if len(token) == 4 and 1900 <= int(token) <= 2100:
-                named = True
-            elif not (len(token) <= 2 and any(t in _MONTH_WORDS for t in tokens)):
-                return False
-        elif token in _PERIOD_WORDS:
-            named = named or token not in _PERIOD_FILLER or token in ("year", "month", "quarter", "week")
-        elif token not in _PERIOD_FILLER:
-            return False
-    return named
-
-
-def _bare_year(text: str) -> int | None:
-    """"2025" or "2025?": a year, never a rank (owner retest of round 4, R7)."""
-    bare = (text or "").strip().rstrip("?").strip()
-    if len(bare) == 4 and bare.isdigit() and 1900 <= int(bare) <= 2100:
-        return int(bare)
-    return None
-
-
-def _split_noisy_token(db: Session, raw: str) -> tuple[list[dict[str, Any]], list[str]] | None:
-    """Owner retest of round 4 (27 Sep 2026, R4): one entity carrying several things
-    ("fanny water closet", "bathtub by sean") split into word groups, longest first,
-    each matched against sales agents, categories, brands and customers in turn
-    (`_classify_word_group`). The words the question's own options print ("sales
-    agent", "customer") mark the kind of the group before them, and a leftover of three
-    letters or more is returned to be said once. None when no group matches."""
-    words = raw.split()
-    if len(words) < 2:
-        return None
-    found: list[dict[str, Any]] = []
-    leftover: list[str] = []
-    i = 0
-    while i < len(words):
-        for size in range(len(words) - i, 0, -1):
-            group = " ".join(words[i : i + size])
-            hint = _classify_word_group(db, group)
-            if hint:
-                found.append({"raw": group, "hint": hint})
-                i += size
-                break
-        else:
-            word = words[i]
-            if word.lower() in TOP_SELLING_WHO_WORDS:
-                if TOP_SELLING_WHO_WORDS[word.lower()] == 2 and found and found[-1]["hint"] == "customer":
-                    found[-1]["hint"] = "sales_agent"
-            elif len(word) >= 3:
-                leftover.append(word)
-            i += 1
-    if not found:
-        return None
-    return found, leftover
-
-
-def _classify_word_group(db: Session, group: str) -> str | None:
-    """The kind one word group names, matched strictly (a category by its code, name or
-    class vocabulary term, never by containing a class word), so "fanny water closet"
-    is not taken whole as the Water Closet class."""
-    from app.services.product_class_signal import resolve_classes_for_term
-
-    if group.lower() in TOP_SELLING_WHO_WORDS:
-        return None
-    # A category or an exact brand beats a sales agent alias ("water closet", "sorento" are
-    # aliases of an agent on dev): customers stay last.
-    if business_services.resolve_category_token(db, group) or resolve_classes_for_term(db, group.lower()):
-        return "category"
-    if business_services.resolve_brand_token(db, group, exact_only=True):
-        return "brand"
-    if business_services.resolve_sales_agent_token(db, group):
-        return "sales_agent"
-    if business_services.customers_named(db, group):
-        return "customer"
-    return None
-
-
-def _resolves_whole(db: Session, raw: str, hint: str) -> bool:
-    if hint == "sales_agent":
-        return bool(business_services.resolve_sales_agent_token(db, raw))
-    if hint == "category":
-        return bool(business_services.resolve_category_token(db, raw)) or bool(
-            business_services.resolve_category_class(db, raw)[0]
-        )
-    if hint == "brand":
-        return bool(business_services.resolve_brand_token(db, raw))
-    if hint == "customer":
-        return bool(business_services.customers_named(db, raw))
-    return False
-
-
-def _noisy_split(db: Session, raw: str, hint: str) -> tuple[list[dict[str, Any]], list[str]] | None:
-    """The split of a noisy token, or None to keep it whole. A token naming a sales
-    agent or a brand beside another kind always splits ("fanny water closet"); any
-    other token splits only when it does not resolve whole under its own hint (so
-    "water tap" stays the Tap class and "SAMPLE - FANNY NG" stays one customer)."""
-    split = _split_noisy_token(db, raw)
-    if split is None:
-        return None
-    parts, _rest = split
-    kinds = {p["hint"] for p in parts}
-    if len(kinds) > 1 and kinds & {"sales_agent", "brand"}:
-        return split
-    if hint in ("customer", "sales_agent", "category", "brand") and _resolves_whole(db, raw, hint):
-        return None
-    return split
-
-
-def _top_selling_verdict(
-    db: Session, verdict: dict[str, Any], state: Any, text: str
-) -> tuple[dict[str, Any], Any, str | None]:
-    """Owner retest of top selling round 4 (27 Sep 2026, PR #1273): inside a ranking
-    conversation the message is read against the question the bot asked, before the
-    parser's reading can send it anywhere else. Returns the verdict to apply, the state
-    (a customer picker the correction dismisses is closed) and the rule that fired.
-
-    * R1/R2 an answer to "customer or sales agent?" ("2", "yeah sales agent", "fanny
-      sales agent", "neither") binds to that question only (`top_selling_who`).
-    * R3 "neither" or "customer is everyone" over a customer picker the ranking opened
-      clears the customer; it never picks every row of the picker.
-    * R7 over a ranked list only a bare 1 to N picks a rank; "2025" or "2025?" is the
-      year, anything else is a new message (the positions are dropped).
-    * R6 an out of scope reading inside a ranking asks one short question instead.
-    * R2/R4 a customer word the message calls an agent is the agent; a word carrying
-      several things splits into its parts, the leftover said once.
-
-    Round 7 (owner retest of round 5, part 2): ranking words ("top 10 hot selling") are
-    the ranking whatever the parser's status; an echoed word from an earlier turn is
-    dropped; basis words switch the basis; a period alone re-runs the ranking for it.
-    """
-    filled = _fills_open_top_selling_question(state.focus, verdict)
-    if filled:
-        # Chat fix PR-B S2b (R12, R17): a parse that fills the field the open question asked,
-        # naming nothing of its own, is its answer whatever report type the parser put on it.
-        return _as_ranking_answer(verdict, group_by=None, **filled), state, "top_selling_question_filled"
-    if jsc.js_string(verdict.get("order_status") or "").strip() == "sales_ranking":
-        # A new ask the parser named (owner held-state rule: a new intent always wins): never
-        # captured by an open top selling question.
-        return verdict, state, None
-    focus = state.focus
-    slot = focus.top_selling if isinstance(focus.top_selling, dict) else None
-    ranking = focus.status == "top_selling" or bool(slot and slot.get("hop"))
-    # An out of scope reading inside a ranking keeps round 5's one short question (R6).
-    claimed = None if ranking and verdict.get("message_type") == "out_of_scope" else _ranking_words_claim(verdict, text)
-    if claimed is not None:
-        verdict = claimed
-    if slot is not None:
-        # R1 (round 7): a word the parser echoes from an earlier turn (`current_message:
-        # false`, no id) is never read again: the ranking already resolved it, and the
-        # report it hands over to carries what it resolved (`apply._hop_to_report`).
-        entities = [e for e in (verdict.get("entities") or []) if isinstance(e, dict)]
-        fresh = [e for e in entities if e.get("current_message") is not False or e.get("uuid")]
-        if len(fresh) != len(entities):
-            verdict = {**verdict, "entities": fresh}
-    asks_ranking = jsc.js_string(verdict.get("order_status") or "").strip() == "top_selling"
-    if not (ranking or asks_ranking):
-        return verdict, state, None
-    pending = state.pending
-    if ranking and slot and slot.get("asked") == "who" and isinstance(slot.get("who"), dict):
-        answer = _top_selling_who_answer(db, text, verdict, slot["who"])
-        if answer is not None:
-            return _as_ranking_answer(verdict, top_selling_who=answer), state, "top_selling_who_answer"
-    if focus.status == "top_selling" and slot and slot.get("asked"):
-        answer_keys = _top_selling_question_answer(text, verdict, slot.get("asked"))
-        if answer_keys is not None:
-            return _as_ranking_answer(verdict, **answer_keys), state, "top_selling_question_answer"
-    if focus.status == "top_selling" and claimed is None:
-        # R3 (round 7): "sales order?", "based on sales order", "by SO", "ordered" switch
-        # the ranking on screen to Basis: Ordered; "delivered", "by DO" switch it back.
-        basis = _basis_words(text)
-        if basis is not None:
-            return _as_ranking_answer(verdict, basis=basis), state, "top_selling_basis_words"
-        # R2 (round 7): a year, a month or a quarter alone re-runs the ranking for it,
-        # whether or not a ranked list is open to pick from.
-        if _period_only(text):
-            if verdict.get("date_filter_start") or verdict.get("date_filter_end") or verdict.get("date_mode"):
-                return _as_ranking_answer(verdict), state, "top_selling_period"
-            year = _bare_year(text)
-            if year is not None:
-                return (
-                    _as_ranking_answer(
-                        verdict, date_filter_start=f"{year}-01-01", date_filter_end=f"{year}-12-31", date_mode=None
-                    ),
-                    state,
-                    "top_selling_period",
-                )
-    if ranking and pending is not None and pending.kind == "top_selling_pick":
-        year = _bare_year(text)
-        if year is not None:
-            return (
-                _as_ranking_answer(
-                    verdict, date_filter_start=f"{year}-01-01", date_filter_end=f"{year}-12-31", date_mode=None
-                ),
-                state,
-                "top_selling_year_not_rank",
-            )
-        bare = (text or "").strip()
-        in_list = bare.isdigit() and 1 <= int(bare) <= len(pending.options)
-        answer = verdict.get("open_question_answer")
-        if isinstance(answer, dict) and answer.get("mode") == "pick" and not in_list:
-            # The same rule for the parser's other way of picking a row (round 7).
-            verdict = {**verdict, "open_question_answer": dict(_NO_OPEN_QUESTION_ANSWER)}
-        if verdict.get("reference_positions") and not in_list:
-            verdict = {**verdict, "reference_positions": []}
-            if verdict.get("message_type") in ("casual", "clarification", "low_signal", None):
-                return _as_ranking_answer(verdict), state, "top_selling_not_a_rank"
-    if ranking and pending is not None and pending.kind == "customer_pick":
-        widens = broaden_level(verdict) == EVERYTHING and broaden_kind(verdict) in (None, "customer")
-        says_agent = any(TOP_SELLING_WHO_WORDS.get(w) == 2 for w in _words(text))
-        if widens or says_agent or verdict.get("is_affirmative") is False:
-            entities = [
-                {**e, "hint": "sales_agent"} if says_agent and e.get("hint") == "customer" else e
-                for e in (verdict.get("entities") or [])
-                if isinstance(e, dict)
-            ]
-            state = dataclasses_replace(state, pending=None)
-            return (
-                _as_ranking_answer(
-                    {**verdict, "entities": []},
-                    entities=[e for e in entities if e.get("hint") in ("category", "brand", "sales_agent")],
-                    broaden_axis="customer",
-                    broaden_to="all",
-                    correction=True,
-                ),
-                state,
-                "top_selling_customer_picker_dismissed",
-            )
-    if ranking and verdict.get("message_type") == "out_of_scope":
-        return _as_ranking_answer(verdict, top_selling_unclear=True), state, "top_selling_unclear"
-    entities = [e for e in (verdict.get("entities") or []) if isinstance(e, dict)]
-    says_agent = any(TOP_SELLING_WHO_WORDS.get(w) == 2 for w in _words(text))
-    rebuilt: list[dict[str, Any]] = []
-    leftover: list[str] = []
-    changed = False
-    for e in entities:
-        hint = jsc.js_string(e.get("hint") or "")
-        raw = " ".join(jsc.js_string(e.get("raw") or "").split())
-        current = e.get("current_message") is not False and not e.get("uuid")
-        if current and raw and hint == "specification" and not e.get("spec_key"):
-            # Merge of main into PR #833 (fix round 13): the specification kind splits
-            # "fanny water closet" into the class and an UNKNOWN specification "fanny"
-            # before this reading; inside a ranking such a word is a group like any other.
-            # A word that names nothing is the leftover said once ("marble").
-            kind = _classify_word_group(db, raw)
-            split = ([{"raw": raw, "hint": kind}], []) if kind else _split_noisy_token(db, raw)
-            if split is None:
-                split = ([], [w for w in raw.split() if len(w) >= 3 and w.lower() not in TOP_SELLING_WHO_WORDS])
-        elif not current or not raw or hint not in ("customer", "sales_agent", "category", "brand", "promotion", "product"):
-            rebuilt.append(e)
-            continue
-        else:
-            split = _noisy_split(db, raw, hint)
-        if split is None:
-            if hint == "customer" and says_agent and business_services.resolve_sales_agent_token(db, raw):
-                # "by sean salea agent": the message calls the name an agent (R2).
-                rebuilt.append({**e, "hint": "sales_agent"})
-                changed = True
-            else:
-                rebuilt.append(e)
-            continue
-        parts, rest = split
-        for part in parts:
-            if says_agent and part["hint"] == "customer" and business_services.resolve_sales_agent_token(db, part["raw"]):
-                part["hint"] = "sales_agent"
-            rebuilt.append({**e, "raw": part["raw"], "hint": part["hint"], "canonical_code": None, "hint_confident": True})
-        leftover.extend(rest)
-        changed = True
-    if not changed:
-        return verdict, state, "top_selling_ranking_words" if claimed is not None else None
-    out = {**verdict, "entities": rebuilt}
-    if leftover:
-        out["top_selling_leftover"] = leftover
-    if not asks_ranking and out.get("domain_hint") not in (None, "", *ORDER_OR_SALES_DOMAINS):
-        # A word the parser sent to a promotion or document lookup, inside a ranking.
-        out = _as_ranking_answer(out, entities=rebuilt)
-    return out, state, "top_selling_split_token"
+    return bool(ideation.get("pending_media"))
 
 
 def run_turn(
@@ -5417,30 +4673,6 @@ def _run_stages_body(  # noqa: PLR0915
         # back (below), so it never outlives the reply it describes.
         state_in.focus.low_stock = None
 
-        # Owner retest of top selling round 4 (27 Sep 2026): inside a ranking, the message
-        # is read against the question the bot asked before anything routes it.
-        # R2 (round 7): read before the verdict below can change the conversation.
-        in_ranking_conversation = _in_ranking_conversation(state_in.focus)
-        top_selling_rule = None
-        if not state_led and not state_gate:
-            verdict, state_in, top_selling_rule = _top_selling_verdict(
-                db, verdict, state_in, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
-            )
-        if in_ranking_conversation and _asks_for_a_person(verdict):
-            in_ranking_conversation = False
-        if top_selling_rule:
-            turn_trace.add("top_selling", {"verdict_rule": top_selling_rule})
-        if state_in.focus.status == "top_selling" or state_in.focus.top_selling or (
-            jsc.js_string(verdict.get("order_status") or "").strip() == "top_selling"
-        ):
-            # R8: inside a ranking no picker lists more than five options.
-            roster_caps = {
-                kind: min(cap, turn_compose.MAX_MENU_OPTIONS)
-                if isinstance(cap, int) and cap > 0
-                else turn_compose.MAX_MENU_OPTIONS
-                for kind, cap in roster_caps.items()
-            }
-
         # #1262 fix lane round 7 (R3 to R5): inside an order list the message is read
         # against the list before the parser's reading can send it anywhere else.
         from app.services.chatbot import order_list as order_list_mod
@@ -5467,9 +4699,7 @@ def _run_stages_body(  # noqa: PLR0915
             turn_trace.add("so_status", {"verdict_rule": typed_so_rule})
         # Same pass: the report status and document the parser carried onto "1" under the
         # outstanding offer, or onto a period answering the SO list, are not the message's.
-        if not state_led and not (
-            in_ranking_conversation or top_selling_rule or state_in.focus.status == "top_selling"
-        ):
+        if not state_led:
             verdict, carried_rule = so_status_mod.carried_status_verdict(
                 verdict,
                 jsc.js_string(jsc.get(_inner_message(envelope), "text") or ""),
@@ -5479,14 +4709,9 @@ def _run_stages_body(  # noqa: PLR0915
             )
             if carried_rule:
                 turn_trace.add("so_list", {"verdict_rule": carried_rule})
-        # Never inside a top selling ranking: there "by sales order" / "SO basis" switch the
-        # ranking's basis (`_top_selling_verdict` above, round 7 R3), and the list must not
-        # take the ranking's question or its status away.
-        so_list_rule = None
-        if not (in_ranking_conversation or top_selling_rule or state_in.focus.status == "top_selling"):
-            verdict, so_list_rule = so_status_mod.so_list_verdict(
-                verdict, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
-            )
+        verdict, so_list_rule = so_status_mod.so_list_verdict(
+            verdict, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
+        )
         if so_list_rule:
             turn_trace.add("so_list", {"verdict_rule": so_list_rule})
             # Owner hand test, 3 Oct 2026: over an open outstanding summary, "find all my
@@ -5501,15 +4726,14 @@ def _run_stages_body(  # noqa: PLR0915
                 focus=_dc.replace(state_in.focus, status=None),
                 pending=None if open_kind in ("outstanding_detail", "outstanding_scope") else state_in.pending,
             )
-        if not (in_ranking_conversation or top_selling_rule or state_in.focus.status == "top_selling"):
-            # The month and the "outstanding" an SO ask types, when the parser dropped them.
-            from app.services.chatbot import do_ask as _do_ask
+        # The month and the "outstanding" an SO ask types, when the parser dropped them.
+        from app.services.chatbot import do_ask as _do_ask
 
-            verdict, typed_rule = so_status_mod.typed_words_verdict(
-                verdict, jsc.js_string(jsc.get(_inner_message(envelope), "text") or ""), _do_ask.today_myt()
-            )
-            if typed_rule:
-                turn_trace.add("so_list", {"verdict_rule": typed_rule})
+        verdict, typed_rule = so_status_mod.typed_words_verdict(
+            verdict, jsc.js_string(jsc.get(_inner_message(envelope), "text") or ""), _do_ask.today_myt()
+        )
+        if typed_rule:
+            turn_trace.add("so_list", {"verdict_rule": typed_rule})
 
         # PR #1353 fix round 3: a bare position over an open roster is read by the
         # engine, and its positions win over the parser's (turn 3f56a40d: "2" read as 1).
@@ -5734,9 +4958,6 @@ def _run_stages_body(  # noqa: PLR0915
             access=access,
             media=getattr(envelope, "media", None),
         )[0]["json"]["ctx"]
-        if in_ranking_conversation:
-            # Read by the tail: no escalate offer and no routing picker (round 7).
-            ctx["top_selling_no_offer"] = True
         # PLAN-chatbot-customer-scope-29sep.md D3: the contact's customer scope, read once
         # per turn; the gate below and (through `make_tool_runner`) the lane read it.
         # V1-DOC-SCOPE: read on EVERY turn (a reference number can be typed on any turn, and
@@ -5856,7 +5077,6 @@ def _run_stages_body(  # noqa: PLR0915
         )
         unlinked_held = customer_docs_hidden and not granted_report_turn
 
-        top_selling_updates: dict[str, Any] = {}
         customer_scope_refused = False
         gate_input: dict[str, Any] | None = None
         account_question: str | None = None
@@ -5955,29 +5175,6 @@ def _run_stages_body(  # noqa: PLR0915
             resolver_parse_output = _without_the_drill_pick_words(
                 resolver_parse_output, state_in.pending, plan.trace
             )
-            # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 4 (AC-1954): under `order`
-            # the generic resolver re-types a category token as a customer
-            # (`entity_resolver._DOMAIN_HINT_EXPANSIONS["order"]["category"]`), which
-            # would filter the ranking by a customer nobody named or open a customer
-            # picker. A top selling ask resolves its category words itself, against
-            # `product_categories` (`lanes/business._top_selling_category_ids`), so the
-            # resolver is never asked about them.
-            # Owner retest (27 Sep 2026): read off the FOCUS, not the verdict, so a
-            # message that only narrows the ranking ("sold by fanny", no ask word of
-            # its own) is kept away from the resolver too.
-            if state_out.focus.status == "top_selling":
-                dealer = (
-                    business_services.top_selling_dealer_ledgers(db, contact_respond_id, space_id_for_turn)
-                    is not None
-                )
-                resolver_parse_output, top_selling_updates = _top_selling_narrowing(
-                    db, resolver_parse_output, state_out.focus, dealer=dealer
-                )
-                resolver_parse_output = _top_selling_dealer_scope(
-                    db, resolver_parse_output, state_out.focus, contact_respond_id, space_id_for_turn
-                )
-            elif isinstance(state_out.focus.top_selling, dict) and state_out.focus.top_selling.get("hop"):
-                resolver_parse_output = _without_carried_words(resolver_parse_output)
             # REPORT-ENGINE 1b fix round F1: a dealer's sales ranking never has a location
             # word looked up (the resolver's miss line would probe warehouse codes); the
             # lane refuses the ask off the word itself (`report_ask._dealer_outside`).
@@ -6372,7 +5569,6 @@ def _run_stages_body(  # noqa: PLR0915
             )
             if clarify is not None:
                 state_out.focus.set_clarify = clarify
-            _apply_top_selling_updates(state_out.focus, top_selling_updates)
             if scope_refused:
                 # A refusal must not lock the next turns: nothing the refused message
                 # named (the foreign word, unresolved) stays on the focus or the plan.
@@ -7777,7 +6973,6 @@ def _run_stages_body(  # noqa: PLR0915
                 # executor.
                 answer.files.extend(_stock_ask_packing_list_files(envelopes))
                 stock_ask_entries = _stock_ask_answered_entries(envelopes)
-                record_top_selling_asked(state_out.focus, envelopes)
                 # LOWSTOCK-FILTER-ASK: a lane that asked for a required field hands its
                 # slot back; it stays open for the next message only.
                 state_out.focus.required_ask = next(
@@ -7809,15 +7004,6 @@ def _run_stages_body(  # noqa: PLR0915
                     None,
                 )
                 state_out.focus.low_stock = low_stock_frame
-                if (
-                    (state_out.focus.top_selling or {}).get("asked")
-                    and state_out.pending is not None
-                    and state_out.pending.kind == "top_selling_pick"
-                ):
-                    # Owner retest (27 Sep 2026): the lane asked a question over a
-                    # ranking still on screen, so the "2" that answers it must not
-                    # pick row 2 of the old list. The question closes the list.
-                    state_out = dataclasses_replace(state_out, pending=None)
                 if (
                     state_out.pending is not None
                     and state_out.pending.kind in ("outstanding_detail", "outstanding_scope")
@@ -7984,8 +7170,6 @@ def _run_stages_body(  # noqa: PLR0915
             answer = _dealer_refers_to_salesman(answer, localizer)
             if _dealer_incoming_ask(state_out, plan):
                 answer = _dealer_names_the_miss(answer, envelopes)
-        elif in_ranking_conversation:
-            answer = _without_escalation_offer(answer)
         return _run_answer(
             turn_id=turn_id,
             ctx=ctx,
@@ -8287,35 +7471,6 @@ def _dealer_asks(state_out: Any, plan: Any, domain: str) -> bool:
         getattr(state_out.focus, "domains", None) or []
     )
     return domain in domains
-
-
-def _in_ranking_conversation(focus: Any) -> bool:
-    """Is the conversation inside a ranking, or a report a ranking handed over to?"""
-    slot = focus.top_selling if isinstance(focus.top_selling, dict) else None
-    return focus.status == "top_selling" or bool(slot and slot.get("hop"))
-
-
-def _asks_for_a_person(verdict: dict[str, Any]) -> bool:
-    escalation = verdict.get("escalation") if isinstance(verdict.get("escalation"), dict) else {}
-    return verdict.get("message_type") == "request_for_help" or escalation.get("is_escalation_confirmation") is True
-
-
-def _without_escalation_offer(answer: Any) -> Any:
-    """PR #1273 round 7 (round 5 R6, restated): inside a ranking or the report it handed
-    over to, a reply offers no escalation and no routing picker unless the customer asked
-    for a person. The sentence, the offer and an escalation question all go; a pick the
-    reply also asked stays, without the offer attached to it."""
-    from app.services.chatbot import dealer_stock as dealer_mod
-    from app.services.chatbot.turn.pending import ESCALATION_OFFER_KINDS
-
-    text, _had = dealer_mod.refers_to_salesman(getattr(answer, "text", "") or "")
-    question = getattr(answer, "question", None)
-    if question is not None:
-        if question.kind in ESCALATION_OFFER_KINDS:
-            question = None
-        elif (question.payload or {}).get("escalate_offered") is True:
-            question = dataclasses_replace(question, payload={**question.payload, "escalate_offered": False})
-    return dataclasses_replace(answer, text=text, question=question, offer=None)
 
 
 def _only_shown(codes: list[str] | None, text: Any) -> list[str] | None:
@@ -11041,16 +10196,6 @@ def run_tail(
             gate=values["gate"],
             offer_hold=values["offer_hold"],
         )
-        if ctx.get("top_selling_no_offer") and catalog.get("is_escalate_offer") is True:
-            # PR #1273 round 7: inside a ranking, or the report it handed over to, no
-            # escalate offer and no routing picker unless the customer asked for a person.
-            from app.services.chatbot import dealer_stock as dealer_mod
-
-            catalog = {
-                **catalog,
-                "response": dealer_mod.refers_to_salesman(jsc.js_string(catalog.get("response") or ""))[0],
-                "is_escalate_offer": False,
-            }
         producers["escalate-catalog"] = catalog
         outcome_input = catalog
         # ESCALATION-CONTROL: no CS roster is built for a barred contact at all (its rows
