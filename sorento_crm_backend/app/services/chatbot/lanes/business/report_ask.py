@@ -878,10 +878,12 @@ def settle(
         # product and channel stay, never asked again; the message's own period, product or channel wins.
         axis = GROUP_BY.get(raw_group, raw_group)
         held_period = period_from(frame.get("date_from"), frame.get("date_to"))
+        widened = _widened(parse_output)
         held_product = {
-            k: frame[k] for k in ("product_code", "product_ids") if frame.get(k) and k not in _AXIS_FILTERS.get(axis, ())
+            k: frame[k] for k in ("product_code", "product_ids")
+            if frame.get(k) and k not in _AXIS_FILTERS.get(axis, ()) and widened != "product"
         }
-        if axis != "channel" and frame.get("channel") in ("dealer", "project"):
+        if axis != "channel" and widened != "channel" and frame.get("channel") in ("dealer", "project"):
             held_channel = frame["channel"]
         holding = True
         parse_output = {**parse_output, "ranking_refine": False}
@@ -926,6 +928,15 @@ def settle(
     return rf.collect(db, SALES_RANKING_ASK, given=given, extras=extras), None
 
 
+def _widened(parse_output: dict[str, Any]) -> str | None:
+    """The one held axis the parser widened to "all" this turn (`broaden_axis` with `broaden_to`
+    "all", template R-P3-09): the hold drops it and keeps the rest. Parser fields only."""
+    if parse_output.get("broaden_to") != "all":
+        return None
+    axis = jsc.js_string(parse_output.get("broaden_axis") or "").strip().lower()
+    return axis if axis in ("channel", "product") else None
+
+
 def _refine(
     db: Any, parse_output: dict[str, Any], frame: dict[str, Any], entities: Any = (), *, dealer: bool = False
 ) -> tuple[rf.Outcome | None, str | None]:
@@ -945,6 +956,9 @@ def _refine(
         ):
             return None, DEALER_REFUSAL
     args = {k: v for k, v in frame.items() if k not in _FRAME_ONLY}
+    widened = _widened(parse_output)
+    for key in _AXIS_FILTERS.get(widened or "", ()):
+        args.pop(key, None)  # REPORT-SMART-L R0: the widened axis is dropped, the rest held
     channel = parse_output.get("sales_channel")
     if channel in ("dealer", "project"):
         if dealer:
