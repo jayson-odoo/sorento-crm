@@ -92,7 +92,7 @@ from app.services.chatbot.turn import task as turn_task
 from app.services.chatbot.turn.apply import apply as _apply_state
 from app.services.chatbot.turn.apply import is_product_shaped_entity
 from app.services.chatbot.turn.apply import RESET_KEEPS, record_top_selling_asked
-from app.services.chatbot.turn.decide import EVERYTHING, broaden_kind, broaden_level, names_its_own_domain
+from app.services.chatbot.turn.decide import EVERYTHING, broaden_kind, broaden_level, domain_in_message, names_its_own_domain
 from app.services.chatbot.turn.policy import load_policy
 from app.services.chatbot.turn.route import route as turn_route
 # Module level and by name, the same shape `app/api/v1/external/media.py` uses for its own
@@ -4215,6 +4215,37 @@ def _all_broaden_over_nothing_open(verdict: dict[str, Any], state: Any) -> bool:
     )
 
 
+#: Release gate #1829, round 14: the rosters whose v63 "all" answers are measured to carry a pick
+#: (the tier roster; the product roster, did-you-mean and stock picks).
+#: Extend a kind only once v63 is measured giving its real 'all' answers a pick.
+RESET_OVER_PICKER_KINDS: frozenset[str] = frozenset({"tier_pick", "product_pick"})
+
+
+def _clear_over_an_open_picker(verdict: dict[str, Any], answer: dict[str, Any], state: Any) -> bool:
+    """Release gate #1829, round 13 (EVAL-BENCH contacts 09 / 10, crew ruling option b): `entity_op`
+    clear that gives NO answer to the open roster (no pick, position or item; mode null or cancel)
+    is "clear all". Measured live (v63, 22 Oct): a real answer to a picker ("all", "semua", "all of
+    them", "1 and 2") always carries its picks. The roster's own domain may ride along when
+    `domain_in_message` is not true (contact 10); a held subject is allowed. Round 14: only the rosters
+    `RESET_OVER_PICKER_KINDS` names, the ones measured on v63. A question the focus
+    holds (round 12b) is no roster here. Whether the message states anything else is the seam's
+    own `_stated_beside_a_reset`."""
+    pending = getattr(state, "pending", None)
+    if pending is None or pending.kind not in RESET_OVER_PICKER_KINDS or not pending.options:
+        return False
+    if verdict.get("entity_op") != "clear":
+        return False
+    if answer.get("picked") or answer.get("items") or verdict.get("reference_positions"):
+        return False
+    if answer.get("mode") not in (None, "cancel"):
+        return False
+    asked_for = pending.payload.get("domains") or ([pending.payload["domain"]] if pending.payload.get("domain") else [])
+    named = chat_state._message_domains(verdict)
+    if named and (domain_in_message(verdict) is True or not set(named) <= set(asked_for)):
+        return False
+    return not chat_state._focus_questions(state.focus) and not state.focus.set_page
+
+
 def _reset_signals(verdict: dict[str, Any], parser_raw: Any = None, state: Any = None) -> list[str]:
     """Release gate #1829, rounds 7-8 (crew rulings, design note 6335681391): the parser fields
     that mark a reset, one per line, so one can be dropped with a one-line change. Parser fields
@@ -4230,6 +4261,7 @@ def _reset_signals(verdict: dict[str, Any], parser_raw: Any = None, state: Any =
         # The chat_state mirror rule: a new subject over which nothing carries IS a reset.
         "new_subject_naming_no_domain": "new_subject" in ops and not _names_a_domain(verdict),
         "all_broaden_over_nothing_open": _all_broaden_over_nothing_open(verdict, state),
+        "clear_over_an_open_picker": _clear_over_an_open_picker(verdict, answer, state),
     }
     return [name for name, on in signals.items() if on]
 
@@ -5339,6 +5371,21 @@ def _run_stages_body(  # noqa: PLR0915
     if reset_result is not None:
         return reset_result
 
+    # Q1 (owner ruling (a), 23 Oct 2026): what the stored question lets a typed word answer, read
+    # before the state applier closes or rewrites it. A raw that is one of its option codes, or a
+    # turn that answers it by position or pick, is a pick, never a corrected typo (`grounding.ground`).
+    near_code_roster = frozenset(
+        turn_state.token_key(str(option.get(field)))
+        for option in (getattr(state_in.pending, "options", None) or [])
+        if isinstance(option, dict)
+        for field in ("code", "label")
+        if option.get(field)
+    )
+    stored_answer = verdict.get("open_question_answer") if isinstance(verdict.get("open_question_answer"), dict) else {}
+    near_code_answering = state_in.pending is not None and bool(
+        verdict.get("reference_positions") or stored_answer.get("picked")
+    )
+
     # CHAT-STATE seam: the parser's `state_changes`, applied ONCE, before every post-parse
     # rewrite, APPLY and both of its re-entries (they all read `state_in` / `verdict`, so
     # writing the change into those two makes the re-entries idempotent). On when the
@@ -5528,6 +5575,8 @@ def _run_stages_body(  # noqa: PLR0915
             pick_info=pick_info if parser_config.code_lookup else None,
             held_ids=[str(p["uuid"]) for p in state_in.focus.products if isinstance(p, dict) and p.get("uuid")],
             hidden_keys=hidden_spec,
+            roster_codes=near_code_roster,
+            answers_question=near_code_answering,
         )
     # H1: the ONE strip, on the grounding output: grounding re-derives specs from the raw words
     # over the whole registry, so this covers the parser's own emission too.

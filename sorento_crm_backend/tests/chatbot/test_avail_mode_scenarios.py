@@ -283,10 +283,61 @@ def test_S30_bare_all_is_refused_and_the_list_stays_open(console):
     assert [o["code"] for o in question["options"]] == OWNER_FAMILY
 
 
-def test_S31_all_of_them_as_a_broaden_alone_is_refused_too(console):
+RESET_ACK = "Okay, I've cleared that. What would you like to check?"
+
+
+def test_S31_a_no_pick_entity_op_clear_over_a_picker_is_a_reset(console):
+    """Re-pinned by the release gate #1829 round 13 crew ruling (crew-note on #1825): this parse
+    (entity_op clear, broaden_axis all, no pick, no position, no mode) over an open picker is the
+    "clear all" read, never "all of them": measured live (v63, x3 each, 22 Oct) a real "all",
+    "semua" or "all of them" over a product picker carried its picks in 9 of 9 runs. The parse
+    and the stored picker are unchanged; the reset closes the picker and fetches nothing."""
     c = console()
     c.say("srtwc286 x 10", stock(product("srtwc286", 10)))
-    assert c.say("all of them", reply(broaden_axis="all", entity_op="clear")) == NOT_ALL
+    calls = len(c.tool_calls)
+    assert c.say("all of them", reply(broaden_axis="all", entity_op="clear")) == RESET_ACK
+    assert c.stored_question is None, c.stored_question
+    assert len(c.tool_calls) == calls, c.tool_calls[calls:]
+
+
+#: The measured "all of them" over the same picker at b173c6e8c4 (lane, actions, tools, reply).
+B173_ALL_OF_THEM_PICKS = {
+    "lane": "business_query", "actions": ["send_message"], "tools": [],
+    "reply": "Please reply with the number of the code you need.",
+}
+
+
+def test_S31b_the_measured_all_of_them_over_a_picker_answers_every_pick(console, monkeypatch):
+    """The parse measured live for "all of them" over an open product picker (v63, 22 Oct): mode
+    pick, every position picked, entity_op reuse, broaden_axis all, the picker's inventory domain.
+    It answers as it did at b173c6e8c4."""
+    from app.services.chatbot import engine as engine_mod
+
+    results = []
+    real_run_turn = engine_mod.run_turn
+
+    def recorded(*a, **k):
+        out = real_run_turn(*a, **k)
+        results.append(out)
+        return out
+
+    monkeypatch.setattr(engine_mod, "run_turn", recorded)
+    c = console()
+    c.say("srtwc286 x 10", stock(product("srtwc286", 10)))
+    calls = len(c.tool_calls)
+    every = [1, 2, 3, 4, 5]
+    text = c.say("all of them", reply(
+        broaden_axis="all", entity_op="reuse", reference_positions=every,
+        open_question_answer=answer("pick", picked=every),
+    ))
+    out = results[-1]
+    observed = {
+        "lane": out.branch_kind,
+        "actions": [a.get("kind") for a in out.actions or []],
+        "tools": sorted({name for name, _ in c.tool_calls[calls:]}),
+        "reply": text,
+    }
+    assert observed == B173_ALL_OF_THEM_PICKS, observed
 
 
 def test_S32_picking_every_number_is_allowed_and_answered(console):

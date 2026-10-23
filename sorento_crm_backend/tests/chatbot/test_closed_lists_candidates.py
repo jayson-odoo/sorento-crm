@@ -506,3 +506,49 @@ def test_guard_the_numeric_a_number_line_stays_beside_a_boolean_key(db):
     lines = _lines(db, "do you have a zz high basin")
 
     assert '- "high": spec dim_height (a number)' in lines, lines
+
+
+# --- P8: every exact existing code keeps its line past the cap ---------------------------------------
+
+
+def test_every_exact_code_gets_its_line_whatever_the_line_cap(db):
+    codes = [f"ZZTEX{n:03d}" for n in range(13)]
+    _products(db, *codes)
+
+    entries = candidates.shortlist(db, "stock " + " ".join(codes))
+    lines = candidates.candidate_lines(entries)
+    assert len(lines) == 1 + len(codes), lines
+    for code in codes:
+        assert any(ln.startswith(f'- "{code.lower()}": code {code} (Name of {code})') for ln in lines), code
+    # what grounding and the trace read agrees with what is rendered
+    assert candidates.listed_codes(entries) >= {c.lower() for c in codes}
+    assert set(candidates.pick_info(entries)) >= {c.lower() for c in codes}
+
+
+def test_guard_non_code_words_stay_capped_when_exact_codes_ride_along(db):
+    codes = [f"ZZTEX{n:03d}" for n in range(13)]
+    _products(db, *codes)
+    _registry(db, "finish", "Finish", [f"tone{n}" for n in range(40)])
+    message = " ".join(f"tone{n}" for n in range(40)) + " " + " ".join(codes)
+    lines = candidates.candidate_lines(candidates.shortlist(db, message))
+    assert len([ln for ln in lines if "code ZZTEX" in ln]) == 13
+    assert len([ln for ln in lines if "spec finish" in ln]) <= candidates.CAP_LINES
+
+
+def test_guard_near_code_lines_stay_capped_per_word_and_to_the_first_coded_words(db):
+    _products(db, *[f"ZZTNR{n:03d}" for n in range(12)])
+    typed = [f"zztnr{n:03d}x" for n in range(8)]  # eight typos: only the first CODE_WORDS_PER_MESSAGE read near codes
+    lines = candidates.candidate_lines(candidates.shortlist(db, " ".join(typed)))
+    near_lines = [ln for ln in lines if "near code" in ln]
+    assert len(near_lines) <= candidates.CODE_WORDS_PER_MESSAGE
+    assert all(ln.count("near code") <= candidates.CAP_PER_WORD for ln in near_lines)
+
+
+def test_p8b_a_large_paste_of_exact_codes_has_a_ceiling_and_keeps_message_order(db):
+    codes = [f"ZZTBG{n:03d}" for n in range(80)]
+    _products(db, *codes)
+    lines = candidates.candidate_lines(candidates.shortlist(db, " ".join(codes)))
+    body = lines[1:]
+    assert len(body) <= 60, len(body)
+    listed = [ln.split('"')[1] for ln in body]
+    assert listed == [c.lower() for c in codes[: len(listed)]], "first come, first listed"

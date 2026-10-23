@@ -29,6 +29,9 @@ HEADER = "Candidates for words of this message (each says what it is; pick one o
 
 CAP_PER_WORD = 5
 CAP_LINES = 12
+#: The ceiling on the lines a message gets once exact existing codes ride past `CAP_LINES` (a large
+#: paste lists the first of them in message order).
+CAP_CODE_LINES = 60
 #: Words with a digit read for codes holding them / spelt near them, per message (one
 #: query each); every other word costs nothing beyond the one whole-code query.
 CODE_WORDS_PER_MESSAGE = 6
@@ -599,12 +602,30 @@ def shortlist(
     return ordered
 
 
+def _names_an_exact_code(entry: WordCandidates) -> bool:
+    """Does one of this word's rows list the word's own code, exactly (not a near or a holding row)?"""
+    folded = _fold_code(entry.gram)
+    return any(
+        not item.startswith("near ") and _fold_code(code) == folded
+        for item, code in entry.codes.items() if item in entry.items
+    )
+
+
+def shown_entries(entries: list[WordCandidates]) -> list[WordCandidates]:
+    """The words that get a line: the first `CAP_LINES`, and every word past them that is an
+    exact existing code (one short line each). The cap limits non-code words and near-code lines;
+    a typed code that exists is never dropped, whatever its place in the message."""
+    kept = [entry for entry in entries if entry.items]
+    extra = [entry for entry in kept[CAP_LINES:] if _names_an_exact_code(entry)]
+    return kept[:CAP_LINES] + extra[: max(0, CAP_CODE_LINES - CAP_LINES)]
+
+
 def listed_codes(entries: list[WordCandidates]) -> frozenset[str]:
     """The folded codes of the code lines `candidate_lines` renders (the caps applied):
     what grounding checks a product pick against under the gate."""
     from app.services.chatbot.turn.state import token_key
 
-    shown = [entry for entry in entries if entry.items][:CAP_LINES]
+    shown = shown_entries(entries)
     return frozenset(token_key(entry.codes[item]) for entry in shown for item in entry.items if item in entry.codes)
 
 
@@ -614,7 +635,7 @@ def pick_info(entries: list[WordCandidates]) -> dict[str, dict[str, Any]]:
     that hold the word."""
     from app.services.chatbot.turn.state import token_key
 
-    shown = [entry for entry in entries if entry.items][:CAP_LINES]
+    shown = shown_entries(entries)
     out: dict[str, dict[str, Any]] = {}
     for entry in shown:
         listed = {code for item, code in entry.codes.items() if item in entry.items}
@@ -628,7 +649,7 @@ def pick_info(entries: list[WordCandidates]) -> dict[str, dict[str, Any]]:
 def candidate_lines(entries: list[WordCandidates]) -> list[str]:
     """The block for the parser's user turn: a header and one line per word, capped; empty
     when nothing in the message is on file (the user turn is then unchanged)."""
-    lines = [f'- "{entry.gram}": ' + "; ".join(entry.items) for entry in entries if entry.items]
+    lines = [f'- "{entry.gram}": ' + "; ".join(entry.items) for entry in shown_entries(entries)]
     if not lines:
         return []
-    return [HEADER, *lines[:CAP_LINES]]
+    return [HEADER, *lines]
