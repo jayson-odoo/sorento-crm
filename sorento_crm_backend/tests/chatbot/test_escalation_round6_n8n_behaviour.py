@@ -564,7 +564,7 @@ class TestR3RefusalHoldsWhicheverProductRowComesFirst:
         said = _said(conv.say(f"{PRODUCT_CODE} kim seng jaya send yet", _order_ask()))
         assert _checked_both(said), said
         assert f"{PICKER_HEAD}\n*Mocha:*\n1. Kia Yee\n*Sorento:*\n2. Jereen Tee" in said, (
-            "the picker's order is the lookup's company order, not the product rows'"
+            "the picker's order is the gate's name-sorted routing companies, not the product rows'"
         )
         conv.say("the cabana one", _reply(escalation={"is_escalation_confirmation": False, "company_pick": "Cabana"}))
         assert conv.last_lane == [], "a pick outside the offered pool routes nowhere"
