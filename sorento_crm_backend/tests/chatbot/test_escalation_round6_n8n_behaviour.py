@@ -82,8 +82,10 @@ SORENTO_MEMBERS = [("zzt-u-jer", "Jereen Tee"), ("zzt-u-tay", "Tay Zhi Yang")]
 def _chain(session_factory, *, product_order: tuple[str, str] = ("mocha", "sorento")) -> dict[str, str]:
     """`product_order` is the order the two same-code products are INSERTED in, which is
     the only thing that decides which one the resolver's exact probe returns first (it has
-    no ORDER BY). The default is this file's historical order; a shared xdist worker's
-    earlier tests can still lay the rows out the other way on disk (main cd220251)."""
+    no ORDER BY) in a fresh table. The default is this file's historical order; a shared
+    xdist worker's earlier tests can still lay the rows out the other way on disk (main
+    cd220251), so no assertion may depend on it: the product-row order shows only in the
+    "checked in" phrase (BOTH_CHECKED) and the plain clarify (PLAIN_CLARIFY)."""
     a = _seed_company(session_factory, name=MOCHA)
     b = _seed_company(session_factory, name=SORENTO)
     ids = {"mocha": a, "sorento": b}
@@ -550,23 +552,19 @@ class TestR3BothMissClarifiesTheCompany:
 class TestR3RefusalHoldsWhicheverProductRowComesFirst:
     """Main deploy cd220251 (run 36379111785): on a shared xdist worker the Sorento product
     row sat ahead of the Mocha one, the offer said "checked in Sorento and Mocha", and the
-    refusal test died in its setup before the rule it pins was ever reached. Both physical
-    orders are pinned here, so the refusal is proven in each and the phrase's order is on
-    the record as the resolver's, not a promise."""
+    refusal test died in its setup before the rule it pins was ever reached. Both INSERT
+    orders run here, so the refusal is proven in each. The insert order does not pin the
+    physical row order (a worker whose earlier tests freed heap space can lay the second
+    insert out first; release runs 39823699218 / 39876559607 and a third run saw the
+    phrase flip with Mocha inserted first), so the phrase accepts either order."""
 
-    @pytest.mark.parametrize(
-        ("product_order", "phrase"),
-        [
-            (("mocha", "sorento"), "checked in Mocha and Sorento"),
-            (("sorento", "mocha"), "checked in Sorento and Mocha"),
-        ],
-    )
-    def test_a_parser_pick_of_a_company_never_offered_is_refused(self, conversation, product_order, phrase):
+    @pytest.mark.parametrize("product_order", [("mocha", "sorento"), ("sorento", "mocha")])
+    def test_a_parser_pick_of_a_company_never_offered_is_refused(self, conversation, product_order):
         conv = conversation(_both_miss, product_order=product_order)
         said = _said(conv.say(f"{PRODUCT_CODE} kim seng jaya send yet", _order_ask()))
-        assert phrase in said, said
+        assert _checked_both(said), said
         assert f"{PICKER_HEAD}\n*Mocha:*\n1. Kia Yee\n*Sorento:*\n2. Jereen Tee" in said, (
-            "the picker's order is the lookup's company order, not the product rows'"
+            "the picker's order is the gate's name-sorted routing companies, not the product rows'"
         )
         conv.say("the cabana one", _reply(escalation={"is_escalation_confirmation": False, "company_pick": "Cabana"}))
         assert conv.last_lane == [], "a pick outside the offered pool routes nowhere"
