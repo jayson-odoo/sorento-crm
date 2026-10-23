@@ -16,6 +16,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { copyTextToClipboard } from '@/lib/clipboard';
 import { useReducedMotion } from '@/lib/motion';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
@@ -35,10 +36,11 @@ interface MessageBubbleActionsProps {
 }
 
 async function copyToClipboard(text: string) {
-  try {
-    await navigator.clipboard.writeText(text);
+  // Over plain http (a phone on the tailnet) the Clipboard API is missing; the shared
+  // helper falls back to execCommand.
+  if (await copyTextToClipboard(text)) {
     toast.success('Copied');
-  } catch {
+  } else {
     toast.error('Could not copy this message');
   }
 }
