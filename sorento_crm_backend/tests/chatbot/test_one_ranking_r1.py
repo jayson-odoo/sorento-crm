@@ -275,6 +275,20 @@ def test_r1_review_1_a_customer_pick_continues_the_ranking_never_the_catalogue_l
         # Or it asks only what is still missing, in one reply (the period and / or the basis).
         assert "Which period" in reply or "Delivered" in reply, reply
         assert "Which one" not in reply, reply
+        # The answer to what was missing runs the ranking for the PICKED customer.
+        result, captured = _run_turn(
+            session_factory, monkeypatch,
+            qf=_parser_output(
+                message_type="business_query", domain_hint="order", intent_hint="check_order", entities=[],
+                order_status="sales_ranking", group_by=None, top_n=None, measure=None, basis="delivered",
+                open_question_answer={"mode": "fill", "picked": [], "items": [], "qty_for_all": None},
+                state_changes=[{"op": "answer", "axis": None, "position": None}], **YEAR_2026),
+            text_body="2026, delivered", msg_id=f"zzt-r1-pick2-{label}", attributes=["sales_orders.sales_report"])
+        ran = [a for n, a in captured if n == TOOL]
+        assert len(ran) == 1, ((result.reply or {}).get("text"), captured)
+        assert ran[0].get("customer_ids") == [ZZ_UUID_1], ran  # the picked customer, not the top 4 overall
+        assert ran[0]["top_n"] == 4 and ran[0]["measure"] == "amount" and ran[0]["basis"] == "delivered", ran
+        assert ran[0]["date_from"] == "2026-01-01" and ran[0]["date_to"] == "2026-12-31", ran
 
 
 def test_r1_review_2_an_old_top_selling_session_still_reaches_the_own_book_run(console_no_grant, monkeypatch) -> None:
