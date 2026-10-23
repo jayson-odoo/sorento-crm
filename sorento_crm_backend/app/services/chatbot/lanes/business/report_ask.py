@@ -920,7 +920,7 @@ def settle(
         # period alone never runs a total (it asks).
         given["period"] = period
     extras: dict[str, Any] = {"args": args, "top_n": top_n}
-    if across_all and frame.get("group_by") in AXIS_NOUNS:
+    if across_all and frame.get("group_by") in AXIS_NOUNS and _drill_source(frame):
         # Owner ruling B: after a ranking, a new axis runs across all, and the header line says so.
         extras["note"] = f"Across all {AXIS_NOUNS[frame['group_by']][1]}"
     return rf.collect(db, SALES_RANKING_ASK, given=given, extras=extras), None
@@ -1000,6 +1000,15 @@ def _named_words(parse_output: dict[str, Any], axis: str) -> list[str]:
     return [w for w in words if w]
 
 
+def _drill_source(frame: dict[str, Any]) -> bool:
+    """Is the ranking on screen a population a drill can narrow (agents, customers, ...), not a month
+    or channel list? One test with the scoped drill."""
+    from app.services.reports.ask import drill_param
+
+    source = jsc.js_string(frame.get("group_by") or "")
+    return source in AXIS_NOUNS and drill_param(source, source) is not None
+
+
 def _unsure_line(group_by: str, top_n: Any, source: str, count: int) -> str:
     """"Top 10 customers of the 3 sales agents above, or across all customers?" (card rule 1)."""
     one, many = AXIS_NOUNS[group_by]
@@ -1027,7 +1036,7 @@ def _drill(
     rows = [r for r in jsc.array(shown.get("rows")) if isinstance(r, dict)]
     source = jsc.js_string(shown.get("group_by") or "")
     unsure = reading == "unsure"
-    drillable = bool(rows) and source in AXIS_NOUNS and drill_param(source, source) is not None
+    drillable = bool(rows) and _drill_source(frame)
     if unsure and not drillable:
         return None
     if not rows or source not in AXIS_NOUNS:
