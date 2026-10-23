@@ -60,9 +60,31 @@ def test_contract_key_maps_do_not_name_the_old_tool() -> None:
     assert holders == []
 
 
-def test_bootstrap_replays_the_r4b_applier() -> None:
-    text = (BACKEND / "scripts" / "bootstrap_env.py").read_text()
-    assert "or_r4b_top_selling_off" in text
+def test_bootstrap_replays_the_r4b_applier(monkeypatch) -> None:
+    """Behavioural: the bootstrap's chatbot policy seed, replayed on a blank schema inside a rolled-back
+    transaction (its `engine.begin()` blocks are pointed at the session's connection), ends with no
+    chatbot_domains row listing the old tool and `crm_report_ask` on the sales row."""
+    from contextlib import contextmanager
+
+    import sqlalchemy as sa
+
+    import app.database
+    from scripts import bootstrap_env
+    from tests._pg_fixture import blank_session
+
+    with blank_session() as db:
+        conn = db.connection()
+
+        class _Engine:
+            @contextmanager
+            def begin(self):
+                yield conn
+
+        monkeypatch.setattr(app.database, "engine", _Engine())
+        bootstrap_env.seed_chatbot_policy()
+        rows = dict(db.execute(sa.text("SELECT name, tools FROM chatbot_domains")).all())
+    assert [n for n, t in rows.items() if OLD_TOOL in t] == []
+    assert "crm_report_ask" in rows["sales"], rows["sales"]
 
 
 # ---- guards that stay green: the route, MCP tool and analytics connector keep the tool ----
