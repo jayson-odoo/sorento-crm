@@ -75,7 +75,7 @@ export interface ConsolePromptVersion {
   version: number;
   label: string | null;
   chars: number;
-  /** Item 6: the lineage of the body (shown in the picker; the default is the production label). */
+  /** Item 6: the lineage of the body. The console defaults to the newest `full`. */
   base: ConsolePromptBase;
 }
 

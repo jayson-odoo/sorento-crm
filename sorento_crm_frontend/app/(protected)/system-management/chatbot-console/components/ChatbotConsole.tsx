@@ -16,7 +16,7 @@ import { formatElapsed, useVoiceRecorder } from '@/components/common/conversatio
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { getRespondContactsOutbound } from '../../respond-contacts/services/respondContactOutboundService';
-import { defaultPromptVersionId, useChatbotConsole } from '../hooks/useChatbotConsole';
+import { useChatbotConsole } from '../hooks/useChatbotConsole';
 import type { ChatbotConsoleMessage, ConsoleMediaInput, ConsoleQuote } from '../types/chatbotConsole.types';
 
 /** A press on the mic shorter than this is a tap (recording keeps going, with a bar to
@@ -240,19 +240,16 @@ export default function ChatbotConsole() {
 
   // The version actually in effect, spelled out next to the composer - "Parser v38", never
   // the raw id. `promptVersionId === null` after the versions have loaded is an explicit
-  // pick of the live production label (the select's "clear" option), not a loading state;
-  // it still names the version that label points at, so the operator always sees what runs.
+  // in-session pick of the live production label (the select's "clear" option), not a
+  // loading state.
   const activePromptVersion = promptVersions.find((v) => v.id === promptVersionId);
-  const productionVersion = promptVersions.find((v) => v.id === defaultPromptVersionId(promptVersions));
   const activePromptLabel = promptVersionsLoading
     ? null
     : activePromptVersion
       ? `Parser v${activePromptVersion.version}`
-      : productionVersion
-        ? `Parser v${productionVersion.version} (live production)`
-        : promptVersions.length > 0
-          ? 'Parser live (production)'
-          : null;
+      : promptVersions.length > 0
+        ? 'Parser live (production)'
+        : null;
 
   // The bubbles a message can quote: bot replies of a real turn and the customer's own sent messages
   // (never the greeting lines).

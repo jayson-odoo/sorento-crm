@@ -21,7 +21,6 @@ import {
 } from '../types/chatbotConsole.types';
 
 const LAST_CONTACT_STORAGE_KEY = 'chatbot-console:last-contact';
-const PROMPT_VERSION_STORAGE_KEY = 'chatbot-console:prompt-version';
 // How often the "still reading/transcribing" poll checks back, once a media turn's own
 // synchronous wait already timed out server-side. Matches the plan's own "every 2 s".
 const MEDIA_POLL_INTERVAL_MS = 2000;
@@ -71,41 +70,14 @@ function writeStoredContact(contact: StoredContact): void {
   }
 }
 
-/** The version the console pins when the operator has not chosen one: the version the
- * `production` label points at, so a console turn runs what a customer's turn runs. The
- * label can be joined ("production, staging") when two labels share a row. Null when no
- * version carries it (the select then reads "live"). CONSOLE-PICKER-COPY (23 Oct 2026):
- * the older "newest full body" rule landed on v73 while production sat on v92. */
+/** Item 6: the version the console pins when the operator has not chosen one - the NEWEST
+ * `full` body, never the newest overall and never the production label (which locally
+ * sits on the compact lineage: the owner's turns ran the compact base twice unnoticed).
+ * Null when no full version exists. */
 export function defaultPromptVersionId(versions: ConsolePromptVersion[]): string | null {
-  const production = versions.find((v) =>
-    (v.label ?? '').split(',').some((label) => label.trim() === 'production'),
-  );
-  return production?.id ?? null;
-}
-
-/** The operator's pick for this tab, `{id}` with `id: null` for an explicit "live label"
- * clear. sessionStorage, not localStorage: a reload (iOS Safari reloads background tabs)
- * keeps the pick, a new tab starts from production again. `undefined` = nothing stored. */
-function readStoredPromptVersion(): string | null | undefined {
-  if (typeof window === 'undefined') return undefined;
-  try {
-    const raw = window.sessionStorage.getItem(PROMPT_VERSION_STORAGE_KEY);
-    if (!raw) return undefined;
-    const parsed = JSON.parse(raw) as { id?: unknown };
-    if (parsed.id === null || typeof parsed.id === 'string') return parsed.id;
-  } catch {
-    // Ignored - a corrupt value is the same as absent.
-  }
-  return undefined;
-}
-
-function writeStoredPromptVersion(id: string | null): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.sessionStorage.setItem(PROMPT_VERSION_STORAGE_KEY, JSON.stringify({ id }));
-  } catch {
-    // Storage can be full or disabled; the pick then lasts until the next reload.
-  }
+  const full = versions.filter((v) => v.base === 'full');
+  if (full.length === 0) return null;
+  return full.reduce((best, v) => (v.version > best.version ? v : best)).id;
 }
 
 /** A contact row's display label, the same "no UUIDs in the UI" rule every other picker
@@ -148,10 +120,11 @@ export function useChatbotConsole() {
   const [contactId, setContactIdState] = useState<string | null>(null);
   const [contactLabelState, setContactLabelState] = useState<string>('');
   const [promptVersionId, setPromptVersionIdState] = useState<string | null>(null);
-  // The operator's pick is kept in sessionStorage for this tab (see
-  // `readStoredPromptVersion`). This flag guards against re-defaulting over an explicit
-  // pick (including an explicit "live label" clear, id === null) once the versions list
-  // refetches.
+  // Item 6 (revised, PR #1273 retest): the operator's pick lives in React state ONLY for
+  // this page session - never localStorage/sessionStorage/URL - so a reload always starts
+  // from the newest full body again rather than replaying a stale pick from a prior visit.
+  // This flag guards against re-defaulting over an explicit in-session pick (including an
+  // explicit "live label" clear, id === null) once the versions list refetches.
   const promptChoiceApplied = useRef(false);
   const [runId, setRunId] = useState<string>(() => newRunId());
   const [sessionVars, setSessionVars] = useState<Record<string, unknown> | null>({});
@@ -173,19 +146,12 @@ export function useChatbotConsole() {
   useEffect(() => {
     if (promptChoiceApplied.current || !promptVersions) return;
     promptChoiceApplied.current = true;
-    const stored = readStoredPromptVersion();
-    // A stored id the list no longer carries (a deleted version) falls back to production.
-    if (stored === null || (stored !== undefined && promptVersions.some((v) => v.id === stored))) {
-      setPromptVersionIdState(stored);
-    } else {
-      setPromptVersionIdState(defaultPromptVersionId(promptVersions));
-    }
+    setPromptVersionIdState(defaultPromptVersionId(promptVersions));
   }, [promptVersions]);
 
   const setPromptVersionId = useCallback((id: string | null) => {
     promptChoiceApplied.current = true;
     setPromptVersionIdState(id);
-    writeStoredPromptVersion(id);
   }, []);
 
   // Default contact: last used from localStorage, else the contact of the most recent
