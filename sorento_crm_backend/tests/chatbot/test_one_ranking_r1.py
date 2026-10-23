@@ -300,3 +300,16 @@ def test_r1_review_3_guard_a_noisy_axis_word_in_a_basis_answer_does_not_change_t
     assert len(_ran(log)) == 1, (text, log)
     args = _ran(log)[0]
     assert args["group_by"] == "product" and args["basis"] == "delivered" and args["top_n"] == 10, args
+
+
+def test_r1_review_2b_a_top_selling_verdict_that_skips_by_capability_still_reaches_ruling_2(console_no_grant, monkeypatch) -> None:
+    """A live session never passed `by_capability`: the verdict reaches the domain-grant check as top_selling."""
+    from app.services.chatbot.lanes.business import report_ask
+
+    monkeypatch.setattr(report_ask, "by_capability", lambda verdict: verdict)
+    _make_salesperson(console_no_grant)
+    text, log = _say_all(
+        console_no_grant, monkeypatch, _top_selling(self_reference=True, **FULL_ITEMS), "my top selling items this year")
+    assert OLD_TOOL not in _names(log), _names(log)
+    assert len(_ran(log)) == 1, (text, log)  # not refused at the domain-grant check
+    assert _ran(log)[0].get("mine") is True and _ran(log)[0]["group_by"] == "product", log
