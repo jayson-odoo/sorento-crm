@@ -166,6 +166,8 @@ turns (chatbot.turns on the crew copy).
   axis that runs across all ("by customer") keeps the held product, channel and period and widens only the ranked side
   (header "Across all sales agents"); no period question. Today it is a fresh ask from the message alone. Fix: the hold
   a refine already uses (report_ask.py:871, AC-B6) on the across-all path; a value the message names itself still wins.
+  S6c (crew, 23 Oct ~08:40, owner's 'keep what is on screen'): the same hold also keeps the count, measure and basis
+  (as built in cf0f98d191 it kept period, product and channel only); no question on an across-all ask.
 
 ### Gates (S3)
 

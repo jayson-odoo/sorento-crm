@@ -75,3 +75,7 @@ Plan: `PLAN-report-smart-owner-1022.md`.
   dealer, 2026 with no question asked, header "Across all sales agents". A product, channel or period the message
   names itself replaces the held one. The final run of an across-all ask that first asked a missing detail still
   carries the header.
+- AC-S6-5 (crew on the owner's 'keep what is on screen', 23 Oct ~08:40). The count, measure and basis on screen are held
+  too: after "Top 5 sales agents by delivered sales" (qty), "by customer" runs top 5 customers by delivered qty for the
+  held product, channel and year, header "Across all sales agents", with no question at all. A count, measure or basis
+  the message names itself ("top 10 by customer by amount") replaces the held one.
