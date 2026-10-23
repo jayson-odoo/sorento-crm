@@ -343,8 +343,7 @@ def test_b4_near_miss_a_delivered_status_with_no_report_question_open_is_not_a_r
     "order_status",
     [
         "sales_ranking",
-        pytest.param("top_selling", marks=pytest.mark.xfail(
-            strict=True, reason="REPORT-SMART-L R1 one ranking: a top_selling refine is a sales ranking now; R2 ports the top-selling-shaped refine")),
+        "top_selling",
         None, "delivered", "outstanding",
     ],
     ids=["sales_ranking", "top_selling", "none", "delivered", "outstanding"],
