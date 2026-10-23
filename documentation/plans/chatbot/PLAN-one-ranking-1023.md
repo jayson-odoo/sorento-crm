@@ -1,6 +1,6 @@
 # PLAN: one ranking function (lane REPORT-SMART-L, owner direction 23 Oct 09:05)
 
-Status: owner rulings Q1 (a), Q2 (b), Q3 + ruling-2 (a) (23 Oct ~09:35: widens nothing); R0 READY (b13e934333); R1 in progress. Track: L (routing across two lanes, access change, retire path).
+Status: owner rulings Q1 (a), Q2 (b), Q3 + ruling-2 (a) (23 Oct ~09:35: widens nothing); R0 READY (b13e934333); R0-R3 READY; R4a built (reviewer next). Track: L (routing across two lanes, access change, retire path).
 Branch `claude/report-smart-1021-r2xexf` (PR #1816), base head 412255c5b4. UAC: `one-ranking-1023-acceptance-criteria.md`.
 Evidence: owner's 08:52 turns (crew/state/eval/report-smart-v92/owner-0852-diagnosis.md); code map at 412255c5b4 (below).
 
@@ -53,6 +53,11 @@ nowhere by the sales ranking, so an item ask lands on the catalogue line (T1-T3)
 - Wider: a granted contact that is unlinked and not staff gets 403 on top selling (orders.py:2075-2079) but report_ask does
   not scope it (_contact_scope.py:56-66): it would see every customer.
 - Narrower: dealers lose the channel and agent filters. New: 10 reports / 10 minutes; fails closed with no company row.
+
+## Access rulings as built (owner 23 Oct ~13:00, crew (a))
+Nothing widened, nothing narrowed: item / category rankings stay refused for a granted contact that is unlinked and
+not staff (top selling's 403, kept on the report ask route in R1); customer / brand / month rankings and totals stay as
+today for that contact (owner ruling (b) 'leave it'); ruling 2 'my ...' own-book for an ungranted live salesperson.
 
 ## Risks
 Access (Q3); the connector / any n8n caller (route kept); sessions mid-ranking at deploy (R1 safety net); the claim regex
