@@ -26,7 +26,7 @@
  * designer, one click away through the same primary CTA.
  */
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api';
@@ -58,7 +58,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
+import { numberFieldError, parseNumberDraft } from '@/lib/number-field';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -128,6 +129,7 @@ import {
   type PriceTagAction,
   type PriceTagActionSpec,
 } from './priceTagRequestActions';
+import { codeWithName, distinctName } from '@/lib/product-display';
 
 type DetailTab = 'request' | 'lines' | 'attachments';
 
@@ -598,14 +600,33 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   // saved) only on blur, in `commitManualLinePrice`.
   const [manualPriceDraft, setManualPriceDraft] = useState<Record<string, string>>({});
 
+  // A typed price that is not usable is not saved and not rewritten: the box keeps it and says why.
+  const [manualPriceError, setManualPriceError] = useState<Record<string, string | undefined>>({});
+
+  const manualPriceFollowRef = useRef<Record<string, boolean>>({});
+
   const setManualLinePrice = useCallback((lineId: string, value: string) => {
     setManualPriceDraft((prev) => ({ ...prev, [lineId]: value }));
+    // Once a sentence has been shown it follows the typing in both directions.
+    if (manualPriceFollowRef.current[lineId]) {
+      setManualPriceError((prev) => ({
+        ...prev,
+        [lineId]: numberFieldError(value, { min: 0.01, optional: true }),
+      }));
+    }
   }, []);
 
   const commitManualLinePrice = useCallback(
     (lineId: string) => {
       const draft = manualPriceDraft[lineId];
-      const manual = draft === undefined || draft === '' ? null : Number(draft);
+      // Blank clears the override (no manual price); anything else must be a price.
+      const message = numberFieldError(draft, { min: 0.01, optional: true });
+      if (message) {
+        manualPriceFollowRef.current[lineId] = true;
+        setManualPriceError((prev) => ({ ...prev, [lineId]: message }));
+        return;
+      }
+      const manual = parseNumberDraft(draft);
       setLinePriceOverrides((prev) => ({
         ...prev,
         [lineId]: { promotion_id: null, manual_sell_price: manual, locked: true },
@@ -1113,8 +1134,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                 ).toLocaleString('en-MY')}
                               </p>
                             ) : canEditLinePrice ? (
-                              <Input
-                                type="number"
+                              <NumberInput
                                 inputMode="decimal"
                                 // `ManualSellPrice` is `gt=0` with 2 decimal
                                 // places, so 0 is a refusal, not a bound.
@@ -1132,6 +1152,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                 placeholder="Type a price"
                                 aria-label={`Selling price for ${line.code || line.name}`}
                                 disabled={savingLinePrice === line.id}
+                                error={manualPriceError[line.id]}
                               />
                             ) : (
                               <p className="text-sm font-medium whitespace-nowrap">
@@ -1154,12 +1175,14 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                 {line.code}
                               </td>
                               <td className="py-2 pr-3">
-                                <span
-                                  className="truncate block max-w-[200px]"
-                                  title={line.name}
-                                >
-                                  {line.name}
-                                </span>
+                                {distinctName(line.code, line.name) ? (
+                                  <span
+                                    className="truncate block max-w-[200px]"
+                                    title={line.name}
+                                  >
+                                    {line.name}
+                                  </span>
+                                ) : null}
                                 {line.package_warning && (
                                   <span className="mt-1 flex flex-wrap items-center gap-1.5">
                                     <Badge
@@ -1316,7 +1339,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                   colSpan={columns - 1}
                                 >
                                   {part.product_id
-                                    ? `${part.code ?? ''}${part.name ? ` - ${part.name}` : ''}${part.role ? ` (${part.role})` : ''}`
+                                    ? `${codeWithName(part.code ?? '', part.name)}${part.role ? ` (${part.role})` : ''}`
                                     : `${part.role ?? 'Open'}: ${part.candidates
                                         .map((candidate) => candidate.code)
                                         .join(' / ')}`}

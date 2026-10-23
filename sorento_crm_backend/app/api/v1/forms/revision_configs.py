@@ -24,8 +24,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import (
-    get_current_user,
     get_current_user_or_api_key,
+    require_permission,
     require_permission_with_api_key,
 )
 from app.models.portal import PortalRevisionConfig
@@ -40,10 +40,21 @@ router = APIRouter()
 # wiring at all (no PortalRevisionService dispatch, no revise/save-draft route), so a
 # settings row for it would configure nothing - exactly the trap the SUPPORTED_TYPES
 # comment in portal_service.py warns about. Add it back here the day it gets one.
+# sample_request (SR-CORE #1718) is out for the same reason: the portal revise route
+# refuses it (no RevisionAdapter in portal_revision_service.ADAPTERS).
+# new_product_application (NEW-PRODUCT-APP) likewise: its Revise is its own move (#1698 style),
+# not the portal revision engine.
 REVISABLE_PORTAL_FORM_TYPES = tuple(
     kind
     for kind in GRANTABLE_PORTAL_FORM_TYPES
-    if kind not in ("sales_opportunity", "customer_asks", "conversation")
+    if kind
+    not in (
+        "sales_opportunity",
+        "sample_request",
+        "new_product_application",
+        "customer_asks",
+        "conversation",
+    )
 )
 
 
@@ -188,10 +199,14 @@ async def get_portal_revision_enabled_map(
 async def upsert_portal_revision_config(
     payload: PortalRevisionConfigUpdate,
     source_entity_type: str = Path(...),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.settings.edit")),
     db: Session = Depends(get_db),
 ):
-    """Upsert one type's policy. Creates the row when the seed never ran."""
+    """Upsert one type's policy. Creates the row when the seed never ran.
+
+    The settings edit slug, the one the Portal Revisions globals already save under
+    (via `PUT /settings/general`): this checked only that the caller was signed in
+    (SETTINGS-PERM-GATE)."""
     kind = _check_type(source_entity_type)
     row = (
         db.query(PortalRevisionConfig)

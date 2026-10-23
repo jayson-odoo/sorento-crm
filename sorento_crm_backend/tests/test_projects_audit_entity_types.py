@@ -56,12 +56,23 @@ def _mapped_classes():
 # type at birth and are pinned by their own test below, not by the rename contract.
 BORN_AFTER_THE_MOVE = frozenset({
     "so_supply_decisions",
+    # OI-LINE-SPLIT (migration ols_0001_so_line_splits): the delivery splits staff plan for one
+    # SO line, born straight into `projects` beside `sales_order_lines`.
+    "so_line_splits",
     # PLAN-so-book-diff-replanning.md (migration 29d85dc3ccc3), same reason as above.
     "planning_change_batches",
     "planning_change_rows",
     # PLAN-scm-cs-planning-uat.md (migration 421_order_inquiry_links): one inquiry row's
     # quantity placed across several documents.
     "order_inquiry_links",
+    # OI-RESERVE-RECEIVED (migration oirr_0001_released_links): born into `projects`.
+    "order_inquiry_released_links",
+    # PLAN-set-quote-line-14oct.md, migration sql_0001_set_quote_line (#1682): one product
+    # set priced into a series, born straight into `projects` beside `series_products`.
+    "series_sets",
+    # PLAN-series-filters-15oct.md, migration sf_0001_series_brands (#1697): the brands a
+    # series picks, born straight into `projects` beside `series_categories`.
+    "series_brands",
     # PLAN-oi-links-autocount-truth-24sep.md (migration oisl_0001_suggested_links, issue
     # #1215): a guess the cascade walk made, never a placement - born straight into
     # `projects` the same way its sibling `order_inquiry_links` was.
@@ -81,6 +92,13 @@ BORN_AFTER_THE_MOVE = frozenset({
     # PLAN-oi-request-cs-reserve.md section 6c, migration oirs_0002_reserve_round2: born
     # straight into `projects` the same way.
     "order_inquiry_reserve_events",
+    # PLAN-stock-debt-snapshot-15oct.md, migration sds_0001_stock_debt_snapshots (#1705):
+    # born straight into `projects` the same way.
+    "stock_debt_snapshots",
+    "stock_debt_snapshot_rows",
+    # SR-CORE (#1718, migration sr_0001_sample_requests): born straight into `projects`.
+    "sample_requests",
+    "sample_request_lines",
 })
 
 
@@ -145,6 +163,15 @@ def test_a_model_born_after_the_move_keeps_the_prefix_convention_it_was_born_wit
         _audit_entity_type(OrderInquiryReserveEvent)
         == "project_order_inquiry_reserve_events"
     )
+    # PLAN-stock-debt-snapshot-15oct.md: the same convention, pinned at birth.
+    from app.models.stock_debt_snapshot import StockDebtSnapshot, StockDebtSnapshotRow
+
+    assert _audit_entity_type(StockDebtSnapshot) == "project_stock_debt_snapshots"
+    assert _audit_entity_type(StockDebtSnapshotRow) == "project_stock_debt_snapshot_rows"
+    # SR-CORE (#1718): the same convention, pinned at birth.
+    from app.models.sample_request import SampleRequest
+
+    assert _audit_entity_type(SampleRequest) == "project_sample_requests"
 
 
 def test_every_renamed_model_pins_its_pre_move_audit_entity_type():

@@ -128,6 +128,8 @@ class SystemSettingUpdate(BaseModel):
     # on, a staff upload goes through Submit/Decide/Return before Apply. Same rule again -
     # must appear here AND in the GET dict below.
     cost_price_verification_enabled: Optional[bool] = None
+    # Sample requests (SR-CORE, card rule 2): soft-transition switch, OFF on deploy. Must appear here, in the GET dict, and in AppConfigResponse below.
+    sample_request_require_project: Optional[bool] = None
     # Chatbot media endpoint (PLAN-chatbot-media-endpoint section 2.4). Same rule
     # again - every one of these must ALSO appear in the GET dict below.
     #
@@ -194,6 +196,17 @@ class SystemSettingUpdate(BaseModel):
     # above - they must appear HERE and in the GET dict, because both are manual.
     chatbot_business_lane_enabled: Optional[bool] = None
     chatbot_ordering_enabled: Optional[bool] = None
+    # CHAT-SPEED: the direct-ingress switch. A Literal, so a mode outside the three answers
+    # 422 instead of being stored and read as off. Same rule as every block above - it must
+    # appear HERE and in the GET dict, because both are manual.
+    chatbot_direct_ingress_mode: Optional[Literal["off", "contacts", "all"]] = None
+    chatbot_direct_ingress_contacts: Optional[str] = Field(None, max_length=20000)
+    # CLOSED-LISTS-INDEX-MODE: a Literal, so a mode outside the two answers 422. Same rule as
+    # every block above - it must appear HERE and in the GET dict, because both are manual.
+    chatbot_closed_lists_mode: Optional[Literal["block", "index"]] = None
+    # CHAT-RELEASE-1021: the stored reply composer switch (default off). Same rule as every
+    # block above - it must appear HERE and in the GET dict, because both are manual.
+    chatbot_composer_enabled: Optional[bool] = None
     # Price tag packages (D2): the product classes a request line is WARNED about
     # when it reaches marketing without its catalogue package. Same rule as every
     # block above - it must appear HERE and in the GET dict, because both are manual.
@@ -245,6 +258,9 @@ class AppConfigResponse(BaseModel):
     #: `price_tag_auto_collect_days` is here. A warehouse id, never rendered as text -
     #: only matched against the dialog's own resolved pool options.
     oi_reserve_default_pool_warehouse_id: Optional[str] = None
+    #: SR-CORE: a salesperson's sample request form must know whether to require a
+    #: registered project, and holds no `user_management.settings.view`.
+    sample_request_require_project: bool = False
 
 
 @router.get("/")
@@ -414,6 +430,9 @@ async def get_settings(
                 "cost_price_verification_enabled": (
                     bool(getattr(settings, "cost_price_verification_enabled", False)) if settings else False
                 ),
+                "sample_request_require_project": (
+                    bool(getattr(settings, "sample_request_require_project", False)) if settings else False
+                ),
                 # Chatbot media. NULL is meaningful for the three model columns:
                 # provider/model inherit the AIAssistantConfig row, and a NULL
                 # degraded model means the monthly quota is a hard stop rather
@@ -463,6 +482,10 @@ async def get_settings(
                 "chatbot_completed_lanes": getattr(settings, "chatbot_completed_lanes", None) or [] if settings else None,
                 "chatbot_business_lane_enabled": getattr(settings, "chatbot_business_lane_enabled", False) if settings else None,
                 "chatbot_ordering_enabled": getattr(settings, "chatbot_ordering_enabled", False) if settings else None,
+                "chatbot_direct_ingress_mode": getattr(settings, "chatbot_direct_ingress_mode", None) or "off" if settings else None,
+                "chatbot_direct_ingress_contacts": getattr(settings, "chatbot_direct_ingress_contacts", None) if settings else None,
+                "chatbot_closed_lists_mode": getattr(settings, "chatbot_closed_lists_mode", None) or "block" if settings else None,
+                "chatbot_composer_enabled": bool(getattr(settings, "chatbot_composer_enabled", False)) if settings else None,
                 "price_tag_guarded_classes": getattr(settings, "price_tag_guarded_classes", None) or [] if settings else None,
                 # PLAN-oi-request-cs-reserve.md section 6c (F1): BOTH manual builders,
                 # or the setting never reaches the General settings screen at all.
@@ -530,6 +553,9 @@ async def get_app_config(
                 if settings
                 else None
             ),
+            sample_request_require_project=bool(
+                getattr(settings, "sample_request_require_project", False)
+            ),
         )
     except Exception as e:
         raise handle_internal_error(str(e))
@@ -550,6 +576,29 @@ _RUNTIME_MAX_LENGTH = {
     "respond_webhook_secret": 1000,
 }
 _RO_DSN_SCHEMES = ("postgresql://", "postgresql+psycopg2://", "postgres://")
+
+
+def _refused_date(name: str, value: str) -> Optional[str]:
+    """Why a date setting is refused, or None. ISO text only (the box sends YYYY-MM-DD), and
+    never after today in Malaysia time: the DO cutover marks every DO dated before it delivered,
+    so a future date would land today's live DOs delivered with no tracking."""
+    import re
+    from datetime import date
+
+    from app.services.incoming_stock_service import today_myt
+
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        day = date.fromisoformat(text) if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text) else None
+    except ValueError:
+        day = None
+    if day is None:
+        return f"{name} must be a date (YYYY-MM-DD) or null."
+    if day > today_myt():
+        return f"{name} cannot be a future date."
+    return None
 
 
 def _row_without_secrets(settings: SystemSetting) -> dict:
@@ -588,6 +637,12 @@ def _validate_runtime_payload(payload: Any) -> dict:
             if not isinstance(value, bool):
                 raise _refuse(f"{name} must be true, false or null.")
             continue
+        if name in runtime_settings.DATE_FIELDS:
+            refused = (_refused_date(name, value) if isinstance(value, str)
+                       else f"{name} must be a date (YYYY-MM-DD) or null.")
+            if refused:
+                raise _refuse(refused)
+            continue
         if not isinstance(value, str):
             raise _refuse(f"{name} must be text or null.")
         if len(value) > _RUNTIME_MAX_LENGTH[name]:
@@ -613,10 +668,16 @@ def _validate_runtime_payload(payload: Any) -> dict:
 
 def _runtime_settings_body(db: Session) -> dict:
     from app.api.v1.public.respond_webhook import SIGNATURE_HEADERS
+    from app.models.order import OrderStatus
     from app.services import runtime_settings
 
     return {
         "fields": runtime_settings.describe(db),
+        # The DO ingest's own lookup (`AutocountDocIngestService._delivered_status_id`): without
+        # this status "Assume DOs delivered before" only logs a warning and DOs land new.
+        "delivered_order_status_exists": db.query(OrderStatus.id)
+        .filter(OrderStatus.status_code.ilike("delivered"))
+        .first() is not None,
         "respond_webhook_path": "/api/v1/public/respond/webhook",
         "respond_signature_headers": list(SIGNATURE_HEADERS),
         # `respond_webhook.SHARED_SECRET_HEADER`, in the casing Respond.io's form is given.
@@ -709,6 +770,12 @@ async def get_chatbot_lanes(
         raise handle_internal_error(str(e))
 
 
+# The SMTP login on `SystemSettingUpdate`. Written ONLY through `PUT /smtp`, which carries
+# the secrets slug; `/general` refuses them (SETTINGS-PERM-GATE security review: its
+# setattr loop below took them on `.edit` alone, which went around that gate).
+_SMTP_FIELDS = ("smtp_host", "smtp_port", "smtp_secure", "smtp_username", "smtp_password", "smtp_from")
+
+
 def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Session):
     """Shared implementation for PUT/POST general settings."""
     from app.models.procurement import Supplier
@@ -717,6 +784,14 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
     if not settings:
         raise HTTPException(status_code=404, detail="Settings not found")
     update_data = settings_data.model_dump(exclude_unset=True)
+
+    smtp_keys = sorted(k for k in update_data if k in _SMTP_FIELDS)
+    if smtp_keys:
+        # Names the fields, never a value: one of them may be the password.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"SMTP settings are saved through PUT /settings/smtp, not here: {', '.join(smtp_keys)}",
+        )
 
     if "default_product_supplier_id" in update_data:
         sid = update_data["default_product_supplier_id"]
@@ -963,6 +1038,9 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
         "borrow_from_order_enabled": False,
         "chatbot_business_lane_enabled": False,
         "chatbot_ordering_enabled": False,
+        "chatbot_direct_ingress_mode": "off",
+        "chatbot_closed_lists_mode": "block",
+        "chatbot_composer_enabled": False,
         # A7 (chatbot-growth-r1): repeats SystemSetting.chatbot_crossdomain_ladder's own
         # default (app/models/user.py).
         "chatbot_crossdomain_ladder": {
@@ -1006,6 +1084,11 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
         != bool(getattr(settings, "cost_price_verification_enabled", False))
     )
 
+    # NOT NULL booleans: an explicit null would 500 at commit, so it reads as "off".
+    for column in ("sample_request_require_project",):
+        if column in update_data and update_data[column] is None:
+            update_data[column] = False
+
     for key, value in update_data.items():
         setattr(settings, key, value)
 
@@ -1027,6 +1110,11 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
 
     db.commit()
     db.refresh(settings)
+    if "chatbot_composer_enabled" in update_data:
+        from app.modules.chatbot.lane_vocabulary import clear_composer_cache
+
+        # The gate caches the stored switch per process; this process sees the flip now.
+        clear_composer_cache()
     return {"message": "General settings updated successfully", "data": _row_without_secrets(settings)}
 
 
@@ -1081,10 +1169,11 @@ async def update_general_settings_post(
 @router.put("/social", status_code=status.HTTP_200_OK)
 async def update_social_settings(
     settings_data: SystemSettingUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.settings.edit")),
     db: Session = Depends(get_db)
 ):
-    """Update social media settings."""
+    """Update social media settings. Same gate as `PUT /general` (SETTINGS-PERM-GATE:
+    it checked only that the caller was signed in)."""
     try:
         settings = db.query(SystemSetting).first()
         if not settings:
@@ -1111,10 +1200,11 @@ async def update_social_settings(
 @router.put("/notifications", status_code=status.HTTP_200_OK)
 async def update_notification_settings(
     settings_data: SystemSettingUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.settings.edit")),
     db: Session = Depends(get_db)
 ):
-    """Update notification settings."""
+    """Update notification settings. Same gate as `PUT /general` (SETTINGS-PERM-GATE:
+    it checked only that the caller was signed in)."""
     try:
         settings = db.query(SystemSetting).first()
         if not settings:
@@ -1144,16 +1234,20 @@ async def update_notification_settings(
 @router.put("/smtp", status_code=status.HTTP_200_OK)
 async def update_smtp_settings(
     settings_data: SystemSettingUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission(RUNTIME_SETTINGS_PERMISSION)),
     db: Session = Depends(get_db),
 ):
-    """Update SMTP settings. Password is update-only (omit to keep existing)."""
+    """Update SMTP settings. Password is update-only (omit to keep existing).
+
+    On the secrets slug, not `.edit` (SETTINGS-PERM-GATE): the host, login and password
+    decide where every outbound email goes, which is a credential for the same reason the
+    runtime secrets are, and `.edit` is also held by warehouse_manager and the integration
+    API-key roles."""
     try:
         settings = db.query(SystemSetting).first()
         if not settings:
             raise HTTPException(status_code=404, detail="Settings not found")
-        smtp_fields = ["smtp_host", "smtp_port", "smtp_secure", "smtp_username", "smtp_password", "smtp_from"]
-        update_data = {k: v for k, v in settings_data.model_dump(exclude_unset=True).items() if k in smtp_fields}
+        update_data = {k: v for k, v in settings_data.model_dump(exclude_unset=True).items() if k in _SMTP_FIELDS}
         for key, value in update_data.items():
             if key == "smtp_secure":
                 setattr(settings, key, bool(value) if value is not None else True)
@@ -1173,10 +1267,11 @@ async def update_smtp_settings(
 
 @router.post("/smtp/test", status_code=status.HTTP_200_OK, response_model=SmtpTestResult)
 async def test_smtp_connection(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission(RUNTIME_SETTINGS_PERMISSION)),
     db: Session = Depends(get_db),
 ):
-    """Test SMTP connection using current system settings (or env fallback)."""
+    """Test SMTP connection using current system settings (or env fallback). Same gate
+    as `PUT /smtp`: it logs in with the stored password and reports what the server said."""
     try:
         from app.services.notification_email import test_smtp_connection as do_test
         settings = db.query(SystemSetting).first()

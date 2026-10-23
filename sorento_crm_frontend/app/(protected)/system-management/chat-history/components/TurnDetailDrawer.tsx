@@ -7,6 +7,7 @@ import { Badge, type BadgeProps } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { SearchableCode } from '@/components/common/find-in-text/SearchableCode';
+import { IndexMatchSection } from './IndexMatchSection';
 import { useChatbotTurn } from '../hooks/useChatbotTurns';
 import { shortTurnId } from '../turnPresentation';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -106,6 +107,9 @@ function Sections({ detail }: { detail: TurnDetail }) {
       </Section>
       <Section title="Parse" testId="section-parse">
         <ParseSection parse={detail.parse} />
+      </Section>
+      <Section title="Index match" testId="section-index-match">
+        <IndexMatchSection indexMatch={detail.index_match ?? null} />
       </Section>
       <Section title="Apply" testId="section-apply">
         <ApplySection apply={detail.apply ?? null} />

@@ -256,7 +256,8 @@ describe('AC-UC-02: one gear entry per undoable order, of three', () => {
 
     const items = within(menu).getAllByText(/^Undo SO0000\d+ confirm \(rev 1\)$/);
     expect(items).toHaveLength(2);
-    expect(within(menu).queryByText(/SO000003/)).not.toBeInTheDocument();
+    // OI-SPLIT-VIEW: SO000003 has per-order Split delivery / View splits items, but no Undo entry.
+    expect(within(menu).queryByText(/Undo SO000003/)).not.toBeInTheDocument();
   });
 });
 

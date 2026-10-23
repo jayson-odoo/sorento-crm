@@ -284,6 +284,28 @@ register(
     )
 )
 
+def _delete_llm_model_price(db: Session, payload: dict):
+    """The same delete `DELETE /system/ai-assistant/model-prices/{id}` runs, by id."""
+    from app.models.ai_assistant import LLMModelPrice
+
+    row = db.query(LLMModelPrice).filter(LLMModelPrice.id == _entity_id(payload)).first()
+    if row is None:
+        return None
+    db.delete(row)
+    return None
+
+
+register(
+    FormAction(
+        key="llm_model_price.delete",
+        entity_types=("llm_model_price",),
+        execute=_delete_llm_model_price,
+        window=WINDOW_DESTRUCTIVE,
+        permission="system.ai_assistant_settings.edit",
+        label="Delete model price",
+    )
+)
+
 register(
     FormAction(
         key="order.delete",
@@ -1137,6 +1159,22 @@ def _delete_market_segment(db: Session, payload: dict):
     return MarketSegmentService(db).delete_segment(_entity_id(payload))
 
 
+def _delete_contact_tag(db: Session, payload: dict):
+    from app.services.contact_tag_service import ContactTagService
+
+    from app.api.v1.system.companies import _is_superadmin
+    from app.services.user_service import UserPermissionService
+
+    # Same gates as clearing the tag's gated sections by PATCH. The actor is the requester.
+    actor = payload.get("requested_by_id")
+    perms = UserPermissionService(db)
+    gates = (
+        (lambda slug: bool(actor) and perms.check_user_has_permission(str(actor), slug)),
+        (lambda: bool(actor) and _is_superadmin(db, str(actor))),
+    )
+    return ContactTagService(db).delete_tag(_entity_id(payload), gates=gates)
+
+
 def _delete_onboarding_request(db: Session, payload: dict):
     from app.services import onboarding_service
 
@@ -1447,6 +1485,17 @@ register(
         # at all (issue #402).
         permission="user_management.reference_data.manage",
         label="Delete market segment",
+    )
+)
+
+register(
+    FormAction(
+        key="contact_tag.delete",
+        entity_types=("contact_tag",),
+        execute=_delete_contact_tag,
+        window=WINDOW_DESTRUCTIVE,
+        permission="user_management.contacts.edit",
+        label="Delete contact tag",
     )
 )
 
@@ -2085,6 +2134,99 @@ register(
 )
 
 
+def _delete_stock_debt_snapshot(db: Session, payload: dict):
+    from app.services.scm.stock_debt_snapshot_service import StockDebtSnapshotService
+
+    # `delete` answers 404 for a snapshot that is not the requester's own, so ownership IS
+    # the check - the same shape `saved_view.delete` above uses.
+    StockDebtSnapshotService(db).delete(
+        _entity_id(payload), str(payload.get("requested_by_id") or "")
+    )
+    return {"message": "Deleted"}
+
+
+register(
+    FormAction(
+        key="stock_debt_snapshot.delete",
+        entity_types=("stock_debt_snapshot",),
+        execute=_delete_stock_debt_snapshot,
+        # Destructive: the snapshot carries other people's decisions on its rows.
+        window=WINDOW_DESTRUCTIVE,
+        permission=OWN_RECORD,
+        label="Delete snapshot",
+    )
+)
+
+
+def _delete_sample_request(db: Session, payload: dict):
+    from app.services import sample_request_service
+
+    # Owner's own Draft only; re-checked here because the state can change inside the window.
+    sample_request_service.delete_draft(
+        db, _entity_id(payload), str(payload.get("requested_by_id") or "")
+    )
+    return {"message": "Deleted"}
+
+
+register(
+    FormAction(
+        key="sample_request.delete",
+        entity_types=("sample_request",),
+        execute=_delete_sample_request,
+        # Destructive: a hard delete of the owner's draft and its lines.
+        window=WINDOW_DESTRUCTIVE,
+        permission=OWN_RECORD,
+        label="Delete draft",
+    )
+)
+
+
+def _delete_new_product_application(db: Session, payload: dict):
+    from app.services import new_product_application_service
+
+    # Applicant's own Draft only; re-checked here because the state can change inside the window.
+    new_product_application_service.delete_draft(
+        db, _entity_id(payload), str(payload.get("requested_by_id") or "")
+    )
+    return {"message": "Deleted"}
+
+
+register(
+    FormAction(
+        key="new_product_application.delete",
+        entity_types=("new_product_application",),
+        execute=_delete_new_product_application,
+        # Destructive: a hard delete of the applicant's draft and its lines.
+        window=WINDOW_DESTRUCTIVE,
+        permission=OWN_RECORD,
+        label="Delete draft",
+    )
+)
+
+
+def _unlink_new_product_application_attachment(db: Session, payload: dict):
+    from app.services import new_product_application_service
+
+    # The applicant's own link on an editable application; re-checked here because the state
+    # can change inside the window. Only the link goes: the file stays in the library.
+    new_product_application_service.unlink_attachment(
+        db, _entity_id(payload), str(payload.get("requested_by_id") or "")
+    )
+    return {"message": "Unlinked"}
+
+
+register(
+    FormAction(
+        key="new_product_application_attachment.unlink",
+        entity_types=("new_product_application_attachment",),
+        execute=_unlink_new_product_application_attachment,
+        window=WINDOW_REVERSIBLE,
+        permission=OWN_RECORD,
+        label="Unlink attachment",
+    )
+)
+
+
 def _void_price_tag_request(db: Session, payload: dict):
     from app.services.price_tag_request_service import (
         PriceTagRequestService,
@@ -2392,5 +2534,44 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="procurement.stock_inquiries.view",
         label="Delete comment",
+    )
+)
+
+
+def assert_quotation_deletable(db: Session, document_id: str, user_id) -> None:
+    """The DELETE route's checks (edit rights on the project, not issued), run at park time and
+    again when the window lapses. Raises 404 when the quotation is gone, 403 without edit rights
+    and 422 `quotation_document_issued` once anything has been sent."""
+    from app.models.projects import Project
+    from app.services import project_quotation_document_service as qdocs
+    from app.services import project_service
+    from app.services.error_handler import handle_not_found
+    from app.services.user_service import UserPermissionService
+
+    document = qdocs.get_document(db, document_id)
+    if document is None:
+        raise handle_not_found("Quotation", document_id)
+    project = db.query(Project).filter(Project.id == document.project_id).first()
+    slugs = set(UserPermissionService(db).get_user_permission_slugs(user_id)) if user_id else set()
+    project_service.assert_can_edit_project(db, project, user_id, slugs)
+    qdocs.assert_deletable(db, document)
+
+
+def _delete_quotation_document(db: Session, payload: dict):
+    from app.services import project_quotation_document_service as qdocs
+
+    document_id = _entity_id(payload)
+    assert_quotation_deletable(db, document_id, payload.get("requested_by_id"))
+    return qdocs.delete_document(db, qdocs.get_document(db, document_id))
+
+
+register(
+    FormAction(
+        key="quotation_document.delete",
+        entity_types=("quotation_document",),
+        execute=_delete_quotation_document,
+        window=WINDOW_DESTRUCTIVE,
+        permission="projects.projects.delete",
+        label="Delete quotation",
     )
 )

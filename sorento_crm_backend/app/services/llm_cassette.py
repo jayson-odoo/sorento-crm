@@ -160,8 +160,8 @@ def _digest(payload: dict[str, Any]) -> str:
 
 def chat_key(kwargs: dict[str, Any]) -> str:
     payload = {"kind": "chat", **{f: kwargs.get(f) for f in _CHAT_KEY_FIELDS}}
-    # An effort decides the answer too, but joins the key only when set, so every
-    # recording made before it existed keeps its key (PARSER-GEMINI-LITE).
+    # A reasoning effort changes the answer, so it is part of the key when one is sent; a call with none keeps
+    # the key every existing recording was made under, byte for byte.
     if kwargs.get("reasoning_effort"):
         payload["reasoning_effort"] = kwargs["reasoning_effort"]
     return _digest(payload)

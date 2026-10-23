@@ -33,7 +33,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { Input } from '@/components/ui/input';
+import { LiveNumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -90,6 +90,7 @@ import { clearPicks, readPicks } from '@/lib/dealer-kit/cataloguePicks';
 import { CollapsiblePanel, FocusShell, FocusToggle } from '../../components/FocusMode';
 import { RoomPlan } from './RoomPlan';
 import { DEFAULT_CEILING_MM, RoomScene } from './RoomScene';
+import { sameDisplayText } from '@/lib/product-display';
 
 /**
  * The room designer: pick products, shape the room, place them, confirm.
@@ -933,28 +934,28 @@ export function RoomDesigner() {
                       <Label htmlFor="dk-opening-width" className="text-xs">
                         Width
                       </Label>
-                      <Input
+                      <LiveNumberInput
+                        key={selectedOpening.id}
                         id="dk-opening-width"
-                        type="number"
                         className="h-8 w-24"
+                        min={1}
+                        rules={{ min: 1 }}
                         value={selectedOpening.widthMm}
-                        onChange={(event) =>
-                          resizeOpening({ widthMm: Number(event.target.value) })
-                        }
+                        onCommit={(widthMm) => resizeOpening({ widthMm })}
                       />
                     </div>
                     <div className="flex flex-col gap-1">
                       <Label htmlFor="dk-opening-height" className="text-xs">
                         Height
                       </Label>
-                      <Input
+                      <LiveNumberInput
+                        key={selectedOpening.id}
                         id="dk-opening-height"
-                        type="number"
                         className="h-8 w-24"
+                        min={1}
+                        rules={{ min: 1 }}
                         value={selectedOpening.heightMm}
-                        onChange={(event) =>
-                          resizeOpening({ heightMm: Number(event.target.value) })
-                        }
+                        onCommit={(heightMm) => resizeOpening({ heightMm })}
                       />
                     </div>
                     <div className="flex flex-col gap-1">
@@ -964,17 +965,15 @@ export function RoomDesigner() {
                       <Label htmlFor="dk-opening-offset" className="text-xs">
                         From corner
                       </Label>
-                      <Input
+                      <LiveNumberInput
+                        key={selectedOpening.id}
                         id="dk-opening-offset"
-                        type="number"
                         className="h-8 w-24"
+                        min={0}
+                        rules={{ min: 0 }}
                         value={Math.round(selectedOpening.offsetMm)}
-                        onChange={(event) =>
-                          moveOpening(
-                            selectedOpening.id,
-                            Number(event.target.value),
-                            selectedOpening.wallIndex,
-                          )
+                        onCommit={(offsetMm) =>
+                          moveOpening(selectedOpening.id, offsetMm, selectedOpening.wallIndex)
                         }
                       />
                     </div>
@@ -1005,12 +1004,14 @@ export function RoomDesigner() {
                       <Label htmlFor="dk-opening-sill" className="text-xs">
                         Sill
                       </Label>
-                      <Input
+                      <LiveNumberInput
+                        key={selectedOpening.id}
                         id="dk-opening-sill"
-                        type="number"
                         className="h-8 w-24"
+                        min={0}
+                        rules={{ min: 0 }}
                         value={selectedOpening.sillMm}
-                        onChange={(event) => resizeOpening({ sillMm: Number(event.target.value) })}
+                        onCommit={(sillMm) => resizeOpening({ sillMm })}
                       />
                     </div>
                     <span className="text-xs text-muted-foreground">mm</span>
@@ -1093,23 +1094,22 @@ export function RoomDesigner() {
                   <Label htmlFor="dk-ceiling-height" className="text-xs text-muted-foreground">
                     Ceiling height
                   </Label>
-                  <Input
-                    id="dk-ceiling-height"
-                    type="number"
-                    min={1000}
-                    max={6000}
-                    step={50}
-                    className="h-8 w-28"
-                    value={ceilingHeightMm}
-                    onChange={(event) => {
-                      const typed = Number(event.target.value);
-                      // Left alone rather than clamped mid-typing: clamping on
-                      // every keystroke fights whoever is deleting a digit.
-                      if (!Number.isFinite(typed)) return;
-                      setCeilingHeightMm(typed);
-                      setDirty(true);
-                    }}
-                  />
+                  <div className="w-28">
+                    <LiveNumberInput
+                      id="dk-ceiling-height"
+                      min={1000}
+                      rules={{ min: 1000, max: 6000 }}
+                      max={6000}
+                      step={50}
+                      className="h-8"
+                      value={ceilingHeightMm}
+                      // Typed text stays as typed; only a figure inside the range is kept.
+                      onCommit={(typed) => {
+                        setCeilingHeightMm(typed);
+                        setDirty(true);
+                      }}
+                    />
+                  </div>
                   <span className="text-xs text-muted-foreground">mm</span>
                 </div>
                 <p className="mt-2 text-xs text-muted-foreground">
@@ -1173,9 +1173,11 @@ export function RoomDesigner() {
                   renderOption={(option) => (
                     <span className="min-w-0">
                       <span className="block truncate font-mono text-xs">{option.label}</span>
-                      <span className="block truncate text-xs text-muted-foreground">
-                        {option.description}
-                      </span>
+                      {option.description && !sameDisplayText(option.label, option.description) ? (
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {option.description}
+                        </span>
+                      ) : null}
                     </span>
                   )}
                   placeholder="Search products"

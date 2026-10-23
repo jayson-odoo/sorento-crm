@@ -314,7 +314,7 @@ export default function TicketConversationPanel({
                 composerMode === mode
                   ? mode === 'comment'
                     ? 'bg-amber-500 text-white shadow-sm'
-                    : 'bg-background text-foreground shadow-sm'
+                    : 'bg-primary text-primary-foreground shadow-sm'
                   : 'text-muted-foreground hover:text-foreground',
               )}
             >

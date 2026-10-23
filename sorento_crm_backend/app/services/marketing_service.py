@@ -19,6 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from typing import Any, Optional
 from decimal import Decimal
 
+from app.utils.product_display import code_with_name
 from app.services import promotion_serving, promotion_window
 from app.models.marketing import (
     Promotion,
@@ -193,7 +194,7 @@ def _product_display_label(db: Session, product_id: str) -> str:
     code = (p.product_code or "").strip()
     name = (p.product_name or "").strip()
     if code and name:
-        return f"{code} - {name}"
+        return code_with_name(code, name)
     return code or name or product_id
 
 
@@ -251,6 +252,11 @@ def _load_attachments_by_promotion_ids(
             _joinedload(PromotionAttachment.attachment).joinedload(Attachment.attachment_type)
         )
         .filter(PromotionAttachment.promotion_id.in_(promotion_ids))
+        # A soft-deleted file is never served (owner run 21 Oct: a flyer deleted in July was
+        # still sent). The admin detail tab reads `get_promotion_attachments_by_promotion`, unfiltered, to unlink it.
+        .filter(
+            PromotionAttachment.attachment.has(Attachment.is_deleted.is_(False))
+        )
         .order_by(
             PromotionAttachment.sort_order.asc().nulls_last(),
             PromotionAttachment.created_at.asc(),
@@ -1571,7 +1577,12 @@ class PromotionProductService:
             _default_type_labels(self.db) if any(not t for t in parent_type_ids) else (None, None)
         )
         for line in products:
-            line.promotion_attachments = attachments_map.get(line.promotion_id, [])
+            # SEC-PROMO-ACCESS (security review B1): the same per-file filter the promotions
+            # list and get apply - a contact allowed to see the promotion still sees only
+            # the files at its own levels, never an OFFICE USE one beside them.
+            line.promotion_attachments = PromotionService._filter_attachments_by_codes(
+                attachments_map.get(line.promotion_id, []), contact_access_codes
+            )
             # Row-level expiry of the PARENT promotion, mirroring the promotions
             # list - lets MCP/n8n say "found but expired" for fallback/historical
             # lines instead of presenting them as live.
@@ -2194,6 +2205,8 @@ class PromotionAttachmentService:
             joinedload(PromotionAttachment.promotion),
             joinedload(PromotionAttachment.attachment).joinedload(Attachment.attachment_type)
         )
+        # The same rule as `_load_attachments_by_promotion_ids`: a soft-deleted file is not served.
+        q = q.filter(PromotionAttachment.attachment.has(Attachment.is_deleted.is_(False)))
 
         if contact_access_codes is not None:
             if not contact_access_codes:

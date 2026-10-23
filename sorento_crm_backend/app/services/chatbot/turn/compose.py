@@ -33,8 +33,10 @@ from app.services.chatbot.turn.state import (
     offers_escalation,
 )
 from app.services.chatbot.turn import refer
+from app.services.chatbot.composers import files as composers_files
+from app.services.chatbot.composers import format as composers_format
 
-_ATTACHED_SENTENCE = "I have attached the file(s) below."
+_ATTACHED_SENTENCE = composers_files.ATTACHED_SENTENCE
 
 
 def _pretty_team(team: str) -> str:
@@ -52,6 +54,8 @@ class Section:
     figures: list[dict[str, Any]] = field(default_factory=list)
     files: list[dict[str, Any]] = field(default_factory=list)
     miss: list[Any] = field(default_factory=list)
+    # CHAT-COMPOSER: the printed number of the first row (a set page 2+ starts past 1).
+    first: int = 1
 
 
 @dataclass
@@ -68,6 +72,11 @@ class Answer:
     files: list[dict[str, Any]] = field(default_factory=list)
     actions: list[dict[str, Any]] = field(default_factory=list)
     text: str = ""
+    #: Trace only (R2-7): product codes the reply lists when no pick question carries them.
+    shown_codes: list[str] | None = None
+    # CHAT-COMPOSER: the unplaced-token sentence printed in `text` (gate on only), so the
+    # dealer ETA path strips exactly those bytes. "" gate off.
+    miss_text: str = ""
 
 
 def _codes_without_rows(entities: list[Any], figures: list[dict[str, Any]]) -> list[str]:
@@ -104,16 +113,19 @@ def _types_without_files(
     Each asked type is `{name, keys}` (`turn_runtime.attachment_type_labels`): the presenter
     prints a type's description when it has one, else its name, so both are keys. A type
     with no such entry is never named - it could only ever read as a false gap.
+    A row `fetch._file_rows` grouped carries one "Attachment Type" field per file, and
+    every one of them counts (Mr Loo T7: a label -> value dict kept only the last).
     """
     present: set[tuple[str, str]] = set()
     for fig in figures:
-        fields = {
-            f.get("label"): str(f.get("value") or "").strip()
-            for f in fig.get("fields") or []
-            if isinstance(f, dict)
-        }
-        if fields.get("Product Code") and fields.get("Attachment Type"):
-            present.add((fields["Product Code"].casefold(), fields["Attachment Type"].casefold()))
+        fields = [f for f in fig.get("fields") or [] if isinstance(f, dict)]
+        code = next(
+            (str(f.get("value") or "").strip() for f in fields if f.get("label") == "Product Code"), ""
+        )
+        for f in fields:
+            kind = str(f.get("value") or "").strip() if f.get("label") == "Attachment Type" else ""
+            if code and kind:
+                present.add((code.casefold(), kind.casefold()))
     types = [
         (str(t.get("name")).strip(), {str(k).strip().casefold() for k in t.get("keys") or [] if k})
         for t in asked_types
@@ -148,6 +160,16 @@ def _render_row(n: int, fig: dict[str, Any]) -> str:
 def _file_key(f: dict[str, Any]) -> Any:
     # PHOTO-SEND-CAP: one picture under two urls (two domains' envelopes) is one file.
     return f.get("fileHash") or f.get("url") or f.get("id") or f.get("filename")
+
+
+def _same_file(a: Any, b: Any) -> bool:
+    """CHAT-COMPOSER F2: the send rule's "same file": the same url, or the same non-empty hash."""
+    if not (isinstance(a, dict) and isinstance(b, dict)):
+        return False
+    if not b.get("url"):
+        return False
+    ha, hb = str(a.get("fileHash") or "").strip(), str(b.get("fileHash") or "").strip()
+    return a.get("url") == b.get("url") or bool(ha and ha == hb)
 
 
 def _dealer_view(figures: list[dict[str, Any]]) -> bool:
@@ -394,7 +416,8 @@ def _did_you_mean_per_code(
     ctx: Any,
     *,
     lane_asked: bool,
-) -> tuple[str, Any, bool]:
+    miss_out: list[str] | None = None,
+) -> tuple[str, Any, bool, list[str]]:
     """MULTI-CODE-DYM: the reply's unplaced tokens, each as it would be answered alone.
 
     A token with suggestions (`envelope["unresolved_suggestions"]`, the single-code
@@ -408,9 +431,26 @@ def _did_you_mean_per_code(
     Returns the text, the question to store - one `product_pick` over every offered code
     (AC-1691: two or more), a team offer when one code was offered with the escalation,
     None when a lane already asked this turn's question - and whether any did-you-mean
-    was listed (when none was, the miss offer arm offers the escalation instead).
+    was listed (when none was, the miss offer arm offers the escalation instead), and the codes
+    listed, in display order (trace only).
     """
     localizer = getattr(ctx, "localizer", None) or IDENTITY
+
+    def unplaced_line(names: list[str]) -> str:
+        from app.services.chatbot import composers
+
+        if composers.enabled():
+            from app.services.chatbot.composers import misses
+
+            kept = [n for n in names if not composers_format.is_uuid(n)]  # an id is not a name
+            if not kept:
+                return ""
+            line = misses.not_found_text(kept, join=lambda n: _join_words(n, localizer))
+            if miss_out is not None:
+                miss_out.append(line)
+            return line
+        return f"I could not find {_join_words(names, localizer)}."
+
     suggestions: dict[str, dict[str, Any]] = {}
     for env in envelopes:
         carried = env.get("unresolved_suggestions")
@@ -455,9 +495,10 @@ def _did_you_mean_per_code(
         else:
             plain.append(token)
     if not paragraphs:
-        if plain:
-            text += "\n" + f"I could not find {_join_words(plain, localizer)}."
-        return text, None, False
+        line = unplaced_line(plain) if plain else ""
+        if line:
+            text += "\n" + line
+        return text, None, False, []
 
     domain, team = None, None
     for env in envelopes:
@@ -480,11 +521,13 @@ def _did_you_mean_per_code(
         closing = f"{lead_in}."
     # The codes with no suggestion follow the lists, above the one closing line - the
     # all-miss reply's own order (`answer._unsuggested_line`).
-    unsuggested = f"\n\nI could not find {_join_words(plain, localizer)}." if plain else ""
+    unsuggested_line = unplaced_line(plain) if plain else ""
+    unsuggested = f"\n\n{unsuggested_line}" if unsuggested_line else ""
     text += "\n\n" + "\n\n".join(paragraphs) + unsuggested + "\n" + closing
 
+    listed_codes = [str(o["code"]) for o in options]
     if lane_asked:
-        return text, None, True
+        return text, None, True, listed_codes
     agent = getattr(ctx, "suggested_agent", None) if offered else None
     brand = _routing_brand(ctx) if offered else None
     if len(options) >= 2:
@@ -494,10 +537,10 @@ def _did_you_mean_per_code(
             team=team if offered else None,
             asked_at_turn=getattr(state, "turn_no", None),
             payload={"domain": domain, "escalate_offered": offered, "agent": agent, "brand_code": brand},
-        ), True
+        ), True, listed_codes
     if offered:
-        return text, _team_pick_question([domain], policy, agent=agent, brand=brand), True
-    return text, None, True
+        return text, _team_pick_question([domain], policy, agent=agent, brand=brand), True, listed_codes
+    return text, None, True, listed_codes
 
 
 def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: Any) -> Answer:
@@ -508,6 +551,13 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
     missed_domains: list[str] = []
     files: list[dict[str, Any]] = []
     seen_file_keys: set[Any] = set()
+    from app.services.chatbot import composers
+
+    composers_on = composers.enabled()
+    # CHAT-COMPOSER F1: per text part, whether it opens with the attached sentence the
+    # presenter put there (read from the envelope's `lane_intro`, never by searching text).
+    printed_intro = localizer.sentence(_ATTACHED_SENTENCE)
+    opened: list[bool] = []
     # RESOLVER-TOKEN-CAP: a code the resolver cut at its ceiling rides every envelope
     # (`envelope_of.not_checked`) but is a fact about the message, so it is named once
     # per turn, under the first section that carries it.
@@ -524,7 +574,17 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         miss = env.get("miss") or []
         env_files = env.get("files") or []
 
-        sections.append(Section(domain=domain, entities=entities, figures=figures, files=env_files, miss=miss))
+        window = env.get("set_window") if composers_on else None
+        sections.append(
+            Section(
+                domain=domain,
+                entities=entities,
+                figures=figures,
+                files=env_files,
+                miss=miss,
+                first=int(window["first"]) if isinstance(window, dict) and window.get("first") else 1,
+            )
+        )
 
         rows_text: list[str] = []
         n = 0
@@ -699,10 +759,17 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         ):
             gaps = _types_without_files(product_codes, env.get("attachment_types") or [], figures)
             if gaps:
-                lines = "\n".join(
-                    localizer.fill("{code} has no {types}.", code=code, types=_join_words(missing, localizer))
-                    for code, missing in gaps
-                )
+                if composers_on:
+                    # CHAT-COMPOSER F3: the one "nothing on record" sentence.
+                    lines = "\n".join(
+                        composers_format.missing_line(_join_words(missing, localizer), code, fill=localizer.fill)
+                        for code, missing in gaps
+                    )
+                else:
+                    lines = "\n".join(
+                        localizer.fill("{code} has no {types}.", code=code, types=_join_words(missing, localizer))
+                        for code, missing in gaps
+                    )
                 # Its own paragraph, and the lane's footer keeps the blank line above it.
                 body, sep, footer = block.rpartition("\n_Data last updated")
                 block = (
@@ -757,9 +824,25 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             block = block + "\n" + f"Not checked: {', '.join(not_checked)}."
         if block:
             text_parts.append(block)
+            lane_intro = env.get("lane_intro")
+            opened.append(
+                bool(composers_on and lane_intro in (_ATTACHED_SENTENCE, printed_intro))
+                and (block == printed_intro or block.startswith(printed_intro + "\n\n"))
+            )
 
         for f in env_files:
             key = _file_key(f)
+            if composers_on:
+                # CHAT-COMPOSER F2: the send rule (url or hash already seen), so the reply's
+                # files equal what is sent.
+                dup = next((k for k in files if _same_file(k, f)), None)
+                if dup is not None:
+                    url = f.get("url") if isinstance(f, dict) else None
+                    if url and url != dup.get("url"):
+                        files[files.index(dup)] = {**dup, "aliasUrls": [*(dup.get("aliasUrls") or []), url]}
+                    continue
+                files.append(f)
+                continue
             if key in seen_file_keys:
                 # PHOTO-SEND-CAP (security review M1): the same image under another url is
                 # not sent twice, but this section's text may name that url under its row;
@@ -772,6 +855,8 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             seen_file_keys.add(key)
             files.append(f)
 
+    if composers_on:
+        text_parts = composers_files.place_attached(text_parts, opened, printed_intro, False)
     text = "\n\n".join(text_parts)
 
     # A token nobody could place is named, never dropped in silence (hand pass 2 item 6,
@@ -792,13 +877,15 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
     lane_question = _lane_question(envelopes, getattr(state, "turn_no", None))
     dym_question = None
     dym_listed = False
+    dym_codes: list[str] = []
+    miss_lines: list[str] = []
     if unplaced and (text.strip() or spared_unplaced):
         # MULTI-CODE-DYM (owner, 4 Oct 2026, "treat each product code individually"): a
         # token with a did-you-mean gets the one it gets when asked alone; the rest keep
         # this sentence.
         carried = getattr(state, "pending", None)
         asked_this_turn = carried is not None and carried.asked_at_turn == getattr(state, "turn_no", None)
-        text, dym_question, dym_listed = _did_you_mean_per_code(
+        text, dym_question, dym_listed, dym_codes = _did_you_mean_per_code(
             text,
             unplaced,
             envelopes,
@@ -806,6 +893,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             policy,
             ctx,
             lane_asked=lane_question is not None or asked_this_turn,
+            miss_out=miss_lines,
         )
         text = text.lstrip("\n")
 
@@ -911,6 +999,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                 if not offer_withheld:
                     team = carried.team or teams[0]
                     payload["escalate_offered"] = True
+                    payload["offered_at_turn"] = getattr(state, "turn_no", None)
                     # SRTSC07 review round 2, SHOULD-A: both halves come from
                     # the SAME source as the `team` expression right above, not
                     # independently. A roster CAN carry a team with no agent at
@@ -975,11 +1064,19 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         # presenters`'s universal "has attachments" intro) now that `lane_text` is
         # reused verbatim above - appending a second copy read as the sentence
         # twice in one reply.
-        if _ATTACHED_SENTENCE not in text:
+        if _ATTACHED_SENTENCE not in text and not (composers_on and any(opened)):
             text += "\n\n" + _ATTACHED_SENTENCE
 
     return Answer(
-        sections=sections, question=question, offer=offer, canned=[], files=files, actions=actions, text=text
+        sections=sections,
+        question=question,
+        offer=offer,
+        canned=[],
+        files=files,
+        actions=actions,
+        text=text,
+        shown_codes=dym_codes or None,
+        miss_text=miss_lines[-1] if miss_lines else "",
     )
 
 
@@ -1013,6 +1110,8 @@ _ASK_HEADERS: dict[str, str] = {
     "sales_report_detail": "Which list would you like?",
     "kind_pick": "Which one do you mean?",
     "attachment_type_ask": "Which kind of file do you need?",
+    "period_ask": "Which period do you mean?",
+    "held_customer_ask": "Same customer or all customers?",
 }
 
 

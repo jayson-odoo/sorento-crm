@@ -71,6 +71,9 @@ def _roster_cap(
 # The matrices, verbatim.
 # --------------------------------------------------------------------------- #
 
+#: Domains where a product set (CHAT-CODE-LOOKUP R2) is read as its member products.
+_SET_MEMBER_DOMAINS = frozenset({"master_products", "inventory"})
+
 ALLOWED: dict[str, list[str]] = {
     "master_products": ["product", "category", "brand"],
     "product_attachment": [
@@ -392,8 +395,13 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     tier_gate: dict[str, Any] | None = None,
     aggregate: dict[str, Any] | None = None,
     roster_caps: Mapping[str, int] | None = None,
+    held_product_uuids: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """`disallowed-entity-gate`'s output item. `item` is mutated and returned, as in JS.
+
+    `held_product_uuids` (CHAT-CLOSED-LISTS HELD-FAMILY): the products the conversation
+    already held before this message. A product picker whose candidates for a token hold
+    exactly one of them is no choice: that product is the token.
 
     `roster_caps` (PLAN-chatbot-answer-half-reattach.md "Roster cap", owner ruling
     20 Sep 2026) is `{entity kind: chatbot_entity_kinds.roster_cap}`, read at the two
@@ -428,7 +436,29 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     flat.extend(_flatten_by_entity_type(resolver.get("by_entity_type")))
 
     by_uuid: dict[Any, dict[str, Any]] = {}
+    # CHAT-CODE-LOOKUP R2: under the gate a flyer code that is a product set answers as its
+    # member products (product info and stock), the set's code riding on each as `set_code`.
+    set_members = parser.get("code_lookup") is True and domain in _SET_MEMBER_DOMAINS
     for m in flat:
+        if set_members and jsc.get(m, "entity_type") == "product_set" and (
+            str(jsc.get(m, "uuid")) in {str(i) for i in resolver.get("visible_set_ids") or []}
+        ):
+            for member in jsc.array(jsc.get(jsc.get(m, "display"), "members")):
+                member_uuid = jsc.get(member, "uuid")
+                if jsc.truthy(member_uuid):
+                    # A member of two typed sets is one entity (fetched once) listed under both.
+                    held = by_uuid.get(member_uuid)
+                    codes = [*(held.get("set_codes") or [])] if held else []
+                    if jsc.get(m, "canonical_code") not in codes:
+                        codes.append(jsc.get(m, "canonical_code"))
+                    by_uuid[member_uuid] = {
+                        "uuid": member_uuid,
+                        "entity_type": "product",
+                        "code": jsc.get(member, "product_code"),
+                        "set_code": codes[0],
+                        "set_codes": codes,
+                    }
+            continue
         if jsc.truthy(m) and jsc.truthy(jsc.get(m, "uuid")):
             entity = {
                 "uuid": jsc.get(m, "uuid"),
@@ -448,6 +478,7 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     gate_passed = True
     gate_reason = "ok"
     gate_clarification = ""
+    customer_picker = False
     compatible_entities: list[dict[str, Any]] = entities
     # D10 (owner console pass, 8 Sep 2026, turn 69d9900e "srtwc8610-sh hav incoming?"):
     # per token, the incompatible types it ONLY matched - never populated for a token that
@@ -476,6 +507,14 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
             if not matches:
                 continue
             types = [jsc.get(m, "entity_type") for m in matches if jsc.truthy(m)]
+            if set_members:
+                visible = {str(i) for i in resolver.get("visible_set_ids") or []}
+                types = [
+                    "product" if t == "product_set" and any(
+                        str(jsc.get(m, "uuid")) in visible for m in matches if jsc.get(m, "entity_type") == "product_set"
+                    ) else t
+                    for t in types
+                ]
             if types and not any(t in allowed for t in types):
                 token = jsc.get(resolution, "token")
                 if jsc.truthy(token):
@@ -484,7 +523,16 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
             intent = jsc.js_string(parser.get("intent_hint") or "")
             intent_allows_empty = intent in INTENTS_ALLOWING_EMPTY
             gate_passed = ALLOWS_EMPTY.get(domain) is True or intent_allows_empty
-            if intent_allows_empty and ALLOWS_EMPTY.get(domain) is not True:
+            # CLOSED LISTS: a spec that grounding made out of the parser's class (`class_hint`)
+            # names a class, so the described set is the scope and the ask is never refused as
+            # "search every <domain>". A parser-emitted spec without it keeps the refusal.
+            names_class = bool(parser.get("closed_lists")) and predicate_bypass and any(
+                isinstance(e, dict) and e.get("class_hint") for e in jsc.array(parser.get("entities"))
+            )
+            if names_class and not gate_passed:
+                gate_passed = True
+                gate_reason = "no entities; the ask names a class, so the described set is the scope"
+            elif intent_allows_empty and ALLOWS_EMPTY.get(domain) is not True:
                 # Its own reason string, so a trace says WHY a domain that normally
                 # demands a filter let this one through.
                 gate_reason = f"no entities; intent '{intent}' permits broad query"
@@ -899,6 +947,23 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                 if len(option["candidates"]) > 0
             ]
 
+        if len(specific_options) > 0 and held_product_uuids:
+            # HELD-FAMILY (CHAT-STATE handoff, 17 Oct 2026): "incoming srtwc286?" with
+            # SRTWC286-SH held is about the held variant. Exactly one held candidate settles
+            # the token; two or none leave the picker. Data only: no word is read.
+            unsettled: list[dict[str, Any]] = []
+            for o in specific_options:
+                held = [c for c in o["candidates"] if str(c.get("uuid")) in held_product_uuids]
+                if len(held) == 1:
+                    exact_entities.append({
+                        "uuid": held[0]["uuid"], "entity_type": "product", "code": held[0]["label"],
+                        # CHAT-CODE-LOOKUP R2-2: settled on the held member (answer_bridge reads it).
+                        **({"held_member": True} if parser.get("code_lookup") is True else {}),
+                    })
+                else:
+                    unsettled.append(o)
+            specific_options = unsettled
+
         if len(specific_options) > 0:
             require_specific = True
             gate_passed = False
@@ -1163,9 +1228,11 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                 f"'{domain}' customer token matches {len(bases)} different companies; "
                 "user must pick"
             )
-            gate_clarification = "Which customer do you mean? Please choose:\n" + "\n".join(
-                f"{i + 1}. {rep_labels[i]}" for i in range(len(reps))
-            )
+            # PICKER-ONE (owner, 13 Oct 2026): no picker TEXT here. The customer reads the
+            # one customer picker every roster prints (`answer_bridge._offer_answer` ->
+            # `narrow.customer_options` -> `compose_question`), built from the rows below;
+            # this arm's own "Which customer do you mean? Please choose:" was a second one.
+            customer_picker = True
             # The roster must be the SAME rows in the SAME order as the numbered lines or
             # the positional pick misresolves. `title` is what compile-current-state
             # labels the row with, so a reply by name resolves as well as one by number -
@@ -1377,6 +1444,7 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
             and len(entities) == 0
             and len(compatible_entities) > 0
             and not jsc.truthy(gate_clarification)
+            and not customer_picker
         ):
             gate_passed = True
             gate_reason = (
@@ -1586,13 +1654,18 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
         if len(df_lost) > 0:
             out["dropped_filter_tokens"] = df_lost
             # R3: when a picker is ALREADY being shown, the miss rides in the SAME message.
-            if jsc.truthy(gate_clarification):
+            if jsc.truthy(gate_clarification) or customer_picker:
                 df_lines = []
                 for t in df_lost:
                     h = _df_hint_of(t)
                     df_lines.append(f'"{jsc.js_string(_df_raw_of(t))}"' + (f" ({h.replace('_', ' ')})" if h else ""))
-                gate_clarification = f"Couldn't find: {', '.join(df_lines)}.\n\n{gate_clarification}"
-                out["gate_clarification"] = gate_clarification
+                dropped_line = f"Couldn't find: {', '.join(df_lines)}."
+                # PICKER-ONE: as data, for the customer picker the bridge composes
+                # through `compose_question` (it has no text of its own here).
+                out["dropped_filter_line"] = dropped_line
+                if jsc.truthy(gate_clarification):
+                    gate_clarification = f"{dropped_line}\n\n{gate_clarification}"
+                    out["gate_clarification"] = gate_clarification
 
     if cust_pin_kept:
         out["customer_pin_kept"] = True

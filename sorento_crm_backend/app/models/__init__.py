@@ -18,6 +18,7 @@ from app.models.sales import SalesTeam, SalesTeamMember
 from app.models.stock_ask import StockAsk
 from app.models.finance import BillingDocument, BillingDocumentLine
 from app.models.autocount_branch import Branch
+from app.models.autocount_cancel import AutocountCancelDoc, AutocountCancelLine
 from app.models.autocount_compare_mapping import AutocountCompareMapping
 from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
 from app.models.procurement import Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine, PurchaseOrder, PurchaseOrderLine
@@ -41,7 +42,7 @@ from app.models.ticket_comment import ConversationTicketComment
 from app.models.message_snippet import MessageSnippet
 from app.models.resources import Attachment, AttachmentType
 from app.models.certificate import Certificate, CertificateRevision, CertificateProduct
-from app.models.access import AccessAgent, ContactAgentAccess, ContactAccessType, RespondContact, RespondContactCustomer, StockVisibilityPolicy, respond_contact_access_types, MarketSegment, respond_contact_market_segments, team_member_market_segments, team_member_brands
+from app.models.access import AccessAgent, ContactAgentAccess, ContactAccessType, ContactTag, respond_contact_tags, RespondContact, RespondContactCustomer, StockVisibilityPolicy, respond_contact_access_types, MarketSegment, respond_contact_market_segments, team_member_market_segments, team_member_brands
 from app.models.respond_workspace import RespondWorkspace
 from app.models.respond_template import (
     RespondChannel,
@@ -75,6 +76,7 @@ from app.models.job import ImportJob, ImportJobRow
 from app.models.download import UserDownload, DownloadStatus
 from app.models.report_view import ReportView
 from app.models.saved_view import SavedView
+from app.models.stock_debt_snapshot import StockDebtSnapshot, StockDebtSnapshotRow
 from app.models.audit import AuditLog, AuditTrailGap
 from app.models.notification import Notification, NotificationDelivery, PushSubscription
 from app.models.scheduled_task import ScheduledTask, ScheduledTaskRun
@@ -189,8 +191,11 @@ from app.models.project_so import (  # noqa: F401
     SOAmendment,
     OrderInquiry,
     OrderInquiryRow,
+    SOLineSplit,
 )
 from app.models.stock_transfer import StockTransfer  # noqa: F401
+from app.models.sample_request import SampleRequest, SampleRequestLine  # noqa: F401
+from app.models.new_product_application import NewProductApplication, NewProductApplicationLine  # noqa: F401
 from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow  # noqa: F401
 
 __all__ = [
@@ -229,6 +234,8 @@ __all__ = [
     "SalesOrder",
     "SalesOrderLine",
     "StockTransfer",
+    "SampleRequest",
+    "SampleRequestLine",
     "SalesAgent",
     "Warehouse",
     "StorageZone",
@@ -285,6 +292,7 @@ __all__ = [
     "AccessAgent",
     "ContactAgentAccess",
     "ContactAccessType",
+    "ContactTag",
     "RespondContact",
     "RespondContactCustomer",
     "respond_contact_access_types",
@@ -403,6 +411,8 @@ __all__ = [
     "BillingDocumentLine",
     # AutoCount branch table (#1354 S2)
     "Branch",
+    "AutocountCancelDoc",
+    "AutocountCancelLine",
     "AutocountCompareMapping",
     # Dealer Kit (schema: dealer_kit)
     "Page",

@@ -61,7 +61,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app.models.inventory import Warehouse
 from app.models.stock_transfer import TRANSFER_MOVED, StockTransfer
@@ -101,6 +101,7 @@ from app.models.projects import Project
 from app.models.scm import ItemClassification
 from app.models.user import User
 from app.services.error_handler import AppException
+from app.services.project_line_split_service import display_line_nos
 from app.services.scm import order_link_service
 from app.services.scm.front_planning_engine import (
     BORROW,
@@ -2433,6 +2434,7 @@ def explain_refusal(db: Session, pso_id: str, batch_id: str) -> List[dict]:
         .all()
     )
     revision = current_revision_no(db, str(pso_id))
+    so_nos = display_line_nos(db, [r.project_line_id for r in rows])
     out: List[dict] = []
     for row in rows:
         reason_applied = row.applied_reason or ""
@@ -2456,7 +2458,7 @@ def explain_refusal(db: Session, pso_id: str, batch_id: str) -> List[dict]:
         }[code]
         out.append(
             {
-                "so_line_no": row.line_no,
+                "so_line_no": so_nos.get(str(row.project_line_id), row.line_no),
                 "item_code": row.item_code,
                 "reason_code": code,
                 "reason": reason,
@@ -2472,7 +2474,13 @@ def _row_is_superseded(db: Session, row: PlanningChangeRow) -> bool:
     return row_is_overtaken(row, current_revision_no(db, str(row.project_sales_order_id)))
 
 
-def row_out(db: Session, row: PlanningChangeRow) -> dict:
+def row_out(
+    db: Session, row: PlanningChangeRow, so_nos: Optional[Dict[str, Optional[int]]] = None
+) -> dict:
+    """`so_nos` is `display_line_nos` read once for a whole batch (`get_batch`); a single
+    row looks its own up."""
+    if so_nos is None:
+        so_nos = display_line_nos(db, [row.project_line_id])
     applied_state = row.applied_state
     if applied_state == PLANNING_CHANGE_STATE_PENDING and _row_is_superseded(db, row):
         applied_state = PLANNING_CHANGE_STATE_SUPERSEDED
@@ -2480,6 +2488,8 @@ def row_out(db: Session, row: PlanningChangeRow) -> dict:
         "id": str(row.id),
         "project_line_id": str(row.project_line_id) if row.project_line_id else None,
         "line_no": row.line_no or 0,
+        # The number the customer's order carries; `line_no` stays the sheet's own address.
+        "so_line_no": so_nos.get(str(row.project_line_id), row.line_no),
         "item_code": row.item_code or "",
         "product_name": row.product_name,
         "kind": row.kind,
@@ -2532,6 +2542,7 @@ def get_batch(db: Session, batch_id: str) -> dict:
     by_order: Dict[str, List[PlanningChangeRow]] = defaultdict(list)
     for r in rows:
         by_order[str(r.project_sales_order_id)].append(r)
+    so_nos = display_line_nos(db, [r.project_line_id for r in rows])
 
     orders_map: Dict[str, ProjectSalesOrder] = {}
     if by_order:
@@ -2559,7 +2570,7 @@ def get_batch(db: Session, batch_id: str) -> dict:
                 "customer_name": customer_name,
                 "project_label": project_label,
                 "revision_no": revision_no,
-                "rows": [row_out(db, r) for r in order_rows],
+                "rows": [row_out(db, r, so_nos) for r in order_rows],
                 "is_adopted": bool(order.so_id) and order.project_id is None,
                 "core_sales_order_id": str(order.so_id) if order.so_id else None,
                 "project_id": str(order.project_id) if order.project_id else None,
@@ -3232,6 +3243,7 @@ def _document_links_by_row(
 
 
 def _record_redeal_intent(
+    db: Session,
     row: PlanningChangeRow,
     component: dict,
     *,
@@ -3283,7 +3295,8 @@ def _record_redeal_intent(
         freed = min(freed, sum((_dec(share.get("qty")) for share in shares), _ZERO))
         if freed <= _ZERO:
             return []
-    where = f"{so_number} line {row.line_no or '?'}"
+    so_line = display_line_nos(db, [row.project_line_id]).get(str(row.project_line_id), row.line_no)
+    where = f"{so_number} line {so_line or '?'}"
 
     # One notice per document and state, not per purchase-order line: a placement split
     # across two lines of one purchase order is one instruction to purchasing.
@@ -3452,11 +3465,12 @@ def _move_reserve(
     location = next(
         (entry.get("location") for entry in held_reserve if entry.get("location")), None
     )
+    so_line = display_line_nos(db, [row.project_line_id]).get(str(row.project_line_id), row.line_no)
     if not warehouse_id:
         raise AppException(
             status_code=409,
             message=(
-                f"{so_number} line {row.line_no or '?'}: the reserve it gives up names no "
+                f"{so_number} line {so_line or '?'}: the reserve it gives up names no "
                 "warehouse, so there is nothing to move."
             ),
             code="planning_change_reallocation_no_warehouse",
@@ -3482,7 +3496,7 @@ def _move_reserve(
         .filter(ProjectSalesOrderLine.id == receiving_line_id)
         .scalar()
     )
-    reason = f"Reallocated from {so_number} line {row.line_no or '?'}"
+    reason = f"Reallocated from {so_number} line {so_line or '?'}"
     db.add(
         SOLineAllocation(
             so_line_id=receiving_line_id,
@@ -3677,7 +3691,7 @@ def _execute_reallocations(
                 ))
             else:
                 done[str(row.id)]["released_documents"].extend(_record_redeal_intent(
-                    row, component, so_number=so_number, document_links=document_links,
+                    db, row, component, so_number=so_number, document_links=document_links,
                 ))
     return {
         row_id: {key: words for key, words in said.items() if words}
@@ -3807,6 +3821,17 @@ def _oi_demand_rows(
         and r.project_line_id
         and str(r.project_line_id) not in settled
     ]
+    # OI-LINE-SPLIT (UAC AC-G10, crew ruling (a)): a whole-Buy line whose splits act has its
+    # cut explained by them (a split moved, kept at its own date, or an explicit cancel
+    # split the confirm writes itself), so no split is netted into a CANCEL BALANCE here. A
+    # line partly from stock nets as before (AC-G13).
+    from app.services.project_line_split_service import LineSplitService
+    from app.services.project_order_inquiry_service import whole_buy_line_ids
+
+    split_line_ids = LineSplitService(db).acting_origin_ids(qty_down_line_ids) & (
+        whole_buy_line_ids(db, qty_down_line_ids)
+    )
+    qty_down_line_ids = [i for i in qty_down_line_ids if i not in split_line_ids]
     cancellable_by_line: Dict[str, Decimal] = defaultdict(lambda: _ZERO)
     if qty_down_line_ids:
         held_query = db.query(OrderInquiryRow).filter(
@@ -3887,6 +3912,8 @@ def _oi_demand_rows(
                 counts.get("DELAY" if r.kind == "delayed" else "ADVANCE", 0) + 1
             )
         elif r.kind == "qty_down":
+            if str(r.project_line_id) in split_line_ids:
+                continue
             from_qty = _dec((r.from_json or {}).get("qty"))
             to_qty = _dec((r.to_json or {}).get("qty"))
             drop = min(from_qty - to_qty, cancellable_by_line[str(r.project_line_id)])
@@ -3912,6 +3939,13 @@ def _oi_demand_rows(
     return out, counts
 
 
+#: The rows `_retire_inquiry_rows` tells purchasing about: the ones that asked them to get
+#: stock for the line (`_shift_links_off_retired_lines`'s own "still owes this line" verbs).
+#: A CANCEL BALANCE or a date-only row on the same line is part of that same instruction, so
+#: printing it too would read as a second CANCEL ALL for one line.
+_TOLD_ON_RETIRE = (IV_ORDER, IV_ORDER_BACK, IV_RESERVE_AND_ORDER)
+
+
 def _retire_inquiry_rows(
     db: Session, project_line_id: Optional[str], reason: str, actor: Optional[str] = None
 ) -> List[str]:
@@ -3930,9 +3964,20 @@ def _retire_inquiry_rows(
     purchasing dealt with it (`mark_rows` is its only writer), and a plan does not get to
     overrule it.
 
+    EVERY BUY ROW IT TOUCHES (`_TOLD_ON_RETIRE`) IS TOLD ON THE HANDOVER EMAIL as CANCEL ALL
+    (OI-RETIRE-CANCEL-EMAIL, owner case 20 Oct 2026: a line AutoCount deleted and replaced
+    printed only the new line's ORDER). This runs before the confirm on purpose (see the
+    caller), so the confirm's own `_retire_uncovered_rows`, which tells its retirements, never
+    sees these rows: the CANCEL has to be queued here, and rides the same commit's email. An
+    `actioned` row is told too: it stays live, but purchasing has to hear the line is gone to
+    undo what they placed.
+
     Returns THE ROWS IT CANCELLED, by id, and the shift below takes exactly those: a row
     somebody cancelled last month is not this apply's to move documents off."""
-    from app.services.project_order_inquiry_service import _record_cancel
+    from app.services.project_order_inquiry_service import (
+        ProjectOrderInquiryService,
+        _record_cancel,
+    )
 
     if not project_line_id:
         return []
@@ -3945,8 +3990,10 @@ def _retire_inquiry_rows(
         .all()
     )
     cancelled: List[str] = []
+    service = ProjectOrderInquiryService(db)
     for row in rows:
         note = f"{row.note}\n{reason}" if row.note else reason
+        was_qty = row.qty
         if row.state == INQUIRY_ACTIONED:
             row.note = note
         else:
@@ -3954,6 +4001,10 @@ def _retire_inquiry_rows(
             _record_cancel(db, row, "planning_change_retired", actor_user_id=actor)
             row.note = note
             cancelled.append(str(row.id))
+        if row.verb in _TOLD_ON_RETIRE:
+            service._record_handover(
+                row, kind="cancelled", was={"qty": was_qty}, actor_user_id=actor
+            )
     return cancelled
 
 
@@ -4344,12 +4395,16 @@ def _refuse_dropped_named_lines(
     from app.services.project_supply_service import SupplyLinesRefused
 
     rows_by_line = {str(r.project_line_id): r for r in order_rows if r.project_line_id}
+    # The rows carry their session, so the guard keeps the signature its callers have.
+    session = object_session(order_rows[0]) if order_rows else None
+    so_nos = display_line_nos(session, dropped) if session is not None else {}
     failing = []
     for line_id in dropped:
         r = rows_by_line.get(line_id)
         failing.append(
             {
                 "line_no": r.line_no if r is not None else None,
+                "so_line_no": so_nos.get(line_id, r.line_no if r is not None else None),
                 "item_code": r.item_code if r is not None else None,
                 "reason": (
                     (r.applied_reason if r is not None else None)
@@ -4358,7 +4413,7 @@ def _refuse_dropped_named_lines(
             }
         )
     named = ", ".join(
-        f"line {f['line_no']}" + (f" ({f['item_code']})" if f["item_code"] else "")
+        f"line {f['so_line_no']}" + (f" ({f['item_code']})" if f["item_code"] else "")
         for f in failing
     )
     raise SupplyLinesRefused(
@@ -4370,6 +4425,85 @@ def _refuse_dropped_named_lines(
         failing_lines=failing,
         code="planning_change_line_dropped",
     )
+
+
+def link_rows_to_mirror_lines(db: Session, rows: Sequence[PlanningChangeRow]) -> None:
+    """PLAN-BATCH-HELD-CANCEL: an `added` row is written with no `project_line_id` (its
+    mirror line does not exist yet when the book is read). Once the order carries that line,
+    link it: the board already reads the row's line off `proposal.project_line_id`, and a
+    row that cannot name its line can never be decided, applied or closed (SO394881's 30
+    `added` rows kept its batch open, and the board holding the order, for a month)."""
+    unlinked = [
+        r
+        for r in rows
+        if not r.project_line_id
+        and r.core_line_id
+        and r.applied_state == PLANNING_CHANGE_STATE_PENDING
+    ]
+    if not unlinked:
+        return
+    mirrors = {
+        (str(pso_id), str(core_id)): str(line_id)
+        for line_id, pso_id, core_id in db.query(
+            ProjectSalesOrderLine.id,
+            ProjectSalesOrderLine.project_sales_order_id,
+            ProjectSalesOrderLine.core_sales_order_line_id,
+        )
+        .filter(
+            ProjectSalesOrderLine.core_sales_order_line_id.in_(
+                list({str(r.core_line_id) for r in unlinked})
+            )
+        )
+        .all()
+    }
+    for r in unlinked:
+        line_id = mirrors.get((str(r.project_sales_order_id), str(r.core_line_id)))
+        if line_id:
+            r.project_line_id = line_id
+    db.flush()
+
+
+def _settle_answered_rows(
+    db: Session, order_rows: Sequence[PlanningChangeRow], covered_line_ids: set
+) -> None:
+    """PLAN-BATCH-HELD-CANCEL (crew ruling Q2, 21 Oct 2026): an undecided pending row the
+    order has already answered is closed here, per row, so a batch whose rows are all
+    resolved gets `applied_at` and stops holding the order:
+
+    * its sales-order line is cancelled (a Cancel SO, or the book) - superseded, the same
+      reason a decided row on such a line already gets below;
+    * it is an `added` row whose line the active revision already covers (CS confirmed the
+      new line through an ordinary press) - applied: there is nothing left to decide.
+
+    A row whose line is NOT covered stays pending: CS has not decided that line yet."""
+    pending = [
+        r
+        for r in order_rows
+        if r.applied_state == PLANNING_CHANGE_STATE_PENDING
+        and r.kind != "cancelled"
+        and r.decision is None
+    ]
+    if not pending:
+        return
+    core_ids = [str(r.core_line_id) for r in pending if r.core_line_id]
+    cancelled_core_ids = (
+        {
+            str(line_id)
+            for (line_id,) in db.query(SalesOrderLine.id)
+            .filter(SalesOrderLine.id.in_(core_ids), SalesOrderLine.line_status == "cancelled")
+            .all()
+        }
+        if core_ids
+        else set()
+    )
+    for r in pending:
+        if r.core_line_id and str(r.core_line_id) in cancelled_core_ids:
+            r.applied_state = PLANNING_CHANGE_STATE_SUPERSEDED
+            r.applied_reason = "the sales-order line is cancelled"
+        elif r.kind == "added" and r.project_line_id and str(r.project_line_id) in covered_line_ids:
+            r.applied_state = PLANNING_CHANGE_STATE_APPLIED
+            r.applied_reason = "the line is already confirmed"
+    db.flush()
 
 
 def _apply_one_order(
@@ -4408,6 +4542,9 @@ def _apply_one_order(
     # None and hide it behind the generic fallback every time.
     previous_frozen_for_report = supply.frozen_lines_of(latest_decision)
     previous_decision_id_for_report = str(latest_decision.id) if latest_decision else None
+
+    link_rows_to_mirror_lines(db, order_rows)
+    _settle_answered_rows(db, order_rows, {str(line_id) for line_id in frozen})
 
     # Confirm or Amend, and a line the book CANCELLED - nothing else is applied (AC-C7).
     # A row still undecided is simply left pending: the batch waits for CS.
@@ -4674,7 +4811,14 @@ def _apply_one_order(
     confirm_result: Optional[dict] = None
     settled_in_place: List[str] = []
     auto_place_products: List[str] = []
-    if confirm_lines:
+    # Crew ruling Q1 (PLAN-BATCH-HELD-CANCEL, 21 Oct 2026): a press that composed nothing but
+    # retires (or re-opens) covered lines while other covered lines survive goes through the
+    # SAME confirm as a composed press - a revision naming no line, with `uncover_line_ids`
+    # taking only those lines out, the presser as its author, and the auto-place deferred for
+    # the link shift below (AC-P3-6). It used to supersede the whole revision, sending every
+    # confirmed line of the order back to review (SO394881).
+    survivors = set(frozen) - set(uncover_line_ids)
+    if confirm_lines or (active_decision is not None and uncover_line_ids and survivors):
         # AC-E2 (Slice E, one signal): the borrow-hold release `challenge_if_drifted` used
         # to perform for the WHOLE decision on drift is already covered without a call
         # here - a line THIS BATCH names in the confirm is retired by `confirm()`'s own
@@ -4702,7 +4846,8 @@ def _apply_one_order(
         # None when every line it named was already fulfilled (#1362 item 3): nothing
         # was written, so nothing was revised.
         revised = revision_no is not None
-    elif active_decision is not None and (replanned or retired):
+    elif active_decision is not None and uncover_line_ids:
+        # Every covered line leaves: no revision is left to carry anything.
         supply.supersede_for_material_change(
             order,
             "Every covered line moved to Replan or Retire in a planning change batch.",
@@ -4824,6 +4969,16 @@ def _apply_one_order(
         ProjectOrderInquiryService(db).derive_for_book_change(
             order, demand_rows, batch_id=str(batch.id), actor_user_id=actor
         )
+    # ORDERBACK-DELTA review B1: the confirm above already told each saved line once.
+    # Only when THIS apply confirmed lines: an older entry from another confirm in the same
+    # session must never swallow this apply's own notices.
+    if confirm_lines:
+        ProjectOrderInquiryService(db).forget_rows_told_for_saved_lines(str(order.id))
+    # OI-LINE-SPLIT: this order's moved-split record has been read (the netting above, the
+    # email inside the confirm); a long-lived session must never carry it into a later apply.
+    from app.services.project_order_inquiry_service import SPLIT_MOVED_KEY
+
+    db.info.pop(SPLIT_MOVED_KEY, None)
 
     for r in live:
         r.applied_state = PLANNING_CHANGE_STATE_APPLIED

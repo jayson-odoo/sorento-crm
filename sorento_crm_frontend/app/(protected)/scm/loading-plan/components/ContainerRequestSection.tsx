@@ -28,6 +28,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
 import { EM_DASH, fmtInt } from '../../lib/format';
+import { LiveNumberInput } from '@/components/ui/number-input';
 import { describeWindow } from '../../reorder/lib/runListing';
 import { useContainerRequestBuild, useContainerRequestHistory } from '../../hooks/useFulfilment';
 import type {
@@ -62,6 +63,7 @@ import {
   type ContainerRequestMatrixAxis,
   type ContainerRequestMatrixGranularity,
 } from './containerRequestMatrix';
+import { distinctName } from '@/lib/product-display';
 
 /**
  * Stage 1 of Ms Tee's journey (PLAN-scm-loading-plan-demand-first.md, amended section 4/6b -
@@ -148,10 +150,7 @@ function engineQtyFormulaTitle(row: ContainerRequestRow): string {
  * that differ only by spacing or case are still the same word to a reader scanning the grid.
  */
 export function productNameDiffersFromCode(row: ContainerRequestRow): boolean {
-  if (!row.product_name) return false;
-  const name = row.product_name.trim().toLowerCase();
-  const code = (row.item_code ?? '').trim().toLowerCase();
-  return name !== code;
+  return distinctName(row.item_code, row.product_name) !== null;
 }
 
 /**
@@ -428,15 +427,12 @@ export function ContainerRequestSection({
       return <span className="tabular-nums">{fmtInt(value)}</span>;
     }
     return (
-      <Input
-        type="number"
+      <LiveNumberInput
         min={0}
+        rules={{ min: 0 }}
         className="h-8 w-24 tabular-nums"
         value={value}
-        onChange={(e) => {
-          const next = Math.max(0, Number(e.target.value) || 0);
-          onQtyChangeRef.current(original.row_key, next);
-        }}
+        onCommit={(next) => onQtyChangeRef.current(original.row_key, next)}
       />
     );
   }, []);

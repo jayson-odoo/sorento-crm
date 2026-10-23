@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Edit, Info, MessageSquareText, Store } from 'lucide-react';
+import { Edit, Info, MessageSquareText, Receipt, Store } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useBackToListHref, useHrefWithListState } from '@/components/common/BackToList';
 import { Badge, BadgeDot } from '@/components/ui/badge';
@@ -20,8 +20,12 @@ import { useHasPermission } from '@/hooks/usePermissions';
 import CustomerLinkedContactsSection from './CustomerLinkedContactsSection';
 import CustomerOpportunitiesSection from './CustomerOpportunitiesSection';
 import CustomerGroupLedgersCard from './CustomerGroupLedgersCard';
+import { DEBTOR_TYPE_OPTIONS } from '../types/customer.types';
+import BillingDocumentsView from '@/app/(protected)/finance/billing-documents/components/BillingDocumentsView';
+import { CustomerOutstandingMeta } from '@/app/(protected)/finance/billing-documents/components/CustomerOutstandingMeta';
+import { BILLING_VIEW_SLUG } from '@/app/(protected)/finance/billing-documents/lib/permissions';
 
-export type CustomerTab = 'details' | 'branches' | 'asks';
+export type CustomerTab = 'details' | 'branches' | 'asks' | 'billing';
 
 /** Shared with the edit page, so view and edit carry the same tabs in the same order. */
 export const CUSTOMER_TABS: { value: CustomerTab; label: string; icon: typeof Info }[] = [
@@ -29,12 +33,19 @@ export const CUSTOMER_TABS: { value: CustomerTab; label: string; icon: typeof In
   // #1356: the customer's AutoCount branches, read only; needs order_management.branches.view.
   { value: 'branches', label: 'Branches', icon: Store },
   { value: 'asks', label: 'Asks', icon: MessageSquareText },
+  // PLAN-finance-billing-documents S3-2: needs finance.billing_documents.view.
+  { value: 'billing', label: 'Billing documents', icon: Receipt },
 ];
 
-/** The tabs this user may open: Branches is hidden without order_management.branches.view. */
+/** The tabs this user may open: Branches is hidden without order_management.branches.view,
+ *  Billing documents without finance.billing_documents.view. */
 export function useCustomerTabs() {
   const canSeeBranches = useHasPermission('order_management.branches.view');
-  return CUSTOMER_TABS.filter((t) => t.value !== 'branches' || canSeeBranches);
+  const canSeeBilling = useHasPermission(BILLING_VIEW_SLUG);
+  return CUSTOMER_TABS.filter(
+    (t) =>
+      (t.value !== 'branches' || canSeeBranches) && (t.value !== 'billing' || canSeeBilling),
+  );
 }
 
 interface CustomerDetailProps {
@@ -90,6 +101,7 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
           <p className="text-sm text-muted-foreground">
             Customer Code: {customer.customer_code}
           </p>
+          <CustomerOutstandingMeta customerId={customerId} />
         </div>
         <DetailActions
           pager={{
@@ -155,6 +167,12 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
                   <p className="text-sm text-muted-foreground">Account level</p>
                   <p className="font-medium">
                     {customer.account_level ? `Account ${customer.account_level}` : 'No account level set'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Debtor type</p>
+                  <p className="font-medium">
+                    {DEBTOR_TYPE_OPTIONS.find((o) => o.value === customer.debtor_type)?.label ?? '-'}
                   </p>
                 </div>
                 <div>
@@ -234,6 +252,10 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
 
         <TabsContent value="asks">
           {tab === 'asks' && <CustomerAsksTab customerId={customerId} />}
+        </TabsContent>
+
+        <TabsContent value="billing">
+          {tab === 'billing' && <BillingDocumentsView customerId={customerId} />}
         </TabsContent>
       </Tabs>
     </div>

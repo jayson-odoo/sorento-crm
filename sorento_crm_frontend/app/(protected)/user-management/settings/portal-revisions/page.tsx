@@ -21,11 +21,13 @@ import {
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
+import { numberFieldError } from '@/lib/number-field';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 
+import { useHasPermission } from '@/hooks/usePermissions';
 import { useSettings } from '../components/settings-context';
 import { PortalRevisionConfigDialog } from './components/PortalRevisionConfigDialog';
 import {
@@ -49,6 +51,9 @@ import {
  */
 export default function PortalRevisionsSettingsPage() {
   const { settings } = useSettings();
+  // Both saves (the globals and a row) need the edit slug (SETTINGS-PERM-GATE);
+  // without it the tab is read-only.
+  const canEdit = useHasPermission('user_management.settings.edit');
   const [enabled, setEnabled] = useState<boolean>(settings.portalRevisionsEnabled ?? true);
   const [maxRevisions, setMaxRevisions] = useState<string>(
     String(settings.portalMaxRevisions ?? 2),
@@ -59,8 +64,9 @@ export default function PortalRevisionsSettingsPage() {
   const saveGlobals = useSavePortalRevisionGlobals();
   const updateConfig = useUpdatePortalRevisionConfig();
 
-  const maxInvalid =
-    !/^\d+$/.test(maxRevisions.trim()) || Number(maxRevisions.trim()) > 50;
+  // Save stays live; a click on a wrong number says what is wrong instead of doing nothing.
+  const [maxChecked, setMaxChecked] = useState(false);
+  const maxError = numberFieldError(maxRevisions, { min: 0, max: 50, integer: true });
 
   const columns = useMemo<ColumnDef<PortalRevisionConfig>[]>(
     () => [
@@ -158,20 +164,21 @@ export default function PortalRevisionsSettingsPage() {
         minSize: 60,
         enableSorting: false,
         enableHiding: false,
-        cell: ({ row }) => (
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label={`Edit ${portalRevisionTypeLabel(row.original.source_entity_type)}`}
-            onClick={() => setEditing(row.original)}
-          >
-            <Pencil className="size-4" />
-            Edit
-          </Button>
-        ),
+        cell: ({ row }) =>
+          canEdit ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={`Edit ${portalRevisionTypeLabel(row.original.source_entity_type)}`}
+              onClick={() => setEditing(row.original)}
+            >
+              <Pencil className="size-4" />
+              Edit
+            </Button>
+          ) : null,
       },
     ],
-    [],
+    [canEdit],
   );
 
   const table = useReactTable({
@@ -196,44 +203,55 @@ export default function PortalRevisionsSettingsPage() {
               id="portal-revisions-enabled"
               checked={enabled}
               onCheckedChange={setEnabled}
+              disabled={!canEdit}
             />
           </div>
           <div className="space-y-2">
             <Label htmlFor="portal-max-revisions">Max revisions</Label>
-            <Input
+            <NumberInput
               id="portal-max-revisions"
               inputMode="numeric"
+              min={0}
+              max={50}
               value={maxRevisions}
               onChange={(e) => setMaxRevisions(e.target.value)}
-              aria-invalid={maxInvalid}
+              error={maxChecked ? maxError : undefined}
+              disabled={!canEdit}
               className="max-w-40"
             />
           </div>
         </CardContent>
-        <CardFooter className="flex justify-end gap-4 py-5">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => {
-              setEnabled(settings.portalRevisionsEnabled ?? true);
-              setMaxRevisions(String(settings.portalMaxRevisions ?? 2));
-            }}
-          >
-            Reset
-          </Button>
-          <Button
-            type="button"
-            disabled={saveGlobals.isPending || maxInvalid}
-            onClick={() =>
-              saveGlobals.mutate({
-                portal_revisions_enabled: enabled,
-                portal_max_revisions: Number(maxRevisions.trim()),
-              })
-            }
-          >
-            {saveGlobals.isPending ? 'Saving…' : 'Save Settings'}
-          </Button>
-        </CardFooter>
+        {canEdit && (
+          <CardFooter className="flex justify-end gap-4 py-5">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setEnabled(settings.portalRevisionsEnabled ?? true);
+                setMaxRevisions(String(settings.portalMaxRevisions ?? 2));
+                setMaxChecked(false);
+              }}
+            >
+              Reset
+            </Button>
+            <Button
+              type="button"
+              disabled={saveGlobals.isPending}
+              onClick={() => {
+                if (maxError) {
+                  setMaxChecked(true);
+                  return;
+                }
+                saveGlobals.mutate({
+                  portal_revisions_enabled: enabled,
+                  portal_max_revisions: Number(maxRevisions.trim()),
+                });
+              }}
+            >
+              {saveGlobals.isPending ? 'Saving…' : 'Save Settings'}
+            </Button>
+          </CardFooter>
+        )}
       </Card>
 
       <DataGrid

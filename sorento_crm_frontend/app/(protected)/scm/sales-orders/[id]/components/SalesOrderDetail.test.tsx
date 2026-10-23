@@ -95,6 +95,12 @@ vi.mock(
   }),
 );
 
+// The route tests below render the server page, whose `Container` reads the layout settings
+// provider; the wrapper is layout only, so a plain div stands in.
+vi.mock('@/components/common/container', () => ({
+  Container: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+}));
+
 const useSalesOrder = vi.fn();
 const updateSalesOrderMutateAsync = vi.fn();
 vi.mock('../../../hooks/useSalesOrders', () => ({
@@ -157,6 +163,8 @@ vi.mock('../../../services/salesOrderService', () => ({
 }));
 
 import { SalesOrderDetail } from './SalesOrderDetail';
+import SalesOrderDetailPage from '../page';
+import ConsignmentDetailPage from '../../../consignments/[id]/page';
 import type { SalesOrder, SalesOrderLine } from '../../../types/scm.types';
 
 function so(over: Partial<SalesOrder> = {}): SalesOrder {
@@ -249,19 +257,136 @@ beforeEach(() => {
   searchParams = new URLSearchParams();
 });
 
-describe('SalesOrderDetail - states', () => {
-  it('shows a skeleton and the way back while loading', () => {
-    useSalesOrder.mockReturnValue({ data: undefined, isLoading: true, isError: false });
-    renderDetail();
-    // The way back is present even before the record is: a slow read must not trap anybody.
-    expect(screen.getByText('Back to sales orders')).toBeInTheDocument();
+/**
+ * SO-DETAIL-DUP-BACK (owner, 21 Oct): the page showed TWO "Back to sales orders" while the
+ * order loaded - the header's and the component's. The composed route is what the owner
+ * sees, so it is what these render: the server page, awaited, around the real component.
+ */
+async function renderPage(page: 'sales-order' | 'consignment' = 'sales-order') {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const params = Promise.resolve({ id: 'so-1' });
+  const tree =
+    page === 'consignment'
+      ? await ConsignmentDetailPage({ params })
+      : await SalesOrderDetailPage({ params });
+  return render(<QueryClientProvider client={client}>{tree}</QueryClientProvider>);
+}
+
+describe('Sales order detail route - exactly one Back', () => {
+  const states: Array<[string, Record<string, unknown>]> = [
+    ['loading', { data: undefined, isLoading: true, isError: false }],
+    [
+      'not found',
+      {
+        data: undefined,
+        isLoading: false,
+        isError: true,
+        error: Object.assign(new Error('Sales order not found'), { status: 404 }),
+        refetch: vi.fn(),
+      },
+    ],
+    [
+      'failed',
+      {
+        data: undefined,
+        isLoading: false,
+        isError: true,
+        error: Object.assign(new Error('Internal server error'), { status: 500 }),
+        refetch: vi.fn(),
+      },
+    ],
+  ];
+
+  it.each(states)('while %s, the sales-orders route has one Back to its list', async (_, state) => {
+    useSalesOrder.mockReturnValue(state);
+    await renderPage();
+    const backs = screen.getAllByRole('link', { name: /Back to sales orders/ });
+    expect(backs).toHaveLength(1);
+    expect(backs[0].getAttribute('href')).toMatch(/^\/scm\/sales-orders(\?|$)/);
   });
 
-  it('names what is missing rather than rendering an empty shell', () => {
-    useSalesOrder.mockReturnValue({ data: undefined, isLoading: false, isError: true });
+  it.each(states)('while %s, the consignment route has one Back to its own list', async (_, state) => {
+    useSalesOrder.mockReturnValue(state);
+    await renderPage('consignment');
+    const backs = screen.getAllByRole('link', { name: /Back to consignments/ });
+    expect(backs).toHaveLength(1);
+    expect(backs[0].getAttribute('href')).toMatch(/^\/scm\/consignments(\?|$)/);
+    expect(screen.queryByText('Back to sales orders')).toBeNull();
+  });
+
+  it('once loaded, the route still has one Back', async () => {
+    useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
+    await renderPage();
+    expect(screen.getAllByRole('link', { name: /Back to sales orders/ })).toHaveLength(1);
+  });
+});
+
+describe('SalesOrderDetail - states', () => {
+  // SO-DETAIL-DUP-BACK: the page header owns Back (`../page.tsx`), so the component's own
+  // states draw none - a second one stacked under the header's while the order loaded.
+  it('shows a skeleton and no second Back while loading', () => {
+    useSalesOrder.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+    renderDetail();
+    expect(screen.queryByText('Back to sales orders')).toBeNull();
+  });
+
+  it('a 404 names what is missing rather than rendering an empty shell', () => {
+    useSalesOrder.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: Object.assign(new Error('Sales order not found'), { status: 404 }),
+      refetch: vi.fn(),
+    });
     renderDetail();
     expect(screen.getByText('Sales order not found')).toBeInTheDocument();
-    expect(screen.getByText('Back to sales orders')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull();
+    expect(screen.queryByText('Back to sales orders')).toBeNull();
+  });
+
+  it('any other failure says it could not load, with the reason and a Retry that refetches', () => {
+    const refetch = vi.fn();
+    useSalesOrder.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: Object.assign(new Error('The server took too long to answer.'), { status: undefined }),
+      refetch,
+      isFetching: false,
+    });
+    renderDetail();
+    expect(screen.queryByText('Sales order not found')).toBeNull();
+    expect(screen.getByText('Could not load this sales order')).toBeInTheDocument();
+    expect(screen.getByText('The server took too long to answer.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Retry/ }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed background refetch keeps the order already on screen', () => {
+    useSalesOrder.mockReturnValue({
+      data: so(),
+      isLoading: false,
+      isError: true,
+      error: Object.assign(new Error('Internal server error'), { status: 500 }),
+      refetch: vi.fn(),
+    });
+    renderDetail();
+    expect(screen.getByText('SO-2026/07-0042')).toBeInTheDocument();
+    expect(screen.queryByText('Could not load this sales order')).toBeNull();
+  });
+
+  it('a refusal renders the access-denied state, not "not found"', () => {
+    useSalesOrder.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: Object.assign(new Error('Permission required: scm.dashboard.view'), { status: 403 }),
+      refetch: vi.fn(),
+    });
+    renderDetail();
+    expect(screen.getByText("You don't have access to this page")).toBeInTheDocument();
+    expect(screen.queryByText('Sales order not found')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull();
   });
 
   it('renders the document number, the customer and every summary field', () => {
@@ -2479,5 +2604,90 @@ describe('SalesOrderDetail - What changed dialog Was / Now sides', () => {
       to: null,
     });
     expect(dialog).toHaveTextContent('Cancelled');
+  });
+});
+
+// AC-CANCEL-CRM (owner hand test, 13 Oct): "where do I see the cancelled quantity?" AutoCount
+// Cancel SO is in TransferedQty, so without its own column a cancelled line reads as ordered
+// 36, delivered 0, outstanding 0 with nothing saying why.
+describe('SalesOrderDetail - AutoCount Cancel SO on the lines', () => {
+  function cancelledOrder() {
+    return so({
+      lines: [
+        {
+          id: 'l-1', line_no: 1, sku: 'CB110', product_name: 'Cabinet 110',
+          qty_ordered: 36, qty_delivered: 0, qty_cancelled: 36, outstanding_qty: 0, uom: 'PCS',
+          warehouse_code: 'BRW-BB', line_status: 'cancelled', required_date: '2026-10-01',
+          cancels: [{ doc_no: 'XS-016501', qty: 36, match_reason: 'line_key' }],
+        },
+        {
+          id: 'l-2', line_no: 2, sku: 'CB110-R', product_name: 'Cabinet 110 R',
+          qty_ordered: 10, qty_delivered: 4, qty_cancelled: 6, outstanding_qty: 0, uom: 'PCS',
+          warehouse_code: 'BRW-BB', line_status: 'closed', required_date: '2026-10-01',
+          cancels: [
+            { doc_no: 'XS-016502', qty: null, match_reason: 'group_whole' },
+            { doc_no: 'XS-016503', qty: 2, match_reason: 'item' },
+          ],
+        },
+        {
+          id: 'l-3', line_no: 3, sku: 'CB110LP', product_name: 'Cabinet 110 LP',
+          qty_ordered: 10, qty_delivered: 0, qty_cancelled: 4, outstanding_qty: 6, uom: 'PCS',
+          warehouse_code: 'BRW-BB', line_status: 'open', required_date: '2026-10-01',
+          cancels: [{ doc_no: 'XS-016504', qty: 4, match_reason: 'item' }],
+        },
+      ],
+    });
+  }
+
+  it('states Qty cancelled in its own column, right after Qty delivered', () => {
+    useSalesOrder.mockReturnValue({ data: cancelledOrder(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    const delivered = headers.findIndex((h) => h.includes('Qty delivered'));
+    expect(headers[delivered + 1]).toContain('Qty cancelled');
+    expect(screen.getByTestId('qty-cancelled-l-1')).toHaveTextContent('36');
+    expect(screen.getByTestId('qty-cancelled-l-2')).toHaveTextContent('6');
+  });
+
+  it('names each cancel document and how it was matched, on the figure', () => {
+    useSalesOrder.mockReturnValue({ data: cancelledOrder(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    expect(screen.getByTestId('qty-cancelled-l-1')).toHaveAttribute(
+      'title', 'XS-016501: 36 (line key)',
+    );
+    expect(screen.getByTestId('qty-cancelled-l-2')).toHaveAttribute(
+      'title', 'XS-016502 (every line of the item)\nXS-016503: 2 (item)',
+    );
+  });
+
+  it('reads Cancelled for a whole cancel, Partly cancelled only while a partial one is open', () => {
+    // Owner, 13 Oct: a done line reads Completed (the Qty cancelled column carries the
+    // cancel); "Partly cancelled" is for a line still open.
+    useSalesOrder.mockReturnValue({ data: cancelledOrder(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    const rows = screen.getAllByRole('row');
+    const row1 = rows.find((r) => within(r).queryByText('CB110'));
+    const row2 = rows.find((r) => within(r).queryByText('CB110-R'));
+    const row3 = rows.find((r) => within(r).queryByText('CB110LP'));
+    expect(within(row1!).getByText('Cancelled')).toBeInTheDocument();
+    expect(within(row2!).getByText('Completed')).toBeInTheDocument();
+    expect(within(row2!).queryByText('Partly cancelled')).not.toBeInTheDocument();
+    expect(within(row3!).getByText('Partly cancelled')).toBeInTheDocument();
+  });
+
+  it('reads 0 with no tooltip on a line nothing cancelled, like the other quantities', () => {
+    useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    const cell = screen.getAllByTestId(/^qty-cancelled-/)[0];
+    expect(cell).toHaveTextContent(/^0$/);
+    expect(cell).not.toHaveAttribute('title');
   });
 });

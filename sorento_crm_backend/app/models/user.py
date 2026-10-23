@@ -1,6 +1,6 @@
 """User management models."""
 import enum
-from sqlalchemy import CheckConstraint, Column, String, Boolean, DateTime, ForeignKey, Numeric, Text, Index, Integer, UniqueConstraint, text
+from sqlalchemy import CheckConstraint, Column, String, Boolean, Date, DateTime, ForeignKey, Numeric, Text, Index, Integer, UniqueConstraint, text
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, ARRAY, JSONB
 from sqlalchemy.orm import relationship
@@ -421,6 +421,8 @@ class SystemSetting(Base):
     connector_ss_callback_url = Column(String(2048), nullable=True)
     analytics_ro_database_url_ciphertext = Column(Text, nullable=True)
     respond_webhook_secret_ciphertext = Column(Text, nullable=True)
+    # DO-BACKFILL-SETTING: the DO-HISTORY cutover (NULL = DO_ASSUME_DELIVERED_BEFORE).
+    do_assume_delivered_before = Column(Date, nullable=True)
 
     # Takeover cooldown: seconds between a takeover confirm and the actual reassignment,
     # during which the original assignee can reject and the initiator can cancel.
@@ -443,6 +445,10 @@ class SystemSetting(Base):
     # 27 Sep 00:45). On, a staff upload goes through Submit/Decide/Return before Apply; off, the
     # uploader applies directly. A supplier-channel set (Lane B) is Pending regardless.
     cost_price_verification_enabled = Column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
+    # Sample requests (SR-CORE card rules 2 and 3): soft-transition switches, OFF on deploy.
+    sample_request_require_project = Column(
         Boolean, nullable=False, server_default="false", default=False
     )
     # How many days an untouched price tag collection waits before the sweep
@@ -744,6 +750,32 @@ class SystemSetting(Base):
     # why the settings screen confirms before turning it on.
     chatbot_ordering_enabled = Column(
         Boolean, nullable=False, server_default="false", default=False
+    )
+    # CHAT-SPEED: does the respond.io webhook start the turn itself? `off` (today),
+    # `contacts` (only the respond.io contact ids in `chatbot_direct_ingress_contacts`, one
+    # per line or comma separated) or `all`. The n8n producer keeps running either way, so
+    # its later copy of a message comes back as a D15 duplicate and sends nothing.
+    chatbot_direct_ingress_mode = Column(
+        String(16), nullable=False, server_default="off", default="off"
+    )
+    chatbot_direct_ingress_contacts = Column(Text, nullable=True)
+    # CLOSED-LISTS-INDEX-MODE: how a CLOSED LISTS parser version sees the closed lists.
+    # `block` (today) renders every full list into the system prompt; `index` renders each
+    # as one fixed pointer line, and the per-turn CLOSED LISTS block carries only what the
+    # message's words and the held products match (`head/closed_lists_index.py`). Read per
+    # turn, so a flip reaches the next turn with no restart.
+    chatbot_closed_lists_mode = Column(
+        String(16), nullable=False, server_default="block", default="block"
+    )
+    # CHAT-RELEASE-1021: the stored CHAT-COMPOSER gate (default off), flipped on Settings >
+    # Chatbot and read at run time by `chatbot.composers.enabled()`; `CHAT_COMPOSER_ENABLED`,
+    # when set, overrides it.
+    chatbot_composer_enabled = Column(Boolean, nullable=False, server_default="false", default=False)
+    # LEAN: the reasoning effort the parser's OpenAI call asks for: `off` (the default: none sent,
+    # as before) | `low`; anything else reads as `off` (`head/parser.reasoning_effort_setting`; widen
+    # only per the trigger at `head/parser.REASONING_EFFORTS`). Read per parse, so a flip reaches the next turn.
+    chatbot_parser_reasoning_effort = Column(
+        String(16), nullable=False, server_default="off", default="off"
     )
 
 

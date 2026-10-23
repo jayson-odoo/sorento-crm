@@ -32,9 +32,11 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { NumberInput } from "@/components/ui/number-input";
 import { Textarea } from "@/components/ui/textarea";
 import { SearchableSelect } from "@/components/common/SearchableSelect";
 import { searchProjectsForLink } from "../services/purchaseRequestService";
+import { RequestCustomerField } from "./RequestCustomerField";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useReactTable, getCoreRowModel } from "@tanstack/react-table";
@@ -51,6 +53,7 @@ import { getOrCreateViewLink } from "../services/purchaseRequestService";
 import { toast } from '@/lib/toast';
 import {
   PurchaseRequestFormSchema,
+  lineHasContent,
   type PurchaseRequestSchemaType,
 } from '../forms/purchase-request-schema';
 import type { PurchaseRequestFormData } from '../types/purchaseRequest.types';
@@ -124,6 +127,7 @@ export default function PurchaseRequestForm({
       request_number: null,
       request_date: null,
       customer_name: null,
+      customer_id: null,
       pic: null,
       project_title: null,
       project_id: null,
@@ -226,26 +230,29 @@ export default function PurchaseRequestForm({
             render={({ field: f }) => (
               <FormItem>
                 <FormControl>
-                  <Input
-                    type="number"
+                  <NumberInput
                     step="any"
                     placeholder="0"
-                    {...f}
-                    value={f.value ?? ""}
-                    onChange={(e) => {
-                      const v = e.target.value ? parseFloat(e.target.value) : null;
+                    name={f.name}
+                    ref={f.ref}
+                    onBlur={f.onBlur}
+                    value={f.value ?? null}
+                    onValueChange={(v) => {
                       f.onChange(v);
+                      // Re-check a flagged box as it is fixed (the form validates on blur otherwise).
+                      if (form.getFieldState(f.name, form.formState).error) void form.trigger(f.name);
                       if (isSponsorship) {
                         const up = form.getValues(`products.${row.index}.unit_price`);
-                        if (up != null && up !== "") {
+                        if (v !== null && !Number.isNaN(v) && up != null && up !== "") {
                           form.setValue(`products.${row.index}.total`, (v ?? 0) * Number(up));
                         }
+                        if (v === null || Number.isNaN(v)) form.setValue(`products.${row.index}.total`, null);
                       }
                     }}
                     className="h-8 w-24"
                   />
                 </FormControl>
-                <FormMessage />
+                <FormMessage className="whitespace-normal break-words" />
               </FormItem>
             )}
           />
@@ -273,19 +280,20 @@ export default function PurchaseRequestForm({
                   render={({ field: f }) => (
                     <FormItem>
                       <FormControl>
-                        <Input
-                          type="number"
+                        <NumberInput
                           step="any"
                           placeholder="0"
-                          {...f}
-                          value={f.value ?? ""}
-                          onChange={(e) => {
-                            const v = e.target.value ? parseFloat(e.target.value) : null;
+                          name={f.name}
+                          ref={f.ref}
+                          onBlur={f.onBlur}
+                          value={f.value ?? null}
+                          onValueChange={(v) => {
                             f.onChange(v);
                             const qty = form.getValues(`products.${row.index}.quantity`);
-                            if (qty != null && qty !== "") {
+                            if (v !== null && !Number.isNaN(v) && qty != null && qty !== "") {
                               form.setValue(`products.${row.index}.total`, (v ?? 0) * Number(qty));
                             }
+                            if (v === null || Number.isNaN(v)) form.setValue(`products.${row.index}.total`, null);
                           }}
                           className="h-8 w-24"
                         />
@@ -308,14 +316,14 @@ export default function PurchaseRequestForm({
                   render={({ field: f }) => (
                     <FormItem>
                       <FormControl>
-                        <Input
-                          type="number"
+                        <NumberInput
                           step="any"
                           placeholder="0"
-                          {...f}
-                          value={f.value ?? ""}
-                          onChange={(e) => {
-                            const v = e.target.value ? parseFloat(e.target.value) : null;
+                          name={f.name}
+                          ref={f.ref}
+                          onBlur={f.onBlur}
+                          value={f.value ?? null}
+                          onValueChange={(v) => {
                             f.onChange(v);
                           }}
                           className="h-8 w-28"
@@ -422,6 +430,7 @@ export default function PurchaseRequestForm({
           ? new Date(request.request_date).toISOString().split("T")[0]
           : null,
         customer_name: request.customer_name ?? null,
+        customer_id: request.customer_id ?? null,
         pic: request.pic ?? null,
         project_title: request.project_title ?? null,
         project_id: request.project_id ?? null,
@@ -450,6 +459,12 @@ export default function PurchaseRequestForm({
         products,
       });
       setFormInitialized(true);
+      // An intake line can arrive with a NULL quantity: flag it now, not only on Update.
+      const blank = products
+        .map((l, i) => (l.quantity == null ? i : -1))
+        .filter((i) => i >= 0)
+        .map((i) => `products.${i}.quantity` as const);
+      if (blank.length) void form.trigger(blank);
     }
   }, [request, isEditMode, form, formInitialized]);
 
@@ -457,13 +472,14 @@ export default function PurchaseRequestForm({
     setFormInitialized(false);
   }, [requestId]);
 
-  const onSubmit = async (data: PurchaseRequestSchemaType) => {
-    try {
-      const formData: PurchaseRequestFormData = {
+  // The ONE body Save and Update & Reply both send, so neither can drop a field.
+  const buildFormData = (data: PurchaseRequestSchemaType): PurchaseRequestFormData => {
+    return {
         request_type: data.request_type,
         request_number: data.request_number ?? undefined,
         request_date: data.request_date || undefined,
         customer_name: data.customer_name || undefined,
+        customer_id: data.customer_id || null,
         // Empty string must become undefined, not "" - "not given" is one value.
         pic: data.pic || undefined,
         project_title: data.project_title || undefined,
@@ -477,8 +493,8 @@ export default function PurchaseRequestForm({
         total_project_value_text: data.total_project_value_text?.trim()
           ? data.total_project_value_text.trim()
           : undefined,
-        // Sales type applies to purchase requests only; clear it on sponsorship forms.
-        sales_type: !isSponsorship ? (data.sales_type ?? undefined) : undefined,
+        // A cleared (optional, SF) select gives ''; send none rather than an empty code.
+        sales_type: data.sales_type || undefined,
         sponsor_subject: data.sponsor_subject ?? undefined,
         // Only carry the "Others" detail when the sponsor subject is 'others';
         // sending '' otherwise clears any stale parked text on the backend.
@@ -495,11 +511,10 @@ export default function PurchaseRequestForm({
         requested_by_contact_id: data.requested_by_contact_id ?? null,
         requested_at: data.requested_at || undefined,
         products: data.products
-          .filter(
-            (p) =>
-              p.item_code != null ||
-              p.quantity != null ||
-              (isSponsorship && (p.unit_price != null || p.total != null)),
+          .filter((p) =>
+            lineHasContent(
+              isSponsorship ? p : { item_code: p.item_code, quantity: p.quantity },
+            ),
           )
           .map((p) => ({
             item_code: p.item_code ?? undefined,
@@ -516,6 +531,11 @@ export default function PurchaseRequestForm({
               p.total != null && p.total !== "" ? Number(p.total) : undefined,
           })),
       };
+  };
+
+  const onSubmit = async (data: PurchaseRequestSchemaType) => {
+    try {
+      const formData = buildFormData(data);
 
       if (isEditMode && requestId) {
         await updateMutation.mutateAsync({ id: requestId, data: formData });
@@ -618,23 +638,7 @@ export default function PurchaseRequestForm({
                     )}
                   />
                 )}
-                <FormField
-                  control={form.control}
-                  name="customer_name"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Customer Name</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="Customer name"
-                          {...field}
-                          value={field.value ?? ""}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                <RequestCustomerField form={form} label="Customer Name" />
                 <FormField
                   control={form.control}
                   name="pic"
@@ -734,41 +738,6 @@ export default function PurchaseRequestForm({
                     )}
                   />
                 )}
-                {!isSponsorship && (
-                  <FormField
-                    control={form.control}
-                    name="sales_type"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>
-                          Sales Type <span className="text-destructive">*</span>
-                        </FormLabel>
-                        <FormControl>
-                          <LookupBoundField
-                            table="purchase_requests"
-                            column="sales_type"
-                            value={field.value}
-                            onChange={field.onChange}
-                            placeholder="Select sales type"
-                            renderFallback={() => (
-                              <SearchableSelect
-                                key={field.value || "empty"}
-                                onChange={field.onChange}
-                                value={field.value || ""}
-                                placeholder="Select sales type"
-                                options={[
-                                  { value: "project", label: "Project" },
-                                  { value: "cash_sales", label: "Cash Sales" },
-                                ]}
-                              />
-                            )}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                )}
                 {isSponsorship && (
                   <>
                     <FormField
@@ -778,8 +747,7 @@ export default function PurchaseRequestForm({
                         <FormItem>
                           <FormLabel>Total Project Value</FormLabel>
                           <FormControl>
-                            <Input
-                              type="number"
+                            <NumberInput
                               inputMode="decimal"
                               step="0.01"
                               placeholder="e.g. 1234.00"
@@ -849,6 +817,44 @@ export default function PurchaseRequestForm({
                     )}
                   </>
                 )}
+                {/* Required on a purchase request (it routes CS); kept, optional, on a sponsorship
+                    form (SF-SALES-TYPE). After Purpose on a PR, after Sponsor Subject on an SF. */}
+                <FormField
+                  control={form.control}
+                  name="sales_type"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        Sales Type{" "}
+                        {!isSponsorship && <span className="text-destructive">*</span>}
+                      </FormLabel>
+                      <FormControl>
+                        <LookupBoundField
+                          table="purchase_requests"
+                          column="sales_type"
+                          value={field.value}
+                          onChange={field.onChange}
+                          placeholder="Select sales type"
+                          clearable={isSponsorship}
+                          renderFallback={() => (
+                            <SearchableSelect
+                              key={field.value || "empty"}
+                              onChange={field.onChange}
+                              value={field.value || ""}
+                              placeholder="Select sales type"
+                              clearable={isSponsorship}
+                              options={[
+                                { value: "project", label: "Project" },
+                                { value: "cash_sales", label: "Cash Sales" },
+                              ]}
+                            />
+                          )}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
                 <FormField
                   control={form.control}
                   name="expected_delivery_date"
@@ -1153,41 +1159,7 @@ export default function PurchaseRequestForm({
                     await updateAndReplyMutation.mutateAsync({
                       id: requestId,
                       data: {
-                        formData: {
-                          request_type: values.request_type,
-                          request_number: values.request_number ?? undefined,
-                          request_date: values.request_date ?? undefined,
-                          customer_name: values.customer_name ?? undefined,
-                          project_title: values.project_title ?? undefined,
-                          purpose: values.purpose ?? undefined,
-                          expected_delivery_date:
-                            values.expected_delivery_date ?? undefined,
-                          expected_po_date:
-                            values.expected_po_date ?? undefined,
-                          expected_po_date_text:
-                            values.expected_po_date_text ?? undefined,
-                          requested_by: values.requested_by ?? undefined,
-                          requested_by_contact_id: values.requested_by_contact_id ?? null,
-                          requested_at: values.requested_at ?? undefined,
-                          products: (values.products ?? []).map((p) => ({
-                            item_code: p.item_code ?? undefined,
-                            quantity:
-                              typeof p.quantity === "number"
-                                ? p.quantity
-                                : p.quantity != null && p.quantity !== ""
-                                  ? Number(p.quantity)
-                                  : undefined,
-                            remark: p.remark ?? undefined,
-                            unit_price:
-                              p.unit_price != null && p.unit_price !== ""
-                                ? Number(p.unit_price)
-                                : undefined,
-                            total:
-                              p.total != null && p.total !== ""
-                                ? Number(p.total)
-                                : undefined,
-                          })),
-                        },
+                        formData: buildFormData(values),
                         reply_message: replyMessage.trim(),
                       },
                     });

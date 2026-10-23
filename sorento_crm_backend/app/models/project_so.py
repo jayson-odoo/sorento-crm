@@ -1330,6 +1330,68 @@ class OrderInquirySuggestedLink(Base, CompanyScopedMixin):
     )
 
 
+class OrderInquiryReleasedLink(Base, CompanyScopedMixin):
+    """A received PO/SPO link given up when CS reserved the row's stock instead
+    (`PLAN-oi-reserve-received.md` item 1).
+
+    The link itself is deleted (the row's own sums never read this table); this is the
+    memory that the target's quantity was used by other orders, so `_linked_by_target`
+    keeps counting it and nothing re-links it. CASCADE on both targets: a row of a document
+    line that no longer exists means nothing.
+    """
+
+    __tablename__ = "order_inquiry_released_links"
+    __audit_skip__ = "link history table, one row per released received link"
+    __audit_entity_type__ = "project_order_inquiry_released_links"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    row_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.order_inquiry_rows.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    reserve_request_row_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(
+            "projects.order_inquiry_reserve_request_rows.id",
+            ondelete="SET NULL",
+            name="fk_order_inquiry_released_links_reserve_request_row",
+        ),
+        nullable=True,
+    )
+    po_line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("purchase_order_lines.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    spo_allocation_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(
+            "spo_allocations.id",
+            ondelete="CASCADE",
+            name="fk_order_inquiry_released_links_spo_allocation",
+        ),
+        nullable=True,
+    )
+    document = Column(String(80), nullable=True)
+    qty = Column(Numeric(15, 4), nullable=False)
+    released_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    released_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "(po_line_id IS NOT NULL)::int + (spo_allocation_id IS NOT NULL)::int = 1",
+            name="ck_order_inquiry_released_links_one_target",
+        ),
+        CheckConstraint("qty > 0", name="ck_order_inquiry_released_links_qty_positive"),
+        Index("ix_order_inquiry_released_links_row", "row_id"),
+        Index("ix_order_inquiry_released_links_po_line", "po_line_id"),
+        Index("ix_order_inquiry_released_links_spo_allocation", "spo_allocation_id"),
+        {"schema": "projects"},
+    )
+
+
 #: PLAN-oi-request-cs-reserve.md (R1-R11): purchasing asks CS to cover part of a row from
 #: own or pool stock before buying the balance. Two tables: the REQUEST (one per ask,
 #: `OI-2609-0678 request #2`, addressed by ordinal within the inquiry rather than its own
@@ -1369,6 +1431,9 @@ class OrderInquiryReserveRequest(Base, CompanyScopedMixin):
     reserved_at = Column(DateTime(timezone=False), nullable=True)
     cancelled_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     cancelled_at = Column(DateTime(timezone=False), nullable=True)
+    # OI-STAGED-NOTIFY: set while the request is parked (saved, not yet mailed to CS);
+    # who parked it is `requested_by`. NULL = sent (legacy rows count as sent).
+    parked_at = Column(DateTime(timezone=False), nullable=True)
 
     __table_args__ = (
         CheckConstraint(
@@ -1379,6 +1444,11 @@ class OrderInquiryReserveRequest(Base, CompanyScopedMixin):
             "order_inquiry_id", "ordinal", name="uq_order_inquiry_reserve_requests_ordinal"
         ),
         Index("ix_order_inquiry_reserve_requests_inquiry", "order_inquiry_id"),
+        Index(
+            "ix_order_inquiry_reserve_requests_parked",
+            "parked_at",
+            postgresql_where=text("parked_at IS NOT NULL"),
+        ),
         {"schema": "projects"},
     )
 
@@ -1414,6 +1484,12 @@ class OrderInquiryReserveRequestRow(Base, CompanyScopedMixin):
     )
     qty_reserved = Column(Numeric(15, 4), nullable=True)
     reason = Column(Text, nullable=True)
+    # OI-STAGED-NOTIFY: a parked notice to purchasing (CS answered, not yet mailed).
+    # `notified_qty` is the figure purchasing was last told; a row is actionable while
+    # `qty_reserved` differs from it (NULL counts as different).
+    notice_parked_at = Column(DateTime(timezone=False), nullable=True)
+    notice_parked_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    notified_qty = Column(Numeric(15, 4), nullable=True)
 
     __table_args__ = (
         CheckConstraint("qty_requested > 0", name="ck_order_inquiry_reserve_rows_qty_positive"),
@@ -1422,6 +1498,11 @@ class OrderInquiryReserveRequestRow(Base, CompanyScopedMixin):
         ),
         Index("ix_order_inquiry_reserve_request_rows_request", "request_id"),
         Index("ix_order_inquiry_reserve_request_rows_row", "row_id"),
+        Index(
+            "ix_order_inquiry_reserve_request_rows_notice_parked",
+            "notice_parked_at",
+            postgresql_where=text("notice_parked_at IS NOT NULL"),
+        ),
         {"schema": "projects"},
     )
 
@@ -1944,5 +2025,65 @@ class ProjectSODivergenceLine(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_project_so_divergence_lines_divergence", "divergence_id"),
         Index("ix_project_so_divergence_lines_so_line", "so_line_id"),
+        {"schema": "projects"},
+    )
+
+
+class SOLineSplit(Base, CompanyScopedMixin):
+    """One split of an SO line: a qty, its delivery date (or a cancel), and the line it sits on.
+
+    OI-LINE-SPLIT (`documentation/plans/scm/PLAN-oi-line-split-16oct.md`). AutoCount only
+    carries net figures per line, so when staff split one line into several deliveries the
+    plan is recorded here. A line with no rows is not split.
+
+    * `so_line_id` is the split's OWN (origin) line; `sits_on_line_id` is the line staff
+      placed it on (the own line, another line of the same item and location on this SO, or
+      NULL for a new line not in AutoCount yet). Only staff ever set it (UAC C1).
+    * `is_cancel` splits have no date and sit on their own line.
+    * `base_qty` / `base_date` are what the line read when the split was made, the same on
+      every row of one origin line: a saved split keeps the base it was made against (B2).
+    """
+
+    __tablename__ = "so_line_splits"
+    __audit_skip__ = "staff plan rows, replaced wholesale per line on every save"
+    # Born straight into `projects`, after the schema move (354): the `project_` prefix
+    # convention `so_supply_decisions` set.
+    __audit_entity_type__ = "project_so_line_splits"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    project_sales_order_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.sales_orders.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    so_line_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.sales_order_lines.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    seq = Column(Integer, nullable=False, server_default="0")
+    qty = Column(Numeric(15, 4), nullable=False)
+    delivery_date = Column(Date, nullable=True)
+    is_cancel = Column(Boolean, nullable=False, server_default="false", default=False)
+    sits_on_line_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.sales_order_lines.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    remark = Column(Text, nullable=True)
+    base_qty = Column(Numeric(15, 4), nullable=False)
+    base_date = Column(Date, nullable=True)
+    created_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint("qty > 0", name="ck_so_line_splits_qty_positive"),
+        CheckConstraint(
+            "(is_cancel AND delivery_date IS NULL) OR (NOT is_cancel AND delivery_date IS NOT NULL)",
+            name="ck_so_line_splits_date_iff_not_cancel",
+        ),
+        Index("ix_so_line_splits_order", "project_sales_order_id"),
+        Index("ix_so_line_splits_line", "so_line_id"),
         {"schema": "projects"},
     )

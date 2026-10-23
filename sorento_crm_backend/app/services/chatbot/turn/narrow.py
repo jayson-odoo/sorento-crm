@@ -15,7 +15,7 @@ from app.services.chatbot.turn.state import (
 # Core owns the ledger-family rule (`app/services/ledger_family.py`): the stock-ask record
 # names a customer-less ask by it too, and core may not import this package. `compose.py`
 # and `session_state.py` keep reading the two names from here.
-from app.services.ledger_family import ledger_family_key, ledger_family_label
+from app.services.ledger_family import customer_group_of, ledger_family_key, ledger_family_label
 
 # Which suffix an ask carries, by policy value.
 _ROSTER_POLICIES = {"narrow_to_code", "must_narrow_one", "narrow_by_tier"}
@@ -133,6 +133,8 @@ def _options(
 
     built: list[dict[str, Any]] = []
     by_label: dict[Any, dict[str, Any]] = {}
+    companies_of: dict[int, list[str]] = {}
+    exact_of: dict[int, str] = {}
     for c in candidates:
         code = c.get("canonical_code") or c.get("raw")
         identity = c.get("uuid") or code
@@ -168,6 +170,7 @@ def _options(
             key = (label_key, company) if multi_company else label_key
             if multi_company:
                 label = f"{label} ({company})"
+        codes = [str(x) for x in (c.get("company_codes") or []) if x]
         merged = by_label.get(key)
         if merged is not None:
             for u in uuids:
@@ -175,6 +178,9 @@ def _options(
                     merged["uuids"].append(u)
             if stamp and not merged.get("stamp"):
                 merged["stamp"] = stamp
+            for code_ in codes:
+                if code_ not in companies_of[id(merged)]:
+                    companies_of[id(merged)].append(code_)
             continue
         option: dict[str, Any] = {
             "position": len(built) + 1,
@@ -189,7 +195,10 @@ def _options(
             option["name"] = name
         if stamp:
             option["stamp"] = stamp
+        if family:
+            exact_of[id(option)] = str(name or c.get("raw") or code or "").strip()
         by_label[key] = option
+        companies_of[id(option)] = list(codes)
         built.append(option)
     # B1: a hard cap, in the resolver's own order (already the relevance order the
     # candidates arrived in) - a roster nobody could realistically read through is not
@@ -198,7 +207,37 @@ def _options(
     # Policy; `_ROSTER_CAP` is the fallback for a caller with no policy of its own
     # (every direct `decide()` call in the tests), the same role `gate.py`'s named
     # legacy default plays on its side.
-    return built[: cap if isinstance(cap, int) and cap > 0 else _ROSTER_CAP]
+    built = built[: cap if isinstance(cap, int) and cap > 0 else _ROSTER_CAP]
+    # PICKER-ONE: a family of ONE ungrouped ledger is printed by its exact name
+    # ("SOON HENG TRADING [A/C I]", ACCOUNT-LEDGER AC-8) - the gate's own rule, now the
+    # only one: the marker is the one thing that says which ledger a staff pick reaches.
+    # Several ledgers, or a customer group, print the family label.
+    for option in built:
+        exact = exact_of.get(id(option))
+        if exact and len(set(option["uuids"])) <= 1 and customer_group_of(exact) is None:
+            option["label"] = exact
+    # PICKER-ONE (owner, 13 Oct 2026): a customer line names the companies it sits in
+    # ("HANLIM (MCH, SRT)") ONLY when the options' companies differ - the tag is there to
+    # tell two lines apart, and one company set across every line tells nothing apart.
+    # Printed in the label itself, so a reply that types the whole line back still matches
+    # the option it read.
+    # Compared as SETS ("MCH, SRT" and "SRT, MCH" are one set); printed first-seen. A line
+    # with no company code (a shared row) prints no tag of its own.
+    company_sets = {frozenset(companies_of[id(o)]) for o in built}
+    if len(company_sets) > 1:
+        for option in built:
+            codes = companies_of[id(option)]
+            if codes:
+                option["label"] = f"{option['label']} ({', '.join(codes)})"
+    return built
+
+
+def customer_options(candidates: list[dict[str, Any]], cap: int | None = None) -> list[dict[str, Any]]:
+    """`_options` for a customer roster built OUTSIDE `decide` - the gate's own ambiguous
+    customer picker (`answer_bridge._offer_answer`, PICKER-ONE). Same builder, same
+    `ledger_family` grouping the `customer` kind row seeds (`policy_rows.py`), so the two
+    rosters cannot name one customer two ways."""
+    return _options(candidates, "customer", "ledger_family", cap)
 
 
 @dataclass
@@ -225,6 +264,7 @@ def decide(
     family_grouping: str | None = None,
     unplaced: frozenset[str] | set[str] | None = None,
     roster_cap: int | None = None,
+    held_uuids: frozenset[str] = frozenset(),
 ) -> NarrowOutcome:
     """`attributes` is the verdict's `requested_attributes` - what the question asked ABOUT.
 
@@ -260,6 +300,19 @@ def decide(
     # rows for a narrowing decision, because a roster the customer is asked to choose
     # from has to list things that exist: "wc286" is one focus entity and ten real
     # products, and offering the customer their own typo back is not a choice.
+    if resolved_candidates and held_uuids:
+        # CHAT-CLOSED-LISTS HELD-FAMILY (CHAT-STATE handoff, 17 Oct 2026): a typed family
+        # code whose matched rows hold exactly ONE product the conversation already held is
+        # that product ("srtwc8516" right after "SRTWC8516-SH-UF x 8"). Data only: two held
+        # rows, or none, leave every rule below as it was.
+        held = [row for row in resolved_candidates if str(row.get("uuid")) in held_uuids]
+        typed = {
+            _token_of(c).casefold() for c in candidates if c.get("current_message") is True and not c.get("uuid")
+        } - {""}
+        typed_a_match = any(fold_token(_code_of(row).casefold()) in typed for row in resolved_candidates)
+        if len(held) == 1 and not typed_a_match:
+            return NarrowOutcome(None, [], held, None, note="held_member_settles")
+
     if resolved_candidates:
         # Owner hand pass 2, item 6, the other half (turn c45e2929, "Outstsnding DO for
         # 7445"): a token THIS message named that the resolver read as SEVERAL things is a

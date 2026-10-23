@@ -42,6 +42,9 @@ SORENTO = "00000000-0000-0000-0000-000000000001"
 # both of 354's directions leave them exactly where their own migration put them.
 BORN_AFTER_THE_MOVE = frozenset({
     "so_supply_decisions",
+    # OI-LINE-SPLIT (migration ols_0001_so_line_splits): the delivery splits staff plan for one
+    # SO line, born straight into `projects` beside `sales_order_lines`.
+    "so_line_splits",
     # PLAN-so-book-diff-replanning.md: born straight into `projects` by their own migration
     # (29d85dc3ccc3), same as `so_supply_decisions` above.
     "planning_change_batches",
@@ -49,6 +52,8 @@ BORN_AFTER_THE_MOVE = frozenset({
     # PLAN-scm-cs-planning-uat.md, migration 421_order_inquiry_links: one inquiry row's
     # quantity placed across several documents.
     "order_inquiry_links",
+    # OI-RESERVE-RECEIVED (migration oirr_0001_released_links): born into `projects`.
+    "order_inquiry_released_links",
     # PLAN-scm-fulfilment-feedback.md: the planning module's own move-stock artifact.
     "stock_transfers",
     # PLAN-scm-fulfilment-feedback-2sep.md S4, migration 461: saved-but-not-yet-confirmed
@@ -70,6 +75,19 @@ BORN_AFTER_THE_MOVE = frozenset({
     # #1215): a guess the cascade walk made, never a placement, born straight into
     # `projects` the same way as its sibling `order_inquiry_links`.
     "order_inquiry_suggested_links",
+    # PLAN-set-quote-line-14oct.md, migration sql_0001_set_quote_line (#1682): one product
+    # set priced into a series, born straight into `projects` beside `series_products`.
+    "series_sets",
+    # PLAN-series-filters-15oct.md, migration sf_0001_series_brands (#1697): the brands a
+    # series picks, born straight into `projects` beside `series_categories`.
+    "series_brands",
+    # PLAN-stock-debt-snapshot-15oct.md, migration sds_0001_stock_debt_snapshots (#1705): a
+    # frozen Stock Debt view and its rows, born straight into `projects` (ADR-0011).
+    "stock_debt_snapshots",
+    "stock_debt_snapshot_rows",
+    # SR-CORE (#1718, migration sr_0001_sample_requests): born straight into `projects`.
+    "sample_requests",
+    "sample_request_lines",
 })
 
 MIGRATION = (

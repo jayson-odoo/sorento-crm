@@ -115,6 +115,40 @@ respond_contact_access_types = Table(
 )
 
 
+class ContactTag(Base):
+    """Free-form contact label (CONTACT-TAGS). Contacts stay global: no company column.
+
+    `settings` is stored for S2 (access settings a tag may carry); S1 only keeps it as `{}`.
+    """
+    __tablename__ = "contact_tags"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    sort_order = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    settings = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_by = Column(Text, nullable=True)
+    updated_by = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("uq_contact_tags_lower_name", text("lower(name)"), unique=True),
+    )
+
+
+respond_contact_tags = Table(
+    "respond_contact_tags",
+    Base.metadata,
+    Column("contact_id", Text, ForeignKey("respond_contacts.id", ondelete="CASCADE"), primary_key=True),
+    Column("tag_id", UUID(as_uuid=False), ForeignKey("contact_tags.id", ondelete="CASCADE"), primary_key=True),
+    Column("created_at", DateTime(timezone=False), server_default=func.now(), nullable=False),
+    Column("created_by", Text, nullable=True),
+    Index("ix_respond_contact_tags_tag_id", "tag_id"),
+)
+
+
 class MarketSegment(Base):
     """Configurable catalog of market segments (retail / project) for CS routing.
 
@@ -354,9 +388,10 @@ class RespondContactCsRouting(Base):
 
     When a procurement form-SLA customer-service stage spawns at approval, the
     assignee resolver (`form_sla_service._start_for_config`) looks up an active pin
-    for (respond_contact_id, use_case). A valid pin - where ``cs_pic`` is a member of
-    the stage's tier-1 CS team and is active - assigns that user directly; any miss
-    (no pin / stale pin / inactive user / non-member) falls back to the existing
+    for (respond_contact_id, use_case). A valid pin - where ``cs_pic`` is an eligible
+    PIC (``cs_routing_service.is_eligible_pic``: active, can process purchase
+    requests, granted the company; team membership not required) - assigns that user
+    directly; any miss (no pin / ineligible user) falls back to the existing
     round-robin. ``use_case`` is one of {'purchase_request', 'sponsorship_form'};
     complaint never reads this table, so complaint CS assignment stays round-robin.
     See docs/plans/PLAN-procurement-cs-handoff-and-pinpoint-routing.md.
@@ -376,7 +411,7 @@ class RespondContactCsRouting(Base):
     cs_pic_user_id = Column(
         String,
         ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,  # NULL = No CS (the form finishes at approval)
     )
     use_case = Column(String(50), nullable=False)  # purchase_request | sponsorship_form | complaint | stock_inquiry
     is_active = Column(Boolean, default=True, nullable=False)

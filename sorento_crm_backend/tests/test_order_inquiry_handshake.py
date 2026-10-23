@@ -1013,8 +1013,9 @@ def _raise_two_rows(api, *, first_qty="10", second_qty="6"):
     """One order, TWO lines, both confirmed wholly as Buy: two raised inquiry rows.
 
     What the single-line fixture cannot express: a confirmation that names ONE line of an
-    order carries the other, and a carried line's row is cancelled and re-raised under the
-    new revision (13.4). That is the seam the handshake has to survive.
+    order carries the other, and a carried line's row moves under the new revision (13.4):
+    kept and re-filed when unchanged (ORDERBACK-DELTA), restated when it moved. That is
+    the seam the handshake has to survive.
     """
     client, world = api
     db = world.db
@@ -1394,10 +1395,9 @@ def test_every_new_field_reaches_the_list_the_row_and_the_export(api):
     import openpyxl
 
     book = openpyxl.load_workbook(io.BytesIO(export.content))
-    # EVERY sheet, not the first one. The workbook is one sheet per delivery MONTH and this
-    # suite runs on the shared prod-copy database, which carries real rejected rows of its
-    # own: the first sheet is whichever month sorts first across all of them, and asserting
-    # against it made the test a statement about somebody else's data.
+    # EVERY row of EVERY sheet. The workbook is one sheet now (owner, 16 Oct 2026), but this
+    # suite can run on a database carrying real rejected rows of its own, so the test reads
+    # the whole file for its own row rather than a position somebody else's data decides.
     printed = []
     for name in book.sheetnames:
         sheet = book[name]

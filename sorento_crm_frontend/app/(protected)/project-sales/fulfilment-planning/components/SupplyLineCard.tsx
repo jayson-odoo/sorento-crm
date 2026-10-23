@@ -4,7 +4,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import { AlertTriangle, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
 import { Textarea } from '@/components/ui/textarea';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
@@ -18,11 +18,13 @@ import {
   fromMinor,
   lineBalance,
   lineBlockers,
+  quantityError,
   toMinor,
   type DraftBorrow,
   type DraftLine,
 } from '../../_shared/lib/supplyComposition';
 import { poolShareLimitsFromLine } from '../../_shared/lib/poolShare';
+import { soLineNoText } from '../../_shared/lib/fulfilmentBoard';
 import { BoardLadderOptionsTable, debtMonthLabel } from './BoardLadderOptionsTable';
 import { BorrowAddDialog } from './BorrowAddDialog';
 import { ClassificationProofPopover } from './ClassificationProofPopover';
@@ -122,7 +124,7 @@ export function SupplyLineCard({
       <header className="flex flex-col gap-1 border-b border-border px-3 py-2.5 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="truncate text-sm font-medium">
-            {`Line ${line.line_no}${line.item_code ? ` · ${line.item_code}` : ''}`}
+            {`Line ${soLineNoText(line)}${line.item_code ? ` · ${line.item_code}` : ''}`}
           </div>
           <div className="truncate text-sm text-muted-foreground" title={line.description ?? ''}>
             {line.description || 'No description'}
@@ -247,12 +249,12 @@ export function SupplyLineCard({
               {draft.reserve.map((row, index) => (
                 <div key={row.key} className="space-y-1">
                   <div className="flex items-center gap-2">
-                    <Input
-                      type="number"
+                    <NumberInput
                       min="0"
                       step="any"
                       value={row.qty}
-                      aria-label={`Reserve at ${row.location ?? 'the fulfilment location'} on line ${line.line_no}`}
+                      error={quantityError(row.qty)}
+                      aria-label={`Reserve at ${row.location ?? 'the fulfilment location'} on line ${soLineNoText(line)}`}
                       onChange={(event) => {
                         const next = [...draft.reserve];
                         next[index] = { ...row, qty: event.target.value };
@@ -282,12 +284,12 @@ export function SupplyLineCard({
                 draft.borrow.map((row, index) => (
                   <div key={row.key} className="space-y-1.5">
                     <div className="flex items-center gap-2">
-                      <Input
-                        type="number"
+                      <NumberInput
                         min="0"
                         step="any"
                         value={row.qty}
-                        aria-label={`Borrow from ${row.donor_project_ref ?? row.warehouse_code} on line ${line.line_no}`}
+                        error={quantityError(row.qty)}
+                        aria-label={`Borrow from ${row.donor_project_ref ?? row.warehouse_code} on line ${soLineNoText(line)}`}
                         onChange={(event) => {
                           const next = [...draft.borrow];
                           next[index] = { ...row, qty: event.target.value };
@@ -304,7 +306,7 @@ export function SupplyLineCard({
                         type="button"
                         mode="icon"
                         variant="dim"
-                        aria-label={`Remove the borrow from ${row.donor_project_ref ?? row.warehouse_code} on line ${line.line_no}`}
+                        aria-label={`Remove the borrow from ${row.donor_project_ref ?? row.warehouse_code} on line ${soLineNoText(line)}`}
                         onClick={() =>
                           setBorrow(draft.borrow.filter((entry) => entry.key !== row.key))
                         }
@@ -360,12 +362,12 @@ export function SupplyLineCard({
           ) : (
             <div className="space-y-2">
               <div className="flex items-center gap-2">
-                <Input
-                  type="number"
+                <NumberInput
                   min="0"
                   step="any"
                   value={draft.buy_qty}
-                  aria-label={`Buy on line ${line.line_no}`}
+                  error={quantityError(draft.buy_qty)}
+                  aria-label={`Buy on line ${soLineNoText(line)}`}
                   onChange={(event) => onChange({ ...draft, buy_qty: event.target.value })}
                   className="h-8 w-28 tabular-nums"
                 />
@@ -434,6 +436,7 @@ export function SupplyLineCard({
       {adding && (
         <BorrowAddDialog
           lineNo={line.line_no}
+          soLineNo={line.so_line_no}
           itemCode={line.item_code}
           lineId={line.project_line_id}
           candidates={line.borrow_candidates}
@@ -466,7 +469,7 @@ function BlockedLineCard({
       <header className="flex flex-col gap-1 border-b border-border px-3 py-2.5 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="truncate text-sm font-medium">
-            {`Line ${line.line_no}${line.item_code ? ` · ${line.item_code}` : ''}`}
+            {`Line ${soLineNoText(line)}${line.item_code ? ` · ${line.item_code}` : ''}`}
           </div>
           <div className="truncate text-sm text-muted-foreground" title={line.description ?? ''}>
             {line.description || 'No description'}

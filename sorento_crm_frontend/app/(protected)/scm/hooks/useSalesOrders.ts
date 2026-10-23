@@ -14,6 +14,7 @@ import {
 import type { SalesOrderFormData } from '../types/scm.types';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
+import { retryUnlessRefused } from '@/lib/api-client';
 
 export interface UseSalesOrdersParams {
   pageIndex: number;
@@ -35,6 +36,8 @@ export interface UseSalesOrdersParams {
   demandClass?: string | null;
   /** AutoCount's Transferable flag: 'yes' | 'no' | 'unknown'. Null for all. */
   transferable?: string | null;
+  /** AC-CONSIGN-CRM: 'consignment' lists consignments; omitted lists sales orders. */
+  docType?: 'sales_order' | 'consignment' | null;
 }
 
 /**
@@ -73,26 +76,41 @@ export function salesOrdersListParamsFromUrl(
 export const salesOrdersPagerQuery = {
   listQueryKey: (params: ListPagerParams): QueryKey =>
     salesOrdersListQueryKey(salesOrdersListParamsFromUrl(params)),
-  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> => {
-    const p = salesOrdersListParamsFromUrl(params);
-    return getSalesOrders({
-      pageIndex: p.pageIndex,
-      pageSize: p.pageSize,
-      sortField: p.sorting?.[0]?.id,
-      sortDir: p.sorting?.[0]?.desc ? 'desc' : 'asc',
-      searchQuery: p.searchQuery,
-      status: p.status,
-      priority: p.priority,
-      source: p.source ?? null,
-      dateFrom: p.dateFrom ?? null,
-      dateTo: p.dateTo ?? null,
-      customerCode: p.customerCode ?? null,
-      outstanding: p.outstanding ?? false,
-      salesAgentId: p.salesAgentId ?? null,
-      demandClass: p.demandClass ?? null,
-      transferable: p.transferable ?? null,
-    });
-  },
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    fetchSalesOrdersPage(params, null),
+};
+
+function fetchSalesOrdersPage(
+  params: ListPagerParams,
+  docType: 'consignment' | null,
+): Promise<ListPagerPage> {
+  const p = salesOrdersListParamsFromUrl(params);
+  return getSalesOrders({
+    pageIndex: p.pageIndex,
+    pageSize: p.pageSize,
+    sortField: p.sorting?.[0]?.id,
+    sortDir: p.sorting?.[0]?.desc ? 'desc' : 'asc',
+    searchQuery: p.searchQuery,
+    status: p.status,
+    priority: p.priority,
+    source: p.source ?? null,
+    dateFrom: p.dateFrom ?? null,
+    dateTo: p.dateTo ?? null,
+    customerCode: p.customerCode ?? null,
+    outstanding: p.outstanding ?? false,
+    salesAgentId: p.salesAgentId ?? null,
+    demandClass: p.demandClass ?? null,
+    transferable: p.transferable ?? null,
+    docType,
+  });
+}
+
+/** The same pager hooks for the Consignment list; its own key, so the two lists never share a page. */
+export const consignmentsPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    salesOrdersListQueryKey({ ...salesOrdersListParamsFromUrl(params), docType: 'consignment' }),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    fetchSalesOrdersPage(params, 'consignment'),
 };
 
 /**
@@ -123,6 +141,7 @@ export function useSalesOrders(params: UseSalesOrdersParams & { enabled?: boolea
         salesAgentId: listParams.salesAgentId ?? null,
         demandClass: listParams.demandClass ?? null,
         transferable: listParams.transferable ?? null,
+        docType: listParams.docType ?? null,
       }),
     enabled,
     staleTime: 10_000,
@@ -137,7 +156,10 @@ export function useSalesOrder(id: string | null) {
     queryFn: () => getSalesOrder(id as string),
     enabled: !!id,
     staleTime: 5_000,
-    retry: 1,
+    // A 404 or a refusal will not change on a second ask, so it lands at once.
+    retry: retryUnlessRefused,
+    // The page renders the failure in place; no toast on top of it.
+    meta: { silent: true },
   });
 }
 

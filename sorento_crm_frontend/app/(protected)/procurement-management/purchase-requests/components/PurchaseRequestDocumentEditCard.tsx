@@ -18,6 +18,7 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
 import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import LookupBoundField from '@/components/common/LookupBoundField';
@@ -27,6 +28,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import type { PurchaseRequestSchemaType } from '../forms/purchase-request-schema';
 import type { PurchaseRequest } from '../types/purchaseRequest.types';
+import { RequestCustomerField } from './RequestCustomerField';
 import { PurchaseRequestSignoffFooter } from './PurchaseRequestSignoffFooter';
 import { purchaseRequestNumberFieldLabel } from '../lib/purchase-request-field-labels';
 
@@ -130,26 +132,29 @@ export function PurchaseRequestDocumentEditCard({
             render={({ field: f }) => (
               <FormItem>
                 <FormControl>
-                  <Input
-                    type="number"
+                  <NumberInput
                     step="any"
                     placeholder="0"
-                    {...f}
-                    value={f.value ?? ''}
-                    onChange={(e) => {
-                      const v = e.target.value ? parseFloat(e.target.value) : null;
+                    name={f.name}
+                    ref={f.ref}
+                    onBlur={f.onBlur}
+                    value={f.value ?? null}
+                    onValueChange={(v) => {
                       f.onChange(v);
+                      // Re-check a flagged box as it is fixed (the form validates on blur otherwise).
+                      if (form.getFieldState(f.name, form.formState).error) void form.trigger(f.name);
                       if (isSponsorship) {
                         const up = form.getValues(`products.${row.index}.unit_price`);
-                        if (up != null && up !== '') {
+                        if (v !== null && !Number.isNaN(v) && up != null && up !== '') {
                           form.setValue(`products.${row.index}.total`, (v ?? 0) * Number(up));
                         }
+                        if (v === null || Number.isNaN(v)) form.setValue(`products.${row.index}.total`, null);
                       }
                     }}
                     className="h-8 w-24"
                   />
                 </FormControl>
-                <FormMessage />
+                <FormMessage className="whitespace-normal break-words" />
               </FormItem>
             )}
           />
@@ -171,19 +176,20 @@ export function PurchaseRequestDocumentEditCard({
                 render={({ field: f }) => (
                   <FormItem>
                     <FormControl>
-                      <Input
-                        type="number"
+                      <NumberInput
                         step="any"
                         placeholder="0"
-                        {...f}
-                        value={f.value ?? ''}
-                        onChange={(e) => {
-                          const v = e.target.value ? parseFloat(e.target.value) : null;
+                        name={f.name}
+                        ref={f.ref}
+                        onBlur={f.onBlur}
+                        value={f.value ?? null}
+                        onValueChange={(v) => {
                           f.onChange(v);
                           const qty = form.getValues(`products.${row.index}.quantity`);
-                          if (qty != null && qty !== '') {
+                          if (v !== null && !Number.isNaN(v) && qty != null && qty !== '') {
                             form.setValue(`products.${row.index}.total`, (v ?? 0) * Number(qty));
                           }
+                          if (v === null || Number.isNaN(v)) form.setValue(`products.${row.index}.total`, null);
                         }}
                         className="h-8 w-24"
                       />
@@ -206,14 +212,14 @@ export function PurchaseRequestDocumentEditCard({
                 render={({ field: f }) => (
                   <FormItem>
                     <FormControl>
-                      <Input
-                        type="number"
+                      <NumberInput
                         step="any"
                         placeholder="0"
-                        {...f}
-                        value={f.value ?? ''}
-                        onChange={(e) => {
-                          const v = e.target.value ? parseFloat(e.target.value) : null;
+                        name={f.name}
+                        ref={f.ref}
+                        onBlur={f.onBlur}
+                        value={f.value ?? null}
+                        onValueChange={(v) => {
                           f.onChange(v);
                         }}
                         className="h-8 w-28"
@@ -393,18 +399,7 @@ export function PurchaseRequestDocumentEditCard({
             </DocField>
 
             <DocField label="Customer Name" className="sm:col-span-2">
-              <FormField
-                control={control}
-                name="customer_name"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormControl>
-                      <Input placeholder="Customer name" {...field} value={field.value ?? ''} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              <RequestCustomerField form={form} />
             </DocField>
 
             <DocField label="PIC" className="sm:col-span-2">
@@ -494,8 +489,7 @@ export function PurchaseRequestDocumentEditCard({
                     render={({ field }) => (
                       <FormItem>
                         <FormControl>
-                          <Input
-                            type="number"
+                          <NumberInput
                             inputMode="decimal"
                             step="0.01"
                             placeholder="e.g. 1234.00"
@@ -566,6 +560,46 @@ export function PurchaseRequestDocumentEditCard({
                 )}
               </>
             )}
+
+            {/* Required on a PR (routes CS), optional on an SF (SF-SALES-TYPE): after Purpose on a PR,
+                after Sponsor Subject on an SF, as on the detail page. */}
+            <DocField label="Sales Type" className="sm:col-span-2">
+              <FormField
+                control={control}
+                name="sales_type"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormControl>
+                      <LookupBoundField
+                        table="purchase_requests"
+                        column="sales_type"
+                        value={field.value}
+                        onChange={field.onChange}
+                        placeholder="Select sales type"
+                        clearable={isSponsorship}
+                        // An existing SF with no sales type stays blank: the edit card mounts
+                        // before the form reset, so the new-form default would otherwise fill it.
+                        applyDefault={!isSponsorship}
+                        renderFallback={() => (
+                          <SearchableSelect
+                            key={field.value || 'empty'}
+                            onChange={field.onChange}
+                            value={field.value || ''}
+                            placeholder="Select sales type"
+                            clearable={isSponsorship}
+                            options={[
+                              { value: 'project', label: 'Project' },
+                              { value: 'cash_sales', label: 'Cash Sales' },
+                            ]}
+                          />
+                        )}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </DocField>
 
             <DocField label={isSponsorship ? 'Date of Delivery' : 'Expected date of delivery'}>
               <FormField

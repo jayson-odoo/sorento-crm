@@ -16,6 +16,7 @@ const useSetLabel = vi.fn();
 const useDryRun = vi.fn();
 const useHasPermission = vi.fn();
 const useRegistryVariables = vi.fn();
+const usePromptArchitecture = vi.fn();
 
 vi.mock('../../hooks/useAIAssistantPrompts', () => ({
   usePromptVersions: () => usePromptVersions(),
@@ -29,6 +30,7 @@ vi.mock('../../hooks/useAIAssistantPrompts', () => ({
   usePromptKeys: () => usePromptKeys(),
   useSetAgentModel: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useRegistryVariables: () => useRegistryVariables(),
+  usePromptArchitecture: (...args: unknown[]) => usePromptArchitecture(...args),
 }));
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: () => useHasPermission(),
@@ -112,6 +114,7 @@ beforeEach(() => {
   useSetLabel.mockReturnValue({ mutate: labelMutate, isPending: false });
   useDryRun.mockReturnValue({ mutate: vi.fn(), isPending: false, data: undefined, isError: false });
   useRegistryVariables.mockReset().mockReturnValue({ data: [], isLoading: false, isError: false });
+  usePromptArchitecture.mockReset().mockReturnValue({ data: undefined, isLoading: true, isError: false });
 });
 afterEach(() => cleanup());
 
@@ -346,5 +349,189 @@ describe('PromptDetail wired-panel insert (owner hand test #1405, item 2)', () =
     expect(chip).not.toBeNull();
     expect(chip.previousSibling!.textContent!.endsWith('domain_hint = ONE of:')).toBe(true);
     expect(editor.lastChild!.textContent!.endsWith('END')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------
+// PROMPT-EDITOR-FULLSCREEN (owner, 16 Oct: "let me full screen, otherwise
+// this small quite hard to see"). The Editor card goes over the whole window
+// through the dealer-kit FocusShell; the editor must NOT remount on the
+// toggle, or the caret, the scroll and an open Find are lost.
+// ---------------------------------------------------------------------
+
+describe('PromptDetail full screen editor (PROMPT-EDITOR-FULLSCREEN)', () => {
+  const overlay = () => document.querySelector('[data-dk-focus-mode]');
+  const enter = () => fireEvent.click(screen.getByRole('button', { name: 'Full screen editor' }));
+
+  it('puts the editor card over the window and keeps the unsaved text and the same editor node', () => {
+    renderDetail();
+    const editor = screen.getByTestId('prompt-editor') as HTMLTextAreaElement;
+    fireEvent.change(editor, { target: { value: 'Classify {{current_date}} edited.' } });
+    editor.scrollTop = 120;
+    expect(overlay()).toBeNull();
+
+    enter();
+
+    expect(overlay()).not.toBeNull();
+    expect(overlay()!.contains(editor)).toBe(true);
+    // Same element: nothing remounted, so caret and scroll are untouched.
+    expect(screen.getByTestId('prompt-editor')).toBe(editor);
+    expect(editor.value).toBe('Classify {{current_date}} edited.');
+    expect(editor.scrollTop).toBe(120);
+    // Save stays reachable inside the overlay.
+    expect(overlay()!.contains(screen.getByTestId('save-version'))).toBe(true);
+    expect(overlay()!.contains(screen.getByTestId('diff-toggle'))).toBe(true);
+  });
+
+  it('Exit full screen and Esc both leave, and the text survives', () => {
+    renderDetail();
+    const editor = screen.getByTestId('prompt-editor') as HTMLTextAreaElement;
+    fireEvent.change(editor, { target: { value: 'edited once' } });
+    enter();
+    fireEvent.click(screen.getByRole('button', { name: 'Exit full screen editor' }));
+    expect(overlay()).toBeNull();
+    expect(screen.getByTestId('prompt-editor')).toBe(editor);
+
+    enter();
+    fireEvent.keyDown(editor, { key: 'Escape' });
+    expect(overlay()).toBeNull();
+    expect((screen.getByTestId('prompt-editor') as HTMLTextAreaElement).value).toBe('edited once');
+    expect(screen.getByTestId('prompt-editor')).toBe(editor);
+  });
+
+  it('offers Stage / Publish for the loaded version while in full screen', () => {
+    renderDetail();
+    enter();
+    // v2 is already production, so only Stage is offered for it.
+    expect(screen.queryByTestId('fullscreen-publish-production')).toBeNull();
+    fireEvent.click(screen.getByTestId('fullscreen-publish-staging'));
+    expect(screen.getByText('Publish router v2 to staging?')).toBeInTheDocument();
+  });
+
+  it('disables full-screen Stage / Publish while the draft has unsaved edits', () => {
+    renderDetail();
+    enter();
+    fireEvent.change(screen.getByTestId('prompt-editor'), { target: { value: 'unsaved' } });
+    // It publishes the SAVED version, so beside unsaved text it would mislead.
+    expect(screen.getByTestId('fullscreen-publish-staging')).toBeDisabled();
+  });
+
+  describe('with registry variables (chip editor)', () => {
+    beforeEach(() => {
+      usePromptVersions.mockReturnValue({
+        data: { ...META, name: 'chatbot_semantic_parser', registry_variables: ['domains'] },
+        isLoading: false,
+        isError: false,
+      });
+      usePromptVersion.mockReturnValue({
+        data: { ...BASE, template: 'RULES:\ncurrent one {{domains}}\n# Output\ncurrent two\n== PRICE TERMS (decisive) ==\nlower case line' },
+        isLoading: false,
+        isError: false,
+      });
+      useRegistryVariables.mockReturnValue({
+        data: [{ name: 'domains', label: 'Domains', source: 'Chatbot Domains', href: '/x', count: 3, last_changed: null, rendered: 'a | b', used: true }],
+        isLoading: false,
+        isError: false,
+      });
+    });
+
+    it('Find works in full screen, and Esc closes Find without leaving full screen', () => {
+      renderDetail();
+      const editor = screen.getByTestId('prompt-chip-editor');
+      enter();
+      expect(screen.getByTestId('prompt-chip-editor')).toBe(editor);
+      fireEvent.click(screen.getByTestId('open-find'));
+      fireEvent.change(screen.getByTestId('find-input'), { target: { value: 'current' } });
+      expect(screen.getByTestId('find-count')).toHaveTextContent('1/2');
+      fireEvent.keyDown(screen.getByTestId('find-input'), { key: 'Enter' });
+      expect(screen.getByTestId('find-count')).toHaveTextContent('2/2');
+      expect(overlay()!.contains(screen.getByTestId('find-bar'))).toBe(true);
+
+      // Esc on the editor while Find is open closes Find only, and keeps the place the jump
+      // scrolled to: a plain focus() sends a contentEditable back to the top.
+      const focusSpy = vi.spyOn(editor, 'focus');
+      fireEvent.keyDown(editor, { key: 'Escape' });
+      expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
+      expect(screen.queryByTestId('find-bar')).toBeNull();
+      expect(overlay()).not.toBeNull();
+      // A second Esc leaves full screen.
+      fireEvent.keyDown(editor, { key: 'Escape' });
+      expect(overlay()).toBeNull();
+    });
+
+    it('Preview rendered prompt also shows in full screen, with section headers marked', () => {
+      renderDetail();
+      enter();
+      fireEvent.mouseDown(screen.getByTestId('editor-mode-preview'), { button: 0 });
+      const preview = screen.getByTestId('prompt-preview');
+      expect(overlay()!.contains(preview)).toBe(true);
+      const headings = Array.from(preview.querySelectorAll('[data-heading]')).map((n) => n.textContent);
+      expect(headings).toEqual(['RULES:', '# Output', '== PRICE TERMS (decisive) ==']);
+      expect(preview.textContent).toContain('current one a | b');
+    });
+  });
+});
+
+describe('PromptDetail Architecture tab (CHAT-INDEX-VIZ FE-2)', () => {
+  function renderFor(name: string, registry: string[]) {
+    usePromptVersions.mockReturnValue({
+      data: { ...META, name, registry_variables: registry },
+      isLoading: false,
+      isError: false,
+    });
+    usePromptVersion.mockReturnValue({ data: { ...BASE, name }, isLoading: false, isError: false });
+    useRegistryVariables.mockReturnValue({ data: [], isLoading: false, isError: false });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={client}>
+        <PromptDetail name={name} />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('shows the Architecture tab for the semantic parser only', () => {
+    renderFor('chatbot_semantic_parser', ['domains']);
+    expect(screen.getByTestId('editor-mode-architecture')).toHaveTextContent('Architecture');
+  });
+
+  it('hides the Architecture tab for any other key, registry variables or not', () => {
+    renderFor('chatbot_clarifier', ['domains']);
+    expect(screen.queryByTestId('editor-mode-architecture')).toBeNull();
+    cleanup();
+    renderFor('router', []);
+    expect(screen.queryByTestId('editor-mode-architecture')).toBeNull();
+  });
+
+  it('opens the architecture view for the shown version and keeps the chip editor mounted but hidden', () => {
+    usePromptArchitecture.mockReturnValue({
+      data: {
+        version: 2, mode: 'block', uses_closed_lists: false, total_size: 10,
+        groups: [{ name: 'Rules', size: 10, share: 1 }], lists: [],
+      },
+      isLoading: false,
+      isError: false,
+    });
+    renderFor('chatbot_semantic_parser', ['domains']);
+    fireEvent.mouseDown(screen.getByTestId('editor-mode-architecture'), { button: 0 });
+    expect(screen.getByTestId('prompt-architecture')).toBeInTheDocument();
+    expect(screen.getByTestId('chip-editor-pane')).toBeInTheDocument();
+    expect(screen.getByTestId('chip-editor-pane').hidden).toBe(true);
+    const lastCall = usePromptArchitecture.mock.calls.at(-1)!;
+    expect(lastCall[0]).toBe('chatbot_semantic_parser');
+    expect(lastCall[1]).toBe(2);
+  });
+
+  it('hides the variable chips while the Architecture tab is selected and brings them back on Edit', () => {
+    usePromptArchitecture.mockReturnValue({
+      data: { version: 2, mode: 'block', uses_closed_lists: false, total_size: 10, groups: [{ name: 'Rules', size: 10, share: 1 }], lists: [] },
+      isLoading: false,
+      isError: false,
+    });
+    renderFor('chatbot_semantic_parser', ['domains']);
+    expect(screen.getByTestId('var-chips')).toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByTestId('editor-mode-architecture'), { button: 0 });
+    expect(screen.queryByTestId('var-chips')).toBeNull();
+    fireEvent.mouseDown(screen.getByTestId('editor-mode-edit'), { button: 0 });
+    expect(screen.getByTestId('var-chips')).toBeInTheDocument();
   });
 });

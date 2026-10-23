@@ -109,6 +109,10 @@ async def get_contacts(
     stock: Optional[Literal["yes", "no"]] = Query(None),
     region: Optional[Literal["west", "east"]] = Query(None),
     customer_id: Optional[uuid.UUID] = Query(None),
+    # CONTACT-TAGS: `tag` repeats (any-of); `tags=none` lists contacts holding no tag.
+    tag: Optional[list[uuid.UUID]] = Query(None),
+    tags: Optional[Literal["none"]] = Query(None),
+    tag_settings: Optional[Literal["differs", "matches"]] = Query(None),
     access_differs_from: Optional[str] = Query(None),
     current_user: dict = Depends(require_permission("user_management.contacts.view")),
     db: Session = Depends(get_db)
@@ -121,7 +125,11 @@ async def get_contacts(
         can_view_users = UserPermissionService(db).check_user_has_permission(
             current_user["id"], "user_management.users.view"
         )
+        from app.api.v1.user_management.contact_tags import _gates
+        from app.services.contact_tag_settings import unreadable_sections
+
         result = service.list_contacts(
+            redact_sections=unreadable_sections(*_gates(db, current_user)),
             page=page,
             limit=limit,
             query=query,
@@ -140,6 +148,9 @@ async def get_contacts(
                 "stock": stock,
                 "region": region,
                 "customer_id": str(customer_id) if customer_id else None,
+                "tag_ids": [str(t) for t in tag] if tag else None,
+                "no_tags": tags == "none",
+                "tag_settings": tag_settings,
                 "access_differs_from": access_differs_from,
                 # What this viewer's copy would leave alone is not a difference to them.
                 "access_differs_skip": (
@@ -246,7 +257,7 @@ def bulk_copy_contact_access(
 @router.post("/bulk-sync", status_code=status.HTTP_200_OK)
 async def bulk_sync_contacts(
     body: BulkSyncContactsRequest = Body(...),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db),
 ):
     """Sync multiple contacts from Respond.io (name, first/last name, respond_io_id)."""
@@ -264,7 +275,7 @@ async def bulk_sync_contacts(
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
 async def bulk_delete_contacts(
     body: BulkDeleteContactsRequest = Body(...),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db),
 ):
     """Bulk delete contacts by ID. Related access records are removed."""
@@ -309,7 +320,7 @@ async def get_contact(
 @router.post("/", response_model=RespondContactResponse, status_code=status.HTTP_201_CREATED)
 async def create_contact(
     contact_data: RespondContactCreate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db)
 ):
     """Create a new respond contact."""
@@ -582,7 +593,7 @@ async def set_contact_companies(
 @router.delete("/{contact_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_contact(
     contact_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db)
 ):
     """Delete a respond contact. Related access records are cascade-deleted; SLA tracking references are set to null."""
@@ -600,7 +611,7 @@ async def delete_contact(
 @router.post("/{contact_id}/sync", response_model=RespondContactResponse)
 async def sync_contact(
     contact_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db)
 ):
     """Sync contact name from Respond.io API."""
@@ -687,7 +698,7 @@ async def sync_contact(
 
 
 class CsRoutingPinRequest(BaseModel):
-    cs_pic_user_id: str
+    cs_pic_user_id: Optional[str] = None  # None = No CS (finish at approval)
     # Predicate set [{field, operator, value}], AND-combined, matched against the
     # form header fields. Empty/omitted = wildcard. Lower `priority` wins among
     # matching rows for a form (pure admin order).
@@ -695,12 +706,22 @@ class CsRoutingPinRequest(BaseModel):
     priority: int = 0
 
 
+class CsRoutingRule(CsRoutingPinRequest):
+    use_case: str
+
+
+class CsRoutingReplaceRequest(BaseModel):
+    # Every rule of the contact, in the page's order. Replaces what is stored. Capped
+    # so one request cannot carry an unbounded list (each rule costs queries).
+    rules: list[CsRoutingRule] = Field(max_length=100)
+
+
 @router.get("/cs-routing/candidates")
 async def list_cs_routing_candidates(
     current_user: dict = Depends(require_permission("user_management.contacts.view")),
     db: Session = Depends(get_db),
 ):
-    """Tier-1 members of the procurement customer-service team (pin dropdown options)."""
+    """Every eligible CS PIC, sorted by name (pin dropdown options)."""
     try:
         from app.services.cs_routing_service import CsRoutingService
 
@@ -728,12 +749,36 @@ async def get_contact_cs_routing(
         raise handle_internal_error(str(e))
 
 
+@router.put("/{contact_id}/cs-routing")
+async def replace_contact_cs_routing(
+    contact_id: str,
+    payload: CsRoutingReplaceRequest,
+    current_user: dict = Depends(require_permission("user_management.contacts.edit")),
+    db: Session = Depends(get_db),
+):
+    """Save a salesman's routing rules page: validate every rule, then replace them
+    all in one transaction. A bad rule is a 400 naming it and nothing changes."""
+    try:
+        from app.services.cs_routing_service import CsRoutingService
+
+        pins = CsRoutingService(db).replace_all(
+            contact_id,
+            [rule.model_dump() for rule in payload.rules],
+            created_by=current_user.get("id"),
+        )
+        return {"pins": pins}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.put("/{contact_id}/cs-routing/{use_case}")
 async def upsert_contact_cs_routing(
     contact_id: str,
     use_case: str,
     payload: CsRoutingPinRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db),
 ):
     """Pin this salesman to a CS PIC for ``use_case`` (purchase_request | sponsorship_form)."""
@@ -783,7 +828,7 @@ async def delete_contact_cs_routing(
     contact_id: str,
     use_case: str,
     row_id: Optional[str] = None,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db),
 ):
     """Clear routing rows for a use_case (or one ``row_id``) → reverts to round-robin."""
@@ -819,7 +864,7 @@ async def get_contact_market_segments(
 async def set_contact_market_segments(
     contact_id: str,
     payload: MarketSegmentCodesUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db),
 ):
     """Replace a contact's market segments with the supplied set (empty = clear → matches all)."""
@@ -895,7 +940,7 @@ async def get_contact_attachment_types(
 async def set_contact_attachment_types(
     contact_id: str,
     payload: ContactAttachmentTypesUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db),
 ):
     """Replace this contact's attachment-type grants (empty = baseline only)."""

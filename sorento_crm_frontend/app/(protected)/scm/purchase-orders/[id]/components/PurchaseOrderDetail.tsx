@@ -39,6 +39,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
@@ -70,12 +71,15 @@ import {
   purchaseOrderLineStatusPill,
   purchaseOrderStatusPill,
 } from '../../../lib/purchaseOrderStatus';
+import { cancelSourcesTitle, isPartlyCancelled, PARTLY_CANCELLED } from '@/app/(protected)/scm/lib/autocountCancel';
 import type {
   PurchaseOrder,
   PurchaseOrderLine,
   PurchaseOrderLineAllocation,
 } from '../../../types/scm.types';
-import BackToList from '@/components/common/BackToList';
+import { codeWithName, distinctName } from '@/lib/product-display';
+import { numberFieldError, parseNumberDraft } from '@/lib/number-field';
+import { useStableColumns } from '@/hooks/useStableColumns';
 
 /**
  * The purchase-order detail, built section for section as the twin of `SalesOrderDetail`.
@@ -224,6 +228,19 @@ function draftOrRow(
  * footer and the header total cannot disagree - and `null` rather than 0 when nobody priced
  * it, because an unpriced line is not a line worth nothing.
  */
+/** Qty ordered must be above 0 (the server refuses a zero or blank line). */
+const QTY_ORDERED_RULES = { min: 0, minExclusive: true } as const;
+
+/** An edit-session qty that is blank or unusable is pending ("-"), never 0. */
+function qtyIsPending(raw: string): boolean {
+  return numberFieldError(raw, QTY_ORDERED_RULES) !== undefined;
+}
+
+/** A quantity cell: the figure, or "-" while the figure is pending. */
+function fmtQtyCell(value: number | null): string {
+  return value === null ? '-' : fmtInt(value);
+}
+
 function lineAmount(
   qty: string,
   unitPrice: string,
@@ -252,7 +269,7 @@ function productFallback(
   if (!row.sku || sku !== row.sku) return undefined;
   return {
     value: row.sku,
-    label: row.product_name ? `${row.sku} · ${row.product_name}` : row.sku,
+    label: codeWithName(row.sku, row.product_name, ' · '),
   };
 }
 
@@ -294,6 +311,8 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   const [expectedDate, setExpectedDate] = useState('');
   const [lineDrafts, setLineDrafts] = useState<Record<string, LineDraft>>({});
   const [error, setError] = useState<string | null>(null);
+  // Set by a refused Save; from then on each quantity box re-checks itself live.
+  const [showQtyErrors, setShowQtyErrors] = useState(false);
   // Which LINE's "Placed" figure was pressed (R5, AC-L1) - one dialog for the whole grid,
   // replacing the "Allocated to" card that used to sit under it (AC-L3).
   const [placementsLineId, setPlacementsLineId] = useState<string | null>(null);
@@ -310,12 +329,14 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     setLineDrafts(drafts);
     originalLineSignatureRef.current = lineSignature(po.lines.map(seedDraft));
     setError(null);
+    setShowQtyErrors(false);
     setIsEditing(true);
   };
 
   const cancelEdit = () => {
     setIsEditing(false);
     setError(null);
+    setShowQtyErrors(false);
   };
 
   // `?edit=1` opens the session on arrival, so a bookmarked link lands in the same place a
@@ -375,11 +396,14 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
       if (!isEditing && row.outstanding_qty !== undefined && row.outstanding_qty !== null) {
         return row.outstanding_qty;
       }
-      const ordered = isEditing
-        ? Number(draftOrRow(lineDrafts, row).qty_ordered)
-        : Number(row.qty_ordered);
+      const draftQty = draftOrRow(lineDrafts, row).qty_ordered;
+      if (isEditing && qtyIsPending(draftQty)) return null;
+      const ordered = isEditing ? (parseNumberDraft(draftQty) as number) : Number(row.qty_ordered);
       if (!Number.isFinite(ordered)) return 0;
-      return Math.max(ordered - Number(row.qty_received), 0);
+      // The received figure on screen is net of an AutoCount Cancel PO; the cancelled qty
+      // is not coming either, so it is added back before the subtraction (AC-CONSIGN-CRM).
+      const settled = Number(row.qty_received) + Number(row.qty_cancelled ?? 0);
+      return Math.max(ordered - settled, 0);
     },
     [isEditing, lineDrafts],
   );
@@ -392,6 +416,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         );
       }
       const draft = draftOrRow(lineDrafts, row);
+      if (qtyIsPending(draft.qty_ordered)) return null;
       // The stated `line_total` is what the supplier's document charged, so it wins - until
       // one of the figures it was charged ON is edited, at which point it no longer
       // describes what is on the screen and the arithmetic does.
@@ -408,7 +433,9 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
 
   const qtyOrderedTotal = useMemo(
     () =>
-      lines.reduce((sum, l) => {
+      lines.reduce<number | null>((sum, l) => {
+        if (sum === null) return null;
+        if (isEditing && qtyIsPending(draftOrRow(lineDrafts, l).qty_ordered)) return null;
         const qty = isEditing
           ? Number(draftOrRow(lineDrafts, l).qty_ordered)
           : Number(l.qty_ordered);
@@ -421,7 +448,11 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     [lines],
   );
   const outstandingTotal = useMemo(
-    () => lines.reduce((sum, l) => sum + outstandingOf(l), 0),
+    () =>
+      lines.reduce<number | null>((sum, l) => {
+        const out = outstandingOf(l);
+        return sum === null || out === null ? null : sum + out;
+      }, 0),
     [lines, outstandingOf],
   );
 
@@ -443,9 +474,11 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   );
 
   const amountTotal = useMemo(() => {
+    // A blank or unusable qty on any line makes the total pending, not a sum that skips it.
+    if (isEditing && lines.some((l) => qtyIsPending(draftOrRow(lineDrafts, l).qty_ordered))) return null;
     const amounts = lines.map(amountOf).filter((a): a is string => a !== null);
     return amounts.length ? sumMoney(amounts) : null;
-  }, [lines, amountOf]);
+  }, [lines, amountOf, isEditing, lineDrafts]);
 
   /** The money cell's text, in the order's own currency: the figure, or a plain "-" for a
    *  line nobody priced. */
@@ -454,7 +487,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     [currency],
   );
 
-  const columns = useMemo<ColumnDef<PurchaseOrderLine>[]>(
+  const liveColumns = useMemo<ColumnDef<PurchaseOrderLine>[]>(
     () => [
       {
         accessorKey: 'sku',
@@ -494,9 +527,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
             );
           }
           const showProductName =
-            !!row.original.product_name?.trim() &&
-            row.original.product_name.trim().toLowerCase() !==
-              row.original.sku?.trim().toLowerCase();
+            distinctName(row.original.sku, row.original.product_name) !== null;
           return (
             <div className="flex min-w-0 flex-col">
               <span className="font-medium">{row.original.sku}</span>
@@ -524,11 +555,15 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
           if (isEditing) {
             const draft = lineDrafts[row.original.id];
             return (
-              <Input
-                type="number"
+              <NumberInput
                 min={0}
                 aria-label={`Qty ordered on ${row.original.sku}`}
                 value={draft?.qty_ordered ?? String(row.original.qty_ordered)}
+                error={
+                  showQtyErrors
+                    ? numberFieldError(draft?.qty_ordered ?? String(row.original.qty_ordered), QTY_ORDERED_RULES)
+                    : undefined
+                }
                 onChange={(e) =>
                   setLineDrafts((prev) => ({
                     ...prev,
@@ -546,7 +581,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         },
         size: 130,
         // One `td` per column, so the sum sits UNDER the column it sums and needs no label.
-        footer: () => fmtInt(qtyOrderedTotal),
+        footer: () => fmtQtyCell(qtyOrderedTotal),
         meta: {
           headerTitle: 'Qty ordered',
           headerClassName: 'text-right',
@@ -567,6 +602,32 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         },
       },
       {
+        // AC-CANCEL-CRM (owner hand test, 13 Oct): AutoCount Cancel PO is part of
+        // TransferedQty; this states it, and the tooltip names each cancel document and how
+        // it was matched to this line.
+        id: 'qty_cancelled',
+        accessorFn: (line) => Number(line.qty_cancelled ?? 0),
+        header: ({ column }) => <DataGridColumnHeader title="Qty cancelled" column={column} />,
+        cell: ({ row }) => {
+          const qty = Number(row.original.qty_cancelled ?? 0);
+          return (
+            <span
+              data-testid={`qty-cancelled-${row.original.id}`}
+              title={cancelSourcesTitle(row.original.cancels)}
+              className="truncate"
+            >
+              {fmtInt(qty)}
+            </span>
+          );
+        },
+        size: 130,
+        meta: {
+          headerTitle: 'Qty cancelled',
+          headerClassName: 'text-right',
+          cellClassName: 'text-right tabular-nums',
+        },
+      },
+      {
         id: 'outstanding',
         // Computed here rather than sent, so it cannot disagree with the two columns beside
         // it. An over-receipt reads as 0 rather than as a negative commitment. In an EDIT
@@ -574,11 +635,14 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         // line with 100 received has to show 300 still coming straight away, or the row
         // states two figures that contradict each other until the page is reloaded.
         accessorFn: (line) =>
-          Math.max(Number(line.qty_ordered) - Number(line.qty_received), 0),
+          Math.max(
+            Number(line.qty_ordered) - Number(line.qty_received) - Number(line.qty_cancelled ?? 0),
+            0,
+          ),
         header: ({ column }) => <DataGridColumnHeader title="Outstanding qty" column={column} />,
-        cell: ({ row }) => fmtInt(outstandingOf(row.original)),
+        cell: ({ row }) => fmtQtyCell(outstandingOf(row.original)),
         size: 140,
-        footer: () => fmtInt(outstandingTotal),
+        footer: () => fmtQtyCell(outstandingTotal),
         meta: {
           headerTitle: 'Outstanding qty',
           headerClassName: 'text-right',
@@ -625,12 +689,12 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
           if (isEditing) {
             const draft = draftOrRow(lineDrafts, row.original);
             return (
-              <Input
-                type="number"
+              <NumberInput
                 min={0}
                 step="0.01"
                 aria-label={`Unit price on ${row.original.sku}`}
                 value={draft.unit_price}
+                error={numberFieldError(draft.unit_price, { min: 0, optional: true })}
                 onChange={(e) =>
                   setLineDrafts((prev) => ({
                     ...prev,
@@ -661,12 +725,12 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
           if (isEditing) {
             const draft = draftOrRow(lineDrafts, row.original);
             return (
-              <Input
-                type="number"
+              <NumberInput
                 min={0}
                 step="0.01"
                 aria-label={`Discount on ${row.original.sku}`}
                 value={draft.discount}
+                error={numberFieldError(draft.discount, { min: 0, optional: true })}
                 onChange={(e) =>
                   setLineDrafts((prev) => ({
                     ...prev,
@@ -834,7 +898,10 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         // The same light chip as every other pill on this page, worded the same two ways the
         // header pill is - the same helper both read.
         cell: ({ row }) => {
-          const pill = purchaseOrderLineStatusPill(row.original.line_status);
+          // AC-CANCEL-CRM: part of the line cancelled by AutoCount Cancel PO.
+          const pill = isPartlyCancelled(row.original)
+            ? PARTLY_CANCELLED
+            : purchaseOrderLineStatusPill(row.original.line_status);
           return (
             <Badge variant={pill.variant} appearance="light" size="md">
               {pill.label}
@@ -848,6 +915,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     [
       isEditing,
       lineDrafts,
+      showQtyErrors,
       warehouseSelectOptions,
       uomSelectOptions,
       outstandingOf,
@@ -862,6 +930,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     ],
   );
 
+  const columns = useStableColumns(liveColumns);
   const table = useReactTable({
     columns,
     data: lines,
@@ -887,18 +956,11 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   });
   const visibleLineCount = table.getFilteredRowModel().rows.length;
 
-  // Back and prev/next live on the RIGHT of the record header, next to each other, the way
-  // the sales-order and users screens do it.
-  // Back carries the list query the row click wrote (S3-01). It lives on the
-  // toolbar row now; the empty states below keep one of their own.
-  const backLink = (
-    <BackToList listPath="/scm/purchase-orders" label="Back to purchase orders" />
-  );
-
+  // Back is the page header's (`../page.tsx`) on every state; one here stacked a second
+  // Back under it while the order loaded (SO-DETAIL-DUP-BACK).
   if (isLoading) {
     return (
       <div className="space-y-4">
-        <div className="flex justify-end">{backLink}</div>
         <Skeleton className="h-40 w-full rounded-xl" />
         <Skeleton className="h-64 w-full rounded-xl" />
       </div>
@@ -907,16 +969,13 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
 
   if (isError || !data) {
     return (
-      <div className="space-y-4">
-        <div className="flex justify-end">{backLink}</div>
-        <Card className="flex flex-col items-center gap-3 p-10 text-center">
-          <div className="text-sm font-semibold">Purchase order not found</div>
-          <p className="max-w-md text-sm text-muted-foreground">
-            This purchase order doesn&apos;t exist, or it was removed after this link was
-            made. Head back to the list to pick another.
-          </p>
-        </Card>
-      </div>
+      <Card className="flex flex-col items-center gap-3 p-10 text-center">
+        <div className="text-sm font-semibold">Purchase order not found</div>
+        <p className="max-w-md text-sm text-muted-foreground">
+          This purchase order doesn&apos;t exist, or it was removed after this link was
+          made. Head back to the list to pick another.
+        </p>
+      </Card>
     );
   }
 
@@ -942,8 +1001,20 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         ...(draft ?? {}),
       };
     });
-    if (cleanedLines.some((l) => !l.sku || !(Number(l.qty_ordered) > 0))) {
+    if (cleanedLines.some((l) => qtyIsPending(l.qty_ordered))) setShowQtyErrors(true);
+    if (cleanedLines.some((l) => !l.sku || qtyIsPending(l.qty_ordered))) {
       return setError('Every line needs a product and a quantity above zero.');
+    }
+    // The price and discount may stay blank (blank clears the figure), but a typed one is
+    // never negative.
+    if (
+      cleanedLines.some(
+        (l) =>
+          numberFieldError(l.unit_price, { min: 0, optional: true }) ||
+          numberFieldError(l.discount, { min: 0, optional: true }),
+      )
+    ) {
+      return setError('A unit price or discount cannot be negative.');
     }
     const linesUnchanged =
       originalLineSignatureRef.current !== null &&
@@ -1180,11 +1251,11 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
             <section aria-label="Totals" className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2">
               {/* A dash, never RM 0.00, for an order nobody priced. */}
               <Field label="Total amount">{fmtMoneyCell(amountTotal)}</Field>
-              <Field label="Total qty">{fmtInt(qtyOrderedTotal)}</Field>
+              <Field label="Total qty">{fmtQtyCell(qtyOrderedTotal)}</Field>
               {/* ALWAYS shown, even when it equals the total. On a wholly outstanding order
                   the two agree, and a reader who cannot see the figure at all has to work
                   out from its absence that nothing has arrived. */}
-              <Field label="Outstanding qty">{fmtInt(outstandingTotal)}</Field>
+              <Field label="Outstanding qty">{fmtQtyCell(outstandingTotal)}</Field>
               <Field label="Lines">{fmtInt(lineCount)}</Field>
             </section>
           </Card>
@@ -1209,7 +1280,9 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
             // A real key, not the empty "do not persist" one: a 200-line order is read with
             // the same few columns every time, and the choice has to survive the visit.
             // Keyed off the permission slug plus a stable id, never the record's own path.
-            listingKey="scm.dashboard.view::purchase-order-lines"
+            // -v2 (AC-CANCEL-CRM, owner 13 Oct): Qty cancelled and Status must show by
+            // default; a saved preference could keep either hidden.
+            listingKey="scm.dashboard.view::purchase-order-lines-v2"
           >
             <Card>
               <CardHeader className="flex-wrap gap-3">
@@ -1268,8 +1341,8 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
                 </div>
               ) : qtyReceivedTotal > 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  {fmtInt(qtyReceivedTotal)} of {fmtInt(qtyOrderedTotal)} received.{' '}
-                  {fmtInt(outstandingTotal)} still to arrive.
+                  {fmtInt(qtyReceivedTotal)} of {fmtQtyCell(qtyOrderedTotal)} received.{' '}
+                  {fmtQtyCell(outstandingTotal)} still to arrive.
                 </p>
               ) : (
                 // No CTA back to the list: the Create GR button that lived there is gone,

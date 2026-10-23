@@ -1,6 +1,6 @@
 'use client';
 
-import { Children, isValidElement, ReactNode, useState } from 'react';
+import { Children, isValidElement, ReactNode, Ref, useState } from 'react';
 import { Cog, MoreHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -40,6 +40,11 @@ interface DetailActionsMenuProps {
    */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /**
+   * The trigger button, for a dialog an item opens that must hand focus back to the gear
+   * when it closes (a menu item that opens a dialog leaves Radix nothing to return to).
+   */
+  triggerRef?: Ref<HTMLButtonElement>;
 }
 
 /**
@@ -89,6 +94,7 @@ export function DetailActionsMenu({
   disabled,
   open: controlledOpen,
   onOpenChange,
+  triggerRef,
 }: DetailActionsMenuProps) {
   const TriggerIcon = trigger === 'ellipsis' ? MoreHorizontal : Cog;
   const items = actions ? null : orderChildren(children);
@@ -108,6 +114,7 @@ export function DetailActionsMenu({
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <Button
+          ref={triggerRef}
           type="button"
           variant={trigger === 'ellipsis' ? 'ghost' : 'outline'}
           size="icon"

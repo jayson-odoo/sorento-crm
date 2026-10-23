@@ -379,3 +379,169 @@ def test_narrowing_one_token_keeps_the_pin_on_an_untouched_token(client, family)
     assert set(by_token) >= {"ZZTWC286-SH-P", "ZZTWC8066-SH"}, sorted(by_token)
     pinned = by_token["ZZTWC8066-SH"].get("matches") or []
     assert [m.get("canonical_code") or m.get("code") for m in pinned] == ["ZZTWC8066-SH-MG"], pinned
+
+
+# --------------------------------------------------------------------------- #
+# SPEC-VARIANT-OR (owner hand test, 23 Oct 2026, turn c4cffa1a): a code the      #
+# message's spec narrows to 2+ variants answers exactly those variants (OR)      #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def family_8354(world):
+    """The SRTWC8354 shape: two S trap 250 variants, -SH and -SH-UF, and -SH-UF* rows
+    beside them at other traps. An AND over the two variant codes intersects their
+    families, which is exactly the -SH-UF* rows (the P traps included)."""
+    world.product("ZZTWC8354-SH", "SORENTO WATER CLOSET S-TRAP 250MM", stock=1)
+    world.product("ZZTWC8354-SH-UF", "SORENTO WATER CLOSET S-TRAP 250MM UF SEAT", stock=1)
+    world.product("ZZTWC8354-SH-UF-PA", "SORENTO WATER CLOSET P-TRAP 180MM UF SEAT", stock=1)
+    world.product("ZZTWC8354-SH-UF-PB", "SORENTO WATER CLOSET P-TRAP 150MM UF SEAT", stock=1)
+    world.product("ZZTWC8354-SH-UF-PC", "SORENTO WATER CLOSET P-TRAP 200MM UF SEAT", stock=1)
+    world.product("ZZTWC8354-SH-P", "SORENTO WATER CLOSET P-TRAP 180MM", stock=1)
+    world.product("ZZTWC8354-SH-S3", "SORENTO WATER CLOSET S-TRAP 300MM", stock=1)
+    return world
+
+
+def _route_codes(payload: dict) -> list[str]:
+    matches = payload.get("intersection") or [
+        m for r in payload.get("resolutions") or [] for m in r.get("matches") or []
+    ]
+    return sorted({m.get("canonical_code") or m.get("code") for m in matches if m.get("entity_type") == "product"})
+
+
+def test_a_code_with_s_trap_250_answers_exactly_its_two_250_variants(client, family_8354):
+    """The gate's own body for "SRTWC8354 s trap 250MM": one product token, the grounded
+    trap specs, AND (one product). The narrowing picks -SH and -SH-UF; the answer must be
+    those two, never the -SH-UF* rows the AND intersection of their families leaves."""
+    body = {
+        "query": "ZZTWC8354 s trap 250MM",
+        "tokens": ["ZZTWC8354"],
+        "raw_tokens": ["ZZTWC8354"],
+        "allowed_entity_types": ["product"],
+        "match_mode": "and",
+        "spec_fallback": True,
+        "exact_match": True,
+        "extracted_specs": S250,
+        "dry_run": True,
+    }
+    response = client.post(ENDPOINT, json=body)
+    assert response.status_code == 200, response.text
+    assert _route_codes(response.json()) == ["ZZTWC8354-SH", "ZZTWC8354-SH-UF"], response.json()
+    # Each variant is its own answered product, not a which-one pick.
+    assert all(r.get("resolved") for r in response.json().get("resolutions") or []), response.json()
+
+
+def test_the_grounded_values_alone_answer_the_two_variants(client, family_8354):
+    """The carried-product shape (no code word in the message, so only the spec
+    narrowing runs): the same two variants, OR."""
+    body = {
+        "query": "how about s trap 250",
+        "tokens": ["ZZTWC8354"],
+        "allowed_entity_types": ["product"],
+        "match_mode": "and",
+        "spec_fallback": True,
+        "exact_match": True,
+        "extracted_specs": S250,
+        "dry_run": True,
+    }
+    response = client.post(ENDPOINT, json=body)
+    assert response.status_code == 200, response.text
+    assert _route_codes(response.json()) == ["ZZTWC8354-SH", "ZZTWC8354-SH-UF"], response.json()
+    # Each variant is its own answered product, not a which-one pick.
+    assert all(r.get("resolved") for r in response.json().get("resolutions") or []), response.json()
+
+
+def _request(**fields):
+    from app.api.v1.system.references import ResolveReferenceRequest
+
+    return ResolveReferenceRequest(**fields)
+
+
+def test_a_spec_narrowing_to_one_code_keeps_the_mode(family):
+    from app.api.v1.system.references import _narrowed_payload
+
+    out = _narrowed_payload(
+        family.db,
+        _request(
+            query="How about p trap",
+            tokens=["ZZTWC286-SH"],
+            allowed_entity_types=["product"],
+            match_mode="and",
+            extracted_specs=P_TRAP,
+        ),
+    )
+    assert out.tokens == ["ZZTWC286-SH-P"]
+    assert out.match_mode == "and"
+
+
+def test_a_spec_matching_no_variant_leaves_the_request_unchanged(family):
+    from app.api.v1.system.references import _narrowed_payload
+
+    request = _request(
+        query="How about p trap 300",
+        tokens=["ZZTWC286-SH"],
+        allowed_entity_types=["product"],
+        match_mode="and",
+        extracted_specs=[{"key": "trap_type", "value": "p_trap"}, {"key": "trap_length", "value": 300}],
+    )
+    out = _narrowed_payload(family.db, request)
+    assert out.tokens == ["ZZTWC286-SH"]
+    assert out.match_mode == "and"
+
+
+def test_a_spec_narrowing_beside_a_customer_keeps_and(family_8354):
+    """The gate keeps AND for a product scoped by another kind ("SRTWT7445 for HANLIM"),
+    so the narrowing does too."""
+    from app.api.v1.system.references import _narrowed_payload
+
+    out = _narrowed_payload(
+        family_8354.db,
+        _request(
+            query="how about s trap 250 for HANLIM",
+            tokens=["ZZTWC8354", "HANLIM"],
+            allowed_entity_types=["product", "customer"],
+            match_mode="and",
+            extracted_specs=S250,
+        ),
+    )
+    assert out.tokens == ["ZZTWC8354-SH", "ZZTWC8354-SH-UF", "HANLIM"]
+    assert out.match_mode == "and"
+
+
+def test_two_typed_codes_still_or():
+    """The gate's two-codes rule is untouched: two product codes go out as OR."""
+    from app.services.chatbot.lanes.business.resolve_gate import resolve_entity_body
+
+    ctx = {
+        "message": "ZZTWC286-SH / ZZTWC8066-SH stock",
+        "parse": {
+            "output": {
+                "entities": [
+                    {"token": "ZZTWC286-SH", "raw": "ZZTWC286-SH", "hint": "product"},
+                    {"token": "ZZTWC8066-SH", "raw": "ZZTWC8066-SH", "hint": "product"},
+                ],
+                "match_mode": "and",
+            }
+        },
+    }
+    assert resolve_entity_body(ctx)["match_mode"] == "or"
+
+
+def test_a_bare_code_the_narrowing_falls_back_to_keeps_its_family(client, family):
+    """Reviewer on SPEC-VARIANT-OR: `narrow_code_tokens` swaps "ZZTWC9000qqq" (words that
+    pick nothing) for its bare code. That is the typed family, not a picked variant, so
+    its answer is not cut to the one exact row."""
+    family.product("ZZTWC9000", "SORENTO WATER CLOSET S-TRAP 250MM", stock=1)
+    family.product("ZZTWC9000-P", "SORENTO WATER CLOSET P-TRAP 180MM", stock=1)
+    body = {
+        "query": "ZZTWC9000 qqq\nZZTWC286-SH stock",
+        "tokens": ["ZZTWC9000qqq", "ZZTWC286-SH"],
+        "allowed_entity_types": ["product", "product"],
+        "match_mode": "or",
+        "dry_run": True,
+    }
+    response = client.post(ENDPOINT, json=body)
+    assert response.status_code == 200, response.text
+    by_token = {r.get("token"): r for r in response.json().get("resolutions") or []}
+    codes = sorted(m.get("canonical_code") for m in by_token["ZZTWC9000"].get("matches") or [])
+    assert codes == ["ZZTWC9000", "ZZTWC9000-P"], response.json()

@@ -88,6 +88,8 @@ import PurchaseRequestAttachmentsSection from './PurchaseRequestAttachmentsSecti
 import PurchaseRequestConversationPanel from './PurchaseRequestConversationPanel';
 import { PurchaseRequestSignoffFooter } from './PurchaseRequestSignoffFooter';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { numberFieldError } from '@/lib/number-field';
+import { QUANTITY_RULES } from '../forms/purchase-request-schema';
 import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
 import {
   purchaseRequestNumberReplyPhrase,
@@ -145,7 +147,14 @@ function PurchaseRequestLineItemsGrid({
         id: 'quantity',
         accessorFn: (row) => row.quantity ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
-        cell: ({ row }) => row.original.quantity ?? ' - ',
+        // An external-intake line can arrive with no quantity: staff see what to enter,
+        // not a dash.
+        cell: ({ row }) =>
+          row.original.quantity ?? (
+            <span className="whitespace-normal break-words text-xs text-destructive">
+              {numberFieldError(null, QUANTITY_RULES)}
+            </span>
+          ),
         size: 100,
         meta: { headerTitle: 'Qty' },
       },
@@ -581,7 +590,10 @@ export default function PurchaseRequestDetail({
   const isProcessedByCs = lifecycleStatusNorm === 'processed_by_cs';
   const isClosedByCs = lifecycleStatusNorm === 'closed';
   const isCsFinalized = isProcessedByCs || isClosedByCs;
-  const showCsActions = isApprovedStatus && !isCsFinalized;
+  // A No CS form stays Approved but never gets a customer-service stage, so the CS
+  // actions need that stage's tracker (active or resolved); hidden while trackers load.
+  const hasCsStage = (slaTrackers ?? []).some((t) => t.team_set_code === 'customer_service');
+  const showCsActions = isApprovedStatus && !isCsFinalized && hasCsStage;
   const csFinalizeLabel = isProcessedByCs
     ? 'Processed by CS'
     : isClosedByCs
@@ -1427,6 +1439,20 @@ export default function PurchaseRequestDetail({
                       {request.sponsor_subject === 'others' && request.sponsor_subject_other
                         ? `: ${request.sponsor_subject_other}`
                         : ''}
+                    </p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <p className="text-sm text-muted-foreground">Sales Type</p>
+                    <p className="font-medium">
+                      {request.sales_type ? (
+                        <LookupBoundLabel
+                          table="purchase_requests"
+                          column="sales_type"
+                          value={request.sales_type}
+                        />
+                      ) : (
+                        ' - '
+                      )}
                     </p>
                   </div>
                   <div className="sm:col-span-2">

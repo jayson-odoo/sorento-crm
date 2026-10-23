@@ -12,10 +12,18 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any, Dict, List, Literal, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
+from app.schemas.project_line_split import LineSplitViewOut
 from app.services.uuid_path_param import UUID_PATTERN
 
 #: The longest free-text search string the worklist routes accept
@@ -187,6 +195,21 @@ class OrderInquirySuggestedLinkOut(BaseModel):
     trigger: Optional[str] = None
 
 
+class OrderInquiryLineSplitOut(BaseModel):
+    """OI-LINE-SPLIT (UAC D3): one split of the row's SO line, for the Lines tab's
+    read-only expand. `sits_on_line_no` is what the screen prints; the id is addressing."""
+
+    id: str
+    qty: str
+    delivery_date: Optional[date] = None
+    is_cancel: bool = False
+    #: REMAIN / DELAY / ADVANCE / CANCEL BALANCE against the line's base date.
+    change: str = ""
+    sits_on_line_id: Optional[str] = None
+    sits_on_line_no: Optional[int] = None
+    remark: str = ""
+
+
 class OrderInquiryRowOut(BaseModel):
     id: str
     order_inquiry_id: str
@@ -280,6 +303,12 @@ class OrderInquiryRowOut(BaseModel):
     previous_delivery_date: Optional[date] = None
     #: OI-PRODUCT-FOLLOW: the item code before a product change moved the row ("was X").
     previous_item_code: Optional[str] = None
+    #: OI-LINE-SPLIT (UAC D3): the splits of this row's SO line; empty when not split.
+    #: Declared because `response_model` drops a field it has not been told about.
+    splits: List[OrderInquiryLineSplitOut] = []
+    #: OI-SPLIT-VIEW (UAC B1 to B5): the line's split popup (`LineSplitService.split_views`),
+    #: null when the line has no splits.
+    split_view: Optional[LineSplitViewOut] = None
 
 
 class UploadJobScope(BaseModel):
@@ -346,6 +375,8 @@ class OrderInquiryWorklistRow(BaseModel):
     """
 
     id: str
+    #: OI-BULK-RESERVE v4: the header this row belongs to, for the Lines page's per-inquiry commit.
+    order_inquiry_id: Optional[str] = None
     #: `OI-000123` - the number of the inquiry this row belongs to, off its own header.
     #: Optional only so a record written before the column existed still reads; every
     #: inquiry raised since carries one. The S/O no beside it does not answer the same
@@ -438,6 +469,9 @@ class OrderInquiryWorklistRow(BaseModel):
     project_id: Optional[str] = None
     project_sales_order_id: Optional[str] = None
     core_sales_order_id: Optional[str] = None
+    #: AC-CONSIGN-CRM: the core sales order's doc_type ('consignment' / 'sales_order'); null
+    #: when the row has no core SO.
+    so_doc_type: Optional[str] = None
     # AC-B6-7 (`PLAN-board-oi-mechanical-22sep.md`, S6): the core LINE's own id, which the
     # "SO line" cell puts on
     # `/scm/sales-orders/<core_sales_order_id>?tab=lines&line=<core_line_id>` beside
@@ -516,6 +550,13 @@ class OrderInquiryWorklistRow(BaseModel):
     #: Purchased/Incoming still count it when it holds a link. Declared here because
     #: `response_model` silently drops a field it has not been told about.
     line_cancelled: bool = False
+    #: OI-LINE-SPLIT (UAC D3): the splits of this row's SO line, for the OI Lines tab's
+    #: read-only expand; empty when not split. Declared because `response_model` drops a
+    #: field it has not been told about.
+    splits: List[OrderInquiryLineSplitOut] = []
+    #: OI-SPLIT-VIEW (UAC B1 to B5): the line's split popup, the same value
+    #: `OrderInquiryRowOut.split_view` carries; null when the line has no splits.
+    split_view: Optional[LineSplitViewOut] = None
     #: PLAN-oi-request-cs-reserve.md 3.5 (AC-RS-20): `requested` while an open reserve
     #: request row exists, `reserved` once something has actually been reserved (and no
     #: open request), `declined` when the latest answer was 0 (6e.4, AC-RS-78c), else
@@ -532,6 +573,19 @@ class OrderInquiryWorklistRow(BaseModel):
     #: read N off this, not off a second lookup. Declared here because `response_model`
     #: silently drops a field it has not been told about.
     requested_qty: str = "0"
+    #: OI-RESERVE-PILL-QTY (owner, 21 Oct 2026): what purchasing last asked CS to reserve
+    #: off this row, kept after CS answers (a partial answer shows both numbers); "0" when
+    #: nothing was asked. Declared here because `response_model` drops undeclared fields.
+    asked_reserve_qty: str = "0"
+    #: OI-BULK-RESERVE v4 (B2): the open request row's warehouse id and code, null when no
+    #: request is open. Declared here because `response_model` drops undeclared fields.
+    reserve_warehouse_id: Optional[str] = None
+    reserve_location: Optional[str] = None
+    #: OI-RESERVE-RECEIVED (AC-RR-5): what a reserve request may still ask for - a NUMBER (AC-RR-5): qty less
+    #: open links, reserve links and the bundle; links on a fully received PO/SPO line do
+    #: not count. The screen never re-derives "received". Declared here because
+    #: `response_model` silently drops a field it has not been told about.
+    reserve_requestable_qty: float = 0
 
 
 class OrderInquiryMonthTotal(BaseModel):
@@ -721,6 +775,8 @@ class AcknowledgeFilter(BaseModel):
     #: md`): "Select all N matching" narrowed to one header, so pressing Confirm with
     #: nothing ticked means exactly that OI and nothing else.
     inquiry_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
+    #: OI-BULK-RESERVE v4: keep a line when one of its own request rows is in this status.
+    reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = None
 
 
 class AcknowledgeRowsRequest(BaseModel):
@@ -1168,6 +1224,8 @@ class OrderInquiryWorklistExportRequest(BaseModel):
     spo_number: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
     delivery_from: Optional[str] = None
     delivery_to: Optional[str] = None
+    #: OI-BULK-RESERVE v4: keep a line when one of its own request rows is in this status.
+    reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = None
 
 
 class UnplaceAllResult(BaseModel):
@@ -1333,6 +1391,8 @@ class OrderInquiryHeaderOut(BaseModel):
     raised_by_name: Optional[str] = None
     #: The CORE `sales_orders.id`, null when this order never reached AutoCount.
     sales_order_id: Optional[str] = None
+    #: AC-CONSIGN-CRM: that core order's doc_type; null when there is no core order.
+    so_doc_type: Optional[str] = None
     project_sales_order_id: str
     so_number: Optional[str] = None
     so_date: Optional[date] = None
@@ -1347,6 +1407,10 @@ class OrderInquiryHeaderOut(BaseModel):
     qty_total: str = "0"
     #: DERIVED, never stored (AC-LS-02): `lines_to_confirm > 0`.
     status: Literal["outstanding", "completed"] = "outstanding"
+    #: OI-STAGED-NOTIFY (AC-SN-30): the OI's earliest reserve status, null when it has no
+    #: reserve request rows; `parked_by_name` names who parked it while it is parked.
+    reserve_status: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = None
+    parked_by_name: Optional[str] = None
 
 
 class OrderInquiryRaiseHistoryEntryOut(BaseModel):
@@ -1444,6 +1508,9 @@ class CreateReserveRequestIn(BaseModel):
     #: N-4 (review round): an arbitrarily long note lands verbatim in an outgoing email
     #: body / the worklist chip.
     note: Optional[str] = Field(None, max_length=5000)
+    #: OI-STAGED-NOTIFY: save the request without mailing CS; sent later from the
+    #: Order inquiries Actions menu.
+    park: bool = False
 
     @model_validator(mode="after")
     def _no_duplicate_rows(self) -> "CreateReserveRequestIn":
@@ -1500,6 +1567,9 @@ class CommitReserveRequestIn(BaseModel):
 
     reserves: List[CommitReserveRowIn] = []
     amendments: List[CommitAmendRowIn] = []
+    #: OI-STAGED-NOTIFY: write the answers without mailing purchasing; sent later from
+    #: the Order inquiries Actions menu.
+    park_notice: bool = False
 
     @model_validator(mode="after")
     def _at_least_one_row(self) -> "CommitReserveRequestIn":
@@ -1552,3 +1622,109 @@ class OrderInquiryReserveRequestOut(BaseModel):
     cancelled_at: Optional[datetime] = None
     rows: List[OrderInquiryReserveRequestRowOut] = []
     notified_name: Optional[str] = None
+
+
+# ------------------------------------------------ park / send all parked (OI-STAGED-NOTIFY)
+
+
+class ReservePersonOut(BaseModel):
+    name: str
+
+
+class ParkedEmailOut(BaseModel):
+    to: ReservePersonOut
+    cc: List[ReservePersonOut] = []
+    inquiry_count: int
+    line_count: int
+    subject: str
+    body_html: str
+
+
+class ParkedUnresolvedOut(BaseModel):
+    inquiry_count: int
+    line_count: int
+
+
+class ParkedPreviewOut(BaseModel):
+    emails: List[ParkedEmailOut] = []
+    inquiry_total: int = 0
+    unresolved: List[ParkedUnresolvedOut] = []
+
+
+class ParkedSendOut(BaseModel):
+    emails_sent: int
+    items_sent: int
+    unresolved: List[ParkedUnresolvedOut] = []
+
+
+class HandoverResendIn(BaseModel):
+    """OI-RESEND-PURCHASING: the order inquiries to send to purchasing again."""
+
+    inquiry_ids: List[Annotated[str, StringConstraints(pattern=UUID_PATTERN)]] = Field(
+        ..., min_length=1, max_length=50
+    )
+    #: The ticked lines of ONE order inquiry; omitted means every open line.
+    row_ids: Optional[List[Annotated[str, StringConstraints(pattern=UUID_PATTERN)]]] = Field(
+        None, max_length=500
+    )
+
+
+class HandoverResendLineOut(BaseModel):
+    row_id: str
+    item_code: Optional[str] = None
+    qty: str
+    location: Optional[str] = None
+    delivery_date: Optional[date] = None
+    selected: bool
+    #: The newest earlier handover email of this OI that names the line's item code.
+    sent_at: Optional[datetime] = None
+
+
+class HandoverLastSentOut(BaseModel):
+    at: datetime
+    kind: Literal["automatic", "resent"]
+    by: Optional[str] = None
+
+
+class HandoverResendEmailOut(ParkedEmailOut):
+    inquiry_id: str
+    inquiry_no: Optional[str] = None
+    last_sent: Optional[HandoverLastSentOut] = None
+    #: The OI Excel the send attaches (names only; a preview stores nothing).
+    attachments: List[str] = []
+    #: Single-OI preview only: every open line, for the per-line ticks.
+    lines: List[HandoverResendLineOut] = []
+
+
+class HandoverResendSkipOut(BaseModel):
+    inquiry_id: str
+    inquiry_no: Optional[str] = None
+    reason: Literal["nothing_open", "no_recipient", "failed"]
+
+
+class HandoverResendPreviewOut(BaseModel):
+    emails: List[HandoverResendEmailOut] = []
+    inquiry_total: int = 0
+    unresolved: List[ParkedUnresolvedOut] = []
+    skipped: List[HandoverResendSkipOut] = []
+    automation_enabled: bool
+
+
+class HandoverResendSendOut(BaseModel):
+    emails_sent: int
+    items_sent: int
+    skipped: List[HandoverResendSkipOut] = []
+
+
+class ReserveStatusSummaryOut(BaseModel):
+    parked: int = 0
+    needs_reserve: int = 0
+    notice_parked: int = 0
+    reserved: int = 0
+    my_parked_requests: int = 0
+    my_parked_notices: int = 0
+
+
+class ReserveNoticeRecipientsOut(BaseModel):
+    to: Optional[ReservePersonOut] = None
+    cc: List[ReservePersonOut] = []

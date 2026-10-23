@@ -197,6 +197,16 @@ class Focus:
     # roster and must only PARK a task.
     tasks: tuple[Task, ...] = ()
     extra: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    # SEAT-AS-PRODUCT (crew ruling 13 Oct, the #1626 pattern): while `products` are the
+    # answer to a fit ask, which side they are ("covers" for "seat cover for <WC>", "wcs" for
+    # "WC for <cover>"; "<kind>:<side>" for a mirror / shelf ask, `find.relation_of`), so a bare
+    # next code the parser marks as a continuation repeats that ask in the same direction and a pointer at one of these codes narrows it.
+    # Written by `engine._run_turn` around `find.as_linked_products`; a topic reset drops it.
+    relation: str | None = None
+    # CHAT-STATE: the numbered list the last reply showed, `[{position, label, code, ...}]`,
+    # so "the second one" has something to point at. Rides inside the focus like `tasks`
+    # (a second key could disagree); written by `turn/tail.py::last_list_after`.
+    last_list: list[dict[str, Any]] | None = None
 
 
 @dataclass
@@ -269,6 +279,33 @@ def reads_customer_po_refs(profile: "Profile | None") -> bool:
 
 
 @dataclass
+class Subject:
+    """What a state-led turn is about, written only by `chat_state.apply_changes`.
+
+    `source`: "ids" (explicit product uuids), "predicate" (a described set over brand /
+    class / spec / family) or "unresolved" (nothing to fetch by). `predicate` maps an axis to
+    typed rows, `{"value", "key", "hint", ...}`: the word as said or held, its registry key
+    (uuid, else code; None for a bare word), the entity kind, and a grounded spec's own
+    fields, so the fetch never re-reads the focus. The class is ONE axis. `provenance` maps
+    an axis (the predicate axes plus "product") to "held" / "said" / "offer"; a cleared axis
+    is absent. `product_tokens` are the named products with no key yet, `{"value", "key":
+    <code>, "hint": "product"}` (a held one stays a token until the resolver places it);
+    `unplaced` are the tokens the resolver could not place (set by `settle_subject`).
+    `kept_aside` are the words the applier saw this message type on a held axis under `keep`
+    (written only under keep): not a change, so the fetch drops exactly these."""
+
+    source: str = "unresolved"
+    product_ids: tuple[str, ...] = ()
+    product_tokens: tuple[dict[str, Any], ...] = ()
+    unplaced: tuple[dict[str, Any], ...] = ()
+    kept_aside: tuple[dict[str, Any], ...] = ()
+    predicate: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    scope: frozenset[str] = frozenset()
+    hidden: frozenset[str] = frozenset()
+    provenance: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
 class State:
     focus: Focus
     pending: Any = None
@@ -285,6 +322,40 @@ class State:
     # `{pending, focus}` set aside. Rides on the state so every lane's tail (answer, canned,
     # clarify, out_of_scope) writes the live question back; never serialised.
     quoted_live: Any = None
+    # CHAT-STATE r7: the turn number of the bot message this reply quotes (`QuotedTurn.turn_no`),
+    # set by `engine._quoted_context` also when that turn is the newest and nothing is swapped;
+    # None without a quote. `chat_state.quotes_the_list` compares it to the list's
+    # `shown_at_turn`. Never serialised.
+    quoted_turn_no: int | None = None
+    # CHAT-STATE: set once by `turn/chat_state.apply_changes` when the parser's
+    # `state_changes` were applied ("answer" / "new_ask" / "refine" / "carry"); None on
+    # every other turn. Never serialised.
+    state_led: str | None = None
+    # CHAT-STATE: the turn ran on the state path (the prompt in use or a dry-run emission asks
+    # for `state_changes`), so the tail records the list it showed. Never serialised.
+    state_path: bool = False
+    # CHAT-STATE: held slots the parser said `skip` for, set aside for this turn only
+    # (`{"customers": [...], "date_window": {...}}`) and put back by the tail. Never serialised.
+    held_aside: dict[str, Any] | None = None
+    # CHAT-STATE: a question the state change itself raises (an unclear held slot): the
+    # engine asks it instead of fetching. Never serialised.
+    slot_ask: Any = None
+    # CHAT-STATE r6 S5: the turn is under the state gate: the applier read the parser's ops over
+    # a State it showed (applied or rejected), so the legacy text rewriters stand down. False on
+    # a first ask over nothing shown, which runs exactly as without the key. Written only by
+    # `chat_state.apply_changes`; never serialised.
+    state_gate: bool = False
+    # CHAT-STATE r6 S4: who this contact is for the Subject, read by the engine ONCE per turn on
+    # the state path before the applier runs: its company scope (company ids) and its hidden
+    # keys ({"customer"} when it may not see other customers' rows or documents, V1-DOC-SCOPE).
+    # Only `chat_state` reads them, to write `Subject.scope` / `Subject.hidden`. Never serialised.
+    company_scope: frozenset[str] = frozenset()
+    hidden_keys: frozenset[str] = frozenset()
+    # CHAT-STATE r6: the typed subject the applier built from the focus and this turn's ops
+    # (`chat_state.py` is its only writer: `apply_changes`, `narrow_held_to_brands`,
+    # `settle_subject`); None off the state path. The fetch reads it (`fetch_entities`).
+    # Never serialised.
+    subject: "Subject | None" = None
 
 
 # --------------------------------------------------------------------------- #
@@ -317,6 +388,9 @@ def focus_to_wire(focus: Focus) -> dict[str, Any]:
     # could disagree with it.
     wire["tasks"] = [task_to_wire(task) for task in (focus.tasks or ())]
     wire["extra"] = {k: list(v) for k, v in (focus.extra or {}).items()}
+    wire["relation"] = focus.relation
+    if focus.last_list:
+        wire["last_list"] = [dict(row) for row in focus.last_list]
     return wire
 
 
@@ -385,6 +459,12 @@ def focus_from_wire(raw: Any) -> Focus:
         focus.tasks = tuple(
             task for task in (task_from_wire(row) for row in tasks) if task is not None
         )
+    relation = raw.get("relation")
+    focus.relation = relation if isinstance(relation, str) else None
+    last_list = raw.get("last_list")
+    focus.last_list = (
+        [dict(row) for row in last_list if isinstance(row, dict)] if isinstance(last_list, list) else None
+    ) or None
     extra = raw.get("extra")
     if isinstance(extra, dict):
         focus.extra = {

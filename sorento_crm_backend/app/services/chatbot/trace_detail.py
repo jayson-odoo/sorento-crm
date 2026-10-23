@@ -20,6 +20,7 @@ Nothing here writes anything. `app/services/chatbot/trace.py` (the write side, a
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -412,6 +413,260 @@ def _prompt_text(records: list[dict[str, Any]]) -> str | None:
     return text[:PROMPT_TEXT_CHAR_CAP]
 
 
+_HINT_WORDS = {
+    "product": "a product",
+    "category": "a product type",
+    "product_type": "a product type",
+    "specification": "a specification",
+    "spec": "a specification",
+    "attachment_type": "a file",
+    "warehouse": "a warehouse",
+    "brand": "a brand",
+    "customer": "a customer",
+    "sales_agent": "a sales agent",
+    "order": "an order",
+    "promotion": "a promotion",
+    "product_attachment": "a product file",
+    "inventory": "stock",
+    "incoming": "incoming stock",
+}
+
+
+def _hint_words(hint: str) -> str:
+    """A hint in plain words; one the table does not name still never shows an underscore."""
+    return _HINT_WORDS.get(hint, hint.replace("_", " "))
+
+
+_LIST_WORDS = {"attachment_type": "file type", "cert_kind": "certificate", "cert_scheme": "certificate scheme"}
+_UNDERSCORED = re.compile(r"(?<=[A-Za-z0-9])_(?=[A-Za-z0-9])")
+_UUID_LIKE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
+_CLASS_HINTS = ("category", "product_type")
+LOOKED_UP_DETAIL_CAP = 8
+
+
+def _say(text: Any) -> str:
+    """Text with no snake_case word left in it."""
+    return _UNDERSCORED.sub(" ", str(text))
+
+
+def _fold(text: Any) -> str:
+    from app.services.chatbot.head.candidates import _phrase
+
+    return _phrase(text or "")
+
+
+class _Lookups:
+    """Registry labels, value labels and attachment type names, read once for a turn's detail;
+    without a session (or when a read fails) the key or code itself, with no underscore."""
+
+    def __init__(self, db: Session | None) -> None:
+        self.specs: dict[str, tuple[str | None, dict[str, Any]]] = {}
+        self.types: dict[str, str] = {}
+        if db is None:
+            return
+        try:
+            with db.begin_nested():
+                from app.services import chatbot_prompt_vars as pv
+                from app.services.product_spec_registry import active_registry
+
+                for row in active_registry(db):
+                    self.specs[row.spec_key] = (str(row.label) if row.label else None, dict(row.value_labels or {}))
+                for row in [*pv._file_type_rows(db), *pv._cert_kind_rows(db)]:
+                    name = str(row.get("type_name") or "").strip()
+                    if name:
+                        for key in (row.get("code"), name):
+                            self.types[_fold(key)] = name
+        except Exception:  # noqa: BLE001 - labels are a nicety; the raw words still read
+            self.specs, self.types = {}, {}
+
+    def label(self, key: Any) -> str:
+        label = self.specs.get(str(key), (None, {}))[0]
+        return label or _say(key).capitalize()
+
+    def value(self, key: Any, value: Any) -> str:
+        if str(key) in self.specs:
+            from app.services.product_spec_registry import display_spec_value
+
+            return _say(display_spec_value(value, self.specs[str(key)][1]))
+        return _say(value)
+
+    def type_name(self, code: Any) -> str:
+        return self.types.get(_fold(code)) or _say(code)
+
+
+def _result_text(note: dict[str, Any] | None, lk: _Lookups) -> dict[str, str]:
+    """One entity's grounding outcome in plain words (CHAT-INDEX-VIZ wording table)."""
+    if note is None:
+        return {"outcome": "kept", "text": "Kept"}
+    to = note.get("to")
+    if isinstance(to, list):
+        parts = []
+        for item in to:
+            if isinstance(item, dict):
+                key = item.get("key")
+                label = item.get("label") or (lk.label(key) if key else "")
+                if item.get("value") is not None and label:
+                    parts.append(f"{label}: {lk.value(key, item['value'])}")
+                elif item.get("said"):
+                    parts.append(str(item["said"]))  # the customer's own words, as typed
+            elif str(item).strip():
+                parts.append(str(item))
+        if not parts:
+            return {"outcome": "changed", "text": "Changed"}
+        return {"outcome": "changed", "text": "Changed: read as " + "; ".join(parts)}
+    to = str(to)
+    if to == "dropped: a finish short form, no warehouse on file":
+        return {"outcome": "dropped", "text": "Dropped: a finish code ending, not on the warehouse list"}
+    if to in ("dropped: not on the closed lists", "dropped: not a listed document type"):
+        return {"outcome": "dropped", "text": "Dropped: not on the file type list"}
+    if to == "unknown product type":
+        return {"outcome": "dropped", "text": "Dropped: not a known product type"}
+    if to.startswith("on the ") and " list: " in to:
+        listed, _, code = to[len("on the "):].partition(" list: ")
+        return {"outcome": "kept", "text": f"Kept: on the {_LIST_WORDS.get(listed, _say(listed))} list ({lk.type_name(code)})"}
+    if to == "canonical dropped: not on the candidate block":
+        return {"outcome": "changed", "text": "Changed: product code not among the matches, removed"}
+    if to.startswith("canonical refused:"):
+        return {"outcome": "changed", "text": "Changed: several product codes fit, the bot asks which"}
+    if to.startswith("listed product type: "):
+        return {"outcome": "changed", "text": f"Changed: read as the product type {_say(to[len('listed product type: '):])}"}
+    if to == "category":
+        return {"outcome": "changed", "text": "Changed: read as a product type"}
+    return {"outcome": "changed", "text": f"Changed: read as {_say(to)}"}
+
+
+def _noun_of(note: dict[str, Any] | None) -> str | None:
+    """`file type` / `certificate` / `certificate scheme`, from a kept-on-a-list note."""
+    to = str((note or {}).get("to") or "")
+    if to.startswith("on the ") and " list: " in to:
+        listed = to[len("on the "):].partition(" list: ")[0]
+        return _LIST_WORDS.get(listed)
+    return None
+
+
+def _understood_text(entity: dict[str, Any], lk: _Lookups, noun: str | None = None) -> str:
+    head = f'"{entity.get("raw")}"'
+    hint = str(entity.get("hint") or "")
+    key, spec_value = entity.get("spec_key"), entity.get("spec_value")
+    value = entity.get("canonical_code") or entity.get("listed_item")
+    if not hint:
+        return f"{head}: {value}" if value else head
+    if hint in _CLASS_HINTS and (value or spec_value):
+        return f"{head} read as product type {_say(value or spec_value)}"
+    if key and spec_value is not None:
+        return f"{head} read as {lk.label(key)}: {lk.value(key, spec_value)}"
+    if hint == "product" and value:
+        return f"{head} read as product {value}"
+    if hint == "attachment_type" and value:
+        return f"{head} read as {noun or 'file type'} {lk.type_name(value)}"
+    text = f"{head} read as {_hint_words(hint)}"
+    return f"{text}: {value}" if value else text
+
+
+_PLUMBING_ARGS = frozenset({"contact_id", "space_id", "dry_run", "limit", "offset"})
+#: Args that carry the customer's own words: shown as typed.
+_FREE_TEXT_ARGS = frozenset({"query", "q", "text", "search"})
+
+
+def _arg_text(value: Any) -> str:
+    return "yes" if value is True else "no" if value is False else str(value)
+
+
+def _looked_up(records: list[dict[str, Any]], lk: _Lookups) -> dict[str, Any] | None:
+    """What the bot looked up this turn (its tool call), in plain words. Codes (`*_code`,
+    `*_codes` args) and free text stay as stored; internal ids (`*_id`, `*_ids`) and plumbing
+    args are left out; a registry spec key shows its label and value label."""
+    entries = _kind_records(records, "tool")
+    if not entries or not entries[-1].get("name"):
+        return None
+    entry = entries[-1]
+    details: list[str] = []
+    args = entry.get("args") if isinstance(entry.get("args"), dict) else {}
+    for key, value in args.items():
+        if key in _PLUMBING_ARGS or key.endswith(("_id", "_ids")) or value is None or isinstance(value, dict):
+            continue
+        items = [v for v in (value if isinstance(value, list) else [value]) if v not in (None, "") and not isinstance(v, (dict, list))]
+        items = [v for v in items if not _UUID_LIKE.match(str(v))]
+        if not items:
+            continue
+        if key in lk.specs:
+            label, text = lk.label(key), ", ".join(lk.value(key, v) for v in items)
+        elif key.endswith(("_code", "_codes")) or key in _FREE_TEXT_ARGS:
+            label, text = _say(key).capitalize(), ", ".join(str(v) for v in items)
+        else:
+            label, text = _say(key).capitalize(), _say(", ".join(_arg_text(v) for v in items))
+        details.append(f"{label}: {text}")
+        if len(details) == LOOKED_UP_DETAIL_CAP:
+            break
+    what = _say(entry["name"])
+    return {"what": what[:1].upper() + what[1:], "details": details}
+
+
+def _index_match(records: list[dict[str, Any]], db: Session | None = None) -> dict[str, Any] | None:
+    """CHAT-INDEX-VIZ: the word -> matched entry -> what the bot understood -> kept/dropped flow of
+    a turn that ran in index mode; None for a turn with no `closed_lists_index` event."""
+    events = _kind_records(records, "closed_lists_index")
+    if not events:
+        return None
+    event = events[-1]
+    lk = _Lookups(db)
+    matches = [m for m in event.get("matches") or [] if isinstance(m, dict)]
+    words = [str(w) for w in event.get("words") or []]
+    plain = [m for m in matches if not m.get("held") and m.get("word")]
+    matched_words: set[str] = set()
+    for m in plain:
+        matched_words.update(_fold(m["word"]).split())
+
+    rows: list[dict[str, Any]] = []
+    by_word: dict[str, dict[str, Any]] = {}
+    for m in plain:
+        row = by_word.get(m["word"])
+        if row is None:
+            row = by_word[m["word"]] = {"word": m["word"], "matched": [], "parser_got": [], "understood": [], "result": []}
+            rows.append(row)
+        row["matched"].append({
+            "plain": m.get("plain") or _say(m.get("entry")),
+            "source": m.get("source") or str(m.get("list") or ""),
+            "close_spelling": bool(m.get("close_spelling")),
+        })
+        if m.get("line") not in row["parser_got"]:
+            row["parser_got"].append(m.get("line"))
+
+    notes = []
+    for r in _kind_records(records, "grounding"):
+        notes += [n for n in r.get("changes") or [] if isinstance(n, dict)]
+    raw = _understood_raw(records) or {}
+    parser_raw = raw.get("parser_raw") if isinstance(raw.get("parser_raw"), dict) else {}
+    entities = [e for e in parser_raw.get("entities") or [] if isinstance(e, dict)]
+
+    leftover: list[dict[str, str]] = []
+    for entity in entities:
+        folded = f" {_fold(entity.get('raw'))} "
+        row = next((r for r in rows if folded == f" {_fold(r['word'])} "), None) or next(
+            (r for r in rows if f" {_fold(r['word'])} " in folded), None
+        )
+        note = next(
+            (n for n in notes if n.get("from") == entity.get("hint") and _fold(n.get("raw")) == _fold(entity.get("raw"))),
+            None,
+        )
+        text = _understood_text(entity, lk, _noun_of(note))
+        result = _result_text(note, lk)
+        if row is None:
+            leftover.append({"text": text, "outcome": result["outcome"], "result": result["text"]})
+        else:
+            row["understood"].append({"text": text})
+            row["result"].append(result)
+
+    return {
+        "words": [{"text": w, "matched": _fold(w) in matched_words} for w in words],
+        "rows": rows,
+        "held": [m.get("plain") or _say(m.get("entry")) for m in matches if m.get("held")],
+        "not_from_lists": leftover,
+        "failed": bool(event.get("failed")),
+        "looked_up": _looked_up(records, lk),
+    }
+
+
 def compose_trace_detail(row: ChatbotTurn, db: Session | None = None) -> dict[str, Any]:
     records = _records(row)
     return {
@@ -430,4 +685,5 @@ def compose_trace_detail(row: ChatbotTurn, db: Session | None = None) -> dict[st
         "context": _context(records),
         "order": _order(row, db),
         "prompt_text": _prompt_text(records),
+        "index_match": _index_match(records, db),
     }

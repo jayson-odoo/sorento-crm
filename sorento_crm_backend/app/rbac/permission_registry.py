@@ -55,11 +55,11 @@ PERMISSION_REGISTRY.append({
     "name": "Get contact portal link",
     "description": "Generate or send a user-submission portal link for a respond contact.",
 })
-# Contact editing had no slug at all - every contact write is `get_current_user`
-# only, so today any authenticated user may change one. This names that authority
-# so the media gate can be enforced against something, and migration 357 grants it
-# to every existing role, which reproduces today's reach exactly rather than
-# silently narrowing it. Revoking it per role is now possible; it was not before.
+# Contact editing had no slug at all - every contact write was `get_current_user`
+# only. This names that authority, and migration 357 grants it to every role that
+# existed then, which reproduced the old reach rather than silently narrowing it.
+# It now gates every contact write in user_management/contacts.py and its sibling
+# /contacts routers (SEC-CONTACT-WRITE-PERMS), so it is revocable per role.
 PERMISSION_REGISTRY.append({
     "slug": "user_management.contacts.edit",
     "name": "Edit Contacts",
@@ -260,6 +260,13 @@ PERMISSION_REGISTRY.extend([
     {"slug": "procurement.stock_inquiries.purchasing_reject", "name": "Purchasing reject stock inquiry", "description": "Reject stock inquiry (purchasing)."},
     {"slug": "procurement.stock_inquiries.reopen", "name": "Reopen rejected stock inquiry", "description": "Reopen a rejected stock inquiry back to its previous state (pending project sales or pending purchasing)."},
     {"slug": "procurement.stock_inquiries.void", "name": "Void Stock Inquiries", "description": "Void a stock inquiry (irreversible; sets status='voided' with a required reason, stops the SLA by config, notifies assignee/handler/salesperson)."},
+])
+# NEW-PRODUCT-APP: asking purchasing to open new item codes (CARD-new-product-application-17oct.md).
+PERMISSION_REGISTRY.extend([
+    {"slug": "procurement.new_product_applications.view", "name": "View New Product Applications", "description": "See every new product application of your companies, not only your own."},
+    {"slug": "procurement.new_product_applications.create", "name": "Create New Product Applications", "description": "Raise, submit, revise and cancel your own new product applications."},
+    {"slug": "procurement.new_product_applications.approve", "name": "Approve New Product Applications", "description": "Approve or reject a submitted new product application, and revise one. Approvers are told when one is submitted."},
+    {"slug": "procurement.new_product_applications.open_code", "name": "Open Codes for New Product Applications", "description": "Purchasing grant: link each line of an approved application to the product AutoCount sent, or close it as not opening. Told when one is approved."},
 ])
 PERMISSION_REGISTRY.extend(_crud("procurement", "purchase_requests", "Purchase Requests"))
 PERMISSION_REGISTRY.extend(_crud("procurement", "sponsorship_forms", "Sponsorship Forms"))
@@ -638,6 +645,26 @@ PERMISSION_REGISTRY.extend([
         ),
     },
     {
+        "slug": "projects.sample_requests.view",
+        "name": "View Sample Requests",
+        "description": "See every sample request (consignment requisition), not only your own.",
+    },
+    {
+        "slug": "projects.sample_requests.create",
+        "name": "Create Sample Requests",
+        "description": "Raise and submit your own sample requests, and cancel them until Processing.",
+    },
+    {
+        "slug": "projects.sample_requests.process",
+        "name": "Process Sample Requests",
+        "description": (
+            "Coordinator grant: move a sample request through Processing, Customer "
+            "confirmed and Delivered, cancel one in Processing, and fill Consignment No "
+            "and PO No. Separate from `projects.projects.edit`, which every salesperson "
+            "holds and which would let them mark their own request delivered."
+        ),
+    },
+    {
         "slug": "projects.stock_debt.view",
         "name": "View Stock Debt",
         "description": (
@@ -898,6 +925,32 @@ PERMISSION_REGISTRY.extend([
         "name": "Delete Billing Documents",
         "description": "Permission to delete billing documents through the AutoCount ingest.",
     },
+])
+
+# AC-CANCEL-CRM (contract 2.8): the AutoCount Cancel SO / Cancel PO (and the Consignment /
+# Consignment Return; AC-CONSIGN-CRM 2.9: a consignment push writes a sales order marked
+# Consignment, a return push records its returned qty) ingest doors. Their own
+# slugs (one per entity per door, `test_external_permission_coverage`), granted by migration
+# `ac_cancel_0001_docs` to admin / superadmin and to the role that already pushes the orders.
+PERMISSION_REGISTRY.extend([
+    {"slug": f"scm.{entity}.{action}", "name": f"{verb} {label}", "description": description}
+    for entity, label in (("cancel_sales_orders", "AutoCount Cancel SO"),
+                          ("cancel_purchase_orders", "AutoCount Cancel PO"),
+                          ("consignments", "AutoCount Consignment"),
+                          ("consignment_returns", "AutoCount Consignment Return"))
+    for action, verb, description in (
+        ("view", "View", f"Permission to read {label} documents pushed by the AutoCount ingest."),
+        ("edit", "Ingest",
+         "Permission to push AutoCount Consignment documents, which are written as sales "
+         "orders marked Consignment, through the AutoCount ingest."
+         if entity == "consignments" else
+         "Permission to push AutoCount Consignment Return documents, which record the "
+         "returned quantity on the consignment line, through the AutoCount ingest."
+         if entity == "consignment_returns" else
+         f"Permission to push {label} documents through the AutoCount ingest."),
+        ("delete", "Sweep", f"Permission to mark vanished {label} documents through the "
+                            "AutoCount ingest."),
+    )
 ])
 
 

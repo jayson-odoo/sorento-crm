@@ -43,10 +43,14 @@ from fastapi import APIRouter
 
 from app.api.v1.external.ingest import CONTRACT_VERSION, SUPPORTED_ENTITIES
 from app.schemas.canonical_documents import (
+    CanonicalArOutstanding,
+    CanonicalArOutstandingDocument,
     CanonicalBillingDocument,
     CanonicalBillingDocumentLine,
 )
+from app.services.autocount_cancel_ingest_service import CONTRACT_2_8_WARNINGS
 from app.services.autocount_doc_ingest_service import CONTRACT_2_7_WARNINGS
+from app.services.finance.ar_outstanding_ingest_service import WARN_DOCUMENTS_UNKNOWN
 from app.services.finance.billing_document_ingest_service import (
     WARN_AGENT_UNRESOLVED,
     WARN_PRODUCT_UNRESOLVED,
@@ -127,6 +131,34 @@ FIELDS_ADDED: dict[str, list[str]] = {
     "branches": ["book", "AccNo", "BranchCode", "BranchName"],
     "delivery_orders_deletions": ["book", "doc_date_from", "doc_date_to", "doc_keys"],
     "goods_receive_notes_deletions": ["book", "doc_date_from", "doc_date_to", "doc_keys"],
+    # v2.8 (AC-CANCEL-CRM): AutoCount Cancel SO (XS) / Cancel PO (XP), the 2.7 vendor shape.
+    "cancel_sales_orders": ["book", "DocKey", "DocNo", "DocDate", "LastModified", "Cancelled",
+                            "Details", "Details.DtlKey", "Details.Seq", "Details.ItemCode",
+                            "Details.Location", "Details.Qty", "Details.FromDocType",
+                            "Details.FromDocNo", "Details.FromDocDtlKey"],
+    "cancel_purchase_orders": ["book", "DocKey", "DocNo", "DocDate", "LastModified", "Cancelled",
+                               "Details", "Details.DtlKey", "Details.Seq", "Details.ItemCode",
+                               "Details.Location", "Details.Qty", "Details.FromDocType",
+                               "Details.FromDocNo", "Details.FromDocDtlKey"],
+    "consignments": ["book", "DocKey", "DocNo", "DocDate", "LastModified", "Cancelled",
+                     "DebtorCode", "DebtorName", "SalesAgent",
+                     "Details", "Details.DtlKey", "Details.Seq", "Details.ItemCode",
+                     "Details.Location", "Details.Qty", "Details.FromDocType",
+                     "Details.FromDocNo", "Details.FromDocDtlKey", "Details.UOM",
+                     "Details.UnitPrice", "Details.SubTotal", "Details.TransferedQty"],
+    "consignment_returns": ["book", "DocKey", "DocNo", "DocDate", "LastModified", "Cancelled",
+                            "Details", "Details.DtlKey", "Details.Seq", "Details.ItemCode",
+                            "Details.Location", "Details.Qty", "Details.FromDocType",
+                            "Details.FromDocNo", "Details.FromDocDtlKey"],
+    # v2.10 (AC-BILLING): every key of the record and of its documents (`documents.<key>`).
+    "ar_outstanding": [
+        *(key for key in CanonicalArOutstanding.model_fields if key != "source_doc_no"),
+        *(f"documents.{key}" for key in CanonicalArOutstandingDocument.model_fields),
+    ],
+    "cancel_sales_orders_deletions": ["book", "doc_date_from", "doc_date_to", "doc_keys"],
+    "cancel_purchase_orders_deletions": ["book", "doc_date_from", "doc_date_to", "doc_keys"],
+    "consignments_deletions": ["book", "doc_date_from", "doc_date_to", "doc_keys"],
+    "consignment_returns_deletions": ["book", "doc_date_from", "doc_date_to", "doc_keys"],
 }
 
 # D24 (captain 2026-09-06): per-entity notes on a field's meaning that
@@ -183,6 +215,18 @@ FIELD_NOTES: dict[str, str] = {
         "status is posted or cancelled; cancelled is an update. /deletions hard-deletes, or "
         "sets cancelled (deactivated) when a credit or debit note still points at it."
     ),
+    "ar_outstanding": (
+        "v2.10. One record per debtor, the whole truth for that debtor; source_ref is "
+        "{database}:debtor:{AutoKey}. total_outstanding (MYR, AutoCount's own figure) goes to "
+        "customers.ar_outstanding and as_of to ar_as_of. documents lists every open item by its "
+        "billing_documents source_ref (outstanding negative for an unapplied credit note); a "
+        "stored document of the customer with an open balance that is not listed is set to 0. "
+        "A listed ref that is not in the CRM, or is another customer's, is skipped (warning "
+        "documents_unknown). The customer resolves by customer_ref then customer_code inside the "
+        "anchor company, never created: unresolved fails by customer_ref. An older as_of, or an "
+        "identical push, answers unchanged (the older one with stale_ignored). First push of a "
+        "ref is created, later ones updated. No deletions door."
+    ),
     "delivery_orders": (
         "v2.7. Each record is the vendor API's DO object with its Details rows, unmapped, and is "
         "stored whole. Envelope book is required. Key (company, book, DocKey); source_ref is "
@@ -200,6 +244,38 @@ FIELD_NOTES: dict[str, str] = {
     "branches": (
         "v2.7. branchbypage rows as returned. Key (company, book, AccNo, BranchCode). No read "
         "and no deletions door."
+    ),
+    "cancel_sales_orders": (
+        "v2.8. AutoCount Cancel SO (XS) as the vendor API returns it, stored whole. Envelope book "
+        "is required. Key (company, book, DocKey); source_ref is {book}:XS:{DocKey}. Each Details "
+        "row is matched exactly or not at all: FromDocDtlKey names its SO line; without one, "
+        "the row is decided with its group (FromDocNo + ItemCode, whatever the Location): the "
+        "group's one line takes it, or, when nothing was delivered and the group's cancels "
+        "equal every line's TransferedQty, each line's cancelled qty is its own transfer. "
+        "Anything else is undetermined: kept, named on no line, never counted as cancelled. "
+        "An SO line's "
+        "cancelled qty is derived from live docs on every sync. Cancelled T (DocStatus V) "
+        "cancels nothing. A row whose SO is not here yet waits (cancel_line_waiting); an "
+        "undetermined or unplaceable one is unmatched (cancel_line_unmatched). Nothing is "
+        "retryable on a missing master. "
+        "/deletions marks the vanished doc_keys of a DocDate range; they then cancel nothing. "
+        "No read door."
+    ),
+    "cancel_purchase_orders": (
+        "v2.8. As cancel_sales_orders, AutoCount Cancel PO (XP) against PO or SPO lines (the "
+        "number's table decides; FromDocType reads PO on both). source_ref is {book}:XP:{DocKey}."
+    ),
+    "consignments": (
+        "v2.9. AutoCount Consignment. Once every item line carries TransferedQty the document "
+        "becomes a sales order marked Consignment, delivered in full and closed (the goods "
+        "left with the CG); TransferedQty is the returned qty. A void or vanished doc is "
+        "cancelled. A record without it is kept but moves no quantity. source_ref is "
+        "{book}:CSGN:{DocKey}. /deletions marks the vanished doc_keys."
+    ),
+    "consignment_returns": (
+        "v2.9. AutoCount Consignment Return, matched to the consignment line exactly "
+        "(FromDocDtlKey, else the group's one line) and recorded as returned qty only. "
+        "source_ref is {book}:CSGR:{DocKey}."
     ),
 }
 
@@ -220,9 +296,15 @@ STATUS_OPTIONAL: dict[str, bool] = {
     "shipping_orders": True,
     # Required: posted or cancelled, AutoCount's Cancelled flag.
     "billing_documents": False,
+    # No status: a debtor record states figures only.
+    "ar_outstanding": False,
     # Cancelled is read off the AutoCount record itself.
     "delivery_orders": False,
     "goods_receive_notes": False,
+    "cancel_sales_orders": False,
+    "cancel_purchase_orders": False,
+    "consignments": False,
+    "consignment_returns": False,
 }
 
 # The fixed warning vocabulary, drawn from the constants each producing
@@ -253,7 +335,9 @@ WARNINGS: list[str] = sorted(
         WARN_AGENT_UNRESOLVED,
         WARN_PRODUCT_UNRESOLVED,
         WARN_STALE_IGNORED,
+        WARN_DOCUMENTS_UNKNOWN,
         *CONTRACT_2_7_WARNINGS,
+        *CONTRACT_2_8_WARNINGS,
         "category_created",
         "uom_created",
         "brand_created",

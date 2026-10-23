@@ -562,6 +562,18 @@ class SPOAllocationUpdate(BaseModel):
     quantity_received: Optional[int] = None
     quantity_rejected: Optional[int] = None
     allocation_notes: Optional[str] = None
+
+    @field_validator("allocated_quantity", "quantity_received", "quantity_rejected")
+    @classmethod
+    def _qty_not_null(cls, v: Optional[int]) -> Optional[int]:
+        # Validators run only on provided values: omitted stays unchanged, an explicit
+        # null would hit a NOT NULL column (500), so refuse it here.
+        if v is None:
+            raise ValueError("Quantity cannot be blank.")
+        if v > 2147483647:
+            raise ValueError("Quantity is too large.")
+        return v
+
     # The document form view's Lines-tab editors (PLAN-spo-investigation-grid.md UAT
     # batch, AC-24 parts 2/3): the line's OWN ETA fallback and its OWN supplier,
     # never the shipment's - those stay read-only, booked against the shipment record.
@@ -1190,7 +1202,15 @@ class PurchaseRequestLineBase(BaseModel):
 
 
 class PurchaseRequestLineCreate(PurchaseRequestLineBase):
-    pass
+    # Write schema only: the response schema shares the base, and a NULL quantity from the
+    # external intake must still serialize on GET.
+    @model_validator(mode="after")
+    def _quantity_required_above_zero(self) -> "PurchaseRequestLineCreate":
+        if self.quantity is None or self.quantity <= 0:
+            raise ValueError("Quantity must be a number above 0.")
+        if self.quantity >= 10**13:
+            raise ValueError("Quantity is too large.")
+        return self
 
 
 class PurchaseRequestLineResponse(PurchaseRequestLineBase):
@@ -1229,6 +1249,8 @@ class PurchaseRequestHeaderBase(BaseModel):
     request_number: Optional[str] = None  # User-assignable form number (e.g. PR-2026-001)
     request_date: Optional[date] = None
     customer_name: Optional[str] = None
+    # The customer picked from the customer list; None = free text.
+    customer_id: Optional[str] = None
     # Site contact, free text ("name and contact number"). Optional.
     pic: Optional[str] = None
     project_title: Optional[str] = None
@@ -1241,7 +1263,7 @@ class PurchaseRequestHeaderBase(BaseModel):
     total_project_value_text: Optional[str] = None  # sponsorship form (e.g. 800K)
     sponsor_subject: Optional[str] = None  # sponsorship: showroom/mockup/others (lookup-bound)
     sponsor_subject_other: Optional[str] = None  # sponsorship: free-text detail when sponsor_subject='others'
-    sales_type: Optional[str] = None  # PR: project/cash_sales (lookup-bound); required for PR at service layer; SF ignores
+    sales_type: Optional[str] = None  # project/cash_sales (lookup-bound); required for PR at service layer, optional on SF
     expected_delivery_date: Optional[date] = None
     expected_po_date: Optional[date] = None
     expected_po_date_text: Optional[str] = None
@@ -1301,6 +1323,7 @@ class PurchaseRequestHeaderUpdate(BaseModel):
     request_number: Optional[str] = None
     request_date: Optional[date] = None
     customer_name: Optional[str] = None
+    customer_id: Optional[str] = None
     # Site contact, free text ("name and contact number"). Optional.
     pic: Optional[str] = None
     project_title: Optional[str] = None
@@ -1313,7 +1336,7 @@ class PurchaseRequestHeaderUpdate(BaseModel):
     total_project_value_text: Optional[str] = None
     sponsor_subject: Optional[str] = None
     sponsor_subject_other: Optional[str] = None
-    sales_type: Optional[str] = None  # PR sales type (project/cash_sales)
+    sales_type: Optional[str] = None  # PR / SF sales type (project/cash_sales)
     expected_delivery_date: Optional[date] = None
     expected_po_date: Optional[date] = None
     expected_po_date_text: Optional[str] = None
@@ -1512,7 +1535,7 @@ class PublicApprovalSummaryResponse(BaseModel):
     total_project_value: Optional[Decimal] = None  # sponsorship form (numeric)
     total_project_value_text: Optional[str] = None  # sponsorship form (descriptive)
     sponsor_subject: Optional[str] = None  # sponsorship form
-    sales_type: Optional[str] = None  # PR sales type (project/cash_sales); null for SF
+    sales_type: Optional[str] = None  # PR / SF sales type (project/cash_sales); optional on SF
     sponsor_subject_other: Optional[str] = None  # sponsorship form: free-text when 'others'
     requested_by: Optional[str] = None
     requested_by_contact_id: Optional[str] = None

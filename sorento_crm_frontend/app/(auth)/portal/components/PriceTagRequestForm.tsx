@@ -39,6 +39,8 @@ import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
+import { numberFieldError } from '@/lib/number-field';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -112,6 +114,7 @@ import {
 import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
 import { cn } from '@/lib/utils';
 import { promotionOptionName } from '@/lib/dealer-kit/line-pricing-types';
+import { codeWithName, distinctName, sameDisplayText } from '@/lib/product-display';
 
 /** Where an AI-extracted product line stands against the catalogue lookup
  *  (D7/AC-S6-2), shown in the extract dialog's own result table. */
@@ -150,7 +153,8 @@ interface DraftLine {
   product_set_id: string | null;
   name: string;
   code: string;
-  quantity: number;
+  /** null while the field is empty; checked on Save / Submit. */
+  quantity: number | null;
   included_accessories: string;
   /** Free-text note on the line (D6). */
   remarks: string;
@@ -564,6 +568,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const [lines, setLines] = useState<DraftLine[]>([]);
   const [attachments, setAttachments] = useState<PortalAttachment[]>([]);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  // The Sales Order box's accept list, off `/me` (see the /me effect below).
+  const [attachmentExtensions, setAttachmentExtensions] = useState<string[] | undefined>();
 
   // ---- AI extract sales order lines (D7, per-file per D-P3) ----
   const [aiExtractOpen, setAiExtractOpen] = useState(false);
@@ -615,6 +621,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     lines?: string;
   }>({});
   const [serverMessage, setServerMessage] = useState<string | null>(null);
+  // Set by a Save / Submit that found a bad quantity or price; rows then show their sentence live.
+  const [showNumberErrors, setShowNumberErrors] = useState(false);
 
   // A draft is `portal_draft_at`, not a status: a draft's status is `new`, the
   // same status a submitted request keeps until marketing claims it. Checking
@@ -810,13 +818,16 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // same `/me` payload every other portal page already fetches, and renders
   // the same inline blocked message the edit page's real 403 uses below.
   // The server remains the enforcement; this only avoids an empty form.
+  // ATTACH-ACCEPT: the same `/me` carries the Sales Order box's accept list,
+  // so it is read on an existing draft too; the visibility check stays /new.
   useEffect(() => {
-    if (!isNew) return;
     let cancelled = false;
     fetchMe()
       .then((c) => {
         if (cancelled) return;
+        setAttachmentExtensions(c.attachment_allowed_extensions);
         if (
+          isNew &&
           Array.isArray(c.visible_form_types) &&
           !c.visible_form_types.includes('price_tag_request')
         ) {
@@ -1011,7 +1022,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       return items.map((i) => ({
         value: `${i.kind}:${i.id}`,
         label: i.name || i.code,
-        description: `${i.kind === 'product_set' ? 'Set' : 'Product'} - ${i.code}`,
+        description: distinctName(i.code, i.name)
+          ? `${i.kind === 'product_set' ? 'Set' : 'Product'} - ${i.code}`
+          : i.kind === 'product_set'
+            ? 'Set'
+            : 'Product',
       }));
     },
     [],
@@ -1307,13 +1322,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
 
   /** The "Type a price" input, only shown while the line has no promotion
    *  (AC-S1-6). Empty clears it back to nothing typed. */
-  const setManualSellPrice = useCallback((key: string, value: string) => {
+  const setManualSellPrice = useCallback((key: string, value: number | null) => {
     setLines((prev) =>
-      prev.map((l) =>
-        l.key === key
-          ? { ...l, manual_sell_price: value === '' ? null : Number(value) }
-          : l,
-      ),
+      prev.map((l) => (l.key === key ? { ...l, manual_sell_price: value } : l)),
     );
   }, []);
 
@@ -1413,7 +1424,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         .map((i) => ({
           value: `product:${i.id}`,
           label: i.name || i.code,
-          description: `Product - ${i.code}`,
+          description: distinctName(i.code, i.name) ? `Product - ${i.code}` : undefined,
         }));
     },
     [],
@@ -1519,7 +1530,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       product_id: l.product_id,
       product_set_id: l.product_set_id,
       combo_id: l.combo_id,
-      quantity: l.quantity,
+      quantity: l.quantity as number,
       included_accessories: l.included_accessories || null,
       remarks: l.remarks || null,
       product_class: null,
@@ -1671,8 +1682,23 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     [pendingFiles],
   );
 
-  // ---- Save draft (D48a: validates nothing) ----
+  /** A blank or invalid quantity / manual price stops the send; the rows say which. */
+  const numbersInvalid = useCallback(() => {
+    const bad = lines.some(
+      (l) =>
+        numberFieldError(l.quantity, { min: 1, integer: true }) !== undefined ||
+        numberFieldError(l.manual_sell_price, { min: 0.01, optional: true }) !== undefined,
+    );
+    if (bad) {
+      setShowNumberErrors(true);
+      toggleSection('sales_order', true);
+    }
+    return bad;
+  }, [lines, toggleSection]);
+
+  // ---- Save draft (D48a: validates nothing but the numbers it would send) ----
   const handleSaveDraft = useCallback(async () => {
+    if (numbersInvalid()) return;
     setSaving(true);
     try {
       const debtor = debtors.find((d) => d.code === debtorCode);
@@ -1716,7 +1742,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setSaving(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveId, debtorCode, debtors, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug, applyFieldErrors]);
+  }, [numbersInvalid, effectiveId, debtorCode, debtors, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug, applyFieldErrors]);
 
   // ---- Revise (R3-1): sent through the portal revision engine, never the
   // retired post-submit PUT. A reason is required; the same zero-line/
@@ -1730,6 +1756,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       toast.error('Tell us what changed and why.');
       return;
     }
+    if (numbersInvalid()) return;
     try {
       const debtor = debtors.find((d) => d.code === debtorCode);
       await revise({
@@ -1771,7 +1798,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       toast.error(e instanceof Error ? e.message : 'Failed to send revision');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveId, reviseReason, revise, debtorCode, debtors, priceMode, neededByDate, notes, request, applyRequestFieldsFrom, flushPendingFiles, revisionHistory]);
+  }, [numbersInvalid, effectiveId, reviseReason, revise, debtorCode, debtors, priceMode, neededByDate, notes, request, applyRequestFieldsFrom, flushPendingFiles, revisionHistory]);
 
   const handleCancelRevise = useCallback(async () => {
     setReviseMode(false);
@@ -1823,6 +1850,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       scrollToFirstProblem();
       return;
     }
+    if (numbersInvalid()) return;
 
     setSubmitting(true);
     setServerMessage(null);
@@ -1873,7 +1901,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setSubmitting(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collectProblems, applyFieldErrors, openSectionForProblems, effectiveId, debtorCode, debtors, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug]);
+  }, [numbersInvalid, collectProblems, applyFieldErrors, openSectionForProblems, effectiveId, debtorCode, debtors, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug]);
 
   // ---- Approve proof ----
   const handleApprove = useCallback(async () => {
@@ -2258,7 +2286,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                                   </div>
                                   <div className="text-xs text-muted-foreground">
                                     {line.line_type === 'product' ? 'Product' : 'Set'}
-                                    {line.code ? ` - ${line.code}` : ''}
+                                    {line.code && !sameDisplayText(line.code, line.name) ? ` - ${line.code}` : ''}
                                   </div>
                                   {/* AC-S1-10/AC-S1-11: below the app's 992px
                                       mobile breakpoint (useIsMobile), the same
@@ -2314,7 +2342,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                                             {part.name || part.code}
                                           </span>
                                           <span className="text-xs text-muted-foreground">
-                                            {part.code ? ` - ${part.code}` : ''}
+                                            {part.code && !sameDisplayText(part.code, part.name) ? ` - ${part.code}` : ''}
                                             {part.role ? ` (${part.role})` : ''}
                                           </span>
                                         </>
@@ -2696,6 +2724,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             pendingFiles={pendingFiles}
             onPendingFilesChange={setPendingFiles}
             placeholder="Drop the sales order here, paste a screenshot, or"
+            allowedExtensions={attachmentExtensions}
             onExtract={(file) => {
               setAiExtractFiles([file]);
               setAiExtractOpen(true);
@@ -2801,6 +2830,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                       onRestoreParts={restoreParts}
                       onChoosePromotion={choosePromotion}
                       onManualSellPriceChange={setManualSellPrice}
+                      showNumberErrors={showNumberErrors}
                     />
                   ))}
                 </tbody>
@@ -3054,7 +3084,9 @@ interface LineRowProps {
   onAddPart: (key: string, option: SearchableSelectOption | null) => void;
   onRestoreParts: (key: string) => void;
   onChoosePromotion: (key: string, promotionId: string) => void;
-  onManualSellPriceChange: (key: string, value: string) => void;
+  onManualSellPriceChange: (key: string, value: number | null) => void;
+  /** True once a Save / Submit found a bad number: rows then show their message. */
+  showNumberErrors: boolean;
 }
 
 /** AC-S2-1: "CODE  RM x" - x is the candidate's LIST price in List mode, or
@@ -3129,7 +3161,9 @@ function PartRow({
                 <div className="truncate text-sm" title={part.name || part.code}>
                   {part.name || part.code}
                 </div>
-                <div className="text-xs text-muted-foreground">{part.code || '-'}</div>
+                {!sameDisplayText(part.code, part.name) ? (
+                  <div className="text-xs text-muted-foreground">{part.code || '-'}</div>
+                ) : null}
               </div>
             )}
           </div>
@@ -3178,6 +3212,7 @@ function LineRow({
   onRestoreParts,
   onChoosePromotion,
   onManualSellPriceChange,
+  showNumberErrors,
 }: LineRowProps) {
   const isSet = line.line_type === 'product_set';
   const warning = packageWarningFor(line);
@@ -3194,7 +3229,11 @@ function LineRow({
     ? {
         value: picked,
         label: line.name || line.code,
-        description: `${isSet ? 'Set' : 'Product'}${line.code ? ` - ${line.code}` : ''}`,
+        description: distinctName(line.code, line.name)
+          ? `${isSet ? 'Set' : 'Product'}${line.code ? ` - ${line.code}` : ''}`
+          : isSet
+            ? 'Set'
+            : 'Product',
       }
     : undefined;
 
@@ -3287,8 +3326,7 @@ function LineRow({
           {formatRM(pricing?.sell_price)}
         </div>
       ) : (
-        <Input
-          type="number"
+        <NumberInput
           inputMode="decimal"
           // The server takes `gt=0` with 2 decimal places (`ManualSellPrice`),
           // so 0 is a refusal, not a bound.
@@ -3296,8 +3334,13 @@ function LineRow({
           step={0.01}
           variant="sm"
           className="w-full max-w-28"
-          value={line.manual_sell_price ?? ''}
-          onChange={(e) => onManualSellPriceChange(line.key, e.target.value)}
+          value={line.manual_sell_price}
+          onValueChange={(v) => onManualSellPriceChange(line.key, v)}
+          error={
+            showNumberErrors
+              ? numberFieldError(line.manual_sell_price, { min: 0.01, optional: true })
+              : undefined
+          }
           placeholder="Type a price"
           aria-label={`Selling price for line ${index + 1}`}
         />
@@ -3345,15 +3388,15 @@ function LineRow({
           )}
         </td>
         <td className="px-2 py-2">
-          <Input
-            type="number"
+          <NumberInput
             inputMode="numeric"
             min={1}
             value={line.quantity}
-            onChange={(e) =>
-              onUpdate(line.key, {
-                quantity: Math.max(1, parseInt(e.target.value) || 1),
-              })
+            onValueChange={(v) => onUpdate(line.key, { quantity: v })}
+            error={
+              showNumberErrors
+                ? numberFieldError(line.quantity, { min: 1, integer: true })
+                : undefined
             }
             aria-label={`Quantity for line ${index + 1}`}
           />
@@ -3550,7 +3593,7 @@ function AIMatchCell({
         onChange={(v) => onPick(product, v)}
         options={suggestions.map((s) => ({
           value: s.product_id,
-          label: s.product_name ? `${s.product_code} - ${s.product_name}` : s.product_code,
+          label: codeWithName(s.product_code, s.product_name),
         }))}
         placeholder="Did you mean?"
         aria-label={`Did you mean, for ${product.product_code ?? 'this row'}`}

@@ -73,9 +73,15 @@ describe('AC-B3-1: the Lines tab reads Product, Qty, Taken, Remaining, Delivery 
       // replace Qty.
       'No.',
       'Product',
+      // OI-SPLIT-VIEW (UAC B1): the "Split" chip column sits right after Product.
+      'Split',
       'Confirmed',
       'SO Qty',
       'Requested',
+      // OI-RESERVE-PILL-QTY round 2 (owner, 21 Oct 2026): the reserve figures beside the
+      // line's own quantities, the same shared columns the Lines list carries.
+      'Reserve requested',
+      'Reserved',
       'Taken',
       'Remaining',
       'Delivery date',
@@ -239,7 +245,7 @@ describe('AC-RS-83 / 83b / 83c: the reserve icons live inside the State cell', (
     expect(screen.getByLabelText('Edit reserve')).toBeInTheDocument();
   });
 
-  it('AC-RS-83c: with the permission the State column starts at 410 wide with no minSize, so it can be narrowed back down', () => {
+  it('AC-RS-83c: with the permission the State column starts at 438 wide with no minSize, so it can be narrowed back down', () => {
     const { result } = renderHook(() =>
       useOrderInquiryHeaderLinesColumns({ canReserve: true } as never),
     );
@@ -247,8 +253,9 @@ describe('AC-RS-83 / 83b / 83c: the reserve icons live inside the State cell', (
       (column) => ((column as { id?: string }).id ?? (column as { accessorKey?: string }).accessorKey) === 'state',
     ) as { size?: number; minSize?: number };
     // Round 2 (`PLAN-oi-decision-trail-ui.md`): 380 -> 410, room for the new Decision
-    // trail icon beside the pill and the reserve icons.
-    expect(stateColumn.size).toBe(410);
+    // trail icon beside the pill and the reserve icons. OI-BULK-RESERVE: 410 -> 438 for
+    // the line's x Reject between the tick and the pen.
+    expect(stateColumn.size).toBe(438);
     expect(stateColumn.minSize).toBeUndefined();
   });
 
@@ -811,9 +818,11 @@ describe('W1 line confirmation column', () => {
     const ids = result.current.map((column) => (column as { id?: string; accessorKey?: string }).id ?? (column as { accessorKey?: string }).accessorKey);
     const productIndex = ids.indexOf('item_code');
     const confirmationIndex = ids.indexOf('confirmation');
+    // OI-SPLIT-VIEW (UAC B1): the Split column sits between Product and Confirmed.
+    expect(ids[productIndex + 1]).toBe('split');
     const soQtyIndex = ids.indexOf('so_qty');
     expect(productIndex).toBeGreaterThanOrEqual(0);
-    expect(confirmationIndex).toBe(productIndex + 1);
+    expect(confirmationIndex).toBe(productIndex + 2);
     expect(soQtyIndex).toBe(confirmationIndex + 1);
     const confirmationColumn = result.current.find(
       (c) => (c as { id?: string }).id === 'confirmation',
@@ -892,5 +901,92 @@ describe('State sorts on the line State, not the primary row state', () => {
       'line_cancelled',
       'nothing_to_buy',
     ]);
+  });
+});
+
+describe('OI-RESERVE-PILL-QTY round 2: the line reads Requested, Reserve requested and Reserved side by side', () => {
+  function cellOf(id: string, row: OrderInquiryWorklistRow) {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const column = result.current.find((c) => (c as { id?: string }).id === id) as
+      | { cell: (context: unknown) => React.ReactNode }
+      | undefined;
+    expect(column).toBeDefined();
+    const [lineRow] = toLineRows(foldInquiryLines([row]));
+    return column!.cell({ row: { original: lineRow } });
+  }
+
+  const cb315 = linesRow({
+    id: 'row-cb315',
+    item_code: 'CB315',
+    qty: '170',
+    reserve_state: 'requested',
+    requested_qty: '70',
+    asked_reserve_qty: '70',
+    reserved_qty: '0',
+  });
+
+  it('Reserve requested prints the open request qty (70), not the line qty (170)', () => {
+    render(<>{cellOf('reserve_requested', cb315)}</>);
+    expect(screen.getByText('70')).toBeInTheDocument();
+    expect(screen.queryByText('170')).not.toBeInTheDocument();
+  });
+
+  it('Reserved prints a muted dash while nothing is reserved yet', () => {
+    render(<>{cellOf('reserved', cb315)}</>);
+    expect(screen.getByText('-')).toBeInTheDocument();
+  });
+
+  it('a line with several live rows sums them, like Taken does (review S2)', () => {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const column = (id: string) =>
+      result.current.find((c) => (c as { id?: string }).id === id) as {
+        cell: (context: unknown) => React.ReactNode;
+      };
+    const [lineRow] = toLineRows(
+      foldInquiryLines([
+        linesRow({ id: 'a', so_line_id: 'sol-1', qty: '100', reserve_state: 'requested', requested_qty: '70', asked_reserve_qty: '70', reserved_qty: '0' }),
+        linesRow({ id: 'b', so_line_id: 'sol-1', qty: '70', reserve_state: 'reserved', requested_qty: '0', asked_reserve_qty: '0', reserved_qty: '25' }),
+        linesRow({ id: 'c', so_line_id: 'sol-1', qty: '9', reserve_state: 'requested', requested_qty: '5', asked_reserve_qty: '5', reserved_qty: '0' }),
+      ]),
+    );
+    render(
+      <>
+        <span data-testid="req">{column('reserve_requested').cell({ row: { original: lineRow } })}</span>
+        <span data-testid="res">{column('reserved').cell({ row: { original: lineRow } })}</span>
+      </>,
+    );
+    expect(screen.getByTestId('req')).toHaveTextContent('75');
+    expect(screen.getByTestId('res')).toHaveTextContent('25');
+  });
+
+  it('a partial answer keeps both numbers: asked 70, reserved 50 (owner ruling 21 Oct 2026)', () => {
+    const partial = linesRow({
+      id: 'row-partial',
+      qty: '170',
+      reserve_state: 'reserved',
+      requested_qty: '0',
+      asked_reserve_qty: '70',
+      reserved_qty: '50',
+    });
+    render(
+      <>
+        <span data-testid="req">{cellOf('reserve_requested', partial)}</span>
+        <span data-testid="res">{cellOf('reserved', partial)}</span>
+      </>,
+    );
+    expect(screen.getByTestId('req')).toHaveTextContent('70');
+    expect(screen.getByTestId('res')).toHaveTextContent('50');
+  });
+
+  it('Reserved prints the reserved qty once CS has reserved', () => {
+    render(
+      <>
+        {cellOf(
+          'reserved',
+          linesRow({ id: 'row-done', qty: '170', reserve_state: 'reserved', reserved_qty: '70', requested_qty: '0' }),
+        )}
+      </>,
+    );
+    expect(screen.getByText('70')).toBeInTheDocument();
   });
 });

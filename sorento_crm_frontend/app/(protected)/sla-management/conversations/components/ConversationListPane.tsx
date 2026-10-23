@@ -121,7 +121,7 @@ export default function ConversationListPane({
             className={cn(
               'flex-1 rounded px-2 py-1.5 text-xs font-medium transition-colors sm:text-sm',
               tab === value
-                ? 'bg-background text-foreground shadow-sm'
+                ? 'bg-primary text-primary-foreground shadow-sm'
                 : 'text-muted-foreground hover:text-foreground',
             )}
           >

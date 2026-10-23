@@ -43,6 +43,7 @@ from app.database import Base
 EXEMPTIONS: dict[str, str] = {
     # --- JUNCTION (composite PK, pure association) ---
     "respond_contact_access_types": "JUNCTION (contact_id + access_type_code)",
+    "respond_contact_tags": "JUNCTION (contact_id + tag_id)",
     "respond_contact_market_segments": "JUNCTION (contact_id + segment_code)",
     "team_member_market_segments": "JUNCTION (team_member_id + segment_code)",
     "team_member_brands": "JUNCTION (team_member_id + brand_code), mirrors team_member_market_segments",
@@ -50,6 +51,7 @@ EXEMPTIONS: dict[str, str] = {
     # not, and a bare "brands" key here would exempt the wrong table.
     "projects.brands": "JUNCTION (project_id + brand_id)",
     "projects.collaborators": "JUNCTION (project_id + user_id)",
+    "projects.series_brands": "JUNCTION (series_id + brand_id), mirrors series_categories",
     "projects.series_categories": "JUNCTION (series_id + category_id)",
     "projects.series_products": "JUNCTION (series_id + product_id)",
     # One row per project, keyed BY the project. A surrogate uuid would invite a

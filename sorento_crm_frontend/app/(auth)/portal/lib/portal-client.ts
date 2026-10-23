@@ -80,6 +80,9 @@ export interface PortalContact {
   impersonation?: PortalImpersonationInfo | null;
   /** Portal form types this contact may see (access-type union + overrides). */
   visible_form_types?: string[];
+  /** The "Portal Submission" attachment type's allowed extensions (no dots).
+   *  The file picker's accept list; empty = the type sets no limit. */
+  attachment_allowed_extensions?: string[];
 }
 
 export interface PortalSubmissionSummary {
@@ -988,7 +991,11 @@ export interface ProductLookupItem {
 }
 
 export interface DebtorLookupItem {
+  customer_id: string;
   debtor_name: string;
+  customer_code: string;
+  // The server's mapping of debtor_type to the PR Sales type; null = leave Sales type alone.
+  sales_type: string | null;
 }
 
 export interface DOProductLine {
@@ -1210,6 +1217,10 @@ export const AI_EXTRACT_FORM_KEYS: Record<PortalLandingKind, string> = {
   // prefix as every other portal form key (Phase 1 briefly had this as a
   // bare `price_tag_request` - wrong; fixed to match convention).
   price_tag_request: 'portal.price_tag_request',
+  // Never read: the sample request form offers no AI extract.
+  sample_request: 'portal.sample_request',
+  // Never read: the application form offers no AI extract.
+  new_product_application: 'portal.new_product_application',
   // Never read: the opportunity form offers no AI extract. Present because the map is keyed
   // by every landing kind.
   sales_opportunity: 'portal.sales_opportunity',

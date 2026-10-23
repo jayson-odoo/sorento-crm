@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { sameDisplayText } from '@/lib/product-display';
 
 export interface AsyncComboboxProps<T> {
   value: string;
@@ -30,6 +31,11 @@ export interface AsyncComboboxProps<T> {
    */
   displayValue?: string;
   id?: string;
+  /**
+   * Accessible name for a box that has no visible label of its own (a table cell). Giving
+   * it also marks the input as a combobox for assistive tech.
+   */
+  ariaLabel?: string;
   /**
    * When true, renders the input as an auto-growing `<textarea>` so long
    * values wrap onto multiple lines instead of scrolling horizontally. The
@@ -60,6 +66,7 @@ export function AsyncCombobox<T>({
   allowFreeText = true,
   displayValue,
   id,
+  ariaLabel,
   multiline,
 }: AsyncComboboxProps<T>) {
   /** Label of the option picked in THIS session, so the sync-from-parent effect
@@ -273,6 +280,9 @@ export function AsyncCombobox<T>({
         <Input
           id={id}
           type="text"
+          {...(ariaLabel
+            ? { role: 'combobox', 'aria-label': ariaLabel, 'aria-expanded': open }
+            : {})}
           value={text}
           placeholder={placeholder}
           disabled={disabled}
@@ -348,7 +358,7 @@ export function AsyncCombobox<T>({
                   }}
                 >
                   <div className="font-medium truncate">{label}</div>
-                  {meta && (
+                  {meta && !sameDisplayText(label, meta) && (
                     <div className="text-xs text-muted-foreground truncate">{meta}</div>
                   )}
                 </button>

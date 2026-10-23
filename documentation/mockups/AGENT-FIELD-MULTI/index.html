@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent field access mock v1</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--background:#fff;--foreground:#09090b;--card:#fff;--primary:#3b82f6;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--input:#e4e4e7;--destructive:#dc2626;--radius:.5rem}
+*{box-sizing:border-box}
+body{margin:0;background:#e4e4e7;color:var(--foreground);font:14px/1.5 Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.mocknav{position:sticky;top:0;z-index:80;background:#18181b;display:flex;gap:4px;padding:8px 16px;overflow-x:auto;font-size:13px;align-items:center}
+.mocknav span{color:#71717a;padding:6px 8px 6px 0;white-space:nowrap}
+.mocknav button{background:transparent;border:0;color:#a1a1aa;font:inherit;padding:6px 10px;border-radius:6px;cursor:pointer;white-space:nowrap}
+.mocknav button.on{background:#3f3f46;color:#fff}
+.mocknav .w{margin-left:auto;display:flex;gap:4px}
+.stage{padding:16px;display:flex;justify-content:center}
+.frame{position:relative;background:#fafafa;width:1280px;max-width:100%;overflow:hidden;border:1px solid #d4d4d8;border-radius:8px}
+.frame.narrow{width:375px}
+.view{display:none}.view.on{display:block}
+.container{padding:20px 16px 40px}
+.crumb{font-size:12px;font-weight:500;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-fg)}
+.hdr{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin:4px 0 16px}
+h1{font-size:20px;font-weight:600;margin:0}
+.card{border:1px solid var(--border);border-radius:12px;background:var(--card);box-shadow:0 1px 2px rgba(0,0,0,.05);margin-bottom:16px}
+.cardhead{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid var(--border)}
+.cardhead b{font-size:15px;font-weight:600}
+.cardbody{padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+.grp{border:1px solid var(--border);border-radius:var(--radius);padding:12px}
+.grp.dim{opacity:.45}
+.gh{display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center}
+.gh h4{margin:0;font-size:14px;font-weight:500}
+.switch{display:inline-flex;align-items:center;gap:8px;font-size:14px}
+.sw{width:32px;height:18px;border-radius:999px;background:var(--primary);position:relative}
+.sw:after{content:"";position:absolute;right:2px;top:2px;width:14px;height:14px;border-radius:50%;background:#fff}
+.lab{display:flex;flex-direction:column;gap:4px;padding:4px 0}
+.lab>span{font-size:14px}
+.ms{display:flex;flex-wrap:wrap;gap:4px;align-items:center;min-height:34px;border:1px solid var(--input);border-radius:var(--radius);padding:4px 30px 4px 6px;background:#fff;position:relative;font-size:13px}
+.ms .ph{color:var(--muted-fg);padding-left:4px}
+.ms .chev{position:absolute;right:10px;top:50%;transform:translateY(-50%);color:var(--muted-fg)}
+.chip{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 4px 0 8px;border-radius:6px;background:var(--muted);font-size:12.5px;max-width:100%}
+.chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip i{font-style:normal;color:var(--muted-fg);padding:0 4px;cursor:pointer;border-radius:4px}
+.chip i:hover{background:#e4e4e7;color:var(--foreground)}
+.pop{border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 24px rgba(0,0,0,.15);background:#fff;margin-top:4px;padding:4px;font-size:13px;max-width:520px}
+.pop .search{border-bottom:1px solid var(--border);padding:6px 8px;color:var(--muted-fg)}
+.pop .opt{display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px}
+.pop .opt:hover{background:var(--muted)}
+.pop .tick{width:14px;color:var(--primary)}
+.pills{display:flex;flex-wrap:wrap;gap:4px}
+.pill{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:999px;font-size:12px;background:var(--muted);white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 0;font-size:14px}
+.ok{background:#dcfce7;color:#166534}
+.btn{display:inline-flex;align-items:center;height:32px;padding:0 12px;border-radius:var(--radius);border:1px solid var(--input);background:#fff;font:inherit;font-size:13px;font-weight:500}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+.actions{display:flex;justify-content:flex-end;gap:8px}
+.note{font-size:12px;color:#92400e;background:#fffbeb;border:1px dashed #f59e0b;border-radius:8px;padding:8px 10px;margin-bottom:12px}
+.map{max-width:1280px;margin:0 auto 24px;padding:0 16px;font-size:13px}
+.map table{border-collapse:collapse;width:100%;background:#fff;border:1px solid var(--border)}
+.map td,.map th{border-bottom:1px solid var(--border);padding:6px 10px;text-align:left;vertical-align:top}
+.map code{font-size:12px}
+</style>
+</head>
+<body>
+<nav class="mocknav">
+  <span>AGENT-FIELD-MULTI v1</span>
+  <button data-v="today">Today (the bug)</button>
+  <button data-v="view" class="on">View</button>
+  <button data-v="edit">Edit</button>
+  <button data-v="open">Edit: Allow list open</button>
+  <div class="w"><button data-w="wide" class="on">1280</button><button data-w="narrow">375</button></div>
+</nav>
+
+<div class="stage"><div class="frame" id="frame">
+<div class="container">
+  <div class="crumb">User management / Contact tags</div>
+  <div class="hdr"><h1>Dealer</h1></div>
+
+  <!-- TODAY: what the owner saw -->
+  <div class="view" data-view="today">
+    <div class="note">Today's screen, rebuilt from the owner's screenshot: the duplicate row has no remove. Kept here only to compare.</div>
+    <div class="card"><div class="cardbody">
+      <div class="grp">
+        <div class="gh"><h4>Agent field access</h4></div>
+        <div style="margin-top:8px">
+          <div class="row"><span>Incoming Stock Enquiries: eta_delay_date</span><span class="pill ok">Allow</span></div>
+          <div class="row"><span>Incoming Stock Enquiries: informed_collection_date</span><span class="pill ok">Allow</span></div>
+          <div class="row"><span>Incoming Stock Enquiries: estimated_arrival_date</span><span class="pill ok">Allow</span></div>
+          <div class="row"><span>Incoming Stock Enquiries: estimated_arrival_date</span><span class="pill ok">Allow</span></div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- VIEW -->
+  <div class="view on" data-view="view">
+    <div class="card">
+      <div class="cardhead"><b>Access settings</b><span class="btn">Edit</span></div>
+      <div class="cardbody">
+        <div class="grp dim"><div class="gh"><h4>Chatbot agents</h4></div><div class="row"><span>Incoming Stock Enquiries</span><span class="pill ok">Allow</span></div></div>
+        <div class="grp">
+          <div class="gh"><h4>Agent field access</h4></div>
+          <div class="lab"><span>Allow</span>
+            <div class="pills">
+              <span class="pill">Incoming Stock Enquiries: ETA</span>
+              <span class="pill">Incoming Stock Enquiries: ETA delay</span>
+              <span class="pill">Incoming Stock Enquiries: Collection informed</span>
+            </div>
+          </div>
+        </div>
+        <div class="grp dim"><div class="gh"><h4>Media access</h4></div><p style="margin:4px 0 0;color:var(--muted-fg);font-size:14px">Not set</p></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- EDIT -->
+  <div class="view" data-view="edit">
+    <div class="card">
+      <div class="cardhead"><b>Access settings</b></div>
+      <div class="cardbody">
+        <div class="grp">
+          <div class="gh"><h4>Agent field access</h4><label class="switch"><span class="sw"></span>Set on this tag</label></div>
+          <div class="lab"><span>Allow</span>
+            <div class="ms">
+              <span class="chip"><span>Incoming Stock Enquiries: ETA</span><i title="Remove">&#10005;</i></span>
+              <span class="chip"><span>Incoming Stock Enquiries: ETA delay</span><i title="Remove">&#10005;</i></span>
+              <span class="chip"><span>Incoming Stock Enquiries: Collection informed</span><i title="Remove">&#10005;</i></span>
+              <span class="chev">&#9662;</span>
+            </div>
+          </div>
+          <div class="lab"><span>Deny</span>
+            <div class="ms"><span class="ph">None</span><span class="chev">&#9662;</span></div>
+          </div>
+        </div>
+        <div class="actions"><span class="btn">Cancel</span><span class="btn primary">Save</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- EDIT, list open -->
+  <div class="view" data-view="open">
+    <div class="card">
+      <div class="cardhead"><b>Access settings</b></div>
+      <div class="cardbody">
+        <div class="grp">
+          <div class="gh"><h4>Agent field access</h4><label class="switch"><span class="sw"></span>Set on this tag</label></div>
+          <div class="lab"><span>Allow</span>
+            <div class="ms">
+              <span class="chip"><span>Incoming Stock Enquiries: ETA</span><i title="Remove">&#10005;</i></span>
+              <span class="chip"><span>Incoming Stock Enquiries: ETA delay</span><i title="Remove">&#10005;</i></span>
+              <span class="chip"><span>Incoming Stock Enquiries: Collection informed</span><i title="Remove">&#10005;</i></span>
+              <span class="chev">&#9662;</span>
+            </div>
+            <div class="pop">
+              <div class="search">Search...</div>
+              <div class="opt"><span class="tick">&#10003;</span>Incoming Stock Enquiries: ETA</div>
+              <div class="opt"><span class="tick">&#10003;</span>Incoming Stock Enquiries: ETA delay</div>
+              <div class="opt"><span class="tick"></span>Incoming Stock Enquiries: CIDB inspection</div>
+              <div class="opt"><span class="tick"></span>Incoming Stock Enquiries: CIDB approval</div>
+              <div class="opt"><span class="tick"></span>Incoming Stock Enquiries: Gatepass</div>
+              <div class="opt"><span class="tick"></span>Incoming Stock Enquiries: Warehouse arrival</div>
+              <div class="opt"><span class="tick">&#10003;</span>Incoming Stock Enquiries: Collection informed</div>
+              <div class="opt"><span class="tick"></span>Incoming Stock Enquiries: Container number</div>
+              <div class="opt" style="color:var(--muted-fg)">... 16 more</div>
+            </div>
+          </div>
+          <div class="lab"><span>Deny</span>
+            <div class="ms"><span class="ph">None</span><span class="chev">&#9662;</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div></div>
+
+<div class="map">
+  <p><b>Real case:</b> tag "Dealer" on the shared dev DB holds one Allow entry (ETA). The mock adds ETA delay and
+  Collection informed, the fields in the owner's screenshot. The two old ETA rows show as one ETA chip.</p>
+  <table>
+    <tr><th>Element</th><th>Reuses</th></tr>
+    <tr><td>Allow / Deny multi-selects with chips and an x per chip</td><td><code>components/common/SearchableMultiSelect.tsx</code> through the tag screen's <code>PickList</code> (same control as Market segments, Regions)</td></tr>
+    <tr><td>Two lists, "Allow" above "Deny"; a field in one is not offered in the other</td><td>Stock visibility's "Only these locations" / "Except these locations" in the same card (<code>contact-tags/components/ContactTagSettings.tsx</code>)</td></tr>
+    <tr><td>Readable field names ("ETA delay", "Collection informed")</td><td><code>FIELD_LABELS</code> in <code>sorento_crm_backend/app/services/field_access.py</code>, already shown on the agent's own "Fields this agent may reveal" card</td></tr>
+    <tr><td>View pills, "Set on this tag" switch, Save / Cancel</td><td>Unchanged: <code>Pills</code>, group switch and footer of <code>ContactTagSettings.tsx</code></td></tr>
+  </table>
+</div>
+
+<script>
+document.querySelectorAll('[data-v]').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('[data-v]').forEach(x=>x.classList.toggle('on',x===b));
+  document.querySelectorAll('.view').forEach(v=>v.classList.toggle('on',v.dataset.view===b.dataset.v));
+});
+document.querySelectorAll('[data-w]').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('[data-w]').forEach(x=>x.classList.toggle('on',x===b));
+  document.getElementById('frame').classList.toggle('narrow',b.dataset.w==='narrow');
+});
+</script>
+</body>
+</html>

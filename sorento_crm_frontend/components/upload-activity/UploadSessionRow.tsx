@@ -209,7 +209,7 @@ export function UploadSessionRow({
                   className={cn(
                     'text-xs px-2.5 py-1 rounded-md',
                     bulkSubtab === 'needs_action'
-                      ? 'bg-background border border-border'
+                      ? 'bg-primary text-primary-foreground'
                       : 'text-muted-foreground hover:text-foreground',
                   )}
                   onClick={() => setBulkSubtab('needs_action')}
@@ -221,7 +221,7 @@ export function UploadSessionRow({
                   className={cn(
                     'text-xs px-2.5 py-1 rounded-md',
                     bulkSubtab === 'all'
-                      ? 'bg-background border border-border'
+                      ? 'bg-primary text-primary-foreground'
                       : 'text-muted-foreground hover:text-foreground',
                   )}
                   onClick={() => setBulkSubtab('all')}

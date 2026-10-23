@@ -11,7 +11,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
+import { numberFieldError } from '@/lib/number-field';
 import { EM_DASH } from '../../lib/format';
 import {
   effectiveLevel,
@@ -19,6 +20,7 @@ import {
   levelRowsForExport,
   type LevelSuggestion,
 } from '../lib/levelSuggestion';
+import { codeWithName, distinctName } from '@/lib/product-display';
 
 /**
  * The run's AutoCount level changes, as one list to carry over (S13f, AC-S13f.3).
@@ -120,36 +122,47 @@ function LevelChangeRow({
   onAmend?: (s: LevelSuggestion, amended: number | null) => Promise<void> | void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
+  // Set when the box was left with a bad figure: the sentence then follows the field live.
+  const [tried, setTried] = useState(false);
+  // Blank is a real answer here (it clears the amendment); only a bad figure is told.
+  const error = draft === null ? undefined : numberFieldError(draft, { min: 0, optional: true });
   const amended = s.amended_level !== null && s.amended_level !== s.suggested_level;
 
   const save = async () => {
     if (!onAmend || draft === null) return;
+    if (error) {
+      setTried(true);
+      return;
+    }
     const parsed = draft.trim() === '' ? null : Number(draft);
-    if (parsed !== null && (!Number.isFinite(parsed) || parsed < 0)) return;
     await onAmend(s, parsed === s.suggested_level ? null : parsed);
     setDraft(null);
+    setTried(false);
   };
 
   return (
     <tr className="border-t">
       <td className="max-w-64 py-1.5 pr-3">
-        <span className="block truncate font-medium" title={s.product_name}>
+        <span className="block truncate font-medium" title={codeWithName(s.product_code, s.product_name)}>
           {s.product_code}
         </span>
-        <span className="block truncate text-xs text-muted-foreground" title={s.product_name}>
-          {s.product_name}
-        </span>
+        {distinctName(s.product_code, s.product_name) ? (
+          <span className="block truncate text-xs text-muted-foreground" title={s.product_name}>
+            {s.product_name}
+          </span>
+        ) : null}
       </td>
       <td className="py-1.5 pr-3">{s.warehouse_code ?? EM_DASH}</td>
       <td className="py-1.5 pr-3 text-right tabular-nums">{s.current_level ?? 'none'}</td>
       <td className="py-1.5 pr-3 text-right">
         {onAmend ? (
-          <Input
-            type="number"
+          <NumberInput
             min={0}
             inputMode="decimal"
             className="ml-auto h-7 w-24 text-right tabular-nums"
             aria-label={`Set level for ${s.product_code}`}
+            error={tried ? error : undefined}
+            errorClassName="text-right"
             value={draft ?? String(effectiveLevel(s))}
             onChange={(e) => setDraft(e.target.value)}
             onBlur={() => void save()}

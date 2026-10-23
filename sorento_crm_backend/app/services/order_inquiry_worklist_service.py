@@ -11,8 +11,9 @@ order raised rows that were reachable only from the one sales order that raised 
 `JAN - DEC 2026 ORDER.xlsx`, sheet title `ORDER INQUIRY`, columns SO DATE / S/O NO / ITEM
 CODE / QTY / TOTAL QTY / DELIVERY DATE / PROJECT/CUSTOMER / SUPPLIER / PO NO, one sheet
 per delivery MONTH plus a tab per day showing what was raised that day. The columns are
-read off that file rather than retyped, the month is the primary axis rather than one
-filter among many, and the export writes the same workbook back out.
+read off that file rather than retyped, and on screen the month is the primary axis rather
+than one filter among many. The export prints those columns on ONE sheet, never split by
+month (owner, 16 Oct 2026).
 
 **SUPPLIER and PO NO are never guessed.** On their sheet a blank in those two columns
 means "not placed yet", and that is exactly what the system knows: the only link the
@@ -36,7 +37,7 @@ from decimal import Decimal
 from itertools import groupby
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import Date, String, case, cast, func, or_, select, text
+from sqlalchemy import Date, String, and_, case, cast, func, or_, select, text
 from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.orm import Session, aliased
 
@@ -58,6 +59,7 @@ from app.models.project_so import (
     ACK_LINKABLE,
     ACK_REJECTED,
     ACK_STATES,
+    DECISION_ACTIVE,
     INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
     INQUIRY_PLACED,
@@ -85,13 +87,16 @@ from app.services.product_companion_service import (
     bundled_with_item_codes_map,
     resolve_bundled_item_codes,
 )
+from app.services.order_inquiry_reserve_service import reserve_status_predicates
 from app.services.project_order_inquiry_service import (
     ProjectOrderInquiryService,
     arrives_outside_window,
+    cancel_plan_row,
     derived_spo_open_clauses,
     project_customer_label,
     project_title_with_note,
 )
+from app.services.project_line_split_service import remark_for_row  # noqa: F401 - AC-G5, the one REMARK function
 from app.services.project_supply_service import ProjectSupplyService
 from app.services.scm import order_link_service, priority, spo_supply
 from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
@@ -185,10 +190,6 @@ MONTH_WORD = (
 )
 
 EXPORT_TITLE = "ORDER INQUIRY"
-#: Where the rows that have no delivery date go. They are not dropped: an instruction
-#: with no date is still an instruction, and one that vanishes from the file is one
-#: nobody places.
-EXPORT_UNDATED_SHEET = "NO DATE"
 #: Read off `JAN - DEC 2026 ORDER.xlsx` row 2, trailing space and all. Retyping it
 #: tidier is how a column their filters no longer find gets introduced.
 EXPORT_HEADINGS = (
@@ -196,14 +197,24 @@ EXPORT_HEADINGS = (
     "S/O NO",
     "ITEM CODE",
     "QTY",
+    # OI-RESERVE-PILL-QTY round 2 (owner ruling 21 Oct 2026, "we just need more
+    # visibility"): the reserve figures right beside QTY, so a 170 line with a 70 reserve
+    # request never reads as one number. Inserted, not appended, on that ruling; the
+    # planning-board worksheet keeps its own ten columns (`WORKSHEET_HEADINGS`). Checked
+    # first: nothing in this repo reads the sheet back by position - the importer finds
+    # every column by its heading (`project_order_inquiry_reader.py` `_header_map`).
+    "REQUESTED RESERVE",
+    "RESERVED",
     "TOTAL QTY",
     "DELIVERY DATE",
     "PROJECT/CUSTOMER",
     "SUPPLIER",
     "PO NO ",
     "LOCATION",
-    # APPENDED, never inserted: their own filters and habits are keyed on the columns
-    # above being where they have always been (`PLAN-scm-oi-handshake.md` section 4).
+    # APPENDED after LOCATION (`PLAN-scm-oi-handshake.md` section 4): their own filters
+    # and habits are keyed on the columns above. The one exception is the owner's own
+    # ruling above (REQUESTED RESERVE / RESERVED beside QTY, 21 Oct 2026); any other new
+    # column still goes after these, never between them.
     "ACKNOWLEDGED",
     # Fix round (22 Sep): parity with the grid's own S3 columns (AC-D15) - the SAME
     # row-level Taken/Remaining the grid has shown since S3, never the retired
@@ -218,7 +229,37 @@ EXPORT_HEADINGS = (
     # only. APPENDED for the same reason ACKNOWLEDGED/TAKEN/REMAINING were: their own
     # filters are keyed on the columns before it being where they have always been.
     "SUGGESTED",
+    # OI-LINE-SPLIT round 3 (UAC AC-G7, mock section 6): a split line's rows, the owner's
+    # own Excel: QTY / DELIVERY DATE the line's (first row only), CHANGE QUANTITY / CHANGE
+    # DATE each row's. APPENDED before REMARK; no existing column moves or is renamed.
+    "CHANGE QUANTITY",
+    "CHANGE DATE",
+    # OI-LINE-SPLIT (UAC D2, AC-G7): the sheet's remark for the row, else the generated one.
+    "REMARK",
 )
+
+#: The planning-board OI worksheet's columns (Lane C, AC-C3): the sheet's first ten as they
+#: stood before the reserve figures went in, no ACKNOWLEDGED / TAKEN / REMAINING.
+WORKSHEET_HEADINGS = (
+    "SO DATE",
+    "S/O NO",
+    "ITEM CODE",
+    "QTY",
+    "TOTAL QTY",
+    "DELIVERY DATE",
+    "PROJECT/CUSTOMER",
+    "SUPPLIER",
+    "PO NO ",
+    "LOCATION",
+)
+
+
+def _export_reserve_qty(value: Any) -> Optional[float]:
+    """A reserve figure for the sheet: the quantity, blank when there is none (the row
+    carries "0" when it has no open request / nothing reserved)."""
+    qty = _dec(value)
+    return float(qty) if qty else None
+
 
 # The two routes a row can be attributed by, joined ONCE through a coalesce rather than
 # twice through two aliases of `customers`. The precedence is the same either way - the
@@ -461,6 +502,91 @@ _OPEN_REQUEST_QTY = (
     # constraint spans the two tables), so this reads one row rather than trusting it.
     .order_by(OrderInquiryReserveRequest.ordinal.desc())
     .limit(1)
+    .scalar_subquery()
+)
+#: OI-RESERVE-PILL-QTY (owner ruling 21 Oct 2026): what purchasing has ASKED CS to reserve
+#: off this row, kept once CS answers so a partial answer (asked 70, reserved 50) still
+#: shows both numbers - `_OPEN_REQUEST_QTY` above drops to nothing the moment the row is
+#: answered. A later balance request counts once, the same rule `commit_request` caps an
+#: amendment against (`order_inquiry_reserve_service.py`): the latest request row's own
+#: ask plus what CS kept on every earlier answered row, capped at the row's qty (asked 70,
+#: got 50, then 20 asked = 70, not 20). A request cancelled before its row was answered
+#: asks for nothing.
+_ASKED_REQUEST_ROW = and_(
+    OrderInquiryReserveRequestRow.row_id == OrderInquiryRow.id,
+    or_(
+        OrderInquiryReserveRequestRow.qty_reserved.isnot(None),
+        OrderInquiryReserveRequest.state != "cancelled",
+    ),
+)
+_ASKED_LATEST_ORDINAL = (
+    select(func.max(OrderInquiryReserveRequest.ordinal))
+    .select_from(OrderInquiryReserveRequestRow)
+    .join(
+        OrderInquiryReserveRequest,
+        OrderInquiryReserveRequest.id == OrderInquiryReserveRequestRow.request_id,
+    )
+    .where(_ASKED_REQUEST_ROW)
+    .correlate(OrderInquiryRow)
+    .scalar_subquery()
+)
+_ASKED_LATEST_QTY = (
+    select(OrderInquiryReserveRequestRow.qty_requested)
+    .select_from(OrderInquiryReserveRequestRow)
+    .join(
+        OrderInquiryReserveRequest,
+        OrderInquiryReserveRequest.id == OrderInquiryReserveRequestRow.request_id,
+    )
+    .where(_ASKED_REQUEST_ROW, OrderInquiryReserveRequest.ordinal == _ASKED_LATEST_ORDINAL)
+    .correlate(OrderInquiryRow)
+    .limit(1)
+    .scalar_subquery()
+)
+_ASKED_EARLIER_KEPT = (
+    select(func.coalesce(func.sum(OrderInquiryReserveRequestRow.qty_reserved), 0))
+    .select_from(OrderInquiryReserveRequestRow)
+    .join(
+        OrderInquiryReserveRequest,
+        OrderInquiryReserveRequest.id == OrderInquiryReserveRequestRow.request_id,
+    )
+    .where(
+        OrderInquiryReserveRequestRow.row_id == OrderInquiryRow.id,
+        OrderInquiryReserveRequestRow.qty_reserved.isnot(None),
+        OrderInquiryReserveRequest.ordinal < _ASKED_LATEST_ORDINAL,
+    )
+    .correlate(OrderInquiryRow)
+    .scalar_subquery()
+)
+# NULL when nothing was asked: Postgres LEAST skips a NULL argument, so it would
+# otherwise fall back to the row's own qty.
+_ASKED_RESERVE_QTY = case(
+    (_ASKED_LATEST_ORDINAL.is_(None), None),
+    else_=func.least(_ASKED_LATEST_QTY + _ASKED_EARLIER_KEPT, OrderInquiryRow.qty),
+)
+#: OI-BULK-RESERVE v4 (B2): the OPEN request row's warehouse id and code, same open-row
+#: conditions and latest ordinal as `_OPEN_REQUEST_QTY`, for the Lines page's Decide drafts.
+_OPEN_REQUEST_WAREHOUSE_ID = (
+    select(OrderInquiryReserveRequestRow.warehouse_id)
+    .select_from(OrderInquiryReserveRequestRow)
+    .join(
+        OrderInquiryReserveRequest,
+        OrderInquiryReserveRequest.id == OrderInquiryReserveRequestRow.request_id,
+    )
+    .where(
+        OrderInquiryReserveRequestRow.row_id == OrderInquiryRow.id,
+        OrderInquiryReserveRequestRow.qty_reserved.is_(None),
+        OrderInquiryReserveRequest.state == "requested",
+    )
+    .correlate(OrderInquiryRow)
+    .order_by(OrderInquiryReserveRequest.ordinal.desc())
+    .limit(1)
+    .scalar_subquery()
+)
+# Aliased: the main query outer-joins `Warehouse` itself, which this would auto-correlate to.
+_REQUEST_WAREHOUSE = aliased(Warehouse)
+_OPEN_REQUEST_LOCATION = (
+    select(_REQUEST_WAREHOUSE.warehouse_code)
+    .where(_REQUEST_WAREHOUSE.id == _OPEN_REQUEST_WAREHOUSE_ID)
     .scalar_subquery()
 )
 #: 6e.4 (AC-RS-78c): the LATEST answered request row's own `qty_reserved` for this
@@ -770,6 +896,7 @@ _COLUMNS = (
     ProjectSalesOrder.id.label("project_sales_order_id"),
     ProjectSalesOrder.is_pre_order.label("is_pre_order"),
     SalesOrder.id.label("core_sales_order_id"),
+    SalesOrder.doc_type.label("so_doc_type"),
     # AC-B6-7 (`PLAN-board-oi-mechanical-22sep.md`, S6): the "SO line" cell resolves
     # `/scm/sales-orders/<core_sales_order_id>?tab=lines&line=<core_line_id>`, so the only
     # NEW column the deep link needs is the core LINE's own id - the sales-order half is
@@ -818,6 +945,9 @@ _COLUMNS = (
     _HAS_OPEN_RESERVE_REQUEST.label("has_open_reserve_request"),
     # PLAN-oi-request-cs-reserve.md 6e.2: the open request row's own `qty_requested`.
     _OPEN_REQUEST_QTY.label("requested_qty"),
+    _ASKED_RESERVE_QTY.label("asked_reserve_qty"),
+    _OPEN_REQUEST_WAREHOUSE_ID.label("reserve_warehouse_id"),
+    _OPEN_REQUEST_LOCATION.label("reserve_location"),
     # 6e.4 (AC-RS-78c): the latest answer, so a declined line reads `declined`.
     _LATEST_ANSWERED_QTY.label("latest_answered_qty"),
     # PLAN-oi-worklist-split-customer-project.md, Slice 2: the Raised at column's own
@@ -1151,6 +1281,8 @@ class OrderInquiryWorklistService:
         # the whole-OI Confirm (`AcknowledgeFilter.inquiry_id`) and gear > Auto link
         # (`AutoPlaceRequest.filter.inquiry_id`).
         inquiry_id: Optional[str] = None,
+        # OI-BULK-RESERVE v4: keep a line when one of ITS request rows is in this status.
+        reserve: Optional[str] = None,
         # Lane C, PLAN-order-sheet-oi-reports-22sep.md (AC-C3): the OI worksheet's own
         # row set - a run's `run_scope_oi_rows` result, fed in as the row ids to print
         # rather than as a new set of filter clauses. `None` (the default) means "every
@@ -1246,6 +1378,21 @@ class OrderInquiryWorklistService:
             base = base.filter(_PROJECT_TITLE == project)
         if inquiry_id:
             base = base.filter(OrderInquiry.id == inquiry_id)
+        if reserve:
+            base = base.filter(
+                select(OrderInquiryReserveRequestRow.id)
+                .select_from(OrderInquiryReserveRequestRow)
+                .join(
+                    OrderInquiryReserveRequest,
+                    OrderInquiryReserveRequest.id == OrderInquiryReserveRequestRow.request_id,
+                )
+                .where(
+                    OrderInquiryReserveRequestRow.row_id == OrderInquiryRow.id,
+                    reserve_status_predicates()[reserve],
+                )
+                .correlate(OrderInquiryRow)
+                .exists()
+            )
         if row_ids is not None:
             base = base.filter(OrderInquiryRow.id.in_(list(row_ids)))
         if supplier_id:
@@ -1583,6 +1730,23 @@ class OrderInquiryWorklistService:
         anchor_headline_by_id = self._anchor_headline_by_id(rows, links)
         host_changes_by_row_id = self._host_changes_for_rows(rows, bundle_map)
         raise_events_by_row = self._raise_events_by_row(rows)
+        # OI-LINE-SPLIT (UAC D3): every page row's line splits, in one read.
+        splits_by_line = ProjectOrderInquiryService(self.db).splits_for_lines(
+            [row.so_line_id for row in rows]
+        )
+        # OI-SPLIT-VIEW (UAC B1 to B5): every page row's line split popup, in one read.
+        split_views = ProjectOrderInquiryService(self.db).split_views_for_lines(
+            [row.so_line_id for row in rows]
+        )
+        # AC-RR-6: one query for every PO line on the page that has an open SPO chained from it.
+        blocked = ProjectOrderInquiryService(self.db).po_lines_with_open_chained_spo(
+            [
+                link.get("po_line_id")
+                for row_links in links.values()
+                for link in row_links
+                if link.get("received") and link.get("po_line_id")
+            ]
+        )
         return {
             "data": [
                 self._serialize(
@@ -1596,6 +1760,9 @@ class OrderInquiryWorklistService:
                     host_changes_by_row_id,
                     suggested_links,
                     raise_events_by_row,
+                    blocked,
+                    splits_by_line,
+                    split_views,
                 )
                 for row in rows
             ],
@@ -2217,6 +2384,9 @@ class OrderInquiryWorklistService:
         host_changes_by_row_id: Optional[Dict[str, List[Dict[str, Any]]]] = None,
         suggested_links: Optional[Dict[str, List[Dict[str, Any]]]] = None,
         raise_events_by_row: Optional[Dict[str, Dict[str, Any]]] = None,
+        blocked: Optional[set] = None,
+        splits_by_line: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+        split_views: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         line_flow = (flow or {}).get(row.so_line_id, {})
         row_links = (links or {}).get(row.id, [])
@@ -2228,8 +2398,30 @@ class OrderInquiryWorklistService:
         linked_qty = sum(
             (_dec(link["qty"]) for link in row_links if not link.get("derived")), _ZERO
         )
+        # OI-RESERVE-RECEIVED (AC-RR-5): what a reserve request may still ask for -
+        # `order_inquiry_reserve_service._requestable`, worked off the links already
+        # loaded: qty less the OPEN links, the reserve links and the bundle (a link on a
+        # fully received document does not count against it).
+        open_linked = sum(
+            (
+                _dec(link["qty"])
+                for link in row_links
+                if not link.get("derived")
+                and (not link.get("received") or link.get("po_line_id") in (blocked or ()))
+            ),
+            _ZERO,
+        )
+        requestable = (
+            _dec(row.qty)
+            - open_linked
+            - _dec(getattr(row, "reserved_qty", None))
+            - _dec(row.bundled_qty)
+        )
         return {
             "id": row.id,
+            "reserve_requestable_qty": float(max(requestable, _ZERO)),
+            # OI-BULK-RESERVE v4: the header's id, so the Lines page can commit per order inquiry.
+            "order_inquiry_id": row.order_inquiry_id,
             "inquiry_no": row.inquiry_no,
             "so_date": row.so_date,
             "so_number": row.so_number,
@@ -2270,6 +2462,11 @@ class OrderInquiryWorklistService:
             # 6e.2: "0" when there is no open request row, same default shape as
             # `reserved_qty` above.
             "requested_qty": _qty_str(_dec(getattr(row, "requested_qty", None))),
+            # The last asked figure, kept after CS answers ("0" when nothing was asked).
+            "asked_reserve_qty": _qty_str(_dec(getattr(row, "asked_reserve_qty", None))),
+            # OI-BULK-RESERVE v4 (B2): the open request row's warehouse, null without one.
+            "reserve_warehouse_id": getattr(row, "reserve_warehouse_id", None),
+            "reserve_location": getattr(row, "reserve_location", None),
             # WHERE this row's quantity sits (AC-I5), off the ONE reader the per-project
             # list and the SCM sales-order detail also use.
             "links": row_links,
@@ -2355,11 +2552,22 @@ class OrderInquiryWorklistService:
             # which drops this column outright, so the export's own `row` namedtuple
             # never carries the attribute at all.
             "raise_history": getattr(row, "raise_history", None) or [],
+            # OI-LINE-SPLIT (UAC D3): the splits of this row's SO line for the Lines tab's
+            # read-only expand, the same keys `serialize_rows` carries. `[]` when unsplit.
+            "splits": (
+                (splits_by_line or {}).get(str(row.so_line_id), []) if row.so_line_id else []
+            ),
+            # OI-SPLIT-VIEW (UAC B1 to B5): the line's split popup, the same value
+            # `serialize_rows` carries. Null when unsplit.
+            "split_view": (
+                (split_views or {}).get(str(row.so_line_id)) if row.so_line_id else None
+            ),
             "verb": row.verb,
             "note": row.note,
             "project_id": row.project_id,
             "project_sales_order_id": row.project_sales_order_id,
             "core_sales_order_id": row.core_sales_order_id,
+            "so_doc_type": row.so_doc_type,
             # AC-B6-7 (`PLAN-board-oi-mechanical-22sep.md`, S6): the core LINE's own id,
             # which the "SO line" cell puts on
             # `/scm/sales-orders/<core_sales_order_id>?tab=lines&line=<core_line_id>`
@@ -3244,10 +3452,18 @@ class OrderInquiryWorklistService:
     def export_xlsx(
         self, *, columns: Sequence[str] = EXPORT_HEADINGS, **filters
     ) -> Tuple[str, bytes]:
-        """The filtered set as their own workbook: one sheet per delivery month.
+        """The filtered set as their own workbook, on ONE sheet.
 
-        Within a sheet the rows go SUPPLIER then ITEM CODE, which is the order their own
-        sheets are in and the order a buyer places in - one purchase order per factory.
+        Owner, 16 Oct 2026: "our OI excel cannot split by month, this applies to all
+        places where OI excel is printed" - the list export, the export tasks and the
+        handover attachment (Confirm and resend, `store_handover_excel`) all print
+        through here, so every delivery month and the undated rows share one
+        sheet.
+        A row with no date is still an instruction and is never dropped from the file.
+
+        Within the sheet the rows go SUPPLIER then ITEM CODE then delivery date, which is
+        the order their own sheets are in and the order a buyer places in - one purchase
+        order per factory.
         TOTAL QTY prints on the last row of each supplier-and-item-code run and totals
         that run, which is the one thing on their sheet that is arithmetic rather than
         typing. The run is the pair, not the item code alone: the same item bought from
@@ -3260,45 +3476,36 @@ class OrderInquiryWorklistService:
 
         `columns` (Lane C, AC-C3): the heading tuple to print, defaulting to the full
         `EXPORT_HEADINGS` so the list page's own export is unchanged. The OI worksheet
-        passes `EXPORT_HEADINGS[:10]` (no ACKNOWLEDGED / TAKEN / REMAINING) - a prefix,
-        so the row values below can be cut to the same length.
+        passes `WORKSHEET_HEADINGS` (no reserve figures, ACKNOWLEDGED / TAKEN /
+        REMAINING); `_write_sheet` prints each row by heading.
         """
         import openpyxl
 
         rows = self._all_rows(**filters)
-        grouped: Dict[str, List[Dict[str, Any]]] = {}
-        for row in rows:
-            key = (
-                row["delivery_date"].strftime("%Y-%m")
-                if row["delivery_date"]
-                else ""
-            )
-            grouped.setdefault(key, []).append(row)
 
         workbook = openpyxl.Workbook()
-        # A new workbook opens with one blank sheet; every sheet here is named for a
-        # month, so the blank one goes rather than sitting in front of them called
-        # "Sheet".
+        # A new workbook opens with one blank sheet called "Sheet"; the one sheet here is
+        # written by `_write_sheet` under the file's own title instead. An empty result
+        # is still that sheet with its headings, rather than a file a spreadsheet refuses.
         default_sheet = workbook.active
         if default_sheet is not None:
             workbook.remove(default_sheet)
-        # Dated months in order, undated last: a row with no date is still an instruction
-        # and is never dropped from the file.
-        for key in sorted(month for month in grouped if month):
-            self._write_sheet(workbook, month_label(key), grouped[key], columns=columns)
-        if "" in grouped:
-            self._write_sheet(
-                workbook, EXPORT_UNDATED_SHEET, grouped[""], columns=columns
-            )
-        if not workbook.sheetnames:
-            # An empty result is still a workbook a person can open and see the headings
-            # of, rather than a file their spreadsheet refuses.
-            self._write_sheet(workbook, EXPORT_TITLE, [], columns=columns)
+        self._write_sheet(workbook, EXPORT_TITLE, rows, columns=columns)
 
         buffer = io.BytesIO()
         workbook.save(buffer)
         filename = f"order-inquiry-{date.today().isoformat()}.xlsx"
         return filename, buffer.getvalue()
+
+    def export_pdf(self, **filters) -> Tuple[str, bytes]:
+        """`export_xlsx`'s sheet as a PDF (OI-DOWNLOAD, owner: "the pdf needs to be like Excel
+        la, just in pdf format ... 1 table"): the same title, header row and rows, from the same
+        `_sheet_values`, in the house style (`app/services/order_inquiry_pdf.py`)."""
+        from app.services import order_inquiry_pdf
+
+        filename = f"order-inquiry-{date.today().isoformat()}.pdf"
+        values = self._sheet_values(self._all_rows(**filters))
+        return filename, order_inquiry_pdf.render_pdf(EXPORT_HEADINGS, values)
 
     def _all_rows(self, **filters) -> List[Dict[str, Any]]:
         """The same set the list serves, unpaged, in the workbook's own order.
@@ -3314,6 +3521,10 @@ class OrderInquiryWorklistService:
                 OrderInquiryRow.delivery_date.asc().nulls_last(),
                 Supplier.supplier_name.asc().nulls_last(),
                 OrderInquiryRow.item_code.asc().nulls_last(),
+                # Raised order, then the bigger row, before the random id: the same rows
+                # print in the same order.
+                OrderInquiryRow.created_at.asc(),
+                OrderInquiryRow.qty.desc(),
                 OrderInquiryRow.id.asc(),
             )
             .all()
@@ -3327,12 +3538,145 @@ class OrderInquiryWorklistService:
         suggested_links = ProjectOrderInquiryService(self.db).suggested_links_for_rows(
             [row.id for row in rows]
         )
-        return [
-            self._serialize(
-                row, bundle_map=bundle_map, links=links, suggested_links=suggested_links
+        return self._with_splits(
+            [
+                self._serialize(
+                    row, bundle_map=bundle_map, links=links, suggested_links=suggested_links
+                )
+                for row in rows
+            ]
+        )
+
+    def _own_remarks(self, order_ids: Sequence[str]) -> Dict[str, str]:
+        """`mirror line id -> the planner's own REMARK` off these orders' ACTIVE revisions
+        (OI-SPLIT-GUIDE UAC F26, F27); a line with none is left out."""
+        if not order_ids:
+            return {}
+        out: Dict[str, str] = {}
+        for (snapshots,) in self.db.query(SOSupplyDecision.line_snapshots).filter(
+            SOSupplyDecision.project_sales_order_id.in_(list(order_ids)),
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        ):
+            for snapshot in snapshots or []:
+                remark = ((snapshot or {}).get("remark") or "").strip()
+                if remark and snapshot.get("project_line_id"):
+                    out[str(snapshot["project_line_id"])] = remark
+        return out
+
+    def _with_splits(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """OI-LINE-SPLIT (UAC D2, AC-G7): a line splits touch (split itself, or other lines'
+        splits sit on it) prints its plan rows (`line_plans`), the same rows as the OI email:
+        one per split under its own line, its own row when it is not split, and the
+        AutoCount extra row. QTY / DELIVERY DATE are the line's on its first row (blank
+        under it), CHANGE QUANTITY / CHANGE DATE the row's, REMARK the sheet's remark else
+        the generated one. The line prints once, off its first OI row. Every other row
+        prints as today, REMARK empty."""
+        import dataclasses
+
+        from app.services.project_line_split_service import LineSplitService, line_plans
+        from app.services.project_order_inquiry_service import whole_buy_line_ids
+
+        line_ids = sorted({str(row["so_line_id"]) for row in rows if row.get("so_line_id")})
+        if not line_ids:
+            return rows
+        orders = sorted(
+            {
+                str(order_id)
+                for (order_id,) in self.db.query(ProjectSalesOrderLine.project_sales_order_id)
+                .filter(ProjectSalesOrderLine.id.in_(line_ids))
+                .distinct()
+                .all()
+            }
+        )
+        # OI-SPLIT-GUIDE (UAC F27): a row with no split plan prints the planner's own REMARK
+        # frozen with its line in the active revision (`ConfirmLine.remark`), as the email
+        # does; one read for the whole export.
+        own_remarks = self._own_remarks(orders)
+
+        def plain(row: Dict[str, Any]) -> Dict[str, Any]:
+            return {**row, "split_remark": own_remarks.get(str(row.get("so_line_id") or ""), "")}
+
+        service = LineSplitService(self.db)
+        facts = service._facts_for(ProjectSalesOrderLine.project_sales_order_id.in_(orders))
+        # AC-G13: only a line bought whole prints its plan; a line partly from stock prints
+        # what its rows hold, as without splits.
+        whole = whole_buy_line_ids(self.db, [i for i, f in facts.items() if f.splits])
+        facts = {
+            i: f if i in whole else dataclasses.replace(f, splits=[]) for i, f in facts.items()
+        }
+        stored = [split for f in facts.values() for split in f.splits]
+        if not stored:
+            return [plain(row) for row in rows]
+        sits = service.effective_sits_on(stored)
+        plans = line_plans(facts, sits, {target for target in sits.values() if target})
+        out: List[Dict[str, Any]] = []
+        printed: set = set()
+        for row in rows:
+            line_id = str(row.get("so_line_id") or "")
+            plan = plans.get(line_id)
+            if plan is None or not plan.involved:
+                out.append(plain(row))
+                continue
+            if line_id in printed:
+                continue
+            printed.add(line_id)
+            # The row's own TAKEN / REMAINING / SUGGESTED belong to the row, printed once on
+            # the line's first row; worked off the row as it stands.
+            figures = (_export_taken(row), _export_remaining(row), _export_suggested(row))
+            plan_rows = list(plan.rows)
+            dropped = ProjectOrderInquiryService(self.db).dropped_split_qty(
+                line_id, plan.facts.splits
             )
-            for row in rows
-        ]
+            if dropped > _ZERO:
+                # AC-G17: what a re-plan dropped, the line's CANCEL BALANCE, as the email says.
+                plan_rows.append(cancel_plan_row(dropped))
+            for index, plan_row in enumerate(plan_rows):
+                first = index == 0
+                own_row = plan_row.split is None and not plan_row.extra
+                # What the row itself asks for: the split's (or extra's) qty, the line's
+                # changed qty on its own row. The 10-column worksheet prints it in QTY.
+                row_qty = plan_row.new_qty if plan_row.new_qty is not None else plan.base_qty
+                row_date = plan_row.new_date or (plan.base_date if own_row else None)
+                split = plan_row.split
+                # TOTAL QTY adds what the rows ask for now: a split dropped on another line
+                # sits inside that line's qty, and a cancel asks for nothing (AC-G13).
+                target = plans.get(str(split.sits_on_line_id or "")) if split is not None else None
+                # Inside the qty of the line it sits on, when that line prints its own row (it
+                # is not split itself).
+                inside = (
+                    target is not None
+                    and str(split.sits_on_line_id) != line_id
+                    and not any(r.split is not None for r in target.rows)
+                )
+                live = (
+                    _ZERO
+                    if plan_row.is_cancel or (split is not None and inside)
+                    else row_qty
+                )
+                out.append(
+                    {
+                        **row,
+                        "qty": _qty_str(plan.base_qty) if first else None,
+                        "delivery_date": plan.base_date if first else None,
+                        "row_qty": row_qty,
+                        "row_date": row_date,
+                        "live_qty": live,
+                        # Not printed in the 10-column worksheet: inside another line's qty,
+                        # or a cancel (it asks for nothing).
+                        "inside": inside or plan_row.is_cancel,
+                        "change_qty": plan_row.new_qty,
+                        "change_date": plan_row.new_date,
+                        "split_remark": plan_row.remark,
+                        "split_figures": figures if first else ("", "", ""),
+                        # The line's reserve figures, like `split_figures`: on its first
+                        # row only, never repeated per split.
+                        "asked_reserve_qty": row.get("asked_reserve_qty") if first else None,
+                        "reserved_qty": row.get("reserved_qty") if first else None,
+                        # The line's rows stay together, in their own order.
+                        "plan_key": (plan.base_date or date.max, line_id, index),
+                    }
+                )
+        return out
 
     def _write_sheet(
         self,
@@ -3345,6 +3689,24 @@ class OrderInquiryWorklistService:
         sheet = workbook.create_sheet(title=title[:31])
         sheet.append([EXPORT_TITLE])
         sheet.append(list(columns))
+        for values in self._sheet_values(rows, columns=columns):
+            sheet.append(values)
+        _style_sheet(sheet, columns)
+
+    def _sheet_values(
+        self, rows: Sequence[Dict[str, Any]], *, columns: Sequence[str] = EXPORT_HEADINGS
+    ) -> List[List[Any]]:
+        """The sheet's data rows under `columns`, in the sheet's order - the ONE source the
+        workbook (`_write_sheet`) and the PDF (`export_pdf`, OI-DOWNLOAD owner ruling: "the pdf
+        needs to be like Excel la") both print."""
+        out: List[List[Any]] = []
+        # Without CHANGE QUANTITY (the 10-column worksheet) a split line's rows print each
+        # row's own qty and date (AC-G13), never a blank QTY.
+        own_figures = "CHANGE QUANTITY" not in columns
+        if own_figures:
+            # ... and a split already inside another line's qty is not printed again: the QTY
+            # cells add up to TOTAL QTY.
+            rows = [row for row in rows if not row.get("inside")]
         # `￿` sorts after every real string, so a missing supplier or item code
         # lands at the end rather than at the top where a buyer would read it first.
         ordered = sorted(
@@ -3352,7 +3714,9 @@ class OrderInquiryWorklistService:
             key=lambda row: (
                 (row.get("supplier") or "￿"),
                 (row.get("item_code") or "￿"),
-                row.get("delivery_date") or date.max,
+                # A split line's rows sort by the line's date and stay together (AC-G7).
+                row["plan_key"] if "plan_key" in row
+                else (row.get("delivery_date") or date.max, "", 0),
             ),
         )
         runs = groupby(
@@ -3360,31 +3724,104 @@ class OrderInquiryWorklistService:
         )
         for (_supplier, code), members in runs:
             run = list(members)
-            total = sum((_dec(row.get("qty")) for row in run), _ZERO)
+            total = sum(
+                (_dec(row["live_qty"] if "live_qty" in row else row.get("qty")) for row in run),
+                _ZERO,
+            )
             for index, row in enumerate(run):
                 last_of_run = index == len(run) - 1
                 # Only where it says something the QTY column does not: a single-row
                 # run has its own quantity as its total, and printing it twice is noise.
                 run_total = float(total) if last_of_run and len(run) > 1 else None
-                values = [
-                    row.get("so_date"),
-                    row.get("so_number") or "",
-                    code or "",
-                    float(_dec(row.get("qty"))),
-                    run_total,
-                    row.get("delivery_date"),
-                    row.get("project_customer") or "",
+                taken, remaining, suggested = (
+                    row["split_figures"]
+                    if "split_figures" in row
+                    else (_export_taken(row), _export_remaining(row), _export_suggested(row))
+                )
+                values = {
+                    "SO DATE": row.get("so_date"),
+                    "S/O NO": row.get("so_number") or "",
+                    "ITEM CODE": code or "",
+                    "QTY": float(_dec(row["row_qty"]))
+                    if own_figures and "row_qty" in row
+                    else float(_dec(row.get("qty"))) if row.get("qty") not in (None, "") else None,
+                    "REQUESTED RESERVE": _export_reserve_qty(row.get("asked_reserve_qty")),
+                    "RESERVED": _export_reserve_qty(row.get("reserved_qty")),
+                    "TOTAL QTY": run_total,
+                    "DELIVERY DATE": row["row_date"]
+                    if own_figures and "row_qty" in row
+                    else row.get("delivery_date"),
+                    "PROJECT/CUSTOMER": row.get("project_customer") or "",
                     # Blank means nobody has placed it, exactly as it does on their
                     # sheet.
-                    row.get("supplier") or "",
-                    row.get("po_number") or "",
-                    row.get("location") or "",
-                    ack_label(row),
-                    _export_taken(row),
-                    _export_remaining(row),
-                    _export_suggested(row),
-                ]
-                # `columns` may be a PREFIX of `EXPORT_HEADINGS` (Lane C's worksheet, no
-                # ACKNOWLEDGED / TAKEN / REMAINING) - cut the row to match so the sheet
-                # never carries more cells than it has headings for.
-                sheet.append(values[: len(columns)])
+                    "SUPPLIER": row.get("supplier") or "",
+                    "PO NO ": row.get("po_number") or "",
+                    "LOCATION": row.get("location") or "",
+                    "ACKNOWLEDGED": ack_label(row),
+                    "TAKEN": taken,
+                    "REMAINING": remaining,
+                    "SUGGESTED": suggested,
+                    "CHANGE QUANTITY": float(row["change_qty"])
+                    if row.get("change_qty") is not None
+                    else None,
+                    "CHANGE DATE": row.get("change_date"),
+                    "REMARK": row.get("split_remark") or "",
+                }
+                # Keyed by heading, so `columns` may name any of them in any order (the
+                # planning-board worksheet prints `WORKSHEET_HEADINGS` only).
+                out.append([values[heading] for heading in columns])
+        return out
+
+
+#: OI-DOWNLOAD (owner, 21 Oct: "nicer, like the LOW STOCK REPORT"): each heading's width, by
+#: NAME so a cut column list (the 10-column worksheet) or a heading added later keeps its own;
+#: a heading not listed takes `_EXPORT_DEFAULT_WIDTH`.
+_EXPORT_WIDTHS = {
+    "SO DATE": 12,
+    "S/O NO": 14,
+    "ITEM CODE": 18,
+    "QTY": 9,
+    "REQUESTED RESERVE": 12,
+    "RESERVED": 11,
+    "TOTAL QTY": 11,
+    "DELIVERY DATE": 13,
+    "PROJECT/CUSTOMER": 40,
+    "SUPPLIER": 24,
+    "PO NO ": 16,
+    "LOCATION": 14,
+    "ACKNOWLEDGED": 16,
+    "TAKEN": 10,
+    "REMAINING": 12,
+    "SUGGESTED": 20,
+    "CHANGE QUANTITY": 12,
+    "CHANGE DATE": 13,
+    "REMARK": 30,
+}
+_EXPORT_DEFAULT_WIDTH = 14
+_EXPORT_DATE_HEADINGS = frozenset({"SO DATE", "DELIVERY DATE", "CHANGE DATE"})
+
+
+def _style_sheet(sheet, columns: Sequence[str]) -> None:
+    """The house style (`app.services.excel_style`, the LOW STOCK REPORT's look) on the OI
+    sheet: the title row bold, the heading row (row 2) dark with white bold text, every table
+    cell bordered and wrapped, frozen under the headings, dates dd/mm/yyyy. Columns, their
+    order and every value are untouched."""
+    from openpyxl.styles import Font
+    from openpyxl.utils import get_column_letter
+
+    from app.services import excel_style
+
+    sheet["A1"].font = Font(bold=True, size=13)
+    excel_style.style_table(
+        sheet,
+        header_row=2,
+        widths={
+            get_column_letter(index): _EXPORT_WIDTHS.get(heading, _EXPORT_DEFAULT_WIDTH)
+            for index, heading in enumerate(columns, start=1)
+        },
+        date_columns=[
+            index
+            for index, heading in enumerate(columns, start=1)
+            if heading in _EXPORT_DATE_HEADINGS
+        ],
+    )

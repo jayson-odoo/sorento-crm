@@ -4,7 +4,8 @@ from pathlib import Path as _Path
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List, Union
+from datetime import date as _date
+from typing import List, Optional, Union
 
 
 def _resolve_settings_env_file() -> str:
@@ -187,6 +188,11 @@ class Settings(BaseSettings):
     # the LLM, so it is off until switched on. Owner, 9 Oct 2026: labelling on dev only for now.
     # CHAT_TOPIC_LABELLER_ENABLED.
     chat_topic_labeller_enabled: bool = False
+    # CHAT-COMPOSER: one reply composer per answer type. Off = main's reply text, byte for byte.
+    # Read at call time through `chatbot.composers.enabled()`. CHAT_COMPOSER_ENABLED, when set,
+    # overrides the stored switch `system_settings.chatbot_composer_enabled` (Settings >
+    # Chatbot); unset (None) means the stored switch decides.
+    chat_composer_enabled: Optional[bool] = None
     # How long the request waits for the offloaded turn before giving up on it.
     # CHATBOT_TURN_WAIT_SECONDS.
     chatbot_turn_wait_seconds: int = 60
@@ -381,6 +387,13 @@ class Settings(BaseSettings):
     # delivery-orders pull is refused until BOTH Excel files have been compared with zero
     # differences; when False (default) the compare is advisory, as on Products / Stock.
     autocount_do_pull_confirm_requires_match: bool = False  # AUTOCOUNT_DO_PULL_CONFIRM_REQUIRES_MATCH
+    # DO-HISTORY (owner 13 Oct 2026): an AutoCount DO that lands (created, or an untracked Order
+    # Tracking row adopted) with a DocDate before this date has no tracking to come, so it lands
+    # DELIVERED with `orders.tracking_assumed_at` set and no delivery date. Unset = off. Set to
+    # 2026-07-01 for the 2023-09-01 history backfill. Fallback only (DO-BACKFILL-SETTING): the
+    # date saved on Settings > Integrations > AutoCount wins and needs no restart; this env
+    # value applies while none is saved (`app/services/runtime_settings.py`).
+    do_assume_delivered_before: Optional[_date] = None  # DO_ASSUME_DELIVERED_BEFORE
 
     model_config = SettingsConfigDict(
         env_file=_resolve_settings_env_file(),

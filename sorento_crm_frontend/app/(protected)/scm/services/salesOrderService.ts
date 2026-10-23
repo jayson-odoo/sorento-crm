@@ -37,9 +37,9 @@
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';
-import { buildDataGridParams, extractApiError } from '@/lib/api-client';
+import { apiError, buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { DataGridApiResponse } from '@/components/ui/data-grid';
-import type { SalesOrder, SalesOrderFormData } from '../types/scm.types';
+import type { SalesOrder, SalesOrderDeliveries, SalesOrderFormData } from '../types/scm.types';
 
 const BASE = '/api/v1/scm/sales-orders';
 
@@ -65,6 +65,8 @@ export interface SalesOrderListQuery {
   demandClass?: string | null;
   /** AutoCount's Transferable flag: 'yes' | 'no' | 'unknown' (never stated). Omit for all. */
   transferable?: string | null;
+  /** AC-CONSIGN-CRM: 'consignment' lists consignments; omitted lists sales orders. */
+  docType?: 'sales_order' | 'consignment' | null;
 }
 
 /**
@@ -141,6 +143,7 @@ export async function getSalesOrders(
       sales_agent_id: params.salesAgentId || undefined,
       demand_class: params.demandClass || undefined,
       transferable: params.transferable || undefined,
+      doc_type: params.docType || undefined,
     },
   );
   const res = await apiFetch(`${BASE}?${sp.toString()}`);
@@ -150,8 +153,18 @@ export async function getSalesOrders(
 
 /** One sales order with its lines. `linked_purchase_orders` is a LIST-only field. */
 export async function getSalesOrder(id: string): Promise<SalesOrder> {
-  const res = await apiFetch(`${BASE}/${id}`);
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the sales order'));
+  // 15 s, not the 30 s read default: a timeout is never retried, so a hung read ends on
+  // the page's error state and its Retry in at most this long.
+  const res = await apiFetch(`${BASE}/${id}`, { timeoutMs: 15_000 });
+  // `apiError` keeps the status, so the page can tell a 404 from a refusal or a fault.
+  if (!res.ok) throw await apiError(res, 'Failed to load the sales order');
+  return res.json();
+}
+
+/** The DOs and Cancel SO documents under each line of one sales order. */
+export async function getSalesOrderDeliveries(id: string): Promise<SalesOrderDeliveries> {
+  const res = await apiFetch(`${BASE}/${id}/deliveries`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the deliveries'));
   return res.json();
 }
 

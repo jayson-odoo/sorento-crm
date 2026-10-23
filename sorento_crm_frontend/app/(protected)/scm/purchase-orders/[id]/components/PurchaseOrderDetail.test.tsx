@@ -73,6 +73,12 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));
 
+// The route tests render the server page, whose `Container` reads the layout settings
+// provider; the wrapper is layout only, so a plain div stands in.
+vi.mock('@/components/common/container', () => ({
+  Container: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+}));
+
 const usePurchaseOrder = vi.fn();
 const updatePurchaseOrderMutateAsync = vi.fn();
 vi.mock('../../../hooks/usePurchaseOrders', () => ({
@@ -124,6 +130,7 @@ vi.mock('../../../services/salesOrderService', () => ({
 }));
 
 import { PurchaseOrderDetail } from './PurchaseOrderDetail';
+import PurchaseOrderDetailPage from '../page';
 import type { PurchaseOrder, PurchaseOrderLine } from '../../../types/scm.types';
 
 function po(over: Partial<PurchaseOrder> = {}): PurchaseOrder {
@@ -197,19 +204,31 @@ beforeEach(() => {
 });
 
 describe('PurchaseOrderDetail - states', () => {
-  it('shows a skeleton and the way back while loading', () => {
+  // The page header owns Back (`../page.tsx`); the component's states draw none, or a
+  // second one stacks under the header's while the order loads (SO-DETAIL-DUP-BACK).
+  it('shows a skeleton and no second Back while loading', () => {
     usePurchaseOrder.mockReturnValue({ data: undefined, isLoading: true, isError: false });
     const { container } = renderDetail();
     expect(container.querySelector('[data-slot="skeleton"], .animate-pulse')).toBeTruthy();
-    // The way back is present even before the record is: a slow read must not trap anybody.
-    expect(screen.getByText('Back to purchase orders')).toBeInTheDocument();
+    expect(screen.queryByText('Back to purchase orders')).toBeNull();
   });
 
   it('names what is missing rather than rendering an empty shell', () => {
     usePurchaseOrder.mockReturnValue({ data: null, isLoading: false, isError: true });
     renderDetail();
     expect(screen.getByText('Purchase order not found')).toBeInTheDocument();
-    expect(screen.getByText('Back to purchase orders')).toBeInTheDocument();
+    expect(screen.queryByText('Back to purchase orders')).toBeNull();
+  });
+
+  it.each([
+    ['loading', { data: undefined, isLoading: true, isError: false }],
+    ['failed', { data: null, isLoading: false, isError: true }],
+  ])('while %s, the purchase-order route has exactly one Back', async (_, state) => {
+    usePurchaseOrder.mockReturnValue(state);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = await PurchaseOrderDetailPage({ params: Promise.resolve({ id: 'po-1' }) });
+    render(<QueryClientProvider client={client}>{tree}</QueryClientProvider>);
+    expect(screen.getAllByRole('link', { name: /Back to purchase orders/ })).toHaveLength(1);
   });
 
   it('carries one tab per concern of the order, General first', () => {
@@ -747,6 +766,31 @@ describe('PurchaseOrderDetail - correcting the order in place', () => {
     expect(updatePurchaseOrderMutateAsync).not.toHaveBeenCalled();
   });
 
+  it('S9: a negative unit price marks the price box itself, with the sentence, and writes nothing', () => {
+    renderDetail();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    openTab('Lines');
+    const box = screen.getByLabelText('Unit price on CW-BASIN-450');
+    fireEvent.change(box, { target: { value: '-5' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save purchase order' }));
+
+    expect(updatePurchaseOrderMutateAsync).not.toHaveBeenCalled();
+    expect(box).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText('Enter a number of at least 0, or leave it blank.')).toBeInTheDocument();
+  });
+
+  it('S9: a negative discount marks the discount box itself', () => {
+    renderDetail();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    openTab('Lines');
+    const box = screen.getByLabelText('Discount on CW-BASIN-450');
+    fireEvent.change(box, { target: { value: '-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save purchase order' }));
+
+    expect(updatePurchaseOrderMutateAsync).not.toHaveBeenCalled();
+    expect(box).toHaveAttribute('aria-invalid', 'true');
+  });
+
   it('leaves the record alone on Cancel', () => {
     renderDetail();
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
@@ -882,5 +926,109 @@ describe('PurchaseOrderDetail - the Plan card (R1, AC-H7)', () => {
 
     expect(screen.getByText('No PO pull recorded.')).toBeInTheDocument();
     expect(screen.getByText('No sales order covered.')).toBeInTheDocument();
+  });
+});
+
+// AC-CANCEL-CRM (owner hand test, 13 Oct): AutoCount Cancel PO is in TransferedQty, so the PO
+// line shows its own Qty cancelled, which document cancelled it and how it was matched.
+describe('PurchaseOrderDetail - AutoCount Cancel PO on the lines', () => {
+  function cancelledPo() {
+    return po({
+      lines: [
+        {
+          id: 'l-1', sku: 'CW-BASIN-450', product_name: 'Ceramic Wash Basin 450mm',
+          qty_ordered: 320, qty_received: 300, qty_cancelled: 20, uom: 'PCS',
+          warehouse_code: 'WH-KL', line_status: 'closed', expected_date: '2026-07-30',
+          unit_price: '100.00', discount: '15.00', line_total: '31985.00', currency: 'MYR',
+          cancels: [{ doc_no: 'XP-000077', qty: 20, match_reason: 'item' }],
+        },
+      ],
+    });
+  }
+
+  it('states Qty cancelled right after Qty received, with the document and match on it', () => {
+    usePurchaseOrder.mockReturnValue({ data: cancelledPo(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    const received = headers.findIndex((h) => h.includes('Qty received'));
+    expect(headers[received + 1]).toContain('Qty cancelled');
+    const cell = screen.getByTestId('qty-cancelled-l-1');
+    expect(cell).toHaveTextContent('20');
+    expect(cell).toHaveAttribute('title', 'XP-000077: 20 (item)');
+    // Owner, 13 Oct: the line is done (closed), so it reads Completed, not Partly cancelled.
+    expect(screen.queryByText('Partly cancelled')).not.toBeInTheDocument();
+  });
+
+  it('reads Partly cancelled while a partly cancelled line is still open', () => {
+    const order = cancelledPo();
+    order.lines[0] = { ...order.lines[0], qty_received: 100, line_status: 'open' };
+    usePurchaseOrder.mockReturnValue({ data: order, isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    expect(screen.getByText('Partly cancelled')).toBeInTheDocument();
+  });
+
+  // AC-CONSIGN-CRM part C: the received figure on screen is net of the cancel, so an edit
+  // session that recomputes outstanding from it must add the cancel back, or the cancelled
+  // qty reads as still to arrive (320 ordered, 100 received + 20 cancelled = 200, not 220).
+  it('keeps a cancelled qty out of outstanding while the order is being edited', () => {
+    const order = cancelledPo();
+    order.lines[0] = {
+      ...order.lines[0], qty_received: 100, line_status: 'open', outstanding_qty: 200,
+    };
+    usePurchaseOrder.mockReturnValue({ data: order, isLoading: false, isError: false });
+    renderDetail();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    openTab('Lines');
+    const row = screen.getByLabelText('Qty ordered on CW-BASIN-450').closest('tr') as HTMLElement;
+    expect(within(row).getByText('200')).toBeInTheDocument();
+    expect(within(row).queryByText('220')).toBeNull();
+  });
+});
+
+describe('PurchaseOrderDetail - a blank or invalid quantity is pending, never 0 (round 2, S-E)', () => {
+  const cells = (tr: HTMLElement) =>
+    Array.from(tr.querySelectorAll('td')).map((td) => (td.textContent ?? '').trim());
+  const footer = () =>
+    Array.from((document.querySelector('tfoot') as HTMLElement).querySelectorAll('td')).map((td) =>
+      (td.textContent ?? '').trim(),
+    );
+
+  function openEditLines() {
+    usePurchaseOrder.mockReturnValue({ data: po(), isLoading: false, isError: false });
+    renderDetail();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    openTab('Lines');
+    return screen.getByLabelText('Qty ordered on CW-BASIN-450') as HTMLInputElement;
+  }
+
+  it.each([
+    ['blank', ''],
+    ['negative', '-5'],
+  ])('a %s qty shows - in Outstanding and in the totals that include it', (_name, typed) => {
+    const box = openEditLines();
+    const tr = box.closest('tr') as HTMLElement;
+    const dashesBefore = footer().filter((t) => t === '-').length;
+    const rowDashesBefore = cells(tr).filter((t) => t === '-').length;
+    fireEvent.change(box, { target: { value: typed } });
+    // Outstanding was 320 and must not become 0.
+    expect(cells(tr).filter((t) => t === '-').length).toBeGreaterThan(rowDashesBefore);
+    const headers = Array.from(document.querySelectorAll('thead th')).map((th) => (th.textContent ?? '').trim());
+    const outstandingAt = headers.findIndex((h) => /^Outstanding qty/.test(h));
+    expect(outstandingAt).toBeGreaterThan(-1);
+    expect(cells(tr)[outstandingAt]).toBe('-');
+    expect(footer().filter((t) => t === '-').length).toBeGreaterThanOrEqual(dashesBefore + 2);
+  });
+
+  it('Save is refused with the sentence under the qty box', () => {
+    const box = openEditLines();
+    fireEvent.change(box, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save purchase order' }));
+    expect(updatePurchaseOrderMutateAsync).not.toHaveBeenCalled();
+    expect(box).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText(/^Enter a number above 0\.$/)).toBeInTheDocument();
   });
 });

@@ -11,8 +11,10 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
+import { numberFieldError, parseNumberDraft } from '@/lib/number-field';
 import { bareLocationCode } from '../../../_shared/lib/orderInquiryReserve';
 
 /**
@@ -22,9 +24,11 @@ import { bareLocationCode } from '../../../_shared/lib/orderInquiryReserve';
  * own header `Reserve (N)` CTA does the one batched commit, `OrderInquiryDetail.tsx`
  * owns the staged map). Replaces `ReserveRowDialog`'s per-row `ReserveRowSection`.
  *
- * Reserve mode: Location is a `SearchableSelect` (options = the row's own pools with
- * availability), Reserved defaults to `min(requested, available at the chosen pool)`
- * and recomputes to that ceiling every time Location changes. Amend mode: Location is
+ * Reserve mode: Location is a `SearchableSelect` (options = the row's own pools, their
+ * availability shown as information), Reserved defaults to the request. Owner, 16 Oct: never
+ * capped or recomputed by CRM stock - AutoCount may already hold the reservation while CRM
+ * stock lags - so any qty up to the request is allowed whatever the pool shows. Amend mode:
+ * Location is
  * locked read-only text (the row's own answered location never changes on an amend),
  * Reserved starts at the row's own net reserved.
  *
@@ -32,8 +36,11 @@ import { bareLocationCode } from '../../../_shared/lib/orderInquiryReserve';
  * both modes (6e.4, S1): availability never waives it - "only 20 at DC1" is exactly the
  * explanation the requester reads in the mail.
  *
- * The caller mounts this only once the row's pool options have loaded (6e.4, S2), so
- * the reserve-mode prefill is read off real availability, never an empty map.
+ * The caller mounts this only once the row's pool options have loaded (6e.4, S2), so the
+ * default location and the option list are real, never empty.
+ *
+ * Its button reads "Save" (owner 16 Oct: no "Stage"), Fulfilment Planning's own word for a
+ * decision kept until Confirm (`BoardDecideControl.tsx` "Save N lines").
  */
 export interface ReserveLineFormStagePayload {
   /** Absent when no location is chosen: the server defaults it (6e.4, S8). */
@@ -91,38 +98,19 @@ export function ReserveLineForm({
   const requested = Number(requestedQty || '0');
   const max = maxQty != null ? Number(maxQty) : requested;
 
-  // What Reserved auto-sets to, on mount and on every Location switch: the request,
-  // capped at what the chosen pool actually has (0 when that pool reports nothing). No
-  // location at all (the server defaults it) prefills the request itself.
-  const ceilingFor = React.useCallback(
-    (locationId: string): number => {
-      if (mode === 'amend' || !locationId) return requested;
-      const available = availableQtyByLocation[locationId];
-      return available != null ? Math.min(requested, available) : 0;
-    },
-    [mode, requested, availableQtyByLocation],
-  );
-
   const [location, setLocation] = React.useState(() => defaultLocationId ?? '');
-  const [qty, setQty] = React.useState(() =>
-    mode === 'amend'
-      ? Math.max(0, Number(initialQty || '0'))
-      : Math.max(0, ceilingFor(defaultLocationId ?? '')),
+  // What the operator typed, kept as typed; the final value is checked on Save.
+  const [qtyText, setQtyText] = React.useState(() =>
+    String(mode === 'amend' ? Math.max(0, Number(initialQty || '0')) : Math.max(0, requested)),
   );
   const [reason, setReason] = React.useState('');
+  const [showErrors, setShowErrors] = React.useState(false);
 
-  function handleLocationChange(value: string) {
-    setLocation(value);
-    setQty(Math.max(0, ceilingFor(value)));
-  }
-
-  function handleQtyChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const raw = Number(event.target.value);
-    setQty(Math.min(Math.max(Number.isFinite(raw) ? raw : 0, 0), max));
-  }
+  const qtyError = numberFieldError(qtyText, { min: 0, max });
+  const qty = parseNumberDraft(qtyText);
 
   // AC-RS-85 / 6e.4: Reason appears, and is required, whenever Reserved < Requested.
-  const showReason = qty < requested;
+  const showReason = (qty ?? requested) < requested;
   const canStage = !showReason || reason.trim().length > 0;
 
   // AC-RS-85: "options = the row's pools with availability" - the availability reads
@@ -145,6 +133,10 @@ export function ReserveLineForm({
   );
 
   function handleStage() {
+    if (qtyError || qty === null) {
+      setShowErrors(true);
+      return;
+    }
     const cleanReason = showReason ? reason.trim() || null : null;
     if (mode === 'reserve') {
       onStage(
@@ -171,7 +163,7 @@ export function ReserveLineForm({
               <SearchableSelect
                 id="reserve-line-location"
                 value={location}
-                onChange={handleLocationChange}
+                onChange={setLocation}
                 options={displayLocationOptions}
               />
             </div>
@@ -188,14 +180,14 @@ export function ReserveLineForm({
           )}
           <div className="space-y-1">
             <Label htmlFor="reserve-line-qty">Reserved</Label>
-            <Input
+            <NumberInput
               id="reserve-line-qty"
-              type="number"
               min={0}
               max={max}
               step="any"
-              value={qty}
-              onChange={handleQtyChange}
+              value={qtyText}
+              error={showErrors ? qtyError : undefined}
+              onChange={(event) => setQtyText(event.target.value)}
             />
           </div>
           {showReason ? (
@@ -214,7 +206,7 @@ export function ReserveLineForm({
             Cancel
           </Button>
           <Button type="button" onClick={handleStage} disabled={!canStage}>
-            Stage
+            Save
           </Button>
         </DialogFooter>
       </DialogContent>

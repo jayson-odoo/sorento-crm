@@ -181,6 +181,7 @@ from app.schemas.product import (
 )
 from app.services.error_handler import handle_not_found, handle_conflict, AppException
 from app.services.company_scope import stamp_lookup_companies
+from app.services.contact_brand_scope import product_in_scope_clauses
 from app.schemas.common import PaginationResponse
 from app.models.user import SystemSetting
 from app.services.embedding_events import publish_embedding_event
@@ -1232,6 +1233,7 @@ class ProductService:
         """Delete a product."""
         product = self.get_product(product_id)
         self._reject_if_companion_rule_dependency(product_id)
+        self._reject_if_new_product_application_link(product_id)
         # Capture children BEFORE delete so we can re-anchor them to the next
         # existing ancestor afterwards (DB ondelete=SET NULL orphans them).
         ex_children = self._variant_child_ids(product_id)
@@ -1240,6 +1242,30 @@ class ProductService:
         for child_id in ex_children:
             self._reconcile_variant_links(child_id)
         return {"message": "Product deleted successfully"}
+
+    def _reject_if_new_product_application_link(self, product_id: str) -> None:
+        """A new product application line opened as this product holds it (RESTRICT, so the
+        link purchasing made is never silently undone); answer with a 409 naming the
+        application instead of the bare IntegrityError's 500."""
+        from app.models.new_product_application import (
+            NewProductApplication,
+            NewProductApplicationLine,
+        )
+
+        row = (
+            self.db.query(NewProductApplication.application_no)
+            .join(
+                NewProductApplicationLine,
+                NewProductApplicationLine.application_id == NewProductApplication.id,
+            )
+            .filter(NewProductApplicationLine.opened_product_id == product_id)
+            .first()
+        )
+        if row is not None:
+            raise handle_conflict(
+                f"This product was opened for new product application {row[0]}. "
+                "Undo that line first."
+            )
 
     def _reject_if_companion_rule_dependency(self, product_id: str) -> None:
         """RESTRICT is real at the DB level (migration 495), but a bare
@@ -2446,6 +2472,19 @@ class ProductCategoryService:
         """Delete a category. Raises if any products use this category."""
         category = self.get_category(category_id)
         from sqlalchemy import func
+        from app.models.projects import ProjectSeries, ProjectSeriesCategory
+        series_names = [
+            row[0]
+            for row in self.db.query(ProjectSeries.name)
+            .join(ProjectSeriesCategory, ProjectSeriesCategory.series_id == ProjectSeries.id)
+            .filter(ProjectSeriesCategory.category_id == category_id)
+            .order_by(ProjectSeries.name)
+            .all()
+        ]
+        if series_names:
+            raise handle_conflict(
+                f"Used by series {', '.join(series_names)}; remove it there first."
+            )
         product_count = self.db.query(func.count(Product.id)).filter(
             Product.category_id == category_id
         ).scalar() or 0
@@ -2584,6 +2623,19 @@ class BrandService:
     def delete_brand(self, brand_id: str):
         """Delete a brand. Products using this brand have their brand_id set to null (brand is optional)."""
         brand = self.get_brand(brand_id)
+        from app.models.projects import ProjectSeries, ProjectSeriesBrand
+        series_names = [
+            row[0]
+            for row in self.db.query(ProjectSeries.name)
+            .join(ProjectSeriesBrand, ProjectSeriesBrand.series_id == ProjectSeries.id)
+            .filter(ProjectSeriesBrand.brand_id == brand_id)
+            .order_by(ProjectSeries.name)
+            .all()
+        ]
+        if series_names:
+            raise handle_conflict(
+                f"Used by series {', '.join(series_names)}; remove it there first."
+            )
         updated = (
             self.db.query(Product)
             .filter(Product.brand_id == brand_id)
@@ -2842,6 +2894,9 @@ class ProductAttachmentService:
             # get_product_attachments_by_product. Without this, "Move to Trash"d
             # files keep showing in product-attachment listings.
             ProductAttachment.attachment.has(Attachment.is_deleted == False),
+            # A brand-scoped session lists only in-brand products' rows: the brand rule sits
+            # on Product, which the joinedload LEFT JOIN does not filter on.
+            *product_in_scope_clauses(self.db, ProductAttachment.product_id),
         )
 
         if entity_buckets is not None and entity_buckets.product_codes:

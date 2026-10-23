@@ -7,6 +7,7 @@ from app.api.v1.projects import (
     forecast,
     fulfilment_planning,
     leads,
+    line_splits,
     order_inquiries,
     parties,
     planning_changes,
@@ -16,11 +17,13 @@ from app.api.v1.projects import (
     quotation_templates,
     quotations,
     sales_orders,
+    sample_requests,
     samples_pos,
     schedules,
     so_line_attachments,
     status_graphs,
     stock_debt,
+    stock_debt_snapshots,
     tasks,
     types,
 )
@@ -53,6 +56,9 @@ router.include_router(status_graphs.router, tags=["project-status-graphs"])
 # Samples and customer POs mount at the root for the same reason: both are nested
 # under a project for listing but addressed directly for editing.
 router.include_router(samples_pos.router, tags=["project-samples-pos"])
+# Sample requests (SR-CORE): `/sample-requests/...` and `/projects/{id}/sample-requests`, root-mounted
+# ahead of the projects router for the same reason as the routers above.
+router.include_router(sample_requests.router, tags=["project-sample-requests"])
 # Phase 2 document intake. Root-mounted for the same reason as the three above: a PO
 # version, a schedule version and an SO draft are each listed under a project but
 # addressed directly by id. All three MUST precede the projects router.
@@ -65,6 +71,9 @@ router.include_router(divergences.router, tags=["project-so-divergence"])
 # Fulfilment planning (Stage 1B) hangs off `/sales-orders/{pso_id}` too, so it joins the
 # routers declared ahead of the plain sales-order one for the same reason.
 router.include_router(fulfilment_planning.router, tags=["project-fulfilment-planning"])
+# OI-LINE-SPLIT: `/sales-orders/{pso_id}/line-splits`, ahead of the plain sales-order
+# router for the same reason fulfilment planning is.
+router.include_router(line_splits.router, tags=["project-fulfilment-planning"])
 router.include_router(sales_orders.router, tags=["project-sales-orders"])
 # Allocation (P9) hangs off sales order LINES and off claims between projects, so it is
 # root-mounted alongside sales orders. Its paths add a segment to the sales-order ones
@@ -80,6 +89,7 @@ router.include_router(planning_changes.router, tags=["project-planning-changes"]
 # Stock Debt (S2) is a cross-order READ addressed by product, never nested under a project,
 # so it is root-mounted for the same reason planning changes is - and ahead of the projects
 # router, or `/project-sales/stock-debt` is captured by `/projects/{project_id}`.
+router.include_router(stock_debt_snapshots.router, tags=["project-stock-debt-snapshots"])
 router.include_router(stock_debt.router, tags=["project-stock-debt"])
 # Sales-order-line attachments (#1312) address the CORE line directly, never nested
 # under a project, so it is root-mounted for the same reason stock debt is.

@@ -36,7 +36,7 @@ import pytest
 
 from app.services.chatbot import engine as engine_mod
 from app.services.company_scope import DEFAULT_COMPANY_ID
-from tests.chatbot._turn_helpers import do_window
+from tests.chatbot._turn_helpers import do_window, make_office_access_type
 from tests.chatbot import test_outstanding_lane as outstanding_lane
 from tests.chatbot.test_engine import CONTACT_ID
 from tests.chatbot.test_outstanding_lane import (
@@ -102,7 +102,9 @@ class Seeded:
 def _seed(session_factory, *, wt_alias: str | None = None) -> Seeded:
     from app.models.product import ProductCategory
     from app.models.sales_agent import SalesAgent
-    from app.services.product_class_signal import CLASS_SYNONYMS
+    from app.services.product_spec_registry import shipped_class_synonyms
+
+    CLASS_SYNONYMS = shipped_class_synonyms()
     from tests._mc_lookup_seed import customer
 
     seeded = Seeded()
@@ -210,6 +212,8 @@ def console_factory(session_factory, monkeypatch):
     from app.services.chatbot.lanes.business import services as business_services
 
     _seed_contact(session_factory, variables={})
+    # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
+    make_office_access_type(session_factory, CONTACT_ID)
     _seed_borrowable_envelope(session_factory)
     monkeypatch.setattr(console_service, "SessionLocal", session_factory)
     monkeypatch.setattr(

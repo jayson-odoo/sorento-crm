@@ -15,6 +15,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
+import { numberFieldError } from '@/lib/number-field';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -34,6 +36,7 @@ import {
 import { useSalesOpportunityActions } from '../../actions';
 import {
   OpportunityLineRow,
+  lineHasNumberError,
   nextLineKey,
   sumLineAmounts,
   type LineDraft,
@@ -45,6 +48,7 @@ import {
   customerTriggerLabel,
 } from '../../lib/customerOrProspect';
 import type { SalesOpportunityTransition } from '../../types/salesOpportunity.types';
+import { codeWithName } from '@/lib/product-display';
 
 /**
  * `/sales/opportunities/{id}` detail page (UAC S2-11, S2-12, S2-13; plan section 16; Phase 3
@@ -94,6 +98,7 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
   const [amountTouched, setAmountTouched] = useState(false);
   const [expectedCloseDate, setExpectedCloseDate] = useState('');
   const [lines, setLines] = useState<LineDraft[]>([]);
+  const [showErrors, setShowErrors] = useState(false);
 
   useEffect(() => {
     setPending(null);
@@ -175,7 +180,7 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
       productId: line.product_id,
       qty: String(line.qty),
       unitPrice: line.unit_price ?? '',
-      productLabel: `${line.product_code} - ${line.product_name}`,
+      productLabel: codeWithName(line.product_code, line.product_name),
     }));
     setLines(seededLines);
     // F7: only start "touched" (the typed value wins) when the stored amount does not
@@ -184,6 +189,7 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
     const storedAmount = Number(opportunity.expected_amount);
     const storedSum = sumLineAmounts(seededLines);
     setAmountTouched(!(Number.isFinite(storedAmount) && storedAmount.toFixed(2) === storedSum.toFixed(2)));
+    setShowErrors(false);
     setIsEditing(true);
   };
 
@@ -206,12 +212,18 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
   const canSaveEdit =
     customerOrProspect !== BLOCKED_VALUE &&
     title.trim().length > 0 &&
-    !!effectiveAmount &&
     !!expectedCloseDate &&
     !save.isPending;
 
+  const amountError = numberFieldError(effectiveAmount, { min: 0 });
+
   const handleSaveEdit = async () => {
     if (!canSaveEdit) return;
+    // Only the final values are checked: a bad amount or product row stays as typed.
+    if (amountError || lines.some(lineHasNumberError)) {
+      setShowErrors(true);
+      return;
+    }
     try {
       await save.mutateAsync({
         id,
@@ -383,12 +395,12 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
                   </div>
                   <div className="flex flex-col gap-1.5">
                     <Label htmlFor="opportunity-edit-amount">Expected amount</Label>
-                    <Input
+                    <NumberInput
                       id="opportunity-edit-amount"
-                      type="number"
                       min="0"
                       step="0.01"
                       value={effectiveAmount}
+                      error={showErrors ? amountError : undefined}
                       onChange={(e) => {
                         setExpectedAmount(e.target.value);
                         setAmountTouched(true);
@@ -492,6 +504,7 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
                         line={line}
                         onChange={(patch) => updateLine(line.key, patch)}
                         onRemove={() => removeLine(line.key)}
+                        showErrors={showErrors}
                       />
                     ))}
                   </div>
@@ -508,8 +521,8 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
                   </li>
                   {existingLines.map((line) => (
                     <li key={line.id} className="flex items-center gap-2 px-3 py-2">
-                      <span className="min-w-0 flex-1 truncate" title={`${line.product_code} - ${line.product_name}`}>
-                        {line.product_code} - {line.product_name}
+                      <span className="min-w-0 flex-1 truncate" title={codeWithName(line.product_code, line.product_name)}>
+                        {codeWithName(line.product_code, line.product_name)}
                       </span>
                       <span className="w-10 shrink-0 text-end text-muted-foreground">{line.qty}</span>
                       <span className="w-20 shrink-0 text-end text-muted-foreground">

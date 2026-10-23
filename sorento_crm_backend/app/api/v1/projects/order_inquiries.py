@@ -31,6 +31,13 @@ from app.schemas.project_order_inquiry import (
     AutoPlaceRequest,
     AutoPlaceResult,
     CommitReserveRequestIn,
+    HandoverResendIn,
+    HandoverResendPreviewOut,
+    HandoverResendSendOut,
+    ParkedPreviewOut,
+    ParkedSendOut,
+    ReserveNoticeRecipientsOut,
+    ReserveStatusSummaryOut,
     CreateReserveRequestIn,
     LinkNowRequest,
     MarkInquiryRowsRequest,
@@ -201,6 +208,8 @@ def _worklist_filters(
     project: Optional[str] = None,
     # S3 (`PLAN-oi-header-list-detail.md`): the OI detail page's own Lines tab.
     inquiry_id: Optional[str] = None,
+    # OI-BULK-RESERVE v4: the Lines page's Reserve facet, one request row's own status.
+    reserve: Optional[str] = None,
 ) -> dict:
     filters = {
         "query": query,
@@ -223,6 +232,7 @@ def _worklist_filters(
         "delivery_from": delivery_from,
         "delivery_to": delivery_to,
         "inquiry_id": inquiry_id,
+        "reserve": reserve,
     }
     _validate_worklist_filter_uuids(filters)
     # `axis_key` is NOT validated here: it is compared against a UUID column on every
@@ -384,6 +394,13 @@ def list_order_inquiry_worklist(
             "by `order_inquiries.id`."
         ),
     ),
+    reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = Query(
+        None,
+        description=(
+            "OI-BULK-RESERVE: keep a line when one of its own reserve request rows is in "
+            "this status (the Documents view's four statuses)."
+        ),
+    ),
     include_history: bool = Query(
         False,
         description=(
@@ -434,6 +451,7 @@ def list_order_inquiry_worklist(
                 axis_key=axis_key,
                 inquiry_id=inquiry_id,
                 project=project,
+                reserve=reserve,
             ),
         )
     except Exception as exc:
@@ -475,6 +493,7 @@ def order_inquiry_worklist_summary(
     spo_number: Optional[str] = Query(None, max_length=_MAX_FILTER_LENGTH),
     delivery_from: Optional[str] = Query(None),
     delivery_to: Optional[str] = Query(None),
+    reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -500,6 +519,7 @@ def order_inquiry_worklist_summary(
                 delivery_from,
                 delivery_to,
                 project=project,
+                reserve=reserve,
             ),
         )
     except Exception as exc:
@@ -533,6 +553,7 @@ def export_order_inquiry_worklist(
             "Excel - exactly this header's own rows."
         ),
     ),
+    reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -564,6 +585,7 @@ def export_order_inquiry_worklist(
                 delivery_to,
                 project=project,
                 inquiry_id=inquiry_id,
+                reserve=reserve,
             )
         )
         return Response(
@@ -589,10 +611,30 @@ def export_order_inquiry_worklist_async(
     the `user_downloads` row, enqueue the render, mark it failed and answer 503 on an
     enqueue failure rather than leaving the row stuck pending.
     """
+    return _queue_worklist_export(payload, current_user, db, fmt="xlsx")
+
+
+@router.post("/order-inquiries/export/pdf", response_model=DownloadResponse)
+def export_order_inquiry_worklist_pdf(
+    payload: OrderInquiryWorklistExportRequest = Body(default_factory=OrderInquiryWorklistExportRequest),
+    current_user: dict = Depends(_EXPORT),
+    db: Session = Depends(get_db),
+):
+    """OI-DOWNLOAD (`PLAN-oi-download-21oct.md`): the lines list's Print / Download PDF -
+    the Export Excel above as a PDF (owner: "like Excel la, just in pdf format"): one table,
+    the same header row and filtered rows, through My Downloads (the Purchase Request PDF's
+    shape). Sends no email."""
+    return _queue_worklist_export(payload, current_user, db, fmt="pdf")
+
+
+def _queue_worklist_export(
+    payload: OrderInquiryWorklistExportRequest, current_user: dict, db: Session, *, fmt: str,
+):
     from app.api.v1.projects._common import acting_company_id
     from app.services.queue_service import enqueue_job
     from app.tasks.export_tasks import generate_order_inquiry_worklist_xlsx
 
+    kind = f"order_inquiry_worklist_{fmt}"
     filters = payload.model_dump(exclude_none=True)
     # Security review fix round 2, item 1: the SAME UUID guard the GET list/summary/
     # matrix routes and the acknowledge route's own `filter` branch run - defense in
@@ -607,19 +649,17 @@ def export_order_inquiry_worklist_async(
     # same as the UUID guard above.
     company_id = acting_company_id(db)
 
-    if DownloadService(db).has_in_flight(
-        user_id=str(current_user["id"]), kind="order_inquiry_worklist_xlsx",
-    ):
+    if DownloadService(db).has_in_flight(user_id=str(current_user["id"]), kind=kind):
         raise AppException(
             status_code=409,
             message="An order inquiry export is already being prepared - check My "
                     "Downloads.",
         )
 
-    filename = f"order-inquiries-{compact_ddmmyyyy(None)}.xlsx"
+    filename = f"order-inquiries-{compact_ddmmyyyy(None)}.{fmt}"
     download = DownloadService(db).create(
         user_id=str(current_user["id"]),
-        kind="order_inquiry_worklist_xlsx",
+        kind=kind,
         filename=filename,
     )
     try:
@@ -629,6 +669,8 @@ def export_order_inquiry_worklist_async(
             filters,
             str(current_user["id"]),
             company_id=company_id,
+            # Only a PDF names its format: an Excel job is queued exactly as before.
+            **({"fmt": fmt} if fmt != "xlsx" else {}),
             queue_name="imports",
             job_timeout=600,
         )
@@ -659,14 +701,33 @@ def export_order_inquiry_header(
     render, mark it failed and answer 503 on an enqueue failure. 404 for an unknown or
     another company's header, off the SAME loader the detail page itself reads.
     """
+    return _queue_header_export(inquiry_id, current_user, db, fmt="xlsx")
+
+
+@router.post("/order-inquiries/{inquiry_id}/export/pdf", response_model=DownloadResponse)
+def export_order_inquiry_header_pdf(
+    inquiry_id: str,
+    current_user: dict = Depends(_EXPORT),
+    db: Session = Depends(get_db),
+):
+    """OI-DOWNLOAD (`PLAN-oi-download-21oct.md`): the OI detail page's Print / Download PDF
+    - its Export Excel as a PDF (one table, the same header row and rows), through My
+    Downloads like `POST /procurement/purchase-requests/{id}/export/pdf`, named like it
+    (`order-inquiry-<OI no>.pdf`). Sends no email."""
+    return _queue_header_export(inquiry_id, current_user, db, fmt="pdf")
+
+
+def _queue_header_export(inquiry_id: str, current_user: dict, db: Session, *, fmt: str):
+    from app.services.pdf_revision_support import export_filename
     from app.services.queue_service import enqueue_job
     from app.tasks.export_tasks import generate_order_inquiry_xlsx
 
     validate_uuid_path(inquiry_id, resource="Order inquiry")
     header = OrderInquiryHeaderService(db).get(inquiry_id)
+    kind = f"order_inquiry_{fmt}"
 
     if DownloadService(db).has_in_flight(
-        user_id=str(current_user["id"]), kind="order_inquiry_xlsx",
+        user_id=str(current_user["id"]), kind=kind,
         source_entity_type="order_inquiry", source_entity_id=inquiry_id,
     ):
         raise AppException(
@@ -677,10 +738,16 @@ def export_order_inquiry_header(
 
     download = DownloadService(db).create(
         user_id=str(current_user["id"]),
-        kind="order_inquiry_xlsx",
+        kind=kind,
         source_entity_type="order_inquiry",
         source_entity_id=inquiry_id,
-        filename=f"{header.inquiry_no}.xlsx",
+        # The Excel keeps the name the OI email attaches it under; the PDF is named the way
+        # the Purchase Request / Sponsorship Form PDF is (`<what it is>-<number>.pdf`).
+        filename=(
+            export_filename("order-inquiry", header.inquiry_no)
+            if fmt == "pdf"
+            else f"{header.inquiry_no}.xlsx"
+        ),
     )
     try:
         enqueue_job(
@@ -688,6 +755,7 @@ def export_order_inquiry_header(
             str(download.id),
             inquiry_id,
             str(current_user["id"]),
+            **({"fmt": fmt} if fmt != "xlsx" else {}),
             queue_name="imports",
             job_timeout=600,
         )
@@ -727,6 +795,7 @@ def order_inquiry_worklist_matrix(
     spo_number: Optional[str] = Query(None, max_length=_MAX_FILTER_LENGTH),
     delivery_from: Optional[str] = Query(None),
     delivery_to: Optional[str] = Query(None),
+    reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -761,6 +830,7 @@ def order_inquiry_worklist_matrix(
                 delivery_from,
                 delivery_to,
                 project=project,
+                reserve=reserve,
             ),
         )
         return {"data": cells}
@@ -1225,6 +1295,7 @@ async def create_order_inquiry_reserve_request(
             rows=[row.model_dump() for row in payload.rows],
             note=payload.note,
             actor_user_id=current_user["id"],
+            park=payload.park,
         )
         db.commit()
         inquiry = (
@@ -1299,6 +1370,7 @@ async def commit_order_inquiry_reserve(
             reserves=[row.model_dump() for row in payload.reserves],
             amendments=[row.model_dump() for row in payload.amendments],
             actor_user_id=current_user["id"],
+            park_notice=payload.park_notice,
         )
         db.commit()
         return [_serialize_reserve_request(db, request) for request in requests]
@@ -1309,6 +1381,155 @@ async def commit_order_inquiry_reserve(
         # Security re-review: the detail goes to the log, never into the response.
         logger.exception("Reserve commit failed for order inquiry %s", inquiry_id)
         raise handle_internal_error()
+
+
+@router.get(
+    "/order-inquiries/reserve-status/summary", response_model=ReserveStatusSummaryOut
+)
+def order_inquiry_reserve_status_summary(
+    current_user: dict = Depends(require_any_permission([VIEW, ACKNOWLEDGE, RESERVE])),
+    db: Session = Depends(get_db),
+):
+    """OI-STAGED-NOTIFY (AC-SN-31): OIs per reserve status (everyone's) and the caller's
+    own parked requests / notices."""
+    try:
+        return OrderInquiryReserveService(db).reserve_status_summary(
+            actor_user_id=current_user["id"]
+        )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/order-inquiries/handover-resend/preview", response_model=HandoverResendPreviewOut
+)
+def preview_handover_resend(
+    payload: HandoverResendIn,
+    current_user: dict = Depends(require_permission(ACTION)),
+    db: Session = Depends(get_db),
+):
+    """OI-RESEND-PURCHASING: the handover email "Send to purchasing" would send, one per
+    order inquiry, rendered by the handover automation's own template. Writes nothing."""
+    from app.services.oi_handover_resend import OrderInquiryHandoverResend
+
+    try:
+        return OrderInquiryHandoverResend(db).preview(
+            payload.inquiry_ids, actor_user_id=current_user["id"], row_ids=payload.row_ids
+        )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/order-inquiries/handover-resend/send", response_model=HandoverResendSendOut)
+def send_handover_resend(
+    payload: HandoverResendIn,
+    current_user: dict = Depends(require_permission(ACTION)),
+    db: Session = Depends(get_db),
+):
+    """OI-RESEND-PURCHASING: send each order inquiry's open rows to purchasing again, even
+    while the automatic handover is switched off. Each email is its own recorded run."""
+    from app.services.oi_handover_resend import OrderInquiryHandoverResend
+
+    try:
+        return OrderInquiryHandoverResend(db).send(
+            payload.inquiry_ids, actor_user_id=current_user["id"], row_ids=payload.row_ids
+        )
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/order-inquiries/reserve-requests/parked/preview", response_model=ParkedPreviewOut
+)
+def preview_parked_reserve_requests(
+    current_user: dict = Depends(require_permission(ACKNOWLEDGE)),
+    db: Session = Depends(get_db),
+):
+    """The emails "send all parked requests" would send, one per recipient, rendered by
+    the automation's own template (AC-SN-04)."""
+    try:
+        return OrderInquiryReserveService(db).parked_requests_preview(
+            actor_user_id=current_user["id"]
+        )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/order-inquiries/reserve-requests/parked/send", response_model=ParkedSendOut)
+def send_parked_reserve_requests(
+    current_user: dict = Depends(require_permission(ACKNOWLEDGE)),
+    db: Session = Depends(get_db),
+):
+    """Send the caller's parked requests to CS (AC-SN-06). The dispatch queued by the
+    service fires only when this commit lands."""
+    try:
+        result = OrderInquiryReserveService(db).send_parked_requests(
+            actor_user_id=current_user["id"]
+        )
+        db.commit()
+        return result
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/order-inquiries/reserve-notices/parked/preview", response_model=ParkedPreviewOut
+)
+def preview_parked_reserve_notices(
+    current_user: dict = Depends(require_permission(RESERVE)),
+    db: Session = Depends(get_db),
+):
+    """The emails "send all parked reserves" would send to purchasing (AC-SN-22)."""
+    try:
+        return OrderInquiryReserveService(db).parked_notices_preview(
+            actor_user_id=current_user["id"]
+        )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/order-inquiries/reserve-notices/parked/send", response_model=ParkedSendOut)
+def send_parked_reserve_notices(
+    current_user: dict = Depends(require_permission(RESERVE)),
+    db: Session = Depends(get_db),
+):
+    """Send the caller's parked reserve notices to purchasing (AC-SN-22)."""
+    try:
+        result = OrderInquiryReserveService(db).send_parked_notices(
+            actor_user_id=current_user["id"]
+        )
+        db.commit()
+        return result
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get(
+    "/order-inquiries/{inquiry_id}/reserve-notices/recipients",
+    response_model=ReserveNoticeRecipientsOut,
+)
+def order_inquiry_reserve_notice_recipients(
+    inquiry_id: str,
+    row_ids: Optional[str] = Query(
+        None, max_length=4000, description="Comma-separated staged OI row ids."
+    ),
+    current_user: dict = Depends(require_permission(RESERVE)),
+    db: Session = Depends(get_db),
+):
+    """Who the reserve confirmation's notice would go to (AC-SN-27)."""
+    try:
+        validate_uuid_path(inquiry_id, resource="Order inquiry")
+        ids = [part.strip() for part in (row_ids or "").split(",") if part.strip()]
+        for row_id in ids:
+            validate_uuid_path(row_id, resource="Order inquiry")
+        return OrderInquiryReserveService(db).notice_recipients(
+            inquiry_id=inquiry_id, actor_user_id=current_user["id"], row_ids=ids or None
+        )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
 @router.get(
@@ -1710,6 +1931,9 @@ def list_order_inquiry_headers(
     # `Project` row), so a uuid-pattern filter never matched anything. Same shape
     # `order_inquiry_worklist_service.py`'s own `project` filter already uses.
     project: Optional[str] = Query(None, max_length=200, description="Exact match on the Project column's text."),
+    reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = Query(
+        None, description="OIs with a reserve request row in this status (AC-SN-30)."
+    ),
     sort: Optional[HeaderListSort] = Query(None, description="Defaults to raised_at."),
     direction: Optional[Literal["asc", "desc"]] = Query("asc", alias="dir"),
     page: int = Query(1, ge=1),
@@ -1725,6 +1949,7 @@ def list_order_inquiry_headers(
             raised_by=raised_by,
             agent=agent,
             project=project,
+            reserve=reserve,
             sort=sort,
             direction=direction,
             page=page,

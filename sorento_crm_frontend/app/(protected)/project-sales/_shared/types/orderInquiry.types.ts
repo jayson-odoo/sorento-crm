@@ -414,8 +414,58 @@ export interface OrderInquiryListEnvelope {
  * screen and the file can be read side by side.
  */
 
+/** OI-LINE-SPLIT (UAC D3): one split of a row's SO line, as the Lines tab lists it. */
+export interface OrderInquiryLineSplit {
+  id: string;
+  qty: string;
+  delivery_date: string | null;
+  is_cancel: boolean;
+  /** REMAIN / DELAY / ADVANCE / CANCEL BALANCE against the line's base date. */
+  change: string;
+  sits_on_line_id: string | null;
+  /** What the screen prints for the line it sits on; the id is addressing only. */
+  sits_on_line_no: number | null;
+  remark: string;
+}
+
+/**
+ * OI-SPLIT-VIEW (UAC B2): one row of a line's split popup, a saved split or the AutoCount
+ * extra (`sits_on: 'extra'`). Quantities and dates are strings; `sits_on_line_no` is the
+ * AutoCount line number.
+ */
+export interface LineSplitViewRow {
+  qty: string;
+  delivery_date: string | null;
+  /** The email's REMARK word: ADVANCE / REMAIN / DELAY / CANCEL BALANCE / ORDER n. */
+  change: string;
+  sits_on: 'own' | 'line' | 'new' | 'extra';
+  sits_on_line_no: number | null;
+  remark: string;
+  is_cancel: boolean;
+  /** Not in the applied plan while the edit waits (UAC B4); `was_*` only when exact. */
+  changed: boolean;
+  was_qty: string | null;
+  was_date: string | null;
+}
+
+/** OI-SPLIT-VIEW (UAC B2 to B4): a split line as the popup reads it, the same value on the
+ * SO and OI reads (server `LineSplitService.split_views`); null on a line with no splits. */
+export interface LineSplitView {
+  status: 'confirmed' | 'saved' | 'autocount_changed';
+  revision_no: number | null;
+  confirmed_on: string | null;
+  base_qty: string;
+  base_date: string | null;
+  now_qty: string;
+  now_date: string | null;
+  total_qty: string;
+  rows: LineSplitViewRow[];
+}
+
 export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
   id: string;
+  /** OI-BULK-RESERVE v4: the header this row belongs to; the Lines page commits per order inquiry. */
+  order_inquiry_id?: string | null;
   /**
    * `OI-000123` - the number of the inquiry this row belongs to, off its own header.
    * What a person calls the instruction: "the inquiry on SO414033" stops being an answer
@@ -515,6 +565,13 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    * on every row before this plan.
    */
   line_cancelled?: boolean;
+  /**
+   * OI-LINE-SPLIT (UAC D3): the splits of this row's SO line, for the Lines tab's
+   * read-only expand; empty when the line is not split.
+   */
+  splits?: OrderInquiryLineSplit[];
+  /** OI-SPLIT-VIEW (UAC B1): the line's split popup; null when the line has no splits. */
+  split_view?: LineSplitView | null;
   /** `PLAN-oi-request-cs-reserve.md` 3.5 (AC-RS-20): `requested` while an open reserve
    * request row exists, `reserved` once CS has actually reserved something (and no open
    * request), `declined` when CS's latest answer was 0 (6e.4), else null. */
@@ -527,6 +584,17 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    * The Lines grid's `Request to reserve N` pill and the tick's default stage both
    * read N off this. */
   requested_qty?: string;
+  /** OI-RESERVE-PILL-QTY (owner, 21 Oct 2026): what purchasing last asked CS to reserve
+   * off this row, kept after CS answers so a partial answer shows both numbers; "0" when
+   * nothing was asked. The Reserve requested column reads this, not `requested_qty`. */
+  asked_reserve_qty?: string;
+  /** OI-BULK-RESERVE v4: the open request row's warehouse id and code; null with no open
+   * request. The Lines page's Decide drafts read them. */
+  reserve_warehouse_id?: string | null;
+  reserve_location?: string | null;
+  /** OI-RESERVE-RECEIVED (AC-RR-5): what a reserve request may still ask for - the
+   * server's own figure, so the screen never re-derives "received". A number. */
+  reserve_requestable_qty?: number;
   /** Who sold it (`sales_orders.sales_agent_id` -> `sales_agents`), off the same core
    * sales order the S/O no column reaches. Null when the row reaches no core order, or
    * that order carries no agent. */
@@ -568,6 +636,8 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
   project_id?: string | null;
   project_sales_order_id?: string | null;
   core_sales_order_id?: string | null;
+  /** AC-CONSIGN-CRM: the core sales order's doc_type; null when there is no core order. */
+  so_doc_type?: string | null;
   /**
    * S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-1/AC-B6-7): the AutoCount line number,
    * for the "SO line" column's own text (`SO402757 · L5`, `orderInquirySoLineLabel`).
@@ -667,6 +737,8 @@ export interface OrderInquiryWorklistParams {
   po_number?: string;
   /** Prefix, case-insensitive (S1, R-K): a row's SPO link (own or derived, S5). */
   spo_number?: string;
+  /** OI-BULK-RESERVE v4: keep a line when one of its own request rows is in this status. */
+  reserve?: 'parked' | 'needs_reserve' | 'notice_parked' | 'reserved';
   /**
    * The bounds of one schedule-matrix cell's own period (S3): a click's drilldown asks
    * the list for exactly this cell's axis + period rather than reading rows back out of
@@ -1305,6 +1377,8 @@ export interface OrderInquiryHeader {
   raised_by_name?: string | null;
   /** The CORE sales order id, for the S/O no link (AC-HL-06). Null when there is none. */
   sales_order_id?: string | null;
+  /** AC-CONSIGN-CRM: the core sales order's doc_type; null when there is no core order. */
+  so_doc_type?: string | null;
   project_sales_order_id?: string | null;
   so_number?: string | null;
   so_date?: string | null;
@@ -1319,6 +1393,10 @@ export interface OrderInquiryHeader {
   qty_total: string;
   /** Derived, never stored (plan S2): `lines_to_confirm > 0` is outstanding. */
   status: OrderInquiryHeaderStatus;
+  /** The OI's earliest reserve status (AC-SN-30); null when it has no reserve requests. */
+  reserve_status?: 'parked' | 'needs_reserve' | 'notice_parked' | 'reserved' | null;
+  /** Who parked it, while it is parked. */
+  parked_by_name?: string | null;
 }
 
 /** One entry of the detail page's Raise history card (AC-DP-07). Newest first. */
@@ -1344,6 +1422,8 @@ export interface OrderInquiryHeaderListParams {
    * 2026) - never a `projects.id`: 0 of 738 headers on the prod copy carry a
    * registered project. */
   project?: string;
+  /** OIs with a reserve request row in this status (AC-SN-30). */
+  reserve?: 'parked' | 'needs_reserve' | 'notice_parked' | 'reserved';
   page?: number;
   limit?: number;
   sort?: string;

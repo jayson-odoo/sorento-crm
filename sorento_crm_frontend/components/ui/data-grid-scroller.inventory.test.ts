@@ -156,9 +156,15 @@ const SCROLLER_MAX_HEIGHT_FALSE_SITES = new Map<string, number>([
     1, // the original site this rule copies - its own maxHeightClassName ScrollArea
   ],
   [
-    'app/(protected)/project-sales/order-inquiries/[id]/components/ReserveRequestDialog.tsx',
+    'app/(protected)/project-sales/_shared/components/RequestReserveDialog.tsx',
     // G6 (PLAN-oi-request-cs-reserve.md section 6d): one DataGrid, one row per
     // selected line, inside its own DialogBody (overflow-y-auto).
+    1,
+  ],
+  [
+    'app/(protected)/project-sales/order-inquiries/[id]/components/ReserveConfirmDialog.tsx',
+    // OI-STAGED-NOTIFY: the staged lines of the Reserve confirmation, inside its own
+    // DialogBody (overflow-y-auto).
     1,
   ],
   [
@@ -166,6 +172,12 @@ const SCROLLER_MAX_HEIGHT_FALSE_SITES = new Map<string, number>([
     // PLAN-oi-no-double-count-25sep.md S0 (G2, G3): the History dialog's Rows tab, one
     // DataGrid of the line's rows inside its own DialogBody (overflow-y-auto); the grid's
     // own scroller carries the sideways scroll at 375.
+    1,
+  ],
+  [
+    'app/(protected)/project-sales/order-inquiries/[id]/components/orderInquiryHeaderLinesColumns.tsx',
+    // OI-LINE-SPLIT (UAC D3): a split line's splits, a few rows in the Lines tab's own
+    // expanded row; the outer Lines grid owns the vertical scroll.
     1,
   ],
   [
@@ -179,6 +191,10 @@ const SCROLLER_MAX_HEIGHT_FALSE_SITES = new Map<string, number>([
   [
     'app/(protected)/project-sales/stock-debt/components/StockDebtCellDialog.tsx',
     2, // two PanelDataGrid tabs (Demand, Supply) inside one DialogBody
+  ],
+  [
+    'app/(protected)/project-sales/stock-debt/components/SnapshotDrillDialog.tsx',
+    1, // the per-OI PanelDataGrid inside the drill's DialogBody
   ],
   [
     'app/(protected)/project-sales/fulfilment-planning/components/BoardCellBreakdownDialog.tsx',
@@ -228,6 +244,10 @@ const SCROLLER_MAX_HEIGHT_FALSE_SITES = new Map<string, number>([
   [
     'app/(protected)/scm/sales-orders/[id]/components/SoLineLinksBody.tsx',
     1, // DrillTable, same as PoLinePlacementsBody
+  ],
+  [
+    'app/(protected)/scm/sales-orders/[id]/components/SoLineHistoryBody.tsx',
+    2, // the delivered-DOs DrillTable and the Cancel SO DrillTable, same as SoLineLinksBody
   ],
   [
     'app/(protected)/scm/loading-plan/components/ContainerRequestSection.tsx',

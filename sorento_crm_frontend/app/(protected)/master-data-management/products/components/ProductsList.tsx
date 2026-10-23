@@ -22,6 +22,7 @@ import {
   SlidersHorizontal,
   MessageSquare,
   CloudDownload,
+  Barcode,
 } from 'lucide-react';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Badge, BadgeDot } from '@/components/ui/badge';
@@ -45,6 +46,8 @@ import { CHAT_SEARCH_LABEL, chatSearchState, type ProductListItem } from '../typ
 import { bulkImportProducts, validateProductsImport } from '../services/productService';
 import ProductBulkChatSearchDialog from './ProductBulkChatSearchDialog';
 import { UploadCostPriceAction } from './UploadCostPriceAction';
+import { BarcodeImportDialog } from './BarcodeImportDialog';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
 import { useImportJobDrawer } from '@/components/upload-activity';
 import { ListQueryFilterDialog } from '@/components/list/ListQueryFilterDialog';
@@ -72,6 +75,7 @@ import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import { useAutocountPullAction } from '@/app/(protected)/system-management/import-jobs/autocount-pull/hooks/useAutocountPull';
+import { codeWithName, distinctName } from '@/lib/product-display';
 
 const PRODUCT_IMPORT_COLUMNS: ColumnOption[] = [
   { key: 'Item Code', label: 'Item Code', selected: true },
@@ -177,6 +181,8 @@ const ProductsList = () => {
   const [bulkChatSearchDialogOpen, setBulkChatSearchDialogOpen] = useState(false);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [barcodeImportOpen, setBarcodeImportOpen] = useState(false);
+  const canEditProducts = useHasPermission('master_data.products.edit');
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
   const [advancedFilterDialogOpen, setAdvancedFilterDialogOpen] = useState(false);
 
@@ -420,7 +426,7 @@ const ProductsList = () => {
         cell: ({ row }) => {
           return (
             <div className="font-medium text-sm">
-              {row.original.product_name}
+              {distinctName(row.original.product_code, row.original.product_name)}
             </div>
           );
         },
@@ -472,7 +478,7 @@ const ProductsList = () => {
           return (
             <div
               className="truncate text-sm"
-              title={`${parent.product_code} - ${parent.product_name}`}
+              title={codeWithName(parent.product_code, parent.product_name)}
             >
               {parent.product_code}
             </div>
@@ -1008,6 +1014,16 @@ const ProductsList = () => {
                 onClick: () => setUploadDialogOpen(true),
                 dataGuideTarget: 'master-data.products.upload-button',
               },
+              ...(canEditProducts
+                ? [
+                    {
+                      key: 'import-barcodes',
+                      label: 'Import barcodes',
+                      icon: Barcode,
+                      onClick: () => setBarcodeImportOpen(true),
+                    },
+                  ]
+                : []),
               ...(autocountPull.visible
                 ? [
                     {
@@ -1073,6 +1089,7 @@ const ProductsList = () => {
         }}
         accept=".xlsx,.xls"
       />
+      <BarcodeImportDialog open={barcodeImportOpen} onOpenChange={setBarcodeImportOpen} />
       <ListQueryFilterDialog
         resourceKey="products"
         open={advancedFilterDialogOpen}

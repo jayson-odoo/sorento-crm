@@ -130,7 +130,7 @@ export interface BoardChangeAnnotation {
  * lightbox that spelled the same month differently two lines apart would read as two
  * different facts.
  */
-const SHORT_MONTHS = [
+export const SHORT_MONTHS = [
   'Jan',
   'Feb',
   'Mar',
@@ -406,7 +406,7 @@ export function annotationOf(
   return {
     rowId: row.id,
     soNumber,
-    lineNo: row.line_no,
+    lineNo: row.so_line_no ?? row.line_no,
     itemCode: row.item_code,
     kind: row.kind,
     closed,

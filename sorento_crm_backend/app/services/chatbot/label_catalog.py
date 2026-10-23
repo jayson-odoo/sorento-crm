@@ -27,6 +27,8 @@ LANGUAGES = ("en", "ms", "zh")
 # The presenter's own truncation sentence (`summary_intro`), which carries an em dash; escaped
 # here so this source stays dash-free.
 _NOT_EVERY_BREAKDOWN = "Not every breakdown is shown \u2014 add a customer, a product or a date range."
+# `output_structurer`'s denied-field note (one per line), escaped the same way.
+_CANT_SHARE = "I can't share the {label} \u2014 please check with the office."
 
 LABELS: dict[str, dict[str, str]] = {
     "Company": {"ms": "Syarikat", "zh": "公司"},
@@ -120,6 +122,7 @@ LABELS: dict[str, dict[str, str]] = {
     # Slice 2: PO / SO / SPO / orders rows. PO, SO, SPO and GR stay as printed (owner Q3).
     "Order Number": {"ms": "No. Pesanan", "zh": "订单号"},
     "Customer": {"ms": "Pelanggan", "zh": "客户"},
+    "Branch": {"ms": "Cawangan", "zh": "分店"},
     "Order Date": {"ms": "Tarikh Pesanan", "zh": "订单日期"},
     "Actual Delivery Date": {"ms": "Tarikh Penghantaran Sebenar", "zh": "实际送货日期"},
     "Status": {"ms": "Status", "zh": "状态"},
@@ -444,12 +447,48 @@ LABELS: dict[str, dict[str, str]] = {
     "No grouping": {"ms": "Tanpa pengasingan", "zh": "不分组"},
     "How should the low stock report be grouped?": {"ms": "Bagaimana laporan stok rendah patut diasingkan?", "zh": "低库存报告要如何分组？"},
     "I still can't tell which one you mean. Ask for the low stock report again with a category or \"all\".": {"ms": "Saya masih tidak pasti yang mana satu anda maksudkan. Minta laporan stok rendah sekali lagi dengan kategori atau \"all\".", "zh": "我仍然无法确定您指的是哪一个。请再次索取低库存报告，并提供类别或 \"all\"。"},
+    # CHAT-PRODUCT-LABELS (4 Oct): product info replies (presenter `_products`,
+    # `_promotion_products`, `_product_attachments` and their intros) and the text
+    # `output_structurer` adds to them. Spec registry labels and product data stay as printed.
+    "Description": {"ms": "Keterangan", "zh": "描述"},
+    "List Price": {"ms": "Harga Senarai", "zh": "标价"},
+    "Dimensions": {"ms": "Dimensi", "zh": "尺寸"},
+    "Not defined": {"ms": "Tidak ditetapkan", "zh": "未设定"},
+    "Promotion": {"ms": "Promosi", "zh": "促销"},
+    "Selling Price": {"ms": "Harga Jualan", "zh": "售价"},
+    "Attachment Type": {"ms": "Jenis Lampiran", "zh": "附件类型"},
+    "File Name": {"ms": "Nama Fail", "zh": "文件名"},
+    "Certificate Number": {"ms": "No. Sijil", "zh": "证书编号"},
+    "Valid Until": {"ms": "Sah Sehingga", "zh": "有效期至"},
+    "Validity": {"ms": "Kesahan", "zh": "有效状态"},
+    "File Link": {"ms": "Pautan Fail", "zh": "文件链接"},
+    "Specs": {"ms": "Spesifikasi", "zh": "规格"},
+    "not recorded yet": {"ms": "belum direkodkan", "zh": "尚未记录"},
+    _CANT_SHARE: {
+        "ms": "Saya tidak boleh berkongsi {label}. Sila semak dengan pejabat.",
+        "zh": "我无法提供 {label}，请向办公室查询。",
+    },
+    "Here are the matching products.": {"ms": "Berikut ialah produk yang sepadan.", "zh": "以下是匹配的产品。"},
+    "Here are the matching promotion products.": {"ms": "Berikut ialah produk promosi yang sepadan.", "zh": "以下是匹配的促销产品。"},
+    "Here are the product files I found.": {"ms": "Berikut ialah fail produk yang saya temui.", "zh": "以下是我找到的产品文件。"},
+    # The presenter's `_VALIDITY_LABELS` words and `FILE_LINK_UNAVAILABLE`: values of one label
+    # each (`LABEL_VALUES`), so an order status that reads "Expired" stays as printed.
+    "Valid": {"ms": "Sah", "zh": "有效"},
+    "Expiring soon": {"ms": "Akan tamat tempoh", "zh": "即将到期"},
+    "Expired": {"ms": "Tamat tempoh", "zh": "已过期"},
+    "Not yet valid": {"ms": "Belum sah", "zh": "尚未生效"},
+    "Unknown": {"ms": "Tidak diketahui", "zh": "未知"},
+    "(file link unavailable right now)": {
+        "ms": "(pautan fail tidak tersedia buat masa ini)",
+        "zh": "（文件链接暂时无法获取）",
+    },
 }
 
 # CHAT-FIND: the generic find tool's presenter lines live with their filter in the registry
 # (`app/services/product_find.py`), so a filter registered there is translated with no edit
 # here. A label already catalogued above keeps its own wording.
 from app.services.product_find import catalog_labels as _find_labels  # noqa: E402
+from app.services.product_find import fit_keys as _find_fit_keys  # noqa: E402
 
 for _english, _entry in _find_labels().items():
     LABELS.setdefault(_english, _entry)
@@ -534,13 +573,54 @@ def refer_sentences(localizer: Any = None) -> tuple[str, ...]:
     return tuple(dict.fromkeys(found))
 
 
+#: CHAT-COMPOSER: the catalogue entries only the lane's gate-on sentences use. Kept apart from `LABELS`
+#: so a gate-off table never holds them; `defaults()` and `resolve()` add them when the gate is on.
+#: `{noun}` is a lower-case spec word, so it never takes the official-type wording of `{what}`.
+LANE_LABELS: dict[str, dict[str, str]] = {
+    "Name one to see them.": {"ms": "Sebut satu untuk melihatnya.", "zh": "请指定一个品牌查看。"},
+    'Reply "more" to see the next {n}.': {"ms": 'Balas "more" untuk lihat {n} seterusnya.', "zh": '回复 "more" 查看接下来的 {n} 个。'},
+    "That is all {total}.": {"ms": "Itu sahaja, {total}.", "zh": "就这些，共 {total} 个。"},
+    "But no stock matched these.": {"ms": 'Tiada stok yang sepadan.', "zh": '没有匹配的库存。'},
+    "But no product matched these.": {"ms": 'Tiada produk yang sepadan.', "zh": '没有匹配的产品。'},
+    "But no SPO line matched these.": {"ms": 'Tiada baris SPO yang sepadan.', "zh": '没有匹配的 SPO 行。'},
+    "No {what} on record for {product}.": {"ms": 'Tiada {what} dalam rekod untuk {product}.', "zh": '{product} 没有{what}记录。'},
+    "No {noun} on record for {product}.": {"ms": 'Tiada {noun} direkodkan untuk {product}.', "zh": '没有 {product} 的{noun}记录。'},
+    "No list price on record for {product}.": {"ms": 'Tiada harga senarai direkodkan untuk {product}.', "zh": '没有 {product} 的标价记录。'},
+    "No dimensions on record for {product}.": {"ms": 'Tiada dimensi direkodkan untuk {product}.', "zh": '没有 {product} 的尺寸记录。'},
+    # Lists L5: the tail `_named` counts the names it left off; filled into the `{names}` value only.
+    " and {n} others": {"ms": " dan {n} lagi", "zh": " 等另外 {n} 个"},
+    # Lists L1: the range a cut code-lookup list adds to its intro; it states no total (the probe
+    # behind such a list may have stopped short of its end).
+    "(showing {first} to {last})": {
+        "ms": "(menunjukkan {first} hingga {last})",
+        "zh": "（显示第 {first} 至 {last} 个）",
+    },
+    "Those are the first {n} matches. Send more of the code to narrow it.": {
+        "ms": "Itulah {n} padanan pertama. Hantar lebih banyak kod untuk mengecilkan carian.",
+        "zh": "以上是前 {n} 个匹配项。请发送更完整的编码以缩小范围。",
+    },
+}
+
+
+#: CHAT-COMPOSER: the catalogue keys the lane added. They belong to gate-on sentences only, so with
+#: the gate off the table neither seeds nor uses them (ms/zh replies stay as main prints them).
+LANE_KEYS = frozenset(LANE_LABELS)
+
+
+def _lane_on() -> bool:
+    from app.services.chatbot import composers
+
+    return composers.enabled()
+
+
 def defaults(lang: str) -> dict[str, str]:
     """English -> `lang` for every catalog entry whose translation keeps the English tokens."""
     if lang == "en":
         return {}
+    entries = {**LABELS, **LANE_LABELS} if _lane_on() else LABELS
     return {
         english: entry[lang]
-        for english, entry in LABELS.items()
+        for english, entry in entries.items()
         if lang in entry and tokens_match(english, entry[lang])
     }
 
@@ -599,6 +679,13 @@ INLINE = frozenset(
         '{header} I found {count}, please type a little more of the name.',
         'and {n} others, reply with the full code.',
         "Couldn't find {names}.",
+        # CHAT-COMPOSER S3a: the miss sentence with a customer word, not a table name.
+        "But no stock matched these.",
+        "But no product matched these.",
+        "But no SPO line matched these.",
+        "No {what} on record for {product}.",
+        "That is all {total}.",
+        "Name one to see them.",
         'What would you like me to know?',
         "Sorry, we don't support direct goods receive & SPO at the moment. You may ask about incoming stock for a specific product or container",
         'Do you mean customer {customer} or sales agent {agent}? Reply 1 for the customer, 2 for the sales agent.',
@@ -723,11 +810,34 @@ _SUB_ASK_KEYS = frozenset(
         "{date} ({qty}, {spo})", "{qty}, ETA {date}",
     }
 )
-DIRECT_ONLY = frozenset({"I have {names}.", "{code} has no {types}."}) | _SUB_ASK_KEYS
+DIRECT_ONLY = (
+    frozenset(
+        {
+            "I have {names}.",
+            "{code} has no {types}.",
+            " and {n} others",
+            "(showing {first} to {last})",
+        }
+    )
+    | _SUB_ASK_KEYS
+    | _find_fit_keys()
+)
+_NAMES_TAIL = " and {n} others"
+_OTHERS = re.compile(r"(.*) and (\d[\d,]*) others")
 
 #: Report value words `Localizer.lines` translates after a catalogued label. An explicit set, never
 #: "any catalog key", so data that happens to read like a label (a status named "Status") is safe.
-VALUE_WORDS = frozenset({"all", "Amount", "Quantity", "Ordered", "Delivered (transferred to DO)"})
+VALUE_WORDS = frozenset(
+    {"all", "Amount", "Quantity", "Ordered", "Delivered (transferred to DO)", "Not defined", "not recorded yet"}
+)
+#: Value words that translate only after ONE English label (the product attachment presenter's).
+LABEL_VALUES: dict[str, frozenset[str]] = {
+    "Validity": frozenset({"Valid", "Expiring soon", "Expired", "Not yet valid", "Unknown"}),
+    "File Link": frozenset({"(file link unavailable right now)"}),
+}
+#: Those words are never a sentence, a flag or a label of their own: a status card that prints
+#: "Unknown" or "Expired" alone on a line keeps it as printed (#1448 owner Q3).
+_VALUE_ONLY = frozenset().union(*LABEL_VALUES.values())
 RANGE = "{from} to {to}"
 #: A `{token}` matches at most this many characters of one line, and a line longer than
 #: `_INLINE_LINE_MAX` gets `lines()` only (the inline pass is skipped for it).
@@ -746,7 +856,10 @@ _NUMERIC_TOKENS = frozenset({"available"})
 
 
 def _token_pattern(name: str) -> str:
-    body = r"\d[\d,]*" if name in _NUMERIC_TOKENS else f"[^\\n]{{1,{_TOKEN_MAX}}}?"
+    if name == "noun":
+        body = f"[a-z][^\\n]{{0,{_TOKEN_MAX - 1}}}?"  # a spec word starts lower-case
+    else:
+        body = r"\d[\d,]*" if name in _NUMERIC_TOKENS else f"[^\\n]{{1,{_TOKEN_MAX}}}?"
     return f"(?P<{name}>{body})"
 
 
@@ -768,17 +881,35 @@ def _inline_pattern(english: str, target: str) -> tuple[re.Pattern[str], str, in
     return regex, target, fixed, tuple(_TOKEN.findall(english))
 
 
+#: CHAT-COMPOSER S4: the generic "no <what> on record" sentence, and the product-find none lines it
+#: must never rewrite (a kind with no noun translation is said in English, not garbled into
+#: `{what}` = "mirror is").
+_GENERIC_MISSING = "No {what} on record for {product}."
+_GENERIC_NOUN_MISSING = "No {noun} on record for {product}."
+
+
+def _find_none_patterns() -> list[re.Pattern[str]]:
+    from app.services import product_find
+
+    lines = [f(k) for k in product_find.KINDS for f in (product_find.none_line, product_find.no_host_line)]
+    return [re.compile(re.escape(x).replace(re.escape("{code}"), ".+?")) for x in lines]
+
+
 class Localizer:
     """Rewrites catalogued labels and sentences for `language`; everything else is untouched."""
 
     def __init__(self, language: str, table: dict[str, str]) -> None:
         self.language = language
+        if not _lane_on():
+            table = {k: v for k, v in table.items() if k not in LANE_KEYS}
         self.table = table
         # `{token}` entries as (whole-string regex over the English shape, target).
         self._templates: list[tuple[re.Pattern[str], str, int, bool]] = []  # most fixed text wins
         # The INLINE sentences the table carries: (regex for a start-anchored match, target,
         # fixed characters, token names). Longest fixed text wins where two start together.
         self._inline: list[tuple[re.Pattern[str], str, int, tuple[str, ...]]] = []
+        self._find_none = _find_none_patterns() if _GENERIC_MISSING in table else []
+        self._generic_targets = {table[k] for k in (_GENERIC_MISSING, _GENERIC_NOUN_MISSING) if k in table}
         for english, target in table.items():
             if english in INLINE and english not in DIRECT_ONLY:
                 self._inline.append(_inline_pattern(english, target))
@@ -815,7 +946,12 @@ class Localizer:
         For the few sentences too generic to be matched in running text (`DIRECT_ONLY`)."""
         return _TOKEN.sub(lambda t: values.get(t.group(1), t.group(0)), self.table.get(key, key))
 
+    def _is_find_none(self, span: str) -> bool:
+        return any(r.fullmatch(span) for r in self._find_none)
+
     def _text(self, s: str, *, inline: bool) -> str:
+        if s in _VALUE_ONLY:
+            return s
         if s in self.table and s not in DIRECT_ONLY:
             return self.table[s]
         best = None
@@ -823,11 +959,13 @@ class Localizer:
             if is_inline and not inline:
                 continue  # INLINE sentences are replaced by `reply()` at their own boundaries
             m = regex.fullmatch(s)
+            if m and target in self._generic_targets and self._is_find_none(s):
+                continue
             if m and (best is None or fixed > best[0]):
                 best = (fixed, m.groupdict(), target)
         if best is None:
             return s
-        values = best[1]
+        values = self._names(best[1])
         return _TOKEN.sub(lambda t: values.get(t.group(1), t.group(0)), best[2])
 
     def lines(self, text: str) -> str:
@@ -838,7 +976,8 @@ class Localizer:
            (or `"- <sentence>"`);
         3. a label line (`"<label>: <value>"`, bold `"*<label>:* <value>"`, optionally led by
            `"<n>. "` or `"- "`) whose label is catalogued: the label translates, and the value only when
-           it is exactly a `VALUE_WORDS` entry or a `dd/mm/yyyy to dd/mm/yyyy` range;
+           it is exactly a `VALUE_WORDS` entry, one of that label's `LABEL_VALUES`, or a
+           `dd/mm/yyyy to dd/mm/yyyy` range;
         4. anything else, unchanged (rank lines, months, codes, `Unassigned`).
         The join is byte-exact."""
         if not self.table or not text:
@@ -858,11 +997,20 @@ class Localizer:
             line if len(line) > _INLINE_LINE_MAX else self._inline_line(line) for line in text.split("\n")
         )
 
+    def _names(self, values: dict[str, str]) -> dict[str, str]:
+        """`values` with a `{names}` tail "... and 3 others" said in the table's wording, when it has one."""
+        tail, m = self.table.get(_NAMES_TAIL), _OTHERS.fullmatch(values.get("names") or "")
+        if tail is None or m is None:
+            return values
+        return {**values, "names": m.group(1) + tail.replace("{n}", m.group(2))}
+
     def _inline_line(self, text: str) -> str:
         found: list[tuple[int, int, int, str]] = []
-        for regex, target, fixed, _names in self._inline:
+        for regex, target, fixed, names in self._inline:
             for m in regex.finditer(text):
-                values = m.groupdict()
+                values = self._names(m.groupdict())
+                if target in self._generic_targets and self._is_find_none(m.group(0)):
+                    continue
                 found.append((m.start(), m.end(), fixed, _TOKEN.sub(lambda t: values.get(t.group(1), t.group(0)), target)))
         found.sort(key=lambda f: (f[0], -f[2]))
         out, pos = [], 0
@@ -888,7 +1036,7 @@ class Localizer:
         if done != line:
             return done
         flag = _FLAG.fullmatch(line)
-        if flag and flag.group(2) in self.table and flag.group(2) not in DIRECT_ONLY and not tokens(flag.group(2)):
+        if flag and flag.group(2) in self.table and flag.group(2) not in DIRECT_ONLY and flag.group(2) not in _VALUE_ONLY and not tokens(flag.group(2)):
             return flag.group(1) + self.table[flag.group(2)] + flag.group(3)
         number = _NUMBERED.match(line)
         prefix, rest = (number.group(0), line[number.end() :]) if number else ("", line)
@@ -900,13 +1048,13 @@ class Localizer:
             if not rest.startswith(left):
                 continue
             head, found, value = rest[len(left) :].partition(sep)
-            if not found or head not in self.table or head in DIRECT_ONLY or _BREAKDOWN_VALUE.match(value):
+            if not found or head not in self.table or head in DIRECT_ONLY or head in _VALUE_ONLY or _BREAKDOWN_VALUE.match(value):
                 continue  # a breakdown row (`5 (O/S: 2)`) whose name collides with a label is data
-            return prefix + left + self.table[head] + sep + self._value(value)
+            return prefix + left + self.table[head] + sep + self._value(value, head)
         return line
 
-    def _value(self, value: str) -> str:
-        if value in VALUE_WORDS and value in self.table:
+    def _value(self, value: str, label: str) -> str:
+        if (value in VALUE_WORDS or value in LABEL_VALUES.get(label, ())) and value in self.table:
             return self.table[value]
         m = _DATE_RANGE.fullmatch(value)
         if m and RANGE in self.table:
@@ -960,7 +1108,7 @@ def resolve(db: Any, lang: str, *, dry_run: bool = False) -> Localizer:
                 .filter(
                     TranslationMemory.source_lang == "en",
                     TranslationMemory.target_lang == lang,
-                    TranslationMemory.source_text.in_(list(LABELS)),
+                    TranslationMemory.source_text.in_(list(LABELS) + (list(LANE_LABELS) if _lane_on() else [])),
                 )
                 .all()
             )

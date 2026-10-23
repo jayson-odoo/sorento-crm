@@ -358,6 +358,37 @@ describe('BoardDecideControl: the lenient toast (AC-16, R10)', () => {
   });
 });
 
+describe('BoardDecideControl: names the SO line (SO-LINE-NUMBERS AC-7)', () => {
+  it('words a short line by its SO number, not the planning order\'s own', async () => {
+    const short = row({
+      key: 'so-2:line-20',
+      so_number: 'SO397451',
+      line_no: 20,
+      so_line_no: 304,
+      item_code: 'CB6633',
+      sources: [{ kind: 'buy', qty: '40', reason: 'Nothing free.' }],
+      locations: [
+        { location: 'BRW-BB', where: 'own', warehouse_id: 'wh-own2', qty_free_remaining: '10' },
+      ],
+    });
+    renderControl({ contributions: [short], selectedKeys: [short.key] });
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Use own location' }));
+
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText(/^Reason/), {
+      target: { value: 'Own site takes what it can.' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Save/ }));
+
+    await waitFor(() =>
+      expect(toast.warning).toHaveBeenCalledWith(
+        '1 saved as Use own location · 1 short: CB6633 line 304 (only 10 free at own location)',
+      ),
+    );
+  });
+});
+
 /**
  * Review round 2, Should fix 2: Should fix 4 (review round 1) - the throwaway probe that
  * checks a covered row against its OWN frozen composition before it ever touches the real
@@ -475,16 +506,72 @@ describe('BoardDecideControl: Borrow from another order follows the switch (BR1)
     expect(within(select).queryByText('MWH-IB')).not.toBeInTheDocument();
   });
 
-  it('keeps the own location 0-free row out of the bulk Borrow picker (BORROW-OWN-LOC S5)', async () => {
-    const own = { ...nameless, warehouse_code: 'BRW-BB', warehouse_id: 'wh-own', free_qty: '0' };
-    renderControl({ contributions: [row({ borrow_candidates: [nameless, own] })] });
+  it('always lists the own location in the bulk Borrow picker, even at 0 free (owner, 14 Oct)', async () => {
+    // Owner hand test 14 Oct 2026 (overrides BORROW-OWN-LOC S5): the bulk dialog offers what
+    // the line's own "Add a borrow" offers, and the own location is always in it.
+    const own = {
+      ...nameless,
+      warehouse_code: 'BRW-BB',
+      warehouse_id: 'wh-own',
+      free_qty: '0',
+      donor_core_line_id: null,
+      rung: null,
+    };
+    renderControl({
+      contributions: [
+        row({ fulfilment_warehouse_id: 'wh-own', borrow_candidates: [nameless, own] }),
+      ],
+    });
     openMenu();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Borrow' }));
 
     const dialog = await screen.findByRole('dialog');
     const select = within(dialog).getByLabelText('donor-or-location');
     expect(within(select).getByText('DC1-IR')).toBeInTheDocument();
-    expect(within(select).queryByText('BRW-BB')).not.toBeInTheDocument();
+    expect(within(select).getByText('BRW-BB')).toBeInTheDocument();
+  });
+
+  it('lists a location with nothing free in the bulk Borrow picker (owner, 22 Oct: not available also can borrow)', async () => {
+    const empty = {
+      ...nameless,
+      warehouse_code: 'MWH-IR',
+      warehouse_id: 'wh-mwh-ir',
+      free_qty: '0',
+      donor_core_line_id: null,
+      rung: null,
+    };
+    renderControl({
+      contributions: [
+        row({ fulfilment_warehouse_id: 'wh-own', borrow_candidates: [nameless, empty] }),
+      ],
+    });
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Borrow' }));
+
+    const dialog = await screen.findByRole('dialog');
+    const select = within(dialog).getByLabelText('donor-or-location');
+    expect(within(select).getByText('DC1-IR')).toBeInTheDocument();
+    expect(within(select).getByText('MWH-IR')).toBeInTheDocument();
+  });
+
+  it('lists the own location when it is the only candidate (the screenshot: No results found)', async () => {
+    const own = {
+      ...nameless,
+      warehouse_code: 'BRW-BB',
+      warehouse_id: 'wh-own',
+      free_qty: '0',
+      donor_core_line_id: null,
+      rung: null,
+    };
+    renderControl({
+      contributions: [row({ fulfilment_warehouse_id: 'wh-own', borrow_candidates: [own] })],
+    });
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Borrow' }));
+
+    const dialog = await screen.findByRole('dialog');
+    const select = within(dialog).getByLabelText('donor-or-location');
+    expect(within(select).getByText('BRW-BB')).toBeInTheDocument();
   });
 });
 

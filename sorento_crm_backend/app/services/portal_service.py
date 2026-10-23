@@ -95,10 +95,28 @@ AGENT_ONLY_FORM_TYPES = (CUSTOMER_ASKS_FORM_TYPE, CONVERSATION_FORM_TYPE)
 GRANTABLE_PORTAL_FORM_TYPES = SUPPORTED_TYPES + (
     "price_tag_request",
     "sales_opportunity",
+    "sample_request",
+    "new_product_application",
     CUSTOMER_ASKS_FORM_TYPE,
     CONVERSATION_FORM_TYPE,
 )
 PORTAL_ATTACHMENT_TYPE_CODE = "portal_submission"
+
+
+def parse_allowed_extensions(raw: Optional[str]) -> list[str]:
+    """An attachment type's ``allowed_extensions`` text as sorted, unique,
+    lowercase extensions without dots. Admins type the list by hand, so
+    spaces, capitals, a leading dot and empty entries all occur. Both the
+    portal upload check and the file picker's list (``/me``) read this, so
+    the picker never offers a file the server refuses or greys out one it
+    accepts. Empty means the type sets no limit."""
+    return sorted(
+        {
+            e.strip().lower().lstrip(".")
+            for e in (raw or "").split(",")
+            if e.strip().lstrip(".")
+        }
+    )
 
 # Crockford base32 alphabet - excludes I, L, O, U to eliminate look-alike
 # transcription errors (I↔l↔1, O↔0, U↔V). Tokens are user-visible in URLs and
@@ -1010,6 +1028,7 @@ class PortalService:
     ) -> dict:
         kind = kind.strip().lower()
         if submission_id is None:
+            self._check_line_numbers(kind, payload)
             row = self._instantiate(kind, token, payload)
             row.portal_draft_at = _utcnow()
             self.db.add(row)
@@ -1483,6 +1502,14 @@ class PortalService:
                             "Pick a registered project from the list - the project field "
                             "does not take free text."
                         )
+                if field == "customer_id":
+                    from app.services.debtor_type import link_customer
+
+                    value, linked_name = link_customer(
+                        self.db, value, current_id=getattr(row, "customer_id", None)
+                    )
+                    if linked_name:
+                        row.customer_name = linked_name
                 setattr(row, field, value)
         if requestor_field and requestor_field in payload:
             self._apply_requestor_contact(kind, row, payload.get(requestor_field))
@@ -1502,6 +1529,15 @@ class PortalService:
             row.sponsor_subject_other = (
                 explicit_other if norm_subject == "others" and explicit_other else norm_other
             )
+
+    def _check_line_numbers(self, kind: str, payload: dict) -> None:
+        """Refuse a bad line figure before the header is written."""
+        if kind not in ("purchase_request", "sponsorship_form"):
+            return
+        for line_data in payload.get("products") or []:
+            if isinstance(line_data, dict):
+                for key in ("quantity", "unit_price", "total"):
+                    self._coerce_decimal(line_data.get(key))
 
     def _replace_request_lines_if_needed(self, kind: str, row: Any, payload: dict) -> None:
         if kind == "complaint":
@@ -1652,6 +1688,7 @@ class PortalService:
             )
         return (
             "customer_name",
+            "customer_id",  # the picked customer; None = free text (FORM-ROUTING-CONDITIONS)
             "pic",
             "project_title",
             # AC-F3: the link itself. Ownership and the per-contact requirement are
@@ -1665,7 +1702,7 @@ class PortalService:
             "total_project_value_text",
             "sponsor_subject",
             "sponsor_subject_other",
-            "sales_type",  # PR: project/cash_sales (lookup-bound); required for PR, routes CS
+            "sales_type",  # project/cash_sales (lookup-bound); required for PR (routes CS), optional on SF
             "expected_delivery_date",
             "expected_po_date",
             "requested_by",
@@ -1717,12 +1754,15 @@ class PortalService:
     def _coerce_decimal(value: Any) -> Optional[Decimal]:
         if value is None or value == "":
             return None
-        if isinstance(value, Decimal):
-            return value
         try:
-            return Decimal(str(value))
+            number = value if isinstance(value, Decimal) else Decimal(str(value))
         except (InvalidOperation, ValueError):
             return None
+        if not number.is_finite():
+            raise handle_validation_error("Enter a valid number.")
+        if number >= 10**13 or number <= -(10**13):
+            raise handle_validation_error("Quantity is too large.")
+        return number
 
     # ---------- Requestor ("requested by" / "salesperson") options ----------
     #
@@ -1896,6 +1936,17 @@ class PortalService:
                 logger.warning("Purchase request submit notify failed: %s", e)
 
     # ---------- Attachment policy ----------
+
+    def portal_allowed_extensions(self) -> list[str]:
+        """The portal type's extension list for the file picker. Unlike
+        ``get_portal_attachment_type`` this never raises: a missing type row
+        must not break ``/me``; the upload route still refuses on its own."""
+        row = (
+            self.db.query(AttachmentType.allowed_extensions)
+            .filter(AttachmentType.code == PORTAL_ATTACHMENT_TYPE_CODE)
+            .first()
+        )
+        return parse_allowed_extensions(row[0] if row else None)
 
     def get_portal_attachment_type(self) -> AttachmentType:
         row = (
@@ -2104,6 +2155,7 @@ class PortalService:
                 # portal shows, because a UUID in the UI is never the answer.
                 "project_id": str(row.project_id) if row.project_id else None,
                 "project_code": self._project_code(row.project_id),
+                "customer_id": str(row.customer_id) if row.customer_id else None,
                 "products": [
                     {
                         "id": str(line.id),

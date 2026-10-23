@@ -173,6 +173,8 @@ class PlanningChangeRow(BaseModel):
     #: rather than by product and sales order (AC-P3-2). `None` on an `added` row.
     project_line_id: Optional[str] = None
     line_no: int
+    #: The number the customer's sales order carries; `line_no` stays the sheet's own address.
+    so_line_no: Optional[int] = None
     item_code: str
     product_name: Optional[str] = None
     kind: PlanningChangeKind

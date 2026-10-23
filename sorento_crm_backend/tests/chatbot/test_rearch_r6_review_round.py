@@ -45,6 +45,7 @@ from app.services.chatbot.turn import narrow as narrow_mod
 from app.services.chatbot.turn.policy import default_policy
 from app.services.chatbot.turn.state import Focus, Profile
 from app.services.company_scope import DEFAULT_COMPANY_ID
+from tests.chatbot._turn_helpers import make_office_access_type
 from tests._pg_fixture import unique_code
 from tests.chatbot._turn_helpers import do_window
 from tests.chatbot.test_engine import (
@@ -1151,6 +1152,8 @@ class TestMultiDomainAmbiguousCustomerUsesGatesOwnHeader:
             return {"items": [], "has_result": False}
 
         _seed_business_contact(session_factory, variables={})
+        # V1-DOC-SCOPE slice 3: plays an office role, unlinked != customer.
+        make_office_access_type(session_factory, CONTACT_ID)
         result, captured = _run_turn_fake_resolver(
             session_factory, monkeypatch,
             qf=_parser_output(
@@ -1174,14 +1177,13 @@ class TestMultiDomainAmbiguousCustomerUsesGatesOwnHeader:
             resolve_services=_ambiguous_hanlim_resolve_services(spy_probe),
         )
         reply = (result.reply or {}).get("text") or ""
-        assert "Which one do you mean?" not in reply, (
-            f"reviewer S7: a multi-domain ambiguous-customer ask must never fall "
-            f"through to turn/compose.py's generic header (turn/compose.py:487, "
-            f"`customer_pick` absent from `_ASK_HEADERS`): {reply!r}"
-        )
-        assert reply.startswith("Which customer do you mean? Please choose:"), (
-            f"reviewer S7: gate.py's own customer-picker header must win even for "
-            f"a multi-domain ask - engine.py's own bridge (engine.py:1668-1692) "
-            f"must not skip the offer exit just because len(plan.domains) > 1: "
-            f"{reply!r}"
-        )
+        # PICKER-ONE (owner, 13 Oct 2026) supersedes S7's "the gate's header wins": every
+        # customer picker prints the ONE format, so the two-domain ask reads exactly what
+        # the one-domain ask reads (`test_rearch_r3_bridge_engine.py::
+        # TestCustomerAskUsesTheOneCustomerPicker`) - the precedence half of S7 (the
+        # bridge's offer exit still answers a multi-domain ask) is what this still pins.
+        assert reply == (
+            "Which one do you mean?\n"
+            "1. HANLIM TRADING SDN BHD - no DO\n"
+            "2. HANLIM HARDWARE SDN BHD - no DO"
+        ), reply

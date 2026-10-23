@@ -144,6 +144,7 @@ SPLIT_BY_MODES = (SPLIT_BY_AREA, SPLIT_BY_DELIVERY_DATE, SPLIT_BY_DELIVERY_MONTH
 _DATE_GROUPING_ORIGINS = frozenset({GROUPING_DELIVERY_DATE, GROUPING_DELIVERY_MONTH})
 
 EXPLOSION_PACKAGE = "package"
+EXPLOSION_SET = "set"
 EXPLOSION_QUOTATION = "quotation"
 EXPLOSION_NONE = "none"
 
@@ -379,6 +380,7 @@ class ProjectSODraftService:
         project = self._project_or_404(po.project_id)
         schedule_version = self._schedule_version_or_404(schedule_version_id)
         self._assert_schedule_belongs_to_po(schedule_version, po)
+        self._assert_buildable(po, schedule_version)
 
         po_version = self._po_version_for(po, schedule_version)
         source_lines = self._source_lines(po, po_version)
@@ -398,7 +400,7 @@ class ProjectSODraftService:
 
         quotation_version = self._quotation_version(po)
         findings: List[_PendingFinding] = []
-        findings.extend(self._document_findings(source_lines, po_version))
+        findings.extend(self._document_findings(source_lines, po_version, quotation_version))
 
         slices = self._spread_across_phases(
             po=po, schedule_version=schedule_version, source_lines=source_lines, findings=findings
@@ -462,7 +464,9 @@ class ProjectSODraftService:
         source_lines = self._source_lines(po, po_version)
 
         findings: List[_PendingFinding] = []
-        findings.extend(self._document_findings(source_lines, po_version))
+        findings.extend(
+            self._document_findings(source_lines, po_version, self._quotation_version(po))
+        )
         # `_spread_across_phases` also appends order-scoped findings (schedule_short,
         # missing_delivery_date, ...) to this same list as a side effect of walking the
         # cells -- harmless to compute again since only the `batch_level` subset below is
@@ -543,15 +547,42 @@ class ProjectSODraftService:
                 code="schedule_foreign_po",
             )
 
+    def _assert_buildable(
+        self, po: ProjectPurchaseOrder, schedule_version: DeliveryScheduleVersion
+    ) -> None:
+        """D3 (PM-SIMPLIFY): sales orders come from a CONFIRMED schedule and, when the PO
+        was scanned, a CONFIRMED PO version. An unconfirmed one is a proposal nobody has
+        read yet, and building from it put unread dates and quantities into AutoCount."""
+        if schedule_version.confirmed_at is None:
+            raise AppException(
+                status_code=409,
+                message=(
+                    "Confirm the delivery schedule before building sales orders from it."
+                ),
+                code="schedule_not_confirmed",
+            )
+        versions = self.db.query(ProjectPOVersion).filter(
+            ProjectPOVersion.purchase_order_id == po.id
+        )
+        if (
+            versions.first() is not None
+            and versions.filter(ProjectPOVersion.confirmed_at.isnot(None)).first() is None
+        ):
+            raise AppException(
+                status_code=409,
+                message="Confirm the purchase order before building sales orders from it.",
+                code="po_not_confirmed",
+            )
+
     def _po_version_for(
         self, po: ProjectPurchaseOrder, schedule_version: DeliveryScheduleVersion
     ) -> Optional[ProjectPOVersion]:
         """The PO version this build reads.
 
         The schedule names it (finding G1): a schedule issued before a handwritten
-        cancellation reconciles against the PO as it stood. Falling back to the latest
-        CONFIRMED version rather than the latest version is deliberate -- an unconfirmed
-        extraction is a proposal nobody has read yet.
+        cancellation reconciles against the PO as it stood. Otherwise the latest CONFIRMED
+        version, never an unconfirmed one (D3): an unconfirmed extraction is a proposal
+        nobody has read yet.
         """
         if schedule_version.po_version_id:
             named = (
@@ -559,17 +590,17 @@ class ProjectSODraftService:
                 .filter(ProjectPOVersion.id == schedule_version.po_version_id)
                 .first()
             )
-            if named is not None:
+            if named is not None and named.confirmed_at is not None:
                 return named
-        query = self.db.query(ProjectPOVersion).filter(
-            ProjectPOVersion.purchase_order_id == po.id
-        )
-        confirmed = (
-            query.filter(ProjectPOVersion.confirmed_at.isnot(None))
+        return (
+            self.db.query(ProjectPOVersion)
+            .filter(
+                ProjectPOVersion.purchase_order_id == po.id,
+                ProjectPOVersion.confirmed_at.isnot(None),
+            )
             .order_by(ProjectPOVersion.version_no.desc())
             .first()
         )
-        return confirmed or query.order_by(ProjectPOVersion.version_no.desc()).first()
 
     def _source_lines(
         self, po: ProjectPurchaseOrder, po_version: Optional[ProjectPOVersion]
@@ -623,6 +654,14 @@ class ProjectSODraftService:
             for index, row in enumerate(hand_keyed, start=1)
         ]
 
+    def _is_quoted_set(
+        self, line: _SourceLine, quotation_version: Optional[ProjectQuotationVersion]
+    ) -> bool:
+        """A no-product PO line whose code is a quoted SET line: it splits from the parts frozen
+        on the quotation, so it is not an unresolved product."""
+        quoted = self._quoted_line(line, quotation_version)
+        return quoted is not None and bool(quoted.set_parts_snapshot)
+
     def _quotation_version(
         self, po: ProjectPurchaseOrder
     ) -> Optional[ProjectQuotationVersion]:
@@ -637,7 +676,10 @@ class ProjectSODraftService:
     # ------------------------------------------------------- document arithmetic
 
     def _document_findings(
-        self, source_lines: Sequence[_SourceLine], po_version: Optional[ProjectPOVersion]
+        self,
+        source_lines: Sequence[_SourceLine],
+        po_version: Optional[ProjectPOVersion],
+        quotation_version: Optional[ProjectQuotationVersion] = None,
     ) -> List[_PendingFinding]:
         """`line_arithmetic`, `total_mismatch` and `unresolved_product`.
 
@@ -671,7 +713,9 @@ class ProjectSODraftService:
                         source_po_line_no=line.line_no,
                     )
                 )
-            if not line.is_cancelled and not line.product_id:
+            if not line.is_cancelled and not line.product_id and not self._is_quoted_set(
+                line, quotation_version
+            ):
                 out.append(
                     _PendingFinding(
                         severity=SEVERITY_HARD,
@@ -1175,6 +1219,28 @@ class ProjectSODraftService:
         )
         if package is not None:
             return package
+
+        # A quoted SET line carries its parts frozen at quote time: the driver at the quoted
+        # rate, the others at zero, so the set's price is counted once.
+        # The snapshot alone triggers it: a set deleted since the quote (product_set_id nulled by
+        # the FK) still splits from what was frozen.
+        if quoted is not None and quoted.set_parts_snapshot:
+            return _Explosion(
+                components=[
+                    _Component(
+                        product_id=part["product_id"],
+                        code=part["product_code"],
+                        description=part.get("description"),
+                        uom=part.get("uom"),
+                        unit_price=parent_price if part.get("is_driver") else _ZERO,
+                        numerator=_dec(part["quantity"], Decimal("1")),
+                        denominator=Decimal("1"),
+                        quotation_line_id=quoted.id,
+                    )
+                    for part in quoted.set_parts_snapshot
+                ],
+                source=EXPLOSION_SET,
+            )
 
         fallback = self._quotation_components(source, quotation_version)
         if fallback is not None and fallback.components:
@@ -3301,6 +3367,8 @@ class ProjectSODraftService:
         *,
         query: Optional[str] = None,
         status: Optional[Sequence[str]] = None,
+        purchase_order_id: Optional[str] = None,
+        without_purchase_order: bool = False,
         page: int = 1,
         limit: int = 50,
         sort: str = "created_at",
@@ -3309,6 +3377,10 @@ class ProjectSODraftService:
         rows = self.db.query(ProjectSalesOrder).filter(
             ProjectSalesOrder.project_id == project_id
         )
+        if purchase_order_id:
+            rows = rows.filter(ProjectSalesOrder.purchase_order_id == purchase_order_id)
+        if without_purchase_order:
+            rows = rows.filter(ProjectSalesOrder.purchase_order_id.is_(None))
         if status:
             rows = rows.filter(ProjectSalesOrder.status.in_(list(status)))
         if query:

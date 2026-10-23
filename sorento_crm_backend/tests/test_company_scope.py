@@ -607,7 +607,24 @@ def test_every_company_id_table_is_registered():
     #   by product, so the mixin's filter is what hides another company's links = 158.
     # + 1 (WC-SEAT-COMPAT): `product_compatibility`, one company's own "seat cover fits WC"
     #   link between two of its products, read by product like the alternatives = 159.
-    expected_owned = 159
+    # + 2 (AC-CANCEL-CRM): `autocount_cancel_docs` and `autocount_cancel_lines`, AutoCount
+    #   Cancel SO / PO (and stored-only consignment) documents of ONE company's book. The lines are owned
+    #   too, not left to their parent: the waiting retry and the order-push relink read them
+    #   directly, by company, without the doc = 161.
+    # + 1 (OI-RESERVE-RECEIVED): `order_inquiry_released_links`, one company's own released
+    #   received link per reserve = 162.
+    # + 2 (STOCK-DEBT-SNAPSHOT): `stock_debt_snapshots` and `stock_debt_snapshot_rows`, one
+    #   company's frozen Stock Debt view and its rows (customer demand, OI numbers and
+    #   decisions); every read is by snapshot within the company = 164.
+    # + 1 (OI-LINE-SPLIT): `so_line_splits`, one company's own delivery splits of an SO line;
+    #   read by order within the company = 165.
+    # + 1 (SR-CORE #1718): `sample_requests`, one company's sample requests = 166.
+    # + 3 (SALES-TARGET-DEALER): `sales.target_accounts` (a dealer target's counted accounts),
+    #   `sales.target_tier_rates` (a tier's per-account rate) and `sales.point_ratios` (one
+    #   company's dated point-to-RM ratio); each is one company's own scheme data = 169.
+    # + 1 (NEW-PRODUCT-APP): `new_product_applications`, one company's applications; the lines
+    #   are scoped through the parent = 170.
+    expected_owned = 170
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

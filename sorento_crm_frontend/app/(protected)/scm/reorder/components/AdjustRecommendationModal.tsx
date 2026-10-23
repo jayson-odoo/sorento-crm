@@ -13,7 +13,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
+import { numberFieldError } from '@/lib/number-field';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -27,6 +28,7 @@ import {
 } from '../../lib/format';
 import type { AdjustPayload } from '../types/decisions.types';
 import type { ReorderRecommendation, SupplierChoice } from '../types/reorder.types';
+import { distinctName } from '@/lib/product-display';
 
 /**
  * M4-D7 - Adjust a recommendation before it drafts a PO: override the buy qty
@@ -52,6 +54,7 @@ export function AdjustRecommendationModal({
   const [supplierCode, setSupplierCode] = useState('');
   const [reason, setReason] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [showErrors, setShowErrors] = useState(false);
 
   // Seed the form each time a new rec is opened.
   useEffect(() => {
@@ -60,6 +63,7 @@ export function AdjustRecommendationModal({
     setSupplierCode(rec.supplier?.supplier_code ?? '');
     setReason('');
     setError(null);
+    setShowErrors(false);
   }, [open, rec]);
 
   const supplierOptions = useMemo(() => {
@@ -91,7 +95,8 @@ export function AdjustRecommendationModal({
   }, [rec, supplierCode]);
 
   const qtyNum = Number(qty);
-  const qtyValid = Number.isFinite(qtyNum) && qtyNum > 0;
+  const qtyError = numberFieldError(qty, { min: 1, integer: true });
+  const qtyValid = !qtyError;
 
   /**
    * Live recompute preview off the chosen supplier.
@@ -119,7 +124,7 @@ export function AdjustRecommendationModal({
   const submit = () => {
     setError(null);
     if (!qtyValid) {
-      setError('Enter a buy quantity greater than zero.');
+      setShowErrors(true);
       return;
     }
     if (!reason.trim()) {
@@ -127,7 +132,7 @@ export function AdjustRecommendationModal({
       return;
     }
     onSubmit({
-      override_qty: Math.round(qtyNum),
+      override_qty: qtyNum,
       override_supplier_code:
         rec && chosenSupplier?.supplier_code !== rec.supplier?.supplier_code
           ? chosenSupplier?.supplier_code ?? null
@@ -157,7 +162,9 @@ export function AdjustRecommendationModal({
           ) : null}
 
           <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
-            <div className="font-medium">{rec.product_name}</div>
+            {distinctName(rec.sku, rec.product_name) ? (
+              <div className="font-medium">{rec.product_name}</div>
+            ) : null}
             <div className="mt-0.5 text-xs text-muted-foreground">
               Proposed: {fmtInt(rec.order_qty)} units · {rec.supplier?.supplier_name ?? EM_DASH} ·{' '}
               {fmtMoney(rec.cash_impact)}
@@ -166,10 +173,10 @@ export function AdjustRecommendationModal({
 
           <div>
             <Label className="mb-1 block">Buy quantity</Label>
-            <Input
-              type="number"
+            <NumberInput
               min={1}
               value={qty}
+              error={showErrors ? qtyError : undefined}
               onChange={(e) => setQty(e.target.value)}
               className="w-40 tabular-nums"
             />

@@ -32,7 +32,6 @@ from app.services.chatbot.lanes.business import brand_guard
 from app.services.chatbot import do_ask
 from app.services.chatbot.lanes.business import alternatives as alternatives_mod
 from app.services.chatbot.lanes.business import fetch as fetch_mod
-from app.services.chatbot.lanes.business import find as find_lane
 from app.services.chatbot.lanes.business import low_stock_ask
 from app.services.chatbot.lanes.business import chat_report
 from app.services.chatbot.lanes.business import report_ask
@@ -221,6 +220,7 @@ def _low_stock_not_enabled() -> dict[str, Any]:
         "outcome": "not_found",
         "escalate": True,
         "response": LOW_STOCK_NOT_ENABLED_MESSAGE,
+        "refused": True,
     }
 
 
@@ -605,14 +605,70 @@ def _nothing_live_of_kind(
     return {**_fixed_reply(text), "kind_none": True} if text else None
 
 
+#: V1-DOC-SCOPE: the tools that list customer documents (DOs, and SOs on the report).
+_DOC_TOOLS: frozenset[str] = fetch_mod.ORDER_TOOLS | {"crm_outstanding_report"}
+
+
+def _scope_refusal(customer_scope: dict[str, Any]) -> str:
+    """The contact's scope refusal line; a contact with no links (no scope read at all) gets
+    the same line over no names ("I can only check on your own account")."""
+    from app.services import contact_customer_scope as scope_mod
+
+    return str(customer_scope.get("refusal") or "") or scope_mod.refusal_line(
+        scope_mod.ContactCustomerScope(linked=(), staff=False)
+    )
+
+
+def _ref_page_fragment(db: Any, ref_status: Any, carry: dict[str, Any]) -> dict[str, Any] | None:
+    """CHAT-COMPOSER Lists L3: the page a "more" asks of a cut PO / PR card, with its "more" line and
+    the carry for the next one. None when the card is gone."""
+    from app.services.chatbot.composers import sets as composers_sets
+
+    cards = carry.get("ref_cards") or []
+    now = carry
+    if int(now.get("shown") or 0) >= int(now.get("total") or 0):
+        # This card is done: go on to the next cut card (from its line 10), else say the end.
+        now = ref_status.next_ref(now)
+    index = int(now.get("card") or 0)
+    if index >= len(cards):
+        return None
+    shown, total = int(now.get("shown") or 0), int(now.get("total") or 0)
+    text = ref_status.card_page(db, cards[index], shown)
+    if text is None:
+        return None
+    after, left = now, 0
+    if shown < total:
+        after = ref_status.next_ref(now)
+        ahead = after if int(after["shown"]) < int(after["total"]) else ref_status.next_ref(after)
+        left = composers_sets.next_count(int(ahead["total"]), 0, int(ahead["shown"]), ref_status.MAX_LINES)
+        if left:
+            text += "\n\n" + composers_sets.more_line(left)
+    fragment = _fixed_reply(text)
+    fragment["fetch"]["so_status"] = True
+    fragment["fetch"]["set_window"] = {
+        "first": min(shown + 1, total),
+        "last": min(shown + ref_status.MAX_LINES, total),
+        "total": total,
+        "next": left,
+        "carry": after,
+    }
+    return fragment
+
+
 def _fixed_reply(
-    text: str, *, top_selling_asked: str | None = None, required_ask: dict[str, Any] | None = None
+    text: str,
+    *,
+    top_selling_asked: str | None = None,
+    required_ask: dict[str, Any] | None = None,
+    refused: bool = False,
 ) -> dict[str, Any]:
     """One fixed line and nothing else, before any fetch: the refusal and the top
     selling questions. `has_result: True` and no `outstanding_ask` keep it OFF the miss
     lane (no escalate offer) and arm nothing; the carried `focus.status` is what makes
     the next message land on the same ask. `outstanding_report` skips the generic
-    search-scope header."""
+    search-scope header. `refused` marks a refusal (grant, scope, audience): the envelope carries
+    it as its own `refused` key (not `denied`, which has its own composer line), so no fit line
+    opens the reply (CHAT-FIT-LINE AC-23)."""
     structured: dict[str, Any] = {
         "response": text,
         "answers": [],
@@ -639,6 +695,7 @@ def _fixed_reply(
         "delegate": DELEGATE,
         "delegate_payload": {"fetch": item},
         "fetch": item,
+        "refused": refused,
     }
 
 
@@ -683,6 +740,7 @@ def _sales_report_not_enabled() -> dict[str, Any]:
         "delegate": DELEGATE,
         "delegate_payload": {"fetch": item},
         "fetch": item,
+        "refused": True,
     }
 
 
@@ -950,7 +1008,7 @@ def _fetch_semantic_input(
             if isinstance(parse_output.get("access_levels"), list)
             else []
         )
-    return {
+    semantic = {
         "message_type": parse_output.get("message_type"),
         "intent_hint": parse_output.get("intent_hint"),
         "domain_hint": parse_output.get("domain_hint"),
@@ -1026,6 +1084,12 @@ def _fetch_semantic_input(
         # the map could never reach the tool.
         "requested_quantities": parse_output.get("requested_quantities"),
     }
+    from app.services.chatbot import composers
+
+    if composers.enabled():
+        # CHAT-COMPOSER Lists L2: the report's group page start.
+        semantic["outstanding_group_offset"] = parse_output.get("outstanding_group_offset")
+    return semantic
 
 
 def _error_fragment(reason: str, *, outcome: str | None = None) -> dict[str, Any]:
@@ -1406,7 +1470,7 @@ def run_fetch(
     picked = bool((tier_gate or {}).get("tier_pick"))
     narrow = {
         **{k: v for k, v in (parse_output.get("promo_filter") or {}).items() if v and picked},
-        **{k: v for k, v in _turn_runtime.promo_filter(parse_output, db, gate).items() if v},
+        **{k: v for k, v in _turn_runtime.promo_filter(parse_output, db, gate, tier_pick=picked).items() if v},
     }
     for key, values in narrow.items():
         semantic_input[key] = list(values)
@@ -1454,11 +1518,20 @@ def run_fetch(
         if _OUTSTANDING_SO_GRANT not in granted:
             if trace is not None:
                 trace.add("so_status", {"refused": "not_granted", "needs": _OUTSTANDING_SO_GRANT})
-            return _fixed_reply(fetch_mod.SO_NOT_ENABLED_MESSAGE)
+            return _fixed_reply(fetch_mod.SO_NOT_ENABLED_MESSAGE, refused=True)
         if db is not None:
             from app.services.chatbot import so_status
 
-            linked = list(customer_scope.get("linked") or []) if customer_scope.get("enforced") else None
+            # V1-DOC-SCOPE: an enforced contact is held to its links first (as the resolver's
+            # `engine._reference_scope` holds it, whatever its tier); otherwise only staff
+            # (`doc_staff`: the tier, an office access type or a staff CRM user) are unscoped, and an unlinked
+            # non-staff contact is held to its (empty) links, so every SO is refused.
+            # V1-DOC-SCOPE-SALES: a linked staff CRM user is enforced yet document staff (the
+            # scope's `staff`), so it is not held to its links here.
+            if customer_scope.get("enforced") and customer_scope.get("staff") is not True:
+                linked = list(customer_scope.get("linked") or [])
+            else:
+                linked = None if parse_output.get("doc_staff") is True else list(customer_scope.get("linked") or [])
             looked = so_status.lookup(db, so_numbers, linked=linked)
             if trace is not None:
                 trace.add(
@@ -1473,9 +1546,11 @@ def run_fetch(
             fragment = _fixed_reply(
                 so_status.reply_text(
                     looked,
-                    refusal=str(customer_scope.get("refusal") or ""),
+                    refusal=_scope_refusal(customer_scope),
                     kind_word="Sales order" if parse_output.get("so_placed") is True else None,
-                )
+                ),
+                # A reply that is nothing but the scope refusal is sent as it is (AC-23).
+                refused=looked.refused and not looked.cards and not looked.missing,
             )
             # The reply names its own missing numbers, so the resolver's own `not_found`
             # exit (nothing placed the SO words) is not a second miss to compose
@@ -1494,7 +1569,7 @@ def run_fetch(
         if _OUTSTANDING_SO_GRANT not in granted:
             if trace is not None:
                 trace.add("so_status", {"refused": "not_granted", "needs": _OUTSTANDING_SO_GRANT})
-            refusal = _fixed_reply(fetch_mod.SO_NOT_ENABLED_MESSAGE)
+            refusal = _fixed_reply(fetch_mod.SO_NOT_ENABLED_MESSAGE, refused=True)
             # The refusal is the whole answer: the miss ladder (escalation offer) stands down.
             refusal["fetch"]["so_status"] = True
             return refusal
@@ -1502,7 +1577,12 @@ def run_fetch(
             from app.services.chatbot import so_status
 
             # REF-PROBES: staff carry no customer links and no enforced scope (`ref_staff`).
-            linked = None if parse_output.get("ref_staff") is True else list(customer_scope.get("linked") or [])
+            # V1-DOC-SCOPE: an enforced contact is held to its links whatever its tier, as in
+            # the SO number arm above.
+            if customer_scope.get("enforced"):
+                linked = list(customer_scope.get("linked") or [])
+            else:
+                linked = None if parse_output.get("ref_staff") is True else list(customer_scope.get("linked") or [])
             looked = so_status.lookup_po_refs(db, po_refs, linked=linked)
             if trace is not None:
                 trace.add(
@@ -1526,23 +1606,57 @@ def run_fetch(
     # resolver never probes these kinds for anyone else, so this is the second lock.
     po_numbers = [w for w in jsc.array(parse_output.get("po_numbers")) if isinstance(w, str) and w.strip()]
     pr_numbers = [w for w in jsc.array(parse_output.get("pr_numbers")) if isinstance(w, str) and w.strip()]
-    if (po_numbers or pr_numbers) and db is not None and parse_output.get("ref_staff") is True:
+    from app.services.chatbot import composers
+
+    ref_page = parse_output.get("ref_page") if composers.enabled() else None
+    if isinstance(ref_page, dict) and db is None:
+        return _error_fragment("reference page refused", outcome="not_found")
+    if (po_numbers or pr_numbers or isinstance(ref_page, dict)) and db is not None and (
+        parse_output.get("ref_staff") is True or isinstance(ref_page, dict)
+    ):
         access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
         granted_raw = access_ctx.get("attributes")
         granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
+        if isinstance(ref_page, dict):
+            # CHAT-COMPOSER Lists L3: a later page of a cut card. Audience and grant are checked again on
+            # every page, and a refused page never falls through to the domain tool (no entity rides it).
+            if parse_output.get("ref_staff") is not True or "purchase_orders.placed" not in granted:
+                return _error_fragment("reference page refused", outcome="not_found")
+            from app.services.chatbot import ref_status
+
+            page = _ref_page_fragment(db, ref_status, ref_page)
+            return page or _error_fragment("reference page refused", outcome="not_found")
         if "purchase_orders.placed" in granted:
             from app.services.chatbot import ref_status
 
             cards: list[str] = []
+            cut: list[dict[str, Any]] = []
             if po_numbers:
-                cards += ref_status.lookup_purchase_orders(db, po_numbers).cards
+                looked = ref_status.lookup_purchase_orders(db, po_numbers)
+                cards += looked.cards
+                cut += looked.cut
             if pr_numbers:
-                cards += ref_status.lookup_purchase_requests(db, pr_numbers).cards
+                looked = ref_status.lookup_purchase_requests(db, pr_numbers)
+                cards += looked.cards
+                cut += looked.cut
             if trace is not None:
                 trace.add("ref_status", {"po": po_numbers, "pr": pr_numbers, "cards": len(cards)})
             if cards:
-                fragment = _fixed_reply("\n\n".join(cards))
+                text = "\n\n".join(cards)
+                carry = None
+                if composers.enabled() and cut:
+                    from app.services.chatbot.composers import sets as composers_sets
+
+                    total = int(cut[0]["lines"])
+                    carry = {"ref_cards": cut, "card": 0, "shown": ref_status.MAX_LINES, "total": total}
+                    more = composers_sets.next_count(total, 0, ref_status.MAX_LINES, ref_status.MAX_LINES)
+                    text += "\n\n" + composers_sets.more_line(more)
+                fragment = _fixed_reply(text)
                 fragment["fetch"]["so_status"] = True
+                if carry is not None:
+                    fragment["fetch"]["set_window"] = {
+                        "first": 1, "last": ref_status.MAX_LINES, "total": total, "next": more, "carry": carry,
+                    }
                 return fragment
     # SO-NUMBER-ASK, the SO list ("all my sales orders"): the customers in scope (the
     # links on a scoped or "my" turn, a resolved customer otherwise), behind the same SO
@@ -1563,13 +1677,19 @@ def run_fetch(
             own = {str(i) for i in customer_scope["ids"]}
             customer_ids = [u for u in customer_ids if str(u) in own] or list(customer_scope["ids"])
     if parse_output.get("so_list") is True and parse_output.get("domain_hint") == "order" and customer_ids and db is not None:
+        if parse_output.get("doc_staff") is not True and not customer_scope.get("ids"):
+            # V1-DOC-SCOPE: a non-staff contact with no links owns no sales order; a customer
+            # it named is another customer.
+            if trace is not None:
+                trace.add("so_list", {"refused": "no_links"})
+            return _fixed_reply(_scope_refusal(customer_scope), refused=True)
         access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
         granted_raw = access_ctx.get("attributes")
         granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
         if _OUTSTANDING_SO_GRANT not in granted:
             if trace is not None:
                 trace.add("so_list", {"refused": "not_granted", "needs": _OUTSTANDING_SO_GRANT})
-            return _fixed_reply(fetch_mod.SO_NOT_ENABLED_MESSAGE)
+            return _fixed_reply(fetch_mod.SO_NOT_ENABLED_MESSAGE, refused=True)
         from app.services.chatbot import so_status
         from app.services.ledger_family import family_words
 
@@ -1689,7 +1809,7 @@ def run_fetch(
                             "dropped": violation.dropped,
                         },
                     )
-                return _fixed_reply(str(customer_scope.get("refusal") or ""))
+                return _fixed_reply(str(customer_scope.get("refusal") or ""), refused=True)
             except Exception:  # noqa: BLE001 - an unprobed tier is "unknown", never "none"
                 logger.warning("chatbot: tier probe did not run", exc_info=True)
                 probe_results.append(None)
@@ -1738,7 +1858,7 @@ def run_fetch(
             if need == chat_report.GRANT:
                 # CA-3: a contact without the Chat analytics reveal is turned away in one line
                 # before any call (the route refuses again, `chat_analytics_not_enabled`).
-                return _fixed_reply(chat_report.NOT_ENABLED)
+                return _fixed_reply(chat_report.NOT_ENABLED, refused=True)
             if need == _SALES_REPORT_GRANT:
                 # R7 (PLAN-prompt-dynamic-30sep D9): the `sales` domain is refused in the
                 # words every sales figure ask was refused in under `order`.
@@ -1768,15 +1888,6 @@ def run_fetch(
     # ── the read ─────────────────────────────────────────────────────────────
     tool_item = pick.items[0]["json"]
     tool_name = jsc.js_string(tool_item.get("name") or "")
-
-    # CHAT-FIND (PLAN-chat-generic-find-12oct 2.5): the parser's `find.filters` (registry keys
-    # only) pick the generic find tool over the domain's own. Only the products this message
-    # named are its subject; the args are built below by the same transformer.
-    find_items = find_lane.filter_items(parse_output)
-    if find_items:
-        tool_name = find_lane.TOOL
-        tool_item = {"name": tool_name, "_tool_pick": {"source": "find_override"}}
-        entities = find_lane.named_this_turn(parse_output, jsc.array(entities))
 
     # S4 point 2 (PLAN-chatbot-outstanding-report.md), REWRITTEN by R13 (owner ruling,
     # 13 Sep 2026): domain "order" + an outstanding `order_status` picks the report over
@@ -2105,7 +2216,7 @@ def run_fetch(
             # ledgers (`engine._top_selling_dealer_scope`). No picker, no fetch.
             if trace is not None:
                 trace.add("top_selling", {"refused": "customer_not_permitted"})
-            return _fixed_reply(TOP_SELLING_REFUSED_OTHER_CUSTOMER)
+            return _fixed_reply(TOP_SELLING_REFUSED_OTHER_CUSTOMER, refused=True)
         if slot.get("unclear"):
             # Owner retest of round 4 (27 Sep 2026, R6/R8): a message inside a ranking
             # the parser could not place is asked about in one short line, never sent to
@@ -2175,7 +2286,7 @@ def run_fetch(
                  "values": settled.values if settled else None, "line": line},
             )
         if settled is None:
-            return _fixed_reply(line or "")
+            return _fixed_reply(line or "", refused=line == report_ask.DEALER_REFUSAL)
         if not settled.done:
             return _fixed_reply(settled.reply or "", required_ask=settled.slot)
         semantic_input["report_ask_args"] = chat_report.route_args(settled)
@@ -2201,7 +2312,7 @@ def run_fetch(
                  "values": settled.values if settled else None, "line": line},
             )
         if settled is None:
-            return _fixed_reply(line or "")
+            return _fixed_reply(line or "", refused=line == report_ask.DEALER_REFUSAL)
         if not settled.done:
             return _fixed_reply(settled.reply or "", required_ask=settled.slot)
         semantic_input["report_ask_args"] = report_ask.route_args(settled)
@@ -2225,6 +2336,19 @@ def run_fetch(
             semantic_input["order_status"] = "outstanding"
             semantic_input["so_bucket_refused"] = True
 
+    # V1-DOC-SCOPE (owner rule: unlinked != customer): a non-staff contact with no customer
+    # links owns no delivery order, so an orders read (or the outstanding report, whose rows
+    # carry DO / SO numbers and customer names) would only ever list other customers'.
+    # Refused before any fetch; the routes themselves scope only an enforced contact.
+    if (
+        tool_name in _DOC_TOOLS
+        and parse_output.get("doc_staff") is not True
+        and not customer_scope.get("ids")
+    ):
+        if trace is not None:
+            trace.add("customer_scope", {"refused": "no_links", "tool": tool_name})
+        return _fixed_reply(_scope_refusal(customer_scope), refused=True)
+
     # DO-ASK-SIMPLIFY security S1 (PR #1433): a transporter named on a DO list ask would
     # filter the rows by it, telling the contact who carried each one. Without the
     # `delivery_orders.transporter` reveal the ask is refused before any fetch (review S5:
@@ -2233,7 +2357,7 @@ def run_fetch(
         if any(isinstance(e, dict) and e.get("entity_type") == "transporter" for e in entities):
             if trace is not None:
                 trace.add("field_reveal", {"refused": "transporter_filter", "tool": tool_name})
-            return _fixed_reply(do_ask.TRANSPORTER_REFUSED)
+            return _fixed_reply(do_ask.TRANSPORTER_REFUSED, refused=True)
 
     trigger = {
         "tool": tool_name,
@@ -2258,6 +2382,15 @@ def run_fetch(
         # stay byte-inert for every non-HAS turn.
         "predicate": gate.get("predicate"),
     }
+    set_by_code = {
+        str(e.get("code")).casefold(): [str(c) for c in (e.get("set_codes") or [e["set_code"]])]
+        for e in entities
+        if isinstance(e, dict) and e.get("set_code") and e.get("code")
+    }
+    if set_by_code:
+        # CHAT-CODE-LOOKUP R2: member rows of a product set the customer typed; the reply
+        # groups them under their set and prints no price (`output_structurer`).
+        trigger["set_by_code"] = set_by_code
     if tool_name == "crm_portal_link_get":
         # DEV-FAILURES RC-B: the intro names the form the link opens, in the reply language.
         templates = reply_copy.resolve(db) if db is not None else reply_copy.fallback_copy()
@@ -2266,6 +2399,17 @@ def run_fetch(
             getattr(ctx.get("localizer"), "language", None),
         )
     predicate = gate.get("predicate")
+    if (
+        tool_name == fetch_mod.TIER_PROBE_TOOL
+        and semantic_input.get("brand_subject")
+        and isinstance(predicate, dict)
+        and set((predicate.get("require") or {}).keys()) <= {"promotion"}
+    ):
+        # CHAT-PROMO-BRAND-FLYER: "Sorento A3 flyer" reads as the described set "Sorento
+        # products that have a promotion", which IS the question the promotions read answers
+        # by brand and kind (`promo_filter`): not a filter, and its count is not the answer.
+        predicate = None
+        trigger["predicate"] = None
     if isinstance(predicate, dict) and not predicate.get("qualifying_total"):
         # Reviewer B2 on PR #833: a described set with nothing in it has no product to
         # send, and the tool called without one answers about every product. The miss
@@ -2275,13 +2419,6 @@ def run_fetch(
         args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id)
         if dry_run and tool_name == _LOW_STOCK_TOOL:
             args["dry_run"] = True
-        if tool_name == find_lane.TOOL:
-            find_args, ask = find_lane.route_args(args, find_items)
-            if find_args is None:
-                # Card rule 6: nothing to run on (no product named, no value given), so the
-                # filter's own question; never a guess.
-                return _fixed_reply(ask)
-            args = find_args
     except fetch_mod.ScopeViolation as violation:
         # D4: the defence behind the engine's gate. No tool is called.
         if trace is not None:
@@ -2294,7 +2431,7 @@ def run_fetch(
                     "dropped": violation.dropped,
                 },
             )
-        return _fixed_reply(str(customer_scope.get("refusal") or ""))
+        return _fixed_reply(str(customer_scope.get("refusal") or ""), refused=True)
     # DO-ASK-SIMPLIFY rules 3-4 (owner, 2 Oct 2026; every contact, owner 4 Oct): a DO list ask with no
     # range, or a range over 31 days, is answered with one line and fetches nothing.
     # After the customer-scope backstop above (security S2), so the question never
@@ -2439,7 +2576,7 @@ def run_fetch(
         if refusal:
             if trace is not None:
                 trace.add("report_ask", {"refused": envelope.get("status_code")})
-            return _fixed_reply(refusal)
+            return _fixed_reply(refusal, refused=True)
         return _error_fragment(envelope["error"])
 
     # PRODUCT-ALTERNATIVES round B (card Addendum 1, owner 8 Oct 2026): an asked product
