@@ -181,7 +181,8 @@ def as_linked_products(
     """`verdict` with every named code that sits on a `fits` link replaced by its linked codes
     (each marked `linked_from` and `linked_as`, the side listed), and the lines that are the whole reply when nothing was
     replaced (empty otherwise). Nothing else changes: the domain, the intent, every other key
-    and every other entity stay the parser's.
+    and every other entity stay the parser's, except the file ask the relation's own word made
+    (`_without_relation_file_ask`), dropped whenever a said `fits` is read.
 
     `carried_codes` are the conversation's product codes (`focus.products`): the subject of
     "which seat cover fits it?", whose parse names no code. With neither, the reply asks for
@@ -217,6 +218,13 @@ def as_linked_products(
         if value and message and value.casefold() not in message.casefold():
             value = ""
         said = bool(value)
+        if said:
+            # SEAT-COVER-HIDDEN (live, prod v63, 23 Oct): "seat cover for <WC>" also tagged
+            # "seat cover" as an Installation Guide / certificate / photo. A turn that runs on as
+            # typed (a family code, a typo) must not carry that file ask either, so the rule the
+            # swap applies runs here, whether or not a code is replaced.
+            verdict = _without_relation_file_ask(verdict, items["fits"])
+            entities = list(jsc.array(verdict.get("entities")))
     elif carried_relation and (_bare_continuation(verdict, entities) or echo_turn):
         said = False
     else:
@@ -378,15 +386,23 @@ def as_linked_products(
              "linked_from": entity_code(entity), "linked_as": side, "linked_kind": kind}
             for code, kind, side in replaced[i]
         ]
-    linked = {**verdict, "entities": out}
-    fits_item = items.get("fits") or {}
+    return _without_relation_file_ask({**verdict, "entities": out}, items.get("fits") or {}), []
+
+
+def _without_relation_file_ask(verdict: dict[str, Any], fits_item: dict[str, Any]) -> dict[str, Any]:
+    """`verdict` with the file ask the relation's own word made dropped: a fits ask is never a
+    file ask unless the parser names a file word (SEAT-COVER-HIDDEN, owner 23 Oct). The same
+    object when nothing is dropped (the engine traces a resolution only when the verdict changed)."""
+    entities = list(jsc.array(verdict.get("entities")))
+    kept = entities
+    out = verdict
     relation_word = jsc.js_string(fits_item.get("value") or "").strip().casefold()
     if relation_word:
         # Crew audit: "<WC> seat cover files" came back with the relation's own word ("seat
         # cover", the parser's fits value) also tagged as a file type (Installation Guide). Two of
         # the parser's own fields name the same word; as the relation it names no file type.
-        linked["entities"] = [
-            e for e in linked["entities"]
+        kept = [
+            e for e in kept
             if not (
                 isinstance(e, dict)
                 and e.get("hint") == "attachment_type"
@@ -396,16 +412,17 @@ def as_linked_products(
     if "file_word" in fits_item and not jsc.js_string(fits_item.get("file_word") or "").strip():
         # The parser says THIS message asks for no file (crew v94 check 2: v94 read "seat cover" as
         # an Installation Guide / "which kind of file?" ask). The relation's word is no file type,
-        # so the turn is the bare linked codes: no attachment type of this message, and a file
-        # domain is left to the engine's own continuation (null), as a bare code's is.
-        linked["entities"] = [
-            e for e in linked["entities"]
+        # so the turn is the bare codes: no attachment type of this message, and a file domain is
+        # left to the engine's own continuation (null), as a bare code's is.
+        kept = [
+            e for e in kept
             if not (isinstance(e, dict) and e.get("hint") == "attachment_type" and e.get("current_message") is not False)
         ]
-        if linked.get("domain_hint") == "product_attachment":
-            linked["domain_hint"] = None
-            linked["intent_hint"] = None
-    return linked, []
+        if verdict.get("domain_hint") == "product_attachment":
+            out = {**out, "domain_hint": None, "intent_hint": None}
+    if len(kept) != len(entities):
+        out = {**out, "entities": kept}
+    return out
 
 
 def fit_lines(entities: list[Any], localizer: Any = None) -> list[str]:
