@@ -485,7 +485,9 @@ def names_its_own_ask(
         # REPORT-SMART-1021 (EVAL-BENCH 21 Oct, turn dded3dc7): a refine naming its own entity,
         # or the whole ask typed again (`new_subject`), is never the open question's answer; a
         # bare refine ("ordered") still is.
-        return named or restates_the_ask(verdict)
+        # R5 a3 (live turn c404da24): one naming another axis than the slot holds, and filling no open
+        # field, is a new ask too ("by customer" under How many? is not the count).
+        return named or restates_the_ask(verdict) or (not filled and _other_axis(verdict, extras))
     if named:
         # The parser's `answer` op on a reply that fills an open field is the answer even when it
         # repeats the held brand or category as current-message entities (live turn, parser v92).
@@ -495,13 +497,21 @@ def names_its_own_ask(
     # one filling the count, metric or basis is the answer (16 Oct: its axis is parser noise).
     if not raw_group or set(filled) - {"period"}:
         return False
+    return _other_axis(verdict, extras)
+
+
+def _other_axis(verdict: dict[str, Any], extras: dict[str, Any]) -> bool:
+    """Whether the verdict names an axis other than the open slot's (its scope question names two)."""
+    raw_group = jsc.js_string(verdict.get("group_by") or "").strip().lower()
+    if not raw_group:
+        return False
+    axis = GROUP_BY.get(raw_group, raw_group)
     scope = _dict(extras.get("scope"))
     if scope:
         # The scope question names two axes ("customers of the sales agents above"): a reply
         # echoing either is its answer, not a new ask.
-        return GROUP_BY.get(raw_group, raw_group) not in (scope.get("source"), _dict(scope.get("scoped")).get("args", {}).get("group_by"))
-    held = _dict(extras.get("args")).get("group_by")
-    return GROUP_BY.get(raw_group, raw_group) != held
+        return axis not in (scope.get("source"), _dict(scope.get("scoped")).get("args", {}).get("group_by"))
+    return axis != _dict(extras.get("args")).get("group_by")
 
 
 def _carries_answer_op(verdict: dict[str, Any], parser_ops: Any = ()) -> bool:
