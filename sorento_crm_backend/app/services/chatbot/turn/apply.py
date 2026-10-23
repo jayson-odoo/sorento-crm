@@ -952,7 +952,8 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
                 for key, value in held_ask.items():
                     if verdict.get(key) in (None, "", []):
                         verdict[key] = value
-                verdict["ranking_pick"] = True  # the picked row is this ranking's customer (engine key, never the parser's)
+                if pending.kind == "customer_pick":
+                    verdict["ranking_pick"] = True  # only a customer pick: the picked row is this ranking's customer (engine key, never the parser's)
         # #1262 slice 8 (F1b siblings), owner ruling 6: a SECOND ambiguous token
         # queued on THIS pick's own payload is asked NEXT, once this one is
         # answered - never the same options re-printed (`with_answered_positions`,
