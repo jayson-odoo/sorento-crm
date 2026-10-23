@@ -172,7 +172,7 @@ def test_global_is_a_fresh_ask_and_carries_nothing(console) -> None:
     _turn1(console)
     text, calls = console.say(_drill(ranking_drill="global"), "top 10 customers overall")
     # Owner ruling 16 Oct 2026 (chat fix PR-B S1): every missing detail in one numbered reply.
-    assert calls == [] and text.strip().startswith(f"1. {PERIOD_Q}\n"), text
+    assert calls == [] and text.strip().startswith("1. By quantity or by amount?\n"), text  # S6b: the period on screen is kept, so it is not asked
 
 
 def test_unsure_runs_across_all_and_says_so(console) -> None:
@@ -181,7 +181,7 @@ def test_unsure_runs_across_all_and_says_so(console) -> None:
     text, calls = console.say(_drill(ranking_drill="unsure", measure="qty", basis="delivered", **SEP), "top 10 customers")
     (args,) = calls
     assert args["group_by"] == "customer" and args["top_n"] == 10, args
-    assert "customer_agent_ids" not in args and "product_code" not in args, args
+    assert "customer_agent_ids" not in args and args["product_code"] == PRODUCT_CODE, args  # S6b: the product stays
     assert "Across all sales agents" in text and "or across all" not in text, text
 
 
@@ -189,7 +189,7 @@ def test_unsure_with_no_count_asks_the_missing_details_not_the_scope(console) ->
     _turn1(console)
     text, calls = console.say(_drill(ranking_drill="unsure", top_n=None), "customers")
     assert calls == [] and "or across all" not in text, (text, calls)
-    assert text.strip().startswith(f"1. {PERIOD_Q}\n"), text
+    assert text.strip().startswith(f"1. {TOPN_Q}\n"), text  # S6b: the held period is not asked again
 
 
 def test_unsure_then_the_missing_details_run_across_all(console) -> None:
@@ -229,7 +229,7 @@ def test_unsure_after_a_month_list_is_the_fresh_ask(console) -> None:
     _turn1(console, group_by="month")
     text, calls = console.say(_drill(ranking_drill="unsure"), "top 10 customers")
     # Owner ruling 16 Oct 2026 (chat fix PR-B S1): every missing detail in one numbered reply.
-    assert calls == [] and text.strip().startswith(f"1. {PERIOD_Q}\n"), text
+    assert calls == [] and text.strip().startswith("1. By quantity or by amount?\n"), text  # S6b: the period on screen is kept, so it is not asked
 
 
 @pytest.mark.parametrize(
