@@ -177,6 +177,28 @@ def test_the_labels_effort_wins_over_the_stored_setting(monkeypatch):
     assert seen[0]["reasoning_effort"] == "minimal"
 
 
+@pytest.mark.parametrize("effort", ["medium", "high", "xhigh"])
+def test_an_openai_label_effort_above_the_token_ceiling_is_not_sent(monkeypatch, effort):
+    """LEAN review S1: on OpenAI, medium / high can spend all of PARSER_MAX_TOKENS on reasoning, so the
+    label path holds the same cap until that ceiling is raised; the stored setting applies instead."""
+    seen = _capture_chat(monkeypatch, _emission_result())
+    parser_mod.parse(_config(label_reasoning_effort=effort), "block")
+    assert "reasoning_effort" not in seen[0]
+    config = _config(reasoning_effort="low", label_reasoning_effort=effort)
+    assert parser_mod.sent_reasoning_effort(config) == "low"
+
+
+def test_a_capped_effort_still_reaches_gemini(monkeypatch):
+    seen = _capture_chat(monkeypatch, _emission_result())
+    parser_mod.parse(_config(provider="gemini", label_reasoning_effort="medium"), "block")
+    assert seen[0]["reasoning_effort"] == "medium"
+
+
+def test_anthropic_reports_no_effort_sent():
+    """AnthropicProvider ignores an effort, so the trace must not say one was sent."""
+    assert parser_mod.sent_reasoning_effort(_config(provider="anthropic", label_reasoning_effort="low")) == "off"
+
+
 def test_resolve_config_reads_the_labels_reasoning_effort(monkeypatch):
     class _Cfg:
         provider = "openai"
@@ -259,6 +281,10 @@ def test_understood_facts_carry_model_provider_latency_and_token_split(
     session_factory, stub_parser, stub_access, monkeypatch
 ):
     monkeypatch.delenv("LLM_CASSETTE_MODE", raising=False)
+    from app.services.ai_assistant_service import MCPRuntimeClient
+
+    # No MCP server in a test: the business lane's product list answers empty.
+    monkeypatch.setattr(MCPRuntimeClient, "call_tool", lambda self, name, args: json.dumps({"ok": True, "items": []}))
     _seed_contact(session_factory, str(CONTACT_ID))
     stub_access()
     usage = {
