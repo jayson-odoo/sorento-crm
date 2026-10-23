@@ -216,3 +216,87 @@ def test_r1_6_guard_total_sales_this_month_still_uses_the_sales_report_tool(cons
         "total sales this month")
     assert "crm_sales_report" in _names(log), (text, log)
     assert TOOL not in _names(log), _names(log)
+
+
+# ---------------------------------------------------------------- review round
+
+ZZ_UUID_1 = "11111111-1111-4111-8111-111111111111"
+ZZ_UUID_2 = "22222222-2222-4222-8222-222222222222"
+
+
+def _ambiguous_customer_services():
+    """A customer word ("zzhan") matching two ZZ customers: the resolver offers a pick."""
+    from app.services.chatbot.lanes.business.services import ResolveGateServices
+    from tests.chatbot.conftest import validating_resolve_entity
+
+    def _resolve(body: dict[str, Any]) -> dict[str, Any]:
+        matches = [
+            {"entity_type": "customer", "canonical_code": code, "uuid": uid, "company_code": "SRT",
+             "display": {"customer_name": name}}
+            for code, uid, name in (("ZZ-H1", ZZ_UUID_1, "ZZHAN TRADING SDN BHD"), ("ZZ-H2", ZZ_UUID_2, "ZZHAN HARDWARE SDN BHD"))
+        ]
+        return {"tokens": ["zzhan"], "resolutions": [{"token": "zzhan", "matches": matches}], "unresolved_tokens": []}
+
+    return ResolveGateServices(
+        access_types=lambda **_: [{"name": "Sorento Dealer"}],
+        resolve_entity=validating_resolve_entity(_resolve),
+        probe=lambda **_: {"items": [], "has_result": False},
+    )
+
+
+@pytest.mark.parametrize("label", ["top_selling", "sales_ranking"])
+def test_r1_review_1_a_customer_pick_continues_the_ranking_never_the_catalogue_line(session_factory, monkeypatch, label) -> None:
+    from tests.chatbot.test_outstanding_lane import _run_turn, _seed_contact
+
+    _seed_contact(session_factory, variables={})
+    ask = _parser_output(
+        domain_hint="order", intent_hint="check_order", order_status=label, group_by="product" if label == "sales_ranking" else None,
+        rank_group="item", rank_by="amount", measure="amount", basis=None, top_n=4,
+        entities=[{"raw": "zzhan", "hint": "customer", "canonical_code": None, "current_message": True, "confident": True}],
+        domain_in_message=True,
+    )
+    result, captured = _run_turn(
+        session_factory, monkeypatch, qf=ask, text_body="top 4 for zzhan by amount", msg_id=f"zzt-r1-pick-{label}",
+        attributes=["sales_orders.sales_report"], resolve_services=_ambiguous_customer_services())
+    assert "Which one do you mean?" in ((result.reply or {}).get("text") or ""), result.reply
+    result, captured = _run_turn(
+        session_factory, monkeypatch,
+        qf=_parser_output(message_type="casual", intent_hint=None, domain_hint=None, entities=[], reference_positions=[1],
+                          reference_target="dym", entity_op="reuse", order_status=None),
+        text_body="1", msg_id=f"zzt-r1-pick1-{label}", attributes=["sales_orders.sales_report"])
+    reply = (result.reply or {}).get("text") or ""
+    assert CATALOGUE_LINE not in reply and "I can rank sales by" not in reply, reply
+    assert OLD_TOOL not in [n for n, _a in captured], captured
+    ran = [a for n, a in captured if n == TOOL]
+    if ran:
+        # It runs for the picked customer with the typed count and measure.
+        assert ran[0].get("customer_ids") == [ZZ_UUID_1] and ran[0]["top_n"] == 4 and ran[0]["measure"] == "amount", ran
+    else:
+        # Or it asks only what is still missing, in one reply (the period and / or the basis).
+        assert "Which period" in reply or "Delivered" in reply, reply
+        assert "Which one" not in reply, reply
+
+
+def test_r1_review_2_an_old_top_selling_session_still_reaches_the_own_book_run(console_no_grant, monkeypatch) -> None:
+    _make_salesperson(console_no_grant)
+    console_no_grant.session_vars = {"focus": {"domains": ["order"], "status": "top_selling"}}  # a pre-deploy session
+    text, log = _say_all(
+        console_no_grant, monkeypatch, _top_selling(self_reference=True, **FULL_ITEMS), "my top selling items this year")
+    assert OLD_TOOL not in _names(log), _names(log)
+    assert len(_ran(log)) == 1, (text, log)  # not refused at the domain-grant check
+    assert _ran(log)[0].get("mine") is True, log
+
+
+@pytest.mark.parametrize("group_by", ["customer", "sales_agent"])
+@pytest.mark.parametrize("label", ["sales_ranking", "top_selling"])
+def test_r1_review_3_guard_a_noisy_axis_word_in_a_basis_answer_does_not_change_the_axis(console, monkeypatch, group_by, label) -> None:
+    text, log = _say_all(
+        console, monkeypatch, _top_selling(top_n=10, measure="qty", rank_by="quantity", basis=None), "top 10 selling items this year by qty")
+    assert _names(log) == [] and "Delivered" in text, ("setup: the basis must be asked", text, log)
+    text, log = _say_all(
+        console, monkeypatch,
+        _answer(order_status=label, group_by=group_by, measure=None, basis="delivered"), "delivered")
+    assert OLD_TOOL not in _names(log), _names(log)
+    assert len(_ran(log)) == 1, (text, log)
+    args = _ran(log)[0]
+    assert args["group_by"] == "product" and args["basis"] == "delivered" and args["top_n"] == 10, args

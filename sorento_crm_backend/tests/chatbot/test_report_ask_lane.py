@@ -1029,10 +1029,12 @@ def test_kill_the_message_words_do_not_set_the_measure(console) -> None:
 
 def test_kill_a_top_selling_verdict_for_the_owner_message_runs_on_the_report_engine(console, monkeypatch) -> None:
     # REPORT-SMART-L R1: the parser's label decides, never the text; both labels run on the report engine.
+    wt = _seed_wt(console)  # the category is on file, so the report engine runs (it would say the word otherwise)
     text, log = _say_all(console, monkeypatch, _old(_hit("sorento", "brand"), _hit("water closet", "category")), OWNER_MESSAGE)
     assert "crm_top_selling_report" not in _names(log), (_names(log), text)
-    # No category row is seeded here, so the report engine says the word it cannot place (its own line).
-    assert TOOL in _names(log) or text.strip() == "I don't know 'water closet' as a category.", (_names(log), text)
+    assert TOOL in _names(log), (_names(log), text)
+    args = [a for n, a in log if n == TOOL][0]
+    assert args["category_ids"] == [wt["category"]], args
 
 
 def test_kill_a_person_noun_looking_sales_agent_entity_is_trusted_as_a_filter(console) -> None:
