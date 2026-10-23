@@ -99,8 +99,8 @@ def test_a_salesperson_without_the_grant_reaches_the_report_tool_with_mine(conso
 REFUSED_KINDS = [
     ("top 5 selling items this month", dict(order_status="top_selling", group_by=None, rank_by="amount",
                                             rank_group="item", rank_direction="top", top_n=5, basis="delivered")),
-    ("my top selling items", dict(order_status="top_selling", group_by=None, rank_by="qty", rank_group="item",
-                                  rank_direction="top", top_n=5, basis="delivered", self_reference=True)),
+    # ("my top selling items", ...) flipped by owner ruling 2 (REPORT-SMART-L R1): an ungranted live salesperson's
+    # "my ..." item ranking is the own-book ranking; pinned in test_one_ranking_r1.py::test_r1_5d.
     ("本月 畅销产品 top 5", dict(order_status="top_selling", group_by=None, rank_by="amount", rank_group="item",
                                  rank_direction="top", top_n=5, basis="ordered")),
     ("item paling laku", dict(order_status="top_selling", group_by=None, rank_by="qty", rank_group="item",

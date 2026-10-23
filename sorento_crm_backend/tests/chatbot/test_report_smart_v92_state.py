@@ -202,7 +202,7 @@ OCT = {"date_filter_start": "2026-10-01", "date_filter_end": "2026-10-31"}
 
 @pytest.mark.parametrize("hint", ["sales", "order"])
 @pytest.mark.parametrize("body", TOP_SELLING_BODIES)
-def test_near_miss_a_top_selling_ask_after_a_ranking_runs_the_top_selling_tool(console, monkeypatch, body, hint) -> None:
+def test_near_miss_a_top_selling_ask_after_a_ranking_runs_an_item_ranking_on_the_report_engine(console, monkeypatch, body, hint) -> None:
     from tests.chatbot.test_report_ask_lane import TOOL, _names, _say_all
 
     ran = _state_on(console)
@@ -214,8 +214,9 @@ def test_near_miss_a_top_selling_ask_after_a_ranking_runs_the_top_selling_tool(c
     )
     text, log = _say_all(console, monkeypatch, qf, body)
     assert ran, "harness: the State path never ran"
-    assert "crm_top_selling_report" in _names(log), (_names(log), text)
-    assert TOOL not in _names(log), (_names(log), text)
+    # REPORT-SMART-L R1: an item ranking runs on the report engine, never `crm_top_selling_report`.
+    assert "crm_top_selling_report" not in _names(log), (_names(log), text)
+    assert TOOL in _names(log), (_names(log), text)
 
 
 # ---- live turn 34f16b3d: the answer repeats the held brand (entity_op reuse) ----

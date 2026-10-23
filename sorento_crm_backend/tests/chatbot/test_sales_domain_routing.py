@@ -110,8 +110,9 @@ class TestTheLanePicksTheSalesTools:
         assert captured and captured[0][0] == "crm_sales_report", captured
 
     def test_top_selling_under_sales(self, session_factory) -> None:
-        captured = _picked("sales", "top_selling", [], top_selling={"rank_by": "quantity", "basis": "delivered", "top_n": 5})
-        assert captured and captured[0][0] == "crm_top_selling_report", captured
+        # REPORT-SMART-L R1: an item ranking is the report engine's (`crm_report_ask`), never `crm_top_selling_report`.
+        captured = _picked("sales", "top_selling", [], rank_by="quantity", basis="delivered", top_n=5, rank_group="item", **_A_MONTH)
+        assert captured and captured[0][0] == "crm_report_ask", captured
 
     @pytest.mark.parametrize("status", ["outstanding", "so_outstanding", "delivered"])
     def test_an_order_report_still_picks_the_outstanding_report(self, session_factory, status) -> None:
@@ -139,8 +140,9 @@ class TestAWholeTurn:
 
     def test_a_top_selling_ask_answers_from_the_ranking(self, session_factory, monkeypatch, route) -> None:  # noqa: F811
         _seed_contact(session_factory, variables={})
-        _text, captured = _turn(session_factory, monkeypatch, _ts(), "top 5 selling items")
-        assert len(_calls(captured)) == 1, captured
+        _text, captured = _turn(session_factory, monkeypatch, _ts(**_A_MONTH), "top 5 selling items")
+        # REPORT-SMART-L R1: the item ranking runs once on the report engine.
+        assert [c for c in captured if c[0] == "crm_report_ask"] and not _calls(captured), captured
 
     @pytest.mark.parametrize(
         "status,text",

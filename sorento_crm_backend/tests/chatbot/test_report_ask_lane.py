@@ -868,22 +868,22 @@ def test_c1_the_owner_message_new_reading_ranks_sales_agents_for_the_brand_and_c
 # C2: top_selling stays top_selling (the sales ranking vocabulary is the parser's, see test_report_ask_parser.py)
 
 
-def test_c2_top_selling_items_stays_top_selling(console, monkeypatch) -> None:
-    """No regression: a ranking of ITEMS is the old top selling path, never the new lane."""
+def test_c2_top_selling_items_runs_on_the_report_engine(console, monkeypatch) -> None:
+    """REPORT-SMART-L R1: a ranking of ITEMS is a sales ranking on the report engine, never the old top selling tool."""
     text, log = _say_all(
         console, monkeypatch, _old(_hit("sorento", "brand")), "top 3 selling items for sorento"
     )
-    assert "crm_top_selling_report" in _names(log), (_names(log), text)
-    assert TOOL not in _names(log), (_names(log), text)
+    assert "crm_top_selling_report" not in _names(log), (_names(log), text)
+    assert TOOL in _names(log), (_names(log), text)
 
 
-def test_c2_top_selling_items_by_an_agent_stays_top_selling_with_the_agent_filter(console, monkeypatch) -> None:
+def test_c2_top_selling_items_by_an_agent_runs_on_the_report_engine_with_the_agent_filter(console, monkeypatch) -> None:
     wt = _seed_wt(console)
     text, log = _say_all(
         console, monkeypatch, _old(_hit("WT", "sales_agent"), top_n=10), "top selling items sold by agent WT"
     )
-    assert TOOL not in _names(log), (_names(log), text)
-    (args,) = [a for n, a in log if n == "crm_top_selling_report"]
+    assert "crm_top_selling_report" not in _names(log), (_names(log), text)
+    (args,) = [a for n, a in log if n == TOOL]
     assert sorted(args.get("sales_agent_ids") or []) == wt["agents"], args
 
 
@@ -922,12 +922,12 @@ def test_a_ranking_noun_entity_is_not_filtered_by_the_lane_it_is_the_parsers_to_
 
 
 @pytest.mark.parametrize("body", ["top 3 salesman for sorento this year", "top 3 sales agents for sorento this year", OWNER_MESSAGE])
-def test_no_reroute_from_top_selling(console, monkeypatch, body) -> None:
-    """The published prompt parses sales rankings itself (the parser emits sales_ranking for these
-    messages: pinned by test_report_ask_parser.py and the live console case): a top_selling verdict stays top selling."""
+def test_a_top_selling_verdict_runs_on_the_report_engine(console, monkeypatch, body) -> None:
+    """REPORT-SMART-L R1: a top_selling verdict is a sales ranking on the report engine (the code reads the
+    parser's label and axis, never the text); the old top selling tool is not called."""
     text, log = _say_all(console, monkeypatch, _old(_hit("sorento", "brand"), top_n=3), body)
-    assert TOOL not in _names(log), (body, _names(log), text)
-    assert "crm_top_selling_report" in _names(log), (body, _names(log), text)
+    assert "crm_top_selling_report" not in _names(log), (body, _names(log), text)
+    assert TOOL in _names(log), (body, _names(log), text)
 
 
 
@@ -1027,12 +1027,12 @@ def test_kill_the_message_words_do_not_set_the_measure(console) -> None:
     assert args["measure"] == "qty", args
 
 
-def test_kill_a_top_selling_verdict_for_the_owner_message_is_not_rerouted(console, monkeypatch) -> None:
-    # The published prompt makes the parser emit sales_ranking for this message (pinned by the
-    # parser test + live console case); the code never reroutes on the text.
+def test_kill_a_top_selling_verdict_for_the_owner_message_runs_on_the_report_engine(console, monkeypatch) -> None:
+    # REPORT-SMART-L R1: the parser's label decides, never the text; both labels run on the report engine.
     text, log = _say_all(console, monkeypatch, _old(_hit("sorento", "brand"), _hit("water closet", "category")), OWNER_MESSAGE)
-    assert "crm_top_selling_report" in _names(log), (_names(log), text)
-    assert TOOL not in _names(log), (_names(log), text)
+    assert "crm_top_selling_report" not in _names(log), (_names(log), text)
+    # No category row is seeded here, so the report engine says the word it cannot place (its own line).
+    assert TOOL in _names(log) or text.strip() == "I don't know 'water closet' as a category.", (_names(log), text)
 
 
 def test_kill_a_person_noun_looking_sales_agent_entity_is_trusted_as_a_filter(console) -> None:
@@ -1332,8 +1332,8 @@ def test_guard_a_genuine_answer_still_answers_the_open_top_selling_question(cons
     text, log = _say_all(
         console, monkeypatch, _old(rank_by="amount", entities=[], top_n=None), "amount"
     )
-    assert "crm_top_selling_report" in _names(log), (_names(log), text)
-    assert TOOL not in _names(log), (_names(log), text)
+    assert "crm_top_selling_report" not in _names(log), (_names(log), text)
+    assert TOOL in _names(log), (_names(log), text)
 
 
 # --------------------------------------------------------------------------- #
@@ -1664,18 +1664,17 @@ def test_d_an_unknown_basis_on_a_refine_leaves_the_held_basis(console) -> None:
 # E ----------------------------------------------------------------------- #
 
 
-def test_e_a_top_selling_verdict_with_basis_outstanding_is_not_an_outstanding_top_selling(
+def test_e_a_top_selling_verdict_with_basis_outstanding_runs_the_outstanding_basis(
     console, monkeypatch
 ) -> None:
-    """Top selling has two bases (delivered, ordered). A parser slip of `outstanding` on a
-    top_selling verdict neither reroutes to the ranking lane nor reaches the top selling route
-    (review S2: never run delivered silently): the basis question is asked and nothing is fetched."""
+    """REPORT-SMART-L R1: the report engine has the `outstanding` basis, so a top_selling verdict carrying it
+    runs on that basis; it never reaches the old top selling route and never runs delivered silently."""
     text, log = _say_all(
         console, monkeypatch, _old(_hit("sorento", "brand"), basis="outstanding"), "top 3 selling items outstanding"
     )
-    assert TOOL not in _names(log), (_names(log), text)
     assert "crm_top_selling_report" not in _names(log), (_names(log), text)
-    assert text.strip() == "Delivered (transferred to DO) or ordered?", text
+    ran = [a for n, a in log if n == TOOL]
+    assert len(ran) == 1 and ran[0]["basis"] == "outstanding", (_names(log), text)
 
 
 def test_e_the_schema_lets_a_sales_ranking_emit_outstanding() -> None:

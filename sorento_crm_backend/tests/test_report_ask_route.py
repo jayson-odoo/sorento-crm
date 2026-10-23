@@ -98,6 +98,15 @@ def _full(db):
     return contact
 
 
+def _staff(db):
+    """A grant holder with an office access type: staff, the audience an item / category ranking is for
+    (REPORT-SMART-L R1: an unlinked non-staff contact is refused those, `test_one_ranking_r1.py`)."""
+    contact = _contact(db)
+    _access(db, contact, "Sorento Office")
+    db.commit()
+    return contact
+
+
 def _brand(db, name):
     row = Brand(id=str(uuid.uuid4()), brand_code=unique_code("BR")[:50], brand_name=name,
                 company_id=DEFAULT_COMPANY_ID)
@@ -366,14 +375,14 @@ def test_ac_re_9_group_by_brand(client, db):
 
 def test_ac_re_9_group_by_category(client, db):
     _ranking_world(db)
-    body = _ok(client, _full(db), group_by="category", top_n=5)
+    body = _ok(client, _staff(db), group_by="category", top_n=5)
     assert _rows(body) == [("ZZT-CAT-X", 65, D("5100.00")), ("ZZT-CAT-Y", 5, D("150.00"))], body["rows"]
     assert body["group_label"] == "Category", body
 
 
 def test_ac_re_9_group_by_product(client, db):
     _ranking_world(db)
-    body = _ok(client, _full(db), group_by="product", top_n=5)
+    body = _ok(client, _staff(db), group_by="product", top_n=5)
     assert [r["name"] for r in body["rows"]] == ["ZZTBB-1", "ZZTAA-1", "ZZTAA-2"], body["rows"]
 
 
@@ -584,9 +593,9 @@ def test_a_brand_name_shared_across_companies_counts_only_the_contacts_own_compa
                  total="5000.00", company_id=mocha.id)
     db.commit()
     ids = [brand_a.id, brand_b.id]
-    body = _ok(client, _full(db), group_by="product", top_n=10, brand_ids=ids)
+    body = _ok(client, _staff(db), group_by="product", top_n=10, brand_ids=ids)
     assert [r["name"] for r in body["rows"]] == [prod_a.product_code], body["rows"]
-    total = _ok(client, _full(db), brand_ids=ids)["total"]
+    total = _ok(client, _staff(db), brand_ids=ids)["total"]
     assert total["qty"] == 10 and money(total["amount"]) == D("100.00"), total
 
 
@@ -594,7 +603,7 @@ def test_a_brand_name_shared_across_companies_counts_only_the_contacts_own_compa
 
 
 def test_ac_re_17_a_product_code_matching_nothing_is_404(client, db):
-    resp = _ask(client, _full(db), group_by="product", top_n=3, product_code="ZZTNOSUCHPRODUCT")
+    resp = _ask(client, _staff(db), group_by="product", top_n=3, product_code="ZZTNOSUCHPRODUCT")
     assert resp.status_code == 404, resp.text
     assert resp.json().get("code") == "NOT_FOUND", resp.text  # not the missing route's bare 404
 
@@ -690,7 +699,7 @@ def _top_selling_rows(db, *, rank_by, basis, **extra):
 def test_ac_re_20_group_by_product_is_top_sellings_item_ranking(client, db, basis, measure, rank_by):
     """Same per-product numbers AND the same order as `top_selling`, on both bases and both measures."""
     _parity_world(db)
-    ask = _ok(client, _full(db), group_by="product", top_n=100, basis=basis, measure=measure)
+    ask = _ok(client, _staff(db), group_by="product", top_n=100, basis=basis, measure=measure)
     expected, out = _top_selling_rows(db, rank_by=rank_by, basis=basis)
     assert len(expected) >= 3, expected  # the world ranks several products
     assert _rows(ask) == expected, (basis, measure, _rows(ask), expected)
@@ -705,7 +714,7 @@ def test_ac_re_20_the_world_pins_the_numbers_not_only_the_parity(client, db):
     in Sep), PC 4 / 0.00 (qty, no value). The cancelled line, the Oct-required line and the undelivered
     PC line are out or zero."""
     _parity_world(db)
-    contact = _full(db)
+    contact = _staff(db)
     delivered = _ok(client, contact, group_by="product", top_n=100, basis="delivered")
     assert _rows(delivered) == [("ZZTPAR-A", 18, D("1240.00")), ("ZZTPAR-D", 5, D("333.33")),
                                 ("ZZTPAR-B", 10, D("320.00")), ("ZZTPAR-E", 7, D("70.00")),
@@ -721,7 +730,7 @@ def test_ac_re_20_the_world_pins_the_numbers_not_only_the_parity(client, db):
 @pytest.mark.parametrize("measure, rank_by", [("amount", "amount"), ("qty", "quantity")])
 def test_ac_re_20_with_a_category_filter_it_still_equals_top_selling(client, db, basis, measure, rank_by):
     w = _parity_world(db)
-    ask = _ok(client, _full(db), group_by="product", top_n=100, basis=basis, measure=measure,
+    ask = _ok(client, _staff(db), group_by="product", top_n=100, basis=basis, measure=measure,
               category_ids=[w.cat1.id])
     expected, out = _top_selling_rows(db, rank_by=rank_by, basis=basis, category_ids=[w.cat1.id])
     assert "ZZTPAR-D" not in [name for name, _q, _a in expected], expected  # the other category is out
@@ -735,7 +744,7 @@ def test_ac_re_20_group_by_category_equals_top_sellings_category_ranking(client,
     from app.services.sales_report_service import top_selling
 
     _parity_world(db)
-    ask = _ok(client, _full(db), group_by="category", top_n=100, basis="delivered")
+    ask = _ok(client, _staff(db), group_by="category", top_n=100, basis="delivered")
     set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
     out = top_selling(db, rank_by="amount", basis="delivered", group="category",
                       date_from=date(2026, 9, 1), date_to=date(2026, 9, 30))
@@ -1325,7 +1334,7 @@ def _bulk_world(db):
 
 def test_a_ranking_over_more_than_5000_groups_is_not_truncated(client, db):
     top = _bulk_world(db)
-    body = _ok(client, _full(db), group_by="product", top_n=3)
+    body = _ok(client, _staff(db), group_by="product", top_n=3)
     assert body["status"] == "ok", body
     groups = BULK_PRODUCTS + 1
     assert body["rows"][0]["name"] == "ZZZ-TOP" and money(body["rows"][0]["amount"]) == D("500.00"), body["rows"]

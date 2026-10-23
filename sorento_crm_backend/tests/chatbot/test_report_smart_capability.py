@@ -200,12 +200,13 @@ def test_near_miss_an_analysis_by_month_stays_the_sales_analysis(console) -> Non
     assert calls == [], (text, calls)  # crm_sales_analysis ran, not the report ask
 
 
-def test_near_miss_a_top_selling_ask_with_no_axis_stays_top_selling(console) -> None:
+def test_near_miss_a_top_selling_ask_with_no_axis_is_an_item_ranking_on_the_report_ask(console) -> None:
+    # REPORT-SMART-L R1: the item ranking is the report engine's (product axis), no longer the old tool.
     text, calls = console.say(
         _ask(order_status="top_selling", group_by=None, top_n=10, rank_by="quantity", basis="delivered"),
         "top 10 selling items september",
     )
-    assert calls == [], (text, calls)
+    assert len(calls) == 1 and calls[0]["group_by"] == "product", (text, calls)
 
 
 def test_near_miss_an_axis_no_tool_draws_is_still_said(console) -> None:
