@@ -249,3 +249,48 @@ def test_c_near_miss_the_parsers_unsure_runs_across_all_not_the_scope_question(c
     assert ran, "harness: the State path never ran"
     assert SCOPE_Q not in text, (text, calls)
     assert calls and calls[0]["group_by"] == "customer" and not calls[0].get("customer_agent_ids"), (text, calls)
+
+
+# ---------------------------------------------------------------- C guard: a stale or empty frame holds nothing
+
+def _held_full_ranking(console) -> None:
+    """A ranking with a product and a channel, so a frame that wrongly holds them shows in the next args."""
+    text, calls = console.say(
+        _rank(_e(PRODUCT_CODE, "product"), top_n=3, measure="qty", basis="delivered", sales_channel="dealer",
+              state_changes=list(KEEP), **THIS_YEAR),
+        f"top 3 salesppl for {PRODUCT_CODE}, dealer sales",
+    )
+    assert len(calls) == 1, ("setup: the ranking did not run", text, calls)
+
+
+def _assert_holds_nothing(text: str, calls: list[dict[str, Any]], *, named_count: bool) -> None:
+    assert "Across all" not in text, text
+    if named_count:
+        assert calls and calls[0]["group_by"] == "customer", (text, calls)
+        assert not calls[0].get("product_code") and not calls[0].get("product_ids"), calls
+        assert not calls[0].get("channel"), calls
+    else:
+        # The message names no count, measure or basis: nothing on screen fills them, so they are asked.
+        assert calls == [], ("a stale or empty frame's choices were held", text, calls)
+
+
+@pytest.mark.parametrize("named_count", [True, False])
+def test_c_guard_a_stale_frame_runs_nothing_across_all_and_holds_none_of_its_choices(console, named_count) -> None:
+    _state_on(console)
+    _held_full_ranking(console)
+    text, calls = console.say(FAILED_ASKS["unknown_axis"](), "top 5 for zzt")
+    assert calls == [], ("setup: the failing ask ran", text, calls)
+    over = {} if named_count else dict(top_n=None, measure=None, basis=None)
+    text, calls = console.say(_customers_ask(**over), "top 10 customers this year")
+    _assert_holds_nothing(text, calls, named_count=named_count)
+
+
+@pytest.mark.parametrize("named_count", [True, False])
+def test_c_guard_a_frame_with_no_shown_rows_runs_nothing_across_all_and_holds_nothing(console, monkeypatch, named_count) -> None:
+    _state_on(console)
+    real = _drill_body
+    monkeypatch.setattr(lane_tests, "_fake_body", lambda args: {**real(args), "rows": [], "total_count": 0})
+    _held_full_ranking(console)
+    over = {} if named_count else dict(top_n=None, measure=None, basis=None)
+    text, calls = console.say(_customers_ask(**over), "top 10 customers this year")
+    _assert_holds_nothing(text, calls, named_count=named_count)
