@@ -802,7 +802,7 @@ def test_n1_fetch_py_falls_back_to_delivered_only_for_a_picked_row() -> None:
         assert "detail_code" in near, near
 
 
-@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
+@pytest.mark.xfail(strict=True, reason="stale: pins the old top-selling basis line and tool; superseded by test_one_ranking_r1 review_1")
 def test_n5_the_customer_picker_answer_asks_the_basis_before_any_fetch(session_factory, monkeypatch, route) -> None:
     from tests.chatbot.test_outstanding_lane import HANLIM_UUID_1, _ambiguous_hanlim_resolve_services
 
