@@ -277,6 +277,39 @@ LABELS: dict[str, dict[str, str]] = {
     "Top {n} selling category": {"ms": "{n} kategori paling laris", "zh": "最畅销的 {n} 个类别"},
     "Bottom {n} selling item": {"ms": "{n} item paling kurang laris", "zh": "最滞销的 {n} 个项目"},
     "Bottom {n} selling category": {"ms": "{n} kategori paling kurang laris", "zh": "最滞销的 {n} 个类别"},
+    # REPORT-SMART-L R3d: the sales ranking's head, miss and number-shape lines (`presenters._report_ask`),
+    # said in the contact's language. Their vocabulary tokens translate only from the words below.
+    "Top {top_n} {rank_noun} by {basis}": {"ms": "{top_n} {rank_noun} teratas mengikut {basis}", "zh": "按{basis}排名前 {top_n} 位的{rank_noun}"},
+    "Top {top_n} of {of_total} {rank_noun} by {basis}": {"ms": "{top_n} daripada {of_total} {rank_noun} teratas mengikut {basis}", "zh": "按{basis}排名前 {top_n} 位（共 {of_total} 个{rank_noun}）"},
+    "Top {top_n} {rank_noun} by {measure}, {basis}": {"ms": "{top_n} {rank_noun} teratas mengikut {measure}, {basis}", "zh": "按{measure}、{basis}排名前 {top_n} 位的{rank_noun}"},
+    "Top {top_n} of {of_total} {rank_noun} by {measure}, {basis}": {"ms": "{top_n} daripada {of_total} {rank_noun} teratas mengikut {measure}, {basis}", "zh": "按{measure}、{basis}排名前 {top_n} 位（共 {of_total} 个{rank_noun}）"},
+    "Bottom {top_n} {rank_noun} by {basis}": {"ms": "{top_n} {rank_noun} terbawah mengikut {basis}", "zh": "按{basis}排名后 {top_n} 位的{rank_noun}"},
+    "Bottom {top_n} of {of_total} {rank_noun} by {basis}": {"ms": "{top_n} daripada {of_total} {rank_noun} terbawah mengikut {basis}", "zh": "按{basis}排名后 {top_n} 位（共 {of_total} 个{rank_noun}）"},
+    "Bottom {top_n} {rank_noun} by {measure}, {basis}": {"ms": "{top_n} {rank_noun} terbawah mengikut {measure}, {basis}", "zh": "按{measure}、{basis}排名后 {top_n} 位的{rank_noun}"},
+    "Bottom {top_n} of {of_total} {rank_noun} by {measure}, {basis}": {"ms": "{top_n} daripada {of_total} {rank_noun} terbawah mengikut {measure}, {basis}", "zh": "按{measure}、{basis}排名后 {top_n} 位（共 {of_total} 个{rank_noun}）"},
+    "Sales by {basis}": {"ms": "Jualan mengikut {basis}", "zh": "按{basis}统计的销售"},
+    "No {basis} found": {"ms": "Tiada {basis} ditemui", "zh": "未找到{basis}"},
+    "delivered sales": {"ms": "jualan dihantar", "zh": "已送货销售"},
+    "ordered sales": {"ms": "jualan dipesan", "zh": "已订购销售"},
+    "outstanding orders": {"ms": "pesanan tertunggak", "zh": "未交货订单"},
+    "products": {"ms": "produk", "zh": "产品"},
+    "product": {"ms": "produk", "zh": "产品"},
+    "categories": {"ms": "kategori", "zh": "类别"},
+    "category": {"ms": "kategori", "zh": "类别"},
+    "customers": {"ms": "pelanggan", "zh": "客户"},
+    "customer": {"ms": "pelanggan", "zh": "客户"},
+    "brands": {"ms": "jenama", "zh": "品牌"},
+    "brand": {"ms": "jenama", "zh": "品牌"},
+    "sales agents": {"ms": "ejen jualan", "zh": "销售代理"},
+    "sales agent": {"ms": "ejen jualan", "zh": "销售代理"},
+    "locations": {"ms": "lokasi", "zh": "位置"},
+    "location": {"ms": "lokasi", "zh": "位置"},
+    "channels": {"ms": "saluran", "zh": "渠道"},
+    "channel": {"ms": "saluran", "zh": "渠道"},
+    "months": {"ms": "bulan", "zh": "月份"},
+    "month": {"ms": "bulan", "zh": "月份"},
+    "You can only see sales for your own account.": {"ms": "Anda hanya boleh melihat jualan untuk akaun anda sendiri.", "zh": "您只能查看自己账户的销售数据。"},
+    "That breakdown is not available for your account.": {"ms": "Pecahan itu tidak tersedia untuk akaun anda.", "zh": "您的账户无法查看该分类。"},
     # Slice 4: the final reply pass (composer sentences, escalate offer, canned copy, dealer
     # questions) and the domain label words. Sentences are listed in INLINE below.
     REFER_TO_SALESMAN: {"ms": "Sila rujuk jurujual anda.", "zh": "请联系您的销售员。"},
@@ -807,6 +840,16 @@ _SUB_ASK_KEYS = frozenset(
         "{date} ({qty}, {spo})", "{qty}, ETA {date}",
     }
 )
+#: The ranking head's vocabulary tokens (R3d): the English words each may carry, which `Localizer._text`
+#: translates from the table. A word outside these sets leaves the whole line as printed. The words are
+#: DIRECT_ONLY so a bare line ("products", "month") is never rewritten on its own.
+_RANK_NOUNS = frozenset(
+    {"products", "product", "categories", "category", "customers", "customer", "brands", "brand",
+     "sales agents", "sales agent", "locations", "location", "channels", "channel", "months", "month"}
+)
+_RANK_BASES = frozenset({"delivered sales", "ordered sales", "outstanding orders"})
+_RANK_MEASURES = frozenset({"customers", "orders", "products"})
+VOCAB: dict[str, frozenset[str]] = {"rank_noun": _RANK_NOUNS, "basis": _RANK_BASES, "measure": _RANK_MEASURES}
 DIRECT_ONLY = (
     frozenset(
         {
@@ -818,6 +861,8 @@ DIRECT_ONLY = (
     )
     | _SUB_ASK_KEYS
     | _find_fit_keys()
+    | _RANK_NOUNS
+    | _RANK_BASES
 )
 _NAMES_TAIL = " and {n} others"
 _OTHERS = re.compile(r"(.*) and (\d[\d,]*) others")
@@ -840,7 +885,8 @@ RANGE = "{from} to {to}"
 #: `_INLINE_LINE_MAX` gets `lines()` only (the inline pass is skipped for it).
 _TOKEN_MAX = 200
 _INLINE_LINE_MAX = 1000
-_DATE_RANGE = re.compile(r"(?P<from>\d{2}/\d{2}/\d{4}) to (?P<to>\d{2}/\d{2}/\d{4})")
+_DATE = r"(?:\d{2}/\d{2}/\d{4}|\d{1,2} [A-Z][a-z]{2} \d{4})"  # 01/09/2026, or the report ask's 1 Sep 2026
+_DATE_RANGE = re.compile(rf"(?P<from>{_DATE}) to (?P<to>{_DATE})")
 _BREAKDOWN_VALUE = re.compile(r"\d[\d,]* \(O/S: ")
 #: A numbered row's `"<n>. "` or a cross-domain row's `"- "`; only the rest of the line is read.
 _NUMBERED = re.compile(r"\d+\. |- ")
@@ -849,7 +895,7 @@ _FLAG = re.compile(r"(\S+ +\*\()(.+)(\)\*)")
 _WRAPPERS = (("*_", "_*"), ("*", "*"), ("_", "_"))
 #: Tokens that are always a number: a template opening with one must not swallow the
 #: "<code> x <qty>: " prefix of the line it is matched against.
-_NUMERIC_TOKENS = frozenset({"available"})
+_NUMERIC_TOKENS = frozenset({"available", "top_n", "of_total"})
 
 
 def _token_pattern(name: str) -> str:
@@ -959,7 +1005,9 @@ class Localizer:
             if m and target in self._generic_targets and self._is_find_none(s):
                 continue
             if m and (best is None or fixed > best[0]):
-                best = (fixed, m.groupdict(), target)
+                found = self._vocab(m.groupdict())
+                if found is not None:
+                    best = (fixed, found, target)
         if best is None:
             return s
         values = self._names(best[1])
@@ -993,6 +1041,19 @@ class Localizer:
         return "\n".join(
             line if len(line) > _INLINE_LINE_MAX else self._inline_line(line) for line in text.split("\n")
         )
+
+    def _vocab(self, values: dict[str, str]) -> dict[str, str] | None:
+        """`values` with each `VOCAB` token said in the table's wording; None when a word is not
+        catalogued (the line is then left as printed, never half translated)."""
+        out = dict(values)
+        for name, words in VOCAB.items():
+            if name not in values:
+                continue
+            word = values[name]
+            if word not in words or word not in self.table:
+                return None
+            out[name] = self.table[word]
+        return out
 
     def _names(self, values: dict[str, str]) -> dict[str, str]:
         """`values` with a `{names}` tail "... and 3 others" said in the table's wording, when it has one."""

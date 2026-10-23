@@ -98,7 +98,7 @@ def test_r3d_a_a_count_measure_head_is_translated(lang) -> None:
 
 @pytest.mark.parametrize("lang", ["ms", "zh"])
 def test_r3d_a_the_number_shape_head_is_translated(lang) -> None:
-    out = _lines(_body(group_by=None, group_label=None, rows=[], total={"qty": 45, "amount": 1800.0}), lang)[0]
+    out = _lines(_body(group_by="", group_label="", rows=[], total={"qty": 45, "amount": 1800.0}), lang)[0]
     assert "Sales by" not in out and "delivered" not in out, out
 
 
@@ -172,7 +172,8 @@ def test_r3d_e_a_long_ranking_keeps_its_part_markers_after_localization(lang) ->
     translated = _structure(body, lang)["response"]
     en_parts, tr_parts = engine.split_marked_message(english), engine.split_marked_message(translated)
     assert len(en_parts) > 1 and len(tr_parts) == len(en_parts), (len(en_parts), len(tr_parts))
-    assert translated.split("\n")[0] != english.split("\n")[0], translated[:120]
+    head = next(ln for ln in translated.split("\n") if not ln.startswith("("))
+    assert head != next(ln for ln in english.split("\n") if not ln.startswith("(")), head
 
 
 # ---------------------------------------------------------------- f. the one question, end to end
