@@ -381,6 +381,7 @@ class Replay:
 
 
 class TestOwnerTranscripts:
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_transcript_1(self, session_factory, monkeypatch, cat) -> None:
         """"product category is water closet, product is everything, agent is contactz" then
         "2" then "outstanding". The ask says "agent" next to the name: the agent, no
@@ -420,6 +421,7 @@ class TestOwnerTranscripts:
 
         r.say(_report("outstanding"), "outstanding", outstanding)
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_transcript_2(self, session_factory, monkeypatch, cat) -> None:
         r = Replay(session_factory, monkeypatch)
 
@@ -453,6 +455,7 @@ class TestOwnerTranscripts:
 
         r.say(_answer(rank_by="amount"), "amount", ranked)
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_transcript_3_and_4(self, session_factory, monkeypatch, cat) -> None:
         r = Replay(session_factory, monkeypatch, services=_staff_picker(cat.customers))
         text, _ = r.say(
@@ -499,6 +502,7 @@ class TestOwnerTranscripts:
 
         r.say(_answer(rank_by="amount"), "amount", bottom)
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_transcript_5(self, session_factory, monkeypatch, cat) -> None:
         r = Replay(session_factory, monkeypatch)
         r.say(
@@ -550,6 +554,7 @@ _PROMOTION_MISREAD = _parser_output(
 
 
 class TestR1TheAnswerBindsToTheQuestion:
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize(
         "qf",
         [_position(2), _PROMOTION_MISREAD, _low_signal()],
@@ -568,6 +573,7 @@ class TestR1TheAnswerBindsToTheQuestion:
         _header(text, customer="all", category="Water Closet", agent=CONTACTZ)
         assert not any(bad in text for bad in NEVER), text
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_one_sets_the_customer_and_clears_the_agent(self, session_factory, monkeypatch, cat) -> None:
         _asked_who(session_factory, monkeypatch)
         text, captured = _turn(session_factory, monkeypatch, _position(1), "1")
@@ -576,6 +582,7 @@ class TestR1TheAnswerBindsToTheQuestion:
         assert "sales_agent_ids" not in args
         _header(text, customer="SAMPLE - CONTACTZ X", category="Water Closet", agent="all")
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_with_no_metric_the_answer_leads_to_the_metric_question(self, session_factory, monkeypatch, cat) -> None:
         _asked_who(session_factory, monkeypatch, rank_by=None)
         text, captured = _turn(session_factory, monkeypatch, _position(2), "2")
@@ -584,6 +591,7 @@ class TestR1TheAnswerBindsToTheQuestion:
         (args,) = _calls(captured)
         assert sorted(args["sales_agent_ids"]) == sorted(cat.fanny_agents) and "customer_ids" not in args
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_the_question_is_answered_once(self, session_factory, monkeypatch, cat) -> None:
         """After the answer a "2" is rank 2 of the list the ranking printed."""
         _asked_who(session_factory, monkeypatch)
@@ -594,6 +602,7 @@ class TestR1TheAnswerBindsToTheQuestion:
 
 
 class TestR2AnswersInWords:
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize(
         "message, qf",
         [
@@ -614,12 +623,14 @@ class TestR2AnswersInWords:
         _header(text, customer="all", category="Water Closet", agent=CONTACTZ)
         assert "Reply 1 for the customer" not in text
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_customer_in_words_answers_like_one(self, session_factory, monkeypatch, cat) -> None:
         _asked_who(session_factory, monkeypatch)
         _text, captured = _turn(session_factory, monkeypatch, _low_signal(), "the customer")
         (args,) = _calls(captured)
         assert args["customer_ids"] == [cat.customers["SAMPLE - CONTACTZ X"]] and "sales_agent_ids" not in args
 
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize(
         "message",
         ["top 100 hot selling bathtub by sean salea agent", "top 100 hot selling bathtub by sean sales agent",
@@ -659,6 +670,7 @@ class TestR3Corrections:
         assert text.startswith("Which one do you mean?")
         return services
 
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize(
         "message, qf",
         [
@@ -677,6 +689,7 @@ class TestR3Corrections:
         _header(text, customer="all", category="Bathtub")
         assert _open_question(session_factory).get("kind") != "customer_pick"
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_version_34_neither_then_everyone(self, session_factory, monkeypatch, cat) -> None:
         """The owner's order: "neither, i mean sales agent sean" (read as a customer
         word by version 34) set Customer SAMPLE - SEAN; "customer is everyone" then set
@@ -696,6 +709,7 @@ class TestR3Corrections:
         assert "customer_ids" not in args and sorted(args["sales_agent_ids"]) == sorted(cat.sean_agents)
         _header(text, customer="all", agent=SEAN)
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_neither_under_the_who_question_sets_neither(self, session_factory, monkeypatch, cat) -> None:
         _asked_who(session_factory, monkeypatch)
         text, captured = _turn(session_factory, monkeypatch, _parser_output(message_type="casual", entities=[], is_affirmative=False), "neither")
@@ -710,6 +724,7 @@ class TestR3Corrections:
 
 
 class TestR4NoisyTokens:
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize("hint", ["category", "customer", "promotion", "sales_agent"])
     def test_fanny_water_closet_splits(self, session_factory, monkeypatch, cat, hint) -> None:
         _ranked(session_factory, monkeypatch)
@@ -721,6 +736,7 @@ class TestR4NoisyTokens:
         _header(text, customer="all", category="Water Closet", agent=CONTACTZ)
         assert not any(bad in text for bad in NEVER), text
 
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize("message, raw", [("bathtub by sean", "bathtub by sean"), ("sean bathtub", "sean bathtub")])
     def test_bathtub_and_sean(self, session_factory, monkeypatch, cat, message, raw) -> None:
         _ranked(session_factory, monkeypatch)
@@ -730,6 +746,7 @@ class TestR4NoisyTokens:
         assert args["category_ids"] == cat.bathtub and "customer_ids" not in args
         _header(text, customer="all", category="Bathtub", agent=SEAN)
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_one_unknown_leftover_is_said_once_and_the_ranking_runs(self, session_factory, monkeypatch, cat) -> None:
         _ranked(session_factory, monkeypatch)
         text, captured = _turn(session_factory, monkeypatch, _narrow(_e("contactz marble water closet", "category")), "contactz marble water closet")
@@ -772,6 +789,7 @@ class TestR5Continuity:
     ranking" header, no "... is not a filter for ..." line), and an OUTSTANDING ask is
     the ordinary outstanding question over the ranked codes (`test_top_selling_round8`)."""
 
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R2")
     @pytest.mark.parametrize(
         "message, qf",
         [
@@ -813,6 +831,7 @@ class TestR5Continuity:
         assert not any(bad in text for bad in NEVER), text
         assert _open_question(session_factory).get("kind") not in ("member_offer", "team_pick")
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R2")
     def test_the_ranking_brand_is_not_the_order_brand_carry(self, session_factory, monkeypatch, cat) -> None:
         # Main merge (#1262 brand carry): the ranking's "sorento brand" narrows the
         # ranking only (`top_selling.brand_ids`); it never lands on the outstanding
@@ -822,6 +841,7 @@ class TestR5Continuity:
         assert (focus.get("top_selling") or {}).get("brand_ids"), focus
         assert not focus.get("outstanding_brand_ids"), focus
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R2")
     def test_the_customer_carries(self, session_factory, monkeypatch, cat) -> None:
         _asked_who(session_factory, monkeypatch)
         _turn(session_factory, monkeypatch, _position(1), "1")
@@ -840,6 +860,7 @@ class TestR5Continuity:
         assert args["actual_delivery_date_from"] == "2025-01-01" and args["actual_delivery_date_to"] == "2025-01-31"
         assert "Filters from the ranking" not in text
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R2")
     def test_the_next_report_carries_the_same_and_a_new_ranking_starts_over(self, session_factory, monkeypatch, cat) -> None:
         # Dated: a dateless DO list ask asks which period first (DO-ASK-SIMPLIFY, owner 4 Oct 2026).
         _ranked_with_filters(session_factory, monkeypatch, cat, date_filter_start="2026-01-01", date_filter_end="2026-01-31")
@@ -865,6 +886,7 @@ class TestR5Continuity:
 
 
 class TestR6WorstSelling:
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize("message", ["worst 100 hot selling bathtub", "worse 100 hot selling", "bottom 100"])
     def test_worst_is_the_least_sold_ranking(self, session_factory, monkeypatch, cat, message) -> None:
         _turn(session_factory, monkeypatch, _ask(top_n=100, rank_direction="bottom"), message)
@@ -873,6 +895,7 @@ class TestR6WorstSelling:
         assert args["direction"] == "bottom" and args["n"] == 100
         assert text.startswith("*Bottom 100 selling items*")
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_out_of_scope_inside_a_ranking_asks_one_short_question(self, session_factory, monkeypatch, cat) -> None:
         """Transcript 4: version 34 read "worsr 100 hot selling bathtub" out of scope and
         routed it to customer service."""
@@ -899,6 +922,7 @@ class TestR6WorstSelling:
 
 
 class TestR7RankPicks:
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R3c")
     @pytest.mark.parametrize(
         "message, qf",
         [
@@ -927,6 +951,7 @@ class TestR7RankPicks:
         assert "Which one do you mean?" not in text
         assert len([ln for ln in text.split("\n") if re.match(r"^\d+\. ", ln)]) <= len(ITEM_CODES)
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R3c")
     def test_a_bare_number_within_the_list_is_a_pick(self, session_factory, monkeypatch, cat) -> None:
         _ranked(session_factory, monkeypatch)
         _text, captured = _turn(session_factory, monkeypatch, _position(7), "7")
@@ -951,6 +976,7 @@ class TestR8ShortMenus:
         assert answer.text == "Which item do you mean? Reply with a rank number from 1 to 100."
         assert answer.actions[0]["result_set"] == pending.options
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R3c")
     def test_a_ranking_picker_lists_at_most_five(self, session_factory, monkeypatch, cat) -> None:
         many = [f"SEAN TRADING {i}" for i in range(1, 9)]
 

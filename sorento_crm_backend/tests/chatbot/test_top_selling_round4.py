@@ -290,6 +290,7 @@ def cat(session_factory, route) -> Catalogue:
 
 
 class TestF1QuickReplies:
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_a_ranked_list_offers_no_chip_per_product(self, session_factory, monkeypatch, cat) -> None:
         """Transcript item 1: the Top 100 answer sent one chip per product code (about
         100). The ranking keeps the one "Reply with a rank number" line and no chips."""
@@ -299,6 +300,7 @@ class TestF1QuickReplies:
         assert _text(reply).endswith(ITEM_OFFER)
         assert _chips(reply) == []
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_the_rank_number_typed_still_opens_the_row(self, session_factory, monkeypatch, cat) -> None:
         _ranked(session_factory, monkeypatch)
         assert _open_question(session_factory).get("kind") == "top_selling_pick"
@@ -328,6 +330,7 @@ class TestF1QuickReplies:
 
 
 class TestF2SalesAgent:
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize("message", ["sold by contactz", "sales agent is contactz", "by agent contactz"])
     def test_an_agent_word_sets_the_sales_agent_filter(self, session_factory, monkeypatch, cat, message) -> None:
         """Transcript item 2: "sold by contactz" answered Customer: SAMPLE - CONTACTZ X."""
@@ -340,6 +343,7 @@ class TestF2SalesAgent:
         assert "\nSales agent: CONTACTZ\n" in _text(reply)
         assert "\nCustomer: all\n" in _text(reply)
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_a_customer_hinted_word_that_names_only_an_agent_is_the_agent(
         self, session_factory, monkeypatch, cat
     ) -> None:
@@ -349,6 +353,7 @@ class TestF2SalesAgent:
         assert args["sales_agent_ids"] == [cat.fanny_agent]
         assert "customer_ids" not in args
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_a_word_naming_a_customer_and_an_agent_is_asked(self, session_factory, monkeypatch, route) -> None:
         """Both a customer and an agent could be meant: one short question, nothing
         fetched, and "2" takes the agent."""
@@ -366,6 +371,7 @@ class TestF2SalesAgent:
         (args,) = calls
         assert args["sales_agent_ids"] == [cat.fanny_agent] and "customer_ids" not in args
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_answering_one_to_the_question_takes_the_customer(self, session_factory, monkeypatch, route) -> None:
         _seed_contact(session_factory, variables={})
         cat = _seed_catalogue(session_factory, with_fanny_customer=True)
@@ -377,6 +383,7 @@ class TestF2SalesAgent:
         assert args["customer_ids"] == [cat.fanny_customer] and "sales_agent_ids" not in args
         assert "\nCustomer: SAMPLE - CONTACTZ X\n" in _text(reply)
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_an_agent_word_matching_no_agent_is_said_and_the_ranking_kept(
         self, session_factory, monkeypatch, cat
     ) -> None:
@@ -405,6 +412,7 @@ class TestF3Correction:
         assert calls[0]["customer_ids"] == [cat.fanny_customer]
         return cat
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_customer_is_everyone_but_agent_is_fanny(self, session_factory, monkeypatch, route) -> None:
         """Transcript item 3: the correction left the customer and never set the agent,
         re-running the previous filter unchanged."""
@@ -419,6 +427,7 @@ class TestF3Correction:
         assert args["sales_agent_ids"] == [cat.fanny_agent]
         assert "\nCustomer: all\n" in _text(reply) and "\nSales agent: CONTACTZ\n" in _text(reply)
 
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize("message", ["everyone", "all customers", "any customer"])
     def test_everyone_clears_the_customer(self, session_factory, monkeypatch, route, message) -> None:
         self._customer_fanny(session_factory, monkeypatch, route)
@@ -436,6 +445,7 @@ class TestF3Correction:
 
 
 class TestF4Metric:
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize("typed, metric", [("1", "quantity"), ("2", "amount")])
     def test_the_listed_order_answers_the_metric(self, session_factory, monkeypatch, cat, typed, metric) -> None:
         """Transcript item 4: "2" under "By quantity or by amount?" asked again. The
@@ -447,6 +457,7 @@ class TestF4Metric:
         (args,) = calls
         assert args["rank_by"] == metric and args["n"] == 100
 
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize(
         "typed, metric", [("qty", "quantity"), ("quantity", "quantity"), ("amt", "amount"), ("amount", "amount")]
     )
@@ -462,6 +473,7 @@ class TestF4Metric:
         for word in ('"1"', '"2"', '"qty"', '"quantity"', '"amt"', '"amount"'):
             assert word in TOP_SELLING_ADDENDUM, word
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_an_answer_carrying_filters_is_applied_whole(self, session_factory, monkeypatch, cat) -> None:
         _turn(session_factory, monkeypatch, _ask(top_n=5), "top 5 hot selling item")
         reply, calls = _turn(
@@ -481,6 +493,7 @@ class TestF4Metric:
 
 
 class TestF5Category:
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_which_is_water_closet(self, session_factory, monkeypatch, cat) -> None:
         """Transcript item 4: the ask named water closet, "amt" answered the metric and
         the ranking fell into "Could not find order" plus the routing picker."""
@@ -498,6 +511,7 @@ class TestF5Category:
         assert "\nCategory: Water Closet\n" in text
         assert _open_question(session_factory).get("kind") not in ("member_offer", "team_pick")
 
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize(
         "message, word, category",
         [
@@ -516,6 +530,7 @@ class TestF5Category:
         assert f"\nCategory: {category}\n" in _text(reply)
         assert args["rank_by"] == "quantity" and args["n"] == 100
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_a_narrowing_that_says_it_asks_keeps_the_ranking(self, session_factory, monkeypatch, cat) -> None:
         """"water closet only" read with `domain_in_message` but no ask word of its own
         must not leave the ranking for the order lane."""
@@ -529,6 +544,7 @@ class TestF5Category:
         assert sorted(args["category_ids"]) == sorted(cat.water_closet)
         assert "Could not find order" not in _text(reply)
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_an_unknown_category_word_is_said_and_the_ranking_kept(self, session_factory, monkeypatch, cat) -> None:
         _ranked(session_factory, monkeypatch)
         reply, calls = _turn(session_factory, monkeypatch, _narrow(_e("marble", "category")), "marble only")
@@ -540,6 +556,7 @@ class TestF5Category:
         reply, _calls = _turn(session_factory, monkeypatch, _answer(rank_by="amount"), "by amount")
         assert "I don't know" not in _text(reply)
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_no_sales_is_said_without_the_escalation_offer(self, session_factory, monkeypatch, cat, route) -> None:
         route.codes = []
         _turn(session_factory, monkeypatch, _ask(top_n=100), "top 100 hot selling item")
@@ -556,6 +573,7 @@ class TestF5Category:
 
 
 class TestF6Brand:
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_for_sorento_brand(self, session_factory, monkeypatch, cat) -> None:
         """Transcript item 5: "Which customer do you mean?" with SORENTO customers."""
         reply, calls = _turn(
@@ -570,6 +588,7 @@ class TestF6Brand:
         assert "customer_ids" not in args and "customer_query" not in args
         assert "\nBrand: Sorento\n" in _text(reply)
 
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize(
         "message, raw, hint, brand",
         [
@@ -608,6 +627,7 @@ class TestF6Brand:
 
 
 class TestF7Direction:
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_top_10_cold_selling(self, session_factory, monkeypatch, cat) -> None:
         """Transcript item 6: the cold selling ask answered the Top 10, descending."""
         reply, calls = _turn(
@@ -622,6 +642,7 @@ class TestF7Direction:
         assert NO_SALE_LINE in text
         assert f"\n1. {ITEM_CODES[-1]}: " in text
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_least_sold_item(self, session_factory, monkeypatch, cat) -> None:
         _turn(session_factory, monkeypatch, _ask(rank_direction="bottom"), "least sold item")
         reply, calls = _turn(session_factory, monkeypatch, _answer(rank_by="amount"), "amount")
@@ -629,6 +650,7 @@ class TestF7Direction:
         assert args["direction"] == "bottom" and args["count_only"] is True
         assert _text(reply).startswith("*Least sold items*\n")
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_a_top_ask_after_a_bottom_one_ranks_descending(self, session_factory, monkeypatch, cat) -> None:
         _turn(session_factory, monkeypatch, _ask(top_n=10, rank_direction="bottom", rank_by="amount"), "bottom 10 by amount")
         _reply, calls = _turn(session_factory, monkeypatch, _ask(top_n=10, rank_by="amount"), "top 10 by amount")
@@ -655,6 +677,7 @@ _SNAKE = re.compile(r"\b[a-z]+_[a-z0-9_]+\b")
 
 
 class TestOwnerTranscript:
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_replay(self, session_factory, monkeypatch, cat) -> None:
         """Every message of the retest (27 Sep 11:27 to 11:35 MYT), in order, with what
         the bot must do now. Each reply: at most three chips, no snake_case, no dash
@@ -736,6 +759,7 @@ class TestOwnerTranscript:
 
 
 class TestNarrowingNeverRestarts:
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_a_narrowing_marked_as_naming_the_ask_keeps_the_metric_and_count(
         self, session_factory, monkeypatch, cat
     ) -> None:

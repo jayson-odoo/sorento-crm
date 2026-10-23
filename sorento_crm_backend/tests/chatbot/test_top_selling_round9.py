@@ -66,6 +66,7 @@ def _console(console_factory, session_factory):
 
 
 class TestWordAnswers:
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize("word", AGENT_WORDS)
     def test_an_agent_word_answers_like_two(self, console_factory, session_factory, word) -> None:
         c = _console(console_factory, session_factory)
@@ -77,6 +78,7 @@ class TestWordAnswers:
         assert sorted(args["sales_agent_ids"]) == c.seeded.agents("WT"), (word, args)
         assert "customer_ids" not in args, (word, args)
 
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize("word", CUSTOMER_WORDS)
     def test_a_customer_word_answers_like_one(self, console_factory, session_factory, word) -> None:
         c = _console(console_factory, session_factory)
@@ -88,6 +90,7 @@ class TestWordAnswers:
         assert args["customer_ids"] == [_william_customer_id(session_factory)], (word, args)
         assert "sales_agent_ids" not in args, (word, args)
 
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize("word", ["salesman", "customer"])
     def test_a_word_reading_as_a_position_still_binds_by_its_word(self, console_factory, session_factory, word) -> None:
         """The parser may read the word as some other thing; the word still answers."""
@@ -102,6 +105,7 @@ class TestWordAnswers:
         else:
             assert "customer_ids" in args and "sales_agent_ids" not in args, args
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_a_new_ranking_ask_is_not_read_as_an_answer(self, console_factory, session_factory) -> None:
         """"sale" is one edit from "sales", but a whole new ask while the question is open
         asks the question again rather than taking the agent."""
@@ -120,6 +124,7 @@ class TestWordAnswers:
 
 
 class TestOwnerTranscript:
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_replay(self, console_factory, session_factory) -> None:
         c = _console(console_factory, session_factory)
 

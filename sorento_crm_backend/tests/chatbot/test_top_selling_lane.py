@@ -213,6 +213,7 @@ class TestToolPick:
             },
         }
 
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize(
         "entities",
         [[], [{"uuid": CUSTOMER_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_NAME}]],
@@ -291,6 +292,7 @@ class TestNoGrant:
 
 
 class TestArgs:
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_rank_by_and_top_n_from_parser_only(self, session_factory, monkeypatch, route) -> None:
         _seed_contact(session_factory, variables={})
         reply, captured = _turn(session_factory, monkeypatch, _ts(rank_by="amount", top_n=3), "top 3 by quantity")
@@ -304,6 +306,7 @@ class TestArgs:
         assert "Name of" not in reply, "rows print the code only"
         assert reply.endswith(ITEM_OFFER)
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_named_n_past_one_hundred_is_not_capped(self, session_factory, monkeypatch, route) -> None:
         """TOP-N-UNCAP (owner, 30 Sep 2026): "100, 200" - the named N goes out as named."""
         _seed_contact(session_factory, variables={})
@@ -311,6 +314,7 @@ class TestArgs:
         assert _calls(captured)[0]["n"] == 250
         assert "at most" not in reply
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_named_n_past_the_ceiling_asks_the_ceiling_and_says_so(self, session_factory, monkeypatch, route) -> None:
         _seed_contact(session_factory, variables={})
         reply, captured = _turn(session_factory, monkeypatch, _ts(top_n=1500), "top 1500 by quantity")
@@ -319,6 +323,7 @@ class TestArgs:
             "I can list at most the top 1,000 in one reply.\n\n"
         ), reply[:200]
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_param_mapping_and_date_default(self, session_factory, monkeypatch, route) -> None:
         """AC-1953 as built: dates, the resolved customer, the channel, the basis and the
         contact identity (review N2: always both ids) all travel; no date sends none (the
@@ -376,6 +381,7 @@ class TestCategory:
         db.commit()
         return str(row.id)
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_category_entity_resolves_under_order(self, session_factory, monkeypatch, route) -> None:
         category_id = self._seed_category(session_factory)
         asked: list[list[str]] = []
@@ -448,6 +454,7 @@ class TestCategory:
         got = business_services.resolve_category_token(db, "kitchen sinks")
         assert [row[0] for row in got] == [ids["KITCHEN SINK"]]
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_a_word_matching_several_categories_is_asked(self, session_factory, monkeypatch, route) -> None:
         """Reviewer S1: several categories match, so the bot asks which one (owner: no
         silent defaults, clarify), listing the codes (owner: code only), and fetches
@@ -476,6 +483,7 @@ class TestCategory:
 
 
 class TestCustomerPicker:
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_customer_picker_continues_ask(self, session_factory, monkeypatch, route) -> None:
         _seed_contact(session_factory, variables={})
         reply, captured = _turn(
@@ -504,6 +512,7 @@ class TestCustomerPicker:
         assert args["rank_by"] == "amount" and args["n"] == 4
         assert args["channel"] == "dealer"
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_pick_all_continues_ask(self, session_factory, monkeypatch, route) -> None:
         _seed_contact(session_factory, variables={})
         _turn(
@@ -524,6 +533,7 @@ class TestCustomerPicker:
 
 
 class TestFollowUp:
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R2")
     def test_follow_up_by_amount_keeps_filters(self, session_factory, monkeypatch, route) -> None:
         _seed_contact(session_factory, variables={})
         matches = {"dealer a": {"uuid": CUSTOMER_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_NAME}}
@@ -547,6 +557,7 @@ class TestFollowUp:
         assert args["date_from"] == "2026-03-01"
         assert "Ranked by: Amount" in reply
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R2")
     def test_ordered_follow_up_reruns_on_the_ordered_basis(self, session_factory, monkeypatch, route) -> None:
         _seed_contact(session_factory, variables={})
         _turn(session_factory, monkeypatch, _ts(), "top 5 by quantity")
@@ -560,6 +571,7 @@ class TestFollowUp:
         assert args["rank_by"] == "quantity" and args["n"] == 5
         assert "Basis: Ordered" in reply
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R2")
     def test_a_new_top_selling_ask_does_not_inherit_the_old_metric(self, session_factory, monkeypatch, route) -> None:
         """A fresh ask states its own metric: the carried one only answers a question
         the bot asked, or a follow-up that names no ask of its own."""
@@ -571,6 +583,7 @@ class TestFollowUp:
         assert _calls(captured) == []
         assert reply.strip() == ASK_METRIC
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R2")
     def test_a_fresh_ask_after_a_single_row_reply_drops_the_old_category(
         self, session_factory, monkeypatch, route
     ) -> None:
@@ -606,6 +619,7 @@ class TestFollowUp:
         assert args["rank_by"] == "amount" and args["n"] == 5
         assert "\nCategory: all\n" in reply
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R2")
     def test_a_fresh_ask_after_an_unanswered_how_many_asks_the_metric(
         self, session_factory, monkeypatch, route
     ) -> None:
@@ -622,6 +636,7 @@ class TestFollowUp:
         assert _calls(captured) == []
         assert reply.strip() == ASK_METRIC
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R2")
     def test_a_fresh_ask_after_a_single_row_reply_drops_the_old_customer(
         self, session_factory, monkeypatch, route
     ) -> None:
@@ -647,6 +662,7 @@ class TestFollowUp:
         assert "customer_ids" not in args or not args["customer_ids"]
         assert "\nCustomer: all\n" in reply
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R2")
     def test_the_metric_answer_restating_the_ask_completes_it(self, session_factory, monkeypatch, route) -> None:
         """The other side of B2: the bot asked the metric, and "top 5 by amount" names
         the ranking AND answers the question. It completes the asked ask (its
@@ -696,6 +712,7 @@ class TestFollowUp:
 
 
 class TestMissAndHeader:
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_miss_says_no_sales_without_escalating(self, session_factory, monkeypatch, route) -> None:
         """AC-1957 as amended by the owner's retest (27 Sep 2026, PR #1273): a top
         selling ask never falls into "Could not find order" and never opens the
@@ -709,6 +726,7 @@ class TestMissAndHeader:
         assert "escalate" not in reply.lower()
         assert _open_question(session_factory).get("kind") != "top_selling_pick"
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_header_skipped(self, session_factory, monkeypatch, route) -> None:
         _seed_contact(session_factory, variables={})
         reply, _captured = _turn(session_factory, monkeypatch, _ts(), "top 5 by quantity")
@@ -722,6 +740,7 @@ class TestMissAndHeader:
 
 
 class TestClarify:
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_metric_clarify_then_answer(self, session_factory, monkeypatch, route) -> None:
         _seed_contact(session_factory, variables={})
         matches = {"dealer a": {"uuid": CUSTOMER_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_NAME}}
@@ -743,6 +762,7 @@ class TestClarify:
         assert args["customer_ids"] == [CUSTOMER_UUID]
         assert reply.startswith("*Top 5 selling items*\nRanked by: Amount\n")
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_group_clarify_then_answer(self, session_factory, monkeypatch, route) -> None:
         _seed_contact(session_factory, variables={})
         reply, captured = _turn(session_factory, monkeypatch, _ts(rank_group="unclear", top_n=3), "top selling by category")
@@ -758,6 +778,7 @@ class TestClarify:
         assert reply.startswith("*Top 3 selling categories*\n")
         assert "\n1. KS: Qty 99, RM 999.00\n" in reply
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_basis_clarify(self, session_factory, monkeypatch, route) -> None:
         _seed_contact(session_factory, variables={})
         reply, captured = _turn(session_factory, monkeypatch, _ts(basis="unclear"), "top orders")
@@ -793,6 +814,7 @@ class TestClarify:
 
 
 class TestDealer:
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_dealer_other_customer_refused(self, session_factory, monkeypatch, route) -> None:
         """The route forces a dealer contact to its own ledgers and answers 403
         `customer_not_permitted` for any other customer (and for a name that matches
@@ -827,6 +849,7 @@ class TestDealer:
         db.commit()
         return str(own.id)
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_dealer_naming_another_customer_sees_no_names(self, session_factory, monkeypatch, route) -> None:
         """Reviewer S2, PR #1273 (owner: a dealer sees only its own customers; ruling
         pending owner confirmation): a linked dealer contact gets no customer picker. A
@@ -855,6 +878,7 @@ class TestDealer:
         assert _calls(captured) == []
         assert all("hanlim" not in tokens for tokens in looked_up), looked_up
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_dealer_naming_its_own_customer_runs_on_its_own_ledger(self, session_factory, monkeypatch, route) -> None:
         """The other side: a word that matches the dealer's own ledger runs the ranking
         on that ledger, with no picker and no lookup of anyone else's."""
@@ -905,6 +929,7 @@ class TestDealer:
         assert reply.strip() != REFUSED
         assert "Which one do you mean?" in reply
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_linked_contact_with_only_an_inactive_office_type_stays_a_dealer(
         self, session_factory, monkeypatch, route
     ) -> None:
@@ -929,6 +954,7 @@ class TestDealer:
 
 
 class TestPickList:
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R3c")
     def test_rank_number_opens_detail(self, session_factory, monkeypatch, route) -> None:
         _seed_contact(session_factory, variables={})
         _turn(session_factory, monkeypatch, _ts(sales_channel="dealer"), "top 5 dealer by quantity")
@@ -957,6 +983,7 @@ class TestPickList:
         assert "detail_code" not in args
         assert args["rank_by"] == "amount" and args["n"] == 5
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R3c")
     def test_typed_code_opens_detail(self, session_factory, monkeypatch, route) -> None:
         _seed_contact(session_factory, variables={})
         _turn(session_factory, monkeypatch, _ts(), "top 5 by quantity")
@@ -971,6 +998,7 @@ class TestPickList:
         (args,) = _calls(captured)
         assert args["detail_code"] == "SRTBS1020"
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R3c")
     def test_number_past_the_last_row_fetches_nothing(self, session_factory, monkeypatch, route) -> None:
         _seed_contact(session_factory, variables={})
         _turn(session_factory, monkeypatch, _ts(), "top 5 by quantity")
@@ -981,6 +1009,7 @@ class TestPickList:
         assert all("detail_code" not in args for args in _calls(captured))
         assert _open_question(session_factory).get("kind") == "top_selling_pick"
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R3c")
     def test_category_pick_runs_that_categorys_items(self, session_factory, monkeypatch, route) -> None:
         from app.models.product import ProductCategory
 
@@ -1005,6 +1034,7 @@ class TestPickList:
 
 
 class TestHowMany:
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_how_many_then_number(self, session_factory, monkeypatch, route) -> None:
         _seed_contact(session_factory, variables={})
         reply, captured = _turn(session_factory, monkeypatch, _ts(top_n=None), "top selling items by quantity")
@@ -1021,6 +1051,7 @@ class TestHowMany:
         assert "count_only" not in args
         assert reply.startswith("*Top 4 selling items*\n")
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_a_bare_number_under_the_how_many_question_is_the_count(self, session_factory, monkeypatch, route) -> None:
         """The parser may read a bare "20" as a position. With no list open and the bot
         waiting on how many, the number is the N (the deterministic side reads the
@@ -1031,6 +1062,7 @@ class TestHowMany:
         (args,) = _calls(captured)
         assert args["n"] == 6
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_one_row_is_sent_as_is(self, session_factory, monkeypatch, route) -> None:
         route.codes = ["SRTWT7445"]
         _seed_contact(session_factory, variables={})
@@ -1136,6 +1168,7 @@ class TestLongRankingParts:
             a["text"] for a in result.as_dict()["actions"] if isinstance(a, dict) and a.get("kind") == "send_message"
         ]
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R3a")
     def test_top_200_is_every_row_in_ordered_parts(self, session_factory, monkeypatch, route) -> None:
         import re
 
@@ -1160,6 +1193,7 @@ class TestLongRankingParts:
         actions = [a for a in result.as_dict()["actions"] if a.get("kind") == "send_message"]
         assert all(a["result_set"] is None and a["quick_replies"] is None for a in actions[:-1])
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R3a")
     def test_past_the_ceiling_the_note_opens_part_one(self, session_factory, monkeypatch, route) -> None:
         route.codes = [f"SRTWC{i:04d}" for i in range(1, 1201)]
         _seed_contact(session_factory, variables={})

@@ -178,6 +178,7 @@ def _assert_ranking(text: str, captured, *, rank_by: str, top_n: int | None = 10
 
 
 class TestTheOwnersConsoleRetest:
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_turn_one_sets_the_ranking_as_the_ask_in_progress(self, console) -> None:
         """"top 100 sold item" asks the metric, and the reply the console hands the next
         turn carries the ask and the question (the console's own carry)."""
@@ -188,6 +189,7 @@ class TestTheOwnersConsoleRetest:
         assert focus.get("status") == "top_selling", focus
         assert focus.get("top_selling") == {"top_n": 100, "basis": "delivered", "asked": "metric"}, focus
 
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize("reading", list(AMOUNT_READINGS))
     def test_top_100_sold_item_then_amount_is_the_ranking_by_amount(self, console, reading) -> None:
         """The owner's exact two messages. On d59e1dcf the "owner_v39_new_order_ask"
@@ -198,6 +200,7 @@ class TestTheOwnersConsoleRetest:
         turn2, captured = console(AMOUNT_READINGS[reading](), "amount", turn1.session_vars)
         _assert_ranking(turn2.reply_text, captured, rank_by="amount")
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_the_same_two_messages_on_whatsapp(self, session_factory, monkeypatch, cat) -> None:
         """The live path (the contact's stored session) lands the same way."""
         text, _ = _turn(session_factory, monkeypatch, _ask(top_n=100), "top 100 sold item")
@@ -265,6 +268,7 @@ class TestR1TheSoldWords:
         for words in ('domain_in_message false', "never an order list", '"sold" or "sold items" is the ranking'):
             assert words in TOP_SELLING_ADDENDUM, words
 
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize("phrase", list(SOLD_PHRASES))
     def test_each_phrase_then_amount_ranks_by_amount(self, console, phrase) -> None:
         top_n = SOLD_PHRASES[phrase]
@@ -282,6 +286,7 @@ class TestR1TheSoldWords:
 
 
 class TestR2TheMetricAnswer:
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize(
         "body,rank_by",
         [("amount", "amount"), ("amt", "amount"), ("by amount", "amount"), ("Amount.", "amount"),
@@ -293,6 +298,7 @@ class TestR2TheMetricAnswer:
         turn2, captured = console(_fresh_order("all"), body, turn1.session_vars)
         _assert_ranking(turn2.reply_text, captured, rank_by=rank_by)
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_a_position_the_parser_read_is_the_option(self, console) -> None:
         turn1, _ = console(_ask(top_n=100), "top 100 sold item", {})
         position = _parser_output(
@@ -302,6 +308,7 @@ class TestR2TheMetricAnswer:
         turn2, captured = console(position, "2", turn1.session_vars)
         _assert_ranking(turn2.reply_text, captured, rank_by="amount")
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_an_answer_carrying_more_keeps_the_parser_keys(self, console) -> None:
         """"amount, top 20" under the question: the metric binds, the count the parser
         read is kept."""
@@ -318,6 +325,7 @@ class TestR2TheMetricAnswer:
         assert _calls(captured) == [], captured
         assert turn2.reply_text != ASK_METRIC
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_a_new_ask_naming_no_option_still_leaves(self, console) -> None:
         turn1, _ = console(_ask(top_n=100), "top 100 sold item", {})
         # Dated: a dateless DO list ask asks which period first (DO-ASK-SIMPLIFY, owner 4 Oct 2026).
@@ -336,6 +344,7 @@ class TestR2TheMetricAnswer:
 
 
 class TestR2EveryOtherQuestion:
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_the_grain_question(self, console) -> None:
         turn1, _ = console(_ask(top_n=10, rank_by="amount", rank_group="unclear"), "top 10 selling by category", {})
         assert turn1.reply_text == ASK_GROUP
@@ -344,12 +353,14 @@ class TestR2EveryOtherQuestion:
         assert len(call) == 1 and call[0].get("group") == "category", captured
         assert _calls(captured, ORDERS) == []
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_the_grain_question_by_items(self, console) -> None:
         turn1, _ = console(_ask(top_n=10, rank_by="amount", rank_group="unclear"), "top 10 selling by category", {})
         turn2, captured = console(_fresh_order("all"), "items", turn1.session_vars)
         call = _calls(captured)
         assert len(call) == 1 and "group" not in call[0], captured
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_the_basis_question(self, console) -> None:
         turn1, _ = console(_ask(top_n=10, rank_by="amount", basis="unclear"), "top 10 orders", {})
         assert turn1.reply_text == ASK_BASIS
@@ -358,12 +369,14 @@ class TestR2EveryOtherQuestion:
         assert len(call) == 1 and call[0].get("basis") == "ordered", captured
         assert _calls(captured, ORDERS) == []
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_the_basis_question_by_number(self, console) -> None:
         turn1, _ = console(_ask(top_n=10, rank_by="amount", basis="unclear"), "top 10 orders", {})
         turn2, captured = console(_fresh_order("all"), "1", turn1.session_vars)
         call = _calls(captured)
         assert len(call) == 1 and call[0].get("basis") == "delivered", captured
 
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize("body", ["20", "top 20"])
     def test_the_how_many_question(self, console, body) -> None:
         """The count question the route asks (`top_selling_how_many`), carried the same
@@ -374,6 +387,7 @@ class TestR2EveryOtherQuestion:
         turn2, captured = console(_fresh_order("all"), body, carried)
         _assert_ranking(turn2.reply_text, captured, rank_by="amount", top_n=20)
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_the_category_question(self, console, cat) -> None:
         """"Which category do you mean? Reply with one code: ..." answered with a code."""
         turn1, _ = console(_ask(top_n=100), "top 100 sold item", {})
@@ -383,6 +397,7 @@ class TestR2EveryOtherQuestion:
         call = _assert_ranking(turn2.reply_text, captured, rank_by="amount")
         assert call.get("category_ids") == [cat.water_closet[0]], call
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_the_who_question(self, console, cat) -> None:
         """Round 5's who binding, now pinned in the console too."""
         turn1, _ = console(_ask(top_n=100), "top 100 sold item", {})

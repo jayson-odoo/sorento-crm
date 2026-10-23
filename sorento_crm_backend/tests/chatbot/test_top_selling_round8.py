@@ -133,6 +133,7 @@ def _top_10_by_wt(c) -> str:
 
 
 class TestR1OrdinaryRoute:
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize("reading", list(OUTSTANDING_READINGS))
     def test_can_see_the_outstanding_asks_the_ordinary_question(self, console_factory, reading) -> None:
         """"can see the outstanignd/" after the Top 10: the ordinary header with the ten
@@ -147,6 +148,7 @@ class TestR1OrdinaryRoute:
         assert _calls(captured, OUTSTANDING) == [], captured
         assert c.open_question.get("kind") == "outstanding_scope", c.open_question
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_one_gives_the_sales_order_report_for_the_ranked_products(self, console_factory) -> None:
         """"1" continues exactly as the direct path does: the sales order outstanding
         report, the same ten codes, the ranking's year, every customer, and no sales agent
@@ -164,6 +166,7 @@ class TestR1OrdinaryRoute:
         assert _calls(captured, ORDERS) == [], captured
         assert "*Sales order outstanding*" in text, text
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_the_ranking_customer_rides_along(self, console_factory) -> None:
         """A ranking narrowed to HANLIM hands its customer in as the Customer line."""
         c = console_factory()
@@ -179,6 +182,7 @@ class TestR1OrdinaryRoute:
         assert sorted(args["customer_ids"]) == c.seeded.customers("HANLIM TRADING", "HANLIM TRADING (SRT)"), args
         assert args["product_codes"] == RANKED, args
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_a_period_ranking_hands_its_period(self, console_factory) -> None:
         c = console_factory()
         c.codes = list(RANKED)
@@ -188,6 +192,7 @@ class TestR1OrdinaryRoute:
         _no_hop_lines(text, "can see its outstanding?")
         _scope_question(text, product=", ".join(RANKED), order_date="01/01/2026 to 31/03/2026")
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_a_product_named_in_the_ask_wins_over_the_ranked_ones(self, console_factory, session_factory) -> None:
         """"any outstandding for srtwc286" after a ranking asks about SRTWC286, not the
         ranked ten."""
@@ -204,6 +209,7 @@ class TestR1OrdinaryRoute:
 
 
 class TestR2NoRankingHeader:
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize(
         "body, qf",
         [
@@ -227,6 +233,7 @@ class TestR2NoRankingHeader:
 
 
 class TestOwnerTranscript:
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_replay(self, console_factory, session_factory) -> None:
         _seed_family(session_factory)
         _seed_william_ledger(session_factory)

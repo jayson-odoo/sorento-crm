@@ -356,6 +356,7 @@ OUTSTANDING_READINGS = {
 
 
 class TestR1CarriedEntities:
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R2")
     @pytest.mark.parametrize("reading", list(OUTSTANDING_READINGS))
     def test_any_outstanding_keeps_hanlim_and_drops_the_agent(self, console_factory, reading) -> None:
         """"sold by Jayden to hanlim" then "any outstanding?" then "1": Customer HANLIM
@@ -376,6 +377,7 @@ class TestR1CarriedEntities:
         # Fix lane round 8: the agent is simply not carried, with no line about it.
         assert "is not a filter for" not in text and "Filters from the ranking" not in text, text
 
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R2")
     @pytest.mark.parametrize("reading", list(OUTSTANDING_READINGS))
     def test_can_see_its_outstanding_after_sold_by_wt(self, console_factory, reading) -> None:
         """"sold by wt" then "can see its outstiandg?": the outstanding report for the
@@ -401,6 +403,7 @@ class TestR1CarriedEntities:
         ), text
         assert "is not a filter for" not in text and "Filters from the ranking" not in text, text
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R2")
     def test_a_carried_word_is_never_re_resolved_under_another_kind(self, console_factory) -> None:
         """The same carry on the plain order list ("show me the orders"): the agent word
         is dropped with its note, never looked up as a customer."""
@@ -463,6 +466,7 @@ PERIOD_READINGS = {
 
 
 class TestR2PeriodOverARanking:
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R2")
     @pytest.mark.parametrize("reading", list(PERIOD_READINGS))
     @pytest.mark.parametrize("listed", [True, False], ids=["list_open", "no_sales"])
     def test_2025_re_runs_the_ranking_for_the_year(self, console_factory, reading, listed) -> None:
@@ -483,6 +487,7 @@ class TestR2PeriodOverARanking:
         assert args["category_ids"] == [c.seeded.ids["Water Closet"]], args
         assert c.open_question.get("kind") not in ("team_pick", "member_offer"), c.open_question
 
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R2")
     @pytest.mark.parametrize(
         "body,start,end",
         [("july", "2026-07-01", "2026-07-31"), ("q1 2026", "2026-01-01", "2026-03-31"), ("in 2024", "2024-01-01", "2024-12-31")],
@@ -501,6 +506,7 @@ class TestR2PeriodOverARanking:
         assert (args.get("date_from"), args.get("date_to")) == (start, end), args
         assert args["direction"] == "bottom", args
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane; feature ported in R2")
     def test_a_period_with_a_report_word_is_still_the_report(self, console_factory) -> None:
         """"outstanding in 2025" names its own report: round 5's hop, unchanged."""
         c = console_factory()
@@ -520,6 +526,7 @@ RANKING_WORD_READINGS = {
 
 
 class TestR2RankingWords:
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize("reading", list(RANKING_WORD_READINGS))
     def test_top_10_by_an_unknown_agent_in_q1_stays_a_ranking(self, console_factory, reading) -> None:
         """"top 10 hot selling item by william in q1 2026" with no alias yet: the unknown
@@ -547,6 +554,7 @@ class TestR2RankingWords:
         assert "sales_agent_ids" not in args and "category_ids" not in args, args
         assert text.startswith("*Top 10 selling items*"), text
 
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize(
         "body,top_n,direction",
         [("top 10 hot selling item", 10, None), ("worst 20 selling bathtub", 20, "bottom"),
@@ -578,6 +586,7 @@ class TestR2RankingWords:
 
 
 class TestR2NoPickerNoOffer:
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_no_escalate_offer_on_the_outstanding_report_after_a_ranking(self, console_factory) -> None:
         """"any outstanding?" then "1" with no open sales order: "No open sales order."
         and nothing else (on bb7a7b0c: "Would you like me to escalate to customer service
@@ -591,6 +600,7 @@ class TestR2NoPickerNoOffer:
         assert "No open sales order." in text, text
         assert c.open_question.get("kind") not in ("team_pick", "member_offer", "company_pick"), c.open_question
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_a_miss_inside_a_ranking_has_no_offer(self, console_factory) -> None:
         """A word the ranking hands the order lane anyway (a product it cannot place)
         answers without the offer."""
@@ -606,6 +616,7 @@ class TestR2NoPickerNoOffer:
         assert "escalate" not in text and "Please choose who to route to" not in text, text
         assert c.open_question.get("kind") not in ("team_pick", "member_offer", "company_pick"), c.open_question
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_asking_for_a_person_still_escalates(self, console_factory) -> None:
         c = console_factory()
         _bottom_water_closet(c)
@@ -634,6 +645,7 @@ BASIS_READINGS = {
 
 
 class TestR3BasisWords:
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize("reading", list(BASIS_READINGS))
     @pytest.mark.parametrize(
         "body", ["sales order?", "based on sales order", "by SO", "SO basis", "ordered", "by sales order"]
@@ -649,6 +661,7 @@ class TestR3BasisWords:
         assert args["direction"] == "bottom" and args["rank_by"] == "quantity", args
         assert "Basis: Ordered" in text, text
 
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize("body", ["delivered", "by DO", "DO basis", "based on delivery order"])
     def test_the_delivery_words_switch_back(self, console_factory, body) -> None:
         c = console_factory()
@@ -660,6 +673,7 @@ class TestR3BasisWords:
         assert args.get("basis") in (None, "delivered"), args
         assert "Basis: Delivered (transferred to DO)" in text, text
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_can_show_me_the_do_is_still_the_report(self, console_factory) -> None:
         """Round 5 R5: "can show me the DO" asks for the delivery orders, not a basis."""
         c = console_factory()
@@ -671,6 +685,7 @@ class TestR3BasisWords:
         assert "category_ids" not in args, args
         assert "is not a filter for" not in text, text
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_a_bare_rank_is_still_a_pick(self, console_factory) -> None:
         c = console_factory()
         _bottom_water_closet(c)
@@ -699,6 +714,7 @@ class TestR4Aliases:
         finally:
             db.close()
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_sold_by_william_with_the_alias(self, console_factory) -> None:
         c = console_factory(wt_alias="William")
         c.say(_ask(top_n=10, rank_by="quantity"), "top 10 hot selling item")
@@ -709,6 +725,7 @@ class TestR4Aliases:
         _line(text, "Sales agent", WT)
         assert "I don't know" not in text, text
 
+    @pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     def test_top_10_by_william_with_the_alias(self, console_factory) -> None:
         c = console_factory(wt_alias="William")
         _bottom_water_closet(c)
@@ -764,6 +781,7 @@ class TestR4MasterRecord:
 
 
 class TestOwnerTranscript:
+    @pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
     @pytest.mark.parametrize("alias", [None, "William"], ids=["no_alias_yet", "wt_is_william"])
     def test_replay(self, console_factory, alias) -> None:
         c = console_factory(wt_alias=alias)
