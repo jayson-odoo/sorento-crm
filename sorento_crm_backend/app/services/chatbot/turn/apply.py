@@ -787,7 +787,7 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
             return answered
 
     if pending.kind == "top_selling_pick":
-        answered = _answer_top_selling_pick(pending, decision, focus, trace)
+        answered = _answer_top_selling_pick(pending, decision, focus, trace, verdict)
         if answered is not None:
             return answered
     if _stock_pick(pending):
@@ -1778,7 +1778,9 @@ def _without_top_selling_pick(focus: Focus) -> Focus:
     return replace(focus, top_selling={k: v for k, v in slot.items() if k not in TOP_SELLING_ONE_SHOT})
 
 
-def _answer_top_selling_pick(pending: Pending, decision: Decision, focus: Focus, trace: Trace):
+def _answer_top_selling_pick(
+    pending: Pending, decision: Decision, focus: Focus, trace: Trace, verdict: dict[str, Any] | None = None
+):
     """The ranked list is a pick list (owner, PR #1258 05:32Z), answered the pickers' way
     (`decide` settles the positions, a typed code matches a label) but it re-runs the
     ASK rather than settling an entity: an item row opens that code's detail
@@ -1794,6 +1796,19 @@ def _answer_top_selling_pick(pending: Pending, decision: Decision, focus: Focus,
         return None
     option = matched[-1]
     code = option.get("code") or option.get("label")
+    ranking = (pending.payload.get("filters") or {}).get("ranking")
+    if isinstance(ranking, dict) and isinstance(verdict, dict):
+        # REPORT-SMART-L R3c (owner Q2 b): a row of a ranking run on the report engine opens its detail on
+        # that engine (`report_ask.settle` reads `ranking_detail`); nothing is written to the old slot.
+        verdict["ranking_detail"] = {
+            "group_by": ranking.get("group_by"),
+            "name": code,
+            "keys": list((option.get("payload") or {}).get("keys") or []),
+        }
+        focus.status = "sales_ranking"
+        focus.domains = [contracts.SALES_DOMAIN]
+        trace.rules_fired.append("answer_ranking_pick")
+        return focus, with_answered_positions(pending, positions), None, True
     slot = dict(focus.top_selling or {})
     if not slot:
         stored = pending.payload.get("filters")

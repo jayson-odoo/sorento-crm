@@ -3526,6 +3526,13 @@ def _report_ask(body: dict) -> str:
         lines.append(f"and {more} more")
     lines.append(f"Total {figures}")
     text = "\n".join(lines)
+    if items:
+        # REPORT-SMART-L R3c: the top selling reply's own offer (Q2 b): a rank number opens that row.
+        text += "\n\n" + (
+            "Reply with a rank number to see that category's top items."
+            if group_by == "category"
+            else "Reply with a rank number to see that item's customers and months."
+        )
     # Length never cuts an item or category list: split between rows into WhatsApp-sized parts (as top selling did).
     return "\n\n".join(whatsapp_parts(text)) if items else text
 

@@ -72,7 +72,7 @@ ALL_WORDS = frozenset({"all", "any", "everything", "every", "semua", "全部", "
 ENGINE_KEYS = frozenset(
     {
         "required_ask", "required_ask_reply", "required_ask_answer", "low_stock_frame",
-        "report_ask_words", "sales_ranking_frame", "ranking_pick",
+        "report_ask_words", "sales_ranking_frame", "ranking_pick", "ranking_detail",
         # V1-DOC-SCOPE: who may see any customer's documents is the engine's call alone.
         "ref_staff", "doc_staff",
     }

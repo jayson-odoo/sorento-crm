@@ -3154,12 +3154,27 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
     # REPORT-DRILLDOWN: the rows the ranking printed, with their keys, ride on the frame
     # (`shown`), so "these agents" next turn means exactly them. Never a route param.
     drill = envelope.get("drill_rows")
-    frame = dict(args) if text and isinstance(args, dict) else None
+    detail = isinstance(semantic_input, dict) and bool(semantic_input.get("report_ask_detail"))
+    frame = dict(args) if text and isinstance(args, dict) and not detail else None  # a detail leaves the ranking on screen
+    pick = None
     if frame is not None:
         frame.pop("shown", None)
         if isinstance(drill, dict) and drill.get("group_by") == frame.get("group_by") and drill.get("rows"):
             frame["shown"] = drill
+            if frame.get("group_by") in ("product", "category") and not frame.get("compare_to"):
+                # REPORT-SMART-L R3c (owner Q2 b): an item / category ranking is a pick list; a rank number opens
+                # that row's detail, on this engine (`turn/pending.top_selling_pick`, `apply._answer_top_selling_pick`).
+                pick = {
+                    "kind": "top_selling_pick",
+                    "last_result_set": [
+                        {"idx": i, "label": r.get("name"), "code": r.get("name"),
+                         "entity_type": "category" if frame["group_by"] == "category" else "product", "keys": list(r.get("keys") or [])}
+                        for i, r in enumerate(jsc.array(drill.get("rows")), start=1) if isinstance(r, dict)
+                    ],
+                    "filters": {"tool": "crm_report_ask", "ranking": {"group_by": frame["group_by"]}},
+                }
     return {
+        "outstanding_ask": pick,
         "sales_ranking_frame": frame,
         # REPORT-SMART-L R3a: the fixed lines (filter labels, header words) follow the contact's language, as
         # every other answer's do (AC-CL33); rank lines and figures pass through unchanged, English is byte-identical.

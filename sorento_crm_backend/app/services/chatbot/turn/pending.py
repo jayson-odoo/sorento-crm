@@ -133,7 +133,7 @@ def top_selling_pick(
             "code": row.get("code"),
             "name": row.get("name"),
             "entity_type": row.get("entity_type") or "product",
-            "payload": {},
+            "payload": ({"keys": list(row["keys"])} if row.get("keys") else {}),
         }
         for row in (result_set or [])
         if isinstance(row, dict) and isinstance(row.get("idx"), int) and row.get("label")
@@ -145,7 +145,12 @@ def top_selling_pick(
         options,
         asked_at_turn=asked_at_turn,
         # R7 (PLAN-prompt-dynamic-30sep D9): the ranking is the `sales` domain's.
-        payload={"domain": "sales", "status": "top_selling", "filters": dict(filters)},
+        payload={
+            "domain": "sales",
+            # REPORT-SMART-L R3c: a ranking run on the report engine is carried back as that ranking.
+            "status": "sales_ranking" if (filters or {}).get("ranking") else "top_selling",
+            "filters": dict(filters),
+        },
     )
 
 

@@ -2492,6 +2492,10 @@ def run_fetch(
         semantic_input["report_ask_args"] = report_ask.route_args(settled)
         if settled.extras.get("note"):
             semantic_input["report_ask_note"] = settled.extras["note"]
+        if settled.extras.get("detail"):
+            semantic_input["report_ask_detail"] = True  # R3c: a row's detail leaves the ranking on screen
+            if settled.extras.get("detail_second"):
+                semantic_input["report_ask_second_group"] = settled.extras["detail_second"]
         # The args carry every id the ask settled (an answering turn's came off the slot);
         # nothing the session carried rides beside them.
         entities = []
@@ -2679,6 +2683,19 @@ def run_fetch(
     envelope = brand_guard.guard_result(
         tool_name, fetch_mod.parse_mcp_content(raw), semantic_input.get("scope_brand_ids"), db
     )
+    second_group = semantic_input.get("report_ask_second_group") if tool_name == report_ask.TOOL else None
+    if second_group and isinstance(envelope, dict) and envelope.get("response"):
+        # REPORT-SMART-L R3c: an item's detail is two runs of the same ask (by customer, then by month),
+        # shown together as the top selling detail was; the second never changes the first's envelope.
+        try:
+            raw2 = fetch_mod.call_tool(tool_name, {**args, "group_by": second_group}, mcp=_McpSeam(services.mcp_call))
+            env2 = brand_guard.guard_result(
+                tool_name, fetch_mod.parse_mcp_content(raw2), semantic_input.get("scope_brand_ids"), db
+            )
+            if isinstance(env2, dict) and env2.get("response"):
+                envelope = {**envelope, "response": f"{envelope['response']}\n\n{env2['response']}"}
+        except Exception:  # noqa: BLE001 - the first run's answer stands alone
+            logger.warning("chatbot: item detail second run failed", exc_info=True)
     if tool_name == fetch_mod.TIER_PROBE_TOOL and semantic_input.get("promotion_types"):
         # A kind ask is served by the same serving rule as every promotion (AC-22).
         if (

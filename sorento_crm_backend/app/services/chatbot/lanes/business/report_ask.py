@@ -827,6 +827,31 @@ def _reply_fills(
     return {name: got for name, got in reading.items() if got is not None and got.status == "ok" and is_open(name)}
 
 
+def _detail_outcome(db: Any, frame: dict[str, Any], detail: dict[str, Any]) -> rf.Outcome:
+    """REPORT-SMART-L R3c (owner Q2 b): the row a rank number picked, opened on the report engine under the
+    ranking's own period, basis, measure and filters. An item: its customers (and, second, its months); a
+    category: its items. The row's keys are the pick's own resolved ids, never a word."""
+    keys = [str(k) for k in detail.get("keys") or []]
+    base = {k: v for k, v in frame.items() if k not in _FRAME_ONLY and k != "group_by"}
+    for key in _AXIS_FILTERS.get(frame.get("group_by") or "", ()):
+        base.pop(key, None)
+    if frame.get("group_by") == "category":
+        args = {**base, "group_by": "product", "category_ids": keys}
+        top_n = frame.get("top_n")
+    else:
+        args = {**base, "group_by": "customer", "product_ids": keys}
+        top_n = BREAKDOWN_TOP_N
+    given = {**_given_choices(args), **_given_top_n(args, top_n)}
+    period = period_from(frame.get("date_from"), frame.get("date_to"))
+    if period is not None:
+        given["period"] = period
+    outcome = rf.collect(db, SALES_RANKING_ASK, given=given, extras={"args": args, "top_n": top_n})
+    if frame.get("group_by") != "category":
+        outcome.extras["detail_second"] = "month"
+    outcome.extras["detail"] = True
+    return outcome
+
+
 def settle(
     db: Any, parse_output: dict[str, Any], entities: Any, *, dealer: bool = False
 ) -> tuple[rf.Outcome | None, str | None]:
@@ -838,6 +863,10 @@ def settle(
     answering turn runs the first message's ask; every field still missing is asked in one
     numbered reply (chat fix PR-B S1), and an answer settling any of them is read whole."""
     slot = parse_output.get("required_ask")
+    ranking_detail = parse_output.get("ranking_detail")
+    shown_frame = _dict(parse_output.get("sales_ranking_frame"))
+    if isinstance(ranking_detail, dict) and ranking_detail.get("keys") and shown_frame.get("group_by") in ("product", "category"):
+        return _detail_outcome(db, shown_frame, ranking_detail), None
     if isinstance(slot, dict) and slot.get("ask") == ASK_NAME and slot.get("asking") == "scope":
         return _scope_answer(db, parse_output, slot), None
     if isinstance(slot, dict) and slot.get("ask") == ASK_NAME:
