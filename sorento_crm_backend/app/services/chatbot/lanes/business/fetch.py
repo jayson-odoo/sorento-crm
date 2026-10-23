@@ -3167,7 +3167,8 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
                 pick = {
                     "kind": "top_selling_pick",
                     "last_result_set": [
-                        {"idx": i, "label": r.get("name"), "code": r.get("name"),
+                        # A category is printed (and so picked) by its code, as top selling printed it.
+                        {"idx": i, "label": r.get("code") or r.get("name"), "code": r.get("code") or r.get("name"),
                          "entity_type": "category" if frame["group_by"] == "category" else "product", "keys": list(r.get("keys") or [])}
                         for i, r in enumerate(jsc.array(drill.get("rows")), start=1) if isinstance(r, dict)
                     ],

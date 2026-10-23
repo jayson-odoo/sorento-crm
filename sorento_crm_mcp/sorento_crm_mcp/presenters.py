@@ -3640,7 +3640,10 @@ def _report_ask_envelope(body: dict) -> dict:
     drill = (
         {
             "group_by": body.get("group_by"),
-            "rows": [{"name": r.get("name"), "keys": list(r.get("keys") or [])} for r in rows],
+            "rows": [
+                {"name": r.get("name"), "keys": list(r.get("keys") or []), **({"code": r["code"]} if r.get("code") else {})}
+                for r in rows
+            ],
         }
         if rows
         else None
