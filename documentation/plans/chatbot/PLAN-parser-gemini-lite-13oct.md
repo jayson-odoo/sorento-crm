@@ -1,6 +1,6 @@
 # PLAN: parser on Gemini, per-label reasoning effort, parser model trace (PARSER-GEMINI-LITE)
 
-Status: implemented on PR #1624, awaiting review and the crew's dev eval with the label on
+Status: implemented on PR #1624 (main merged 23 Oct, LEAN reconciled), awaiting review and the crew's dev eval with the label on
 gemini-3.5-flash-lite. Track: small diff (about 250 lines of code), but it carries one
 additive migration, so it is not strictly the small fix track; the lane brief allowed the column.
 
@@ -22,6 +22,11 @@ stays in `ai_prompt_labels`, and the owner decides the switch after the eval.
    carries it, and `parse` sends it only when it is set. OpenAI receives it as
    `reasoning_effort`. On Gemini, `low` / `medium` / `high` map to a thinking budget of
    1024 / 8192 / 24576; anything else keeps the old default.
+   After main's LEAN merge (23 Oct): a label effort, when set, wins over
+   `system_settings.chatbot_parser_reasoning_effort` (`parser.sent_reasoning_effort`), except
+   that OpenAI does not get `medium` / `high` / `xhigh` from the label (they can spend all of
+   `PARSER_MAX_TOKENS` on reasoning; the stored setting applies instead) and Anthropic gets none.
+   With the label NULL, LEAN's rule is unchanged (off | low, OpenAI only).
 3. `ChatResult.model` (the id the provider says answered) and `ChatResult.reasoning_tokens`.
    The parser's `usage` and the `understood` facts carry provider, model, model_answered,
    reasoning_effort, latency_ms and the input / cached / output / reasoning token split.

@@ -6,7 +6,8 @@
   (`tests/chatbot/test_parser_gemini_lite.py`)
 - AC-2: With `reasoning_effort` unset, the OpenAI request carries no `reasoning_effort`
   and the Gemini thinking budget is unchanged for every model. With it set, OpenAI receives
-  it verbatim, and Gemini gets the mapped budget plus the same added amount on
+  it verbatim (except `medium` / `high` / `xhigh`, held back until `PARSER_MAX_TOKENS` is
+  raised; the label wins over LEAN's stored setting otherwise, Anthropic is sent none), and Gemini gets the mapped budget plus the same added amount on
   `maxOutputTokens`. (`tests/test_llm_provider.py`)
 - AC-3: `agent_reasoning_effort` returns None for an unset label and the label's own value
   when one is set, and `resolve_config` carries that value. (`tests/test_ai_prompt_registry.py`,

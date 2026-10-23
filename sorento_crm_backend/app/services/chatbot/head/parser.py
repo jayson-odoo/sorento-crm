@@ -849,11 +849,21 @@ def reasoning_effort_setting(db: Session) -> str:
     return value if value in REASONING_EFFORTS else "off"
 
 
+#: PARSER-GEMINI-LITE: label efforts held back on OpenAI for the reason REASONING_EFFORTS gives (they can
+#: spend the whole PARSER_MAX_TOKENS ceiling on reasoning); lift with that ceiling. Gemini takes them, with
+#: answer headroom per level (`llm_provider._gemini_thinking`).
+OPENAI_CAPPED_LABEL_EFFORTS = frozenset({"medium", "high", "xhigh"})
+
+
 def sent_reasoning_effort(config: ParserConfig) -> str:
-    """The effort `parse` actually sends: the label's own when it sets one (any provider), else the stored
-    one on OpenAI, `off` (none sent) otherwise. The trace records this, so it says what the provider was
-    asked for."""
-    if label_effort := getattr(config, "label_reasoning_effort", None):
+    """The effort `parse` actually sends: the label's own when it sets one (any provider but Anthropic, which
+    takes none; on OpenAI not one in OPENAI_CAPPED_LABEL_EFFORTS), else the stored one on OpenAI, `off`
+    (none sent) otherwise. The trace records this, so it says what the provider was asked for."""
+    provider = getattr(config, "provider", None)
+    if provider == "anthropic":
+        return "off"
+    label_effort = getattr(config, "label_reasoning_effort", None)
+    if label_effort and not (provider == "openai" and label_effort in OPENAI_CAPPED_LABEL_EFFORTS):
         return label_effort
     effort = getattr(config, "reasoning_effort", "off")
     return effort if effort in REASONING_EFFORTS and getattr(config, "provider", None) == "openai" else "off"
