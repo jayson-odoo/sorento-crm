@@ -868,6 +868,7 @@ def settle(
     held_period: rf.Resolved | None = None
     held_product: dict[str, Any] = {}
     held_channel: str | None = None
+    holding = False
     # Owner ruling B + S6b (23 Oct): a new axis that runs across all, right after a ranking, keeps what is
     # on screen and widens only the ranked side: the same hold a refine naming another axis uses.
     across_all = new_axis and drill != "scoped" and bool(_dict(frame.get("shown"))) and not frame.get("stale")
@@ -882,6 +883,7 @@ def settle(
         }
         if axis != "channel" and frame.get("channel") in ("dealer", "project"):
             held_channel = frame["channel"]
+        holding = True
         parse_output = {**parse_output, "ranking_refine": False}
 
     args, line = _fresh_args(db, parse_output, entities, dealer=dealer)
@@ -891,6 +893,11 @@ def settle(
         args.update(held_product)
     if held_channel and not args.get("channel"):
         args["channel"] = held_channel
+    if holding:
+        # S6c: the measure and the basis on screen stay too (the message's own win).
+        for key in ("measure", "basis"):
+            if not args.get(key) and frame.get(key):
+                args[key] = frame[key]
     if (
         parse_output.get("ranking_refine") is not True
         and not dealer  # the route forces a dealer's links, so a plain total can never widen
@@ -900,6 +907,8 @@ def settle(
         # Not a valid ask: no axis and nothing to total. Say what can be ranked and open nothing.
         return None, CATALOGUE_LINE
     top_n = parse_output.get("top_n")
+    if top_n is None and holding and frame.get("top_n"):
+        top_n = frame["top_n"]  # S6c: the count on screen stays
     if top_n is None and parse_output.get("report_breakdown") is True and args.get("group_by"):
         top_n = BREAKDOWN_TOP_N  # a breakdown lists every row (`by_capability`)
     if args.get("compare_to") and args.get("group_by") == "month":
