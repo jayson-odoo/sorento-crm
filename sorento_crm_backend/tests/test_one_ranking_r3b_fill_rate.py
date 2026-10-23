@@ -57,3 +57,23 @@ def test_r3b_2_guard_a_ranking_with_no_agent_filter_carries_no_fill_rate(client,
     _world(db, with_agent=2, without_agent=3)
     body = _ok(client, _staff(db), group_by="product", top_n=5)
     assert not body.get("sales_agent_fill_rate"), body
+
+
+def test_r3b_3_guard_the_fill_rate_counts_only_the_contacts_company(client, db) -> None:
+    from tests._mc_lookup_seed import seed_mocha
+
+    agent = _world(db, with_agent=2, without_agent=3)  # the contact's company: 2 of 5 carry an agent
+    mocha = seed_mocha(db)
+    cust = seed_customer(db, name=unique_code("MochaCust"), company_id=mocha.id)
+    wh = warehouse(db, company_id=mocha.id)
+    for _ in range(10):  # another company: ten sales orders, none with an agent
+        _sale(db, cust=cust, wh=wh, agent=None, prod=_prod_in(db, mocha.id), qty=1, total="10.00")
+    db.commit()
+    body = _ok(client, _staff(db), group_by="product", top_n=5, sales_agent_ids=[agent.id])
+    assert body.get("sales_agent_fill_rate") == pytest.approx(0.4), body
+
+
+def _prod_in(db, company_id):
+    from tests._mc_lookup_seed import product
+
+    return product(db, company_id=company_id, code=unique_code("ZZTM", alpha=True))

@@ -141,3 +141,50 @@ def test_r3c_5_guard_a_customer_ranking_row_pick_opens_nothing_new(console, monk
     assert len(_ran(log)) == 1, ("setup", text, log)
     text, log = _say_all(console, monkeypatch, _pick(1), "1")
     assert OLD_TOOL not in _names(log) and _ran(log) == [], (text, log)
+
+
+# ---------------------------------------------------------------- review: one reply, and the printed code picks a row
+
+
+def test_r3c_review_2_an_item_detail_over_the_limit_splits_as_one_reply(console, monkeypatch) -> None:
+    import re
+
+    many = {**ROWS, "customer": [{"rank": i, "name": f"ZZT CUSTOMER {i:04d} SDN BHD", "qty": 500 - i, "amount": 5000.0 - i,
+                                  "keys": [f"cust-{i}"]} for i in range(1, 301)],
+            "month": [{"rank": i, "name": f"2026-{i:02d}", "qty": 5, "amount": 50.0, "keys": []} for i in range(1, 13)]}
+    monkeypatch.setattr(lane_tests, "_fake_body", lambda args: {**_body(args), "rows": many.get(args.get("group_by"), []),
+                                                              "total_count": len(many.get(args.get("group_by"), []))})
+    from app.services.chatbot import console_service
+
+    _on_screen(console, monkeypatch)
+    results: list[Any] = []
+    real = console_service.run_console_turn
+    monkeypatch.setattr(console_service, "run_console_turn", lambda *a, **k: results.append(real(*a, **k)) or results[-1])
+    text, log = _say_all(console, monkeypatch, _pick(2), "2")
+    assert len(_ran(log)) == 2, (text, log)
+    parts = [results[-1].reply_text, *results[-1].send_messages]  # the parts the customer gets, in order
+    assert len(parts) > 1 and all(len(p) <= 3900 for p in parts), [len(p) for p in parts]
+    marks = [re.match(r"\((\d+)/(\d+)\)", p) for p in parts]
+    assert all(marks), [p[:12] for p in parts]
+    assert [int(m.group(1)) for m in marks] == list(range(1, len(parts) + 1)), [m.group(0) for m in marks]
+    assert {int(m.group(2)) for m in marks} == {len(parts)}, [m.group(0) for m in marks]  # one numbering for the whole detail
+    joined = "\n".join(parts)
+    assert "ZZT CUSTOMER 0001" in joined and "Dec 2026" in joined, "both halves are in the reply"
+
+
+def test_r3c_review_3_typing_a_category_rows_printed_code_picks_that_row(console, monkeypatch) -> None:
+    from tests.chatbot.test_report_ask_lane import _e
+
+    coded = {"product": ROWS["product"], "customer": ROWS["customer"], "month": ROWS["month"],
+             "category": [{"rank": 1, "name": "ZZ Category A", "code": "ZZCATA", "qty": 39, "amount": 399.0, "keys": [C1]},
+                          {"rank": 2, "name": "ZZ Category B", "code": "ZZCATB", "qty": 38, "amount": 398.0, "keys": [C2]}]}
+    monkeypatch.setattr(lane_tests, "_fake_body", lambda args: {**_body(args), "rows": coded.get(args.get("group_by"), [])})
+    text = _on_screen(console, monkeypatch, "category")
+    assert "1. ZZCATA" in text, text  # the ranking prints the code
+    typed = _parser_output(
+        message_type="business_query", domain_hint="order", intent_hint="check_order", entities=[_e("ZZCATA", "category")],
+        order_status=None, domain_in_message=False, state_changes=[{"op": "answer", "axis": None, "position": None}])
+    text, log = _say_all(console, monkeypatch, typed, "ZZCATA")
+    ran = _ran(log)
+    assert len(ran) == 1, (text, log)
+    assert ran[0]["group_by"] == "product" and ran[0].get("category_ids") == [C1], ran
