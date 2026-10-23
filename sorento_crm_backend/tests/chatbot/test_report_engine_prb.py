@@ -339,10 +339,14 @@ def test_b4_near_miss_a_delivered_status_with_no_report_question_open_is_not_a_r
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 @pytest.mark.parametrize(
     "order_status",
-    ["sales_ranking", "top_selling", None, "delivered", "outstanding"],
+    [
+        "sales_ranking",
+        pytest.param("top_selling", marks=pytest.mark.xfail(
+            strict=True, reason="REPORT-SMART-L R1 one ranking: a top_selling refine is a sales ranking now; R2 ports the top-selling-shaped refine")),
+        None, "delivered", "outstanding",
+    ],
     ids=["sales_ranking", "top_selling", "none", "delivered", "outstanding"],
 )
 def test_b5_a_refine_changes_only_the_channel_whatever_report_type_the_parser_picked(console, order_status) -> None:
