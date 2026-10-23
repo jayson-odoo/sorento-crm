@@ -163,6 +163,7 @@ class TestPhantomAnswerIsDropped:
         assert _positions_read_elsewhere(State(focus=Focus(top_selling={"rank_by": "amount"}))) is False
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
 def test_the_first_one_answers_the_top_selling_who_question(session_factory, monkeypatch, cat) -> None:
     """Reviewer B1 on this lane: "the first one" under "Do you mean customer SAMPLE -
     CONTACT Z or sales agent ...? Reply 1 for the customer, 2 for the sales agent." arrives

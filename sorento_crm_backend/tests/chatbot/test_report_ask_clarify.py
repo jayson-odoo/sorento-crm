@@ -435,6 +435,7 @@ def _top_selling(session_factory, monkeypatch, qf: dict[str, Any], body: str):
     return ts_turn(session_factory, monkeypatch, qf, body)
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 def test_k_top_selling_with_no_basis_asks_the_basis_and_does_not_fetch(session_factory, monkeypatch, route) -> None:
     _seed_contact(session_factory, variables={})
     reply, captured = _top_selling(session_factory, monkeypatch, _ts(rank_by="amount", basis=None, top_n=10), "top 10 selling sorento")
@@ -442,12 +443,14 @@ def test_k_top_selling_with_no_basis_asks_the_basis_and_does_not_fetch(session_f
     assert ts_calls(captured) == [], captured
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 def test_k_an_unclear_basis_asks_the_basis_too(session_factory, monkeypatch, route) -> None:
     _seed_contact(session_factory, variables={})
     reply, captured = _top_selling(session_factory, monkeypatch, _ts(rank_by="amount", basis="unclear", top_n=10), "top orders")
     assert reply.strip() == TS_BASIS_Q and ts_calls(captured) == [], (reply, captured)
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 def test_l_both_null_asks_the_metric_first_then_the_basis(session_factory, monkeypatch, route) -> None:
     _seed_contact(session_factory, variables={})
     reply, captured = _top_selling(session_factory, monkeypatch, _ts(rank_by=None, basis=None, top_n=10), "top 10 selling sorento")
@@ -460,6 +463,7 @@ def test_l_both_null_asks_the_metric_first_then_the_basis(session_factory, monke
     assert args["rank_by"] == "quantity" and args["basis"] == "ordered" and args["n"] == 10, args
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 def test_m_the_basis_answer_ordered_runs_with_ordered_sent_explicitly(session_factory, monkeypatch, route) -> None:
     _seed_contact(session_factory, variables={})
     reply, _captured = _top_selling(session_factory, monkeypatch, _ts(rank_by="amount", basis=None, top_n=10), "top 10 selling sorento")
@@ -469,6 +473,7 @@ def test_m_the_basis_answer_ordered_runs_with_ordered_sent_explicitly(session_fa
     assert args["basis"] == "ordered" and args["rank_by"] == "amount" and args["n"] == 10, args
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 def test_n_the_basis_answer_delivered_runs_with_delivered_sent_explicitly(session_factory, monkeypatch, route) -> None:
     _seed_contact(session_factory, variables={})
     _top_selling(session_factory, monkeypatch, _ts(rank_by="amount", basis=None, top_n=10), "top 10 selling sorento")
@@ -477,6 +482,7 @@ def test_n_the_basis_answer_delivered_runs_with_delivered_sent_explicitly(sessio
     assert "basis" in args and args["basis"] == "delivered", args
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 def test_n_a_first_message_naming_delivered_sends_it_explicitly(session_factory, monkeypatch, route) -> None:
     _seed_contact(session_factory, variables={})
     _reply, captured = _top_selling(session_factory, monkeypatch, _ts(rank_by="amount", basis="delivered", top_n=10), "top 10 delivered by amount")
@@ -484,6 +490,7 @@ def test_n_a_first_message_naming_delivered_sends_it_explicitly(session_factory,
     assert args["basis"] == "delivered", args
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 def test_n_a_fetch_with_no_settled_basis_makes_no_call(session_factory) -> None:
     """`fetch.py` sends `basis` only when set today; the route then defaults to delivered. A
     fetch for the ranking must never run without an explicit basis."""
@@ -591,6 +598,7 @@ def test_kill_the_ranking_lanes_basis_line_comes_from_the_shared_function(consol
     assert text.strip() == SENTINEL_BASIS and calls == [], (text, calls)
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 def test_kill_top_selling_asks_through_the_shared_function(session_factory, monkeypatch, route) -> None:
     from app.services.chatbot.lanes.business import ranking_ask
 
@@ -601,6 +609,7 @@ def test_kill_top_selling_asks_through_the_shared_function(session_factory, monk
     assert reply.strip() == f"1. {SENTINEL_METRIC}\n2. {SENTINEL_BASIS}" and ts_calls(captured) == [], reply
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 def test_kill_top_sellings_basis_line_comes_from_the_shared_function(session_factory, monkeypatch, route) -> None:
     from app.services.chatbot.lanes.business import ranking_ask
 
@@ -686,6 +695,7 @@ def test_s2_the_question_helper_asks_the_basis_for_outstanding() -> None:
     assert _top_selling_question({"rank_by": "amount", "basis": "outstanding"}) == ("basis", TS_BASIS_Q)
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 def test_s2_a_top_selling_verdict_with_basis_outstanding_asks_the_basis_and_fetches_nothing(
     session_factory, monkeypatch, route
 ) -> None:
@@ -695,6 +705,7 @@ def test_s2_a_top_selling_verdict_with_basis_outstanding_asks_the_basis_and_fetc
     assert ts_calls(captured) == [], captured
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 def test_s2_an_outstanding_answer_to_the_top_selling_basis_question_asks_again_and_keeps_the_held_ask(
     session_factory, monkeypatch, route
 ) -> None:
@@ -759,6 +770,7 @@ def _fetch_payload(slot: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 def test_n1_a_picked_row_with_no_basis_may_fall_back_to_delivered_nothing_else_may(session_factory) -> None:
     import json
 
@@ -790,6 +802,7 @@ def test_n1_fetch_py_falls_back_to_delivered_only_for_a_picked_row() -> None:
         assert "detail_code" in near, near
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 def test_n5_the_customer_picker_answer_asks_the_basis_before_any_fetch(session_factory, monkeypatch, route) -> None:
     from tests.chatbot.test_outstanding_lane import HANLIM_UUID_1, _ambiguous_hanlim_resolve_services
 

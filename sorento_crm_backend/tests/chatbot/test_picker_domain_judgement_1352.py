@@ -376,6 +376,7 @@ from tests.chatbot.test_top_selling_round5 import ASK_METRIC, _answer, _ask, cat
 from tests.chatbot.test_top_selling_round6 import _assert_ranking, console  # noqa: E402,F401
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
 def test_c_top_selling_metric_then_top_x(console):
     """AC-PK011: "top selling item" -> "By quantity or by amount?" -> "amount" ranks by
     amount and asks how many to show -> "20" is the top X, never a pick or a new ask."""

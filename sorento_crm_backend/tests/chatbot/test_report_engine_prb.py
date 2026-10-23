@@ -339,6 +339,7 @@ def test_b4_near_miss_a_delivered_status_with_no_report_question_open_is_not_a_r
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 @pytest.mark.parametrize(
     "order_status",
     ["sales_ranking", "top_selling", None, "delivered", "outstanding"],
@@ -526,6 +527,7 @@ def _ts_bare(**overrides: Any) -> dict[str, Any]:
     return _ts(rank_by=None, basis=None, top_n=100, **overrides)
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 def test_b1b_a_top_selling_ask_with_neither_metric_nor_basis_gets_one_numbered_reply(
     session_factory, monkeypatch, route
 ) -> None:
@@ -537,6 +539,7 @@ def test_b1b_a_top_selling_ask_with_neither_metric_nor_basis_gets_one_numbered_r
     assert "quantity" in low and "amount" in low and "delivered" in low and "ordered" in low, reply
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 def test_b1b_the_recorded_asked_axis_covers_both_questions(session_factory, monkeypatch, route) -> None:
     _seed_contact(session_factory, variables={})
     ts_turn(session_factory, monkeypatch, _ts_bare(), "top 100 hot selling item")
@@ -547,6 +550,7 @@ def test_b1b_the_recorded_asked_axis_covers_both_questions(session_factory, monk
     assert "basis" in " ".join(str(a) for a in flat) or "both" in " ".join(str(a) for a in flat), asked
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 def test_b1b_one_reply_carrying_rank_by_and_basis_settles_both_and_runs(session_factory, monkeypatch, route) -> None:
     _seed_contact(session_factory, variables={})
     ts_turn(session_factory, monkeypatch, _ts_bare(), "top 100 hot selling item")
@@ -558,6 +562,7 @@ def test_b1b_one_reply_carrying_rank_by_and_basis_settles_both_and_runs(session_
     assert calls[0]["rank_by"] == "amount" and calls[0]["basis"] == "ordered" and calls[0]["n"] == 100, calls
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 def test_b1b_a_reply_with_only_rank_by_reasks_only_the_basis_and_is_still_an_answer(
     session_factory, monkeypatch, route
 ) -> None:
@@ -573,6 +578,7 @@ def test_b1b_a_reply_with_only_rank_by_reasks_only_the_basis_and_is_still_an_ans
     assert calls[0]["rank_by"] == "quantity" and calls[0]["basis"] == "delivered" and calls[0]["n"] == 100, calls
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 def test_b1b_a_reply_with_only_the_basis_reasks_only_the_metric(session_factory, monkeypatch, route) -> None:
     _seed_contact(session_factory, variables={})
     ts_turn(session_factory, monkeypatch, _ts_bare(), "top 100 hot selling item")
@@ -597,6 +603,7 @@ def test_b1b_near_miss_the_words_say_both_but_the_parser_set_neither_is_a_miss(
     assert ts_calls(captured) == [], captured
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 def test_b1b_unchanged_the_group_question_is_still_asked_alone_first(session_factory, monkeypatch, route) -> None:
     _seed_contact(session_factory, variables={})
     reply, captured = ts_turn(
@@ -606,6 +613,7 @@ def test_b1b_unchanged_the_group_question_is_still_asked_alone_first(session_fac
     assert ts_calls(captured) == [], captured
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 def test_b1b_unchanged_one_missing_detail_is_asked_alone(session_factory, monkeypatch, route) -> None:
     _seed_contact(session_factory, variables={})
     reply, _c = ts_turn(session_factory, monkeypatch, _ts(rank_by=None, basis="delivered", top_n=5), "top 5 selling")
@@ -636,6 +644,7 @@ def _open_ts_basis(session_factory, monkeypatch) -> None:
     assert reply.strip() == TS_BASIS_Q and ts_calls(captured) == [], (reply, captured)
 
 
+@pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 @pytest.mark.parametrize(
     "keys",
     [
@@ -664,6 +673,7 @@ def test_b15_a_basis_answer_tagged_with_another_report_type_runs_the_top_selling
     assert not [a for n, a in captured if n == "crm_report_ask"], captured
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 def test_b15_near_miss_the_other_report_type_with_no_open_field_filled_is_not_the_answer(
     session_factory, monkeypatch, route
 ) -> None:
@@ -748,6 +758,7 @@ def _axis_turn(session_factory, monkeypatch, **keys):
     return ts_turn(session_factory, monkeypatch, _parser_output(**base), "how about by brand instead?")
 
 
+@pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 @pytest.mark.parametrize("group_by", [None, "product", "item"], ids=["no_axis", "same_axis_product", "same_axis_item"])
 def test_b6d_near_miss_no_axis_or_the_same_axis_is_a_plain_answer(session_factory, monkeypatch, route, group_by) -> None:
     _open_ts_after_metric(session_factory, monkeypatch)
@@ -774,6 +785,7 @@ def test_b6d_guard_a_noisy_group_by_on_a_count_answer_keeps_the_held_axis_R16(co
     assert calls[0]["group_by"] == "customer" and calls[0]["top_n"] == 5, calls
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 def test_b6d_guard_a_noisy_group_by_on_a_basis_answer_keeps_the_top_selling_items_R12_R17(
     session_factory, monkeypatch, route
 ) -> None:
@@ -854,6 +866,7 @@ def test_m3_near_miss_a_sales_ranking_parse_filling_only_the_period_is_still_the
     assert len(calls) == 1 and calls[0]["date_from"] == "2026-10-01", (text, calls)
 
 
+@pytest.mark.xfail(strict=False, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 @pytest.mark.parametrize("group_by", ["customer", "sales_agent"])
 @pytest.mark.parametrize("order_status", ["sales_ranking", "top_selling"])
 def test_s2b_veto_a_basis_answer_carrying_a_customer_or_agent_group_by_is_still_the_answer(
@@ -876,6 +889,7 @@ def test_s2b_veto_a_basis_answer_carrying_a_customer_or_agent_group_by_is_still_
     assert not [a for n, a in captured if n == "crm_report_ask"], captured
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 def test_b1b_an_answer_that_restates_the_ranking_under_the_combined_question_completes_it(
     session_factory, monkeypatch, route
 ) -> None:
@@ -899,6 +913,7 @@ def test_b1b_an_answer_that_restates_the_ranking_under_the_combined_question_com
     assert len(calls) == 1 and calls[0]["n"] == 100 and calls[0]["rank_by"] == "amount", (reply, calls)
 
 
+@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
 def test_b1b_near_miss_a_fresh_top_selling_ask_over_the_combined_question_starts_over(
     session_factory, monkeypatch, route
 ) -> None:
