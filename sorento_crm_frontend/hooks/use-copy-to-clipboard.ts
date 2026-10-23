@@ -2,6 +2,8 @@
 
 import * as React from 'react';
 
+import { copyTextToClipboard } from '@/lib/clipboard';
+
 /**
  * One copy, and the checkmark that answers it (S7-05).
  *
@@ -13,8 +15,9 @@ import * as React from 'react';
  * they already did.
  *
  * `copyToClipboard` resolves to whether the write landed, because failure is a
- * different matter: the clipboard is refused over plain HTTP and by some
- * browser policies, and nothing on screen would otherwise say so. That path
+ * different matter: the Clipboard API is missing over plain HTTP and refused by
+ * some browser policies (both fall back to `lib/clipboard`'s execCommand path),
+ * and when that fails too nothing on screen would otherwise say so. That path
  * keeps its toast, at the call site, which is also where the fallback lives
  * (show the link so the reader can copy it by hand).
  */
@@ -37,14 +40,9 @@ export function useCopyToClipboard({
 
   const copyToClipboard = React.useCallback(
     async (value: string): Promise<boolean> => {
-      if (typeof window === 'undefined' || !navigator.clipboard?.writeText) return false;
-      if (!value) return false;
-
-      try {
-        await navigator.clipboard.writeText(value);
-      } catch {
-        return false;
-      }
+      if (typeof window === 'undefined' || !value) return false;
+      // The Clipboard API, else the execCommand fallback (plain http has no Clipboard API).
+      if (!(await copyTextToClipboard(value))) return false;
 
       setIsCopied(true);
       onCopy?.();
