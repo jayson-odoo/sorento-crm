@@ -522,16 +522,18 @@ def report_ask(
         )
     if agents and group_norm in ("product", "category") and data.get("status") == "ok" and not (narrowed and not (customers or [])):
         # REPORT-SMART-L R3b: the old top selling note, by its own computation (`sales_report_service.top_selling`
-        # builds `sales_agent_fill_rate` only with an agent filter): the share of the window's sales orders, every
-        # other filter applied and the agent filter NOT, that carry any sales agent.
+        # builds `sales_agent_fill_rate` only with an agent filter): the share of the window's sales orders that
+        # carry any sales agent, over the period, customer, channel, category and brand filters (never the agent
+        # filter itself, by the rate's own definition).
         from app.models.order import SalesOrder
         from app.services import sales_report_service as srs
         from app.services.contact_brand_scope import brand_predicate
 
         try:
-            # ONE count query (`srs.sales_agent_fill_rate`) over the ranking's own filters, with the contact's
-            # company, brand and customer scope applied EXPLICITLY (a column query is not reached by the
-            # session listeners), so the rate counts only the sales orders the ranking it annotates counts.
+            # ONE count query (`srs.sales_agent_fill_rate`), with the contact's company, brand and customer
+            # scope applied EXPLICITLY (a column query is not reached by the session listeners). It does not
+            # apply the ranking's product, location (warehouse) or customer card agent filters, so with one of
+            # those set the rate is over more sales orders than the ranking it annotates counts.
             _extra = [SalesOrder.company_id.in_(sorted(grants)) if grants else false()]
             if brand_scope:
                 _extra.append(brand_predicate(brand_scope, Product.brand_id, Product.company_id))
