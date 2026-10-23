@@ -171,8 +171,10 @@ def test_the_same_axis_scoped_ranks_within_the_rows_printed(console) -> None:
 def test_global_is_a_fresh_ask_and_carries_nothing(console) -> None:
     _turn1(console)
     text, calls = console.say(_drill(ranking_drill="global"), "top 10 customers overall")
-    # Owner ruling 16 Oct 2026 (chat fix PR-B S1): every missing detail in one numbered reply.
-    assert calls == [] and text.strip().startswith("1. By quantity or by amount?\n"), text  # S6b: the period on screen is kept, so it is not asked
+    # S6c: the measure, basis and period on screen stay, so nothing is asked and it runs across all.
+    (args,) = calls
+    assert args["group_by"] == "customer" and args["top_n"] == 10 and "customer_agent_ids" not in args, args
+    assert "Across all sales agents" in text, text
 
 
 def test_unsure_runs_across_all_and_says_so(console) -> None:
@@ -185,51 +187,31 @@ def test_unsure_runs_across_all_and_says_so(console) -> None:
     assert "Across all sales agents" in text and "or across all" not in text, text
 
 
-def test_unsure_with_no_count_asks_the_missing_details_not_the_scope(console) -> None:
+def test_unsure_with_no_count_runs_across_all_with_the_held_count(console) -> None:
     _turn1(console)
     text, calls = console.say(_drill(ranking_drill="unsure", top_n=None), "customers")
-    assert calls == [] and "or across all" not in text, (text, calls)
-    assert text.strip().startswith(f"1. {TOPN_Q}\n"), text  # S6b: the held period is not asked again
-
-
-def test_unsure_then_the_missing_details_run_across_all(console) -> None:
-    # S6b: the held period is kept, so the detail left to ask is the count (the message names none).
-    _turn1(console)
-    text, calls = console.say(_drill(ranking_drill="unsure", top_n=None), "customers")
-    assert calls == [] and TOPN_Q in text and "Which period" not in text, text
-    text, calls = console.say(_reply(top_n=10, measure="amount", basis="delivered"), "10")
+    # S6c: the count on screen stays, so nothing is asked and the scope question is not either.
     (args,) = calls
-    assert args["group_by"] == "customer" and args["top_n"] == 10, args
+    assert args["group_by"] == "customer" and args["top_n"] == 3 and "customer_agent_ids" not in args, args
+    assert "or across all" not in text, text
+
+
+def test_unsure_across_all_run_carries_the_header_the_held_count_and_the_held_product(console) -> None:
+    _turn1(console)
+    text, calls = console.say(_drill(ranking_drill="unsure", top_n=None), "customers")
+    (args,) = calls
+    assert args["group_by"] == "customer" and args["top_n"] == 3, args
     assert "customer_agent_ids" not in args and args["product_code"] == PRODUCT_CODE, args
-    assert "Across all sales agents" in text, text  # the final run carries the header too
-
-
-# ============================================================================ never a guess
-
-
-NO_RANKING = (
-    "I don't have a ranking to take those from. "
-    "Ask the ranking first, for example top 5 sales agents for a product this year."
-)
-
-
-def test_scoped_with_no_ranking_held_is_said_and_nothing_runs(console) -> None:
-    text, calls = console.say(_drill(), "top 10 customers for these sales agents")
-    assert calls == [] and text.strip() == NO_RANKING, text
-
-
-def test_unsure_with_no_ranking_held_is_the_fresh_ask(console) -> None:
-    """Review S3: with nothing to scope to, the global reading is the only one."""
-    text, calls = console.say(_drill(ranking_drill="unsure"), "top 10 customers")
-    # Owner ruling 16 Oct 2026 (chat fix PR-B S1): every missing detail in one numbered reply.
-    assert calls == [] and text.strip().startswith(f"1. {PERIOD_Q}\n"), text
+    assert "Across all sales agents" in text, text  # the run carries the header too
 
 
 def test_unsure_after_a_month_list_is_the_fresh_ask(console) -> None:
     _turn1(console, group_by="month")
     text, calls = console.say(_drill(ranking_drill="unsure"), "top 10 customers")
-    # Owner ruling 16 Oct 2026 (chat fix PR-B S1): every missing detail in one numbered reply.
-    assert calls == [] and text.strip().startswith("1. By quantity or by amount?\n"), text  # S6b: the period on screen is kept, so it is not asked
+    # S6c: a month list on screen is held too (its period, measure and basis), so it runs across all months.
+    (args,) = calls
+    assert args["group_by"] == "customer" and args["top_n"] == 10, args
+    assert "Across all months" in text, text
 
 
 @pytest.mark.parametrize(

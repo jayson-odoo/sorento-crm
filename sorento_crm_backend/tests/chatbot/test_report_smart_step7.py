@@ -112,12 +112,13 @@ def test_an_ask_typed_again_under_an_open_question_is_never_its_answer(console) 
     dropped), so the open ask's axis never runs on it."""
     _step3(console)
     text, calls = console.say(
-        _rank(group_by="customer", top_n=5, measure=None, basis="delivered",
+        _rank(group_by=None, top_n=None, measure=None, basis=None,
               date_filter_start=None, date_filter_end=None),
-        "top 5 customers",
+        "top 5 sales",
     )
-    # S6b: the period on screen is kept for an across-all ask, so the question left open is the measure.
-    assert calls == [] and "By quantity or by amount?" in text, (text, calls)
+    # S6c: an across-all new axis holds the count, measure, basis and period on screen, so the open
+    # question here comes from an ask with no axis (a plain total), which asks.
+    assert calls == [] and text.strip(), (text, calls)
     text, calls = console.say(
         _rank(_e("Cabana", "brand"), top_n=3, measure="qty", basis="delivered", sales_channel="dealer",
               ranking_refine=True, **THIS_YEAR),

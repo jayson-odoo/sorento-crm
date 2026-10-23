@@ -440,7 +440,7 @@ def _held_product_ranking(console) -> None:
     )
 
 
-def test_b6_a_new_axis_is_asked_and_keeps_the_held_period_and_product(console) -> None:
+def test_b6_a_new_axis_runs_and_keeps_the_held_period_and_product(console) -> None:
     from tests.chatbot.test_report_ask_lane import PRODUCT_CODE
 
     _held_product_ranking(console)
@@ -449,29 +449,24 @@ def test_b6_a_new_axis_is_asked_and_keeps_the_held_period_and_product(console) -
               date_filter_start=None, date_filter_end=None, drill_rank=None),
         "and the top customer",
     )
-    # Still asked (8 Oct rule): nothing runs on a guess.
-    assert calls == [], calls
-    low = text.lower()
-    assert "period" not in low and PERIOD_Q not in text, f"the held period is asked again: {text}"
-    assert text.strip(), text
-    # The answer completes it with the held period and product.
-    text, calls = console.say(_answer(top_n=1, measure="amount", basis="delivered"), "1, amount, delivered")
+    # S6c (owner ruling, 23 Oct, reverses the 8 Oct ask): the new axis keeps what is on screen and runs.
     assert len(calls) == 1, (text, calls)
     args = calls[0]
-    assert args["group_by"] == "customer" and args["top_n"] == 1, args
+    assert args["group_by"] == "customer", args
     assert args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
     assert args.get("product_code") == PRODUCT_CODE or args.get("product_ids"), args
+    assert PERIOD_Q not in text, f"the held period is asked again: {text}"
 
 
-def test_b6_the_new_axis_does_not_run_on_a_guess(console) -> None:
+def test_b6_the_new_axis_keeps_the_held_choices_and_runs(console) -> None:
     _held_product_ranking(console)
     text, calls = console.say(
         _rank(group_by="customer", top_n=1, ranking_refine=True, measure=None, basis=None,
               date_filter_start=None, date_filter_end=None),
         "the top customer",
     )
-    assert calls == [] or all(c.get("group_by") != "customer" for c in calls) or text.strip(), (text, calls)
-    assert calls == [], calls
+    # S6c: the measure and basis on screen stay, so nothing is asked.
+    assert len(calls) == 1 and calls[0]["group_by"] == "customer" and calls[0]["top_n"] == 1, (text, calls)
 
 
 def test_b6_near_miss_a_new_axis_that_names_its_own_period_uses_it_not_the_held_one(console) -> None:
