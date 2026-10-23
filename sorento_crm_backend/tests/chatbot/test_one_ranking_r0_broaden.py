@@ -68,3 +68,21 @@ def test_or0_near_miss_no_broadening_holds_everything_as_today(console, shape) -
     text, calls = console.say(_widen(shape, None, None), "same again")
     assert len(calls) == 1, (text, calls)
     _held(calls[0], drop=None)
+
+
+@pytest.mark.parametrize("shape", ["refine", "new_axis"])
+def test_or0_guard_a_family_broaden_keeps_the_held_product(console, shape) -> None:
+    _state_on(console)
+    _ranking(console)
+    text, calls = console.say(_widen(shape, "product", "family"), "all variants")
+    assert len(calls) == 1, (text, calls)
+    _held(calls[0], drop=None)
+
+
+@pytest.mark.parametrize("shape", ["refine", "new_axis"])
+def test_or0_guard_widening_another_axis_keeps_the_held_product_and_channel(console, shape) -> None:
+    _state_on(console)
+    _ranking(console)
+    text, calls = console.say(_widen(shape, "customer", "all"), "all customers")
+    assert len(calls) == 1, (text, calls)
+    _held(calls[0], drop=None)
