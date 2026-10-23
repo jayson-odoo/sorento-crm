@@ -112,19 +112,19 @@ def test_an_ask_typed_again_under_an_open_question_is_never_its_answer(console) 
     dropped), so the open ask's axis never runs on it."""
     _step3(console)
     text, calls = console.say(
-        _rank(group_by=None, top_n=None, measure=None, basis=None,
+        _rank(group_by="sales_agent", top_n=None, measure=None, basis=None,
               date_filter_start=None, date_filter_end=None),
-        "top 5 sales",
+        "top salesman",
     )
-    # S6c: an across-all new axis holds the count, measure, basis and period on screen, so the open
-    # question here comes from an ask with no axis (a plain total), which asks.
-    assert calls == [] and text.strip(), (text, calls)
+    assert calls == [] and PERIOD_Q in text, ("setup: a question must be open", text, calls)
     text, calls = console.say(
         _rank(_e("Cabana", "brand"), top_n=3, measure="qty", basis="delivered", sales_channel="dealer",
               ranking_refine=True, **THIS_YEAR),
         "who's the top 3 salesman for cabana this year, dealer sales only",
     )
-    assert all(c.get("group_by") != "customer" for c in calls), (text, calls)
+    assert len(calls) == 1, (text, calls)  # not taken as the answer to the open question
+    assert calls[0]["group_by"] == "sales_agent" and calls[0]["top_n"] == 3 and calls[0]["channel"] == "dealer", calls
+    _held(calls[0], console)
 
 
 def test_near_miss_a_bare_channel_refine_keeps_the_held_choices(console) -> None:

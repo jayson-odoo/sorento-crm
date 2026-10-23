@@ -205,13 +205,35 @@ def test_unsure_across_all_run_carries_the_header_the_held_count_and_the_held_pr
     assert "Across all sales agents" in text, text  # the run carries the header too
 
 
-def test_unsure_after_a_month_list_is_the_fresh_ask(console) -> None:
+# ============================================================================ never a guess
+
+
+NO_RANKING = (
+    "I don't have a ranking to take those from. "
+    "Ask the ranking first, for example top 5 sales agents for a product this year."
+)
+
+
+def test_scoped_with_no_ranking_held_is_said_and_nothing_runs(console) -> None:
+    text, calls = console.say(_drill(), "top 10 customers for these sales agents")
+    assert calls == [] and text.strip() == NO_RANKING, text
+
+
+def test_unsure_with_no_ranking_held_is_the_fresh_ask(console) -> None:
+    """Review S3: with nothing to scope to, the global reading is the only one."""
+    text, calls = console.say(_drill(ranking_drill="unsure"), "top 10 customers")
+    # Owner ruling 16 Oct 2026 (chat fix PR-B S1): every missing detail in one numbered reply.
+    assert calls == [] and text.strip().startswith(f"1. {PERIOD_Q}\n"), text
+
+
+def test_a_new_axis_after_a_month_list_runs_with_the_held_choices_and_no_across_all_header(console) -> None:
+    # Months are not a population: no "Across all months" line (lead decision, S6c review); the held
+    # period, measure and basis still apply.
     _turn1(console, group_by="month")
     text, calls = console.say(_drill(ranking_drill="unsure"), "top 10 customers")
-    # S6c: a month list on screen is held too (its period, measure and basis), so it runs across all months.
     (args,) = calls
     assert args["group_by"] == "customer" and args["top_n"] == 10, args
-    assert "Across all months" in text, text
+    assert "Across all" not in text, text
 
 
 @pytest.mark.parametrize(
