@@ -739,6 +739,10 @@ def _fresh_args(
     # The gate's resolved rows, of the kinds THIS message named (a carried subject from an
     # earlier question is not this ask's filter).
     kinds = _current_kinds(parse_output)
+    if parse_output.get("ranking_pick") is True:
+        # The turn that answered this ranking's customer pick: the picked row is carried, not typed, and is
+        # still this ask's customer (the engine marks it; the parser cannot, `required_fields.ENGINE_KEYS`).
+        kinds = kinds | {"customer"}
     customer_ids = _gate_ids(entities, "customer") if "customer" in kinds else []
     if customer_ids:
         args["customer_ids"] = customer_ids
