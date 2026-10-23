@@ -1,6 +1,6 @@
 # PLAN: owner console turns 22 Oct, fix round on #1816 (lane REPORT-SMART-L, round S2)
 
-Status: S5 reviewer READY at e7332aeec0; round S6 (owner ruling 23 Oct: after a ranking = (B), run across all) in progress. Track: L (prompt candidate, resolver/state guards).
+Status: S6 reviewer READY at 8a3ca07de0; S6b (owner ruling 23 Oct ~08:25: across all keeps what is on screen) in progress. Track: L (prompt candidate, resolver/state guards).
 `claude/report-smart-1021-r2xexf` (on `crew/chat-release-1022`), base head afd7f70605. Diagnosis (13 turns, prompt v94,
 code 65c2025c05): `crew/state/eval/report-smart-v92/owner-1022-diagnosis.md` (crew-only). UAC:
 `report-smart-owner-1022-acceptance-criteria.md`.
@@ -161,6 +161,11 @@ turns (chatbot.turns on the crew copy).
   slot already held by a session is still answered. Not changed: a refine of the ranking on screen (same axis,
   ranking_refine true), a fresh ask with no ranking shown. Prompt: "only those N" as a scoped example goes into the
   v101 candidate (template line 300 lists "these", "their", "above").
+
+- S6b (OWNER RULING 23 Oct ~08:25, reviewer SHOULD on S6): across all keeps what is on screen. After a ranking, a new
+  axis that runs across all ("by customer") keeps the held product, channel and period and widens only the ranked side
+  (header "Across all sales agents"); no period question. Today it is a fresh ask from the message alone. Fix: the hold
+  a refine already uses (report_ask.py:871, AC-B6) on the across-all path; a value the message names itself still wins.
 
 ### Gates (S3)
 

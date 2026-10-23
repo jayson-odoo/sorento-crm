@@ -70,3 +70,8 @@ Plan: `PLAN-report-smart-owner-1022.md`.
 - AC-S6-3. Near misses: a refine of the ranking on screen (same axis, "Dealer sales only") and a fresh ask with no
   ranking shown carry no "Across all" line and behave as today; a scope question already held in a session is still
   answered as today.
+- AC-S6-4 (owner ruling ~08:25). On screen "Top 5 sales agents by delivered sales, Product SRTWC286-SH, Channel:
+  Dealer, 2026"; "by customer" (new axis, ranking_drill null / unsure / global) runs top customers for SRTWC286-SH,
+  dealer, 2026 with no question asked, header "Across all sales agents". A product, channel or period the message
+  names itself replaces the held one. The final run of an across-all ask that first asked a missing detail still
+  carries the header.
