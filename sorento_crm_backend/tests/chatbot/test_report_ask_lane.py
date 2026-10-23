@@ -34,7 +34,7 @@ from tests.chatbot.test_outstanding_lane import (
     _present_response,
     _seed_contact,
 )
-from tests.chatbot.test_top_selling_round6 import _seed_borrowable_envelope
+from tests.chatbot._turn_helpers import seed_borrowable_envelope as _seed_borrowable_envelope
 
 TOOL = "crm_report_ask"
 GRANT = "sales_orders.sales_report"
@@ -942,68 +942,6 @@ def test_f2_a_real_agent_name_next_to_a_customer_ranking_is_still_a_filter(conso
     (args,) = calls
     assert args["group_by"] == "customer", args
     assert args["sales_agent_ids"] == [console.ids["agent"]], args
-
-
-# C3: resolver hardening --------------------------------------------------- #
-
-
-def test_c3_a_category_wins_over_a_sales_agent_alias(console) -> None:
-    from app.models.base import set_company_scope
-    from app.services.chatbot import engine as engine_mod_
-
-    _seed_wt(console)
-    db = console.session_factory()
-    try:
-        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
-        assert engine_mod_._classify_word_group(db, "water closet") == "category"
-    finally:
-        db.close()
-
-
-def test_c3_an_exact_brand_wins_over_a_sales_agent_alias(console) -> None:
-    from app.models.sales_agent import SalesAgent
-    from app.services.chatbot import engine as engine_mod_
-
-    db = console.session_factory()
-    try:
-        db.add(SalesAgent(id=str(uuid.uuid4()), sales_agent="ZZT AGENT B", person_label="ZZT AGENT B",
-                          company_id=DEFAULT_COMPANY_ID, aliases="sorento"))
-        db.commit()
-        assert engine_mod_._classify_word_group(db, "sorento") == "brand"
-    finally:
-        db.close()
-
-
-def test_c3_a_noisy_token_splits_into_brand_and_category_with_no_sales_agent(console) -> None:
-    from app.services.chatbot import engine as engine_mod_
-
-    wt = _seed_wt(console)
-    db = console.session_factory()
-    try:
-        split = engine_mod_._split_noisy_token(db, "sorento water closet")
-    finally:
-        db.close()
-    assert split is not None
-    parts, _leftover = split
-    assert {(p["raw"].lower(), p["hint"]) for p in parts} == {("sorento", "brand"), ("water closet", "category")}, parts
-    assert "sales_agent" not in {p["hint"] for p in parts}, parts
-    assert wt["category"]
-
-
-def test_c3_a_real_agent_word_is_still_a_sales_agent(console) -> None:
-    """No regression: a word that names only an agent (the alias nobody else claims) stays sales_agent."""
-    from app.models.sales_agent import SalesAgent
-    from app.services.chatbot import engine as engine_mod_
-
-    db = console.session_factory()
-    try:
-        db.add(SalesAgent(id=str(uuid.uuid4()), sales_agent="ZZT AGENT C", person_label="ZZT AGENT C",
-                          company_id=DEFAULT_COMPANY_ID, aliases="zzthandle"))
-        db.commit()
-        assert engine_mod_._classify_word_group(db, "zzthandle") == "sales_agent"
-    finally:
-        db.close()
-
 
 
 # --------------------------------------------------------------------------- #

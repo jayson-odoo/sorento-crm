@@ -25,23 +25,24 @@ def _clean(text: str) -> None:
     assert text.strip(), "an empty reply"
 
 
-# ---------------------------------------------------------------- the top selling output
+# ---------------------------------------------------------------- the ranking output
+# (REPORT-SMART-L R4a: every item / category ranking is the report ask's, `_report_ask_output`.)
 
 
-def test_a_top_selling_result_with_no_rendered_text_is_a_sentence() -> None:
-    from app.services.chatbot.lanes.business.fetch import _top_selling_output
+def test_a_ranking_result_with_no_rendered_text_is_a_sentence() -> None:
+    from app.services.chatbot.lanes.business.fetch import _report_ask_output
 
-    out = _top_selling_output({"has_result": False, "items": []}, {})
+    out = _report_ask_output({"has_result": False, "items": []}, {})
     _clean(out["response"])
 
 
 def test_a_tool_error_string_is_never_printed() -> None:
-    from app.services.chatbot.lanes.business.fetch import _top_selling_output
+    from app.services.chatbot.lanes.business.fetch import _report_ask_output
 
-    raw = "Error executing tool crm_top_selling_report: " + json.dumps(
+    raw = "Error executing tool crm_report_ask: " + json.dumps(
         {"code": "INVALID_UUID", "message": "`customer_ids` contains a non-UUID value: 'X'"}
     )
-    out = _top_selling_output(raw, {})
+    out = _report_ask_output(raw, {})
     _clean(out["response"])
 
 

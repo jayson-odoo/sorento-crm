@@ -112,14 +112,14 @@ MEASURED_VERDICT_READS: dict[str, str] = {
     # Merged with #1267's two rows above: 38 + 2 -> 40.
     "open_question_answer": "app/services/chatbot/turn/apply.py",
     # 26 Sep 2026 (PLAN-chatbot-top-x-hot-selling-24sep.md S4): the top selling ask's
-    # three axes, read by `turn/apply.py::_top_selling_rules` onto `Focus.top_selling`.
-    # 38 declared keys -> 41.
-    "rank_by": "app/services/chatbot/turn/apply.py",
-    "basis": "app/services/chatbot/turn/apply.py",
-    "rank_group": "app/services/chatbot/turn/apply.py",
+    # three axes; since REPORT-SMART-L R4a read by the sales ranking (`report_ask.from_top_selling`,
+    # `metric_from`, `basis_from`). 38 declared keys -> 41.
+    "rank_by": "app/services/chatbot/lanes/business/report_ask.py",
+    "basis": "app/services/chatbot/lanes/business/report_ask.py",
+    "rank_group": "app/services/chatbot/lanes/business/report_ask.py",
     # Fix lane round 4 (owner retest, 27 Sep 2026): "cold selling", "least sold".
     # 41 declared keys -> 42.
-    "rank_direction": "app/services/chatbot/turn/apply.py",
+    "rank_direction": "app/services/chatbot/lanes/business/report_ask.py",
     # 29 Sep 2026 (PLAN-chatbot-customer-scope-29sep D2): "my" / "me" as the asker's own
     # account; the engine's `_customer_scope_gate` reads it off the verdict. 44 -> 45.
     "self_reference": "app/services/chatbot/engine.py",

@@ -48,7 +48,6 @@ from tests.chatbot.test_samantha_27sep_r7_owner_replay import (  # noqa: F401 - 
     _header,
     owner_chat,
 )
-from tests.chatbot.test_top_selling_round5 import cat, route  # noqa: F401 - fixtures
 
 PICKER_HEADER = "Please choose who to route to (reply with the number):"
 PICKER_CLOSE = "If you have no preference, just reply 'yes' and we'll assign automatically."
@@ -144,8 +143,7 @@ class TestPhantomAnswerIsDropped:
 
     def test_a_question_answered_by_a_position_elsewhere_keeps_the_positions(self) -> None:
         """`lanes/ideate.py::build_arguments` reads `reference_positions` as the media
-        selection while `ideation.pending_media` is outstanding, and `turn/apply.py`'s
-        top selling rules read them while `focus.top_selling.asked` is set; neither is an
+        selection while `ideation.pending_media` is outstanding; that is not an
         `Open question:` object - the positions stay, only the declared answer goes."""
         verdict = _parser_output(open_question_answer=dict(PHANTOM_PICK), reference_positions=[1, 3])
         out, dropped = _drop(verdict, positions_read_elsewhere=True)
@@ -153,32 +151,12 @@ class TestPhantomAnswerIsDropped:
         assert out["open_question_answer"] == question_mod.NO_ANSWER
         assert out["reference_positions"] == [1, 3]
 
-    def test_positions_read_elsewhere_names_the_two_questions(self) -> None:
+    def test_positions_read_elsewhere_names_the_media_menu(self) -> None:
         from app.services.chatbot.engine import _positions_read_elsewhere
         from app.services.chatbot.turn.state import Focus, State
 
         assert _positions_read_elsewhere(State(focus=Focus())) is False
         assert _positions_read_elsewhere(State(focus=Focus(), ideation={"pending_media": [{"id": "m1"}]})) is True
-        assert _positions_read_elsewhere(State(focus=Focus(top_selling={"asked": "who"}))) is True
-        assert _positions_read_elsewhere(State(focus=Focus(top_selling={"rank_by": "amount"}))) is False
-
-
-@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: superseded by crm_report_ask; R4 deletes this lane")
-def test_the_first_one_answers_the_top_selling_who_question(session_factory, monkeypatch, cat) -> None:
-    """Reviewer B1 on this lane: "the first one" under "Do you mean customer SAMPLE -
-    CONTACT Z or sales agent ...? Reply 1 for the customer, 2 for the sales agent." arrives
-    as `reference_positions: [1]` (and, on a newer prompt, as a declared pick). That
-    question is `focus.top_selling.asked`, not an `Open question:` object, so the drop
-    must leave the positions to `turn/apply.py`'s `top_selling_who_is_the_customer`."""
-    from tests.chatbot.test_top_selling_round5 import _asked_who, _calls, _position, _turn
-
-    _asked_who(session_factory, monkeypatch)
-    text, captured = _turn(
-        session_factory, monkeypatch, _position(1, open_question_answer=dict(PHANTOM_PICK)), "the first one"
-    )
-    (args,) = _calls(captured)
-    assert args["customer_ids"] == [cat.customers["SAMPLE - CONTACTZ X"]], (text, args)
-    assert "sales_agent_ids" not in args, args
 
 
 # --------------------------------------------------------------------------- #

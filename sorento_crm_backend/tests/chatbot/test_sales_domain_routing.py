@@ -9,7 +9,7 @@ questions (outstanding, delivered, SO/DO outstanding, a plain DO list) stay `ord
 with the tools they always had. The grant refusal reads exactly as before.
 
 Built on the harness the sales tests already share (`test_outstanding_lane.py`'s
-`_run_turn` / `_capturing_mcp`, `test_top_selling_lane.py`'s `route` double).
+`_run_turn` / `_capturing_mcp`).
 """
 from __future__ import annotations
 
@@ -31,7 +31,6 @@ from tests.chatbot.test_outstanding_lane import (
 )
 from tests.chatbot.test_sales_analysis_lane import _rendered as _sales_analysis_hit
 from tests.chatbot.test_sales_report_lane import SALES_REPORT_HIT
-from tests.chatbot.test_top_selling_lane import _calls, _ts, _turn, route  # noqa: F401 - fixture
 
 GRANT = "sales_orders.sales_report"
 DENIAL = "Sales report is not enabled for your account."
@@ -138,11 +137,16 @@ class TestAWholeTurn:
         )
         assert [c[0] for c in captured] == ["crm_sales_analysis"]
 
-    def test_a_top_selling_ask_answers_from_the_ranking(self, session_factory, monkeypatch, route) -> None:  # noqa: F811
+    def test_a_top_selling_ask_answers_from_the_ranking(self, session_factory, monkeypatch) -> None:
         _seed_contact(session_factory, variables={})
-        _text, captured = _turn(session_factory, monkeypatch, _ts(**_A_MONTH), "top 5 selling items")
-        # REPORT-SMART-L R1: the item ranking runs once on the report engine.
-        assert [c for c in captured if c[0] == "crm_report_ask"] and not _calls(captured), captured
+        _result, captured = _run_turn(
+            session_factory, monkeypatch,
+            qf=_qf(order_status="top_selling", entities=[], rank_by="quantity", basis="delivered", top_n=5, **_A_MONTH),
+            text_body="top 5 selling items", msg_id="ZZT-sales-domain-top-1", attributes=[GRANT],
+        )
+        # REPORT-SMART-L R1: the item ranking runs once on the report engine, never `crm_top_selling_report`.
+        names = [c[0] for c in captured]
+        assert names.count("crm_report_ask") == 1 and "crm_top_selling_report" not in names, captured
 
     @pytest.mark.parametrize(
         "status,text",

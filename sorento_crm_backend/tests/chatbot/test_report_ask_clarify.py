@@ -6,10 +6,9 @@
    period and how-many, asked AFTER them, metric before basis. The metric is NOT asked when
    there is no ranking (a plain total, or a month trend: both qty and amount are shown); the
    basis is always asked when not given.
-2. Top selling: a null (or `unclear`) basis is asked (`Delivered (transferred to DO) or
-   ordered?`) after the metric question, and a `crm_top_selling_report` fetch ALWAYS carries an
-   explicit `basis`.
-3. ONE shared function decides the next question for BOTH lanes, metric then basis. Pinned
+2. (Top selling, retired from the chatbot in REPORT-SMART-L R4a: every item and category
+   ranking is the sales ranking above.)
+3. ONE shared function decides the next question, metric then basis. Pinned
    here as `app.services.chatbot.lanes.business.ranking_ask.next_question(*, metric_settled,
    basis_settled, basis_line) -> (axis, line) | None` (axis `"metric"` | `"basis"`), with the
    three lines as module constants. The NAMES are the tester's pin (the owner named none);
@@ -19,7 +18,7 @@
    `basis`), never the message text.
 
 Whole console turns (real engine, lane and MCP presenter; parser and MCP transport doubles),
-the way `test_report_ask_lane.py` and `test_top_selling_lane.py` drive them. The answering-turn
+the way `test_report_ask_lane.py` drives them. The answering-turn
 parser outputs below are what the parser emits for a bare reply: "qty" under the metric
 question is `order_status "top_selling"`, `rank_by "quantity"`, everything else null.
 """
@@ -32,7 +31,6 @@ from typing import Any
 import pytest
 
 from tests.chatbot.test_engine import _parser_output
-from tests.chatbot.test_outstanding_lane import _seed_contact
 from tests.chatbot.test_report_ask_lane import (  # noqa: F401 - fixtures + helpers
     DIMENSION_REFUSAL,
     GIVE_UP,
@@ -53,14 +51,6 @@ from tests.chatbot.test_report_ask_lane import (  # noqa: F401 - fixtures + help
     console,
     dealer,
 )
-from tests.chatbot.test_top_selling_lane import (  # noqa: F401 - fixtures + helpers
-    ASK_BASIS as TS_BASIS_Q,
-    ASK_METRIC as TS_METRIC_Q,
-    _calls as ts_calls,
-    _turn as ts_turn,
-    _ts,
-    route,
-)
 
 METRIC_Q = "By quantity or by amount?"
 BASIS_Q = "Delivered, ordered or outstanding?"
@@ -70,7 +60,6 @@ SENTINEL_BASIS = "SENTINEL SHARED BASIS LINE"
 #: Owner ruling 16 Oct 2026 (chat fix PR-B S1, S1b): the metric and the basis both open are one
 #: numbered reply.
 BOTH_Q = f"1. {METRIC_Q}\n2. {BASIS_Q}"
-TS_BOTH_Q = f"1. {TS_METRIC_Q}\n2. {TS_BASIS_Q}"
 
 
 # --------------------------------------------------------------------------- #
@@ -427,122 +416,6 @@ def test_j_an_unsettled_basis_word_is_not_carried_as_delivered() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Top selling (k) to (n)
-# --------------------------------------------------------------------------- #
-
-
-def _top_selling(session_factory, monkeypatch, qf: dict[str, Any], body: str):
-    return ts_turn(session_factory, monkeypatch, qf, body)
-
-
-@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
-def test_k_top_selling_with_no_basis_asks_the_basis_and_does_not_fetch(session_factory, monkeypatch, route) -> None:
-    _seed_contact(session_factory, variables={})
-    reply, captured = _top_selling(session_factory, monkeypatch, _ts(rank_by="amount", basis=None, top_n=10), "top 10 selling sorento")
-    assert reply.strip() == TS_BASIS_Q, reply
-    assert ts_calls(captured) == [], captured
-
-
-@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
-def test_k_an_unclear_basis_asks_the_basis_too(session_factory, monkeypatch, route) -> None:
-    _seed_contact(session_factory, variables={})
-    reply, captured = _top_selling(session_factory, monkeypatch, _ts(rank_by="amount", basis="unclear", top_n=10), "top orders")
-    assert reply.strip() == TS_BASIS_Q and ts_calls(captured) == [], (reply, captured)
-
-
-@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
-def test_l_both_null_asks_the_metric_first_then_the_basis(session_factory, monkeypatch, route) -> None:
-    _seed_contact(session_factory, variables={})
-    reply, captured = _top_selling(session_factory, monkeypatch, _ts(rank_by=None, basis=None, top_n=10), "top 10 selling sorento")
-    # Owner ruling 16 Oct 2026 (chat fix PR-B S1): every missing detail in one numbered reply.
-    assert reply.strip() == TS_BOTH_Q and ts_calls(captured) == [], reply
-    reply, captured = _top_selling(session_factory, monkeypatch, _answer_keys(rank_by="quantity"), "qty")
-    assert reply.strip() == TS_BASIS_Q and ts_calls(captured) == [], reply
-    _reply, captured = _top_selling(session_factory, monkeypatch, _answer_keys(basis="ordered"), "ordered")
-    args = ts_calls(captured)[0]
-    assert args["rank_by"] == "quantity" and args["basis"] == "ordered" and args["n"] == 10, args
-
-
-@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
-def test_m_the_basis_answer_ordered_runs_with_ordered_sent_explicitly(session_factory, monkeypatch, route) -> None:
-    _seed_contact(session_factory, variables={})
-    reply, _captured = _top_selling(session_factory, monkeypatch, _ts(rank_by="amount", basis=None, top_n=10), "top 10 selling sorento")
-    assert reply.strip() == TS_BASIS_Q
-    _reply, captured = _top_selling(session_factory, monkeypatch, _answer_keys(basis="ordered"), "ordered")
-    (args,) = ts_calls(captured)
-    assert args["basis"] == "ordered" and args["rank_by"] == "amount" and args["n"] == 10, args
-
-
-@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
-def test_n_the_basis_answer_delivered_runs_with_delivered_sent_explicitly(session_factory, monkeypatch, route) -> None:
-    _seed_contact(session_factory, variables={})
-    _top_selling(session_factory, monkeypatch, _ts(rank_by="amount", basis=None, top_n=10), "top 10 selling sorento")
-    _reply, captured = _top_selling(session_factory, monkeypatch, _answer_keys(basis="delivered"), "delivered")
-    (args,) = ts_calls(captured)
-    assert "basis" in args and args["basis"] == "delivered", args
-
-
-@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
-def test_n_a_first_message_naming_delivered_sends_it_explicitly(session_factory, monkeypatch, route) -> None:
-    _seed_contact(session_factory, variables={})
-    _reply, captured = _top_selling(session_factory, monkeypatch, _ts(rank_by="amount", basis="delivered", top_n=10), "top 10 delivered by amount")
-    (args,) = ts_calls(captured)
-    assert args["basis"] == "delivered", args
-
-
-@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
-def test_n_a_fetch_with_no_settled_basis_makes_no_call(session_factory) -> None:
-    """`fetch.py` sends `basis` only when set today; the route then defaults to delivered. A
-    fetch for the ranking must never run without an explicit basis."""
-    import json
-
-    from app.services.chatbot.lanes.business import run_fetch
-    from app.services.chatbot.lanes.business.services import FetchServices
-
-    def payload(slot: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "gate": {"compatible_entities": []},
-            "tier_gate": None,
-            "ctx": {
-                "parse": {
-                    "output": _parser_output(
-                        domain_hint="order", intent_hint="check_order", order_status="top_selling",
-                        entities=[], top_selling=slot,
-                    )
-                },
-                "contact": {"id": 437264483},
-                "access": {"attributes": ["sales_orders.sales_report"]},
-            },
-        }
-
-    calls: list[tuple[str, dict[str, Any]]] = []
-
-    def _call(name, args):
-        calls.append((name, dict(args)))
-        return json.dumps({"has_result": False, "response": "x", "result_set": []})
-
-    run_fetch(payload({"rank_by": "quantity", "top_n": 5}), services=FetchServices(mcp_call=_call))
-    assert calls == [], f"ran a top selling fetch with no basis: {calls}"
-    run_fetch(payload({"rank_by": "quantity", "top_n": 5, "basis": "delivered"}), services=FetchServices(mcp_call=_call))
-    (name, args), = calls
-    assert name == TOP_SELLING and args["basis"] == "delivered", calls
-
-
-def test_top_selling_question_order_is_group_metric_then_basis() -> None:
-    from app.services.chatbot.lanes.business import _top_selling_question
-
-    axis, _line = _top_selling_question({"rank_group": "unclear", "rank_by": None, "basis": None})
-    assert axis == "group"
-    # Owner ruling 16 Oct 2026 (chat fix PR-B S1): every missing detail in one numbered reply.
-    assert _top_selling_question({"rank_by": None, "basis": None}) == ("metric_basis", TS_BOTH_Q)
-    assert _top_selling_question({"rank_by": "amount", "basis": None}) == ("basis", TS_BASIS_Q)
-    assert _top_selling_question({"rank_by": "amount", "basis": "unclear"}) == ("basis", TS_BASIS_Q)
-    assert _top_selling_question({"rank_by": "amount", "basis": "ordered"}) is None
-    assert _top_selling_question({"rank_by": "quantity", "basis": "delivered"}) is None
-    assert _top_selling_question({"detail_code": "SRTWT7445"}) is None
-
-
-# --------------------------------------------------------------------------- #
 # One shared ask path (ruling 3)
 # --------------------------------------------------------------------------- #
 
@@ -560,16 +433,10 @@ def test_the_shared_function_decides_metric_then_basis() -> None:
     assert ranking_ask.next_question(metric_settled=True, basis_settled=True, basis_line="B") is None
 
 
-def test_both_lanes_use_the_shared_lines() -> None:
-    from app.services.chatbot.lanes.business import (
-        SALES_RANKING_ASK_BASIS,
-        TOP_SELLING_ASK_BASIS,
-        TOP_SELLING_ASK_METRIC,
-        ranking_ask,
-    )
+def test_the_ranking_lane_uses_the_shared_lines() -> None:
+    from app.services.chatbot.lanes.business import SALES_RANKING_ASK_BASIS, ranking_ask
 
-    assert TOP_SELLING_ASK_METRIC == ranking_ask.METRIC_LINE == METRIC_Q
-    assert TOP_SELLING_ASK_BASIS == ranking_ask.TOP_SELLING_BASIS_LINE == TS_BASIS_Q
+    assert ranking_ask.METRIC_LINE == METRIC_Q
     assert SALES_RANKING_ASK_BASIS == ranking_ask.RANKING_BASIS_LINE == BASIS_Q
 
 
@@ -598,37 +465,13 @@ def test_kill_the_ranking_lanes_basis_line_comes_from_the_shared_function(consol
     assert text.strip() == SENTINEL_BASIS and calls == [], (text, calls)
 
 
-@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
-def test_kill_top_selling_asks_through_the_shared_function(session_factory, monkeypatch, route) -> None:
-    from app.services.chatbot.lanes.business import ranking_ask
-
-    monkeypatch.setattr(ranking_ask, "next_question", _sentinel)
-    _seed_contact(session_factory, variables={})
-    reply, captured = _top_selling(session_factory, monkeypatch, _ts(rank_by=None, basis=None, top_n=10), "top 10 selling sorento")
-    # Owner ruling 16 Oct 2026 (chat fix PR-B S1): every missing detail in one numbered reply.
-    assert reply.strip() == f"1. {SENTINEL_METRIC}\n2. {SENTINEL_BASIS}" and ts_calls(captured) == [], reply
-
-
-@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
-def test_kill_top_sellings_basis_line_comes_from_the_shared_function(session_factory, monkeypatch, route) -> None:
-    from app.services.chatbot.lanes.business import ranking_ask
-
-    monkeypatch.setattr(ranking_ask, "next_question", _sentinel)
-    _seed_contact(session_factory, variables={})
-    reply, captured = _top_selling(session_factory, monkeypatch, _ts(rank_by="amount", basis=None, top_n=10), "top 10 selling sorento")
-    assert reply.strip() == SENTINEL_BASIS and ts_calls(captured) == [], reply
-
-
-def test_the_same_unsettled_state_asks_the_metric_line_first_in_both_lanes() -> None:
-    """The cross-lane contract is pinned by the per-lane turn tests above (`test_a_...` and
-    `test_l_...` both expect the metric line, `test_b_...` / `test_l_...` each lane's own basis
-    line) plus the shared lines test: one metric line, two basis lines."""
+def test_the_same_unsettled_state_asks_the_metric_line_first() -> None:
+    """The contract is pinned by the turn tests above (`test_a_...` expects the metric line,
+    `test_b_...` the basis line) plus the shared lines test: one metric line, one basis line."""
     from app.services.chatbot.lanes.business import ranking_ask
 
     assert ranking_ask.next_question(metric_settled=False, basis_settled=False, basis_line=BASIS_Q)[1] == METRIC_Q
-    assert ranking_ask.next_question(metric_settled=False, basis_settled=False, basis_line=TS_BASIS_Q)[1] == METRIC_Q
     assert ranking_ask.next_question(metric_settled=True, basis_settled=False, basis_line=BASIS_Q)[1] == BASIS_Q
-    assert ranking_ask.next_question(metric_settled=True, basis_settled=False, basis_line=TS_BASIS_Q)[1] == TS_BASIS_Q
 
 
 # --------------------------------------------------------------------------- #
@@ -677,52 +520,6 @@ def test_p_the_report_ask_addendum_teaches_the_basis_and_metric_answers() -> Non
         assert 'measure "qty"' not in flat.split("inside a sales ranking", 1)[1][:260], flat
 
 # --------------------------------------------------------------------------- #
-# Review S2: a top selling slot carrying basis "outstanding" never runs delivered silently
-# --------------------------------------------------------------------------- #
-
-
-def test_s2_waiting_still_accepts_outstanding_the_re_ask_comes_from_the_question_helper() -> None:
-    from app.services.chatbot.turn.apply import _top_selling_waiting
-
-    assert _top_selling_waiting("basis", {"basis": "delivered"}) is True
-    assert _top_selling_waiting("basis", {"basis": "outstanding"}) is True
-    assert _top_selling_waiting("basis", {"basis": None}) is False
-
-
-def test_s2_the_question_helper_asks_the_basis_for_outstanding() -> None:
-    from app.services.chatbot.lanes.business import _top_selling_question
-
-    assert _top_selling_question({"rank_by": "amount", "basis": "outstanding"}) == ("basis", TS_BASIS_Q)
-
-
-@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
-def test_s2_a_top_selling_verdict_with_basis_outstanding_asks_the_basis_and_fetches_nothing(
-    session_factory, monkeypatch, route
-) -> None:
-    _seed_contact(session_factory, variables={})
-    reply, captured = _top_selling(session_factory, monkeypatch, _ts(rank_by="amount", basis="outstanding", top_n=10), "top 10 selling outstanding")
-    assert reply.strip() == TS_BASIS_Q, reply
-    assert ts_calls(captured) == [], captured
-
-
-@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
-def test_s2_an_outstanding_answer_to_the_top_selling_basis_question_asks_again_and_keeps_the_held_ask(
-    session_factory, monkeypatch, route
-) -> None:
-    _seed_contact(session_factory, variables={})
-    reply, _captured = _top_selling(session_factory, monkeypatch, _ts(rank_by="amount", basis=None, top_n=10), "top 10 selling sorento")
-    assert reply.strip() == TS_BASIS_Q
-    reply, captured = _top_selling(
-        session_factory, monkeypatch, _answer_keys(basis="outstanding", domain_in_message=True), "outstanding"
-    )
-    assert reply.strip() == TS_BASIS_Q, reply
-    assert ts_calls(captured) == [], captured
-    _reply, captured = _top_selling(session_factory, monkeypatch, _answer_keys(basis="delivered"), "delivered")
-    (args,) = ts_calls(captured)
-    assert args["basis"] == "delivered" and args["n"] == 10 and args["rank_by"] == "amount", args
-
-
-# --------------------------------------------------------------------------- #
 # Review S6: a category word that resolves to no ids and no unknown/ambiguous entry is said
 # --------------------------------------------------------------------------- #
 
@@ -756,43 +553,6 @@ def test_s6_the_lane_says_so_and_runs_nothing_when_the_resolver_finds_no_ids(con
 CATALOGUE = "I can rank sales by customer, product, brand, category, sales agent, location, channel or month."
 
 
-def _fetch_payload(slot: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "gate": {"compatible_entities": []},
-        "tier_gate": None,
-        "ctx": {
-            "parse": {"output": _parser_output(
-                domain_hint="order", intent_hint="check_order", order_status="top_selling",
-                entities=[], top_selling=slot)},
-            "contact": {"id": 437264483},
-            "access": {"attributes": ["sales_orders.sales_report"]},
-        },
-    }
-
-
-@pytest.mark.xfail(strict=True, reason="REPORT-SMART-L R1 one ranking: the old top selling clarify flow is superseded by the report ask one numbered question (test_one_ranking_r1.py); R4 deletes it")
-def test_n1_a_picked_row_with_no_basis_may_fall_back_to_delivered_nothing_else_may(session_factory) -> None:
-    import json
-
-    from app.services.chatbot.lanes.business import run_fetch
-    from app.services.chatbot.lanes.business.services import FetchServices
-
-    calls: list[tuple[str, dict[str, Any]]] = []
-
-    def _call(name, args):
-        calls.append((name, dict(args)))
-        return json.dumps({"has_result": False, "response": "x", "result_set": []})
-
-    run_fetch(_fetch_payload({"rank_by": "quantity", "top_n": 5}), services=FetchServices(mcp_call=_call))
-    assert calls == [], calls
-    run_fetch(
-        _fetch_payload({"rank_by": "quantity", "top_n": 5, "detail_code": "SRTWT7445"}),
-        services=FetchServices(mcp_call=_call),
-    )
-    (name, args), = calls
-    assert name == TOP_SELLING and args["basis"] == "delivered" and args["detail_code"] == "SRTWT7445", calls
-
-
 def test_n1_fetch_py_falls_back_to_delivered_only_for_a_picked_row() -> None:
     from app.services.chatbot.lanes.business import fetch as fetch_mod
 
@@ -800,36 +560,6 @@ def test_n1_fetch_py_falls_back_to_delivered_only_for_a_picked_row() -> None:
     for m in re.finditer(r'else\s+"delivered"', source):
         near = source[max(0, m.start() - 250):m.end()]
         assert "detail_code" in near, near
-
-
-@pytest.mark.xfail(strict=True, reason="stale: pins the old top-selling basis line and tool; superseded by test_one_ranking_r1 review_1")
-def test_n5_the_customer_picker_answer_asks_the_basis_before_any_fetch(session_factory, monkeypatch, route) -> None:
-    from tests.chatbot.test_outstanding_lane import HANLIM_UUID_1, _ambiguous_hanlim_resolve_services
-
-    _seed_contact(session_factory, variables={})
-    reply, captured = ts_turn(
-        session_factory, monkeypatch,
-        _ts(
-            rank_by="amount", basis=None, top_n=4,
-            entities=[{"raw": "hanlim", "hint": "customer", "canonical_code": None, "current_message": True, "confident": True}],
-        ),
-        "top 4 for hanlim by amount",
-        resolve_services=_ambiguous_hanlim_resolve_services(lambda **_: {"items": [], "has_result": False}),
-    )
-    assert ts_calls(captured) == [] and "Which one do you mean?" in reply, reply
-    reply, captured = ts_turn(
-        session_factory, monkeypatch,
-        _parser_output(
-            message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-            reference_positions=[1], reference_target="dym", entity_op="reuse", order_status=None,
-        ),
-        "1",
-    )
-    assert ts_calls(captured) == [], captured
-    assert reply.strip() == TS_BASIS_Q, reply
-    _reply, captured = _top_selling(session_factory, monkeypatch, _answer_keys(basis="delivered"), "delivered")
-    (args,) = ts_calls(captured)
-    assert args["customer_ids"] == [HANLIM_UUID_1] and args["basis"] == "delivered" and args["n"] == 4, args
 
 
 # --------------------------------------------------------------------------- #
