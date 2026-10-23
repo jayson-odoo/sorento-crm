@@ -3487,6 +3487,9 @@ def _report_ask(body: dict) -> str:
         f"{f.get('label')}: {', '.join(str(v) for v in f.get('values') or [])}"
         for f in body.get("filters") or []
     ]
+    agent_note = _top_selling_agent_note(body)  # REPORT-SMART-L R3b: the top selling fill-rate caveat, below 95%
+    if agent_note:
+        facts.append(agent_note)
     facts.append(f"Period: {_chat_date(body.get('date_from'))} to {_chat_date(body.get('date_to'))}")
     if body.get("compare_to") and body.get("compare_from"):
         facts.append(f"Compared with: {_chat_date(body.get('compare_from'))} to {_chat_date(body.get('compare_until'))}")

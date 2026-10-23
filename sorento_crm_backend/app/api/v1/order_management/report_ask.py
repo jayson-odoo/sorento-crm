@@ -189,7 +189,7 @@ def _echo(
 
 #: REPORT-SMART-1021: keys a sales body carries only when counted or compared, so a body
 #: that is neither stays what every caller already reads.
-_OPTIONAL_KEYS = ("count", "prev", "change_pct", "compare_to", "compare_from", "compare_until", "code")
+_OPTIONAL_KEYS = ("count", "prev", "change_pct", "compare_to", "compare_from", "compare_until", "code", "sales_agent_fill_rate")
 
 
 def _drop_unset(part: dict, compared: bool) -> dict:
@@ -520,6 +520,24 @@ def report_ask(
         common.update(
             compare_to=compare_norm, compare_from=earlier_from.isoformat(), compare_until=earlier_to.isoformat()
         )
+    if agents and group_norm in ("product", "category") and data.get("status") == "ok" and not (narrowed and not (customers or [])):
+        # REPORT-SMART-L R3b: the old top selling note, by its own computation (`sales_report_service.top_selling`
+        # builds `sales_agent_fill_rate` only with an agent filter): the share of the window's sales orders, every
+        # other filter applied and the agent filter NOT, that carry any sales agent.
+        from app.services import sales_report_service
+
+        try:
+            with company_scope(db, frozenset(grants)):
+                _fill = sales_report_service.top_selling(
+                    db, rank_by="quantity", basis=basis_norm, group="item", n=1,
+                    customer_ids=list(customers or []) or None, category_ids=list(categories or []) or None,
+                    brand_ids=list(brands or []) or None, sales_agent_ids=list(agents or []), channel=channel_norm,
+                    date_from=date_from, date_to=date_to,
+                ).get("sales_agent_fill_rate")
+        except Exception:  # noqa: BLE001 - the note is a caveat, never a failed ranking
+            _fill = None
+        if _fill is not None:
+            data = {**data, "sales_agent_fill_rate": _fill}
     return _response({**data, **common, "filters": echo})
 
 

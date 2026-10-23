@@ -69,6 +69,9 @@ class ReportAskResponse(BaseModel):
     compare_to: Optional[str] = None
     compare_from: Optional[str] = None
     compare_until: Optional[str] = None
+    # REPORT-SMART-L R3b: an item / category ranking with an agent filter carries the share of the window's
+    # sales orders that carry any agent (the old top selling note); absent otherwise.
+    sales_agent_fill_rate: Optional[float] = None
 
 
 class ReportAskChatRow(BaseModel):
