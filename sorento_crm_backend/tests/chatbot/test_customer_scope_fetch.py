@@ -113,6 +113,7 @@ class TestSetIsPinnedToTheCatalogue:
         `CUSTOMER_SCOPED_TOOLS`, and the set names nothing the catalogue lacks. A new tool
         taking customer ids fails here until it is classified."""
         carrying = {spec.name for spec in _load_catalog_specs() if "customer_ids" in spec.query_params}
+        assert "crm_top_selling_report" not in fetch.CHATBOT_READ_ONLY_TOOLS  # put back on a seed row -> scope it
         carrying -= {"crm_top_selling_report"}  # R4b: still a catalogue tool, but no chatbot path calls it
         assert carrying, "the catalogue no longer has a tool taking customer_ids: the pin is stale"
         assert carrying == set(fetch.CUSTOMER_SCOPED_TOOLS), carrying ^ set(fetch.CUSTOMER_SCOPED_TOOLS)

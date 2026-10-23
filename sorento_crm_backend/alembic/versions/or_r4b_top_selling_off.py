@@ -53,7 +53,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     """The seed only ever had the tool on the order and sales rows (`policy_rows` before R4b,
     migrations `chatbot_top_selling_tool` and `pdyn_0001_status_words_sales`), so a downgrade
-    restores exactly those two; the sales row drops `crm_report_ask`, the order row keeps its own."""
+    restores exactly those two (appended last, so `tools[0]` is unchanged); the sales row drops `crm_report_ask`, the order row keeps its own."""
     bind = op.get_bind()
     bind.execute(
         sa.text(

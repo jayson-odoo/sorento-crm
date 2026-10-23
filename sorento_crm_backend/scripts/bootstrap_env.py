@@ -801,7 +801,6 @@ def seed_chatbot_policy() -> None:
         top_selling.apply_tools(conn)
         sales_s1.apply_tools(conn)
         report_engine.apply_tools(conn)
-        or_r4b.apply_tools(conn)
     with engine.begin() as conn:
         s11.apply_narrowing(conn)
     with engine.begin() as conn:
@@ -809,6 +808,9 @@ def seed_chatbot_policy() -> None:
     # After every narrowing step: the `sales` row copies the `order` row's narrowing.
     with engine.begin() as conn:
         pdyn1.apply(conn)
+    # R4b, after the sales row exists (pdyn1 inserts it with the old tool): the tool leaves every row.
+    with engine.begin() as conn:
+        or_r4b.apply_tools(conn)
     # The owner's prompt-list tags and his curated domain words (answers 2 and 4).
     with engine.begin() as conn:
         pdyn4.apply(conn)

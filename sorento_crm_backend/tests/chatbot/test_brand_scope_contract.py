@@ -55,6 +55,9 @@ def test_every_chatbot_read_only_tool_has_a_treatment() -> None:
 def test_every_mcp_catalogue_tool_has_a_treatment() -> None:
     names = {spec.name for spec in _load_catalog_specs()}
     assert names, "the MCP catalogue is empty: the pin is stale"
+    from app.services.chatbot.lanes.business.fetch import CHATBOT_READ_ONLY_TOOLS
+
+    assert "crm_top_selling_report" not in CHATBOT_READ_ONLY_TOOLS  # put back on a seed row -> give it a treatment
     # R4b: the route and MCP tool stay in the catalogue, but no chatbot path calls the top selling tool.
     assert untreated(names - {"crm_top_selling_report"}, _treatment()) == []
 
