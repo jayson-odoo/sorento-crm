@@ -316,6 +316,7 @@ def from_top_selling(verdict: dict[str, Any]) -> dict[str, Any]:
     ranking on the report engine, read whole by `settle`: `rank_group` category (or a `category`
     axis) ranks categories, else the axis the parser named, else products; the count, period,
     measure (`rank_by`), basis, direction and filters ride unchanged. Parser fields only."""
+    verdict = {k: v for k, v in verdict.items() if k not in CAPABILITY_KEYS}  # no stray parser key survives
     raw_group = jsc.js_string(verdict.get("group_by") or "").strip().lower()
     rank_group = jsc.js_string(verdict.get("rank_group") or "").strip().lower()
     if rank_group == "category" or raw_group == "category":
@@ -886,7 +887,7 @@ def settle(
     raw_group = jsc.js_string(parse_output.get("group_by") or "").strip().lower()
     # A refine never changes the axis: a verdict naming another axis than the held ranking's
     # is not one, whatever its `ranking_refine` says (crew live pass, 8 Oct 2026).
-    if parse_output.get("bare_top_selling") is True and frame:
+    if parse_output.get("bare_top_selling") is True and frame and _dict(frame.get("shown")) and not frame.get("stale"):
         # REPORT-SMART-L R2: a top_selling-labelled follow-up naming no axis and no grain refines the ranking
         # on screen (whatever its axis), keeping the rest, exactly as a `ranking_refine` does.
         parse_output = {**parse_output, "group_by": None, "ranking_refine": True}
