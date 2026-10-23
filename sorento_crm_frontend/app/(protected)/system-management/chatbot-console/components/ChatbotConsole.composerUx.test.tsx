@@ -283,10 +283,19 @@ describe('Copy over plain http (CONSOLE-PICKER-COPY)', () => {
 
   it('copies through the execCommand fallback when navigator.clipboard is undefined', async () => {
     Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+    // What is selected when the browser copies: the menu's focus trap must not have pulled
+    // focus off the hidden textarea, or the copy is empty while the toast says "Copied".
+    let selected: string | null = null;
+    execCommand.mockImplementation(() => {
+      const el = document.activeElement;
+      selected = el instanceof HTMLTextAreaElement ? el.value.slice(el.selectionStart, el.selectionEnd) : null;
+      return true;
+    });
     renderConsole();
     await copyGreeting();
     await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('Copied'));
     expect(execCommand).toHaveBeenCalledWith('copy');
+    expect(selected).toBe(CONSOLE_GREETING_MESSAGES[0]);
     expect(toastError).not.toHaveBeenCalled();
   });
 

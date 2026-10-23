@@ -50,19 +50,55 @@ describe('copyTextToClipboard', () => {
 });
 
 describe('copyViaExecCommand', () => {
-  it('selects the whole text (setSelectionRange for iOS) and leaves no textarea behind', () => {
-    let selected = '';
+  function recordSelectionOnCopy(): { selected: string | null } {
+    const seen = { selected: null as string | null };
     Object.defineProperty(document, 'execCommand', {
       value: vi.fn(() => {
-        const el = document.activeElement as HTMLTextAreaElement;
-        selected = el.value.slice(el.selectionStart, el.selectionEnd);
+        const el = document.activeElement;
+        seen.selected = el instanceof HTMLTextAreaElement ? el.value.slice(el.selectionStart, el.selectionEnd) : null;
         return true;
       }),
       configurable: true,
     });
+    return seen;
+  }
+
+  it('selects the whole text and leaves no textarea behind', () => {
+    const seen = recordSelectionOnCopy();
     expect(copyViaExecCommand('hello world')).toBe(true);
-    expect(selected).toBe('hello world');
+    expect(seen.selected).toBe('hello world');
     expect(document.querySelector('textarea')).toBeNull();
+  });
+
+  it('sets the selection range explicitly, since iOS Safari ignores select() alone', () => {
+    const select = vi.spyOn(HTMLTextAreaElement.prototype, 'select').mockImplementation(() => {});
+    const seen = recordSelectionOnCopy();
+    copyViaExecCommand('hello world');
+    expect(seen.selected).toBe('hello world');
+    select.mockRestore();
+  });
+
+  it('keeps focus inside an open dialog or menu whose focus trap would pull it back', () => {
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    const button = document.createElement('button');
+    dialog.appendChild(button);
+    document.body.appendChild(dialog);
+    button.focus();
+    // The Radix FocusScope behaviour: focus landing outside the trap goes back inside it.
+    const trap = (event: FocusEvent) => {
+      if (!dialog.contains(event.target as Node)) button.focus();
+    };
+    document.addEventListener('focusin', trap);
+    try {
+      const seen = recordSelectionOnCopy();
+      expect(copyViaExecCommand('inside the trap')).toBe(true);
+      expect(seen.selected).toBe('inside the trap');
+      expect(dialog.querySelector('textarea')).toBeNull();
+    } finally {
+      document.removeEventListener('focusin', trap);
+      dialog.remove();
+    }
   });
 
   it('returns false when execCommand throws', () => {

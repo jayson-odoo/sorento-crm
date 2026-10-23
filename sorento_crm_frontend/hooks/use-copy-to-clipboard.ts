@@ -18,8 +18,8 @@ import { copyTextToClipboard } from '@/lib/clipboard';
  * different matter: the Clipboard API is missing over plain HTTP and refused by
  * some browser policies (both fall back to `lib/clipboard`'s execCommand path),
  * and when that fails too nothing on screen would otherwise say so. That path
- * keeps its toast, at the call site, which is also where the fallback lives
- * (show the link so the reader can copy it by hand).
+ * keeps its toast, at the call site, which is also where the manual-copy hint
+ * lives (show the link so the reader can copy it by hand).
  */
 export function useCopyToClipboard({
   timeout = 2000,
