@@ -51,14 +51,14 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """The seeded policy had the tool on the order and sales rows, but the upgrade does not record
-    which rows lost it, so the tool goes back on every row that lacks it (what the migration test
-    pins); the sales row drops `crm_report_ask`, the order row keeps its own."""
+    """The seed only ever had the tool on the order and sales rows (`policy_rows` before R4b,
+    migrations `chatbot_top_selling_tool` and `pdyn_0001_status_words_sales`), so a downgrade
+    restores exactly those two; the sales row drops `crm_report_ask`, the order row keeps its own."""
     bind = op.get_bind()
     bind.execute(
         sa.text(
             "UPDATE chatbot_domains SET tools = array_append(tools, CAST(:old AS text)) "
-            "WHERE NOT (CAST(:old AS text) = ANY(tools))"
+            "WHERE name IN ('order', 'sales') AND NOT (CAST(:old AS text) = ANY(tools))"
         ),
         {"old": OLD},
     )

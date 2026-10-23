@@ -95,7 +95,7 @@ def test_downgrade_restores_old_tool_where_it_was_and_removes_ask_from_sales():
         assert ASK in _tools(db, "order")  # the order row had it before: untouched
         assert OLD in _tools(db, "sales")
         assert ASK not in _tools(db, "sales")  # the sales row did not have it before
-        assert OLD in _tools(db, other)
+        assert OLD not in _tools(db, other)  # the seed never had it on any other row
 
 
 def test_revision_id_fits_and_chains():
