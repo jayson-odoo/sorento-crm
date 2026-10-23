@@ -16,6 +16,10 @@ Plan: `PLAN-one-ranking-1023.md`. Per round; owner answers Q1-Q3 fill the bracke
   across all with what is on screen held (header "Across all products").
 - AC-OR3. Reply: long lists split for WhatsApp, the "no sale is not ranked" line, the contact's language, category codes;
   the agent fill-rate note; [Q2] row pick / outstanding.
+- AC-OR3d. For an ms / zh contact a sales ranking reply (any group_by) prints its head line, its miss line ("No
+  <basis> found"), its Period range and the route's refusal lines in the contact's language; rank lines, names, codes and
+  every figure are unchanged, an English contact's reply is byte-identical, WhatsApp part markers and the part count
+  survive, and the ONE ranking question (period / measure / basis / count) is in the contact's language end to end.
 - AC-OR4. No chatbot path reaches crm_top_selling_report; the route, MCP tool and analytics connector still work.
 - AC-OR-ACCESS (owner Q3 + ruling (a), 23 Oct ~09:35: the unification widens nothing). Every ranking (items and categories
   included) needs the contact's Sales report switch (sales_orders.sales_report), except ruling 2 of 22 Oct: a live

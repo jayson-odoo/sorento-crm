@@ -1,6 +1,6 @@
 # PLAN: one ranking function (lane REPORT-SMART-L, owner direction 23 Oct 09:05)
 
-Status: owner rulings Q1 (a), Q2 (b), Q3 + ruling-2 (a) (23 Oct ~09:35: widens nothing); R0 READY (b13e934333); R0-R3 READY; R4a built (reviewer next). Track: L (routing across two lanes, access change, retire path).
+Status: owner rulings Q1 (a), Q2 (b), Q3 + ruling-2 (a) (23 Oct ~09:35: widens nothing); R0-R3c + R4a READY, main merged (f76a4545e4); R3d in progress (small fix track); then R4b, R5. Track: L (routing across two lanes, access change, retire path).
 Branch `claude/report-smart-1021-r2xexf` (PR #1816), base head 412255c5b4. UAC: `one-ranking-1023-acceptance-criteria.md`.
 Evidence: owner's 08:52 turns (crew/state/eval/report-smart-v92/owner-0852-diagnosis.md); code map at 412255c5b4 (below).
 
@@ -37,6 +37,17 @@ nowhere by the sales ranking, so an item ask lands on the catalogue line (T1-T3)
 - R3a (S) reply: WhatsApp split (top_n to 1000), "no sale is not ranked" line, localisation (`_report_ask_output` never
   localizes: AC-CL33 tests/chatbot/test_chat_language_slice3.py:651-779), category code. R3b (M) agent fill-rate note
   (services/sales_report_service.py:741-752) on the report ask route. R3c (M) per Q2 (row pick / outstanding).
+- R3d (S, small fix track, R4a review follow-up, BEFORE R4b): since R1 an ms / zh contact reads an item ranking's
+  head line ("Top 10 products by delivered sales"), miss line ("No delivered sales found"), the route refusals ("You can
+  only see sales for your own account.", "That breakdown is not available for your account.") and the Period value's
+  "to" in English (the old lane localized each; measured 23 Oct by rendering the R3a fixture through
+  `fetch.output_structurer` with an ms / zh Localizer). ARCHITECTURE: localization stays in `label_catalog` (layer: the
+  backend's reply pass; the MCP presenter, shared with n8n, stays English). Shared mechanism: the catalog's `{token}`
+  templates; the head is built from three vocabularies (rank noun, count measure, basis label), so its tokens' VALUES
+  translate only when catalogued (as `{names}` already does) and a line with an unknown word stays as printed. Classes
+  fixed: every sales group_by's head (not only items), the miss line per basis, every report-ask 403 line, the
+  `d Mon yyyy to d Mon yyyy` period range. Out: the chat dataset (staff console), the `Total ...` / `and N more` / `pcs`
+  words (English on every report-ask ranking before R1 too; listed in the final report).
 - R4 (L, a + b) retire from the chatbot: lane branch and helpers, engine / apply top selling code, top_selling_pick,
   Focus.top_selling (a held status top_selling loads as None), policy rows via a migration (turn/policy_rows.py:169, :339,
   :387; reverse alembic chatbot_top_selling_tool; add crm_report_ask to the sales row); delete the 194 top-selling lane
