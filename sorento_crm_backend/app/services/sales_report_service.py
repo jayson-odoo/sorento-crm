@@ -600,6 +600,45 @@ def _category_echo(db: Session, ids: Optional[list[str]]) -> Optional[str]:
 TOP_SELLING_N_CEILING = 1000
 
 
+def _ranking_filters(
+    *, bucket_expr, customer_query, customer_ids, channel, date_from, date_to, category_ids, brand_ids
+) -> list:
+    """The filters an item / category ranking and its agent fill rate share (one list, so the
+    note is about the very sales orders the ranking counted)."""
+    filters = _common_filters(
+        product_ids=None, customer_query=customer_query, customer_ids=customer_ids,
+        channel=channel, warehouse_ids=None, date_from=date_from, date_to=date_to,
+        bucket_expr=bucket_expr,
+    )
+    if category_ids is not None:
+        filters.append(Product.category_id.in_(category_ids))
+    if brand_ids is not None:
+        filters.append(Product.brand_id.in_(brand_ids))
+    return filters
+
+
+def sales_agent_fill_rate(
+    db: Session, *, group: str, filters: list, with_customer: bool = False, extra_filters: Optional[list] = None
+) -> Optional[float]:
+    """THE formula (REPORT-SMART-L R3 review): the share of the window's distinct sales orders (every
+    filter in `filters` applied, the agent filter NOT) that carry any sales agent at all: the owner's
+    caveat that agent attribution is only as good as its fill. ONE count query. `extra_filters` is how
+    a caller applies EXPLICITLY the scope the session's listener would not (the report ask route's
+    company, brand and customer scope), so the rate counts what the ranking it annotates counts."""
+    query = db.query(
+        func.count(func.distinct(SalesOrder.id)),
+        func.count(func.distinct(case((SalesOrder.sales_agent_id.isnot(None), SalesOrder.id)))),
+    ).select_from(SalesOrderLine).join(
+        SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id
+    ).join(Product, Product.id == SalesOrderLine.product_id)
+    if group == "category":
+        query = query.outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
+    if with_customer:
+        query = query.outerjoin(Customer, Customer.id == SalesOrder.customer_id)
+    so_total, so_with_agent = query.filter(*filters, *(extra_filters or [])).one()
+    return round(so_with_agent / so_total, 4) if so_total else None
+
+
 def top_selling(
     db: Session,
     *,
@@ -642,15 +681,10 @@ def top_selling(
     amount_sum = func.coalesce(func.sum(amount_expr), 0)
 
     bucket_expr = _bucket_expr()
-    filters = _common_filters(
-        product_ids=None, customer_query=customer_query, customer_ids=customer_ids,
-        channel=channel, warehouse_ids=None, date_from=date_from, date_to=date_to,
-        bucket_expr=bucket_expr,
+    filters = _ranking_filters(
+        bucket_expr=bucket_expr, customer_query=customer_query, customer_ids=customer_ids, channel=channel,
+        date_from=date_from, date_to=date_to, category_ids=category_ids, brand_ids=brand_ids,
     )
-    if category_ids is not None:
-        filters.append(Product.category_id.in_(category_ids))
-    if brand_ids is not None:
-        filters.append(Product.brand_id.in_(brand_ids))
     agent_filter = SalesOrder.sales_agent_id.in_(sales_agent_ids) if sales_agent_ids is not None else None
 
     if group == "category":
@@ -740,16 +774,7 @@ def top_selling(
 
     fill_rate = None
     if sales_agent_ids is not None:
-        # Share of the window's SOs (every other filter applied, the agent
-        # filter NOT) that carry any agent at all: the owner's caveat that
-        # agent attribution is only as good as its fill.
-        so_total, so_with_agent = _base(
-            db.query(
-                func.count(func.distinct(SalesOrder.id)),
-                func.count(func.distinct(case((SalesOrder.sales_agent_id.isnot(None), SalesOrder.id)))),
-            )
-        ).one()
-        fill_rate = round(so_with_agent / so_total, 4) if so_total else None
+        fill_rate = sales_agent_fill_rate(db, group=group, filters=filters, with_customer=bool(customer_query))
 
     return {
         "rank_by": rank_by,

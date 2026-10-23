@@ -524,16 +524,27 @@ def report_ask(
         # REPORT-SMART-L R3b: the old top selling note, by its own computation (`sales_report_service.top_selling`
         # builds `sales_agent_fill_rate` only with an agent filter): the share of the window's sales orders, every
         # other filter applied and the agent filter NOT, that carry any sales agent.
-        from app.services import sales_report_service
+        from app.models.order import SalesOrder
+        from app.services import sales_report_service as srs
+        from app.services.contact_brand_scope import brand_predicate
 
         try:
-            with company_scope(db, frozenset(grants)):
-                _fill = sales_report_service.top_selling(
-                    db, rank_by="quantity", basis=basis_norm, group="item", n=1,
-                    customer_ids=list(customers or []) or None, category_ids=list(categories or []) or None,
-                    brand_ids=list(brands or []) or None, sales_agent_ids=list(agents or []), channel=channel_norm,
+            # ONE count query (`srs.sales_agent_fill_rate`) over the ranking's own filters, with the contact's
+            # company, brand and customer scope applied EXPLICITLY (a column query is not reached by the
+            # session listeners), so the rate counts only the sales orders the ranking it annotates counts.
+            _extra = [SalesOrder.company_id.in_(sorted(grants)) if grants else false()]
+            if brand_scope:
+                _extra.append(brand_predicate(brand_scope, Product.brand_id, Product.company_id))
+            _fill = srs.sales_agent_fill_rate(
+                db, group="category" if group_norm == "category" else "item",
+                filters=srs._ranking_filters(
+                    bucket_expr=srs._bucket_expr(), customer_query=None,
+                    customer_ids=list(customers or []) or None, channel=channel_norm,
                     date_from=date_from, date_to=date_to,
-                ).get("sales_agent_fill_rate")
+                    category_ids=list(categories or []) or None, brand_ids=list(brands or []) or None,
+                ),
+                extra_filters=_extra,
+            )
         except Exception:  # noqa: BLE001 - the note is a caveat, never a failed ranking
             _fill = None
         if _fill is not None:
