@@ -867,15 +867,21 @@ def settle(
             return drilled
     held_period: rf.Resolved | None = None
     held_product: dict[str, Any] = {}
-    if new_axis and parse_output.get("ranking_refine") is True:
+    held_channel: str | None = None
+    # Owner ruling B + S6b (23 Oct): a new axis that runs across all, right after a ranking, keeps what is
+    # on screen and widens only the ranked side: the same hold a refine naming another axis uses.
+    across_all = new_axis and drill != "scoped" and bool(_dict(frame.get("shown"))) and not frame.get("stale")
+    if new_axis and (parse_output.get("ranking_refine") is True or across_all):
         # Not a refine (it names another axis): the fresh ask reads it whole, its dates included.
-        # Chat fix PR-B S4 (AC-B6): the new axis is still asked (8 Oct rule), but the held period
-        # and product stay, never asked again; the message's own period or product wins.
+        # Chat fix PR-B S4 (AC-B6): the new axis is still asked (8 Oct rule), but the held period,
+        # product and channel stay, never asked again; the message's own period, product or channel wins.
         axis = GROUP_BY.get(raw_group, raw_group)
         held_period = period_from(frame.get("date_from"), frame.get("date_to"))
         held_product = {
             k: frame[k] for k in ("product_code", "product_ids") if frame.get(k) and k not in _AXIS_FILTERS.get(axis, ())
         }
+        if axis != "channel" and frame.get("channel") in ("dealer", "project"):
+            held_channel = frame["channel"]
         parse_output = {**parse_output, "ranking_refine": False}
 
     args, line = _fresh_args(db, parse_output, entities, dealer=dealer)
@@ -883,6 +889,8 @@ def settle(
         return None, line
     if held_product and not (args.get("product_code") or args.get("product_ids")):
         args.update(held_product)
+    if held_channel and not args.get("channel"):
+        args["channel"] = held_channel
     if (
         parse_output.get("ranking_refine") is not True
         and not dealer  # the route forces a dealer's links, so a plain total can never widen
@@ -903,7 +911,7 @@ def settle(
         # period alone never runs a total (it asks).
         given["period"] = period
     extras: dict[str, Any] = {"args": args, "top_n": top_n}
-    if new_axis and _dict(frame.get("shown")) and not frame.get("stale") and frame.get("group_by") in AXIS_NOUNS:
+    if across_all and frame.get("group_by") in AXIS_NOUNS:
         # Owner ruling B: after a ranking, a new axis runs across all, and the header line says so.
         extras["note"] = f"Across all {AXIS_NOUNS[frame['group_by']][1]}"
     return rf.collect(db, SALES_RANKING_ASK, given=given, extras=extras), None
