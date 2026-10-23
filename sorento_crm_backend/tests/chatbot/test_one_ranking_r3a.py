@@ -69,8 +69,8 @@ def test_r3a_3_guard_the_rank_lines_and_figures_are_unchanged_by_localization(la
     assert rows and all(r in translated for r in rows), translated
 
 
-def test_r3a_3_guard_english_is_byte_identical_with_no_localizer() -> None:
-    assert _structure(_body(), None)["response"] == _structure(_body(), None)["response"]
+def test_r3a_3_guard_english_with_the_localizer_is_byte_identical_to_no_localizer() -> None:
+    assert _structure(_body(), "en")["response"] == _structure(_body(), None)["response"]
 
 
 # ---------------------------------------------------------------- 4. category code beside the name (route)
@@ -99,6 +99,41 @@ def test_r3a_4_a_category_ranking_row_carries_the_categorys_code(client, db) -> 
     body = _ok(client, contact, group_by="category", top_n=5)
     row = body["rows"][0]
     assert code in json.dumps(row), (code, row)  # the code beside the name, as top selling printed it
+
+
+def _staff_and_world(db):
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from tests._chat_asker_seed import link_user
+    from tests._sales_report_do_seed import _contact, seed_agent
+    from tests.test_report_ask_route import _category, _prod, _sale, seed_customer, unique_code, warehouse
+    from tests.test_top_selling_report import _access
+
+    cat = _category(db, "ZZT Cat Name")
+    cust = seed_customer(db, name=unique_code("Cust"))
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID)
+    agent = seed_agent(db, code=unique_code("Agent"))
+    prod = _prod(db, unique_code("ZZTP", alpha=True), category=cat)
+    _sale(db, cust=cust, wh=wh, agent=agent, prod=prod, qty=3, total="300.00")
+    contact = _contact(db, granted=True)
+    link_user(db, contact)
+    _access(db, contact, "Sorento Office")
+    db.commit()
+    return contact
+
+
+@pytest.mark.parametrize("group_by", ["sales_agent", "customer"])
+def test_r3a_review_1_a_non_category_ranking_row_has_no_code_key(client, db, group_by) -> None:
+    from tests.test_report_ask_route import _ok
+
+    body = _ok(client, _staff_and_world(db), group_by=group_by, top_n=5)
+    assert body["rows"] and all("code" not in row for row in body["rows"]), body["rows"]
+
+
+def test_r3a_review_1_guard_a_category_ranking_row_keeps_its_code_key(client, db) -> None:
+    from tests.test_report_ask_route import _ok
+
+    body = _ok(client, _staff_and_world(db), group_by="category", top_n=5)
+    assert body["rows"] and all("code" in row for row in body["rows"]), body["rows"]
 
 
 from tests.test_report_ask_route import client, db  # noqa: E402,F401 - fixtures of the route tests
