@@ -1,6 +1,6 @@
 # PLAN: one ranking function (lane REPORT-SMART-L, owner direction 23 Oct 09:05)
 
-Status: owner rulings Q1 (a), Q2 (b), Q3 + ruling-2 (a) (23 Oct ~09:35: widens nothing); R0-R3c + R4a READY, main merged (f76a4545e4); R3d in progress (small fix track); then R4b, R5. Track: L (routing across two lanes, access change, retire path).
+Status: owner rulings Q1 (a), Q2 (b), Q3 + ruling-2 (a) (23 Oct ~09:35: widens nothing); R0-R3c + R4a + R3d (small fix track) + R4b READY (security PASS on R1, R3b, R4a, R4b), main merged (f76a4545e4), CI fix 91c643f00a; next R5 (prompt candidate, non-production). Track: L (routing across two lanes, access change, retire path).
 Branch `claude/report-smart-1021-r2xexf` (PR #1816), base head 412255c5b4. UAC: `one-ranking-1023-acceptance-criteria.md`.
 Evidence: owner's 08:52 turns (crew/state/eval/report-smart-v92/owner-0852-diagnosis.md); code map at 412255c5b4 (below).
 
