@@ -20,6 +20,7 @@ const postConsoleTurn = vi.fn();
 const getConsolePromptVersions = vi.fn();
 const getConsoleMediaStatus = vi.fn();
 const toastError = vi.fn();
+const toastSuccess = vi.fn();
 
 vi.mock('../services/chatbotConsoleService', () => ({
   postConsoleTurn: (...args: unknown[]) => postConsoleTurn(...args),
@@ -28,7 +29,7 @@ vi.mock('../services/chatbotConsoleService', () => ({
 }));
 
 vi.mock('@/lib/toast', () => ({
-  toast: { success: vi.fn(), error: (...args: unknown[]) => toastError(...args) },
+  toast: { success: (...args: unknown[]) => toastSuccess(...args), error: (...args: unknown[]) => toastError(...args) },
 }));
 
 vi.mock('../../respond-contacts/services/respondContactOutboundService', () => ({
@@ -258,6 +259,53 @@ describe('reply from the bubble (AC-CX-1..6)', () => {
     fireEvent.contextMenu(bubbleOf(CONSOLE_GREETING_MESSAGES[0]), { clientX: 20, clientY: 20 });
     expect(await screen.findByRole('menuitem', { name: 'Copy' })).toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: 'Reply' })).not.toBeInTheDocument();
+  });
+});
+
+describe('Copy over plain http (CONSOLE-PICKER-COPY)', () => {
+  let execCommand: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    toastSuccess.mockReset();
+    execCommand = vi.fn().mockReturnValue(true);
+    Object.defineProperty(document, 'execCommand', { value: execCommand, configurable: true });
+  });
+  afterEach(() => {
+    // @ts-expect-error - test-only cleanup of the properties defined here.
+    delete document.execCommand;
+    // @ts-expect-error - see above.
+    delete navigator.clipboard;
+  });
+
+  async function copyGreeting() {
+    fireEvent.contextMenu(bubbleOf(CONSOLE_GREETING_MESSAGES[0]), { clientX: 20, clientY: 20 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy' }));
+  }
+
+  it('copies through the execCommand fallback when navigator.clipboard is undefined', async () => {
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+    renderConsole();
+    await copyGreeting();
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('Copied'));
+    expect(execCommand).toHaveBeenCalledWith('copy');
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it('falls back to execCommand when writeText rejects', async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error('NotAllowedError'));
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    renderConsole();
+    await copyGreeting();
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('Copied'));
+    expect(writeText).toHaveBeenCalled();
+    expect(execCommand).toHaveBeenCalledWith('copy');
+  });
+
+  it('still says it could not copy when neither path works', async () => {
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+    execCommand.mockReturnValue(false);
+    renderConsole();
+    await copyGreeting();
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith('Could not copy this message'));
   });
 });
 
