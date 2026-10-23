@@ -4547,6 +4547,8 @@ def _run_stages_body(  # noqa: PLR0915
                 "provider": getattr(parser_config, "provider", None),
                 # LEAN: the effort the parser call SENT ("off": none, also for a provider other than OpenAI).
                 "reasoning_effort": parser.sent_reasoning_effort(parser_config),
+                # PARSER-GEMINI-LITE: the call's wall clock, even when it never returned.
+                "latency_ms": getattr(exc, "latency_ms", None),
                 "code_sha": GIT_SHA,
                 # A replay miss fails here: the console check must not read it as a live
                 # spend (LLM-TEST-COST).
@@ -4614,11 +4616,16 @@ def _run_stages_body(  # noqa: PLR0915
             "intent": verdict.get("intent_hint"),
             "entities": len(verdict.get("entities") or []),
             "prompt_version": parser_config.prompt_version,
-            "model": parser_config.model,
+            # PARSER-GEMINI-LITE: which model answered and how. `model` is the one the
+            # label asked for, `model_answered` the id the provider says ran (empty on a
+            # bypassed or replayed parse), `latency_ms` the call's wall clock.
+            "model": parser_usage.get("model") or parser_config.model,
+            "model_answered": parser_usage.get("model_answered") or None,
+            "latency_ms": parser_usage.get("latency_ms"),
             "prompt_sha256": _parser_prompt_sha256(parser_config),
-            "provider": getattr(parser_config, "provider", None),
+            "provider": parser_usage.get("provider") or getattr(parser_config, "provider", None),
             # LEAN: the effort the parser call SENT ("off": none, also for a provider other than OpenAI).
-            "reasoning_effort": parser.sent_reasoning_effort(parser_config),
+            "reasoning_effort": parser_usage.get("reasoning_effort") or parser.sent_reasoning_effort(parser_config),
             "code_sha": GIT_SHA,
             "tokens": int(parser_usage.get("total_tokens") or 0),
             # Chatbot memory lane A (contract section 6): the provider's own split,

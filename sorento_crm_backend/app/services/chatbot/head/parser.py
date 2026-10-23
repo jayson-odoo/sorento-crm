@@ -18,12 +18,13 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.services.ai_prompt_registry import agent_model, get_prompt, render, render_resolved
+from app.services.ai_prompt_registry import agent_model, agent_reasoning_effort, get_prompt, render, render_resolved
 from app.services.chatbot.contracts import ParserOutputError  # noqa: F401 - re-export
 from app.services.chatbot.turn import context as context_mod
 from app.services.chatbot.turn import question as question_mod
@@ -68,6 +69,9 @@ class ParserError(RuntimeError):
     ) -> None:
         super().__init__(*args)
         self.usage = usage or {}
+        # The provider call's wall clock, set by `parse` even when the call never returned
+        # (no usage then, so no usage row), for the failed `understood` record.
+        self.latency_ms: int | None = None
         # PR #1247 round 6, ruling 3: every attempt was refused with a 429, so the
         # dealer is told `llm_call.RATE_LIMITED_REPLY`, not the generic parser error.
         self.rate_limited = rate_limited
@@ -107,6 +111,10 @@ class ParserConfig:
     # LEAN: `system_settings.chatbot_parser_reasoning_effort` as read for this parse (REASONING_EFFORTS).
     # `parse` puts it on an OpenAI request only when it is not `off` (`sent_reasoning_effort`).
     reasoning_effort: str = "off"
+    # PARSER-GEMINI-LITE: the production label's own `reasoning_effort`, None when it sets none.
+    # When set it wins over the stored setting above, on any provider (Gemini maps it onto its
+    # thinking level), so a label pointed at another model carries the effort that model needs.
+    label_reasoning_effort: str | None = None
 
 
 def _build_base_json_schema() -> dict[str, Any]:
@@ -865,9 +873,22 @@ def reasoning_effort_setting(db: Session) -> str:
     return value if value in REASONING_EFFORTS else "off"
 
 
+#: PARSER-GEMINI-LITE: label efforts held back on OpenAI for the reason REASONING_EFFORTS gives (they can
+#: spend the whole PARSER_MAX_TOKENS ceiling on reasoning); lift with that ceiling. Gemini takes them, with
+#: answer headroom per level (`llm_provider._gemini_thinking`).
+OPENAI_CAPPED_LABEL_EFFORTS = frozenset({"medium", "high", "xhigh"})
+
+
 def sent_reasoning_effort(config: ParserConfig) -> str:
-    """The effort `parse` actually sends: the stored one on OpenAI, `off` (none sent) otherwise. The trace
-    records this, so it says what the provider was asked for."""
+    """The effort `parse` actually sends: the label's own when it sets one (any provider but Anthropic, which
+    takes none; on OpenAI not one in OPENAI_CAPPED_LABEL_EFFORTS), else the stored one on OpenAI, `off`
+    (none sent) otherwise. The trace records this, so it says what the provider was asked for."""
+    provider = getattr(config, "provider", None)
+    if provider == "anthropic":
+        return "off"
+    label_effort = getattr(config, "label_reasoning_effort", None)
+    if label_effort and not (provider == "openai" and label_effort in OPENAI_CAPPED_LABEL_EFFORTS):
+        return label_effort
     effort = getattr(config, "reasoning_effort", "off")
     return effort if effort in REASONING_EFFORTS and getattr(config, "provider", None) == "openai" else "off"
 
@@ -942,6 +963,7 @@ def resolve_config(
         template=TEMPLATE_MARKER in (raw_template or ""),
         closed_lists_index=index_mode,
         reasoning_effort=reasoning_effort_setting(db),
+        label_reasoning_effort=agent_reasoning_effort(db, PROMPT_KEY),
     )
 
 
@@ -1219,6 +1241,9 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
         {"role": "system", "content": config.system_prompt},
         {"role": "user", "content": user_block},
     ]
+    # LEAN + PARSER-GEMINI-LITE: `off` sends none, so an unset label and setting send what they always did.
+    effort = sent_reasoning_effort(config)
+    started = time.perf_counter()
     try:
         # A rate limit is waited out inside the call (PR #1247 round 6, ruling 3).
         result = llm_call.chat(
@@ -1233,17 +1258,26 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
             # One cache bucket per published prompt version: every parse on it shares
             # the same static prefix (OpenAI only; the others ignore it).
             prompt_cache_key=f"{PROMPT_KEY}:v{config.prompt_version or 'fallback'}",
-            # LEAN: the stored effort, on OpenAI only and only when set (`off` sends none, as before).
-            **({"reasoning_effort": effort} if (effort := sent_reasoning_effort(config)) != "off" else {}),
+            **({"reasoning_effort": effort} if effort != "off" else {}),
         )
     except llm_call.RateLimited as exc:
-        raise ParserError(f"parser provider call failed: {exc}", rate_limited=True) from exc
+        failure = ParserError(f"parser provider call failed: {exc}", rate_limited=True)
+        failure.latency_ms = int((time.perf_counter() - started) * 1000)
+        raise failure from exc
     except Exception as exc:  # noqa: BLE001 - provider/transport failure is a failed stage
-        raise ParserError(f"parser provider call failed: {exc}") from exc
+        failure = ParserError(f"parser provider call failed: {exc}")
+        failure.latency_ms = int((time.perf_counter() - started) * 1000)
+        raise failure from exc
 
     usage = {
         "provider": config.provider,
         "model": config.model,
+        # The id the provider says answered (a dated snapshot of the alias asked for),
+        # the effort asked for, and the call's wall clock, retries and backoff included
+        # (PARSER-GEMINI-LITE: what a model comparison reads off the trace).
+        "model_answered": str(getattr(result, "model", "") or ""),
+        "reasoning_effort": effort,
+        "latency_ms": int((time.perf_counter() - started) * 1000),
         "prompt_tokens": int(getattr(result, "prompt_tokens", 0) or 0),
         "completion_tokens": int(getattr(result, "completion_tokens", 0) or 0),
         "total_tokens": int(getattr(result, "total_tokens", 0) or 0),
@@ -1270,5 +1304,6 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
         # The provider answered, so it billed. The turn fails either way; the spend is
         # still real and still has to reach `ai_assistant_usage_logs`.
         exc.usage = usage
+        exc.latency_ms = usage["latency_ms"]
         raise
     return ParsedOutput(parsed, usage)
