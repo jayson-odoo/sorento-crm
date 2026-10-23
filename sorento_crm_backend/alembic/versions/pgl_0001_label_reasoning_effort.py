@@ -6,14 +6,14 @@ column existed, so the column changes nothing until somebody sets a value. Addit
 nullable: no backfill, no lock beyond the catalog update.
 
 Revision ID: pgl_0001_label_reasoning_effort
-Revises: oirj_0002_theme_sorento
+Revises: npa_0002_paper_layout
 """
 from __future__ import annotations
 
 from alembic import op
 
 revision = "pgl_0001_label_reasoning_effort"
-down_revision = "oirj_0002_theme_sorento"
+down_revision = "npa_0002_paper_layout"
 branch_labels = None
 depends_on = None
 

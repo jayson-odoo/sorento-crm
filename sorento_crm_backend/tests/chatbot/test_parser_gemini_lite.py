@@ -149,7 +149,8 @@ def _capture_chat(monkeypatch, result: llm_provider.ChatResult) -> list[dict]:
 
 
 def test_the_config_defaults_to_no_reasoning_effort():
-    assert _config().reasoning_effort is None
+    assert _config().label_reasoning_effort is None
+    assert parser_mod.sent_reasoning_effort(_config()) == "off"
 
 
 def test_parse_sends_no_reasoning_effort_when_the_label_sets_none(monkeypatch):
@@ -160,8 +161,20 @@ def test_parse_sends_no_reasoning_effort_when_the_label_sets_none(monkeypatch):
 
 def test_parse_sends_the_labels_reasoning_effort(monkeypatch):
     seen = _capture_chat(monkeypatch, _emission_result())
-    parser_mod.parse(_config(reasoning_effort="low"), "block")
+    parser_mod.parse(_config(label_reasoning_effort="low"), "block")
     assert seen[0]["reasoning_effort"] == "low"
+
+
+def test_the_labels_effort_reaches_a_gemini_call(monkeypatch):
+    seen = _capture_chat(monkeypatch, _emission_result())
+    parser_mod.parse(_config(provider="gemini", label_reasoning_effort="minimal"), "block")
+    assert seen[0]["reasoning_effort"] == "minimal"
+
+
+def test_the_labels_effort_wins_over_the_stored_setting(monkeypatch):
+    seen = _capture_chat(monkeypatch, _emission_result())
+    parser_mod.parse(_config(reasoning_effort="low", label_reasoning_effort="minimal"), "block")
+    assert seen[0]["reasoning_effort"] == "minimal"
 
 
 def test_resolve_config_reads_the_labels_reasoning_effort(monkeypatch):
@@ -179,18 +192,23 @@ def test_resolve_config_reads_the_labels_reasoning_effort(monkeypatch):
 
     import app.services.ai_assistant_service as assistant_service
 
-    monkeypatch.setattr(parser_mod, "render", lambda *_a, **_k: ("prompt", 7))
+    import types
+
+    monkeypatch.setattr(parser_mod, "get_prompt", lambda *_a, **_k: types.SimpleNamespace(text="prompt"))
+    monkeypatch.setattr(parser_mod, "render_resolved", lambda *_a, **_k: ("prompt", 7))
+    monkeypatch.setattr(parser_mod, "reasoning_effort_setting", lambda *_a, **_k: "off")
     monkeypatch.setattr(parser_mod, "agent_model", lambda *_a, **_k: ("gemini", "gemini-3.5-flash-lite"))
     monkeypatch.setattr(parser_mod, "agent_reasoning_effort", lambda *_a, **_k: "minimal")
     monkeypatch.setattr(assistant_service, "AIAssistantConfigService", _Service)
     monkeypatch.setattr(llm_provider, "resolve_api_key", lambda *_a, **_k: "gk")
 
     config = parser_mod.resolve_config(object(), current_date="today")
-    assert (config.provider, config.model, config.reasoning_effort) == (
+    assert (config.provider, config.model, config.label_reasoning_effort) == (
         "gemini",
         "gemini-3.5-flash-lite",
         "minimal",
     )
+    assert parser_mod.sent_reasoning_effort(config) == "minimal"
 
 
 # --------------------------------------------------------------------------- #
@@ -203,7 +221,7 @@ def test_parse_usage_names_the_answering_model_latency_and_reasoning(monkeypatch
         monkeypatch,
         _emission_result(model="gpt-5.4-mini-2026-03-17", reasoning_tokens=48),
     )
-    out = parser_mod.parse(_config(reasoning_effort="low"), "block")
+    out = parser_mod.parse(_config(label_reasoning_effort="low"), "block")
     usage = out.usage
     assert usage["provider"] == "openai"
     assert usage["model"] == "gpt-5.4-mini"
