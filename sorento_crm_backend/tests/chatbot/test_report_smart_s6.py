@@ -155,3 +155,34 @@ def test_s6b_4_guard_scoped_still_narrows_to_the_agents_on_screen(console) -> No
     (args,) = calls
     assert args["customer_agent_ids"] == KEYS and args.get("product_code") == PRODUCT_CODE, args
     assert ACROSS_ALL not in text, text
+
+
+# ---------------------------------------------------------------- S6c: across all also holds the count, measure and basis
+
+
+@pytest.mark.parametrize("reading", [None, "unsure", "global"])
+def test_s6c_1_across_all_holds_the_count_measure_and_basis_on_screen_and_asks_nothing(console, reading) -> None:
+    _ranking(console)  # top 5, qty, delivered, product, dealer, 2026
+    text, calls = console.say(
+        _bare_new_axis(reading, top_n=None, measure=None, basis=None), "by customer")
+    assert len(calls) == 1, (text, calls)  # no question of any kind
+    args = calls[0]
+    assert args["group_by"] == "customer" and args["top_n"] == 5, args
+    assert args["measure"] == "qty" and args["basis"] == "delivered", args
+    assert args.get("product_code") == PRODUCT_CODE and args.get("channel") == "dealer", args
+    assert args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
+    assert not args.get("sales_agent_ids") and not args.get("customer_agent_ids"), args
+    assert ACROSS_ALL in text, text
+
+
+def test_s6c_2_a_count_and_measure_the_message_names_replace_the_held_ones(console) -> None:
+    _ranking(console)
+    text, calls = console.say(
+        _bare_new_axis(None, top_n=10, measure="amount", basis=None), "top 10 by customer by amount")
+    assert len(calls) == 1, (text, calls)
+    args = calls[0]
+    assert args["top_n"] == 10 and args["measure"] == "amount", args
+    assert args["basis"] == "delivered" and args.get("product_code") == PRODUCT_CODE, args
+    assert args.get("channel") == "dealer", args
+    assert args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
+    assert ACROSS_ALL in text, text
