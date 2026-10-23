@@ -110,3 +110,48 @@ def test_s6_5_guard_a_scope_slot_already_held_is_still_answered(console) -> None
     text, calls = console.say(_by_customer(ranking_drill="scoped"), "the agents above")
     (args,) = calls
     assert args["group_by"] == "customer" and args["customer_agent_ids"] == KEYS, args
+
+
+# ---------------------------------------------------------------- S6b: across all keeps product, channel and year
+
+
+def _bare_new_axis(reading: Any, **overrides: Any) -> dict[str, Any]:
+    """'by customer': the parse names no period, product or channel (the held ones are not retyped)."""
+    base: dict[str, Any] = dict(
+        group_by="customer", top_n=5, measure="qty", basis="delivered", state_changes=list(KEEP),
+        ranking_drill=reading, date_filter_start=None, date_filter_end=None,
+    )
+    base.update(overrides)
+    return _drill(**base)
+
+
+@pytest.mark.parametrize("reading", [None, "unsure", "global"])
+def test_s6b_1_across_all_keeps_the_product_channel_and_year_on_screen_and_asks_nothing(console, reading) -> None:
+    _ranking(console)
+    text, calls = console.say(_bare_new_axis(reading), "by customer")
+    assert len(calls) == 1, (text, calls)  # no "Which period?" or any other question
+    args = calls[0]
+    assert args["group_by"] == "customer", args
+    assert args.get("product_code") == PRODUCT_CODE and args.get("channel") == "dealer", args
+    assert args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
+    assert not args.get("sales_agent_ids") and not args.get("customer_agent_ids"), args
+    assert ACROSS_ALL in text and "Which period" not in text, text
+
+
+def test_s6b_2_a_period_the_message_names_replaces_the_held_one_product_and_channel_kept(console) -> None:
+    _ranking(console)
+    text, calls = console.say(
+        _bare_new_axis(None, date_filter_start="2025-01-01", date_filter_end="2025-12-31"), "by customer last year")
+    assert len(calls) == 1, (text, calls)
+    args = calls[0]
+    assert args["date_from"] == "2025-01-01" and args["date_to"] == "2025-12-31", args
+    assert args.get("product_code") == PRODUCT_CODE and args.get("channel") == "dealer", args
+    assert ACROSS_ALL in text, text
+
+
+def test_s6b_4_guard_scoped_still_narrows_to_the_agents_on_screen(console) -> None:
+    _ranking(console)
+    text, calls = console.say(_bare_new_axis("scoped"), "their customers")
+    (args,) = calls
+    assert args["customer_agent_ids"] == KEYS and args.get("product_code") == PRODUCT_CODE, args
+    assert ACROSS_ALL not in text, text

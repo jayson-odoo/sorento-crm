@@ -193,13 +193,15 @@ def test_unsure_with_no_count_asks_the_missing_details_not_the_scope(console) ->
 
 
 def test_unsure_then_the_missing_details_run_across_all(console) -> None:
+    # S6b: the held period is kept, so the detail left to ask is the count (the message names none).
     _turn1(console)
-    console.say(_drill(ranking_drill="unsure"), "top 10 customers")
-    _text, calls = console.say(_reply(**SEP), "september")
-    _text, calls = console.say(_reply(measure="amount"), "by amount") if not calls else (_text, calls)
-    _text, calls = console.say(_reply(basis="delivered"), "delivered") if not calls else (_text, calls)
+    text, calls = console.say(_drill(ranking_drill="unsure", top_n=None), "customers")
+    assert calls == [] and TOPN_Q in text and "Which period" not in text, text
+    text, calls = console.say(_reply(top_n=10, measure="amount", basis="delivered"), "10")
     (args,) = calls
-    assert args["group_by"] == "customer" and "customer_agent_ids" not in args and "product_code" not in args, args
+    assert args["group_by"] == "customer" and args["top_n"] == 10, args
+    assert "customer_agent_ids" not in args and args["product_code"] == PRODUCT_CODE, args
+    assert "Across all sales agents" in text, text  # the final run carries the header too
 
 
 # ============================================================================ never a guess
