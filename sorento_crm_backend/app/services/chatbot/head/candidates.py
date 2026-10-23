@@ -371,8 +371,7 @@ def _code_candidates(db: "Session", tokens: list[str], *, code_lookup: bool = Fa
     norm = func.lower(func.regexp_replace(Product.product_code, r"[-\s]+", "", "g"))
     words = {position: re.sub(r"[-\s]+", "", token) for position, token in enumerate(tokens)}
     words = {p: w for p, w in words.items() if len(w) >= 2}
-    # A bare number is a count or a size, never a code fragment: it lists only an exact code (REPORT-SMART-L R0).
-    coded = [p for p, w in words.items() if any(ch.isdigit() for ch in w) and len(w) >= MIN_CODE_CHARS and not _is_number(w)]
+    coded = [p for p, w in words.items() if any(ch.isdigit() for ch in w) and len(w) >= MIN_CODE_CHARS]
     coded = coded[:CODE_WORDS_PER_MESSAGE]
     whole_only = sorted({w for p, w in words.items() if p not in coded})
     by_word: dict[str, list[tuple[str, str | None]]] = {}
