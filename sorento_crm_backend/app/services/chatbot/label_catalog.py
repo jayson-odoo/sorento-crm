@@ -309,7 +309,12 @@ LABELS: dict[str, dict[str, str]] = {
     "months": {"ms": "bulan", "zh": "月份"},
     "month": {"ms": "bulan", "zh": "月份"},
     "You can only see sales for your own account.": {"ms": "Anda hanya boleh melihat jualan untuk akaun anda sendiri.", "zh": "您只能查看自己账户的销售数据。"},
-    "That breakdown is not available for your account.": {"ms": "Pecahan itu tidak tersedia untuk akaun anda.", "zh": "您的账户无法查看该分类。"},
+    "That breakdown is not available for your account.": {"ms": "Pecahan itu tidak tersedia untuk akaun anda.", "zh": "您的账户无法查看该细分数据。"},
+    "You can only see orders for your own account.": {"ms": "Anda hanya boleh melihat pesanan untuk akaun anda sendiri.", "zh": "您只能查看自己账户的订单。"},
+    "Compared with": {"ms": "Berbanding dengan", "zh": "对比期间"},
+    "customers (count)": {"ms": "bilangan pelanggan", "zh": "客户数"},
+    "orders (count)": {"ms": "bilangan pesanan", "zh": "订单数"},
+    "products (count)": {"ms": "bilangan produk", "zh": "产品数"},
     # Slice 4: the final reply pass (composer sentences, escalate offer, canned copy, dealer
     # questions) and the domain label words. Sentences are listed in INLINE below.
     REFER_TO_SALESMAN: {"ms": "Sila rujuk jurujual anda.", "zh": "请联系您的销售员。"},
@@ -849,6 +854,8 @@ _RANK_NOUNS = frozenset(
 )
 _RANK_BASES = frozenset({"delivered sales", "ordered sales", "outstanding orders"})
 _RANK_MEASURES = frozenset({"customers", "orders", "products"})
+#: A count measure is said as a count ("bilangan pelanggan"), never as the grouping noun, so it has its own entries.
+_MEASURE_KEYS = {w: f"{w} (count)" for w in _RANK_MEASURES}
 VOCAB: dict[str, frozenset[str]] = {"rank_noun": _RANK_NOUNS, "basis": _RANK_BASES, "measure": _RANK_MEASURES}
 DIRECT_ONLY = (
     frozenset(
@@ -863,6 +870,7 @@ DIRECT_ONLY = (
     | _find_fit_keys()
     | _RANK_NOUNS
     | _RANK_BASES
+    | frozenset(_MEASURE_KEYS.values())
 )
 _NAMES_TAIL = " and {n} others"
 _OTHERS = re.compile(r"(.*) and (\d[\d,]*) others")
@@ -1050,9 +1058,10 @@ class Localizer:
             if name not in values:
                 continue
             word = values[name]
-            if word not in words or word not in self.table:
+            key = _MEASURE_KEYS.get(word, word) if name == "measure" else word
+            if word not in words or key not in self.table:
                 return None
-            out[name] = self.table[word]
+            out[name] = self.table[key]
         return out
 
     def _names(self, values: dict[str, str]) -> dict[str, str]:

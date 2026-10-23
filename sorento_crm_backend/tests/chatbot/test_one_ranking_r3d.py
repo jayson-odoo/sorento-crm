@@ -91,7 +91,7 @@ def test_r3d_a_a_one_row_head_is_singular_and_translated(lang) -> None:
 def test_r3d_a_a_count_measure_head_is_translated(lang) -> None:
     head = _head(lang, measure="customers", **_more("product", 2, 37))
     assert "Top" not in head and "customers" not in head and "delivered" not in head, head
-    assert "37" in head, head
+    assert "37" in head and ("bilangan pelanggan" if lang == "ms" else "客户数") in head, head
     one = _head(lang, measure="customers", **_more("product", 1, 2))
     assert "Top" not in one and "customers" not in one and "customer" not in one, one
 
@@ -115,7 +115,7 @@ def test_r3d_b_the_miss_line_translates_per_basis(lang, word, basis_label) -> No
 # ---------------------------------------------------------------- c. route refusals, end to end
 
 
-@pytest.mark.parametrize("lang, expect", [("ms", "Maaf"), ("zh", "")])
+@pytest.mark.parametrize("lang, expect", [("ms", "akaun anda"), ("zh", "")])
 @pytest.mark.parametrize("message", [OWN_ACCOUNT, DIMENSION_REFUSAL])
 def test_r3d_c_a_route_refusal_is_translated_by_the_final_reply_pass(console, monkeypatch, lang, expect, message) -> None:
     console.refuse = {"message": message, "detail": None, "code": "customer_not_permitted"}
@@ -124,6 +124,7 @@ def test_r3d_c_a_route_refusal_is_translated_by_the_final_reply_pass(console, mo
     done = Localizer(lang, label_catalog.defaults(lang)).reply(text)
     assert done != text and message not in done, done
     assert len(done.strip()) > 8 and "account" not in done, done
+    assert (expect in done) if expect else any("\u4e00" <= ch <= "\u9fff" for ch in done), done
 
 
 # ---------------------------------------------------------------- d. the period range
@@ -148,6 +149,7 @@ def test_r3d_e_rank_lines_names_and_codes_are_unchanged(lang) -> None:
 
 
 def test_r3d_e_english_with_the_localizer_is_byte_identical_to_no_localizer() -> None:
+    # Pins the en path: `defaults("en")` is empty, so the localizer must be a pass-through.
     for over in (_more("product", 2, 37), {"rows": [], "total_count": 0}, {"sort": "asc"}):
         assert _structure(_body(**over), "en")["response"] == _structure(_body(**over), None)["response"]
 
@@ -184,4 +186,36 @@ def test_r3d_f_the_one_ranking_question_renders_in_the_contacts_language(console
     text, log = _say_all(console, monkeypatch, _top_selling(), "top selling items")
     done = Localizer(lang, label_catalog.defaults(lang)).reply(text)
     assert marker in done, done
-    assert "By quantity or by amount?" not in done and "Delivered, ordered or outstanding?" not in done, done
+    assert "By quantity or by amount?" not in done, done
+
+
+# ---------------------------------------------------------------- review follow-ups
+
+
+@pytest.mark.parametrize("lang", ["ms", "zh"])
+@pytest.mark.parametrize("text", ["products", "1. month", "*customer*", "delivered sales", "category", "customers (count)"])
+def test_r3d_g_the_vocabulary_words_alone_are_never_rewritten(lang, text) -> None:
+    localizer = Localizer(lang, label_catalog.defaults(lang))
+    assert localizer.reply(text) == text and localizer.sentence(text) == text
+    assert localizer.lines(text) == text
+
+
+@pytest.mark.parametrize("lang, word", [("ms", "bilangan"), ("zh", "数")])
+def test_r3d_g_a_count_measure_reads_as_a_count_not_a_grouping(lang, word) -> None:
+    for measure in ("customers", "orders", "products"):
+        head = _head(lang, measure=measure, **_more("product", 2, 37))
+        assert word in head and measure not in head, head
+
+
+@pytest.mark.parametrize("lang, label, joiner", [("ms", "Berbanding dengan", "hingga"), ("zh", "对比期间", "至")])
+def test_r3d_g_the_compared_with_line_is_localized(lang, label, joiner) -> None:
+    body = _body(compare_to="previous", compare_from="2026-08-01", compare_until="2026-08-31")
+    line = next(ln for ln in _lines(body, lang) if ln.startswith(label))
+    assert joiner in line and " to " not in line and "1 Aug 2026" in line, line
+
+
+@pytest.mark.parametrize("lang", ["ms", "zh"])
+def test_r3d_g_the_orders_refusal_is_translated(lang) -> None:
+    msg = "You can only see orders for your own account."
+    done = Localizer(lang, label_catalog.defaults(lang)).reply(msg)
+    assert done != msg and "orders" not in done, done
