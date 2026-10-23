@@ -17,6 +17,7 @@ from tests.test_report_ask_route import _ask, _ok, _prod, _sale, client, db  # n
 from tests.test_top_selling_report import _access
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests._pg_fixture import unique_code
+from tests._report_ask_so_seed import seed_so_line
 
 
 def _staff(db):
@@ -67,7 +68,8 @@ def test_r3b_3_guard_the_fill_rate_counts_only_the_contacts_company(client, db) 
     cust = seed_customer(db, name=unique_code("MochaCust"), company_id=mocha.id)
     wh = warehouse(db, company_id=mocha.id)
     for _ in range(10):  # another company: ten sales orders, none with an agent
-        _sale(db, cust=cust, wh=wh, agent=None, prod=_prod_in(db, mocha.id), qty=1, total="10.00")
+        seed_so_line(db, cust=cust, prod=_prod_in(db, mocha.id), qty=1, total="10.00", agent=None, wh=wh,
+                     company_id=mocha.id)
     db.commit()
     body = _ok(client, _staff(db), group_by="product", top_n=5, sales_agent_ids=[agent.id])
     assert body.get("sales_agent_fill_rate") == pytest.approx(0.4), body
