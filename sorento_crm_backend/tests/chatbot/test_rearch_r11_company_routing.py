@@ -544,7 +544,7 @@ class TestThirdTurnClarifyAnswerRoutesByCompanyId:
     # None`) - the ONE line that reads the id off the routing-roster-plan pool a
     # resolved `company_pick` matched against - makes
     # `test_a_bare_position_over_the_clarify_resolves_to_the_first_companys_real_id`
-    # fail at `assert ec.get("company_id") == ids["a"]` (`None == '<uuid>'`), and
+    # fail at `assert ec.get("company_id") == first_id` (`None == '<uuid>'`), and
     # leaves every other test in this file green (the mutation is scoped to the
     # `company_pick` arm alone, which only this test and BLOCKER 2a exercise -
     # BLOCKER 2a fails too, correctly, for the same reason: both reach id resolution
