@@ -39,12 +39,12 @@ EXPECT_KEYS = frozenset({
     "continues", "topic_reset", "answer_mode", "picked", "reference_positions", "entity_op", "broaden_axis",
     "state_ops_include", "state_ops_exclude",
     # REPORT-SMART-L v92: the report fields, each compared with the parse field of the same name.
-    "order_status", "group_by", "measure", "compare_to", "sales_channel", "ranking_refine",
+    "order_status", "group_by", "measure", "basis", "compare_to", "sales_channel", "ranking_refine",
     # REPORT-SMART-L delivery gold: the paper codes list (["DO"]), plain equality.
     "document",
 })
 #: The expect keys read straight off the verdict (null means null or absent).
-_REPORT_KEYS = ("order_status", "group_by", "measure", "compare_to", "sales_channel", "ranking_refine",
+_REPORT_KEYS = ("order_status", "group_by", "measure", "basis", "compare_to", "sales_channel", "ranking_refine",
                 "document")
 #: LEAN v90: the type each of these expect values must have (null allowed where listed).
 _EXPECT_TYPES: dict[str, tuple[type, ...]] = {

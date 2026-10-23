@@ -75,3 +75,14 @@ def test_a3_3_guard_the_held_axis_echoed_with_nothing_else_is_unchanged(console,
     # Today: the held axis echoed fills nothing, so nothing runs and the count is asked again
     # (it still opens with the "I don't know ... as a number" miss line; not pinned here).
     assert _ran(log) == [] and "How many? For example top 5." in text, (text, log)
+
+
+def test_a3_4_guard_an_item_ranking_with_no_basis_or_measure_gets_one_combined_question(console, monkeypatch) -> None:
+    """Row 5: the parse leaves basis and measure null ("Top 30 selling item this year"): one question names both."""
+    _state_on(console)
+    qf = _verdict(order_status="sales_ranking", ranking_refine=False, group_by="product", top_n=30, basis=None,
+                  measure=None, domain_in_message=True, state_changes=list(KEEP), **YEAR_2026)
+    text, log = _say_all(console, monkeypatch, qf, "Top 30 selling item this year")
+    assert _ran(log) == [], (text, log)
+    assert "quantity" in text.lower() and "amount" in text.lower(), text
+    assert "delivered" in text.lower() and "ordered" in text.lower(), text
