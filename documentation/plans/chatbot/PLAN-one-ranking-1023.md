@@ -1,6 +1,6 @@
 # PLAN: one ranking function (lane REPORT-SMART-L, owner direction 23 Oct 09:05)
 
-Status: PROPOSED, waits crew OK and the 3 owner questions. Track: L (routing across two lanes, access change, retire path).
+Status: owner rulings Q1 (a), Q2 (b) recorded; Q3 vs ruling 2 with the owner; R0 built (reviewer next). Track: L (routing across two lanes, access change, retire path).
 Branch `claude/report-smart-1021-r2xexf` (PR #1816), base head 412255c5b4. UAC: `one-ranking-1023-acceptance-criteria.md`.
 Evidence: owner's 08:52 turns (crew/state/eval/report-smart-v92/owner-0852-diagnosis.md); code map at 412255c5b4 (below).
 
@@ -22,9 +22,12 @@ nowhere by the sales ranking, so an item ask lands on the catalogue line (T1-T3)
   the chatbot.
 
 ## Rounds (each red-first, reviewer each; security-reviewer on R1 and R4: access)
-- R0 (S) parser input: a bare count is never a "codes holding it" candidate (candidates.py:374 sends every 3+ char token
-  with a digit; `_is_number` :191 unused there; owner T4 '100' -> M1100 -> stock). Plus "all channels" drops a held channel
-  (the ranking lane ignores the parser's broaden_axis).
+- R0 (S, crew 23 Oct): the ranking hold honours the parser's broaden_axis channel / product with broaden_to 'all'
+  (drops that axis, keeps the rest; same-axis refine, across-all and the refine naming another axis). Date widening is
+  out: the report ask route requires a period (api/v1/order_management/report_ask.py:283-284, :551); 'all-time
+  rankings' is an owner question (crew). The bare-count candidates change was reverted (crew a1): it contradicted the
+  closed-lists design (tests/chatbot/test_closed_lists_candidates.py:419, :437: a bare number that is part of codes is
+  shown as holding them); the count goes to R5.
 - R1 (M) routing: one `report_ask.from_top_selling` used by by_capability (every top_selling verdict) and at
   lanes/business/__init__.py:2356 (safety net for live sessions); rank_group item / none -> group_by product, category ->
   category; never the catalogue line or a grain question; questions per Q1; access per Q3.
@@ -39,6 +42,9 @@ nowhere by the sales ranking, so an item ask lands on the catalogue line (T1-T3)
   :387; reverse alembic chatbot_top_selling_tool; add crm_report_ask to the sales row); delete the 194 top-selling lane
   tests and 3 console cases; route, MCP tool and connector stay.
 - R5 (S) prompt candidate (fold template :317 into :316; :75 / :99 / :110 / :320 / :358), NON-production; the owner publishes.
+  R5 also carries: 'the N in top / bottom N is top_n, never a product; a holding line is never a pick' with gold rows incl.
+  the owner's 'Top 100 selling item this year by product, delivered qty' (crew a1); v101 lines 53 / 297 / 310; 'only those N'
+  as a scoped example; 'all channels' -> broaden_axis channel.
 - Also queued: owner turn 045fb9bb ('Top sales for cb6635 in 2026, by salesppl' -> monthly report), v101 lines 53 / 297 / 310.
 
 ## Access differences the merge makes (Q3)
