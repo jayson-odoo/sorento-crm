@@ -710,7 +710,8 @@ def seed_chatbot_policy() -> None:
     `chatbot_rearch_s6e` / `chatbot_rearch_s7` / `chatbot_rearch_s8` / `chatbot_rearch_
     s11` / `chatbot_rearch_s12` update six domains' narrowing and `chatbot_rearch_s9`
     appends `crm_sales_report` (and `chatbot_top_selling_tool` appends
-    `crm_top_selling_report`) to the order domain's tools. `chatbot_rearch_s12` then
+    `crm_top_selling_report`, which `or_r4b_top_selling_off` later removes from every row while
+    the sales row gains `crm_report_ask`) to the order domain's tools. `chatbot_rearch_s12` then
     republishes the parser version over its own narrowing changes and moves the
     `production` label onto it (owner ruling 21 Sep 2026: the deploy ships the config,
     nothing is promoted by hand). All nine are migration-BODY work: `create_all` gives a
@@ -776,6 +777,7 @@ def seed_chatbot_policy() -> None:
     report_engine = _load("_report_engine_0001_prompt", "report_engine_0001_prompt.py")
     ca3_domain = _load("_ca3_0002_chat_analytics_domain", "ca3_0002_chat_analytics_domain.py")
     measure_words = _load("_maskp_0002_measure_words", "maskp_0002_measure_words.py")
+    or_r4b = _load("_or_r4b_top_selling_off", "or_r4b_top_selling_off.py")
 
     with engine.begin() as conn:
         domains_inserted, kinds_inserted = s0.seed_domains_and_kinds(conn)
@@ -799,6 +801,7 @@ def seed_chatbot_policy() -> None:
         top_selling.apply_tools(conn)
         sales_s1.apply_tools(conn)
         report_engine.apply_tools(conn)
+        or_r4b.apply_tools(conn)
     with engine.begin() as conn:
         s11.apply_narrowing(conn)
     with engine.begin() as conn:

@@ -200,7 +200,7 @@ class TestTheDomainRow:
         from app.services.chatbot.lanes.business.fetch import CHATBOT_READ_ONLY_TOOLS
         from app.services.mcp_tool_domains import CHATBOT_TOOL_DOMAINS
 
-        for tool in ("crm_sales_report", "crm_sales_analysis", "crm_top_selling_report"):
+        for tool in ("crm_sales_report", "crm_sales_analysis", "crm_report_ask"):
             assert tool in CHATBOT_READ_ONLY_TOOLS
             assert CHATBOT_TOOL_DOMAINS[tool] == "sales"
 
@@ -216,7 +216,10 @@ class TestTheDomainRow:
         spec.loader.exec_module(module)
         row = next(r for r in policy_rows.DEFAULT_DOMAIN_ROWS if r["name"] == "sales")
         for key, value in module.SALES_DOMAIN.items():
+            if key == "tools":
+                continue  # R4b: `or_r4b_top_selling_off` swaps the top selling tool for `crm_report_ask`
             assert row[key] == value, key
+        assert row["tools"] == ["crm_sales_report", "crm_sales_analysis", "crm_report_ask"]
         order = next(r for r in policy_rows.DEFAULT_DOMAIN_ROWS if r["name"] == "order")
         assert row["narrowing"] == order["narrowing"]
 

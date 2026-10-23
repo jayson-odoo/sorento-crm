@@ -26,7 +26,6 @@ MUST_BE_FILTERED = (
     "crm_order_management_orders_by_product_list",
     "crm_outstanding_report",
     "crm_sales_report",
-    "crm_top_selling_report",
     "crm_report_ask",
     "crm_sales_analysis",
     "crm_low_stock_report",
@@ -56,7 +55,8 @@ def test_every_chatbot_read_only_tool_has_a_treatment() -> None:
 def test_every_mcp_catalogue_tool_has_a_treatment() -> None:
     names = {spec.name for spec in _load_catalog_specs()}
     assert names, "the MCP catalogue is empty: the pin is stale"
-    assert untreated(names, _treatment()) == []
+    # R4b: the route and MCP tool stay in the catalogue, but no chatbot path calls the top selling tool.
+    assert untreated(names - {"crm_top_selling_report"}, _treatment()) == []
 
 
 def test_treatment_names_no_tool_that_does_not_exist() -> None:
