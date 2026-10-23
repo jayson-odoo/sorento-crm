@@ -3533,8 +3533,8 @@ def _report_ask(body: dict) -> str:
             if group_by == "category"
             else "Reply with a rank number to see that item's customers and months."
         )
-    # Length never cuts an item or category list: split between rows into WhatsApp-sized parts (as top selling did).
-    return "\n\n".join(whatsapp_parts(text)) if items else text
+    # Length never cuts a ranking: split between rows into WhatsApp-sized parts (as top selling did).
+    return "\n\n".join(whatsapp_parts(text))
 
 
 #: The measure as the head line says it, by the route's `measure`.

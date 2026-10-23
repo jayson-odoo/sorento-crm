@@ -189,7 +189,7 @@ def _echo(
 
 #: REPORT-SMART-1021: keys a sales body carries only when counted or compared, so a body
 #: that is neither stays what every caller already reads.
-_OPTIONAL_KEYS = ("count", "prev", "change_pct", "compare_to", "compare_from", "compare_until")
+_OPTIONAL_KEYS = ("count", "prev", "change_pct", "compare_to", "compare_from", "compare_until", "code")
 
 
 def _drop_unset(part: dict, compared: bool) -> dict:
