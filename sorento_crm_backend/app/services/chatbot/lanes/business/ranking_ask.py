@@ -1,16 +1,14 @@
 """The one place that picks the next clarify question for a ranking (owner ruling, 4 Oct 2026).
 
-Both ranking lanes, top selling (`lanes/business._top_selling_question`) and the sales ranking
-(`report_ask`), ask the metric first and then the basis, and neither defaults either. Each lane
-keeps its own binding (what counts as settled, where the answer lands); this decides only which
-line comes next. No imports: both lanes import it.
+The sales ranking (`report_ask`, every item, category and other ranking since REPORT-SMART-L)
+asks the metric first and then the basis, and defaults neither. The lane keeps its own binding
+(what counts as settled, where the answer lands); this decides only which line comes next.
+No imports.
 """
 from __future__ import annotations
 
 METRIC_LINE = "By quantity or by amount?"
-#: Top selling has two bases (an outstanding top selling is the outstanding report, a hop).
-TOP_SELLING_BASIS_LINE = "Delivered (transferred to DO) or ordered?"
-#: The sales ranking (`crm_report_ask`) has all three.
+#: The sales ranking (`crm_report_ask`) has all three bases.
 RANKING_BASIS_LINE = "Delivered, ordered or outstanding?"
 
 

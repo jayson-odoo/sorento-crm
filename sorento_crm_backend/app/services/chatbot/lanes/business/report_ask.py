@@ -6,11 +6,11 @@ company, location policy) is the ROUTE's, from `contact_id`; this module only tu
 parser's reading into the route's params, and asks for the two fields the route requires
 (the period and how many, then, for a ranking, the metric, and always the basis) through the
 shared `required_fields` helper. A ranking never defaults the metric or the basis: it asks
-(owner ruling, 4 Oct 2026), through `ranking_ask.next_question`, as top selling does.
+(owner ruling, 4 Oct 2026), through `ranking_ask.next_question`.
 
 * `take_words` (engine seam): a FRESH ask's brand, sales agent and category words come off
   the entity list onto `report_ask_words`, so the generic resolver never reads them as
-  customers (the top selling lesson, `engine._top_selling_narrowing`).
+  customers (it types a brand or a person under `order` as a customer).
 * `settle` (lane): words to ids, `group_by` to the catalogue's word, the required fields;
   either a line to send instead of running, or the outcome to build the args from.
 * `route_args`: the settled outcome as the route's query params.
@@ -68,8 +68,11 @@ OTHER_REPORTS = frozenset({"top_selling", "sales_report", "sales_analysis"})
 #: The entity hints `take_words` moves, and the noun each is said with when it names nothing.
 WORD_HINTS = {"brand": "brand", "sales_agent": "sales agent", "category": "category"}
 
-#: One ceiling, shared with the route and the top-selling lane (owner, 30 Sep 2026).
+#: One ceiling, shared with the routes (owner, 30 Sep 2026).
 TOP_N_MIN, TOP_N_MAX = 1, TOP_SELLING_N_CEILING
+#: Said above a ranking whose named N passed the ceiling (owner, 30 Sep 2026: no 100 cap, and
+#: no silent clamp either). It promises no count: fewer items than the ceiling may have sold.
+CEILING_NOTE = f"I can list at most the top {TOP_N_MAX:,} in one reply."
 #: A month breakdown is a trend, never asked "How many?": every month of the period (1b code
 #: review S2). This is its own row count, not a second top-N limit.
 MONTH_TOP_N = 100
@@ -189,9 +192,7 @@ def top_n_from(value: Any) -> rf.Resolved:
     if isinstance(value, (int, float)) and float(value).is_integer() and TOP_N_MIN <= int(value) <= TOP_N_MAX:
         return rf.Resolved("ok", value=int(value), label=str(int(value)))
     if isinstance(value, (int, float)) and float(value).is_integer() and value > TOP_N_MAX:
-        from app.services.chatbot.lanes.business import top_selling_ceiling_note  # the one wording; lazy, the package imports this module
-
-        return rf.Resolved("unknown", note=top_selling_ceiling_note({"top_n": value}) or "")
+        return rf.Resolved("unknown", note=CEILING_NOTE)
     return rf.Resolved("unknown")
 
 
@@ -651,8 +652,8 @@ def _word_filters(
             if not word:
                 continue
             if hint == "category":
-                # One definition with top selling's category filter (owner, 4 Oct 2026):
-                # code or name, then the class vocabulary ("water closet").
+                # One category definition (owner, 4 Oct 2026): code or name, then the class
+                # vocabulary ("water closet").
                 from app.services.chatbot.lanes import business as business_pkg
 
                 found, _named, ambiguous, unknown = business_pkg._top_selling_category_ids(

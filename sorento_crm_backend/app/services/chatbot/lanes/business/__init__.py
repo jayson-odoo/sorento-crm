@@ -81,27 +81,8 @@ SALES_REPORT_NOT_ENABLED_MESSAGE = "Sales report is not enabled for your account
 #: PLAN-retail-sales-reports-26sep S1: the sales analysis tool, gated by the SAME key.
 _SALES_ANALYSIS_TOOL = "crm_sales_analysis"
 
-#: PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)". The ranking's tool, and
-#: the fixed lines the lane sends BEFORE any fetch when the ask is not settled yet
-#: (owner rulings 26 Sep 2026: no default metric, never assume the grain or the basis).
-#: The MCP presenter declares the same three literals for its goldens; the backend keeps
-#: its own copy because its container does not ship `sorento_crm_mcp`, and
-#: `tests/chatbot/test_top_selling_lane.py` pins the two equal.
-TOP_SELLING_TOOL = "crm_top_selling_report"
-TOP_SELLING_ASK_METRIC = ranking_ask.METRIC_LINE
-TOP_SELLING_ASK_GROUP = (
-    "Do you want the top items inside one category, or the categories ranked against each other?"
-)
-TOP_SELLING_ASK_BASIS = ranking_ask.TOP_SELLING_BASIS_LINE
-#: What a reply asking the metric AND the basis in one numbered reply records as asked
-#: (`turn/apply.TOP_SELLING_CLARIFY_AXES`, chat fix PR-B S1b).
-TOP_SELLING_ASKED_BOTH = "metric_basis"
 #: The sales ranking's own basis question (`report_ask`), three bases.
 SALES_RANKING_ASK_BASIS = ranking_ask.RANKING_BASIS_LINE
-TOP_SELLING_REFUSED_OTHER_CUSTOMER = "Sorry, I can only share sales figures for your own account."
-#: Owner retest of round 4 (27 Sep 2026, R8): one short question in words when a message
-#: inside a ranking cannot be placed.
-TOP_SELLING_UNCLEAR = "Sorry, I didn't get that. What would you like to change in the ranking?"
 
 #: PLAN-low-stock-report S6 (AC-62/AC-64). The intent that overrides the inventory domain's
 #: default tool pick, the tool it picks, and the per-contact key that gates it - all three
@@ -495,60 +476,16 @@ def _outstanding_offer_closed(parse_output: dict[str, Any], db: Any) -> dict[str
     }
 
 
-def top_selling_ceiling_note(slot: dict[str, Any]) -> str | None:
-    """The line said above a ranking whose named N passed the shared safety ceiling
-    (owner, 30 Sep 2026: no 100 cap, and no silent clamp either). `fetch.py` asks the
-    route for the ceiling; this says so. None for every N at or under it, and for a
-    detail pick, which lists no ranking."""
-    from app.services.sales_report_service import TOP_SELLING_N_CEILING
-
-    top_n = slot.get("top_n")
-    if slot.get("detail_code") or isinstance(top_n, bool) or not isinstance(top_n, (int, float)):
-        return None
-    if int(top_n) <= TOP_SELLING_N_CEILING:
-        return None
-    # Promises no count: fewer items than the ceiling may have sold.
-    return f"I can list at most the top {TOP_SELLING_N_CEILING:,} in one reply."
-
-
-def _top_selling_question(slot: dict[str, Any]) -> tuple[str, str] | None:
-    """S4 point 8a: the one question an unsettled top selling ask gets, in this order:
-    the grain when the parser could not tell a category filter from a category ranking,
-    the metric when none was named, the basis when none was named or it is not delivered or
-    ordered (`ranking_ask.next_question`, shared with the sales ranking). None once
-    the ask is settled. A picked row (`detail_code`) is never asked about: the ranking
-    it came from already ran. Returns `(axis, line)`: the axis is what the reply records
-    as asked (`top_selling_asked`), so the next message is read as its answer only if it
-    answers that axis (`turn/apply._top_selling_waiting`, reviewer B2 on PR #1273)."""
-    if slot.get("detail_code"):
-        return None
-    if slot.get("rank_group") == "unclear":
-        return "group", TOP_SELLING_ASK_GROUP
-    basis_settled = slot.get("basis") in ("delivered", "ordered")
-    asked = ranking_ask.next_question(
-        metric_settled=slot.get("rank_by") in ("quantity", "amount"),
-        basis_settled=basis_settled,
-        basis_line=TOP_SELLING_ASK_BASIS,
-    )
-    if asked is not None and asked[0] == "metric" and not basis_settled:
-        # Chat fix PR-B S1b (owner, 16 Oct 2026): both open are asked in ONE numbered reply,
-        # recorded as asking both, so an answer settling either or both is read.
-        basis = ranking_ask.next_question(metric_settled=True, basis_settled=False, basis_line=TOP_SELLING_ASK_BASIS)
-        if basis is not None:
-            return TOP_SELLING_ASKED_BOTH, f"1. {asked[1]}\n2. {basis[1]}"
-    return asked
-
-
 def _top_selling_category_ids(
     slot: dict[str, Any], *, db: Any
 ) -> tuple[list[str], bool, list[str], list[str]]:
-    """The category filter a top selling ask carries, as ids: a picked category row's
-    exact code (`category_code`), else the category words the messages named
+    """The category filter a ranking's category word carries, as ids (the one definition,
+    read by `report_ask._word_filters`): an exact code (`category_code`), else the words
     (`category_words`). Returns `(ids, named, ambiguous, unknown)`. `ambiguous` is what
     ONE word matched when it matched several (category codes, or class labels): the lane
     asks which (reviewer S1, PR #1273), it never takes them all. `unknown` is every word
-    that matched nothing: the lane says so and keeps the ranking (owner retest, 27 Sep
-    2026), never a miss and never a silent widening said nowhere.
+    that matched nothing: the lane says so (owner retest, 27 Sep 2026), never a miss and
+    never a silent widening said nowhere.
 
     A word matching no category code or name goes through the catalogue's class
     vocabulary (`services.resolve_category_class`, the stock ask's own words): category
@@ -576,24 +513,6 @@ def _top_selling_category_ids(
             if category_id not in ids:
                 ids.append(category_id)
     return ids, True, [], unknown
-
-
-def _top_selling_ask_who(who: dict[str, Any]) -> str:
-    """Owner retest (27 Sep 2026): a word naming a customer AND a sales agent is asked
-    about in one short question; "1" takes the customer, "2" the agent."""
-    word = jsc.js_string(who.get("word") or "").strip()
-    customer = jsc.js_string(who.get("customer_label") or "").strip()
-    customer_part = f"customer {customer}" if customer else f"a customer named '{word}'"
-    agent = jsc.js_string(who.get("agent_label") or "").strip() or word
-    return (
-        f"Do you mean {customer_part} or sales agent {agent}? "
-        "Reply 1 for the customer, 2 for the sales agent."
-    )
-
-
-def _top_selling_ask_category(codes: list[str]) -> str:
-    """The category question: the codes only (owner, 26 Sep ~07:40Z, code only)."""
-    return f"Which category do you mean? Reply with one code: {', '.join(codes)}"
 
 
 def _nothing_live_of_kind(
@@ -669,12 +588,11 @@ def _ref_page_fragment(db: Any, ref_status: Any, carry: dict[str, Any]) -> dict[
 def _fixed_reply(
     text: str,
     *,
-    top_selling_asked: str | None = None,
     required_ask: dict[str, Any] | None = None,
     refused: bool = False,
 ) -> dict[str, Any]:
-    """One fixed line and nothing else, before any fetch: the refusal and the top
-    selling questions. `has_result: True` and no `outstanding_ask` keep it OFF the miss
+    """One fixed line and nothing else, before any fetch: a refusal or a question.
+    `has_result: True` and no `outstanding_ask` keep it OFF the miss
     lane (no escalate offer) and arm nothing; the carried `focus.status` is what makes
     the next message land on the same ask. `outstanding_report` skips the generic
     search-scope header. `refused` marks a refusal (grant, scope, audience): the envelope carries
@@ -693,9 +611,6 @@ def _fixed_reply(
         "requested_attributes": [],
         "keys_served": False,
         "outstanding_report": True,
-        # The top selling question this line asks, if any (`_top_selling_question`'s
-        # axis); `engine.py` records it on the slot for the next turn to read.
-        "top_selling_asked": top_selling_asked,
         # LOWSTOCK-FILTER-ASK: the `required_fields` slot this line leaves open, if any.
         "required_ask": required_ask,
     }
@@ -843,8 +758,9 @@ def sales_figure_decision(
 ) -> str:
     """`granted`, `salesperson_book` or `not_granted` for a sales figure ask. The ONE rule
     (`contact_asker.may_ask_sales_ranking`) applies only to a verdict that runs on the report-ask
-    tool (`sales_ranking`); every other sales figure ask (top selling, sales report, the sales
-    analysis tool) needs the grant, as before. The contact is the one the seam already resolves."""
+    tool (`sales_ranking`, the parser's `top_selling` label included); every other sales figure ask
+    (sales report, the sales analysis tool) needs the grant, as before. The contact is the one the
+    seam already resolves."""
     if granted:
         return "granted"
     if order_status == "top_selling" and isinstance(parse_output, dict):
@@ -1175,9 +1091,6 @@ def _fetch_semantic_input(
         # 'all dates'" - `broaden_axis` lives on the full parser output, not this
         # object's other twelve fields, so it has to be named explicitly here too.
         "broaden_axis": parse_output.get("broaden_axis"),
-        # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 8: the top selling ask's own
-        # axes (`turn_runtime.lane_parse_output` projects them off the focus).
-        "top_selling": parse_output.get("top_selling"),
         # PLAN-po-spo-warehouse-29sep S6: the PO/SPO sort axis (the parser's own, or the
         # focus's carried one projected by `turn_runtime.lane_parse_output`). Named here
         # for the same reason `group_by`/`top_n` are: `entity_ids_transformer` reads
@@ -2375,68 +2288,6 @@ def run_fetch(
         # resolution the outstanding override above uses, fixed once at this one
         # seam for both tools. --------------------------------------------------- #
         _resolve_report_product_and_location(parse_output, entities, semantic_input, db=db)
-    elif domain in contracts.ORDER_OR_SALES_DOMAINS and order_status_raw == "top_selling":
-        # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 5 (AC-1950): the ranking needs
-        # no subject, so no subject rule; never `tools[0]`. Gated on the sales report's
-        # own key (owner ruling 26 Sep: no new key), checked above for every sales
-        # figure status, before anything below can fetch.
-        tool_name = TOP_SELLING_TOOL
-        tool_item = {"name": tool_name, "_tool_pick": {"source": "top_selling_override"}}
-        slot = semantic_input.get("top_selling")
-        slot = slot if isinstance(slot, dict) else {}
-        if slot.get("dealer_refused"):
-            # Reviewer S2 (PR #1273): a linked dealer named a customer outside its own
-            # ledgers (`engine._top_selling_dealer_scope`). No picker, no fetch.
-            if trace is not None:
-                trace.add("top_selling", {"refused": "customer_not_permitted"})
-            return _fixed_reply(TOP_SELLING_REFUSED_OTHER_CUSTOMER, refused=True)
-        if slot.get("unclear"):
-            # Owner retest of round 4 (27 Sep 2026, R6/R8): a message inside a ranking
-            # the parser could not place is asked about in one short line, never sent to
-            # the out of scope lane or the customer service routing.
-            if trace is not None:
-                trace.add("top_selling", {"asked": "unclear"})
-            return _fixed_reply(TOP_SELLING_UNCLEAR)
-        who = slot.get("who")
-        if isinstance(who, dict):
-            if trace is not None:
-                trace.add("top_selling", {"asked": "who", "word": who.get("word")})
-            return _fixed_reply(_top_selling_ask_who(who), top_selling_asked="who")
-        question = _top_selling_question(slot)
-        if question is not None:
-            axis, line = question
-            if trace is not None:
-                trace.add("top_selling", {"asked": line})
-            # A word this message named that the ranking cannot narrow by is said above
-            # the question too, once (PR #1273 round 7: "by william" asked the metric and
-            # the unknown agent was never said).
-            unknown = [
-                f"I don't know '{word}' as a {kind}." if kind else f"I don't know '{word}'."
-                for kind, word in (slot.get("unknown") or [])
-                if jsc.truthy(word)
-            ]
-            return _fixed_reply("\n\n".join([" ".join(unknown), line]) if unknown else line, top_selling_asked=axis)
-        category_ids, _category_named, ambiguous, unknown = _top_selling_category_ids(slot, db=db)
-        if ambiguous:
-            if trace is not None:
-                trace.add("top_selling", {"asked": "category", "codes": ambiguous})
-            return _fixed_reply(_top_selling_ask_category(ambiguous), top_selling_asked="category")
-        # Owner retest (27 Sep 2026): a word the ranking cannot narrow by is said in one
-        # line above the ranking, which runs without it; the category word is then
-        # forgotten (`top_selling_drop`), the brand and agent words were never kept.
-        notes = [
-            f"I don't know '{word}' as a {kind}." if kind else f"I don't know '{word}'."
-            for kind, word in (slot.get("unknown") or [])
-            if jsc.truthy(word)
-        ]
-        notes += [f"I don't know '{word}' as a category." for word in unknown]
-        ceiling_note = top_selling_ceiling_note(slot)
-        if ceiling_note:
-            notes.append(ceiling_note)
-        if unknown:
-            semantic_input["top_selling_drop"] = ["category_words", "category_code"]
-        semantic_input["top_selling_notes"] = notes
-        semantic_input["top_selling_category_ids"] = category_ids
     elif domain == chat_report.DOMAIN and chat_report.is_chat_report(parse_output):
         # CA-3 (PLAN-chat-analytics-ca3-chat-dataset-10oct.md slice 5): what customers ask
         # the bot, `crm_report_ask` with `dataset=chat`. The reveal was checked above; every
@@ -2686,7 +2537,7 @@ def run_fetch(
     second_group = semantic_input.get("report_ask_second_group") if tool_name == report_ask.TOOL else None
     if second_group and isinstance(envelope, dict) and envelope.get("response"):
         # REPORT-SMART-L R3c: an item's detail is two runs of the same ask (by customer, then by month),
-        # shown together as the top selling detail was; the second never changes the first's envelope.
+        # shown together; the second never changes the first's envelope.
         try:
             raw2 = fetch_mod.call_tool(tool_name, {**args, "group_by": second_group}, mcp=_McpSeam(services.mcp_call))
             env2 = brand_guard.guard_result(
