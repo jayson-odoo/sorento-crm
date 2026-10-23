@@ -795,6 +795,18 @@ def _offer_ask_payload(parser: dict[str, Any] | None) -> dict[str, Any]:
     order_status = (parser or {}).get("order_status")
     if order_status:
         ask_payload["status"] = order_status
+    if order_status in ("sales_ranking", "top_selling"):
+        # REPORT-SMART-L R1 review: the ranking ask this pick interrupts (axis, count, measure, basis,
+        # direction, period), parser fields only, so the answered pick resumes it for the picked entity
+        # (`turn/apply._answer_pending` fills what the answering verdict leaves empty).
+        held = {
+            k: parser[k]
+            for k in ("group_by", "top_n", "measure", "basis", "rank_direction", "rank_by", "rank_group",
+                      "date_filter_start", "date_filter_end")
+            if parser.get(k) not in (None, "", [])
+        }
+        if held:
+            ask_payload["ranking_ask"] = held
     return ask_payload
 
 

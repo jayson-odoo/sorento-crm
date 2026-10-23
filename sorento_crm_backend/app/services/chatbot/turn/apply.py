@@ -947,6 +947,11 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
             asked_status = pending.payload.get("status")
             if isinstance(asked_status, str) and asked_status:
                 focus.status = asked_status
+            held_ask = pending.payload.get("ranking_ask")
+            if isinstance(held_ask, dict) and isinstance(verdict, dict):
+                for key, value in held_ask.items():
+                    if verdict.get(key) in (None, "", []):
+                        verdict[key] = value
         # #1262 slice 8 (F1b siblings), owner ruling 6: a SECOND ambiguous token
         # queued on THIS pick's own payload is asked NEXT, once this one is
         # answered - never the same options re-printed (`with_answered_positions`,

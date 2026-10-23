@@ -847,6 +847,9 @@ def sales_figure_decision(
     analysis tool) needs the grant, as before. The contact is the one the seam already resolves."""
     if granted:
         return "granted"
+    if order_status == "top_selling" and isinstance(parse_output, dict):
+        # REPORT-SMART-L R1: a top_selling verdict that skipped `by_capability` is the sales ranking it becomes.
+        parse_output, order_status = report_ask.from_top_selling(parse_output), report_ask.ASK_NAME
     if order_status != report_ask.ASK_NAME or db is None or not contact_respond_id or not str(contact_respond_id).strip():
         return "not_granted"
     from app.services import contact_asker
@@ -1945,6 +1948,12 @@ def run_fetch(
     # turns in the 7 Sep 2026 prod copy, the vector search this replaced chose the domain's
     # first-listed tool on every one of them.
     domain = parse_output.get("domain_hint") or (tier_gate or {}).get("tier_pick_domain")
+    order_status_raw = jsc.js_string(parse_output.get("order_status") or "").strip()
+    if order_status_raw == "top_selling" and domain in contracts.ORDER_OR_SALES_DOMAINS:
+        # REPORT-SMART-L R1 (safety net for a live session that never passed `by_capability`, converted before any grant gate reads its status): an item or
+        # category ranking is the sales ranking on the report engine, never `crm_top_selling_report`.
+        parse_output = report_ask.take_words(report_ask.from_top_selling(parse_output), "")
+        order_status_raw = report_ask.ASK_NAME
 
     # -- whole-domain grant gate (D6, PLAN-chatbot-last-purchase-cost.md) --------
     # A domain in `DOMAIN_GRANT_REQUIRED` is refused OUTRIGHT without the grant, before
@@ -2150,11 +2159,6 @@ def run_fetch(
     # is what still answers the refusal on that path, and is the SECOND line of
     # defence (mirrors `DOMAIN_GRANT_REQUIRED`'s own trace shape above) for a
     # re-entry path that calls `run_fetch` directly (this module's own tests).
-    if order_status_raw == "top_selling" and domain in contracts.ORDER_OR_SALES_DOMAINS:
-        # REPORT-SMART-L R1 (safety net for a live session that never passed `by_capability`): an item or
-        # category ranking is the sales ranking on the report engine, never `crm_top_selling_report`.
-        parse_output = report_ask.take_words(report_ask.from_top_selling(parse_output), "")
-        order_status_raw = report_ask.ASK_NAME
     if order_status_raw in contracts.SALES_FIGURE_STATUSES:
         access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
         granted_raw = access_ctx.get("attributes")
