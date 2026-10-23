@@ -520,7 +520,6 @@ class TaskOutcome:
     question: str | None = None
     question_domain: str | None = None
     parked_kinds: tuple[str, ...] = ()
-    closed_kinds: tuple[str, ...] = ()
     rules: tuple[str, ...] = ()
 
 
@@ -559,24 +558,20 @@ def run(
     # A decline is an answer too ("none of them", "start over"), to a STORED question: with nothing
     # stored, a "no" answers the task's own question and resume re-asks it.
     answers_pending = pending is not None and (decision_kind == "answer" or declined)
+    # A cancel that is no reset names an ask of its own ("batal, stock SRTZA102 instead"): that ask
+    # runs, and the question it cancelled is never resumed in its place (release gate #1829, N1).
+    cancelled = isinstance(oqa, dict) and oqa.get("mode") == "cancel"
+    if cancelled and pending is None:
+        # Crew ruling (N1): the cancel closes the stock check whose question it cancelled (the open
+        # one, with no other question stored: a stored one is what a cancel answers then); a
+        # parked check is no part of that question and stays as it was.
+        asked = next((t for t in tasks if t.kind == "stock_qty" and t.status == OPEN and t.slots), None)
+        if asked is not None:
+            tasks = tuple(t for t in tasks if t is not asked)
+            rules.append(f"task_closed_on_cancel_{asked.kind}")
 
-    # (1) Close or park on a topic reset. A reset aimed at a task's OWN domain ends
-    # it; one aimed elsewhere parks it, and the focus keeps the task through the wipe
-    # (`apply._focus_rules` empties every other axis).
-    if verdict.get("topic_reset") is True:
-        kept: list[Task] = []
-        closed: list[str] = []
-        for task in tasks:
-            aimed_here = not named_domain or task.domain == named_domain
-            if aimed_here or task.status == ANSWERED:
-                closed.append(task.kind)
-                rules.append(f"task_closed_on_reset_{task.kind}")
-                continue
-            kept.append(replace(task, status=PARKED))
-            rules.append(f"task_parked_{task.kind}")
-        return TaskOutcome(
-            tasks=tuple(kept), closed_kinds=tuple(closed), rules=tuple(rules)
-        )
+    # (1) A topic reset never reaches here with a task: `apply._reset` closed every one,
+    # whatever domain the reset names (release gate #1829).
 
     # Owner hand test 26 Sep, slice 4 (T14): a message that names a product the task
     # does NOT hold is a stock question of its own, never a fill. Claimed, the task's
@@ -686,6 +681,7 @@ def run(
             task.domain and task.domain == named_domain and _only_task_slots(task, verdict)
             and not isinstance(verdict.get("set_brand"), list)
             and not answers_pending
+            and not cancelled
         ):
             # (3) resume: the task's own topic, named again with nothing new. Only
             # what is still missing is asked; nothing is asked twice.

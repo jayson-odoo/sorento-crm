@@ -16,11 +16,11 @@ from uuid import UUID
 
 from app.services.chatbot.turn import question as question_mod
 from app.services.chatbot.turn import task as task_mod
-from app.services.chatbot.turn.decide import names_its_own_domain
+from app.services.chatbot.turn.decide import backward_reference, domain_in_message, names_its_own_domain
 from app.services.chatbot.turn.pending import ESCALATION_OFFER_KINDS
 from app.services.chatbot.turn.pending import ask as pending_ask
 from app.services.chatbot.turn.pending import is_roster, offered_companies, option_entities
-from app.services.chatbot.turn.state import Focus, State, Subject
+from app.services.chatbot.turn.state import KIND_FIELD_MAP, Focus, State, Subject
 
 OPS: tuple[str, ...] = (
     "keep", "new_subject", "set", "clear", "pick", "answer", "switch_domain", "close_question",
@@ -351,10 +351,27 @@ def _has_field(verdict: dict[str, Any], axis: str) -> bool:
 
 
 def names_own_subject(verdict: dict[str, Any]) -> bool:
-    """CHAT-STATE r8: this message names its own subject: a product or a brand it typed (a `set`
-    on either axis is backed by exactly such an entity, `_has_field`). The parser's echo of a
-    held row (`current_message` false) names nothing."""
-    return bool({"product", "brand"} & _named_kinds(verdict))
+    """CHAT-STATE r8: this message names its own subject: an entity it typed of a subject kind,
+    the kinds `state.KIND_FIELD_MAP` holds (product, customer, warehouse, brand; a `set` on any
+    of those axes is backed by exactly such an entity, `_has_field`). CHAT-PICK-QTY-STATE crew
+    ruling (a): a typed customer or warehouse is a subject as much as a product or a brand. Tier
+    is no subject kind. The parser's echo of a held row (`current_message` false) names nothing."""
+    return bool(KIND_FIELD_MAP.keys() & _named_kinds(verdict))
+
+
+def _switch_names_new_subject(verdict: dict[str, Any], ops: list[Any]) -> bool:
+    """Does this switch's typed subject start a new subject? A typed product or brand does,
+    exactly as CHAT-STATE r8 has it. A typed customer or warehouse (the rest of the subject
+    kinds) does only on an explicit switch (the `switch_domain` op or the message's own domain
+    word) that does not refer back: CHAT-PICK-QTY-STATE round 2 lead ruling, parity with the old
+    path's rows in `decide` (`domain_in_message` NEW_ASK, `domain_in_message_anaphora` and
+    `refines_standing_subject` REFINE)."""
+    if not names_own_subject(verdict):
+        return False
+    if {"product", "brand"} & _named_kinds(verdict):
+        return True
+    explicit = "switch_domain" in ops or domain_in_message(verdict) is True
+    return explicit and not backward_reference(verdict)
 
 
 def _message_domains(verdict: dict[str, Any], held_status: str | None = None) -> list[str]:
@@ -963,6 +980,24 @@ def stock_pick(pending: Any) -> bool:
     return pending is not None and bool((pending.payload or {}).get("stock_pick"))
 
 
+def _settles_the_typed_miss(
+    pending: Any, roster_picks: list[int], verdict: dict[str, Any], ops: list[Any]
+) -> bool:
+    """Does this turn answer the stored question with a product option, the way
+    `apply._answer_pending` puts that option in place of the held products: a pick whose first
+    option is a product (`_set_kind_field` with the option's kind; a did-you-mean or which-one
+    roster, staff or dealer), or a yes over a stock pick's one option (`stock_pick_yes`; a yes
+    over a staff roster accepts its escalation offer, it picks nothing)?"""
+    if pending is None:
+        return False
+    options = [o for o in pending.options or [] if isinstance(o, dict)]
+    matched = [o for o in options if o.get("position") in roster_picks]
+    if matched:
+        return matched[0].get("entity_type") == "product"
+    said_yes = "answer" in ops and (verdict.get(question_mod.ANSWER_KEY) or {}).get("mode") == "yes"
+    return said_yes and stock_pick(pending) and len(options) == 1 and options[0].get("entity_type") == "product"
+
+
 def stock_task_is_the_current_question(state: State, task: Any, verdict: dict[str, Any]) -> bool:
     """Issue #1352, the chained-question rule (owner ruling, 29 Sep 2026): the engine
     judges a message against the CURRENT question first, and earlier rosters stay stored
@@ -1339,6 +1374,13 @@ def apply_changes(
     Returns the new `State` (with `state_led` set) and the verdict with `state_changes`
     popped; an invalid change returns the inputs unchanged with the reasons in the log.
     `log["slots"]` is the stance stated per held slot, `{axis: op}`."""
+    from app.services.chatbot.turn.apply import entities_a_reset_keeps, is_reset
+
+    if is_reset(verdict, state):
+        # Release gate #1829 (B1): the reset is read off the parser's own verdict before any op
+        # runs (an op mix that answers nothing would strip a cancel below), so the applier and
+        # `apply` read one reset, and nothing the reset drops reaches the ops.
+        verdict = {**verdict, "topic_reset": True, "entities": entities_a_reset_keeps(verdict, state)}
     changes = verdict.get("state_changes")
     shown = view(state, open_question)
     log: dict[str, Any] = {
@@ -1540,9 +1582,12 @@ def apply_changes(
     # A bare switch keeps the held subject whole (only the domain-bound axes drop, below). A switch
     # never rebuilds when this turn answers the open question (a pick of its option, an `answer`):
     # a pick may carry the last turn's domain and the option's own code (r8 review B2); only the
-    # explicit `new_subject` op still rebuilds and closes it.
+    # explicit `new_subject` op still rebuilds and closes it. A typed customer or warehouse
+    # rebuilds only on an explicit switch that does not refer back (`_switch_names_new_subject`).
     answers_the_question = bool(roster_picks) or slot_pick is not None or "answer" in ops
-    new_subject = "new_subject" in ops or (switching and not answers_the_question and names_own_subject(verdict))
+    new_subject = "new_subject" in ops or (
+        switching and not answers_the_question and _switch_names_new_subject(verdict, ops)
+    )
     if new_subject:
         window = focus.date_window if NEW_SUBJECT_KEEPS_PERIOD else None
         focus = Focus(
@@ -1605,6 +1650,10 @@ def apply_changes(
             out, open_question=open_question if (open_question or {}).get("about") else None,
             positions_read_elsewhere=positions_read_elsewhere, focus_has_product=False
         )
+        if question_mod.is_the_stock_question(open_question) and (verdict.get(question_mod.ANSWER_KEY) or {}).get("mode") == "cancel":
+            # The parser's own cancel of the stock question rides on whatever the ops did beside
+            # it, so `apply` closes that check and never resumes it in the ask's place (#1829).
+            out[question_mod.ANSWER_KEY] = verdict.get(question_mod.ANSWER_KEY)
     if left_to_apply and not roster_picks:
         # The position stays in the parse exactly as the parser read it: `apply` turns it into
         # the quantity (`_bare_position_is_the_quantity`), as it does off the state path.
@@ -1650,9 +1699,11 @@ def apply_changes(
             if open_question.get("kind") == question_mod.QUANTITIES and set(ops) == {"close_question"} and not names_own:
                 out[question_mod.ANSWER_KEY] = {**question_mod.NO_ANSWER, "mode": "cancel"}
         elif open_question is not None and (verdict.get(question_mod.ANSWER_KEY) or {}).get("mode") in ("no", "cancel"):
-            # The parser declared a decline of the stored question: its own arm answers it, as it
-            # does off the state path ("none of them" over a did-you-mean), so the question stays
-            # for that arm and the declared answer is kept.
+            # The parser declared an answer to the stored question that closes it: a "no" is its
+            # decline, which its own arm answers as off the state path ("none of them" over a
+            # did-you-mean); a cancel that names nothing is a reset (`apply.is_reset`, read at the
+            # top), which `apply` closes unanswered. Either way the question stays for `apply`
+            # and the declared answer is kept.
             out[question_mod.ANSWER_KEY] = verdict.get(question_mod.ANSWER_KEY)
             if _same_list([i for i in (_list_item(r) for r in focus.last_list or [] if isinstance(r, dict)) if i], open_question):
                 # The declined question's options WERE the stored list: it goes with them.
@@ -1716,6 +1767,18 @@ def apply_changes(
             option = next((o for o in (state.pending.options if state.pending else []) if o.get("position") == position), None)
             if option and option.get("entity_type"):
                 picked_kinds.add(str(option["entity_type"]))
+    if _settles_the_typed_miss(state.pending, roster_picks, verdict, ops):
+        # A product option answers the stored question (a pick, or a yes over a stock pick's one
+        # option): `apply._answer_pending` puts the option in place of the held products, so a
+        # held word that never resolved (the typed miss the did-you-mean was asked about) is
+        # settled by it and retired here, before the Subject is built: the old path's fetch, read
+        # off the focus `apply` leaves, never hands it over. The same rows `apply`'s stock pick
+        # decline arm retires when the dealer says none of them. Held as a token, it went to the
+        # resolver again and its miss was printed beside the answer.
+        focus.products = [
+            row for row in focus.products
+            if not (isinstance(row, dict) and not (row.get("uuid") or row.get("uuids")))
+        ]
     if picked_kinds:
         # A pick consumes the name it points at: a typed entity of the picked kind that no
         # `set` claims is not a second subject.

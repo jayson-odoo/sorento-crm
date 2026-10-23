@@ -1,9 +1,13 @@
 # PLAN: CHAT-PICK-QTY-STATE - the state path keeps the old path's pick / quantity / clear safeguards (parity)
 
-**Status:** Review (22 Oct 2026). #1825 is the chat RE-RELEASE branch (crew decision 22 Oct): main d400da75db +
-re-applied #1823 (9e23244cc6, the base of crew/explore-1022) + this lane's fixes; both prompt paths are gates (v63 old
-path, v92 state path). The prod-only focus_diff fix ships separately as #1827 off plain main. Track: SMALL FIX. Red-first,
-kill-proof per slice, one reviewer. Backups: crew/chat-pick-qty-state-pre1826 (on #1823), -reverted-base (on main).
+**Status:** Hand test (23 Oct 2026). The re-release shipped as #1829 (squash a24e1ae609 on main, with the reset seam
+rounds 1-12). #1825 is now the NEXT round on top of main: P5/P8 (find.py / candidates.py), rounds 13-14 ('clear all' over
+an open tier_pick / product_pick roster is a reset), Q1 near-code did-you-mean with the parser pick first (owner ruling (a),
+crew (d), widened to a pick the alternatives cap cut when the raw did not resolve), and the carried product across a domain
+switch (a switch that types its own subject drops the held product; a typed customer / warehouse only on an explicit switch
+that does not refer back). Reasoning per round: #1825 crew-notes. Both prompt paths are gates (v63 old path, v92 state
+path). EVAL-BENCH gate PASS on d21211b82c; owner hand test on the combined :3105 build. Track: M, lead pattern (tester red,
+coder, Opus reviewer per round). Backups: crew/chat-pick-qty-state-pre1826 (on #1823), -reverted-base (on main).
 **UAC:** `chat-pick-qty-state-acceptance-criteria.md` (alongside). Evidence (local only, never committed): crew incident
 file `prod-chat-1022-pick-qty.md` (owner's prod turn table, 22 Oct 00:00 MYT).
 
@@ -105,6 +109,14 @@ Out of scope: discontinued candidates in did-you-mean (bug 5 of the incident), t
    Old-path gaps NOT changed: v63 stores no numbered data list (tail.py ~188, state path only), so a row number over a
    multi-product answer cannot pick on v63; v63's file-kind question has no numbered kinds without closed lists
    (engine.py ~7744).
+7. Round after the freeze (dc66a1646c, owner Q3: code only, no prompt lines): a kind-less fit filter that links nothing
+   is no fit ask when the parser marked it a file ask (`fits.file_word` filled), lanes/business/find.py, so "photo of
+   <code> basin" sends the photo and "what goes with <unlinked code>" keeps its no-link line (red f845ae4eba +
+   32a4d4baa9 / 31e341047a, fix a81f8a16a9 + 94fe505694); every exact existing code keeps its candidate line past the
+   12-word cap, at most 60 lines in all, head/candidates.py `shown_entries` / CAP_CODE_LINES (red bc5cd9d683 +
+   166da27902 + 31e341047a, fix f8d0e91f23 + 4769ccf32a). Dropped with reasons on #1825: P2 (owner Q2 keeps the recap),
+   P3 / P4 (prompt only: v92 also emits `entity_op clear` + `broaden_axis all` for "show me everything"), P7 (both
+   halves in the shared resolver probes). P9 did not reproduce. P1 (near-code boundary) waits for owner Q1.
 
 ## Coordination
 REPORT-SMART-L (#1816) and CHAT-CLOSED-LISTS-L (#1755) touch turn/apply.py, chat_state.py, task.py; keep the diff to

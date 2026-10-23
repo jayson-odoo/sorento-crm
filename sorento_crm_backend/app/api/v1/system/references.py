@@ -3276,6 +3276,7 @@ def _narrowed_payload(db: Session, payload: "ResolveReferenceRequest") -> "Resol
         return payload
     from app.services.product_code_family import narrow_code_tokens
 
+    typed = payload
     narrowed = narrow_code_tokens(
         db, query=payload.query or "", tokens=payload.tokens, allowed_types=payload.allowed_entity_types
     )
@@ -3315,7 +3316,80 @@ def _narrowed_payload(db: Session, payload: "ResolveReferenceRequest") -> "Resol
                     "entity_pins": pins,
                 }
             )
-    return payload
+    return _variants_or(typed, payload)
+
+
+def _picked_variants(typed_tokens: list[str], tokens: list[str] | None) -> list[str]:
+    """The variant codes a narrowing picked: tokens it added that are not a typed token's
+    own code cut short. `narrow_code_tokens` also swaps a folded "Srtwc7604ptrap" whose
+    words picked nothing for its bare code, and that bare code is the typed family, not a
+    variant (reviewer on SPEC-VARIANT-OR)."""
+    from app.services.product_code_family import _fold
+
+    typed_folds = [_fold(t) for t in typed_tokens]
+    return [
+        t
+        for t in tokens or []
+        if t not in typed_tokens and not any(f.startswith(_fold(t)) for f in typed_folds)
+    ]
+
+
+def _variants_or(typed: "ResolveReferenceRequest", payload: "ResolveReferenceRequest") -> "ResolveReferenceRequest":
+    """`payload` in OR mode when the narrowing left two or more PRODUCT codes, at least one
+    of them a variant it picked; otherwise `payload` as it is.
+
+    SPEC-VARIANT-OR (owner hand test, 23 Oct 2026, turn c4cffa1a "SRTWC8354 s trap 250MM"):
+    the narrowing picked SRTWC8354-SH and SRTWC8354-SH-UF, and AND over the two codes
+    intersected their families, answering the -SH-UF* rows (P traps included). The gate's
+    two-codes rule (`resolve_gate.resolve_entity_body`: one product cannot be two codes)
+    runs before the narrowing and never sees the variants, so it is applied here to what
+    the narrowing produced. A token the caller typed as another kind ("for HANLIM") keeps
+    AND, as it does there."""
+    if (payload.match_mode or "").strip().lower() != "and" or not payload.tokens or len(payload.tokens) < 2:
+        return payload
+    typed_tokens = list(typed.tokens or [])
+    if not _picked_variants(typed_tokens, payload.tokens):
+        return payload
+    kinds = (
+        list(typed.allowed_entity_types)
+        if typed.allowed_entity_types and len(typed.allowed_entity_types) == len(typed_tokens)
+        else None
+    )
+
+    def is_product(token: str) -> bool:
+        if token not in typed_tokens:
+            return True  # a code a narrowing put in
+        return kinds is not None and _canonical_entity_type(kinds[typed_tokens.index(token)] or "") == "product"
+
+    if not all(is_product(t) for t in payload.tokens):
+        return payload
+    return payload.model_copy(update={"match_mode": "or"})
+
+
+def _keep_exact_variants(result: dict[str, Any], picked: list[str]) -> None:
+    """SPEC-VARIANT-OR: a variant code the narrowing picked IS the product, so its token
+    keeps its own exact-code match only, never the longer codes its prefix probe also
+    finds (the -SH token would otherwise answer every -SH-* row). A token with no exact
+    match is left as the resolver answered it; two exact rows (one code in two companies)
+    stay an ambiguous token, the resolver's own flags."""
+    from app.services.product_code_family import _fold
+
+    wanted = {_fold(t) for t in picked}
+    for resolution in result.get("resolutions") or []:
+        if not isinstance(resolution, dict) or _fold(resolution.get("token")) not in wanted:
+            continue
+        token = _fold(resolution.get("token"))
+        exact = [
+            m
+            for m in resolution.get("matches") or []
+            if isinstance(m, dict)
+            and m.get("entity_type") == "product"
+            and _fold(m.get("canonical_code") or m.get("code")) == token
+        ]
+        if exact:
+            resolution["matches"] = exact
+            resolution["ambiguous"] = len(exact) > 1
+            resolution["resolved"] = len(exact) == 1
 
 
 @router.post("/resolve")
@@ -3325,7 +3399,13 @@ def resolve_reference_post(
     db: Session = Depends(get_db),
 ):
     """POST variant for external callers that send JSON body (e.g. n8n HTTP node)."""
+    typed_tokens = list(payload.tokens or [])
     payload = _narrowed_payload(db, payload)
+    picked_variants = (
+        _picked_variants(typed_tokens, payload.tokens)
+        if (payload.match_mode or "").strip().lower() == "or"
+        else []
+    )
     # A contact's packing list regions (unresolved = West) bound the shipments it can be
     # shown; no contact_id = no filter.
     regions = None
@@ -3376,6 +3456,8 @@ def resolve_reference_post(
             code="ENTITY_PIN_MISMATCH",
         ) from exc
 
+    if picked_variants:
+        _keep_exact_variants(result, picked_variants)
     if payload.exact_match:
         _drop_word_neighbours(result)
 

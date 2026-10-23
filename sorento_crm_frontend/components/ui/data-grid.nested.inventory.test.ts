@@ -125,7 +125,7 @@ const EXPANDED_CONTENT_SITES = new Map<string, string>([
 
 /**
  * A grid-bearing component rendered inside another grid's JSX - the dialog or
- * popover a cell opens. Two of the five are real nesting; the other three are a
+ * popover a cell opens. Three of the six are real nesting; the other three are a
  * list's own table split into its own file, which renders `<DataGridTable />`
  * inside the PARENT's provider and is therefore the same grid, not a second one.
  */
@@ -149,6 +149,10 @@ const IN_GRID_SUBTREE_SITES = new Map<string, string>([
   [
     'app/(protected)/scm/reorder/components/PlanLinesGrid.tsx:1333',
     'NESTED GRID: PlanRowDialog opens inside the plan grid and holds DrillTable/OnHandTable/StockDocumentsPanel. Every one already passes scrollerMaxHeight={false}; the context default now agrees with them',
+  ],
+  [
+    'app/(protected)/master-data-management/products/components/ProductsList.tsx:1092',
+    'NESTED GRID: BarcodeImportDialog (#1811, BARCODE-IMPORT) is rendered inside the products DataGrid and its preview step holds a DataGrid of the parsed rows. It names scrollerMaxHeight: \'20rem\', so the nested default leaves it alone and it keeps its sticky header inside that window, like the ComplaintFulfilmentOrdersSection items popover',
   ],
 ]);
 
@@ -179,7 +183,7 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
     'Reconciliation lines in a sheet body. Already scrollerMaxHeight={false}',
   ],
   [
-    'app/(protected)/project-sales/fulfilment-planning/components/PileQueueDialog.tsx:289',
+    'app/(protected)/project-sales/fulfilment-planning/components/PileQueueDialog.tsx:291',
     'Pile queue in a dialog body. Already scrollerMaxHeight={false}',
   ],
   [

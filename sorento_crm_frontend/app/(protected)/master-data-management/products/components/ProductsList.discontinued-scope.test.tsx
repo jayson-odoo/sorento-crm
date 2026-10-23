@@ -30,6 +30,8 @@ const nav = vi.hoisted(() => ({
   params: new URLSearchParams(),
   router: { replace: vi.fn(), push: vi.fn() },
 }));
+// The Import barcodes action is gated on master_data.products.edit.
+vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => true }));
 vi.mock('next/navigation', () => ({
   // A STABLE router object, matching ProductsList.discontinued.test.tsx: a new
   // object literal on every call makes the reload-clean effect's dependency

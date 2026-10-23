@@ -34,6 +34,7 @@ from typing import Any, Literal
 
 from app.services.chatbot import jsc, label_catalog, quick_reply_guard
 from app.services.chatbot.composers import misses as composers_misses
+from app.services.chatbot.head.grounding import NEAR_PICK_KEY
 from app.services.chatbot.lanes.business.fetch import DATE_PARAMS, space_id_or_default
 from app.services.ledger_family import customer_group_of, customer_header_words
 from app.services.product_spec_registry import SPEC_ACRONYMS
@@ -4869,8 +4870,15 @@ def miss_token_candidates(res: Any, allowed_types: list | None) -> list:
     NAME, debtor CODE and a hash canonical code), so code-keyed dedup rendered one
     customer as three "codes"; they key on the display name instead, and the resolver's
     similarity order keeps the name-coded row first.
+
+    Q1 (owner ruling (a), 23 Oct 2026): a typed code the parser corrected leads with the
+    parser's pick (`NEAR_PICK_KEY`, set by `resolve_gate.pick_near_code_first`), ahead of
+    any non-exact match; the pick's own row further down is then deduped.
     """
     acc: list = []
+    near_pick = jsc.get(res, NEAR_PICK_KEY)
+    if isinstance(near_pick, dict):
+        acc.append(near_pick)
     matches = jsc.get(res, "matches")
     if isinstance(matches, list):
         acc.extend(matches)

@@ -1424,6 +1424,7 @@ class FulfilmentBoardService:
                     "sales_order_id": row.get("sales_order_id"),
                     "so_number": row["so_number"],
                     "line_no": row.get("line_no"),
+                    "so_line_no": row.get("so_line_no"),
                     "customer_name": names.get(row.get("customer_id") or ""),
                     "qty": qty_text(_dec(row["open_qty"])),
                     "required_date": row["required_date"],
@@ -4478,8 +4479,9 @@ class FulfilmentBoardService:
                 f"Nothing free{where} by the delivery date, so the quantity is bought."
             )
         elif taker.sales_order_id == row.sales_order_id:
+            taker_no = taker.so_line_no if taker.so_line_no is not None else taker.line_no
             reason = (
-                f"An earlier line of this sales order (line {taker.line_no}) took the free "
+                f"An earlier line of this sales order (line {taker_no}) took the free "
                 f"stock{where}, so the residual is bought."
             )
         elif taker.rank_score > row.rank_score:

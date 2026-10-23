@@ -71,6 +71,24 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+describe('ReserveAddDialog: the title names the SO line (SO-LINE-NUMBERS AC-2)', () => {
+  it('prints the SO line number, not the planning order\'s own', () => {
+    render(
+      <ReserveAddDialog
+        lineNo={11}
+        soLineNo={224}
+        itemCode="SRTWB242"
+        locations={[]}
+        openRemainder="24"
+        onDone={onDone}
+        onAdd={onAdd}
+      />,
+    );
+
+    expect(screen.getByText('Add a reserve location for line 224')).toBeInTheDocument();
+  });
+});
+
 describe('ReserveAddDialog: the candidate order (R-A, AC-3.1)', () => {
   it('sorts the site pool first, then own, then group - whatever order the caller handed them in', () => {
     renderDialog([OWN, GROUP, SITE_POOL]);

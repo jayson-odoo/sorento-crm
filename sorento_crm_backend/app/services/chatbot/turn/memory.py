@@ -393,7 +393,7 @@ def history_items(
     (`episode_digest`), so a list built from these can never quote a stale number.
 
     `include_open=False` is the closed episodes alone: what "Last time" means, since the
-    open conversation is today's, never the time before."""
+    open conversation is today's, never an earlier one of its own."""
     items: list[str] = []
     if include_open and level in _OPEN_LEVELS:
         open_rows = list(

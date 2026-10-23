@@ -91,6 +91,8 @@ from app.services.chatbot.turn import tail as turn_tail
 from app.services.chatbot.turn import task as turn_task
 from app.services.chatbot.turn.apply import apply as _apply_state
 from app.services.chatbot.turn.apply import is_product_shaped_entity
+from app.services.chatbot.turn.apply import RESET_KEEPS
+from app.services.chatbot.turn.decide import domain_in_message, names_its_own_domain
 from app.services.chatbot.turn.policy import load_policy
 from app.services.chatbot.turn.route import route as turn_route
 # Module level and by name, the same shape `app/api/v1/external/media.py` uses for its own
@@ -3484,6 +3486,392 @@ def _clarifier_memory_slice(memory_intake: dict[str, Any]) -> str:
             lines = []
 
 
+def _names_a_domain(verdict: dict[str, Any]) -> bool:
+    """Release gate #1829, round 8: did THIS message name a domain of its own
+    (`decide.names_its_own_domain`)? Not beside a widening to everything (`broaden_axis` all):
+    widening keeps the held `domain_hint` (parser R-P3-09), so that domain is the held one, the
+    shape "clear all" itself carried at contact 01 (domain inventory, `domain_in_message`). The
+    `new_subject` signal's reading; the stated-beside check reads `_states_a_domain`."""
+    return names_its_own_domain(verdict) and verdict.get("broaden_axis") != "all"
+
+
+def _states_a_domain(verdict: dict[str, Any], held_domains: tuple[str, ...]) -> bool:
+    """Release gate #1829, round 9 (reviewer S2, captain ruling option B): a domain stated beside
+    a reset. Beside a widening to everything it is the held one only when the session already
+    holds it (contact 01: inventory over an inventory session); "never mind, all promotions" over
+    a stock session names promotion of its own. Round 10: `scope_intent` broaden is the same
+    widening (a reset beside it is "clear all", crew audit 22 Oct)."""
+    held_widening = (
+        (verdict.get("broaden_axis") == "all" or verdict.get("scope_intent") == "broaden")
+        and not verdict.get("asks")
+        and verdict.get("domain_hint") in held_domains
+    )
+    return names_its_own_domain(verdict) and not held_widening
+
+
+def _all_broaden_over_nothing_open(verdict: dict[str, Any], state: Any) -> bool:
+    """Release gate #1829, round 12 (EVAL-BENCH contacts 01, 02, 30; captain ruling option A): an
+    all-broaden (`entity_op` clear or `broaden_axis` all) with `scope_intent` null and no domain or
+    asks of its own (any `domain_hint`, so an idea's ideate stays out), over a session with no open
+    question, no task of any status and no stored list, has nothing to widen: it is "clear all". A
+    held subject is allowed (the trace's turns held products and the inventory domain). Whether the
+    message states anything else is the seam's own `_stated_beside_a_reset`. Round 12b (reviewer
+    B1 / S1): a question the focus holds (`chat_state._focus_questions`: a set clarify, the count
+    question, the other-brands offer) or a set being listed is open too,
+    and a family widening (`broaden_to` other than all, `family` true) is stated; round 12c:
+    `family` false is the exact code alone, no widening."""
+    if state is None:
+        return False
+    focus = state.focus
+    return (
+        (verdict.get("entity_op") == "clear" or verdict.get("broaden_axis") == "all")
+        and not verdict.get("scope_intent")
+        and verdict.get("broaden_to") in (None, "", "all")
+        and verdict.get("family") is not True
+        and not chat_state._message_domains(verdict)
+        and state.pending is None
+        and not focus.tasks
+        and not focus.last_list
+        and not focus.required_ask
+        and not chat_state._focus_questions(focus)
+        and not focus.set_page
+    )
+
+
+#: Release gate #1829, round 14: the rosters whose v63 "all" answers are measured to carry a pick
+#: (the tier roster; the product roster, did-you-mean and stock picks).
+#: Extend a kind only once v63 is measured giving its real 'all' answers a pick.
+RESET_OVER_PICKER_KINDS: frozenset[str] = frozenset({"tier_pick", "product_pick"})
+
+
+def _clear_over_an_open_picker(verdict: dict[str, Any], answer: dict[str, Any], state: Any) -> bool:
+    """Release gate #1829, round 13 (EVAL-BENCH contacts 09 / 10, crew ruling option b): `entity_op`
+    clear that gives NO answer to the open roster (no pick, position or item; mode null or cancel)
+    is "clear all". Measured live (v63, 22 Oct): a real answer to a picker ("all", "semua", "all of
+    them", "1 and 2") always carries its picks. The roster's own domain may ride along when
+    `domain_in_message` is not true (contact 10); a held subject is allowed. Round 14: only the rosters
+    `RESET_OVER_PICKER_KINDS` names, the ones measured on v63. A question the focus
+    holds (round 12b) is no roster here. Whether the message states anything else is the seam's
+    own `_stated_beside_a_reset`."""
+    pending = getattr(state, "pending", None)
+    if pending is None or pending.kind not in RESET_OVER_PICKER_KINDS or not pending.options:
+        return False
+    if verdict.get("entity_op") != "clear":
+        return False
+    if answer.get("picked") or answer.get("items") or verdict.get("reference_positions"):
+        return False
+    if answer.get("mode") not in (None, "cancel"):
+        return False
+    asked_for = pending.payload.get("domains") or ([pending.payload["domain"]] if pending.payload.get("domain") else [])
+    named = chat_state._message_domains(verdict)
+    if named and (domain_in_message(verdict) is True or not set(named) <= set(asked_for)):
+        return False
+    return not chat_state._focus_questions(state.focus) and not state.focus.set_page
+
+
+def _reset_signals(verdict: dict[str, Any], parser_raw: Any = None, state: Any = None) -> list[str]:
+    """Release gate #1829, rounds 7-8 (crew rulings, design note 6335681391): the parser fields
+    that mark a reset, one per line, so one can be dropped with a one-line change. Parser fields
+    only. The cancel is read off the parser's own emission: with nothing open the phantom drop
+    (`turn_question.without_phantom_answer`) has already taken it off the verdict. `entity_op`
+    clear (the "all" / broaden signal) and a `clear` op (one part of the subject) are no reset."""
+    said = parser_raw if isinstance(parser_raw, dict) else verdict
+    answer = said.get("open_question_answer") if isinstance(said.get("open_question_answer"), dict) else {}
+    ops = {c.get("op") for c in verdict.get("state_changes") or [] if isinstance(c, dict)}
+    signals = {
+        "topic_reset": verdict.get("topic_reset") is True,
+        "cancel": answer.get("mode") == "cancel",
+        # The chat_state mirror rule: a new subject over which nothing carries IS a reset.
+        "new_subject_naming_no_domain": "new_subject" in ops and not _names_a_domain(verdict),
+        "all_broaden_over_nothing_open": _all_broaden_over_nothing_open(verdict, state),
+        "clear_over_an_open_picker": _clear_over_an_open_picker(verdict, answer, state),
+    }
+    return [name for name, on in signals.items() if on]
+
+
+#: The message types a reset may carry and still state nothing: the casual kinds and a plain
+#: business query. Any other (a hand-off, a history question, an idea) is an ask of its own.
+_RESET_MESSAGE_TYPES = frozenset({None, "", "business_query", "casual", "clarification", "confirmation", "unknown", "low_signal"})
+
+
+def _stated_beside_a_reset(
+    verdict: dict[str, Any], held_domains: tuple[str, ...] = (), signals: tuple[str, ...] = ()
+) -> list[str]:
+    """What the message states of its own, one per line: anything here makes a reset signal
+    the start of an ask, which keeps today's path. A carried echo (`current_message` false), a
+    carried domain and a plain business query state nothing; `broaden_axis` all is the "all" of
+    "clear all" itself (every measured v63 "clear all" carries it), a widening to everything is
+    `scope_intent` broaden when the parser read no `topic_reset` and no cancel (rounds 10-11).
+    `signals` are `_reset_signals`' own names for this verdict."""
+    answer = verdict.get("open_question_answer") if isinstance(verdict.get("open_question_answer"), dict) else {}
+    low_stock = verdict.get("low_stock") if isinstance(verdict.get("low_stock"), dict) else {}
+    ops = {c.get("op") for c in verdict.get("state_changes") or [] if isinstance(c, dict)}
+    stated = {
+        "entity": any(isinstance(e, dict) and e.get("current_message") is not False for e in verdict.get("entities") or []),
+        "status": bool(verdict.get("status") or verdict.get("order_status")),
+        "document": bool(verdict.get("document")),
+        "sales_channel": bool(verdict.get("sales_channel")),
+        "low_stock": any(v not in (None, "", []) for v in low_stock.values()),
+        "date_window": bool(verdict.get("date_mode") or verdict.get("date_filter_start") or verdict.get("date_filter_end")),
+        "attributes": bool(verdict.get("requested_attributes")),
+        "quantity": verdict.get("demand_qty") is not None,
+        "positions": bool(verdict.get("reference_positions")),
+        "picked": bool(answer.get("picked")),
+        "item_qty": any(isinstance(i, dict) and i.get("qty") is not None for i in answer.get("items") or []),
+        "qty_for_all": answer.get("qty_for_all") is not None,
+        "domain": _states_a_domain(verdict, held_domains),
+        "top_n": verdict.get("top_n") is not None,
+        "rank_by": bool(verdict.get("rank_by")),
+        "basis": bool(verdict.get("basis")),
+        "sort_by": bool(verdict.get("sort_by")),
+        "group_by": bool(verdict.get("group_by")),
+        "broaden_axis": verdict.get("broaden_axis") not in (None, "", "all"),
+        # Rounds 10-11: a reset wins over broaden, `topic_reset` or a declared cancel (read as
+        # `_reset_signals` reads it); without either a broaden ("show me everything") is an ask.
+        "scope_intent": bool(verdict.get("scope_intent"))
+        and not ({"topic_reset", "cancel"} & set(signals) and verdict.get("scope_intent") == "broaden"),
+        "query_brands": bool(verdict.get("query_brands")),
+        "set_op": "set" in ops,
+        "message_type": verdict.get("message_type") not in _RESET_MESSAGE_TYPES,
+    }
+    return [name for name, on in stated.items() if on]
+
+
+def _close_the_episode(
+    db: Session,
+    envelope: Envelope,
+    *,
+    verdict: dict[str, Any],
+    this_domain: str | None,
+    dry_run: bool,
+    contact_respond_id: str,
+    turn_id: str,
+    remembered_before: dict[str, Any],
+) -> None:
+    """The one memory episode write of a turn, for the routed path and the reset seam alike
+    (release gate #1829, round 8: the seam answers before routing, and a reset still closes
+    the topic it ended). `this_domain` is the domain the turn's plan acted on (None on the
+    seam, which plans nothing). Stashes `_episode_written` and `_facts_tallied` on
+    `remembered_before` for the turn's memory trace."""
+    contact_pk = remembered_before.get("_contact_pk")
+    # AC-1546 / chatbot memory lane A (contract section 3): the episode belongs to
+    # the topic that just CLOSED, and a topic closes because the customer changed
+    # subject - not because this turn's lane went on to answer. Written HERE, where
+    # the reset is decided, so a turn whose fetch failed or whose lane refused
+    # still remembers the topic it ended. Once per turn, never mid-topic.
+    #
+    # Human intervention closes nothing (Q2 ruling): the topic is whatever it was
+    # when the bot resumes. D14's third named exception (Q15) is the one write a
+    # dry run may make: a CONSOLE turn writes an `is_test=true` frame of its own
+    # world; every other dry run (clone/replay/harness) writes nothing.
+    is_console_dry_run = dry_run and envelope.ingress == "console"
+    written_frame = None
+    # Fix lane round 3 (R1, owner hand test 28 Sep 2026): the parser's
+    # `topic_reset` alone never closed "check stock X" then "incoming X" (same
+    # product, so it reads as a follow-up). A turn whose plan names a different
+    # domain from the open conversation's newest one is the other switch
+    # (`episode_digest.close_trigger`, the backfill's same rule).
+    may_write_episode = (not dry_run or is_console_dry_run) and not _is_human_intervened(envelope)
+    open_domain = None
+    if may_write_episode and this_domain and verdict.get("topic_reset") is not True:
+        try:
+            open_domain = memory_mod.open_topic_domain(
+                db,
+                contact_respond_id=contact_respond_id,
+                is_test=dry_run,
+                exclude_turn_id=turn_id,
+            )
+        except Exception:  # noqa: BLE001 - a lost episode is never a lost turn
+            logger.warning("chatbot: the open topic read did not run", exc_info=True)
+    close_trigger = episode_digest_mod.close_trigger(verdict, this_domain, open_domain)
+    if close_trigger is not None and may_write_episode:
+        try:
+            written_frame = memory_mod.write_episode_for_reset(
+                db,
+                contact_respond_id=contact_respond_id,
+                is_test=dry_run,
+                resetting_turn_id=turn_id,
+            )
+        except Exception:  # noqa: BLE001 - a lost episode is never a lost turn
+            logger.warning("chatbot: the episode write did not run", exc_info=True)
+    # Stashed on the shared `before` box (the same object `_run_answer` and
+    # `_run_entities_only_arm` already receive as `remembered_before`) so
+    # `_record_memory_trace`, several call frames later, can report what THIS turn
+    # closed without a new parameter threaded through every arm between here and
+    # there.
+    remembered_before["_episode_written"] = (
+        {
+            "id": written_frame.id,
+            "turn_count": len(written_frame.turn_ids or []),
+            "close_reason": written_frame.close_reason,
+            "summary": written_frame.summary,
+            "trigger": close_trigger,
+            "domain": getattr(written_frame, "domain", None),
+        }
+        if written_frame is not None
+        else None
+    )
+
+    # AC-MEM032: the tally runs after the episode write above has committed -
+    # never before, since it reads the newest CLOSED frames and a frame this
+    # turn just wrote is one of them. Round 3 (PLAN 6.0, AC-MEM049): facts are
+    # learned and saved at EVERY context level, Off included - the level decides
+    # only what the bot READS, never what it LEARNS. Episodes themselves are
+    # ALSO written whatever the level, staff still see everything either way; the
+    # one gate that still applies is B2's own (never on a dry run).
+    # Stashed on `before` the same way `_episode_written` is, so `_run_answer`'s
+    # tail can fold it into the turn's own `facts_saved` trace line.
+    if written_frame is not None and not dry_run and contact_pk is not None:
+        try:
+            tallied = profile_facts_mod.tally(
+                db, contact_respond_id, is_test=dry_run, contact_pk=contact_pk
+            )
+            remembered_before["_facts_tallied"] = [
+                {"key": f["key"], "source": f["source"]} for f in tallied
+            ]
+        except Exception:  # noqa: BLE001 - a lost tally is never a lost turn
+            logger.warning("chatbot: the profile tally did not run", exc_info=True)
+
+
+def _reset_turn(
+    envelope: Envelope,
+    *,
+    verdict: dict[str, Any],
+    parser_raw: Any,
+    state_in: Any,
+    session_block: Any,
+    remembered_before: dict[str, Any],
+    recalled: list[dict[str, Any]],
+    user_turn: Any,
+    profile: Any,
+    known_phone: str | None,
+    parser_usage: dict[str, Any],
+    parse_started: Any,
+    session_factory: SessionFactory,
+    turn_trace: Any,
+    turn_id: str,
+    contact_respond_id: str,
+    dry_run: bool,
+    actions: list[dict[str, Any]],
+    stage: list[str],
+) -> TurnResult | None:
+    """Release gate #1829, round 7: ONE reset seam, right after the parse and before the state
+    applier, apply, routing or any lane, so nothing the parser carried beside the reset (a
+    domain, a message type) can route the turn. A reset that states nothing new closes the open
+    question (any kind, offers included), every task and the stored list, resets the focus to
+    RESET_KEEPS, saves the session and answers ONE fixed acknowledgement in the reply language:
+    no lane, fetch, tool, escalation, hand-off, small-talk model or recap. None for every other
+    turn (and for a contact the access check refuses), which runs today's path untouched."""
+    signals = _reset_signals(verdict, parser_raw, state_in)
+    if not signals or _stated_beside_a_reset(verdict, tuple(state_in.focus.domains or ()), tuple(signals)):
+        return None
+    routed = turn_runtime.with_routing_agent_default(verdict, pending=None)
+    suggested_agent = jsc.get(routed.get("routing"), "suggested_agent")
+    with _session(session_factory) as db:
+        access = check_access(db, agent_code=suggested_agent, contact_id=contact_respond_id, space_id=default_space_id(db))
+        if access.get("allowed") is not True:
+            # The refusal is the access stage's own answer, on today's path.
+            return None
+        stage[0] = "access"
+        _record_parser_usage(
+            db, usage=parser_usage, started=parse_started, contact_respond_id=contact_respond_id,
+            dry_run=dry_run, answered=True, turn_id=turn_id,
+        )
+        turn_trace.record(
+            "access",
+            summary=f"Access allowed for {access.get('agent_name') or suggested_agent}.",
+            why="The contact must be granted the agent this turn would use before anything is answered.",
+            facts={"agent": suggested_agent, "allowed": True, "decision": access.get("decision")},
+            raw=access,
+        )
+        from app.services.chatbot import copy as copy_mod
+
+        reply_language = _turn_language(user_turn, remembered_before, profile)
+        ack = copy_mod.resolve(db).render_in("reset_ack", reply_language)
+        # Round 8: a reset closes the topic it ended, exactly as the routed reset did. A cancel or
+        # a new subject naming nothing is a topic reset too (the chat_state mirror rule).
+        verdict["topic_reset"] = True
+        _close_the_episode(
+            db,
+            envelope,
+            verdict=verdict,
+            this_domain=None,
+            dry_run=dry_run,
+            contact_respond_id=contact_respond_id,
+            turn_id=turn_id,
+            remembered_before=remembered_before,
+        )
+    stage[0] = "routed"
+    item = _stamp_item(access, "low_signal", {})
+    item["reply_language"] = reply_language
+    closed = {
+        "open_question": getattr(state_in.pending, "kind", None),
+        "tasks": len(state_in.focus.tasks or ()),
+        "last_list": bool(state_in.focus.last_list),
+    }
+    turn_trace.add("reset_turn", {"signals": signals, "closed": closed})
+    turn_trace.record(
+        "routed",
+        summary="Reset: the conversation was cleared and acknowledged.",
+        why="The parser read a reset that states nothing new, so nothing is looked up or handed on.",
+        facts={"lane": "low_signal", "rule": "reset_turn", "signals": signals, "closed": closed},
+        raw={"item": item},
+    )
+    reset_state = turn_state.State(
+        focus=turn_state.Focus(**{k: getattr(state_in.focus, k) for k in RESET_KEEPS}),
+        pending=None,
+        profile=state_in.profile,
+        turn_no=state_in.turn_no,
+        ideation=state_in.ideation,
+    )
+    ctx = build_ctx(
+        contact=_contact_block(envelope, known_phone),
+        text=_tf_message(envelope),
+        session=session_block,
+        parse={"output": verdict, "_parser_raw": parser_raw},
+        access=access,
+        media=getattr(envelope, "media", None),
+    )[0]["json"]["ctx"]
+    return _run_answer(
+        turn_id=turn_id,
+        ctx=ctx,
+        item=item,
+        branch_kind="low_signal",
+        actions=actions,
+        answer=turn_compose.Answer(text=ack),
+        state=reset_state,
+        remembered_before=remembered_before,
+        dry_run=dry_run,
+        session_factory=session_factory,
+        turn_trace=turn_trace,
+        stage=stage,
+        contact_respond_id=contact_respond_id,
+        verdict=verdict,
+        recalled=recalled,
+        chat_console=_chat_console(envelope),
+    )
+
+
+def _small_talk_ctx(ctx: dict[str, Any], verdict: dict[str, Any], state: Any) -> dict[str, Any]:
+    """Release gate #1829 (contact 04): a reset's small talk is about the state the reset left, so
+    the model is shown that state (no open question, offer, team, task or stored list), never the
+    session from before the turn. Contacts 13 and 18: nor the parse's intent and domain, which
+    let the clarifier promise a check nobody runs. Every other turn's ctx is returned as it is."""
+    if verdict.get("topic_reset") is not True:
+        # Every reset wrote `topic_reset` (`apply._reset`); the state after apply is not the one
+        # `apply` judged, so the reading is never made again here.
+        return ctx
+    session = jsc.get(ctx, "session") or {}
+    after = {
+        **session_state.five_keys(session),
+        "focus": turn_state.focus_to_wire(state.focus),
+        "open_question": turn_pending.to_wire(state.pending),
+    }
+    parse = jsc.get(ctx, "parse") or {}
+    output = {**(jsc.get(parse, "output") or {}), "intent_hint": None, "domain_hint": None}
+    return {**ctx, "session": {**session, "session_vars": after}, "parse": {**parse, "output": output}}
+
+
 def _fallback_context(
     db: Session,
     *,
@@ -4284,6 +4672,47 @@ def _run_stages_body(  # noqa: PLR0915
     # stage (AC-105/R5/H44's own "no routing" shape).
     turn_trace.add("context", context_report)
 
+    # Release gate #1829, round 7: the ONE reset seam, before the state applier, apply, routing
+    # and every lane (`_reset_turn`).
+    reset_result = _reset_turn(
+        envelope,
+        verdict=verdict,
+        parser_raw=parser_raw,
+        state_in=state_in,
+        session_block=session_block,
+        remembered_before=remembered_before,
+        recalled=recalled,
+        user_turn=user_turn,
+        profile=profile,
+        known_phone=known_phone,
+        parser_usage=parser_usage,
+        parse_started=parse_started,
+        session_factory=session_factory,
+        turn_trace=turn_trace,
+        turn_id=turn_id,
+        contact_respond_id=contact_respond_id,
+        dry_run=dry_run,
+        actions=actions,
+        stage=stage,
+    )
+    if reset_result is not None:
+        return reset_result
+
+    # Q1 (owner ruling (a), 23 Oct 2026): what the stored question lets a typed word answer, read
+    # before the state applier closes or rewrites it. A raw that is one of its option codes, or a
+    # turn that answers it by position or pick, is a pick, never a corrected typo (`grounding.ground`).
+    near_code_roster = frozenset(
+        turn_state.token_key(str(option.get(field)))
+        for option in (getattr(state_in.pending, "options", None) or [])
+        if isinstance(option, dict)
+        for field in ("code", "label")
+        if option.get(field)
+    )
+    stored_answer = verdict.get("open_question_answer") if isinstance(verdict.get("open_question_answer"), dict) else {}
+    near_code_answering = state_in.pending is not None and bool(
+        verdict.get("reference_positions") or stored_answer.get("picked")
+    )
+
     # CHAT-STATE seam: the parser's `state_changes`, applied ONCE, before every post-parse
     # rewrite, APPLY and both of its re-entries (they all read `state_in` / `verdict`, so
     # writing the change into those two makes the re-entries idempotent). On when the
@@ -4475,6 +4904,8 @@ def _run_stages_body(  # noqa: PLR0915
             pick_info=pick_info if parser_config.code_lookup else None,
             held_ids=[str(p["uuid"]) for p in state_in.focus.products if isinstance(p, dict) and p.get("uuid")],
             hidden_keys=hidden_spec,
+            roster_codes=near_code_roster,
+            answers_question=near_code_answering,
         )
     # H1: the ONE strip, on the grounding output: grounding re-derives specs from the raw words
     # over the whole registry, so this covers the parser's own emission too.
@@ -5675,86 +6106,17 @@ def _run_stages_body(  # noqa: PLR0915
         # special-case it: `profile_facts.set_tier` and this call site are gone,
         # a resolved tier is never persisted onto the contact row, and every ask
         # still resolves fresh off `narrow.py`'s own turn-scoped state.
-        contact_pk = remembered_before.get("_contact_pk")
-
-        # AC-1546 / chatbot memory lane A (contract section 3): the episode belongs to
-        # the topic that just CLOSED, and a topic closes because the customer changed
-        # subject - not because this turn's lane went on to answer. Written HERE, where
-        # the reset is decided, so a turn whose fetch failed or whose lane refused
-        # still remembers the topic it ended. Once per turn, never mid-topic.
-        #
-        # Human intervention closes nothing (Q2 ruling): the topic is whatever it was
-        # when the bot resumes. D14's third named exception (Q15) is the one write a
-        # dry run may make: a CONSOLE turn writes an `is_test=true` frame of its own
-        # world; every other dry run (clone/replay/harness) writes nothing.
-        is_console_dry_run = dry_run and envelope.ingress == "console"
-        written_frame = None
-        # Fix lane round 3 (R1, owner hand test 28 Sep 2026): the parser's
-        # `topic_reset` alone never closed "check stock X" then "incoming X" (same
-        # product, so it reads as a follow-up). A turn whose plan names a different
-        # domain from the open conversation's newest one is the other switch
-        # (`episode_digest.close_trigger`, the backfill's same rule).
         this_domain = str(plan.domains[0]) if plan.domains else None
-        may_write_episode = (not dry_run or is_console_dry_run) and not _is_human_intervened(envelope)
-        open_domain = None
-        if may_write_episode and this_domain and verdict.get("topic_reset") is not True:
-            try:
-                open_domain = memory_mod.open_topic_domain(
-                    db,
-                    contact_respond_id=contact_respond_id,
-                    is_test=dry_run,
-                    exclude_turn_id=turn_id,
-                )
-            except Exception:  # noqa: BLE001 - a lost episode is never a lost turn
-                logger.warning("chatbot: the open topic read did not run", exc_info=True)
-        close_trigger = episode_digest_mod.close_trigger(verdict, this_domain, open_domain)
-        if close_trigger is not None and may_write_episode:
-            try:
-                written_frame = memory_mod.write_episode_for_reset(
-                    db,
-                    contact_respond_id=contact_respond_id,
-                    is_test=dry_run,
-                    resetting_turn_id=turn_id,
-                )
-            except Exception:  # noqa: BLE001 - a lost episode is never a lost turn
-                logger.warning("chatbot: the episode write did not run", exc_info=True)
-        # Stashed on the shared `before` box (the same object `_run_answer` and
-        # `_run_entities_only_arm` already receive as `remembered_before`) so
-        # `_record_memory_trace`, several call frames later, can report what THIS turn
-        # closed without a new parameter threaded through every arm between here and
-        # there.
-        remembered_before["_episode_written"] = (
-            {
-                "id": written_frame.id,
-                "turn_count": len(written_frame.turn_ids or []),
-                "close_reason": written_frame.close_reason,
-                "summary": written_frame.summary,
-                "trigger": close_trigger,
-                "domain": getattr(written_frame, "domain", None),
-            }
-            if written_frame is not None
-            else None
+        _close_the_episode(
+            db,
+            envelope,
+            verdict=verdict,
+            this_domain=this_domain,
+            dry_run=dry_run,
+            contact_respond_id=contact_respond_id,
+            turn_id=turn_id,
+            remembered_before=remembered_before,
         )
-
-        # AC-MEM032: the tally runs after the episode write above has committed -
-        # never before, since it reads the newest CLOSED frames and a frame this
-        # turn just wrote is one of them. Round 3 (PLAN 6.0, AC-MEM049): facts are
-        # learned and saved at EVERY context level, Off included - the level decides
-        # only what the bot READS, never what it LEARNS. Episodes themselves are
-        # ALSO written whatever the level, staff still see everything either way; the
-        # one gate that still applies is B2's own (never on a dry run).
-        # Stashed on `before` the same way `_episode_written` is, so `_run_answer`'s
-        # tail can fold it into the turn's own `facts_saved` trace line.
-        if written_frame is not None and not dry_run and contact_pk is not None:
-            try:
-                tallied = profile_facts_mod.tally(
-                    db, contact_respond_id, is_test=dry_run, contact_pk=contact_pk
-                )
-                remembered_before["_facts_tallied"] = [
-                    {"key": f["key"], "source": f["source"]} for f in tallied
-                ]
-            except Exception:  # noqa: BLE001 - a lost tally is never a lost turn
-                logger.warning("chatbot: the profile tally did not run", exc_info=True)
 
         turn_trace.add(
             "apply",
@@ -5890,7 +6252,9 @@ def _run_stages_body(  # noqa: PLR0915
                     # V1-DOC-SCOPE slice 3: the clarifier asks the resolver itself, so a held
                     # contact's customer rows are dropped here too.
                     resolve_gate._without_customer_rows(resolved_for_prompt)
-                clarifier_prompt = casual.construct_user_prompt(ctx, resolved_for_prompt)
+                clarifier_prompt = casual.construct_user_prompt(
+                    _small_talk_ctx(ctx, verdict, state_out), resolved_for_prompt
+                )
                 clarifier_config = casual.resolve_clarifier_config(
                     db,
                     override_version_id=_prompt_override(

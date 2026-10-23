@@ -190,7 +190,7 @@ def test_a_declined_did_you_mean_drops_its_unresolved_token_and_a_bare_two_does_
     state, plan = _run(
         _declined_state(gate), _decline_verdict(), [{"op": "close_question", "axis": None, "position": None}]
     )
-    assert "stock_pick_declined" in plan.trace.rules_fired
+    assert "reset_closes_the_question" in plan.trace.rules_fired
     assert not [p for p in state.focus.products if not p.get("uuid")], state.focus.products
     # the next turn: a bare `2`, nothing pending
     v = verdict(domain_hint="inventory", intent_hint="check_stock", entities=[], reference_positions=[2],

@@ -97,8 +97,12 @@ import {
   cancelledLinesFor,
   confirmNoticeLines,
   failingLineText,
+  HELD_BACK_ALONE,
+  HELD_BACK_BESIDE_CONFIRM,
+  settleHeldBackNotes,
   shiftedDayWindow,
   soLineLabel,
+  soLineNoText,
   unpostableDecidedFor,
   type UnpostableLine,
   type UnpostableReason,
@@ -1478,7 +1482,7 @@ export function FulfilmentBoardPanel({
   // The lines each order's press posted, by planning record, so the results block can set
   // them beside what the server says it wrote.
   const [postedLines, setPostedLines] = React.useState<
-    Record<string, { project_line_id: string; label: string }[]>
+    Record<string, { project_line_id: string; line_no: number; label: string }[]>
   >({});
 
 
@@ -1737,11 +1741,12 @@ export function FulfilmentBoardPanel({
             so_number: soNumber,
             ok: false,
             heldBack: true,
-            error: postingSomethingElse
-              ? 'was confirmed, but its staged rejection could not ride along with the pending change; it commits after the change is applied.'
-              : 'has a staged rejection that commits after the pending change is applied.',
+            // Settled against the server's answer (`settleHeldBackNotes`): "was confirmed"
+            // survives only when the order actually came back ok.
+            error: postingSomethingElse ? HELD_BACK_BESIDE_CONFIRM : HELD_BACK_ALONE,
             failing_lines: heldBackByBatch.map((contribution) => ({
               line_no: contribution.line_no,
+              so_line_no: contribution.so_line_no,
               reason: 'rejection is staged; it commits after the pending change is applied.',
             })),
           } as BoardBatchResult);
@@ -1883,7 +1888,7 @@ export function FulfilmentBoardPanel({
       }
       const { skipped, contributions } = built;
       if (built.orders.length === 0) {
-        if (skipped.length > 0) setBatchResults(skipped);
+        if (skipped.length > 0) setBatchResults(settleHeldBackNotes(skipped));
         return true;
       }
       // DRY RUN FIRST (FULFIL-CONFIRM-SCOPE): the server runs this very body and rolls it back,
@@ -1941,7 +1946,7 @@ export function FulfilmentBoardPanel({
         });
       const body = built.body.batch_id ? { orders, batch_id: built.body.batch_id } : { orders };
       if (orders.length === 0) {
-        setBatchResults([...skipped, ...refusals]);
+        setBatchResults(settleHeldBackNotes([...skipped, ...refusals]));
         return true;
       }
 
@@ -1969,7 +1974,7 @@ export function FulfilmentBoardPanel({
       const labelOf = new Map(
         contributions.map((entry) => [
           entry.project_line_id ?? '',
-          `line ${entry.line_no} ${entry.item_code}`,
+          { line_no: entry.line_no, label: `line ${soLineNoText(entry)} ${entry.item_code}` },
         ]),
       );
       setPostedLines(
@@ -1978,12 +1983,13 @@ export function FulfilmentBoardPanel({
             order.pso_id,
             order.lines.map((line) => ({
               project_line_id: line.project_line_id,
-              label: labelOf.get(line.project_line_id) ?? 'a line',
+              line_no: labelOf.get(line.project_line_id)?.line_no ?? -1,
+              label: labelOf.get(line.project_line_id)?.label ?? 'a line',
             })),
           ]),
         ),
       );
-      setBatchResults([...skipped, ...refusals, ...result.results]);
+      setBatchResults(settleHeldBackNotes([...skipped, ...refusals, ...result.results]));
 
       // What the press produced, in the three numbers a planner is about to act on (D3):
       // the promises made, the movements somebody now has to approve (the panel below lists
@@ -2353,7 +2359,7 @@ export function FulfilmentBoardPanel({
           : labelled;
       });
       setSimulated(true);
-      setBatchResults([...skipped, ...named]);
+      setBatchResults(settleHeldBackNotes([...skipped, ...named]));
     } catch {
       // The mutation's own `onError` already toasted the message.
     } finally {
@@ -3119,7 +3125,7 @@ export function FulfilmentBoardPanel({
                           key={entry.project_line_id}
                           className="text-sm break-words text-destructive"
                         >
-                          {`${`line ${entry.line_no ?? '?'} ${entry.item_code ?? ''}`.trim()}: ${entry.error}`}
+                          {`${`line ${soLineNoText(entry) || '?'} ${entry.item_code ?? ''}`.trim()}: ${entry.error}`}
                         </li>
                       ))}
                     </ul>
@@ -3144,7 +3150,7 @@ export function FulfilmentBoardPanel({
                       <li className="text-sm break-words">
                         {`${simulated ? 'Would transfer' : 'Transferred'} to Cancel SO: ${result.lines_cancelled
                           .map((line) =>
-                            `line ${line.line_no ?? '?'} ${line.item_code ?? ''}${
+                            `line ${soLineNoText(line) || '?'} ${line.item_code ?? ''}${
                               line.reason ? ` (${line.reason})` : ''
                             }`.trim(),
                           )
@@ -3159,7 +3165,7 @@ export function FulfilmentBoardPanel({
                     >
                       <li className="text-sm break-words">
                         {`${simulated ? 'Would confirm' : 'Confirmed'}: ${result.lines_confirmed
-                          .map((line) => `line ${line.line_no ?? '?'} ${line.item_code ?? ''}`.trim())
+                          .map((line) => `line ${soLineNoText(line) || '?'} ${line.item_code ?? ''}`.trim())
                           .join(' · ')}`}
                       </li>
                       {(result.lines_carried ?? 0) > 0 && (
@@ -3251,7 +3257,7 @@ export function FulfilmentBoardPanel({
                         const held = new Set((result.lines_held_back ?? []).map((line) => line.line_no));
                         const names = (postedLines[result.pso_id] ?? [])
                           .filter((line) => !echoed.has(line.project_line_id))
-                          .filter((line) => !held.has(Number(line.label.split(' ')[1])))
+                          .filter((line) => !held.has(line.line_no))
                           .map((line) => line.label);
                         return names.length > 0 ? `: ${names.join(' \u00b7 ')}` : '';
                       })()}
@@ -3659,9 +3665,9 @@ export function FulfilmentBoardPanel({
                   const failedLines = failedKeys
                     .map(
                       (key) =>
-                        allContributions.find((entry) => entry.key === key)?.line_no,
+                        soLineNoText(allContributions.find((entry) => entry.key === key) ?? {}),
                     )
-                    .filter((lineNo): lineNo is number => lineNo != null);
+                    .filter((lineNo) => lineNo !== '');
                   toast.error(
                     `${failedKeys.length} line${failedKeys.length === 1 ? '' : 's'} could not be discarded` +
                       (failedLines.length ? ` (line ${failedLines.join(', ')})` : ''),

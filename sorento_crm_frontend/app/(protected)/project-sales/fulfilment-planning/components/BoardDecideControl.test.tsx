@@ -358,6 +358,37 @@ describe('BoardDecideControl: the lenient toast (AC-16, R10)', () => {
   });
 });
 
+describe('BoardDecideControl: names the SO line (SO-LINE-NUMBERS AC-7)', () => {
+  it('words a short line by its SO number, not the planning order\'s own', async () => {
+    const short = row({
+      key: 'so-2:line-20',
+      so_number: 'SO397451',
+      line_no: 20,
+      so_line_no: 304,
+      item_code: 'CB6633',
+      sources: [{ kind: 'buy', qty: '40', reason: 'Nothing free.' }],
+      locations: [
+        { location: 'BRW-BB', where: 'own', warehouse_id: 'wh-own2', qty_free_remaining: '10' },
+      ],
+    });
+    renderControl({ contributions: [short], selectedKeys: [short.key] });
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Use own location' }));
+
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText(/^Reason/), {
+      target: { value: 'Own site takes what it can.' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Save/ }));
+
+    await waitFor(() =>
+      expect(toast.warning).toHaveBeenCalledWith(
+        '1 saved as Use own location · 1 short: CB6633 line 304 (only 10 free at own location)',
+      ),
+    );
+  });
+});
+
 /**
  * Review round 2, Should fix 2: Should fix 4 (review round 1) - the throwaway probe that
  * checks a covered row against its OWN frozen composition before it ever touches the real

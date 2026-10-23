@@ -13,6 +13,7 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { verdictOf } from './BoardDecisionPill';
 import { suggestedDecisionFor } from '../../_shared/lib/boardAmend';
+import { soLineNoText } from '../../_shared/lib/fulfilmentBoard';
 import type {
   BoardContribution,
   BoardDecision,
@@ -67,7 +68,7 @@ export function BoardVerdictActions({
   const fieldId = React.useId();
 
   const verdict = verdictOf(contribution, decision);
-  const label = `${contribution.so_number} line ${contribution.line_no}`;
+  const label = `${contribution.so_number} line ${soLineNoText(contribution)}`;
   const blank = reason.trim().length === 0;
 
   const submitRejection = async () => {

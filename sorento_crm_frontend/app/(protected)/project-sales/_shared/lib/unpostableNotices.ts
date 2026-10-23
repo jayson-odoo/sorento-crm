@@ -1,4 +1,4 @@
-import type { UnpostableLine, UnpostableReason } from './fulfilmentBoard';
+import { soLineNoText, type UnpostableLine, type UnpostableReason } from './fulfilmentBoard';
 
 /** How many names a sentence carries before it stops being a sentence and becomes a wall. */
 export const NAMED_CAP = 5;
@@ -55,7 +55,7 @@ export function unpostableNotices(
 ): UnpostableNotice[] {
   if (lines.length === 0) return [];
   const named = lines.slice(0, NAMED_CAP).map((entry) => ({
-    label: `${entry.contribution.item_code} line ${entry.contribution.line_no}`,
+    label: `${entry.contribution.item_code} line ${soLineNoText(entry.contribution)}`,
     line: entry,
   }));
   const moreCount = lines.length - named.length;
