@@ -306,7 +306,7 @@ CAN_DRAW = {
 #: "sales for all agents") lists every row, never asked "how many": up to this many.
 BREAKDOWN_TOP_N = 100
 #: The keys `by_capability` writes; stripped from every verdict first, so no parse sets them.
-CAPABILITY_KEYS = ("capability_from", "report_breakdown")
+CAPABILITY_KEYS = ("capability_from", "report_breakdown", "bare_top_selling")
 #: The analysis's basis key (`sales_basis`) and the bases the report ask has of it.
 _ANALYSIS_BASES = frozenset({"delivered", "ordered"})
 
@@ -330,6 +330,10 @@ def from_top_selling(verdict: dict[str, Any]) -> dict[str, Any]:
         "group_by": group_by,
         "capability_from": "top_selling",
     }
+    if not raw_group and not rank_group:
+        # The parser named neither an axis nor a grain ("by amount", "ordered", "top 20"): under a ranking on
+        # screen this only changes values of it (`settle`), the axis above is just the default for a fresh ask.
+        out["bare_top_selling"] = True
     if basis_from(out) is None and verdict.get("sales_basis") in _ANALYSIS_BASES:
         out["basis"] = verdict["sales_basis"]
     return out
@@ -882,6 +886,11 @@ def settle(
     raw_group = jsc.js_string(parse_output.get("group_by") or "").strip().lower()
     # A refine never changes the axis: a verdict naming another axis than the held ranking's
     # is not one, whatever its `ranking_refine` says (crew live pass, 8 Oct 2026).
+    if parse_output.get("bare_top_selling") is True and frame:
+        # REPORT-SMART-L R2: a top_selling-labelled follow-up naming no axis and no grain refines the ranking
+        # on screen (whatever its axis), keeping the rest, exactly as a `ranking_refine` does.
+        parse_output = {**parse_output, "group_by": None, "ranking_refine": True}
+        raw_group = ""
     new_axis = bool(frame) and bool(raw_group) and GROUP_BY.get(raw_group, raw_group) != frame.get("group_by")
     if not new_axis and restates_the_ask(parse_output):
         # The same axis typed again is a new ask (a new frame): read whole, nothing held.
@@ -897,6 +906,7 @@ def settle(
     held_period: rf.Resolved | None = None
     held_product: dict[str, Any] = {}
     held_channel: str | None = None
+    held_filters: dict[str, Any] = {}
     holding = False
     # Owner ruling B + S6b (23 Oct): a new axis that runs across all, right after a ranking, keeps what is
     # on screen and widens only the ranked side: the same hold a refine naming another axis uses.
@@ -914,6 +924,11 @@ def settle(
         }
         if axis != "channel" and widened != "channel" and frame.get("channel") in ("dealer", "project"):
             held_channel = frame["channel"]
+        # A brand, category or sales agent filter on screen is held too (the new axis's own filter is not).
+        held_filters = {
+            k: frame[k] for k in ("brand_ids", "category_ids", "sales_agent_ids")
+            if frame.get(k) and k not in _AXIS_FILTERS.get(axis, ())
+        }
         holding = True
         parse_output = {**parse_output, "ranking_refine": False}
 
@@ -924,6 +939,8 @@ def settle(
         args.update(held_product)
     if held_channel and not args.get("channel"):
         args["channel"] = held_channel
+    for key, value in held_filters.items():
+        args.setdefault(key, value)  # the message's own values win
     if holding:
         # S6c: the measure and the basis on screen stay too (the message's own win).
         for key in ("measure", "basis"):
@@ -1008,8 +1025,8 @@ def _refine(
             args.update(product_args)
     if parse_output.get("basis") in ("ordered", "delivered", "outstanding"):
         args["basis"] = parse_output["basis"]
-    if parse_output.get("measure") in METRICS:
-        args["measure"] = parse_output["measure"]
+    if metric_from(parse_output):
+        args["measure"] = metric_from(parse_output)  # `measure`, else the top selling key `rank_by`
     if parse_output.get("compare_to") in COMPARE_TO:
         args["compare_to"] = parse_output["compare_to"]
     if parse_output.get("self_reference") is True:
