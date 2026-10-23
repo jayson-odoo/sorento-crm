@@ -2,8 +2,11 @@
 
 Plan: `PLAN-one-ranking-1023.md`. Per round; owner answers Q1-Q3 fill the bracketed parts.
 
-- AC-OR0. A bare number in a message ("Top 100 selling item ...") is never offered to the parser as a code holding it;
-  "all channels" after a ranking drops the held channel.
+- AC-OR0 (as built, crew 23 Oct). After a ranking, the parser's broaden_axis product or channel with broaden_to 'all'
+  drops that held axis and keeps the rest (same-axis refine, across all, a refine naming another axis); broaden_to
+  'family' or another axis changes nothing. The live parser emitting broaden_axis 'channel' for "all channels" is a prompt
+  item (R5: R-P3-09 lists date, an entity hint or 'all', not channel). Out: date widening (the route requires a period);
+  the bare count (R5 prompt line, gold incl. "Top 100 selling item this year by product, delivered qty").
 - AC-OR1. "Top 30 selling item this year" and "top 10 selling items this year by qty delivered" run crm_report_ask with
   group_by product (category for "which category sells most"); never the catalogue line "I can rank sales by ..." and
   never a grain / "rank by product or ..." question; what is missing is asked in one reply [Q1]; the answer ("Delivered
