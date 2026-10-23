@@ -327,3 +327,48 @@ def test_r1_review_2b_a_top_selling_verdict_that_skips_by_capability_still_reach
     assert OLD_TOOL not in _names(log), _names(log)
     assert len(_ran(log)) == 1, (text, log)  # not refused at the domain-grant check
     assert _ran(log)[0].get("mine") is True and _ran(log)[0]["group_by"] == "product", log
+
+
+# ---------------------------------------------------------------- unit: only a customer pick marks a ranking's pick
+
+
+def _pick_pending(kind: str, entity_type: str):
+    from app.services.chatbot.turn.pending import ask
+
+    options = [
+        {"uuid": f"{i}{i}{i}{i}{i}{i}{i}{i}-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "code": f"ZZ-{entity_type}-{i}",
+         "label": f"ZZ {entity_type} {i}", "position": i, "entity_type": entity_type}
+        for i in (1, 2)
+    ]
+    return ask(
+        kind, options, expects="pick", asked_at_turn=3,
+        payload={"domain": "order", "status": "sales_ranking",
+                 "ranking_ask": {"group_by": "product", "top_n": 4, "measure": "amount"}},
+    )
+
+
+def _answer_the_pick(pending) -> dict[str, Any]:
+    """Answer the pending roster with "1" through the engine's apply; the verdict it left behind."""
+    from app.services.chatbot.turn.apply import apply
+    from app.services.chatbot.turn.state import Focus, Profile, State
+    from tests.chatbot._turn_helpers import build_policy
+
+    verdict = _parser_output(
+        message_type="casual", intent_hint=None, domain_hint=None, entities=[], reference_positions=[1],
+        open_question_answer={"mode": "pick", "picked": [1], "items": [], "qty_for_all": None},
+        domain_in_message=False)
+    state = State(focus=Focus(domains=["order"]), pending=pending, profile=Profile())
+    apply(state, verdict, build_policy())
+    return verdict
+
+
+def test_r1_review_unit_a_customer_pick_marks_the_rankings_pick() -> None:
+    verdict = _answer_the_pick(_pick_pending("customer_pick", "customer"))
+    assert verdict.get("ranking_pick") is True, verdict
+    assert verdict.get("group_by") == "product" and verdict.get("top_n") == 4, verdict  # the held ask resumed
+
+
+def test_r1_review_unit_a_product_pick_never_marks_the_rankings_pick() -> None:
+    verdict = _answer_the_pick(_pick_pending("product_pick", "product"))
+    assert verdict.get("group_by") == "product" and verdict.get("top_n") == 4, verdict  # the held ask resumed
+    assert not verdict.get("ranking_pick"), verdict  # a carried customer must never become its filter
