@@ -5810,6 +5810,7 @@ def _run_stages_body(  # noqa: PLR0915
             _decision = sales_figure_decision(
                 db, contact_respond_id, default_space_id(db), granted=False,
                 order_status=jsc.js_string(parsed_output.get("order_status") or "").strip(),
+                parse_output=parsed_output,
             )
             sales_report_grant_refused = _decision != "salesperson_book"
             if not sales_report_grant_refused:

@@ -838,7 +838,8 @@ def sales_analysis_company_reply(verdict: Any, pending: Any) -> dict[str, Any] |
 
 
 def sales_figure_decision(
-    db: Any, contact_respond_id: Any, space_id: Any, *, order_status: str, granted: bool
+    db: Any, contact_respond_id: Any, space_id: Any, *, order_status: str, granted: bool,
+    parse_output: dict[str, Any] | None = None,
 ) -> str:
     """`granted`, `salesperson_book` or `not_granted` for a sales figure ask. The ONE rule
     (`contact_asker.may_ask_sales_ranking`) applies only to a verdict that runs on the report-ask
@@ -854,7 +855,17 @@ def sales_figure_decision(
     resolved = resolve_contact_with_null_workspace_fallback(
         db, contact_id=str(contact_respond_id).strip(), space_id=(str(space_id).strip() or None) if space_id else None
     )
-    return contact_asker.may_ask_sales_ranking(db, str(resolved) if resolved else None, granted=False)[0]
+    decision = contact_asker.may_ask_sales_ranking(db, str(resolved) if resolved else None, granted=False)[0]
+    verdict = parse_output if isinstance(parse_output, dict) else {}
+    if (
+        decision == "salesperson_book"
+        and jsc.js_string(verdict.get("group_by") or "").strip().lower() in ("product", "category")
+        and verdict.get("self_reference") is not True
+    ):
+        # REPORT-SMART-L R1 (ruling 2): an ungranted salesperson's item / category ranking is the own-book
+        # "my ..." ask only; without `self_reference` it is refused, as top selling refused it.
+        return "not_granted"
+    return decision
 
 
 def _office_staff(db: Any, contact_respond_id: Any, space_id: Any) -> bool:
@@ -1953,6 +1964,7 @@ def run_fetch(
             sales_figure_decision(
                 db, contact_id, space_id, granted=False,
                 order_status=jsc.js_string(parse_output.get("order_status") or "").strip(),
+                parse_output=parse_output,
             )
             if need == _SALES_REPORT_GRANT and need not in granted
             else "granted" if need in granted else "not_granted"
@@ -2138,12 +2150,18 @@ def run_fetch(
     # is what still answers the refusal on that path, and is the SECOND line of
     # defence (mirrors `DOMAIN_GRANT_REQUIRED`'s own trace shape above) for a
     # re-entry path that calls `run_fetch` directly (this module's own tests).
+    if order_status_raw == "top_selling" and domain in contracts.ORDER_OR_SALES_DOMAINS:
+        # REPORT-SMART-L R1 (safety net for a live session that never passed `by_capability`): an item or
+        # category ranking is the sales ranking on the report engine, never `crm_top_selling_report`.
+        parse_output = report_ask.take_words(report_ask.from_top_selling(parse_output), "")
+        order_status_raw = report_ask.ASK_NAME
     if order_status_raw in contracts.SALES_FIGURE_STATUSES:
         access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
         granted_raw = access_ctx.get("attributes")
         granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
         decision = sales_figure_decision(
-            db, contact_id, space_id, order_status=order_status_raw, granted=_SALES_REPORT_GRANT in granted
+            db, contact_id, space_id, order_status=order_status_raw, granted=_SALES_REPORT_GRANT in granted,
+            parse_output=parse_output,
         )
         if decision == "not_granted":
             if trace is not None:

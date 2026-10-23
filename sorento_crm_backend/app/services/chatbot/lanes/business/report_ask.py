@@ -300,8 +300,7 @@ CAN_DRAW = {
     "sales_analysis": frozenset({"", "year", "month"}),
     # `crm_sales_report`: one subject's sales, month by month.
     "sales_report": frozenset({"", "month"}),
-    # `crm_top_selling_report`: items or categories ranked.
-    "top_selling": frozenset({"", "product", "category"}),
+    # (`top_selling` is no longer here: every item / category ranking is the report ask's, `from_top_selling`.)
 }
 #: A breakdown the parser did not read as a ranking (a sales analysis or report by an axis,
 #: "sales for all agents") lists every row, never asked "how many": up to this many.
@@ -310,6 +309,30 @@ BREAKDOWN_TOP_N = 100
 CAPABILITY_KEYS = ("capability_from", "report_breakdown")
 #: The analysis's basis key (`sales_basis`) and the bases the report ask has of it.
 _ANALYSIS_BASES = frozenset({"delivered", "ordered"})
+
+
+def from_top_selling(verdict: dict[str, Any]) -> dict[str, Any]:
+    """REPORT-SMART-L R1: the parser's `top_selling` label (an item or category ranking) is a sales
+    ranking on the report engine, read whole by `settle`: `rank_group` category (or a `category`
+    axis) ranks categories, else the axis the parser named, else products; the count, period,
+    measure (`rank_by`), basis, direction and filters ride unchanged. Parser fields only."""
+    raw_group = jsc.js_string(verdict.get("group_by") or "").strip().lower()
+    rank_group = jsc.js_string(verdict.get("rank_group") or "").strip().lower()
+    if rank_group == "category" or raw_group == "category":
+        group_by = "category"
+    elif raw_group in GROUP_BY:
+        group_by = raw_group
+    else:
+        group_by = "product"
+    out = {
+        **{k: v for k, v in verdict.items() if k not in ("status", "document")},
+        **SALES_RANKING_ASK.reroute,
+        "group_by": group_by,
+        "capability_from": "top_selling",
+    }
+    if basis_from(out) is None and verdict.get("sales_basis") in _ANALYSIS_BASES:
+        out["basis"] = verdict["sales_basis"]
+    return out
 
 
 def by_capability(verdict: dict[str, Any]) -> dict[str, Any]:
@@ -323,6 +346,8 @@ def by_capability(verdict: dict[str, Any]) -> dict[str, Any]:
     verdict = {k: v for k, v in verdict.items() if k not in CAPABILITY_KEYS}
     status = jsc.js_string(verdict.get("order_status") or "").strip()
     raw_group = jsc.js_string(verdict.get("group_by") or "").strip().lower()
+    if status == "top_selling":
+        return from_top_selling(verdict)
     if status not in CAN_DRAW or (raw_group and raw_group not in GROUP_BY):
         return verdict
     counted = verdict.get("measure") in METRICS[2:]
