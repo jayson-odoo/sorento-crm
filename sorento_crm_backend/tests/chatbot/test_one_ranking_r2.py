@@ -183,3 +183,72 @@ def test_r2_5_guard_total_sales_this_month_still_uses_the_sales_report_tool(cons
                        top_n=None, measure=None, basis=None, entities=[], domain_in_message=True, **SEP),
         "total sales this month")
     assert "crm_sales_report" in _names(log) and TOOL not in _names(log), (text, log)
+
+
+# ---------------------------------------------------------------- review: a bare top-selling ask and an unusable frame
+
+BARE_ASK = dict(group_by=None, rank_group=None, top_n=10, rank_by="quantity", measure=None, basis="delivered",
+                entities=[], domain_in_message=True, **YEAR_2026)
+
+
+def _bare_top_selling() -> dict[str, Any]:
+    return _parser_output(domain_hint="order", intent_hint="check_order", order_status="top_selling",
+                          rank_direction="top", state_changes=list(KEEP), **BARE_ASK)
+
+
+def _hold_agent_ranking(console) -> None:
+    """Top 5 sales agents for a product, dealer sales, 2026: a ranking with a product and a channel."""
+    from tests.chatbot.test_report_ask_lane import PRODUCT_CODE, _e
+
+    text, calls = console.say(
+        _rank(_e(PRODUCT_CODE, "product"), top_n=5, measure="qty", basis="delivered", sales_channel="dealer",
+              state_changes=list(KEEP), **THIS_YEAR),
+        f"top 5 salesppl in 2026 for {PRODUCT_CODE}, dealer sales")
+    assert len(calls) == 1, ("setup: the agent ranking did not run", text, calls)
+
+
+def _fresh_product_ranking(console, monkeypatch) -> None:
+    text, log = _say_all(console, monkeypatch, _bare_top_selling(), "top 10 selling this year")
+    ran = [a for n, a in log if n == TOOL]
+    assert OLD_TOOL not in _names(log) and len(ran) == 1, (text, log)
+    args = ran[0]
+    assert args["group_by"] == "product" and args["top_n"] == 10, args
+    assert not args.get("product_code") and not args.get("channel"), args  # the old ranking's choices are not held
+
+
+def test_r2_review_a_bare_top_selling_ask_after_a_stale_frame_is_a_fresh_product_ranking(console, monkeypatch) -> None:
+    from tests.chatbot.test_report_smart_owner_1022 import FAILED_ASKS
+
+    _state_on(console)
+    _hold_agent_ranking(console)
+    text, calls = console.say(FAILED_ASKS["unknown_axis"](), "top 5 for zzt")
+    assert calls == [], ("setup: the failing ask ran", text, calls)
+    _fresh_product_ranking(console, monkeypatch)
+
+
+def test_r2_review_a_bare_top_selling_ask_after_a_ranking_with_no_rows_is_a_fresh_product_ranking(console, monkeypatch) -> None:
+    from tests.chatbot import test_report_ask_lane as lane_tests
+
+    _state_on(console)
+    real = lane_tests._fake_body
+    monkeypatch.setattr(lane_tests, "_fake_body", lambda args: {**real(args), "rows": [], "total_count": 0})
+    _hold_agent_ranking(console)
+    monkeypatch.setattr(lane_tests, "_fake_body", real)
+    _fresh_product_ranking(console, monkeypatch)
+
+
+def test_r2_review_guard_a_bare_top_selling_ask_with_nothing_held_is_a_fresh_product_ranking(console, monkeypatch) -> None:
+    _state_on(console)
+    _fresh_product_ranking(console, monkeypatch)
+
+
+def test_r2_review_guard_a_bare_top_selling_ask_refines_a_shown_agent_ranking(console, monkeypatch) -> None:
+    from tests.chatbot.test_report_ask_lane import PRODUCT_CODE
+
+    _state_on(console)
+    _hold_agent_ranking(console)
+    text, log = _say_all(console, monkeypatch, _bare_top_selling(), "top 10 selling this year")
+    ran = [a for n, a in log if n == TOOL]
+    assert len(ran) == 1, (text, log)
+    assert ran[0]["group_by"] == "sales_agent" and ran[0]["top_n"] == 10, ran
+    assert ran[0].get("product_code") == PRODUCT_CODE and ran[0].get("channel") == "dealer", ran
