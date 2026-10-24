@@ -776,6 +776,20 @@ def _which_customer_ask() -> dict[str, Any]:
     }
 
 
+def _sales_analysis_names_a_subject(parse_output: dict[str, Any]) -> bool:
+    """SALES-COMPANY-PICK round 2: a sales_analysis parse whose CURRENT message names a
+    product or a customer is a sales report of that subject (the company analysis has no
+    such filter). Read off the parser's entities; a carried entity never counts."""
+    if jsc.js_string(parse_output.get("order_status") or "").strip() != "sales_analysis":
+        return False
+    return any(
+        isinstance(e, dict)
+        and e.get("current_message") is True
+        and jsc.js_string(e.get("hint") or "") in ("product", "customer")
+        for e in jsc.array(parse_output.get("entities"))
+    )
+
+
 def _sales_analysis_axis_unsupported(group_by: str) -> dict[str, Any]:
     """A sales analysis asked by an axis it cannot draw (customer, product, ...): ONE line
     naming the axes it can, no figure and no fetch (`_sales_report_not_enabled`'s shape)."""
@@ -947,6 +961,7 @@ def run_until_exit(
     # do and would exit `not_found`; `run_fetch` gates and answers it.
     sales_analysis_ask = (
         jsc.js_string(parse_output_peek.get("order_status") or "") == "sales_analysis"
+        and not _sales_analysis_names_a_subject(parse_output_peek)
     )
     # CA-3: a chat report names no order subject for the gate to resolve; the lane resolves its
     # customer and product words itself (`chat_report.settle`) and says a miss in one line.
@@ -2022,6 +2037,7 @@ def run_fetch(
         ]
 
     order_status_raw = jsc.js_string(parse_output.get("order_status") or "").strip()
+    named_subject_analysis = _sales_analysis_names_a_subject(parse_output) and not has_own_accounts
 
     # R-S3 (reviewer finding, Phase 3 fix round, item 7): checked here, regardless of
     # whether a subject resolved - `run_until_exit`'s OWN bypass (above this module,
@@ -2132,7 +2148,11 @@ def run_fetch(
             so_refused = order_status_raw != "outstanding"
         semantic_input["outstanding_scope"] = scope
         semantic_input["outstanding_so_refused"] = so_refused
-    elif order_status_raw == "sales_analysis" and not has_own_accounts:
+    elif (
+        order_status_raw == "sales_analysis"
+        and not has_own_accounts
+        and not _sales_analysis_names_a_subject(parse_output)
+    ):
         # PLAN-retail-sales-reports-26sep S1: a sales ANALYSIS (a company's sales by
         # month, by year, by channel) is the reports kernel's own query, answered as the
         # whole table in text and the same query as an Excel (Owner ruling 26 Sep 07:16
@@ -2163,7 +2183,7 @@ def run_fetch(
     elif (
         domain in contracts.ORDER_OR_SALES_DOMAINS
         and (has_product or has_customer or carried_subject)
-        and order_status_raw == "sales_report"
+        and (order_status_raw == "sales_report" or named_subject_analysis)
     ) or (order_status_raw == "sales_analysis" and has_own_accounts):
         # S4 wiring point 3 (AC-1650): domain "order" + a resolved product OR
         # customer + `order_status: "sales_report"` picks THIS tool - one more
@@ -2179,7 +2199,11 @@ def run_fetch(
         # other sales ask of a scoped contact runs. Its reply is TEXT (the presenter's
         # month blocks), never a file.
         tool_name = "crm_sales_report"
-        if order_status_raw == "sales_analysis":
+        if named_subject_analysis:
+            # SALES-COMPANY-PICK round 2 (AC-9..AC-11): the same report the sales_report
+            # parse of this message runs; the trace says why.
+            tool_item = {"name": tool_name, "_tool_pick": {"source": "sales_analysis_named_subject"}}
+        elif order_status_raw == "sales_analysis":
             tool_item = {"name": tool_name, "_tool_pick": {"source": "customer_scope_sales_report"}}
             # A linked STAFF contact is not forced by the engine (not enforced), so its
             # links may not have been handed over as entities ("sales this month" with no
