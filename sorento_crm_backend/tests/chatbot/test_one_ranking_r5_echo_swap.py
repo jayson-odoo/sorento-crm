@@ -82,3 +82,64 @@ def test_r10_guard_only_a_sales_ranking_status_becomes_a_basis() -> None:
     assert kept["basis"] == "ordered", kept
     pending = {"order_status": "sales_ranking", "status": "pending", "basis": None}
     assert report_ask.status_as_basis(pending) == pending
+
+
+# ------------------------------------------------ review: the reply's own values win over the held ones
+
+import pytest  # noqa: E402
+
+YEAR_2025 = {"date_filter_start": "2025-01-01", "date_filter_end": "2025-12-31"}
+
+
+def _swap_reply(refine: Any, **over: Any) -> dict[str, Any]:
+    return _echo("customer", ranking_refine=refine, state_changes=[*ANSWER_OP, {"op": "set", "axis": "group_by", "position": None}], **over)
+
+
+def _then_top5():
+    return _verdict(top_n=5, ranking_refine=False, state_changes=ANSWER_OP)
+
+
+@pytest.mark.parametrize("refine", [None, True])
+def test_r34b_1_a_period_typed_with_the_new_axis_wins_over_the_held_one(console, monkeypatch, refine) -> None:
+    _open_how_many(console, monkeypatch)
+    text, log = _say_all(console, monkeypatch, _swap_reply(refine, **YEAR_2025), "customers 2025")
+    assert _ran(log) == [] and "How many?" in text and "Which period" not in text, (text, log)
+    text, log = _say_all(console, monkeypatch, _then_top5(), "top 5")
+    ran = _ran(log)
+    assert len(ran) == 1 and ran[0]["group_by"] == "customer" and ran[0]["top_n"] == 5, (text, log)
+    assert ran[0]["date_from"] == "2025-01-01" and ran[0]["date_to"] == "2025-12-31", ran
+    assert ran[0]["product_code"] == PRODUCT_CODE and ran[0]["basis"] == "delivered" and ran[0]["measure"] == "qty", ran
+
+
+@pytest.mark.parametrize("field, value", [("measure", "amount"), ("basis", "ordered")])
+def test_r34b_2_a_measure_or_basis_typed_with_the_new_axis_wins(console, monkeypatch, field, value) -> None:
+    _open_how_many(console, monkeypatch)
+    text, log = _say_all(console, monkeypatch, _swap_reply(None, **{field: value}), "customers " + value)
+    assert _ran(log) == [] and "How many?" in text, (text, log)
+    text, log = _say_all(console, monkeypatch, _then_top5(), "top 5")
+    ran = _ran(log)
+    assert len(ran) == 1 and ran[0][field] == value and ran[0]["group_by"] == "customer", (text, log)
+    assert ran[0]["date_from"] == "2026-01-01" and ran[0]["product_code"] == PRODUCT_CODE, ran
+    other, held = ("basis", "delivered") if field == "measure" else ("measure", "qty")
+    assert ran[0][other] == held, ran
+
+
+@pytest.mark.parametrize("axis", ["sales_agent", "customer"], ids=["echo", "swap"])
+def test_r34b_3_a_channel_typed_with_the_axis_is_kept(console, monkeypatch, axis) -> None:
+    _open_how_many(console, monkeypatch)
+    text, log = _say_all(console, monkeypatch, _echo(axis, sales_channel="dealer"), "by it dealer only")
+    assert _ran(log) == [] and "How many?" in text, (text, log)
+    text, log = _say_all(console, monkeypatch, _then_top5(), "top 5")
+    ran = _ran(log)
+    assert len(ran) == 1 and ran[0]["group_by"] == axis and ran[0].get("channel") == "dealer", (text, log)
+
+
+def test_r34b_4_a_new_subject_op_is_a_new_ask_with_the_state_applier_off(console, monkeypatch) -> None:
+    """Without the State prompt nothing drops the open ask on `new_subject`: `_swappable` itself must."""
+    from app.services.chatbot.lanes.business import report_ask
+
+    extras = {"args": {"group_by": "sales_agent"}}
+    slot_reply = _echo("customer", state_changes=[{"op": "new_subject", "axis": None, "position": None}])
+    assert report_ask.names_its_own_ask(slot_reply, {"extras": extras}) is True
+    plain = _echo("customer")
+    assert report_ask.names_its_own_ask(plain, {"extras": extras}) is False
