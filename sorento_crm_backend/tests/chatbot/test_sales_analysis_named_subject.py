@@ -87,6 +87,17 @@ def test_n1_a_sales_analysis_parse_naming_a_product_runs_the_report_two_companie
     )
 
 
+def test_n1s_the_parser_status_field_reads_the_same(two):
+    """The status axis can arrive on `status` alone (the projection derives `order_status`
+    from it): a sales_analysis `status` with a named product runs the report too."""
+    qf = {**_x2(), "status": "sales_analysis", "order_status": None}
+    result, captured = two.say(qf, "b2155-nl-blue dealer sales september 2026", matches=X2_MATCH)
+    assert _calls(captured, ANALYSIS) == [], f"a named subject never runs the company analysis: {captured}"
+    calls = _calls(captured, REPORT)
+    assert calls and calls[0].get("product_code") == "B2155-NL-BLUE", captured
+    assert QUESTION not in _reply(result), _reply(result)
+
+
 def test_n2_a_sales_analysis_parse_naming_a_product_runs_the_report_one_company(one):
     result, captured = one.say(_x2(), TEXT, matches=X2_MATCH)
     args = _assert_report(result, captured)
@@ -207,7 +218,8 @@ def test_b1_an_ambiguous_customer_on_a_sales_analysis_parse_picks_into_the_repor
 
 
 def test_s1_a_customer_hinted_word_that_is_a_product_renders_the_report(one):
-    matches = {"Srt5674N": {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": "SRT5674-N"}}
+    # The resolver is asked the customer-hinted token verbatim (reviewer, measured).
+    matches = {"Srt5674-N": {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": "SRT5674-N"}}
     word = [{"raw": "Srt5674-N", "hint": "customer", "canonical_code": None,
              "current_message": True, "confident": True}]
     text = "dealer Srt5674-N sales september 2026"
@@ -218,8 +230,10 @@ def test_s1_a_customer_hinted_word_that_is_a_product_renders_the_report(one):
     assert _calls(captured, REPORT) == _calls(setup, REPORT), (
         f"the same report call as the sales_report parse: {_calls(captured, REPORT)} vs {_calls(setup, REPORT)}"
     )
-    # AC-13 is parity: the reply is the sales_report parse's own reply, whatever that says.
+    # AC-13: parity with the sales_report parse, and that reply is the rendered report.
     assert _reply(result) == _reply(r_setup), (_reply(result), _reply(r_setup))
+    reply = _reply(result).lower()
+    assert "couldn't find" not in reply and "escalate" not in reply, _reply(result)
 
 
 # --------------------------------------------------------------------------- #
