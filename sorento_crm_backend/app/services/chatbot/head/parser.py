@@ -970,7 +970,8 @@ def resolve_config(
     if closed_lists:
         from app.services.chatbot_prompt_vars import closed_list_enum
 
-        json_schema = closed_lists_schema(closed_list_enum(db), state=state_block, report_fields=report_fields, axis_words=axis_words
+        json_schema = closed_lists_schema(
+            closed_list_enum(db), state=state_block, report_fields=report_fields, axis_words=axis_words
         )
     return ParserConfig(
         system_prompt=system_prompt,

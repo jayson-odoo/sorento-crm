@@ -317,7 +317,8 @@ def from_top_selling(verdict: dict[str, Any]) -> dict[str, Any]:
     ranking on the report engine, read whole by `settle`: `rank_group` category (or a `category`
     axis) ranks categories, else the axis the parser named, else products; the count, period,
     measure (`rank_by`), basis, direction and filters ride unchanged. Parser fields only."""
-    verdict = {k: v for k, v in verdict.items() if k not in CAPABILITY_KEYS}  # no stray parser key survives
+    # A `top_selling` label is the parser's own statement that items are ranked: `axis_words` null does not null its axis.
+    verdict = {k: v for k, v in verdict.items() if k not in (*CAPABILITY_KEYS, "axis_words")}  # no stray parser key survives
     raw_group = jsc.js_string(verdict.get("group_by") or "").strip().lower()
     rank_group = jsc.js_string(verdict.get("rank_group") or "").strip().lower()
     if rank_group == "category" or raw_group == "category":
@@ -366,9 +367,10 @@ def by_capability(verdict: dict[str, Any]) -> dict[str, Any]:
     # Engine keys only this seam writes: never taken from the parser's own emission.
     verdict = {k: v for k, v in verdict.items() if k not in CAPABILITY_KEYS}
     status = jsc.js_string(verdict.get("order_status") or "").strip()
-    raw_group = jsc.js_string(verdict.get("group_by") or "").strip().lower()
     if status == "top_selling":
         return from_top_selling(verdict)
+    verdict = typed_group_by(verdict)  # R6: a null `axis_words` names no axis, so the guess routes nothing
+    raw_group = jsc.js_string(verdict.get("group_by") or "").strip().lower()
     if status not in CAN_DRAW or (raw_group and raw_group not in GROUP_BY):
         return verdict
     counted = verdict.get("measure") in METRICS[2:]
