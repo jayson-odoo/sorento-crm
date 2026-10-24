@@ -204,7 +204,12 @@ def _build_request(
         message_id=message_id or f"no-message-id-{turn_id}",
         modality=modality,
         media_url=jsc.js_string(jsc.get(attachment, "url")) if jsc.truthy(jsc.get(attachment, "url")) else "",
-        mime_type=jsc.js_string(jsc.get(attachment, "mimeType")) or None,
+        # Guarded like `url`: `js_string` is JS `String(v)`, so a missing mimeType read
+        # "null" and every stored (answered-ahead) photo was filed, and sent to the
+        # model, as mime "null" (24 Oct prod: "the image file appears corrupted").
+        mime_type=(
+            jsc.js_string(jsc.get(attachment, "mimeType")) if jsc.truthy(jsc.get(attachment, "mimeType")) else None
+        ),
         caption=caption or None,
         duration_ms=int(duration_ms) if isinstance(duration_ms, (int, float)) else None,
         bytes=int(size) if isinstance(size, (int, float)) else None,
