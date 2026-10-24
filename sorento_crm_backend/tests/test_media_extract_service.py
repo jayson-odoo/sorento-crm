@@ -517,7 +517,7 @@ def test_image_lane_produces_the_confirmation_and_stamps_the_ledger_cost(monkeyp
 
         monkeypatch.setattr(
             "app.services.media_extract.service.fetch_media_bytes",
-            lambda url: (b"fake-image-bytes", "image/jpeg"),
+            lambda url: (JPEG_HEAD, "image/jpeg"),
         )
 
         canned = json.dumps(
@@ -869,7 +869,10 @@ def test_a_clip_whose_length_cannot_be_read_is_refused_with_a_clear_error(monkey
 
     with blank_session() as db:
         usage = _seed_usage(db, "voice")
-        calls = _wire_voice(monkeypatch, b"RIFFnot-really-a-wave-file" * 40)
+        # A WAVE header (so it passes the audio sniff) over a body mutagen cannot parse.
+        calls = _wire_voice(
+            monkeypatch, b"RIFF\x00\x00\x00\x00WAVE" + b"not-really-a-wave-file" * 40
+        )
 
         with pytest.raises(MediaClipLengthError) as raised:
             MediaExtractService(db).extract(_voice_job(usage.id))
@@ -1618,3 +1621,135 @@ def test_image_lane_inherits_the_assistants_model_when_the_provider_matches():
             MediaExtractService(db)._resolve_image_provider(None, settings)[2]
             == "gemini-2.5-pro"
         )
+
+
+# ----- MEDIA-INTAKE-GUARD: the bytes must be what the lane expects -------------
+
+JPEG_HEAD = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00" + b"\x00" * 64
+
+
+@pytest.mark.parametrize(
+    "data, expected",
+    [
+        (b"\xff\xd8\xff\xe0" + b"\x00" * 20, "image/jpeg"),
+        (b"\x89PNG\r\n\x1a\n" + b"\x00" * 20, "image/png"),
+        (b"GIF89a" + b"\x00" * 20, "image/gif"),
+        (b"RIFF\x00\x00\x00\x00WEBPVP8 " + b"\x00" * 20, "image/webp"),
+        (b"\x00\x00\x00\x18ftypheic" + b"\x00" * 20, "image/heic"),
+        (b"%PDF-1.7\n" + b"\x00" * 20, "application/pdf"),
+        (b"\x00\x00\x00\x18ftypisom" + b"\x00" * 20, "video/mp4"),
+        (b"\x00\x00\x00\x18ftypM4A " + b"\x00" * 20, "audio/mp4"),
+        (b"OggS\x00\x02" + b"\x00" * 20, "audio/ogg"),
+        (b"RIFF\x00\x00\x00\x00WAVEfmt " + b"\x00" * 20, "audio/wav"),
+        (b"ID3\x04\x00" + b"\x00" * 20, "audio/mpeg"),
+        (b"<!DOCTYPE html><html>", None),
+        (b"", None),
+    ],
+)
+def test_sniff_mime_reads_the_first_bytes(data, expected):
+    from app.services.media_extract.sniff import sniff_mime
+
+    assert sniff_mime(data) == expected
+
+
+def _wire_image(monkeypatch, data: bytes, content_type: str):
+    """Stub the download and a provider that records whether it was called."""
+    from app.services.llm_provider import ChatResult
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.services.media_extract.service.fetch_media_bytes",
+        lambda url: (data, content_type),
+    )
+
+    class _StubProvider:
+        def chat(self, **kwargs):
+            calls.append(kwargs)
+            return ChatResult(
+                content=json.dumps({"image_kind": "label", "entities": []}),
+                prompt_tokens=1, completion_tokens=1, total_tokens=2,
+            )
+
+    monkeypatch.setattr(
+        MediaExtractService,
+        "_resolve_image_provider",
+        lambda self, tier, settings: (_StubProvider(), "gemini", "gemini-test"),
+    )
+    return calls
+
+
+def _image_job(usage_id, mime_type="image/jpeg"):
+    return MediaJobInput(
+        job_id=str(uuid.uuid4()),
+        modality="image",
+        tier="standard",
+        media_url="https://cdn.example/x.jpg",
+        mime_type=mime_type,
+        caption=None,
+        usage_id=usage_id,
+    )
+
+
+def test_a_download_that_is_not_an_image_fails_with_the_reason_before_the_model(monkeypatch):
+    """24 Oct incident: an HTML body labelled image/jpeg reached the vision model.
+    The job now fails before any provider call, naming what actually arrived."""
+    from app.services.media_extract.service import MediaExtractionError
+
+    body = b"<html><body>Access denied</body></html>"
+    with blank_session() as db:
+        usage = _seed_usage(db, "image")
+        calls = _wire_image(monkeypatch, body, "text/html; charset=utf-8")
+
+        with pytest.raises(MediaExtractionError) as raised:
+            MediaExtractService(db).extract(_image_job(usage.id))
+
+    assert str(raised.value) == (
+        "Downloaded file is not an image: content-type text/html; charset=utf-8, "
+        f"{len(body)} bytes, first bytes {body[:16].hex()}"
+    )
+    assert calls == []
+
+
+def test_a_pdf_turn_whose_bytes_are_not_a_pdf_names_the_pdf_modality(monkeypatch):
+    from app.services.media_extract.service import MediaExtractionError
+
+    with blank_session() as db:
+        usage = _seed_usage(db, "image")
+        calls = _wire_image(monkeypatch, JPEG_HEAD, "application/pdf")
+
+        with pytest.raises(MediaExtractionError) as raised:
+            MediaExtractService(db).extract(_image_job(usage.id, "application/pdf"))
+
+    assert str(raised.value).startswith("Downloaded file is not a pdf: content-type application/pdf")
+    assert calls == []
+
+
+def test_a_png_labelled_jpeg_reaches_the_model_as_png(monkeypatch):
+    """A real image passes, and the model is told what the bytes really are."""
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+    with blank_session() as db:
+        usage = _seed_usage(db, "image")
+        calls = _wire_image(monkeypatch, png, "image/jpeg")
+
+        MediaExtractService(db).extract(_image_job(usage.id))
+
+    assert len(calls) == 1
+    assert calls[0]["images"][0].mime == "image/png"
+
+
+def test_a_voice_download_that_is_not_audio_is_refused_with_the_reason(monkeypatch):
+    from app.services.media_extract.service import MediaClipLengthError
+
+    body = b"<html>expired link</html>"
+    with blank_session() as db:
+        usage = _seed_usage(db, "voice")
+        calls = _wire_voice(monkeypatch, body)
+
+        with pytest.raises(MediaClipLengthError) as raised:
+            MediaExtractService(db).extract(_voice_job(usage.id))
+
+    assert str(raised.value).startswith(
+        f"Downloaded file is not an audio file: content-type audio/wav, {len(body)} bytes"
+    )
+    assert raised.value.notice["kind"] == "unreadable"
+    assert calls == []
