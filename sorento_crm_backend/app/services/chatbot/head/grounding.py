@@ -547,6 +547,21 @@ def _pick_as_trgm_neighbour(db: "Session", raw: str, pick: str) -> dict[str, Any
     return None
 
 
+def _types_the_code_whole(raw: str, canonical: str) -> bool:
+    """True when `canonical` is one of `raw`'s words, or a run of adjacent words, after
+    `token_key` folding: the parser stripped the type / colour / brand words beside a code typed
+    exactly (AC-RSF-01 / AC-RSF-03, RESOLVE-SEMANTIC-FALLBACK: "TAP SRTWT5608" -> "SRTWT5608"), so
+    Q1 never reads it as a corrected typo (RELEASE-FIX-1024)."""
+    from app.services.chatbot.turn.state import token_key
+
+    wanted, words = token_key(canonical), raw.split()
+    return any(
+        token_key("".join(words[start:end])) == wanted
+        for start in range(len(words))
+        for end in range(start + 1, len(words) + 1)
+    )
+
+
 def _names_a_class_not_a_code(raw: str, vocab: Vocabulary) -> bool:
     """A `product` token that is words only, no code among them, one of which is a class or
     type phrase said word for word ("gunmetal basin", "sorento water closet")."""
@@ -861,8 +876,9 @@ def ground(
     option codes, folded. A product the parser corrected from a typed code (raw and canonical_code
     differ after `token_key` folding) whose pick is a trigram neighbour of the raw
     (`_pick_as_trgm_neighbour`) keeps its raw and loses its canonical, so the did-you-mean asks, the
-    pick first (`NEAR_PICK_KEY`). A raw that is one of the options, a turn answering the stored
-    question by position or pick (`answers_question`) and a carried entity are never corrections."""
+    pick first (`NEAR_PICK_KEY`). A raw that is one of the options, a raw that types the canonical
+    whole beside other words (`_types_the_code_whole`), a turn answering the stored question by
+    position or pick (`answers_question`) and a carried entity are never corrections."""
     entities = verdict.get("entities")
     if not isinstance(entities, list) or not entities:
         return verdict, []
@@ -970,7 +986,7 @@ def ground(
             from app.services.chatbot.turn.state import token_key
 
             typed = token_key(raw)
-            if typed != token_key(canonical) and typed not in roster_codes:
+            if typed != token_key(canonical) and typed not in roster_codes and not _types_the_code_whole(raw, canonical):
                 near = _pick_as_trgm_neighbour(db, raw, canonical)
                 if near is not None:
                     notes.append({"from": hint, "raw": raw, "to": f"did you mean: {canonical} (a typed code corrected)"})
