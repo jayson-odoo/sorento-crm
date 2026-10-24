@@ -1,6 +1,6 @@
 # PLAN: estimated delivery date stays in the CRM UI, never in MCP / turn API output
 
-Status: in progress (10 Sep 2026)
+Status: merged (PR #800, 10 Sep 2026)
 Domain: chatbot
 Branch: fix/chatbot-eta-not-in-turn
 
