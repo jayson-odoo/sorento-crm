@@ -915,10 +915,11 @@ def _reply_fills(
     }
     filled = {name: got for name, got in reading.items() if got is not None and got.status == "ok" and is_open(name)}
     # R7: a total's / month trend's metric is settled EMPTY (both measures shown); a measure typed in the
-    # answer still fills it, so the route and the held frame carry it (never the count: that stays None).
+    # answer still fills it, so the route and the held frame carry it (never top_n: that stays None). Only
+    # a reply that already fills an owed field is the answer; a measure alone is not (swap, fresh ask, compare).
     metric, settled = reading["metric"], held.get("metric")
     if (
-        "metric" not in filled and metric is not None and metric.status == "ok"
+        filled and "metric" not in filled and metric is not None and metric.status == "ok"
         and isinstance(settled, rf.Resolved) and settled.status == "ok" and settled.value is None
         and _dict(values.get("metric")).get("value") is None
     ):
