@@ -646,6 +646,11 @@ def _settled_by_its_axis(values: dict[str, Any], group_by: Any) -> dict[str, Any
 #: REPORT-SMART-L R8: the engine's stamp (`with_held`), frame-shaped (`date_from`, `date_to`, the route params), plus
 #: `product` when the held products are the gate's carried rows. Listed in `required_fields.ENGINE_KEYS`.
 HELD_KEY = "report_held"
+#: REPORT-SMART-L R9: the open question a sales report reply arms with its drill offer (`fetch._sales_report_output`),
+#: so the engine-held sign that the last answer was a sales report (`contracts.DETAIL_OFFER_KINDS`).
+SALES_REPORT_OFFER = "sales_report_detail"
+#: The bases `crm_sales_report` answers: delivered only (none named is that report's own figure).
+_SALES_REPORT_BASES = (None, "delivered")
 
 
 def with_held(
@@ -656,21 +661,28 @@ def with_held(
     replaced: dict[str, Any] | None,
     parser_ops: Any = (),
     held_domains: Any = None,
+    held_offer: str | None = None,
 ) -> dict[str, Any]:
     """Engine seam, REPORT-SMART-L R8 (crew ruling, EVAL-BENCH v63 gate): when the reply to a held sales report
     total becomes a ranking, what that total showed stays, and only what is still missing is asked.
 
     On only when the parser reuses the held subject (`entity_op` reuse, no topic reset, no `new_subject` op), the
-    verdict is a ranking naming its axis, no ranking frame is held (a held one keeps its own rules: refine, S6b,
-    ruling B, stale), the last ask was a sales figure, and no open ask is being answered. `held_domains`: the
-    domains the focus held before this turn's State applier wrote its own (the engine reads them; `Focus.domains`
-    when not given). The source is the open report ask this verdict replaced (`names_its_own_ask`), alone, less
-    what a total or month trend settled on its own (`_settled_by_its_axis`: no carried count); with none open, the
-    held sales report total: `Focus.date_window` and the products it ran on. Engine-held state only, never words."""
+    verdict is a ranking (R9: an axis-less one too, which runs the total), no ranking frame is held (a held one
+    keeps its own rules: refine, S6b, ruling B, stale), the last ask was a sales figure, and no open ask is being
+    answered. `held_domains`: the domains the focus held before this turn's State applier wrote its own (the engine
+    reads them; `Focus.domains` when not given). The source is the open report ask this verdict replaced
+    (`names_its_own_ask`), alone, less what a total or month trend settled on its own (`_settled_by_its_axis`: no
+    carried count); with none open, the held sales report total: `Focus.date_window` and the products it ran on.
+    Engine-held state only, never words.
+
+    R9 (ruling A on v63): right after a sales report (`held_offer`, the pending kind its drill offer armed), a
+    ranking parse with no typed axis and no count (an axis-less sales ranking, or the top selling label with no
+    grain: `bare_top_selling`) answers THAT total: delivered or no basis re-runs the sales report (the verdict goes
+    back to `sales_report`, whose lane reuses the held window and products as it always has); ordered or
+    outstanding, which that report has not, runs the report-ask total on the held product and period below."""
     domains = held_domains if held_domains is not None else getattr(focus, "domains", None)
     if (
         jsc.js_string(verdict.get("order_status") or "").strip() != ASK_NAME
-        or not jsc.js_string(typed_group_by(verdict).get("group_by") or "").strip()
         or verdict.get("entity_op") != "reuse"
         or verdict.get("topic_reset") is True
         or _new_subject(verdict, parser_ops)
@@ -679,6 +691,16 @@ def with_held(
         or (open_ask is not None and replaced is None)
     ):
         return verdict
+    axisless = not jsc.js_string(typed_group_by(verdict).get("group_by") or "").strip()
+    if (
+        held_offer == SALES_REPORT_OFFER
+        and replaced is None
+        and verdict.get("top_n") is None
+        and (axisless or verdict.get("bare_top_selling") is True)
+    ):
+        verdict = {**{k: v for k, v in verdict.items() if k not in CAPABILITY_KEYS}, "group_by": None}
+        if basis_from(verdict) in _SALES_REPORT_BASES:
+            return {**verdict, "order_status": "sales_report", "ranking_refine": None}
     if replaced is not None:
         if replaced.get("asking") == "scope":
             return verdict  # the drill's scope question holds no ask of its own to carry

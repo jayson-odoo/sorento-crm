@@ -360,7 +360,8 @@ def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] 
         pending_kind=None, pending_options=None, settings_profile_line=None,
         current_message=latest_user_message, reply_to=held.get("reply_to"), media_line=None, brands=brands,
         promotion_kinds=promotion_kinds,
-        sales_channels=list(SALES_CHANNELS),  # REPORT-SMART-L S2 A'': the engine's always-on Sales channels line
+        # REPORT-SMART-L R9: as the engine, only when the prompt names the line (`ParserConfig.sales_channels`).
+        sales_channels=list(SALES_CHANNELS) if getattr(config, "sales_channels", True) else None,
         product_types=product_types, product_details=product_details, candidate_lines=lines,
         open_question_line=None if state else parser.open_question_line(held.get("open_question")),
         state_block=state,

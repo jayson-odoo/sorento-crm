@@ -4535,7 +4535,9 @@ def _run_stages_body(  # noqa: PLR0915
         open_question_line=parser.open_question_line(open_question),
         brands=brands,
         promotion_kinds=promotion_kinds,
-        sales_channels=list(SALES_CHANNELS),
+        # REPORT-SMART-L R9: printed only when the prompt names the line (`ParserConfig.sales_channels`; owner ruling
+        # 22 Oct 23:20, PLAN-report-smart-owner-1022.md:40-45: the line pairs with the template rule that names it).
+        sales_channels=list(SALES_CHANNELS) if parser_config.sales_channels else None,
         product_types=product_types,
         product_details=product_details,
         recent_exchanges=recent,
@@ -5162,6 +5164,8 @@ def _run_stages_body(  # noqa: PLR0915
             verdict = report_ask.with_held(
                 verdict, state_in.focus, open_ask=asked_before, replaced=replaced_ask, parser_ops=parser_ops,
                 held_domains=held_domains,
+                # R9: the open sales report drill offer says the last answer was a sales report total.
+                held_offer=getattr(state_in.pending, "kind", None),
             )
         # MULTI-ASK-PLAN round 6 (G1): the reply to the scope question re-runs the asked
         # multi-ask turn's own verdict from HERE, with the scope the parser read settled, so

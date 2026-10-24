@@ -105,6 +105,10 @@ class ParserConfig:
     # not (production v92) would answer null on every parse, which the sales ranking reads as "no axis typed",
     # so its schema carries no such key and `parse` drops it from the verdict (`without_by_words`).
     by_words: bool = True
+    # REPORT-SMART-L R9: the prompt in use names the `Sales channels:` line, so the user turn prints it
+    # (owner ruling 22 Oct 23:20, PLAN-report-smart-owner-1022.md:40-45: the line pairs with the template rule
+    # that names it; production v63 names none). True keeps the line for a bare config.
+    sales_channels: bool = True
     # PARSER-TEMPLATE F1-A: the version is the consolidated template (`head/parser_template`),
     # whose rules decide what the engine's own re-readings of the message used to.
     template: bool = False
@@ -971,6 +975,7 @@ def resolve_config(
     # REPORT-SMART-L: the schema follows the prompt, as `state_block` does.
     report_fields = "compare_to" in (raw_template or "")
     by_words = "by_words" in (raw_template or "")
+    sales_channels = "Sales channels" in (raw_template or "")
     json_schema = None
     if closed_lists:
         from app.services.chatbot_prompt_vars import closed_list_enum
@@ -990,6 +995,7 @@ def resolve_config(
         state_block=state_block,
         report_fields=report_fields,
         by_words=by_words,
+        sales_channels=sales_channels,
         template=TEMPLATE_MARKER in (raw_template or ""),
         closed_lists_index=index_mode,
         reasoning_effort=reasoning_effort_setting(db),
