@@ -142,3 +142,19 @@ def test_cf5_guard_a_stale_frame_gives_today_s_reply(console, monkeypatch) -> No
     ran = _ran(log)
     assert len(ran) == 1 and ran[0]["group_by"] == "channel" and ran[0]["channel"] == "dealer", (text, log)
     assert text.startswith("Top 1 channel by delivered sales\nChannel: Dealer"), text
+
+
+def test_cf6_dealer_sales_only_filters_a_held_report_ask_total(console, monkeypatch) -> None:
+    """A total is one row by construction too: the channel filters the held total, never a channel ranking."""
+    total = _v63(group_by=None, ranking_refine=False, measure="qty", rank_by="quantity", basis="delivered",
+                 entities=[_e(PRODUCT_CODE, "product")], entity_op="replace_combine", domain_in_message=True, **YEAR_2026)
+    text, log = _say_all(console, monkeypatch, total, f"total qty of {PRODUCT_CODE} in 2026 delivered")
+    assert len(_ran(log)) == 1 and not _ran(log)[0].get("group_by"), ("setup", text, log)
+    text, log = _say_all(console, monkeypatch, _dealer_only(), "Dealer sales only")
+    ran = _ran(log)
+    assert len(ran) == 1, (text, log)
+    args = ran[0]
+    assert not args.get("group_by") and "top_n" not in args and args["channel"] == "dealer", args
+    assert args["product_code"] == PRODUCT_CODE and args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
+    assert args["measure"] == "qty" and args["basis"] == "delivered", args
+    assert text.startswith("Sales by delivered sales\nChannel: Dealer\n") and "?" not in text, text
