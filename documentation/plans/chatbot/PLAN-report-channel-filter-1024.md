@@ -1,6 +1,6 @@
 # PLAN: a channel word after a held ranking filters it (lane REPORT-CHANNEL-FILTER, owner ruling 24 Oct ~19:50)
 
-Status: PROPOSED, small fix track (S: report_ask.py only, no migration, no access change, no new ingest). UAC: `report-channel-filter-1024-acceptance-criteria.md`.
+Status: READY (Opus reviewer, 24 Oct), small fix track (S: report_ask.py only, no migration, no access change, no new ingest). UAC: `report-channel-filter-1024-acceptance-criteria.md`.
 Branch `claude/report-channel-filter-1024` off main 8f7c7662e3 (#1816 + #1843).
 
 ## Why
@@ -18,7 +18,8 @@ axis, period, product and measure ("Top 5 sales agents, Channel: Dealer"); never
 - Rule, parser fields only: a verdict whose `group_by` is channel while its `sales_channel` names one channel is that channel's FILTER
   on the held ranking (the frame's axis is kept), not an axis. Ranking by channel within one channel is one row by construction, so
   the two fields together can only mean the filter.
-- It applies only with a held ranking on screen (a frame with its own `group_by`, not stale). With nothing held, today's behaviour stays.
+- It applies with a held ranking OR a held report-ask total on screen (any frame, not stale; review: a channel axis within one
+  channel is one row for a total too). With nothing held, or a stale frame, today's behaviour stays.
 - The message's own values still win (period, product, count, measure, basis), as every refine today.
 - Unchanged: `group_by` channel with no `sales_channel` ("sales by channel") stays a channel ranking; a frame whose own axis is channel
   keeps today's refine rules.

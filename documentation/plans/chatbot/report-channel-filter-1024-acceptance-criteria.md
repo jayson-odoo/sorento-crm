@@ -7,5 +7,7 @@
   keeps the agent axis with Channel: Project; the message's own product and count win.
 - AC-CF3. "sales by channel" (group_by channel, no sales_channel) after a ranking stays a channel ranking (owner ruling B unchanged).
 - AC-CF4. With no ranking held (or a stale one), the same parse behaves as before this change.
+- AC-CF6. After a report-ask total ("total qty of X in 2026 delivered"), "Dealer sales only" answers that total again filtered to
+  dealer (Channel: Dealer), no question.
 - AC-CF5. On the production prompt v63 (Block, composer off, gpt-5.4-mini), rows 14-17 of EXPLORE-1023C give row 15 the dealer-filtered
   agent ranking and no row worse than before (EVAL-BENCH check, cap USD 0.10).
