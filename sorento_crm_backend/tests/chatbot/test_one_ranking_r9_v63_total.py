@@ -51,7 +51,9 @@ def _fresh_caches():
     pv.clear_cache()
 
 
-def _turn(console, monkeypatch, qf: dict[str, Any], body: str) -> tuple[str, list[tuple[str, dict[str, Any]]]]:
+def _turn(
+    console, monkeypatch, qf: dict[str, Any], body: str, *, sales_body: dict[str, Any] | None = None
+) -> tuple[str, list[tuple[str, dict[str, Any]]]]:
     """One console turn: the parse is `qf`; the sales report and the report ask answer through the MCP presenter."""
     from app.services.chatbot import console_service
 
@@ -61,7 +63,7 @@ def _turn(console, monkeypatch, qf: dict[str, Any], body: str) -> tuple[str, lis
     def _mcp(name: str, args: dict[str, Any]) -> Any:
         log.append((name, dict(args)))
         if name == SALES_REPORT_TOOL:
-            return present(name, json.dumps(SALES_BODY))
+            return present(name, json.dumps(sales_body or SALES_BODY))
         if name == TOOL:
             return present(name, json.dumps(_fake_body(args)))
         return json.dumps({"has_result": False, "items": []})
@@ -227,3 +229,45 @@ def test_r9_guard_a_held_report_ask_frame_keeps_its_own_rules(console, monkeypat
     ran = _ran(log)  # the refine re-runs the held frame with the basis it changed
     assert len(ran) == 1 and not ran[0].get("group_by") and ran[0]["basis"] == "ordered", (text, log)
     assert ran[0]["product_code"] == PRODUCT_CODE and not _calls(log, SALES_REPORT_TOOL), (text, log)
+
+
+# ------------------------------------------------ review round 1
+
+
+@pytest.mark.parametrize("qf, body", [
+    (dict(top_n=5, ranking_refine=False), "top 5"),
+    (dict(top_n=5, ranking_refine=False, measure="qty", rank_by="quantity", basis="ordered"), "top 5 qty ordered"),
+], ids=["top_5", "top_5_qty_ordered"])
+def test_r9_review_a_typed_count_with_no_axis_keeps_today_s_reply(console, monkeypatch, qf, body) -> None:
+    """AC-OR9: a typed count keeps the ranking. With no axis that is today's catalogue line, never a total."""
+    from app.services.chatbot.lanes.business.report_ask import CATALOGUE_LINE
+
+    _total(console, monkeypatch)
+    text, log = _turn(console, monkeypatch, _v63(**qf), body)
+    assert text == CATALOGUE_LINE, (text, log)
+    assert _ran(log) == [] and not _calls(log, SALES_REPORT_TOOL), log
+
+
+def test_r9_review_after_a_sales_report_that_found_nothing_the_reply_is_not_that_report_again(console, monkeypatch) -> None:
+    """No drill offer is armed on a miss, so ruling A is off: the held product and period run the report-ask total."""
+    miss = {**SALES_BODY, "periods": [], "options": [], "total": {"qty": 0, "amount": 0}}
+    text, log = _turn(console, monkeypatch, _row1(), f"Top sales for {PRODUCT_CODE.lower()} in 2026", sales_body=miss)
+    assert len(_calls(log, SALES_REPORT_TOOL)) == 1 and "No sales found." in text, ("setup", text, log)
+    text, log = _turn(console, monkeypatch, _axisless(), "qty, delivered")
+    ran = _ran(log)
+    assert len(ran) == 1 and not _calls(log, SALES_REPORT_TOOL), (text, log)
+    assert not ran[0].get("group_by") and ran[0]["product_code"] == PRODUCT_CODE, ran
+    assert ran[0]["date_from"] == "2026-01-01" and ran[0]["basis"] == "delivered" and ran[0]["measure"] == "qty", ran
+    _no_question(text)
+
+
+def test_r9_review_after_a_sales_analysis_total_the_reply_is_not_a_sales_report(console, monkeypatch) -> None:
+    analysis = _v63(order_status="sales_analysis", entities=[], entity_op="replace_combine", domain_in_message=True,
+                    **YEAR_2026)
+    text, log = _turn(console, monkeypatch, analysis, "total sales in 2026")
+    assert not _calls(log, SALES_REPORT_TOOL) and _ran(log) == [], ("setup", text, log)
+    from app.services.chatbot.lanes.business.report_ask import CATALOGUE_LINE
+
+    text, log = _turn(console, monkeypatch, _axisless(), "qty, delivered")
+    # No product is held, so the held period alone has nothing to total: today's catalogue line.
+    assert text == CATALOGUE_LINE and log == [], (text, log)
