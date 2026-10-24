@@ -1,6 +1,6 @@
 # PLAN: answer an earlier-sent photo before a later text that reached the CRM first
 
-Status: in progress (Review, reviewer round 1 fixed). Track: small fix (backend only, no migration, no auth / RBAC change,
+Status: in progress (Review, reviewer rounds 1 and 2 fixed). Track: small fix (backend only, no migration, no auth / RBAC change,
 no new ingest surface, no prompt change).
 UAC: `chat-send-order-acceptance-criteria.md`.
 Source: prod case 24 Oct ~08:15 MYT: a forwarded product IMAGE (card printed SRTWC2350-P-RL), then
@@ -41,16 +41,20 @@ One more source for `send_order.earlier_unanswered`: **a stored-only media messa
   contact's latest ANSWERED turn (a message the bot never took, e.g. while a human had the chat,
   is history, not a message on its way),
 - on this conversation's channel (one contact can write on several),
-- with no respond.io agent reply (`outgoing`, `sender_source = user`) after it: a person handled
+- with no staff reply (`outgoing`, `sender_source` `user` or `echo`) after it: a person handled
   it (a bot reply in between does not count),
 - with NO turn row (it has not reached `/chat/turn`) and NO media ledger row (n8n's media intake
   has not touched it; once it has, the existing ledger rule owns it, unchanged),
 
 is rebuilt as an attachment envelope from this turn's envelope (same contact, channel) and
-answered first, on its own turn row, exactly like the #1262 ledger path. Its caption is the
-stored text only when that is not the webhook's typed placeholder (`[image]`, `[file] a.pdf`).
-A photo or voice note is READ first (`media_intake.run`, the ledger key n8n's intake uses too)
-and answered ahead only once read; a read that fails or runs out leaves it to its own delivery
+answered first, on its own turn row, exactly like the #1262 ledger path. Its caption: the
+webhook now stores a captioned attachment's `description` as the row's text
+(`conversation_thread_service._respond_item_text`, which also shows it in the inbox), and the
+row's text counts as a caption only when it is not the typed placeholder (`[image]`,
+`[file] a.pdf`), by the thread view's own rule (`_is_media_placeholder`).
+A photo or voice note is READ first (`media_intake.run`, the ledger key n8n's intake uses too,
+filed under the photo's own turn id, chosen before its row is inserted) and answered ahead only
+once read; a read that fails or runs out leaves it to its own delivery
 with no turn row, because n8n's `media-route` replies on its own to those (reviewer round 1,
 S1). Then it is inserted with its message
 id (the D15 unique key; an `IntegrityError` means its own delivery got there first and owns it),
