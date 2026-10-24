@@ -16,7 +16,8 @@ fails with no reason in the trace or "completes" with 0 items, and the parser ru
    `Downloaded file is not a <modality>: content-type X, N bytes, first bytes <hex>`.
 2. A completed image read with 0 items and no caption/text replies `wording.nothing_read()` instead
    of running the parser on empty input.
-3. `stored_attachment` passes the stored media mime type when the chat history row has it.
+3. `stored_attachment` passes the mime its stored file name shows, for a photo or voice note only
+   (`chat_histories` has no mime column; a migration for one is out of scope).
 4. Gemini 402 / "credits depleted" gets the same whose-problem operator hint as 429.
 5. Trace view prints "quoted turn" as readable fields instead of `[object Object]`.
 

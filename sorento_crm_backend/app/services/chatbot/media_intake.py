@@ -400,6 +400,7 @@ def run(
             job_id=fast.job_id,
             elapsed_ms=elapsed_ms,
             result=result,
+            notices=fast.notices,
             attachment_id=result.get("attachment_id"),
             attachment_error=result.get("attachment_error"),
             max_entities=max_entities,

@@ -534,11 +534,16 @@ def stored_attachment(earlier: Earlier) -> dict[str, Any]:
     if earlier.file_name:
         attachment["fileName"] = earlier.file_name
         # `chat_histories` keeps no mime column, so the stored file name is the
-        # only record of what the file is. Without it the extraction had nothing
-        # but the download's own content-type to go on.
-        mime, _ = mimetypes.guess_type(earlier.file_name)
-        if mime:
-            attachment["mimeType"] = mime
+        # only record of what the file is. Only for a photo or voice note: on any
+        # other type `media_intake.detect` falls back to the mime, so a `file`
+        # named IMG.jpg would turn into a photo read that `carries_media` (worked
+        # out from the type alone) never budgeted for.
+        from app.services.chatbot import media_intake
+
+        if media_intake.detect({"attachment": {"type": earlier.attachment_type}}) is not None:
+            mime, _ = mimetypes.guess_type(earlier.file_name)
+            if mime:
+                attachment["mimeType"] = mime
     if earlier.caption:
         attachment["description"] = earlier.caption
     return attachment

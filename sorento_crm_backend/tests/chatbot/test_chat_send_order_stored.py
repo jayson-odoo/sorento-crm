@@ -604,25 +604,29 @@ class TestReviewRound1:
         assert [e.caption for e in found] == [caption]
 
 
-# MEDIA-INTAKE-GUARD (3): chat_histories keeps no mime column, so the rebuilt
-# attachment names the mime its stored file name shows; with no file name it
-# sends none rather than a guess.
+# MEDIA-INTAKE-GUARD (3): chat_histories keeps no mime column, so a rebuilt photo
+# or voice note names the mime its stored file name shows; with no file name it
+# sends none rather than a guess. Any other type sends none either: the mime would
+# turn a `file` IMG.jpg into a photo read `carries_media` never counted.
 @pytest.mark.parametrize(
-    "file_name, expected",
+    "attachment_type, file_name, expected",
     [
-        ("invoice.pdf", "application/pdf"),
-        ("IMG_0001.JPG", "image/jpeg"),
-        ("clip.mp4", "video/mp4"),
-        (None, None),
-        ("no-extension", None),
+        ("image", "IMG_0001.JPG", "image/jpeg"),
+        ("image", "photo.png", "image/png"),
+        ("audio", "note.ogg", "audio/ogg"),
+        ("image", None, None),
+        ("image", "no-extension", None),
+        ("file", "IMG_0001.jpg", None),
+        ("file", "invoice.pdf", None),
+        ("video", "clip.3gp", None),
     ],
 )
-def test_stored_attachment_passes_the_stored_mime_type(file_name, expected):
+def test_stored_attachment_passes_the_stored_mime_type(attachment_type, file_name, expected):
     earlier = send_order.Earlier(
         order_key=1.0,
         message_id="ZZT-msg-1",
         media_url="https://cdn.example/x",
-        attachment_type="file" if file_name else "image",
+        attachment_type=attachment_type,
         file_name=file_name,
     )
 
