@@ -202,4 +202,11 @@ describe('ContactChatbotSection - AI model (AC-M-15)', () => {
     fireEvent.click(screen.getByLabelText(/stock checks/i));
     expect(mutate.mock.calls[0][0].llm).toBeUndefined();
   });
+
+  it('D2: an override model the provider list lacks is shown as the selected value', () => {
+    show({ provider: 'gemini', model: 'typed-model-zzt', source: 'contact', tags: [] });
+    const modelSelect = selectHolding('typed-model-zzt');
+    expect(modelSelect).toBeTruthy();
+    expect(modelSelect!.value).toBe('typed-model-zzt');
+  });
 });

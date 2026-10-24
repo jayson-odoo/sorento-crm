@@ -143,4 +143,11 @@ describe('ContactTagSettings - AI model (AC-M-2)', () => {
     render({ chatbot: { llm: { provider: 'gemini', model: 'm-zzt-1' } } }, true);
     expect(selectHolding('gemini')).not.toBeDisabled();
   });
+
+  it('D2: edit mode shows a stored model that the provider list lacks as the selected value', () => {
+    render({ chatbot: { llm: { provider: 'gemini', model: 'typed-model-zzt' } } }, true);
+    const modelSelect = selectHolding('typed-model-zzt');
+    expect(modelSelect).toBeTruthy();
+    expect(modelSelect!.value).toBe('typed-model-zzt');
+  });
 });

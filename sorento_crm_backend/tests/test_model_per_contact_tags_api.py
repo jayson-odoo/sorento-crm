@@ -305,3 +305,24 @@ def test_ac_m_14_apply_preview_and_write_never_touch_the_override(client, db, al
     assert tuple(_stored(db, plain.id)) == (None, None)
     # the write really ran for the other setting, so the llm item was skipped on purpose
     assert db.execute(text("SELECT chatbot_stock_allowed FROM respond_contacts WHERE id = :i"), {"i": c.id}).scalar() is False
+
+
+# ---------------------------------------------------------------- one provider label (D3)
+
+
+def test_d3_conflict_values_use_the_frontend_provider_labels(client, db, all_perms):
+    a = _llm_tag(client, db, GEMINI, name="ZZT lbl a")
+    b = _llm_tag(client, db, {"provider": "openai", "model": "gpt-5.4-mini"}, name="ZZT lbl b")
+    item = _llm_item(_read(client, _holder(client, db, [a, b])))
+    assert item["conflict"] is True
+    values = {t["name"]: t["value"] for t in item["conflict_tags"]}
+    assert values == {
+        "ZZT lbl a": "Google Gemini gemini-3.5-flash-lite",
+        "ZZT lbl b": "OpenAI gpt-5.4-mini",
+    }
+
+
+def test_d3_single_tag_display_uses_the_frontend_provider_label(client, db, all_perms):
+    tag = _llm_tag(client, db, GEMINI, name="ZZT lbl single")
+    item = _llm_item(_read(client, _holder(client, db, [tag])))
+    assert item["expected"] == "Google Gemini gemini-3.5-flash-lite"
