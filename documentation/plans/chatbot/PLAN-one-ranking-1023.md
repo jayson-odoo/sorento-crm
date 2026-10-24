@@ -97,6 +97,15 @@ nowhere by the sales ranking, so an item ask lands on the catalogue line (T1-T3)
   subject, no ranking frame held; the message's own values win. Owner Q3 (PLAN-report-engine.md:50, period required, no default)
   stands: this is the period on screen, not a default; an order list's window still never carries (`_spec_window` untouched).
   Census fold-in: drilldown route tests ask the item ranking as staff (R1 rule).
+- R9 (S, crew 24 Oct ~17:30, EVAL-BENCH gate round 3 on the PRODUCTION prompt v63, equal empty history, x10: row 2 "qty, delivered"
+  after the sales report total: prod repeats the total 8/10, #1816 2/10, p ~0.02). Cause, measured from code (stub LLM, both trees):
+  the parser request differs from prod in exactly two user-block lines, both from cc3ccfd1a5 (S2): the always-on `Sales channels:`
+  line (+7 tokens) and the brand short form `SORENTO (SRT)` (-2, plan F'' / AC-F2); system prompt, schema and kwargs identical.
+  (1) The Sales channels line prints only when the rendered prompt names it (owner 22 Oct 23:20 pairs it with the template rule that
+  names it; v63 names none); the brand short form stays (cited ruling, data). (2) R8's carry also covers an axis-less ranking.
+  (3) Ruling A on v63: after a held sales report total, a ranking parse with no typed axis and no count (sales_ranking group_by null,
+  or v63 top_selling with no count) answers the total: basis delivered or none re-runs that sales report (the same DO-date figure,
+  as prod); ordered / outstanding gives the report-ask total on the held product and period.
 - Also queued: owner turn 045fb9bb ('Top sales for cb6635 in 2026, by salesppl' -> monthly report), v101 lines 53 / 297 / 310.
 
 ## Access differences the merge makes (Q3)
