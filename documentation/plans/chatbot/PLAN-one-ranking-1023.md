@@ -56,6 +56,13 @@ nowhere by the sales ranking, so an item ask lands on the catalogue line (T1-T3)
   R5 also carries: 'the N in top / bottom N is top_n, never a product; a holding line is never a pick' with gold rows incl.
   the owner's 'Top 100 selling item this year by product, delivered qty' (crew a1); v101 lines 53 / 297 / 310; 'only those N'
   as a scoped example; 'all channels' -> broaden_axis channel.
+- R5 follow-ups from EVAL-BENCH EXPLORE-1023C (24 Oct; :3105 = main + #1816 b830f31ca6, gemini-3.5-flash-lite, v101):
+  row 4: a refine naming another axis while a question is open swaps that axis into the open ask (filters kept, only owed
+  fields asked; an answer that fills a field stays an answer) (8a322acb5e red, d29ad668d5); row 5: prompt v102 contrast line
+  (an item ranking with no basis / measure word leaves both null; flash-lite 40% -> 73% on that class) + gold c74f6fb2a4;
+  owner rulings 24 Oct 08:10 (ask a40448868): (A) a1 'Top sales for X in 2026' with no 'by' stays a TOTAL (no axis question,
+  no default axis); (B) b2 row N of an agent / customer ranking opens that row's detail (agent -> its customers, customer ->
+  its products, plus months; period / product / basis held), the item pick rule (ed44bae38d red, f9aaca0573).
 - Also queued: owner turn 045fb9bb ('Top sales for cb6635 in 2026, by salesppl' -> monthly report), v101 lines 53 / 297 / 310.
 
 ## Access differences the merge makes (Q3)

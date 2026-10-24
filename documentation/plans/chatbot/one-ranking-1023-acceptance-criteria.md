@@ -20,6 +20,13 @@ Plan: `PLAN-one-ranking-1023.md`. Per round; owner answers Q1-Q3 fill the bracke
   <basis> found"), its Period range and the route's refusal lines in the contact's language; rank lines, names, codes and
   every figure are unchanged, an English contact's reply is byte-identical, WhatsApp part markers and the part count
   survive, and the ONE ranking question (period / measure / basis / count) is in the contact's language end to end.
+- AC-OR5 (EXPLORE-1023C, owner rulings 24 Oct 08:10). (A) "Top sales for CB6635 in 2026" (no "by ...") asks only what is
+  missing for a TOTAL and runs the total; never an axis question or a default axis. (B) After an agent or customer ranking, a
+  rank number opens that row's detail for what is on screen (period, product, basis, measure held): an agent's customers, a
+  customer's products, each plus by month; the reply under such a ranking offers it ("Reply with a rank number ...", the
+  contact's language). A new grouping typed while a question is open ("by customer" under "How many?") changes the grouping
+  of the ask being completed, keeps every filter typed, and asks only what is still missing; never "I don't know ... as a
+  number".
 - AC-OR4. No chatbot path reaches crm_top_selling_report; the route, MCP tool and analytics connector still work.
 - AC-OR-ACCESS (owner Q3 + ruling (a), 23 Oct ~09:35: the unification widens nothing). Every ranking (items and categories
   included) needs the contact's Sales report switch (sales_orders.sales_report), except ruling 2 of 22 Oct: a live
