@@ -1,8 +1,8 @@
 """RED tests for SR1 of the AutoCount pull + review lane (issue #1045).
 
 Covers: AC-PL-2..7, AC-BD-1..5, AC-BD-7, AC-PP-1..6, AC-PM-1..2, AC-T-2.
-Plan: documentation/plans/autocount/PLAN-autocount-pull-review.md
-UAC:  documentation/plans/autocount/autocount-pull-review-acceptance-criteria.md
+Plan: documentation/plans/_archive/autocount/PLAN-autocount-pull-review.md
+UAC:  documentation/plans/_archive/autocount/autocount-pull-review-acceptance-criteria.md
 
 Nothing under test exists yet - the settings fields, the FoundryX client module, the pull
 service, the pull router, the preview task and the two permission slugs are ALL the coder's
