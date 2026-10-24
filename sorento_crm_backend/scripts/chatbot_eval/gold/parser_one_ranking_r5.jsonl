@@ -57,3 +57,6 @@
 {"id": "or5-n-02", "message": "most sold in 2026", "expect": {"order_status": "sales_ranking", "group_by": "product", "axis_words": "most sold"}, "context": {"previous_reply": null, "subject": null, "open_question": null}}
 {"id": "or5-n-03", "message": "paling laris tahun ini", "expect": {"order_status": "sales_ranking", "group_by": "product", "axis_words": "paling laris"}, "context": {"previous_reply": null, "subject": null, "open_question": null}}
 {"id": "or5-n-04", "message": "今年最畅销", "expect": {"order_status": "sales_ranking", "group_by": "product", "axis_words": "畅销"}, "context": {"previous_reply": null, "subject": null, "open_question": null}}
+{"id": "or5-m-01", "message": "best sales for CB6635 2026", "expect": {"order_status": "sales_ranking", "group_by": null, "axis_words": null}, "context": {"previous_reply": null, "subject": null, "open_question": null}}
+{"id": "or5-m-02", "message": "top sales this year", "expect": {"order_status": "sales_ranking", "group_by": null, "axis_words": null}, "context": {"previous_reply": null, "subject": null, "open_question": null}}
+{"id": "or5-m-03", "message": "per channel 2026 top 5", "expect": {"order_status": "sales_ranking", "group_by": "channel", "axis_words": "per channel"}, "context": {"previous_reply": null, "subject": null, "open_question": null}}
