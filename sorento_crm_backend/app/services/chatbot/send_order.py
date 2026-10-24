@@ -8,7 +8,7 @@ first (~20 s), so a text sent after a photo overtakes it. Mr Loo, 26 Sep: photo 
 No timer and no waiting window (owner, 26 Sep: "very fragile"). The rule instead: when a
 turn gets its slot, it first answers every EARLIER-sent message of this contact that the
 CRM already KNOWS about and has not answered, then itself. The CRM knows about an earlier
-message in exactly two ways, and this module reads both:
+message in exactly three ways, and this module reads all of them:
 
 * **a queued turn row.** Its request reached `/chat/turn` after this one and is waiting for
   its ticket; its row sits at stage `queued`. Earlier-sent is decided on the respond.io
@@ -23,6 +23,17 @@ message in exactly two ways, and this module reads both:
   arrived and after this contact's previous turn. Both bounds are states, not clocks: a
   photo whose job already finished is not on its way (it has a turn row, or n8n answered
   it on its own reply arm), and a job stranded before an answered turn is history.
+
+* **a stored media message with no turn row and no ledger row** (CHAT-SEND-ORDER, prod 24
+  Oct). The CRM's own respond.io webhook stores every message in `chat_histories` on arrival,
+  often before n8n has forwarded the photo or started reading it, so this is the CRM's
+  earliest sight of it. Earlier is decided on respond.io's clock (the message id is the send
+  time in microseconds). Bounded by states and one staleness line, never a wait: sent at most
+  `STORED_LOOKBACK_SECONDS` before this message and after the contact's latest answered turn,
+  on this conversation's channel, with no respond.io agent reply after it, not yet a turn,
+  and not yet in n8n's media intake (the ledger rule above owns it from then). The text never
+  waits for the photo to arrive; the photo is answered from what is stored, and, like a
+  ledger photo, only once it has been read (the engine reads it first, `media_intake.run`).
 
 The engine answers a claimed message on its own turn row, with its own trace, and the
 earlier message's actions go out ahead of this turn's in the one response n8n executes in
@@ -48,6 +59,11 @@ from app.models.chatbot_turn import ChatbotTurn
 
 QUEUED_STAGE = "queued"
 
+# How far before this message a stored-only media message still counts as on its way. The
+# same line direct ingress draws for a body too old to start a turn
+# (`direct_ingress.STALE_AFTER_SECONDS`): anything older is history, not a message in flight.
+STORED_LOOKBACK_SECONDS = 120.0
+
 # A fixed count of earlier messages one turn answers ahead of itself. Each is a full turn
 # (an LLM call, maybe a media wait), and they all ride this request.
 MAX_EARLIER_PER_TURN = 2
@@ -69,6 +85,40 @@ def sent_at_ms(envelope_message: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _message_id_ms(message_id: Any) -> float | None:
+    """respond.io's send time off its message id (epoch microseconds), in ms with the
+    microseconds kept, or None when the id is not that clock."""
+    try:
+        raw = int(str(message_id))
+    except (TypeError, ValueError):
+        return None
+    if raw > 1e14:
+        return raw / 1000.0
+    if raw > 1e11:
+        return float(raw)
+    return None
+
+
+def send_key_ms(envelope_message: Any) -> float | None:
+    """The send order of this message (`envelope.message`, the webhook body), in ms.
+
+    `timestamp` (ms) is the clock, as before, but it is whole seconds on real envelopes, so
+    two messages sent inside one second tie on it (CHAT-SEND-ORDER, the 15 Oct same-second
+    case). The message id is respond.io's send time in microseconds; when it falls inside
+    the timestamp's second it refines it. With no timestamp, the id alone; with neither, None.
+    """
+    if not isinstance(envelope_message, dict):
+        return None
+    inner = envelope_message.get("message")
+    from_id = _message_id_ms(inner.get("messageId") if isinstance(inner, dict) else None)
+    sent = sent_at_ms(envelope_message)
+    if sent is None:
+        return from_id
+    if from_id is not None and sent <= from_id < sent + 1000:
+        return from_id
+    return float(sent)
 
 
 def claim(db: Session, turn_id: str) -> bool:
@@ -108,6 +158,10 @@ class Earlier:
     job_id: str | None = None
     # Whether answering it can sit in the media poll (a photo or voice note).
     carries_media: bool = False
+    # ... or a media message the CRM has only STORED so far (`chat_histories`): its
+    # respond.io attachment type and file name, to rebuild it (`stored_envelope`).
+    attachment_type: str | None = None
+    file_name: str | None = None
 
 
 def _epoch_ms(value: datetime | None) -> float:
@@ -125,7 +179,7 @@ def earlier_unanswered(db: Session, *, contact_respond_id: str, me: ChatbotTurn)
     oldest first. Live turns only: a test turn never answers or claims a customer's message."""
     if me.is_test:
         return []
-    my_sent = sent_at_ms(me.envelope.get("message") if isinstance(me.envelope, dict) else None)
+    my_sent = send_key_ms(me.envelope.get("message") if isinstance(me.envelope, dict) else None)
     found: list[Earlier] = []
 
     if my_sent is not None:
@@ -147,7 +201,7 @@ def earlier_unanswered(db: Session, *, contact_respond_id: str, me: ChatbotTurn)
             if row.message_id is not None and row.message_id == me.message_id:
                 continue
             envelope = row.envelope if isinstance(row.envelope, dict) else {}
-            sent = sent_at_ms(envelope.get("message"))
+            sent = send_key_ms(envelope.get("message"))
             if sent is not None and sent < my_sent:
                 found.append(
                     Earlier(
@@ -159,6 +213,8 @@ def earlier_unanswered(db: Session, *, contact_respond_id: str, me: ChatbotTurn)
                 )
 
     found.extend(_ledger_only_media(db, contact_respond_id=contact_respond_id, me=me))
+    if my_sent is not None:
+        found.extend(_stored_only_media(db, contact_respond_id=contact_respond_id, me=me, my_sent=my_sent))
     return sorted(found, key=lambda e: e.order_key)
 
 
@@ -326,5 +382,178 @@ def ledger_envelope(my_envelope: dict[str, Any], earlier: Earlier) -> dict[str, 
     if earlier.caption:
         attachment["description"] = earlier.caption
     inner["message"] = {"type": "attachment", "attachment": attachment}
+    body["message"] = inner
+    return envelope
+
+
+def _naive_utc(ms: float) -> datetime:
+    """`chat_histories.sent_at` is naive UTC."""
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).replace(tzinfo=None)
+
+
+def _latest_answered_send_ms(db: Session, *, contact_respond_id: str, me: ChatbotTurn) -> float | None:
+    """The send time of this contact's latest ANSWERED turn (by arrival), or None."""
+    row = (
+        db.query(ChatbotTurn.message_id, ChatbotTurn.envelope)
+        .filter(
+            ChatbotTurn.contact_respond_id == contact_respond_id,
+            ChatbotTurn.is_test.is_(False),
+            ChatbotTurn.id != me.id,
+            ChatbotTurn.finished_at.isnot(None),
+        )
+        .order_by(ChatbotTurn.started_at.desc())
+        .first()
+    )
+    if row is None:
+        return None
+    envelope = row[1] if isinstance(row[1], dict) else {}
+    sent = send_key_ms(envelope.get("message"))
+    return sent if sent is not None else _message_id_ms(row[0])
+
+
+def _stored_only_media(
+    db: Session, *, contact_respond_id: str, me: ChatbotTurn, my_sent: float
+) -> list[Earlier]:
+    """Media messages the CRM's webhook stored before this one was sent, that are not a
+    turn yet and that n8n's media intake has not touched (CHAT-SEND-ORDER)."""
+    from app.models.chat_history import ChatHistory
+    from app.models.media import ContactMediaUsage
+    from app.services.chatbot import media_intake
+
+    floor = my_sent - STORED_LOOKBACK_SECONDS * 1000
+    answered = _latest_answered_send_ms(db, contact_respond_id=contact_respond_id, me=me)
+    if answered is not None:
+        floor = max(floor, answered)
+
+    # `sent_at` is the id's send time cut to ms, so the SQL window is a ms either side and
+    # the exact comparison runs on the id below.
+    from app.services.chat_history_ingest_service import normalise_channel
+
+    # One contact can write on several channels; only this conversation's channel counts,
+    # read the way the webhook mapped it onto the row.
+    body = me.envelope.get("message") if isinstance(me.envelope, dict) else None
+    block = body.get("channel") if isinstance(body, dict) and isinstance(body.get("channel"), dict) else {}
+    channel = normalise_channel(block.get("source") or block.get("type"))
+
+    query = db.query(ChatHistory).filter(
+        ChatHistory.channel == channel,
+        ChatHistory.contact_id == contact_respond_id,
+        ChatHistory.type == "incoming",
+        ChatHistory.message_id.isnot(None),
+        ChatHistory.media_type.isnot(None),
+        ChatHistory.media_url.isnot(None),
+        ChatHistory.sent_at >= _naive_utc(floor - 1),
+        ChatHistory.sent_at <= _naive_utc(my_sent + 1),
+    )
+    if me.message_id:
+        query = query.filter(ChatHistory.message_id != me.message_id)
+
+    found: list[Earlier] = []
+    seen: set[str] = set()
+    for row in query.order_by(ChatHistory.sent_at.asc(), ChatHistory.id.asc()).all():
+        message_id = str(row.message_id)
+        if message_id in seen:
+            continue
+        seen.add(message_id)
+        key = _message_id_ms(message_id)
+        if key is None:
+            key = _epoch_ms(row.sent_at)
+        if not floor < key < my_sent:
+            continue
+        has_turn = (
+            db.query(ChatbotTurn.id)
+            .filter(
+                ChatbotTurn.contact_respond_id == contact_respond_id,
+                ChatbotTurn.message_id == message_id,
+                ChatbotTurn.is_test.is_(False),
+            )
+            .first()
+        )
+        if has_turn is not None:
+            continue
+        in_ledger = (
+            db.query(ContactMediaUsage.id)
+            .filter(
+                ContactMediaUsage.respond_io_id == contact_respond_id,
+                ContactMediaUsage.message_id == message_id,
+            )
+            .first()
+        )
+        if in_ledger is not None:
+            continue
+        # A person replied after it (a respond.io agent, or staff on the WhatsApp Business
+        # app, `echo`): handled, not on its way. The bot's own replies never hide it.
+        agent_replied = (
+            db.query(ChatHistory.id)
+            .filter(
+                ChatHistory.channel == channel,
+                ChatHistory.contact_id == contact_respond_id,
+                ChatHistory.type == "outgoing",
+                ChatHistory.sender_source.in_(("user", "echo")),
+                ChatHistory.sent_at >= row.sent_at,
+                ChatHistory.sent_at <= _naive_utc(my_sent),
+            )
+            .first()
+        )
+        if agent_replied is not None:
+            continue
+        attachment_type = str(row.media_type)
+        found.append(
+            Earlier(
+                order_key=key,
+                message_id=message_id,
+                media_url=row.media_url,
+                caption=_caption(row.message, row.media_file_name),
+                attachment_type=attachment_type,
+                file_name=row.media_file_name,
+                carries_media=media_intake.detect({"attachment": {"type": attachment_type}}) is not None,
+            )
+        )
+    return found
+
+
+def _caption(stored_text: str | None, file_name: str | None) -> str | None:
+    """The customer's own words on a stored media message, or None.
+
+    The webhook stores the caption (`conversation_thread_service._respond_item_text`), or
+    with none a typed placeholder (`[image]`, `[file] a.pdf`), which is not a caption: read
+    as one it would reach the extraction and the parser as if the customer had typed it.
+    The thread view tells the two apart the same way."""
+    from app.services.conversation_thread_service import _is_media_placeholder
+
+    text = (stored_text or "").strip()
+    if not text or _is_media_placeholder(text, file_name):
+        return None
+    return text
+
+
+def stored_attachment(earlier: Earlier) -> dict[str, Any]:
+    """The attachment block a stored-only media message is rebuilt with."""
+    attachment: dict[str, Any] = {"type": earlier.attachment_type, "url": earlier.media_url}
+    if earlier.file_name:
+        attachment["fileName"] = earlier.file_name
+    if earlier.caption:
+        attachment["description"] = earlier.caption
+    return attachment
+
+
+def stored_envelope(my_envelope: dict[str, Any], earlier: Earlier) -> dict[str, Any]:
+    """A stored-only media message as the envelope its own delivery will carry.
+
+    Built from THIS turn's envelope (same contact, channel and workspace), with the message
+    swapped for the attachment the webhook stored, its own id and its send time. The
+    engine's own media intake then reads a photo or voice note under the ledger key n8n's
+    intake uses too (contact, message id, modality), so nothing is read or charged twice.
+    """
+    envelope = copy.deepcopy(my_envelope)
+    envelope["media"] = None
+    body = envelope.setdefault("message", {})
+    inner = copy.deepcopy(body.get("message")) if isinstance(body.get("message"), dict) else {}
+    # The text's quote (if it quoted something) is not the photo's.
+    inner.pop("replyTo", None)
+    inner.pop("reply_to", None)
+    inner["messageId"] = earlier.message_id
+    inner["timestamp"] = int(earlier.order_key)
+    inner["message"] = {"type": "attachment", "attachment": stored_attachment(earlier)}
     body["message"] = inner
     return envelope

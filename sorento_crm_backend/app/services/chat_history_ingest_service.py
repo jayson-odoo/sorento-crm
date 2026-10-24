@@ -30,6 +30,16 @@ from app.services.otp_redaction import mask_otp_text
 logger = logging.getLogger(__name__)
 
 
+def normalise_channel(source: Any) -> str:
+    """`chat_histories.channel` is `whatsapp` for every WhatsApp flavour Respond names
+    (whatsapp_cloud, whatsapp_twilio ...): the thread is read per channel, and n8n
+    writes `whatsapp`, so the two lanes must agree or one lane's rows are invisible."""
+    value = str(source or "").strip().lower()
+    if not value or "whatsapp" in value:
+        return "whatsapp"
+    return value[:32]
+
+
 @dataclass
 class ChatMessageRow:
     channel: str
