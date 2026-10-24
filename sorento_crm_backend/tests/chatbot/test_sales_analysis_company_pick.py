@@ -5,7 +5,7 @@ Live (v63, old path, a staff contact holding TWO companies, Sorento the default 
 
 * turn A, a sales report, leaves its `sales_report_detail` drill offer open (By product /
   Delivery orders).
-* turn B "b2155-nl-blue dealer sales september 2026": `order_status: sales_analysis`,
+* turn B "dealer sales september 2026": `order_status: sales_analysis`,
   `sales_channel: dealer`, Sep 2026, `sales_company: null`, a product entity. The lane runs
   `crm_sales_analysis` with no company and the ROUTE answers its own clarify,
   "Sorento or Mocha?" (`app/api/v1/sales/analysis.py`), which comes back as plain result
@@ -204,11 +204,11 @@ def _turn_a() -> dict[str, Any]:
 
 
 def _turn_b(**overrides: Any) -> dict[str, Any]:
-    """"b2155-nl-blue dealer sales september 2026", as the parser emitted it live."""
+    """"dealer sales september 2026", the no-product ask (a product-naming parse runs the report)."""
     base = dict(
         domain_hint="order", intent_hint="check_order", order_status="sales_analysis",
         sales_channel="dealer", sales_company=None, sales_basis=None, group_by=None,
-        entities=[_product()], entity_op="replace_combine", domain_in_message=True, **SEP_2026,
+        entities=[], entity_op="replace_combine", domain_in_message=True, **SEP_2026,
     )
     base.update(overrides)
     return _parser_output(**base)
@@ -256,7 +256,7 @@ def _to_the_company_question(chat: Chat) -> None:
     assert (chat.lane._session_of(chat.session_factory).get("open_question") or {}).get("kind") == (
         "sales_report_detail"
     ), "setup: turn A leaves the drill offer open"
-    result, _captured = chat.say(_turn_b(), "b2155-nl-blue dealer sales september 2026")
+    result, _captured = chat.say(_turn_b(), "dealer sales september 2026")
     assert QUESTION in _reply(result), f"setup: turn B asks which company: {_reply(result)!r}"
 
 
@@ -279,7 +279,7 @@ def _assert_ran_for(captured: list[tuple[str, dict[str, Any]]], company: str) ->
 
 def test_c1_turn_b_asks_the_company_and_stores_the_question(two):
     two.say(_turn_a(), "b2155-nl-blue sales 2026")
-    result, captured = two.say(_turn_b(), "b2155-nl-blue dealer sales september 2026")
+    result, captured = two.say(_turn_b(), "dealer sales september 2026")
     assert QUESTION in _reply(result), _reply(result)
     assert not [a for a in _calls(captured, ANALYSIS) if a.get("company")], captured
     question = two.next_open_question()
@@ -346,7 +346,7 @@ def test_c4_mocha_runs_the_analysis_for_mocha(two, answer):
 
 def test_g1_one_company_runs_straight_away(one):
     one.say(_turn_a(), "b2155-nl-blue sales 2026")
-    result, captured = one.say(_turn_b(), "b2155-nl-blue dealer sales september 2026")
+    result, captured = one.say(_turn_b(), "dealer sales september 2026")
     calls = _calls(captured, ANALYSIS)
     assert calls, captured
     assert calls[0].get("channel") == "dealer", calls[0]
@@ -356,7 +356,7 @@ def test_g1_one_company_runs_straight_away(one):
 
 def test_g2_a_named_company_needs_no_question(two):
     two.say(_turn_a(), "b2155-nl-blue sales 2026")
-    result, captured = two.say(_turn_b(sales_company="Mocha"), "b2155-nl-blue dealer sales september 2026 mocha")
+    result, captured = two.say(_turn_b(sales_company="Mocha"), "dealer sales september 2026 mocha")
     calls = _calls(captured, ANALYSIS)
     assert calls and calls[0].get("company") == "Mocha", captured
     assert calls[0].get("channel") == "dealer", calls[0]
@@ -384,7 +384,7 @@ def test_g3_another_ask_while_the_question_is_open_is_its_own_ask(two):
             "ok thanks", id="casual",
         ),
         pytest.param(
-            _turn_b(sales_company="Mocha"), "b2155-nl-blue dealer sales september 2026 mocha",
+            _turn_b(sales_company="Mocha"), "dealer sales september 2026 mocha",
             id="own-ask-naming-its-company",
         ),
     ],
