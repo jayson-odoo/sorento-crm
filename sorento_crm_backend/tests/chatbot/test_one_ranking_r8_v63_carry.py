@@ -337,3 +337,21 @@ def test_r8_review_a_fresh_ranking_s_open_ask_replaced_by_a_new_axis_keeps_its_c
     assert _ran(log) == [] and text == HOW_MANY, (text, log)
     text, log = _say_all(console, monkeypatch, _top5(), "top 5")
     _runs_with_all_four(log, "sales_agent")
+
+
+def test_r8_review_a_typed_measure_survives_the_axis_swap_into_a_total_s_open_ask(console, monkeypatch) -> None:
+    """R7 + R5: the measure typed in the answer to a total's question is a value, so the axis swap keeps it
+    (`_settled_by_its_axis`); only the count and the basis are owed."""
+    total = _v63(group_by=None, ranking_refine=False, entities=[_e(PRODUCT_CODE, "product")],
+                 entity_op="replace_combine", domain_in_message=True)
+    text, log = _say_all(console, monkeypatch, total, f"total sales for {PRODUCT_CODE}")
+    assert _ran(log) == [] and PERIOD_Q in text and BASIS_Q in text, ("setup", text, log)
+    answer = _v63(measure="qty", rank_by="quantity", open_question_answer=dict(FILL), **YEAR_2026)
+    text, log = _say_all(console, monkeypatch, answer, "2026, qty")
+    assert _ran(log) == [] and text == BASIS_Q, ("setup", text, log)
+    text, log = _say_all(console, monkeypatch, _row3(ranking_refine=None), "by salesppl")
+    assert _ran(log) == [] and HOW_MANY in text and BASIS_Q in text, (text, log)
+    assert "quantity or" not in text.lower() and PERIOD_Q not in text, text
+    text, log = _say_all(console, monkeypatch, _v63(top_n=5, basis="delivered", open_question_answer=dict(FILL)),
+                         "top 5, delivered")
+    _runs_with_all_four(log, "sales_agent")
