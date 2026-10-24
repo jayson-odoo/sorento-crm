@@ -455,6 +455,29 @@ def test_q1_guard_a_sibling_variant_pick_answers_the_picked_variant(session_fact
     assert observed == B173_Q1[f"sibling_variant_pick|{'state_path' if gate else 'old_path'}"], observed
 
 
+# --- RELEASE-FIX-1024: a word beside an exact code is a strip, never a correction ----------------------
+#
+# AC-RSF-01 / AC-RSF-03 (RESOLVE-SEMANTIC-FALLBACK, #1511): with a type / colour / brand word beside the
+# code, `raw` is the whole phrase and `canonical_code` the bare code exactly as typed. The raw's own
+# token resolves nothing and the code is its trigram neighbour, yet the parser corrected nothing: the
+# code is among the raw's words. Release run 40053956497 failed four canonical-code tests on this.
+
+
+@PATHS
+@pytest.mark.parametrize(
+    "raw",
+    ["TAP SRTWT8259-GM", "SRTWT8259-GM gun metal", "TAP SRTWT 8259-GM"],
+    ids=["type_word_before", "colour_words_after", "type_word_and_spaced_code"],
+)
+def test_q1_guard_a_word_beside_an_exact_code_answers_the_code(session_factory, monkeypatch, stub_access, gate, raw):  # noqa: F811
+    pick = "SRTWT8259-GM"
+    c, _ = _console(session_factory, monkeypatch, stub_access, f"+60000032{len(raw) % 10}{int(gate)}", gate)
+    text = c.say(f"{raw} stock", _ask(raw, pick, gate))
+    assert "Did you mean" not in text, text
+    assert text.startswith("Stock summary") and f"*Product Code:* {pick}" in text, text
+    assert _stocked(c, 0) == [pick], _stocked(c, 0)
+
+
 # --- reviewer should-fix: the pick leads even with non-exact matches ahead of it -----------------------
 #
 # D1 lists a resolution's `matches` before its `alternatives` (`answer.miss_token_candidates`), so a
