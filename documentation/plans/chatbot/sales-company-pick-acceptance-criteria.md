@@ -23,3 +23,7 @@ Round 2 (item 3):
 - AC-10: A sales_analysis parse naming a customer this message runs the sales report for that customer.
 - AC-11: A sales_analysis parse naming no product or customer this message (including one that only carries an earlier
   turn's product) is unchanged: company question (2+ companies) or the company analysis.
+- AC-12: A named subject that arms a picker (customer picker, kind picker, did-you-mean) keeps the sales report: the
+  answer ("1") runs crm_sales_report for the picked subject, never the company analysis.
+- AC-13: A customer-hinted word that resolves as a product renders that product's sales report, as the sales_report
+  parse of the same message does (not the miss text).

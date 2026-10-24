@@ -43,8 +43,13 @@ coder, Opus reviewer + security-reviewer (multi-company scoping). Branch crew/ch
   names a product or a customer (entity hint product / customer, current_message true) is a sales report of that subject:
   it runs crm_sales_report exactly as the sales_report parse of the same message does (same args), never the company
   analysis and never the company question. A customer is the same class (the route filters neither).
-- Architecture: one predicate over parser fields (named subject this message), read at the two seams that today treat
-  every sales_analysis parse alike: the resolve+gate bypass (`lanes/business/__init__.py` ~:948, `sales_analysis_ask`,
-  so the subject is resolved like a sales_report ask) and the tool pick (~:2135 analysis branch / ~:2163 sales report
-  branch). The tool pick is traced (`_tool_pick.source`). Carried entities (current_message false) never reroute: a new
-  "dealer sales this year" after a product report stays the company analysis.
+- Architecture (crew ruling (a), 24 Oct): ONE seam, `turn_runtime._report_status_means_order_domain`, the existing
+  normalisation of a fresh verdict's status from the parser's own fields before anything reads it. A sales_analysis
+  verdict whose current message names a product or customer reads as sales_report from there on, so the tool pick,
+  resolve_gate's status set (`resolve_gate.py:90`), the picker's stored status (`answer_bridge.py:795`) and
+  `focus.status` (`apply.py:939`) all see one ask. Parser fields only: no message text, no word lists. A picker answer
+  ("1") keeps the asking turn's subject kinds. Carried entities (current_message false) never reroute.
+  Round 2's first cut (per-consumer edits in `lanes/business/__init__.py`, a06eba5141) is removed: the reviewer found
+  the customer picker answer, a customer word that resolves as a product and the dead `run_until_exit` seam (no
+  production caller) still wrong or untested. Not the 16 Oct NO-GO class (crew): that overrode the parser from message
+  text; this maps status to the tool's domain from parser params.
