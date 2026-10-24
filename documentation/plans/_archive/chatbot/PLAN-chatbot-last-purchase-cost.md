@@ -1,6 +1,6 @@
 # PLAN: "last purchase cost" answer, per product per location, gated per contact
 
-Status: implemented, in review (12 Sep 2026)
+Status: merged (PR #844, 2582bd2cf, 12 Sep 2026)
 Branch: `feat/chatbot-last-purchase-cost`, worktree
 `.claude/worktrees/chatbot-last-purchase-cost`
 UAC: `chatbot-last-purchase-cost-acceptance-criteria.md`
