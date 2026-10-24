@@ -1,8 +1,8 @@
 # PLAN: the chatbot sales report splits by channel the way the ranking does (SALES-REPORT-CHANNEL)
 
-Status: Build (red tests, then fix). Card `sales-report-channel-behaviour-card.md` filed 24 Oct 2026; answers: owner
-Q1 (a) a DO line with no SO is in no channel ("we need to link, we will link": linking is separate work), crew Q2 (a)
-keep DO date, crew Q3 (a) always apply the channel. Prod sizing SQL for the linking work:
+Status: Review round 1 (PR #1841: red c96ae62453, fix 42ea3f8c47, kill-proof posted; reviewer: 0 blocking, 2 should-fix
+in progress). Answers: owner Q1 (a) a DO line with no SO is in no channel ("we need to link, we will link": linking is
+separate work), crew Q2 (a) keep DO date, crew Q3 (a) always apply the channel. Prod sizing SQL for the linking work:
 `sales-report-channel-prod-link-share.sql`. Track: M, LEAD pattern. No migration, no auth change.
 
 UAC: `sales-report-channel-24oct-acceptance-criteria.md` (alongside).
@@ -67,6 +67,11 @@ After this lane the sales report's Channel means the sales order's type (ruling 
   `reports/ask.py:21`) are untouched, so `crm_report_ask`'s numbers do not move. `crm_top_selling_report`
   (`sales_report_service.py:270-273`) and Sales > Yearly comparison (`sales_order_lines.py:66-72`,
   `billing_documents.py:73-74`) already read `demand_class` and are untouched.
+- Decided, reviewer nit 3: the doc-number link requires `from_doc_type = 'SO'`. The AutoCount ingest also tries a
+  NULL type (`autocount_doc_ingest_service.py:1169-1170`), but 0 of 116,487 dev DO lines carry a `from_doc_no` without a
+  type, so the stricter rule moves no number; revisit if a feed starts sending NULL types.
+- Not slower in kind: the two lookups are indexed scalar subqueries (pk; unique `(company_id, so_number)`). Worst ask
+  measured on the dev copy (all products, full year, Project): 5.1 s vs main 2.7 s all companies, 2.8 s vs 1.6 s Sorento.
 - Out of scope, noted: the sales report's `sales_agent` dimension reads only the header link `orders.sales_order_id`
   (`delivery_order_lines.py:177-178`), NULL on every dev DO. Separate ticket if wanted.
 
