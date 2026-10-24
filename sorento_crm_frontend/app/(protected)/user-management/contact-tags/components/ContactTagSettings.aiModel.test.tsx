@@ -88,6 +88,7 @@ beforeEach(() => {
 describe('ContactTagSettings - AI model (AC-M-2)', () => {
   it('the Chatbot section has an AI model row with a provider select in edit mode', () => {
     render({}, true);
+    fireEvent.click(within(chatbot()).getByRole('switch', { name: /set on this tag/i }));
     expect(within(chatbot()).getByText('AI model')).toBeInTheDocument();
     expect(selectHolding('gemini')).toBeTruthy();
   });
