@@ -87,3 +87,7 @@ Contact page
   validator (no `/`, `?`, `#`, whitespace or newline); anything else is a 422 naming the field.
 - AC-S-4: without `system.ai_assistant_settings.edit` the AI model picker on the contact page and the tag form is
   read-only (value and source line still shown). Cosmetic only: the backend enforces AC-S-1/2.
+- AC-S-5 (crew ruling (b), 24 Oct 2026): adding or removing a contact's tag keeps today's gate
+  (`user_management.contacts.edit`), even when the tag carries an AI model: putting a model on a tag is the
+  AI-settings holder's delegation to everyone who may tag contacts. The resulting model and the tag it comes from
+  are visible on the contact page (AC-M-15 source line), so a membership change shows there.
