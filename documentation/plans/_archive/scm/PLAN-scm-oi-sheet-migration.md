@@ -1,8 +1,9 @@
 # PLAN: order inquiry sheet as a migration tool
 
-Status: VERIFIED 14 Sep 2026, PR pending. Browser evidence in
-evidence/oi-sheet-migration/. Owner check before first prod upload: only
-purchasing / admin roles hold scm.reorder.run (security review SF3).
+Status: MERGED 14 Sep 2026, PR #875 (squash ae0831776), issue #873 closed.
+Browser evidence stays in `documentation/plans/scm/evidence/oi-sheet-migration/`.
+Owner check before the first prod upload: only purchasing / admin roles hold
+scm.reorder.run (security review SF3).
 
 Owner ruling, 13 Sep 2026: "we don't need to create sales orders, the sales
 orders are created, so we need to create order inquiries instead ... that
