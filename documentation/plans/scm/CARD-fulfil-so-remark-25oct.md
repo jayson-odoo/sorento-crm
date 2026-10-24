@@ -21,8 +21,7 @@ Mock: `documentation/mockups/FULFIL-SO-REMARK/index.html`.
    **Remark** field under the SO header row: free text, prefilled with the default, editable,
    clearable, up to 100 characters.
 2. The remark prints in a new **REMARK** column at the end of the email's SO table
-   (S/O NO | SO DATE | CUSTOMER | PROJECT | REMARK). Blank remark, blank cell. The preview dry run
-   shows the same remark as the send.
+   (S/O NO | SO DATE | CUSTOMER | PROJECT | REMARK). Blank remark, blank cell.
 3. Default, recomputed every time the Confirm guide opens, from the LINES CHOSEN for that SO in
    this Confirm (an edit applies to that send only), first match wins:
    1. Shipping Info contains `SPON` (any case) -> `Sponsorship`.

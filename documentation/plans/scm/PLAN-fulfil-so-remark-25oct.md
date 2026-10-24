@@ -1,8 +1,9 @@
 # PLAN: per-SO remark on the Confirm split page, carried into the purchasing email (FULFIL-SO-REMARK)
 
-**Status:** Plan. Step 1 investigation done; behaviour card filed to the owner (crew `--ask`); no code
-until the answers come back. Track: M by the brief; becomes L if slice 2 (AutoCount pull of new fields)
-goes ahead, because it needs a shared-service change and CRM columns (migration).
+**Status:** Build (size L, two repos). Owner approved mock v3 and the final card 25 Oct 05:39.
+Rules: `documentation/plans/scm/CARD-fulfil-so-remark-25oct.md` (FINAL). UAC:
+`documentation/plans/scm/fulfil-so-remark-25oct-acceptance-criteria.md`. PRs: shared service
+`crew/fulfil-so-remark` (foundryx-shared-service) + CRM `crew/fulfil-so-remark` (sorento-crm).
 
 ## Requirement (owner, 25 Oct 2026, relayed by crew)
 
@@ -68,12 +69,75 @@ ShipInfo or RefDocNo; the line query (`presets.py:204-214`) reads Description bu
 FurtherDescription, and skips text-only lines (`ItemCode IS NOT NULL AND Qty IS NOT NULL`, :214). So
 slice 2 needs a shared-service query + canonical payload change plus CRM columns.
 
-## Slices (pending owner answers)
+## Architecture
 
-1. Remark field + email (CRM only). Default from data the CRM already holds (Note -> `MOCKUP`).
-2. AutoCount pull: shared service sends `ShipInfo`, `RefDocNo`, line `FurtherDescription`; CRM stores
-   them; default rules use them (PR / Sponsorship / PO no / mixed-SO line labels).
+One rule module per repo side, no new framework:
+
+- **Shared service** sends three more AutoCount values on the SO it already pulls by SQL preset:
+  header `ShipInfo` -> `ship_info`; line `FurtherDescription` (raw RTF, like `Note`) -> `line_remark`;
+  line `SectionHeading` -> `section_heading`, computed in the line query by an OUTER APPLY: the
+  Description of the nearest earlier text-only line (ItemCode or Qty NULL, text not blank) of the
+  same DocKey. The item-line cut and the LineCount guard stay as they are. Existing tasks get the
+  new query through the repo's backfill pattern (rewrite only a byte-identical previous preset; the
+  hand-written prod query is a documented operator step). CRM drops unknown keys
+  (`app/schemas/ingest_extras.py:23`), so the two PRs can deploy in either order.
+- **CRM storage**: `sales_orders.ship_info` (precedent `orders.ship_info`, `app/models/order.py:484`),
+  `sales_order_lines.line_remark` (RTF stripped by `app/utils/rtf.py:27`) and
+  `sales_order_lines.section_heading`. One alembic revision. Ingest maps them like `po_ref`
+  (`document_ingest_service.py:1050`).
+- **CRM rules**: one pure module `app/services/so_remark_rules.py`: `is_mockup_line(note,
+  line_remark, section_heading)`, `remark_type(ship_info)` (Sponsorship > Purchase Request),
+  `default_remark(remark_type, chosen_flags)`, `label_lines(chosen_flags)` (mixed only). The board
+  exposes `is_mockup` per line (`BoardContribution`, `project_board.py:574`) and `remark_type` per SO
+  (`BoardOrderStanding`, :1239). The FE mirrors only the two-line default/label decision
+  (`_shared/lib/soRemark.ts`) over those flags.
+- **Confirm -> email**: `ConfirmManyOrderBody.so_remark` (`app/schemas/project_supply.py:596`,
+  Optional, max 100; None = compute the default, "" = staff cleared it) -> `confirm` ->
+  `record_saved_lines(so_remark=...)` (`project_order_inquiry_service.py:4587`) stamped on the queued
+  items -> `_build_handover_context` `orders` rows (:14066) get `remark`; line items of an SO whose
+  queued lines mix mockup and actual get `Mockup` / `Mockup, <text>` in `remark`. Resend
+  (`oi_handover_resend.py:147`) passes no remark, so the default is recomputed from the resent lines.
+- **Template**: `oihr_0010_so_remark_column` adds REMARK as the last SO-table column (HTML + text),
+  copying `oihr_0009`'s pattern (`_load`, exact single replacements, `only_when` guard, downgrade).
+- Not changed: the OI Excel attachment, the preview dry run (it never builds the email,
+  `project_supply_service.py:11587`), RefDocNo (owner: not needed).
+
+## Slices
+
+CRM (this repo):
+1. Migration + model + canonical schema + ingest mapping (`ship_info`, `line_remark`, `section_heading`).
+2. `so_remark_rules.py` + board fields (`is_mockup`, `remark_type`).
+3. Confirm payload `so_remark` + handover context (SO remark, line labels) + `oihr_0010` template.
+4. FE: Remark input per SO page in `ConfirmGuideDialog.tsx`, Mockup badges, `so_remark` in
+   `buildConfirmOrders` (`FulfilmentBoardPanel.tsx:1509`).
+
+Shared service (`foundryx-shared-service`):
+1. Preset header/line queries + mappings + canonical fields (SO line only) + catalog pin.
+2. Backfill + module migration + bootstrap call + manifest bump + docs (operator step for the
+   hand-written prod query).
+
+## Test plan (red first, per repo)
+
+CRM pytest (throwaway DB `sorento_fsr_throwaway`, `SORENTO_ENV_FILE=.env.ci-tests`):
+`tests/test_so_remark_rules.py` (rules, every card case), `tests/test_so_remark_ingest.py` (columns
+stored, RTF stripped, absent key keeps value like po_ref), `tests/test_so_remark_board.py`
+(`is_mockup`, `remark_type` on the board), `tests/test_so_remark_email.py` (SO REMARK cell from the
+payload, default when None, blank when "", line labels only when mixed, resend default),
+`tests/test_email_layout_migrations.py` (oihr_0010 single head, guard, downgrade). Global guards:
+`tests/test_schema_uuid_id_principle.py`, `tests/test_list_pagination_limit.py`.
+CRM vitest: `_shared/lib/soRemark.test.ts`, `FulfilmentBoardPanel.confirmGuide.test.tsx` (field,
+default per case, clear, badges when mixed, payload carries so_remark).
+Shared service pytest: preset query/mapping/payload/catalog/backfill tests next to
+`tests/test_autocount_so_po_ref.py` and `test_autocount_so_transferable.py`.
+
+## E2E (dev)
+
+The dev SS source (`seed_autocount_shape_source.py`) has no ShipInfo/FurtherDescription and runs a
+Postgres translation, so the end-to-end run reads real AutoCount read-only through the Air tunnel:
+the SS branch's preset queries + mapping + sink payload for SO419417 / SO421287 / SO423741, posted to
+the crew test copy's ingest, then the board and a Confirm on that copy. Never Confirm/Push to
+AutoCount.
 
 ## Open questions
 
-Filed as the behaviour card; answers recorded here when crew relays them.
+None. Owner rulings recorded in the card (FINAL).
