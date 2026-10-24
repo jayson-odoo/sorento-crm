@@ -199,6 +199,25 @@ describe('BorrowAddDialog', () => {
     expect(screen.getByText('SRT501-CP')).toBeInTheDocument();
   });
 
+  it('titles the dialog with the SO line number, not the planning order\'s own (SO-LINE-NUMBERS AC-1)', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    render(
+      <QueryClientProvider client={client}>
+        <BorrowAddDialog
+          lineNo={11}
+          soLineNo={224}
+          itemCode="SRTWB242"
+          candidates={[OTHER_LOCATION]}
+          onDone={onDone}
+          onAdd={onAdd}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText('Borrow for line 224')).toBeInTheDocument();
+    expect(screen.queryByText('Borrow for line 11')).not.toBeInTheDocument();
+  });
+
   it('says "This item" rather than nothing when the line carries no item code', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
     render(
@@ -222,11 +241,12 @@ describe('BorrowAddDialog', () => {
 
     const table = screen.getByTestId('borrow-donor-table');
     for (const label of [
-      'Location', 'Where', 'On hand', 'SO qty', 'SPO qty', 'Available',
+      'Location', 'On hand', 'SO qty', 'SPO qty', 'Available',
       'Available for Project', 'PO qty', 'Taken',
     ]) {
       expect(within(table).getByText(label)).toBeInTheDocument();
     }
+    expect(within(table).queryByText('Where')).not.toBeInTheDocument();
     expect(within(table).queryByText('Free')).not.toBeInTheDocument();
     expect(within(table).queryByText('Committed')).not.toBeInTheDocument();
     expect(within(table).queryByText('After borrow')).not.toBeInTheDocument();
@@ -646,14 +666,23 @@ describe('BorrowAddDialog', () => {
     expect(screen.getByRole('button', { name: 'Add the borrow' })).toBeEnabled();
   });
 
-  it('adds nothing on a zero or negative quantity', () => {
+  it('adds nothing on a zero, negative or blank quantity - Add stays enabled and says why', () => {
     renderDialog();
 
+    // NUMBER-FIELDS: the button is never disabled without a reason; pressing it names the gap.
     fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '0' } });
-    expect(screen.getByRole('button', { name: 'Add the borrow' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Add the borrow' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Add the borrow' }));
+    expect(screen.getByText(/^Enter a number/)).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '-5' } });
-    expect(screen.getByRole('button', { name: 'Add the borrow' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Add the borrow' }));
+    expect(screen.getByText(/^Enter a number/)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add the borrow' }));
+    expect(screen.getByText(/^Enter a number/)).toBeInTheDocument();
+    expect(onAdd).not.toHaveBeenCalled();
   });
 
   it('hands back the chosen candidate, the quantity and an empty reason (no same-agent donor)', () => {

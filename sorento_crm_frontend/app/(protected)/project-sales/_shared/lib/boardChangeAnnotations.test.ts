@@ -125,6 +125,13 @@ function batchOf(rows: PlanningChangeRow[]): PlanningChangeBatch {
 }
 
 describe('the Was / Now table of a changed line', () => {
+  it('prints the SO line number, not the planning order\'s own (SO-LINE-NUMBERS AC-6)', () => {
+    expect(annotationOf(row({ line_no: 11, so_line_no: 224 }), 'SO401624', 'BRW-IB').lineNo).toBe(
+      224,
+    );
+    expect(annotationOf(row({ line_no: 11 }), 'SO401624', 'BRW-IB').lineNo).toBe(11);
+  });
+
   it('states the quantity, the date and the decision on both sides', () => {
     const annotation = annotationOf(row({}), 'SO381895', 'BRW-IB');
     expect(annotation.was).toEqual({

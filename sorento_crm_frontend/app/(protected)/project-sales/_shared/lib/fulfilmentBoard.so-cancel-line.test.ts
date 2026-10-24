@@ -100,39 +100,41 @@ describe('a cancel draft on a covered line is no press at all (AC-F10)', () => {
   });
 });
 
-// Round 8 (crew ruling 7 Oct, option b): a cancel is held back by a pending planning change
-// ONLY when the batch NAMES that line. The batch's own lines reach the lib as
+// Round 8 (crew ruling 7 Oct, option b) held a cancel the batch NAMES; ruling (a) of
+// 21 Oct 2026 retired that hold (below). The batch's own lines reach the lib as
 // `batchNamedKeys: ReadonlySet<string>` (contribution keys; the panel feeds it
 // `preMarkedKeys` of the loaded batches, boardChangeAnnotations.ts:686), beside the
 // order-level `batchBlocked` / `batchBlockedSalesOrderIds` that already exist. Accepted by
 // `pressPostsContribution` options, `plannedLineCount` / `cancelledLinesFor` options
 // (`ConfirmScopeOptions`) and `confirmDialogRowsFor` context.
-describe('a cancel draft the pending planning change NAMES is held, not counted (AC-F11)', () => {
+// PLAN-BATCH-HELD-CANCEL (owner ruling (a), 21 Oct 2026) supersedes AC-F11: a cancel the
+// pending change NAMES rides in the same press too; the server applies the change and the
+// transfer in one go, so nothing is held.
+describe('a cancel draft the pending planning change NAMES rides along too (AC-F11, ruling a)', () => {
   const contribution = row();
   const draft: BoardDraft = { [contribution.key]: CANCEL };
   const named = new Set([contribution.key]);
 
-  it('is not a press and is not counted', () => {
+  it('is a press and is counted', () => {
     expect(
       pressPostsContribution(contribution, CANCEL, { batchBlocked: true, batchNamedKeys: named } as never),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       plannedLineCount([contribution], 'so-1', draft, new Set(['so-1']), {
         batchNamedKeys: named,
       } as never),
-    ).toBe(0);
-    expect(plannedLineCount([contribution], 'so-1', draft, new Set())).toBe(1);
+    ).toBe(1);
   });
 
-  it('the dialog names it as not posted rather than listing it', () => {
+  it('the dialog lists it as Cancel SO, not under not posted', () => {
     const dialog = confirmDialogRowsFor([contribution], draft, {
       currentUserName: 'Cyndi',
       openedAt: new Date('2026-10-01T00:00:00Z'),
       batchBlockedSalesOrderIds: new Set(['so-1']),
       batchNamedKeys: named,
     } as never);
-    expect(dialog.rows).toHaveLength(0);
-    expect(dialog.notPosted).toHaveLength(1);
+    expect(dialog.rows.map((r) => r.composition)).toEqual(['Cancel SO']);
+    expect(dialog.notPosted).toHaveLength(0);
   });
 });
 
@@ -204,7 +206,10 @@ describe('committed Cancel SO line (AC-F16)', () => {
   });
 
   it('control: a book-cancelled line is still retired by the press', () => {
-    expect(plannedLineCount([bookCancelled], 'so-1', {})).toBe(1);
+    // PLAN-BATCH-COUNT-DISPLAY (owner ruling 21 Oct 2026 ~16:15): not counted as a decision; it
+    // is the AutoCount change note, and the press still retires it.
+    expect(plannedLineCount([bookCancelled], 'so-1', {})).toBe(0);
+    expect(board.autocountChangeNotes([bookCancelled], {})).toHaveLength(1);
     expect(confirmDialogRowsFor([bookCancelled], {}, ctx).cancelled).toHaveLength(1);
   });
 });

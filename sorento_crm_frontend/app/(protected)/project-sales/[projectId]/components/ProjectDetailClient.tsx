@@ -4,7 +4,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
-  CalendarRange,
+  ClipboardList,
   Clock,
   FileText,
   Flame,
@@ -15,7 +15,6 @@ import {
   Package,
   Paperclip,
   Pencil,
-  Receipt,
   ShoppingCart,
   Trash2,
   UserCog,
@@ -53,10 +52,10 @@ import { ProjectActivityPanel } from './ProjectActivityPanel';
 import { ProjectDocumentsPanel } from './ProjectDocumentsPanel';
 import { ProjectAccessPanel } from './ProjectAccessPanel';
 import { ReassignProjectDialog } from './ReassignProjectDialog';
-import { DeliverySchedulesPanel } from './DeliverySchedulesPanel';
 import { PurchaseOrdersPanel } from './PurchaseOrdersPanel';
 import { SalesOrdersPanel } from './SalesOrdersPanel';
 import { QuotationsPanel } from './QuotationsPanel';
+import { SampleRequestsPanel } from './SampleRequestsPanel';
 import { SamplesPanel } from './SamplesPanel';
 import { SponsorshipsPanel } from './SponsorshipsPanel';
 import { StakeholdersPanel } from './StakeholdersPanel';
@@ -72,29 +71,38 @@ import { TasksPanel } from './TasksPanel';
  * Tabs whose slice has not shipped say so plainly instead of pretending: an honest
  * "arrives with quotations" beats a stub that looks broken.
  */
-const TABS = [
+export const TABS = [
   { id: 'overview', label: 'Overview', icon: Info },
   { id: 'stakeholders', label: 'Stakeholders', icon: Users },
   { id: 'tasks', label: 'Tasks', icon: ListChecks },
   { id: 'quotations', label: 'Quotations', icon: FileText },
+  { id: 'sample-requests', label: 'Sample requests', icon: ClipboardList },
   { id: 'samples', label: 'Samples', icon: Package },
   { id: 'sponsorships', label: 'Sponsorships', icon: HandCoins },
-  { id: 'pos', label: 'POs', icon: ShoppingCart },
-  { id: 'schedules', label: 'Delivery schedules', icon: CalendarRange },
-  { id: 'sales-orders', label: 'Sales orders', icon: Receipt },
+  // PM-SIMPLIFY AC-O1: one Orders tab where POs, Delivery schedules and Sales orders were.
+  // A PO's schedule and sales orders live on the PO's own page.
+  { id: 'orders', label: 'Orders', icon: ShoppingCart },
   { id: 'activity', label: 'Activity', icon: History },
   { id: 'documents', label: 'Documents', icon: Paperclip },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
 
+/** The three tabs Orders replaced; their old links (and bookmarks) open Orders. */
+const LEGACY_ORDER_TABS = ['pos', 'schedules', 'sales-orders'];
+
+export function resolveProjectTab(requested: string | null): TabId {
+  if (requested && LEGACY_ORDER_TABS.includes(requested)) return 'orders';
+  return requested && TABS.some((tab) => tab.id === requested)
+    ? (requested as TabId)
+    : 'overview';
+}
+
 export function ProjectDetailClient({ projectId }: { projectId: string }) {
   const router = useRouter();
   const backHref = useBackToListHref('/project-sales/pipeline');
   const searchParams = useSearchParams();
-  const requestedTab = searchParams.get('tab') as TabId | null;
-  const activeTab: TabId =
-    requestedTab && TABS.some((tab) => tab.id === requestedTab) ? requestedTab : 'overview';
+  const activeTab = resolveProjectTab(searchParams.get('tab'));
 
   const { data: project, isLoading, isError, error } = useProject(projectId);
   const graph = useProjectStatusGraph('project', project?.template_id ?? null);
@@ -383,20 +391,18 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
         <TabsContent value="quotations">
           <QuotationsPanel project={project} />
         </TabsContent>
+        <TabsContent value="sample-requests">
+          <SampleRequestsPanel project={project} />
+        </TabsContent>
         <TabsContent value="samples">
           <SamplesPanel project={project} />
         </TabsContent>
         <TabsContent value="sponsorships">
           <SponsorshipsPanel project={project} />
         </TabsContent>
-        <TabsContent value="pos">
+        <TabsContent value="orders" className="space-y-4">
           <PurchaseOrdersPanel project={project} />
-        </TabsContent>
-        <TabsContent value="schedules">
-          <DeliverySchedulesPanel project={project} />
-        </TabsContent>
-        <TabsContent value="sales-orders">
-          <SalesOrdersPanel project={project} />
+          <SalesOrdersPanel project={project} withoutPurchaseOrder />
         </TabsContent>
         <TabsContent value="activity">
           <ProjectActivityPanel project={project} />

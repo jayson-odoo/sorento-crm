@@ -221,3 +221,75 @@ def do_window() -> dict[str, str]:
     A seed that needs its orders listed stamps `actual_delivery_date=DO_WINDOW_DATE`.
     """
     return {"date_filter_start": "2026-09-01", "date_filter_end": "2026-09-30"}
+
+
+def make_office_tier(session_factory: Any, respond_io_id: Any) -> None:
+    """V1-DOC-SCOPE: mark a seeded contact as staff (`chatbot_profile.tier == "office"`). An
+    unlinked contact that is neither this nor an office access type owns no customer
+    document, so a test whose contact plays an office/staff role says so explicitly."""
+    from sqlalchemy import text
+
+    db = session_factory()
+    marked = db.execute(
+        text(
+            "UPDATE respond_contacts SET chatbot_profile = "
+            "COALESCE(chatbot_profile, '{}'::jsonb) || '{\"tier\": \"office\"}'::jsonb "
+            "WHERE respond_io_id = :c"
+        ),
+        {"c": str(respond_io_id)},
+    ).rowcount
+    assert marked == 1, f"no single seeded contact {respond_io_id!r} to mark as staff ({marked})"
+    db.commit()
+
+
+def make_office_access_type(session_factory: Any, respond_io_id: Any) -> None:
+    """V1-DOC-SCOPE: mark a seeded contact as staff by an ACTIVE office access type alone
+    ("Sorento Office", `contact_customer_scope.is_office_staff`), leaving its tier untouched
+    (the tier also decides the escalation offer, `turn.state.is_staff_profile`)."""
+    import uuid
+
+    from sqlalchemy import text
+
+    code = f"ZZTOFF{uuid.uuid4().hex[:8]}"
+    db = session_factory()
+    db.execute(
+        text("INSERT INTO contact_access_types (code, name, is_active) VALUES (:c, 'Sorento Office', true)"),
+        {"c": code},
+    )
+    marked = db.execute(
+        text(
+            "INSERT INTO respond_contact_access_types (contact_id, access_type_code) "
+            "SELECT id, :c FROM respond_contacts WHERE respond_io_id = :cid"
+        ),
+        {"c": code, "cid": str(respond_io_id)},
+    ).rowcount
+    assert marked == 1, f"no single seeded contact {respond_io_id!r} to mark as staff ({marked})"
+    db.commit()
+
+
+def seed_borrowable_envelope(session_factory: Any) -> None:
+    """The contact's last real inbound envelope, the one `console_service._borrow_envelope`
+    reads (a console turn cannot run without one). Same seed as PR #1300 round 3's console
+    replay; moved here from the retired top selling lane tests (REPORT-SMART-L R4a)."""
+    import json
+
+    from app.models.chatbot_turn import ChatbotTurn
+    from tests.chatbot.test_engine import CONTACT_ID, _envelope
+
+    db = session_factory()
+    try:
+        db.add(
+            ChatbotTurn(
+                contact_respond_id=str(CONTACT_ID),
+                message_id="ZZT-top-selling-r6-seed",
+                ingress="webhook",
+                envelope=json.loads(_envelope().model_dump_json()),
+                is_test=False,
+                status="done",
+                stage="sent",
+                branch_kind="business_query",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()

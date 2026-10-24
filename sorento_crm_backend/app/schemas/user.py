@@ -52,6 +52,10 @@ class RespondContactResponse(RespondContactBase):
     access_types: List[RespondContactAccessTypeRef] = []
     # Linked customer codes, sorted; filled by the list endpoint (one query per page).
     customer_codes: List[str] = []
+    # CONTACT-TAGS: `[{id, name}]` ordered by tag sort_order then name.
+    tags: List[dict] = []
+    # CONTACT-TAGS S2: `{status: matches|differs|none, differ_count, differ_labels}` (list rows).
+    tag_settings: Optional[dict] = None
     # CONTACT-BRAND-SCOPE: the brands the contact may see, `[{id, brand_name}]`; empty = all.
     brands: List[dict] = []
     workspace_name: Optional[str] = None
@@ -67,6 +71,8 @@ class RespondContactResponse(RespondContactBase):
     # Chatbot memory lane A (contract section 5): the contact's own context level,
     # null = follow the system default.
     chatbot_memory_level: Optional[str] = None
+    # MODEL-PER-CONTACT: {provider, model, source, tags} from contact_llm_choice; null on list rows.
+    chatbot_llm: Optional[dict] = None
     # S6: stock allowance on the contact row, default on.
     chatbot_stock_allowed: bool = True
     # Chatbot stock ask v2 S2 (PLAN-chatbot-stock-ask-v2-24sep.md, R7): both default off.

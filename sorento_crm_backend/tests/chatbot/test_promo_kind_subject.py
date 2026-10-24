@@ -112,10 +112,10 @@ def _route_backed_mcp(monkeypatch, session_factory):
     def _db():
         yield session_factory()
 
-    app.dependency_overrides[get_db] = _db
-    app.dependency_overrides[get_current_user] = lambda: user
-    app.dependency_overrides[get_current_user_or_api_key] = lambda: user
-    app.dependency_overrides[apply_company_scope] = lambda: None
+    monkeypatch.setitem(app.dependency_overrides, get_db, _db)
+    monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: user)
+    monkeypatch.setitem(app.dependency_overrides, get_current_user_or_api_key, lambda: user)
+    monkeypatch.setitem(app.dependency_overrides, apply_company_scope, lambda: None)
     client = TestClient(app)
     captured: list[tuple[str, dict[str, Any]]] = []
     forwarded = ("access_levels", "promotion_types", "brand_ids", "scope_terms", "product_ids")
@@ -259,7 +259,7 @@ def test_kind_and_brand_with_live_rows_shows_the_stamped_menu_then_sends_kind_an
     ids = _seed_world(session_factory, sorento_live_flyer=True)
     captured = _route_backed_mcp(monkeypatch, session_factory)
     reply, _ = _say(session_factory, monkeypatch, _qf(kind="a3_flyer"), "sroento a3 flyer", "zzt-pk-live-ask")
-    assert reply.startswith("Which access level do you need for Sorento?"), reply
+    assert reply.startswith("Which access level do you need for A3 Flyer, Sorento?"), reply
     assert "1. Office - no promotion" in reply and "2. Dealer - has promotion" in reply, reply
     probes = [a for n, a in captured if n == PROMO_TOOL]
     assert probes and all(a.get("promotion_types") == ["a3_flyer"] and a.get("brand_ids") == [ids["srt"]] for a in probes), captured

@@ -592,35 +592,7 @@ async def root():
     return {"message": "Sorento CRM API", "version": "1.0.0"}
 
 
-def _git_sha() -> str:
-    """The short sha of the checkout this process is running, read ONCE at import.
-
-    A stack check has to be able to say WHICH code answered it, and the deploy is the
-    only other thing that knows. `GIT_SHA` (set by the container build) wins where there
-    is no git directory at all; a local run reads it from the checkout beside this file.
-    Never per request: this shells out.
-    """
-    from os import environ
-
-    env_sha = (environ.get("GIT_SHA") or "").strip()
-    if env_sha:
-        return env_sha
-    try:
-        import subprocess
-
-        out = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=str(_Path(__file__).resolve().parent.parent),
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        return (out.stdout or "").strip() or "unknown"
-    except Exception:  # noqa: BLE001 - a health probe never fails over its own metadata
-        return "unknown"
-
-
-GIT_SHA = _git_sha()
+from app.utils.build_info import GIT_SHA, _git_sha  # noqa: E402,F401 - /health reports it
 
 
 def _production_prompt_version(db) -> int | None:
@@ -660,16 +632,37 @@ async def health_check():
             prompt_version = _production_prompt_version(db)
         finally:
             db.close()
-        return {
-            "status": "healthy",
-            "git_sha": GIT_SHA,
-            "prompt_version": prompt_version,
-        }
     except Exception as e:
         # The error stays server-side: a Postgres connection error names the internal host
         # and port.
         logging.getLogger(__name__).error("/health: database check failed: %s", str(e)[:200])
         return JSONResponse(status_code=503, content={"status": "unhealthy"})
+
+    # Reported, never gating: Redis or the scheduler being down must not hold a deploy.
+    from app.services import health_probes
+
+    probes = await health_probes.snapshot()
+    return {
+        "status": "healthy",
+        "git_sha": GIT_SHA,
+        "prompt_version": prompt_version,
+        "redis": probes["redis"],
+        "scheduler": probes["scheduler"],
+    }
+
+
+@app.get("/health/deep")
+async def health_deep():
+    """For monitors, not for blue/green: 503 unless the database, Redis and the scheduler are
+    all OK. States only, no error text (unauthenticated route)."""
+    from app.services import health_probes
+
+    probes = await health_probes.snapshot()
+    ok = probes["database"] == "ok" and probes["redis"] == "ok" and probes["scheduler"]["status"] == "ok"
+    return JSONResponse(
+        status_code=200 if ok else 503,
+        content={"status": "healthy" if ok else "unhealthy", **probes},
+    )
 
 
 @app.get("/api/v1/health")

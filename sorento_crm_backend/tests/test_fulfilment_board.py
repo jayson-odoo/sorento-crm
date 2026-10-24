@@ -1819,7 +1819,7 @@ def _lead_time(db, product, days: int) -> None:
 
 
 @pytest.mark.usefixtures("ladder_steps_on")
-def test_a_line_beyond_the_reserve_window_says_so_and_offers_no_donor():
+def test_a_line_beyond_the_reserve_window_says_so_and_proposes_no_borrow():
     """The captain, on SO414341: two lines due 15 February and 15 March 2027, roughly 174
     days out on a product whose lead time is well inside that, read "Nothing free at BRW-BB
     by the delivery date, so the quantity is bought. Borrowing is possible from BRW-IB,
@@ -1832,8 +1832,9 @@ def test_a_line_beyond_the_reserve_window_says_so_and_offers_no_donor():
         sentence over the top of it, and "nothing free at L" is not why this line is bought -
         it is bought because purchasing can still get it here in time and the stock at L is
         kept for nearer orders;
-      * the DONORS are not offered at all. Rungs 4 and 5 are not walked for this line, so a
-        donor list beside it is an offer of the one thing the rule forbids.
+      * the DONORS are not PROPOSED. Rungs 4 and 5 are not walked for this line and the
+        Buy's sentence names nobody to borrow from. The donor LIST is still offered for a
+        hand-picked Borrow (owner ruling (b), 22 Oct 2026, BORROW-ZERO-FREE).
     """
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
@@ -1860,9 +1861,12 @@ def test_a_line_beyond_the_reserve_window_says_so_and_offers_no_donor():
         )
         assert "Borrowing is possible" not in buy["reason"]
 
-        # Nothing to borrow is OFFERED either - not on the row, not in its total.
-        assert contribution["borrow_candidates"] == []
-        assert contribution["qty_borrow_available"] == "0"
+        # The donor list is offered for a hand-picked Borrow (owner ruling (b), 22 Oct 2026):
+        # the location with stock first, the own location last.
+        assert [c["warehouse_code"] for c in contribution["borrow_candidates"]] == [
+            elsewhere.warehouse_code, own.warehouse_code,
+        ]
+        assert contribution["qty_borrow_available"] == "650"
 
         # And the trail says the two rungs were not walked, rather than pretending they were
         # checked and found empty.
@@ -5949,10 +5953,15 @@ def test_a_covered_line_still_carries_the_donors_it_could_be_amended_to():
         assert contribution["so_qty_ahead"] is None
         candidates = contribution["borrow_candidates"]
         # The frozen donor's 43 is now a confirmed hold and out of its free stock, so it is
-        # not offered again; the spare location is. The line's own location is offered last
-        # as a plain location borrow (BORROW-OWN-LOC, owner 13 Oct 2026).
+        # offered at 0 free (BORROW-ZERO-FREE, owner 22 Oct 2026), BEHIND the spare location
+        # with stock, which keeps the head. The line's own location is offered last as a
+        # plain location borrow (BORROW-OWN-LOC, owner 13 Oct 2026).
         assert [c["warehouse_code"] for c in candidates] == [
-            spare.warehouse_code, world["own"].warehouse_code,
+            spare.warehouse_code, world["donor"].warehouse_code, world["own"].warehouse_code,
+        ]
+        assert candidates[1]["free_qty"] == "0"
+        assert [c["warehouse_code"] for c in candidates if c.get("recommended")] == [
+            spare.warehouse_code
         ]
         assert candidates[0]["warehouse_id"] == str(spare.id)
         assert candidates[0]["free_qty"] == "7"
@@ -5960,6 +5969,29 @@ def test_a_covered_line_still_carries_the_donors_it_could_be_amended_to():
         # residual to measure damage against - stated as 0, never invented.
         assert candidates[0]["need_qty"] == "0"
         assert contribution["qty_borrow_available"] == "7"
+
+
+def test_a_covered_line_beyond_the_reserve_window_still_carries_its_donors():
+    """Owner ruling (b), 22 Oct 2026: a decided line beyond the window can be amended to a
+    Borrow too, so its donor list is read like any covered line's."""
+    with blank_session() as db:
+        world = _covered_world(db)
+        spare = _warehouse(db, f"ZZTX{_uid()[:6]}"[:20])
+        _stock(db, world["product"], spare, on_hand=7)
+        _lead_time(db, world["product"], 1)
+        _decide_line_one(db, world)
+        # Seen from 1 March: 1 + 14 days of window, and line 1 is due 4 September.
+        early = date(2026, 3, 1)
+
+        board = _service(db).build(
+            ["ZZT-SO-COVER", "ZZT-SO-AHEAD"], granularity="week", as_of=early
+        )
+
+        contribution = _covered_contribution(board, world)
+        assert contribution["covered"] is True
+        codes = [c["warehouse_code"] for c in contribution["borrow_candidates"]]
+        assert spare.warehouse_code in codes, codes
+        assert codes[-1] == world["own"].warehouse_code, codes
 
 
 def test_the_pile_queue_names_no_leading_factor_on_a_row_behind_the_asked_line():

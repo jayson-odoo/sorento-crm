@@ -9,7 +9,7 @@ questions (outstanding, delivered, SO/DO outstanding, a plain DO list) stay `ord
 with the tools they always had. The grant refusal reads exactly as before.
 
 Built on the harness the sales tests already share (`test_outstanding_lane.py`'s
-`_run_turn` / `_capturing_mcp`, `test_top_selling_lane.py`'s `route` double).
+`_run_turn` / `_capturing_mcp`).
 """
 from __future__ import annotations
 
@@ -31,7 +31,6 @@ from tests.chatbot.test_outstanding_lane import (
 )
 from tests.chatbot.test_sales_analysis_lane import _rendered as _sales_analysis_hit
 from tests.chatbot.test_sales_report_lane import SALES_REPORT_HIT
-from tests.chatbot.test_top_selling_lane import _calls, _ts, _turn, route  # noqa: F401 - fixture
 
 GRANT = "sales_orders.sales_report"
 DENIAL = "Sales report is not enabled for your account."
@@ -59,7 +58,8 @@ def _picked(domain: str, order_status: str | None, entities: list[dict[str, Any]
             "gate": {"compatible_entities": entities},
             "tier_gate": None,
             "ctx": {
-                "parse": {"output": _qf(domain_hint=domain, order_status=order_status, entities=[], **qf)},
+                # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
+                "parse": {"output": {**_qf(domain_hint=domain, order_status=order_status, entities=[], **qf), "doc_staff": True}},
                 "contact": {"id": 437264483},
                 "access": {"attributes": list(attributes)},
             },
@@ -109,8 +109,9 @@ class TestTheLanePicksTheSalesTools:
         assert captured and captured[0][0] == "crm_sales_report", captured
 
     def test_top_selling_under_sales(self, session_factory) -> None:
-        captured = _picked("sales", "top_selling", [], top_selling={"rank_by": "quantity", "basis": "delivered", "top_n": 5})
-        assert captured and captured[0][0] == "crm_top_selling_report", captured
+        # REPORT-SMART-L R1: an item ranking is the report engine's (`crm_report_ask`), never `crm_top_selling_report`.
+        captured = _picked("sales", "top_selling", [], rank_by="quantity", basis="delivered", top_n=5, rank_group="item", **_A_MONTH)
+        assert captured and captured[0][0] == "crm_report_ask", captured
 
     @pytest.mark.parametrize("status", ["outstanding", "so_outstanding", "delivered"])
     def test_an_order_report_still_picks_the_outstanding_report(self, session_factory, status) -> None:
@@ -136,10 +137,16 @@ class TestAWholeTurn:
         )
         assert [c[0] for c in captured] == ["crm_sales_analysis"]
 
-    def test_a_top_selling_ask_answers_from_the_ranking(self, session_factory, monkeypatch, route) -> None:  # noqa: F811
+    def test_a_top_selling_ask_answers_from_the_ranking(self, session_factory, monkeypatch) -> None:
         _seed_contact(session_factory, variables={})
-        _text, captured = _turn(session_factory, monkeypatch, _ts(), "top 5 selling items")
-        assert len(_calls(captured)) == 1, captured
+        _result, captured = _run_turn(
+            session_factory, monkeypatch,
+            qf=_qf(order_status="top_selling", entities=[], rank_by="quantity", basis="delivered", top_n=5, **_A_MONTH),
+            text_body="top 5 selling items", msg_id="ZZT-sales-domain-top-1", attributes=[GRANT],
+        )
+        # REPORT-SMART-L R1: the item ranking runs once on the report engine, never `crm_top_selling_report`.
+        names = [c[0] for c in captured]
+        assert names.count("crm_report_ask") == 1 and "crm_top_selling_report" not in names, captured
 
     @pytest.mark.parametrize(
         "status,text",
@@ -193,7 +200,7 @@ class TestTheDomainRow:
         from app.services.chatbot.lanes.business.fetch import CHATBOT_READ_ONLY_TOOLS
         from app.services.mcp_tool_domains import CHATBOT_TOOL_DOMAINS
 
-        for tool in ("crm_sales_report", "crm_sales_analysis", "crm_top_selling_report"):
+        for tool in ("crm_sales_report", "crm_sales_analysis", "crm_report_ask"):
             assert tool in CHATBOT_READ_ONLY_TOOLS
             assert CHATBOT_TOOL_DOMAINS[tool] == "sales"
 
@@ -209,7 +216,10 @@ class TestTheDomainRow:
         spec.loader.exec_module(module)
         row = next(r for r in policy_rows.DEFAULT_DOMAIN_ROWS if r["name"] == "sales")
         for key, value in module.SALES_DOMAIN.items():
+            if key == "tools":
+                continue  # R4b: `or_r4b_top_selling_off` swaps the top selling tool for `crm_report_ask`
             assert row[key] == value, key
+        assert row["tools"] == ["crm_sales_report", "crm_sales_analysis", "crm_report_ask"]
         order = next(r for r in policy_rows.DEFAULT_DOMAIN_ROWS if r["name"] == "order")
         assert row["narrowing"] == order["narrowing"]
 

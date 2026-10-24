@@ -132,6 +132,37 @@ def test_a_plain_rate_limit_does_not_claim_the_cap_was_hit(monkeypatch) -> None:
     assert "rate limit has been reached" in str(exc.value)
 
 
+def test_a_402_out_of_credits_reads_as_an_operator_problem(monkeypatch) -> None:
+    """MEDIA-INTAKE-GUARD: a prepaid balance that ran out (402) failed the photo
+    read with Gemini's words alone, with no hint of whose problem it was."""
+    _install(
+        monkeypatch,
+        {"error": {"message": "Your prepayment credits are depleted."}},
+        status_code=402,
+    )
+
+    with pytest.raises(RuntimeError) as exc:
+        GeminiProvider("k").chat([{"role": "user", "content": "hi"}])
+
+    message = str(exc.value)
+    assert "credits have run out" in message
+    assert "Nothing uploaded is lost" in message
+    assert "credits are depleted" in message
+
+
+def test_credits_depleted_under_another_status_still_gets_the_hint(monkeypatch) -> None:
+    _install(
+        monkeypatch,
+        {"error": {"message": "Prepayment credits depleted for this project"}},
+        status_code=400,
+    )
+
+    with pytest.raises(RuntimeError) as exc:
+        GeminiProvider("k").chat([{"role": "user", "content": "hi"}])
+
+    assert "credits have run out" in str(exc.value)
+
+
 def test_a_rejected_key_says_whose_problem_it_is(monkeypatch) -> None:
     _install(monkeypatch, {"error": {"message": "API key not valid"}}, status_code=403)
 

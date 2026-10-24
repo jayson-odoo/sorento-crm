@@ -453,6 +453,8 @@ Captain rulings on the tester's open points (2 Oct 2026):
   bases, until a word differs from its key.
 - **Known semantics, documented not changed.** Channel: delivered reads the account's segment
   (no segment = in every channel); ordered reads the SO's `demand_class` (NULL = in none).
+  *Delivered channel superseded 24 Oct 2026 (SALES-REPORT-CHANNEL, PR #1841): it now reads the DO line's sales
+  order `demand_class` too (no SO or NULL = in none), `PLAN-sales-report-channel-24oct.md`.*
   Ordered basis under a location policy: an SO line with no warehouse is outside every capped
   location (fail closed); the share is unmeasured (no dev data in the sandbox), golden-asks
   item.

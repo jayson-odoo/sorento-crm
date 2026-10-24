@@ -432,7 +432,7 @@ def test_open_question_answer_cancel_closes_the_task_and_fetches_nothing():
         entities=[], open_question_answer={"mode": "cancel", "items": [], "qty_for_all": None}
     )
     new_state, plan = apply(state, v, build_policy())
-    assert "open_question_answer_cancel" in plan.trace.rules_fired
+    assert "task_closed_on_reset_stock_qty" in plan.trace.rules_fired
     assert plan.fetch == []
     assert not any(t.kind == "stock_qty" for t in new_state.focus.tasks)
 

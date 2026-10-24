@@ -124,6 +124,13 @@ def channel_condition(ctx: Any, values: List[str]) -> Optional[Any]:
 
 # ------------------------------------------------------------------------ catalog
 
+#: The count measures: key, label, the id counted.
+COUNT_COLUMNS = (
+    ("customers", "Customers", SalesOrder.customer_id),
+    ("orders", "Orders", SalesOrder.id),
+    ("products", "Products", SalesOrderLine.product_id),
+)
+
 #: Basis -> definition title. The qty and amount expressions come from `_figures`, top selling's own.
 _TITLES = {"delivered": "Delivered sales", "ordered": "Ordered sales", "outstanding": "Outstanding orders"}
 
@@ -159,6 +166,16 @@ def _definition(basis: str) -> reg.ReportDefinition:
         reg.Column("all", "All", "text", "dimension", lambda c: sa.cast(sa.literal("all"), sa.Text), size=80),
         reg.Column("amount", "RM", "money", "measure", lambda c: amount_expr, size=130),
         reg.Column("qty", "Qty", "integer", "measure", lambda c: qty_expr, size=100),
+        # REPORT-SMART-1021: how many customers, orders and products, counting only lines
+        # with a figure on this basis (a line nothing was delivered on sold nothing).
+        *(
+            reg.Column(
+                key, label, "integer", "measure",
+                (lambda col: lambda c: sa.case((sa.or_(qty_expr != 0, amount_expr != 0), col)))(column),
+                size=110, agg="count_distinct",
+            )
+            for key, label, column in COUNT_COLUMNS
+        ),
     )
     dataset = reg.Dataset(
         key=key,

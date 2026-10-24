@@ -5,9 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import {
   acceptPOAnnotation,
-  approvePurchaseOrder,
   confirmPOVersion,
-  countersignPurchaseOrder,
   editPOAnnotation,
   getPOVersion,
   listPOVersions,
@@ -167,24 +165,6 @@ export function usePOIntakeController(
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const approveMutation = useMutation({
-    mutationFn: () => approvePurchaseOrder(poId as string),
-    onSuccess: () => {
-      invalidatePo();
-      toast.success('Purchase order approved');
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  const countersignMutation = useMutation({
-    mutationFn: () => countersignPurchaseOrder(poId as string),
-    onSuccess: () => {
-      invalidatePo();
-      toast.success('Purchase order countersigned');
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
   const updateLine = React.useCallback(
     async (lineId: string, body: POLineUpdateBody) => {
       if (!versionId) return;
@@ -263,7 +243,6 @@ export function usePOIntakeController(
     savingLineIds,
     savingAnnotationIds,
     isConfirming: confirmMutation.isPending,
-    isStamping: approveMutation.isPending || countersignMutation.isPending,
     isSavingHeader: headerMutation.isPending,
     isRetrying: retryMutation.isPending,
     retryExtraction: async () => {
@@ -282,13 +261,5 @@ export function usePOIntakeController(
     acceptAnnotation,
     editAnnotation,
     rejectAnnotation,
-    approve: async () => {
-      if (!poId) return;
-      await approveMutation.mutateAsync().catch(() => undefined);
-    },
-    countersign: async () => {
-      if (!poId) return;
-      await countersignMutation.mutateAsync().catch(() => undefined);
-    },
   };
 }

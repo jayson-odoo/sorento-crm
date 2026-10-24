@@ -271,6 +271,10 @@ async def list_project_sales_orders(
     project_id: str,
     query: Optional[str] = Query(None, description="Matches provisional ref, doc no or area"),
     so_status: Optional[List[str]] = Query(None, alias="status"),
+    purchase_order_id: Optional[str] = Query(None, description="Only this PO's orders"),
+    without_purchase_order: bool = Query(
+        False, description="Only orders not built from a PO (sponsorship, adopted)"
+    ),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: str = Query("created_at"),
@@ -280,12 +284,16 @@ async def list_project_sales_orders(
 ):
     try:
         validate_uuid_path(project_id, resource="Project")
+        if purchase_order_id:
+            validate_uuid_path(purchase_order_id, resource="Purchase order")
         projects.get_project_or_404(db, project_id)
         service = ProjectSODraftService(db)
         rows, total = service.list_for_project(
             project_id,
             query=query,
             status=so_status,
+            purchase_order_id=purchase_order_id,
+            without_purchase_order=without_purchase_order,
             page=page,
             limit=limit,
             sort=sort,

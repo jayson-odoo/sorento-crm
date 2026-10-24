@@ -46,6 +46,7 @@ import {
   type PackingListRegion,
 } from '@/lib/packing-list-regions';
 import { getContact } from './contactService';
+import type { ChatbotLlm } from '../../types/contact.types';
 import { codeWithName } from '@/lib/product-display';
 
 export type ChatbotMemoryLevel = 'off' | 'conversation' | 'episodes' | 'full';
@@ -74,6 +75,8 @@ export interface ContactChatbotProfile {
   skip_period_questions: boolean;
   /** PHOTO-SEND-CAP: the bot sends this contact one text with file links. Default off. */
   files_as_links: boolean;
+  /** MODEL-PER-CONTACT (read side): the effective model and its source. Never sent back. */
+  chatbot_llm?: ChatbotLlm | null;
 }
 
 export type ChatbotFactSource = 'crm' | 'tallied' | 'stated' | 'staff';
@@ -166,7 +169,10 @@ export interface ContactChatbotMemory {
   };
 }
 
-export type ContactChatbotSaveInput = ContactChatbotProfile;
+/** `llm` is the write side: absent = untouched, null = clear, a pair = set. */
+export type ContactChatbotSaveInput = ContactChatbotProfile & {
+  llm?: { provider: string; model: string } | null;
+};
 
 function profileFromContact(contact: {
   chatbot_profile?: { tier?: string | null; default_ledgers?: string[] | null } | null;
@@ -180,6 +186,7 @@ function profileFromContact(contact: {
   chatbot_allowed?: boolean;
   chatbot_skip_period_questions?: boolean;
   chatbot_files_as_links?: boolean;
+  chatbot_llm?: ChatbotLlm | null;
 }): ContactChatbotProfile {
   const profile = contact.chatbot_profile ?? null;
   return {
@@ -197,6 +204,7 @@ function profileFromContact(contact: {
     chatbot_allowed: contact.chatbot_allowed === true,
     skip_period_questions: Boolean(contact.chatbot_skip_period_questions),
     files_as_links: Boolean(contact.chatbot_files_as_links),
+    chatbot_llm: contact.chatbot_llm ?? null,
   };
 }
 
@@ -227,6 +235,8 @@ export async function saveContactChatbotProfile(
       chatbot_eta_offset_applied: input.eta_offset_applied,
       chatbot_skip_period_questions: input.skip_period_questions,
       chatbot_files_as_links: input.files_as_links,
+      // Present only when the operator touched it; `JSON.stringify` drops undefined.
+      llm: input.llm,
       // `escalation_allowed` is NOT sent here: it has its own save
       // (`saveContactEscalation`), so another switch saved from a stale page can never
       // switch a contact's escalation back on (security review S3). `chatbot_allowed` is

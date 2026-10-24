@@ -252,6 +252,36 @@ describe('PileQueueDialog', () => {
     expect(await screen.findByText('Nothing is queuing for this stock')).toBeInTheDocument();
   });
 
+  it('names a planned line by its SO line number and still says Not planned for a core line nobody adopted', async () => {
+    // SO-LINE-NUMBERS review round 1: `line_no` is the planning mirror's own number and is
+    // null for a core line with no mirror, which is what "Not planned" has always meant; a
+    // core number on that row does not make it planned.
+    getPileQueue.mockResolvedValue(
+      queue({
+        lines: [
+          line({ line_no: 11, so_line_no: 224 }),
+          line({
+            position: 2,
+            line_id: 'core-2',
+            sales_order_id: 'so-2',
+            so_number: 'SO396351',
+            line_no: null,
+            so_line_no: 336,
+            qty: '200',
+            cumulative_ahead_qty: '320',
+          }),
+        ],
+      }),
+    );
+
+    renderDialog('core-1');
+
+    expect(await screen.findByText('224')).toBeInTheDocument();
+    expect(screen.queryByText('11')).not.toBeInTheDocument();
+    expect(screen.getByText('Not planned')).toBeInTheDocument();
+    expect(screen.queryByText('336')).not.toBeInTheDocument();
+  });
+
   it('reads the queue on nobody’s behalf when no line asked', async () => {
     getPileQueue.mockResolvedValue(queue({ this_line_position: null }));
 

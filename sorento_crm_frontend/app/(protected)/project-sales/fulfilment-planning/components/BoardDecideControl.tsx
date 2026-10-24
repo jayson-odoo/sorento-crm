@@ -36,12 +36,11 @@ import {
   borrowCandidatesOf,
   canQuickSave,
   decideComposition,
-  isOwnLocationBorrow,
   suggestedDecisionFor,
   type DecideComposition,
   type DecideWay,
 } from '../../_shared/lib/boardAmend';
-import { matchesSuggestion } from '../../_shared/lib/fulfilmentBoard';
+import { matchesSuggestion, soLineNoText } from '../../_shared/lib/fulfilmentBoard';
 import { toMinor } from '../../_shared/lib/supplyComposition';
 import { LABELS } from '../../_shared/lib/supplyVocabulary';
 import type {
@@ -140,10 +139,9 @@ function pickerOptions(
         if (candidate.donor_so_number) seen.add(candidate.donor_so_number);
       } else if (
         candidate.source === 'other_location' &&
-        !candidate.donor_so_number &&
-        // The line's own location is always listed, at 0 free and never capped (owner, 14
-        // Oct, overriding BORROW-OWN-LOC review S5); any other location only with stock.
-        (toMinor(candidate.free_qty) > 0 || isOwnLocationBorrow(row, candidate))
+        // Every location is listed, 0 free included, and never capped (owner, 14 Oct for the
+        // own location, 22 Oct for every other: "not available also can borrow").
+        !candidate.donor_so_number
       ) {
         // K8: a donor-named candidate is an order borrow, never a location's.
         seen.add(candidate.warehouse_code);
@@ -312,7 +310,7 @@ export function BoardDecideControl({
         const skipped: SkippedEntry[] = [];
         const short: SkippedEntry[] = [];
         const labelFor = (row: BoardContribution) =>
-          `${row.item_code} line ${row.line_no}`;
+          `${row.item_code} line ${soLineNoText(row)}`;
 
         for (const row of tickedRows) {
           if (chosenWay === 'suggested') {
@@ -558,6 +556,7 @@ export function BoardDecideControl({
               {entry.separatorAfter && <DropdownMenuSeparator />}
             </React.Fragment>
           ))}
+          {/* OI-SPLIT-VIEW (UAC D2): "Split delivery" lives in the board gear, per order. */}
         </DropdownMenuContent>
       </DropdownMenu>
       {!embedded && selectedKeys.length > 0 ? (

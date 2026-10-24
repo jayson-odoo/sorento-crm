@@ -906,7 +906,8 @@ def test_borrowing_from_a_decided_donor_supersedes_its_decision_and_raises_its_o
 
     assert DECISION_SUPERSEDED in states, states
     assert any(
-        reason and reason.startswith("Borrowed by SO") for reason in reasons
+        reason and reason.startswith("Borrowed by ") and "by SOSO" not in reason
+        for reason in reasons
     ), reasons
     assert DECISION_ACTIVE not in states, (
         "a donor whose stock has been taken is not covered any more"
@@ -1161,7 +1162,7 @@ def test_a_multi_line_donor_keeps_every_other_lines_hold_when_one_line_is_borrow
         )
         borrowed_no = borrowed_line.line_no
         expected_reason = (
-            f"Borrowed by SO{asker.provisional_ref} line {asker_line.line_no}"
+            f"Borrowed by {asker.provisional_ref} line {asker_line.line_no}"
         )
         superseded_reasons = [row.superseded_reason for row in superseded]
 

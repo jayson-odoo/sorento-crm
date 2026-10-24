@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { usePromptKeys, useSetAgentModel } from '../../hooks/useAIAssistantPrompts';
-import { MODEL_OPTIONS, PROVIDER_OPTIONS } from '../../lib/modelOptions';
+import { MODEL_OPTIONS, PROVIDER_OPTIONS } from '@/lib/ai/modelOptions';
 import { useProviderModels } from '@/hooks/useProviderModels';
 
 /**

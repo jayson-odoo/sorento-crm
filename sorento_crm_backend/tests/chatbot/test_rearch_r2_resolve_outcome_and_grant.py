@@ -133,6 +133,8 @@ class TestResolveKindsReturnsAResolveOutcome:
             # RESOLVER-TOKEN-CAP: the tokens the resolver cut at its ceiling, as
             # typed, defaulted so the two early returns stay seven-positional.
             "not_checked",
+            # CHAT-STATE r6 (2f34e1076a): the exact whole-token hits per kind.
+            "exact_kinds",
         ], f"ResolveOutcome field order/names do not match the contract: {field_names!r}"
 
     @pytest.mark.parametrize("domain", _seeded_supported_domains())

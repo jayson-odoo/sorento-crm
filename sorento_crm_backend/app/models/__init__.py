@@ -42,7 +42,7 @@ from app.models.ticket_comment import ConversationTicketComment
 from app.models.message_snippet import MessageSnippet
 from app.models.resources import Attachment, AttachmentType
 from app.models.certificate import Certificate, CertificateRevision, CertificateProduct
-from app.models.access import AccessAgent, ContactAgentAccess, ContactAccessType, RespondContact, RespondContactCustomer, StockVisibilityPolicy, respond_contact_access_types, MarketSegment, respond_contact_market_segments, team_member_market_segments, team_member_brands
+from app.models.access import AccessAgent, ContactAgentAccess, ContactAccessType, ContactTag, respond_contact_tags, RespondContact, RespondContactCustomer, StockVisibilityPolicy, respond_contact_access_types, MarketSegment, respond_contact_market_segments, team_member_market_segments, team_member_brands
 from app.models.respond_workspace import RespondWorkspace
 from app.models.respond_template import (
     RespondChannel,
@@ -191,8 +191,11 @@ from app.models.project_so import (  # noqa: F401
     SOAmendment,
     OrderInquiry,
     OrderInquiryRow,
+    SOLineSplit,
 )
 from app.models.stock_transfer import StockTransfer  # noqa: F401
+from app.models.sample_request import SampleRequest, SampleRequestLine  # noqa: F401
+from app.models.new_product_application import NewProductApplication, NewProductApplicationLine  # noqa: F401
 from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow  # noqa: F401
 
 __all__ = [
@@ -231,6 +234,8 @@ __all__ = [
     "SalesOrder",
     "SalesOrderLine",
     "StockTransfer",
+    "SampleRequest",
+    "SampleRequestLine",
     "SalesAgent",
     "Warehouse",
     "StorageZone",
@@ -287,6 +292,7 @@ __all__ = [
     "AccessAgent",
     "ContactAgentAccess",
     "ContactAccessType",
+    "ContactTag",
     "RespondContact",
     "RespondContactCustomer",
     "respond_contact_access_types",

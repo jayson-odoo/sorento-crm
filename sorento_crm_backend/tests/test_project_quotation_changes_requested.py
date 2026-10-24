@@ -61,7 +61,7 @@ def _product(db, code: str) -> Product:
     category = ProductCategory(
         id=_uid(), category_code=f"ZZT-{_uid()[:8]}", category_name=f"{MARKER} Sanitary"
     )
-    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{_uid()[:4]}", uom_name="Piece")
+    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{uuid.uuid4().hex}", uom_name="Piece")
     db.add_all([category, uom])
     db.flush()
     product = Product(

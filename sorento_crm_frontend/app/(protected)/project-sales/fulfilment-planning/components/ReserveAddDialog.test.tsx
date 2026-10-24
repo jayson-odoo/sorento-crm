@@ -71,6 +71,24 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+describe('ReserveAddDialog: the title names the SO line (SO-LINE-NUMBERS AC-2)', () => {
+  it('prints the SO line number, not the planning order\'s own', () => {
+    render(
+      <ReserveAddDialog
+        lineNo={11}
+        soLineNo={224}
+        itemCode="SRTWB242"
+        locations={[]}
+        openRemainder="24"
+        onDone={onDone}
+        onAdd={onAdd}
+      />,
+    );
+
+    expect(screen.getByText('Add a reserve location for line 224')).toBeInTheDocument();
+  });
+});
+
 describe('ReserveAddDialog: the candidate order (R-A, AC-3.1)', () => {
   it('sorts the site pool first, then own, then group - whatever order the caller handed them in', () => {
     renderDialog([OWN, GROUP, SITE_POOL]);
@@ -174,15 +192,24 @@ describe('ReserveAddDialog: picking a row seeds the quantity (AC-3.2)', () => {
     expect(onDone).toHaveBeenCalled();
   });
 
-  it('will not add on a zero or negative quantity', () => {
+  it('will not add on a zero, negative or blank quantity - Add stays enabled and says why', () => {
     renderDialog([SITE_POOL], '24');
 
+    // NUMBER-FIELDS: the button is never disabled without a reason; pressing it names the gap.
     fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '0' } });
-    expect(screen.getByRole('button', { name: 'Add the location' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Add the location' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Add the location' }));
+    expect(screen.getByText(/^Enter a number/)).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '-3' } });
-    expect(screen.getByRole('button', { name: 'Add the location' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Add the location' }));
+    expect(screen.getByText(/^Enter a number/)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add the location' }));
+    expect(screen.getByText(/^Enter a number/)).toBeInTheDocument();
     expect(onAdd).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
   });
 });
 

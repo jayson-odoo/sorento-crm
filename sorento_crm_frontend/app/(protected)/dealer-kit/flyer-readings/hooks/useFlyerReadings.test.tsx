@@ -12,9 +12,9 @@
  *   though it were the answer.
  */
 import React from 'react';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
@@ -105,8 +105,19 @@ function freshClient() {
   });
 }
 
+/** Moves the fake clock and lets react-query's resulting fetches and renders settle. */
+async function advance(ms: number) {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('useFlyerReadingsQuery', () => {
@@ -147,9 +158,10 @@ describe('useFlyerReadingsQuery', () => {
   });
 
   it('polls every 3s while a row is processing, and stops once none is (AC-FE.3)', async () => {
-    // Real timers: react-query's own refetch scheduling runs through a real
-    // setTimeout, and testing-library's `waitFor` polls with real timers too -
-    // faking them here means both go quiet and the test hangs on itself.
+    // Fake timers, advanced by hand: the interval is real product timing, and
+    // waiting it out for real cost this file ~13 s of an already-full CI shard.
+    // No `waitFor` here - it cannot see vitest's fake clock and would hang.
+    vi.useFakeTimers();
     mockList.mockResolvedValueOnce([
       {
         id: 'r-1',
@@ -181,21 +193,27 @@ describe('useFlyerReadingsQuery', () => {
       wrapper: wrapperWith(freshClient()),
     });
 
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    // Reading `data` here also subscribes the hook to it: react-query re-renders
+    // only for the result fields a render has read.
+    await advance(0);
+    expect(result.current.data?.[0]?.status).toBe('processing');
+    expect(mockList).toHaveBeenCalledTimes(1);
+
+    // Not before the interval: the poll is 3 s, not "as soon as possible".
+    await advance(2900);
     expect(mockList).toHaveBeenCalledTimes(1);
 
     // A row is still processing, so the interval resolves to 3000 and a
     // second GET fires on its own, without anybody touching the page.
-    await waitFor(() => expect(result.current.data?.[0]?.status).toBe('done'), {
-      timeout: 4500,
-    });
+    await advance(200);
+    expect(result.current.data?.[0]?.status).toBe('done');
     expect(mockList).toHaveBeenCalledTimes(2);
 
     // Nothing left processing, so refetchInterval resolves to false: no third
-    // call turns up even after another full poll interval elapses.
-    await new Promise((resolve) => setTimeout(resolve, 3200));
+    // call turns up even after several more poll intervals.
+    await advance(10_000);
     expect(mockList).toHaveBeenCalledTimes(2);
-  }, 10000);
+  });
 });
 
 describe('useFlyerReadingQuery', () => {
@@ -227,6 +245,7 @@ describe('useFlyerReadingQuery', () => {
   });
 
   it('polls the detail every 3s while it is processing, and stops once it is done (AC-FE.4)', async () => {
+    vi.useFakeTimers();
     const processing: FlyerReading = {
       ...READING,
       status: 'processing',
@@ -241,16 +260,21 @@ describe('useFlyerReadingQuery', () => {
       wrapper: wrapperWith(freshClient()),
     });
 
-    await waitFor(() => expect(result.current.data?.status).toBe('processing'));
+    await advance(0);
+    expect(result.current.data?.status).toBe('processing');
     expect(mockGet).toHaveBeenCalledTimes(1);
 
-    await waitFor(() => expect(result.current.data?.status).toBe('done'), { timeout: 4500 });
+    await advance(2900);
+    expect(mockGet).toHaveBeenCalledTimes(1);
+
+    await advance(200);
+    expect(result.current.data?.status).toBe('done');
     expect(mockGet).toHaveBeenCalledTimes(2);
 
-    // Done stops the poll: no third GET turns up after another interval.
-    await new Promise((resolve) => setTimeout(resolve, 3200));
+    // Done stops the poll: no third GET turns up after several more intervals.
+    await advance(10_000);
     expect(mockGet).toHaveBeenCalledTimes(2);
-  }, 10000);
+  });
 });
 
 describe('useUploadFlyerReading', () => {

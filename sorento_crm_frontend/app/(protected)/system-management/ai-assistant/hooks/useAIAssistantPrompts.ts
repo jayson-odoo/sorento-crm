@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   dryRunPrompt,
+  getPromptArchitecture,
   getPromptVersion,
   getPromptVersions,
   getRegistryVariables,
@@ -37,6 +38,14 @@ export function usePromptVersion(name: string, version: number | null) {
     queryKey: versionKey(name, version ?? -1),
     queryFn: () => getPromptVersion(name, version as number),
     enabled: !!name && version != null,
+  });
+}
+
+export function usePromptArchitecture(name: string, version: number | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ['ai-prompts', name, 'architecture', version ?? -1],
+    queryFn: () => getPromptArchitecture(name, version as number),
+    enabled: !!name && version != null && enabled,
   });
 }
 

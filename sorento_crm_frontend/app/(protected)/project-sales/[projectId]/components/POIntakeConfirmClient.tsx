@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { CheckCircle2, Stamp } from 'lucide-react';
+import { CheckCircle2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -37,9 +37,8 @@ type ReviewTab = 'lines' | 'documents';
  *
  * One page, one lines table, focused on what was identified as needing a look; the PDF and
  * the document notes move together onto their own Documents tab, always (R14(b)/R18), so
- * Lines has the full page width at every size. One primary button, always the next step
- * (Confirm this PO, then Approve, then Countersign); the status trail states the other two
- * without a card of their own.
+ * Lines has the full page width at every size. One primary button: Confirm this PO, the
+ * only sign-off a PO has (PM-SIMPLIFY Q1a; Approve and Countersign gated nothing, D2).
  */
 export function POIntakeConfirmClient({
   projectId,
@@ -147,13 +146,6 @@ export function POIntakeConfirmClient({
   }
 
   const poNumber = version.purchase_order?.po_number ?? version.header.po_number;
-  const approvedByName =
-    version.purchase_order?.approved_by_name ?? version.approved_by_name ?? null;
-  const approvedAt = version.purchase_order?.approved_at ?? version.approved_at ?? null;
-  const countersignedByName =
-    version.purchase_order?.countersigned_by_name ?? version.countersigned_by_name ?? null;
-  const countersignedAt =
-    version.purchase_order?.countersigned_at ?? version.countersigned_at ?? null;
 
   // F4 (owner hand test 25 Sep 2026, item 4): a note naming no line - a signature, "Continue
   // To Next Page", delivery instructions - had its only surface in the Documents-tab
@@ -212,26 +204,6 @@ export function POIntakeConfirmClient({
                   {intake.isConfirming ? 'Confirming…' : 'Confirm this PO'}
                 </Button>
               )}
-              {confirmed && !approvedAt && canEdit && (
-                <Button
-                  type="button"
-                  disabled={intake.isStamping}
-                  onClick={() => void intake.approve()}
-                >
-                  <Stamp className="size-4" aria-hidden />
-                  Approve
-                </Button>
-              )}
-              {approvedAt && !countersignedAt && canEdit && (
-                <Button
-                  type="button"
-                  disabled={intake.isStamping}
-                  onClick={() => void intake.countersign()}
-                >
-                  <Stamp className="size-4" aria-hidden />
-                  Countersign
-                </Button>
-              )}
               {!readOnly && unreviewed.length > 0 && (
                 <span className="flex flex-wrap items-center gap-1 text-right text-xs text-muted-foreground">
                   {`${unreviewed.length} handwritten note${unreviewed.length === 1 ? '' : 's'} still unreviewed`}
@@ -249,10 +221,6 @@ export function POIntakeConfirmClient({
               <StatusTrail
                 confirmedAt={version.confirmed_at}
                 confirmedBy={version.confirmed_by_name ?? null}
-                approvedAt={approvedAt}
-                approvedBy={approvedByName}
-                countersignedAt={countersignedAt}
-                countersignedBy={countersignedByName}
               />
             </div>
           ) : undefined
@@ -458,53 +426,34 @@ function POIntakeDocumentEmptyState({ onReupload }: { onReupload?: () => void })
 }
 
 /**
- * Confirmed, Approved, Countersigned as three pills (S6-1): the button above is always the
- * next step, and this states the other two without a bordered card of their own. Who and
- * when stay in the accessible name so a screen reader (and a test) can still find them; the
- * pill itself keeps the mockup's plain label.
+ * Who confirmed and when, as one pill. Who and when stay in the accessible name so a screen
+ * reader (and a test) can still find them.
  */
 function StatusTrail({
   confirmedAt,
   confirmedBy,
-  approvedAt,
-  approvedBy,
-  countersignedAt,
-  countersignedBy,
 }: {
   confirmedAt: string | null;
   confirmedBy: string | null;
-  approvedAt: string | null;
-  approvedBy: string | null;
-  countersignedAt: string | null;
-  countersignedBy: string | null;
 }) {
-  const stages: Array<{ label: string; at: string | null; by: string | null }> = [
-    { label: 'Confirmed', at: confirmedAt, by: confirmedBy },
-    { label: 'Approved', at: approvedAt, by: approvedBy },
-    { label: 'Countersigned', at: countersignedAt, by: countersignedBy },
-  ];
-
+  const done = Boolean(confirmedAt);
   return (
     <div className="flex items-center gap-1 text-xs">
-      {stages.map((stage, index) => {
-        const done = Boolean(stage.at);
-        return (
-          <React.Fragment key={stage.label}>
-            {index > 0 && <span className="text-muted-foreground">&rsaquo;</span>}
-            <Badge
-              variant={done ? 'success' : 'secondary'}
-              title={done ? `${stage.by ?? 'Recorded'} · ${formatDateTimeInMalaysia(stage.at as string)}` : 'Not yet'}
-            >
-              {stage.label}
-              <span className="sr-only">
-                {done
-                  ? ` by ${stage.by ?? 'Recorded'} · ${formatDateTimeInMalaysia(stage.at as string)}`
-                  : ' Not yet'}
-              </span>
-            </Badge>
-          </React.Fragment>
-        );
-      })}
+      <Badge
+        variant={done ? 'success' : 'secondary'}
+        title={
+          done
+            ? `${confirmedBy ?? 'Recorded'} · ${formatDateTimeInMalaysia(confirmedAt as string)}`
+            : 'Not yet'
+        }
+      >
+        Confirmed
+        <span className="sr-only">
+          {done
+            ? ` by ${confirmedBy ?? 'Recorded'} · ${formatDateTimeInMalaysia(confirmedAt as string)}`
+            : ' Not yet'}
+        </span>
+      </Badge>
     </div>
   );
 }

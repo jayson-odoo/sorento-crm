@@ -234,7 +234,7 @@ def _fixture_for_write(api):
     env = {"company_id": company_id}
     from app.models.product import ProductCategory, UnitOfMeasure
 
-    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{_uid()[:4]}", uom_name="Piece")
+    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{uuid.uuid4().hex}", uom_name="Piece")
     category = ProductCategory(
         id=_uid(), category_code=f"ZZT-{_uid()[:8]}", category_name=f"{MARKER} Cat"
     )

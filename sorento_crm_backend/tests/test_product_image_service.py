@@ -46,7 +46,7 @@ def _sorento(db) -> str:
 
 
 def _catalogue(db):
-    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{_uid()[:4]}", uom_name=f"{MARKER} each")
+    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{uuid.uuid4().hex}", uom_name=f"{MARKER} each")
     category = ProductCategory(
         id=_uid(), category_code=f"ZZT-{_uid()[:8]}", category_name=f"{MARKER} Sanitary Ware"
     )

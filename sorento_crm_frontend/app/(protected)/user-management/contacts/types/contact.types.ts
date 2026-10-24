@@ -1,3 +1,10 @@
+export interface ChatbotLlm {
+  provider: string | null;
+  model: string | null;
+  source: 'contact' | 'tag' | 'tag_conflict' | 'none';
+  tags: string[];
+}
+
 export interface RespondContactAccessType {
   code: string;
   name: string;
@@ -40,6 +47,10 @@ export interface RespondContact {
   chatbot_stock_allowed?: boolean;
   /** Linked customer codes, sorted (list rows). */
   customer_codes?: string[];
+  /** CONTACT-TAGS: the tags the contact holds, ordered by tag sort order then name. */
+  tags?: { id: string; name: string }[];
+  /** CONTACT-TAGS S2: how the contact's values compare with its tags' settings (list rows). */
+  tag_settings?: { status: 'matches' | 'differs' | 'none'; differ_count: number; differ_labels: string[] };
   /** CONTACT-BRAND-SCOPE: the brands this contact may see; empty = every brand (list rows). */
   brands?: { id: string; brand_name: string }[];
   /** CONTACT-BULK-ACCESS: `chatbot_profile.tier`, flattened for the list (list rows). */
@@ -57,6 +68,8 @@ export interface RespondContact {
   chatbot_allowed?: boolean;
   chatbot_skip_period_questions?: boolean;
   chatbot_files_as_links?: boolean;
+  /** MODEL-PER-CONTACT: the effective model and where it came from (detail reads only). */
+  chatbot_llm?: ChatbotLlm | null;
   /** Identity S3: the user this contact is linked to, if any (list rows). Null
    *  without `user_management.users.view`. */
   linked_user_id?: string | null;

@@ -110,7 +110,11 @@ export async function listProjectSalesOrders(
       sorting: params.sort ? [{ id: params.sort, desc: params.dir === 'desc' }] : [],
       searchQuery: params.query ?? '',
     },
-    { status: params.status, purchase_order_id: params.purchase_order_id },
+    {
+      status: params.status,
+      purchase_order_id: params.purchase_order_id,
+      without_purchase_order: params.without_purchase_order ? 'true' : undefined,
+    },
   );
   const response = await apiFetch(
     `${BASE}/projects/${projectId}/sales-orders?${search.toString()}`,

@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional, Protocol
@@ -39,6 +40,12 @@ class ChatResult:
     # The part of `prompt_tokens` the provider served from its prompt cache (billed at a
     # discount). 0 when the provider reports none (LLM-TEST-COST).
     cached_tokens: int = 0
+    # The part of `completion_tokens` spent reasoning (OpenAI `completion_tokens_details`); None when the
+    # provider reports none.
+    reasoning_tokens: Optional[int] = None
+    # The model id the provider says answered (a dated snapshot of the alias asked for);
+    # "" when it reports none (PARSER-GEMINI-LITE: the parser's `understood` facts carry it).
+    model: str = ""
 
 
 @dataclass
@@ -141,8 +148,9 @@ def resolve_api_key(cfg: Any, provider_name: str) -> str:
     than "no key configured", so the generic column counts only when the
     assistant itself runs on the provider being asked for.
 
-    Order per provider: the provider-specific column, then the generic column
-    when it belongs to this provider, then the environment key. An empty string
+    Order per provider (OpenAI included, which has its own
+    ``openai_api_key_ciphertext`` slot): the provider-specific column, then the
+    generic column when it belongs to this provider, then the environment key. An empty string
     means no key is configured, which is the caller's cue to say so.
 
     Names are normalized exactly as ``get_provider`` and ``default_model_for``
@@ -174,7 +182,12 @@ def resolve_api_key(cfg: Any, provider_name: str) -> str:
             or app_settings.gemini_api_key
             or ""
         )
-    return generic or app_settings.openai_api_key or ""
+    return (
+        column("openai_api_key_ciphertext")
+        or generic
+        or app_settings.openai_api_key
+        or ""
+    )
 
 
 class LLMProvider(Protocol):
@@ -194,6 +207,7 @@ class LLMProvider(Protocol):
         json_schema_name: Optional[str] = None,
         timeout: Optional[float] = None,
         prompt_cache_key: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> ChatResult: ...
 
     def embed(self, text: str) -> list[float]: ...
@@ -325,7 +339,10 @@ def _create_chat_completion(client, kwargs: dict) -> Any:
     attempt = dict(kwargs)
     if "max_tokens" in attempt:
         attempt["max_completion_tokens"] = attempt.pop("max_tokens")
-    rejected = _OPENAI_REJECTED_PARAMS.setdefault(str(attempt.get("model")), set())
+    # Remembered per model AND per whether an effort is sent: a parameter refused beside a reasoning effort says
+    # nothing about the same model without one (and the reverse). A request with no effort keeps the model key.
+    memo = str(attempt.get("model")) + (" +reasoning_effort" if attempt.get("reasoning_effort") else "")
+    rejected = _OPENAI_REJECTED_PARAMS.setdefault(memo, set())
     for param in [p for p in attempt if p in rejected]:
         _adapt(attempt, param)
     for _ in range(_MAX_PARAM_RETRIES):
@@ -349,9 +366,16 @@ _UNSUPPORTED_PARAM_RE = re.compile(r"[Uu]nsupported parameter: '([a-z_]+)'|'([a-
 _UNSUPPORTED_CODES = frozenset({"unsupported_parameter", "unsupported_value"})
 
 
+# Parameters whose refused VALUE says nothing about the parameter: `minimal` refused on a
+# model that takes `low` must not drop every later effort on it for the life of the process.
+_VALUE_REFUSALS_ARE_PER_CALL = frozenset({"reasoning_effort"})
+
+
 def _is_unsupported(exc: Exception, param: str) -> bool:
     """True when the 400 says the model does not take `param` at all."""
     message = str(exc)
+    if param in _VALUE_REFUSALS_ARE_PER_CALL:
+        return _unsupported_param(message) == param
     return (
         getattr(exc, "code", None) in _UNSUPPORTED_CODES
         or _unsupported_param(message) == param
@@ -364,6 +388,17 @@ def _unsupported_param(message: str) -> str | None:
     if not match:
         return None
     return match.group(1) or match.group(2)
+
+
+# `OpenAIProvider._client`'s shared clients. Bounded only as a backstop: production holds a
+# handful (one key, a few timeouts); the clear is for a test run that swaps keys freely.
+_OPENAI_CLIENTS: dict[tuple, Any] = {}
+_OPENAI_CLIENTS_LOCK = threading.Lock()
+_OPENAI_CLIENTS_MAX = 32
+# A forked child (an RQ work-horse, a gunicorn worker) must not share its parent's open TLS
+# connection, so it starts with no clients (the same rule worker.py applies to DB sockets).
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_OPENAI_CLIENTS.clear)
 
 
 class OpenAIProvider:
@@ -387,7 +422,22 @@ class OpenAIProvider:
         if base_url:
             _require_safe_base_url(base_url)
             overrides = {"base_url": base_url, **overrides}
-        return OpenAI(api_key=self.api_key, **overrides)
+        # One client per (key, settings), kept for the process: a new client is a new
+        # connection pool, so every call paid a fresh TCP + TLS handshake to the provider
+        # (CHAT-LATENCY-SCOUT). The SDK client is safe to share across threads. `OpenAI`
+        # itself is in the key so a test that swaps the class never gets another's client.
+        try:
+            key = (OpenAI, self.api_key, tuple(sorted(overrides.items())))
+            hash(key)
+        except TypeError:
+            return OpenAI(api_key=self.api_key, **overrides)
+        with _OPENAI_CLIENTS_LOCK:
+            client = _OPENAI_CLIENTS.get(key)
+            if client is None:
+                if len(_OPENAI_CLIENTS) >= _OPENAI_CLIENTS_MAX:
+                    _OPENAI_CLIENTS.clear()
+                client = _OPENAI_CLIENTS[key] = OpenAI(api_key=self.api_key, **overrides)
+            return client
 
     def chat(
         self,
@@ -403,6 +453,7 @@ class OpenAIProvider:
         json_schema_name: Optional[str] = None,
         timeout: Optional[float] = None,
         prompt_cache_key: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> ChatResult:
         from app.services import llm_cassette
 
@@ -413,8 +464,11 @@ class OpenAIProvider:
             # `LLM_MODEL_OVERRIDE` wins only when set (LLM-TEST-COST; set nowhere yet).
             "model": os.environ.get("LLM_MODEL_OVERRIDE") or model or self.default_model,
             "messages": outbound_messages,
-            "temperature": temperature,
         }
+        # A reasoning effort and a temperature are refused together (gpt-5.4-mini, probe 21 Oct 2026), so a
+        # request that carries an effort carries no temperature: no refused round trip.
+        if not reasoning_effort:
+            kwargs["temperature"] = temperature
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
@@ -437,6 +491,9 @@ class OpenAIProvider:
         # covers only what decides the answer.
         if prompt_cache_key:
             kwargs["prompt_cache_key"] = prompt_cache_key
+        # Only when the caller sets one (the chatbot parser's stored setting); none is sent otherwise.
+        if reasoning_effort:
+            kwargs["reasoning_effort"] = reasoning_effort
 
         def live() -> Any:
             # A caller-set timeout turns the SDK's own retries off: the caller owns the retry
@@ -481,6 +538,7 @@ class OpenAIProvider:
         total_tokens = int(getattr(usage, "total_tokens", prompt_tokens + completion_tokens) or 0)
         details = getattr(usage, "prompt_tokens_details", None)
         cached_tokens = int(getattr(details, "cached_tokens", 0) or 0)
+        reasoning = getattr(getattr(usage, "completion_tokens_details", None), "reasoning_tokens", None)
 
         return ChatResult(
             content=content,
@@ -490,6 +548,8 @@ class OpenAIProvider:
             tool_calls=normalized_calls,
             raw=completion,
             cached_tokens=cached_tokens,
+            reasoning_tokens=int(reasoning) if isinstance(reasoning, (int, float)) else None,
+            model=str(getattr(completion, "model", "") or ""),
         )
 
     def embed(self, text: str) -> list[float]:
@@ -749,6 +809,7 @@ class AnthropicProvider:
         json_schema_name: Optional[str] = None,
         timeout: Optional[float] = None,
         prompt_cache_key: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> ChatResult:
         from app.services import llm_cassette
 
@@ -806,6 +867,7 @@ class AnthropicProvider:
                 tool_calls=[],
                 raw=resp,
                 cached_tokens=int(getattr(usage, "cache_read_input_tokens", 0) or 0),
+                model=str(getattr(resp, "model", "") or ""),
             )
         # Anthropic has no native JSON-mode flag; emulate by appending an
         # explicit instruction to the system prompt. The extract service
@@ -860,6 +922,7 @@ class AnthropicProvider:
             tool_calls=normalized_calls,
             raw=resp,
             cached_tokens=int(getattr(usage, "cache_read_input_tokens", 0) or 0),
+            model=str(getattr(resp, "model", "") or ""),
         )
 
     def embed(self, text: str) -> list[float]:
@@ -939,7 +1002,53 @@ GEMINI_EMBEDDING_NATIVE_DIMS = 3072
 GEMINI_PRO_THINKING_BUDGET = 1024
 
 
-def _gemini_thinking_budget(model: Optional[str]) -> Optional[int]:
+# A caller's `reasoning_effort` (OpenAI's word, set per prompt label) as a Gemini
+# thinking budget. `none` / `minimal` is the smallest budget the model takes, which is
+# what `_gemini_thinking_budget` already returns for a flash model; the rest are
+# Google's own documented scale for 2.5 Flash (dynamic tops out at 24576).
+GEMINI_EFFORT_BUDGETS: dict[str, int] = {"low": 1024, "medium": 8192, "high": 24576}
+
+# The 3.x family's own thinking control. `thinkingBudget` is accepted there for backward
+# compatibility only (Google advises against it) and is a hint rather than a ceiling, and
+# a request carrying both fields is a 400, so an effort goes out as a level on 3.x.
+GEMINI_3_THINKING_LEVELS: dict[str, str] = {
+    "none": "minimal",
+    "minimal": "minimal",
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+}
+
+# Extra `maxOutputTokens` on every 3.x call, on top of the caller's answer budget and any
+# thinking budget. Crew gate, 13 Oct 2026: flash-lite truncated a parser answer at the
+# 2048 cap that the same answer fits under on gpt-5.4-mini, because 3.x thinking is
+# billed against the cap and is not held to the budget. Output is billed as used, so
+# headroom that is not needed costs nothing.
+GEMINI_3_ANSWER_HEADROOM = 2048
+
+
+def _gemini_thinking(model: Optional[str], effort: Optional[str]) -> tuple[Optional[dict], int]:
+    """`(thinkingConfig, tokens to add to the caller's answer budget)` for this call.
+
+    `(None, 0)` for a model with no thinking to configure (2.0 and older). 2.5 keeps its
+    exact budget. 3.x takes an effort as `thinkingLevel`, and with none set keeps the
+    budget `_gemini_thinking_budget` gives it; either way the cap grows by
+    `GEMINI_3_ANSWER_HEADROOM` so thinking cannot spend the answer's room.
+    """
+    budget = _gemini_thinking_budget(model, effort)
+    if budget is None:
+        return None, 0
+    version = re.search(r"gemini-(\d+)", (model or "").lower())
+    if version is None or int(version.group(1)) < 3:
+        return {"thinkingBudget": budget}, budget
+    key = (effort or "").strip().lower()
+    level = GEMINI_3_THINKING_LEVELS.get(key)
+    if level is not None:
+        return {"thinkingLevel": level}, GEMINI_3_ANSWER_HEADROOM + GEMINI_EFFORT_BUDGETS.get(key, 0)
+    return {"thinkingBudget": budget}, budget + GEMINI_3_ANSWER_HEADROOM
+
+
+def _gemini_thinking_budget(model: Optional[str], effort: Optional[str] = None) -> Optional[int]:
     """How many tokens this model may spend thinking before it answers.
 
     `None` means the model has no thinking to budget and `thinkingConfig` must
@@ -964,6 +1073,9 @@ def _gemini_thinking_budget(model: Optional[str]) -> Optional[int]:
     A model id with no readable version is treated as pre-2.5, because omitting
     the field costs at worst a shorter answer while sending it to a model that
     does not take it costs the whole call.
+
+    `effort` (`low` / `medium` / `high`) replaces the default with a larger budget on a
+    model that thinks; anything else, unset included, keeps the default above.
     """
     name = (model or "").lower()
     version = re.search(r"gemini-(\d+)(?:\.(\d+))?", name)
@@ -972,6 +1084,9 @@ def _gemini_thinking_budget(model: Optional[str]) -> Optional[int]:
     major, minor = int(version.group(1)), int(version.group(2) or 0)
     if (major, minor) < (2, 5):
         return None
+    asked = GEMINI_EFFORT_BUDGETS.get((effort or "").strip().lower())
+    if asked is not None:
+        return asked
     if "flash" in name:
         return 0 if major < 3 else 1
     return GEMINI_PRO_THINKING_BUDGET
@@ -1001,12 +1116,31 @@ _GEMINI_SCHEMA_KEYS = {
 }
 
 
+# Which keys belong to which type, for splitting a multi-type field into `anyOf`
+# branches. A key not listed here (`description`, `title`) describes the field as a
+# whole and stays on the outer node.
+_GEMINI_TYPE_KEYS = {
+    "array": {"items", "minItems", "maxItems"},
+    "object": {"properties", "required", "propertyOrdering"},
+    "string": {"enum", "format"},
+    "number": {"minimum", "maximum", "format"},
+    "integer": {"minimum", "maximum", "format"},
+}
+_GEMINI_BRANCH_KEYS = set().union(*_GEMINI_TYPE_KEYS.values())
+
+
 def _gemini_schema(schema: Any) -> Any:
     """Translate a JSON Schema into Gemini's OpenAPI subset."""
     if isinstance(schema, list):
         return [_gemini_schema(item) for item in schema]
     if not isinstance(schema, dict):
         return schema
+
+    kinds = schema.get("type")
+    if isinstance(kinds, list):
+        concrete = [kind for kind in kinds if kind != "null"]
+        if len(concrete) > 1:
+            return _gemini_any_of(schema, concrete, nullable=len(concrete) != len(kinds))
 
     out: dict[str, Any] = {}
     for key, value in schema.items():
@@ -1039,6 +1173,33 @@ def _gemini_schema(schema: Any) -> Any:
             out[key] = _gemini_schema(value)
             continue
         out[key] = value
+    return out
+
+
+def _gemini_any_of(schema: dict, kinds: list[str], *, nullable: bool) -> dict[str, Any]:
+    """A field of several types (`["string", "array"]`) as one `anyOf` branch per type.
+
+    Gemini's `type` is a single enum, so the old reading kept the first type and every
+    other key with it: `profile_statements[].value` became a STRING carrying `items`,
+    which Google refuses with a 400, and every parser call on Gemini failed on it. Each
+    branch keeps only the keys its own type reads; a null member puts `nullable` on every
+    branch, since an `anyOf` node takes no `type` of its own to hang it on.
+    """
+    out: dict[str, Any] = {
+        key: value
+        for key, value in schema.items()
+        if key in _GEMINI_SCHEMA_KEYS and key not in _GEMINI_BRANCH_KEYS and key not in ("type", "nullable", "anyOf")
+    }
+    branches = []
+    for kind in kinds:
+        own = _GEMINI_TYPE_KEYS.get(kind, set())
+        branch = _gemini_schema(
+            {"type": kind, **{key: value for key, value in schema.items() if key in own}}
+        )
+        if nullable:
+            branch["nullable"] = True
+        branches.append(branch)
+    out["anyOf"] = branches
     return out
 
 
@@ -1221,17 +1382,22 @@ def _gemini_error_message(response: Any) -> str:
 def _gemini_operator_hint(status_code: int, provider_message: str) -> str:
     """The sentence that says whose problem this is, appended to Gemini's own words.
 
-    A quota wall and a bad key are the operator's to fix, not the document's,
-    and both used to reach the screen as raw provider JSON that read like the
-    uploaded file was unreadable. The provider message is still carried (it is
+    A quota wall, an empty prepaid balance (402) and a bad key are the operator's
+    to fix, not the document's, and all three used to reach the screen as raw
+    provider JSON that read like the uploaded file was unreadable. The provider message is still carried (it is
     the only thing that distinguishes one 400 from another); this only adds who
     can act on it. Everything else gets nothing, because we would be guessing.
     """
+    lowered_message = (provider_message or "").lower()
+    if status_code == 402 or ("credits" in lowered_message and "deplet" in lowered_message):
+        return (
+            " The reader is unavailable because the prepaid credits have run out. "
+            "Nothing uploaded is lost. Top up the credits in Google AI Studio, then try again."
+        )
     if status_code == 429:
-        lowered = (provider_message or "").lower()
         reason = (
             "the billing cap has been reached"
-            if "spend" in lowered
+            if "spend" in lowered_message
             else "the rate limit has been reached"
         )
         return (
@@ -1244,6 +1410,20 @@ def _gemini_operator_hint(status_code: int, provider_message: str) -> str:
             "Check GEMINI_API_KEY, then try again."
         )
     return ""
+
+
+class GeminiHTTPError(RuntimeError):
+    """A Gemini call the provider refused, with its HTTP status as `status_code`.
+
+    The OpenAI and Anthropic SDKs put the status on their errors, and the chatbot's retry
+    seam (`chatbot/llm_call.is_rate_limited` / `is_transient`) reads it there. A plain
+    RuntimeError carried it only in its text, so a Gemini 429 or 503 on the parser failed
+    the dealer's turn at once instead of being waited out (PARSER-GEMINI-LITE).
+    """
+
+    def __init__(self, message: str, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class GeminiProvider:
@@ -1286,9 +1466,10 @@ class GeminiProvider:
 
         if response.status_code >= 400:
             provider_message = _gemini_error_message(response)
-            raise RuntimeError(
+            raise GeminiHTTPError(
                 f"Gemini call failed ({response.status_code}): {provider_message}"
-                f"{_gemini_operator_hint(response.status_code, provider_message)}"
+                f"{_gemini_operator_hint(response.status_code, provider_message)}",
+                response.status_code,
             )
         try:
             body = response.json()
@@ -1312,6 +1493,7 @@ class GeminiProvider:
         json_schema_name: Optional[str] = None,
         timeout: Optional[float] = None,
         prompt_cache_key: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> ChatResult:
         from app.services import llm_cassette
 
@@ -1353,11 +1535,11 @@ class GeminiProvider:
         # a pool the model gets to think out of. A model with no thinking to
         # budget (2.0 and older) gets no `thinkingConfig` and the caller's
         # `max_tokens` unchanged, because the field itself is a 400 there.
-        thinking_budget = _gemini_thinking_budget(model_name)
-        if thinking_budget is not None:
-            generation["thinkingConfig"] = {"thinkingBudget": thinking_budget}
+        thinking_config, thinking_room = _gemini_thinking(model_name, reasoning_effort)
+        if thinking_config is not None:
+            generation["thinkingConfig"] = thinking_config
         if max_tokens is not None:
-            generation["maxOutputTokens"] = max_tokens + (thinking_budget or 0)
+            generation["maxOutputTokens"] = max_tokens + thinking_room
         # Structured output is native here: `responseSchema` constrains decoding
         # the same way OpenAI's strict json_schema does, so `content` comes back
         # as a schema-valid JSON string and the caller parses it identically.
@@ -1416,7 +1598,14 @@ class GeminiProvider:
         # already topped up with the thinking budget above, so reaching it means
         # the answer itself ran out of room.
         if finish == "MAX_TOKENS":
-            raise RuntimeError("Gemini stopped early: MAX_TOKENS (response truncated).")
+            # Where the budget went, so the trace says whether thinking or the answer
+            # ran out of room (crew gate, 13 Oct 2026).
+            spent = body.get("usageMetadata") or {}
+            raise RuntimeError(
+                "Gemini stopped early: MAX_TOKENS (response truncated; "
+                f"thinking {int(spent.get('thoughtsTokenCount') or 0)}, "
+                f"answer {int(spent.get('candidatesTokenCount') or 0)} tokens)."
+            )
         if finish and finish != "STOP":
             raise RuntimeError(f"Gemini stopped early: {finish}.")
 
@@ -1448,6 +1637,10 @@ class GeminiProvider:
             tool_calls=normalized_calls,
             raw=body,
             cached_tokens=int(usage.get("cachedContentTokenCount") or 0),
+            reasoning_tokens=(
+                int(usage["thoughtsTokenCount"]) if usage.get("thoughtsTokenCount") is not None else None
+            ),
+            model=str(body.get("modelVersion") or ""),
         )
 
     def embed(self, text: str) -> list[float]:
