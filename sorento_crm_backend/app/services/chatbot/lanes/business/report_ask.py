@@ -1043,9 +1043,9 @@ def settle(
         return None, COMPARE_BY_MONTH_LINE
     given = {**_given_choices(args), **_given_top_n(args, top_n)}
     period = period_from(parse_output.get("date_filter_start"), parse_output.get("date_filter_end")) or held_period
-    if period is not None and parse_output.get("ranking_refine") is not True:
+    if period is not None and (parse_output.get("ranking_refine") is not True or args.get("group_by")):
         # A refine with no ranking held has nothing to refine: it is a fresh ask, and a
-        # period alone never runs a total (it asks).
+        # period alone never runs a total (it asks). One that names its own axis (R5 row 7) keeps its period.
         given["period"] = period
     extras: dict[str, Any] = {"args": args, "top_n": top_n}
     if across_all and frame.get("group_by") in AXIS_NOUNS and _drill_source(frame):
