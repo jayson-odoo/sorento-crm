@@ -403,3 +403,48 @@ def test_g4_the_company_question_retires_the_stale_drill_offer(two, turn_c, text
     )
     drilled = [a for a in _calls(captured, REPORT) if a.get("group_by")]
     assert drilled == [], f"a later '1' must not pick a drill option of the retired offer: {drilled}"
+
+
+# --------------------------------------------------------------------------- #
+# E (RED) - crew re-verify of :3101 on a6ed31d89e: the company reply carried the parser's own
+# `group_by: "date"`, which the axis check read BEFORE the slot's carried axes applied
+# --------------------------------------------------------------------------- #
+
+
+def _turn_e1() -> dict[str, Any]:
+    """"dealer sales september 2026", as the parser emitted it live (v63, gpt-5.4-mini)."""
+    return _parser_output(
+        domain_hint="sales", intent_hint="check_order", order_status="sales_analysis",
+        sales_channel="dealer", sales_company=None, sales_basis=None, group_by="month",
+        entities=[], entity_op="reuse", domain_in_message=True, **SEP_2026,
+    )
+
+
+def _turn_e2() -> dict[str, Any]:
+    """"Sorento", as the parser emitted it live: the company, a pick of [1], and an axis of
+    its own (`group_by: "date"`) that the bare reply never asked for."""
+    return _parser_output(
+        message_type="business_query", intent_hint="check_order", domain_hint="order",
+        order_status="sales_analysis", group_by="date", sales_channel="dealer",
+        sales_company="Sorento", sales_basis=None, entities=[], entity_op="reuse",
+        reference_positions=[1], open_question_answer=None, domain_in_message=False,
+        date_mode=None, date_filter_start=None, date_filter_end=None,
+    )
+
+
+def test_e_the_company_reply_runs_the_asked_analysis_whatever_axis_it_carries(two):
+    result, _captured = two.say(_turn_e1(), "dealer sales september 2026")
+    assert QUESTION in _reply(result), f"setup: turn 1 asks which company: {_reply(result)!r}"
+    result, captured = two.say(_turn_e2(), "Sorento")
+    assert "break sales down by" not in _reply(result), _reply(result)
+    calls = _calls(captured, ANALYSIS)
+    assert calls, f"the company reply must run the sales analysis: {captured}"
+    args = calls[0]
+    assert args.get("company") == "Sorento", args
+    assert args.get("channel") == "dealer", f"the asked channel rides the question: {args}"
+    assert args.get("date_from") == "2026-09-01" and args.get("date_to") == "2026-09-30", (
+        f"the asked window rides the question: {args}"
+    )
+    assert args.get("rows") == "month" or args.get("cols") == "month" or args.get("group_by") == "month", (
+        f"the asked axis (month) rides the question, not the reply's own: {args}"
+    )
