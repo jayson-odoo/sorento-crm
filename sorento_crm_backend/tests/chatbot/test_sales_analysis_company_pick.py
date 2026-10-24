@@ -448,3 +448,60 @@ def test_e_the_company_reply_runs_the_asked_analysis_whatever_axis_it_carries(tw
     assert args.get("rows") == "month" or args.get("cols") == "month" or args.get("group_by") == "month", (
         f"the asked axis (month) rides the question, not the reply's own: {args}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# E2 (RED, reviewer round E): no axis check is run on the reply to the company question
+# --------------------------------------------------------------------------- #
+
+
+def _held_slot(chat: Chat) -> dict[str, Any]:
+    return (chat.lane._session_of(chat.session_factory).get("focus") or {}).get("required_ask") or {}
+
+
+def test_e_b1_an_ask_with_no_axis_still_runs_for_the_picked_company(two):
+    first = _turn_e1()
+    first["group_by"] = None  # "dealer sales september 2026" with no axis of its own
+    result, _c = two.say(first, "dealer sales september 2026")
+    assert QUESTION in _reply(result), f"setup: turn 1 asks which company: {_reply(result)!r}"
+    result, captured = two.say(_turn_e2(), "Sorento")
+    assert "break sales down by" not in _reply(result), _reply(result)
+    calls = _calls(captured, ANALYSIS)
+    assert calls and calls[0].get("company") == "Sorento", captured
+    assert calls[0].get("channel") == "dealer", calls[0]
+    assert calls[0].get("date_from") == "2026-09-01" and calls[0].get("date_to") == "2026-09-30", calls[0]
+
+
+def _unsettled(**answer: Any) -> dict[str, Any]:
+    reply = _turn_e2()
+    reply.update(sales_company=None, **answer)
+    return reply
+
+
+@pytest.mark.parametrize(
+    "reply, text, expect",
+    [
+        pytest.param(
+            _unsettled(reference_positions=[5],
+                       open_question_answer={"mode": "pick", "picked": [5], "items": [], "qty_for_all": None}),
+            "5", "reask", id="out-of-range-pick",
+        ),
+        pytest.param(
+            _unsettled(reference_positions=[],
+                       open_question_answer={"mode": "cancel", "picked": [], "items": [], "qty_for_all": None}),
+            "cancel", "cancelled", id="cancel",
+        ),
+    ],
+)
+def test_e_s1_an_unsettled_reply_gets_the_questions_own_line(two, reply, text, expect):
+    result, _c = two.say(_turn_e1(), "dealer sales september 2026")
+    assert QUESTION in _reply(result), f"setup: turn 1 asks which company: {_reply(result)!r}"
+    result, captured = two.say(reply, text)
+    assert "break sales down by" not in _reply(result), _reply(result)
+    assert _calls(captured, ANALYSIS) == [], captured
+    if expect == "reask":
+        assert _held_slot(two).get("ask") == "sales_company", (
+            "an out-of-range pick re-asks: the company question stays open", _held_slot(two), _reply(result),
+        )
+    else:
+        assert "Sales report cancelled." in _reply(result), _reply(result)
