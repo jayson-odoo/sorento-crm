@@ -50,7 +50,7 @@ OPTION_LABELS = (
     ("delivery_order", "Delivery orders"),
 )
 
-#: The route's channel vocabulary -> the dataset's (`demand_class.class_of`).
+#: The route's channel vocabulary -> the dataset's (the sales order `demand_class`).
 _CHANNEL_CLASS = {"dealer": "retail", "project": "project"}
 
 #: The open ends of a window with one bound (or none): the engine's period is always closed.
