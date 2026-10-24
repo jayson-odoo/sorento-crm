@@ -84,6 +84,16 @@ re-inject all arrive here). **Sender** = the workspace's thin n8n chatbot sender
   30 s, plus parser and lane); the deploy keeps ingress reachable through the switch (values and
   any deploy change: plan section "Zero-downtime deploy").
 
+- **IQ-24** In queue mode a photo or voice read that is not finished within
+  `media_sync_wait_seconds` (for example while the worker restarts) does not produce a "could
+  not read it in time" reply: the drain keeps waiting (heartbeat kept, hard cap 10 minutes)
+  and the contact's later rows wait behind it. A read job the worker abandoned is read again
+  once.
+- **IQ-25** The app's shutdown handler returns only after every running drain has finished its
+  current row (POST and done mark), so the process never exits mid-turn on a deploy; the
+  gunicorn grace (`graceful_timeout`) and the deploy script's stop timeout are both above the
+  longest turn.
+
 ## Retry and rollback
 
 - **IQ-22** Retry on a failed queued turn answers it once, even if the Retry copy arrives twice.

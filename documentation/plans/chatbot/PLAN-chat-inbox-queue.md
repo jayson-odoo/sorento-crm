@@ -121,10 +121,72 @@ seams: the turn itself (`run_turn`, stub it as the S7 tests do) and the sender P
 13. Rollback: mode switched to off with rows queued: they are still answered once; a new
     message takes the sync path (IQ-23).
 14. Takeover at drain time: no POST (IQ-11).
+15. Photo read not finished within 30 s in queue mode (worker down): no "could not read" reply;
+    the row is answered when the read lands; the contact's later rows wait behind it (IQ-24).
+16. Read job abandoned by the worker: read again once, answered once (IQ-24).
+17. App shutdown handler: with a drain mid-turn, the handler returns only after the POST and
+    the done mark (IQ-19).
 
 ## Zero-downtime deploy
 
-(Filled from the deploy audit before the coder starts; see IQ-19 to IQ-21.)
+### How prod deploys today (audit 25 Oct, read-only, file:line)
+
+1. `deploy.yml:2004-2006`, `:2053-2103`: after the owner's approval, CI copies
+   `scripts/blue_green_deploy.sh` to the server and runs it. The server compose
+   `/opt/sorento-crm2/docker-compose.yml` is gitignored and hand-edited (`deploy.yml:2070-2074`).
+2. `blue_green_deploy.sh:398-400`: start the NEW colour (backend runs `alembic upgrade head`,
+   then `exec gunicorn`, so gunicorn is PID 1: `Dockerfile:94`, `start.sh:41-60`).
+3. `:402-429`: health gate on Docker `Health.Status` of the new containers (120 x 2 s); if
+   unhealthy, NEW stops and OLD keeps serving (`Dockerfile:90-91`, `curl -f /health`).
+4. `:438-449`: rewrite the nginx upstream and `nginx -s reload` (graceful: new requests go to
+   NEW, open ones finish on OLD).
+5. `:451-453`: `sleep DRAIN_SECONDS` (30).
+6. `:455-530`: `up -d --force-recreate --no-deps worker worker_fast` (old worker stops before
+   the new one starts), then wait for their log lines.
+7. `:532-535`: `docker compose stop` of OLD with no `-t` (compose `stop_grace_period`, Docker
+   default 10 s; server value UNVERIFIED), then `rm -f`.
+
+### What a deploy can drop today
+
+| What | Today | Why (file:line) |
+| --- | --- | --- |
+| inbound webhook / `/chat/turn` arriving during the switch | not dropped | nginx reload is graceful (step 4); OLD serves until NEW is healthy |
+| a 90 s sync `/chat/turn` still running on OLD | can be cut | OLD is stopped (step 7); gunicorn `graceful_timeout` unset = 30 s (`gunicorn.conf.py:42-74`), then SIGKILL; also nginx `proxy_read_timeout` 60 s default on the host (UNVERIFIED) |
+| an in-flight direct-ingress turn or its sender POST | killed | the `direct-turn` pool is never drained (`chat_turns.py:75-110`); the only shutdown hook stops the scheduler (`main.py:577-585`); uvicorn re-raises SIGTERM with the default handler, so no atexit, no executor join; the row stays `processing` and its n8n copy is answered `duplicate` (`send_order.py:186-188`) |
+| an RQ `media` job (a photo read) during the worker recreate | delayed, or lost if it outlives the worker's stop grace | warm shutdown finishes the current job; a SIGKILL leaves it abandoned and nothing re-runs it (no RQ `Retry`, `queue_service.py:116-160`); while the old worker stops and the new starts nothing drains `media`, so an in-turn 30 s read wait can expire |
+
+### Design (this PR)
+
+- **No long requests in queue mode.** Webhook and `/chat/turn` only enqueue (rule 2), so a
+  deploy or nginx's 60 s read timeout has nothing long to cut.
+- **Drain on shutdown (app).** The FastAPI shutdown handler calls `begin_shutdown()` then
+  `wait_idle(grace)`: drains stop taking rows and finish the row they are in, including its
+  sender POST and done mark. It must finish BEFORE uvicorn re-raises SIGTERM.
+- **Grace above the longest turn (repo).** `gunicorn.conf.py`: `graceful_timeout = 150`
+  (longest queued turn: photo read + parser + lane + sender POST, well under 120 s).
+  `blue_green_deploy.sh` step 7: `docker compose stop -t 160` for OLD, so Docker does not
+  SIGKILL before gunicorn's grace ends. Both files ship with the release (the script is
+  copied by CI, `deploy.yml:2004-2006`).
+- **Overlap is safe.** During steps 4-7 OLD and NEW both run drains and sweepers; the
+  per-contact mutex and the conditional row claim keep one turn per contact and one answer per
+  row. NEW's sweeper picks up queued rows within 2 s of starting.
+- **Photo reads survive the worker restart (app).** In queue mode a row's photo read is waited
+  for by the drain with no 30 s cap (heartbeat kept; hard cap 10 minutes), so a worker
+  recreate only delays that contact's reply instead of producing "could not read it in time".
+  A read job that the worker abandoned (failed with no result) is read again once.
+- **Sender POST timeout.** The n8n sender now answers after its last node (switchover step 2),
+  so `direct_ingress.SENDER_TIMEOUT_SECONDS` (10 s, `direct_ingress.py:62`) rises to 60 s.
+
+### Outside the repo (owner, server; recommended, not blocking)
+
+- `worker_fast` `stop_grace_period: 120s` in `/opt/sorento-crm2/docker-compose.yml`, so a photo
+  read in flight at the worker recreate finishes instead of being abandoned (the re-read above
+  covers it if not).
+- Nothing on the server makes zero downtime impossible for queue mode: the nginx read timeout
+  and the backend stop grace no longer matter once no request waits on a turn and the script
+  passes `-t`.
+- Seen, out of scope: the API process drains `notifications` on a daemon thread with a raw
+  `lpop` (`queue_service.py:163-246`), so a deploy can lose one notification job in flight.
 
 ## Owner switchover (also in the PR body)
 
