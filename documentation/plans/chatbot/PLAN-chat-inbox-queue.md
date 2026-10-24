@@ -68,6 +68,31 @@ queue" (the research, options and owner rulings); this file holds the final rule
 | sender POST + log | reuse `direct_ingress.send` and its failed-log writer (`:445-504`) |
 | sweeper start / shutdown hook | `app/main.py` startup and shutdown events |
 
+## Contract (what the tests drive; internals are the coder's)
+
+`app/services/chatbot/inbox_queue.py`, plain functions:
+
+| Function | Behaviour |
+| --- | --- |
+| `queue_mode_for(db, contact_respond_id) -> bool` | True when the mode covers this contact (`direct_ingress.covers` on the settings row) |
+| `enqueue(db, envelope) -> tuple[str, bool]` | insert the `queued` row or find it; returns `(turn_id, created)`; never runs the turn |
+| `kick(contact_respond_id) -> None` | make sure a drain for this contact is scheduled on the pool (no-op if one is live) |
+| `drain(contact_respond_id, *, session_factory=None) -> int` | run this contact's queued rows in send order until none is left or shutdown began; returns rows finished; returns 0 at once if another drain holds the contact |
+| `sweep(*, session_factory=None) -> int` | one sweeper pass: recover dead `processing` rows, then `kick` every contact with `queued` rows and no live drain; returns contacts kicked |
+| `begin_shutdown() -> None` / `wait_idle(timeout_s) -> bool` | stop taking rows; wait until running drains finished their current row |
+| `should_resend(outcome) -> bool` | rule (a): `outcome` is the logged result of the last POST attempt, one of `"refused"` (connection refused, nothing left), `"timeout"`, `"http_error"`, `"ok"`, or `None` (attempt stamped, result never logged: a crash mid-POST). True only for `"refused"`. Flipping to rule (b) changes this one function |
+| `_reset_for_tests() -> None` | clear this process's shutdown flag and local drain state (a test's "next process") |
+
+Row states the tests read: `queued` (stage `queued`) -> `processing` -> stage `sending`
+(stamped BEFORE the sender POST) -> `done`, or `failed`. Recovery of a row a dead process left
+`processing`: stage `sending` means a POST may have left, so `should_resend(outcome)` decides;
+any other stage means nothing was posted, so the row goes back to `queued` and runs again. A
+row flagged for staff is `failed` with stage `send_unconfirmed`. Drain mutex key:
+`chatbot:drain:{contact}` (Redis, TTL with heartbeat); a test deletes it to play a dead
+process. Test
+seams: the turn itself (`run_turn`, stub it as the S7 tests do) and the sender POST
+(`direct_ingress.send`'s HTTP call), both monkeypatchable.
+
 ## Test list (tester writes red first; pytest, Postgres + real Redis like `tests/chatbot/test_s7_ordering_and_offload.py`)
 
 1. Mode off = today (IQ-1): `/chat/turn` returns actions synchronously, no row queued, no
