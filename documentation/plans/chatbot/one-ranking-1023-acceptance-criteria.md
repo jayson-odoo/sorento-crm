@@ -27,7 +27,7 @@ Plan: `PLAN-one-ranking-1023.md`. Per round; owner answers Q1-Q3 fill the bracke
   contact's language). A new grouping typed while a question is open ("by customer" under "How many?") changes the grouping
   of the ask being completed, keeps every filter typed, and asks only what is still missing; never "I don't know ... as a
   number".
-- AC-OR6 (crew (A') (b), 24 Oct). (1) The parser reports `axis_words`: the current message's own words naming the ranked or grouped
+- AC-OR6 (crew (A') (b), 24 Oct). (1) The parser reports `by_words` (shipped inert: only a prompt that defines it switches it on; none published, crew (c) 24 Oct): the current message's own words naming the ranked or grouped
   axis, or null. (2) "Top sales for CB6635 in 2026" (axis_words null) is a TOTAL on every model even when the parser also fills
   group_by: only the missing basis is asked, never a count, never an axis question. (3) "Top 5 salesppl in 2026 for CB6635",
   "Top 30 selling item this year", "by customer" keep their axis (axis_words set). (4) A parse without the axis_words key (the

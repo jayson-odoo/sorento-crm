@@ -63,7 +63,7 @@ nowhere by the sales ranking, so an item ask lands on the catalogue line (T1-T3)
   owner rulings 24 Oct 08:10 (ask a40448868): (A) a1 'Top sales for X in 2026' with no 'by' stays a TOTAL (no axis question,
   no default axis); (B) b2 row N of an agent / customer ranking opens that row's detail (agent -> its customers, customer ->
   its products, plus months; period / product / basis held), the item pick rule (ed44bae38d red, f9aaca0573).
-- R6 (M, crew (A') (b) 24 Oct ~11:00): ruling A in code. The parser gets ONE new field `axis_words`: the verbatim words of the
+- R6 (M, crew (A') (b) 24 Oct ~11:00): ruling A in code. The parser gets ONE new field `by_words` (first named `axis_words`): the verbatim words of the
   CURRENT message that name what is ranked or grouped (a "by ..." phrase: "by salesppl", "ikut pelanggan", "按客户"; or the ranked
   noun: "salesppl" in "top 5 salesppl", "items" in "top 30 selling items"), null when the message names no axis ("Top sales for
   CB6635 in 2026"). ARCHITECTURE: layer = the parser contract (schema + prompt v104) and one reader in the report ask lane
@@ -75,6 +75,10 @@ nowhere by the sales ranking, so an item ask lands on the catalogue line (T1-T3)
   channel basis, market segment vs SO type, is the owner's separate question, not changed here); R-P3-16: self_reference only from
   a first-person word in the current message. Measure: gpt-5.4-mini first (checkpointed x1, x3 only if close), then ONE
   gemini-3.5-flash-lite x1 run on the org key under crew/state/eval/gemini-org-key-ledger.md.
+  R6 outcome (24 Oct ~12:10): code READY (Opus) and shipped INERT: the field is offered and read only when the rendered prompt
+  defines `by_words`, and no published prompt does. Candidates v104 / v105 / v106 defined it; gemini-3.5-flash-lite read it exactly
+  (v105 22/22 on the target classes), gpt-5.4-mini misread it on every wording (writes 'top sales' / 'jualan tertinggi' / '销售最高' as
+  axis words; class a 2/6 vs v103 6/6). Crew (c): v103 for both models; ruling A stays prompt-only until a model reads the field.
 - Also queued: owner turn 045fb9bb ('Top sales for cb6635 in 2026, by salesppl' -> monthly report), v101 lines 53 / 297 / 310.
 
 ## Access differences the merge makes (Q3)
