@@ -1,7 +1,7 @@
 # UAC - Portal forms: grant by market segment, every kind gated, per-contact override for all five
 
-Plan: `documentation/plans/portal/PLAN-portal-forms-market-segment.md`
-Status: r4, 16 Sep 2026: PR #963 ready for review (reviewer + security closed, browser pass green), awaiting owner test on :3082 then merge
+Plan: `documentation/plans/_archive/portal/PLAN-portal-forms-market-segment.md`
+Status: merged, PR #963 (cd0520a64), 17 Sep 2026
 
 ## Journey
 
