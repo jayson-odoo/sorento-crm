@@ -12,7 +12,7 @@ The route, the MCP tool and the analytics connector keep the tool.
 unmoved and no republish follows from this migration.
 
 Revision ID: or_r4b_top_selling_off
-Revises: pgl_0001_label_reasoning_effort
+Revises: mpc_0002_contact_llm
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "or_r4b_top_selling_off"
-down_revision = "pgl_0001_label_reasoning_effort"
+down_revision = "mpc_0002_contact_llm"
 branch_labels = None
 depends_on = None
 
