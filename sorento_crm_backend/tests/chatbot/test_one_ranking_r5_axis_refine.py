@@ -111,3 +111,94 @@ def test_a3_4_guard_an_item_ranking_with_no_basis_or_measure_gets_one_combined_q
     assert _ran(log) == [], (text, log)
     assert "quantity" in text.lower() and "amount" in text.lower(), text
     assert "delivered" in text.lower() and "ordered" in text.lower(), text
+
+
+# ------------------------------------------------ review 2: the swap re-derives what the new axis owes
+
+
+def _slot_args(**args: Any) -> dict[str, Any]:
+    return {"args": args, "top_n": None}
+
+
+ANSWER_OP = [{"op": "answer", "axis": None, "position": None}]
+
+
+def _first_total(group_by: str | None) -> dict[str, Any]:
+    """'total qty of <product> in 2026' (or 'by month'): no basis, so the basis is asked."""
+    return _parser_output(
+        domain_hint="order", intent_hint="check_order", order_status="sales_ranking", ranking_refine=False,
+        group_by=group_by, top_n=None, measure="qty", basis=None, entities=[_e(PRODUCT_CODE, "product")],
+        domain_in_message=True, state_changes=list(KEEP), **YEAR_2026)
+
+
+@pytest.mark.parametrize("answer", [None, {"mode": "fill"}])
+@pytest.mark.parametrize("old_axis", [None, "month"], ids=["total", "month"])
+def test_a3r2_1_a_new_axis_over_a_total_or_a_month_trend_asks_the_count_it_never_settled(
+    console, monkeypatch, old_axis, answer
+) -> None:
+    _state_on(console)
+    text, log = _say_all(console, monkeypatch, _first_total(old_axis), "total qty of x in 2026")
+    assert _ran(log) == [] and "Delivered" in text, ("setup", text, log)
+    text, log = _say_all(console, monkeypatch, _verdict(group_by="customer", open_question_answer=answer), "by customer")
+    assert _ran(log) == [] and "How many?" in text and "Delivered" in text and text.count("?") >= 2, (text, log)
+    assert "as a number" not in text, text
+    # basis alone must not run the ranking without a count
+    text, log = _say_all(console, monkeypatch, _verdict(basis="delivered", ranking_refine=False, state_changes=ANSWER_OP), "delivered")
+    assert _ran(log) == [] and "How many?" in text, (text, log)
+    text, log = _say_all(console, monkeypatch, _verdict(top_n=5, ranking_refine=False, state_changes=ANSWER_OP), "top 5")
+    ran = _ran(log)
+    assert len(ran) == 1 and ran[0]["group_by"] == "customer" and ran[0]["top_n"] == 5, (text, log)
+    assert ran[0]["product_code"] == PRODUCT_CODE and ran[0]["basis"] == "delivered" and ran[0]["measure"] == "qty", ran
+
+
+def test_a3r2_2_a_swap_to_month_over_a_comparison_says_a_month_trend_is_not_compared(console, monkeypatch) -> None:
+    from app.services.chatbot.lanes.business.report_ask import COMPARE_BY_MONTH_LINE
+
+    _state_on(console)
+    first = _parser_output(
+        domain_hint="order", intent_hint="check_order", order_status="sales_ranking", ranking_refine=False,
+        group_by="customer", top_n=10, measure="qty", basis="delivered", compare_to="last_year",
+        entities=[_e(PRODUCT_CODE, "product")], domain_in_message=True, state_changes=list(KEEP))
+    text, log = _say_all(console, monkeypatch, first, "top 10 customers x vs last year qty delivered")
+    assert _ran(log) == [] and "period" in text.lower(), ("setup", text, log)
+    text, log = _say_all(console, monkeypatch, _verdict(group_by="month"), "by month")
+    assert COMPARE_BY_MONTH_LINE in text and _ran(log) == [], (text, log)
+
+
+def test_a3r2_3_the_swap_drops_only_the_new_axis_own_filter() -> None:
+    from app.services.chatbot.lanes.business.report_ask import _swap_axis
+
+    held = _slot_args(group_by="customer", product_code=PRODUCT_CODE, product_ids=["p1"], customer_ids=["c1"])
+    out = _swap_axis(_verdict(group_by="product"), held)["args"]
+    assert "product_code" not in out and "product_ids" not in out and out["customer_ids"] == ["c1"], out
+    assert out["group_by"] == "product", out
+
+
+def test_a3r2_3_a_swap_to_product_ranks_products_across_all(console, monkeypatch) -> None:
+    _open_how_many(console, monkeypatch)
+    text, log = _say_all(console, monkeypatch, _verdict(group_by="product"), "by product")
+    assert _ran(log) == [] and "How many?" in text, (text, log)
+    text, log = _say_all(console, monkeypatch, _verdict(top_n=5, ranking_refine=False, state_changes=ANSWER_OP), "top 5")
+    ran = _ran(log)
+    assert len(ran) == 1 and ran[0]["group_by"] == "product", (text, log)
+    assert "product_code" not in ran[0] and "product_ids" not in ran[0], ran
+
+
+def test_a3r2_4_a_comparison_named_with_the_new_axis_ranks_the_new_axis(console, monkeypatch) -> None:
+    _open_how_many(console, monkeypatch)
+    text, log = _say_all(console, monkeypatch, _verdict(group_by="customer", compare_to="last_year"), "by customer vs last year")
+    assert _ran(log) == [] and "How many?" in text, (text, log)
+    text, log = _say_all(console, monkeypatch, _verdict(top_n=5, ranking_refine=False, state_changes=ANSWER_OP), "top 5")
+    ran = _ran(log)
+    assert len(ran) == 1 and ran[0]["group_by"] == "customer" and ran[0].get("compare_to") == "last_year", (text, log)
+
+
+def test_a3r2_5_a_dealers_swap_to_an_agent_gets_the_refusal_at_once(console, monkeypatch) -> None:
+    from tests.chatbot.test_report_ask_lane import _link_dealer
+
+    _link_dealer(console)
+    _state_on(console)
+    text, log = _say_all(console, monkeypatch, _first_total(None), "total qty of x in 2026")
+    assert _ran(log) == [] and "Delivered" in text, ("setup", text, log)
+    text, log = _say_all(console, monkeypatch, _verdict(group_by="sales_agent"), "by agent")
+    assert _ran(log) == [] and "not available for your account" in text, (text, log)
