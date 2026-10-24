@@ -91,6 +91,11 @@ def test_other_axes_and_a_comparison_offer_no_row_pick(group_by):
     assert "rank number" not in _report_ask(_body(compare_to="last_year"))
 
 
+@pytest.mark.parametrize("group_by", ["product", "category", "sales_agent", "customer"])
+def test_a_comparison_ranking_offers_no_row_pick_whatever_the_axis(group_by):
+    assert "rank number" not in _report_ask(_body(group_by=group_by, compare_to="last_year"))
+
+
 def test_no_more_line_when_nothing_is_cut():
     text = _report_ask(_body(more=0, total_count=3))
     assert "and 0 more" not in text and " more" not in text, text

@@ -148,3 +148,64 @@ def test_b5_guard_axis_less_top_sales_asks_only_the_basis_then_runs_a_total(cons
     text, log = _say_all(console, monkeypatch, answer, "delivered")
     ran = r3c._ran(log)
     assert len(ran) == 1 and not ran[0].get("group_by") and ran[0]["basis"] == "delivered", (text, log)
+
+
+# ------------------------------------------------ review: no offer on a detail, scope pins
+
+
+@pytest.mark.parametrize(
+    ("group_by", "over", "position"),
+    [("product", {"order_status": "top_selling", "rank_group": "item", "entities": []}, 2), ("sales_agent", {}, 2), ("customer", {}, 1)],
+)
+def test_b6_a_row_detail_prints_no_offer_for_a_list_it_never_armed(console, monkeypatch, group_by, over, position) -> None:
+    _on_screen(console, monkeypatch, group_by, **over)
+    text, log = _say_all(console, monkeypatch, r3c._pick(position), str(position))
+    assert len(r3c._ran(log)) == 2, (text, log)
+    assert "Reply with a rank number" not in text, text
+
+
+def test_b6_the_ranking_itself_still_prints_its_offer(console, monkeypatch) -> None:
+    assert OFFER_AGENT in _on_screen(console, monkeypatch, "sales_agent")
+
+
+def test_b7_a_customer_row_detail_keeps_the_held_product(console, monkeypatch) -> None:
+    _on_screen(console, monkeypatch, "customer")
+    _text, log = _say_all(console, monkeypatch, r3c._pick(1), "1")
+    assert all(a.get("product_code") == PRODUCT_CODE for a in r3c._ran(log)), log
+
+
+def test_b8_the_detail_axis_must_match_the_ranking_on_screen() -> None:
+    from app.services.chatbot.lanes.business import report_ask
+
+    frame = {"group_by": "sales_agent", "date_from": "2026-01-01", "date_to": "2026-12-31", "basis": "delivered", "measure": "qty"}
+    agreeing = {"sales_ranking_frame": frame, "ranking_detail": {"group_by": "sales_agent", "name": "x", "keys": [A1]}}
+    outcome, _line = report_ask.settle(None, agreeing, [])
+    assert outcome is not None and outcome.extras.get("detail") is True and outcome.extras["args"]["sales_agent_ids"] == [A1]
+    mismatch = {"sales_ranking_frame": frame, "ranking_detail": {"group_by": "customer", "name": "x", "keys": [K1]}}
+    outcome, _line = report_ask.settle(None, mismatch, [])
+    assert outcome is None or not outcome.extras.get("detail"), outcome
+
+
+def test_b9_my_ranking_pick_keeps_mine_in_the_detail(console, monkeypatch) -> None:
+    _on_screen(console, monkeypatch, "customer", self_reference=True)
+    first = r3c._ran(_say_all(console, monkeypatch, r3c._pick(1), "1")[1])
+    assert first and all(a.get("mine") is True for a in first), first
+
+
+def test_b10_a_refused_product_detail_is_said_as_the_refusal(console, monkeypatch) -> None:
+    message = "You can only see sales for your own account."
+    _on_screen(console, monkeypatch, "customer")
+    console.refuse = {"message": message, "detail": None, "code": "customer_not_permitted"}
+    text, log = _say_all(console, monkeypatch, r3c._pick(1), "1")
+    assert text.strip() == message, (text, log)
+
+
+def test_b11_the_roster_rows_carry_the_axis_as_their_entity_type() -> None:
+    from app.services.chatbot.lanes.business import fetch
+
+    for group_by, entity_type in (("sales_agent", "sales_agent"), ("customer", "customer"), ("product", "product"), ("category", "category")):
+        out = fetch._report_ask_output(
+            {"response": "x\n\n1. A", "drill_rows": {"group_by": group_by, "rows": [{"name": "A", "keys": ["k"]}]}},
+            {"semantic_input": {"report_ask_args": {"group_by": group_by}}})
+        rows = out["outstanding_ask"]["last_result_set"]
+        assert [r["entity_type"] for r in rows] == [entity_type], (group_by, rows)
