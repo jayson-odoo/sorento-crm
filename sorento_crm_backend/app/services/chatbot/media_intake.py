@@ -386,6 +386,24 @@ def run(
     rendered_text = (
         result.get("rendered_text") or result.get("transcript") or raws_fallback or ""
     )
+    if modality == "image" and not rendered_text.strip():
+        # 24 Oct incident: a read that "completed" with no item and no caption
+        # (the model said the image looked corrupted) went on to the parser with
+        # empty text. Nothing was read, so the turn says so and stops here.
+        return MediaIntakeOutcome(
+            modality=modality,
+            decision=fast.decision,
+            status="completed",
+            stops_here=True,
+            turn_status="done",
+            reply_text=wording.nothing_read(),
+            job_id=fast.job_id,
+            elapsed_ms=elapsed_ms,
+            result=result,
+            attachment_id=result.get("attachment_id"),
+            attachment_error=result.get("attachment_error"),
+            max_entities=max_entities,
+        )
     return MediaIntakeOutcome(
         modality=modality,
         decision=fast.decision,
