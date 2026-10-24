@@ -1,6 +1,6 @@
 """The order inquiry sheet's raised row takes the SHEET's own delivery date.
 
-Contract: `documentation/plans/scm/oi-sheet-date-follow-sheet-acceptance-criteria.md`,
+Contract: `documentation/plans/_archive/scm/oi-sheet-date-follow-sheet-acceptance-criteria.md`,
 AC-1 to AC-29 (AC-19 onward carried by `PLAN-oi-sheet-date-settled-rows.md`'s own UAC,
 AC-25 onward by `PLAN-oi-sheet-date-adopt-was.md`'s).
 `PLAN-oi-sheet-date-follow-sheet.md` (18 Sep 2026 owner ruling: "we should

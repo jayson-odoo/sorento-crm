@@ -1,8 +1,6 @@
 # PLAN: order inquiry sheet - adopt the sheet row as a superseded row's replacement's Was
 
-Status: Track: small fix - ready for PR review. Follow-up to `PLAN-oi-sheet-date-settled-
-rows.md` (#1011, MERGED). Lane worktree `sorento_crm-oi-sheet-date`, branch
-`fix/oi-sheet-date-adopt-was`. DB `sorento_oisd_ci`. Backend only.
+Status: shipped (merged in #1017, 18 Sep 2026)
 
 UAC: `oi-sheet-date-adopt-was-acceptance-criteria.md`.
 
