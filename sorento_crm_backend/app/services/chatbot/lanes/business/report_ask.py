@@ -550,6 +550,26 @@ def _other_axis(verdict: dict[str, Any], extras: dict[str, Any]) -> bool:
     return axis != _dict(extras.get("args")).get("group_by")
 
 
+def _reply_wins(parse_output: dict[str, Any], slot: dict[str, Any], args: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """A reply that changes the axis (or says it again) may also type a period, measure, basis or channel: those win
+    over the held ones (as a hold does, S6c); whatever the reply does not name stays held. Parser fields only."""
+    values = dict(_dict(slot.get("values")))
+    args = dict(args)
+    period = period_from(parse_output.get("date_filter_start"), parse_output.get("date_filter_end"))
+    if period is not None:
+        values["period"] = {"value": period.value, "label": period.label}
+    if metric_from(parse_output):
+        args["measure"] = metric_from(parse_output)
+        values.pop("metric", None)
+    if basis_from(parse_output):
+        args["basis"] = basis_from(parse_output)
+        values.pop("basis", None)
+    channel = parse_output.get("sales_channel") or parse_output.get("required_ask_channel")  # an answer drops the first
+    if channel in ("dealer", "project"):
+        args["channel"] = channel
+    return {**slot, "values": values}, args
+
+
 def _echoes_axis(parse_output: dict[str, Any], extras: dict[str, Any]) -> bool:
     """Whether the verdict names exactly the axis the open ask already holds."""
     raw_group = jsc.js_string(parse_output.get("group_by") or "").strip().lower()
@@ -972,6 +992,8 @@ def settle(
                 # What a total or a month trend settled on its own (no count, both measures) is not
                 # what the new axis owes: the new axis's rules (`held`) decide, typed values stay.
                 slot = {**slot, "values": {k: v for k, v in _dict(slot.get("values")).items() if k not in ("top_n", "metric")}}
+            slot, args = _reply_wins(parse_output, slot, args)
+            held = {**_given_choices(args), **_given_top_n(args, extras.get("top_n"))}
             extras = {**extras, "args": args}
         if parse_output.get("compare_to") in COMPARE_TO:
             # REPORT-SMART-L S4-1: a reply that sets the comparison and fills no owed field adds the
@@ -988,7 +1010,9 @@ def settle(
             # R5 (live, flash-lite a342e9f0): the open ask's own axis said again fills nothing and is no
             # number: the owed fields are asked again with no miss line; it still counts as one miss, so a
             # second echo gives up as today (default top 10).
-            again = rf.collect(db, SALES_RANKING_ASK, slot=slot, given=held)
+            slot, args = _reply_wins(parse_output, slot, args)
+            held = {**_given_choices(args), **_given_top_n(args, extras.get("top_n"))}
+            again = rf.collect(db, SALES_RANKING_ASK, slot=slot, given=held, extras={"args": args})
             if again.slot:
                 again.slot["misses"] = 1
             return again, None

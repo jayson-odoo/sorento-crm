@@ -73,6 +73,8 @@ ENGINE_KEYS = frozenset(
     {
         "required_ask", "required_ask_reply", "required_ask_answer", "low_stock_frame",
         "report_ask_words", "sales_ranking_frame", "ranking_pick", "ranking_detail",
+        # the channel the parser read off an answering reply (`answer_drops` removes `sales_channel` itself)
+        "required_ask_channel",
         # V1-DOC-SCOPE: who may see any customer's documents is the engine's call alone.
         "ref_staff", "doc_staff",
     }
@@ -397,6 +399,7 @@ def reply_verdict(
         **ask.reroute, "entities": [], "open_question_answer": None,
         "is_affirmative": None, "topic_reset": False,
         "required_ask": slot, "required_ask_reply": text,
+        "required_ask_channel": verdict.get("sales_channel"),
         "required_ask_answer": dict(answer) if answers else None,
     }
     return rerouted, "required_ask_answer"
