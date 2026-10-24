@@ -436,5 +436,6 @@ def _reply_verdict_by_shape(
         **ask.reroute, "entities": [], "open_question_answer": None,
         "is_affirmative": None, "topic_reset": False,
         "required_ask": slot, "required_ask_reply": text,
+        "required_ask_channel": verdict.get("sales_channel"),
     }
     return rerouted, "required_ask_answer"
