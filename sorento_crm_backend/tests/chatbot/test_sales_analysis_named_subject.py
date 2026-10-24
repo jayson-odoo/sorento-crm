@@ -128,13 +128,14 @@ def test_g5_no_named_subject_is_still_the_company_question(two):
 
 
 def test_g6_a_carried_product_never_reroutes(two):
+    """The engine turn: the verdict itself carries the product with `current_message` false."""
     _r, captured_a = two.say(_turn_a(), "b2155-nl-blue sales 2026")
     assert _calls(captured_a, REPORT), f"setup: turn A runs the product report: {captured_a}"
     carried = [{
         "raw": PRODUCT_RAW, "hint": "product", "canonical_code": None,
         "current_message": False, "confident": True,
     }]
-    result, captured = two.say(_x2(entities=carried), "dealer sales september 2026")
+    result, captured = two.say(_x2(entities=carried), "dealer sales september 2026", matches=X2_MATCH)
     assert _calls(captured, REPORT) == [], f"a carried product never reroutes: {captured}"
     assert QUESTION in _reply(result) or _calls(captured, ANALYSIS), (captured, _reply(result))
 
@@ -150,3 +151,164 @@ def test_g7_the_answer_to_the_company_question_still_runs_the_analysis(two):
     calls = _calls(captured, ANALYSIS)
     assert calls and calls[0].get("company") == "Sorento", captured
     assert _calls(captured, REPORT) == [], captured
+
+
+# --------------------------------------------------------------------------- #
+# B1 / S1 (RED) - the named subject reaches the report through a picker and a re-hint
+# --------------------------------------------------------------------------- #
+
+from tests.chatbot.test_sales_analysis_company_pick import _pick  # noqa: E402
+from tests.chatbot.test_new_ask_drops_sales_channel import (  # noqa: E402,F401  (fixture)
+    CUSTOMER_UUID_1, _ambiguous_customer_services, _report_calls, chat,
+)
+
+
+def _ambiguous_turn_1(order_status: str) -> dict[str, Any]:
+    return _parser_output(
+        domain_hint="order", intent_hint="check_order", order_status=order_status,
+        sales_channel="dealer", domain_in_message=True, entity_op="replace_combine",
+        entities=[{"raw": "zz demo", "hint": "customer", "canonical_code": None,
+                   "current_message": True, "confident": True}],
+    )
+
+
+def _pick_1() -> dict[str, Any]:
+    return _parser_output(
+        message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+        reference_positions=[1], reference_target="dym", entity_op="reuse", order_status=None,
+    )
+
+
+def _ambiguous_then_pick(chat, order_status: str, tag: str):
+    _r1, captured1 = chat(
+        _ambiguous_turn_1(order_status), "dealer sales for zz demo", f"ZZT-nsub-{tag}-1",
+        resolve_services=_ambiguous_customer_services(),
+    )
+    assert _report_calls(captured1) == [] and not _calls(captured1, ANALYSIS), captured1
+    assert (chat.session().get("open_question") or {}).get("kind") == "customer_pick", (
+        "setup: the customer picker must be armed", chat.session().get("open_question"),
+    )
+    return chat(_pick_1(), "1", f"ZZT-nsub-{tag}-2")
+
+
+def test_b1_parity_the_sales_report_parse_picks_into_the_report(chat):
+    _r, captured = _ambiguous_then_pick(chat, "sales_report", "par")
+    calls = _report_calls(captured)
+    assert calls and calls[0].get("customer_ids") == [CUSTOMER_UUID_1], captured
+    assert calls[0].get("channel") == "dealer", calls[0]
+
+
+def test_b1_an_ambiguous_customer_on_a_sales_analysis_parse_picks_into_the_report(chat):
+    _r, captured = _ambiguous_then_pick(chat, "sales_analysis", "b1")
+    assert _calls(captured, ANALYSIS) == [], f"the pick never runs the company analysis: {captured}"
+    calls = _report_calls(captured)
+    assert calls and calls[0].get("customer_ids") == [CUSTOMER_UUID_1], captured
+    assert calls[0].get("channel") == "dealer", calls[0]
+
+
+def test_s1_a_customer_hinted_word_that_is_a_product_renders_the_report(one):
+    matches = {"Srt5674N": {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": "SRT5674-N"}}
+    word = [{"raw": "Srt5674-N", "hint": "customer", "canonical_code": None,
+             "current_message": True, "confident": True}]
+    text = "dealer Srt5674-N sales september 2026"
+    _r, setup = one.say(_x2("sales_report", word), text, matches=matches)
+    assert _calls(setup, REPORT), f"setup: the sales_report parse renders the report: {setup}"
+    result, captured = one.say(_x2("sales_analysis", word), text, matches=matches)
+    assert _calls(captured, REPORT), f"the report must run: {captured}"
+    assert "matched" not in _reply(result).lower() and "escalate" not in _reply(result).lower(), _reply(result)
+
+
+# --------------------------------------------------------------------------- #
+# Kind picker and did-you-mean picker (RED): the answer keeps the asking turn's subject kind
+# --------------------------------------------------------------------------- #
+
+from app.services.chatbot.lanes.business.services import ResolveGateServices  # noqa: E402
+from tests.chatbot.conftest import validating_resolve_entity  # noqa: E402
+
+_U1, _U2 = "c0570000-0000-4000-8000-000000000001", "c0570000-0000-4000-8000-000000000002"
+
+
+def _one_token_services(resolution: dict[str, Any], *, unresolved: bool) -> ResolveGateServices:
+    def _resolve(body: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "tokens": ["zz demo"], "resolutions": [resolution],
+            "unresolved_tokens": ["zz demo"] if unresolved else [],
+        }
+
+    return ResolveGateServices(
+        access_types=lambda **_: [{"name": "Sorento Dealer"}],
+        resolve_entity=validating_resolve_entity(_resolve),
+        probe=lambda **_: {"items": [], "has_result": False},
+    )
+
+
+def _kind_services() -> ResolveGateServices:
+    """One word that is both a customer and a product: the engine asks which kind."""
+    match = lambda kind, uuid, code: {  # noqa: E731
+        "entity_type": kind, "canonical_code": code, "uuid": uuid, "company_code": "SRT",
+        "display": {"customer_name": code},
+    }
+    return _one_token_services(
+        {"token": "zz demo", "matches": [match("customer", _U1, "ZZ A"), match("product", _U2, "ZZ B")]},
+        unresolved=False,
+    )
+
+
+def _dym_services() -> ResolveGateServices:
+    """A customer word that is no customer but has two near ones: the did-you-mean pick."""
+    alts = [{"canonical_code": f"ZZDEMO{i}", "uuid": u, "entity_type": "customer"} for i, u in ((1, _U1), (2, _U2))]
+    return _one_token_services(
+        {"token": "zz demo", "resolved": False, "matches": [], "alternatives": alts}, unresolved=True
+    )
+
+
+def _picker_turn_1(order_status: str, confident: bool, hint: str = "customer") -> dict[str, Any]:
+    return _parser_output(
+        domain_hint="order", intent_hint="check_order", order_status=order_status,
+        sales_channel="dealer", domain_in_message=True, entity_op="replace_combine",
+        entities=[{"raw": "zz demo", "hint": hint, "canonical_code": None,
+                   "current_message": True, "confident": confident}],
+    )
+
+
+def _picker_then_pick(chat, services, order_status: str, kind: str, confident: bool, tag: str):
+    hint = "product" if kind == "kind_pick" else "customer"
+    chat(_picker_turn_1(order_status, confident, hint), "dealer sales for zz demo", f"ZZT-nsub-{tag}-1",
+         resolve_services=services())
+    assert (chat.session().get("open_question") or {}).get("kind") == kind, (
+        f"setup: the {kind} must be armed", chat.session().get("open_question"),
+    )
+    answer = _pick_1() if kind != "kind_pick" else _parser_output(
+        message_type="casual", intent_hint=None, domain_hint=None, entities=[], entity_op="reuse",
+        order_status=None, open_question_answer=_pick(2),  # the kind picker lists customer, then product
+    )
+    extra = {"resolve_services": services()} if kind == "kind_pick" else {}
+    return chat(answer, "1", f"ZZT-nsub-{tag}-2", **extra)
+
+
+def test_kind_picker_parity_the_sales_report_parse_picks_into_the_report(chat):
+    _r, captured = _picker_then_pick(chat, _kind_services, "sales_report", "kind_pick", False, "kpar")
+    calls = _report_calls(captured)
+    assert calls and calls[0].get("product_code") == "ZZ B", captured
+
+
+def test_kind_picker_answer_on_a_sales_analysis_parse_runs_the_report(chat):
+    _r, captured = _picker_then_pick(chat, _kind_services, "sales_analysis", "kind_pick", False, "kpick")
+    assert _calls(captured, ANALYSIS) == [], f"the kind pick never runs the company analysis: {captured}"
+    calls = _report_calls(captured)
+    assert calls and calls[0].get("product_code") == "ZZ B", captured
+    assert calls[0].get("channel") == "dealer", calls[0]
+
+
+def test_did_you_mean_parity_the_sales_report_parse_picks_into_the_report(chat):
+    _r, captured = _picker_then_pick(chat, _dym_services, "sales_report", "customer_pick", True, "dpar")
+    calls = _report_calls(captured)
+    assert calls and calls[0].get("customer_ids") == [_U1], captured
+
+
+def test_did_you_mean_answer_on_a_sales_analysis_parse_runs_the_report(chat):
+    _r, captured = _picker_then_pick(chat, _dym_services, "sales_analysis", "customer_pick", True, "dpick")
+    assert _calls(captured, ANALYSIS) == [], f"the did-you-mean pick never runs the company analysis: {captured}"
+    calls = _report_calls(captured)
+    assert calls and calls[0].get("customer_ids") == [_U1], captured
+    assert calls[0].get("channel") == "dealer", calls[0]
