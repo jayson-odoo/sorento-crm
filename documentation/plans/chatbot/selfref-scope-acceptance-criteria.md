@@ -52,6 +52,8 @@ section "Design note: one dimension/measure model". Q1 to Q5 answered (a).
   `day`, `week` (Monday to Sunday), `month`, `delivery_order`, `all`. `channel` reads the
   account's `market_segment_code` (project or contract = Project, else Retail); an account
   with no segment is in every channel (a channel filter keeps it).
+  *Channel part superseded 24 Oct 2026 by AC-SRC-1 to AC-SRC-4 (`sales-report-channel-24oct-acceptance-criteria.md`):
+  channel = the DO line's sales order type, a line with no SO is in no channel.*
 - **AC-SR-23** `[BE]` `GET /order-management/sales-report` answers the delivered report:
   `total {qty, amount}`, `periods[]` (grain day when the window is at most 7 days, week when
   at most 31, else month; latest first; only periods with a delivery), and with
@@ -67,6 +69,7 @@ section "Design note: one dimension/measure model". Q1 to Q5 answered (a).
   engine is never called with `[]` as a filter).
 - **AC-SR-26** `[BE]` Channel line: printed only when the scoped accounts span more than one
   segment; a channel filter the accounts do not span is ignored.
+  *Superseded 24 Oct 2026 by AC-SRC-4: the Channel line prints whenever a channel is asked, never otherwise.*
 - **AC-SR-27** `[MCP]` Reply: bold `*Customer:*` (every account's full name), `*Product:*`,
   `*Channel:*`/`*Location:*` when they apply, `*Delivery date:*` (one date for a one-day
   window), blank line, `*Total:* Qty n, RM v`, one line per period (`dd/mm/yyyy`, `dd/mm to

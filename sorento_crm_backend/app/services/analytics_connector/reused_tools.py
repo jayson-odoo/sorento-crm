@@ -861,8 +861,8 @@ REUSED_TOOLS: tuple[dict, ...] = (
             'otherwise). `product_code` is a PREFIX, case-insensitive (at least 3 '
             'characters). `customer_query` - partial match on customer NAME only. '
             '`customer_ids` - canonical customer UUIDs (csv/JSON/repeated).\n\nFILTERS: '
-            "`channel` - dealer | project (the account's market segment class; an account "
-            'with no segment is in every channel; ignored when the accounts span one class). '
+            "`channel` - dealer | project (the type of the sales order each DO line "
+            'came from; a line with no sales order or no type is in no channel; always applied when given). '
             '`warehouse_codes` - exact warehouse codes (csv/JSON/repeated); resolve a '
             'location TOKEN yourself first, this tool does no suffix matching. '
             '`location_token` (max 32 chars) - the raw location word, echoed back so the '

@@ -35,7 +35,6 @@ from app.services.sales_report_service import (
     _qty,
     _resolve_products,
 )
-from app.services.scm.demand_class import class_of
 
 #: The `group_by` values the route accepts (AC-SR-23): the dataset dimensions a reply can
 #: list. Any other value is 422 `unknown_group_by`.
@@ -51,7 +50,7 @@ OPTION_LABELS = (
     ("delivery_order", "Delivery orders"),
 )
 
-#: The route's channel vocabulary -> the dataset's (`demand_class.class_of`).
+#: The route's channel vocabulary -> the dataset's (the sales order `demand_class`).
 _CHANNEL_CLASS = {"dealer": "retail", "project": "project"}
 
 #: The open ends of a window with one bound (or none): the engine's period is always closed.
@@ -124,12 +123,6 @@ def _customer_ids_for_query(db: Session, customer_query: str) -> list[str]:
         .filter(Customer.customer_name.ilike(pattern, escape=_LIKE_ESCAPE))
         .all()
     ]
-
-
-def _segment_classes(db: Session, customer_ids: list[str]) -> set[str]:
-    """The demand classes the scoped accounts span (an account with no segment adds none)."""
-    rows = db.query(Customer.market_segment_code).filter(Customer.id.in_(customer_ids)).all()
-    return {c for c in (class_of(row[0]) for row in rows) if c}
 
 
 def _warehouse_ids_by_code(db: Session, codes: list[str]) -> dict[str, list[str]]:
@@ -302,17 +295,10 @@ def delivered_sales_report(
         return body
 
     # ---------------------------------------------------------------- channel
-    channel_used: Optional[str] = None
-    if scoped_ids is not None:
-        if not scoped_ids:
-            return body
-        spans = len(_segment_classes(db, scoped_ids)) > 1
-        body["channel_shown"] = spans
-        if spans and channel in _CHANNEL_CLASS:
-            channel_used = channel
-    elif channel in _CHANNEL_CLASS:
-        body["channel_shown"] = True
-        channel_used = channel
+    if scoped_ids is not None and not scoped_ids:
+        return body
+    channel_used = channel if channel in _CHANNEL_CLASS else None
+    body["channel_shown"] = channel_used is not None
     body["channel"] = channel_used
 
     params: dict[str, Any] = {

@@ -15,7 +15,7 @@ from decimal import Decimal
 from typing import Optional
 
 from app.models.access import MarketSegment, StockVisibilityPolicy
-from app.models.order import Order, OrderLine, SalesOrder
+from app.models.order import Order, OrderLine, SalesOrder, SalesOrderLine
 from app.models.sales_agent import SalesAgent
 from app.services.company_scope import DEFAULT_COMPANY_ID
 
@@ -61,13 +61,15 @@ def seed_agent(db, *, code: str) -> SalesAgent:
 
 
 def seed_so(db, *, customer_id, agent_id=None, number: Optional[str] = None,
-            company_id: str = DEFAULT_COMPANY_ID) -> SalesOrder:
+            company_id: str = DEFAULT_COMPANY_ID,
+            demand_class: Optional[str] = None) -> SalesOrder:
     row = SalesOrder(
         id=str(uuid.uuid4()),
         so_number=number or unique_code("SO"),
         customer_id=customer_id,
         sales_agent_id=agent_id,
         status="open",
+        demand_class=demand_class,
         company_id=company_id,
     )
     db.add(row)
@@ -75,9 +77,34 @@ def seed_so(db, *, customer_id, agent_id=None, number: Optional[str] = None,
     return row
 
 
-def line(product_id, warehouse_id, qty, *, price=None, discount=0, total=None) -> dict:
-    """One DO line spec for `seed_do`. `discount` is a FRACTION 0..1."""
+def seed_so_line_row(db, *, so: SalesOrder, product_id, qty, total, warehouse_id=None,
+                     delivered=None, required_date: Optional[date] = None) -> SalesOrderLine:
+    """One line on an existing sales order (the DO line's `sales_order_line_id` target)."""
+    row = SalesOrderLine(
+        id=str(uuid.uuid4()),
+        sales_order_id=so.id,
+        product_id=product_id,
+        warehouse_id=warehouse_id,
+        qty_ordered=qty,
+        qty_delivered=qty if delivered is None else delivered,
+        line_total=Decimal(str(total)),
+        line_status="open",
+        required_date=required_date,
+        company_id=so.company_id,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def line(product_id, warehouse_id, qty, *, price=None, discount=0, total=None,
+         sales_order_line_id=None, from_doc_type=None, from_doc_no=None) -> dict:
+    """One DO line spec for `seed_do`. `discount` is a FRACTION 0..1. The last three are the
+    optional links to the sales order the line was delivered from."""
     return {
+        "sales_order_line_id": sales_order_line_id,
+        "from_doc_type": from_doc_type,
+        "from_doc_no": from_doc_no,
         "product_id": product_id,
         "warehouse_id": warehouse_id,
         "qty": qty,
@@ -128,6 +155,9 @@ def seed_do(
                 unit_price=spec.get("price"),
                 discount=spec.get("discount", 0),
                 total=spec.get("total"),
+                sales_order_line_id=spec.get("sales_order_line_id"),
+                from_doc_type=spec.get("from_doc_type"),
+                from_doc_no=spec.get("from_doc_no"),
                 company_id=company_id,
             )
         )
@@ -150,6 +180,6 @@ def seed_policy(db, contact, *, warehouse_ids=None, excluded_warehouse_ids=None)
 
 
 __all__ = [
-    "BASE", "money", "seed_segment", "seed_customer", "seed_agent", "seed_so", "line", "seed_do",
+    "BASE", "money", "seed_segment", "seed_customer", "seed_agent", "seed_so", "seed_so_line_row", "line", "seed_do",
     "seed_policy", "product", "warehouse", "customer", "client", "db", "_as_contact", "_contact", "_link",
 ]
