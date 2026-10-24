@@ -53,7 +53,9 @@ Plan: `PLAN-one-ranking-1023.md`. Per round; owner answers Q1-Q3 fill the bracke
   block carries no `Sales channels:` line (byte-identical to prod apart from the owner's brand short forms); a version that names it
   keeps it. After the sales report total for "Top sales for cb6635 in 2026", "qty, delivered" read as a ranking with no axis and no
   count (or v63's top_selling with no count) answers the same total again, never "How many?" or "Which period?"; with "ordered" it
-  answers the ordered total on CB6635-, 2026. A typed axis still asks only "How many?" (AC-OR8); a typed count keeps the ranking.
+  answers the ordered total on CB6635-, 2026. A typed axis still asks only "How many?" (AC-OR8); a typed count with no axis keeps
+  today's reply (the catalogue line). Recorded choice: after a sales report that found nothing (no drill offer open) the reply gets
+  the report-ask total on the held product and period, not the sales report again (its lines are dated by required or SO date).
 - AC-OR4. No chatbot path reaches crm_top_selling_report; the route, MCP tool and analytics connector still work.
 - AC-OR-ACCESS (owner Q3 + ruling (a), 23 Oct ~09:35: the unification widens nothing). Every ranking (items and categories
   included) needs the contact's Sales report switch (sales_orders.sales_report), except ruling 2 of 22 Oct: a live
