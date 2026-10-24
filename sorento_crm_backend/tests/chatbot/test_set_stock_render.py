@@ -567,11 +567,11 @@ def _add_mocha_twin(world: World, twin, *, brand_id, on_hand: int = 9):
 
     db = world.db
     if not db.query(Company).filter(Company.id == MOCHA_ID).first():
-        db.add(Company(id=MOCHA_ID, name="Mocha", code=f"MCH{uuid.uuid4().hex[:5]}"))
+        db.add(Company(id=MOCHA_ID, name="Mocha", code=f"MCH{uuid.uuid4().hex}"))
         db.flush()
     set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
     wh = Warehouse(
-        id=str(uuid.uuid4()), warehouse_code=f"ZZMW{uuid.uuid4().hex[:4]}", warehouse_name="ZZT Mocha WH",
+        id=str(uuid.uuid4()), warehouse_code=f"ZZMW{uuid.uuid4().hex}", warehouse_name="ZZT Mocha WH",
         is_active=True, company_id=MOCHA_ID,
     )
     db.add(wh)

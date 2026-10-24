@@ -98,7 +98,7 @@ def _second_company(db) -> str:
             "insert into companies (id, code, name, is_active) "
             "values (:i, :c, :n, true)"
         ),
-        {"i": company_id, "c": f"Z{_uid()[:3]}", "n": f"{MARKER} other co"},
+        {"i": company_id, "c": f"Z{uuid.uuid4().hex}", "n": f"{MARKER} other co"},
     )
     db.flush()
     return company_id

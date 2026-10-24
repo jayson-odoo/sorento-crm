@@ -230,7 +230,7 @@ def two_companies():
 
     with blank_session() as db:
         with company_scope(db, None):
-            second = Company(id=_uid(), name="ZZT Second Co", code=f"Z{_uid()[:5]}")
+            second = Company(id=_uid(), name="ZZT Second Co", code=f"Z{uuid.uuid4().hex}")
             db.add(second)
             db.flush()
             house = Brand(id=_uid(), brand_code="ZZT-SRT", brand_name="SORENTO")

@@ -14,7 +14,7 @@ from tests.test_product_predicate_service import _REFS, _product, _stock, db  # 
 
 
 def _brand(db, name):
-    row = Brand(id=str(uuid.uuid4()), brand_code=f"ZZT{name.upper()}{uuid.uuid4().hex[:4]}", brand_name=name)
+    row = Brand(id=str(uuid.uuid4()), brand_code=f"ZZT{name.upper()}{uuid.uuid4().hex}", brand_name=name)
     db.add(row)
     db.flush()
     return row
