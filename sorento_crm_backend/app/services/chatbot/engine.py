@@ -27,6 +27,7 @@ import json
 import logging
 import re
 import time
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, replace as dataclasses_replace
 from datetime import datetime, timezone
@@ -1676,6 +1677,7 @@ def _insert_turn(
     contact_respond_id: str,
     retrying: ChatbotTurn | None = None,
     queued: bool = False,
+    turn_id: str | None = None,
 ) -> ChatbotTurn:
     """The turn row. `retrying` is the failed row an operator asked to re-run (S2b).
 
@@ -1684,11 +1686,15 @@ def _insert_turn(
     (`send_order`). The request claims it back with `_claim_own_row` once its ticket
     comes up.
 
+    `turn_id`: an id chosen before the row exists (CHAT-SEND-ORDER: a stored photo's read is
+    filed under its own turn before the turn is inserted). None lets the column default.
+
     A retry is a NEW turn, not an edit of the old one: same message, next attempt, ingress
     `retry`. The old row keeps its trace and its failure - that is the record the operator
     was reading - and only loses its retry marker, so a second failure can be retried too.
     """
     row = ChatbotTurn(
+        **({"id": turn_id} if turn_id else {}),
         contact_respond_id=contact_respond_id,
         message_id=_message_id(envelope),
         ingress="retry" if retrying is not None else envelope.ingress,
@@ -1962,6 +1968,9 @@ def _answer_earlier_messages(
     my_message_id = _message_id(envelope)
     out: list[dict[str, Any]] = []
     for item in taken:
+        # A stored-only message's own turn id, chosen now so its media read below is filed
+        # under that turn (ledger row, stored photo), not under this one.
+        own_id = str(uuid.uuid4()) if item.row_id is None and item.job_id is None else None
         if item.row_id is None and item.job_id is None and item.carries_media:
             # CHAT-SEND-ORDER: a stored-only photo or voice note is read FIRST, under the
             # ledger key n8n's intake uses too, and answered ahead only once read: n8n's
@@ -1977,7 +1986,7 @@ def _answer_earlier_messages(
                         modality=detected[0],
                         attachment=attachment,
                         caption=item.caption,
-                        turn_id=turn_id,
+                        turn_id=own_id,
                         session_factory=session_factory,
                     ).status
                     if detected is not None
@@ -2048,7 +2057,12 @@ def _answer_earlier_messages(
                 else:
                     try:
                         earlier_id = str(
-                            _insert_turn(db, envelope=earlier_envelope, contact_respond_id=contact_respond_id).id
+                            _insert_turn(
+                                db,
+                                envelope=earlier_envelope,
+                                contact_respond_id=contact_respond_id,
+                                turn_id=own_id,
+                            ).id
                         )
                     except IntegrityError:
                         # Its own delivery reached the CRM in the meantime and owns it now.

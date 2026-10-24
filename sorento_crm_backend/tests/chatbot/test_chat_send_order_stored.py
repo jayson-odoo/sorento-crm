@@ -455,6 +455,51 @@ def test_send_key_prefers_the_message_id_microseconds():
     ) == TEXT_SENT_MS
 
 
+class TestReviewRound2:
+    def test_the_photos_read_is_filed_under_its_own_turn(
+        self, session_factory, stub_access, media_pipeline, monkeypatch  # noqa: F811
+    ):
+        """S4: the ledger row (and the stored photo) belong to the photo's turn, not to the
+        text's turn that carried its answer."""
+        from app.models.media import ContactMediaUsage
+
+        contact_id = _fresh_contact_id()
+        _seed_contact(session_factory, contact_id, focus_codes=[HELD_CODE])
+        _media_ready(session_factory, contact_id, media_pipeline)
+        stub_access()
+        _install_parser(monkeypatch, [])
+
+        _store(session_factory, contact_id, message_id=PHOTO_MESSAGE_ID)
+        engine_mod.run_turn(_text_envelope(contact_id), session_factory=session_factory)
+
+        photo_row = _turn_for(session_factory, contact_id, PHOTO_MESSAGE_ID)
+        usage = (
+            session_factory()
+            .query(ContactMediaUsage)
+            .filter(
+                ContactMediaUsage.respond_io_id == str(contact_id),
+                ContactMediaUsage.message_id == PHOTO_MESSAGE_ID,
+            )
+            .one()
+        )
+        assert usage.turn_id == str(photo_row.id)
+
+    def test_a_staff_reply_from_the_business_app_hides_it(self, session_factory):
+        contact_id = _fresh_contact_id()
+        _store(session_factory, contact_id, message_id=PHOTO_MESSAGE_ID)
+        _store(
+            session_factory,
+            contact_id,
+            message_id=str(int(PHOTO_MESSAGE_ID) + 1_000_000),
+            traffic="outgoing",
+            media_type=None,
+            media_url=None,
+            message="noted",
+            sender_source="echo",
+        )
+        assert _found(session_factory, contact_id, _me(session_factory, contact_id)) == []
+
+
 class TestReviewRound1:
     """Reviewer pass 1 on this lane: S1 (read first), S2 (channel), S3 (agent reply), B1."""
 
@@ -522,17 +567,38 @@ class TestReviewRound1:
         assert _found(session_factory, contact_id, _me(session_factory, contact_id)) == [PHOTO_MESSAGE_ID]
 
     @pytest.mark.parametrize(
-        ("stored", "media_type", "caption"),
+        ("attachment", "caption"),
         [
-            ("[image]", "image", None),
-            ("[file] zzt-a.pdf", "file", None),
-            ("[sticker]", "sticker", None),
-            ("price for this?", "image", "price for this?"),
+            ({"type": "image", "url": PHOTO_URL}, None),
+            ({"type": "file", "url": PHOTO_URL, "fileName": "zzt-a.pdf"}, None),
+            ({"type": "sticker", "url": PHOTO_URL}, None),
+            ({"type": "image", "url": PHOTO_URL, "description": "price for this?"}, "price for this?"),
         ],
     )
-    def test_the_webhook_placeholder_is_not_a_caption(self, session_factory, stored, media_type, caption):
+    def test_the_caption_survives_the_webhook_and_its_placeholder_is_not_one(
+        self, session_factory, attachment, caption
+    ):
+        """Stored exactly as the respond.io webhook maps it: a captioned photo keeps the
+        customer's words (`attachment.description`), a bare one its `[type]` placeholder."""
+        from app.api.v1.public.respond_webhook import map_webhook_message
+        from app.services.chat_history_ingest_service import upsert_message_row
+
         contact_id = _fresh_contact_id()
-        _store(session_factory, contact_id, message_id=PHOTO_MESSAGE_ID, media_type=media_type, message=stored)
+        payload = {
+            "event_type": "message.received",
+            "contact": {"id": contact_id, "phone": "+60100000000", "firstName": "Zzt"},
+            "channel": {"source": "whatsapp_cloud"},
+            "message": {
+                "messageId": PHOTO_MESSAGE_ID,
+                "traffic": "incoming",
+                "sender": {"source": "contact"},
+                "message": {"type": "attachment", "attachment": attachment},
+            },
+        }
+        db = session_factory()
+        row = map_webhook_message(payload, db)
+        row.media_url = PHOTO_URL  # the test host is not a respond.io media host
+        upsert_message_row(db, row)
         me = _me(session_factory, contact_id)
         found = send_order.earlier_unanswered(session_factory(), contact_respond_id=str(contact_id), me=me)
         assert [e.caption for e in found] == [caption]

@@ -427,13 +427,13 @@ def _stored_only_media(
 
     # `sent_at` is the id's send time cut to ms, so the SQL window is a ms either side and
     # the exact comparison runs on the id below.
-    from app.api.v1.public.respond_webhook import _normalise_channel
+    from app.services.chat_history_ingest_service import normalise_channel
 
     # One contact can write on several channels; only this conversation's channel counts,
     # read the way the webhook mapped it onto the row.
     body = me.envelope.get("message") if isinstance(me.envelope, dict) else None
     block = body.get("channel") if isinstance(body, dict) and isinstance(body.get("channel"), dict) else {}
-    channel = _normalise_channel(block.get("source") or block.get("type"))
+    channel = normalise_channel(block.get("source") or block.get("type"))
 
     query = db.query(ChatHistory).filter(
         ChatHistory.channel == channel,
@@ -481,15 +481,15 @@ def _stored_only_media(
         )
         if in_ledger is not None:
             continue
-        # A person replied after it (a respond.io agent had the chat): handled, not on its
-        # way. The bot's own replies are not a person's, so they never hide it.
+        # A person replied after it (a respond.io agent, or staff on the WhatsApp Business
+        # app, `echo`): handled, not on its way. The bot's own replies never hide it.
         agent_replied = (
             db.query(ChatHistory.id)
             .filter(
                 ChatHistory.channel == channel,
                 ChatHistory.contact_id == contact_respond_id,
                 ChatHistory.type == "outgoing",
-                ChatHistory.sender_source == "user",
+                ChatHistory.sender_source.in_(("user", "echo")),
                 ChatHistory.sent_at >= row.sent_at,
                 ChatHistory.sent_at <= _naive_utc(my_sent),
             )
@@ -503,7 +503,7 @@ def _stored_only_media(
                 order_key=key,
                 message_id=message_id,
                 media_url=row.media_url,
-                caption=_caption(row.message, attachment_type),
+                caption=_caption(row.message, row.media_file_name),
                 attachment_type=attachment_type,
                 file_name=row.media_file_name,
                 carries_media=media_intake.detect({"attachment": {"type": attachment_type}}) is not None,
@@ -512,14 +512,17 @@ def _stored_only_media(
     return found
 
 
-def _caption(stored_text: str | None, attachment_type: str) -> str | None:
+def _caption(stored_text: str | None, file_name: str | None) -> str | None:
     """The customer's own words on a stored media message, or None.
 
-    With no text the webhook stores a typed placeholder (`[image]`, `[file] a.pdf`,
-    `conversation_thread_service._respond_item_text`), which is not a caption: read as one
-    it would reach the extraction and the parser as if the customer had typed it."""
+    The webhook stores the caption (`conversation_thread_service._respond_item_text`), or
+    with none a typed placeholder (`[image]`, `[file] a.pdf`), which is not a caption: read
+    as one it would reach the extraction and the parser as if the customer had typed it.
+    The thread view tells the two apart the same way."""
+    from app.services.conversation_thread_service import _is_media_placeholder
+
     text = (stored_text or "").strip()
-    if not text or text.startswith(f"[{attachment_type}]") or text.startswith("[attachment]"):
+    if not text or _is_media_placeholder(text, file_name):
         return None
     return text
 

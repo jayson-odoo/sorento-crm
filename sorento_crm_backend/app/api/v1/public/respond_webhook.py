@@ -42,6 +42,7 @@ from app.models.access import RespondContact
 from app.schemas.integration import IntegrationLogCreate
 from app.services import conversation_thread_service as thread_service
 from app.services.chat_history_ingest_service import (
+    normalise_channel as _normalise_channel,
     ChatMessageRow,
     announce_new_row,
     upsert_message_row,
@@ -146,16 +147,6 @@ def _allowed_media_url(url: Optional[str]) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # Payload mapping
 # ---------------------------------------------------------------------------
-
-
-def _normalise_channel(source: Any) -> str:
-    """`chat_histories.channel` is `whatsapp` for every WhatsApp flavour Respond names
-    (whatsapp_cloud, whatsapp_twilio ...): the thread is read per channel, and n8n
-    writes `whatsapp`, so the two lanes must agree or one lane's rows are invisible."""
-    value = str(source or "").strip().lower()
-    if not value or "whatsapp" in value:
-        return "whatsapp"
-    return value[:32]
 
 
 def map_webhook_message(payload: dict, db: Session) -> Optional[ChatMessageRow]:
