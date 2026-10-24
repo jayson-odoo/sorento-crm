@@ -5124,7 +5124,7 @@ def _run_stages_body(  # noqa: PLR0915
         # when the parser declared one; a fresh low stock ask keeps only the entities that
         # scope the run. Read before every other seam below.
         from app.services.chatbot import required_fields
-        from app.services.chatbot.lanes.business import chat_report, low_stock_ask, report_ask
+        from app.services.chatbot.lanes.business import chat_report, low_stock_ask, report_ask, sales_company_ask
 
         _message_text = jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
         # Security S1: these keys are the ENGINE's own; one the parser emitted (the
@@ -5147,6 +5147,9 @@ def _run_stages_body(  # noqa: PLR0915
             verdict = {**verdict, "chat_report_reading": chat_report.read_reply(db, open_ask, _message_text) or {}}
         if (open_ask or {}).get("ask") == chat_report.ASK_NAME and chat_report.names_its_own_ask(verdict, open_ask):
             open_ask = None  # a new chat report, not the answer to the open question
+        # SALES-COMPANY: a reply naming an offered company ("Sorento" as the parser's company,
+        # its escalation company pick, or a brand word) is that company's pick.
+        verdict = sales_company_ask.as_answer(verdict, open_ask)
         verdict, required_rule = required_fields.reply_verdict(verdict, open_ask, _message_text)
         if required_rule:
             turn_trace.add("required_ask", {"verdict_rule": required_rule, "ask": (open_ask or {}).get("ask")})
@@ -7442,6 +7445,15 @@ def _run_stages_body(  # noqa: PLR0915
                     (e["required_ask"] for e in envelopes or [] if isinstance(e, dict) and isinstance(e.get("required_ask"), dict)),
                     None,
                 )
+                if (
+                    (state_out.focus.required_ask or {}).get("ask") == sales_company_ask.ASK_NAME
+                    and state_out.pending is not None
+                ):
+                    # SALES-COMPANY: the company question is the newest one on the table, so
+                    # an offer still stored from an earlier turn (a sales report's drill offer)
+                    # closes; left open, the reply "Sorento" would answer it. Only this ask:
+                    # every other required ask keeps the stored question as before.
+                    state_out = dataclasses_replace(state_out, pending=None)
                 # The frame lives only through sales ranking turns (one that ran replaces it,
                 # one that asked a required field keeps it); any other ask clears it.
                 state_out.focus.sales_ranking_frame = next(

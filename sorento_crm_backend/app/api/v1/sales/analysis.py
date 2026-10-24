@@ -99,8 +99,29 @@ def _validate(rows: str, cols: str, basis: Optional[str], date_from, date_to, n)
         raise _unprocessable(f"n is 1 to {_MAX_N}", "n_out_of_range")
 
 
-def _company_question(names: List[str]) -> str:
+def company_question(names: List[str]) -> str:
+    """AC-S1-21: "Sorento or Mocha?". The chatbot's sales lane asks the same line itself,
+    before it calls this route (`lanes/business/sales_company_ask`)."""
     return f"{', '.join(names[:-1])} or {names[-1]}?"
+
+
+def contact_companies(db: Session, contact_uuid: str) -> List[tuple]:
+    """The contact's OWN companies as `(id, name, code)`, the default company first, then by
+    name: the order the company question names them in (AC-S1-21). One reading, shared with
+    the chatbot's sales lane, which asks that question itself before it calls this route."""
+    from app.models.company import Company, RespondContactCompany
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+
+    rows = (
+        db.query(Company.id, Company.name, Company.code)
+        .join(RespondContactCompany, RespondContactCompany.company_id == Company.id)
+        .filter(RespondContactCompany.respond_contact_id == str(contact_uuid))
+        .all()
+    )
+    return sorted(
+        ((str(i), str(name), str(code)) for i, name, code in rows),
+        key=lambda row: (row[0] != DEFAULT_COMPANY_ID, row[1]),
+    )
 
 
 @dataclass
@@ -215,7 +236,7 @@ def _prepare(
     from app.config import settings
     from app.models.access import RespondContactCustomer
     from app.models.base import set_company_scope
-    from app.models.company import Company, RespondContactCompany
+    from app.models.company import Company
     from app.schemas.report import ReportViewConfig
     from app.services import queue_service, rate_limit
     from app.services.contact_field_reveal_service import granted_keys
@@ -259,13 +280,8 @@ def _prepare(
 
     # The contact's OWN companies, read off the contact this route resolved (the low
     # stock route's rule 1): never the act-as principal's, which say nothing about them.
-    grants = {
-        str(c)
-        for (c,) in db.query(RespondContactCompany.company_id)
-        .filter(RespondContactCompany.respond_contact_id == str(resolved))
-        .all()
-        if c
-    }
+    own = contact_companies(db, str(resolved))
+    grants = {cid for cid, _name, _code in own}
     companies = {
         str(i): (str(name), str(code))
         for i, name, code in db.query(Company.id, Company.name, Company.code).all()
@@ -285,13 +301,10 @@ def _prepare(
     elif len(grants) == 1:
         company_id = next(iter(grants))
     elif grants:
-        from app.services.company_scope import DEFAULT_COMPANY_ID
-
-        names = [companies[c][0] for c in sorted(grants, key=lambda c: (c != DEFAULT_COMPANY_ID,
-                                                                        companies[c][0]))]
+        names = [name for _id, name, _code in own]
         # Chat fix PR-B S7: the names ride as data too, so the bot registers the question
         # with them as its options and reads the next reply as its answer.
-        return {"status": "clarify", "message": _company_question(names), "options": names}
+        return {"status": "clarify", "message": company_question(names), "options": names}
     else:
         return {"status": "error", "message": "Could not run the sales report right now."}
 

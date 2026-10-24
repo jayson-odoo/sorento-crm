@@ -1228,6 +1228,17 @@ def _focus_rules(
                 # rule, unchanged).
                 focus.date_window = None
                 trace.rules_fired.append("new_ask_drops_date_window")
+            if focus.sales_channel and not verdict.get("sales_channel"):
+                # The SAME rule (owner hand pass 6), the sales report's channel axis:
+                # "srt102-rg dealer sales may 2026" then "srt102-rg sales 2026" (a NEW
+                # ASK, `domain_in_message`) still ran the report for Dealer only. A
+                # follow-up keeps it (a picker answer or a refine is never `starts_fresh`;
+                # PLAN-chatbot-sales-report.md S4 wiring point 2), and a channel THIS
+                # message names is written below, so it is only ever dropped unnamed.
+                # `turn_runtime`'s lane input reads the channel off this focus. A ranking
+                # keeps its own channel in its held frame (`report_ask._refine`), not here.
+                focus.sales_channel = None
+                trace.rules_fired.append("new_ask_drops_sales_channel")
             # Hand pass 10 (owner ruling): the SAME rule, extended to the two axes
             # that hold no subject of their own - `tier` and `extra` are never a
             # SUBJECT (contract 121's `domain_in_message` table is unchanged: it
