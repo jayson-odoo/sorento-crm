@@ -1,4 +1,4 @@
-# UAC: SALES-REPORT-CHANNEL (Q2 + Q3 answered by crew 24 Oct; Q1 with the owner)
+# UAC: SALES-REPORT-CHANNEL (final: owner Q1 (a), crew Q2 (a) + Q3 (a), 24 Oct 2026)
 
 Plan: `PLAN-sales-report-channel-24oct.md`. Ruling Q14 (`finance/PLAN-finance-billing-documents-27sep.md:55,58`):
 channel = the sales order's type (`sales_orders.demand_class`: `retail` = Dealer, `project` = Project team).
@@ -8,7 +8,9 @@ channel = the sales order's type (`sales_orders.demand_class`: `retail` = Dealer
   `from_doc_type` is `SO` (an SO of that number in the DO's company). The customer's market segment is not read.
 - **AC-SRC-2** `[BE]` A channel filter keeps only lines whose SO class is in the asked channel. A line whose SO has no
   class is in no channel (the ranking's rule). It still counts in the report with no channel asked.
-- **AC-SRC-3** `[BE]` A DO line with no sales order: per owner answer Q1 (draft: in no channel, like AC-SRC-2).
+- **AC-SRC-3** `[BE]` A DO line with no sales order (none of the three links finds one) is in no channel: a channel
+  filter drops it, and it still counts in the report with no channel asked (owner Q1 (a), 24 Oct: "we need to link, we
+  will link"; linking the unlinked DOs is separate work, not this lane).
 - **AC-SRC-4** `[BE]` A named customer plus a channel word (Q3 (a), crew 24 Oct): the channel is always applied and the
   Channel line printed (`channel` and `channel_shown` set), whatever the customer's segment or SO types.
 - **AC-SRC-5** `[BE]` Date basis stays the DO date (`orders.order_date`) (Q2 (a), crew 24 Oct; owner Q4

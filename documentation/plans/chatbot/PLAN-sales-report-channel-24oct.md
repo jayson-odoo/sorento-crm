@@ -1,9 +1,9 @@
 # PLAN: the chatbot sales report splits by channel the way the ranking does (SALES-REPORT-CHANNEL)
 
-Status: Build (red tests for the linked-DO path). Card `sales-report-channel-behaviour-card.md` filed 24 Oct 2026; crew
-answered Q2 (a) keep DO date and Q3 (a) always apply the channel; Q1 (DO lines with no SO) with the owner, measured by
-`sales-report-channel-prod-link-share.sql`. Track: M (owner-visible
-numbers change), LEAD pattern. No migration, no auth change.
+Status: Build (red tests, then fix). Card `sales-report-channel-behaviour-card.md` filed 24 Oct 2026; answers: owner
+Q1 (a) a DO line with no SO is in no channel ("we need to link, we will link": linking is separate work), crew Q2 (a)
+keep DO date, crew Q3 (a) always apply the channel. Prod sizing SQL for the linking work:
+`sales-report-channel-prod-link-share.sql`. Track: M, LEAD pattern. No migration, no auth change.
 
 UAC: `sales-report-channel-24oct-acceptance-criteria.md` (alongside).
 
@@ -58,7 +58,7 @@ After this lane the sales report's Channel means the sales order's type (ruling 
   rule (`sales_order_lines_ask.py:120-121`). The dimension and the filter read the same expression, so a split by
   channel and a channel filter cannot disagree.
 - Classes fixed: every channel ask on the sales report (filter, Channel dimension, named-customer case), not one
-  question shape. Unlinked DO lines follow the owner's Q1 answer.
+  question shape. A DO line no link resolves is in no channel (owner Q1 (a)).
 - Other callers of the changed code: `delivery_order_lines.DEFINITION` is run only by `sales_report_delivered`
   (`sales_report_delivered.py:107`); not registered on the Reports screen (`delivery_order_lines.py:27-29`); no FE page
   calls `/order-management/sales-report` (grep of `sorento_crm_frontend/app|components|services|lib`). The MCP tool
