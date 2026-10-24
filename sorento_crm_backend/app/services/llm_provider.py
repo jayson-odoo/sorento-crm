@@ -1382,9 +1382,9 @@ def _gemini_error_message(response: Any) -> str:
 def _gemini_operator_hint(status_code: int, provider_message: str) -> str:
     """The sentence that says whose problem this is, appended to Gemini's own words.
 
-    A quota wall, an empty prepaid balance (402) and a bad key are the operator's to fix, not the document's,
-    and both used to reach the screen as raw provider JSON that read like the
-    uploaded file was unreadable. The provider message is still carried (it is
+    A quota wall, an empty prepaid balance (402) and a bad key are the operator's
+    to fix, not the document's, and all three used to reach the screen as raw
+    provider JSON that read like the uploaded file was unreadable. The provider message is still carried (it is
     the only thing that distinguishes one 400 from another); this only adds who
     can act on it. Everything else gets nothing, because we would be guessing.
     """
