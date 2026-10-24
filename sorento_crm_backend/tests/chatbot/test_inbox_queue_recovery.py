@@ -502,6 +502,7 @@ def test_photo_read_slower_than_the_sync_wait_is_waited_for_not_timed_out(world,
 
     world.webhook(world.body(contact, photo, photo=True))
     assert wait_until(lambda: media_worker.calls, timeout=10), "the photo's read was never requested"
+    assert media_worker.message_of_job(media_worker.calls[0]) == str(photo), "the read is the photo's"
     world.webhook(world.body(contact, later, text_value="check stock (slow-text)"))
 
     time.sleep(3.0)  # three times the sync wait
@@ -538,6 +539,9 @@ def test_abandoned_read_job_is_read_again_once_and_answered_once(world, media_wo
     posts = world.wait_posts(1, contact, timeout=60, settle=1.5)
     assert len(posts) == 1, f"one photo, one POST: got {len(posts)}"
     assert len(media_worker.calls) == 2, f"read once, then again once: {media_worker.calls}"
+    assert [media_worker.message_of_job(j) for j in media_worker.calls] == [str(photo), str(photo)], (
+        "the second read must be the re-read of the same photo"
+    )
     texts = action_texts(posts[0])
     assert not any(PHOTO_TIMEOUT_SENTENCE in t for t in texts), texts
     assert wording.nothing_read() not in texts, "an abandoned read is not a failed read"

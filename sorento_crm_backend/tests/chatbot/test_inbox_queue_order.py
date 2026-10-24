@@ -85,6 +85,7 @@ SENDER_KEY = "ZZT-iq-plain-sender-key-0001"
 SERIAL_LOCK_KEY = "zzt:tests:inbox-queue:serial"
 SESSION_WRITE_TABLE = "respond_contacts.session_vars"
 PHOTO_URL = "https://media.example-zzt.com/iq/photo.jpg"
+MEDIA_QUEUE_NAME = "media"  # `app.tasks.media_tasks.MEDIA_QUEUE`
 
 
 def iq():
@@ -710,8 +711,10 @@ def world(iq_serial, monkeypatch, redis_client) -> Iterator[World]:
 
 class MediaWorker:
     """Plays the RQ `media` worker for photo turns, at the enqueue seam of
-    `app/api/v1/external/media.py` (`enqueue_job`). Every read the CRM asks for is recorded;
-    `mode` decides what the "worker" does with it:
+    `app/api/v1/external/media.py` (`enqueue_job`). Only jobs for the `media` queue are reads:
+    each is recorded in `calls` (its job id) and simulated. Any other job reaching the patched
+    `queue_service.enqueue_job` (the webhook's `notifications` push job, for one) is
+    swallowed by a no-op and never counted. `mode` decides what the "worker" does with a read:
 
     * `complete`: the job row turns `completed` with a read result after `delay` seconds.
     * `manual`: nothing happens until the test calls `complete(job_id)` (worker down).
@@ -747,6 +750,9 @@ class MediaWorker:
         return job
 
     def _fake_enqueue(self, func: Any, *args: Any, **kwargs: Any) -> Any:
+        if kwargs.get("queue_name") != MEDIA_QUEUE_NAME:
+            # Not a read: nothing to play, nothing to count.
+            return types.SimpleNamespace(id=f"zzt-iq-not-a-read-{uuid.uuid4().hex[:8]}")
         job_id = str(kwargs.get("job_id") or (args[0] if args else uuid.uuid4()))
         with self.lock:
             self.calls.append(job_id)
@@ -808,6 +814,20 @@ class MediaWorker:
             db.close()
         job = Job.fetch(job_id, connection=redis_conn)
         job.set_status(JobStatus.FAILED)
+
+    def message_of_job(self, job_id: str) -> str | None:
+        """The respond message id a read job belongs to (through its ledger row)."""
+        db = SessionLocal()
+        try:
+            return db.execute(
+                text(
+                    "SELECT u.message_id FROM media_extraction_job j "
+                    "JOIN contact_media_usage u ON u.id = j.usage_id WHERE j.id = CAST(:i AS uuid)"
+                ),
+                {"i": job_id},
+            ).scalar()
+        finally:
+            db.close()
 
     def job_status(self, job_id: str) -> str | None:
         db = SessionLocal()
@@ -1061,6 +1081,7 @@ def test_photo_from_the_webhook_is_queued_and_read_in_its_own_turn(world, media_
     posts = world.wait_posts(1, contact)
     assert [world.message_of_turn(p["turn_id"]) for p in posts] == [str(mid)]
     assert len(media_worker.calls) == 1, f"one read for one photo, got {media_worker.calls}"
+    assert media_worker.message_of_job(media_worker.calls[0]) == str(mid), "the read is this photo's"
     row = world.row_for(contact, mid)
     assert row["status"] == "done", row
     assert any(r.get("stage") == "media_intake" for r in row["trace"]), "the read ran inside the turn"
