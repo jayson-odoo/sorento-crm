@@ -28,10 +28,22 @@ global AI assistant config).
   staff 64, salesperson 32; `chatbot_profile.tier` set on 0; `respond_contact_tags` has 0 rows.
 - Parser trace already carries provider + model + usage (#1624, `head/parser.py:1197`).
 
-## Open (behaviour card questions)
+## Decisions
 
-Q1 classifier, Q2 rows per class, Q3 which calls follow, Q4 missing key, Q5 override shape. Answers recorded
-here before any code.
+- Crew 24 Oct 2026: Q3 (a) parser + clarifier + code reader follow the contact, image lane keeps its own setting;
+  Q4 (a) no key for the chosen provider -> label/global for that turn + warning log + trace
+  `model_source=fallback_no_key`; Q5 (a) provider + model pair, no profile table.
+- Crew 24 Oct 2026, R4 addendum accepted: nullable `ai_assistant_configs.openai_api_key_ciphertext` + "OpenAI API
+  key" field beside Gemini/Anthropic; OpenAI order = own column > generic while `config.provider == openai` > env.
+  Write-only in the API, masked like the other keys; security review covers it.
+- Q1 (which classifier) and Q2 (rows per class): with the owner. Only R4 is built until they land.
+
+## Slices
+
+1. R4 key slots (UAC AC-R4-1..8): migration, model, resolver, settings API, reencrypt script, redaction. Red first.
+2. PENDING Q1/Q2: resolver + settings card + contact field + trace + AC-R4-9 field.
+
+Test DB: `sorento_mpc_throwaway` (`SORENTO_ENV_FILE=.env.ci-tests`, redis index 13).
 
 ## Architecture
 
