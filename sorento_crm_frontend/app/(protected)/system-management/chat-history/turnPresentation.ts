@@ -146,6 +146,27 @@ export function shortTurnId(id: string): string {
   return id.replace(/-/g, '').slice(0, 4);
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A nested fact value: a UUID (and any `turn_id`) reads shortened, never in full. */
+function nestedText(key: string, value: unknown): string {
+  if (value !== null && typeof value === 'object') return JSON.stringify(value);
+  const text = String(value);
+  return key === 'turn_id' || UUID_RE.test(text) ? shortTurnId(text) : text;
+}
+
+/** A stage fact as readable text: a plain object (the `received` stage's
+ * `quoted_turn`) reads as "key: value" pairs, never "[object Object]"; everything
+ * else keeps its `String` form. Shared by the inline stage row and the drawer. */
+export function factText(value: unknown): string {
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([k, v]) => `${k}: ${nestedText(k, v)}`)
+      .join(', ');
+  }
+  return String(value);
+}
+
 export type TimelineRow =
   | { kind: 'stage'; record: TurnStageRecord; label: string }
   | { kind: 'not-reached'; labels: string[] };

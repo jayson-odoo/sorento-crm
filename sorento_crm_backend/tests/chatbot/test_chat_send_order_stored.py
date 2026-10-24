@@ -602,3 +602,120 @@ class TestReviewRound1:
         me = _me(session_factory, contact_id)
         found = send_order.earlier_unanswered(session_factory(), contact_respond_id=str(contact_id), me=me)
         assert [e.caption for e in found] == [caption]
+
+
+# MEDIA-INTAKE-GUARD (3): chat_histories keeps no mime column, so a rebuilt photo
+# or voice note names the mime its stored file name shows; with no file name it
+# sends none rather than a guess. Any other type sends none either: the mime would
+# turn a `file` IMG.jpg into a photo read `carries_media` never counted.
+@pytest.mark.parametrize(
+    "attachment_type, file_name, expected",
+    [
+        ("image", "IMG_0001.JPG", "image/jpeg"),
+        ("image", "photo.png", "image/png"),
+        ("audio", "note.ogg", "audio/ogg"),
+        ("image", None, None),
+        ("image", "no-extension", None),
+        ("file", "IMG_0001.jpg", None),
+        ("file", "invoice.pdf", None),
+        ("video", "clip.3gp", None),
+    ],
+)
+def test_stored_attachment_passes_the_stored_mime_type(attachment_type, file_name, expected):
+    earlier = send_order.Earlier(
+        order_key=1.0,
+        message_id="ZZT-msg-1",
+        media_url="https://cdn.example/x",
+        attachment_type=attachment_type,
+        file_name=file_name,
+    )
+
+    attachment = send_order.stored_attachment(earlier)
+
+    assert attachment.get("mimeType") == expected
+
+
+def _real_jpeg() -> bytes:
+    """A genuine JPEG, encoded at test time (no media file is committed)."""
+    import io
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (32, 32), (200, 40, 40)).save(buffer, format="JPEG")
+    return buffer.getvalue()
+
+
+class TestStoredPhotoBytesReachTheModelIntact:
+    """MEDIA-INTAKE-GUARD, 24 Oct prod: a photo answered ahead from its stored row
+    completed with Gemini saying 'The image file appears corrupted or unreadable'.
+    The stored attachment carries no mimeType, so the job's mime fell back to the
+    download's content-type; served as application/octet-stream, the image part
+    went to the model under that label. Runs the REAL extraction service on the
+    stored path; only the download and the provider are stubbed."""
+
+    @pytest.mark.parametrize("served_as", ["application/octet-stream", "binary/octet-stream", None])
+    def test_the_bytes_and_mime_handed_to_the_model_are_the_files(
+        self, session_factory, stub_access, media_pipeline, monkeypatch, served_as  # noqa: F811
+    ):
+        import base64
+
+        import app.tasks.media_tasks as media_tasks_mod
+        from app.services.llm_provider import ChatResult
+        from app.services.media_extract import service as extract_service
+        from app.services.media_extract.service import MediaExtractService
+
+        jpeg = _real_jpeg()
+        fetched: list[str] = []
+        seen_images: list = []
+
+        def _fetch(url):
+            fetched.append(url)
+            return jpeg, served_as
+
+        class _Provider:
+            def chat(self, **kwargs):
+                seen_images.extend(kwargs.get("images") or [])
+                return ChatResult(
+                    content=json.dumps(
+                        {"image_kind": "label", "entities": [{"raw": CARD_CODE, "hint": "product", "confident": True}]}
+                    ),
+                    prompt_tokens=1,
+                    completion_tokens=1,
+                    total_tokens=2,
+                )
+
+        monkeypatch.setattr(extract_service, "fetch_media_bytes", _fetch)
+        monkeypatch.setattr(
+            MediaExtractService,
+            "_resolve_image_provider",
+            lambda self, tier, settings: (_Provider(), "gemini", "gemini-test"),
+        )
+        # The real extraction, on this test's own session (not the stub `set_result` installs).
+        monkeypatch.setattr(
+            media_tasks_mod,
+            "run_media_extraction",
+            lambda job: extract_service.run_extraction(job, db=session_factory()),
+        )
+
+        contact_id = _fresh_contact_id()
+        _seed_contact(session_factory, contact_id, focus_codes=[HELD_CODE])
+        _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
+        _seed_settings(session_factory, media_sync_wait_seconds=5)
+        stub_access()
+        _install_parser(monkeypatch, [])
+        _store(session_factory, contact_id, message_id=PHOTO_MESSAGE_ID)
+
+        engine_mod.run_turn(_text_envelope(contact_id), session_factory=session_factory)
+
+        assert fetched == [PHOTO_URL], "the stored path downloads the stored url, once"
+        assert len(seen_images) == 1, seen_images
+        assert base64.b64decode(seen_images[0].data_b64) == jpeg, "the model got other bytes than the file"
+        assert seen_images[0].mime == "image/jpeg", (
+            f"served as {served_as!r}, the image part was labelled {seen_images[0].mime!r}"
+        )
+
+        from app.models.media import MediaExtractionJob
+
+        jobs = session_factory().query(MediaExtractionJob).filter(MediaExtractionJob.media_url == PHOTO_URL).all()
+        assert [j.mime_type for j in jobs] == [None], "a missing mimeType is no mime, never the string 'null'"

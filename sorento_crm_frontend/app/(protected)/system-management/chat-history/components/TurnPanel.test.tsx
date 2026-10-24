@@ -260,3 +260,32 @@ describe('TurnPanel - AC-972 opens the turn detail drawer from a row', () => {
     );
   });
 });
+
+describe('TurnPanel - nested stage facts (MEDIA-INTAKE-GUARD)', () => {
+  it('prints the quoted turn as readable fields, never [object Object] or a full UUID', () => {
+    const { container } = renderWithClient(
+      <TurnPanel
+        turn={turn({
+          trace: [
+            record({
+              stage: 'received',
+              facts: {
+                quoted_turn: {
+                  found: true,
+                  via: 'own',
+                  turn_id: '0b4c0000-0000-4000-8000-000000000000',
+                  same_as_live: false,
+                },
+              },
+            }),
+          ],
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByText('details'));
+    const text = container.textContent ?? '';
+    expect(text).not.toContain('[object Object]');
+    expect(text).toContain('found: true, via: own, turn_id: 0b4c, same_as_live: false');
+    expect(text).not.toContain('0b4c0000-0000-4000-8000-000000000000');
+  });
+});
