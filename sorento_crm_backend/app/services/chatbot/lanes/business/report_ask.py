@@ -1157,6 +1157,17 @@ def settle(
         # on screen (whatever its axis), keeping the rest, exactly as a `ranking_refine` does.
         parse_output = {**parse_output, "group_by": None, "ranking_refine": True}
         raw_group = ""
+    if (
+        raw_group == "channel"
+        and parse_output.get("sales_channel") in ("dealer", "project")
+        and frame.get("group_by") not in (None, "channel")
+        and not frame.get("stale")
+    ):
+        # REPORT-CHANNEL-FILTER (owner ruling 24 Oct ~19:50, PLAN-report-channel-filter-1024.md): a channel axis
+        # within one named channel is one row by construction, so "<channel> sales only" over a held ranking is that
+        # channel's FILTER on it, never a new axis across all: a refine, which applies `sales_channel` (`_refine`).
+        parse_output = {**parse_output, "group_by": None, "ranking_refine": True}
+        raw_group = ""
     new_axis = bool(frame) and bool(raw_group) and GROUP_BY.get(raw_group, raw_group) != frame.get("group_by")
     if not new_axis and restates_the_ask(parse_output):
         # The same axis typed again is a new ask (a new frame): read whole, nothing held.
