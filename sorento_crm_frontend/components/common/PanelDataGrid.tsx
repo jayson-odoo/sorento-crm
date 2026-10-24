@@ -55,6 +55,7 @@ export function PanelDataGrid<TRow extends object>({
   emptyTitle,
   emptyBody,
   onRowClick,
+  rowHref,
   rowClassName,
   rowAttributes,
   searchPlaceholder,
@@ -111,6 +112,8 @@ export function PanelDataGrid<TRow extends object>({
    */
   emptyAction?: never;
   onRowClick?: (row: TRow) => void;
+  /** The row's detail page as a real link target (ADR 1d); preferred over `onRowClick`. */
+  rowHref?: (row: TRow) => string;
   /**
    * Extra classes layered onto a row (the same idiom `DataGrid`'s own `rowClassName`
    * already gives the top-level listings, e.g. a picker tinting the rows a clicked
@@ -405,6 +408,7 @@ export function PanelDataGrid<TRow extends object>({
         scrollerMaxHeight,
       }}
       onRowClick={onRowClick}
+      rowHref={rowHref}
       rowClassName={rowClassName}
       rowAttributes={rowAttributes}
       renderGroupHeader={renderGroupHeader as never}

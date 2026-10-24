@@ -9,7 +9,7 @@ describe('the Orders tab', () => {
     expect(labels).not.toContain('POs');
     expect(labels).not.toContain('Delivery schedules');
     expect(labels).not.toContain('Sales orders');
-    expect(TABS).toHaveLength(10);
+    expect(TABS).toHaveLength(11);
   });
 
   it('opens Orders for the old ?tab= links', () => {
