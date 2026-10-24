@@ -209,3 +209,11 @@ def test_b11_the_roster_rows_carry_the_axis_as_their_entity_type() -> None:
             {"semantic_input": {"report_ask_args": {"group_by": group_by}}})
         rows = out["outstanding_ask"]["last_result_set"]
         assert [r["entity_type"] for r in rows] == [entity_type], (group_by, rows)
+
+
+def test_b12_the_backends_offer_sentences_match_the_presenters() -> None:
+    from sorento_crm_mcp import presenters
+
+    from app.services.chatbot.lanes.business import fetch
+
+    assert set(fetch._ROW_PICK_OFFERS) == set(presenters._REPORT_ASK_OFFERS.values())
