@@ -29,6 +29,12 @@ ask with its channel).
   report's open drill offer, and CARRY `nothing_answered` with no offer open).
 * S1 (GREEN guard, finding) the state path's `new_subject` already drops the channel,
   through `apply_changes` AND `apply`, so the state path has no twin of this gap.
+* T1 / T2 (RED against the first cut of the fix, reviewer blocking finding): a NARROWING of
+  a dealer top selling ranking ("water closet only", "sold by contactz") is filed NEW ASK
+  `domain_in_message` by `decide()`, yet the ranking continues (`_top_selling_rules`
+  never restarts it; `test_top_selling_round4.py` TestF5Category /
+  TestNarrowingNeverRestarts). It keeps the ranking's channel: green on origin/main's
+  `apply.py`, red once the drop fires on it.
 
 Engine harness: `test_outstanding_lane._run_turn` (real `engine.run_turn`, Postgres,
 parser / access / resolver / MCP faked), with its `_capturing_mcp` swapped for a double
@@ -48,6 +54,15 @@ from app.services.chatbot.turn.state import Focus, Profile, State
 from tests.chatbot._turn_helpers import build_policy, entity, verdict
 from tests.chatbot.conftest import validating_resolve_entity
 from tests.chatbot.test_engine import CONTACT_ID, _parser_output
+from tests.chatbot.test_top_selling_round4 import (  # noqa: F401 - `cat` / `route` are fixtures
+    _ask as _ts_ask,
+    _answer as _ts_answer,
+    _e as _ts_entity,
+    _narrow as _ts_narrow,
+    _turn as _ts_turn,
+    cat,
+    route,
+)
 
 RULE = "new_ask_drops_sales_channel"
 GRANT = "sales_orders.sales_report"
@@ -482,3 +497,57 @@ class TestTheStatePathHasNoTwin:
         assert applied.state.state_led == "new_ask", applied.state.state_led
         state_out, plan = _apply(applied.state, applied.verdict)
         assert state_out.focus.sales_channel is None, plan.trace.rules_fired
+
+
+# --------------------------------------------------------------------------- #
+# T1 / T2 (RED against the first cut of the fix) - a top selling narrowing keeps the channel
+# --------------------------------------------------------------------------- #
+
+
+def _dealer_ranking_focus() -> Focus:
+    """A dealer top selling ranking on screen ("top 10 selling dealer items", by quantity)."""
+    return Focus(
+        domains=["order"], status="top_selling", sales_channel="dealer",
+        top_selling={"rank_by": "quantity", "basis": "delivered", "rank_group": "item", "top_n": 10},
+    )
+
+
+#: The two narrowing shapes the round 4 owner retest pins as a continuation of the ranking:
+#: `domain_in_message` true and an entity of their own, no channel word.
+NARROWINGS = [
+    pytest.param("category", "water closet", {}, "water closet only", id="t1-water-closet-only"),
+    pytest.param("sales_agent", "contactz", {"order_status": "top_selling"}, "sold by contactz", id="t2-sold-by-agent"),
+]
+
+
+class TestATopSellingNarrowingKeepsTheChannel:
+    @pytest.mark.parametrize("hint, raw, extra, _text", NARROWINGS)
+    def test_apply_keeps_the_rankings_channel(self, hint, raw, extra, _text):
+        v = verdict(
+            domain_hint="order", intent_hint="check_order", sales_channel=None,
+            entities=[entity(raw, hint=hint, canonical_code=None, current_message=True)],
+            entity_op="replace_combine", domain_in_message=True, **extra,
+        )
+        state_out, plan = _apply(State(focus=_dealer_ranking_focus(), profile=Profile(), turn_no=3), v)
+        fired = list(plan.trace.rules_fired)
+        assert state_out.focus.status == "top_selling", (state_out.focus.status, fired)
+        assert RULE not in fired, f"a narrowing of the ranking on screen is not a new ask: {fired}"
+        assert state_out.focus.sales_channel == "dealer", (
+            f"a top selling narrowing keeps the ranking's channel: {state_out.focus.sales_channel!r}, {fired}"
+        )
+
+    @pytest.mark.parametrize("hint, raw, extra, text", NARROWINGS)
+    def test_the_next_ranking_call_carries_the_dealer_channel(
+        self, session_factory, monkeypatch, cat, hint, raw, extra, text
+    ):
+        _ts_turn(session_factory, monkeypatch, _ts_ask(top_n=100, sales_channel="dealer"), "top 100 dealer hot selling item")
+        _reply, (ranked,) = _ts_turn(session_factory, monkeypatch, _ts_answer(rank_by="quantity"), "qty")
+        assert ranked.get("channel") == "dealer", f"setup: the ranking runs for dealer: {ranked}"
+        _reply, calls = _ts_turn(
+            session_factory, monkeypatch,
+            _ts_narrow(_ts_entity(raw, hint), domain_hint="order", domain_in_message=True, **extra),
+            text,
+        )
+        (args,) = calls
+        assert args["rank_by"] == "quantity" and args["n"] == 100, f"the ranking continues: {args}"
+        assert args.get("channel") == "dealer", f"the narrowed ranking keeps the dealer channel: {args}"
