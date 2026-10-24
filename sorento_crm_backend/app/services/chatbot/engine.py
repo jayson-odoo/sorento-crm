@@ -5129,10 +5129,12 @@ def _run_stages_body(  # noqa: PLR0915
         verdict = report_ask.drop_field_words(verdict)
         open_ask = state_in.focus.required_ask
         state_in.focus.required_ask = None
+        asked_before, replaced_ask = open_ask, None
+        parser_ops = (remembered_before.get("_chat_state") or {}).get("changes")
         if (open_ask or {}).get("ask") == report_ask.ASK_NAME and report_ask.names_its_own_ask(
-            verdict, open_ask, parser_ops=(remembered_before.get("_chat_state") or {}).get("changes")
+            verdict, open_ask, parser_ops=parser_ops
         ):
-            open_ask = None  # a new sales ranking ask, not the answer to the open question
+            replaced_ask, open_ask = open_ask, None  # a new sales ranking ask, not the answer to the open question
         if (open_ask or {}).get("ask") == chat_report.ASK_NAME and not verdict.get("order_status"):
             # The reply to a chat report question is read ONCE by the extractor, with the open ask;
             # the lane reuses the reading (`chat_report_reading`, empty when it could not read).
@@ -5148,6 +5150,14 @@ def _run_stages_body(  # noqa: PLR0915
             # Chat fix PR-B S3: a refine of the report on screen re-runs it, whatever report
             # type the parser named (`report_ask.as_held_refine`).
             verdict = report_ask.as_held_refine(verdict, state_in.focus.sales_ranking_frame)
+            # REPORT-SMART-L R8 (crew ruling): a ranking reply to a held sales report total, or to the open ask it
+            # replaced, keeps the period, product, measure and basis that total showed. Owner Q3 stays the rule
+            # (PLAN-report-engine.md:50 "Period (Q3). Required. No catalogue default"; turn_runtime.py:3519-3521,
+            # `_spec_window`: "A sales ranking never borrows the carried window"): this window is the period the
+            # user just SAW on a sales figure, the S6b "kept on screen" rule with one more source, never a default.
+            verdict = report_ask.with_held(
+                verdict, state_in.focus, open_ask=asked_before, replaced=replaced_ask, parser_ops=parser_ops
+            )
         # MULTI-ASK-PLAN round 6 (G1): the reply to the scope question re-runs the asked
         # multi-ask turn's own verdict from HERE, with the scope the parser read settled, so
         # it continues exactly as if the scope had been said.

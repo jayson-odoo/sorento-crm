@@ -77,6 +77,8 @@ ENGINE_KEYS = frozenset(
         "required_ask_channel",
         # V1-DOC-SCOPE: who may see any customer's documents is the engine's call alone.
         "ref_staff", "doc_staff",
+        # REPORT-SMART-L R8: what a held sales report total showed (`report_ask.with_held`).
+        "report_held",
     }
 )
 #: An OPTIONAL field also takes these as "no filter" (it was never required).

@@ -21,7 +21,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from app.services.chatbot import jsc
+from app.services.chatbot import contracts, jsc
 from app.services.chatbot import required_fields as rf
 from app.services.reports import ask as reports_ask
 from app.services.sales_report_service import TOP_SELLING_N_CEILING
@@ -531,13 +531,18 @@ def names_its_own_ask(
     return _other_axis(verdict, extras)
 
 
+def _new_subject(verdict: dict[str, Any], parser_ops: Any = ()) -> bool:
+    """The parser's `new_subject` op, read from `state_changes` or from the ops the engine logged."""
+    changes = [*jsc.array(verdict.get("state_changes")), *jsc.array(parser_ops)]
+    return "new_subject" in {jsc.js_string(c.get("op") or "") for c in changes if isinstance(c, dict)}
+
+
 def _swappable(verdict: dict[str, Any], parser_ops: Any = ()) -> bool:
     """A reply that may change the open ask's axis: the parser did not say it is a fresh ask
     (`ranking_refine` explicitly false, or a `new_subject` op). Callers check it fills nothing and names no entity."""
     if verdict.get("ranking_refine") is False:
         return False
-    changes = [*jsc.array(verdict.get("state_changes")), *jsc.array(parser_ops)]
-    return "new_subject" not in {jsc.js_string(c.get("op") or "") for c in changes if isinstance(c, dict)}
+    return not _new_subject(verdict, parser_ops)
 
 
 def _other_axis(verdict: dict[str, Any], extras: dict[str, Any]) -> bool:
@@ -627,6 +632,50 @@ def as_held_refine(verdict: dict[str, Any], frame: Any) -> dict[str, Any]:
         **{k: v for k, v in verdict.items() if k not in ("status", "document")},
         **SALES_RANKING_ASK.reroute,
     }
+
+
+#: REPORT-SMART-L R8: the engine's stamp (`with_held`), frame-shaped (`date_from`, `date_to`, the route params), plus
+#: `product` when the held products are the gate's carried rows. Listed in `required_fields.ENGINE_KEYS`.
+HELD_KEY = "report_held"
+
+
+def with_held(
+    verdict: dict[str, Any],
+    focus: Any,
+    *,
+    open_ask: dict[str, Any] | None,
+    replaced: dict[str, Any] | None,
+    parser_ops: Any = (),
+) -> dict[str, Any]:
+    """Engine seam, REPORT-SMART-L R8 (crew ruling, EVAL-BENCH v63 gate): when the reply to a held sales report
+    total becomes a ranking, what that total showed stays, and only what is still missing is asked.
+
+    On only when the parser reuses the held subject (`entity_op` reuse, no topic reset, no `new_subject` op), the
+    verdict is a ranking naming its axis, no ranking frame is held (a held one keeps its own rules: refine, S6b,
+    ruling B, stale), the last ask was a sales figure (`Focus.domains`), and no open ask is being answered. The
+    source is the open report ask this verdict replaced (`names_its_own_ask`), alone; with none open, the held
+    sales report total: `Focus.date_window` and the products it ran on. Engine-held state only, never words."""
+    if (
+        jsc.js_string(verdict.get("order_status") or "").strip() != ASK_NAME
+        or not jsc.js_string(typed_group_by(verdict).get("group_by") or "").strip()
+        or verdict.get("entity_op") != "reuse"
+        or verdict.get("topic_reset") is True
+        or _new_subject(verdict, parser_ops)
+        or getattr(focus, "sales_ranking_frame", None)
+        or contracts.SALES_DOMAIN not in (getattr(focus, "domains", None) or [])
+        or (open_ask is not None and replaced is None)
+    ):
+        return verdict
+    if replaced is not None:
+        if replaced.get("asking") == "scope":
+            return verdict  # the drill's scope question holds no ask of its own to carry
+        args = route_args(rf.Outcome(values=_dict(replaced.get("values")), extras=_dict(replaced.get("extras"))))
+        held = {k: v for k, v in args.items() if k not in ("group_by", "sort") and v not in (None, "", [])}
+    else:
+        window = _dict(getattr(focus, "date_window", None))
+        held = {"date_from": window.get("start"), "date_to": window.get("end"), "product": bool(getattr(focus, "products", None))}
+        held = {k: v for k, v in held.items() if v}
+    return {**verdict, HELD_KEY: held} if held else verdict
 
 
 def dealer_location_words(parse_output: dict[str, Any]) -> dict[str, Any]:
@@ -837,6 +886,10 @@ def _fresh_args(
         # The turn that answered this ranking's customer pick: the picked row is carried, not typed, and is
         # still this ask's customer (the engine marks it; the parser cannot, `required_fields.ENGINE_KEYS`).
         kinds = kinds | {"customer"}
+    if _dict(parse_output.get(HELD_KEY)).get("product") is True and _widened(parse_output) != "product":
+        # R8: the products the held sales report total ran on are carried, not typed (the plan's own rows, the
+        # same ones `crm_sales_report` read its prefix off); the engine marks it, never the parser.
+        kinds = kinds | {"product"}
     customer_ids = _gate_ids(entities, "customer") if "customer" in kinds else []
     if customer_ids:
         args["customer_ids"] = customer_ids
@@ -1083,23 +1136,32 @@ def settle(
     # Owner ruling B + S6b (23 Oct): a new axis that runs across all, right after a ranking, keeps what is
     # on screen and widens only the ranked side: the same hold a refine naming another axis uses.
     across_all = new_axis and drill != "scoped" and bool(_dict(frame.get("shown"))) and not frame.get("stale")
+    source: dict[str, Any] = {}
+    keep_product = False
     if new_axis and (parse_output.get("ranking_refine") is True or across_all):
+        source = frame
+    elif not frame and _dict(parse_output.get(HELD_KEY)):
+        # R8: no ranking held, and the engine stamped what the held sales report total (or the open ask this
+        # replaced) showed (`with_held`): the same hold, one more source. A total has no rows to rank across, so
+        # the product it was for stays on a product axis too (crew target: its variants ranked).
+        source, keep_product = _dict(parse_output.get(HELD_KEY)), True
+    if source:
         # Not a refine (it names another axis): the fresh ask reads it whole, its dates included.
         # Chat fix PR-B S4 (AC-B6): the new axis is still asked (8 Oct rule), but the held period,
         # product and channel stay, never asked again; the message's own period, product or channel wins.
         axis = GROUP_BY.get(raw_group, raw_group)
-        held_period = period_from(frame.get("date_from"), frame.get("date_to"))
+        held_period = period_from(source.get("date_from"), source.get("date_to"))
         widened = _widened(parse_output)
         held_product = {
-            k: frame[k] for k in ("product_code", "product_ids")
-            if frame.get(k) and k not in _AXIS_FILTERS.get(axis, ()) and widened != "product"
+            k: source[k] for k in ("product_code", "product_ids")
+            if source.get(k) and (keep_product or k not in _AXIS_FILTERS.get(axis, ())) and widened != "product"
         }
-        if axis != "channel" and widened != "channel" and frame.get("channel") in ("dealer", "project"):
-            held_channel = frame["channel"]
+        if axis != "channel" and widened != "channel" and source.get("channel") in ("dealer", "project"):
+            held_channel = source["channel"]
         # A brand, category or sales agent filter on screen is held too (the new axis's own filter is not).
         held_filters = {
-            k: frame[k] for k in ("brand_ids", "category_ids", "sales_agent_ids")
-            if frame.get(k) and k not in _AXIS_FILTERS.get(axis, ())
+            k: source[k] for k in ("brand_ids", "category_ids", "sales_agent_ids")
+            if source.get(k) and k not in _AXIS_FILTERS.get(axis, ())
         }
         holding = True
         parse_output = {**parse_output, "ranking_refine": False}
@@ -1116,8 +1178,8 @@ def settle(
     if holding:
         # S6c: the measure and the basis on screen stay too (the message's own win).
         for key in ("measure", "basis"):
-            if not args.get(key) and frame.get(key):
-                args[key] = frame[key]
+            if not args.get(key) and source.get(key):
+                args[key] = source[key]
     if (
         parse_output.get("ranking_refine") is not True
         and not dealer  # the route forces a dealer's links, so a plain total can never widen
@@ -1127,8 +1189,8 @@ def settle(
         # Not a valid ask: no axis and nothing to total. Say what can be ranked and open nothing.
         return None, CATALOGUE_LINE
     top_n = parse_output.get("top_n")
-    if top_n is None and holding and frame.get("top_n"):
-        top_n = frame["top_n"]  # S6c: the count on screen stays
+    if top_n is None and holding and source.get("top_n"):
+        top_n = source["top_n"]  # S6c: the count on screen stays
     if top_n is None and parse_output.get("report_breakdown") is True and args.get("group_by"):
         top_n = BREAKDOWN_TOP_N  # a breakdown lists every row (`by_capability`)
     if args.get("compare_to") and args.get("group_by") == "month":
