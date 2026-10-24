@@ -63,9 +63,10 @@ Runtime
   (`contact | tag | label | global | fallback_no_key`) and, for `tag`, the tag names.
 
 Tag panel and Apply
-- AC-M-14: the contact's tag panel lists "AI model" with `decided_by` = the tags; a conflict lists both tags
-  (`conflict_tags`); the item never counts as differing, and Apply (contact, tag holders, bulk, on tagging) never
-  writes the contact override.
+- AC-M-14: `evaluate` returns an "AI model" item with `decided_by` = the tags and, on a conflict, `conflict_tags`
+  naming both (the Apply preview shows the conflict); the item never counts as differing, so the contact's tag
+  panel (which lists differences only, `ContactTagSettingsSection.tsx:79`) stays quiet, and Apply (contact, tag
+  holders, bulk, on tagging) never writes the contact override. Which tag decides is shown by the AC-M-15 line.
 
 Contact page
 - AC-M-15: the contact Chatbot section shows "AI model" with the override select (clearable) and a source line:
