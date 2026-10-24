@@ -56,6 +56,8 @@ def test_make_product_codes_are_unique_and_fit():
 
 
 def test_make_customer_codes_are_unique_and_fit():
+    # The old customer code had 6 hex chars (16.7M values), so 2,000 draws caught it only
+    # about 1 run in 8; the uom code in the product test is the one that went red reliably.
     db = _RecordingDb()
     for _ in range(N):
         make_customer(db, "company")

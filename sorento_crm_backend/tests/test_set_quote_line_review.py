@@ -7,8 +7,8 @@ New symbols are used inside each test.
 """
 from __future__ import annotations
 
-import uuid
 import re
+import uuid
 from datetime import date
 from decimal import Decimal
 from io import BytesIO
