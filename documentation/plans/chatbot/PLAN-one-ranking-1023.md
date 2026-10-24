@@ -88,6 +88,15 @@ nowhere by the sales ranking, so an item ask lands on the catalogue line (T1-T3)
   the total then lists that measure first ("Total 30 pcs, RM ...", presenters.py:3419), as the first message path does today.
   Review (Opus, NOT READY at 2d992ec973): without that guard a reply carrying a measure became the answer and broke the swap
   ("by salesppl, qty"), a fresh ask ("top 5 salesman by qty 2026") and compare_to ("vs last year, qty").
+- R8 (S, crew 24 Oct ~15:30, EVAL-BENCH release gate on the PRODUCTION prompt v63: closed lists Block, composer off, mini;
+  BLOCK, rows 2-3 worse than prod d02152a607). On v63, after the sales report total for "Top sales for cb6635 in 2026", the reply
+  "qty, delivered" parsed as a sales ranking (entity_op reuse) and ran a fresh ask with no period and no product, though Focus held
+  2026 and CB6635; then "by salesppl" (ranking_refine false) dropped the open ask (`names_its_own_ask`) and lost qty / delivered.
+  Fix: one hold rule (S6b/S6c) with one more source. The engine stamps `report_held` (an ENGINE_KEY, never parser-forgeable) from
+  the replaced open report ask, else from the window and products of the sales figure just shown, only on parser reuse, no new
+  subject, no ranking frame held; the message's own values win. Owner Q3 (PLAN-report-engine.md:50, period required, no default)
+  stands: this is the period on screen, not a default; an order list's window still never carries (`_spec_window` untouched).
+  Census fold-in: drilldown route tests ask the item ranking as staff (R1 rule).
 - Also queued: owner turn 045fb9bb ('Top sales for cb6635 in 2026, by salesppl' -> monthly report), v101 lines 53 / 297 / 310.
 
 ## Access differences the merge makes (Q3)

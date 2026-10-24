@@ -40,6 +40,12 @@ Plan: `PLAN-one-ranking-1023.md`. Per round; owner answers Q1-Q3 fill the bracke
   as today (the measure is asked with the count). A reply that carries a measure but fills no owed field is not the answer and
   behaves as before R7: "by salesppl, qty" swaps to the agent ranking, a fresh "top 5 salesman by qty 2026" runs that ranking,
   "vs last year, qty" keeps its comparison.
+- AC-OR8 (R8, 24 Oct, production prompt v63 shapes). After the sales report total for "Top sales for cb6635 in 2026" (2026,
+  CB6635), a reply the parser reads as a sales ranking reusing that subject ("qty, delivered": group_by product, measure qty, basis
+  delivered, entity_op reuse) asks only "How many?" and runs on CB6635-, 2026, qty, delivered; a following "by salesppl" (ranking_refine
+  false) also asks only "How many?" with all four kept. Off for a new subject (replace_combine, new_subject, topic_reset), when the
+  message names its own period or product (it wins), after an order list's window (still asks the period: Q3), and with a ranking
+  frame held (the existing hold rules decide). The sales report total itself is unchanged.
 - AC-OR4. No chatbot path reaches crm_top_selling_report; the route, MCP tool and analytics connector still work.
 - AC-OR-ACCESS (owner Q3 + ruling (a), 23 Oct ~09:35: the unification widens nothing). Every ranking (items and categories
   included) needs the contact's Sales report switch (sales_orders.sales_report), except ruling 2 of 22 Oct: a live
