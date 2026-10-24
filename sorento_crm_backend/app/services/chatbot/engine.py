@@ -4786,6 +4786,10 @@ def _run_stages_body(  # noqa: PLR0915
     from app.services.chatbot.lanes.business import report_ask as _report_ask_basis
 
     verdict = _report_ask_basis.status_as_basis(verdict)
+    # REPORT-SMART-L R8 review: the domains the last ask was on, read BEFORE the State applier writes this turn's
+    # own (`chat_state.apply_changes`); `report_ask.with_held` gates on them, so an order list's window never reaches a
+    # ranking on the State path either (owner Q3).
+    held_domains = list(state_in.focus.domains or [])
 
     # CHAT-STATE seam: the parser's `state_changes`, applied ONCE, before every post-parse
     # rewrite, APPLY and both of its re-entries (they all read `state_in` / `verdict`, so
@@ -5156,7 +5160,8 @@ def _run_stages_body(  # noqa: PLR0915
             # `_spec_window`: "A sales ranking never borrows the carried window"): this window is the period the
             # user just SAW on a sales figure, the S6b "kept on screen" rule with one more source, never a default.
             verdict = report_ask.with_held(
-                verdict, state_in.focus, open_ask=asked_before, replaced=replaced_ask, parser_ops=parser_ops
+                verdict, state_in.focus, open_ask=asked_before, replaced=replaced_ask, parser_ops=parser_ops,
+                held_domains=held_domains,
             )
         # MULTI-ASK-PLAN round 6 (G1): the reply to the scope question re-runs the asked
         # multi-ask turn's own verdict from HERE, with the scope the parser read settled, so

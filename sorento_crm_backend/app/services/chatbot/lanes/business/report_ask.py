@@ -634,6 +634,15 @@ def as_held_refine(verdict: dict[str, Any], frame: Any) -> dict[str, Any]:
     }
 
 
+def _settled_by_its_axis(values: dict[str, Any], group_by: Any) -> dict[str, Any]:
+    """A slot's values less what a total or a month trend settled on its own: its count (none, or the month
+    default) and a metric settled EMPTY (both measures shown). A new axis owes those afresh, under its own rules;
+    a measure the customer typed (R7) is a value, and stays."""
+    if group_by not in (None, "month"):
+        return dict(values)
+    return {k: v for k, v in values.items() if k != "top_n" and not (k == "metric" and not _dict(v).get("value"))}
+
+
 #: REPORT-SMART-L R8: the engine's stamp (`with_held`), frame-shaped (`date_from`, `date_to`, the route params), plus
 #: `product` when the held products are the gate's carried rows. Listed in `required_fields.ENGINE_KEYS`.
 HELD_KEY = "report_held"
@@ -646,15 +655,19 @@ def with_held(
     open_ask: dict[str, Any] | None,
     replaced: dict[str, Any] | None,
     parser_ops: Any = (),
+    held_domains: Any = None,
 ) -> dict[str, Any]:
     """Engine seam, REPORT-SMART-L R8 (crew ruling, EVAL-BENCH v63 gate): when the reply to a held sales report
     total becomes a ranking, what that total showed stays, and only what is still missing is asked.
 
     On only when the parser reuses the held subject (`entity_op` reuse, no topic reset, no `new_subject` op), the
     verdict is a ranking naming its axis, no ranking frame is held (a held one keeps its own rules: refine, S6b,
-    ruling B, stale), the last ask was a sales figure (`Focus.domains`), and no open ask is being answered. The
-    source is the open report ask this verdict replaced (`names_its_own_ask`), alone; with none open, the held
-    sales report total: `Focus.date_window` and the products it ran on. Engine-held state only, never words."""
+    ruling B, stale), the last ask was a sales figure, and no open ask is being answered. `held_domains`: the
+    domains the focus held before this turn's State applier wrote its own (the engine reads them; `Focus.domains`
+    when not given). The source is the open report ask this verdict replaced (`names_its_own_ask`), alone, less
+    what a total or month trend settled on its own (`_settled_by_its_axis`: no carried count); with none open, the
+    held sales report total: `Focus.date_window` and the products it ran on. Engine-held state only, never words."""
+    domains = held_domains if held_domains is not None else getattr(focus, "domains", None)
     if (
         jsc.js_string(verdict.get("order_status") or "").strip() != ASK_NAME
         or not jsc.js_string(typed_group_by(verdict).get("group_by") or "").strip()
@@ -662,14 +675,16 @@ def with_held(
         or verdict.get("topic_reset") is True
         or _new_subject(verdict, parser_ops)
         or getattr(focus, "sales_ranking_frame", None)
-        or contracts.SALES_DOMAIN not in (getattr(focus, "domains", None) or [])
+        or contracts.SALES_DOMAIN not in (domains or [])
         or (open_ask is not None and replaced is None)
     ):
         return verdict
     if replaced is not None:
         if replaced.get("asking") == "scope":
             return verdict  # the drill's scope question holds no ask of its own to carry
-        args = route_args(rf.Outcome(values=_dict(replaced.get("values")), extras=_dict(replaced.get("extras"))))
+        extras = _dict(replaced.get("extras"))
+        values = _settled_by_its_axis(_dict(replaced.get("values")), _dict(extras.get("args")).get("group_by"))
+        args = route_args(rf.Outcome(values=values, extras=extras))
         held = {k: v for k, v in args.items() if k not in ("group_by", "sort") and v not in (None, "", [])}
     else:
         window = _dict(getattr(focus, "date_window", None))
@@ -1059,7 +1074,7 @@ def settle(
             if args.get("group_by") != _dict(extras.get("args")).get("group_by") and _dict(extras.get("args")).get("group_by") in (None, "month"):
                 # What a total or a month trend settled on its own (no count, both measures) is not
                 # what the new axis owes: the new axis's rules (`held`) decide, typed values stay.
-                slot = {**slot, "values": {k: v for k, v in _dict(slot.get("values")).items() if k not in ("top_n", "metric")}}
+                slot = {**slot, "values": _settled_by_its_axis(_dict(slot.get("values")), _dict(extras.get("args")).get("group_by"))}
             slot, args = _reply_wins(parse_output, slot, args)
             held = {**_given_choices(args), **_given_top_n(args, extras.get("top_n"))}
             extras = {**extras, "args": args}
