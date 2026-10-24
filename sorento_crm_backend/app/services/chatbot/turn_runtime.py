@@ -1893,9 +1893,27 @@ def _report_status_means_order_domain(out: dict[str, Any]) -> None:
     the status axis - `OUTSTANDING_ORDER_STATUS` is the set `resolve_gate.py`'s own R20
     rule already shares between the outstanding buckets and `sales_report`, so this
     extends one existing normalisation rather than adding a second.
+
+    SALES-COMPANY-PICK round 2 (crew ruling a, 24 Oct 2026): a verdict whose status is
+    `sales_analysis` and whose CURRENT message names a product or a customer (an entity
+    with `current_message` true and hint `product` / `customer`) reads as `sales_report`
+    from here on. The company analysis has no subject filter, so the ask is the report of
+    that subject; reading it here, once, means the picker payload, the resolve gate, the
+    stored focus status and the answering turn all see the same status. Carried entities
+    never count. Parser fields only, no message text.
     """
     from app.services.chatbot import contracts
     from app.services.chatbot.lanes.business import _LOW_STOCK_INTENT
+
+    if any(
+        isinstance(e, dict)
+        and e.get("current_message") is True
+        and jsc.js_string(e.get("hint") or "") in ("product", "customer")
+        for e in jsc.array(out.get("entities"))
+    ):
+        for key in ("status", "order_status"):
+            if jsc.js_string(out.get(key) or "").strip() == "sales_analysis":
+                out[key] = "sales_report"
     from app.services.chatbot.lanes.business.resolve_gate import OUTSTANDING_ORDER_STATUS
 
     if jsc.js_string(out.get("intent_hint") or "").strip() == _LOW_STOCK_INTENT:
