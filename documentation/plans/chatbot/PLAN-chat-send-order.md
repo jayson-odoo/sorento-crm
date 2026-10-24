@@ -1,6 +1,6 @@
 # PLAN: answer an earlier-sent photo before a later text that reached the CRM first
 
-Status: in progress (Review, reviewer rounds 1 and 2 fixed). Track: small fix (backend only, no migration, no auth / RBAC change,
+Status: in progress (Merge-ready: reviewer READY after rounds 1 and 2; awaiting CI and owner merge). Track: small fix (backend only, no migration, no auth / RBAC change,
 no new ingest surface, no prompt change).
 UAC: `chat-send-order-acceptance-criteria.md`.
 Source: prod case 24 Oct ~08:15 MYT: a forwarded product IMAGE (card printed SRTWC2350-P-RL), then
@@ -98,6 +98,9 @@ either way.
 - Ledger photos still sort on the CRM's first sight (`contact_media_usage.created_at`) while
   queued and stored items sort on respond.io's send time (pre-existing since #1262, review
   round 3 N2 there); a ledger photo and a stored photo in the same window can swap.
+- A stored photo left unread, or whose own delivery wins the insert race, keeps its ledger
+  row filed under a turn id that never gets a row (reviewer round 3 nit): the trace screen
+  shows no image on the photo's real turn. Trace display only.
 - A rebuilt voice note carries no `duration`, so the early `denied_duration` refusal does not
   fire; the extraction enforces the same cap after download.
 - A text sent before a later text but delivered after it is not covered (texts are forwarded at

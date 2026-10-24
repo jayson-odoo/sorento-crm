@@ -42,9 +42,9 @@ from app.models.access import RespondContact
 from app.schemas.integration import IntegrationLogCreate
 from app.services import conversation_thread_service as thread_service
 from app.services.chat_history_ingest_service import (
-    normalise_channel as _normalise_channel,
     ChatMessageRow,
     announce_new_row,
+    normalise_channel as _normalise_channel,
     upsert_message_row,
 )
 from app.services.integration_service import IntegrationLogService, sanitize_request_headers
