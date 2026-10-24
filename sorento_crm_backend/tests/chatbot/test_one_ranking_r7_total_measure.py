@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from tests.chatbot.test_engine import _parser_output, stub_access  # noqa: F401
-from tests.chatbot.test_one_ranking_r5_axis_refine import ANSWER_OP, YEAR_2026, _ran, _verdict
+from tests.chatbot.test_one_ranking_r5_axis_refine import ANSWER_OP, SET, YEAR_2026, _ran, _verdict
 from tests.chatbot.test_report_ask_lane import PRODUCT_CODE, _e, _say_all, console  # noqa: F401
 from tests.chatbot.test_report_smart_step7 import KEEP, _state_on
 
@@ -46,6 +46,7 @@ def _flow(console, monkeypatch, answer: dict[str, Any]) -> None:
     text, log = _total_then_answer(console, monkeypatch, answer)
     ran = _ran(log)
     assert len(ran) == 1 and not ran[0].get("group_by") and ran[0]["measure"] == "qty", (text, log)
+    assert "Total 30 pcs, RM 1,200.00" in text, text  # the typed measure is listed first
     assert ran[0]["basis"] == "delivered" and ran[0]["product_code"] == PRODUCT_CODE and ran[0]["date_from"] == "2026-01-01", ran
     text, log = _say_all(console, monkeypatch, _axis("sales_agent"), "by salesppl")
     low = text.lower()
@@ -89,3 +90,52 @@ def test_r7_5_guard_a_typed_count_on_the_total_answer_changes_nothing(console, m
     text, log = _total_then_answer(console, monkeypatch, _row2(top_n=10))
     ran = _ran(log)
     assert len(ran) == 1 and not ran[0].get("group_by") and "top_n" not in ran[0], (text, log)
+
+
+# ------------------------------------------------ review: a reply that fills no owed field is not the answer
+
+BASIS_ONLY = "Delivered, ordered or outstanding?"
+SWAP_ASKS = "1. How many? For example top 5.\n2. Delivered, ordered or outstanding?"
+
+
+def _delivered(console, monkeypatch):
+    v = _verdict(basis="delivered", ranking_refine=None, state_changes=list(ANSWER_OP), open_question_answer=dict(NO_ANSWER))
+    return _say_all(console, monkeypatch, v, "delivered")
+
+
+def _open_total(console, monkeypatch) -> None:
+    _state_on(console)
+    text, log = _say_all(console, monkeypatch, _row1(), f"Top sales for {PRODUCT_CODE} in 2026")
+    assert _ran(log) == [] and BASIS_ONLY in text, ("setup", text, log)
+
+
+def test_r7_6_guard_a_new_axis_with_a_measure_still_swaps_into_the_open_ask(console, monkeypatch) -> None:
+    _open_total(console, monkeypatch)
+    v = _axis("sales_agent", measure="qty", basis=None)
+    text, log = _say_all(console, monkeypatch, v, "by salesppl, qty")
+    assert _ran(log) == [] and text == SWAP_ASKS, (text, log)
+    text, log = _delivered(console, monkeypatch)
+    assert _ran(log) == [] and text == "How many? For example top 5.", (text, log)
+
+
+def test_r7_7_guard_a_fresh_ranking_with_a_measure_is_not_the_totals_answer(console, monkeypatch) -> None:
+    _open_total(console, monkeypatch)
+    v = _verdict(group_by="sales_agent", ranking_refine=False, measure="qty", basis=None, top_n=5,
+                 domain_in_message=True, state_changes=list(SET), **YEAR_2026)
+    text, log = _say_all(console, monkeypatch, v, "top 5 salesman by qty 2026")
+    assert _ran(log) == [] and text == BASIS_ONLY, (text, log)
+    text, log = _delivered(console, monkeypatch)
+    ran = _ran(log)
+    assert len(ran) == 1 and ran[0]["group_by"] == "sales_agent" and ran[0]["top_n"] == 5, (text, log)
+    assert ran[0]["measure"] == "qty" and ran[0]["basis"] == "delivered", ran
+
+
+def test_r7_8_guard_a_comparison_with_a_measure_keeps_its_comparison(console, monkeypatch) -> None:
+    _open_total(console, monkeypatch)
+    v = _verdict(compare_to="last_year", measure="qty", basis=None, ranking_refine=None, state_changes=list(ANSWER_OP))
+    text, log = _say_all(console, monkeypatch, v, "vs last year, qty")
+    assert _ran(log) == [] and text == BASIS_ONLY, (text, log)
+    text, log = _delivered(console, monkeypatch)
+    ran = _ran(log)
+    assert len(ran) == 1 and ran[0]["compare_to"] == "last_year" and not ran[0].get("group_by"), (text, log)
+    assert "measure" not in ran[0] and ran[0]["basis"] == "delivered", ran
