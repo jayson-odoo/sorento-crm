@@ -1859,6 +1859,16 @@ describe('FULFIL-SO-REMARK: the Remark field and Mockup badge on each SO page', 
     expect(remarkInput('SO000001')).toHaveValue('');
   });
 
+  it('review 6: the Clear remark control is the shared Button inside the shared InputWrapper', async () => {
+    await openAt(withMockup(base(), ['pl-1-1']));
+    const clear = within(pageOf('SO000001')).getByRole('button', { name: 'Clear remark' });
+    expect(clear.tagName).toBe('BUTTON');
+    expect(clear).toHaveAttribute('data-slot', 'button');
+    const wrapper = clear.closest('[data-slot="input-wrapper"]');
+    expect(wrapper).not.toBeNull();
+    expect(wrapper).toContainElement(remarkInput('SO000001'));
+  });
+
   it('AC-8: the clear button empties the field and the field is editable', async () => {
     await openAt(withMockup(base(), ['pl-1-1']));
     fireEvent.change(remarkInput('SO000001'), { target: { value: 'Sample for client' } });
