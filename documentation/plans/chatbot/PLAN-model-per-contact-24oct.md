@@ -1,6 +1,6 @@
 # PLAN: chatbot model per contact (MODEL-PER-CONTACT)
 
-Status: Build - slice 1 (R4 keys) green, slice 2 (tag model ladder) red tests next. Track: L (migration, settings UI, keys).
+Status: Review - slices 1 and 2 built; review + security fix round in progress. Track: L (migration, settings UI, keys).
 
 ## Journey
 
@@ -57,8 +57,10 @@ global AI assistant config).
   override. So the leaf takes part in `evaluate` (the panel shows it, with `decided_by` and conflicts) but its
   `current` is the effective value and it never differs, so Apply never writes it.
 - Runtime: `load_profile` (`turn_runtime.py`) carries the choice on `Profile`; the engine hands it to
-  `parser.resolve_config` (`engine.py:5073`), `casual.resolve_clarifier_config` (`engine.py:6946`) and the code
-  reader's `_resolve_provider` (`resolver_code_reader.py:219`). Each applies one shared helper: choice (when its
+  `parser.resolve_config` (`engine.py:5073`), `casual.resolve_clarifier_config` (`engine.py:6946`), only when a choice exists (a turn without one
+  makes main's exact call). The code reader runs in its own request: `POST /system/references/resolve`
+  (`api/v1/system/references.py`) reads the choice for the request's `contact_id` and hands it to
+  `resolver_code_reader._resolve_provider`. Each applies one shared helper: choice (when its
   provider has a key, `resolve_api_key`) > its own label row > global. No key for the chosen provider: warning log,
   label/global used, trace `model_source = fallback_no_key`. Image lane untouched.
 - Storage: tag leaf `settings.chatbot.llm = {"provider", "model"}` (JSON, no migration). Contact override: nullable
@@ -74,11 +76,9 @@ global AI assistant config).
 ## Slices
 
 1. R4 key slots (UAC AC-R4-1..8): DONE, red 4d8c8f539b, green 467e9185b8, kill-proof 3 resolver tests.
-2. Tag model + contact override + runtime ladder + trace (UAC AC-M-*), backend then frontend, red first.
+2. Tag model + contact override + runtime ladder + trace (UAC AC-M-*): red 46cc9b4430 + 28d7389106, green
+   def8c255cd + aa5eb508f9 + 757601fd2d, kill-proof (override / conflict / no-key mutations).
+3. Review + security fix round (UAC AC-S-1..4 + reviewer findings): red first, then fix.
 
 Test DB: `sorento_mpc_throwaway` (`SORENTO_ENV_FILE=.env.ci-tests`, redis index 13).
 
-## Architecture
-
-To be filled after the answers: one resolver (contact override > class default > label row > global) that every
-chatbot LLM config reader calls, so the parser, clarifier and code reader cannot drift apart.

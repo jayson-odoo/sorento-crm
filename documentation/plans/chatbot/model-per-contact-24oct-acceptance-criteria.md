@@ -69,7 +69,10 @@ Tag panel and Apply
 
 Contact page
 - AC-M-15: the contact Chatbot section shows "AI model" with the override select (clearable) and a source line:
-  "From tag <names>" / "Tags disagree: <tag>, <tag>" / "Set on this contact" / "Default".
+  "From tag <names>: <Provider> <model>" / "Tags disagree: <tag>, <tag>" / "Set on this contact" / "Default".
+  The override select holds only the contact's own override (empty unless source is `contact`) and its
+  placeholder reads "No override" (reviewer nit 6, lead 24 Oct 2026: the page must not say "Default" beside a
+  tag model, and it names the model it runs on).
 - AC-M-16: 375px and 1280px usable, no clipping; no UUIDs shown.
 
 ## Security fix round (security review 24 Oct 2026; crew ruling (a) on finding 1)
