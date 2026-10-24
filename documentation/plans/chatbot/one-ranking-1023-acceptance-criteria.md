@@ -45,7 +45,10 @@ Plan: `PLAN-one-ranking-1023.md`. Per round; owner answers Q1-Q3 fill the bracke
   delivered, entity_op reuse) asks only "How many?" and runs on CB6635-, 2026, qty, delivered; a following "by salesppl" (ranking_refine
   false) also asks only "How many?" with all four kept. Off for a new subject (replace_combine, new_subject, topic_reset), when the
   message names its own period or product (it wins), after an order list's window (still asks the period: Q3), and with a ranking
-  frame held (the existing hold rules decide). The sales report total itself is unchanged.
+  frame held (the existing hold rules decide). The sales report total itself is unchanged. The same carry applies when the
+  open ranking question is replaced by a new axis without a total first ("top customers for X in 2026" asks the count, then
+  "by salesppl" keeps 2026 and X); a replaced total's or month trend's own count is never carried (the new axis asks it), only a
+  measure the customer typed. With the State block on, an order list's window still never carries (Q3).
 - AC-OR4. No chatbot path reaches crm_top_selling_report; the route, MCP tool and analytics connector still work.
 - AC-OR-ACCESS (owner Q3 + ruling (a), 23 Oct ~09:35: the unification widens nothing). Every ranking (items and categories
   included) needs the contact's Sales report switch (sales_orders.sales_report), except ruling 2 of 22 Oct: a live
