@@ -20,6 +20,7 @@ const useContactChatbotProfile = vi.fn();
 const mutate = vi.fn();
 const apiFetchMock = vi.fn();
 
+vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => true }));
 vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetchMock(...a) }));
 
 vi.mock('../hooks/useContactChatbot', () => ({

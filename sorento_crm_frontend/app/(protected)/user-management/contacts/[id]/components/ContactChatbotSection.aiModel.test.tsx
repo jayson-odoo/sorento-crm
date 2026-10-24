@@ -96,7 +96,7 @@ function show(chatbot_llm: unknown) {
 
 const selectHolding = (value: string) =>
   (screen.getAllByRole('combobox') as HTMLSelectElement[]).find((s) =>
-    Array.from(s.options).some((o) => o.value === value),
+    Array.from(s.options ?? []).some((o) => o.value === value),
   );
 
 beforeEach(() => {
