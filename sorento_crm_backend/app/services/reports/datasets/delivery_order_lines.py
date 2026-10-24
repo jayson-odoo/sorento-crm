@@ -23,7 +23,7 @@ product, period, DO, sales agent) sums to the same Total to the sen:
 
 The DO-level filters a run names (its customers, its window, its company grant) are pushed
 into that subquery as well: a share is a fraction of its whole DO, so only a filter that
-keeps or drops a WHOLE DO may go there. Product and location filters (per line) stay outside.
+keeps or drops a WHOLE DO may go there. Product, location and channel filters (per line) stay outside.
 
 Not registered on the Reports screen (`reg.register`): the chatbot's sales report runs this
 definition directly (`sales_report_service.delivered_sales_report`). Trigger for the screen:
@@ -36,27 +36,45 @@ from typing import Any, List, Optional
 import sqlalchemy as sa
 
 from app.models.inventory import Warehouse
-from app.models.order import Customer, Order, OrderLine, SalesOrder
+from app.models.order import Customer, Order, OrderLine, SalesOrder, SalesOrderLine
 from app.models.product import Brand, Product, ProductCategory
 from app.models.sales_agent import SalesAgent
 from app.services.reports import registry as reg
-from app.services.scm.demand_class import PROJECT_SEGMENTS
 
 #: A DO with no sales order, or a sales order with no agent, groups here.
 NO_AGENT = "(no agent)"
 
-#: The two channel values the `channel` dimension and filter speak (`demand_class.class_of`).
+#: The two channel values the `channel` dimension and filter speak (sales order `demand_class`).
 CHANNELS = ("project", "retail")
 
-_SEGMENT = sa.func.lower(sa.func.trim(Customer.market_segment_code))
+_LINE_SO = sa.orm.aliased(SalesOrder)
+_LINE_SOL = sa.orm.aliased(SalesOrderLine)
+_DOC_SO = sa.orm.aliased(SalesOrder)
 
-#: `demand_class.class_of`'s rule, in SQL, over its own `PROJECT_SEGMENTS` words: a segment
-#: naming project work is Project, any other stated segment is Retail, none is NULL.
-CHANNEL_EXPR = sa.case(
-    (sa.or_(*(_SEGMENT.like(f"%{word}%") for word in sorted(PROJECT_SEGMENTS))), sa.literal("project")),
-    (sa.func.coalesce(_SEGMENT, "") != "", sa.literal("retail")),
-    else_=sa.null(),
+#: The line's sales order class, by the line link (sales order line -> sales order).
+_BY_LINE_LINK = (
+    sa.select(_LINE_SO.demand_class)
+    .select_from(_LINE_SOL)
+    .join(_LINE_SO, _LINE_SO.id == _LINE_SOL.sales_order_id)
+    .where(_LINE_SOL.id == OrderLine.sales_order_line_id)
+    .scalar_subquery()
 )
+
+#: The same, by the doc number the line says it came from (unique per company and number,
+#: so at most one sales order matches and the line is never fanned out).
+_BY_DOC_NUMBER = (
+    sa.select(_DOC_SO.demand_class)
+    .where(
+        OrderLine.from_doc_type == "SO",
+        _DOC_SO.so_number == OrderLine.from_doc_no,
+        _DOC_SO.company_id == OrderLine.company_id,
+    )
+    .scalar_subquery()
+)
+
+#: A DO line's channel is its sales order's `demand_class` (line link, then the DO header's
+#: link, then the doc number), `project` / `retail`, or NULL when no sales order is found.
+CHANNEL_EXPR = sa.func.coalesce(_BY_LINE_LINK, SalesOrder.demand_class, _BY_DOC_NUMBER)
 
 
 def _fixed_filters() -> List[Any]:
@@ -209,8 +227,8 @@ def location_condition(ctx: Any, values: List[str]) -> Optional[Any]:
 
 
 def channel_condition(ctx: Any, values: List[str]) -> Optional[Any]:
-    """An account with no segment is in every channel, so a channel filter keeps it."""
-    return sa.or_(CHANNEL_EXPR.in_(values), CHANNEL_EXPR.is_(None))
+    """Per line (its sales order's class); a line with no sales order is in no channel."""
+    return CHANNEL_EXPR.in_(values)
 
 
 # ------------------------------------------------------------------------ catalog

@@ -1816,9 +1816,9 @@ async def get_sales_report(
     channel: Optional[str] = Query(
         None,
         description=(
-            "dealer | project - the account's market segment class (project / contract = "
-            "project, any other segment = dealer); an account with no segment is in every "
-            "channel. Ignored when the scoped accounts span only one class. Any other value is 422."
+            "dealer | project - the type of the sales order each delivered DO line came from; "
+            "a line with no sales order, or whose sales order has no type, is in no channel. "
+            "Always applied when given, a named customer too. Any other value is 422."
         ),
     ),
     warehouse_codes: Optional[list[str]] = Query(

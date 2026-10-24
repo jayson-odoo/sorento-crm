@@ -45,6 +45,7 @@ from tests._sales_report_do_seed import (  # noqa: F401  (client / db are fixtur
     seed_policy,
     seed_segment,
     seed_so,
+    seed_so_line_row,
     warehouse,
 )
 from tests._mc_lookup_seed import seed_mocha
@@ -95,21 +96,6 @@ def test_dataset_is_company_scoped_and_date_based_on_the_do_date():
     assert DATASET.company_column is not None
     assert [b.key for b in DATASET.date_bases] == ["order_date"]
     assert str(DATASET.date_bases[0].expr) == str(Order.order_date)
-
-
-def test_the_channel_rule_reads_demand_class_project_words():
-    """Fix round 1, nit N1: the SQL channel rule is built from `demand_class.PROJECT_SEGMENTS`,
-    the words `class_of` reads, never a second spelling of them."""
-    from sqlalchemy.dialects import postgresql
-
-    from app.services.reports.datasets.delivery_order_lines import CHANNEL_EXPR
-    from app.services.scm.demand_class import PROJECT_SEGMENTS
-
-    compiled = str(
-        CHANNEL_EXPR.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
-    ).replace("%%", "%")  # the psycopg2 dialect escapes a literal % as %%
-    for word in PROJECT_SEGMENTS:
-        assert f"'%{word}%'" in compiled, (word, compiled)
 
 
 # ============================================================ AC-SR-20: which DOs count
@@ -927,72 +913,321 @@ def test_without_a_contact_a_location_filter_is_just_a_filter(client, db):
 # ============================================================ AC-SR-22 / AC-SR-26: channel
 
 
-def _channel_world(db, *, segments):
-    """One account per entry of `segments` (a segment code or None), one DO each worth 10 x n."""
+def _linked_do(db, cust, prod, wh, *, so_class, qty, total, link="line", day=date(2026, 8, 10),
+               so_number=None, so_company=DEFAULT_COMPANY_ID, so_cust=None, number=None):
+    """One AutoCount DO of `cust` with one line delivered from a fresh SO of class `so_class`.
+
+    `link` is how the DO says which SO it came from: "line" (order_lines.sales_order_line_id),
+    "header" (orders.sales_order_id), "doc" (from_doc_type SO + from_doc_no), or None (no link)."""
+    so = seed_so(db, customer_id=(so_cust or cust).id, demand_class=so_class, number=so_number,
+                 company_id=so_company)
+    so_line = seed_so_line_row(db, so=so, product_id=prod.id, qty=qty, total=total, warehouse_id=wh.id)
+    spec = line(prod.id, wh.id, qty, price=D("10"), total=D(str(total)))
+    header = None
+    if link == "line":
+        spec["sales_order_line_id"] = so_line.id
+    elif link == "header":
+        header = so.id
+    elif link == "doc":
+        spec["from_doc_type"], spec["from_doc_no"] = "SO", so.so_number
+    seed_do(db, customer_id=cust.id, order_date=day, source_book="db1", sales_order_id=header,
+            lines=[spec], number=number)
+    return so
+
+
+def _unlinked_do(db, cust, prod, wh, *, qty, total, day=date(2026, 8, 10)):
+    return seed_do(db, customer_id=cust.id, order_date=day, source_book="db1",
+                   lines=[line(prod.id, wh.id, qty, price=D("10"), total=D(str(total)))])
+
+
+def _qty_amount(body):
+    return body["total"]["qty"], money(body["total"]["amount"])
+
+
+def _channel_pair(db, *, segment="ZZT-RETAIL"):
+    """A customer whose segment says `segment`; a project SO line (qty 3, RM 300) and a retail SO line
+    (qty 5, RM 500), each delivered by its own DO linked on the DO line."""
+    seed_segment(db, code=segment)
+    cust = seed_customer(db, name="ZZT CH SDN BHD", segment_code=segment)
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
     wh = warehouse(db, company_id=DEFAULT_COMPANY_ID)
-    ids, qtys = [], {}
-    for i, seg in enumerate(segments, start=1):
-        c = seed_customer(db, name=f"ZZT CH{i} SDN BHD", segment_code=seg)
-        seed_do(db, customer_id=c.id, order_date=date(2026, 8, 10),
-                lines=[line(prod.id, wh.id, i, price=D("10"), total=D(i * 10))])
-        ids.append(c.id)
-        qtys[seg or f"none{i}"] = i
+    _linked_do(db, cust, prod, wh, so_class="project", qty=3, total="300.00")
+    _linked_do(db, cust, prod, wh, so_class="retail", qty=5, total="500.00")
     db.commit()
-    return ",".join(ids)
+    return cust, prod, wh
 
 
-def test_channel_is_shown_when_the_accounts_span_two_segment_classes(client, db):
+def test_src1_line_link_gives_the_channel_not_the_customer_segment(client, db):
+    """AC-SRC-1/2: the customer's segment says retail, yet the project SO's line is Project."""
+    cust, _p, _w = _channel_pair(db, segment="ZZT-RETAIL")
+    project = _get(client, customer_ids=cust.id, channel="project")
+    assert _qty_amount(project) == (3, D("300.00")), project
+    dealer = _get(client, customer_ids=cust.id, channel="dealer")
+    assert _qty_amount(dealer) == (5, D("500.00")), dealer
+
+
+def test_src1_the_opposite_segment_changes_nothing(client, db):
+    """AC-SRC-1: a project-ish segment on the customer does not turn retail SO lines into Project."""
+    cust, _p, _w = _channel_pair(db, segment="ZZT-PROJECT-X")
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="project")) == (3, D("300.00"))
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="dealer")) == (5, D("500.00"))
+
+
+def test_src1_header_link_resolves_the_channel_when_the_line_link_is_empty(client, db):
+    cust, prod, wh = _world(db)
+    _linked_do(db, cust, prod, wh, so_class="project", qty=2, total="20.00", link="header")
+    _linked_do(db, cust, prod, wh, so_class="retail", qty=4, total="40.00", link="header")
+    db.commit()
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="project")) == (2, D("20.00"))
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="dealer")) == (4, D("40.00"))
+
+
+def test_src1_doc_number_link_resolves_the_channel_within_the_company(client, db):
+    cust, prod, wh = _world(db)
+    _linked_do(db, cust, prod, wh, so_class="project", qty=2, total="20.00", link="doc")
+    _linked_do(db, cust, prod, wh, so_class="retail", qty=4, total="40.00", link="doc")
+    db.commit()
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="project")) == (2, D("20.00"))
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="dealer")) == (4, D("40.00"))
+
+
+def test_src1_doc_number_of_another_company_does_not_resolve(client, db):
+    """The same SO number exists in Mocha (project) and Sorento (retail): the Sorento DO reads
+    Sorento's, so it is Dealer and not Project."""
+    mocha = seed_mocha(db)
+    cust, prod, wh = _world(db)
+    mocha_cust = seed_customer(db, name=unique_code("MochaCust"), company_id=mocha.id)
+    number = unique_code("SOX")
+    seed_so(db, customer_id=mocha_cust.id, demand_class="project", company_id=mocha.id, number=number)
+    seed_so(db, customer_id=cust.id, demand_class="retail", number=number)
+    seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 10), source_book="db1",
+            lines=[line(prod.id, wh.id, 7, price=D("10"), total=D("70.00"),
+                        from_doc_type="SO", from_doc_no=number)])
+    db.commit()
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="project")) == (0, D("0.00"))
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="dealer")) == (7, D("70.00"))
+
+
+def test_src1_doc_number_only_in_another_company_is_in_no_channel(client, db):
+    mocha = seed_mocha(db)
+    cust, prod, wh = _world(db)
+    mocha_cust = seed_customer(db, name=unique_code("MochaCust"), company_id=mocha.id)
+    so = seed_so(db, customer_id=mocha_cust.id, demand_class="project", company_id=mocha.id,
+                 number=unique_code("SOY"))
+    seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 10), source_book="db1",
+            lines=[line(prod.id, wh.id, 7, price=D("10"), total=D("70.00"),
+                        from_doc_type="SO", from_doc_no=so.so_number)])
+    db.commit()
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="project")) == (0, D("0.00"))
+    assert _qty_amount(_get(client, customer_ids=cust.id)) == (7, D("70.00"))
+
+
+def test_src4_no_channel_asked_means_no_channel_echo_for_any_customer_set(client, db):
+    """Accounts spanning two segment classes and two SO types: channel None, channel_shown False."""
     seed_segment(db, code="ZZT-RETAIL")
     seed_segment(db, code="ZZT-PROJECT-X")
-    ids = _channel_world(db, segments=["ZZT-RETAIL", "ZZT-PROJECT-X"])
-    body = _get(client, customer_ids=ids)
-    assert body["channel_shown"] is True, body
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID)
+    ids = []
+    for i, (seg, cls) in enumerate((("ZZT-RETAIL", "retail"), ("ZZT-PROJECT-X", "project")), start=1):
+        c = seed_customer(db, name=f"ZZT SPAN{i} SDN BHD", segment_code=seg)
+        _linked_do(db, c, prod, wh, so_class=cls, qty=i, total=str(i * 10))
+        ids.append(c.id)
+    db.commit()
+    body = _get(client, customer_ids=",".join(ids))
     assert body["customer_count"] == 2, body
-
-
-def test_channel_is_not_shown_for_one_segment_class(client, db):
-    """Two accounts, both retail (different segment codes, same class): one class, no line."""
-    seed_segment(db, code="ZZT-RETAIL-1")
-    seed_segment(db, code="ZZT-RETAIL-2")
-    ids = _channel_world(db, segments=["ZZT-RETAIL-1", "ZZT-RETAIL-2"])
-    assert _get(client, customer_ids=ids)["channel_shown"] is False
-
-
-def test_an_account_with_no_segment_adds_no_class(client, db):
-    seed_segment(db, code="ZZT-RETAIL")
-    ids = _channel_world(db, segments=["ZZT-RETAIL", None])
-    assert _get(client, customer_ids=ids)["channel_shown"] is False
-
-
-def test_a_project_filter_keeps_project_and_unsegmented_accounts_and_drops_retail(client, db):
-    seed_segment(db, code="ZZT-RETAIL")
-    seed_segment(db, code="ZZT-CONTRACT-Y")
-    # qty 1 retail, qty 2 contract (= Project), qty 3 no segment
-    ids = _channel_world(db, segments=["ZZT-RETAIL", "ZZT-CONTRACT-Y", None])
-    body = _get(client, customer_ids=ids, channel="project")
-    assert body["total"]["qty"] == 2 + 3, body
-    assert body["channel_shown"] is True, body
-
-
-def test_a_retail_filter_keeps_retail_and_unsegmented_accounts(client, db):
-    seed_segment(db, code="ZZT-RETAIL")
-    seed_segment(db, code="ZZT-PROJECT-X")
-    ids = _channel_world(db, segments=["ZZT-RETAIL", "ZZT-PROJECT-X", None])
-    body = _get(client, customer_ids=ids, channel="dealer")
-    assert body["total"]["qty"] == 1 + 3, body
-
-
-def test_a_channel_filter_the_accounts_do_not_span_is_ignored(client, db):
-    """AC-SR-26: every account is retail, the ask says "project only": the filter is ignored
-    (it would otherwise answer "No sales found" for an account that has plenty), and no Channel
-    line is printed."""
-    seed_segment(db, code="ZZT-RETAIL-1")
-    seed_segment(db, code="ZZT-RETAIL-2")
-    ids = _channel_world(db, segments=["ZZT-RETAIL-1", "ZZT-RETAIL-2"])
-    body = _get(client, customer_ids=ids, channel="project")
-    assert body["total"]["qty"] == 1 + 2, body
+    assert body["channel"] is None, body
     assert body["channel_shown"] is False, body
+
+
+def test_src1_doc_type_other_than_so_does_not_resolve(client, db):
+    cust, prod, wh = _world(db)
+    so = seed_so(db, customer_id=cust.id, demand_class="project")
+    seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 10), source_book="db1",
+            lines=[line(prod.id, wh.id, 7, price=D("10"), total=D("70.00"),
+                        from_doc_type="QT", from_doc_no=so.so_number)])
+    db.commit()
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="project")) == (0, D("0.00"))
+
+
+def test_src1_the_line_link_beats_the_doc_number(client, db):
+    """Precedence: line link names a project SO, from_doc_no names a retail SO: Project."""
+    cust, prod, wh = _world(db)
+    project_so = seed_so(db, customer_id=cust.id, demand_class="project")
+    project_line = seed_so_line_row(db, so=project_so, product_id=prod.id, qty=6, total="60.00",
+                                    warehouse_id=wh.id)
+    retail_so = seed_so(db, customer_id=cust.id, demand_class="retail")
+    seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 10), source_book="db1",
+            lines=[line(prod.id, wh.id, 6, price=D("10"), total=D("60.00"),
+                        sales_order_line_id=project_line.id,
+                        from_doc_type="SO", from_doc_no=retail_so.so_number)])
+    db.commit()
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="project")) == (6, D("60.00"))
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="dealer")) == (0, D("0.00"))
+
+
+def test_src1_the_line_link_beats_the_header_link(client, db):
+    """(a) Header names a retail SO, the line link a project SO: Project."""
+    cust, prod, wh = _world(db)
+    retail_so = seed_so(db, customer_id=cust.id, demand_class="retail")
+    project_so = seed_so(db, customer_id=cust.id, demand_class="project")
+    project_line = seed_so_line_row(db, so=project_so, product_id=prod.id, qty=6, total="60.00",
+                                    warehouse_id=wh.id)
+    seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 10), source_book="db1",
+            sales_order_id=retail_so.id,
+            lines=[line(prod.id, wh.id, 6, price=D("10"), total=D("60.00"),
+                        sales_order_line_id=project_line.id)])
+    db.commit()
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="project")) == (6, D("60.00"))
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="dealer")) == (0, D("0.00"))
+
+
+def test_src1_the_header_link_beats_the_doc_number(client, db):
+    """(b) Header names a project SO, from_doc_no a retail SO, no line link: Project."""
+    cust, prod, wh = _world(db)
+    project_so = seed_so(db, customer_id=cust.id, demand_class="project")
+    retail_so = seed_so(db, customer_id=cust.id, demand_class="retail")
+    seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 10), source_book="db1",
+            sales_order_id=project_so.id,
+            lines=[line(prod.id, wh.id, 6, price=D("10"), total=D("60.00"),
+                        from_doc_type="SO", from_doc_no=retail_so.so_number)])
+    db.commit()
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="project")) == (6, D("60.00"))
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="dealer")) == (0, D("0.00"))
+
+
+def test_a_customer_query_matching_nobody_is_an_empty_scope_not_every_customer(client, db):
+    cust, prod, wh = _world(db)
+    _linked_do(db, cust, prod, wh, so_class="project", qty=4, total="40.00")
+    db.commit()
+    for extra in ({}, {"channel": "project"}):
+        body = _get(client, product_code=prod.product_code, customer_query="ZZT NOBODY MATCHES", **extra)
+        assert _qty_amount(body) == (0, D("0.00")), (extra, body)
+
+
+def test_src2_an_so_with_no_class_is_in_no_channel_but_counts_without_one(client, db):
+    cust, prod, wh = _world(db)
+    _linked_do(db, cust, prod, wh, so_class=None, qty=9, total="90.00")
+    db.commit()
+    assert _qty_amount(_get(client, customer_ids=cust.id)) == (9, D("90.00"))
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="project")) == (0, D("0.00"))
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="dealer")) == (0, D("0.00"))
+
+
+def test_src2_an_account_with_no_segment_is_not_in_every_channel(client, db):
+    cust, prod, wh = _world(db)  # no market segment
+    _linked_do(db, cust, prod, wh, so_class="retail", qty=4, total="40.00")
+    db.commit()
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="project")) == (0, D("0.00"))
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="dealer")) == (4, D("40.00"))
+
+
+def test_src4_a_named_customer_with_one_so_type_still_gets_the_channel_applied(client, db):
+    """AC-SRC-4: only retail SO lines; ask Project: total 0, the asked channel echoed and shown.
+    Ask Dealer: its total, channel shown."""
+    cust, prod, wh = _world(db)
+    _linked_do(db, cust, prod, wh, so_class="retail", qty=4, total="40.00")
+    _linked_do(db, cust, prod, wh, so_class="retail", qty=1, total="10.00")
+    db.commit()
+    project = _get(client, customer_ids=cust.id, channel="project")
+    assert _qty_amount(project) == (0, D("0.00")), project
+    assert project["channel"] == "project", project
+    assert project["channel_shown"] is True, project
+    dealer = _get(client, customer_ids=cust.id, channel="dealer")
+    assert _qty_amount(dealer) == (5, D("50.00")), dealer
+    assert dealer["channel"] == "dealer", dealer
+    assert dealer["channel_shown"] is True, dealer
+
+
+def test_src3_a_legacy_do_with_no_links_is_in_no_channel_but_counts_without_one(client, db):
+    """AC-SRC-3: legacy import (source_book NULL), no SO link, project-segment customer."""
+    seed_segment(db, code="ZZT-PROJECT-L")
+    cust = seed_customer(db, name="ZZT LEGACY SDN BHD", segment_code="ZZT-PROJECT-L")
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID)
+    seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 10), source_book=None,
+            lines=[line(prod.id, wh.id, 6, price=D("10"), total=D("60.00"))])
+    db.commit()
+    assert _qty_amount(_get(client, customer_ids=cust.id)) == (6, D("60.00"))
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="project")) == (0, D("0.00"))
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="dealer")) == (0, D("0.00"))
+
+
+def test_src3_an_autocount_direct_do_is_in_no_channel(client, db):
+    """AC-SRC-3: db1 DO, from_doc_type NULL, no link, project-segment customer."""
+    seed_segment(db, code="ZZT-PROJECT-D")
+    cust = seed_customer(db, name="ZZT DIRECT SDN BHD", segment_code="ZZT-PROJECT-D")
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID)
+    _unlinked_do(db, cust, prod, wh, qty=8, total="80.00")
+    db.commit()
+    assert _qty_amount(_get(client, customer_ids=cust.id)) == (8, D("80.00"))
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="project")) == (0, D("0.00"))
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="dealer")) == (0, D("0.00"))
+
+
+def test_src3_a_from_doc_no_naming_no_existing_so_is_in_no_channel(client, db):
+    cust, prod, wh = _world(db)
+    seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 10), source_book="db1",
+            lines=[line(prod.id, wh.id, 3, price=D("10"), total=D("30.00"),
+                        from_doc_type="SO", from_doc_no=unique_code("SONONE"))])
+    db.commit()
+    assert _qty_amount(_get(client, customer_ids=cust.id)) == (3, D("30.00"))
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="project")) == (0, D("0.00"))
+    assert _qty_amount(_get(client, customer_ids=cust.id, channel="dealer")) == (0, D("0.00"))
+
+
+def test_src7_no_channel_asked_counts_every_line_linked_or_not(client, db):
+    cust, prod, wh = _world(db)
+    _linked_do(db, cust, prod, wh, so_class="project", qty=1, total="10.00", link="line")
+    _linked_do(db, cust, prod, wh, so_class="retail", qty=2, total="20.00", link="header")
+    _linked_do(db, cust, prod, wh, so_class=None, qty=4, total="40.00", link="doc")
+    _unlinked_do(db, cust, prod, wh, qty=8, total="80.00")
+    db.commit()
+    assert _qty_amount(_get(client, customer_ids=cust.id)) == (15, D("150.00"))
+
+
+def test_src5_the_do_date_rules_not_the_so_line_date(client, db):
+    """DO dated in Sep for an SO line required in Aug: window Sep counts it, window Aug does not."""
+    cust, prod, wh = _world(db)
+    so = seed_so(db, customer_id=cust.id, demand_class="project")
+    so_line = seed_so_line_row(db, so=so, product_id=prod.id, qty=3, total="30.00", warehouse_id=wh.id,
+                               required_date=date(2026, 8, 20))
+    seed_do(db, customer_id=cust.id, order_date=date(2026, 9, 5), source_book="db1",
+            lines=[line(prod.id, wh.id, 3, price=D("10"), total=D("30.00"), sales_order_line_id=so_line.id)])
+    db.commit()
+    sep = _get(client, customer_ids=cust.id, channel="project", date_from="2026-09-01", date_to="2026-09-30")
+    assert _qty_amount(sep) == (3, D("30.00")), sep
+    aug = _get(client, customer_ids=cust.id, channel="project", date_from="2026-08-01", date_to="2026-08-31")
+    assert _qty_amount(aug) == (0, D("0.00")), aug
+
+
+def test_src6_the_sales_report_agrees_with_the_report_ask_ranking(client, db):
+    """AC-SRC-6: same product, period and channel: the sales report's totals equal the delivered
+    ranking's, for Project and for Dealer."""
+    from tests.test_report_ask_route import _full, _ok as ask_ok
+
+    cust = seed_customer(db, name="ZZT AGREE SDN BHD")
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZTAGR-1")
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID)
+    sep = date(2026, 9, 10)
+    for cls, qty, total in (("project", 3, "300.00"), ("retail", 5, "500.00")):
+        so = seed_so(db, customer_id=cust.id, demand_class=cls)
+        so_line = seed_so_line_row(db, so=so, product_id=prod.id, qty=qty, total=total,
+                                   warehouse_id=wh.id, delivered=qty, required_date=sep)
+        seed_do(db, customer_id=cust.id, order_date=sep, source_book="db1",
+                lines=[line(prod.id, wh.id, qty, price=D("10"), total=D(total),
+                            sales_order_line_id=so_line.id)])
+    db.commit()
+    contact = _full(db)
+
+    period = {"date_from": "2026-09-01", "date_to": "2026-09-30"}
+    for channel, expected in (("project", (3, D("300.00"))), ("dealer", (5, D("500.00")))):
+        report = _get(client, product_code="ZZTAGR-1", channel=channel, **period)
+        ranking = ask_ok(client, contact, group_by="product", top_n=5, basis="delivered", channel=channel,
+                         product_code="ZZTAGR-1", **period)
+        assert _qty_amount(ranking) == expected, ranking
+        assert _qty_amount(report) == _qty_amount(ranking), (channel, report, ranking)
 
 
 # ============================================================ AC-SR-23: the body
