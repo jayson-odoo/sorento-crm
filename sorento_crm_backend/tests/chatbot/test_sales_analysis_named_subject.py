@@ -273,8 +273,11 @@ def _picker_turn_1(order_status: str, confident: bool, hint: str = "customer") -
 
 def _picker_then_pick(chat, services, order_status: str, kind: str, confident: bool, tag: str):
     hint = "product" if kind == "kind_pick" else "customer"
-    chat(_picker_turn_1(order_status, confident, hint), "dealer sales for zz demo", f"ZZT-nsub-{tag}-1",
-         resolve_services=services())
+    _r1, captured1 = chat(_picker_turn_1(order_status, confident, hint), "dealer sales for zz demo",
+                          f"ZZT-nsub-{tag}-1", resolve_services=services())
+    # The asking turn itself: a subject still to be picked never runs the company analysis
+    # (on round 1 the did-you-mean turn ran it beside the picker: the whole company's figure).
+    assert _calls(captured1, ANALYSIS) == [], f"the {kind} asking turn never runs the company analysis: {captured1}"
     assert (chat.session().get("open_question") or {}).get("kind") == kind, (
         f"setup: the {kind} must be armed", chat.session().get("open_question"),
     )
