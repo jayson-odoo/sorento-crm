@@ -344,7 +344,12 @@ class TestANewAskDropsTheHeldChannel:
 class TestTheLiveSequenceThroughTheEngine:
     def test_r2_step_6_runs_the_sales_report_over_every_channel(self, chat):
         _result5, captured5 = chat(_step_5_qf(), "srt102-rg dealer sales may 2026", "ZZT-nadc-r2-step-5")
-        assert [name for name, _ in captured5] == ["crm_sales_analysis"], captured5
+        # Round 2: a sales_analysis parse naming a product this message runs the sales report.
+        assert [name for name, _ in captured5] == ["crm_sales_report"], captured5
+        args5 = captured5[0][1]
+        assert args5.get("product_code") == "SRT102-RG", args5
+        assert args5.get("channel") == "dealer", args5
+        assert args5.get("date_from") == "2026-05-01" and args5.get("date_to") == "2026-05-31", args5
         assert (chat.session().get("focus") or {}).get("sales_channel") == "dealer", (
             "setup: step 5 must hold the dealer channel", chat.session().get("focus"),
         )
