@@ -1,6 +1,6 @@
 # Console cases for chatbot outstanding report owner rounds R15-R24.
 #
-# `documentation/plans/chatbot/PLAN-chatbot-outstanding-report.md` S4 / `chatbot-outstanding-report-acceptance-criteria.md`
+# `documentation/plans/_archive/chatbot/PLAN-chatbot-outstanding-report.md` S4 / `chatbot-outstanding-report-acceptance-criteria.md`
 # owner design rulings, final grading run 14 Sep 2026.
 #
 # NOT collected by pytest. Run with `scripts/chatbot_console_check.py` against the lane

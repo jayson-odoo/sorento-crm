@@ -1,7 +1,7 @@
 """Phase 2 RED tests - `GET /api/v1/order-management/outstanding-report`.
 
-`documentation/plans/chatbot/PLAN-chatbot-outstanding-report.md` (Backend contract, Slice
-S2); `documentation/plans/chatbot/chatbot-outstanding-report-acceptance-criteria.md`
+`documentation/plans/_archive/chatbot/PLAN-chatbot-outstanding-report.md` (Backend contract, Slice
+S2); `documentation/plans/_archive/chatbot/chatbot-outstanding-report-acceptance-criteria.md`
 AC-1110 to AC-1119.
 
 Written BEFORE the route/service/schema exist (Phase 2, test-first). Every test hits the
