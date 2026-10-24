@@ -202,7 +202,7 @@ def _llm_choice(db: Session, row: Any):
         # None unless a model is chosen, so a turn without one makes main's exact calls.
         return choice if choice.model else None
     except Exception:  # noqa: BLE001 - an unreadable choice must not cost the turn
-        logger.warning("chatbot: contact model choice unreadable", exc_info=True)
+        logger.warning("chatbot: contact model choice unreadable", exc_info=False)
         return None
 
 

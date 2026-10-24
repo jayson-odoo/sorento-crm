@@ -19,6 +19,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { providerModelLabel } from '@/lib/ai/modelOptions';
+import type { ProviderModel } from '@/components/common/ProviderModelSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { ProviderModelSelect } from '@/components/common/ProviderModelSelect';
 import {
@@ -327,6 +328,7 @@ interface BodyProps {
   catalog: SettingsCatalog;
   /** Set once a Save found a wrong number; the sentences then follow the typing. */
   showNumberErrors?: boolean;
+  canEditAiModel?: boolean;
 }
 
 function GroupBody({
@@ -336,8 +338,8 @@ function GroupBody({
   editing,
   catalog,
   showNumberErrors,
+  canEditAiModel,
 }: BodyProps & { id: string }) {
-  const canEditAiModel = useHasPermission('system.ai_assistant_settings.edit');
   switch (id) {
     case 'access_types':
     case 'companies':
@@ -395,6 +397,7 @@ function GroupBody({
     case 'chatbot': {
       const c = (s.chatbot ?? {}) as Record<string, unknown>;
       const upd = (k: string, v: unknown) => set('chatbot', put(c, k, v));
+      const llm = c.llm as ProviderModel | undefined;
       return (
         <div>
           {CHATBOT_BOOLS.map(([k, label]) => (
@@ -422,16 +425,13 @@ function GroupBody({
             <Labelled label="AI model">
               {editing ? (
                 <ProviderModelSelect
-                  value={(c.llm as { provider: string; model: string } | undefined) ?? null}
+                  value={llm ?? null}
                   onChange={(next) => upd('llm', next ?? undefined)}
-                  disabled={!canEditAiModel}
+                  disabled={canEditAiModel === false}
                 />
               ) : (
                 <span className="text-sm">
-                  {providerModelLabel(
-                    (c.llm as { provider: string; model: string }).provider,
-                    (c.llm as { provider: string; model: string }).model,
-                  )}
+                  {llm ? providerModelLabel(llm.provider, llm.model) : null}
                 </span>
               )}
             </Labelled>
@@ -836,6 +836,7 @@ export default function ContactTagSettings({
   } = useSettingsCatalog();
   const s: S = editing ? draft : (tag.settings ?? {});
   const save = useSaveTagSettings(tag.id, onDone);
+  const canEditAiModel = useHasPermission('system.ai_assistant_settings.edit');
   const notVisible = (id: string) =>
     !!loadedCatalog &&
     NEEDS_CATALOG[id] !== undefined &&
@@ -925,6 +926,7 @@ export default function ContactTagSettings({
                       editing={editing}
                       catalog={catalog}
                       showNumberErrors={showNumberErrors}
+                      canEditAiModel={canEditAiModel}
                     />
                   )}
                 </div>

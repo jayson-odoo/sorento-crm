@@ -1,6 +1,6 @@
 """MODEL-PER-CONTACT slice 2 (backend, red): tag `llm` leaf, contact override, resolver, tag panel.
 
-UAC AC-M-1, 3, 4, 5, 6, 7, 8 (resolver half), 9, 14. Contract: `contact_model.ContactLLMChoice` /
+UAC AC-M-1, 3, 4, 5, 6, 7, 8 (resolver half), 9, 14. Contract: `contact_llm_choice.ContactLLMChoice` /
 `contact_llm_choice(db, contact)`; tag leaf `settings.chatbot.llm = {provider, model}`; contact columns
 `chatbot_llm_provider` / `chatbot_llm_model`; `PUT /contacts/{id}/chatbot` field `llm`; contact read
 field `chatbot_llm = {provider, model, source, tags}`. Fixtures are the CONTACT-TAGS ones (private blank

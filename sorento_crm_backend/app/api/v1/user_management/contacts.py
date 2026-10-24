@@ -430,9 +430,9 @@ async def update_contact_chatbot(
 
     Guarded by the same `user_management.contacts.edit` the rest of the contact's
     editable surface is: this writes the stock-check and recall switches, which decide
-    what the chatbot will tell that contact.
+    what the chatbot will tell that contact. An `llm` field also needs
+    `system.ai_assistant_settings.edit`, since it spends AI quota.
     """
-    _ = current_user
     try:
         # The model spends AI quota: setting or clearing it needs the AI settings right too,
         # checked before anything is written.
@@ -471,7 +471,7 @@ async def update_contact_chatbot(
             contact.regions = [r for r in ("west", "east") if r in body.regions]
         if "llm" in body.model_fields_set:
             contact.chatbot_llm_provider = body.llm.provider if body.llm else None
-            contact.chatbot_llm_model = body.llm.model.strip() if body.llm else None
+            contact.chatbot_llm_model = body.llm.model if body.llm else None
         # `get_db` never commits (it only closes), so a flush here rolled back on
         # return: PUT 200, row untouched. Main's convention is the commit in the route.
         db.commit()
