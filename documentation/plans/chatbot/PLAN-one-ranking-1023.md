@@ -63,6 +63,18 @@ nowhere by the sales ranking, so an item ask lands on the catalogue line (T1-T3)
   owner rulings 24 Oct 08:10 (ask a40448868): (A) a1 'Top sales for X in 2026' with no 'by' stays a TOTAL (no axis question,
   no default axis); (B) b2 row N of an agent / customer ranking opens that row's detail (agent -> its customers, customer ->
   its products, plus months; period / product / basis held), the item pick rule (ed44bae38d red, f9aaca0573).
+- R6 (M, crew (A') (b) 24 Oct ~11:00): ruling A in code. The parser gets ONE new field `axis_words`: the verbatim words of the
+  CURRENT message that name what is ranked or grouped (a "by ..." phrase: "by salesppl", "ikut pelanggan", "按客户"; or the ranked
+  noun: "salesppl" in "top 5 salesppl", "items" in "top 30 selling items"), null when the message names no axis ("Top sales for
+  CB6635 in 2026"). ARCHITECTURE: layer = the parser contract (schema + prompt v104) and one reader in the report ask lane
+  (lanes/business/report_ask.py, where group_by is taken from a verdict); no word list in code, the parser decides what an axis
+  word is. Rule: a verdict whose `axis_words` key is PRESENT and null names no axis, so its group_by is not typed (a fresh ask is
+  a TOTAL; a refine changes no axis); a verdict WITHOUT the key (v92 production and every older version) behaves exactly as
+  today. Classes fixed: axis-less top / best / tertinggi / 最高 sales asks on any model; a guessed axis on a refine. Also in v104:
+  (B') "<channel> is channel" / "only project" under a held ranking is a channel refine (prompt + gold; crm_sales_report's own
+  channel basis, market segment vs SO type, is the owner's separate question, not changed here); R-P3-16: self_reference only from
+  a first-person word in the current message. Measure: gpt-5.4-mini first (checkpointed x1, x3 only if close), then ONE
+  gemini-3.5-flash-lite x1 run on the org key under crew/state/eval/gemini-org-key-ledger.md.
 - Also queued: owner turn 045fb9bb ('Top sales for cb6635 in 2026, by salesppl' -> monthly report), v101 lines 53 / 297 / 310.
 
 ## Access differences the merge makes (Q3)
