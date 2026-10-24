@@ -47,7 +47,7 @@ def _fresh_caches():
 
 
 def _choice(source="tag", provider="gemini", model=CHOICE_MODEL, tags=("ZZT tag",)):
-    from app.services.chatbot.contact_model import ContactLLMChoice
+    from app.services.contact_llm_choice import ContactLLMChoice
 
     return ContactLLMChoice(provider=provider, model=model, source=source, tags=list(tags))
 

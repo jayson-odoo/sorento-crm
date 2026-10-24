@@ -821,7 +821,7 @@ class ContactService:
     def _llm_choice_dict(contact: RespondContact, db: Optional[Session]) -> Optional[dict]:
         if db is None:
             return None
-        from app.services.chatbot.contact_model import contact_llm_choice
+        from app.services.contact_llm_choice import contact_llm_choice
 
         choice = contact_llm_choice(db, contact)
         return {"provider": choice.provider, "model": choice.model, "source": choice.source, "tags": choice.tags}

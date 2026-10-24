@@ -282,7 +282,7 @@ def resolve_clarifier_config(
     config = AIAssistantConfigService(db).get()
     if config is None:
         raise ClarifierError("AI assistant configuration is not set")
-    from app.services.chatbot.contact_model import apply_choice
+    from app.services.contact_llm_choice import apply_choice
 
     provider, model, api_key, _source = apply_choice(
         llm_choice, config, provider_override or config.provider, model_override or DEFAULT_MODEL,

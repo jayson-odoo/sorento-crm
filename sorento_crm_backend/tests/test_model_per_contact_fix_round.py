@@ -97,7 +97,7 @@ def test_b2_the_resolve_route_hands_the_tagged_contacts_choice_to_the_code_reade
 
 
 def test_b3_a_failing_tag_read_does_not_fail_the_route(resolve_client, db, with_ai, seen, monkeypatch):
-    from app.services.chatbot import contact_model
+    from app.services import contact_llm_choice as contact_model
 
     def boom(*a, **k):
         raise RuntimeError("zzt tag read broke")

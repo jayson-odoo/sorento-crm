@@ -3423,7 +3423,7 @@ def resolve_reference_post(
         # Best effort: a failed read costs the model choice, never the resolve.
         try:
             from app.models.access import RespondContact
-            from app.services.chatbot.contact_model import contact_llm_choice
+            from app.services.contact_llm_choice import contact_llm_choice
 
             with db.begin_nested():
                 asking = db.get(RespondContact, asking_id)

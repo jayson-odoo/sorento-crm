@@ -30,7 +30,7 @@ def _llm_tag(client, db, llm=None, name=None, **extra_chatbot):
 
 
 def _choice(db, contact):
-    from app.services.chatbot.contact_model import contact_llm_choice
+    from app.services.contact_llm_choice import contact_llm_choice
 
     db.expire_all()
     return contact_llm_choice(db, contact)

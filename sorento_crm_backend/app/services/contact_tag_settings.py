@@ -15,7 +15,7 @@ from typing import Any, Callable, Iterable, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.services.chatbot.contact_model import MODEL_NAME_RE
+from app.services.contact_llm_choice import MODEL_NAME_RE
 from app.services.error_handler import AppException, handle_unprocessable
 
 AI_SETTINGS_EDIT = "system.ai_assistant_settings.edit"
@@ -883,7 +883,7 @@ def evaluate(
                 current = reader.current(cid, section, key, cat)
                 differs = current != expected
             if (section, key) == ("chatbot", "llm"):
-                # Read live each turn (contact_model), never applied: it cannot differ.
+                # Read live each turn (contact_llm_choice), never applied: it cannot differ.
                 differs = False
                 current = current if current is not None else expected
             blocked = None

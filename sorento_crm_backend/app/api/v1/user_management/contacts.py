@@ -364,7 +364,7 @@ class ContactChatbotLLM(BaseModel):
     @field_validator("model")
     @classmethod
     def _model_name(cls, v: str) -> str:
-        from app.services.chatbot.contact_model import MODEL_NAME_RE
+        from app.services.contact_llm_choice import MODEL_NAME_RE
 
         if not MODEL_NAME_RE.fullmatch(v):
             raise ValueError("model must be 1 to 100 letters, digits or . _ : -")

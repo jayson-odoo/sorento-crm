@@ -192,7 +192,7 @@ def _llm_choice(db: Session, row: Any):
     try:
         from types import SimpleNamespace
 
-        from app.services.chatbot.contact_model import contact_llm_choice
+        from app.services.contact_llm_choice import contact_llm_choice
 
         # Under a SAVEPOINT: a failed SELECT must not abort the turn's transaction.
         with db.begin_nested():

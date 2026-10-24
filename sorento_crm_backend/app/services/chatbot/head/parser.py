@@ -910,7 +910,7 @@ def resolve_config(
     config = AIAssistantConfigService(db).get()
     if config is None:
         raise ParserError("AI assistant configuration is not set")
-    from app.services.chatbot.contact_model import apply_choice
+    from app.services.contact_llm_choice import apply_choice
 
     provider, model, api_key, model_source = apply_choice(
         llm_choice, config, provider_override or config.provider, model_override or config.model,

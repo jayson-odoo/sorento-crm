@@ -249,7 +249,7 @@ def _resolve_provider(db: Session, llm_choice=None):
         provider_name, model_override = (cfg.provider if cfg else "openai") or "openai", own_model or parser_model
     model_name = resolve_model(cfg, provider_name, model_override)
     # MODEL-PER-CONTACT: the contact's choice (override or tag) sits above all three rungs.
-    from app.services.chatbot.contact_model import apply_choice
+    from app.services.contact_llm_choice import apply_choice
 
     provider_name, model_name, api_key, _source = apply_choice(
         llm_choice, cfg, provider_name, model_name, model_from_label=False

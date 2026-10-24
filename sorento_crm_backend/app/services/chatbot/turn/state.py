@@ -244,7 +244,7 @@ class Profile:
     # PHOTO-SEND-CAP round 2 (owner, 9 Oct 2026): `respond_contacts.chatbot_files_as_links`,
     # the A/B switch. Default OFF: an unresolved contact gets files as attachments (today).
     files_as_links: bool = False
-    # MODEL-PER-CONTACT: the contact's override or tag model (`chatbot.contact_model`), None
+    # MODEL-PER-CONTACT: the contact's override or tag model (`contact_llm_choice`), None
     # when nothing is set or unreadable. Read live on every turn, never copied.
     llm_choice: Any = None
 
