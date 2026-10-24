@@ -1,6 +1,8 @@
 # PLAN: the chatbot sales report splits by channel the way the ranking does (SALES-REPORT-CHANNEL)
 
-Status: Plan, behaviour card filed to crew 24 Oct 2026, waiting on owner answers Q1 to Q3. Track: M (owner-visible
+Status: Build (red tests for the linked-DO path). Card `sales-report-channel-behaviour-card.md` filed 24 Oct 2026; crew
+answered Q2 (a) keep DO date and Q3 (a) always apply the channel; Q1 (DO lines with no SO) with the owner, measured by
+`sales-report-channel-prod-link-share.sql`. Track: M (owner-visible
 numbers change), LEAD pattern. No migration, no auth change.
 
 UAC: `sales-report-channel-24oct-acceptance-criteria.md` (alongside).
