@@ -94,6 +94,38 @@ re-inject all arrive here). **Sender** = the workspace's thin n8n chatbot sender
   gunicorn grace (`graceful_timeout`) and the deploy script's stop timeout are both above the
   longest turn.
 
+## Review round 1 additions (reviewer + security-reviewer, 25 Oct)
+
+- **IQ-26** Every lane answers in queue mode exactly as in sync mode: casual / low-signal,
+  out of scope, escalation offer and escalation accept included (they close through the
+  delegated path today). No generic error reply because a row was queued.
+- **IQ-27** A turn gives way BEFORE any lane side effect it cannot undo (escalation's SLA row
+  and round-robin draw): a re-run after giving way writes them once.
+- **IQ-28** Shutdown starts at the signal: on SIGTERM drains stop taking rows at once, even
+  while long-lived connections (staff event streams) are still open; a drain waiting on a
+  photo read parks the row (back to queued, nothing written) instead of waiting, so the next
+  process continues it. Total shutdown stays inside gunicorn's grace.
+- **IQ-29** One answer per row even if the drain's Redis mutex is lost mid-turn (Redis restart,
+  key evicted): each claim is fenced on the row, the `sending` stamp and the done mark only
+  apply to the claim that owns the row, and a drain whose stamp matches nothing does not POST.
+- **IQ-30** Fairness: a contact with a long backlog does not hold a pool thread for it; each
+  drain step runs one row then yields, so other contacts' rows are answered in between. A
+  photo read not finished within `media_sync_wait_seconds` parks the row and frees the thread
+  (the contact's later rows still wait behind it; overall cap 10 minutes from the first read).
+  The sender POST's connect timeout is short (5 s); the read timeout stays 60 s.
+- **IQ-31** A failed respond.io contact lookup (takeover check) never answers: the row goes
+  back to queued and the contact backs off (growing delay, no hot loop).
+- **IQ-32** `/chat/turn` applies the structural gates before queueing: incoming messages only,
+  not from a staff / bot sender, WhatsApp only. (It stays authenticated by its API key; no
+  stale cut, so failover copies still queue.)
+- **IQ-33** A contact cannot pile up more than 200 queued rows: a further copy is not queued
+  and is logged as an error (a loop guard far above any human rate).
+- **IQ-34** A recovered row whose logged sender outcome is `ok` is marked done, not flagged.
+- **IQ-35** A photo read whose job row has made no progress for longer than its expected run
+  is treated as abandoned and read again once, without waiting for RQ's registry cleanup.
+- **IQ-36** The sweeper's query is served by an index (partial on queued / processing rows),
+  built without blocking writes; with mode off it costs nothing measurable.
+
 ## Retry and rollback
 
 - **IQ-22** Retry on a failed queued turn answers it once, even if the Retry copy arrives twice.
