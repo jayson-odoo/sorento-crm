@@ -84,7 +84,10 @@ nowhere by the sales ranking, so an item ask lands on the catalogue line (T1-T3)
   `_reply_fills.is_open` (:905-907) drops the parser's `measure` / `rank_by`; `route_args` sends none; the frame has no measure;
   the next new-axis hold (S6c :1108-1111) finds none and asks it again. Mini passed only because its next parse copied the measure
   from history (2edc7302). Fix in the answer path, as the first message path already does ("... by qty, delivered" sends a total its
-  measure): the typed measure settles the total's metric; the total's reply is unchanged.
+  measure): the typed measure settles the total's metric, ONLY when the reply also fills an owed field (it answers the question);
+  the total then lists that measure first ("Total 30 pcs, RM ...", presenters.py:3419), as the first message path does today.
+  Review (Opus, NOT READY at 2d992ec973): without that guard a reply carrying a measure became the answer and broke the swap
+  ("by salesppl, qty"), a fresh ask ("top 5 salesman by qty 2026") and compare_to ("vs last year, qty").
 - Also queued: owner turn 045fb9bb ('Top sales for cb6635 in 2026, by salesppl' -> monthly report), v101 lines 53 / 297 / 310.
 
 ## Access differences the merge makes (Q3)
