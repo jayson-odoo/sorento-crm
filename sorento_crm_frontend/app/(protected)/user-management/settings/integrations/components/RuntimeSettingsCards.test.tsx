@@ -286,6 +286,8 @@ describe('RuntimeSettingsCards', () => {
       fireEvent.change(screen.getByLabelText(LABEL), {
         target: { value: '01/07/2026' },
       });
+      // A typed date commits when the box is left (AC-G8, the shared DatePicker).
+      fireEvent.blur(screen.getByLabelText(LABEL));
       fireEvent.click(autocountSave());
       expect(mockMutate).toHaveBeenCalledWith(
         { do_assume_delivered_before: '2026-07-01' },

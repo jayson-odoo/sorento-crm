@@ -1,12 +1,30 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { PillOverflow, type PillItem } from '@/components/common/PillOverflow';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
+import { withAutoCount } from '../../_shared/lib/autoCountStock';
+import { GroupByMenu } from '@/components/common/group-by/GroupByMenu';
+import { groupByLevels } from '@/components/common/group-by/groupByLevels';
+import {
+  DEFAULT_STOCK_GROUP_LEVELS,
+  groupKeysOf,
+  prefixGroupKeys,
+  readStockGroupLevels,
+  STOCK_GROUP_OPTIONS,
+  STOCK_LINE_MEASURES,
+  stockGroupDimensions,
+  stockLinesOf,
+  writeStockGroupLevels,
+  type StockLine,
+} from '../../_shared/lib/stockGroupLines';
+import { formatDateInMalaysia } from '@/lib/helpers';
+import type { StockStatus } from '@/components/stock-status/stockStatus.types';
 import {
   availableForProject,
   availableForProjectOf,
@@ -19,6 +37,7 @@ import {
   type SupplyKind,
 } from '../../_shared/lib/supplyVocabulary';
 import { StockDocumentsPanel } from './StockDocumentsPanel';
+import { GroupRows, LineRows } from './CellStockTableGroups';
 import type {
   BoardCellLocation,
   BoardLocationWhere,
@@ -67,9 +86,6 @@ function writeStoredLocationWidth(px: number) {
     // localStorage disabled - the width still applies for this session.
   }
 }
-/** Wide enough for "Own location", which is the longest of the four tags. */
-const WHERE_COL = 'min-w-[104px]';
-
 /**
  * What a figure the server did not state renders as, which after AC-B2 is ONE row: the line
  * whose sales order names no location. A zero there would read as "that location is empty",
@@ -85,6 +101,7 @@ const EMPTY_TAKEN: Map<string, string> = new Map();
 const EMPTY_TAKEN_KINDS: Map<string, { kind: SupplyKind; qty: string }[]> =
   new Map();
 
+/** A section's subtotal label is still named by where its rows stand; no row carries the tag. */
 const WHERE_LABELS: Record<BoardLocationWhere, string> = {
   own: 'Own location',
   group: 'Group',
@@ -229,15 +246,22 @@ export interface CellStockTableProps {
   showGroupSubtotal?: boolean;
   /**
    * The stock position alone, for a reader with no order in hand (the quotation's stock chip):
-   * On hand, SO qty, SPO qty and Available, with no document chevrons. PO qty, Taken and
+   * On hand, SO qty, SPO qty, Available and PO qty, with no document chevrons. Taken and
    * Available for Project only mean something for an order being planned, and outside one they
    * read 0 or repeat Available.
    */
   stockOnly?: boolean;
+  /**
+   * AutoCount's Available Stock Status for the product (`GET /api/v1/inventory/stock-status`,
+   * STOCK-STATUS round 6). Given, the rows read AutoCount's On hand, SO qty, PO qty and SPO qty
+   * (`withAutoCount`), every location AutoCount holds joins the table, and one Incoming PL row
+   * sits under the Total. Absent (not read, or the read failed), the table is today's.
+   */
+  autoCount?: StockStatus | null;
 }
 
-/** The columns `stockOnly` keeps. */
-const STOCK_ONLY_COLUMNS = new Set(['on-hand', 'so', 'spo', 'available']);
+/** The columns `stockOnly` keeps; PO qty too, since the quotation's table reads AutoCount's. */
+const STOCK_ONLY_COLUMNS = new Set(['on-hand', 'so', 'spo', 'available', 'po']);
 
 /**
  * See the module doc above. Forwards a small imperative handle (`CellStockTableHandle`) so
@@ -250,7 +274,7 @@ export const CellStockTable = React.forwardRef<
   CellStockTableProps
 >(function CellStockTable(
   {
-    locations,
+    locations: serverLocations,
     groupNote,
     taken,
     takenKinds,
@@ -265,13 +289,30 @@ export const CellStockTable = React.forwardRef<
     badges,
     showGroupSubtotal = true,
     stockOnly = false,
+    autoCount = null,
   },
   ref,
 ) {
+  const locations = React.useMemo(
+    () => (autoCount ? withAutoCount(serverLocations, autoCount, poolSharePct) : serverLocations),
+    [serverLocations, autoCount, poolSharePct],
+  );
+  const [plOpen, setPlOpen] = React.useState(false);
+  /**
+   * STOCK-GROUPBY: the Group by levels, remembered per browser. Only a table with the AutoCount
+   * read groups; Location alone is today's table and takes none of the grouped branches below.
+   */
+  const [levels, setLevels] = React.useState<string[]>(readStockGroupLevels);
+  const grouped =
+    autoCount != null && !(levels.length === 1 && levels[0] === 'location');
+  /** Location first plus more levels: today's rows stay and open the next-level groups. */
+  const locationLed = grouped && levels[0] === 'location';
+  /** Groups carry a chevron column even where `stockOnly` drops it. */
+  const withChevron = !stockOnly || grouped;
   const numericColumns = stockOnly
     ? NUMERIC_COLUMNS.filter((column) => STOCK_ONLY_COLUMNS.has(column.key))
     : NUMERIC_COLUMNS;
-  const spanAll = (stockOnly ? 2 : 3) + numericColumns.length;
+  const spanAll = (withChevron ? 2 : 1) + numericColumns.length;
   const drawn = taken ?? EMPTY_TAKEN;
   const drawnKinds = takenKinds ?? EMPTY_TAKEN_KINDS;
   /**
@@ -355,6 +396,126 @@ export const CellStockTable = React.forwardRef<
    */
   const sections = React.useMemo(() => sectionsOf(locations), [locations]);
 
+  const [groupOpen, setGroupOpen] = React.useState<Record<string, boolean>>({});
+  const needle = (filterText ?? '').trim().toLowerCase();
+  const locationOrder = React.useMemo(
+    () => locations.map((row) => row.location).filter((code): code is string => Boolean(code)),
+    [locations],
+  );
+  const lines = React.useMemo(
+    () => (autoCount ? stockLinesOf(autoCount, locationOrder) : []),
+    [autoCount, locationOrder],
+  );
+  const dims = React.useMemo(() => {
+    const all = stockGroupDimensions(locationOrder);
+    return levels.map((id) => all[id]);
+  }, [levels, locationOrder]);
+  /** The body when Location is not first: the first level's groups (no levels: flat lines). */
+  const topGroups = React.useMemo(
+    () => (grouped && !locationLed ? groupByLevels(lines, dims, STOCK_LINE_MEASURES) : []),
+    [grouped, locationLed, lines, dims],
+  );
+  /** The next-level groups hanging under a location or set row, keys rooted at that row. */
+  const groupsUnder = React.useCallback(
+    (prefix: string, codes: readonly string[]) =>
+      prefixGroupKeys(
+        groupByLevels(
+          lines.filter((line) => codes.includes(line.location)),
+          dims.slice(1),
+          STOCK_LINE_MEASURES,
+        ),
+        `${prefix}/`,
+      ),
+    [lines, dims],
+  );
+  /** The dialog search: narrows the lines shown, never the counts or sums. */
+  const showLine = React.useCallback(
+    (line: StockLine) =>
+      !needle ||
+      [line.docNo, line.customer, line.supplier, line.agent].some((value) =>
+        value?.toLowerCase().includes(needle),
+      ),
+    [needle],
+  );
+  /** Groups (and location rows) holding a search match; open unless the reader chose otherwise. */
+  const searchOpen = React.useMemo(() => {
+    const open = new Set<string>();
+    if (!grouped || !needle) return open;
+    if (!locationLed) {
+      groupKeysOf(topGroups, showLine).forEach((key) => open.add(key));
+      return open;
+    }
+    for (const code of new Set(lines.filter(showLine).map((line) => line.location))) {
+      open.add(`location=${code}`);
+      groupKeysOf(groupsUnder(`location=${code}`, [code]), showLine).forEach((key) => open.add(key));
+    }
+    return open;
+  }, [grouped, needle, locationLed, topGroups, lines, showLine, groupsUnder]);
+  const locationsWithLines = React.useMemo(
+    () => new Set(lines.map((line) => line.location)),
+    [lines],
+  );
+  const isGroupOpen = (key: string) => groupOpen[key] ?? searchOpen.has(key);
+  const needleRef = React.useRef(needle);
+  React.useEffect(() => {
+    // A new search starts from what it finds, not from what the last one left open.
+    if (needleRef.current === needle) return;
+    needleRef.current = needle;
+    setGroupOpen({});
+    // A location row the reader closed (or Collapse all closed) opens again when it holds a match.
+    if (locationLed) {
+      setExpanded((current) =>
+        Object.fromEntries(
+          Object.entries(current).filter(([key]) => !searchOpen.has(`location=${key}`)),
+        ),
+      );
+    }
+  }, [needle, locationLed, searchOpen]);
+
+  const openableRows = sections
+    .flatMap((section) => section.rows)
+    .filter((row) => row.location && row.product_id && row.warehouse_id);
+  const rowKeyOf = (row: DonorLocationRow) => row.rowKey ?? row.location ?? '__none__';
+  const allGroupKeys = () =>
+    locationLed
+      ? openableRows.flatMap((row) =>
+          groupKeysOf(groupsUnder(`location=${row.location}`, [row.location as string])),
+        )
+      : groupKeysOf(topGroups);
+  const setAll = (open: boolean) => Object.fromEntries(allGroupKeys().map((key) => [key, open]));
+  function expandAll() {
+    if (!stockOnly || locationLed) {
+      setExpanded((current) => ({
+        ...current,
+        ...Object.fromEntries(openableRows.map((row) => [rowKeyOf(row), true])),
+      }));
+    }
+    if (grouped) setGroupOpen((current) => ({ ...current, ...setAll(true) }));
+  }
+  function collapseAll() {
+    setExpanded(Object.fromEntries(openableRows.map((row) => [rowKeyOf(row), false])));
+    setExpandedSets({});
+    if (grouped) setGroupOpen(setAll(false));
+  }
+  function changeLevels(next: string[]) {
+    setLevels(next);
+    writeStockGroupLevels(next);
+    // Rows opened under the old levels (a drill-down, a set) must not reappear as groups.
+    setExpanded({});
+    setExpandedSets({});
+  }
+  const groupProps = {
+    columns: numericColumns,
+    classes: GROUP_CELLS,
+    locationColClassName,
+    locationColStyle,
+    levels,
+    isOpen: isGroupOpen,
+    onToggle: (key: string) =>
+      setGroupOpen((current) => ({ ...current, [key]: !(current[key] ?? searchOpen.has(key)) })),
+    showLine,
+  };
+
   /**
    * Opens whichever section a jump names - the GROUP subtotal when the set nets one (the
    * mockup's "Balance after" reading), or ONE bin's own row when it does not (N2, fix round
@@ -374,7 +535,28 @@ export const CellStockTable = React.forwardRef<
       location?: string | null,
     ) => {
       if (!section) return;
-      if (section.netOf && sectionProductId(section)) {
+      if (grouped) {
+        // Groups replace the drill-down: open every group holding a line of the target location.
+        const addressable = (row: StockSection['rows'][number]) =>
+          Boolean(row.location && row.product_id && row.warehouse_id);
+        const target =
+          section.rows.find((row) => row.location === location && addressable(row)) ??
+          section.rows.find(addressable);
+        const code = target?.location;
+        if (code) {
+          const keys = locationLed
+            ? groupKeysOf(groupsUnder(`location=${code}`, [code]))
+            : groupKeysOf(topGroups, (line) => line.location === code);
+          if (locationLed) {
+            const rowKey = target?.rowKey ?? code;
+            setExpanded((current) => ({ ...current, [rowKey]: true }));
+          }
+          setGroupOpen((current) => ({
+            ...current,
+            ...Object.fromEntries(keys.map((key) => [key, true])),
+          }));
+        }
+      } else if (section.netOf && sectionProductId(section)) {
         setExpandedSets((current) => ({ ...current, [section.key]: true }));
       } else {
         const addressable = (row: StockSection['rows'][number]) =>
@@ -391,9 +573,10 @@ export const CellStockTable = React.forwardRef<
       jumpNonceRef.current += 1;
       setActiveJump({ kind, nonce: jumpNonceRef.current });
     },
-    [],
+    [grouped, locationLed, groupsUnder, topGroups],
   );
 
+  const readLandedRef = React.useRef(false);
   const ownSection = React.useCallback(
     () =>
       sections.find((section) =>
@@ -450,9 +633,16 @@ export const CellStockTable = React.forwardRef<
    */
   React.useEffect(() => {
     if (!landOnMount) return;
+    if (autoCount) readLandedRef.current = true;
     openSectionAndJump(ownSection(), 'this-line');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // The read can arrive after mount: land once, when it arrives. A level picked later is not a landing.
+  React.useEffect(() => {
+    if (!landOnMount || !autoCount || readLandedRef.current) return;
+    readLandedRef.current = true;
+    if (grouped) openSectionAndJump(ownSection(), 'this-line');
+  }, [landOnMount, autoCount, grouped, openSectionAndJump, ownSection]);
 
   if (locations.length === 0) {
     // Rendered rather than hidden, per the CRUD standard. A pivoted cell holds several products,
@@ -490,13 +680,25 @@ export const CellStockTable = React.forwardRef<
 
   return (
     <div className="space-y-1">
-      {forLine ? (
+      {/* AutoCount's figures are gross of every line, the asker's own included, so they are not
+          one line's position and the caption would name the wrong reading. */}
+      {forLine && !autoCount ? (
         <p
           data-testid="cell-stock-for-line"
           className="text-xs text-muted-foreground"
         >
           {`Available for ${forLine}`}
         </p>
+      ) : null}
+      {autoCount ? (
+        <GroupByMenu
+          options={STOCK_GROUP_OPTIONS}
+          value={levels}
+          defaultValue={[...DEFAULT_STOCK_GROUP_LEVELS]}
+          onChange={changeLevels}
+          onExpandAll={grouped || !stockOnly ? expandAll : undefined}
+          onCollapseAll={grouped || !stockOnly ? collapseAll : undefined}
+        />
       ) : null}
       {/* NO vertical bound, and the Stock tab has exactly ONE scroll region: the dialog body
         above this, which already owns a vertical viewport. This wrapper used to cap itself at
@@ -525,14 +727,16 @@ export const CellStockTable = React.forwardRef<
         <table className="w-full border-separate border-spacing-0 text-xs">
           <thead>
             <tr>
-              {!stockOnly && <th scope="col" className={cn(CHEVRON_COL, HEAD_CELL)} />}
+              {withChevron && <th scope="col" className={cn(CHEVRON_COL, HEAD_CELL)} />}
               <th
                 ref={locationThRef}
                 scope="col"
                 className={cn(locationColClassName, HEAD_CELL, 'relative')}
                 style={locationColStyle}
               >
-                Location
+                {grouped && !locationLed
+                  ? (STOCK_GROUP_OPTIONS.find((option) => option.id === levels[0])?.label ?? 'Line')
+                  : 'Location'}
                 {/* AC-RS-71: mirrors `DataGridTableHeadRowCellResize`'s own affordance -
                     drag to set a width, remembered in `localStorage` on release. */}
                 <span
@@ -559,9 +763,6 @@ export const CellStockTable = React.forwardRef<
                   onLostPointerCapture={() => endLocationResize()}
                 />
               </th>
-              <th scope="col" className={cn(WHERE_COL, HEAD_CELL)}>
-                Where
-              </th>
               {numericColumns.map((column) => (
                 <th
                   key={column.key}
@@ -575,7 +776,14 @@ export const CellStockTable = React.forwardRef<
           </thead>
 
           <tbody>
-            {sections.flatMap((section) => [
+            {grouped && !locationLed ? (
+              levels.length > 0 ? (
+                <GroupRows {...groupProps} nodes={topGroups} baseDepth={0} />
+              ) : (
+                <LineRows {...groupProps} lines={lines} depth={0} />
+              )
+            ) : null}
+            {(grouped && !locationLed ? [] : sections).flatMap((section) => [
               ...section.rows.map((entry) => {
                 // S4/review B2: a donor picker's own `rowKey` wins when a row carries one,
                 // so two donors sharing one warehouse (a same-agent Borrow off two
@@ -591,13 +799,18 @@ export const CellStockTable = React.forwardRef<
                 // B2155-NL-BLUE on the live book, so resolving one from the code would answer
                 // confidently about the wrong product.
                 const addressable = Boolean(
-                  entry.product_id && entry.warehouse_id,
+                  entry.product_id &&
+                    entry.warehouse_id &&
+                    // Location first: a location with no lines in the read has no groups to open.
+                    (!locationLed || (entry.location && locationsWithLines.has(entry.location))),
                 );
-                const isOpen = Boolean(expanded[key]);
+                const isOpen = locationLed
+                  ? (expanded[key] ?? searchOpen.has(`location=${testKey}`))
+                  : Boolean(expanded[key]);
                 return (
                   <React.Fragment key={key}>
                     <tr data-testid={`cell-location-${testKey}`}>
-                      {!stockOnly && (
+                      {withChevron && (
                       <td className={cn(CHEVRON_COL, BODY_CELL, 'px-1')}>
                         {addressable ? (
                           <Button
@@ -607,14 +820,14 @@ export const CellStockTable = React.forwardRef<
                             size="sm"
                             className="size-5"
                             data-testid={`stock-expand-${testKey}`}
-                            aria-label={`${isOpen ? 'Hide' : 'Show'} documents behind ${
-                              entry.location ?? 'this location'
-                            }`}
+                            aria-label={`${isOpen ? 'Hide' : 'Show'} ${
+                              locationLed ? 'groups' : 'documents'
+                            } behind ${entry.location ?? 'this location'}`}
                             aria-expanded={isOpen}
                             onClick={() =>
                               setExpanded((current) => ({
                                 ...current,
-                                [key]: !current[key],
+                                [key]: !isOpen,
                               }))
                             }
                           >
@@ -624,6 +837,9 @@ export const CellStockTable = React.forwardRef<
                               <ChevronRight className="size-3.5" aria-hidden />
                             )}
                           </Button>
+                        ) : locationLed && entry.product_id && entry.warehouse_id ? (
+                          // Listed, but the read holds no lines for it: nothing to open, nothing to explain.
+                          <span className="inline-block size-4" />
                         ) : (
                           // The sales order named no warehouse, so there is no position to open.
                           <span
@@ -683,14 +899,6 @@ export const CellStockTable = React.forwardRef<
                           </span>
                         </div>
                       </td>
-                      <td className={cn(WHERE_COL, BODY_CELL)}>
-                        <span
-                          className="block truncate text-muted-foreground"
-                          title={WHERE_LABELS[entry.where ?? 'own']}
-                        >
-                          {WHERE_LABELS[entry.where ?? 'own']}
-                        </span>
-                      </td>
                       {numericColumns.map((column) => {
                         const value = valueOf(column, entry, drawn);
                         // Signed and never clamped: a negative Available IS the shortfall, and the
@@ -744,7 +952,15 @@ export const CellStockTable = React.forwardRef<
                       })}
                     </tr>
 
-                    {isOpen && addressable && !stockOnly && (
+                    {isOpen && addressable && locationLed && entry.location ? (
+                      <GroupRows
+                        {...groupProps}
+                        nodes={groupsUnder(`location=${entry.location}`, [entry.location])}
+                        baseDepth={1}
+                      />
+                    ) : null}
+
+                    {isOpen && addressable && !stockOnly && !locationLed && (
                       <tr data-testid={`stock-expansion-${testKey}`}>
                         {/* Under the row it belongs to, spanning the whole table: the documents are
                         this location's evidence, not a column of it. */}
@@ -760,6 +976,7 @@ export const CellStockTable = React.forwardRef<
                             documentInfo={documentInfo}
                             filterText={filterText}
                             jumpTarget={activeJump}
+                            autoCount={autoCount}
                           />
                         </td>
                       </tr>
@@ -779,7 +996,7 @@ export const CellStockTable = React.forwardRef<
                       key={`subtotal-${section.key}`}
                       data-testid={`stock-subtotal-${section.key}`}
                     >
-                      {!stockOnly && (
+                      {withChevron && (
                       <td className={cn(CHEVRON_COL, FOOT_CELL, 'px-1')}>
                         {section.netOf && sectionProductId(section) ? (
                           <Button
@@ -819,7 +1036,6 @@ export const CellStockTable = React.forwardRef<
                       >
                         {section.label}
                       </td>
-                      <td className={cn(WHERE_COL, FOOT_CELL)} />
                       {numericColumns.map((column) => {
                         if (!column.total) {
                           return (
@@ -876,7 +1092,24 @@ export const CellStockTable = React.forwardRef<
                         );
                       })}
                     </tr>,
+                    ...(locationLed &&
+                    expandedSets[section.key] &&
+                    section.netOf &&
+                    sectionProductId(section)
+                      ? [
+                          <GroupRows
+                            key={`set-groups-${section.key}`}
+                            {...groupProps}
+                            nodes={groupsUnder(
+                              `set=${section.key}`,
+                              section.rows.flatMap((row) => (row.location ? [row.location] : [])),
+                            )}
+                            baseDepth={1}
+                          />,
+                        ]
+                      : []),
                     ...(!stockOnly &&
+                    !locationLed &&
                     expandedSets[section.key] &&
                     section.netOf &&
                     sectionProductId(section)
@@ -901,6 +1134,7 @@ export const CellStockTable = React.forwardRef<
                                 documentInfo={documentInfo}
                                 filterText={filterText}
                                 jumpTarget={activeJump}
+                                autoCount={autoCount}
                               />
                             </td>
                           </tr>,
@@ -916,7 +1150,7 @@ export const CellStockTable = React.forwardRef<
             // row repeating it is a row that says nothing.
             <tfoot>
               <tr>
-                {!stockOnly && <td className={cn(CHEVRON_COL, FOOT_CELL)} />}
+                {withChevron && <td className={cn(CHEVRON_COL, FOOT_CELL)} />}
                 <td
                   className={cn(
                     locationColClassName,
@@ -927,7 +1161,6 @@ export const CellStockTable = React.forwardRef<
                 >
                   Total
                 </td>
-                <td className={cn(WHERE_COL, FOOT_CELL)} />
                 {numericColumns.map((column) => {
                   if (!column.total) {
                     return (
@@ -984,8 +1217,34 @@ export const CellStockTable = React.forwardRef<
                   );
                 })}
               </tr>
+              {autoCount ? (
+                <IncomingPlRows
+                  status={autoCount}
+                  numericColumns={numericColumns}
+                  stockOnly={!withChevron}
+                  spanAll={spanAll}
+                  open={plOpen}
+                  onToggle={() => setPlOpen((current) => !current)}
+                  locationColClassName={locationColClassName}
+                  locationColStyle={locationColStyle}
+                />
+              ) : null}
             </tfoot>
           )}
+          {!(showGroupSubtotal && showTotals) && autoCount ? (
+            <tfoot>
+              <IncomingPlRows
+                status={autoCount}
+                numericColumns={numericColumns}
+                stockOnly={!withChevron}
+                spanAll={spanAll}
+                open={plOpen}
+                onToggle={() => setPlOpen((current) => !current)}
+                locationColClassName={locationColClassName}
+                locationColStyle={locationColStyle}
+              />
+            </tfoot>
+          ) : null}
         </table>
       </div>
       {groupNote ? (
@@ -1001,6 +1260,135 @@ export const CellStockTable = React.forwardRef<
     </div>
   );
 });
+
+/**
+ * AutoCount's Incoming PL (owner OK of mock v6, UAC AC-33): what the packing lists still to land
+ * add, net of what is already on an SPO, under the SPO qty column because that is the figure it
+ * extends. It names no location (a packing list has none until it lands), so it sits under the
+ * Total rather than on a location's row, and opens to its packing lists.
+ */
+function IncomingPlRows({
+  status,
+  numericColumns,
+  stockOnly,
+  spanAll,
+  open,
+  onToggle,
+  locationColClassName,
+  locationColStyle,
+}: {
+  status: StockStatus;
+  numericColumns: typeof NUMERIC_COLUMNS;
+  stockOnly: boolean;
+  spanAll: number;
+  open: boolean;
+  onToggle: () => void;
+  locationColClassName: string;
+  locationColStyle: React.CSSProperties | undefined;
+}) {
+  const lists = status.incoming_pl ?? [];
+  const toggle =
+    lists.length > 0 ? (
+      <Button
+        type="button"
+        mode="icon"
+        variant="ghost"
+        size="sm"
+        className="size-5"
+        aria-label={`${open ? 'Hide' : 'Show'} incoming packing lists`}
+        aria-expanded={open}
+        onClick={onToggle}
+      >
+        {open ? (
+          <ChevronDown className="size-3.5" aria-hidden />
+        ) : (
+          <ChevronRight className="size-3.5" aria-hidden />
+        )}
+      </Button>
+    ) : null;
+  const added = fromMinor(toMinor(status.totals?.incoming_pl ?? 0));
+  return (
+    <>
+      <tr data-testid="stock-incoming-pl">
+        {!stockOnly && (
+          <td className={cn(CHEVRON_COL, FOOT_CELL, 'px-1')}>{toggle}</td>
+        )}
+        <td
+          className={cn(locationColClassName, FOOT_CELL, 'text-muted-foreground')}
+          style={locationColStyle}
+        >
+          <div className="flex items-center gap-1">
+            {stockOnly ? toggle : null}
+            <span>Incoming PL</span>
+            <span className="font-normal">no location yet</span>
+          </div>
+        </td>
+        {numericColumns.map((column) => (
+          <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)}>
+            {column.key === 'spo' ? (
+              <span className="block truncate text-end tabular-nums">{`+${added}`}</span>
+            ) : null}
+          </td>
+        ))}
+      </tr>
+      {open && lists.length > 0 ? (
+        <tr data-testid="stock-incoming-pl-lists">
+          <td colSpan={spanAll} className="border-b border-border p-2">
+            <div className="overflow-x-auto">
+              <table className="w-full border-separate border-spacing-0 text-xs">
+                <thead>
+                  <tr>
+                    <th scope="col" className={cn(HEAD_CELL, 'min-w-[120px]')}>
+                      Packing list
+                    </th>
+                    <th scope="col" className={cn(HEAD_CELL, 'min-w-[96px]')}>
+                      ETA
+                    </th>
+                    <th scope="col" className={cn(HEAD_CELL, NUMBER_COL, 'text-end')}>
+                      Still to land
+                    </th>
+                    <th scope="col" className={cn(HEAD_CELL, NUMBER_COL, 'text-end')}>
+                      Already on SPO
+                    </th>
+                    <th scope="col" className={cn(HEAD_CELL, NUMBER_COL, 'text-end')}>
+                      Counted
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lists.map((pl) => (
+                    <tr key={pl.shipment_id}>
+                      <td className={BODY_CELL}>
+                        <Link
+                          href={`/procurement-management/packing-lists/${pl.shipment_id}`}
+                          className="font-medium text-primary hover:underline"
+                        >
+                          {pl.shipment_number}
+                        </Link>
+                      </td>
+                      <td className={BODY_CELL}>
+                        {pl.eta ? formatDateInMalaysia(pl.eta) : BLANK}
+                      </td>
+                      <td className={cn(BODY_CELL, 'text-end tabular-nums')}>
+                        {fromMinor(toMinor(pl.still_to_land))}
+                      </td>
+                      <td className={cn(BODY_CELL, 'text-end tabular-nums')}>
+                        {fromMinor(toMinor(pl.on_spo))}
+                      </td>
+                      <td className={cn(BODY_CELL, 'text-end tabular-nums')}>
+                        {fromMinor(toMinor(pl.counted))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </td>
+        </tr>
+      ) : null}
+    </>
+  );
+}
 
 type StockSection = {
   /** Stable per table, and what the subtotal row is addressed by in a test. */
@@ -1099,6 +1487,7 @@ const HEAD_CELL =
 const BODY_CELL = 'border-b border-e border-border px-2 py-1.5 align-middle';
 const FOOT_CELL =
   'border-b border-e border-border bg-muted/50 px-2 py-1.5 font-medium';
+const GROUP_CELLS = { chevron: CHEVRON_COL, body: BODY_CELL, foot: FOOT_CELL, number: NUMBER_COL };
 
 /**
  * The columns, in AutoCount's order, because this is the order the planner reads over there and

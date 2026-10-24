@@ -568,6 +568,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const [lines, setLines] = useState<DraftLine[]>([]);
   const [attachments, setAttachments] = useState<PortalAttachment[]>([]);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  // The Sales Order box's accept list, off `/me` (see the /me effect below).
+  const [attachmentExtensions, setAttachmentExtensions] = useState<string[] | undefined>();
 
   // ---- AI extract sales order lines (D7, per-file per D-P3) ----
   const [aiExtractOpen, setAiExtractOpen] = useState(false);
@@ -816,13 +818,16 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // same `/me` payload every other portal page already fetches, and renders
   // the same inline blocked message the edit page's real 403 uses below.
   // The server remains the enforcement; this only avoids an empty form.
+  // ATTACH-ACCEPT: the same `/me` carries the Sales Order box's accept list,
+  // so it is read on an existing draft too; the visibility check stays /new.
   useEffect(() => {
-    if (!isNew) return;
     let cancelled = false;
     fetchMe()
       .then((c) => {
         if (cancelled) return;
+        setAttachmentExtensions(c.attachment_allowed_extensions);
         if (
+          isNew &&
           Array.isArray(c.visible_form_types) &&
           !c.visible_form_types.includes('price_tag_request')
         ) {
@@ -2719,6 +2724,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             pendingFiles={pendingFiles}
             onPendingFilesChange={setPendingFiles}
             placeholder="Drop the sales order here, paste a screenshot, or"
+            allowedExtensions={attachmentExtensions}
             onExtract={(file) => {
               setAiExtractFiles([file]);
               setAiExtractOpen(true);

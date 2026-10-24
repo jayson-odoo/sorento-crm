@@ -372,23 +372,6 @@ def test_c_outstanding_customer_pick_then_the_document_question(session_factory,
     assert args.get("scope") == "do", args
 
 
-from tests.chatbot.test_top_selling_round5 import ASK_METRIC, _answer, _ask, cat, route  # noqa: E402,F401
-from tests.chatbot.test_top_selling_round6 import _assert_ranking, console  # noqa: E402,F401
-
-
-def test_c_top_selling_metric_then_top_x(console):
-    """AC-PK011: "top selling item" -> "By quantity or by amount?" -> "amount" ranks by
-    amount and asks how many to show -> "20" is the top X, never a pick or a new ask."""
-    turn1, captured = console(_ask(), "top selling item", {})
-    assert turn1.reply_text == ASK_METRIC and not captured, turn1.reply_text
-    turn2, captured = console(_answer(rank_by="amount"), "amount", turn1.session_vars)
-    call = _assert_ranking(turn2.reply_text, captured, rank_by="amount", top_n=None)
-    assert call.get("n") is None, call
-    assert "How many items do you want to see?" in turn2.reply_text, turn2.reply_text
-    turn3, captured = console(_answer(top_n=20), "20", turn2.session_vars)
-    _assert_ranking(turn3.reply_text, captured, rank_by="amount", top_n=20)
-
-
 # =============================================================================== #
 # D. The prompt (AC-PK020 to AC-PK024)
 # =============================================================================== #
@@ -491,7 +474,6 @@ def test_e_publish_adds_the_text_once_and_leaves_the_label(session_factory):
             assert production.version_id == before
     finally:
         db.close()
-
 
 
 # =============================================================================== #

@@ -37,6 +37,13 @@ import {
   uploadAttachment,
 } from '../lib/portal-client';
 
+/** Lowercase extension after the last dot, '' when the name has none (the
+ *  server then judges by content type, so the dropzone lets it through). */
+function fileExtension(name: string): string {
+  const dot = name.lastIndexOf('.');
+  return dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
+}
+
 function isImageAttachment(a: PortalAttachment): boolean {
   if (a.content_type?.startsWith('image/')) return true;
   const name = (a.filename ?? '').toLowerCase();
@@ -77,6 +84,12 @@ interface Props {
    *  generic default reads oddly on a form with only one thing to drop
    *  (e.g. the price tag form's Sales Order file). */
   placeholder?: string;
+  /** The "Portal Submission" attachment type's allowed extensions (no dots),
+   *  off the form's `/me` - the same list the upload route checks. Builds the
+   *  picker's accept list and refuses a dropped or pasted file the server
+   *  would refuse. Absent or empty: the picker offers everything and the
+   *  server stays the judge, rather than a guessed list greying out files. */
+  allowedExtensions?: string[];
 }
 
 const DEFAULT_PLACEHOLDER = 'Drop a file here, paste a screenshot or text, or';
@@ -92,6 +105,7 @@ export function AttachmentDropzone({
   onExtract,
   readOnly,
   placeholder = DEFAULT_PLACEHOLDER,
+  allowedExtensions,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -187,7 +201,22 @@ export function AttachmentDropzone({
   );
 
   const addFiles = useCallback(
-    async (files: File[]) => {
+    async (picked: File[]) => {
+      // Dropped and pasted files skip the picker's filter, so refuse a type
+      // the server would refuse here, at once, before it is buffered.
+      const allowed = allowedExtensions ?? [];
+      const refused = allowed.length
+        ? picked.filter((f) => {
+            const ext = fileExtension(f.name);
+            return ext !== '' && !allowed.includes(ext);
+          })
+        : [];
+      if (refused.length) {
+        toast.error(
+          `${refused.map((f) => f.name).join(', ')}: unsupported file type. Allowed: ${allowed.join(', ')}.`,
+        );
+      }
+      const files = picked.filter((f) => !refused.includes(f));
       if (!files.length) return;
       if (!submissionId) {
         if (onPendingFilesChange) {
@@ -210,7 +239,7 @@ export function AttachmentDropzone({
       }
       setBusy(false);
     },
-    [attachments, kind, onChange, onPendingFilesChange, pendingFiles, submissionId]
+    [allowedExtensions, attachments, kind, onChange, onPendingFilesChange, pendingFiles, submissionId]
   );
 
   const handleSelect = useCallback(
@@ -391,7 +420,11 @@ export function AttachmentDropzone({
           <input
             ref={inputRef}
             type="file"
-            accept="image/*,video/*,.pdf,.txt"
+            accept={
+              allowedExtensions?.length
+                ? allowedExtensions.map((ext) => `.${ext}`).join(',')
+                : undefined
+            }
             className="hidden"
             multiple
             onChange={handleSelect}

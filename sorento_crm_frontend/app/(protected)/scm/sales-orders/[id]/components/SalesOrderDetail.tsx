@@ -19,6 +19,7 @@ import {
   ListOrdered,
   LoaderCircleIcon,
   Move,
+  Receipt,
   Plus,
   Trash2,
   Truck,
@@ -54,6 +55,11 @@ import { DEMAND_CLASS_OPTIONS } from '@/app/(protected)/master-data-management/s
 // The SAME pill the order-inquiry worklist reads, not a second one worded differently:
 // "Placed" has to mean the same thing on both screens or the two disagree in a glance.
 import { OrderInquiryStatePill } from '@/app/(protected)/project-sales/_shared/components/OrderInquiryVerbPill';
+import {
+  LineSplitInfo,
+  splitCount,
+  OrderSplitsDialog,
+} from '@/app/(protected)/project-sales/_shared/components/LineSplitInfo';
 import { OrderInquiryRejectedBadge } from '@/app/(protected)/project-sales/_shared/components/OrderInquiryRejectedBadge';
 import {
   formatMyrExact,
@@ -105,7 +111,9 @@ import type {
 import { describe as describeSupply } from '../../../../project-sales/_shared/lib/supplyVocabulary';
 import { BoardChangeTable } from '@/app/(protected)/project-sales/fulfilment-planning/components/BoardChangeTable';
 import { lineChangeAnnotation } from './salesOrderLineChange';
-import BackToList, { useBackToListHref } from '@/components/common/BackToList';
+import { useBackToListHref } from '@/components/common/BackToList';
+import { QueryErrorState } from '@/components/common/LoadErrorState';
+import { isNotFound } from '@/lib/api-client';
 import { useSalesOrderActions } from '../../actions';
 import { PLAN_PERMISSION } from '../../lib/planActions';
 // Aliased: this file already has its own header-scoped `SOURCE_LABELS` above, worded
@@ -115,6 +123,8 @@ import { PLAN_PERMISSION } from '../../lib/planActions';
 import { SOURCE_LABELS as LINE_SOURCE_LABELS } from '../../lib/sourceLabels';
 import { cancelSourcesTitle, isPartlyCancelled, PARTLY_CANCELLED } from '@/app/(protected)/scm/lib/autocountCancel';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { SalesOrderInvoices } from '@/app/(protected)/finance/billing-documents/components/SalesOrderInvoices';
+import { BILLING_VIEW_SLUG } from '@/app/(protected)/finance/billing-documents/lib/permissions';
 import { distinctName } from '@/lib/product-display';
 
 /**
@@ -470,14 +480,16 @@ export function SalesOrderDetail({
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { data, isLoading, isError } = useSalesOrder(id);
+  const { data, isLoading, isError, error: loadError, refetch, isFetching } = useSalesOrder(id);
   const isConsignmentRoute = docType === 'consignment';
   const listPath = isConsignmentRoute ? '/scm/consignments' : '/scm/sales-orders';
-  const listLabel = isConsignmentRoute ? 'Back to consignments' : 'Back to sales orders';
+  const docNoun = isConsignmentRoute ? 'Consignment' : 'Sales order';
   // Read here rather than off `so` below, which is narrowed after the loading and error
   // returns: the Lines columns are built above them, and the What-changed dialog titles
   // itself with the order this line belongs to.
   const soNumber = data?.so_number ?? '';
+  // OI-SPLIT-VIEW (UAC E5): the split sheet the read-only popups draw, carried on this read.
+  const lineSplits = data?.line_splits ?? null;
   const backHref = useBackToListHref(listPath);
   // Same gate the list's own "Plan selected" carries (S2, R3): a door that answers 403
   // is worse than not offering it, so the primary is simply absent without it.
@@ -487,6 +499,7 @@ export function SalesOrderDetail({
   const [deliveriesRequested, setDeliveriesRequested] = useState(false);
   const canPlan = useHasPermission(PLAN_PERMISSION);
   const canOpenDo = useHasPermission('order_management.orders.view');
+  const canSeeInvoices = useHasPermission(BILLING_VIEW_SLUG);
   const deliveries = useSalesOrderDeliveries(id, deliveriesRequested);
   const searchParams = useSearchParams();
   // A consignment opened by a sales-orders link lands on its own page.
@@ -599,9 +612,14 @@ export function SalesOrderDetail({
   // list and nothing at all here, so a record could only be removed by finding it again in
   // the list. Edit moved in here too (S2, R3): the header's primary slot is now Plan, and
   // the list surface calls this same hook with no `onEdit`, so its row menu shows no Edit.
+  // OI-SPLIT-VIEW (UAC D1): the gear's "View splits", every split line of this order.
+  const [viewSplitsOpen, setViewSplitsOpen] = useState(false);
+  // UAC B8: the gear, where the View splits popup hands focus back on close.
+  const gearRef = useRef<HTMLButtonElement | null>(null);
   const { actions, pending: deletionPending } = useSalesOrderActions(data, {
     onDeleted: () => router.push(backHref),
     onEdit: () => beginEdit(data as SalesOrder),
+    onViewSplits: () => setViewSplitsOpen(true),
   });
 
   const cancelEdit = () => {
@@ -946,6 +964,25 @@ export function SalesOrderDetail({
         },
         size: 260,
         meta: { headerTitle: 'Product' },
+      },
+      // OI-SPLIT-VIEW (UAC B1): "Split N" and the (i) popup in their own column right after
+      // Product, on Columns like the rest; empty for a line with no splits.
+      {
+        id: 'split',
+        // B7a: sorts by the chip's N (the AutoCount extra row not counted).
+        accessorFn: (line) => splitCount(line.split_view),
+        header: ({ column }) => <DataGridColumnHeader title="Split" column={column} />,
+        cell: ({ row }) => (
+          <LineSplitInfo
+            lineNo={row.original.line_no}
+            itemCode={row.original.sku}
+            soNumber={soNumber}
+            view={row.original.split_view}
+            payload={lineSplits}
+          />
+        ),
+        size: 110,
+        meta: { headerTitle: 'Split' },
       },
       {
         id: 'qty_ordered',
@@ -1464,6 +1501,7 @@ export function SalesOrderDetail({
       amountTotal,
       handleRemoveLine,
       soNumber,
+      lineSplits,
       data?.doc_type,
     ],
   );
@@ -1501,36 +1539,40 @@ export function SalesOrderDetail({
     enabled: !isLoading,
   });
 
-  // Back and prev/next live on the RIGHT of the record header, next to each other, the way
-  // the purchase-order and users screens do it.
-  // Back carries the list query the row click wrote (S3-01). It lives on the
-  // toolbar row now; the empty states below keep one of their own.
-  const backLink = (
-    <BackToList listPath={listPath} label={listLabel} />
-  );
-
+  // Back is the page header's (`../page.tsx`, the consignment twin likewise), on every
+  // state: drawing another here stacked a second Back under it while the order loaded
+  // (SO-DETAIL-DUP-BACK). `listPath` above still serves Delete's landing and the pager.
   if (isLoading) {
     return (
       <div className="space-y-4">
-        <div className="flex justify-end">{backLink}</div>
         <Skeleton className="h-40 w-full rounded-xl" />
         <Skeleton className="h-64 w-full rounded-xl" />
       </div>
     );
   }
 
-  if (isError || !data) {
-    return (
-      <div className="space-y-4">
-        <div className="flex justify-end">{backLink}</div>
+  // Every failure ends in a state that says which one it is (NEVER-STUCK-UI): only a 404
+  // reads "not found"; a refusal is AccessDenied; a fault or a timeout carries its reason
+  // and a Retry. A background refetch that fails over an order already shown keeps it.
+  if (!data) {
+    if (!isError || isNotFound(loadError)) {
+      return (
         <Card className="flex flex-col items-center gap-3 p-10 text-center">
-          <div className="text-sm font-semibold">Sales order not found</div>
+          <div className="text-sm font-semibold">{docNoun} not found</div>
           <p className="max-w-md text-sm text-muted-foreground">
-            This sales order doesn&apos;t exist, or it was removed after this link was made.
-            Head back to the list to pick another.
+            This {docNoun.toLowerCase()} doesn&apos;t exist, or it was removed after this link was
+            made. Head back to the list to pick another.
           </p>
         </Card>
-      </div>
+      );
+    }
+    return (
+      <QueryErrorState
+        error={loadError}
+        title={`Could not load this ${docNoun.toLowerCase()}`}
+        onRetry={() => void refetch()}
+        retrying={isFetching}
+      />
     );
   }
 
@@ -1721,6 +1763,7 @@ export function SalesOrderDetail({
                 actions={actions}
                 pendingAction={deletionPending}
                 gearLabel="Sales order options"
+                gearRef={gearRef}
                 // The main action on this page is now PLAN, not Edit (S2, R3): this is the
                 // same board the list's "Plan selected" opens, on this one order, and it
                 // wears the main colour for the same reason an Add does on every list. Edit
@@ -1797,6 +1840,12 @@ export function SalesOrderDetail({
             <Truck />
             <span>Delivery</span>
           </TabsTrigger>
+          {canSeeInvoices ? (
+            <TabsTrigger value="invoices">
+              <Receipt />
+              <span>Invoices</span>
+            </TabsTrigger>
+          ) : null}
           <TabsTrigger value="transfers">
             <Move />
             <span>Transfers</span>
@@ -2238,6 +2287,13 @@ export function SalesOrderDetail({
           </Card>
         </TabsContent>
 
+        {/* PLAN-finance-billing-documents S3-1: billing documents pointing at this order's lines. */}
+        {canSeeInvoices ? (
+          <TabsContent value="invoices" className="mt-0 focus-visible:outline-none">
+            <SalesOrderInvoices salesOrderId={so.id} />
+          </TabsContent>
+        ) : null}
+
         {/* AC-E6: the movements this order's supply decision asked for. The SAME grid the
             Transfers page is, pinned to this order - so a transfer cannot read one way here
             and another way there. Always rendered; it carries its own empty state. */}
@@ -2286,6 +2342,14 @@ export function SalesOrderDetail({
           />
         </PlanRowDialog>
       ) : null}
+
+      <OrderSplitsDialog
+        title={`${soNumber}: splits`}
+        payload={lineSplits}
+        open={viewSplitsOpen}
+        onOpenChange={setViewSplitsOpen}
+        returnFocusRef={gearRef}
+      />
     </div>
     </QtyDraftContext.Provider>
   );

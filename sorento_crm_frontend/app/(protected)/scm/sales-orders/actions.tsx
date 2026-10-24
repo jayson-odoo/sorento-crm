@@ -14,7 +14,7 @@
  * its "..." shows Delete only, same as before.
  */
 
-import { SquarePen, Trash2 } from 'lucide-react';
+import { Split, SquarePen, Trash2 } from 'lucide-react';
 
 import type { RecordAction, RecordActionSet } from '@/components/common/recordActions';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
@@ -40,11 +40,14 @@ export interface UseSalesOrderActionsOptions {
    * Delete alone.
    */
   onEdit?: () => void;
+  /** OI-SPLIT-VIEW (UAC D1): opens the whole-order split popup. The record page passes it;
+   * the list row has no lines to show and passes none. */
+  onViewSplits?: () => void;
 }
 
 export function useSalesOrderActions(
   order: SalesOrderActionTarget | null | undefined,
-  { onDeleted, surface = 'inline', onEdit }: UseSalesOrderActionsOptions = {},
+  { onDeleted, surface = 'inline', onEdit, onViewSplits }: UseSalesOrderActionsOptions = {},
 ): RecordActionSet {
   // Delete asks nothing (D7): the countdown takes the record's primary slot, or
   // the toast on a list row, and Cancel is the way back.
@@ -77,6 +80,16 @@ export function useSalesOrderActions(
             label: 'Edit',
             icon: SquarePen,
             run: onEdit,
+          } as RecordAction,
+        ]
+      : []),
+    ...(onViewSplits
+      ? [
+          {
+            key: 'sales_order.view_splits',
+            label: 'View splits',
+            icon: Split,
+            run: onViewSplits,
           } as RecordAction,
         ]
       : []),

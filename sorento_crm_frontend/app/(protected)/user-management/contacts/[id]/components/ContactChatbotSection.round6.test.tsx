@@ -14,6 +14,7 @@ import type { ContactChatbotMemory } from '../services/contactChatbotService';
 
 // `OpenOrdersCard`'s DataGrid carries a `rowHref`, which routes through
 // `DataGridTable`'s `useRouter()` - not mounted under a plain `render()`.
+vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => true }));
 vi.mock('next/navigation', () => ({
   usePathname: () => '/user-management/contacts/c1',
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),

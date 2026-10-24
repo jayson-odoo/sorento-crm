@@ -1631,6 +1631,15 @@ async def get_outstanding_report(
             "the DO block. Filtering is unaffected - the caller sends scope=do."
         ),
     ),
+    group_offset: Optional[int] = Query(
+        None,
+        ge=0,
+        description=(
+            "ECHO ONLY (CHAT-COMPOSER Lists L2): the page start of the By customer / By "
+            "product group. Echoed onto the body so the MCP presenter prints that page; "
+            "absent = today's body."
+        ),
+    ),
     contact_id: Optional[str] = Query(
         None,
         description=(
@@ -1762,6 +1771,8 @@ async def get_outstanding_report(
         body["location_token"] = location_token.strip()
     if so_refused:
         body["so_refused"] = True
+    if group_offset is not None:
+        body["group_offset"] = group_offset
     return JSONResponse(content=body)
 
 
@@ -1795,12 +1806,19 @@ async def get_sales_report(
         None,
         description="Canonical customer UUIDs (csv/JSON/repeated) - the chatbot's resolved customer entity.",
     ),
+    brand_ids: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Canonical brand UUIDs (csv/JSON/repeated, max 50) - narrows the figures to "
+            "those brands' own products (Product.brand_id). A filter, not a subject."
+        ),
+    ),
     channel: Optional[str] = Query(
         None,
         description=(
-            "dealer | project - the account's market segment class (project / contract = "
-            "project, any other segment = dealer); an account with no segment is in every "
-            "channel. Ignored when the scoped accounts span only one class. Any other value is 422."
+            "dealer | project - the type of the sales order each delivered DO line came from; "
+            "a line with no sales order, or whose sales order has no type, is in no channel. "
+            "Always applied when given, a named customer too. Any other value is 422."
         ),
     ),
     warehouse_codes: Optional[list[str]] = Query(
@@ -1975,9 +1993,12 @@ async def get_sales_report(
     if _no_subject and not scoped_customer_ids:
         raise _needs_subject()
     resolved_warehouse_codes = _normalize_entities(warehouse_codes)
+    # Chat fix PR-B S5 (AC-B7): a brand narrows the figures, never silently dropped.
+    resolved_brand_ids = parse_uuid_list(brand_ids, param_name="brand_ids")
     for values, name in (
         (resolved_customer_ids, "customer_ids"),
         (resolved_warehouse_codes, "warehouse_codes"),
+        (resolved_brand_ids, "brand_ids"),
     ):
         if values is not None and len(values) > 50:
             raise AppException(
@@ -2002,6 +2023,7 @@ async def get_sales_report(
         product_code=product_code,
         customer_query=None if scoped_customer_ids is not None else customer_query,
         customer_ids=resolved_customer_ids,
+        brand_ids=resolved_brand_ids,
         channel=channel_norm,
         warehouse_codes=resolved_warehouse_codes,
         location_token=location_token,

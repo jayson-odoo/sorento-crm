@@ -57,7 +57,7 @@ COST = "purchase_orders.cost"
 
 @pytest.fixture
 def all_perms(perms):
-    perms["granted"] = {VIEW, EDIT, AGENTS_EDIT, STOCK_EDIT, OUTBOUND_EDIT}
+    perms["granted"] = {VIEW, EDIT, AGENTS_EDIT, STOCK_EDIT, OUTBOUND_EDIT, "system.ai_assistant_settings.edit"}
     return perms
 
 

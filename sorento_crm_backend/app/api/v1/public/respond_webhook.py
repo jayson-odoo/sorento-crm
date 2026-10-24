@@ -44,11 +44,13 @@ from app.services import conversation_thread_service as thread_service
 from app.services.chat_history_ingest_service import (
     ChatMessageRow,
     announce_new_row,
+    normalise_channel as _normalise_channel,
     upsert_message_row,
 )
 from app.services.integration_service import IntegrationLogService, sanitize_request_headers
 from app.services.media_proxy_service import allowed_hosts
 from app.services.otp_redaction import otp_template_code_slots, redact_otp_item
+from app.tasks import chat_turns
 
 logger = logging.getLogger(__name__)
 
@@ -145,16 +147,6 @@ def _allowed_media_url(url: Optional[str]) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # Payload mapping
 # ---------------------------------------------------------------------------
-
-
-def _normalise_channel(source: Any) -> str:
-    """`chat_histories.channel` is `whatsapp` for every WhatsApp flavour Respond names
-    (whatsapp_cloud, whatsapp_twilio ...): the thread is read per channel, and n8n
-    writes `whatsapp`, so the two lanes must agree or one lane's rows are invisible."""
-    value = str(source or "").strip().lower()
-    if not value or "whatsapp" in value:
-        return "whatsapp"
-    return value[:32]
 
 
 def map_webhook_message(payload: dict, db: Session) -> Optional[ChatMessageRow]:
@@ -275,6 +267,13 @@ def _log(db: Session, request: Request, body: str, reference: str, status_code: 
         logger.warning("Failed to create integration log for the Respond webhook", exc_info=True)
 
 
+def _hmac_signed(headers: Any) -> bool:
+    """Was the request proved by a body HMAC (not the shared-secret header)?
+    `verify_request` checks the signature header whenever one is present, so after it has
+    passed, a signature header means the body itself was signed."""
+    return any(headers.get(name) for name in SIGNATURE_HEADERS)
+
+
 def _handle(db: Session, request: Request, raw: bytes) -> dict:
     text_body = raw.decode("utf-8", errors="replace")
     try:
@@ -317,6 +316,18 @@ def _handle(db: Session, request: Request, raw: bytes) -> dict:
     _log(db, request, logged, row.contact_id, status.HTTP_200_OK, None)
     if not already_existed:
         announce_new_row(db, message_pk=message_pk, contact_id=row.contact_id, traffic=row.type)
+    # CHAT-SPEED: with the direct-ingress switch on, a fresh incoming text starts its turn
+    # here instead of waiting for the n8n producer and dispatcher. Never raises; anything
+    # it does not enqueue is answered by the n8n copy, as before.
+    chat_turns.enqueue_direct_turn(
+        db,
+        payload,
+        contact_id=row.contact_id,
+        traffic=row.type,
+        channel=row.channel,
+        already_existed=already_existed,
+        hmac_signed=_hmac_signed(request.headers),
+    )
     return {"id": message_pk, "status": "duplicate" if already_existed else "created"}
 
 

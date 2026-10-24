@@ -110,6 +110,19 @@ def test_a_salesperson_with_a_customer_link_is_narrowed_to_its_book_not_its_link
     assert D(str(body["total"]["value"])) == 3, "only cust_a's counted asks (F1 F2 and the staff c9), the book"
 
 
+def test_a_salesperson_whose_only_agent_is_inactive_is_still_narrowed_to_that_book(client, db):
+    """a retired agent row narrows, it never unscopes: cust_a's asks only, not every contact's."""
+    w = seed_asker_world(db)
+    contact = _granted(db)
+    give_role(db, link_user(db, contact), "salesperson")
+    agent = link_agent(db, contact, "ZZT Retired Agent")
+    agent.is_active = False
+    w.cust_a.sales_agent_id = agent.id
+    db.commit()
+    body = _ok(client, contact, group_by="topic", top_n=10)
+    assert D(str(body["total"]["value"])) == 3, "only cust_a's counted asks (the book), never the all-contacts 11"
+
+
 # ======================================================================== asker axis (UAC-27, 29)
 
 

@@ -31,7 +31,6 @@ from app.schemas.project_po_intake import (
     AnnotationActionResponse,
     AnnotationEditRequest,
     AnnotationRejectRequest,
-    POApprovalResponse,
     POLineUpdate,
     POVersionDetailResponse,
     POVersionHeaderUpdate,
@@ -353,51 +352,6 @@ async def confirm_purchase_order_version(
             "model_mismatch_count": result["model_mismatch_count"],
             "price_mismatch_count": result["price_mismatch_count"],
         }
-        db.commit()
-        return body
-    except Exception as exc:
-        db.rollback()
-        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
-
-
-# --------------------------------------------------------------------- approvals
-
-
-@router.post("/purchase-orders/{po_id}/approve", response_model=POApprovalResponse)
-async def approve_purchase_order(
-    po_id: str,
-    current_user: dict = Depends(require_permission(EDIT)),
-    db: Session = Depends(get_db),
-):
-    """AC-D8. CS cannot open the SO draft until this has happened (D21)."""
-    try:
-        validate_uuid_path(po_id, resource="Purchase order")
-        service = ProjectPOExtractionService(db)
-        po = service.get_po(po_id)
-        _project_for_edit(db, po.project_id, current_user)
-        po = service.approve_po(po=po, actor_user_id=current_user["id"])
-        body = service.serialize_po_approval(po)
-        db.commit()
-        return body
-    except Exception as exc:
-        db.rollback()
-        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
-
-
-@router.post("/purchase-orders/{po_id}/countersign", response_model=POApprovalResponse)
-async def countersign_purchase_order(
-    po_id: str,
-    current_user: dict = Depends(require_permission(EDIT)),
-    db: Session = Depends(get_db),
-):
-    """Requires an approved PO and a different person."""
-    try:
-        validate_uuid_path(po_id, resource="Purchase order")
-        service = ProjectPOExtractionService(db)
-        po = service.get_po(po_id)
-        _project_for_edit(db, po.project_id, current_user)
-        po = service.countersign_po(po=po, actor_user_id=current_user["id"])
-        body = service.serialize_po_approval(po)
         db.commit()
         return body
     except Exception as exc:

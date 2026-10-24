@@ -11,6 +11,7 @@ import { TurnDetailDrawer } from './TurnDetailDrawer';
 import {
   buildTimeline,
   canRetry,
+  factText,
   formatMs,
   laneWords,
   memoryChips,
@@ -199,8 +200,8 @@ function StageRow({
           {Object.entries(record.facts).map(([key, value]) => (
             <div key={key} className="contents">
               <dt className="text-muted-foreground">{key.replace(/_/g, ' ')}</dt>
-              <dd className="min-w-0 truncate" title={String(value)}>
-                {String(value)}
+              <dd className="min-w-0 truncate" title={factText(value)}>
+                {factText(value)}
               </dd>
             </div>
           ))}

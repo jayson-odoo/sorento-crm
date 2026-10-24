@@ -21,6 +21,7 @@ import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Switch } from '@/components/ui/switch';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { copyTextToClipboard } from '@/lib/clipboard';
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
@@ -114,31 +115,6 @@ function formatDateChip(value: string): string {
   const date = parseIsoDate(value);
   if (!date) return value;
   return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' });
-}
-
-/** Copy without `navigator.clipboard` (R19/AC-30b): the owner reaches the stack over http
- *  on a LAN hostname, a non-secure context where the Clipboard API does not exist at all.
- *  A hidden, off-screen textarea is the standard fallback - select it, ask the browser to
- *  copy the current selection, then remove it. */
-function copyViaExecCommand(text: string): boolean {
-  if (typeof document.execCommand !== 'function') return false;
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.setAttribute('readonly', '');
-  textarea.style.position = 'fixed';
-  textarea.style.top = '-1000px';
-  textarea.style.opacity = '0';
-  document.body.appendChild(textarea);
-  textarea.focus();
-  textarea.select();
-  let ok = false;
-  try {
-    ok = document.execCommand('copy');
-  } catch {
-    ok = false;
-  }
-  document.body.removeChild(textarea);
-  return ok;
 }
 
 const BOOK_LABEL: Record<StockDebtBook, string> = {
@@ -370,21 +346,10 @@ export function StockDebtClient() {
   }, []);
 
   // R19/AC-30b: `navigator.clipboard` does not exist at all off a secure context (the
-  // owner reaches the stack over http on a LAN hostname) - fall back to a hidden
-  // textarea + `document.execCommand('copy')`, and only toast an error when NEITHER
-  // exists.
+  // owner reaches the stack over http on a LAN hostname) - the shared helper falls back
+  // to a hidden textarea + `document.execCommand('copy')`.
   const handleCopy = async () => {
-    const text = selection.copyText();
-    if (navigator.clipboard?.writeText) {
-      try {
-        await navigator.clipboard.writeText(text);
-        toast.success('Copied');
-        return;
-      } catch {
-        // Fall through to the execCommand fallback below.
-      }
-    }
-    if (copyViaExecCommand(text)) {
+    if (await copyTextToClipboard(selection.copyText())) {
       toast.success('Copied');
     } else {
       toast.error('Could not copy to the clipboard');

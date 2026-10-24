@@ -889,7 +889,7 @@ function TypographyControls({
               type="button"
               className={`flex-1 rounded border px-2 py-0.5 text-xs ${
                 values.align === a
-                  ? 'border-primary bg-primary/10 text-primary'
+                  ? 'border-primary bg-primary text-primary-foreground'
                   : 'border-input hover:bg-accent'
               }`}
               onClick={() => onChange({ align: a })}

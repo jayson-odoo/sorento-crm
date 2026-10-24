@@ -1,0 +1,1054 @@
+'use client';
+
+import * as React from 'react';
+import { createPortal } from 'react-dom';
+import {
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  MeasuringStrategy,
+  MouseSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  pointerWithin,
+  rectIntersection,
+  type CollisionDetection,
+  type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
+  type KeyboardCoordinateGetter,
+} from '@dnd-kit/core';
+import { ListLoadFailure } from '@/components/common/ListLoadFailure';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
+import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
+import { toast } from '@/lib/toast';
+import { cn } from '@/lib/utils';
+import { useLineSplits } from '../../_shared/hooks/useLineSplits';
+import {
+  addSplit,
+  clearDate,
+  dropEmpty,
+  formatSplitDate,
+  fromPayload,
+  gapOf,
+  groupKeyOf,
+  moveSplit,
+  placeRest,
+  readsRemain,
+  removeSplit,
+  setDate,
+  setQty,
+  setRemark,
+  sortLines,
+  splitsOf,
+  plannedDateOf,
+  toPayload,
+  type MoveTarget,
+  type SplitLine,
+} from '../lib/lineSplitModel';
+import {
+  DROP_CANCEL,
+  DROP_NEW,
+  LineSplitSheet,
+  dateInputId,
+  focusCell,
+  lineDropId,
+  type DragSource,
+  type SheetDrag,
+  type SheetHandlers,
+} from './LineSplitSheet';
+
+interface Draft {
+  lines: SplitLine[];
+  history: SplitLine[][];
+}
+
+const HISTORY_LIMIT = 80;
+const FLASH_MS = 2000;
+
+function isTyping(target: EventTarget | null): boolean {
+  const element = target as HTMLElement | null;
+  return Boolean(element && /^(INPUT|SELECT|TEXTAREA)$/.test(element.tagName));
+}
+
+/**
+ * The block under the POINTER wins; only with the pointer over no block does the dragged
+ * handle's own rectangle decide. Matching the handle's rectangle alone dropped one row low
+ * near the bottom of the scrolling sheet (real browser).
+ */
+const splitCollision: CollisionDetection = (args) => {
+  const hits = pointerWithin(args);
+  return hits.length > 0 ? hits : rectIntersection(args);
+};
+
+/** Blocks are re-measured during a drag: the sheet scrolls (autoscroll) under it. */
+const SPLIT_MEASURING = { droppable: { strategy: MeasuringStrategy.Always } };
+
+/** Autoscroll only from a thin edge band, and slowly, so a drop near the edge lands where
+ * it was aimed instead of the sheet still scrolling under it (browser pass). */
+const SPLIT_AUTOSCROLL = { threshold: { x: 0.08, y: 0.08 }, acceleration: 4 };
+
+/** Where focus goes once the sheet has drawn the change. */
+type FocusRequest =
+  | { kind: 'qty'; splitId: string; select?: boolean; caretEnd?: boolean }
+  | { kind: 'date'; splitId: string; typed?: string }
+  | { kind: 'grip'; splitId: string }
+  | { kind: 'line'; lineId: string };
+
+const attr = (value: string) => value.replace(/["\\]/g, '\\$&');
+
+function lineBody(lineId: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(
+    `tbody[data-line-id="${attr(lineId)}"]`,
+  );
+}
+
+/**
+ * A key typed on a REMAIN date cell lands in the date input it turns into. The input's
+ * value is set the way typing sets it, so the date field holds it as its own draft.
+ */
+function typeInto(input: HTMLInputElement, text: string) {
+  const setter = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    'value',
+  )?.set;
+  setter?.call(input, text);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function runFocus(request: FocusRequest): boolean {
+  if (request.kind === 'line') {
+    const body = lineBody(request.lineId);
+    if (!body) return false;
+    body.scrollIntoView({ block: 'center' });
+    return focusCell(body.querySelector('[data-nav-col]'));
+  }
+  if (request.kind === 'grip') {
+    const grip = document.querySelector<HTMLElement>(
+      `[data-grip-split="${attr(request.splitId)}"]`,
+    );
+    if (!grip) return false;
+    grip.focus();
+    return true;
+  }
+  if (request.kind === 'date') {
+    const input = document.getElementById(
+      dateInputId(request.splitId),
+    ) as HTMLInputElement | null;
+    if (!input) return false;
+    input.focus();
+    if (request.typed !== undefined) typeInto(input, request.typed);
+    else input.select();
+    return true;
+  }
+  const input = document.querySelector<HTMLInputElement>(
+    `[data-qty-split="${attr(request.splitId)}"]`,
+  );
+  if (!input) return false;
+  input.focus();
+  if (request.select) input.select();
+  else if (request.caretEnd)
+    input.setSelectionRange(input.value.length, input.value.length);
+  return true;
+}
+
+/** The split that took the moved qty: a new one, one that grew, else the one dragged. */
+function landedSplitId(
+  before: SplitLine,
+  after: SplitLine | undefined,
+  fallback: string | null,
+): string | null {
+  if (!after) return fallback;
+  const prior = new Map(splitsOf(before).map((split) => [split.id, split]));
+  const grown =
+    splitsOf(after).find((split) => !prior.has(split.id)) ??
+    splitsOf(after).find(
+      (split) => split.qty > (prior.get(split.id)?.qty ?? 0),
+    );
+  return grown?.id ?? fallback;
+}
+
+function dragQty(source: DragSource, line: SplitLine): number {
+  if (source.kind === 'rest') return Math.max(0, gapOf(line));
+  return splitsOf(line).find((split) => split.id === source.splitId)?.qty ?? 0;
+}
+
+/**
+ * `20/11/2026`, `New date`, `Cancel this qty` (the overlay's target, UAC A8). A line's number
+ * is never named (OI-SPLIT-GUIDE UAC F21, F24): its planned date, else its item.
+ */
+function targetLabel(
+  overId: string | null,
+  lines: SplitLine[],
+  cancelWord = 'Cancel this qty',
+): string | null {
+  if (!overId) return null;
+  if (overId === DROP_NEW) return 'New date';
+  if (overId === DROP_CANCEL) return cancelWord;
+  const to = lines.find((line) => lineDropId(line.lineId) === overId);
+  if (!to) return null;
+  const date = formatSplitDate(plannedDateOf(lines, to.lineId));
+  return date || to.itemCode;
+}
+
+/** What a host draws in the editor's header: the board dialog's, or the guide page's. */
+export interface LineSplitEditorChrome {
+  /** "<SO number> · <SO date> · <customer>". */
+  subtitle: string;
+  /** The shown lines' locations, for the narrow header. */
+  locations: string;
+  /** The search box and the "Split lines only" toggle; null when the editor is scoped. */
+  searchControls: React.ReactNode;
+  /** Unsaved edits are on the sheet. */
+  dirty: boolean;
+  /** Save is on: the plan is loaded, adds up and is not already saving. */
+  canSave: boolean;
+  saving: boolean;
+  save: () => void;
+  /** Throws every unsaved edit away (back to the stored plan). */
+  discard: () => void;
+}
+
+/** What a host may ask the editor while it is open. */
+export interface LineSplitEditorHandle {
+  isDirty: () => boolean;
+  isDragging: () => boolean;
+}
+
+/**
+ * OI-LINE-SPLIT v4: the split sheet editor (UAC A, B, F; mock v4
+ * `documentation/mockups/OI-LINE-SPLIT/index.html`). Every open line of the SO in one sheet
+ * (`LineSplitSheet`); a split row, a REMAIN line or a line's "N left" drags (pointer, touch
+ * long-press, keyboard) onto another line of its item and location, a new date or Cancel.
+ * Save sends every line at once and waits while a line does not add up or lacks a date.
+ *
+ * OI-SPLIT-GUIDE (UAC F18): ONE editor, two hosts. The board's "Split delivery" dialog
+ * (`LineSplitDialog`) and the guided Confirm's Review split page both render it; the host
+ * draws the header (`renderHeader`) and decides what a Save does after it lands.
+ */
+export function LineSplitEditor({
+  psoId,
+  active,
+  focusLineId,
+  onlyLineIds,
+  lineRemarks,
+  onSaveRemarks,
+  canDrag = true,
+  readLoaded = false,
+  stayAfterSave = false,
+  onSaved,
+  onDirtyChange,
+  handleRef,
+  renderHeader,
+  testId,
+  className,
+}: {
+  psoId: string;
+  /** The host is showing the editor (the dialog is open); inactive, the editor resets. */
+  active: boolean;
+  focusLineId?: string;
+  /**
+   * OI-SPLIT-GUIDE (UAC F13, F22): the sheet draws only these lines (the ones a Confirm covers)
+   * and the lines their splits sit on, with no search and no "Split lines only" toggle; a Save
+   * still sends every line. Absent (the board gear): every line drawn, as before.
+   */
+  onlyLineIds?: ReadonlySet<string>;
+  /**
+   * OI-SPLIT-GUIDE (UAC F18, F25, F26): per saved line, the purchasing email's words for its
+   * Remark (`words`), the planner's own remark kept in its saved decision (`own`), and whether
+   * that remark is edited here (`editable`: a saved decision draft to keep it in).
+   */
+  lineRemarks?: ReadonlyMap<
+    string,
+    { words: string | null; own: string | null; editable: boolean }
+  >;
+  /** Saves the edited remarks of `lineRemarks` lines (line id -> remark, '' = the default). */
+  onSaveRemarks?: (changes: ReadonlyMap<string, string>) => Promise<void>;
+  /**
+   * OI-SPLIT-CONFIRM-POLISH (owner, 21 Oct 2026): false = no drag grips and no draggable
+   * "N left" (the guided Confirm's page); the qty and date cells still edit. Default: drag.
+   */
+  canDrag?: boolean;
+  /**
+   * The host has just read this order's split plan and shows it loaded: start from that read
+   * instead of waiting for the editor's own refetch (no skeleton flash on the guide page).
+   */
+  readLoaded?: boolean;
+  /** After a Save the editor stays and starts again from the stored plan (the guide page). */
+  stayAfterSave?: boolean;
+  onSaved?: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
+  handleRef?: React.Ref<LineSplitEditorHandle>;
+  renderHeader: (chrome: LineSplitEditorChrome) => React.ReactNode;
+  testId?: string;
+  className?: string;
+}) {
+  const { query, save } = useLineSplits(psoId, active);
+  const [draft, setDraft] = React.useState<Draft | null>(null);
+  const draftRef = React.useRef<Draft | null>(null);
+  const initialRef = React.useRef('');
+  // The loaded plan, so the sheet can tell which lines the draft has changed (AC-G20).
+  const [savedLines, setSavedLines] = React.useState<SplitLine[]>([]);
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
+  // The page's own node, as state: Radix mounts the portalled content after the first
+  // render, so an effect keyed on it attaches once it exists.
+  const [container, setContainer] = React.useState<HTMLDivElement | null>(null);
+  const containerCallback = React.useCallback((node: HTMLDivElement | null) => {
+    containerRef.current = node;
+    setContainer(node);
+  }, []);
+  const [search, setSearch] = React.useState('');
+  const [splitOnly, setSplitOnly] = React.useState(false);
+  const [openLineIds, setOpenLineIds] = React.useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [flashLineId, setFlashLineId] = React.useState<string | null>(null);
+  const [drag, setDrag] = React.useState<SheetDrag | null>(null);
+  const dragRef = React.useRef<(SheetDrag & { keyboard: boolean }) | null>(
+    null,
+  );
+  const [overTarget, setOverTarget] = React.useState<string | null>(null);
+  const overRef = React.useRef<string | null>(null);
+  const keyboardIndexRef = React.useRef(-1);
+  // dnd-kit's own live region is kept out of the reading order (it would read internal
+  // ids); the status line says what is moving where instead.
+  const [liveHost, setLiveHost] = React.useState<HTMLDivElement | null>(null);
+  const switchId = React.useId();
+  // OI-SPLIT-GUIDE (UAC F25, F26): remarks typed this session on `lineRemarks` lines (line id
+  // -> remark, '' = the default words), saved through `onSaveRemarks`, never as splits.
+  const [remarkEdits, setRemarkEdits] = React.useState<ReadonlyMap<string, string>>(
+    () => new Map(),
+  );
+
+  const commit = React.useCallback((next: Draft | null) => {
+    draftRef.current = next;
+    setDraft(next);
+  }, []);
+
+  // ---- focus after a change: applied once the sheet has drawn it
+  const focusRef = React.useRef<FocusRequest | null>(null);
+  const scrollRef = React.useRef<string | null>(null);
+  const requestFocus = React.useCallback((request: FocusRequest) => {
+    focusRef.current = request;
+    let tries = 0;
+    const retry = () => {
+      if (focusRef.current !== request) return;
+      if (runFocus(request) || (tries += 1) > 10) {
+        if (focusRef.current === request) focusRef.current = null;
+        return;
+      }
+      window.requestAnimationFrame(retry);
+    };
+    window.requestAnimationFrame(retry);
+  }, []);
+  React.useLayoutEffect(() => {
+    const request = focusRef.current;
+    if (request && runFocus(request)) focusRef.current = null;
+    const scrollTo = scrollRef.current;
+    if (scrollTo) {
+      const body = lineBody(scrollTo);
+      if (body) {
+        body.scrollIntoView({ block: 'center' });
+        scrollRef.current = null;
+      }
+    }
+  });
+
+  React.useEffect(() => {
+    if (!flashLineId) return undefined;
+    const timer = window.setTimeout(() => setFlashLineId(null), FLASH_MS);
+    return () => window.clearTimeout(timer);
+  }, [flashLineId]);
+
+  const endDrag = React.useCallback(() => {
+    dragRef.current = null;
+    overRef.current = null;
+    keyboardIndexRef.current = -1;
+    setDrag(null);
+    setOverTarget(null);
+  }, []);
+
+  React.useEffect(() => {
+    if (!active) {
+      commit(null);
+      endDrag();
+      setOpenLineIds(new Set());
+      setSearch('');
+      setSplitOnly(false);
+      return;
+    }
+    if (query.data && (readLoaded || !query.isFetching) && !draftRef.current) {
+      const lines = fromPayload(query.data);
+      initialRef.current = JSON.stringify(toPayload(lines));
+      setSavedLines(lines);
+      commit({ lines, history: [] });
+      // Opened from a board line: that line is scrolled to and flashed (UAC A1).
+      if (focusLineId && lines.some((line) => line.lineId === focusLineId)) {
+        scrollRef.current = focusLineId;
+        setFlashLineId(focusLineId);
+      }
+    }
+  }, [active, query.data, query.isFetching, readLoaded, focusLineId, commit, endDrag]);
+
+  const lines = draft?.lines ?? null;
+  const sorted = React.useMemo(() => (lines ? sortLines(lines) : []), [lines]);
+  const visible = React.useMemo(() => {
+    if (onlyLineIds) {
+      const landing = new Set<string>();
+      for (const line of sorted) {
+        if (!onlyLineIds.has(line.lineId)) continue;
+        for (const split of line.splits) {
+          if (!split.isCancel && split.sitsOnLineId) landing.add(split.sitsOnLineId);
+        }
+      }
+      return sorted.filter((line) => onlyLineIds.has(line.lineId) || landing.has(line.lineId));
+    }
+    const needle = search.trim().toLowerCase();
+    return sorted.filter(
+      (line) =>
+        (!needle || line.itemCode.toLowerCase().includes(needle)) &&
+        (!splitOnly || !readsRemain(line) || openLineIds.has(line.lineId)),
+    );
+  }, [sorted, search, splitOnly, openLineIds, onlyLineIds]);
+
+  // ---- history: one change, one Undo step
+  const undo = React.useCallback(() => {
+    const current = draftRef.current;
+    if (!current || current.history.length === 0) {
+      toast('Nothing to undo');
+      return;
+    }
+    commit({
+      lines: current.history[current.history.length - 1],
+      history: current.history.slice(0, -1),
+    });
+  }, [commit]);
+
+  // Cmd/Ctrl+Z: anywhere in the sheet, and anywhere else but a text box (UAC A10).
+  React.useEffect(() => {
+    if (!active) return undefined;
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.shiftKey) return;
+      if (event.key.toLowerCase() !== 'z' || dragRef.current) return;
+      const target = event.target as HTMLElement | null;
+      const inSheet = Boolean(target?.closest?.('[data-split-sheet]'));
+      if (isTyping(target) && !inSheet) return;
+      event.preventDefault();
+      undo();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [active, undo]);
+
+  const typingRef = React.useRef<string | null>(null);
+  /** Apply an edit as one Undo step. Typing in one field is ONE step until it loses focus. */
+  const apply = React.useCallback(
+    (edit: (lines: SplitLine[]) => SplitLine[], typingKey?: string) => {
+      const current = draftRef.current;
+      if (!current) return null;
+      const next = edit(current.lines);
+      if (next === current.lines) return null;
+      const sameEdit =
+        typingKey !== undefined && typingRef.current === typingKey;
+      typingRef.current = typingKey ?? null;
+      commit({
+        lines: next,
+        history: sameEdit
+          ? current.history
+          : [...current.history, current.lines].slice(-HISTORY_LIMIT),
+      });
+      return { before: current.lines, after: next };
+    },
+    [commit],
+  );
+
+  /** "Moved N to <target>" with an Undo that restores the lines as they were (UAC A9). */
+  const movedToast = React.useCallback(
+    (
+      qty: number,
+      where: string,
+      done: { before: SplitLine[]; after: SplitLine[] },
+    ) => {
+      toast(`Moved ${qty} to ${where}`, {
+        action: {
+          label: 'Undo',
+          onClick: () => {
+            const now = draftRef.current;
+            if (!now) return;
+            commit(
+              now.lines === done.after
+                ? { lines: done.before, history: now.history.slice(0, -1) }
+                : {
+                    lines: done.before,
+                    history: [...now.history, now.lines].slice(-HISTORY_LIMIT),
+                  },
+            );
+          },
+        },
+      });
+    },
+    [commit],
+  );
+
+  /** Focus left a line: its empty splits go, and a line equal to its base reads REMAIN. */
+  const focusedLineRef = React.useRef<string | null>(null);
+  const leaveLine = React.useCallback(
+    (lineId: string) => {
+      typingRef.current = null;
+      setOpenLineIds((current) => {
+        if (!current.has(lineId)) return current;
+        const next = new Set(current);
+        next.delete(lineId);
+        return next;
+      });
+      const current = draftRef.current;
+      if (!current) return;
+      const next = dropEmpty(current.lines, lineId);
+      if (next)
+        commit({
+          lines: next,
+          history: [...current.history, current.lines].slice(-HISTORY_LIMIT),
+        });
+    },
+    [commit],
+  );
+  // A DOM listener, so focus in a list or calendar opened from a cell (portalled out of
+  // the page) never reaches it: that focus is still in its line.
+  React.useEffect(() => {
+    if (!container) return undefined;
+    const onFocusIn = (event: FocusEvent) => {
+      const target = event.target as HTMLElement;
+      const lineId =
+        target.closest<HTMLElement>('tbody[data-line-id]')?.dataset.lineId ??
+        null;
+      const previous = focusedLineRef.current;
+      focusedLineRef.current = lineId;
+      if (previous && previous !== lineId) leaveLine(previous);
+    };
+    container.addEventListener('focusin', onFocusIn);
+    return () => container.removeEventListener('focusin', onFocusIn);
+  }, [container, leaveLine]);
+
+  const liveLine = React.useCallback(
+    (lineId: string) =>
+      draftRef.current?.lines.find((line) => line.lineId === lineId),
+    [],
+  );
+
+  const handlers = React.useMemo<SheetHandlers>(
+    () => ({
+      open: (line, cell, typed) => {
+        const current = liveLine(line.lineId) ?? line;
+        const split = splitsOf(current)[0];
+        if (!split) return;
+        setOpenLineIds((ids) => new Set(ids).add(line.lineId));
+        if (cell === 'qty') {
+          if (typed)
+            apply(
+              (all) => setQty(all, line.lineId, split.id, Number(typed)),
+              `qty:${split.id}`,
+            );
+          requestFocus({
+            kind: 'qty',
+            splitId: split.id,
+            select: !typed,
+            caretEnd: Boolean(typed),
+          });
+        } else {
+          requestFocus({ kind: 'date', splitId: split.id, typed });
+        }
+      },
+      qty: (line, splitId, qty) => {
+        apply(
+          (all) => setQty(all, line.lineId, splitId, qty),
+          `qty:${splitId}`,
+        );
+      },
+      date: (line, splitId, iso) => {
+        apply((all) =>
+          iso
+            ? setDate(all, line.lineId, splitId, iso)
+            : clearDate(all, line.lineId, splitId),
+        );
+      },
+      remark: (line, splitId, remark) => {
+        apply(
+          (all) => setRemark(all, line.lineId, splitId, remark),
+          `remark:${splitId}`,
+        );
+      },
+      add: (line) => {
+        let id = '';
+        const done = apply((all) => {
+          const added = addSplit(all, line.lineId);
+          id = added.id;
+          return added.lines;
+        });
+        if (done) requestFocus({ kind: 'qty', splitId: id, select: true });
+      },
+      remove: (line, splitId) => {
+        if (apply((all) => removeSplit(all, line.lineId, splitId)))
+          requestFocus({ kind: 'line', lineId: line.lineId });
+      },
+      fieldBlur: () => {
+        typingRef.current = null;
+      },
+      lineRemark: (line, remark) =>
+        setRemarkEdits((current) => new Map(current).set(line.lineId, remark)),
+    }),
+    [apply, liveLine, requestFocus],
+  );
+
+  // ---- drag and drop (UAC A8, A9)
+  const stepKeyboardTarget = React.useCallback((dir: 1 | -1) => {
+    const table = containerRef.current?.querySelector('[data-split-sheet]');
+    const targets = Array.from(
+      table?.querySelectorAll<HTMLElement>('tbody[data-drop-target="true"]') ??
+        [],
+    );
+    if (targets.length === 0) return null;
+    const index =
+      dir > 0
+        ? Math.min(targets.length - 1, keyboardIndexRef.current + 1)
+        : Math.max(0, keyboardIndexRef.current - 1);
+    keyboardIndexRef.current = index;
+    const el = targets[index];
+    const id = el.dataset.dropId ?? null;
+    overRef.current = id;
+    setOverTarget(id);
+    return el;
+  }, []);
+  const stepRef = React.useRef(stepKeyboardTarget);
+  stepRef.current = stepKeyboardTarget;
+
+  /**
+   * Up / Down step through the item's other lines in order, then New date, then Cancel
+   * (UAC A10). The order comes from the sheet, never from measured positions; the overlay
+   * only follows the target when the browser has laid it out.
+   */
+  const keyboardCoordinates = React.useCallback<KeyboardCoordinateGetter>(
+    (event, { currentCoordinates }) => {
+      if (event.code !== 'ArrowDown' && event.code !== 'ArrowUp')
+        return undefined;
+      const el = stepRef.current(event.code === 'ArrowDown' ? 1 : -1);
+      const rect = el?.getBoundingClientRect();
+      if (!rect || !rect.height) return currentCoordinates;
+      return {
+        x: currentCoordinates.x,
+        y: rect.top + Math.min(rect.height / 2, 18) - 14,
+      };
+    },
+    [],
+  );
+
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 200, tolerance: 8 },
+    }),
+    useSensor(KeyboardSensor, {
+      keyboardCodes: {
+        start: ['Space'],
+        cancel: ['Escape'],
+        end: ['Space', 'Enter'],
+      },
+      coordinateGetter: keyboardCoordinates,
+    }),
+  );
+
+  const onDragStart = (event: DragStartEvent) => {
+    const source = event.active.data.current as DragSource | undefined;
+    const line = source ? liveLine(source.lineId) : undefined;
+    if (!source || !line) return;
+    const keyboard =
+      typeof (event.activatorEvent as KeyboardEvent | null)?.key === 'string';
+    const next = { source, groupKey: groupKeyOf(line) };
+    // A press that wandered over a row before the drag began leaves no selection behind.
+    window.getSelection()?.removeAllRanges();
+    dragRef.current = { ...next, keyboard };
+    overRef.current = null;
+    keyboardIndexRef.current = -1;
+    setDrag(next);
+    setOverTarget(null);
+  };
+  const onDragOver = (event: DragOverEvent) => {
+    if (!dragRef.current || dragRef.current.keyboard) return;
+    const id = event.over ? String(event.over.id) : null;
+    overRef.current = id;
+    setOverTarget(id);
+  };
+
+  const drop = (source: DragSource, overId: string) => {
+    const current = draftRef.current;
+    const line = current?.lines.find((c) => c.lineId === source.lineId);
+    if (!current || !line) return;
+    let target: MoveTarget;
+    if (overId === DROP_NEW) target = { date: '', sitsOnLineId: null };
+    else if (overId === DROP_CANCEL)
+      target = { date: 'cancel', sitsOnLineId: null };
+    else {
+      const to = current.lines.find((c) => lineDropId(c.lineId) === overId);
+      if (
+        !to ||
+        to.lineId === line.lineId ||
+        to.deliveredInFull ||
+        groupKeyOf(to) !== groupKeyOf(line)
+      )
+        return;
+      // The line's planned date: one AutoCount line carries one date (UAC A9).
+      const date = plannedDateOf(current.lines, to.lineId);
+      target = { date: date ?? '', sitsOnLineId: to.lineId };
+    }
+    const qty = dragQty(source, line);
+    if (qty <= 0) return;
+    const done = apply((all) =>
+      source.kind === 'rest'
+        ? placeRest(all, line.lineId, target)
+        : moveSplit(all, line.lineId, source.splitId, qty, target),
+    );
+    if (!done) return;
+    movedToast(qty, targetLabel(overId, current.lines, 'Cancel') ?? '', done);
+    const landed = landedSplitId(
+      line,
+      done.after.find((c) => c.lineId === line.lineId),
+      source.kind === 'rest' ? null : source.splitId,
+    );
+    if (!landed) return;
+    // A new date is typed next (UAC A9); otherwise the keyboard stays on the moved row.
+    requestFocus(
+      target.date === ''
+        ? { kind: 'date', splitId: landed }
+        : { kind: 'grip', splitId: landed },
+    );
+  };
+
+  const onDragEnd = (event: DragEndEvent) => {
+    const active = dragRef.current;
+    const overId = active?.keyboard
+      ? overRef.current
+      : event.over
+        ? String(event.over.id)
+        : null;
+    endDrag();
+    if (active && overId) drop(active.source, overId);
+  };
+
+  // ---- the header and status line
+  // OI-SPLIT-GUIDE (UAC F16): scoped, the counts and the problems read the lines shown only.
+  const counted = onlyLineIds ? visible : sorted;
+  const problems = React.useMemo(
+    () =>
+      counted.flatMap((line) => {
+        const gap = gapOf(line);
+        const undated =
+          !readsRemain(line) &&
+          line.splits.some(
+            (split) => !split.isCancel && split.qty > 0 && !split.deliveryDate,
+          );
+        if (gap === 0 && !undated) return [];
+        const what =
+          gap > 0 ? `${gap} left` : gap < 0 ? `${-gap} over` : 'date to fill';
+        return [
+          {
+            lineId: line.lineId,
+            // UAC F24: the item and what is wrong, never the line's number.
+            text: `${line.itemCode}: ${what}`,
+          },
+        ];
+      }),
+    [counted],
+  );
+  const splitCount = counted.filter((line) => !readsRemain(line)).length;
+  const products = new Set(counted.map((line) => line.itemCode)).size;
+  const splitsDirty =
+    Boolean(lines) &&
+    JSON.stringify(toPayload(lines as SplitLine[])) !== initialRef.current;
+  /** The remarks typed this session that differ from what the saved decisions hold. */
+  const remarkChanges = React.useMemo(() => {
+    const out = new Map<string, string>();
+    for (const [lineId, remark] of remarkEdits) {
+      const entry = lineRemarks?.get(lineId);
+      if (entry?.editable && remark.trim() !== (entry.own ?? '').trim()) out.set(lineId, remark.trim());
+    }
+    return out;
+  }, [remarkEdits, lineRemarks]);
+  const dirty = splitsDirty || remarkChanges.size > 0;
+  const dirtyRef = React.useRef(false);
+  dirtyRef.current = dirty;
+
+  const show = (lineId: string) => {
+    setSearch('');
+    setSplitOnly(false);
+    setFlashLineId(lineId);
+    requestFocus({ kind: 'line', lineId });
+  };
+
+  const onSave = () => {
+    const current = draftRef.current;
+    if (!current || problems.length > 0) return;
+    let cleaned = current.lines;
+    for (const line of current.lines)
+      cleaned = dropEmpty(cleaned, line.lineId) ?? cleaned;
+    if (cleaned !== current.lines)
+      commit({ lines: cleaned, history: [...current.history, current.lines] });
+    const remarks = remarkChanges;
+    const finish = (splitsSaved: boolean) => {
+      if (stayAfterSave) {
+        if (splitsSaved) {
+          // The saved plan is the read now: start again from it (the page stays). The split
+          // save answered a new read, which is what re-seeds the sheet.
+          commit(null);
+          setOpenLineIds(new Set());
+        }
+        // A remark-only save touched no split: the sheet stands as it is, and the saved
+        // remarks now come from the host's saved decisions (never a reset that waits for a
+        // split read that is not coming).
+        setRemarkEdits(new Map());
+      }
+      onSaved?.();
+    };
+    // OI-SPLIT-GUIDE (UAC F26): the saved lines' remarks go to their saved decisions; a
+    // failure keeps every edit (the saving call says why).
+    const saveRemarks = () =>
+      remarks.size > 0 && onSaveRemarks ? onSaveRemarks(remarks) : Promise.resolve();
+    if (remarks.size > 0 && !splitsDirty) {
+      saveRemarks().then(() => finish(false), () => undefined);
+      return;
+    }
+    // OI-SPLIT-GUIDE (UAC F22): every line of the order, scoped or not; the scope only limits
+    // what is drawn, so an edit on a hidden line's row drawn under a shown line is never lost.
+    save.mutate(
+      toPayload(cleaned),
+      {
+        onSuccess: () => {
+          saveRemarks().then(() => finish(true), () => undefined);
+        },
+      },
+    );
+  };
+
+  /** OI-SPLIT-GUIDE (UAC F19): every unsaved edit thrown away, back to the stored plan. */
+  const discard = () => {
+    endDrag();
+    setOpenLineIds(new Set());
+    setRemarkEdits(new Map());
+    commit({ lines: savedLines, history: [] });
+  };
+
+  React.useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+  React.useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+
+  React.useImperativeHandle(handleRef, () => ({
+    isDirty: () =>
+      (Boolean(draftRef.current) &&
+        JSON.stringify(toPayload(draftRef.current?.lines ?? [])) !== initialRef.current) ||
+      (dirtyRef.current && remarkChanges.size > 0),
+    isDragging: () => Boolean(dragRef.current),
+  }));
+
+  const soDate = formatSplitDate(query.data?.so_date ?? null);
+  const subtitle = [query.data?.so_number, soDate, query.data?.customer]
+    .filter(Boolean)
+    .join(' · ');
+  const locations = [...new Set(counted.map((line) => line.location))]
+    .filter(Boolean)
+    .join(', ');
+
+  // OI-SPLIT-GUIDE (UAC F18, F25): a host's words for a saved line's Remark, and the
+  // planner's own remark over them (display only; the lines themselves stay as read).
+  const shownLines = React.useMemo(
+    () =>
+      lineRemarks
+        ? visible.map((line) => {
+            const entry = lineRemarks.get(line.lineId);
+            if (!entry) return line;
+            const typed = remarkEdits.get(line.lineId);
+            return {
+              ...line,
+              savedRemark: entry.words,
+              remarkInDraft: entry.editable,
+              remarkStored: savedLines
+                .find((saved) => saved.lineId === line.lineId)
+                ?.splits.some((split) => Boolean(split.remark)),
+              ownRemark: typed ?? (entry.own ?? ''),
+              // Edited: a remark typed now that is not the default, else one stored in the
+              // saved decision (the stored one is never the default: the default stores none).
+              remarkEdited:
+                typed !== undefined
+                  ? Boolean(typed.trim()) && typed !== (entry.words ?? '')
+                  : Boolean(entry.own),
+            };
+          })
+        : visible,
+    [visible, lineRemarks, remarkEdits, savedLines],
+  );
+
+  const searchControls = onlyLineIds ? null : (
+    <>
+      <ListSearchInput
+        value={search}
+        onChange={setSearch}
+        placeholder="Search item code"
+        className="w-full sm:w-56"
+      />
+      <div className="flex items-center gap-2 text-xs">
+        <Switch
+          id={switchId}
+          size="sm"
+          checked={splitOnly}
+          onCheckedChange={setSplitOnly}
+        />
+        <label
+          htmlFor={switchId}
+          className="cursor-pointer select-none"
+        >
+          Split lines only
+        </label>
+      </div>
+    </>
+  );
+
+  const dragLine = drag ? liveLine(drag.source.lineId) : undefined;
+  const dragAmount = drag && dragLine ? dragQty(drag.source, dragLine) : 0;
+  const dragTarget = lines ? targetLabel(overTarget, lines) : null;
+
+  return (
+    <div
+      ref={containerCallback}
+      data-testid={testId}
+      className={cn(
+        'flex h-full min-h-0 flex-col',
+        // No text is selected while something is being dragged (browser pass D3).
+        drag && 'select-none',
+        className,
+      )}
+    >
+      {renderHeader({
+        subtitle,
+        locations,
+        searchControls,
+        dirty,
+        canSave: Boolean(lines) && problems.length === 0 && !save.isPending,
+        saving: save.isPending,
+        save: onSave,
+        discard,
+      })}
+
+      <div
+        // Named: the search box and the loading skeleton carry live regions of their own.
+        role="status"
+        aria-label="Split status"
+        aria-live="polite"
+        className="flex min-h-8 flex-wrap items-center gap-x-3.5 gap-y-1 border-b border-border px-4 py-1.5 text-xs"
+      >
+        {lines ? (
+          <span className="text-muted-foreground">
+            {`${counted.length} line${counted.length === 1 ? '' : 's'} · ${products} product${products === 1 ? '' : 's'} · ${splitCount} split`}
+          </span>
+        ) : null}
+        {/* AC-G1: the change shown is the one the last Confirm applied. */}
+        {lines && query.data?.confirmed_at ? (
+          <span className="font-medium text-success">
+            {`Confirmed ${formatSplitDate(query.data.confirmed_at.slice(0, 10))}`}
+          </span>
+        ) : null}
+        {problems.map((problem) => (
+          <span
+            key={problem.lineId}
+            className="inline-flex items-center gap-1.5"
+          >
+            <span className="font-medium text-destructive">
+              {problem.text}
+            </span>
+            <Button
+              type="button"
+              variant="link"
+              size="sm"
+              className="h-auto text-xs"
+              onClick={() => show(problem.lineId)}
+            >
+              Show
+            </Button>
+          </span>
+        ))}
+        {drag && dragLine ? (
+          <span className="sr-only">
+            {`Moving ${dragAmount} of ${dragLine.itemCode}${dragTarget ? ` → ${dragTarget}` : ''}`}
+          </span>
+        ) : null}
+      </div>
+
+      <div className="min-h-0 flex-1 [&>[data-slot=table-wrapper]]:h-full">
+        {query.isError && !lines ? (
+          <div className="flex h-full items-center justify-center p-6 text-sm">
+            <ListLoadFailure
+              error={query.error}
+              onRetry={() => void query.refetch()}
+            />
+          </div>
+        ) : !lines ? (
+          <SectionSkeleton rows={6} className="p-4" />
+        ) : (
+          <DndContext
+            sensors={sensors}
+            collisionDetection={splitCollision}
+            measuring={SPLIT_MEASURING}
+            autoScroll={SPLIT_AUTOSCROLL}
+            accessibility={{
+              container: liveHost ?? undefined,
+              restoreFocus: false,
+            }}
+            onDragStart={onDragStart}
+            onDragOver={onDragOver}
+            onDragEnd={onDragEnd}
+            onDragCancel={endDrag}
+          >
+            <LineSplitSheet
+              lines={shownLines}
+              allLines={sorted}
+              savedLines={savedLines}
+              soNumber={query.data?.so_number ?? ''}
+              soDate={soDate}
+              openLineIds={openLineIds}
+              drag={drag}
+              overTarget={overTarget}
+              flashLineId={flashLineId}
+              handlers={handlers}
+              canDrag={canDrag}
+            />
+            {typeof document !== 'undefined'
+              ? createPortal(
+                  <DragOverlay dropAnimation={null}>
+                    {drag && dragLine ? (
+                      <div className="pointer-events-none w-max whitespace-nowrap rounded-lg border border-s-[3px] border-border border-s-primary bg-background px-2.5 py-1.5 text-xs shadow-lg">
+                        <b className="tabular-nums">{dragAmount}</b>
+                        {` · ${dragLine.itemCode}`}
+                        {dragTarget ? (
+                          <span
+                            className={
+                              overTarget === DROP_CANCEL
+                                ? 'block text-destructive'
+                                : 'block text-primary'
+                            }
+                          >
+                            {`→ ${dragTarget}`}
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </DragOverlay>,
+                  document.body,
+                )
+              : null}
+          </DndContext>
+        )}
+      </div>
+      <div hidden ref={setLiveHost} />
+    </div>
+  );
+}

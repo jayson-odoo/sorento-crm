@@ -12,8 +12,10 @@
 
 ONE definition, exposed twice: `sql_expr` for the chat dataset (computed at query time from the
 links as they are now, so linking a contact reclassifies its history) and `classify` for the
-route, which runs the same expression for one contact. `is_salesperson_user` is the role arm
-alone, which (not this classification) decides chatbot document access (V1-DOC-SCOPE-SALES).
+route, which runs the same expression for one contact. `is_staff_user` (an active user holding
+a staff role), not this classification, decides chatbot document access (V1-DOC-SCOPE);
+`is_salesperson_user` (the role arm alone) decides whether a `salesperson` asker keeps the chat
+report's relaxed scope (`chat_report.asker_of`, V1-CHATREPORT-REVOKE).
 Core code: it never imports the chatbot package (tests/chatbot/test_import_boundary.py).
 """
 from __future__ import annotations
@@ -95,13 +97,67 @@ def _word_for(contact_id: Any) -> Any:
     )
 
 
+def is_staff_user(db: Session, contact_id: str) -> bool:
+    """True when an ACTIVE, not trashed CRM user linked to the contact (INTERNAL
+    `respond_contacts.id`) holds at least one not trashed role outside
+    `user_service.NON_STAFF_ROLE_SLUGS` (portal_user, guest): the people lookups' own staff
+    definition (`user_service._holds_staff_role`), whatever the role. This, not `classify`,
+    decides chatbot document access (V1-DOC-SCOPE, owner ruling 16 Oct 2026): deactivating or
+    trashing the user revokes it, and a dealer's portal login, a user with no live role, an
+    integration (act-as) user or a `sales_agents.contact_id` link (master data) grants nothing."""
+    from app.models.user import User, UserRole, UserRoleAssignment
+    from app.services.user_service import NON_STAFF_ROLE_SLUGS
+
+    users, roles, assigned = User.__table__, UserRole.__table__, UserRoleAssignment.__table__
+    held = sa.exists().where(
+        users.c.respond_contact_id == str(contact_id),
+        users.c.status == "ACTIVE",
+        users.c.is_trashed.is_(False),
+        users.c.is_integration.is_(False),
+        assigned.c.user_id == users.c.id,
+        assigned.c.role_id == roles.c.id,
+        roles.c.slug.notin_(NON_STAFF_ROLE_SLUGS),
+        roles.c.is_trashed.is_(False),
+    )
+    return bool(db.execute(sa.select(held)).scalar())
+
+
 def is_salesperson_user(db: Session, contact_id: str) -> bool:
     """True when an ACTIVE, not trashed CRM user linked to the contact (INTERNAL
     `respond_contacts.id`) holds the not trashed role `salesperson`: the role arm alone.
-    This, not `classify`, decides chatbot document access (V1-DOC-SCOPE-SALES, crew ruling
-    14 Oct 2026): deactivating or trashing the user revokes it, and a `sales_agents.contact_id`
-    link (master data) grants nothing."""
+    `chat_report.asker_of` reads it so a `salesperson` asker keeps the chat report's relaxed
+    scope only while such a user is live (V1-CHATREPORT-REVOKE): deactivating or trashing the
+    user revokes it, and a `sales_agents.contact_id` link (master data) grants nothing.
+    Document access is `is_staff_user`."""
     return bool(db.execute(sa.select(sa.exists().where(*_salesperson_user_clauses(str(contact_id))))).scalar())
+
+
+def own_book(db: Session, contact_id: str) -> set[str] | None:
+    """The customer ids of a contact's own book (INTERNAL `respond_contacts.id`): the customers
+    whose card agent is a `sales_agents` row linked to the contact. None when the contact has no
+    agent link."""
+    from app.models.base import company_scope
+    from app.models.order import Customer
+    from app.models.sales_agent import SalesAgent
+
+    with company_scope(db, None):
+        agent_ids = [str(i) for (i,) in db.query(SalesAgent.id).filter(SalesAgent.contact_id == str(contact_id)).all()]
+        if not agent_ids:
+            return None
+        return {str(i) for (i,) in db.query(Customer.id).filter(Customer.sales_agent_id.in_(agent_ids)).all()}
+
+
+def may_ask_sales_ranking(db: Session, contact_id: str | None, *, granted: bool) -> tuple[str, set[str] | None]:
+    """THE rule for who may run the sales ranking (the report-ask tool), shared by the route and
+    the chatbot seams: `granted` (the `sales_orders.sales_report` reveal) or a LIVE salesperson
+    user (`is_salesperson_user`) with a non-empty `own_book`. Returns `(decision, book)`:
+    `granted`, `salesperson_book` or `not_granted`; `book` is the salesperson's customer set
+    (None when the contact is not a live salesperson user or has no agent link), whatever the
+    decision, because a granted salesperson with `mine` is narrowed to it too."""
+    book = own_book(db, contact_id) if contact_id and is_salesperson_user(db, str(contact_id)) else None
+    if granted:
+        return "granted", book
+    return ("salesperson_book" if book else "not_granted"), book
 
 
 def classify(db: Session, contact_id: str) -> str:

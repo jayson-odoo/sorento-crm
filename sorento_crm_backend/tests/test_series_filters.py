@@ -392,7 +392,7 @@ def test_b7_empty_filters_never_list_another_companys_products(world):
     other_id = _uid()
     world.db.execute(
         text("insert into companies (id, code, name) values (:id, :code, :name)"),
-        {"id": other_id, "code": f"ZZ{_uid()[:4]}", "name": f"{MARK} Other"},
+        {"id": other_id, "code": f"ZZ{uuid.uuid4().hex}", "name": f"{MARK} Other"},
     )
     with company_scope(world.db, frozenset({other_id})):
         theirs = _product(world.db, "ZZF-THEIRS-1", world.x.id, world.uom, None)
@@ -419,7 +419,7 @@ def _foreign(world):
     other_id = _uid()
     world.db.execute(
         text("insert into companies (id, code, name) values (:id, :code, :name)"),
-        {"id": other_id, "code": f"ZZ{_uid()[:4]}", "name": f"{MARK} Other"},
+        {"id": other_id, "code": f"ZZ{uuid.uuid4().hex}", "name": f"{MARK} Other"},
     )
     with company_scope(world.db, frozenset({other_id})):
         brand = _brand(world.db, "FOREIGN")
@@ -577,7 +577,7 @@ def test_rows_and_is_in_series_stay_in_the_series_company_when_the_session_spans
     other_id = _uid()
     world.db.execute(
         text("insert into companies (id, code, name) values (:id, :code, :name)"),
-        {"id": other_id, "code": f"ZZ{_uid()[:4]}", "name": f"{MARK} Other"},
+        {"id": other_id, "code": f"ZZ{uuid.uuid4().hex}", "name": f"{MARK} Other"},
     )
     with company_scope(world.db, frozenset({other_id})):
         theirs = _product(world.db, "ZZF-THEIRS-2", world.x.id, world.uom, None)

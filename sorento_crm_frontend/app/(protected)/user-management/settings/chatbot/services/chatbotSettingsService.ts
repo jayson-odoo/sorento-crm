@@ -35,7 +35,23 @@ export interface ChatbotSettings {
   /** S7 mode: the CRM orders turns per contact and owns the tail. */
   chatbot_ordering_enabled: boolean;
   chatbot_unsupported_domains: string[];
+  /** CHAT-SPEED: does the respond.io webhook start the turn itself. */
+  chatbot_direct_ingress_mode: ChatbotDirectIngressMode;
+  /** respond.io contact ids, one per line, for the `contacts` mode. */
+  chatbot_direct_ingress_contacts: string | null;
+  /** CLOSED-LISTS-INDEX-MODE: full lists in the prompt, or per-turn matches. */
+  chatbot_closed_lists_mode: ChatbotClosedListsMode;
+  /** CHAT-COMPOSER: the stored reply composer switch (an env var can override it). */
+  chatbot_composer_enabled: boolean;
 }
+
+export type ChatbotDirectIngressMode = 'off' | 'contacts' | 'all';
+
+const DIRECT_INGRESS_MODES: readonly ChatbotDirectIngressMode[] = ['off', 'contacts', 'all'];
+
+export type ChatbotClosedListsMode = 'block' | 'index';
+
+const CLOSED_LISTS_MODES: readonly ChatbotClosedListsMode[] = ['block', 'index'];
 
 /**
  * What a settings row that predates these columns reads as.
@@ -57,6 +73,10 @@ const FALLBACKS: ChatbotSettings = {
   chatbot_business_lane_enabled: false,
   chatbot_ordering_enabled: false,
   chatbot_unsupported_domains: [],
+  chatbot_direct_ingress_mode: 'off',
+  chatbot_direct_ingress_contacts: null,
+  chatbot_closed_lists_mode: 'block',
+  chatbot_composer_enabled: false,
 };
 
 function pickChatbotSettings(row: Record<string, unknown> | null | undefined): ChatbotSettings {
@@ -67,6 +87,21 @@ function pickChatbotSettings(row: Record<string, unknown> | null | undefined): C
     chatbot_unsupported_domains: Array.isArray(row?.chatbot_unsupported_domains)
       ? (row.chatbot_unsupported_domains as string[])
       : FALLBACKS.chatbot_unsupported_domains,
+    chatbot_direct_ingress_mode: DIRECT_INGRESS_MODES.includes(
+      row?.chatbot_direct_ingress_mode as ChatbotDirectIngressMode,
+    )
+      ? (row?.chatbot_direct_ingress_mode as ChatbotDirectIngressMode)
+      : FALLBACKS.chatbot_direct_ingress_mode,
+    chatbot_direct_ingress_contacts:
+      typeof row?.chatbot_direct_ingress_contacts === 'string'
+        ? row.chatbot_direct_ingress_contacts
+        : null,
+    chatbot_closed_lists_mode: CLOSED_LISTS_MODES.includes(
+      row?.chatbot_closed_lists_mode as ChatbotClosedListsMode,
+    )
+      ? (row?.chatbot_closed_lists_mode as ChatbotClosedListsMode)
+      : FALLBACKS.chatbot_closed_lists_mode,
+    chatbot_composer_enabled: Boolean(row?.chatbot_composer_enabled),
   };
 }
 

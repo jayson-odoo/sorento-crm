@@ -24,7 +24,7 @@ import {
   useDeliverySchedules,
 } from '../../_shared/hooks/useDeliverySchedules';
 import type { DeliverySchedule } from '../../_shared/types/deliverySchedule.types';
-import type { Project } from '../../_shared/types/project.types';
+import type { Project, ProjectPurchaseOrder } from '../../_shared/types/project.types';
 import { pipelineOriginHref, withReviewOrigin } from '../../_shared/lib/reviewOrigin';
 
 const ACCEPTED = '.pdf,.jpg,.jpeg,.png';
@@ -43,16 +43,22 @@ const ACCEPTED = '.pdf,.jpg,.jpeg,.png';
  * Start always returns to the Pipeline list (`pipelineListQuery` is the grid's own list
  * state), a fixed `project` call site names its own origin instead (`originHref`) or omits
  * one to stay put.
+ *
+ * `purchaseOrder` (PM-SIMPLIFY AC-D4): opened from the PO page, the file is the only field.
+ * The PO is the page's, the schedule is the PO's latest one (so this is its revision), and
+ * the issuer defaults to the PO's issuer.
  */
 export function DeliveryScheduleUploadDialog({
   project,
   schedules,
+  purchaseOrder,
   onDone,
   originHref,
   pipelineListQuery,
 }: {
   project?: Project;
   schedules?: DeliverySchedule[];
+  purchaseOrder?: ProjectPurchaseOrder;
   onDone: () => void;
   originHref?: string;
   pipelineListQuery?: string;
@@ -71,7 +77,8 @@ export function DeliveryScheduleUploadDialog({
     [schedules, fetchedSchedules.data],
   );
 
-  const [poId, setPoId] = React.useState('');
+  const fileOnly = Boolean(purchaseOrder);
+  const [poId, setPoId] = React.useState(purchaseOrder?.id ?? '');
   const [scheduleId, setScheduleId] = React.useState('');
   const [issuerId, setIssuerId] = React.useState('');
   const [revisionLabel, setRevisionLabel] = React.useState('');
@@ -82,8 +89,8 @@ export function DeliveryScheduleUploadDialog({
   // Changing the project (from the page-level Start picker) invalidates a PO chosen under
   // the previous one, same as changing the PO invalidates its schedule below.
   React.useEffect(() => {
-    setPoId('');
-  }, [effectiveProjectId]);
+    if (!fileOnly) setPoId('');
+  }, [effectiveProjectId, fileOnly]);
 
   // One PO is the normal case, so pick it rather than making the user confirm the obvious.
   React.useEffect(() => {
@@ -111,15 +118,32 @@ export function DeliveryScheduleUploadDialog({
     }));
   }, []);
 
-  const blocked = !effectiveProjectId || !poId || !file || upload.isPending;
+  // File-only: the PO's newest schedule is the one this revises; none means a first one.
+  const revises = fileOnly
+    ? ([...existingForPo].sort((a, b) =>
+        (b.created_at ?? '').localeCompare(a.created_at ?? ''),
+      )[0] ?? null)
+    : null;
+
+  // File-only waits for the schedule list, or a revision would land as a second schedule.
+  const blocked =
+    !effectiveProjectId ||
+    !poId ||
+    !file ||
+    upload.isPending ||
+    (fileOnly && !schedules && fetchedSchedules.isLoading);
 
   return (
     <Dialog open onOpenChange={(next) => !next && onDone()}>
       <DialogContent className="max-h-[92vh] w-full max-w-lg overflow-hidden">
         <DialogHeader>
-          <DialogTitle>Upload a delivery schedule</DialogTitle>
+          <DialogTitle>
+            {fileOnly && revises ? 'Upload revised schedule' : 'Upload a delivery schedule'}
+          </DialogTitle>
           <DialogDescription>
-            PDF or a photo. Reading it takes a moment and you can watch it happen.
+            {fileOnly
+              ? `For ${purchaseOrder?.po_number ?? 'this PO'}. PDF or a photo.`
+              : 'PDF or a photo. Reading it takes a moment and you can watch it happen.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -136,9 +160,11 @@ export function DeliveryScheduleUploadDialog({
                 poId,
                 body: {
                   file,
-                  issuer_party_id: issuerId || null,
-                  revision_label: revisionLabel.trim() || null,
-                  delivery_schedule_id: scheduleId || null,
+                  issuer_party_id: fileOnly
+                    ? (purchaseOrder?.issuing_party_id ?? null)
+                    : issuerId || null,
+                  revision_label: fileOnly ? null : revisionLabel.trim() || null,
+                  delivery_schedule_id: fileOnly ? (revises?.id ?? null) : scheduleId || null,
                 },
               });
             } catch {
@@ -157,7 +183,7 @@ export function DeliveryScheduleUploadDialog({
           }}
         >
           <DialogBody className="max-h-[65vh] space-y-4 overflow-y-auto">
-            {needsProjectField && (
+            {!fileOnly && needsProjectField && (
               <div className="space-y-1.5">
                 <Label htmlFor="schedule-project">
                   Project <span className="text-destructive">*</span>
@@ -174,6 +200,8 @@ export function DeliveryScheduleUploadDialog({
               </div>
             )}
 
+            {!fileOnly && (
+            <>
             <div className="space-y-1.5">
               <Label htmlFor="schedule-po">
                 Purchase order <span className="text-destructive">*</span>
@@ -237,6 +265,8 @@ export function DeliveryScheduleUploadDialog({
                 placeholder="As printed, e.g. REVISED 1 - 23/7/2026"
               />
             </div>
+            </>
+            )}
 
             <div className="space-y-1.5">
               <Label htmlFor="schedule-file">

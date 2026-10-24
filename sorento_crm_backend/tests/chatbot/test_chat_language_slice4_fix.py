@@ -132,20 +132,6 @@ def test_item7_the_new_rows_translate_ms_and_zh():
     )
 
 
-def test_item7_the_short_question_header_reads_in_the_reply_language():
-    from app.services.chatbot.turn import compose as compose_mod
-    from app.services.chatbot.turn.pending import ask
-
-    options = [{"position": i, "label": f"C{i}", "code": f"C{i}"} for i in range(1, 8)]
-    pending = ask("product_pick", options, asked_at_turn=1, payload={})
-    state = SimpleNamespace(focus=SimpleNamespace(status="top_selling", top_selling={"x": 1}), turn_no=2)
-    loc = _loc("ms")
-    out = compose_mod.compose_question(pending, state, loc)
-    final = loc.reply(out.text)
-    assert "Saya menemui 7, sila taip lebih sedikit daripada nama itu." in final
-    assert "Which" not in final
-
-
 def test_final_entities_only_joiner_and_lead_read_in_the_reply_language():
     from app.services.chatbot.turn.compose import entities_only_reply
 

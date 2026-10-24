@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from app.models.inventory import Warehouse
 from app.models.order import Customer
 from app.services.error_handler import handle_not_found
-from app.services.outstanding_report_service import _customer_echo
+from app.services.outstanding_report_service import _brand_echo, _customer_echo
 from app.services.sales_report_service import (
     _LIKE_ESCAPE,
     _escape_like,
@@ -35,7 +35,6 @@ from app.services.sales_report_service import (
     _qty,
     _resolve_products,
 )
-from app.services.scm.demand_class import class_of
 
 #: The `group_by` values the route accepts (AC-SR-23): the dataset dimensions a reply can
 #: list. Any other value is 422 `unknown_group_by`.
@@ -51,7 +50,7 @@ OPTION_LABELS = (
     ("delivery_order", "Delivery orders"),
 )
 
-#: The route's channel vocabulary -> the dataset's (`demand_class.class_of`).
+#: The route's channel vocabulary -> the dataset's (the sales order `demand_class`).
 _CHANNEL_CLASS = {"dealer": "retail", "project": "project"}
 
 #: The open ends of a window with one bound (or none): the engine's period is always closed.
@@ -124,12 +123,6 @@ def _customer_ids_for_query(db: Session, customer_query: str) -> list[str]:
         .filter(Customer.customer_name.ilike(pattern, escape=_LIKE_ESCAPE))
         .all()
     ]
-
-
-def _segment_classes(db: Session, customer_ids: list[str]) -> set[str]:
-    """The demand classes the scoped accounts span (an account with no segment adds none)."""
-    rows = db.query(Customer.market_segment_code).filter(Customer.id.in_(customer_ids)).all()
-    return {c for c in (class_of(row[0]) for row in rows) if c}
 
 
 def _warehouse_ids_by_code(db: Session, codes: list[str]) -> dict[str, list[str]]:
@@ -243,11 +236,13 @@ def delivered_sales_report(
     group_by: Optional[str] = None,
     policy: Any = None,
     capped_by_policy: bool = False,
+    brand_ids: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """The route's body. `channel` is `dealer` / `project` / None, `group_by` one of
     `GROUP_BYS` or None (both validated by the route). `capped_by_policy` says a contact
     asked: `policy` is then that contact's stock visibility policy, and None (nobody
-    resolved) answers nothing (fail closed)."""
+    resolved) answers nothing (fail closed). `brand_ids` narrows to those brands'
+    products (chat fix PR-B S5); None is no brand filter."""
     token = (location_token or "").strip() or None
     named_codes = [str(c).strip() for c in (warehouse_codes or []) if str(c).strip()]
 
@@ -275,6 +270,9 @@ def delivered_sales_report(
         "customer_count": len(scoped_ids) if scoped_ids is not None else 0,
         "product_code": code.upper() if code else None,
         "product_codes": sorted(p.product_code for p in products),
+        # Chat fix PR-B S5b (AC-B7): the brand filter applied, so the reply names it (the
+        # outstanding report's own echo); None when no brand was named.
+        "brand_name": _brand_echo(db, list(brand_ids or [])),
         "channel": None,
         "channel_shown": False,
         "location_token": token,
@@ -302,17 +300,10 @@ def delivered_sales_report(
         return body
 
     # ---------------------------------------------------------------- channel
-    channel_used: Optional[str] = None
-    if scoped_ids is not None:
-        if not scoped_ids:
-            return body
-        spans = len(_segment_classes(db, scoped_ids)) > 1
-        body["channel_shown"] = spans
-        if spans and channel in _CHANNEL_CLASS:
-            channel_used = channel
-    elif channel in _CHANNEL_CLASS:
-        body["channel_shown"] = True
-        channel_used = channel
+    if scoped_ids is not None and not scoped_ids:
+        return body
+    channel_used = channel if channel in _CHANNEL_CLASS else None
+    body["channel_shown"] = channel_used is not None
     body["channel"] = channel_used
 
     params: dict[str, Any] = {
@@ -327,6 +318,10 @@ def delivered_sales_report(
         params["customer"] = scoped_ids
     if product_ids:
         params["product"] = product_ids
+    if brand_ids is not None:
+        if not brand_ids:
+            return body  # never handed to the engine as [] ("no filter")
+        params["brand"] = list(brand_ids)
     if location_ids is not None:
         params["location"] = location_ids
     if channel_used:

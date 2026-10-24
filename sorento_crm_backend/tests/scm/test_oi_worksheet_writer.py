@@ -29,6 +29,9 @@ import openpyxl
 from app.services.order_inquiry_worklist_service import (
     EXPORT_HEADINGS,
     EXPORT_TITLE,
+    # AC-C3's own 10-column list ("SO DATE ... LOCATION", no reserve figures, ACKNOWLEDGED /
+    # TAKEN / REMAINING), the real constant the task prints, not a slice of the full list.
+    WORKSHEET_HEADINGS,
     OrderInquiryWorklistService,
 )
 from tests.scm.conftest import requires_pg
@@ -37,12 +40,6 @@ from tests.scm.test_summary_order_service import chain, db  # noqa: F401
 
 pytestmark = requires_pg
 
-#: AC-C3's own 10-column list ("SO DATE ... LOCATION", no ACKNOWLEDGED / TAKEN /
-#: REMAINING). Measured against the file, not assumed: `EXPORT_HEADINGS` carries 13
-#: headings today (ACKNOWLEDGED was appended, then TAKEN/REMAINING in a later fix round),
-#: not the 11 the plan text alone would suggest - a slice of the real constant is what
-#: cannot drift out of sync with whichever of those additions lands first.
-WORKSHEET_HEADINGS = EXPORT_HEADINGS[:10]
 
 
 def _data_rows(workbook):

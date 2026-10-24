@@ -187,6 +187,7 @@ function draftFromSources(
   return {
     project_line_id: contribution.project_line_id ?? '',
     line_no: contribution.line_no,
+    so_line_no: contribution.so_line_no ?? null,
     item_code: contribution.item_code,
     // The PLAN quantity: what the editor balances against, and what the server's own
     // check compares the posted composition to. Not `qty_outstanding`, which since the
@@ -251,6 +252,7 @@ function frozenDraft(
   return {
     project_line_id: contribution.project_line_id ?? '',
     line_no: contribution.line_no,
+    so_line_no: contribution.so_line_no ?? null,
     item_code: contribution.item_code,
     // The PLAN quantity: what the editor balances against, and what the server's own
     // check compares the posted composition to. Not `qty_outstanding`, which since the
@@ -628,6 +630,12 @@ export function confirmLineFrom(
     buy_qty: fromMinor(toMinor(decision.buy_qty ?? '0')),
     buy_reason: decision.buy_reason?.trim() || undefined,
     cs_note: decision.cs_note?.trim() || undefined,
+    // OI-SPLIT-GUIDE (UAC F26, F33): the planner's own REMARK for the email; '' (cleared) is
+    // passed through, the server's only way to clear a confirmed remark.
+    remark:
+      decision.remark === undefined || decision.remark === null
+        ? undefined
+        : decision.remark.trim(),
     // Frozen with the line. Every other component carries the sentence of the RULE that
     // produced it, and those explain a decision nobody took once a person overrode them.
     amend_reason: decision.reason,
@@ -799,19 +807,15 @@ export function drawAcross<T>(
 }
 
 /**
- * The line's own location offered as a plain Borrow (BORROW-OWN-LOC): always listed, at 0
- * free, and never capped - what is not free there is confirmed short (owner, 13 and 14 Oct).
+ * A location offered as a plain Borrow, naming no donor order or line: never capped - what is
+ * not free there is confirmed short (owner, 13 and 14 Oct for the own location, BORROW-OWN-LOC;
+ * 22 Oct for every location, BORROW-ZERO-FREE).
  */
-export function isOwnLocationBorrow(
-  contribution: BoardContribution,
-  candidate: BorrowCandidate,
-): boolean {
+function isPlainLocationBorrow(candidate: BorrowCandidate): boolean {
   return (
     candidate.source === 'other_location' &&
     !candidate.donor_so_number &&
-    !candidate.donor_core_line_id &&
-    Boolean(contribution.fulfilment_warehouse_id) &&
-    candidate.warehouse_id === contribution.fulfilment_warehouse_id
+    !candidate.donor_core_line_id
   );
 }
 
@@ -980,10 +984,11 @@ export function decideComposition(
       (candidate) => toMinor(candidate.free_qty) - (claimed?.get(claimKeyOf(candidate)) ?? 0),
     );
     const drawn = rows.reduce((sum, row) => sum + row.minor, 0);
-    // The line's own location is never capped (owner, 14 Oct): what is not free there rides
-    // on its plain row and the line is saved short, as "Add a borrow" saves it.
-    const own = candidates.find((candidate) => isOwnLocationBorrow(contribution, candidate));
-    if (drawn < needMinor && !own) {
+    // A location is never capped (owner, 14 and 22 Oct): what is not free there rides on its
+    // plain row and the line is saved short, as "Add a borrow" saves it. A location reached
+    // only through donor lines has no such row, and Confirm refuses an over-ask on a donor line.
+    const plain = candidates.find(isPlainLocationBorrow);
+    if (drawn < needMinor && !plain) {
       return { skip: `only ${fromMinor(drawn)} free at ${donorLabel}` };
     }
     for (const { item, minor } of rows) {
@@ -997,10 +1002,10 @@ export function decideComposition(
       else rows.push({ item: candidates[0], minor: deliveredMinor });
     }
     const shortMinor = needMinor - drawn;
-    if (shortMinor > 0 && own) {
-      const at = rows.findIndex((row) => row.item === own);
+    if (shortMinor > 0 && plain) {
+      const at = rows.findIndex((row) => row.item === plain);
       if (at >= 0) rows[at] = { ...rows[at], minor: rows[at].minor + shortMinor };
-      else rows.push({ item: own, minor: shortMinor });
+      else rows.push({ item: plain, minor: shortMinor });
     }
     return {
       ...(shortMinor > 0 ? { warning: `only ${fromMinor(drawn)} free at ${donorLabel}` } : {}),

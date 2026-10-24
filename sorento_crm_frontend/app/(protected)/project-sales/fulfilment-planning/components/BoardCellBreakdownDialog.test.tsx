@@ -17,6 +17,7 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -44,6 +45,12 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   getPileQueue: (...args: unknown[]) => getPileQueue(...args),
   getClassificationEvidence: (...args: unknown[]) =>
     getClassificationEvidence(...args),
+}));
+
+/** STOCK-STATUS round 6: the Stock tab's AutoCount read. Empty unless a test sets it. */
+const useStockStatusMock = vi.fn<(...args: unknown[]) => Record<string, unknown>>(() => ({ data: undefined as unknown, isLoading: false, isError: false }));
+vi.mock('@/components/stock-status/useStockStatus', () => ({
+  useStockStatus: (...args: unknown[]) => useStockStatusMock(...args),
 }));
 
 import { BoardCellBreakdownDialog, sourceAt } from './BoardCellBreakdownDialog';
@@ -692,7 +699,6 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
     // use it.
     expect(stockRow('BRW-BB').slice(1)).toEqual([
       'BRW-BB',
-      'Own location',
       '478',
       '47009',
       '0',
@@ -725,12 +731,12 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
     );
 
     const row = stockRow('BRW-IB');
-    expect(row[4]).toBe('10805');
-    expect(row[5]).toBe('0');
+    expect(row[3]).toBe('10805');
+    expect(row[4]).toBe('0');
     // A stated location with no figure of its own reads 0 (AC-B2): an absent stock row means
     // the last upload counted none there. Only a line with NO location keeps its blanks.
-    expect(row[3]).toBe('0');
-    expect(row[6]).toBe('0');
+    expect(row[2]).toBe('0');
+    expect(row[5]).toBe('0');
   });
 
   it('leaves the figures blank when the sales order named no location', () => {
@@ -750,7 +756,7 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
 
     const row = stockRow('none');
     expect(row[1]).toBe('No location');
-    expect(row.slice(3)).toEqual(['-', '-', '-', '-', '-', '-', '-']);
+    expect(row.slice(2)).toEqual(['-', '-', '-', '-', '-', '-', '-']);
     expect(row).not.toContain('0');
   });
 
@@ -4148,4 +4154,73 @@ describe('AC-B1/AC-B11: the Decision column carries the same Verdict trio as the
 
 afterEach(() => {
   borrowKinds.shownApart = false;
+});
+
+describe('STOCK-STATUS round 6 (AC-35): the cell Stock tab shows AutoCount\'s figures', () => {
+  it('reads AutoCount for the cell\'s product and carries the Incoming PL row', async () => {
+    useStockStatusMock.mockReturnValue({
+      data: {
+        product_id: 'prod-x',
+        locations: [],
+        incoming_pl: [{ shipment_id: 'sh-1', shipment_number: 'PL-2610-001', container_number: null, eta: null, still_to_land: 5, on_spo: 0, counted: 5 }],
+        totals: { on_hand: 0, so_qty: 0, po_qty: 0, spo_qty: 0, forecast: 0, incoming_pl: 5, forecast_incl_pl: 5 },
+        sales_orders: [],
+        purchase_orders: [],
+        spos: [],
+      },
+      isLoading: false,
+      isError: false,
+    });
+    renderDialog([demand()], { 'BRW-BB': '40' });
+    expect(useStockStatusMock).toHaveBeenCalledWith(`prod-${demand().item_code}`);
+    expect(await screen.findByTestId('stock-incoming-pl')).toHaveTextContent('+5');
+  });
+
+  it('reads nothing for a cell of more than one product (a pivot has no single position)', () => {
+    const cell = cellOf([demand()]);
+    cell.contributions = [
+      ...cell.contributions,
+      { ...cell.contributions[0], key: 'second', product_id: 'prod-OTHER' },
+    ];
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <BoardCellBreakdownDialog
+          cell={cell}
+          bucketLabel="31 Aug 2026"
+          draft={{}}
+          onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    expect(useStockStatusMock).toHaveBeenCalled();
+    expect(useStockStatusMock.mock.calls.every((call) => call[0] === null)).toBe(true);
+  });
+});
+
+
+describe('STOCK-GROUPBY (AC-20): the cell Stock tab carries the Group by bar', () => {
+  it('AC-20 with the AutoCount read the Stock tab shows the group-by-bar; without it, none', async () => {
+    useStockStatusMock.mockReturnValue({
+      data: {
+  product_id: 'prod-1',
+  item_code: 'ITEM-1',
+  locations: [{ warehouse_id: 'wh-BRW-BB', warehouse_code: 'BRW-BB', warehouse_name: 'BRW-BB', is_active: true, on_hand: 5, so_qty: 0, po_qty: 0, spo_qty: 0, forecast: 5 }],
+  totals: { on_hand: 5, so_qty: 0, po_qty: 0, spo_qty: 0, forecast: 5, incoming_pl: 0, forecast_incl_pl: 5 },
+  incoming_pl: [],
+  sales_orders: [],
+  purchase_orders: [],
+  spos: [],
+},
+      isLoading: false,
+      isError: false,
+    });
+    renderDialog([demand()], { 'BRW-BB': '40' });
+    expect(await screen.findByTestId('group-by-bar')).toBeInTheDocument();
+    cleanup();
+    useStockStatusMock.mockReturnValue({ data: undefined, isLoading: false, isError: true });
+    renderDialog([demand()], { 'BRW-BB': '40' });
+    expect(screen.queryByTestId('group-by-bar')).not.toBeInTheDocument();
+  });
 });

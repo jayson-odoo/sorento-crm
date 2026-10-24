@@ -112,7 +112,7 @@ export function TasksPanel({ project }: { project: Project }) {
                   onClick={() => setPhase(tab.id)}
                   className={
                     phase === tab.id
-                      ? 'rounded px-2.5 py-1 text-xs font-medium bg-muted text-foreground'
+                      ? 'rounded px-2.5 py-1 text-xs font-medium bg-primary text-primary-foreground'
                       : 'rounded px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground'
                   }
                 >
@@ -134,7 +134,7 @@ export function TasksPanel({ project }: { project: Project }) {
                   onClick={() => setView(option.id)}
                   className={
                     view === option.id
-                      ? 'rounded px-2.5 py-1 text-xs font-medium bg-muted text-foreground'
+                      ? 'rounded px-2.5 py-1 text-xs font-medium bg-primary text-primary-foreground'
                       : 'rounded px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground'
                   }
                 >

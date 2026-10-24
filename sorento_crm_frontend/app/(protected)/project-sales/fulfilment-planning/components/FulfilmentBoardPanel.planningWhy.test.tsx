@@ -119,7 +119,16 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   ),
 }));
 
+// OI-SPLIT-GUIDE (UAC F2): every guide page reads its order's split view; these specs only care
+// about what the press posts, so the read answers an order with no lines.
+vi.mock('../../_shared/services/lineSplitService', () => ({
+  getLineSplits: (psoId: string) =>
+    Promise.resolve({ pso_id: psoId, so_number: psoId, customer: null, project: null, lines: [] }),
+  saveLineSplits: vi.fn(),
+}));
+
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
+import { walkConfirmGuide } from '@/test-mocks/confirmGuide';
 import {
   buildBoard,
   type BoardDemandLine,
@@ -210,7 +219,7 @@ const PLAIN = { line_no: 7, so_line_no: 7, item_code: 'TPE-9204', reason: 'only 
 
 async function pressConfirm() {
   await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
-  fireEvent.click(screen.getByTestId('board-confirm'));
+  await walkConfirmGuide();
   return screen.findByTestId('board-confirm-results');
 }
 

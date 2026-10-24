@@ -355,6 +355,22 @@ async def update_contact(
         raise handle_internal_error(str(e))
 
 
+class ContactChatbotLLM(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Literal["openai", "gemini", "anthropic"]
+    model: str
+
+    @field_validator("model")
+    @classmethod
+    def _model_name(cls, v: str) -> str:
+        from app.services.contact_llm_choice import MODEL_NAME_RE
+
+        if not MODEL_NAME_RE.fullmatch(v):
+            raise ValueError("model must be 1 to 100 letters, digits or . _ : -")
+        return v
+
+
 class ContactChatbotUpdate(BaseModel):
     """The Contact > Access "Chatbot" card (AC-1515, AC-1561; chatbot memory lane A,
     contract section 5).
@@ -395,6 +411,8 @@ class ContactChatbotUpdate(BaseModel):
     chatbot_files_as_links: bool | None = None
     # CONTACT-REGION: absent = leave alone; empty, unknown or explicit null = 422.
     regions: list[Literal["west", "east"]] = Field(default=None, min_length=1)  # type: ignore[assignment]
+    # MODEL-PER-CONTACT: object sets provider + model, null clears both, absent leaves alone.
+    llm: ContactChatbotLLM | None = None
 
 
 @router.put("/{contact_id}/chatbot", response_model=RespondContactResponse)
@@ -412,10 +430,16 @@ async def update_contact_chatbot(
 
     Guarded by the same `user_management.contacts.edit` the rest of the contact's
     editable surface is: this writes the stock-check and recall switches, which decide
-    what the chatbot will tell that contact.
+    what the chatbot will tell that contact. An `llm` field also needs
+    `system.ai_assistant_settings.edit`, since it spends AI quota.
     """
-    _ = current_user
     try:
+        # The model spends AI quota: setting or clearing it needs the AI settings right too,
+        # checked before anything is written.
+        if "llm" in body.model_fields_set and not UserPermissionService(db).check_user_has_permission(
+            current_user["id"], "system.ai_assistant_settings.edit"
+        ):
+            raise HTTPException(status_code=403, detail="Permission required: system.ai_assistant_settings.edit")
         service = ContactService(db)
         contact = service.get_contact(contact_id)
         if body.chatbot_profile is not None:
@@ -445,6 +469,9 @@ async def update_contact_chatbot(
             contact.chatbot_files_as_links = body.chatbot_files_as_links
         if "regions" in body.model_fields_set:
             contact.regions = [r for r in ("west", "east") if r in body.regions]
+        if "llm" in body.model_fields_set:
+            contact.chatbot_llm_provider = body.llm.provider if body.llm else None
+            contact.chatbot_llm_model = body.llm.model if body.llm else None
         # `get_db` never commits (it only closes), so a flush here rolled back on
         # return: PUT 200, row untouched. Main's convention is the commit in the route.
         db.commit()

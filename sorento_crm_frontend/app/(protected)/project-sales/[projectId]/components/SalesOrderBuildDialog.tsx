@@ -1,16 +1,6 @@
 'use client';
 
 import * as React from 'react';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -35,19 +25,24 @@ const SPLIT_BY_OPTIONS: { value: SalesOrderSplitBy; label: string }[] = [
 ];
 
 /**
- * Build drafts from one PO plus one confirmed delivery schedule version.
+ * Build drafts from one PO plus one CONFIRMED delivery schedule version.
  *
- * Two steps, never nested dialogs: pick, then confirm. The confirmation exists because a
- * rebuild replaces the drafts the same pair produced last time, which throws away any hand
- * regrouping done on them.
+ * One dialog (PM-SIMPLIFY AC-B1). Opened from the PO page, `poId` and `scheduleVersionId`
+ * are the page's, so split by is the only field. What a rebuild replaces is said in the
+ * dialog itself rather than in a second confirm. Only confirmed versions are offered: the
+ * server refuses an unconfirmed one (D3).
  */
 export function SalesOrderBuildDialog({
   projectId,
+  poId: fixedPoId,
+  scheduleVersionId: fixedScheduleVersionId,
   onDone,
   onBuild,
   building,
 }: {
   projectId: string;
+  poId?: string;
+  scheduleVersionId?: string;
   onDone: () => void;
   onBuild: (input: {
     poId: string;
@@ -57,10 +52,10 @@ export function SalesOrderBuildDialog({
   building: boolean;
 }) {
   const purchaseOrders = usePurchaseOrders(projectId);
-  const [poId, setPoId] = React.useState('');
-  const [scheduleVersionId, setScheduleVersionId] = React.useState('');
+  const fixed = Boolean(fixedPoId && fixedScheduleVersionId);
+  const [poId, setPoId] = React.useState(fixedPoId ?? '');
+  const [scheduleVersionId, setScheduleVersionId] = React.useState(fixedScheduleVersionId ?? '');
   const [splitBy, setSplitBy] = React.useState<SalesOrderSplitBy>('area');
-  const [confirming, setConfirming] = React.useState(false);
 
   const scheduleVersions = useScheduleVersions(poId || undefined);
 
@@ -72,67 +67,38 @@ export function SalesOrderBuildDialog({
       .join(' · '),
   }));
 
-  const versionOptions = (scheduleVersions.data ?? []).map((version) => ({
-    value: version.id,
-    label: version.revision_label || `Version ${version.version_no}`,
-    description: [
-      version.issuer_party_label,
-      version.schedule_date ? formatDateInMalaysia(version.schedule_date) : null,
-      version.confirmed_at ? 'Confirmed' : 'Not confirmed yet',
-    ]
-      .filter(Boolean)
-      .join(' · '),
-  }));
+  const versionOptions = (scheduleVersions.data ?? [])
+    .filter((version) => Boolean(version.confirmed_at))
+    .map((version) => ({
+      value: version.id,
+      label: version.revision_label || `Version ${version.version_no}`,
+      description: [
+        version.issuer_party_label,
+        version.schedule_date ? formatDateInMalaysia(version.schedule_date) : null,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+    }));
 
   const chosenPo = (purchaseOrders.data ?? []).find((po) => po.id === poId);
-  const chosenVersion = (scheduleVersions.data ?? []).find(
-    (version) => version.id === scheduleVersionId,
-  );
-
-  if (confirming) {
-    return (
-      <AlertDialog open onOpenChange={(next) => !next && setConfirming(false)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Build the drafts?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {`${chosenPo?.po_number ?? 'This PO'} against ${
-                chosenVersion?.revision_label || `version ${chosenVersion?.version_no ?? ''}`
-              }, split by ${(
-                SPLIT_BY_OPTIONS.find((option) => option.value === splitBy)?.label ?? splitBy
-              ).toLowerCase()}. Drafts built earlier from the same pair are replaced, including any regrouping done on them. Published sales orders are left alone.`}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={building}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={building}
-              onClick={async (event) => {
-                event.preventDefault();
-                await onBuild({ poId, scheduleVersionId, splitBy });
-                onDone();
-              }}
-            >
-              {building ? 'Building…' : 'Build drafts'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    );
-  }
 
   return (
     <Dialog open onOpenChange={(next) => !next && onDone()}>
       <DialogContent className="max-h-[92vh] w-full max-w-md overflow-hidden">
         <DialogHeader>
-          <DialogTitle>Build sales order drafts</DialogTitle>
+          <DialogTitle>Build sales orders</DialogTitle>
           <DialogDescription>
-            From one purchase order and the delivery schedule version it is committed
-            against.
+            {fixed && chosenPo
+              ? `From ${chosenPo.po_number} and its confirmed delivery schedule. `
+              : 'From one purchase order and its confirmed delivery schedule. '}
+            Drafts built earlier from the same pair are replaced, including any regrouping
+            done on them. Published sales orders are left alone.
           </DialogDescription>
         </DialogHeader>
 
         <DialogBody className="max-h-[60vh] space-y-4 overflow-y-auto">
+          {!fixed && (
+          <>
           <div className="space-y-1.5">
             <Label htmlFor="build-po">
               Purchase order <span className="text-destructive">*</span>
@@ -141,8 +107,8 @@ export function SalesOrderBuildDialog({
               <p className="text-sm text-muted-foreground">Loading purchase orders…</p>
             ) : poOptions.length === 0 ? (
               <p className="rounded-md border border-dashed border-border px-3 py-2.5 text-sm text-muted-foreground">
-                No purchase order on this project yet. Record one on the Purchase orders tab
-                first.
+                No purchase order on this project yet. Upload or record one on the Orders
+                tab first.
               </p>
             ) : (
               <SearchableSelect
@@ -174,8 +140,8 @@ export function SalesOrderBuildDialog({
               </p>
             ) : versionOptions.length === 0 ? (
               <p className="rounded-md border border-dashed border-border px-3 py-2.5 text-sm text-muted-foreground">
-                This PO has no delivery schedule yet. Upload and confirm one on the Delivery
-                schedules tab.
+                This PO has no confirmed delivery schedule yet. Upload and confirm one on the
+                PO's Deliveries tab.
               </p>
             ) : (
               <SearchableSelect
@@ -187,6 +153,8 @@ export function SalesOrderBuildDialog({
               />
             )}
           </div>
+          </>
+          )}
 
           <div className="space-y-1.5">
             <Label htmlFor="build-split-by">
@@ -208,10 +176,18 @@ export function SalesOrderBuildDialog({
           </Button>
           <Button
             type="button"
-            disabled={!poId || !scheduleVersionId}
-            onClick={() => setConfirming(true)}
+            disabled={!poId || !scheduleVersionId || building}
+            onClick={async () => {
+              try {
+                await onBuild({ poId, scheduleVersionId, splitBy });
+              } catch {
+                // The mutation already toasted the reason; the dialog stays open.
+                return;
+              }
+              onDone();
+            }}
           >
-            Build drafts
+            {building ? 'Building…' : 'Build sales orders'}
           </Button>
         </DialogFooter>
       </DialogContent>

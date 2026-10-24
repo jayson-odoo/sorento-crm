@@ -16,6 +16,7 @@ import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { numberFieldError } from '@/lib/number-field';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
+import { soLineNoText } from '../../_shared/lib/fulfilmentBoard';
 import { availableForProjectOf } from '../../_shared/lib/poolShare';
 import type {
   BoardCellLocation,
@@ -45,13 +46,16 @@ function qtyError(raw: string) {
 
 export function ReserveAddDialog({
   lineNo,
+  soLineNo,
   itemCode,
   locations,
   openRemainder,
   onDone,
   onAdd,
 }: {
+  /** The planning address, for element ids. What a person reads is `soLineNo`. */
   lineNo: number;
+  soLineNo?: number | null;
   itemCode?: string | null;
   /** Already filtered to what is left to add (free stock, not already on the Reserve list). */
   locations: BoardCellLocation[];
@@ -83,7 +87,10 @@ export function ReserveAddDialog({
     <Dialog open onOpenChange={(next) => !next && onDone()}>
       <DialogContent className="max-h-[92vh] w-full max-w-3xl overflow-hidden">
         <DialogHeader>
-          <DialogTitle>Add a reserve location for line {lineNo}</DialogTitle>
+          <DialogTitle>
+            Add a reserve location for line{' '}
+            {soLineNoText({ so_line_no: soLineNo, line_no: lineNo })}
+          </DialogTitle>
           <DialogDescription>{itemCode ?? 'This item'}</DialogDescription>
         </DialogHeader>
 

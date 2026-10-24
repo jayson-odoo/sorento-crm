@@ -99,6 +99,7 @@ import {
 import type { Attachment } from '../../attachments/types/attachment.types';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import AttachmentUploadDialog from '../../attachments/components/AttachmentUploadDialog';
@@ -215,6 +216,7 @@ export default function AttachmentsInFolderPanel({
   const [bulkImportDialogOpen, setBulkImportDialogOpen] = useState(false);
   const [bulkDownloadOpen, setBulkDownloadOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const canDeletePermanently = useHasPermission('resource.attachments.delete');
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [bulkEditTypeOpen, setBulkEditTypeOpen] = useState(false);
   const [setCompanyDialogOpen, setSetCompanyDialogOpen] = useState(false);
@@ -958,6 +960,7 @@ export default function AttachmentsInFolderPanel({
         isTrashView={isTrashView}
         recursive={recursive}
         resubmitting={isFileItem(item) && pendingResubmitIds.has(item.id)}
+        canDeletePermanently={canDeletePermanently}
         handlers={{
           onOpen: openItem,
           onPreview: handlePreview,
@@ -989,6 +992,7 @@ export default function AttachmentsInFolderPanel({
     [
       isTrashView,
       recursive,
+      canDeletePermanently,
       pendingResubmitIds,
       openItem,
       handlePreview,
@@ -1073,7 +1077,7 @@ export default function AttachmentsInFolderPanel({
               </div>
               <div className="flex items-center rounded-md border p-0.5">
                 <Button
-                  variant={viewMode === 'list' ? 'secondary' : 'ghost'}
+                  variant={viewMode === 'list' ? 'primary' : 'ghost'}
                   size="sm"
                   className="size-7 p-0"
                   onClick={() => setViewMode('list')}
@@ -1083,7 +1087,7 @@ export default function AttachmentsInFolderPanel({
                   <List className="size-4" />
                 </Button>
                 <Button
-                  variant={viewMode === 'grid' ? 'secondary' : 'ghost'}
+                  variant={viewMode === 'grid' ? 'primary' : 'ghost'}
                   size="sm"
                   className="size-7 p-0"
                   onClick={() => setViewMode('grid')}

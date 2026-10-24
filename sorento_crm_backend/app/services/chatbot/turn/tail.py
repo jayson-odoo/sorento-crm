@@ -47,7 +47,8 @@ def carry_live_state(
         # A canned / low-signal / clarify / out-of-scope lane answered nothing (or a lane only
         # re-asked the quote's own task): the quoted state is never written as the live state,
         # so the WHOLE live focus stays.
-        return replace(state, focus=live["focus"], pending=live["pending"], quoted_live=None)
+        # The set-aside slots belong to the quoted focus, not to the live one kept here.
+        return replace(state, focus=live["focus"], pending=live["pending"], quoted_live=None, held_aside=None)
     live_open = _open_stock(live["focus"])
     mine = _open_stock(focus)
     # AC-QR-26 (owner ruling, 7 Oct 2026): a quoted answer that opened a follow-up question of
@@ -64,6 +65,113 @@ def carry_live_state(
     return replace(state, focus=focus, pending=state.pending if asked else live["pending"], quoted_live=None)
 
 
+_ITEM_KEYS = ("entity_type", "uuid", "uuids", "name")
+
+
+def _option_item(option: dict[str, Any]) -> dict[str, Any] | None:
+    position = option.get("position")
+    if not isinstance(position, int) or isinstance(position, bool):
+        return None
+    payload = option.get("payload") if isinstance(option.get("payload"), dict) else {}
+    code = option.get("code") or payload.get("value")
+    item: dict[str, Any] = {
+        "position": position,
+        "label": option.get("label") or option.get("name") or code,
+        "code": code,
+    }
+    for key in _ITEM_KEYS:
+        if option.get(key):
+            item[key] = option[key]
+    if payload.get("value") is not None:
+        item["value"] = payload["value"]
+    return item
+
+
+#: CHAT-STATE r7: the kind of a listed row that names no product, by its section's domain. Such a
+#: row's key is the presenter's own top-level row id (`_Builder.item(entity_id=...)`, never a
+#: printed field); a row of any other domain, or with no id, has no key and is never picked.
+_ROW_KIND_OF_DOMAIN: dict[str, str] = {"promotion": "promotion", "order": "order", "product_attachment": "attachment"}
+
+
+def _row_item(position: int, row: dict[str, Any], domain: Any = None) -> dict[str, Any]:
+    fields = [f for f in row.get("fields") or [] if isinstance(f, dict)]
+    code = next(
+        (str(f["value"]).strip() for f in fields if f.get("label") == "Product Code" and f.get("value")), None
+    )
+    first = next((str(f["value"]).strip() for f in fields if f.get("value") not in (None, "")), None)
+    label = code or row.get("title") or first or str(position)
+    item: dict[str, Any] = {"position": position, "label": label, "code": code}
+    if code:
+        item["entity_type"] = "product"
+    elif _ROW_KIND_OF_DOMAIN.get(str(domain or "")):
+        item["entity_type"] = _ROW_KIND_OF_DOMAIN[str(domain)]
+        if row.get("id"):
+            item["uuid"] = str(row["id"])
+    return item
+
+
+def _file_item(position: int, file: dict[str, Any]) -> dict[str, Any]:
+    """CHAT-STATE r7: one file of a section that listed files and no rows, keyed by its
+    attachment id (the presenter's `attach()` entry "id")."""
+    item: dict[str, Any] = {
+        "position": position, "label": file.get("filename") or str(position), "code": None, "entity_type": "attachment",
+    }
+    if file.get("id"):
+        item["uuid"] = str(file["id"])
+    return item
+
+
+def _stamped(items: list[dict[str, Any]], turn_no: Any) -> list[dict[str, Any]]:
+    if not isinstance(turn_no, int) or isinstance(turn_no, bool):
+        return items
+    return [{**item, "shown_at_turn": turn_no} for item in items]
+
+
+def last_list_after(
+    previous: Any, *, question: Any, sections: Any, turn_no: int | None = None
+) -> list[dict[str, Any]] | None:
+    """The numbered list this turn showed, for `Focus.last_list`. Question options keep
+    their position, label, code and keys; the rows of the one section that has rows are
+    numbered by their order (a promotion, file or order row with its kind and id, CHAT-STATE
+    r7), else the files (two or more) of the one section that listed only files. Options win a
+    position clash; several sections with rows record no list; nothing shown keeps `previous`,
+    its stamp included. Every row of a new list carries `shown_at_turn`: a data row the turn that
+    showed it (`turn_no`), a question's option the turn the question was asked (the same input
+    gives the same focus on every pass)."""
+    asked = getattr(question, "asked_at_turn", None)
+    options = _stamped(
+        [
+            item
+            for item in (_option_item(o) for o in (getattr(question, "options", None) or []) if isinstance(o, dict))
+            if item is not None
+        ],
+        asked if isinstance(asked, int) and not isinstance(asked, bool) else turn_no,
+    )
+    with_rows = [s for s in (sections or []) if getattr(s, "figures", None)]
+    if len(with_rows) > 1:
+        return options or None
+    rows: list[dict[str, Any]] = []
+    if with_rows:
+        domain = getattr(with_rows[0], "domain", None)
+        rows = [
+            _row_item(i, fig, domain)
+            for i, fig in enumerate(with_rows[0].figures, start=getattr(with_rows[0], "first", 1) or 1)
+            if isinstance(fig, dict)
+        ]
+    else:
+        # Files sent with no rows are the list when two or more are sent; one file sent after a
+        # numbered list keeps that list and its stamp (it is the list only when none was shown).
+        with_files = [s for s in (sections or []) if getattr(s, "files", None)]
+        files = [f for f in with_files[0].files if isinstance(f, dict)] if len(with_files) == 1 else []
+        if len(files) >= 2 or (files and not previous):
+            rows = [_file_item(i, f) for i, f in enumerate(files, start=1)]
+    merged = {item["position"]: item for item in _stamped(rows, turn_no)}
+    merged.update({item["position"]: item for item in options})
+    if not merged:
+        return previous
+    return [merged[p] for p in sorted(merged)]
+
+
 def session_payload(state: State, answer: Any, ctx: Any) -> dict[str, Any]:
     """The five-key state this turn leaves behind - what `persist` writes.
 
@@ -75,8 +183,24 @@ def session_payload(state: State, answer: Any, ctx: Any) -> dict[str, Any]:
     """
     if getattr(state, "quoted_live", None):
         state = carry_live_state(state, getattr(answer, "question", None) is not None, state.quoted_live)
+    from app.services.chatbot.turn import chat_state
+
+    focus = chat_state.restored(state).focus
+    if getattr(state, "state_path", False):
+        # CHAT-STATE: a turn on the state path records the list it showed.
+        from dataclasses import replace
+
+        focus = replace(
+            focus,
+            last_list=last_list_after(
+                focus.last_list,
+                question=getattr(answer, "question", None),
+                sections=getattr(answer, "sections", None) or [],
+                turn_no=state.turn_no,
+            ),
+        )
     return {
-        "focus": focus_to_wire(state.focus),
+        "focus": focus_to_wire(focus),
         # `pending' = composer.question` exactly (AC-1532) - and when the composer asked
         # nothing, the roster that survived its OWN pick (contract 36) is still open, so
         # it is what stays. "No new question" is not "no question".
