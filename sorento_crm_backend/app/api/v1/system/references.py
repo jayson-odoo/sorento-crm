@@ -3409,20 +3409,36 @@ def resolve_reference_post(
     # A contact's packing list regions (unresolved = West) bound the shipments it can be
     # shown; no contact_id = no filter.
     regions = None
+    asking_id = None
     if payload.contact_id:
         from app.services.eta_policy import resolve_request_contact, rules_for_contact
 
-        regions = rules_for_contact(
-            db, resolve_request_contact(db, payload.contact_id, payload.space_id)
-        ).regions
+        asking_id = resolve_request_contact(db, payload.contact_id, payload.space_id)
+        regions = rules_for_contact(db, asking_id).regions
     # RESOLVE-SEMANTIC-FALLBACK: the code reader for this request (see the field's own
     # description); `dry_run` keeps its usage row out, exactly as the spec reader's.
+    # MODEL-PER-CONTACT: the asking contact's model choice, only passed when it names a model.
+    reader_extra: dict = {}
+    if payload.semantic_fallback and asking_id:
+        # Best effort: a failed read costs the model choice, never the resolve.
+        try:
+            from app.models.access import RespondContact
+            from app.services.contact_llm_choice import contact_llm_choice
+
+            with db.begin_nested():
+                asking = db.get(RespondContact, asking_id)
+                choice = contact_llm_choice(db, asking) if asking is not None else None
+            if choice is not None and choice.model:
+                reader_extra["llm_choice"] = choice
+        except Exception:  # noqa: BLE001
+            logger.warning("resolve: contact model choice unreadable", exc_info=False)
     code_reader = (
         _resolver_code_reader.reader_for(
             db,
             message_text=payload.query,
             user_id=current_user.get("id") if isinstance(current_user, dict) else None,
             dry_run=payload.dry_run,
+            **reader_extra,
         )
         if payload.semantic_fallback
         else None

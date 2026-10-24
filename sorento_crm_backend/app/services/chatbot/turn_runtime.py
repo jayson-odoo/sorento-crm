@@ -176,9 +176,34 @@ def contact_phone(db: Session, contact_respond_id: str) -> str | None:
 
 _PROFILE_COLUMNS = (
     "c.chatbot_profile, c.chatbot_stock_allowed, "
-    "c.notify_salesman, c.packing_list_allowed, c.escalation_allowed, c.chatbot_files_as_links "
+    "c.notify_salesman, c.packing_list_allowed, c.escalation_allowed, c.chatbot_files_as_links, "
+    "c.id, c.chatbot_llm_provider, c.chatbot_llm_model "
     "FROM respond_contacts c"
 )
+
+
+def _llm_choice(db: Session, row: Any):
+    """MODEL-PER-CONTACT: the contact's override or tag model, read live each turn.
+
+    None on any failure or a row without the new columns: the turn then runs on the label
+    or global model, exactly as before."""
+    if len(row) < 9:
+        return None
+    try:
+        from types import SimpleNamespace
+
+        from app.services.contact_llm_choice import contact_llm_choice
+
+        # Under a SAVEPOINT: a failed SELECT must not abort the turn's transaction.
+        with db.begin_nested():
+            choice = contact_llm_choice(
+                db, SimpleNamespace(id=row[6], chatbot_llm_provider=row[7], chatbot_llm_model=row[8])
+            )
+        # None unless a model is chosen, so a turn without one makes main's exact calls.
+        return choice if choice.model else None
+    except Exception:  # noqa: BLE001 - an unreadable choice must not cost the turn
+        logger.warning("chatbot: contact model choice unreadable", exc_info=False)
+        return None
 
 
 def _fail_closed_profile() -> tuple[Profile, bool]:
@@ -502,6 +527,7 @@ def load_profile(
             escalation_allowed=_escalation_allowed(row),
             # PHOTO-SEND-CAP: default OFF, so `is True` keeps attachment mode on a NULL.
             files_as_links=len(row) > 5 and row[5] is True,
+            llm_choice=_llm_choice(db, row),
         ),
         False,
     )
