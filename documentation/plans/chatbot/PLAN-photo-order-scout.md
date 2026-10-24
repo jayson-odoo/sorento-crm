@@ -208,6 +208,19 @@ Consequence for A:
   CRM to read n8n's Redis and couples the CRM to a queue the turn-engine plan retires
   (`PLAN-chatbot-turn-engine.md:247`). Not buildable until the Redis fact is confirmed.
 
+### Owner checks prepared (25 Oct; owner runs them, crew has no prod access)
+
+1. SQL (crew state, not in the repo): `crew/state/prod-steps/prod-step-photo-order-check.sql`,
+   READ ONLY + ROLLBACK, fill the contact id or the last 6+ phone digits once. Q3 prints the
+   verdict per photo: BEFORE / DURING / AFTER the text turn. Parsed clean on the local clone
+   `sorento_prod_1020` (placeholder left in, 0 rows); functional run on the dev copy (13 Oct
+   pair) printed `BEFORE text turn start`, which matches the earlier measurement.
+2. Redis: the CRM reads `REDIS_URL` (`app/config.py:227`, `redis_url`), used by
+   `app/services/queue_service.py:44` (`redis_conn`), which the chatbot ticket uses
+   (`app/services/chatbot/dispatch.py:177`). Compare its host, port and db index with n8n's
+   `sorento-redis` credential (Host, Port, Database Number). Prod compose lives on the server
+   at `/opt/sorento-crm2/docker-compose.yml` (`.github/workflows/deploy.yml:2071-2073`).
+
 ### Not covered (seen while measuring, out of scope)
 
 - Duplicate photo replies (15 Oct 04:14:48 + 04:15:01; rows 96727 02:30:36 +
