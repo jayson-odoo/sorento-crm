@@ -41,8 +41,8 @@ Contact override
   leaves them alone; provider outside the three or a blank model is a 422. Gate unchanged
   (`user_management.contacts.edit`).
 - AC-M-4: the contact read returns `chatbot_llm` = `{provider, model, source, tags}`: source `contact` (override),
-  `tag` (tags names that set it), `tag_conflict` (provider/model null, `tags` = the disagreeing tags with their
-  values), `none` (provider/model null, today).
+  `tag` (tags names that set it), `tag_conflict` (provider/model null, `tags` = the disagreeing tag names; their
+  values show in the tag panel's `conflict_tags`), `none` (provider/model null, today).
 
 Resolution (one resolver, `contact_llm_choice`)
 - AC-M-5: override set -> override, source `contact`, whatever the tags say.
@@ -70,5 +70,5 @@ Tag panel and Apply
 
 Contact page
 - AC-M-15: the contact Chatbot section shows "AI model" with the override select (clearable) and a source line:
-  "From tag <names>" / "Tags disagree: <tag> (<model>), <tag> (<model>)" / "Set on this contact" / "Default".
+  "From tag <names>" / "Tags disagree: <tag>, <tag>" / "Set on this contact" / "Default".
 - AC-M-16: 375px and 1280px usable, no clipping; no UUIDs shown.
