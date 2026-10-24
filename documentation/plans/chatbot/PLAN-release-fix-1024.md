@@ -1,6 +1,6 @@
 # PLAN: four canonical-code failures blocking the 24 Oct release (RELEASE-FIX-1024)
 
-Status: in progress (small fix track: one guard in `head/grounding.py` plus its tests, well under 300
+Status: fix committed, PR next (small fix track: one guard in `head/grounding.py` plus its tests, well under 300
 lines; no migration, no auth/RBAC change, no new ingest surface).
 
 Release run 40053956497 (main 2b052c4ca1, `full_suite=true`) failed shard 1 of the backend suite with
