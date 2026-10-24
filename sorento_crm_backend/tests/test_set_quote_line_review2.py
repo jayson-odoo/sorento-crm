@@ -6,6 +6,8 @@ R2-5 SQL NULL snapshot on a product line. Helpers come from `test_set_quote_line
 """
 from __future__ import annotations
 
+import uuid
+
 from sqlalchemy import select
 
 from app.models.product import Brand
@@ -130,7 +132,7 @@ def test_r2_3_select_items_carry_the_driver_parts_brand_name_or_null(api):
     brand = Brand(
         id=_uid(),
         company_id=company_id,
-        brand_code=f"ZZT{_uid()[:5]}",
+        brand_code=f"ZZT{uuid.uuid4().hex}",
         brand_name=f"{MARKER} Cabana",
     )
     db.add(brand)

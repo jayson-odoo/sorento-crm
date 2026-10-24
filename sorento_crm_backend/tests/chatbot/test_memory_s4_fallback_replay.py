@@ -154,7 +154,7 @@ def _seed_customer(session_factory, contact_pk: str, customer: dict[str, Any]) -
         db.flush()
         agent_id = agent.id
     row = Customer(
-        customer_code=f"{customer['code']}-{uuid.uuid4().hex[:4]}",
+        customer_code=f"{customer['code']}-{uuid.uuid4().hex}",
         customer_name=customer["name"],
         sales_agent_id=agent_id,
         company_id=DEFAULT_COMPANY_ID,
