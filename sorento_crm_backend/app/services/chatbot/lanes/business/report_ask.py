@@ -369,9 +369,11 @@ def by_capability(verdict: dict[str, Any]) -> dict[str, Any]:
     status = jsc.js_string(verdict.get("order_status") or "").strip()
     if status == "top_selling":
         return from_top_selling(verdict)
+    if status not in CAN_DRAW:
+        return verdict  # an order / PO list keeps its own grouping; only the report ask's statuses are typed
     verdict = typed_group_by(verdict)  # R6: a null `axis_words` names no axis, so the guess routes nothing
     raw_group = jsc.js_string(verdict.get("group_by") or "").strip().lower()
-    if status not in CAN_DRAW or (raw_group and raw_group not in GROUP_BY):
+    if raw_group and raw_group not in GROUP_BY:
         return verdict
     counted = verdict.get("measure") in METRICS[2:]
     if raw_group in CAN_DRAW[status] and not counted:
