@@ -33,6 +33,10 @@ Plan: `PLAN-one-ranking-1023.md`. Per round; owner answers Q1-Q3 fill the bracke
   "Top 30 selling item this year", "by customer" keep their axis (axis_words set). (4) A parse without the axis_words key (the
   production prompt v92 and older) behaves exactly as before. (5) Under a held ranking, "Project is channel" / "only project"
   narrows that ranking to the project channel (never the sales report total).
+- AC-OR7 (R7, 24 Oct). After "Top sales for CB6635 in 2026" asks the basis, the answer "qty, delivered" (the parser's `measure` qty,
+  or only `rank_by` quantity) runs the same TOTAL reply as today, and the measure is held: the next "by salesppl" / "by customer"
+  asks only "How many?" (never the measure again) and the ranking runs on qty, delivered, product and period kept. An answer that
+  names no measure leaves the total and the next ranking exactly as today (the measure is asked with the count).
 - AC-OR4. No chatbot path reaches crm_top_selling_report; the route, MCP tool and analytics connector still work.
 - AC-OR-ACCESS (owner Q3 + ruling (a), 23 Oct ~09:35: the unification widens nothing). Every ranking (items and categories
   included) needs the contact's Sales report switch (sales_orders.sales_report), except ruling 2 of 22 Oct: a live

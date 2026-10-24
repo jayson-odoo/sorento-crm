@@ -79,6 +79,12 @@ nowhere by the sales ranking, so an item ask lands on the catalogue line (T1-T3)
   defines `by_words`, and no published prompt does. Candidates v104 / v105 / v106 defined it; gemini-3.5-flash-lite read it exactly
   (v105 22/22 on the target classes), gpt-5.4-mini misread it on every wording (writes 'top sales' / 'jualan tertinggi' / '销售最高' as
   axis words; class a 2/6 vs v103 6/6). Crew (c): v103 for both models; ruling A stays prompt-only until a model reads the field.
+- R7 (S, small fix track, EVAL-BENCH 1024g flag, flash-lite 6dbed193 / aaf0b04d): a measure typed in the answer to a TOTAL's
+  question is kept. Cause: `_given_choices` (report_ask.py:885-886) settles a total's (and a month trend's) metric as empty, so
+  `_reply_fills.is_open` (:905-907) drops the parser's `measure` / `rank_by`; `route_args` sends none; the frame has no measure;
+  the next new-axis hold (S6c :1108-1111) finds none and asks it again. Mini passed only because its next parse copied the measure
+  from history (2edc7302). Fix in the answer path, as the first message path already does ("... by qty, delivered" sends a total its
+  measure): the typed measure settles the total's metric; the total's reply is unchanged.
 - Also queued: owner turn 045fb9bb ('Top sales for cb6635 in 2026, by salesppl' -> monthly report), v101 lines 53 / 297 / 310.
 
 ## Access differences the merge makes (Q3)
