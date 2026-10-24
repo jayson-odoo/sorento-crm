@@ -1,6 +1,6 @@
 # PLAN - Price Tag Round 9: data gate, review pins, notifications, collection
 
-Status: Implemented 14 Sep 2026, browser-verified, PR open (awaiting owner test on :3082 and merge go). Reconciled onto the combos model 15 Sep 2026: `origin/main` merged PR #913 (PLAN-price-tag-combos.md) FIRST, so a line now prints many tags and this lane adapts to it. Everything r9 does per LINE is done per TAG - the pin and its ack, the review comment anchor, the diff, the rail badges, the versions' `pinned_line_data` map. `ptag_0007` / `ptag_0008` are re-parented onto `ptag_0009_combos_tags` and CREATE the tag-keyed shapes directly, so `ptag_0009`'s `_remap_r9_pins` stays the documented no-op it was written to be. Single head `ptag_0008_pins_versions`; D4, D6, D16-D19 below carry the change.
+Status: Shipped 15 Sep 2026 (PR #907 merged 8161dcc1a, deployed run 34931786068)
 UAC: `documentation/plans/dealer-kit/price-tag-r9-review-loop-acceptance-criteria.md`
 Predecessor: `documentation/plans/dealer-kit/PLAN-price-tag-r7-request-ux.md` (merged #758), portal r8 (#861)
 Grill artifact: `.lavish/ptag-r9/price-tag-r9-plan.html`
