@@ -1,7 +1,8 @@
 # PLAN: SALES-COMPANY-PICK - the reply to the bot's company question picks the company; a new ask drops the held channel
 
-**Status:** Build, round 2 (24 Oct 2026): item 3 below (crew blocker found verifying a33d1be011). Round 1 reviewed
-(Opus READY, security PASS). Track: urgent fix round (crew, during the d02152a607 deploy), lead pattern: tester red,
+**Status:** Review, round 2 (24 Oct 2026): item 3 below (crew blocker found verifying a33d1be011), built at the one
+status seam (crew ruling a), Opus reviewer READY on 25d6b2d1af + should-fix applied; main (#1841, #1839) merged.
+Round 1 reviewed (Opus READY, security PASS). Track: urgent fix round (crew, during the d02152a607 deploy), lead pattern: tester red,
 coder, Opus reviewer + security-reviewer (multi-company scoping). Branch crew/chat-sales-company off main d02152a607.
 **UAC:** `sales-company-pick-acceptance-criteria.md` (alongside). Found by crew running #1841's script on the :3109 copy.
 
