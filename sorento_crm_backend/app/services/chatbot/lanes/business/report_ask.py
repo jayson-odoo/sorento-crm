@@ -485,9 +485,8 @@ def names_its_own_ask(
         # REPORT-SMART-1021 (EVAL-BENCH 21 Oct, turn dded3dc7): a refine naming its own entity,
         # or the whole ask typed again (`new_subject`), is never the open question's answer; a
         # bare refine ("ordered") still is.
-        # R5 a3 (live turn c404da24): one naming another axis than the slot holds, and filling no open
-        # field, is a new ask too ("by customer" under How many? is not the count).
-        return named or restates_the_ask(verdict) or (not filled and _other_axis(verdict, extras))
+        # A bare refine naming another axis is not a new ask: `settle` swaps it into the open ask.
+        return named or restates_the_ask(verdict)
     if named:
         # The parser's `answer` op on a reply that fills an open field is the answer even when it
         # repeats the held brand or category as current-message entities (live turn, parser v92).
@@ -512,6 +511,17 @@ def _other_axis(verdict: dict[str, Any], extras: dict[str, Any]) -> bool:
         # echoing either is its answer, not a new ask.
         return axis not in (scope.get("source"), _dict(scope.get("scoped")).get("args", {}).get("group_by"))
     return axis != _dict(extras.get("args")).get("group_by")
+
+
+def _swap_axis(parse_output: dict[str, Any], extras: dict[str, Any]) -> dict[str, Any] | None:
+    """The slot's extras with a refine's other axis swapped in (its own filter dropped), or None."""
+    if parse_output.get("ranking_refine") is not True or not _other_axis(parse_output, extras):
+        return None
+    axis = GROUP_BY.get(jsc.js_string(parse_output.get("group_by")).strip().lower())
+    if axis is None:
+        return None
+    args = {k: v for k, v in _dict(extras.get("args")).items() if k not in _AXIS_FILTERS.get(axis, ())}
+    return {**extras, "args": {**args, "group_by": axis}}
 
 
 def _carries_answer_op(verdict: dict[str, Any], parser_ops: Any = ()) -> bool:
@@ -900,6 +910,14 @@ def settle(
             if held_args.get("group_by") == "month":
                 return rf.Outcome(reply=COMPARE_BY_MONTH_LINE, slot=None), None  # a month breakdown is not compared
             return rf.collect(db, SALES_RANKING_ASK, slot=slot, given=held, extras={"args": held_args}), None
+        swapped = _swap_axis(parse_output, extras)
+        if swapped is not None:
+            # R5 a3 (live turn c404da24): a refine naming another axis and filling no owed field is the
+            # axis changing, not the answer: it replaces the slot's group_by, every filter stays, and
+            # the fields still owed are asked again in one question (no "I don't know ... as a number").
+            new_args = swapped["args"]
+            new_held = {**_given_choices(new_args), **_given_top_n(new_args, extras.get("top_n"))}
+            return rf.collect(db, SALES_RANKING_ASK, slot=slot, given=new_held, extras=swapped), None
         reply_dates = {"start": parse_output.get("date_filter_start"), "end": parse_output.get("date_filter_end")}
         outcome = rf.collect(
             db,
