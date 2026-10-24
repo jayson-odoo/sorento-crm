@@ -26,7 +26,8 @@ Mock: `documentation/mockups/FULFIL-SO-REMARK/index.html`.
 3. Default, recomputed every time the Confirm guide opens, from the LINES CHOSEN for that SO in
    this Confirm (an edit applies to that send only), first match wins:
    1. Shipping Info contains `SPON` (any case) -> `Sponsorship`.
-   2. Shipping Info contains `PURCHASE REQ` (any case) -> `Purchase Request`.
+   2. Shipping Info contains `PURCHASE REQ` (any case), or starts with `PR` followed by a digit
+      (a PR number such as `PR26-0375`; owner approved 25 Oct 05:39, may drop it) -> `Purchase Request`.
    3. At least one chosen line is a mockup line (rule 4) -> `Mockup`.
    4. Otherwise blank (also when the SO has mockup lines but none of them is chosen this time).
    Sponsorship / Purchase Request stay SO-level and beat Mockup: the owner marked SO421287
@@ -62,7 +63,7 @@ Mock: `documentation/mockups/FULFIL-SO-REMARK/index.html`.
 | --- | --- | --- | --- | --- |
 | SO427088 | PS26-1784 | OT06/2702 (customer PO) | Note `***FOR MOCKUP` | `Mockup` (staff wrote `OTM / HUAZHI CONST. (MOCKUP)`) |
 | SO427489 | PSSF26-0424 | SPONSORSHIP | no mockup | `Sponsorship` |
-| SO423741 | PR26-0375 | PR26-0375 (the PR no, not the words) | Note `Only send 2 for mock up...` | `Mockup` (Shipping Info has no words; see the Q2 note) |
+| SO423741 | PR26-0375 | PR26-0375 (the PR no, not the words) | Note `Only send 2 for mock up...` | `Purchase Request` (PR-number pattern) |
 | SO421287 | PSSF26-0381 | SPONSORSHIP | Note `***SPONSORSHIP (MOCKUP)***` | `Sponsorship` |
 | SO419417 | PS26-0336 | U 2603-00010 | 3 of 24 lines: line remark `***FOR STH(100)-2 UNITS MOCK UP` (SRTWB1515, SRT2403-CR, CB2829-DIY) | `Mockup`; those 3 lines labelled `Mockup` |
 
@@ -78,8 +79,7 @@ lines, mockup header line 8 SOs, Note and line both 3.
 - Staff confirm the mockup lines first and the actual lines another time: the first send says
   `Mockup` (no labels), the second says blank (rule 3.4).
 - Shipping Info holds a PR number instead of the words (26 of 40 PR SOs in 90 days, e.g.
-  `PR26-0375`): no Purchase Request default by the owner's Q2 ruling; crew is showing the owner this
-  count. Adding "Shipping Info starts with PR + digits" is a one-line rule change if he wants it.
+  `PR26-0375`): covered by rule 3.2's PR-number pattern. `PRR26-...` (4 SOs) does not match.
 - Confirm again, or the guide reopened: the default is computed again from the current AutoCount
   data; an earlier edit is not kept.
 - Cleared field: blank cell for that send.
@@ -90,4 +90,4 @@ lines, mockup header line 8 SOs, Note and line both 3.
 
 ## Questions
 
-All answered by the owner, 25 Oct (see FINAL above).
+All answered by the owner, 25 Oct (see FINAL above). Mock v3 approved 05:39.
