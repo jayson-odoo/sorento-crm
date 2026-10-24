@@ -1,9 +1,9 @@
 # PLAN: Loading plan - stock list merged cells read through, no-demand rows back in the one table
 
-Status: IN REVIEW - PR open, awaiting owner test on :3080 and go (owner go to build 15 Sep 2026)
+Status: MERGED - PR #922, 15 Sep 2026 (5d3f46ed6)
 Domain: scm
 Branch: fix/loading-plan-merged-cells-unfold
-UAC: loading-plan-merged-cells-unfold-acceptance-criteria.md
+UAC: loading-plan-merged-cells-unfold-acceptance-criteria.md (evidence: evidence-loading-plan-merged-cells/)
 Owner feedback: 15 Sep 2026, CHAOZHOU JINBAICHUAN plan, stock list of 14/09/2026 (121 model rows)
 
 ## What the owner saw
