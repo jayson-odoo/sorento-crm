@@ -1992,8 +1992,11 @@ def _answer_earlier_messages(
         try:
             if item.row_id is not None:
                 earlier_envelope = Envelope.model_validate(item.envelope)
-            else:
+            elif item.job_id is not None:
                 earlier_envelope = Envelope.model_validate(send_order.ledger_envelope(mine, item))
+            else:
+                # CHAT-SEND-ORDER: only stored so far; its own intake reads it here.
+                earlier_envelope = Envelope.model_validate(send_order.stored_envelope(mine, item))
         except ValueError:
             logger.warning(
                 "chatbot send order: could not rebuild the envelope of an earlier message "

@@ -241,7 +241,7 @@ class TestProdCase24Oct:
         _install_parser(monkeypatch, calls)
 
         _store(session_factory, contact_id, message_id=PHOTO_MESSAGE_ID)
-        envelope = _text_envelope(contact_id).model_copy(update={"dry_run": True})
+        envelope = _text_envelope(contact_id).model_copy(update={"is_test": True})
         engine_mod.run_turn(envelope, session_factory=session_factory)
 
         assert [_message_line(c) for c in calls] == ["Pls check stock"]
@@ -292,7 +292,7 @@ class TestSameSecond:
 def _me(session_factory, contact_id: int, *, message_id: str = TEXT_MESSAGE_ID, dry_run: bool = False) -> ChatbotTurn:
     envelope = _text_envelope(contact_id, message_id=message_id)
     if dry_run:
-        envelope = envelope.model_copy(update={"dry_run": True})
+        envelope = envelope.model_copy(update={"is_test": True})
     return engine_mod._insert_turn(session_factory(), envelope=envelope, contact_respond_id=str(contact_id))
 
 
@@ -430,8 +430,14 @@ class TestStoredOnlyDiscovery:
 
 
 def test_send_key_prefers_the_message_id_microseconds():
-    body = {"messageId": str(SECOND * 1_000_000 + 250_000), "message": {"timestamp": TEXT_SENT_MS}}
+    """`envelope.message` is the webhook body; the id and timestamp sit on its `message`."""
+    body = {"message": {"messageId": str(SECOND * 1_000_000 + 250_000), "timestamp": TEXT_SENT_MS}}
     assert send_order.send_key_ms(body) == pytest.approx(TEXT_SENT_MS + 250.0)
     # No clock in the id (a test id): the timestamp, as before.
-    assert send_order.send_key_ms({"messageId": "ZZT-x", "message": {"timestamp": TEXT_SENT_MS}}) == TEXT_SENT_MS
-    assert send_order.send_key_ms({"messageId": "ZZT-x", "message": {}}) is None
+    assert send_order.send_key_ms({"message": {"messageId": "ZZT-x", "timestamp": TEXT_SENT_MS}}) == TEXT_SENT_MS
+    assert send_order.send_key_ms({"message": {"messageId": "ZZT-x"}}) is None
+    # No timestamp: the id alone. An id outside the timestamp's second: the timestamp.
+    assert send_order.send_key_ms({"message": {"messageId": str(SECOND * 1_000_000)}}) == TEXT_SENT_MS
+    assert send_order.send_key_ms(
+        {"message": {"messageId": str(SECOND * 1_000_000 + 5_000_000), "timestamp": TEXT_SENT_MS}}
+    ) == TEXT_SENT_MS
