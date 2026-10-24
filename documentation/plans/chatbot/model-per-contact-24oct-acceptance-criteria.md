@@ -24,8 +24,51 @@ Plan: `PLAN-model-per-contact-24oct.md`. Sections marked PENDING wait on the own
 - AC-R4-9 (UI, after Q1/Q2): System > AI Assistant shows an "OpenAI API key" field beside the Gemini and Anthropic
   ones, masked, empty = today.
 
-## Resolver, screens, trace: PENDING (Q1 classifier, Q2 rows)
+## Model per contact (owner rulings 24 Oct 2026: tags decide; crew Q3 a, Q4 a, Q5 a)
 
-Decided by crew 24 Oct 2026: Q3 (a) parser + clarifier + code reader follow the contact, image lane keeps its own
-setting; Q4 (a) chosen provider without a key falls back to label/global for that turn, logs a warning, trace
-`model_source=fallback_no_key`; Q5 (a) the override is a provider + model pair.
+Ladder for every chatbot LLM call of a turn (parser, clarifier, code reader): contact override > tag model >
+that call's own `production` label row > global AI assistant config. Image lane unchanged.
+
+Tag setting
+- AC-M-1: a tag's `chatbot` section accepts `llm: {"provider": <openai|gemini|anthropic>, "model": <non-empty
+  string, max 100>}`; anything else is a 422 naming the field. Absent = the tag sets no model.
+- AC-M-2: the tag form's Chatbot section has an "AI model" provider select + model select (models from the
+  provider list, typed-in name accepted, like the Prompts screen's agent model card); clearing it removes `llm`.
+
+Contact override
+- AC-M-3: `respond_contacts` gains nullable `chatbot_llm_provider` + `chatbot_llm_model` (additive migration).
+  `PUT /contacts/{id}/chatbot` with `llm: {"provider", "model"}` sets both, `llm: null` clears both, `llm` absent
+  leaves them alone; provider outside the three or a blank model is a 422. Gate unchanged
+  (`user_management.contacts.edit`).
+- AC-M-4: the contact read returns `chatbot_llm` = `{provider, model, source, tags}`: source `contact` (override),
+  `tag` (tags names that set it), `tag_conflict` (provider/model null, `tags` = the disagreeing tags with their
+  values), `none` (provider/model null, today).
+
+Resolution (one resolver, `contact_llm_choice`)
+- AC-M-5: override set -> override, source `contact`, whatever the tags say.
+- AC-M-6: no override, one or more tags all setting the SAME model -> that model, source `tag`, `tags` = their names.
+- AC-M-7: no override, tags setting DIFFERENT models -> no choice, source `tag_conflict` (the `eq` merge rule).
+- AC-M-8: no override, no tag sets a model (or untagged) -> no choice, source `none`; every config reader returns
+  exactly what it returns on main (same provider, model, key, effort).
+- AC-M-9: a tag edit, a tag added or removed, or an override change applies from the contact's next turn (no cache,
+  no Apply needed).
+
+Runtime
+- AC-M-10: the parser config (`parser.resolve_config`) uses the choice: provider, model and that provider's key
+  (`resolve_api_key`, R4); the label's reasoning effort still applies with the existing per-provider caps.
+- AC-M-11: the clarifier (`casual.resolve_clarifier_config`) and the code reader (`resolver_code_reader`) use the
+  same choice for the same turn.
+- AC-M-12: chosen provider has no key -> that call runs on its label/global config, a warning is logged naming the
+  provider (never a key), and the turn completes; trace `model_source = fallback_no_key`.
+- AC-M-13: the parser `understood` trace records `provider`, `model` (already, #1624) plus `model_source`
+  (`contact | tag | label | global | fallback_no_key`) and, for `tag`, the tag names.
+
+Tag panel and Apply
+- AC-M-14: the contact's tag panel lists "AI model" with `decided_by` = the tags; a conflict lists both tags
+  (`conflict_tags`); the item never counts as differing, and Apply (contact, tag holders, bulk, on tagging) never
+  writes the contact override.
+
+Contact page
+- AC-M-15: the contact Chatbot section shows "AI model" with the override select (clearable) and a source line:
+  "From tag <names>" / "Tags disagree: <tag> (<model>), <tag> (<model>)" / "Set on this contact" / "Default".
+- AC-M-16: 375px and 1280px usable, no clipping; no UUIDs shown.

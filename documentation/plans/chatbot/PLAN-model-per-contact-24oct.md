@@ -1,6 +1,6 @@
 # PLAN: chatbot model per contact (MODEL-PER-CONTACT)
 
-Status: Plan - behaviour card filed to the owner 24 Oct 2026, build waits on the answers. Track: L (migration, settings UI, keys).
+Status: Build - slice 1 (R4 keys) green, slice 2 (tag model ladder) red tests next. Track: L (migration, settings UI, keys).
 
 ## Journey
 
@@ -36,12 +36,45 @@ global AI assistant config).
 - Crew 24 Oct 2026, R4 addendum accepted: nullable `ai_assistant_configs.openai_api_key_ciphertext` + "OpenAI API
   key" field beside Gemini/Anthropic; OpenAI order = own column > generic while `config.provider == openai` > env.
   Write-only in the API, masked like the other keys; security review covers it.
-- Q1 (which classifier) and Q2 (rows per class): with the owner. Only R4 is built until they land.
+- Owner 24 Oct 2026, Q1 (c) + Q2: contact TAGS decide. Provider + model is a new leaf in the existing tag `chatbot`
+  section; no class rows, no `system_settings.chatbot_contact_models`. Order: contact override > tag model >
+  production label > global. Untagged contact = today. The contact page shows which tag the model came from.
+- Lead, 24 Oct 2026, multi-tag edge (owner: reuse an existing merge rule if one fits): the existing `eq` rule
+  (`contact_tag_settings.py:490`, already used by `chatbot_skip_period_questions` / `chatbot_files_as_links`) fits.
+  Tags that set the SAME model agree; tags that set DIFFERENT models are a conflict: no tag model applies, the
+  contact runs on the label/global default, the tag panel lists the conflicting tags (existing `conflict_tags`), and
+  the contact page says the tags disagree. A contact override settles it. No new precedence rule.
+
+## Architecture
+
+- Layer: one backend resolver, `app/services/chatbot/contact_model.py` `contact_llm_choice(db, contact)`, returns
+  `(provider, model, source, tag_names)` with source `contact | tag | tag_conflict | none`. It is the ONLY place the
+  ladder's top two rungs are read. The tag rung reuses `contact_tag_settings.tags_by_contact_with_settings` +
+  `leaves` + the `eq` merge, so the tag page, the contact panel and the runtime cannot disagree on a conflict.
+- Live, not applied: every other tag setting is copied onto the contact by Apply, and the runtime reads the copy.
+  The model is read live from the tags each turn, because the owner's ladder ("untagged = today", override beats
+  tag) cannot hold with a copy: removing a tag would leave its model behind, and a bulk Apply would overwrite an
+  override. So the leaf takes part in `evaluate` (the panel shows it, with `decided_by` and conflicts) but its
+  `current` is the effective value and it never differs, so Apply never writes it.
+- Runtime: `load_profile` (`turn_runtime.py`) carries the choice on `Profile`; the engine hands it to
+  `parser.resolve_config` (`engine.py:5073`), `casual.resolve_clarifier_config` (`engine.py:6946`) and the code
+  reader's `_resolve_provider` (`resolver_code_reader.py:219`). Each applies one shared helper: choice (when its
+  provider has a key, `resolve_api_key`) > its own label row > global. No key for the chosen provider: warning log,
+  label/global used, trace `model_source = fallback_no_key`. Image lane untouched.
+- Storage: tag leaf `settings.chatbot.llm = {"provider", "model"}` (JSON, no migration). Contact override: nullable
+  `respond_contacts.chatbot_llm_provider` + `chatbot_llm_model`, both or neither (migration additive), written by
+  `PUT /contacts/{id}/chatbot` with the absent-vs-null rule (`contacts.py:429`).
+- Trace: the parser `understood` trace already records provider + model (#1624); it gains `model_source` and, for a
+  tag, the tag names.
+- UI (no mock: selects on existing forms, owner 29 Sep exception): tag form chatbot section "AI model" (provider +
+  model, reusing `AgentModelCard`'s `SearchableSelect` + `PROVIDER_OPTIONS` + `useProviderModels`); contact Chatbot
+  section "AI model" override (clearable) plus the source line ("From tag X" / "Tags disagree: ..." / "Default");
+  System > AI Assistant "OpenAI API key" field (AC-R4-9).
 
 ## Slices
 
-1. R4 key slots (UAC AC-R4-1..8): migration, model, resolver, settings API, reencrypt script, redaction. Red first.
-2. PENDING Q1/Q2: resolver + settings card + contact field + trace + AC-R4-9 field.
+1. R4 key slots (UAC AC-R4-1..8): DONE, red 4d8c8f539b, green 467e9185b8, kill-proof 3 resolver tests.
+2. Tag model + contact override + runtime ladder + trace (UAC AC-M-*), backend then frontend, red first.
 
 Test DB: `sorento_mpc_throwaway` (`SORENTO_ENV_FILE=.env.ci-tests`, redis index 13).
 
