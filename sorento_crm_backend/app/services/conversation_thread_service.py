@@ -333,6 +333,11 @@ def _respond_item_text(item: dict) -> str:
         return title
     kind = (message.get("type") or "").strip() or "attachment"
     attachment = _first_attachment(message)
+    # A captioned photo or file keeps the customer's words on the attachment itself
+    # (`attachment.description`, where the chatbot reads them too).
+    caption = str((attachment or {}).get("description") or "").strip()
+    if caption:
+        return caption
     if attachment:
         name = unquote(str(attachment.get("fileName") or attachment.get("filename") or "")).strip()
         sub = (attachment.get("type") or "").strip()
