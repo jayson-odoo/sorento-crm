@@ -458,6 +458,16 @@ def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
     return {**verdict, "entities": kept, "report_ask_words": words}
 
 
+def typed_group_by(verdict: dict[str, Any]) -> dict[str, Any]:
+    """REPORT-SMART-L R6 (ruling A): the parser's `axis_words` are the words of the current message that name the ranked
+    or grouped axis. A verdict whose key is PRESENT and null names no axis, so the `group_by` it carries is a guess and
+    is not taken (a fresh ask is a total, a refine changes no axis). A verdict WITHOUT the key (a prompt version that
+    does not define it) is returned untouched. Parser fields only, no word list."""
+    if "axis_words" not in verdict or jsc.js_string(verdict.get("axis_words") or "").strip() or not verdict.get("group_by"):
+        return verdict
+    return {**verdict, "group_by": None}
+
+
 def names_its_own_ask(
     verdict: dict[str, Any], open_slot: dict[str, Any] | None = None, *, parser_ops: Any = ()
 ) -> bool:
@@ -477,6 +487,7 @@ def names_its_own_ask(
     answer whatever entities it repeats (the held brand echoed under "By quantity or by amount?").
     The applier pops `state_changes` before the engine seam (and rejects an `answer` that has no
     open question), so the engine passes the ops it logged as `parser_ops`."""
+    verdict = typed_group_by(verdict)
     status = jsc.js_string(verdict.get("capability_from") or verdict.get("order_status") or "").strip()
     named = any(
         isinstance(e, dict) and e.get("current_message") is not False and jsc.js_string(e.get("hint") or "").strip()
@@ -922,6 +933,7 @@ def settle(
     The slot's extras carry the first message's args and its number (`top_n`), so an
     answering turn runs the first message's ask; every field still missing is asked in one
     numbered reply (chat fix PR-B S1), and an answer settling any of them is read whole."""
+    parse_output = typed_group_by(parse_output)
     slot = parse_output.get("required_ask")
     ranking_detail = parse_output.get("ranking_detail")
     shown_frame = _dict(parse_output.get("sales_ranking_frame"))

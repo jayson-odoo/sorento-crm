@@ -101,6 +101,10 @@ class ParserConfig:
     # measures and the `compare_to` property; a version that never describes them is not forced
     # to emit them (`without_report_fields`). True keeps the extended schema for a bare config.
     report_fields: bool = True
+    # REPORT-SMART-L R6: the prompt in use defines `axis_words`, so the schema offers it. A version that does
+    # not (production v92) would answer null on every parse, which the sales ranking reads as "no axis typed",
+    # so its schema carries no such key and `parse` drops it from the verdict (`without_axis_words`).
+    axis_words: bool = True
     # PARSER-TEMPLATE F1-A: the version is the consolidated template (`head/parser_template`),
     # whose rules decide what the engine's own re-readings of the message used to.
     template: bool = False
@@ -350,6 +354,10 @@ def _build_base_json_schema() -> dict[str, Any]:
             # PLAN-chatbot-customer-scope-29sep D2: "my" / "me" / "our" as the asker's own
             # account. Required for strict mode, tolerated absent (older prompt versions).
             "self_reference": {"type": "boolean"},
+            # REPORT-SMART-L R6 (ruling A): the verbatim words of the CURRENT message naming the ranked or
+            # grouped axis ("by salesppl", "salesppl", "item"), null when it names none. Same shape and
+            # exemption as `compare_to`; declared by the prompt version that defines it only (`without_axis_words`).
+            "axis_words": {"type": ["string", "null"]},
             "routing": {
                 "type": "object",
                 "additionalProperties": False,
@@ -694,6 +702,7 @@ def _build_base_json_schema() -> dict[str, Any]:
             "portal_form",
             "correction",
             "self_reference",
+            "axis_words",
             "routing",
             "escalation",
             "document",
@@ -801,6 +810,7 @@ TOLERATED_ABSENT: frozenset[str] = frozenset(
         "proceed_anyway",
         "open_question_answer",
         "self_reference",
+        "axis_words",
         "profile_statements",
         # LOWSTOCK-SEMANTIC: no recorded emission and no prompt version before
         # `lss_0001_parser_vocab` carries it; absent reads as "nothing placed".
@@ -836,7 +846,17 @@ def without_report_fields(schema: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def closed_lists_schema(items: list[str], *, state: bool = False, report_fields: bool = True) -> dict[str, Any]:
+def without_axis_words(schema: dict[str, Any]) -> dict[str, Any]:
+    """A copy of `schema` for a prompt version that does not define `axis_words`: neither a property nor required."""
+    out = copy.deepcopy(schema)
+    out["properties"].pop("axis_words", None)
+    out["required"] = [k for k in out["required"] if k != "axis_words"]
+    return out
+
+
+def closed_lists_schema(
+    items: list[str], *, state: bool = False, report_fields: bool = True, axis_words: bool = True
+) -> dict[str, Any]:
     """The strict schema of a CLOSED LISTS version: the production one (the CHAT-STATE one
     when the version also asks for `state_changes`), with each entity's `listed_item` held
     to the items the lists render (a JSON enum) or null. The provider then guarantees the
@@ -853,7 +873,8 @@ def closed_lists_schema(items: list[str], *, state: bool = False, report_fields:
         {"type": ["string", "null"], "enum": [*items, NOT_LISTED, None]} if items else {"type": "null"}
     )
     entity["required"] = [*entity["required"], "listed_item"]
-    return schema if report_fields else without_report_fields(schema)
+    schema = schema if report_fields else without_report_fields(schema)
+    return schema if axis_words else without_axis_words(schema)
 
 
 #: The stored parser reasoning efforts; anything else (a typo, "none", an effort this list does not hold) is `off`.
@@ -944,11 +965,13 @@ def resolve_config(
     state_block = HEADING in (raw_template or "")
     # REPORT-SMART-L: the schema follows the prompt, as `state_block` does.
     report_fields = "compare_to" in (raw_template or "")
+    axis_words = "axis_words" in (raw_template or "")
     json_schema = None
     if closed_lists:
         from app.services.chatbot_prompt_vars import closed_list_enum
 
-        json_schema = closed_lists_schema(closed_list_enum(db), state=state_block, report_fields=report_fields)
+        json_schema = closed_lists_schema(closed_list_enum(db), state=state_block, report_fields=report_fields, axis_words=axis_words
+        )
     return ParserConfig(
         system_prompt=system_prompt,
         prompt_version=prompt_version,
@@ -960,6 +983,7 @@ def resolve_config(
         json_schema=json_schema,
         state_block=state_block,
         report_fields=report_fields,
+        axis_words=axis_words,
         template=TEMPLATE_MARKER in (raw_template or ""),
         closed_lists_index=index_mode,
         reasoning_effort=reasoning_effort_setting(db),
@@ -1221,7 +1245,8 @@ def assert_emission(emission: dict) -> None:
 def _base_schema(config: ParserConfig) -> dict[str, Any]:
     """The production schema for `config`: with or without `state_changes`, with or without the report fields."""
     schema = PARSE_OUTPUT_JSON_SCHEMA_WITH_STATE if config.state_block else PARSE_OUTPUT_JSON_SCHEMA
-    return schema if config.report_fields else without_report_fields(schema)
+    schema = schema if config.report_fields else without_report_fields(schema)
+    return schema if config.axis_words else without_axis_words(schema)
 
 
 def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
@@ -1300,6 +1325,8 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
         if not isinstance(parsed, dict):
             raise ParserError("parser returned a non-object")
         assert_emission(parsed)
+        if not config.axis_words:
+            parsed.pop("axis_words", None)  # the prompt never defined it: a null here would read as "no axis typed"
     except ParserError as exc:
         # The provider answered, so it billed. The turn fails either way; the spend is
         # still real and still has to reach `ai_assistant_usage_logs`.
