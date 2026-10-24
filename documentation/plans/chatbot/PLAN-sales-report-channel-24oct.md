@@ -61,7 +61,10 @@ After this lane the sales report's Channel means the sales order's type (ruling 
   (`sales_report_delivered.py:107`); not registered on the Reports screen (`delivery_order_lines.py:27-29`); no FE page
   calls `/order-management/sales-report` (grep of `sorento_crm_frontend/app|components|services|lib`). The MCP tool
   `crm_sales_report` and the chatbot business lane are the only consumers. `NO_AGENT` (imported by
-  `sales_order_lines_ask.py:25`, `reports/ask.py:151`) is untouched.
+  `sales_order_lines_ask.py:25`, `reports/ask.py:151`) and `_CHANNEL_CLASS` + `resolve_locations` (imported by
+  `reports/ask.py:21`) are untouched, so `crm_report_ask`'s numbers do not move. `crm_top_selling_report`
+  (`sales_report_service.py:270-273`) and Sales > Yearly comparison (`sales_order_lines.py:66-72`,
+  `billing_documents.py:73-74`) already read `demand_class` and are untouched.
 - Out of scope, noted: the sales report's `sales_agent` dimension reads only the header link `orders.sales_order_id`
   (`delivery_order_lines.py:177-178`), NULL on every dev DO. Separate ticket if wanted.
 
