@@ -1,6 +1,6 @@
 # PLAN: chatbot model per contact (MODEL-PER-CONTACT)
 
-Status: Review - slices 1 and 2 built; review + security fix round in progress. Track: L (migration, settings UI, keys).
+Status: PR+CI - PR #1839; reviewer READY and security re-check clean after the fix round; hand test filed. Track: L (migration, settings UI, keys).
 
 ## Journey
 
@@ -47,7 +47,7 @@ global AI assistant config).
 
 ## Architecture
 
-- Layer: one backend resolver, `app/services/chatbot/contact_model.py` `contact_llm_choice(db, contact)`, returns
+- Layer: one backend resolver, `app/services/contact_llm_choice.py` (core, so core callers never import the chatbot package) `contact_llm_choice(db, contact)`, returns
   `(provider, model, source, tag_names)` with source `contact | tag | tag_conflict | none`. It is the ONLY place the
   ladder's top two rungs are read. The tag rung reuses `contact_tag_settings.tags_by_contact_with_settings` +
   `leaves` + the `eq` merge, so the tag page, the contact panel and the runtime cannot disagree on a conflict.
