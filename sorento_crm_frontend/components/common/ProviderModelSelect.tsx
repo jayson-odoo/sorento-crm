@@ -27,7 +27,10 @@ function ModelPick({
   onPick: (model: string) => void;
 }) {
   const modelsQuery = useProviderModels(provider);
-  const options = modelsQuery.data?.models ?? MODEL_OPTIONS[provider] ?? [];
+  const listed = modelsQuery.data?.models ?? MODEL_OPTIONS[provider] ?? [];
+  // A typed-in name is not in the provider's list; it still has to show as the selected value.
+  const options =
+    model && !listed.some((o) => o.value === model) ? [{ value: model, label: model }, ...listed] : listed;
   return (
     <SearchableSelect
       value={model}
