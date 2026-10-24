@@ -100,16 +100,23 @@ def _store(
     media_type: str | None = "image",
     media_url: str | None = PHOTO_URL,
     traffic: str = "incoming",
-    message: str = "",
+    message: str | None = None,
     file_name: str | None = None,
+    channel: str = "whatsapp",
+    sender_source: str = "contact",
 ) -> None:
     """What the CRM's respond.io webhook writes for a message on arrival
     (`respond_webhook.map_webhook_message` -> `upsert_message_row`)."""
+    if message is None:
+        # The webhook's typed placeholder for a media message with no text
+        # (`conversation_thread_service._respond_item_text`).
+        label = f"[{media_type}]" if media_type else ""
+        message = f"{label} {file_name}" if file_name else label
     sent_at = datetime.fromtimestamp(int(message_id) / 1_000_000, tz=timezone.utc).replace(tzinfo=None)
     db = session_factory()
     db.add(
         ChatHistory(
-            channel="whatsapp",
+            channel=channel,
             contact_id=str(contact_id),
             phone_number="+60100000000",
             message=message,
@@ -119,7 +126,7 @@ def _store(
             media_url=media_url,
             media_type=media_type,
             media_file_name=file_name,
-            sender_source="contact",
+            sender_source=sender_source,
         )
     )
     db.commit()
@@ -197,6 +204,11 @@ class TestProdCase24Oct:
         texts = _texts(result.actions)
         assert len(texts) >= 2, texts
         assert texts[0] == _texts(photo_row.response["actions"])[0], "the photo's reply goes out first"
+
+        from app.models.media import MediaExtractionJob
+
+        job = session_factory().query(MediaExtractionJob).filter(MediaExtractionJob.media_url == PHOTO_URL).all()
+        assert [j.caption for j in job] == [None], "the webhook's '[image]' placeholder is not a caption"
 
     def test_the_photos_own_late_delivery_is_a_duplicate_read_and_charged_once(
         self, session_factory, stub_access, media_pipeline, monkeypatch  # noqa: F811
@@ -441,3 +453,86 @@ def test_send_key_prefers_the_message_id_microseconds():
     assert send_order.send_key_ms(
         {"message": {"messageId": str(SECOND * 1_000_000 + 5_000_000), "timestamp": TEXT_SENT_MS}}
     ) == TEXT_SENT_MS
+
+
+class TestReviewRound1:
+    """Reviewer pass 1 on this lane: S1 (read first), S2 (channel), S3 (agent reply), B1."""
+
+    @pytest.mark.parametrize("outcome", ["still_reading", "failed"])
+    def test_a_stored_photo_not_read_in_time_is_left_to_its_own_delivery(
+        self, session_factory, stub_access, media_pipeline, monkeypatch, outcome  # noqa: F811
+    ):
+        """n8n's `media-route` replies on its own to a read that fails or runs out, so the
+        text's turn never answers such a photo ahead: no turn row, nothing sent for it."""
+        contact_id = _fresh_contact_id()
+        _seed_contact(session_factory, contact_id, focus_codes=[HELD_CODE])
+        _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
+        _seed_settings(session_factory, media_sync_wait_seconds=1)
+        if outcome == "failed":
+            media_pipeline.set_result(error=RuntimeError("unreadable"))
+        else:
+            media_pipeline.never_runs()
+        stub_access()
+        calls: list[str] = []
+        _install_parser(monkeypatch, calls)
+
+        _store(session_factory, contact_id, message_id=PHOTO_MESSAGE_ID)
+        result = engine_mod.run_turn(_text_envelope(contact_id), session_factory=session_factory)
+
+        assert [_message_line(c) for c in calls] == ["Pls check stock"]
+        assert _turn_for(session_factory, contact_id, PHOTO_MESSAGE_ID) is None
+        assert len(_texts(result.actions)) == 1, _texts(result.actions)
+        row = _turn_for(session_factory, contact_id, TEXT_MESSAGE_ID)
+        facts = next(r for r in row.trace if r.get("stage") == "received").get("facts") or {}
+        assert "photo_not_read" in str(facts.get("earlier_left_because")), facts
+
+    def test_a_row_on_another_channel_is_not_found(self, session_factory):
+        contact_id = _fresh_contact_id()
+        _store(session_factory, contact_id, message_id=PHOTO_MESSAGE_ID, channel="instagram")
+        assert _found(session_factory, contact_id, _me(session_factory, contact_id)) == []
+
+    def test_a_row_a_person_answered_is_not_found(self, session_factory):
+        contact_id = _fresh_contact_id()
+        _store(session_factory, contact_id, message_id=PHOTO_MESSAGE_ID)
+        _store(
+            session_factory,
+            contact_id,
+            message_id=str(int(PHOTO_MESSAGE_ID) + 1_000_000),
+            traffic="outgoing",
+            media_type=None,
+            media_url=None,
+            message="noted",
+            sender_source="user",
+        )
+        assert _found(session_factory, contact_id, _me(session_factory, contact_id)) == []
+
+    def test_a_bot_reply_in_between_does_not_hide_it(self, session_factory):
+        contact_id = _fresh_contact_id()
+        _store(session_factory, contact_id, message_id=PHOTO_MESSAGE_ID)
+        _store(
+            session_factory,
+            contact_id,
+            message_id=str(int(PHOTO_MESSAGE_ID) + 1_000_000),
+            traffic="outgoing",
+            media_type=None,
+            media_url=None,
+            message="an earlier answer",
+            sender_source="api",
+        )
+        assert _found(session_factory, contact_id, _me(session_factory, contact_id)) == [PHOTO_MESSAGE_ID]
+
+    @pytest.mark.parametrize(
+        ("stored", "media_type", "caption"),
+        [
+            ("[image]", "image", None),
+            ("[file] zzt-a.pdf", "file", None),
+            ("[sticker]", "sticker", None),
+            ("price for this?", "image", "price for this?"),
+        ],
+    )
+    def test_the_webhook_placeholder_is_not_a_caption(self, session_factory, stored, media_type, caption):
+        contact_id = _fresh_contact_id()
+        _store(session_factory, contact_id, message_id=PHOTO_MESSAGE_ID, media_type=media_type, message=stored)
+        me = _me(session_factory, contact_id)
+        found = send_order.earlier_unanswered(session_factory(), contact_respond_id=str(contact_id), me=me)
+        assert [e.caption for e in found] == [caption]

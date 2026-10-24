@@ -1962,6 +1962,40 @@ def _answer_earlier_messages(
     my_message_id = _message_id(envelope)
     out: list[dict[str, Any]] = []
     for item in taken:
+        if item.row_id is None and item.job_id is None and item.carries_media:
+            # CHAT-SEND-ORDER: a stored-only photo or voice note is read FIRST, under the
+            # ledger key n8n's intake uses too, and answered ahead only once read: n8n's
+            # `media-route` replies on its own to a read that fails or runs out, and its
+            # later delivery would otherwise come back a duplicate of a timeout reply.
+            try:
+                attachment = send_order.stored_attachment(item)
+                detected = media_intake.detect({"attachment": attachment})
+                status = (
+                    media_intake.run(
+                        respond_io_id=contact_respond_id,
+                        message_id=item.message_id,
+                        modality=detected[0],
+                        attachment=attachment,
+                        caption=item.caption,
+                        turn_id=turn_id,
+                        session_factory=session_factory,
+                    ).status
+                    if detected is not None
+                    else None
+                )
+            except Exception:  # noqa: BLE001 - see the docstring: best effort
+                logger.warning(
+                    "chatbot send order: could not read an earlier stored media message of "
+                    "%s; it is left to its own delivery",
+                    contact_respond_id,
+                    exc_info=True,
+                )
+                status = None
+            if status != "completed":
+                if "photo_not_read" not in reasons:
+                    reasons.append("photo_not_read")
+                left_count += 1
+                continue
         if item.row_id is None and item.job_id is not None:
             # Today's path (pre-S6): n8n's `media-route` replies on its own when its
             # extraction fails or outlives its wait. Answering such a photo here too
