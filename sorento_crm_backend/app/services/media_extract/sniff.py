@@ -66,7 +66,8 @@ def sniff_mime(data: bytes) -> Optional[str]:
 
 def expected_kind(modality: str, declared_mime: Optional[str]) -> str:
     """What the bytes must be for this job: the voice lane wants audio; the image
-    lane also reads PDFs and video, so the declared mime picks which of the three."""
+    lane also reads PDFs and video, so a specific declared mime picks one of the
+    three, and none (or a generic one like octet-stream) leaves all three open."""
     if modality == "voice":
         return "audio"
     mime = (declared_mime or "").split(";")[0].strip().lower()
@@ -74,7 +75,9 @@ def expected_kind(modality: str, declared_mime: Optional[str]) -> str:
         return "pdf"
     if mime.startswith("video/"):
         return "video"
-    return "image"
+    if mime.startswith("image/"):
+        return "image"
+    return "visual"
 
 
 def matches_kind(sniffed: Optional[str], kind: str) -> bool:
@@ -82,6 +85,8 @@ def matches_kind(sniffed: Optional[str], kind: str) -> bool:
         return False
     if kind == "pdf":
         return sniffed == "application/pdf"
+    if kind == "visual":
+        return sniffed == "application/pdf" or sniffed.startswith(("image/", "video/"))
     if kind == "audio":
         # WebM / MP4 voice notes share their container with video.
         return sniffed.startswith("audio/") or sniffed in {"video/webm", "video/mp4", "video/3gpp"}
@@ -90,7 +95,11 @@ def matches_kind(sniffed: Optional[str], kind: str) -> bool:
 
 def mismatch_reason(data: bytes, content_type: Optional[str], kind: str) -> str:
     """The job error: which modality was expected and what actually arrived."""
-    label = {"image": "an image", "audio": "an audio file"}.get(kind, f"a {kind}")
+    label = {
+        "image": "an image",
+        "audio": "an audio file",
+        "visual": "an image, pdf or video",
+    }.get(kind, f"a {kind}")
     return (
         f"Downloaded file is not {label}: content-type {content_type or 'none'}, "
         f"{len(data)} bytes, first bytes {data[:16].hex()}"

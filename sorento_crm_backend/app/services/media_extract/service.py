@@ -438,8 +438,8 @@ class MediaExtractService:
         sniffed = sniff.sniff_mime(data)
         if not sniff.matches_kind(sniffed, kind):
             raise MediaExtractionError(sniff.mismatch_reason(data, content_type, kind))
-        if kind == "image":
-            # The bytes, not the label, say which image format the model is handed.
+        if kind in ("image", "visual"):
+            # The bytes, not the label, say which format the model is handed.
             mime = sniffed
 
         helper = AIExtractService(self.db)

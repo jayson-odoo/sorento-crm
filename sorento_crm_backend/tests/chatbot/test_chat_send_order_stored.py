@@ -602,3 +602,30 @@ class TestReviewRound1:
         me = _me(session_factory, contact_id)
         found = send_order.earlier_unanswered(session_factory(), contact_respond_id=str(contact_id), me=me)
         assert [e.caption for e in found] == [caption]
+
+
+# MEDIA-INTAKE-GUARD (3): chat_histories keeps no mime column, so the rebuilt
+# attachment names the mime its stored file name shows; with no file name it
+# sends none rather than a guess.
+@pytest.mark.parametrize(
+    "file_name, expected",
+    [
+        ("invoice.pdf", "application/pdf"),
+        ("IMG_0001.JPG", "image/jpeg"),
+        ("clip.mp4", "video/mp4"),
+        (None, None),
+        ("no-extension", None),
+    ],
+)
+def test_stored_attachment_passes_the_stored_mime_type(file_name, expected):
+    earlier = send_order.Earlier(
+        order_key=1.0,
+        message_id="ZZT-msg-1",
+        media_url="https://cdn.example/x",
+        attachment_type="file" if file_name else "image",
+        file_name=file_name,
+    )
+
+    attachment = send_order.stored_attachment(earlier)
+
+    assert attachment.get("mimeType") == expected

@@ -48,6 +48,7 @@ Whatever is left goes to its own delivery, as it did before this module existed.
 from __future__ import annotations
 
 import copy
+import mimetypes
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -532,6 +533,12 @@ def stored_attachment(earlier: Earlier) -> dict[str, Any]:
     attachment: dict[str, Any] = {"type": earlier.attachment_type, "url": earlier.media_url}
     if earlier.file_name:
         attachment["fileName"] = earlier.file_name
+        # `chat_histories` keeps no mime column, so the stored file name is the
+        # only record of what the file is. Without it the extraction had nothing
+        # but the download's own content-type to go on.
+        mime, _ = mimetypes.guess_type(earlier.file_name)
+        if mime:
+            attachment["mimeType"] = mime
     if earlier.caption:
         attachment["description"] = earlier.caption
     return attachment

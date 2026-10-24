@@ -1753,3 +1753,44 @@ def test_a_voice_download_that_is_not_audio_is_refused_with_the_reason(monkeypat
     )
     assert raised.value.notice["kind"] == "unreadable"
     assert calls == []
+
+
+def test_a_turn_with_no_specific_mime_reads_a_pdf_by_its_bytes(monkeypatch):
+    """A stored file rebuilt without a mime (or served as octet-stream) is still
+    read: with no specific label the bytes pick image, pdf or video."""
+    pdf = b"%PDF-1.7\n" + b"\x00" * 64
+    with blank_session() as db:
+        usage = _seed_usage(db, "image")
+        _wire_image(monkeypatch, pdf, "application/octet-stream")
+        rendered: list = []
+
+        from app.services.ai_extract.extract_service import AIExtractService
+
+        monkeypatch.setattr(
+            AIExtractService,
+            "_render_files",
+            lambda self, files: rendered.extend(files) or [],
+        )
+
+        with pytest.raises(Exception) as raised:
+            MediaExtractService(db).extract(_image_job(usage.id, mime_type=None))
+
+    assert "Nothing readable" in str(raised.value)
+    assert rendered[0].mime == "application/pdf"
+
+
+def test_a_turn_with_no_specific_mime_still_refuses_html(monkeypatch):
+    from app.services.media_extract.service import MediaExtractionError
+
+    body = b"<html>gone</html>"
+    with blank_session() as db:
+        usage = _seed_usage(db, "image")
+        calls = _wire_image(monkeypatch, body, "text/html")
+
+        with pytest.raises(MediaExtractionError) as raised:
+            MediaExtractService(db).extract(_image_job(usage.id, mime_type=None))
+
+    assert str(raised.value).startswith(
+        "Downloaded file is not an image, pdf or video: content-type text/html"
+    )
+    assert calls == []
