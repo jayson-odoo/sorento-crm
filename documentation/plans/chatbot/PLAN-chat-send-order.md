@@ -1,6 +1,6 @@
 # PLAN: answer an earlier-sent photo before a later text that reached the CRM first
 
-Status: in progress (Build). Track: small fix (backend only, no migration, no auth / RBAC change,
+Status: in progress (Review, reviewer round 1 fixed). Track: small fix (backend only, no migration, no auth / RBAC change,
 no new ingest surface, no prompt change).
 UAC: `chat-send-order-acceptance-criteria.md`.
 Source: prod case 24 Oct ~08:15 MYT: a forwarded product IMAGE (card printed SRTWC2350-P-RL), then
@@ -40,11 +40,19 @@ One more source for `send_order.earlier_unanswered`: **a stored-only media messa
   `direct_ingress.STALE_AFTER_SECONDS`) before this turn's message, and after the send time of the
   contact's latest ANSWERED turn (a message the bot never took, e.g. while a human had the chat,
   is history, not a message on its way),
+- on this conversation's channel (one contact can write on several),
+- with no respond.io agent reply (`outgoing`, `sender_source = user`) after it: a person handled
+  it (a bot reply in between does not count),
 - with NO turn row (it has not reached `/chat/turn`) and NO media ledger row (n8n's media intake
   has not touched it; once it has, the existing ledger rule owns it, unchanged),
 
 is rebuilt as an attachment envelope from this turn's envelope (same contact, channel) and
-answered first, on its own turn row, exactly like the #1262 ledger path: inserted with its message
+answered first, on its own turn row, exactly like the #1262 ledger path. Its caption is the
+stored text only when that is not the webhook's typed placeholder (`[image]`, `[file] a.pdf`).
+A photo or voice note is READ first (`media_intake.run`, the ledger key n8n's intake uses too)
+and answered ahead only once read; a read that fails or runs out leaves it to its own delivery
+with no turn row, because n8n's `media-route` replies on its own to those (reviewer round 1,
+S1). Then it is inserted with its message
 id (the D15 unique key; an `IntegrityError` means its own delivery got there first and owns it),
 run through the normal stages (the engine's own media intake reads the photo: same ledger
 idempotency key, so n8n's later `/external/media/process` call replays it and nothing is charged
@@ -81,8 +89,12 @@ either way.
   answered after the text. With direct ingress the text starts ~2.3 s after its own webhook, so a
   photo delivered later than that is not seen. Owner ruling 24 Oct: no waiting window, so this
   stays.
-- If the engine's own read of a stored-only photo fails AND n8n's media intake then fails on the
-  same job, n8n's `media-route` reply arm can send its own failure reply beside the engine's.
-  Same failure, said twice; disappears at plan S6.
+- A takeover with no agent reply yet: a photo sent while a human has the chat, handed back
+  within 120 s without the agent writing, is answered by the next text's turn.
+- Ledger photos still sort on the CRM's first sight (`contact_media_usage.created_at`) while
+  queued and stored items sort on respond.io's send time (pre-existing since #1262, review
+  round 3 N2 there); a ledger photo and a stored photo in the same window can swap.
+- A rebuilt voice note carries no `duration`, so the early `denied_duration` refusal does not
+  fire; the extraction enforces the same cap after download.
 - A text sent before a later text but delivered after it is not covered (texts are forwarded at
   once on both paths).
