@@ -816,7 +816,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "`product_code` is a PREFIX, case-insensitive (at least 3 characters). "
             "`customer_query` - partial match on customer NAME only. `customer_ids` - canonical "
             "customer UUIDs (csv/JSON/repeated).\n\n"
-            "FILTERS: `channel` - dealer | project (the type of the sales order each DO line "
+            "FILTERS: `brand_ids` - brand UUIDs (csv/JSON/repeated, max 50), narrows to those "
+            "brands' products. `channel` - dealer | project (the type of the sales order each DO line "
             "came from; a line with no sales order or no type is in no channel; always applied "
             "when given). `warehouse_codes` - exact warehouse codes (csv/JSON/repeated); resolve a "
             "location TOKEN yourself first, this tool does no suffix matching. `location_token` "
@@ -834,7 +835,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         "/api/v1/order-management/sales-report",
         (),
         (
-            "product_code", "customer_query", "customer_ids", "channel", "warehouse_codes",
+            "product_code", "customer_query", "customer_ids", "brand_ids", "channel", "warehouse_codes",
             "location_token", "date_from", "date_to", "group_by",
             "contact_id", "space_id",
         ),
@@ -859,9 +860,14 @@ CATALOG: tuple[ToolSpec, ...] = (
             "`group_by` = customer | product | brand | category | sales_agent | location | "
             "channel | month; absent = ONE total. With `group_by`, `top_n` (1 to 1,000) is REQUIRED "
             "(422 `top_n_required`): the number the person named, or ask. `sort` desc (top, "
-            "default) | asc (bottom). `measure` amount (RM) | qty (what the ranking "
-            "sorts by); ask the person which measure when they did not say, as for top_n. `basis` "
+            "default) | asc (bottom). `measure` amount (RM) | qty | customers | orders | "
+            "products (what the ranking sorts by), the last three COUNT distinct customers, orders "
+            "or products with a sale ('how many dealers sell product Y'); ask the person which measure when they did not say, as for top_n. `basis` "
             "delivered | ordered | outstanding; ask the person which basis when they did not say. "
+            "`compare_to` previous_period (the same number of days just before) | last_year (the "
+            "same dates a year earlier), only when the person asks to compare, never with group_by month: every row and the "
+            "total then carry `prev` and `change_pct` on the sort measure. "
+            "`mine` true only when the person says my / our own sales: a salesperson is narrowed to their own customers. "
             "Every basis is sales "
             "order lines, each dated by its required date, else its SO date: delivered = the "
             "quantity transferred to a DO, capped at ordered; ordered = the whole line; "
@@ -905,7 +911,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "date_from", "date_to", "basis", "measure", "group_by", "top_n", "sort",
             "product_code", "product_ids", "brand_ids", "category_ids", "sales_agent_ids",
             "customer_ids", "warehouse_codes", "channel", "contact_id", "space_id",
-            "customer_agent_ids", "dataset", "subjects", "askers",
+            "customer_agent_ids", "dataset", "subjects", "askers", "compare_to", "mine",
         ),
         domain="orders",
         related_tools=("crm_sales_report", "crm_top_selling_report"),

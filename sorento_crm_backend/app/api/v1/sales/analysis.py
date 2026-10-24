@@ -301,7 +301,10 @@ def _prepare(
     elif len(grants) == 1:
         company_id = next(iter(grants))
     elif grants:
-        return {"status": "clarify", "message": company_question([name for _id, name, _code in own])}
+        names = [name for _id, name, _code in own]
+        # Chat fix PR-B S7: the names ride as data too, so the bot registers the question
+        # with them as its options and reads the next reply as its answer.
+        return {"status": "clarify", "message": company_question(names), "options": names}
     else:
         return {"status": "error", "message": "Could not run the sales report right now."}
 

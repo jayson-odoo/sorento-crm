@@ -39,6 +39,7 @@ from tests.test_report_ask_route import (
     _ok,
     _prod,
     _rows,
+    _staff,
 )
 from tests._sales_report_do_seed import warehouse
 from app.services.company_scope import DEFAULT_COMPANY_ID
@@ -101,7 +102,7 @@ def test_customer_product_brand_category_rows_carry_their_ids(client, db):
     w = _world(db)
     body = _ok(client, _full(db), group_by="customer", top_n=10, product_code="ZZTDD")
     assert _keys(body)["ZZT DRILL C1"] == [w.c1.id], body["rows"]
-    body = _ok(client, _full(db), group_by="product", top_n=10, sales_agent_ids=[w.g1.id])
+    body = _ok(client, _staff(db), group_by="product", top_n=10, sales_agent_ids=[w.g1.id])
     assert _keys(body) == {"ZZTEE-1": [w.q.id], "ZZTDD-1": [w.p.id]}, body["rows"]
 
 
@@ -222,7 +223,7 @@ def test_card_agent_none_never_matches_a_line_with_no_customer(client, db):
     so = seed_so_line(db, cust=w.c3, prod=w.p, qty=1, total="999.00", agent=w.g1, wh=w.wh)
     db.query(SalesOrder).filter(SalesOrder.id == so.id).update({"customer_id": None})
     db.commit()
-    body = _ok(client, _full(db), group_by="product", top_n=10, product_code="ZZTDD", customer_agent_ids=["none"])
+    body = _ok(client, _staff(db), group_by="product", top_n=10, product_code="ZZTDD", customer_agent_ids=["none"])
     assert money(body["total"]["amount"]) == D("25.00"), body
 
 

@@ -62,11 +62,11 @@ def unclear_slot_default() -> str:
 
 #: Axes tied to the domain they were asked in; a domain switch drops them.
 _DOMAIN_BOUND = (
-    "status", "document", "sort", "sales_channel", "top_selling", "sales_ranking_frame", "low_stock", "set_page",
+    "status", "document", "sort", "sales_channel", "sales_ranking_frame", "low_stock", "set_page",
 )
 
 #: Keys that are machine identity, never printed.
-_HIDDEN_KEYS = frozenset({"uuid", "uuids", "id", "key", "payload"})
+_HIDDEN_KEYS = frozenset({"uuid", "uuids", "id", "key", "payload", "stale"})
 
 
 
@@ -158,11 +158,10 @@ def _subject(focus: Focus) -> dict[str, Any]:
         "report": [
             f"{label} {pairs}".strip()
             for label, pairs in (
-                ("top_selling", _pairs(focus.top_selling)),
                 ("sales_ranking_frame", _pairs(focus.sales_ranking_frame)),
                 ("low_stock", _pairs(focus.low_stock)),
             )
-            if pairs or (label == "top_selling" and focus.status == "top_selling")
+            if pairs
         ],
         "relation": _clean(focus.relation),
     }
@@ -234,9 +233,6 @@ def _open_question(focus: Focus, oq: dict[str, Any] | None, pending: Any = None,
         extras["how_many"] = _count_question(focus)
     if _offered_brands(focus):
         extras["other_brands"] = _plain(_offered_brands(focus))
-    asked = (focus.top_selling or {}).get("asked") if isinstance(focus.top_selling, dict) else None
-    if asked:
-        extras["asked"] = _plain(asked)
     extras = {k: v for k, v in extras.items() if v}
     if not obj and not extras:
         return None
@@ -378,11 +374,26 @@ def _switch_names_new_subject(verdict: dict[str, Any], ops: list[Any]) -> bool:
     return explicit and not backward_reference(verdict)
 
 
-def _message_domains(verdict: dict[str, Any]) -> list[str]:
-    asks = [a.get("domain") for a in (verdict.get("asks") or []) if isinstance(a, dict) and a.get("domain")]
-    if asks:
-        return asks
-    return [verdict["domain_hint"]] if verdict.get("domain_hint") else []
+def _message_domains(verdict: dict[str, Any], held_status: str | None = None) -> list[str]:
+    from app.services.chatbot.contracts import ORDER_OR_SALES_DOMAINS, SALES_DOMAIN
+    from app.services.chatbot.turn_runtime import report_domain
+
+    def named(v: dict[str, Any]) -> list[str]:
+        asks = [a.get("domain") for a in (v.get("asks") or []) if isinstance(a, dict) and a.get("domain")]
+        return asks or ([v["domain_hint"]] if v.get("domain_hint") else [])
+
+    domains = named(verdict)
+    if domains and set(domains) <= ORDER_OR_SALES_DOMAINS:
+        # REPORT-SMART-1021 (EVAL-BENCH turn 516a6b39): `order` and `sales` are read the way the
+        # turn writes them (`turn_runtime.report_domain`: a sales figure status is `sales`, `sales`
+        # with none is `order`), so a sales ask under the prompt's `order` is no switch off the
+        # held `sales` report (which would drop its frame). Any other domain stands as named, and
+        # a `status` echoing the held one never turns `order` into `sales` (review should-fix 1);
+        # under `sales` the prompt has the parser repeat it, so it stands there.
+        if held_status and verdict.get("status") == held_status and SALES_DOMAIN not in domains:
+            verdict = {**verdict, "status": None}
+        return named(report_domain(verdict))
+    return domains
 
 
 def _held_quantity(focus: Focus) -> tuple[dict[str, Any], Any]:
@@ -428,7 +439,7 @@ def _clear_axis(focus: Focus, axis: str) -> None:
     elif axis == "domain":
         focus.domains = []
     elif axis == "report":
-        focus.top_selling = focus.sales_ranking_frame = focus.low_stock = None
+        focus.sales_ranking_frame = focus.low_stock = None
     elif axis == "relation":
         focus.relation = None
     elif axis == "sort":
@@ -563,7 +574,7 @@ def _held(focus: Focus, axis: str) -> bool:
     if axis == "domain":
         return bool(focus.domains)
     if axis == "report":
-        return bool(focus.top_selling or focus.sales_ranking_frame or focus.low_stock)
+        return bool(focus.sales_ranking_frame or focus.low_stock)
     if axis == "relation":
         return bool(focus.relation)
     if axis == "sort":
@@ -864,13 +875,8 @@ def held_family_landed(state: State, verdict: dict[str, Any], matched: list[str]
 
 def _focus_questions(focus: Focus) -> bool:
     """A question the focus itself holds for one turn: a clarify, the other-brands offer, the
-    count question, a top selling question."""
-    return bool(
-        focus.set_clarify
-        or _offered_brands(focus)
-        or _count_question(focus)
-        or (isinstance(focus.top_selling, dict) and focus.top_selling.get("asked"))
-    )
+    count question."""
+    return bool(focus.set_clarify or _offered_brands(focus) or _count_question(focus))
 
 
 #: CHAT-STATE r7: the row kinds a pick fetches by the row's own id (`lanes/business/fetch.py`
@@ -1104,11 +1110,26 @@ def without_kept_aside(verdict: dict[str, Any]) -> dict[str, Any]:
     """The verdict with the words a `keep` set aside taken out, once the seams that read the
     message's own words (held-family narrowing, scheme index) have run: they are not a change,
     so nothing after this point (APPLY, the fetch, a stored clarify, the session) sees them
-    or their mark. The verdict itself when nothing was set aside."""
+    or their mark. The verdict itself when nothing was set aside. A brand beside a promotion kind
+    or a flyer (no product typed this message) is that ask's subject and stays, mark and all."""
     rows = [e for e in verdict.get("entities") or [] if isinstance(e, dict)]
     if not any(e.get(KEPT_ASIDE) for e in rows):
         return verdict
-    return {**verdict, "entities": [e for e in verdict.get("entities") or [] if not (isinstance(e, dict) and e.get(KEPT_ASIDE))]}
+    # REPORT-SMART-L S2 (F): a brand beside a promotion kind or a flyer is that ask's subject
+    # (the promotions read narrows by it), so the parser's own `promotion_kind` / `contains_flyer`
+    # keeps it on the verdict; the fetch input still sets it aside (`fetch_entities`).
+    # With no product typed this message (the held family's members are marked, not typed).
+    promo_ask = (bool(verdict.get("promotion_kind")) or verdict.get("contains_flyer") is True) and not any(
+        e.get("hint") == "product" and e.get("current_message") is not False and not e.get("held_family") for e in rows
+    )
+    return {
+        **verdict,
+        "entities": [
+            e
+            for e in verdict.get("entities") or []
+            if not (isinstance(e, dict) and e.get(KEPT_ASIDE) and not (promo_ask and e.get("hint") == "brand"))
+        ],
+    }
 
 
 def _typed_row(entity: dict[str, Any], hint: str) -> dict[str, Any] | None:
@@ -1479,7 +1500,7 @@ def apply_changes(
                 # escalation offer showed IS the answer to that offer.
                 fail(op, "no answer declared")
         elif op == "switch_domain":
-            target = _message_domains(verdict)
+            target = _message_domains(verdict, focus.status)
             if not target or any(d not in domains for d in target):
                 fail(op, "no known domain in the parse")
 
@@ -1545,8 +1566,13 @@ def apply_changes(
         if mapped and all(mapped):
             out["domain_hint"] = mapped[0]
             out["asks"] = []
-    switch_to = _message_domains(out)
+    switch_to = _message_domains(out, focus.status)
     held = list(focus.domains or [])
+    # REPORT-SMART-L v92: a `switch_domain` onto the domain already held is no switch.
+    onto_held = "switch_domain" in ops and bool(switch_to) and all(d in held for d in switch_to)
+    if onto_held:
+        log["switch_onto_held"] = True
+    # It still rebuilds when the message names its own subject (r8 CARRY): only the domain-bound drop is skipped.
     switching = "switch_domain" in ops or bool(held and switch_to and not any(d in held for d in switch_to))
     # CHAT-STATE r8 CARRY (owner run 20 Oct): a message that names its own subject on a switch
     # starts a new subject whatever op the parser picked, so `switch_domain` and `new_subject`
@@ -1572,7 +1598,7 @@ def apply_changes(
         )
         pending = None
         held = []
-    if "switch_domain" in ops or (held and switch_to and not any(d in held for d in switch_to)):
+    if ("switch_domain" in ops and not onto_held) or (held and switch_to and not any(d in held for d in switch_to)):
         held_values = {
             "channel": ("sales_channel", focus.sales_channel),
             "status": ("status", focus.status),
@@ -1618,8 +1644,11 @@ def apply_changes(
         out[question_mod.ANSWER_KEY] = dict(question_mod.NO_ANSWER)
         out[question_mod.POSITIONS_KEY] = []
     elif not answering:
+        # A required-field question (`about`) is stated to the parser, so its declared fill is no
+        # phantom even when the parse carries no `answer` op (REPORT-SMART-L S3-1).
         out, _ = question_mod.without_phantom_answer(
-            out, open_question=None, positions_read_elsewhere=positions_read_elsewhere, focus_has_product=False
+            out, open_question=open_question if (open_question or {}).get("about") else None,
+            positions_read_elsewhere=positions_read_elsewhere, focus_has_product=False
         )
         if question_mod.is_the_stock_question(open_question) and (verdict.get(question_mod.ANSWER_KEY) or {}).get("mode") == "cancel":
             # The parser's own cancel of the stock question rides on whatever the ops did beside
@@ -1682,8 +1711,6 @@ def apply_changes(
         elif open_question is not None:
             pending, focus.required_ask = None, None
         focus.set_clarify = None
-        if isinstance(focus.top_selling, dict) and "asked" in focus.top_selling:
-            focus.top_selling = {k: v for k, v in focus.top_selling.items() if k != "asked"}
         if _offered_brands(focus):
             key = {k: v for k, v in focus.set_page["set_key"].items() if k != "other_brands"}
             focus.set_page = {**focus.set_page, "set_key": key}

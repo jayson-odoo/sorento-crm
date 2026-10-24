@@ -1205,7 +1205,7 @@ def test_src5_the_do_date_rules_not_the_so_line_date(client, db):
 def test_src6_the_sales_report_agrees_with_the_report_ask_ranking(client, db):
     """AC-SRC-6: same product, period and channel: the sales report's totals equal the delivered
     ranking's, for Project and for Dealer."""
-    from tests.test_report_ask_route import _full, _ok as ask_ok
+    from tests.test_report_ask_route import _ok as ask_ok, _staff
 
     cust = seed_customer(db, name="ZZT AGREE SDN BHD")
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZTAGR-1")
@@ -1219,7 +1219,7 @@ def test_src6_the_sales_report_agrees_with_the_report_ask_ranking(client, db):
                 lines=[line(prod.id, wh.id, qty, price=D("10"), total=D(total),
                             sales_order_line_id=so_line.id)])
     db.commit()
-    contact = _full(db)
+    contact = _staff(db)  # an item ranking is for staff (REPORT-SMART-L R1)
 
     period = {"date_from": "2026-09-01", "date_to": "2026-09-30"}
     for channel, expected in (("project", (3, D("300.00"))), ("dealer", (5, D("500.00")))):

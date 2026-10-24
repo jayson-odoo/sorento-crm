@@ -26,11 +26,28 @@ class ReportAskRow(BaseModel):
     # "(no agent)" row), so a follow-up can rank within exactly the rows printed. Empty for a
     # channel or month row (not a drill source).
     keys: List[str] = []
+    # REPORT-SMART-L R3a: a category row's code (the top selling reply printed a category by its code).
+    code: Optional[str] = None
+    # REPORT-SMART-1021: a count measure's distinct count (customers, orders, products).
+    count: Optional[int] = None
+    # REPORT-SMART-1021 `compare_to`: the earlier window's figures and the change in percent
+    # on the sort measure (None when the earlier figure is zero).
+    prev: Optional["ReportAskFigures"] = None
+    change_pct: Optional[float] = None
+
+
+class ReportAskFigures(BaseModel):
+    qty: int
+    amount: float
+    count: Optional[int] = None
 
 
 class ReportAskTotal(BaseModel):
     qty: int
     amount: float
+    count: Optional[int] = None
+    prev: Optional[ReportAskFigures] = None
+    change_pct: Optional[float] = None
 
 
 class ReportAskResponse(BaseModel):
@@ -49,6 +66,12 @@ class ReportAskResponse(BaseModel):
     more: int = 0
     total_count: int = 0
     total: ReportAskTotal
+    compare_to: Optional[str] = None
+    compare_from: Optional[str] = None
+    compare_until: Optional[str] = None
+    # REPORT-SMART-L R3b: an item / category ranking with an agent filter carries the share of the window's
+    # sales orders that carry any agent (the old top selling note); absent otherwise.
+    sales_agent_fill_rate: Optional[float] = None
 
 
 class ReportAskChatRow(BaseModel):

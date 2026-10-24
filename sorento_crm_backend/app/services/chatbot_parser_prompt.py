@@ -165,8 +165,10 @@ Every non-customer entity, and every customer entity without an account number, 
 REPORT_ASK_ADDENDUM = """
 == SALES RANKING: order_status "sales_ranking", domain_hint "order" ==
 Sales ranked or totalled BY one dimension (salesman, SA = sales agent, customer, brand,
-category, location, channel, month). intent_hint "check_order". Two more keys on every
-object: "ranking_refine": true|false|null, "measure": "qty|amount|null".
+category, location, channel, month). intent_hint "check_order". Three more keys on every
+object: "ranking_refine": true|false|null, "measure": "qty|amount|customers|orders|products|null",
+"compare_to": "previous_period|last_year|null", "by_words": the verbatim words of the CURRENT
+message that name the ranked or grouped axis ("by salesppl", "item"), null when it names none.
   - "top 3 salesman for Sorento brand last month" -> order_status "sales_ranking",
     group_by "sales_agent", top_n 3, entities [Sorento as brand]
   - "who's the top 3 salesman for sorento water closet this year" -> sales_ranking,

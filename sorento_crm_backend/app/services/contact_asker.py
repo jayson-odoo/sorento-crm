@@ -132,6 +132,34 @@ def is_salesperson_user(db: Session, contact_id: str) -> bool:
     return bool(db.execute(sa.select(sa.exists().where(*_salesperson_user_clauses(str(contact_id))))).scalar())
 
 
+def own_book(db: Session, contact_id: str) -> set[str] | None:
+    """The customer ids of a contact's own book (INTERNAL `respond_contacts.id`): the customers
+    whose card agent is a `sales_agents` row linked to the contact. None when the contact has no
+    agent link."""
+    from app.models.base import company_scope
+    from app.models.order import Customer
+    from app.models.sales_agent import SalesAgent
+
+    with company_scope(db, None):
+        agent_ids = [str(i) for (i,) in db.query(SalesAgent.id).filter(SalesAgent.contact_id == str(contact_id)).all()]
+        if not agent_ids:
+            return None
+        return {str(i) for (i,) in db.query(Customer.id).filter(Customer.sales_agent_id.in_(agent_ids)).all()}
+
+
+def may_ask_sales_ranking(db: Session, contact_id: str | None, *, granted: bool) -> tuple[str, set[str] | None]:
+    """THE rule for who may run the sales ranking (the report-ask tool), shared by the route and
+    the chatbot seams: `granted` (the `sales_orders.sales_report` reveal) or a LIVE salesperson
+    user (`is_salesperson_user`) with a non-empty `own_book`. Returns `(decision, book)`:
+    `granted`, `salesperson_book` or `not_granted`; `book` is the salesperson's customer set
+    (None when the contact is not a live salesperson user or has no agent link), whatever the
+    decision, because a granted salesperson with `mine` is narrowed to it too."""
+    book = own_book(db, contact_id) if contact_id and is_salesperson_user(db, str(contact_id)) else None
+    if granted:
+        return "granted", book
+    return ("salesperson_book" if book else "not_granted"), book
+
+
 def classify(db: Session, contact_id: str) -> str:
     """The asker word of one contact (INTERNAL `respond_contacts.id`)."""
     return db.execute(sa.select(_word_for(sa.literal(str(contact_id))))).scalar_one()

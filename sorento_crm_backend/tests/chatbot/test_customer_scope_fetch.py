@@ -18,13 +18,12 @@ import pytest
 from app.services.chatbot.lanes.business import fetch
 from app.services.mcp_tool_capability_service import _load_catalog_specs
 
-#: The eight tools of D4, spelled out so a rename in the set shows up as a diff here.
+#: The seven tools of D4 (R4b: `crm_top_selling_report` left the chatbot), spelled out so a rename in the set shows up as a diff here.
 SCOPED_TOOLS = (
     "crm_order_management_orders_list",
     "crm_order_management_orders_by_product_list",
     "crm_outstanding_report",
     "crm_sales_report",
-    "crm_top_selling_report",
     "crm_report_ask",
     "crm_order_analytics",
     "crm_master_customers_list",
@@ -114,6 +113,8 @@ class TestSetIsPinnedToTheCatalogue:
         `CUSTOMER_SCOPED_TOOLS`, and the set names nothing the catalogue lacks. A new tool
         taking customer ids fails here until it is classified."""
         carrying = {spec.name for spec in _load_catalog_specs() if "customer_ids" in spec.query_params}
+        assert "crm_top_selling_report" not in fetch.CHATBOT_READ_ONLY_TOOLS  # put back on a seed row -> scope it
+        carrying -= {"crm_top_selling_report"}  # R4b: still a catalogue tool, but no chatbot path calls it
         assert carrying, "the catalogue no longer has a tool taking customer_ids: the pin is stale"
         assert carrying == set(fetch.CUSTOMER_SCOPED_TOOLS), carrying ^ set(fetch.CUSTOMER_SCOPED_TOOLS)
 

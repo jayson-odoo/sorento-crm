@@ -85,7 +85,6 @@ def test_new_subject_keeps_customer_tier_brands_and_drops_the_rest_and_closes_pe
         sales_channel="dealer",
         sales_ranking_frame={"basis": "qty_sold"},
         low_stock={"category": "basin"},
-        top_selling={"rank_by": "qty"},
     )
     v = verdict(state_changes=[_op("new_subject")], entities=[entity("MWB8051")])
     out = _apply(State(focus=focus, pending=pending, turn_no=4), v, open_question=oq)
@@ -99,7 +98,6 @@ def test_new_subject_keeps_customer_tier_brands_and_drops_the_rest_and_closes_pe
     assert all(p.get("canonical_code") != "SRT5733" for p in kept.products)
     assert kept.sales_ranking_frame is None
     assert kept.low_stock is None
-    assert kept.top_selling is None
     assert kept.status is None
     assert kept.sales_channel is None
     assert out.state.pending is None
@@ -447,9 +445,8 @@ def test_b1_a_sole_close_question_cancels_only_an_owed_quantities_question():
     [
         Focus(set_clarify={"kind": "brand", "options": ["Sorento", "Mocha"]}),
         Focus(set_page={"set_key": {"other_brands": [{"brand": "Mocha", "count": 2}]}}),
-        Focus(top_selling={"asked": {"slot": "basis"}}),
     ],
-    ids=["set_clarify", "other_brands", "top_selling_asked"],
+    ids=["set_clarify", "other_brands"],
 )
 def test_s2_answer_to_a_focus_held_question_is_accepted_and_the_answer_is_kept(focus):
     answer = {"mode": "pick", "picked": [], "items": [], "qty_for_all": None}
@@ -585,11 +582,10 @@ def test_nit_the_focus_wire_omits_last_list_when_none_and_keeps_it_when_set():
     assert focus_from_wire(wire).last_list == rows
 
 
-def test_nit_close_question_also_closes_the_top_selling_ask_and_other_brands_offer():
-    focus = Focus(top_selling={"asked": {"slot": "basis"}, "basis": "qty"}, set_page={"set_key": {"other_brands": [{"brand": "Mocha", "count": 2}]}, "page": 1})
+def test_nit_close_question_also_closes_the_other_brands_offer():
+    focus = Focus(set_page={"set_key": {"other_brands": [{"brand": "Mocha", "count": 2}]}, "page": 1})
     out = _apply(State(focus=focus, turn_no=3), verdict(state_changes=[_op("close_question")]), open_question=None)
     assert out.valid is True
-    assert not (out.state.focus.top_selling or {}).get("asked")
     from app.services.chatbot.turn import chat_state as _cs
 
     assert not _cs._offered_brands(out.state.focus)

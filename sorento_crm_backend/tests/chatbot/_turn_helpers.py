@@ -265,3 +265,31 @@ def make_office_access_type(session_factory: Any, respond_io_id: Any) -> None:
     ).rowcount
     assert marked == 1, f"no single seeded contact {respond_io_id!r} to mark as staff ({marked})"
     db.commit()
+
+
+def seed_borrowable_envelope(session_factory: Any) -> None:
+    """The contact's last real inbound envelope, the one `console_service._borrow_envelope`
+    reads (a console turn cannot run without one). Same seed as PR #1300 round 3's console
+    replay; moved here from the retired top selling lane tests (REPORT-SMART-L R4a)."""
+    import json
+
+    from app.models.chatbot_turn import ChatbotTurn
+    from tests.chatbot.test_engine import CONTACT_ID, _envelope
+
+    db = session_factory()
+    try:
+        db.add(
+            ChatbotTurn(
+                contact_respond_id=str(CONTACT_ID),
+                message_id="ZZT-top-selling-r6-seed",
+                ingress="webhook",
+                envelope=json.loads(_envelope().model_dump_json()),
+                is_test=False,
+                status="done",
+                stage="sent",
+                branch_kind="business_query",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
