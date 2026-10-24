@@ -909,6 +909,20 @@ def settle(
                 **{name: {"value": got.value, "label": got.label} for name, got in filled.items()},
             }
             return rf.collect(db, SALES_RANKING_ASK, slot={**slot, "values": values}, given=held), None
+        swapped = _swap_axis(parse_output, extras)
+        if swapped is not None:
+            # R5 a3 (live turn c404da24): a refine naming another axis and filling no owed field is the
+            # axis changing, not the answer: it replaces the slot's group_by, every filter stays, and
+            # the fields still owed are asked again in one question (no "I don't know ... as a number").
+            if dealer and _dealer_outside(parse_output, swapped["args"].get("group_by")):
+                return None, DEALER_REFUSAL
+            args = swapped["args"]
+            held = {**_given_choices(args), **_given_top_n(args, extras.get("top_n"))}
+            if args.get("group_by") != _dict(extras.get("args")).get("group_by") and _dict(extras.get("args")).get("group_by") in (None, "month"):
+                # What a total or a month trend settled on its own (no count, both measures) is not
+                # what the new axis owes: the new axis's rules (`held`) decide, typed values stay.
+                slot = {**slot, "values": {k: v for k, v in _dict(slot.get("values")).items() if k not in ("top_n", "metric")}}
+            extras = {**extras, "args": args}
         if parse_output.get("compare_to") in COMPARE_TO:
             # REPORT-SMART-L S4-1: a reply that sets the comparison and fills no owed field adds the
             # comparison to the held args and asks the owed fields again: no miss, no basis word.
@@ -916,14 +930,10 @@ def settle(
             if held_args.get("group_by") == "month":
                 return rf.Outcome(reply=COMPARE_BY_MONTH_LINE, slot=None), None  # a month breakdown is not compared
             return rf.collect(db, SALES_RANKING_ASK, slot=slot, given=held, extras={"args": held_args}), None
-        swapped = _swap_axis(parse_output, extras)
         if swapped is not None:
-            # R5 a3 (live turn c404da24): a refine naming another axis and filling no owed field is the
-            # axis changing, not the answer: it replaces the slot's group_by, every filter stays, and
-            # the fields still owed are asked again in one question (no "I don't know ... as a number").
-            new_args = swapped["args"]
-            new_held = {**_given_choices(new_args), **_given_top_n(new_args, extras.get("top_n"))}
-            return rf.collect(db, SALES_RANKING_ASK, slot=slot, given=new_held, extras=swapped), None
+            if args.get("compare_to") and args.get("group_by") == "month":
+                return rf.Outcome(reply=COMPARE_BY_MONTH_LINE, slot=None), None
+            return rf.collect(db, SALES_RANKING_ASK, slot=slot, given=held, extras={"args": args}), None
         reply_dates = {"start": parse_output.get("date_filter_start"), "end": parse_output.get("date_filter_end")}
         outcome = rf.collect(
             db,
