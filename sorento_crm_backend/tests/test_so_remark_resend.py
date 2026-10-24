@@ -10,6 +10,28 @@ from .test_oi_handover_resend import PREVIEW, _automation, _ok, rs  # noqa: F401
 from .test_order_inquiry_worklist import _inquiry_for, _row, _uid
 from .test_planning_changes import _core_line, _core_so, _project_line
 from .test_so_supply_confirmation import _product, _warehouse
+from .test_email_layout_migrations import _run
+from .test_oi_saved_line_email import _migration
+
+LAYOUT_CHAIN = (
+    "oihr_0004_wide_line_table",
+    "oihr_0005_print_one_page",
+    "oihr_0006_no_remark_column",
+    "oihr_0007_excel_remark",
+    "oihr_0008_so_table_on_top",
+    "oihr_0009_split_rows",
+    "oihr_0010_so_remark_column",
+)
+
+
+def _automation_through_0010(world):
+    """`_automation` seeds the template only up to `oihr_0003`; the SO table's REMARK column
+    arrives with the later layout migrations, which a real database has run."""
+    buyer = _automation(world)
+    for name in LAYOUT_CHAIN:
+        _run(_migration(name), world.db)
+    world.db.commit()
+    return buyer
 
 
 def _world_with_so(world, *, ship_info=None, flags):
@@ -61,7 +83,7 @@ def _preview_html(client, inquiry):
 
 def test_ac13_resend_prints_the_remark_type_default(rs):
     client, world = rs
-    _automation(world)
+    _automation_through_0010(world)
     inquiry, _rows = _world_with_so(world, ship_info="SPONSORSHIP", flags=[False])
 
     html = _preview_html(client, inquiry)

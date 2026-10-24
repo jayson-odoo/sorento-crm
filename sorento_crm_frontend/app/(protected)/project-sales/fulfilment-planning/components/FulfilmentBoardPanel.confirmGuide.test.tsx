@@ -910,7 +910,7 @@ describe('T-FE6 (F18 F19 F21): the guide page is the editable split sheet', () =
     const page = await screen.findByTestId('confirm-guide-split-page');
     await within(page).findByTestId('split-line-3');
     expect(within(page).queryByRole('button', { name: /^Split line \d+ quantity$/ })).not.toBeInTheDocument();
-    expect(page.querySelectorAll('input')).toHaveLength(0);
+    expect(page.querySelectorAll('input:not([data-testid="confirm-guide-so-remark"])')).toHaveLength(0);
   });
 
   it('F18: every line of an order not yet adopted is a read-only row', async () => {
@@ -924,7 +924,7 @@ describe('T-FE6 (F18 F19 F21): the guide page is the editable split sheet', () =
     const page = await screen.findByTestId('confirm-guide-split-page');
     await within(page).findByTestId('split-line-1');
     expect(within(page).queryByRole('button', { name: /^Split line \d+ quantity$/ })).not.toBeInTheDocument();
-    expect(page.querySelectorAll('input')).toHaveLength(0);
+    expect(page.querySelectorAll('input:not([data-testid="confirm-guide-so-remark"])')).toHaveLength(0);
   });
 
   it('F19: with an unsaved edit Next is off and "Save or undo your split changes first" shows; after Save Next is on', async () => {
