@@ -1,6 +1,6 @@
 # PLAN: n8n to direct ingress - migration gap map
 
-Status: research (size S, no code). Owner 25 Oct: 05:35 Q1 (a) keep the thin n8n sender, no pilot, one switchover; 05:45 burst Q3 NOT accepted, the CRM must own a real queue. Section "CRM-owned queue" filed as one crew `--ask`, waiting on owner.
+Status: research done. Owner 25 Oct 05:50 GO on option 2 (CRM-owned queue, drains on the API pool, re-send rule (a)); build lane: `PLAN-chat-inbox-queue.md` (final rules) + `chat-inbox-queue-acceptance-criteria.md`.
 Origin: owner 25 Oct 05:25 after PHOTO-ORDER-SCOUT (`documentation/plans/_archive/chatbot/PLAN-photo-order-scout.md`):
 no B2, the Redis queue peek rejected as coupling the CRM to n8n internals; map what it takes
 for the CRM to own the whole chatbot ingress, so the photo-order fix can live in the CRM's
