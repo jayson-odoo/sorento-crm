@@ -1423,7 +1423,7 @@ def _company(db, code_stem: str) -> str:
 
     company_id = _u()
     db.add(Company(id=company_id, name=f"{MARKER} {code_stem}",
-                   code=f"{MARKER[:4]}{code_stem}{uuid.uuid4().hex[:4]}", is_active=True))
+                   code=f"{MARKER[:4]}{code_stem}{uuid.uuid4().hex}", is_active=True))
     db.flush()
     return company_id
 

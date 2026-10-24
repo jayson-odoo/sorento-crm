@@ -52,7 +52,7 @@ def test_ingest_capture_carries_line_ids():
     with blank_session() as db:
         company_id = db.execute(text("select id from companies where code = 'SRT'")).scalar()
         with company_scope(db, frozenset({company_id})):
-            uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{_uid()[:4]}", uom_name="Set")
+            uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{uuid.uuid4().hex}", uom_name="Set")
             category = ProductCategory(
                 id=_uid(), category_code=f"ZZT-{_uid()[:8]}", category_name=f"{MARKER} cat",
             )
@@ -63,7 +63,7 @@ def test_ingest_capture_carries_line_ids():
                 category_id=category.id, base_uom_id=uom.id, list_price=Decimal("120.00"),
             )
             warehouse = Warehouse(
-                id=_uid(), warehouse_code=f"ZZT-WH-{_uid()[:4]}", warehouse_name="ZZT wh",
+                id=_uid(), warehouse_code=f"ZZT-WH-{uuid.uuid4().hex}", warehouse_name="ZZT wh",
                 location="ZZT", is_active=True, fulfilment_planning=True,
             )
             db.add_all([product, warehouse])

@@ -79,7 +79,7 @@ def _numbering_rule(db, company_id: str) -> None:
 
 
 def _product(db) -> Product:
-    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{_uid()[:4]}", uom_name="Piece")
+    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{uuid.uuid4().hex}", uom_name="Piece")
     db.add(uom)
     category = ProductCategory(
         id=_uid(),

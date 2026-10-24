@@ -6,6 +6,7 @@ red until the slice lands. New symbols are imported inside each test.
 """
 from __future__ import annotations
 
+import uuid
 from datetime import date
 from decimal import Decimal
 
@@ -356,7 +357,7 @@ def test_c5_route_another_companys_set_is_not_found_on_a_series(api):
     client, db, company_id, _user_id, _project = api
     category, uom = _catalogue(db)
     mine = _set(db, company_id, category, uom)
-    theirs = _foreign_set(db, code=f"ZZTOTHER{_uid()[:4]}")
+    theirs = _foreign_set(db, code=f"ZZTOTHER{uuid.uuid4().hex}")
     db.commit()
     series = _api_series(client, "Foreign")
     body = {"selling_price": "1.00", "max_discount_pct": "1.00"}
