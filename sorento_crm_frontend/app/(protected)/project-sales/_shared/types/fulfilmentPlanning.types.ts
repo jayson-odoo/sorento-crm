@@ -1180,6 +1180,8 @@ export interface BoardLineDecision {
  * be supplied from").
  */
 export interface BoardContribution {
+  /** FULFIL-SO-REMARK: the line reads as a mockup line (note, line remark or heading). */
+  is_mockup?: boolean;
   /**
    * THIS LINE's own stock position, location by location (R1).
    *
@@ -1960,6 +1962,8 @@ export interface BoardOrderDecisionHeader {
 export interface BoardOrderStanding {
   sales_order_id: string;
   so_number: string;
+  /** FULFIL-SO-REMARK: `Sponsorship` / `Purchase Request` from the order's Shipping Info. */
+  remark_type?: string | null;
   /**
    * The PLANNING RECORD's id, which is what `POST .../sales-orders/{pso_id}/confirm` takes.
    * Addressing only, never rendered. An order that has not been adopted has none, and the
@@ -2633,6 +2637,8 @@ export interface ConfirmManyOrderBody {
   cancelled_lines?: CancelledLineBody[];
   /** Scope this order's press to exactly these mirror line ids (what a Preview showed). */
   only_line_ids?: string[];
+  /** FULFIL-SO-REMARK: the REMARK printed beside this SO in the purchasing email; `''` = cleared. */
+  so_remark?: string | null;
 }
 
 /**

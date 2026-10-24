@@ -56,6 +56,7 @@ from sqlalchemy.orm import Session
 from app.models.base import company_scope, get_company_scope
 from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
+from app.services import so_remark_rules
 from app.models.procurement import (
     InboundShipment,
     ProductSupplier,
@@ -4502,6 +4503,14 @@ class ProjectOrderInquiryService:
             line_no = so_line.line_no if so_line is not None else None
             core_line_id = so_line.core_sales_order_line_id if so_line is not None else None
             self._handover_line_no_cache[row.so_line_id] = (line_no, core_line_id)
+        # FULFIL-SO-REMARK: does this line read as a mockup line (AC-3), for the SO remark
+        # default and the line labels `_build_handover_context` decides over the whole email.
+        core_line = self.db.get(SalesOrderLine, core_line_id) if core_line_id else None
+        is_mockup = so_remark_rules.is_mockup_line(
+            facts.get("note"),
+            core_line.line_remark if core_line is not None else None,
+            core_line.section_heading if core_line is not None else None,
+        )
         location = row.stock_location
         if row.verb == IV_ORDER_BACK and row.so_line_id:
             # Owner, 13 Oct 2026 (re-confirmed 14 Oct): a line telling a Borrow reads the SO
@@ -4552,6 +4561,10 @@ class ProjectOrderInquiryService:
             "so_number": so_number,
             "customer": facts.get("customer"),
             "project": facts.get("project"),
+            #: FULFIL-SO-REMARK: see `so_remark_rules`; `so_remark` is stamped by
+            #: `stamp_so_remark` when the Confirm carried the planner's own text.
+            "is_mockup": is_mockup,
+            "remark_type": facts.get("remark_type"),
             #: The subject's location: what LOCATION prints (a Borrow's, the line's own).
             "stock_location": location,
             #: AC-2/AC-3: what `_build_handover_context` sorts the whole queue by -
@@ -4698,6 +4711,16 @@ class ProjectOrderInquiryService:
         self._tell_splits(
             pso_id, [line for line, _now, _before in saved], actor_user_id=actor_user_id
         )
+
+    def stamp_so_remark(self, pso_id: str, so_remark: Optional[str]) -> None:
+        """FULFIL-SO-REMARK (AC-10, AC-11): the planner's own SO remark for this Confirm
+        (`""` = cleared) rides on every queued line of the order. `None` stamps nothing, so
+        `_build_handover_context` computes the default from the lines in the email."""
+        if so_remark is None:
+            return
+        for item in self.db.info.get(_HANDOVER_PENDING_KEY) or []:
+            if item.get("pso_id") == pso_id:
+                item["so_remark"] = so_remark
 
     def _tell_splits(
         self,
@@ -5257,6 +5280,8 @@ class ProjectOrderInquiryService:
                 Customer.customer_name,
                 SalesOrder.project_label,
                 SalesOrder.order_date,
+                SalesOrder.internal_note,
+                SalesOrder.ship_info,
             )
             .outerjoin(Project, Project.id == ProjectSalesOrder.project_id)
             .outerjoin(
@@ -5285,8 +5310,13 @@ class ProjectOrderInquiryService:
                 customer_name,
                 project_label,
                 order_date,
+                internal_note,
+                ship_info,
             ) = row
             facts = {
+                # FULFIL-SO-REMARK: what the per-SO remark default is decided from.
+                "note": internal_note,
+                "remark_type": so_remark_rules.remark_type(ship_info),
                 "so_number": autocount_doc_no or provisional_ref,
                 "customer": customer_name,
                 # A registered project wins; an adopted AutoCount order (`project_id`
@@ -13960,6 +13990,21 @@ def _handover_sort_key(item: Dict[str, Any]) -> Tuple[str, bool, int, str]:
     )
 
 
+def _so_remark_of(
+    pending: Sequence[Dict[str, Any]], pso_id: Any, flags: Sequence[bool]
+) -> str:
+    """The SO remark one order prints: the planner's own text (`""` = cleared) when the
+    Confirm stamped it on a queued line, else the AC-5 default over the lines in the email."""
+    rtype = None
+    for item in pending:
+        if item.get("pso_id") != pso_id:
+            continue
+        if item.get("so_remark") is not None:
+            return item["so_remark"]
+        rtype = rtype or item.get("remark_type")
+    return so_remark_rules.default_remark(rtype, flags)
+
+
 def _build_handover_context(
     pending: Sequence[Dict[str, Any]],
     attachments_by_line: Optional[Dict[str, List[Dict[str, Any]]]] = None,
@@ -14003,9 +14048,23 @@ def _build_handover_context(
     # which of a line's files made it into the email (both still PRINT the names).
     printed_by_core_line: Dict[str, List[Dict[str, Any]]] = {}
 
+    # FULFIL-SO-REMARK (AC-5, AC-6, AC-11, AC-12): per order, decided over the lines in THIS
+    # email. The planner's own remark (stamped on the items) wins; None computes the default.
+    flags_by_pso: Dict[Any, List[bool]] = {}
+    for item in pending:
+        flags_by_pso.setdefault(item.get("pso_id"), []).append(bool(item.get("is_mockup")))
+    label_by_pso = {
+        pso: so_remark_rules.label_lines(flags) for pso, flags in flags_by_pso.items()
+    }
+
     lines: List[Dict[str, Any]] = []
     for item in sorted(pending, key=_handover_sort_key):
         line = dict(item["line"])
+        if label_by_pso.get(item.get("pso_id")) and item.get("is_mockup"):
+            text = (line.get("remark") or "").strip()
+            line["remark"] = (
+                f"{so_remark_rules.MOCKUP_WORD}, {text}" if text else so_remark_rules.MOCKUP_WORD
+            )
         core_line_id = item.get("core_line_id")
         files = attachments_by_line.get(core_line_id) if core_line_id else None
         if files:
@@ -14070,6 +14129,7 @@ def _build_handover_context(
                     "so_date": (item.get("line") or {}).get("so_date"),
                     "customer": item.get("customer"),
                     "project": item.get("project"),
+                    "remark": _so_remark_of(pending, pso_id, flags_by_pso[pso_id]),
                 }
             )
         if so_number and so_number not in seen_so:
