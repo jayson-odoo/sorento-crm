@@ -1,6 +1,6 @@
 # PLAN - OI replan with received links
 
-Status: PR #973 OPEN, 17 Sep 2026 (branch `feat/oi-replan-received-links`, issues #957-#961 #967 #968; reviewed twice, browser evidence committed, awaiting owner test on the :3000 lane stack and merge go). UAC: `oi-replan-received-links-acceptance-criteria.md`.
+Status: MERGED 16 Sep 2026 22:03Z (#973, squash 975b37a7d) and deployed (run 35155725642). UAC: `oi-replan-received-links-acceptance-criteria.md`.
 Domain: SCM, order inquiries / fulfilment planning. Owner ruling 16 Sep 2026: "so far I am
 okay with your proposal and we shall proceed".
 
