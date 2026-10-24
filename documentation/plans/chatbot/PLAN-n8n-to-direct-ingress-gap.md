@@ -180,41 +180,65 @@ n8n (owner clicks, about 10 minutes):
 2. `sorento-main-INJECT` (`sk0zN90Cas4Y6Y2w`, the failover poller's injector, also the
    Retry target): the same two edits, same minute.
 3. Leave `Redis2` (RPUSH `q:{contact}`) in place: the spine's first node already pops
-   `q:{contact}` (`spine-s7` `redis-pop-main-message-list`), so **the spine needs no change**.
+   `q:{contact}` (`spine-s7` `redis-pop-main-message-list`), so **the flip itself needs no spine change**.
    Each message is pushed once and popped once by the spine run that was started for it.
 4. After `ready-contacts` is empty (the dispatcher drains what was queued at the switch),
    deactivate `sorento-dispatcher` (`77SG9jTdVKhwMwvR`).
+5. **Fold in plan S6** (spine stops reading media; owner steps verbatim in
+   `PLAN-chatbot-turn-order-by-send-time.md:101-118`), only if the live spine still has a
+   `media-intake` node (the owner believes n8n no longer reads photos; the exports and
+   `send_order.py:18-19` say it still did; live UNVERIFIED, one glance at the spine settles
+   it): delete `media-intake` and `media-gate` and wire `redis-pop-main-message-list` to
+   `tf-message`; delete `if-message-is-audio` (both outputs to `chat-turn` and the save call);
+   `chat-turn` body `{envelope: <message>}` with NO `media` key (with it the CRM skips its own
+   read, `media_intake.patched_upstream`, `engine.py:4198`, `:4320-4330`); save-message stores
+   the caption; archive `sub-media-intake` (`B3rBMtABou6FpY69`). Their step 5 (clone smoke:
+   photo only, photo + caption, voice note, denied number) stays: a test, not a pilot.
 
 Unchanged in n8n: auth-less webhook + trigger, rate limit (`Redis1`/`If`), takeover drop
-(`If1`), failover gate + poller, findcontact, the spine (media intake, `/chat/turn`, action
+(`If1`), failover gate + poller, findcontact, the rest of the spine (`/chat/turn`, action
 Switch, send subs, 24 h template fallback, error logger, chat-history save), the thin
 `chatbot-sender`.
 
-CRM (one small lane, small fix track, ~200 lines + tests): the **pre-send look-ahead**.
-Before a turn returns its reply, run `send_order.earlier_unanswered` once more with the
-"on its way" bounds widened to NOW: a queued turn row sent earlier (as today), and a ledger
-photo whose read started AFTER this turn arrived (today `created_at <= first_seen` and job
-queued/running, `send_order.py:318-322`; widen to "before now" and also "done with no turn
-row yet"). If one is found: drop this turn's draft, answer the photo, then re-run this
-message, one response (card Q3 (a)). Nothing found = no wait. Cap: `within_bounds` (n8n's
-90 s). The ledger rule's `outcome == "accepted"` filter (`send_order.py:317`) keeps out
-photos that n8n's media reply arm answers on its own, so no double reply.
+CRM (one small lane, small fix track, ~150 lines + tests): the **pre-send look-ahead**.
+Before a turn returns its reply, run `send_order.earlier_unanswered` once more
+(`send_order.py:178`; today it runs once, at the slot, `engine.py:1938`). With S6 folded in,
+the photo's own `/chat/turn` arrives within about a second of n8n getting it and waits on the
+ticket as a queued turn row, so the EXISTING queued-row rule (earlier-sent by respond.io send
+time, claimed with one conditional UPDATE, `send_order.py:12-17`, `:125`) finds it; no bound
+changes. If found: drop this turn's draft, answer the photo (the engine reads it in-turn,
+`media_intake.run` `media_intake.py:266`, called `engine.py:4347`, on the RQ `media` worker
+`media_extract/service.py:435`, `:454-471`, waiting up to `media_sync_wait_seconds` 30 s),
+then re-run this message, one response (card Q3 (a)). Nothing found = no wait. Cap:
+`within_bounds` (n8n's 90 s). Without S6 the look-ahead would instead have to widen the
+ledger rule to photos whose n8n read started after this turn arrived
+(`send_order.py:318-322`), and could still only take a photo n8n has finished reading, because
+n8n's `media-route` replies on its own when its read fails or outlives its wait
+(`engine.py:2009-2012`); that is the double-reply guard.
 
 ### Where the photo is read
 
-Stays in the n8n spine (`sub-media-intake` before `/chat/turn`). Without the dispatcher the
-photo's spine starts the moment n8n gets the photo, and its first CRM call
-(`/external/media/process`) writes the ledger row within about a second. That row is the
-signal the look-ahead reads, so the photo is NOT late to the CRM even though its own
-`/chat/turn` arrives after its read. The engine then waits for that same read inside the
-text's turn (same ledger key; UNVERIFIED that the n8n-first, engine-second order reuses the
-job rather than reading twice; the reverse order is documented at `send_order.py:557-558`).
-The photo's own `/chat/turn` later comes back `duplicate: true` (D15) and sends nothing.
+The CRM's RQ `media` worker reads it either way (`media_extract/service.py:435`, `:454-471`);
+the question is who WAITS for that read before `/chat/turn`. Today n8n's
+`sub-media-intake` calls `/external/media/process` and waits (about 23 s per the crew's
+measurement) before `/chat/turn`, and the CRM skips its own intake (`patched_upstream`).
+With S6 the spine calls `/chat/turn` at once and the engine waits inside the turn.
 
-25 Oct case under this design: text at n8n 02:34:32.4 -> turn runs ~4.4 s -> pre-send about
-02:34:37; photo at n8n 02:34:34.8 -> ledger row about 02:34:35.5 -> look-ahead finds it ->
-photo answered first. On the dev copy the same timing model gives 47 / 3 / 0 (section
-"Photo order once the CRM owns the queue"; CRM webhook arrival used as a proxy for n8n's).
+Does S6 alone (dispatcher still on) shrink the photo-arrives-late window? **No, not for the
+inverted case.** The dispatcher's `lock:{contact}` keeps the photo's spine from starting until
+the text's spine has finished, so the photo stays invisible to the CRM's queue (only its
+`chat_histories` row from the CRM webhook exists, which the dev copy showed lands during a
+text turn in 0 of 50 pairs on today's timing). S6 alone only removes n8n's wait from the
+photo's own path when the photo is popped first. It pays off together with the injector
+flip: the photo's `/chat/turn` then reaches the CRM about a second after n8n gets it.
+
+25 Oct case with flip + S6: text `/chat/turn` about 02:34:32.6, turn runs ~4.4 s; photo
+`/chat/turn` about 02:34:35 waits on the ticket as a queued row (sent 02:34:25.8, before the
+text's 02:34:28.8); the text's pre-send look-ahead at about 02:34:37 claims it, reads it,
+answers the photo, re-runs "Check stock" on the photo's products, one response. The photo's
+own request later comes back `duplicate: true` (D15) and sends nothing. On the dev copy the
+same timing model gives 47 / 3 / 0 (section "Photo order once the CRM owns the queue"; CRM
+webhook arrival used as a proxy for n8n's).
 
 ### What would break or must move
 
@@ -223,7 +247,8 @@ photo answered first. On the dev copy the same timing model gives 47 / 3 / 0 (se
 | ~1 new turn/s cap (dispatcher tick) | gone: a burst of dealers hits `/chat/turn` at once | CRM capacity: 4 uvicorn workers (`gunicorn.conf.py:44`), in-process turns, offload off (`config.py:182-186`, measured trigger ~250 concurrent not reached); n8n concurrency limit UNVERIFIED. Watch the first busy hour |
 | One contact's long burst | ticket wait is clamped to 30 s (`config.py:174-181`); a 4th+ message of a long photo burst may run before its predecessor finishes (out of order). The dispatcher's lock held regardless | accept, or raise the n8n timeout and the clamp together |
 | Concat / batching | none today, none after | none |
-| Media intake | unchanged, in the spine | none |
+| Media intake (S6) | the read wait moves from n8n onto the API process inside `/chat/turn`: at most 8 concurrent waits (`media_intake.py:48`), up to 30 s each; the RQ `media` worker must be up | watch the first busy hour; a photo that cannot get a wait slot takes the "could not read in time" arm |
+| Claimed photo whose own request outwaits the ticket | the photo's request waits behind text turn + photo read + text re-run (~40 s) but the ticket wait is clamped to 30 s, so it may start while the claimer is still answering it | build check (red test): a claimed queued row must come back `duplicate`, never run twice |
 | Typing / labels | none in the exports | none |
 | Retries / error path | unchanged (spine `sub-error-logger`; no retry) | none |
 | Failover poller | posts to `sorento-main-INJECT`, flipped in step 2 | none beyond step 2 |
@@ -233,21 +258,27 @@ photo answered first. On the dev copy the same timing model gives 47 / 3 / 0 (se
 ### Switchover and rollback
 
 1. Deploy the CRM look-ahead (inert while the dispatcher is on). Confirm on Settings that
-   chatbot ordering (S7) is ON.
-2. Publish steps 1 and 2 in n8n together. 3. Deactivate the dispatcher once
-   `ready-contacts` is empty. 4. Owner test: photo then "check stock" within 3 s.
+   chatbot ordering (S7) is ON. Check whether the live spine still has `media-intake`.
+2. If it does: draft step 5 (S6) on the n8n clone and run its four smoke messages.
+3. Publish steps 1, 2 (and 5) in n8n together. 4. Deactivate the dispatcher once
+   `ready-contacts` is empty. 5. Owner test: photo then "check stock" within 3 s, and a voice
+   note.
 
-Rollback, under a minute: in n8n, restore the previous version of `sorento-main` and
-`sorento-main-INJECT` (workflow history) and re-activate `sorento-dispatcher`. Nothing is
+Rollback, under a minute: in n8n, restore the previous version of `sorento-main`,
+`sorento-main-INJECT` (and the spine, if S6 was published) from workflow history, un-archive
+`sub-media-intake` if it was archived, and re-activate `sorento-dispatcher`. Nothing is
 lost either way: every message is RPUSHed once and popped by whichever spine run takes it.
 The CRM look-ahead can stay; it finds nothing with the dispatcher back in front.
 
 ### Owner questions (filed as one `--ask`)
 
-1. Photo reading: (a) stays in the n8n spine; the look-ahead reads its ledger row,
-   (b) the CRM reads it (spine skips `sub-media-intake`, a bigger n8n edit).
-   Recommendation: (a): no spine change at all, and the ledger row reaches the CRM within
-   about a second of n8n receiving the photo.
+1. Photo reading in the same switchover: (a) fold S6 in (spine media step off, CRM waits
+   for the read in-turn), (b) leave n8n's media step, widen the look-ahead to ledger rows.
+   Recommendation: (a) (REVISED 25 Oct on crew input): the look-ahead then uses the existing
+   queued-row rule unchanged, the photo is read and waited on in one place, and the n8n
+   reply arm that forces the "only a photo already read" guard (`engine.py:2009-2012`) is
+   gone. If the live spine has no `media-intake` node any more, S6 is already done and only
+   the injector flip remains.
 2. Rollback mechanism: (a) n8n workflow history restore + re-activate the dispatcher,
    (b) build an IF toggle node in both injectors now. Recommendation: (a): no extra node to
    build, and the previous version is exactly today's.
