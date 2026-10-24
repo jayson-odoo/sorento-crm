@@ -42,6 +42,8 @@ EXPECT_KEYS = frozenset({
     "order_status", "group_by", "measure", "basis", "compare_to", "sales_channel", "ranking_refine",
     # REPORT-SMART-L delivery gold: the paper codes list (["DO"]), plain equality.
     "document",
+    # REPORT-SMART-L v103: true means the parse carries no entity at all (an axis phrase is no entity).
+    "entities_none",
 })
 #: The expect keys read straight off the verdict (null means null or absent).
 _REPORT_KEYS = ("order_status", "group_by", "measure", "basis", "compare_to", "sales_channel", "ranking_refine",
@@ -49,6 +51,7 @@ _REPORT_KEYS = ("order_status", "group_by", "measure", "basis", "compare_to", "s
 #: LEAN v90: the type each of these expect values must have (null allowed where listed).
 _EXPECT_TYPES: dict[str, tuple[type, ...]] = {
     "products_only": (list,),
+    "entities_none": (bool,),
     "is_active": (bool, type(None)),
     "continues": (bool,),
     "promotion_kind": (str, type(None)),
@@ -224,6 +227,8 @@ def grade_parse(verdict: dict[str, Any], expect: dict[str, Any]) -> tuple[bool, 
         )
         if stray:
             reasons.append(f"product entities outside the allowed set: {stray}")
+    if expect.get("entities_none") and entities:
+        reasons.append(f"entities {[(e.get('hint'), e.get('raw')) for e in entities]} but none expected")
     answer = verdict.get("open_question_answer")
     answer = answer if isinstance(answer, dict) else {}
     if "topic_reset" in expect and (verdict.get("topic_reset") is True) is not expect["topic_reset"]:
