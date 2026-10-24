@@ -51,7 +51,10 @@ def _fresh_caches():
 @pytest.mark.parametrize("mode", ["block", "index"])
 def test_a1_the_user_turn_carries_the_full_sales_channels_line_in_both_modes(session_factory, seeded, stub_access, monkeypatch, mode, body):
     from app.services.chatbot.head.parser import PARSE_OUTPUT_JSON_SCHEMA
+    from tests.chatbot import test_closed_lists_index_mode as idx
 
+    # R9: the line prints only when the prompt names it (owner ruling 22 Oct 23:20); this template names it.
+    monkeypatch.setattr(idx, "TEMPLATE", idx.TEMPLATE + "\nThe Sales channels line lists the channel values.\n")
     _seed_world(session_factory)
     _set_mode(session_factory, mode)
     [(_system, block, _r)] = _turns(session_factory, stub_access, monkeypatch, [(body, _quiet())])

@@ -241,7 +241,7 @@ OFF = {
     "new_subject_op": (dict(state_changes=[NEW_SUBJECT]), {}, {}),
     "new_subject_parser_op": ({}, {}, {"parser_ops": [NEW_SUBJECT]}),
     "names_its_own_value": (dict(entity_op="replace_combine"), {}, {}),
-    "a_total_names_no_axis": (dict(group_by=None), {}, {}),
+    # R9 (crew ruling, part 2): an axis-less ranking is stamped too (`test_one_ranking_r9_v63_total.py`).
     "not_a_ranking": (dict(order_status="sales_report"), {}, {}),
     "a_ranking_frame_held": ({}, dict(sales_ranking_frame={"group_by": "customer", "date_from": "2026-01-01"}), {}),
     "a_stale_frame_held": ({}, dict(sales_ranking_frame={"group_by": "customer", "stale": True}), {}),
