@@ -708,6 +708,34 @@ The order-inquiry side (purchasing's board, place-on-PO UX) is the next planning
   a queue-jumping complaint arrives, whichever first** - this is a floor-reality escape
   hatch for a group that cannot currently reconcile its own oversold book, not a permanent
   reading of what "own group" capacity means.
+- **The confirmation judges INCOMING cover by the dated walk too (captain, 8 Sep 2026).** The
+  same repair the FLOOR half of `_check_line` took on 30 Aug 2026 (SO381895, ladder v7.1 R24),
+  applied to the own-half water. The walk composes `timely_spo` out of `use_candidates_for`'s
+  own-half water candidates - the DATED reading, what the one assignment gave this unit by its
+  own date (`_drawn_at_own_date`) - and the board shows that same walk through `compose_lines`.
+  The recheck bounded the posted quantity at `fact.timely_qty`, which is the water inside
+  `_group_take_candidates`, capped at `group_offer = max(group net + the unit's own quantity, 0)`
+  and therefore 0 on an OVERSOLD group however early the asking line is. So the two sides read
+  two figures for one question: SO419851 lines 3 and 4 (8 Sep 2026, C-FHSS14 at BRW-IB, an IB
+  group 486 short on its own book) were proposed `Incoming 3 (BRW-IB)`, and the
+  approved-as-suggested body came back 422 "Timely SPO cover is now 0, not 3." for both.
+  `_UnitCheck.timely_left` is now seeded by `_timely_cover_for`, which reads the water in BOTH
+  books and takes the LARGER, never their sum - so the confirm accepts what the board proposed
+  by date, and a quantity above both readings is still refused with the same sentence.
+  AC-L10 is unaffected: where the dated walk offers nothing either, the line still buys. The
+  OTHER project groups' water is still on the undated reading only, deliberately: step 1's offer
+  half is bounded by R-M's lending-group budget (`_group_budget_key`) and this scalar has no
+  ledger for it, so widening it would trade the refusal for a double-promise across two units.
+  `_snapshot`'s water SPLIT falls back to `use_candidates_for`'s
+  own-half water (same location, same reason, rung `group_take`) when the undated
+  `_group_take_candidates` is empty, so a unit whose dated water sits at a SIBLING bin is now
+  named there rather than at `fact.own_code` with no rung - only when BOTH lists are empty does
+  the old unnamed fallback row still fire. No `outside_reserve_window` guard was added: an
+  out-of-window oversold line's water now reads the same larger-of-the-two rule as everywhere
+  else, so a hand-typed Incoming above the undated figure is accepted there too when the dated
+  walk placed one - the board itself still proposes Buy for such a line, so this only matters for
+  a hand-composed line, never the board's own suggestion. Pinned by
+  `tests/scm/test_confirm_timely_cover_dated.py`. UAC AC-L5b.
 
 ### Open, found while building ladder v3 (25 Aug)
 

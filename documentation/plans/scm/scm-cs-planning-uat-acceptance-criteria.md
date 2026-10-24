@@ -89,6 +89,7 @@ Plan: `PLAN-scm-cs-planning-uat.md`. Verified in a real browser on :3060 via the
   Reserve past what is physically on hand less other lines' confirmed holds
   (`test_a_reason_does_not_push_a_reserve_past_on_hand`, refused 409 by R14). Revisit when the
   oversold group's book is cleaned up or a queue-jumping complaint arrives, whichever first.
+- AC-L5b **[BE]** The confirmation judges INCOMING cover by the DATED walk as well as the undated group net (captain, 8 Sep 2026). Given an oversold ownership group (own bin holding nothing, an SPO of 3 arriving before the asking line's date, a sibling order in the same group owing 486 with a later date), when the walk proposes `Incoming 3` for the asking line and that composition is posted verbatim, then the confirmation writes it - the bound is the LARGER of the undated group-netted water share and the water the one assignment gave this unit by its own date, never their sum. A hand-typed 5 against the same world is still refused with "Timely SPO cover is now 3, not 5." Where the dated walk offers nothing either (AC-L10) nothing changes: the line still buys and a posted Incoming is still refused. Pinned by `tests/scm/test_confirm_timely_cover_dated.py`.
 - AC-L6 Amend on SO415472 L1 offers SO394803 L2 (same agent) as a donor regardless of rank, requires an authorisation reason, and on confirm raises an Order back OI row for SO394803 L2 with the donor's date; the donor cell reads "71 lent to SO415472".
 
 ## Ladder v4 (group netting, ruled 26 Aug)
