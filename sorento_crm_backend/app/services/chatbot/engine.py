@@ -8083,10 +8083,14 @@ def _run_stages_body(  # noqa: PLR0915
                     (e["required_ask"] for e in envelopes or [] if isinstance(e, dict) and isinstance(e.get("required_ask"), dict)),
                     None,
                 )
-                if state_out.focus.required_ask is not None and state_out.pending is not None:
-                    # SALES-COMPANY: the lane's question is the newest one on the table, so an
-                    # offer still stored from an earlier turn (a sales report's drill offer)
-                    # closes; left open, the reply to this question would answer it.
+                if (
+                    (state_out.focus.required_ask or {}).get("ask") == sales_company_ask.ASK_NAME
+                    and state_out.pending is not None
+                ):
+                    # SALES-COMPANY: the company question is the newest one on the table, so
+                    # an offer still stored from an earlier turn (a sales report's drill offer)
+                    # closes; left open, the reply "Sorento" would answer it. Only this ask:
+                    # every other required ask keeps the stored question as before.
                     state_out = dataclasses_replace(state_out, pending=None)
                 # The frame lives only through sales ranking turns (one that ran replaces it,
                 # one that asked a required field keeps it); any other ask clears it.
