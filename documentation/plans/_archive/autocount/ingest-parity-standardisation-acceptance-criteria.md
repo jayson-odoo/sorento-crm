@@ -1,6 +1,6 @@
 # UAC: ingest parity standardisation (xlsx / manual vs ESB)
 
-Status: APPROVED 2026-09-06 (Lavish grill `.lavish/ingest-parity-standardisation.html`, all
+Status: DONE 2026-09-06, merged with PR #699 (approved the same day from the Lavish grill `.lavish/ingest-parity-standardisation.html`, all
 recommended options; D5 / D6 / D20 per captain markup; D21 = B; D22 = A).
 Plan: `PLAN-ingest-parity-standardisation.md` (same folder).
 
