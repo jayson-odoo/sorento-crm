@@ -167,7 +167,7 @@ REPORT_ASK_ADDENDUM = """
 Sales ranked or totalled BY one dimension (salesman, SA = sales agent, customer, brand,
 category, location, channel, month). intent_hint "check_order". Three more keys on every
 object: "ranking_refine": true|false|null, "measure": "qty|amount|customers|orders|products|null",
-"compare_to": "previous_period|last_year|null", "axis_words": the verbatim words of the CURRENT
+"compare_to": "previous_period|last_year|null", "by_words": the verbatim words of the CURRENT
 message that name the ranked or grouped axis ("by salesppl", "item"), null when it names none.
   - "top 3 salesman for Sorento brand last month" -> order_status "sales_ranking",
     group_by "sales_agent", top_n 3, entities [Sorento as brand]

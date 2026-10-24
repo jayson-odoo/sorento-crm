@@ -46,8 +46,8 @@ EXPECT_KEYS = frozenset({
     "entities_none",
     # REPORT-SMART-L R5 row 13: the parse's `self_reference`, null read as false.
     "self_reference",
-    # REPORT-SMART-L R6: the parse's `axis_words` (any string: the message names an axis; null: it names none; graded only when the parse carries the key).
-    "axis_words",
+    # REPORT-SMART-L R6: the parse's `by_words` (any string: the message names an axis; null: it names none; graded only when the parse carries the key).
+    "by_words",
 })
 #: The expect keys read straight off the verdict (null means null or absent).
 _REPORT_KEYS = ("order_status", "group_by", "measure", "basis", "compare_to", "sales_channel", "ranking_refine",
@@ -57,7 +57,7 @@ _EXPECT_TYPES: dict[str, tuple[type, ...]] = {
     "products_only": (list,),
     "entities_none": (bool,),
     "self_reference": (bool,),
-    "axis_words": (str, type(None)),
+    "by_words": (str, type(None)),
     "is_active": (bool, type(None)),
     "continues": (bool,),
     "promotion_kind": (str, type(None)),
@@ -235,11 +235,11 @@ def grade_parse(verdict: dict[str, Any], expect: dict[str, Any]) -> tuple[bool, 
             reasons.append(f"product entities outside the allowed set: {stray}")
     if "self_reference" in expect and (verdict.get("self_reference") is True) is not expect["self_reference"]:
         reasons.append(f"self_reference {verdict.get('self_reference')!r} != {expect['self_reference']!r}")
-    if "axis_words" in expect and "axis_words" in verdict:
+    if "by_words" in expect and "by_words" in verdict:
         # Null against non-null only (the words themselves vary), and only when the prompt in use emits the key.
-        named = bool(str(verdict.get("axis_words") or "").strip())
-        if named is not (expect["axis_words"] is not None):
-            reasons.append(f"axis_words {verdict.get('axis_words')!r}: expected {'words' if expect['axis_words'] is not None else 'null'}")
+        named = bool(str(verdict.get("by_words") or "").strip())
+        if named is not (expect["by_words"] is not None):
+            reasons.append(f"by_words {verdict.get('by_words')!r}: expected {'words' if expect['by_words'] is not None else 'null'}")
     if expect.get("entities_none") and entities:
         reasons.append(f"entities {[(e.get('hint'), e.get('raw')) for e in entities]} but none expected")
     answer = verdict.get("open_question_answer")

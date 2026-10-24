@@ -1,5 +1,5 @@
-"""REPORT-SMART-L R6 (AC-OR6, owner ruling A): the parser reports `axis_words`, the current message's own words
-naming what is ranked or grouped, or null. A verdict whose `axis_words` key is PRESENT and null names no axis, so
+"""REPORT-SMART-L R6 (AC-OR6, owner ruling A): the parser reports `by_words`, the current message's own words
+naming what is ranked or grouped, or null. A verdict whose `by_words` key is PRESENT and null names no axis, so
 its group_by is not typed (a fresh ask is a TOTAL, a refine changes no axis); a verdict WITHOUT the key (production
 prompt v92 and older) behaves exactly as before. Real engine seam. Fake codes only."""
 from __future__ import annotations
@@ -28,33 +28,33 @@ def _ran(log):
     return [a for n, a in log if n == TOOL]
 
 
-def _fresh(axis_words: Any = "ABSENT", **over: Any) -> dict[str, Any]:
+def _fresh(by_words: Any = "ABSENT", **over: Any) -> dict[str, Any]:
     """'Top sales for <product> in 2026': the parser guessed an axis, basis left null."""
     base: dict[str, Any] = dict(
         domain_hint="order", intent_hint="check_order", order_status="sales_ranking", ranking_refine=False,
         group_by="product", top_n=None, measure=None, basis=None, rank_direction="top",
         entities=[_e(PRODUCT_CODE, "product")], domain_in_message=True, state_changes=list(KEEP), **YEAR_2026)
     base.update(over)
-    if axis_words != "ABSENT":
-        base["axis_words"] = axis_words
+    if by_words != "ABSENT":
+        base["by_words"] = by_words
     return _parser_output(**base)
 
 
-def _refine(axis_words: Any = "ABSENT", **over: Any) -> dict[str, Any]:
+def _refine(by_words: Any = "ABSENT", **over: Any) -> dict[str, Any]:
     base: dict[str, Any] = dict(
         domain_hint="order", intent_hint="check_order", order_status="sales_ranking", ranking_refine=True,
         group_by=None, top_n=None, measure=None, basis=None, entities=[], domain_in_message=False,
         state_changes=list(SET), date_filter_start=None, date_filter_end=None)
     base.update(over)
-    if axis_words != "ABSENT":
-        base["axis_words"] = axis_words
+    if by_words != "ABSENT":
+        base["by_words"] = by_words
     return _parser_output(**base)
 
 
 # 1. schema ------------------------------------------------------------------------------------------------------
 
 
-def test_r6_1_the_parser_schema_declares_axis_words_as_string_or_null() -> None:
+def test_r6_1_the_parser_schema_declares_by_words_as_string_or_null() -> None:
     from app.services.chatbot.head.parser import (
         DECLARED_KEYS,
         PARSE_OUTPUT_JSON_SCHEMA,
@@ -63,9 +63,9 @@ def test_r6_1_the_parser_schema_declares_axis_words_as_string_or_null() -> None:
     )
 
     for schema in (PARSE_OUTPUT_JSON_SCHEMA, PARSE_OUTPUT_JSON_SCHEMA_WITH_STATE, closed_lists_schema(["x"])):
-        assert schema["properties"]["axis_words"] == {"type": ["string", "null"]}, schema["properties"].get("axis_words")
-        assert "axis_words" in schema["required"]
-    assert "axis_words" in DECLARED_KEYS
+        assert schema["properties"]["by_words"] == {"type": ["string", "null"]}, schema["properties"].get("by_words")
+        assert "by_words" in schema["required"]
+    assert "by_words" in DECLARED_KEYS
 
 
 # 2. ruling A, fresh state ---------------------------------------------------------------------------------------
@@ -119,7 +119,7 @@ def test_r6_3b_a_ranked_noun_keeps_its_axis(console, monkeypatch) -> None:
 def test_r6_4_guard_a_verdict_without_the_key_keeps_its_guessed_axis(console, monkeypatch, guessed) -> None:
     _state_on(console)
     text, log = _say_all(console, monkeypatch, _fresh(group_by=guessed), "Top sales for CB6635 in 2026")
-    assert "axis_words" not in _fresh(group_by=guessed)
+    assert "by_words" not in _fresh(group_by=guessed)
     assert _ran(log) == [], (text, log)
     assert "How many" in text, text  # the guessed axis is a ranking, so the count is owed as today
     text, log = _say_all(
@@ -143,7 +143,7 @@ def _held_agent_ranking(console, monkeypatch) -> None:
     assert len(_ran(log)) == 1 and _ran(log)[0]["group_by"] == "sales_agent", ("setup", text, log)
 
 
-def test_r6_5a_a_refine_with_null_axis_words_changes_no_axis(console, monkeypatch) -> None:
+def test_r6_5a_a_refine_with_null_by_words_changes_no_axis(console, monkeypatch) -> None:
     _held_agent_ranking(console, monkeypatch)
     qf = _refine(None, group_by="customer", **YEAR_2025)
     text, log = _say_all(console, monkeypatch, qf, "only 2025")
@@ -184,7 +184,7 @@ def test_r6_6a_under_an_open_how_many_a_named_new_axis_still_swaps(console, monk
     assert len(ran) == 1 and ran[0]["group_by"] == "customer" and ran[0]["top_n"] == 5, (text, log)
 
 
-def test_r6_6b_under_an_open_how_many_a_guessed_axis_with_null_axis_words_does_not_swap(console, monkeypatch) -> None:
+def test_r6_6b_under_an_open_how_many_a_guessed_axis_with_null_by_words_does_not_swap(console, monkeypatch) -> None:
     _open_how_many(console, monkeypatch)
     text, log = _say_all(console, monkeypatch, _refine(None, group_by="customer"), "ok")
     assert _ran(log) == [], (text, log)

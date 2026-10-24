@@ -317,8 +317,8 @@ def from_top_selling(verdict: dict[str, Any]) -> dict[str, Any]:
     ranking on the report engine, read whole by `settle`: `rank_group` category (or a `category`
     axis) ranks categories, else the axis the parser named, else products; the count, period,
     measure (`rank_by`), basis, direction and filters ride unchanged. Parser fields only."""
-    # A `top_selling` label is the parser's own statement that items are ranked: `axis_words` null does not null its axis.
-    verdict = {k: v for k, v in verdict.items() if k not in (*CAPABILITY_KEYS, "axis_words")}  # no stray parser key survives
+    # A `top_selling` label is the parser's own statement that items are ranked: `by_words` null does not null its axis.
+    verdict = {k: v for k, v in verdict.items() if k not in (*CAPABILITY_KEYS, "by_words")}  # no stray parser key survives
     raw_group = jsc.js_string(verdict.get("group_by") or "").strip().lower()
     rank_group = jsc.js_string(verdict.get("rank_group") or "").strip().lower()
     if rank_group == "category" or raw_group == "category":
@@ -371,7 +371,7 @@ def by_capability(verdict: dict[str, Any]) -> dict[str, Any]:
         return from_top_selling(verdict)
     if status not in CAN_DRAW:
         return verdict  # an order / PO list keeps its own grouping; only the report ask's statuses are typed
-    verdict = typed_group_by(verdict)  # R6: a null `axis_words` names no axis, so the guess routes nothing
+    verdict = typed_group_by(verdict)  # R6: a null `by_words` names no axis, so the guess routes nothing
     raw_group = jsc.js_string(verdict.get("group_by") or "").strip().lower()
     if raw_group and raw_group not in GROUP_BY:
         return verdict
@@ -463,11 +463,11 @@ def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
 
 
 def typed_group_by(verdict: dict[str, Any]) -> dict[str, Any]:
-    """REPORT-SMART-L R6 (ruling A): the parser's `axis_words` are the words of the current message that name the ranked
+    """REPORT-SMART-L R6 (ruling A): the parser's `by_words` are the words of the current message that name the ranked
     or grouped axis. A verdict whose key is PRESENT and null names no axis, so the `group_by` it carries is a guess and
     is not taken (a fresh ask is a total, a refine changes no axis). A verdict WITHOUT the key (a prompt version that
     does not define it) is returned untouched. Parser fields only, no word list."""
-    if "axis_words" not in verdict or jsc.js_string(verdict.get("axis_words") or "").strip() or not verdict.get("group_by"):
+    if "by_words" not in verdict or jsc.js_string(verdict.get("by_words") or "").strip() or not verdict.get("group_by"):
         return verdict
     return {**verdict, "group_by": None}
 

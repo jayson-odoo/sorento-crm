@@ -1,5 +1,5 @@
 """REPORT-SMART-L R6 review (AC-OR6): the null-axis reader at every place the parser's `group_by` guess is read.
-Fake codes only; the tester's file `test_one_ranking_r6_axis_words.py` is untouched."""
+Fake codes only; the tester's file `test_one_ranking_r6_by_words.py` is untouched."""
 from __future__ import annotations
 
 from typing import Any
@@ -18,15 +18,15 @@ def _ran(log):
     return [a for n, a in log if n == TOOL]
 
 
-def test_r6b_1_names_its_own_ask_ignores_a_guessed_axis_when_axis_words_is_null() -> None:
+def test_r6b_1_names_its_own_ask_ignores_a_guessed_axis_when_by_words_is_null() -> None:
     from app.services.chatbot.lanes.business import report_ask
 
     slot = {"extras": {"args": {"group_by": "sales_agent"}}, "values": {}}
     reply = _parser_output(
-        order_status="sales_ranking", ranking_refine=False, group_by="customer", axis_words=None,
+        order_status="sales_ranking", ranking_refine=False, group_by="customer", by_words=None,
         entities=[], state_changes=list(ANSWER), **{"date_filter_start": "2025-01-01", "date_filter_end": "2025-12-31"})
     assert report_ask.names_its_own_ask(reply, slot) is False  # the period is an answer; the guessed axis is not a new ask
-    typed = {**reply, "axis_words": "by customer"}
+    typed = {**reply, "by_words": "by customer"}
     assert report_ask.names_its_own_ask(typed, slot) is True  # a typed axis with the period is a new ask (R5 review round 8)
 
 
@@ -40,16 +40,16 @@ def _verdict(**over: Any) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("words", ["paling laris", "best selling", "畅销"])
-def test_r6b_2_a_noun_less_item_ranking_with_axis_words_keeps_its_axis(console, monkeypatch, words) -> None:
+def test_r6b_2_a_noun_less_item_ranking_with_by_words_keeps_its_axis(console, monkeypatch, words) -> None:
     _state_on(console)
-    text, log = _say_all(console, monkeypatch, _verdict(axis_words=words), f"10 {words} tahun ini delivered qty")
+    text, log = _say_all(console, monkeypatch, _verdict(by_words=words), f"10 {words} tahun ini delivered qty")
     ran = _ran(log)
     assert len(ran) == 1 and ran[0]["group_by"] == "product" and ran[0]["top_n"] == 10, (text, log)
 
 
-def test_r6b_3_a_top_selling_label_keeps_its_default_item_axis_whatever_axis_words_says(console, monkeypatch) -> None:
+def test_r6b_3_a_top_selling_label_keeps_its_default_item_axis_whatever_by_words_says(console, monkeypatch) -> None:
     _state_on(console)
-    qf = _verdict(order_status="top_selling", group_by=None, rank_group="item", rank_direction="top", axis_words=None)
+    qf = _verdict(order_status="top_selling", group_by=None, rank_group="item", rank_direction="top", by_words=None)
     text, log = _say_all(console, monkeypatch, qf, "10 paling laris tahun ini delivered qty")
     ran = _ran(log)
     assert len(ran) == 1 and ran[0]["group_by"] == "product", (text, log)
@@ -58,13 +58,13 @@ def test_r6b_3_a_top_selling_label_keeps_its_default_item_axis_whatever_axis_wor
 def test_r6b_4_by_capability_reads_the_typed_axis() -> None:
     from app.services.chatbot.lanes.business import report_ask
 
-    analysis = {"order_status": "sales_analysis", "group_by": "customer", "axis_words": None, "measure": None}
+    analysis = {"order_status": "sales_analysis", "group_by": "customer", "by_words": None, "measure": None}
     out = report_ask.by_capability(analysis)
     assert out["order_status"] == "sales_analysis" and not out.get("capability_from"), out  # stays the analysis tool's
-    report = {"order_status": "sales_report", "group_by": "product", "axis_words": None, "measure": None}
+    report = {"order_status": "sales_report", "group_by": "product", "by_words": None, "measure": None}
     out = report_ask.by_capability(report)
     assert out["order_status"] == "sales_report" and not out.get("capability_from"), out
-    typed = {"order_status": "sales_analysis", "group_by": "customer", "axis_words": "by customer", "measure": None}
+    typed = {"order_status": "sales_analysis", "group_by": "customer", "by_words": "by customer", "measure": None}
     assert report_ask.by_capability(typed)["order_status"] == "sales_ranking"  # a named axis is still the report ask's
     absent = {"order_status": "sales_analysis", "group_by": "customer", "measure": None}
     assert report_ask.by_capability(absent)["order_status"] == "sales_ranking"  # key absent: today's behaviour
@@ -77,12 +77,12 @@ def test_r6b_4_by_capability_reads_the_typed_axis() -> None:
 def test_r6b_5_by_capability_leaves_the_grouping_of_a_non_report_status_alone(status, group_by) -> None:
     from app.services.chatbot.lanes.business import report_ask
 
-    out = report_ask.by_capability({"order_status": status, "group_by": group_by, "axis_words": None, "measure": None})
+    out = report_ask.by_capability({"order_status": status, "group_by": group_by, "by_words": None, "measure": None})
     assert out["group_by"] == group_by, out
 
 
 def test_r6b_5_a_status_the_report_ask_can_draw_still_types_the_axis() -> None:
     from app.services.chatbot.lanes.business import report_ask
 
-    out = report_ask.by_capability({"order_status": "sales_report", "group_by": "month", "axis_words": None, "measure": None})
+    out = report_ask.by_capability({"order_status": "sales_report", "group_by": "month", "by_words": None, "measure": None})
     assert out["group_by"] is None, out

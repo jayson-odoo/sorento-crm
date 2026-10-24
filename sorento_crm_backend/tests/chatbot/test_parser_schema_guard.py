@@ -142,7 +142,7 @@ MEASURED_VERDICT_READS: dict[str, str] = {
     "compare_to": "app/services/chatbot/lanes/business/report_ask.py",
     # REPORT-SMART-L R6 (ruling A): the words naming the ranked axis; a present null means no axis typed
     # (`report_ask.typed_group_by`). 60 -> 61.
-    "axis_words": "app/services/chatbot/lanes/business/report_ask.py",
+    "by_words": "app/services/chatbot/lanes/business/report_ask.py",
     # 4 Oct 2026 (LOWSTOCK-SEMANTIC): the low stock filters, read by
     # `lanes/business/low_stock_ask.reading`. 48 declared keys -> 49.
     "low_stock": "app/services/chatbot/lanes/business/low_stock_ask.py",
