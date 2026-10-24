@@ -211,11 +211,15 @@ def test_s1_a_customer_hinted_word_that_is_a_product_renders_the_report(one):
     word = [{"raw": "Srt5674-N", "hint": "customer", "canonical_code": None,
              "current_message": True, "confident": True}]
     text = "dealer Srt5674-N sales september 2026"
-    _r, setup = one.say(_x2("sales_report", word), text, matches=matches)
-    assert _calls(setup, REPORT), f"setup: the sales_report parse renders the report: {setup}"
+    r_setup, setup = one.say(_x2("sales_report", word), text, matches=matches)
+    assert _calls(setup, REPORT), f"setup: the sales_report parse runs the report: {setup}"
     result, captured = one.say(_x2("sales_analysis", word), text, matches=matches)
-    assert _calls(captured, REPORT), f"the report must run: {captured}"
-    assert "matched" not in _reply(result).lower() and "escalate" not in _reply(result).lower(), _reply(result)
+    assert _calls(captured, ANALYSIS) == [], f"a named subject never runs the company analysis: {captured}"
+    assert _calls(captured, REPORT) == _calls(setup, REPORT), (
+        f"the same report call as the sales_report parse: {_calls(captured, REPORT)} vs {_calls(setup, REPORT)}"
+    )
+    # AC-13 is parity: the reply is the sales_report parse's own reply, whatever that says.
+    assert _reply(result) == _reply(r_setup), (_reply(result), _reply(r_setup))
 
 
 # --------------------------------------------------------------------------- #
