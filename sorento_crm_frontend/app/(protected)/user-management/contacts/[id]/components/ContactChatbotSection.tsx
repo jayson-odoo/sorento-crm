@@ -24,6 +24,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { ProviderModelSelect } from '@/components/common/ProviderModelSelect';
+import { providerModelLabel } from '@/lib/ai/modelOptions';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { FormDialogScaffold } from '@/components/common/FormDialogScaffold';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
@@ -135,14 +137,15 @@ function SwitchRow({
   );
 }
 
-const LLM_SOURCE_LINE: Record<string, (tags: string[]) => string> = {
-  tag: (tags) => `From tag ${tags.join(', ')}`,
+const LLM_SOURCE_LINE: Record<string, (tags: string[], llm: ChatbotLlm | null | undefined) => string> = {
+  tag: (tags, llm) =>
+    `From tag ${tags.join(', ')}${llm?.provider && llm.model ? `: ${providerModelLabel(llm.provider, llm.model)}` : ''}`,
   tag_conflict: (tags) => `Tags disagree: ${tags.join(', ')}`,
   contact: () => 'Set on this contact',
 };
 
 function llmSourceLine(llm: ChatbotLlm | null | undefined): string {
-  return LLM_SOURCE_LINE[llm?.source ?? 'none']?.(llm?.tags ?? []) ?? 'Default';
+  return LLM_SOURCE_LINE[llm?.source ?? 'none']?.(llm?.tags ?? [], llm) ?? 'Default';
 }
 
 function ChatbotSettingsCard({
@@ -156,6 +159,7 @@ function ChatbotSettingsCard({
   const save = useSaveContactChatbotProfile(contactId);
   const saveEscalation = useSaveContactEscalation(contactId);
   const saveAiAllowed = useSaveContactChatbotAllowed(contactId);
+  const canEditAiModel = useHasPermission('system.ai_assistant_settings.edit');
 
   if (isLoading) {
     return (
@@ -235,7 +239,8 @@ function ChatbotSettingsCard({
                 : null
             }
             onChange={(next) => save.mutate({ ...profile, llm: next })}
-            disabled={save.isPending}
+            disabled={save.isPending || !canEditAiModel}
+            providerPlaceholder="No override"
           />
           <p className="text-xs text-muted-foreground">{llmSourceLine(profile.chatbot_llm)}</p>
         </div>

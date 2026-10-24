@@ -7,7 +7,7 @@ import { useProviderModels } from '@/hooks/useProviderModels';
 import {
   MODEL_OPTIONS,
   PROVIDER_OPTIONS,
-} from '@/app/(protected)/system-management/ai-assistant/lib/modelOptions';
+} from '@/lib/ai/modelOptions';
 
 export type ProviderModel = { provider: string; model: string };
 
@@ -49,10 +49,12 @@ export function ProviderModelSelect({
   value,
   onChange,
   disabled,
+  providerPlaceholder = 'Default',
 }: {
   value: ProviderModel | null;
   onChange: (next: ProviderModel | null) => void;
   disabled?: boolean;
+  providerPlaceholder?: string;
 }) {
   const [pendingProvider, setPendingProvider] = useState('');
   const provider = pendingProvider || value?.provider || '';
@@ -80,7 +82,7 @@ export function ProviderModelSelect({
           value={provider}
           onChange={pickProvider}
           options={PROVIDER_OPTIONS}
-          placeholder="Default"
+          placeholder={providerPlaceholder}
           disabled={disabled}
           clearable
         />

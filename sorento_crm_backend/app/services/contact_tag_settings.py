@@ -15,8 +15,10 @@ from typing import Any, Callable, Iterable, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.services.chatbot.contact_model import MODEL_NAME_RE
 from app.services.error_handler import AppException, handle_unprocessable
 
+AI_SETTINGS_EDIT = "system.ai_assistant_settings.edit"
 ALL = "all"  # the "every brand" sentinel, neutral in an intersection
 
 #: Top-level sections in display order (the mock's order).
@@ -277,8 +279,8 @@ def _v_chatbot(db, cat, section, value):
             if v.get("provider") not in LLM_PROVIDERS:
                 raise _bad(k, "unknown provider")
             model = v.get("model")
-            if not isinstance(model, str) or not model.strip() or len(model) > 100:
-                raise _bad(k, "model must be 1 to 100 characters")
+            if not isinstance(model, str) or not MODEL_NAME_RE.fullmatch(model):
+                raise _bad(k, "model must be 1 to 100 letters, digits or . _ : -")
         else:
             raise _bad(k, "unknown setting")
 
@@ -443,6 +445,15 @@ def assert_gates(old: dict, new: dict, can: Callable[[str], bool], is_superadmin
                 message=f"You may not change {SECTION_TITLES[section]} on a tag.",
                 code="FORBIDDEN",
             )
+    # The model a tag puts a contact on spends AI quota: changing it needs the AI settings right.
+    old_llm = (old.get("chatbot") or {}).get("llm")
+    new_llm = (new.get("chatbot") or {}).get("llm")
+    if old_llm != new_llm and not can(AI_SETTINGS_EDIT):
+        raise AppException(
+            status_code=403,
+            message="You may not change the AI model on a tag.",
+            code="FORBIDDEN",
+        )
 
 
 # ------------------------------------------------------------------ leaves + merge

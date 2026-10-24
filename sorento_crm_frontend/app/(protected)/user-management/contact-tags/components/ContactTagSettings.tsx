@@ -18,7 +18,8 @@ import { Switch } from '@/components/ui/switch';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { PROVIDER_OPTIONS } from '@/app/(protected)/system-management/ai-assistant/lib/modelOptions';
+import { providerModelLabel } from '@/lib/ai/modelOptions';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { ProviderModelSelect } from '@/components/common/ProviderModelSelect';
 import {
   useSaveTagSettings,
@@ -305,9 +306,6 @@ function PickOne({
   );
 }
 
-const llmText = (llm: { provider: string; model: string }) =>
-  `${PROVIDER_OPTIONS.find((o) => o.value === llm.provider)?.label ?? llm.provider} ${llm.model}`;
-
 /** Replace one key of an object value, dropping it when undefined. */
 function put(
   obj: Record<string, unknown> | undefined,
@@ -339,6 +337,7 @@ function GroupBody({
   catalog,
   showNumberErrors,
 }: BodyProps & { id: string }) {
+  const canEditAiModel = useHasPermission('system.ai_assistant_settings.edit');
   switch (id) {
     case 'access_types':
     case 'companies':
@@ -425,9 +424,15 @@ function GroupBody({
                 <ProviderModelSelect
                   value={(c.llm as { provider: string; model: string } | undefined) ?? null}
                   onChange={(next) => upd('llm', next ?? undefined)}
+                  disabled={!canEditAiModel}
                 />
               ) : (
-                <span className="text-sm">{llmText(c.llm as { provider: string; model: string })}</span>
+                <span className="text-sm">
+                  {providerModelLabel(
+                    (c.llm as { provider: string; model: string }).provider,
+                    (c.llm as { provider: string; model: string }).model,
+                  )}
+                </span>
               )}
             </Labelled>
           ) : null}

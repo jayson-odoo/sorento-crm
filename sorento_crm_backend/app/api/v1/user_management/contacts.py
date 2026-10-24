@@ -359,7 +359,16 @@ class ContactChatbotLLM(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     provider: Literal["openai", "gemini", "anthropic"]
-    model: str = Field(min_length=1, max_length=100, pattern=r"\S")
+    model: str
+
+    @field_validator("model")
+    @classmethod
+    def _model_name(cls, v: str) -> str:
+        from app.services.chatbot.contact_model import MODEL_NAME_RE
+
+        if not MODEL_NAME_RE.fullmatch(v):
+            raise ValueError("model must be 1 to 100 letters, digits or . _ : -")
+        return v
 
 
 class ContactChatbotUpdate(BaseModel):
@@ -425,6 +434,12 @@ async def update_contact_chatbot(
     """
     _ = current_user
     try:
+        # The model spends AI quota: setting or clearing it needs the AI settings right too,
+        # checked before anything is written.
+        if "llm" in body.model_fields_set and not UserPermissionService(db).check_user_has_permission(
+            current_user["id"], "system.ai_assistant_settings.edit"
+        ):
+            raise HTTPException(status_code=403, detail="Permission required: system.ai_assistant_settings.edit")
         service = ContactService(db)
         contact = service.get_contact(contact_id)
         if body.chatbot_profile is not None:

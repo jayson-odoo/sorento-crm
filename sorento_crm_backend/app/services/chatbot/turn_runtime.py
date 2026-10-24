@@ -194,9 +194,11 @@ def _llm_choice(db: Session, row: Any):
 
         from app.services.chatbot.contact_model import contact_llm_choice
 
-        choice = contact_llm_choice(
-            db, SimpleNamespace(id=row[6], chatbot_llm_provider=row[7], chatbot_llm_model=row[8])
-        )
+        # Under a SAVEPOINT: a failed SELECT must not abort the turn's transaction.
+        with db.begin_nested():
+            choice = contact_llm_choice(
+                db, SimpleNamespace(id=row[6], chatbot_llm_provider=row[7], chatbot_llm_model=row[8])
+            )
         # None unless a model is chosen, so a turn without one makes main's exact calls.
         return choice if choice.model else None
     except Exception:  # noqa: BLE001 - an unreadable choice must not cost the turn

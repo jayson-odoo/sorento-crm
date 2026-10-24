@@ -8,10 +8,14 @@ cache, no Apply); `apply_choice` is the one place a reader merges the choice wit
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+#: A model name is sent to the provider inside a URL path, so only name characters are allowed.
+MODEL_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,99}")
 
 
 @dataclass(frozen=True)

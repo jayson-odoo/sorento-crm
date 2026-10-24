@@ -19,7 +19,7 @@ import {
   useTestAIAssistantConnection,
   useUpdateAIAssistantConfig,
 } from '../hooks/useAIAssistantAdmin';
-import { MODEL_OPTIONS, PROVIDER_OPTIONS } from '../lib/modelOptions';
+import { MODEL_OPTIONS, PROVIDER_OPTIONS } from '@/lib/ai/modelOptions';
 import { useProviderModels } from '@/hooks/useProviderModels';
 
 
