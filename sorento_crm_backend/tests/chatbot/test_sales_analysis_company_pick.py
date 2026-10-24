@@ -28,6 +28,11 @@ never a brand filter, never out_of_scope, and the stale drill offer no longer an
 * G1 (GREEN guard) a contact with ONE company: turn B runs straight away, no question.
 * G2 (GREEN guard) turn B naming `sales_company: Mocha`: no question, runs for Mocha.
 * G3 (GREEN guard) "stock for SRTWC286" while the company question is open is its own ask.
+* G4 (pin) the company question retires the stale drill offer: a turn that leaves the
+  company question unanswered and arms nothing of its own does not bring the drill offer
+  back, so a later "1" picks no drill option (the engine closes the stored offer when a lane
+  hands back a required ask). Its C turn arms nothing on purpose: G3's stock miss arms its
+  own escalation offer, which replaces the drill offer either way and pins nothing.
 
 Engine harness: `test_outstanding_lane._run_turn` (real `engine.run_turn`, Postgres, parser /
 access / resolver / MCP faked) with its `_capturing_mcp` swapped for a double that answers the
@@ -369,3 +374,32 @@ def test_g3_another_ask_while_the_question_is_open_is_its_own_ask(two):
     assert _calls(captured, ANALYSIS) == [] and _calls(captured, REPORT) == [], captured
     assert QUESTION not in _reply(result), _reply(result)
     assert result.branch_kind == "business_query", (result.branch_kind, _reply(result))
+
+
+@pytest.mark.parametrize(
+    "turn_c, text",
+    [
+        pytest.param(
+            _parser_output(message_type="casual", intent_hint=None, domain_hint=None, entities=[], order_status=None),
+            "ok thanks", id="casual",
+        ),
+        pytest.param(
+            _turn_b(sales_company="Mocha"), "b2155-nl-blue dealer sales september 2026 mocha",
+            id="own-ask-naming-its-company",
+        ),
+    ],
+)
+def test_g4_the_company_question_retires_the_stale_drill_offer(two, turn_c, text):
+    _to_the_company_question(two)
+    two.say(turn_c, text)
+    question = two.next_open_question()
+    assert [w.casefold() for w in _option_words(question)] != ["by product", "delivery orders"], (
+        f"the drill offer the company question replaced must not come back: {question}"
+    )
+    _result, captured = two.say(
+        _parser_output(message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                       reference_positions=[1], order_status=None),
+        "1",
+    )
+    drilled = [a for a in _calls(captured, REPORT) if a.get("group_by")]
+    assert drilled == [], f"a later '1' must not pick a drill option of the retired offer: {drilled}"
