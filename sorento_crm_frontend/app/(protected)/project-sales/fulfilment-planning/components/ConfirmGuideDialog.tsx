@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { Input, InputWrapper } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { X } from 'lucide-react';
 import {
@@ -332,29 +332,33 @@ export function ConfirmGuideDialog({
                 </span>
               </div>
               {/* FULFIL-SO-REMARK (AC-8): the REMARK the purchasing email prints beside this SO. */}
-              <div className="relative max-w-md">
+              <div className="max-w-md">
                 <Label htmlFor={`confirm-guide-remark-${page.salesOrderId}`} className="mb-1 block text-xs">
                   Remark
                 </Label>
-                <Input
-                  id={`confirm-guide-remark-${page.salesOrderId}`}
-                  data-testid="confirm-guide-so-remark"
-                  value={remarkOf(page)}
-                  maxLength={SO_REMARK_MAX}
-                  className="pe-8"
-                  onChange={(event) => setRemark(page.salesOrderId, event.target.value)}
-                />
-                {remarkOf(page) ? (
-                  <button
-                    type="button"
-                    aria-label="Clear remark"
-                    title="Clear remark"
-                    className="absolute end-2 bottom-2 text-muted-foreground"
-                    onClick={() => setRemark(page.salesOrderId, '')}
-                  >
-                    <X className="size-3.5" aria-hidden />
-                  </button>
-                ) : null}
+                <InputWrapper>
+                  <Input
+                    id={`confirm-guide-remark-${page.salesOrderId}`}
+                    data-testid="confirm-guide-so-remark"
+                    value={remarkOf(page)}
+                    maxLength={SO_REMARK_MAX}
+                    onChange={(event) => setRemark(page.salesOrderId, event.target.value)}
+                  />
+                  {remarkOf(page) ? (
+                    <Button
+                      type="button"
+                      variant="dim"
+                      mode="icon"
+                      size="sm"
+                      className="-me-2 size-6"
+                      aria-label="Clear remark"
+                      title="Clear remark"
+                      onClick={() => setRemark(page.salesOrderId, '')}
+                    >
+                      <X aria-hidden />
+                    </Button>
+                  ) : null}
+                </InputWrapper>
               </div>
               {prepareFailed ? (
                 <div

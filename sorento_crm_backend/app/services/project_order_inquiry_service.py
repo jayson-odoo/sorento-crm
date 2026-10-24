@@ -4505,12 +4505,6 @@ class ProjectOrderInquiryService:
             self._handover_line_no_cache[row.so_line_id] = (line_no, core_line_id)
         # FULFIL-SO-REMARK: does this line read as a mockup line (AC-3), for the SO remark
         # default and the line labels `_build_handover_context` decides over the whole email.
-        core_line = self.db.get(SalesOrderLine, core_line_id) if core_line_id else None
-        is_mockup = so_remark_rules.is_mockup_line(
-            facts.get("note"),
-            core_line.line_remark if core_line is not None else None,
-            core_line.section_heading if core_line is not None else None,
-        )
         location = row.stock_location
         if row.verb == IV_ORDER_BACK and row.so_line_id:
             # Owner, 13 Oct 2026 (re-confirmed 14 Oct): a line telling a Borrow reads the SO
@@ -4563,8 +4557,7 @@ class ProjectOrderInquiryService:
             "project": facts.get("project"),
             #: FULFIL-SO-REMARK: see `so_remark_rules`; `so_remark` is stamped by
             #: `stamp_so_remark` when the Confirm carried the planner's own text.
-            "is_mockup": is_mockup,
-            "remark_type": facts.get("remark_type"),
+            **self._mockup_facts(facts, core_line_id),
             #: The subject's location: what LOCATION prints (a Borrow's, the line's own).
             "stock_location": location,
             #: AC-2/AC-3: what `_build_handover_context` sorts the whole queue by -
@@ -5248,6 +5241,7 @@ class ProjectOrderInquiryService:
                 "stock_location": location,
                 "line_no": line.line_no,
                 "core_line_id": line.core_sales_order_line_id,
+                **self._mockup_facts(facts, line.core_sales_order_line_id),
                 "item_code": now.get("item_code"),
                 "verb_keys": keys or ["QTY_CHANGE"],
                 "line": line_entry,
@@ -5256,6 +5250,19 @@ class ProjectOrderInquiryService:
                 "tx": tx_chain[-1] if tx_chain else None,
             }
         )
+
+    def _mockup_facts(self, facts: Dict[str, Any], core_line_id: Optional[str]) -> Dict[str, Any]:
+        """FULFIL-SO-REMARK: `is_mockup` (AC-3) and `remark_type` (AC-4) for one queued handover
+        line, shared by every builder of a queue item so none can drop them."""
+        core_line = self.db.get(SalesOrderLine, core_line_id) if core_line_id else None
+        return {
+            "is_mockup": so_remark_rules.is_mockup_line(
+                facts.get("note"),
+                core_line.line_remark if core_line is not None else None,
+                core_line.section_heading if core_line is not None else None,
+            ),
+            "remark_type": facts.get("remark_type"),
+        }
 
     def _handover_order_facts(self, pso_id: Optional[str]) -> Dict[str, Any]:
         """SO number / customer / project / SO date for ONE project sales order, kept

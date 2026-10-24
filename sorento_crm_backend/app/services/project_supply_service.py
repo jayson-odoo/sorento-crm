@@ -5677,13 +5677,6 @@ class ProjectSupplyService:
         body["landed_buy_notices"] = list(self._landed_buy_notices.values()) or None
         body["stock_short_notices"] = self._stock_short_notices(checked) or None
         self._tell_saved_lines(order, checked, before_by_line, actor_user_id=actor_user_id)
-        # FULFIL-SO-REMARK (AC-10): the planner's own SO remark for this send, if the press
-        # carried one; absent computes the default when the email is built.
-        from app.services.project_order_inquiry_service import ProjectOrderInquiryService
-
-        ProjectOrderInquiryService(self.db).stamp_so_remark(
-            str(order.id), getattr(payload, "so_remark", None)
-        )
         return body
 
     def _tell_saved_lines(

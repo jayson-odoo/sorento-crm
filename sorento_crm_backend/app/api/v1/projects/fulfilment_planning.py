@@ -519,7 +519,7 @@ def _run_confirm_many(
         # opened HERE - inside that per-order try - never survives past this order's own
         # write). `entry.rejected_line_ids` is this order's own half of the board's
         # withdrawal, `entry` itself the composition `confirm()` already reads.
-        return _confirm_with_possible_rejects(
+        result = _confirm_with_possible_rejects(
             db,
             supply,
             order,
@@ -538,6 +538,15 @@ def _run_confirm_many(
                 preview=preview,
             ),
         )
+        # FULFIL-SO-REMARK (AC-10): the planner's own SO remark rides on every handover line this
+        # order queued, whichever branch wrote it (plain, batch, withdraw-only, Cancel SO only).
+        # Scoped to this order's pso_id; absent computes the default when the email is built.
+        from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+        ProjectOrderInquiryService(db).stamp_so_remark(
+            str(order.id), getattr(entry, "so_remark", None)
+        )
+        return result
 
     results = supply.confirm_many(
         payload.orders,
