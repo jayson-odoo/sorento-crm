@@ -564,6 +564,7 @@ def _config(**kw):
 
 def test_parse_one_without_a_context_builds_todays_block_byte_equal(session_factory, monkeypatch):
     from app.services.chatbot.turn import context as context_mod
+    from app.services.reports.ask import SALES_CHANNELS
 
     block = _capture(monkeypatch, session_factory, _config())
     expected, _ = context_mod.assemble(context_mod.ContextLayers(
@@ -571,6 +572,7 @@ def test_parse_one_without_a_context_builds_todays_block_byte_equal(session_fact
         current_subject=None, pending_kind=None, pending_options=None, settings_profile_line=None,
         # The engine's own `Current user message` text (`engine.build_latest_user_message`).
         current_message="ZZA100 x 5\n\n", reply_to=None, media_line=None, brands=None, promotion_kinds=None,
+        sales_channels=list(SALES_CHANNELS),
         product_types=None, product_details=None, candidate_lines=None,
     ))
     assert block == expected
@@ -1328,3 +1330,67 @@ def test_run_live_rows_carry_the_answer_and_state_fields(session_factory, monkey
     verdict.pop("state_changes"), verdict.pop("open_question_answer")
     row = run()[0]
     assert row["state_changes"] is None and row["open_question_answer"] is None
+
+
+# ---- REPORT-SMART-L round S1 P3: report keys in the gold runner (UAC AC1-AC10) ----
+REPORT_KEYS = ("order_status", "group_by", "measure", "compare_to", "sales_channel", "ranking_refine")
+V92_GOLD = BACKEND / "scripts" / "chatbot_eval" / "gold" / "parser_report_v92.jsonl"
+
+
+def test_report_keys_are_expect_keys():
+    assert set(REPORT_KEYS) <= pg.EXPECT_KEYS
+
+
+@pytest.mark.parametrize("key,value", [
+    ("order_status", "sales_ranking"), ("group_by", "customer"), ("measure", "customers"),
+    ("compare_to", "last_year"), ("sales_channel", "dealer"), ("ranking_refine", True),
+])
+def test_report_key_matches_and_near_miss_names_the_key(key, value):
+    ok, reasons = pg.grade_parse({key: value}, {key: value})
+    assert ok, reasons
+    ok, reasons = pg.grade_parse({key: "something_else" if value is not True else False}, {key: value})
+    assert not ok
+    assert any(key in r for r in reasons), reasons
+
+
+@pytest.mark.parametrize("key", REPORT_KEYS)
+def test_expected_null_means_parse_null_or_absent(key):
+    assert pg.grade_parse({}, {key: None})[0]
+    assert pg.grade_parse({key: None}, {key: None})[0]
+    ok, reasons = pg.grade_parse({key: "dealer" if key != "ranking_refine" else True}, {key: None})
+    assert not ok
+    assert any(key in r for r in reasons), reasons
+
+
+def test_report_gold_v92_loads_and_covers_the_cases():
+    rows = pg.load_gold(V92_GOLD)
+    for prefix in ("a1", "a2", "a3", "a4", "b1", "b2", "b3", "c", "d", "e", "f"):
+        assert sum(r["id"].startswith(f"rs92-{prefix}-") for r in rows) >= 8, prefix
+
+
+# --- REPORT-SMART-L delivery gold: the document field is gradable and recorded --------------------------------
+
+
+def test_grade_document_is_plain_equality():
+    ok, reasons = pg.grade_parse({"document": ["DO"]}, {"document": ["DO"]})
+    assert ok, reasons
+    for got in (["SO"], []):
+        ok, reasons = pg.grade_parse({"document": got}, {"document": ["DO"]})
+        assert not ok and any("document" in r for r in reasons), (got, reasons)
+
+
+def test_load_gold_accepts_a_document_expect_key(tmp_path):
+    rows = pg.load_gold(_write(tmp_path, [_row("a", "x", {"document": ["DO"]})]))
+    assert rows[0]["expect"] == {"document": ["DO"]}
+
+
+def test_run_live_rows_record_document_and_order_status(session_factory, monkeypatch):
+    from app.services.chatbot.head import parser as parser_mod
+
+    monkeypatch.setattr(parser_mod, "resolve_config", lambda db, **kw: _config())
+    verdict = {"entities": [], "document": ["DO"], "order_status": "delivered"}
+    monkeypatch.setattr(pg, "_parse_one", lambda message, config, factory, context=None: dict(verdict))
+    out = pg.run_live([{"id": "a", "message": "m", "expect": {"document": ["DO"]}}], session_factory=session_factory,
+                      version_id="1", repeats=1, max_usd=5.0, require_key_last4="WXYZ")
+    assert out[0]["passed"] is True, out
+    assert out[0]["document"] == ["DO"] and out[0]["order_status"] == "delivered", out

@@ -81,24 +81,8 @@ SALES_REPORT_NOT_ENABLED_MESSAGE = "Sales report is not enabled for your account
 #: PLAN-retail-sales-reports-26sep S1: the sales analysis tool, gated by the SAME key.
 _SALES_ANALYSIS_TOOL = "crm_sales_analysis"
 
-#: PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)". The ranking's tool, and
-#: the fixed lines the lane sends BEFORE any fetch when the ask is not settled yet
-#: (owner rulings 26 Sep 2026: no default metric, never assume the grain or the basis).
-#: The MCP presenter declares the same three literals for its goldens; the backend keeps
-#: its own copy because its container does not ship `sorento_crm_mcp`, and
-#: `tests/chatbot/test_top_selling_lane.py` pins the two equal.
-TOP_SELLING_TOOL = "crm_top_selling_report"
-TOP_SELLING_ASK_METRIC = ranking_ask.METRIC_LINE
-TOP_SELLING_ASK_GROUP = (
-    "Do you want the top items inside one category, or the categories ranked against each other?"
-)
-TOP_SELLING_ASK_BASIS = ranking_ask.TOP_SELLING_BASIS_LINE
 #: The sales ranking's own basis question (`report_ask`), three bases.
 SALES_RANKING_ASK_BASIS = ranking_ask.RANKING_BASIS_LINE
-TOP_SELLING_REFUSED_OTHER_CUSTOMER = "Sorry, I can only share sales figures for your own account."
-#: Owner retest of round 4 (27 Sep 2026, R8): one short question in words when a message
-#: inside a ranking cannot be placed.
-TOP_SELLING_UNCLEAR = "Sorry, I didn't get that. What would you like to change in the ranking?"
 
 #: PLAN-low-stock-report S6 (AC-62/AC-64). The intent that overrides the inventory domain's
 #: default tool pick, the tool it picks, and the per-contact key that gates it - all three
@@ -492,52 +476,16 @@ def _outstanding_offer_closed(parse_output: dict[str, Any], db: Any) -> dict[str
     }
 
 
-def top_selling_ceiling_note(slot: dict[str, Any]) -> str | None:
-    """The line said above a ranking whose named N passed the shared safety ceiling
-    (owner, 30 Sep 2026: no 100 cap, and no silent clamp either). `fetch.py` asks the
-    route for the ceiling; this says so. None for every N at or under it, and for a
-    detail pick, which lists no ranking."""
-    from app.services.sales_report_service import TOP_SELLING_N_CEILING
-
-    top_n = slot.get("top_n")
-    if slot.get("detail_code") or isinstance(top_n, bool) or not isinstance(top_n, (int, float)):
-        return None
-    if int(top_n) <= TOP_SELLING_N_CEILING:
-        return None
-    # Promises no count: fewer items than the ceiling may have sold.
-    return f"I can list at most the top {TOP_SELLING_N_CEILING:,} in one reply."
-
-
-def _top_selling_question(slot: dict[str, Any]) -> tuple[str, str] | None:
-    """S4 point 8a: the one question an unsettled top selling ask gets, in this order:
-    the grain when the parser could not tell a category filter from a category ranking,
-    the metric when none was named, the basis when none was named or it is not delivered or
-    ordered (`ranking_ask.next_question`, shared with the sales ranking). None once
-    the ask is settled. A picked row (`detail_code`) is never asked about: the ranking
-    it came from already ran. Returns `(axis, line)`: the axis is what the reply records
-    as asked (`top_selling_asked`), so the next message is read as its answer only if it
-    answers that axis (`turn/apply._top_selling_waiting`, reviewer B2 on PR #1273)."""
-    if slot.get("detail_code"):
-        return None
-    if slot.get("rank_group") == "unclear":
-        return "group", TOP_SELLING_ASK_GROUP
-    return ranking_ask.next_question(
-        metric_settled=slot.get("rank_by") in ("quantity", "amount"),
-        basis_settled=slot.get("basis") in ("delivered", "ordered"),
-        basis_line=TOP_SELLING_ASK_BASIS,
-    )
-
-
 def _top_selling_category_ids(
     slot: dict[str, Any], *, db: Any
 ) -> tuple[list[str], bool, list[str], list[str]]:
-    """The category filter a top selling ask carries, as ids: a picked category row's
-    exact code (`category_code`), else the category words the messages named
+    """The category filter a ranking's category word carries, as ids (the one definition,
+    read by `report_ask._word_filters`): an exact code (`category_code`), else the words
     (`category_words`). Returns `(ids, named, ambiguous, unknown)`. `ambiguous` is what
     ONE word matched when it matched several (category codes, or class labels): the lane
     asks which (reviewer S1, PR #1273), it never takes them all. `unknown` is every word
-    that matched nothing: the lane says so and keeps the ranking (owner retest, 27 Sep
-    2026), never a miss and never a silent widening said nowhere.
+    that matched nothing: the lane says so (owner retest, 27 Sep 2026), never a miss and
+    never a silent widening said nowhere.
 
     A word matching no category code or name goes through the catalogue's class
     vocabulary (`services.resolve_category_class`, the stock ask's own words): category
@@ -565,24 +513,6 @@ def _top_selling_category_ids(
             if category_id not in ids:
                 ids.append(category_id)
     return ids, True, [], unknown
-
-
-def _top_selling_ask_who(who: dict[str, Any]) -> str:
-    """Owner retest (27 Sep 2026): a word naming a customer AND a sales agent is asked
-    about in one short question; "1" takes the customer, "2" the agent."""
-    word = jsc.js_string(who.get("word") or "").strip()
-    customer = jsc.js_string(who.get("customer_label") or "").strip()
-    customer_part = f"customer {customer}" if customer else f"a customer named '{word}'"
-    agent = jsc.js_string(who.get("agent_label") or "").strip() or word
-    return (
-        f"Do you mean {customer_part} or sales agent {agent}? "
-        "Reply 1 for the customer, 2 for the sales agent."
-    )
-
-
-def _top_selling_ask_category(codes: list[str]) -> str:
-    """The category question: the codes only (owner, 26 Sep ~07:40Z, code only)."""
-    return f"Which category do you mean? Reply with one code: {', '.join(codes)}"
 
 
 def _nothing_live_of_kind(
@@ -658,12 +588,11 @@ def _ref_page_fragment(db: Any, ref_status: Any, carry: dict[str, Any]) -> dict[
 def _fixed_reply(
     text: str,
     *,
-    top_selling_asked: str | None = None,
     required_ask: dict[str, Any] | None = None,
     refused: bool = False,
 ) -> dict[str, Any]:
-    """One fixed line and nothing else, before any fetch: the refusal and the top
-    selling questions. `has_result: True` and no `outstanding_ask` keep it OFF the miss
+    """One fixed line and nothing else, before any fetch: a refusal or a question.
+    `has_result: True` and no `outstanding_ask` keep it OFF the miss
     lane (no escalate offer) and arm nothing; the carried `focus.status` is what makes
     the next message land on the same ask. `outstanding_report` skips the generic
     search-scope header. `refused` marks a refusal (grant, scope, audience): the envelope carries
@@ -682,9 +611,6 @@ def _fixed_reply(
         "requested_attributes": [],
         "keys_served": False,
         "outstanding_report": True,
-        # The top selling question this line asks, if any (`_top_selling_question`'s
-        # axis); `engine.py` records it on the slot for the next turn to read.
-        "top_selling_asked": top_selling_asked,
         # LOWSTOCK-FILTER-ASK: the `required_fields` slot this line leaves open, if any.
         "required_ask": required_ask,
     }
@@ -773,6 +699,106 @@ def _which_customer_ask() -> dict[str, Any]:
         "delegate_payload": {"fetch": item},
         "fetch": item,
     }
+
+
+def sales_analysis_company_reply(verdict: Any, pending: Any) -> dict[str, Any] | None:
+    """Engine seam, chat fix PR-B S7 (AC-B9): the reply to the sales analysis's company
+    question ("Sorento or Mocha?") re-runs the asked analysis for the company it picked. The
+    pick is the PARSER's: its `open_question_answer` (one position, or one item naming a
+    position or an option) or one `reference_positions`; nothing else answers it, so a new
+    ask is read as itself. None when the turn is not that reply."""
+    if getattr(pending, "kind", None) != fetch_mod.SALES_ANALYSIS_COMPANY_KIND or not isinstance(verdict, dict):
+        return None
+    options = {
+        o["position"]: jsc.js_string(o.get("label") or "").strip()
+        for o in getattr(pending, "options", None) or []
+        if isinstance(o, dict) and isinstance(o.get("position"), int)
+    }
+    position: Any = None
+    reply = verdict.get("open_question_answer")
+    if isinstance(reply, dict) and reply.get("mode") not in (None, "cancel", "no"):
+        picked = [p for p in jsc.array(reply.get("picked")) if isinstance(p, int) and not isinstance(p, bool)]
+        items = [i for i in jsc.array(reply.get("items")) if isinstance(i, dict)]
+        if len(picked) == 1:
+            position = picked[0]
+        elif len(items) == 1:
+            item = items[0]
+            named = jsc.js_string(item.get("code") or item.get("label") or "").strip().casefold()
+            position = item.get("position") if item.get("position") in options else next(
+                (p for p, label in options.items() if named and label.casefold() == named), None
+            )
+    if position is None:
+        positions = [p for p in jsc.array(verdict.get("reference_positions")) if isinstance(p, int) and not isinstance(p, bool)]
+        position = positions[0] if len(positions) == 1 else None
+    if not options.get(position):
+        return None
+    payload = dict(getattr(pending, "payload", None) or {})
+    held = payload.get("filters") if isinstance(payload.get("filters"), dict) else {}
+    return {
+        **verdict,
+        **{key: held.get(key) for key in fetch_mod.SALES_ANALYSIS_HELD_KEYS},
+        "message_type": "business_query",
+        "domain_hint": payload.get("domain") or "sales",
+        "intent_hint": "check_order",
+        "order_status": "sales_analysis",
+        "sales_company": options[position],
+        "status": None,
+        "document": None,
+        "entities": [],
+        "reference_positions": [],
+        "open_question_answer": None,
+        "is_affirmative": None,
+        "topic_reset": False,
+    }
+
+
+def sales_figure_decision(
+    db: Any, contact_respond_id: Any, space_id: Any, *, order_status: str, granted: bool,
+    parse_output: dict[str, Any] | None = None,
+) -> str:
+    """`granted`, `salesperson_book` or `not_granted` for a sales figure ask. The ONE rule
+    (`contact_asker.may_ask_sales_ranking`) applies only to a verdict that runs on the report-ask
+    tool (`sales_ranking`, the parser's `top_selling` label included); every other sales figure ask
+    (sales report, the sales analysis tool) needs the grant, as before. The contact is the one the
+    seam already resolves."""
+    if granted:
+        return "granted"
+    if order_status == "top_selling" and isinstance(parse_output, dict):
+        # REPORT-SMART-L R1: a top_selling verdict that skipped `by_capability` is the sales ranking it becomes.
+        parse_output, order_status = report_ask.from_top_selling(parse_output), report_ask.ASK_NAME
+    if order_status != report_ask.ASK_NAME or db is None or not contact_respond_id or not str(contact_respond_id).strip():
+        return "not_granted"
+    from app.services import contact_asker
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+    resolved = resolve_contact_with_null_workspace_fallback(
+        db, contact_id=str(contact_respond_id).strip(), space_id=(str(space_id).strip() or None) if space_id else None
+    )
+    decision = contact_asker.may_ask_sales_ranking(db, str(resolved) if resolved else None, granted=False)[0]
+    verdict = parse_output if isinstance(parse_output, dict) else {}
+    if (
+        decision == "salesperson_book"
+        and jsc.js_string(verdict.get("group_by") or "").strip().lower() in ("product", "category")
+        and verdict.get("self_reference") is not True
+    ):
+        # REPORT-SMART-L R1 (ruling 2): an ungranted salesperson's item / category ranking is the own-book
+        # "my ..." ask only; without `self_reference` it is refused, as top selling refused it.
+        return "not_granted"
+    return decision
+
+
+def _office_staff(db: Any, contact_respond_id: Any, space_id: Any) -> bool:
+    """Is the turn's contact office staff (an active office access type,
+    `contact_customer_scope.is_office_staff`)? False when it resolves to no one (fail closed)."""
+    from app.services.contact_customer_scope import is_office_staff
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+    if db is None or not contact_respond_id or not str(contact_respond_id).strip():
+        return False
+    contact_id = resolve_contact_with_null_workspace_fallback(
+        db, contact_id=str(contact_respond_id).strip(), space_id=(str(space_id).strip() or None) if space_id else None
+    )
+    return bool(contact_id) and is_office_staff(db, str(contact_id))
 
 
 def _sales_analysis_axis_unsupported(group_by: str) -> dict[str, Any]:
@@ -1065,9 +1091,6 @@ def _fetch_semantic_input(
         # 'all dates'" - `broaden_axis` lives on the full parser output, not this
         # object's other twelve fields, so it has to be named explicitly here too.
         "broaden_axis": parse_output.get("broaden_axis"),
-        # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 8: the top selling ask's own
-        # axes (`turn_runtime.lane_parse_output` projects them off the focus).
-        "top_selling": parse_output.get("top_selling"),
         # PLAN-po-spo-warehouse-29sep S6: the PO/SPO sort axis (the parser's own, or the
         # focus's carried one projected by `turn_runtime.lane_parse_output`). Named here
         # for the same reason `group_by`/`top_n` are: `entity_ids_transformer` reads
@@ -1818,6 +1841,7 @@ def run_fetch(
         )
         if db is not None:
             collected["live_brands"] = _turn_runtime.active_brands(db)  # for the menu's brand echo
+            collected["live_promotion_kinds"] = _turn_runtime.promotion_kind_rows(db)  # and the kind's name
         seen = collected.get("tier_availability")
         if isinstance(seen, dict) and seen and not any(seen.values()) and not collected.get("tier_probe_failed"):
             none_live = _nothing_live_of_kind(semantic_input, db, services, collected)
@@ -1837,6 +1861,12 @@ def run_fetch(
     # turns in the 7 Sep 2026 prod copy, the vector search this replaced chose the domain's
     # first-listed tool on every one of them.
     domain = parse_output.get("domain_hint") or (tier_gate or {}).get("tier_pick_domain")
+    order_status_raw = jsc.js_string(parse_output.get("order_status") or "").strip()
+    if order_status_raw == "top_selling" and domain in contracts.ORDER_OR_SALES_DOMAINS:
+        # REPORT-SMART-L R1 (safety net for a live session that never passed `by_capability`, converted before any grant gate reads its status): an item or
+        # category ranking is the sales ranking on the report engine, never `crm_top_selling_report`.
+        parse_output = report_ask.take_words(report_ask.from_top_selling(parse_output), "")
+        order_status_raw = report_ask.ASK_NAME
 
     # -- whole-domain grant gate (D6, PLAN-chatbot-last-purchase-cost.md) --------
     # A domain in `DOMAIN_GRANT_REQUIRED` is refused OUTRIGHT without the grant, before
@@ -1852,7 +1882,19 @@ def run_fetch(
         access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
         granted_raw = access_ctx.get("attributes")
         granted = set(granted_raw) if isinstance(granted_raw, list) else set()
-        if need not in granted:
+        decision = (
+            sales_figure_decision(
+                db, contact_id, space_id, granted=False,
+                order_status=jsc.js_string(parse_output.get("order_status") or "").strip(),
+                parse_output=parse_output,
+            )
+            if need == _SALES_REPORT_GRANT and need not in granted
+            else "granted" if need in granted else "not_granted"
+        )
+        if decision == "salesperson_book":
+            if trace is not None:
+                trace.add("domain_grant", {"domain": domain, "decision": decision, "needs": need})
+        elif need not in granted:
             if trace is not None:
                 trace.add("domain_grant", {"domain": domain, "skipped": "not_granted", "needs": need})
             if need == chat_report.GRANT:
@@ -2034,13 +2076,25 @@ def run_fetch(
         access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
         granted_raw = access_ctx.get("attributes")
         granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
-        if _SALES_REPORT_GRANT not in granted:
+        decision = sales_figure_decision(
+            db, contact_id, space_id, order_status=order_status_raw, granted=_SALES_REPORT_GRANT in granted,
+            parse_output=parse_output,
+        )
+        if decision == "not_granted":
             if trace is not None:
                 trace.add(
                     "domain_grant",
                     {"domain": domain, "skipped": "not_granted", "needs": _SALES_REPORT_GRANT},
                 )
             return _sales_report_not_enabled()
+        if decision == "salesperson_book" and trace is not None:
+            trace.add("domain_grant", {"domain": domain, "decision": decision, "needs": _SALES_REPORT_GRANT})
+        if order_status_raw != report_ask.ASK_NAME and report_ask.unreadable_period(parse_output):
+            # REPORT-SMART-1021 step 5: a period in words is asked, never run or echoed (the
+            # sales ranking asks it through its own required fields).
+            if trace is not None:
+                trace.add("report_period", {"unreadable": True, "order_status": order_status_raw})
+            return _fixed_reply(report_ask.UNREADABLE_PERIOD_LINE)
 
     has_customer = (
         any(isinstance(e, dict) and e.get("entity_type") == "customer" for e in entities)
@@ -2070,6 +2124,21 @@ def run_fetch(
         or bool(jsc.array(parse_output.get("outstanding_carried_product_codes")))
         or bool(carried_customer_ids)
     )
+    if (
+        order_status_raw == "sales_report"
+        and domain in contracts.ORDER_OR_SALES_DOMAINS
+        and not has_own_accounts
+        and not (has_product or has_customer or carried_subject)
+        and (has_brand or typed_brand_words(parse_output))
+        and _office_staff(db, contact_id, space_id)
+    ):
+        # Chat fix PR-B S10 (review): a staff sales total naming only a brand has no subject
+        # for `crm_sales_report` (422, "could not fetch"); the report engine totals a brand's
+        # sales (`crm_report_ask`, no axis), so it is that ask, with its words and questions.
+        parse_output = report_ask.take_words(
+            {**parse_output, "order_status": report_ask.ASK_NAME, "group_by": None}, ""
+        )
+        order_status_raw = report_ask.ASK_NAME
     if (
         domain == "order"
         and not (has_product or has_customer or has_brand or carried_subject)
@@ -2131,7 +2200,18 @@ def run_fetch(
             so_refused = order_status_raw != "outstanding"
         semantic_input["outstanding_scope"] = scope
         semantic_input["outstanding_so_refused"] = so_refused
-    elif order_status_raw == "sales_analysis" and not has_own_accounts:
+    elif (order_status_raw == "sales_analysis" and not has_own_accounts) or (
+        # Chat fix PR-B S10 (AC-B16, R03/R23): a staff sales report naming no product, no
+        # customer and no brand has no subject for `crm_sales_report` (422
+        # `subject_required`, "I could not fetch sales"): it is the company's sales for
+        # the period, the sales analysis. A customer-scoped contact keeps its links, and
+        # only an OFFICE STAFF contact is rerouted (security review: never on "no links").
+        order_status_raw == "sales_report"
+        and domain in contracts.ORDER_OR_SALES_DOMAINS
+        and not has_own_accounts
+        and not (has_product or has_customer or has_brand or carried_subject or typed_brand_words(parse_output))
+        and _office_staff(db, contact_id, space_id)
+    ):
         # PLAN-retail-sales-reports-26sep S1: a sales ANALYSIS (a company's sales by
         # month, by year, by channel) is the reports kernel's own query, answered as the
         # whole table in text and the same query as an Excel (Owner ruling 26 Sep 07:16
@@ -2163,6 +2243,12 @@ def run_fetch(
         # other sales ask of a scoped contact runs. Its reply is TEXT (the presenter's
         # month blocks), never a file.
         tool_name = "crm_sales_report"
+        if fetch_mod.is_mixed_code_set(fetch_mod.outstanding_product_codes(entities, semantic_input)):
+            # REPORT-SMART-L S2 (D): a word that fanned out to unrelated codes is asked about, never
+            # frozen on the first of them; a shared-prefix family keeps sending its prefix.
+            from app.services.chatbot.lanes.business.report_ask import MIXED_PRODUCTS_LINE
+
+            return _fixed_reply(MIXED_PRODUCTS_LINE)
         if order_status_raw == "sales_analysis":
             tool_item = {"name": tool_name, "_tool_pick": {"source": "customer_scope_sales_report"}}
             # A linked STAFF contact is not forced by the engine (not enforced), so its
@@ -2202,68 +2288,6 @@ def run_fetch(
         # resolution the outstanding override above uses, fixed once at this one
         # seam for both tools. --------------------------------------------------- #
         _resolve_report_product_and_location(parse_output, entities, semantic_input, db=db)
-    elif domain in contracts.ORDER_OR_SALES_DOMAINS and order_status_raw == "top_selling":
-        # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 5 (AC-1950): the ranking needs
-        # no subject, so no subject rule; never `tools[0]`. Gated on the sales report's
-        # own key (owner ruling 26 Sep: no new key), checked above for every sales
-        # figure status, before anything below can fetch.
-        tool_name = TOP_SELLING_TOOL
-        tool_item = {"name": tool_name, "_tool_pick": {"source": "top_selling_override"}}
-        slot = semantic_input.get("top_selling")
-        slot = slot if isinstance(slot, dict) else {}
-        if slot.get("dealer_refused"):
-            # Reviewer S2 (PR #1273): a linked dealer named a customer outside its own
-            # ledgers (`engine._top_selling_dealer_scope`). No picker, no fetch.
-            if trace is not None:
-                trace.add("top_selling", {"refused": "customer_not_permitted"})
-            return _fixed_reply(TOP_SELLING_REFUSED_OTHER_CUSTOMER, refused=True)
-        if slot.get("unclear"):
-            # Owner retest of round 4 (27 Sep 2026, R6/R8): a message inside a ranking
-            # the parser could not place is asked about in one short line, never sent to
-            # the out of scope lane or the customer service routing.
-            if trace is not None:
-                trace.add("top_selling", {"asked": "unclear"})
-            return _fixed_reply(TOP_SELLING_UNCLEAR)
-        who = slot.get("who")
-        if isinstance(who, dict):
-            if trace is not None:
-                trace.add("top_selling", {"asked": "who", "word": who.get("word")})
-            return _fixed_reply(_top_selling_ask_who(who), top_selling_asked="who")
-        question = _top_selling_question(slot)
-        if question is not None:
-            axis, line = question
-            if trace is not None:
-                trace.add("top_selling", {"asked": line})
-            # A word this message named that the ranking cannot narrow by is said above
-            # the question too, once (PR #1273 round 7: "by william" asked the metric and
-            # the unknown agent was never said).
-            unknown = [
-                f"I don't know '{word}' as a {kind}." if kind else f"I don't know '{word}'."
-                for kind, word in (slot.get("unknown") or [])
-                if jsc.truthy(word)
-            ]
-            return _fixed_reply("\n\n".join([" ".join(unknown), line]) if unknown else line, top_selling_asked=axis)
-        category_ids, _category_named, ambiguous, unknown = _top_selling_category_ids(slot, db=db)
-        if ambiguous:
-            if trace is not None:
-                trace.add("top_selling", {"asked": "category", "codes": ambiguous})
-            return _fixed_reply(_top_selling_ask_category(ambiguous), top_selling_asked="category")
-        # Owner retest (27 Sep 2026): a word the ranking cannot narrow by is said in one
-        # line above the ranking, which runs without it; the category word is then
-        # forgotten (`top_selling_drop`), the brand and agent words were never kept.
-        notes = [
-            f"I don't know '{word}' as a {kind}." if kind else f"I don't know '{word}'."
-            for kind, word in (slot.get("unknown") or [])
-            if jsc.truthy(word)
-        ]
-        notes += [f"I don't know '{word}' as a category." for word in unknown]
-        ceiling_note = top_selling_ceiling_note(slot)
-        if ceiling_note:
-            notes.append(ceiling_note)
-        if unknown:
-            semantic_input["top_selling_drop"] = ["category_words", "category_code"]
-        semantic_input["top_selling_notes"] = notes
-        semantic_input["top_selling_category_ids"] = category_ids
     elif domain == chat_report.DOMAIN and chat_report.is_chat_report(parse_output):
         # CA-3 (PLAN-chat-analytics-ca3-chat-dataset-10oct.md slice 5): what customers ask
         # the bot, `crm_report_ask` with `dataset=chat`. The reveal was checked above; every
@@ -2297,7 +2321,8 @@ def run_fetch(
         # totalled by one dimension, `crm_report_ask`. The grant was checked above for
         # every sales figure status; every other gate (audience, company, location) is
         # the route's, from `contact_id`. Nothing runs until the period, and how many for
-        # a ranking, are settled (`required_fields`, asked one per reply).
+        # a ranking, are settled (`required_fields`; every missing one in one numbered
+        # reply, chat fix PR-B S1).
         tool_name = report_ask.TOOL
         tool_item = {"name": tool_name, "_tool_pick": {"source": "sales_ranking_override"}}
         # 1b fix round F1: a customer-scoped (dealer) turn is refused a staff breakdown
@@ -2318,6 +2343,10 @@ def run_fetch(
         semantic_input["report_ask_args"] = report_ask.route_args(settled)
         if settled.extras.get("note"):
             semantic_input["report_ask_note"] = settled.extras["note"]
+        if settled.extras.get("detail"):
+            semantic_input["report_ask_detail"] = True  # R3c: a row's detail leaves the ranking on screen
+            if settled.extras.get("detail_second"):
+                semantic_input["report_ask_second_group"] = settled.extras["detail_second"]
         # The args carry every id the ask settled (an answering turn's came off the slot);
         # nothing the session carried rides beside them.
         entities = []
@@ -2505,6 +2534,19 @@ def run_fetch(
     envelope = brand_guard.guard_result(
         tool_name, fetch_mod.parse_mcp_content(raw), semantic_input.get("scope_brand_ids"), db
     )
+    second_group = semantic_input.get("report_ask_second_group") if tool_name == report_ask.TOOL else None
+    if second_group and isinstance(envelope, dict) and envelope.get("response"):
+        # REPORT-SMART-L R3c: an item's detail is two runs of the same ask (by customer, then by month),
+        # shown together; the second never changes the first's envelope.
+        try:
+            raw2 = fetch_mod.call_tool(tool_name, {**args, "group_by": second_group}, mcp=_McpSeam(services.mcp_call))
+            env2 = brand_guard.guard_result(
+                tool_name, fetch_mod.parse_mcp_content(raw2), semantic_input.get("scope_brand_ids"), db
+            )
+            if isinstance(env2, dict) and env2.get("response"):
+                envelope = {**envelope, "response": f"{envelope['response']}\n\n{env2['response']}"}
+        except Exception:  # noqa: BLE001 - the first run's answer stands alone
+            logger.warning("chatbot: item detail second run failed", exc_info=True)
     if tool_name == fetch_mod.TIER_PROBE_TOOL and semantic_input.get("promotion_types"):
         # A kind ask is served by the same serving rule as every promotion (AC-22).
         if (

@@ -39,7 +39,7 @@ from app.services.chatbot.contracts import (
     SALES_REPORT_GROUP_BYS,
     named_count,
 )
-from app.services.chatbot.turn.apply import names_its_own_ask
+from app.services.chatbot.turn.apply import delivery_status, names_its_own_ask
 from app.services.chatbot.turn.chat_state import CARRIED_QUANTITY_KEY
 from app.services.chatbot.turn.decide import RESTATED_KINDS_KEY, picked_positions
 from app.services.chatbot.turn.pending import (
@@ -330,7 +330,7 @@ _CONSOLE_INGRESS = "console"
 
 
 def previous_reply_text(
-    db: Session, *, contact_respond_id: str, ingress: str | None, is_test: bool
+    db: Session, *, contact_respond_id: str, ingress: str | None, is_test: bool, test_run_id: str | None = None
 ) -> str | None:
     """The text this contact was last answered with, for the parser's `Previous response:`.
 
@@ -359,6 +359,9 @@ def previous_reply_text(
         )
         if str(ingress or "") == _CONSOLE_INGRESS:
             query = query.filter(ChatbotTurn.ingress == _CONSOLE_INGRESS)
+            if test_run_id:
+                # REPORT-SMART-L S5-1: a console Reset is a new run id; only this run's turns are history.
+                query = query.filter(ChatbotTurn.envelope["test_run_id"].astext == str(test_run_id))
         else:
             query = query.filter(ChatbotTurn.ingress != _CONSOLE_INGRESS)
         # PR #1353 fix round 3: `created_at` is Postgres `now()`, the TRANSACTION's start,
@@ -405,6 +408,7 @@ def recent_exchanges(
     ingress: str | None,
     is_test: bool,
     limit: int = 3,
+    test_run_id: str | None = None,
 ) -> list[tuple[str, str]]:
     """The last `limit` completed exchanges with this contact, oldest first, as (what
     the contact said, what the bot answered) - the parser's "Recent exchanges" lines
@@ -425,6 +429,9 @@ def recent_exchanges(
         )
         if str(ingress or "") == _CONSOLE_INGRESS:
             query = query.filter(ChatbotTurn.ingress == _CONSOLE_INGRESS)
+            if test_run_id:
+                # REPORT-SMART-L S5-1: a console Reset is a new run id; only this run's turns are history.
+                query = query.filter(ChatbotTurn.envelope["test_run_id"].astext == str(test_run_id))
         else:
             query = query.filter(ChatbotTurn.ingress != _CONSOLE_INGRESS)
         rows = query.order_by(*_newest_turn_first(ChatbotTurn)).limit(limit * 2).all()
@@ -561,6 +568,10 @@ def active_brands(db: Session) -> list[dict[str, Any]]:
         .order_by(Brand.brand_name)
         .all()
     )
+    from app.services.chatbot_prompt_vars import _alias_words
+
+    # The owner's short forms (`brand_alias`, value = brand code) ride on the row for the Known brands line.
+    aliases = _alias_words(db, "brand_alias")
     return [
         {
             "id": row.id,
@@ -568,6 +579,7 @@ def active_brands(db: Session) -> list[dict[str, Any]]:
             "brand_code": row.brand_code,
             "company_id": row.company_id,
             "is_active": row.is_active,
+            "aliases": aliases.get(str(row.brand_code or "").strip().casefold(), []),
         }
         for row in rows
     ]
@@ -639,7 +651,13 @@ def promo_filter(
             for m in jsc.array(r.get("matches"))
         )
     }
-    product_tokens = [e for e in entities or [] if isinstance(e, dict) and e.get("hint") in (None, "", "product")]
+    # REPORT-SMART-L S2 (F): only a product typed THIS message counts; the codes the held family
+    # re-emits (`head/held_family.py`, marked `held_family`) are the State's, not the asker's.
+    product_tokens = [
+        e
+        for e in entities or []
+        if isinstance(e, dict) and e.get("hint") in (None, "", "product") and not e.get("held_family")
+    ]
     typed_product = bool(placed & set(_typed_by_token(product_tokens)))
     terms = [] if typed_product else [t.lower() for t in class_scope_terms(parse_output)]
     if not typed_product:
@@ -866,9 +884,10 @@ def _osa_distance(a: str, b: str) -> int:
 
 
 def _brand_row_keys(row: dict[str, Any]) -> set[str]:
+    # The owner's short forms (`brand_alias`, on the row) are exact names, as `resolve_brand_token` reads them.
     out = {
-        " ".join(jsc.nullish_str(row.get(k)).casefold().split())
-        for k in ("brand_name", "brand_code")
+        " ".join(jsc.nullish_str(v).casefold().split())
+        for v in (row.get("brand_name"), row.get("brand_code"), *(row.get("aliases") or []))
     }
     out.discard("")
     return out
@@ -1894,6 +1913,15 @@ def with_routing_agent_default(
     return out
 
 
+def report_domain(verdict: dict[str, Any]) -> dict[str, Any]:
+    """A copy of `verdict` with its domain read the way the turn writes it
+    (`_report_status_means_order_domain`), for a reader that runs before that seam
+    (`turn/chat_state._message_domains`)."""
+    out = dict(verdict)
+    _report_status_means_order_domain(out)
+    return out
+
+
 def _report_status_means_order_domain(out: dict[str, Any]) -> None:
     """A REPORT status word always routes to its report's domain: `sales` for a sales
     figure status, `order` for every other one. Mutates `out`.
@@ -2046,7 +2074,7 @@ def lane_parse_output(
     document = list(out.get("document") or [])
     if focus is not None and not document:
         document = list(focus.document)
-    status = out.get("status") or (focus.status if focus is not None else None)
+    status = delivery_status(out) or (focus.status if focus is not None else None)
     if status:
         key = (",".join(sorted(document)), status)
         out["order_status"] = _DOCUMENT_STATUS_TO_ORDER_STATUS.get(key, status)
@@ -2073,15 +2101,6 @@ def lane_parse_output(
     # A sales ranking never takes a carried channel (AC-HT8-10, AC-HT8-11): a fresh one names
     # its own, a refine keeps the channel through the held frame.
     is_ranking = jsc.js_string(out.get("order_status") or "").strip() == "sales_ranking"
-    # AC-HT8-16: a top selling answer fills only the asked slot, so the channel the parser put
-    # on it is not sent (`turn/apply._top_selling_rules` marks the turn `answered`).
-    if (
-        focus is not None
-        and isinstance(focus.top_selling, dict)
-        and focus.top_selling.get("answered")
-        and jsc.js_string(out.get("order_status") or "").strip() == "top_selling"
-    ):
-        out["sales_channel"] = None
     if not out.get("sales_channel") and focus is not None and focus.sales_channel and not is_ranking:
         out["sales_channel"] = focus.sales_channel
     # PLAN-po-spo-warehouse-29sep S5: the PO/SPO sort axis, a default, never an override.
@@ -2089,37 +2108,16 @@ def lane_parse_output(
         out["sort_by"] = focus.sort.get("by")
         if not out.get("sort_dir"):
             out["sort_dir"] = focus.sort.get("dir")
-    # PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 8: the top
-    # selling ask's axes, off the FOCUS (`turn/apply._top_selling_rules` already laid
-    # this turn's own values over the carried ones). One key, read by
-    # `lanes/business._fetch_semantic_input`.
-    if (
-        jsc.js_string(out.get("order_status") or "").strip() == "top_selling"
-        and focus is not None
-        and focus.top_selling
-    ):
-        out["top_selling"] = dict(focus.top_selling)
     # REPORT-ENGINE: the held sales ranking frame rides on a sales ranking verdict the parser
     # did not read as its own global ask (REPORT-DRILLDOWN: a refine, a drill, or no reading,
-    # which the lane asks about rather than guess); any other verdict never sees it.
+    # which the lane asks about rather than guess); any other verdict never sees it. Owner
+    # ruling B (REPORT-SMART-L S6): a global reading sees it too, so its answer can say "Across all".
     if (
         jsc.js_string(out.get("order_status") or "").strip() == "sales_ranking"
-        and out.get("ranking_drill") != "global"
         and focus is not None
         and focus.sales_ranking_frame
     ):
         out["sales_ranking_frame"] = dict(focus.sales_ranking_frame)
-    # Fix lane round 8 (owner hand test, 28 Sep 2026): an outstanding ask after a ranking
-    # is the ORDINARY outstanding ask with the ranked codes as its products
-    # (`apply._hop_to_report` wrote them on the hop). The same carried keys an answering
-    # turn sends (`outstanding_carry`), so the lane's outstanding override, its scope
-    # question and its header read them the way they read any carried subject.
-    hop = focus.top_selling.get("hop") if focus is not None and isinstance(focus.top_selling, dict) else None
-    hop_codes = [c for c in (hop.get("product_codes") or []) if c] if isinstance(hop, dict) else []
-    if hop_codes and not out.get("outstanding_carried_product_code"):
-        out["outstanding_carried_product_code"] = hop_codes[0]
-        if len(hop_codes) > 1:
-            out["outstanding_carried_product_codes"] = list(hop_codes)
 
     routing = dict(out.get("routing") or {})
     if accepted_team:
@@ -3477,6 +3475,29 @@ def stamp_customer_ask(
     return dataclass_replace(ask, options=stamp_customer_options(options, bases))
 
 
+#: The one stamp that answers a DO question by itself (`pickers.customer_stamp`'s wording).
+_NO_DO_STAMP = "no DO"
+
+
+def same_stamp_answer(ask: Any, verdict: dict[str, Any] | None = None) -> str | None:
+    """Chat fix PR-B S9 (AC-B11, W02 t2): a DO ask whose customer roster reads "no DO" on
+    every option gets that answer directly, one line per account, with no question: which
+    account was meant changes nothing. Review M1: only a DO ask (the parser's `document`
+    DO alone, or a DO status), and only "no DO" (an account with DOs still has a list to
+    pick). None otherwise: mixed, unmeasured (an option with no stamp), one option."""
+    if getattr(ask, "kind", None) != "customer_pick":
+        return None
+    verdict = verdict if isinstance(verdict, dict) else {}
+    documents = {jsc.js_string(d).strip().upper() for d in jsc.array(verdict.get("document"))}
+    status = jsc.js_string(verdict.get("order_status") or "").strip()
+    if documents != {"DO"} and status not in ("delivered", "do_outstanding"):
+        return None
+    options = [o for o in (ask.options or []) if isinstance(o, dict) and o.get("label") is not None]
+    if len(options) < 2 or any(o.get("stamp") != _NO_DO_STAMP for o in options):
+        return None
+    return "\n".join(f"{o['label']} - {o['stamp']}" for o in options)
+
+
 def _norm_code(value: Any) -> str:
     """`pickers._norm`'s own rule, for the one comparison this module makes itself."""
     return jsc.nullish_str(value).strip().lower()
@@ -4001,10 +4022,10 @@ def make_tool_runner(
         # R7 (PLAN-prompt-dynamic-30sep D9): a sales report or analysis ask carried the
         # brand under `order` and still does under `sales`; the ranking still does not.
         if domain in ORDER_OR_SALES_DOMAINS and not ranking:
-            # A top selling ranking narrows by its own brand (`focus.top_selling`'s
-            # `brand_ids`, `engine._top_selling_narrowing`); written onto this carry it
-            # outlived the ranking and filtered the next report by it (PR #1273, main
-            # merge: "sorento brand" in the ranking sent `brand_ids` to "can show me the DO").
+            # The parser's `top_selling` label is a ranking (`report_ask.from_top_selling`), which
+            # narrows by its own brand words; written onto this carry it outlived the ranking and
+            # filtered the next report by it (PR #1273, main merge: "sorento brand" in the ranking
+            # sent `brand_ids` to "can show me the DO").
             # #1262 fix lane round 3, B1-r2: the brand is a carried axis like the
             # customer. Resolved once here, sent as is (`run_fetch` takes these ids),
             # written back onto the focus so the next turn carries it, and named on
@@ -6041,7 +6062,11 @@ def envelope_of(
     rows = fetched.get("answers")
     figures = [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
     files = fetched.get("attachments")
-    has_result = bool(fetched.get("has_result")) and bool(figures)
+    # REPORT-SMART-L S5-2: a sales ranking carries no `figures`; the rows it printed (the frame's
+    # `shown`) are its result, so an answered ranking is not remembered as a miss.
+    frame = fetched.get("sales_ranking_frame")
+    ranked = bool(frame.get("shown", {}).get("rows")) if isinstance(frame, dict) and isinstance(frame.get("shown"), dict) else False
+    has_result = bool(fetched.get("has_result")) and (bool(figures) or ranked)
     envelope: dict[str, Any] = {
         "domain": spec.domain,
         "denied": refused,
@@ -6198,17 +6223,6 @@ def envelope_of(
         # count answer recounts the set under the SAME entitlement rather than under the
         # parser's own, empty, list. `None` on every arm that never called the tool.
         "access_levels_used": fetched.get("access_levels"),
-        # The top selling question this reply asked (`group` / `metric` / `basis` /
-        # `how_many`), or None when it asked nothing. `engine.py` records it on
-        # `focus.top_selling` (`turn/apply.record_top_selling_asked`), reviewer B2 on
-        # PR #1273.
-        "top_selling_asked": fetched.get("top_selling_asked"),
-        # The item codes a listed ranking printed, recorded on the slot by the same
-        # `record_top_selling_asked` (fix lane round 8).
-        "top_selling_codes": fetched.get("top_selling_codes"),
-        # Slot keys the reply asks to forget (a category word it said it does not
-        # know), applied by the same `record_top_selling_asked`.
-        "top_selling_drop": fetched.get("top_selling_drop"),
         # LOWSTOCK-FILTER-ASK: the `required_fields` slot a lane left open, recorded on
         # `focus.required_ask` by `engine.py` for the next message only.
         "required_ask": fetched.get("required_ask"),

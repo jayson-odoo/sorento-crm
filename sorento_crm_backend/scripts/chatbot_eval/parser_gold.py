@@ -38,10 +38,26 @@ EXPECT_KEYS = frozenset({
     "attributes_only", "attributes_include", "attachment_types", "warehouse", "promotion_kind", "is_active",
     "continues", "topic_reset", "answer_mode", "picked", "reference_positions", "entity_op", "broaden_axis",
     "state_ops_include", "state_ops_exclude",
+    # REPORT-SMART-L v92: the report fields, each compared with the parse field of the same name.
+    "order_status", "group_by", "measure", "basis", "compare_to", "sales_channel", "ranking_refine",
+    # REPORT-SMART-L delivery gold: the paper codes list (["DO"]), plain equality.
+    "document",
+    # REPORT-SMART-L v103: true means the parse carries no entity at all (an axis phrase is no entity); checked only when true, false is a no-op.
+    "entities_none",
+    # REPORT-SMART-L R5 row 13: the parse's `self_reference`, null read as false.
+    "self_reference",
+    # REPORT-SMART-L R6: the parse's `by_words` (any string: the message names an axis; null: it names none; graded only when the parse carries the key).
+    "by_words",
 })
+#: The expect keys read straight off the verdict (null means null or absent).
+_REPORT_KEYS = ("order_status", "group_by", "measure", "basis", "compare_to", "sales_channel", "ranking_refine",
+                "document")
 #: LEAN v90: the type each of these expect values must have (null allowed where listed).
 _EXPECT_TYPES: dict[str, tuple[type, ...]] = {
     "products_only": (list,),
+    "entities_none": (bool,),
+    "self_reference": (bool,),
+    "by_words": (str, type(None)),
     "is_active": (bool, type(None)),
     "continues": (bool,),
     "promotion_kind": (str, type(None)),
@@ -217,6 +233,15 @@ def grade_parse(verdict: dict[str, Any], expect: dict[str, Any]) -> tuple[bool, 
         )
         if stray:
             reasons.append(f"product entities outside the allowed set: {stray}")
+    if "self_reference" in expect and (verdict.get("self_reference") is True) is not expect["self_reference"]:
+        reasons.append(f"self_reference {verdict.get('self_reference')!r} != {expect['self_reference']!r}")
+    if "by_words" in expect and "by_words" in verdict:
+        # Null against non-null only (the words themselves vary), and only when the prompt in use emits the key.
+        named = bool(str(verdict.get("by_words") or "").strip())
+        if named is not (expect["by_words"] is not None):
+            reasons.append(f"by_words {verdict.get('by_words')!r}: expected {'words' if expect['by_words'] is not None else 'null'}")
+    if expect.get("entities_none") and entities:
+        reasons.append(f"entities {[(e.get('hint'), e.get('raw')) for e in entities]} but none expected")
     answer = verdict.get("open_question_answer")
     answer = answer if isinstance(answer, dict) else {}
     if "topic_reset" in expect and (verdict.get("topic_reset") is True) is not expect["topic_reset"]:
@@ -238,6 +263,9 @@ def grade_parse(verdict: dict[str, Any], expect: dict[str, Any]) -> tuple[bool, 
         present = [o for o in expect.get("state_ops_exclude") or [] if o in ops]
         if present:
             reasons.append(f"state_changes carry forbidden ops {present}")
+    for key in _REPORT_KEYS:
+        if key in expect and verdict.get(key) != expect[key]:
+            reasons.append(f"{key} {verdict.get(key)!r} != {expect[key]!r}")
     return (not reasons, reasons)
 
 
@@ -300,6 +328,7 @@ def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] 
     from app.services.chatbot.head import parser
     from app.services.chatbot.turn import context as context_mod
     from app.services.company_scope import DEFAULT_COMPANY_ID
+    from app.services.reports.ask import SALES_CHANNELS
 
     user_turn, latest_user_message = _fresh_turn(message)
     db = factory()
@@ -331,6 +360,8 @@ def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] 
         pending_kind=None, pending_options=None, settings_profile_line=None,
         current_message=latest_user_message, reply_to=held.get("reply_to"), media_line=None, brands=brands,
         promotion_kinds=promotion_kinds,
+        # REPORT-SMART-L R9: as the engine, only when the prompt names the line (`ParserConfig.sales_channels`).
+        sales_channels=list(SALES_CHANNELS) if getattr(config, "sales_channels", True) else None,
         product_types=product_types, product_details=product_details, candidate_lines=lines,
         open_question_line=None if state else parser.open_question_line(held.get("open_question")),
         state_block=state,
@@ -460,7 +491,8 @@ def run_live(rows: list[dict[str, Any]], *, session_factory: Any, version_id: st
                             entities = [e for e in verdict.get("entities") or [] if isinstance(e, dict)]
                             row.update(
                                 passed=passed, reasons=reasons,
-                                **{k: verdict.get(k) for k in ("status", "domain_hint", "intent_hint", "requested_attributes", "entities")},
+                                **{k: verdict.get(k) for k in ("status", "domain_hint", "intent_hint", "requested_attributes", "entities",
+                                                  "document", "order_status")},
                                 warehouse=_warehouse_raws(entities),
                                 **{k: verdict.get(k) for k in ("topic_reset", "entity_op", "broaden_axis", "reference_positions")},
                                 open_question_answer=_answer_fields(verdict.get("open_question_answer")),

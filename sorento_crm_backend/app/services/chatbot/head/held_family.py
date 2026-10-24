@@ -182,7 +182,7 @@ def narrow_held_family(
         # Held, none match: the subject is kept, and the filter beside it finds nothing.
         held = [
             {"raw": p.get("canonical_code"), "hint": "product", "canonical_code": p.get("canonical_code"),
-             "current_message": True, "confident": True}
+             "current_message": True, "confident": True, "held_family": True}
             for p in held_products
             if isinstance(p, dict) and p.get("uuid") and p.get("canonical_code")
         ]
@@ -190,7 +190,8 @@ def narrow_held_family(
             return verdict, None
         return {**verdict, "entities": [*held, *entities]}, {**note, "matched": [], "none_match": True}
     products = [
-        {"raw": code, "hint": "product", "canonical_code": code, "current_message": True, "confident": True}
+        {"raw": code, "hint": "product", "canonical_code": code, "current_message": True, "confident": True,
+         "held_family": True}
         for _pid, code in matched
     ]
     return {**verdict, "entities": [*products, *entities]}, {**note, "matched": [code for _pid, code in matched]}

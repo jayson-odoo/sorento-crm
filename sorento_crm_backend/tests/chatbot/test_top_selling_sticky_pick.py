@@ -1,7 +1,8 @@
 """Top X hot selling (#1171): the ranked list is a sticky pick list, the same as the
 customer picker and the product picker (owner, PR #1258, 26 Sep 2026 05:32Z: "make sure
 the list of choice behave similarly to our other picker like customer picker, product
-picker, that it will be sticky to a certain extent").
+picker, that it will be sticky to a certain extent"). REPORT-SMART-L R4a: the list is the
+item / category ranking the report engine printed (`crm_report_ask`, R3c), the only one left.
 
 Reuses the pickers' OWN mechanism, no second one:
 
@@ -15,7 +16,7 @@ Reuses the pickers' OWN mechanism, no second one:
   (`new_ask_closes_stale_roster`, which reads no kind, so it is inherited as is and pinned
   by the pickers' own tests rather than again here).
 
-The rows come from the MCP envelope's `result_set` (`presenters._top_selling_envelope`),
+The rows come from the ranking's printed rows (`lanes/business/fetch._report_ask_output`),
 one per printed line, `idx` = the printed rank.
 """
 from __future__ import annotations
@@ -35,7 +36,7 @@ _CATEGORY_RESULT_SET = [
     {"idx": 1, "label": "KS", "code": "KS", "entity_type": "category"},
     {"idx": 2, "label": "WC", "code": "WC", "entity_type": "category"},
 ]
-_FILTERS = {"tool": "crm_top_selling_report", "rank_by": "quantity", "basis": "delivered"}
+_FILTERS = {"tool": "crm_report_ask", "ranking": {"group_by": "product"}}
 
 
 def _decide(v: dict, *, pending):
@@ -77,7 +78,7 @@ def test_arms_one_option_per_printed_row_numbered_by_rank():
     # A pick goes back to the ask that printed the list (contract 121 / AC-1704's
     # `status` carry), and the stored filters re-run it.
     assert pending.payload["domain"] == "sales"  # R7 (PLAN-prompt-dynamic-30sep D9)
-    assert pending.payload["status"] == "top_selling"
+    assert pending.payload["status"] == "sales_ranking"
     assert pending.payload["filters"] == _FILTERS
 
 
@@ -109,7 +110,7 @@ def test_a_bare_number_picks_that_row_and_the_list_stays_open():
     state = _decide(verdict(message_type="casual", reference_positions=[2]), pending=_armed())
     assert state.pending is not None and state.pending.kind == "top_selling_pick"
     assert state.pending.answered_positions == [2]
-    assert state.focus.status == "top_selling"
+    assert state.focus.status == "sales_ranking"
 
     # a LATER reply resolves against the same list, exactly as a second pick over a
     # customer or product roster does

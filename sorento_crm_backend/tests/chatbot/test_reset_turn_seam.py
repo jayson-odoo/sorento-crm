@@ -969,7 +969,8 @@ def test_round12_guard_routes_as_at_b173(turn, name, gate):
 #
 # Reviewer B1 / S1 on 9f156ca06b: all_broaden_over_nothing_open also fired over the questions the bot
 # keeps on the focus rather than as a stored pending (a set clarify, the count question, the
-# other-brands offer, a top selling question), and beside a family widening ("all variants").
+# other-brands offer; the top selling question went with that lane, REPORT-SMART-L R4a), and beside a
+# family widening ("all variants").
 
 
 def _focus_session(focus: Focus) -> dict[str, Any]:
@@ -985,7 +986,6 @@ FOCUS_HELD = {
     "count_question": Focus(domains=["inventory"], set_page={"set_key": {**_WC_KEY, "total": 9, "shown": 0}}),
     "other_brands_offer": Focus(domains=["inventory"], set_page={"set_key": {
         **_WC_KEY, "total": 5, "shown": 5, "other_brands": [{"brand": "Mocha", "count": 2}]}, "page": 1}),
-    "top_selling_asked": Focus(domains=["order"], top_selling={"asked": {"slot": "basis"}}),
     "partly_listed_set": Focus(domains=["inventory"], set_page={"set_key": {**_WC_KEY, "total": 9, "shown": 5},
                                                                 "page": 1}),
 }

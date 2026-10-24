@@ -176,11 +176,11 @@ class TestTextAndFile:
 
 class TestUnsupportedAxis:
     """S1 (review round 2): an axis the sales analysis cannot draw is said plainly, with no
-    figure and no fetch, never a silent by-channel table."""
+    figure and no fetch, never a silent by-channel table. REPORT-SMART-1021: customer, product
+    and warehouse are the report ask's now (`tests/chatbot/test_report_smart_capability.py`);
+    an axis no sales tool draws is still said."""
 
-    @pytest.mark.parametrize(
-        "group_by", ["customer", "product", "date", "warehouse", "supplier", "transporter"]
-    )
+    @pytest.mark.parametrize("group_by", ["date", "supplier", "transporter"])
     def test_an_axis_it_cannot_draw_is_said_and_nothing_is_fetched(
         self, session_factory, monkeypatch, group_by
     ):

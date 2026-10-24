@@ -30,6 +30,7 @@ from app.services.chatbot.turn import context as context_mod
 from app.services.chatbot.turn import question as question_mod
 from app.services.chatbot.turn import task as task_mod
 from app.services.product_compatibility_service import KINDS
+from app.services.reports.ask import COMPARE_TO, SALES_CHANNELS, SALES_MEASURES
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,18 @@ class ParserConfig:
     json_schema: dict[str, Any] | None = None
     # CHAT-STATE: the prompt in use asks for `state_changes` (set by `resolve_config` in S5).
     state_block: bool = False
+    # REPORT-SMART-L: the prompt in use declares `compare_to`, so the schema offers the count
+    # measures and the `compare_to` property; a version that never describes them is not forced
+    # to emit them (`without_report_fields`). True keeps the extended schema for a bare config.
+    report_fields: bool = True
+    # REPORT-SMART-L R6: the prompt in use defines `by_words`, so the schema offers it. A version that does
+    # not (production v92) would answer null on every parse, which the sales ranking reads as "no axis typed",
+    # so its schema carries no such key and `parse` drops it from the verdict (`without_by_words`).
+    by_words: bool = True
+    # REPORT-SMART-L R9: the prompt in use names the `Sales channels:` line, so the user turn prints it
+    # (owner ruling 22 Oct 23:20, PLAN-report-smart-owner-1022.md:40-45: the line pairs with the template rule
+    # that names it; production v63 names none). True keeps the line for a bare config.
+    sales_channels: bool = True
     # PARSER-TEMPLATE F1-A: the version is the consolidated template (`head/parser_template`),
     # whose rules decide what the engine's own re-readings of the message used to.
     template: bool = False
@@ -287,7 +300,7 @@ def _build_base_json_schema() -> dict[str, Any]:
             # prompt version that never emits this key still post-processes with it
             # reading as null; the field is genuinely conditional (emitted only on a
             # sales report ask) either way.
-            "sales_channel": {"type": ["string", "null"], "enum": ["dealer", "project", None]},
+            "sales_channel": {"type": ["string", "null"], "enum": [*SALES_CHANNELS, None]},
             # PLAN-chatbot-top-x-hot-selling-24sep.md "Parser (S4)": the top selling ask's
             # three axes, each nullable and each an ENUM for the reason `group_by` gives
             # (no earlier prompt version emits them, so no working turn produces a value
@@ -327,7 +340,10 @@ def _build_base_json_schema() -> dict[str, Any]:
             # axis read as about the rows the last ranking printed ("scoped"), its own ask
             # ("global"), or either ("unsure", asked). Same exemption as `ranking_refine`.
             "ranking_drill": {"type": ["string", "null"], "enum": ["scoped", "global", "unsure", None]},
-            "measure": {"type": ["string", "null"], "enum": ["qty", "amount", None]},
+            "measure": {"type": ["string", "null"], "enum": [*SALES_MEASURES, None]},
+            # REPORT-SMART-L v92: the earlier window a ranking is compared with. Same shape and
+            # exemption as `measure`.
+            "compare_to": {"type": ["string", "null"], "enum": [*COMPARE_TO, None]},
             # PLAN-retail-sales-reports-26sep S1: the sales analysis's basis and the
             # company named. Required for strict mode and tolerated absent, exactly as
             # `sales_channel` above (no recorded emission carries them).
@@ -345,6 +361,10 @@ def _build_base_json_schema() -> dict[str, Any]:
             # PLAN-chatbot-customer-scope-29sep D2: "my" / "me" / "our" as the asker's own
             # account. Required for strict mode, tolerated absent (older prompt versions).
             "self_reference": {"type": "boolean"},
+            # REPORT-SMART-L R6 (ruling A): the verbatim words of the CURRENT message naming the ranked or
+            # grouped axis ("by salesppl", "salesppl", "item"), null when it names none. Same shape and
+            # exemption as `compare_to`; declared by the prompt version that defines it only (`without_by_words`).
+            "by_words": {"type": ["string", "null"]},
             "routing": {
                 "type": "object",
                 "additionalProperties": False,
@@ -682,12 +702,14 @@ def _build_base_json_schema() -> dict[str, Any]:
             "ranking_refine",
             "ranking_drill",
             "measure",
+            "compare_to",
             "sales_basis",
             "sales_company",
             "promotion_kind",
             "portal_form",
             "correction",
             "self_reference",
+            "by_words",
             "routing",
             "escalation",
             "document",
@@ -787,6 +809,7 @@ TOLERATED_ABSENT: frozenset[str] = frozenset(
         "ranking_refine",
         "ranking_drill",
         "measure",
+        "compare_to",
         "sales_basis",
         "sales_company",
         "promotion_kind",
@@ -794,6 +817,7 @@ TOLERATED_ABSENT: frozenset[str] = frozenset(
         "proceed_anyway",
         "open_question_answer",
         "self_reference",
+        "by_words",
         "profile_statements",
         # LOWSTOCK-SEMANTIC: no recorded emission and no prompt version before
         # `lss_0001_parser_vocab` carries it; absent reads as "nothing placed".
@@ -815,7 +839,31 @@ TOLERATED_ABSENT: frozenset[str] = frozenset(
 )
 
 
-def closed_lists_schema(items: list[str], *, state: bool = False) -> dict[str, Any]:
+#: What a prompt version that never declares `compare_to` is offered for `measure`.
+_OLD_MEASURES = ["qty", "amount", None]
+
+
+def without_report_fields(schema: dict[str, Any]) -> dict[str, Any]:
+    """A copy of `schema` as it was before the count measures and `compare_to`: `measure` is
+    qty | amount | null and `compare_to` is neither a property nor required."""
+    out = copy.deepcopy(schema)
+    out["properties"]["measure"]["enum"] = list(_OLD_MEASURES)
+    out["properties"].pop("compare_to", None)
+    out["required"] = [k for k in out["required"] if k != "compare_to"]
+    return out
+
+
+def without_by_words(schema: dict[str, Any]) -> dict[str, Any]:
+    """A copy of `schema` for a prompt version that does not define `by_words`: neither a property nor required."""
+    out = copy.deepcopy(schema)
+    out["properties"].pop("by_words", None)
+    out["required"] = [k for k in out["required"] if k != "by_words"]
+    return out
+
+
+def closed_lists_schema(
+    items: list[str], *, state: bool = False, report_fields: bool = True, by_words: bool = True
+) -> dict[str, Any]:
     """The strict schema of a CLOSED LISTS version: the production one (the CHAT-STATE one
     when the version also asks for `state_changes`), with each entity's `listed_item` held
     to the items the lists render (a JSON enum) or null. The provider then guarantees the
@@ -832,7 +880,8 @@ def closed_lists_schema(items: list[str], *, state: bool = False) -> dict[str, A
         {"type": ["string", "null"], "enum": [*items, NOT_LISTED, None]} if items else {"type": "null"}
     )
     entity["required"] = [*entity["required"], "listed_item"]
-    return schema
+    schema = schema if report_fields else without_report_fields(schema)
+    return schema if by_words else without_by_words(schema)
 
 
 #: The stored parser reasoning efforts; anything else (a typo, "none", an effort this list does not hold) is `off`.
@@ -923,11 +972,17 @@ def resolve_config(
 
     # CHAT-STATE: the literal on the prompt text (never on a message) opts the turn in.
     state_block = HEADING in (raw_template or "")
+    # REPORT-SMART-L: the schema follows the prompt, as `state_block` does.
+    report_fields = "compare_to" in (raw_template or "")
+    by_words = "by_words" in (raw_template or "")
+    sales_channels = context_mod.SALES_CHANNELS_LINE in (raw_template or "")
     json_schema = None
     if closed_lists:
         from app.services.chatbot_prompt_vars import closed_list_enum
 
-        json_schema = closed_lists_schema(closed_list_enum(db), state=state_block)
+        json_schema = closed_lists_schema(
+            closed_list_enum(db), state=state_block, report_fields=report_fields, by_words=by_words
+        )
     return ParserConfig(
         system_prompt=system_prompt,
         prompt_version=prompt_version,
@@ -938,6 +993,9 @@ def resolve_config(
         code_lookup=closed_lists and code_lookup_prompt.gate_on(raw_template),
         json_schema=json_schema,
         state_block=state_block,
+        report_fields=report_fields,
+        by_words=by_words,
+        sales_channels=sales_channels,
         template=TEMPLATE_MARKER in (raw_template or ""),
         closed_lists_index=index_mode,
         reasoning_effort=reasoning_effort_setting(db),
@@ -1197,6 +1255,13 @@ def assert_emission(emission: dict) -> None:
         )
 
 
+def _base_schema(config: ParserConfig) -> dict[str, Any]:
+    """The production schema for `config`: with or without `state_changes`, with or without the report fields."""
+    schema = PARSE_OUTPUT_JSON_SCHEMA_WITH_STATE if config.state_block else PARSE_OUTPUT_JSON_SCHEMA
+    schema = schema if config.report_fields else without_report_fields(schema)
+    return schema if config.by_words else without_by_words(schema)
+
+
 def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
     """One structured-output call. Raises `ParserError`; never returns a default.
 
@@ -1226,8 +1291,7 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
             messages,
             temperature=0.0,
             max_tokens=PARSER_MAX_TOKENS,
-            json_schema=config.json_schema
-            or (PARSE_OUTPUT_JSON_SCHEMA_WITH_STATE if config.state_block else PARSE_OUTPUT_JSON_SCHEMA),
+            json_schema=config.json_schema or _base_schema(config),
             json_schema_name=PARSE_OUTPUT_SCHEMA_NAME,
             # One cache bucket per published prompt version: every parse on it shares
             # the same static prefix (OpenAI only; the others ignore it).
@@ -1274,6 +1338,8 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
         if not isinstance(parsed, dict):
             raise ParserError("parser returned a non-object")
         assert_emission(parsed)
+        if not config.by_words:
+            parsed.pop("by_words", None)  # the prompt never defined it: a null here would read as "no axis typed"
     except ParserError as exc:
         # The provider answered, so it billed. The turn fails either way; the spend is
         # still real and still has to reach `ai_assistant_usage_logs`.

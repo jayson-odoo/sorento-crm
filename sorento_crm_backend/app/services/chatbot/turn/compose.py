@@ -277,9 +277,9 @@ def _lane_question(envelopes: list[dict[str, Any]], turn_no: int | None = None):
         rows = [r for r in (ask.get("last_result_set") or []) if isinstance(r, dict)]
         kind = str(ask.get("kind"))
         if kind == "top_selling_pick":
-            # PLAN-chatbot-top-x-hot-selling-24sep.md S4: the ranked list's own roster
-            # builder (`turn/pending.top_selling_pick`, S1): options carry the printed
-            # code and grain, and the payload sends a pick back to the ranking.
+            # PLAN-chatbot-top-x-hot-selling-24sep.md S4, REPORT-SMART-L R3c: an item or category
+            # ranking's own roster builder (`turn/pending.top_selling_pick`): options carry the
+            # printed code and grain, and the payload sends a pick back to the ranking.
             question = top_selling_pick(
                 rows, asked_at_turn=turn_no, filters=dict(ask.get("filters") or {})
             )
@@ -1179,25 +1179,6 @@ def _subject_line(state: State | None, asked_kind: str) -> str:
     return "\n".join(lines)
 
 
-#: R8 (owner retest of top selling round 4): the longest menu a ranking conversation prints.
-MAX_MENU_OPTIONS = 5
-
-
-def _in_ranking(state: State | None) -> bool:
-    focus = getattr(state, "focus", None)
-    return bool(focus is not None and (focus.status == "top_selling" or focus.top_selling))
-
-
-def _short_question(pending: Any, localizer: Any = IDENTITY) -> str:
-    count = len(pending.options)
-    if pending.kind == "top_selling_pick":
-        return f"Which item do you mean? Reply with a rank number from 1 to {count}."
-    # The header is a sentence of its own: it reads in the reply's language before the
-    # composed line carries it, the same way a domain label does.
-    header = localizer.sentence(_ASK_HEADERS.get(pending.kind, "Which one do you mean?"))
-    return f"{header} I found {count}, please type a little more of the name."
-
-
 def compose_question(pending: Any, state: State | None = None, localizer: Any = None) -> Answer:
     """The ask, as an Answer: the subject line, the header, the numbered roster, and the
     same pending back.
@@ -1238,13 +1219,6 @@ def compose_question(pending: Any, state: State | None = None, localizer: Any = 
             # the sales report's drill offer says which numbers it takes, first to last
             # (the options continue after the rows printed, so the first may be 11).
             body = f"Please reply with a number from {min(positions)} to {max(positions)}.\n" + verbatim
-    elif len(labels) > MAX_MENU_OPTIONS and _in_ranking(state):
-        # Owner retest of top selling round 4 (27 Sep 2026, R8): inside a ranking no
-        # menu lists more than five options (it listed all 100 ranked codes under
-        # "2025?"); the bot asks one short question in words and a typed number or
-        # name still picks, off the same stored options.
-        body = _short_question(pending, localizer or IDENTITY)
-        labels = []
     action: dict[str, Any] = {
         "kind": "send_message",
         "text": body,

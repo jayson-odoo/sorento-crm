@@ -325,6 +325,16 @@ def access_level_choice_message(
             for e, row in brand_entity_rows(q.get("entities"), jsc.array(out.get("live_brands")))
         }
         raws: list[str] = []
+        # REPORT-SMART-L S4-2: the kind the parser set (`promotion_kind`, a `Promotion kinds:` code)
+        # is named by its row's name, whether or not an entity for it survived grounding.
+        kind_code = jsc.js_string(q.get("promotion_kind") or "").strip()
+        kind_row = next(
+            (k for k in jsc.array(out.get("live_promotion_kinds"))
+             if kind_code and jsc.js_string(jsc.get(k, "type_code") or "").casefold() == kind_code.casefold()),
+            None,
+        )
+        if kind_row is not None:  # a code that is no promotion type behaves as no kind
+            raws.append(jsc.js_string(jsc.get(kind_row, "type_name") or "").strip() or kind_code)
         for e in jsc.array(q.get("entities")):
             v = named.get(id(e)) or jsc.js_string(jsc.get(e, "raw") or "").strip()
             if v and not any(x.lower() == v.lower() for x in raws):

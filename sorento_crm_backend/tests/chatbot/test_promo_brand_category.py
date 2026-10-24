@@ -48,10 +48,12 @@ def _mcp(monkeypatch, session_factory):
     def _db():
         yield session_factory()
 
-    app.dependency_overrides[get_db] = _db
-    app.dependency_overrides[get_current_user] = lambda: user
-    app.dependency_overrides[get_current_user_or_api_key] = lambda: user
-    app.dependency_overrides[apply_company_scope] = lambda: None
+    # monkeypatch, not a bare assignment: the overrides leave with the test even when the importing
+    # file has no `_clear_overrides` (a later file on the xdist worker got this principal and a closed session).
+    monkeypatch.setitem(app.dependency_overrides, get_db, _db)
+    monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: user)
+    monkeypatch.setitem(app.dependency_overrides, get_current_user_or_api_key, lambda: user)
+    monkeypatch.setitem(app.dependency_overrides, apply_company_scope, lambda: None)
     client = TestClient(app)
     captured: list[tuple[str, dict[str, Any]]] = []
     forwarded = ("access_levels", "promotion_types", "brand_ids", "scope_terms", "product_ids")

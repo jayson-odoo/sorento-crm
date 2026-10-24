@@ -99,7 +99,7 @@ _RECENT_EXCHANGES_HEADER = "Recent exchanges, oldest first:"
 
 def known_brands_line(brands: list[dict[str, Any]] | None) -> str | None:
     """#1262 slice 9 (F1a): the `Known brands:` line - the live `Brand` rows for the
-    contact's own companies as `name (code)` pairs, deduped by name (a brand active in
+    contact's own companies as `name (code, short forms)` pairs, deduped by name (a brand active in
     more than one of the contact's companies prints once), `None` when nothing is left.
     Shared by `parser.build_user_block` and `assemble`, so both print the same line."""
     seen: set[str] = set()
@@ -110,7 +110,19 @@ def known_brands_line(brands: list[dict[str, Any]] | None) -> str | None:
         if not name or name in seen:
             continue
         seen.add(name)
-        pairs.append(f"{name} ({code})" if code else name)
+        # The code, then the owner's short forms (`brand_alias`). With no short form the pair is
+        # `name (code)` as ever; with one, any entry equal to the name (case aside) or already
+        # printed is dropped.
+        aliases = (row or {}).get("aliases") or []
+        shown: list[str] = []
+        for entry in [code, *aliases]:
+            entry = str(entry or "").strip()
+            if not entry or entry.casefold() in {s.casefold() for s in shown}:
+                continue
+            if aliases and entry.casefold() == name.casefold():
+                continue
+            shown.append(entry)
+        pairs.append(f"{name} ({', '.join(shown)})" if shown else name)
     if not pairs:
         return None
     return f"Known brands: {', '.join(pairs)}"
@@ -128,6 +140,19 @@ def promotion_kinds_line(kinds: list[dict[str, Any]] | None) -> str | None:
         if code
     ]
     return f"Promotion kinds: {'; '.join(pairs)}" if pairs else None
+
+
+#: The `Sales channels:` line's own name. `parser.resolve_config` prints the line only when the prompt in use names it
+#: (this same text), so the line and its gate cannot drift apart.
+SALES_CHANNELS_LINE = "Sales channels"
+
+
+def sales_channels_line(channels: list[str] | None) -> str | None:
+    """REPORT-SMART-L S2 (A''), R9: the `Sales channels:` line, the channel values the code knows, so a channel
+    word is read from it and is never an entity of any kind. Printed in both closed-list modes, only when the
+    prompt in use names the line (the engine passes no channels otherwise; `ParserConfig.sales_channels`)."""
+    listed = [c for c in dict.fromkeys(str(c or "").strip() for c in channels or []) if c]
+    return f"{SALES_CHANNELS_LINE}: {', '.join(listed)}" if listed else None
 
 
 def product_types_line(names: list[str] | None) -> str | None:
@@ -152,6 +177,7 @@ def _brands_and_kinds(layers: "ContextLayers") -> str | None:
             product_types_line(layers.product_types),
             product_details_line(layers.product_details),
             promotion_kinds_line(layers.promotion_kinds),
+            sales_channels_line(layers.sales_channels),
         )
         if p
     ]
@@ -227,6 +253,8 @@ class ContextLayers:
     #: PROMO-SUBJECT-FILTER R5: the live `promotion_types` rows (`{type_code, type_name}`),
     #: one `Promotion kinds:` line, so the parser fills `promotion_kind` from the table.
     promotion_kinds: list[dict[str, Any]] | None = None
+    #: REPORT-SMART-L S2 (A''): the sales channel values, one `Sales channels:` line.
+    sales_channels: list[str] | None = None
     #: PROMO-SUBJECT-FILTER round 3 (AC-29): the live class names, one `Product types:` line.
     product_types: list[str] | None = None
     #: AC-36: the registry's descriptor keys and values, one `Product details:` line.

@@ -67,7 +67,7 @@ def _menu(session_factory, monkeypatch, ids, captured, *, kind="a3_flyer"):
     qf = _qf(kind=kind, typed="sorento")
     qf["contains_flyer"] = True
     reply, _ = _say(session_factory, monkeypatch, qf, "sorento a3 flyer", "zzt-tpk-menu")
-    assert reply.startswith("Which access level do you need for Sorento?"), reply
+    assert reply.startswith(f"Which access level do you need for {'A3 Flyer, ' if kind else ''}Sorento?"), reply
     assert (_session_of(session_factory).get("open_question") or {}).get("kind") == "tier_pick"
     return len(captured)
 
@@ -105,7 +105,7 @@ def test_a_fresh_ask_over_the_open_menu_does_not_reuse_the_old_pick(session_fact
     fresh = _qf(kind="a3_flyer", typed="sorento")
     fresh["open_question_answer"] = {"mode": "pick", "picked": [2], "items": [], "qty_for_all": None}
     reply, _ = _say(session_factory, monkeypatch, fresh, "Gimme sorento a3 flyer", "zzt-tpk-fresh")
-    assert reply.startswith("Which access level do you need for Sorento?"), reply
+    assert reply.startswith("Which access level do you need for A3 Flyer, Sorento?"), reply
     # Only the menu's per-level probes ran, each by kind and brand at its one level.
     calls = [a for name, a in captured[n:] if name == PROMO_TOOL]
     assert sorted(tuple(a.get("access_levels") or []) for a in calls) == [("Sorento Dealer",), ("Sorento Office",)], calls

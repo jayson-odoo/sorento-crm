@@ -10,7 +10,8 @@ The rule, per field, in the order the ask type lists them:
 1. given in the message and valid -> taken, nothing asked;
 2. "all" (the message said "all categories", or the reply is "all") -> settled as `ALL`,
    where the field allows it;
-3. otherwise -> asked, ONE field per reply, with the field's own question.
+3. otherwise -> asked, ONE field per reply, with the field's own question (an ask that opts
+   in with `ask_all` asks every open field in one numbered reply instead).
 
 Changing what an ask requires is config: add or remove a `FieldSpec` on its `AskType`.
 
@@ -71,9 +72,13 @@ ALL_WORDS = frozenset({"all", "any", "everything", "every", "semua", "全部", "
 ENGINE_KEYS = frozenset(
     {
         "required_ask", "required_ask_reply", "required_ask_answer", "low_stock_frame",
-        "report_ask_words", "sales_ranking_frame",
+        "report_ask_words", "sales_ranking_frame", "ranking_pick", "ranking_detail",
+        # the channel the parser read off an answering reply (`answer_drops` removes `sales_channel` itself)
+        "required_ask_channel",
         # V1-DOC-SCOPE: who may see any customer's documents is the engine's call alone.
         "ref_staff", "doc_staff",
+        # REPORT-SMART-L R8: what a held sales report total showed (`report_ask.with_held`).
+        "report_held",
     }
 )
 #: An OPTIONAL field also takes these as "no filter" (it was never required).
@@ -139,6 +144,18 @@ class AskType:
     #: put the answer's own words in them (CA-3: a period or a count named in "top 5 for
     #: September"). Empty keeps the original capture.
     answer_keys: tuple[str, ...] = ()
+    #: Opt-in (chat fix PR-B S1, owner ruling 16 Oct 2026, "ask all that is needed at once"):
+    #: with more than one required field open, ONE reply asks every one, numbered, each with
+    #: its own question. The slot still names the first as `asking`; the ask's own lane reads
+    #: an answer that settles any of them. False keeps one field per reply.
+    ask_all: bool = False
+    #: Fields that exist only as an asked slot (never collected by `collect`): stated to the
+    #: parser as the Open question like any field (`turn/question.of_required_ask`).
+    slot_fields: tuple[FieldSpec, ...] = ()
+    #: With `answered_by_parser`: a reply the parser declared NO answer for is still read by the
+    #: original capture (`_reply_verdict_by_shape`), so a declared answer is honoured and an
+    #: undeclared short reply is not lost (REPORT-SMART-L S3-1, the rankings' ask).
+    shape_fallback: bool = False
 
 
 #: Every registered ask type, by name (`register`). The engine seam reads the open slot's
@@ -193,6 +210,33 @@ def _pick_line(spec: FieldSpec, options: list[list[Any]]) -> str:
         f"Which {spec.noun} do you mean? Reply with a number" + (' or "all":' if takes_all else ":")
     )
     return "\n".join([head, *[f"{i}. {label}" for i, (_value, label) in enumerate(options, start=1)]])
+
+
+def _named(given: dict[str, Any] | None, name: str) -> bool:
+    word = (given or {}).get(name)
+    return isinstance(word, Resolved) or (isinstance(word, str) and bool(word.strip()))
+
+
+def _others_open(ask: AskType, spec: FieldSpec, values: dict, given: dict[str, Any] | None) -> list[FieldSpec]:
+    """An `ask_all` ask: every OTHER required field still open (not settled, no word given),
+    in the ask's order. Empty for any other ask."""
+    if not ask.ask_all:
+        return []
+    return [
+        _live(s) for s in ask.fields
+        if s.required and s.name != spec.name and s.name not in values and not _named(given, s.name)
+    ]
+
+
+def _numbered(specs: list[FieldSpec]) -> str:
+    return "\n".join(f"{i}. {s.question}" for i, s in enumerate(specs, start=1))
+
+
+def _question(ask: AskType, spec: FieldSpec, values: dict, given: dict[str, Any] | None) -> str:
+    """The open field's question, or, for an `ask_all` ask with others open, every open
+    field's question in one numbered reply."""
+    others = _others_open(ask, spec, values, given)
+    return _numbered([spec, *others]) if others else spec.question
 
 
 def _slot(ask: AskType, values: dict, extras: dict, *, asking: str, options=None, misses: int = 0) -> dict:
@@ -283,7 +327,13 @@ def collect(
                 # A reply the caller could read nothing from is asked again, plainly (a
                 # numbered pick shows its list again).
                 again = _pick_line(spec, options) if options else spec.question
-                return Outcome(values=values, reply=_miss_line(word, spec, got.note) if word else again,
+                reply_line = _miss_line(word, spec, got.note) if word else again
+                if not options and _others_open(ask, spec, values, given):
+                    # `ask_all` with several open: the reply may have meant any of them, so
+                    # it is not named as one field's miss; every open field is asked again.
+                    asked = _question(ask, spec, values, given)
+                    reply_line = f"{got.note}\n\n{asked}" if got.note else asked
+                return Outcome(values=values, reply=reply_line,
                                slot=_slot(ask, values, carried, asking=spec.name, options=options, misses=misses),
                                extras=carried)
 
@@ -316,7 +366,7 @@ def collect(
                            slot=_slot(ask, values, carried, asking=spec.name), extras=carried)
         if not spec.required:
             continue
-        return Outcome(values=values, reply=spec.question,
+        return Outcome(values=values, reply=_question(ask, spec, values, given),
                        slot=_slot(ask, values, carried, asking=spec.name), extras=carried)
     return Outcome(values=values, extras=carried)
 
@@ -339,11 +389,11 @@ def reply_verdict(
     # STUCK-QTY-LOOP pending-question rule): only a declared answer is the answer. Anything
     # else is a new question, which always wins (a whole new low stock ask included: it
     # settles from its own words), and "clear" is the parser's `topic_reset` with no answer.
-    if not ask.answered_by_parser:
-        return _reply_verdict_by_shape(verdict, slot, text, ask)
     answer = verdict.get("open_question_answer")
     mode = answer.get("mode") if isinstance(answer, dict) else None
     answers = mode in ANSWER_MODES
+    if not ask.answered_by_parser or (ask.shape_fallback and not answers):
+        return _reply_verdict_by_shape(verdict, slot, text, ask)
     if not (text or "").strip() or not answers:
         return verdict, "required_ask_dropped"
     rerouted = {
@@ -351,6 +401,7 @@ def reply_verdict(
         **ask.reroute, "entities": [], "open_question_answer": None,
         "is_affirmative": None, "topic_reset": False,
         "required_ask": slot, "required_ask_reply": text,
+        "required_ask_channel": verdict.get("sales_channel"),
         "required_ask_answer": dict(answer) if answers else None,
     }
     return rerouted, "required_ask_answer"
@@ -387,5 +438,6 @@ def _reply_verdict_by_shape(
         **ask.reroute, "entities": [], "open_question_answer": None,
         "is_affirmative": None, "topic_reset": False,
         "required_ask": slot, "required_ask_reply": text,
+        "required_ask_channel": verdict.get("sales_channel"),
     }
     return rerouted, "required_ask_answer"
