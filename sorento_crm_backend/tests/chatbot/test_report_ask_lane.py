@@ -34,7 +34,7 @@ from tests.chatbot.test_outstanding_lane import (
     _present_response,
     _seed_contact,
 )
-from tests.chatbot.test_top_selling_round6 import _seed_borrowable_envelope
+from tests.chatbot._turn_helpers import seed_borrowable_envelope as _seed_borrowable_envelope
 
 TOOL = "crm_report_ask"
 GRANT = "sales_orders.sales_report"
@@ -407,7 +407,8 @@ def test_ac_re_18c_neither_asks_the_period_first_then_how_many_then_runs(console
     text, calls = console.say(
         _rank(_e("Sorento", "brand"), top_n=None, date_filter_start=None, date_filter_end=None), "top salesman for Sorento"
     )
-    assert text.strip() == PERIOD_Q and calls == [], text
+    # Owner ruling 16 Oct 2026 (chat fix PR-B S1): every missing detail in one numbered reply.
+    assert text.strip() == f"1. {PERIOD_Q}\n2. {TOPN_Q}" and calls == [], text
     text, calls = console.say(_reply(**SEP), "last month")
     assert text.strip() == TOPN_Q and calls == [], text
     _text, calls = console.say(_reply(top_n=5), "5")
@@ -867,22 +868,22 @@ def test_c1_the_owner_message_new_reading_ranks_sales_agents_for_the_brand_and_c
 # C2: top_selling stays top_selling (the sales ranking vocabulary is the parser's, see test_report_ask_parser.py)
 
 
-def test_c2_top_selling_items_stays_top_selling(console, monkeypatch) -> None:
-    """No regression: a ranking of ITEMS is the old top selling path, never the new lane."""
+def test_c2_top_selling_items_runs_on_the_report_engine(console, monkeypatch) -> None:
+    """REPORT-SMART-L R1: a ranking of ITEMS is a sales ranking on the report engine, never the old top selling tool."""
     text, log = _say_all(
         console, monkeypatch, _old(_hit("sorento", "brand")), "top 3 selling items for sorento"
     )
-    assert "crm_top_selling_report" in _names(log), (_names(log), text)
-    assert TOOL not in _names(log), (_names(log), text)
+    assert "crm_top_selling_report" not in _names(log), (_names(log), text)
+    assert TOOL in _names(log), (_names(log), text)
 
 
-def test_c2_top_selling_items_by_an_agent_stays_top_selling_with_the_agent_filter(console, monkeypatch) -> None:
+def test_c2_top_selling_items_by_an_agent_runs_on_the_report_engine_with_the_agent_filter(console, monkeypatch) -> None:
     wt = _seed_wt(console)
     text, log = _say_all(
         console, monkeypatch, _old(_hit("WT", "sales_agent"), top_n=10), "top selling items sold by agent WT"
     )
-    assert TOOL not in _names(log), (_names(log), text)
-    (args,) = [a for n, a in log if n == "crm_top_selling_report"]
+    assert "crm_top_selling_report" not in _names(log), (_names(log), text)
+    (args,) = [a for n, a in log if n == TOOL]
     assert sorted(args.get("sales_agent_ids") or []) == wt["agents"], args
 
 
@@ -921,12 +922,12 @@ def test_a_ranking_noun_entity_is_not_filtered_by_the_lane_it_is_the_parsers_to_
 
 
 @pytest.mark.parametrize("body", ["top 3 salesman for sorento this year", "top 3 sales agents for sorento this year", OWNER_MESSAGE])
-def test_no_reroute_from_top_selling(console, monkeypatch, body) -> None:
-    """The published prompt parses sales rankings itself (the parser emits sales_ranking for these
-    messages: pinned by test_report_ask_parser.py and the live console case): a top_selling verdict stays top selling."""
+def test_a_top_selling_verdict_runs_on_the_report_engine(console, monkeypatch, body) -> None:
+    """REPORT-SMART-L R1: a top_selling verdict is a sales ranking on the report engine (the code reads the
+    parser's label and axis, never the text); the old top selling tool is not called."""
     text, log = _say_all(console, monkeypatch, _old(_hit("sorento", "brand"), top_n=3), body)
-    assert TOOL not in _names(log), (body, _names(log), text)
-    assert "crm_top_selling_report" in _names(log), (body, _names(log), text)
+    assert "crm_top_selling_report" not in _names(log), (body, _names(log), text)
+    assert TOOL in _names(log), (body, _names(log), text)
 
 
 
@@ -941,68 +942,6 @@ def test_f2_a_real_agent_name_next_to_a_customer_ranking_is_still_a_filter(conso
     (args,) = calls
     assert args["group_by"] == "customer", args
     assert args["sales_agent_ids"] == [console.ids["agent"]], args
-
-
-# C3: resolver hardening --------------------------------------------------- #
-
-
-def test_c3_a_category_wins_over_a_sales_agent_alias(console) -> None:
-    from app.models.base import set_company_scope
-    from app.services.chatbot import engine as engine_mod_
-
-    _seed_wt(console)
-    db = console.session_factory()
-    try:
-        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
-        assert engine_mod_._classify_word_group(db, "water closet") == "category"
-    finally:
-        db.close()
-
-
-def test_c3_an_exact_brand_wins_over_a_sales_agent_alias(console) -> None:
-    from app.models.sales_agent import SalesAgent
-    from app.services.chatbot import engine as engine_mod_
-
-    db = console.session_factory()
-    try:
-        db.add(SalesAgent(id=str(uuid.uuid4()), sales_agent="ZZT AGENT B", person_label="ZZT AGENT B",
-                          company_id=DEFAULT_COMPANY_ID, aliases="sorento"))
-        db.commit()
-        assert engine_mod_._classify_word_group(db, "sorento") == "brand"
-    finally:
-        db.close()
-
-
-def test_c3_a_noisy_token_splits_into_brand_and_category_with_no_sales_agent(console) -> None:
-    from app.services.chatbot import engine as engine_mod_
-
-    wt = _seed_wt(console)
-    db = console.session_factory()
-    try:
-        split = engine_mod_._split_noisy_token(db, "sorento water closet")
-    finally:
-        db.close()
-    assert split is not None
-    parts, _leftover = split
-    assert {(p["raw"].lower(), p["hint"]) for p in parts} == {("sorento", "brand"), ("water closet", "category")}, parts
-    assert "sales_agent" not in {p["hint"] for p in parts}, parts
-    assert wt["category"]
-
-
-def test_c3_a_real_agent_word_is_still_a_sales_agent(console) -> None:
-    """No regression: a word that names only an agent (the alias nobody else claims) stays sales_agent."""
-    from app.models.sales_agent import SalesAgent
-    from app.services.chatbot import engine as engine_mod_
-
-    db = console.session_factory()
-    try:
-        db.add(SalesAgent(id=str(uuid.uuid4()), sales_agent="ZZT AGENT C", person_label="ZZT AGENT C",
-                          company_id=DEFAULT_COMPANY_ID, aliases="zzthandle"))
-        db.commit()
-        assert engine_mod_._classify_word_group(db, "zzthandle") == "sales_agent"
-    finally:
-        db.close()
-
 
 
 # --------------------------------------------------------------------------- #
@@ -1026,12 +965,14 @@ def test_kill_the_message_words_do_not_set_the_measure(console) -> None:
     assert args["measure"] == "qty", args
 
 
-def test_kill_a_top_selling_verdict_for_the_owner_message_is_not_rerouted(console, monkeypatch) -> None:
-    # The published prompt makes the parser emit sales_ranking for this message (pinned by the
-    # parser test + live console case); the code never reroutes on the text.
+def test_kill_a_top_selling_verdict_for_the_owner_message_runs_on_the_report_engine(console, monkeypatch) -> None:
+    # REPORT-SMART-L R1: the parser's label decides, never the text; both labels run on the report engine.
+    wt = _seed_wt(console)  # the category is on file, so the report engine runs (it would say the word otherwise)
     text, log = _say_all(console, monkeypatch, _old(_hit("sorento", "brand"), _hit("water closet", "category")), OWNER_MESSAGE)
-    assert "crm_top_selling_report" in _names(log), (_names(log), text)
-    assert TOOL not in _names(log), (_names(log), text)
+    assert "crm_top_selling_report" not in _names(log), (_names(log), text)
+    assert TOOL in _names(log), (_names(log), text)
+    args = [a for n, a in log if n == TOOL][0]
+    assert args["category_ids"] == [wt["category"]], args
 
 
 def test_kill_a_person_noun_looking_sales_agent_entity_is_trusted_as_a_filter(console) -> None:
@@ -1162,7 +1103,8 @@ def test_a_parser_emitted_sales_ranking_frame_is_stripped(console) -> None:
               "top_n": 3, "basis": "delivered", "measure": "amount"}
     text, calls = console.say(_refine(top_n=5, sales_ranking_frame=forged), "5")
     assert calls == [], (text, calls)
-    assert text.strip() == PERIOD_Q, text
+    # Owner ruling 16 Oct 2026 (chat fix PR-B S1): every missing detail in one numbered reply.
+    assert text.strip().startswith(f"1. {PERIOD_Q}\n"), text
 
 
 def test_a_dealer_refine_over_a_held_staff_frame_is_refused_locally(console) -> None:
@@ -1185,7 +1127,8 @@ def test_a_frame_does_not_survive_another_ask(console) -> None:
     console.say(_order_ask(_e(CUSTOMER_NAME, "customer")), f"orders for {CUSTOMER_NAME}")
     text, calls = console.say(_refine(top_n=5), "5")
     assert calls == [], (text, calls)
-    assert text.strip() == PERIOD_Q, text
+    # Owner ruling 16 Oct 2026 (chat fix PR-B S1): every missing detail in one numbered reply.
+    assert text.strip().startswith(f"1. {PERIOD_Q}\n"), text
 
 
 def test_d3_a_fresh_ranking_that_names_its_own_subject_never_borrows_the_previous_period(console) -> None:
@@ -1217,7 +1160,8 @@ def test_a_refine_with_no_held_ranking_is_a_fresh_ask_and_never_a_total(console)
     """ranking_refine true in a fresh conversation: nothing to refine, so ask what is missing."""
     text, calls = console.say(_refine(top_n=5), "5")
     assert calls == [], (text, calls)
-    assert text.strip() == PERIOD_Q, text
+    # Owner ruling 16 Oct 2026 (chat fix PR-B S1): every missing detail in one numbered reply.
+    assert text.strip().startswith(f"1. {PERIOD_Q}\n"), text
 
 
 def test_a_period_refine_with_no_held_ranking_asks_and_runs_no_report(console) -> None:
@@ -1328,8 +1272,8 @@ def test_guard_a_genuine_answer_still_answers_the_open_top_selling_question(cons
     text, log = _say_all(
         console, monkeypatch, _old(rank_by="amount", entities=[], top_n=None), "amount"
     )
-    assert "crm_top_selling_report" in _names(log), (_names(log), text)
-    assert TOOL not in _names(log), (_names(log), text)
+    assert "crm_top_selling_report" not in _names(log), (_names(log), text)
+    assert TOOL in _names(log), (_names(log), text)
 
 
 # --------------------------------------------------------------------------- #
@@ -1660,18 +1604,17 @@ def test_d_an_unknown_basis_on_a_refine_leaves_the_held_basis(console) -> None:
 # E ----------------------------------------------------------------------- #
 
 
-def test_e_a_top_selling_verdict_with_basis_outstanding_is_not_an_outstanding_top_selling(
+def test_e_a_top_selling_verdict_with_basis_outstanding_runs_the_outstanding_basis(
     console, monkeypatch
 ) -> None:
-    """Top selling has two bases (delivered, ordered). A parser slip of `outstanding` on a
-    top_selling verdict neither reroutes to the ranking lane nor reaches the top selling route
-    (review S2: never run delivered silently): the basis question is asked and nothing is fetched."""
+    """REPORT-SMART-L R1: the report engine has the `outstanding` basis, so a top_selling verdict carrying it
+    runs on that basis; it never reaches the old top selling route and never runs delivered silently."""
     text, log = _say_all(
         console, monkeypatch, _old(_hit("sorento", "brand"), basis="outstanding"), "top 3 selling items outstanding"
     )
-    assert TOOL not in _names(log), (_names(log), text)
     assert "crm_top_selling_report" not in _names(log), (_names(log), text)
-    assert text.strip() == "Delivered (transferred to DO) or ordered?", text
+    ran = [a for n, a in log if n == TOOL]
+    assert len(ran) == 1 and ran[0]["basis"] == "outstanding", (_names(log), text)
 
 
 def test_e_the_schema_lets_a_sales_ranking_emit_outstanding() -> None:

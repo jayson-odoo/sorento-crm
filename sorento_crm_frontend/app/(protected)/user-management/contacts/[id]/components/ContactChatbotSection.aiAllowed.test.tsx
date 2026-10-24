@@ -17,6 +17,7 @@ const escalationMutate = vi.fn();
 const aiAllowedMutate = vi.fn();
 const memoryMutate = vi.fn();
 
+vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => true }));
 vi.mock('../hooks/useContactChatbot', () => ({
   useContactChatbotProfile: (...a: unknown[]) => useContactChatbotProfile(...a),
   useSaveContactChatbotProfile: () => ({ mutate, isPending: false }),

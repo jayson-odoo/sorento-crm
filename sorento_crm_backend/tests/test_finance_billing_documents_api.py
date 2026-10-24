@@ -133,7 +133,7 @@ class _World:
 
     def customer_row(self, code: str, company_id: str) -> Customer:
         row = Customer(
-            customer_code=f"{MARKER}-{code}-{uuid.uuid4().hex[:4]}",
+            customer_code=f"{MARKER}-{code}-{uuid.uuid4().hex}",
             customer_name=f"{MARKER} {code}",
             company_id=company_id,
         )

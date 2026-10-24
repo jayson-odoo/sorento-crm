@@ -252,6 +252,11 @@ def _load_attachments_by_promotion_ids(
             _joinedload(PromotionAttachment.attachment).joinedload(Attachment.attachment_type)
         )
         .filter(PromotionAttachment.promotion_id.in_(promotion_ids))
+        # A soft-deleted file is never served (owner run 21 Oct: a flyer deleted in July was
+        # still sent). The admin detail tab reads `get_promotion_attachments_by_promotion`, unfiltered, to unlink it.
+        .filter(
+            PromotionAttachment.attachment.has(Attachment.is_deleted.is_(False))
+        )
         .order_by(
             PromotionAttachment.sort_order.asc().nulls_last(),
             PromotionAttachment.created_at.asc(),
@@ -2200,6 +2205,8 @@ class PromotionAttachmentService:
             joinedload(PromotionAttachment.promotion),
             joinedload(PromotionAttachment.attachment).joinedload(Attachment.attachment_type)
         )
+        # The same rule as `_load_attachments_by_promotion_ids`: a soft-deleted file is not served.
+        q = q.filter(PromotionAttachment.attachment.has(Attachment.is_deleted.is_(False)))
 
         if contact_access_codes is not None:
             if not contact_access_codes:

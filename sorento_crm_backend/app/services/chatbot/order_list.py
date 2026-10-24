@@ -5,7 +5,7 @@
 # Two seams, both in `engine._run_stages`:
 #
 # * `order_list_verdict` reads the message against the open list BEFORE the verdict is
-#   applied, the way the top selling lane reads a message against its ranking: a brand
+#   applied (as the retired top selling lane read a message against its ranking): a brand
 #   word alone switches the brand and re-runs the list (R3), the clear words drop the
 #   brand and re-run it (R5), and a fresh order ask that names its own subject but no
 #   brand starts with all brands (R4). The parser's own reading of these messages is

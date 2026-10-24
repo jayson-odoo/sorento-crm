@@ -95,6 +95,12 @@ vi.mock(
   }),
 );
 
+// The route tests below render the server page, whose `Container` reads the layout settings
+// provider; the wrapper is layout only, so a plain div stands in.
+vi.mock('@/components/common/container', () => ({
+  Container: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+}));
+
 const useSalesOrder = vi.fn();
 const updateSalesOrderMutateAsync = vi.fn();
 vi.mock('../../../hooks/useSalesOrders', () => ({
@@ -157,6 +163,8 @@ vi.mock('../../../services/salesOrderService', () => ({
 }));
 
 import { SalesOrderDetail } from './SalesOrderDetail';
+import SalesOrderDetailPage from '../page';
+import ConsignmentDetailPage from '../../../consignments/[id]/page';
 import type { SalesOrder, SalesOrderLine } from '../../../types/scm.types';
 
 function so(over: Partial<SalesOrder> = {}): SalesOrder {
@@ -249,19 +257,136 @@ beforeEach(() => {
   searchParams = new URLSearchParams();
 });
 
-describe('SalesOrderDetail - states', () => {
-  it('shows a skeleton and the way back while loading', () => {
-    useSalesOrder.mockReturnValue({ data: undefined, isLoading: true, isError: false });
-    renderDetail();
-    // The way back is present even before the record is: a slow read must not trap anybody.
-    expect(screen.getByText('Back to sales orders')).toBeInTheDocument();
+/**
+ * SO-DETAIL-DUP-BACK (owner, 21 Oct): the page showed TWO "Back to sales orders" while the
+ * order loaded - the header's and the component's. The composed route is what the owner
+ * sees, so it is what these render: the server page, awaited, around the real component.
+ */
+async function renderPage(page: 'sales-order' | 'consignment' = 'sales-order') {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const params = Promise.resolve({ id: 'so-1' });
+  const tree =
+    page === 'consignment'
+      ? await ConsignmentDetailPage({ params })
+      : await SalesOrderDetailPage({ params });
+  return render(<QueryClientProvider client={client}>{tree}</QueryClientProvider>);
+}
+
+describe('Sales order detail route - exactly one Back', () => {
+  const states: Array<[string, Record<string, unknown>]> = [
+    ['loading', { data: undefined, isLoading: true, isError: false }],
+    [
+      'not found',
+      {
+        data: undefined,
+        isLoading: false,
+        isError: true,
+        error: Object.assign(new Error('Sales order not found'), { status: 404 }),
+        refetch: vi.fn(),
+      },
+    ],
+    [
+      'failed',
+      {
+        data: undefined,
+        isLoading: false,
+        isError: true,
+        error: Object.assign(new Error('Internal server error'), { status: 500 }),
+        refetch: vi.fn(),
+      },
+    ],
+  ];
+
+  it.each(states)('while %s, the sales-orders route has one Back to its list', async (_, state) => {
+    useSalesOrder.mockReturnValue(state);
+    await renderPage();
+    const backs = screen.getAllByRole('link', { name: /Back to sales orders/ });
+    expect(backs).toHaveLength(1);
+    expect(backs[0].getAttribute('href')).toMatch(/^\/scm\/sales-orders(\?|$)/);
   });
 
-  it('names what is missing rather than rendering an empty shell', () => {
-    useSalesOrder.mockReturnValue({ data: undefined, isLoading: false, isError: true });
+  it.each(states)('while %s, the consignment route has one Back to its own list', async (_, state) => {
+    useSalesOrder.mockReturnValue(state);
+    await renderPage('consignment');
+    const backs = screen.getAllByRole('link', { name: /Back to consignments/ });
+    expect(backs).toHaveLength(1);
+    expect(backs[0].getAttribute('href')).toMatch(/^\/scm\/consignments(\?|$)/);
+    expect(screen.queryByText('Back to sales orders')).toBeNull();
+  });
+
+  it('once loaded, the route still has one Back', async () => {
+    useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
+    await renderPage();
+    expect(screen.getAllByRole('link', { name: /Back to sales orders/ })).toHaveLength(1);
+  });
+});
+
+describe('SalesOrderDetail - states', () => {
+  // SO-DETAIL-DUP-BACK: the page header owns Back (`../page.tsx`), so the component's own
+  // states draw none - a second one stacked under the header's while the order loaded.
+  it('shows a skeleton and no second Back while loading', () => {
+    useSalesOrder.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+    renderDetail();
+    expect(screen.queryByText('Back to sales orders')).toBeNull();
+  });
+
+  it('a 404 names what is missing rather than rendering an empty shell', () => {
+    useSalesOrder.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: Object.assign(new Error('Sales order not found'), { status: 404 }),
+      refetch: vi.fn(),
+    });
     renderDetail();
     expect(screen.getByText('Sales order not found')).toBeInTheDocument();
-    expect(screen.getByText('Back to sales orders')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull();
+    expect(screen.queryByText('Back to sales orders')).toBeNull();
+  });
+
+  it('any other failure says it could not load, with the reason and a Retry that refetches', () => {
+    const refetch = vi.fn();
+    useSalesOrder.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: Object.assign(new Error('The server took too long to answer.'), { status: undefined }),
+      refetch,
+      isFetching: false,
+    });
+    renderDetail();
+    expect(screen.queryByText('Sales order not found')).toBeNull();
+    expect(screen.getByText('Could not load this sales order')).toBeInTheDocument();
+    expect(screen.getByText('The server took too long to answer.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Retry/ }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed background refetch keeps the order already on screen', () => {
+    useSalesOrder.mockReturnValue({
+      data: so(),
+      isLoading: false,
+      isError: true,
+      error: Object.assign(new Error('Internal server error'), { status: 500 }),
+      refetch: vi.fn(),
+    });
+    renderDetail();
+    expect(screen.getByText('SO-2026/07-0042')).toBeInTheDocument();
+    expect(screen.queryByText('Could not load this sales order')).toBeNull();
+  });
+
+  it('a refusal renders the access-denied state, not "not found"', () => {
+    useSalesOrder.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: Object.assign(new Error('Permission required: scm.dashboard.view'), { status: 403 }),
+      refetch: vi.fn(),
+    });
+    renderDetail();
+    expect(screen.getByText("You don't have access to this page")).toBeInTheDocument();
+    expect(screen.queryByText('Sales order not found')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull();
   });
 
   it('renders the document number, the customer and every summary field', () => {

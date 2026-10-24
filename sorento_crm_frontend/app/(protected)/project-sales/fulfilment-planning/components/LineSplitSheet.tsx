@@ -2,11 +2,16 @@
 
 import * as React from 'react';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
+import {
+  getCoreRowModel,
+  useReactTable,
+  type ColumnDef,
+} from '@tanstack/react-table';
 import { Check, CirclePlus, GripVertical, Plus, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DatePicker, parseDateInput } from '@/components/ui/date-picker';
-import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import {
   COARSE_HIT_TARGET_CLASS,
   PRESSED_CLASS,
@@ -19,13 +24,13 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { DataGridTableHeadRowCellResize } from '@/components/ui/data-grid-table';
 import { cn } from '@/lib/utils';
 import {
   changeOf,
   formatSplitDate,
   gapOf,
   groupKeyOf,
-  lineShort,
   readsRemain,
   splitsOf,
   type SplitDraft,
@@ -73,6 +78,11 @@ export interface SheetHandlers {
   add: (line: SplitLine) => void;
   remove: (line: SplitLine, splitId: string) => void;
   fieldBlur: () => void;
+  /**
+   * OI-SPLIT-GUIDE (UAC F26): the REMARK of a saved line whose remark lives in its saved
+   * decision (`SplitLine.remarkInDraft`), never as a one-row split.
+   */
+  lineRemark?: (line: SplitLine, remark: string) => void;
 }
 
 type DataAttributes = { [key: `data-${string}`]: string | undefined };
@@ -80,6 +90,8 @@ type DataAttributes = { [key: `data-${string}`]: string | undefined };
 const DESKTOP_ONLY = 'max-md:hidden';
 const GRIP_STICKY = 'max-md:sticky max-md:left-0';
 const ITEM_STICKY = 'max-md:sticky max-md:left-[28px]';
+/** With no grip column (read-only, or no drag) the item column pins at the left edge. */
+const NO_GRIP_ITEM_STICKY = 'max-md:sticky max-md:left-0';
 
 /**
  * Fixed widths except REMARK, which takes the rest: the sheet fills the 1240px page at 1280 with
@@ -94,7 +106,8 @@ const COLUMNS: Array<{
   aria?: string;
 }> = [
   { key: 'grip', label: '', width: 28, className: GRIP_STICKY, aria: 'Drag' },
-  { key: 'line', label: 'Line', width: 44, className: DESKTOP_ONLY },
+  // No Line column (OI-SPLIT-GUIDE UAC F21, owner ruling): a line's number stays internal
+  // (keys, test ids, aria labels, the save body); the item and its rows tell lines apart.
   { key: 'soDate', label: 'SO date', width: 80, className: DESKTOP_ONLY },
   { key: 'soNo', label: 'S/O no', width: 76, className: DESKTOP_ONLY },
   { key: 'item', label: 'Item code', width: 112, className: ITEM_STICKY },
@@ -103,9 +116,11 @@ const COLUMNS: Array<{
   { key: 'newQty', label: 'New qty', width: 56 },
   { key: 'date', label: 'Delivery date', width: 96 },
   { key: 'newDate', label: 'New date', width: 96 },
-  { key: 'changeQty', label: 'Change quantity', width: 80, change: true },
+  // OI-SPLIT-CONFIRM-POLISH (owner, 21 Oct 2026): "Breakdown", not "Change", so an untouched
+  // line does not read as changed.
+  { key: 'changeQty', label: 'Breakdown qty', width: 80, change: true },
   // DD/MM/YYYY in full beside the calendar button and the widest pill (ADVANCE).
-  { key: 'changeDate', label: 'Change date', width: 236, change: true },
+  { key: 'changeDate', label: 'Breakdown date', width: 236, change: true },
   { key: 'remark', label: 'Remark', change: true },
   { key: 'balance', label: 'Balance', width: 88 },
   { key: 'remove', label: '', width: 34, aria: 'Remove' },
@@ -117,12 +132,23 @@ const COLUMNS: Array<{
  * pins at the left edge on a phone.
  */
 const READ_ONLY_DROPPED = new Set(['grip', 'balance', 'remove']);
-const READ_ONLY_ITEM_STICKY = 'max-md:sticky max-md:left-0';
-const READ_ONLY_COLUMNS = COLUMNS.filter(
-  (column) => !READ_ONLY_DROPPED.has(column.key),
-).map((column) =>
-  column.key === 'item' ? { ...column, className: READ_ONLY_ITEM_STICKY } : column,
-);
+const withoutColumns = (dropped: ReadonlySet<string>) =>
+  COLUMNS.filter((column) => !dropped.has(column.key)).map((column) =>
+    column.key === 'item' ? { ...column, className: NO_GRIP_ITEM_STICKY } : column,
+  );
+const READ_ONLY_COLUMNS = withoutColumns(READ_ONLY_DROPPED);
+/** OI-SPLIT-CONFIRM-POLISH: the edit sheet with no drag (the guided Confirm): no grip column. */
+const NO_DRAG_COLUMNS = withoutColumns(new Set(['grip']));
+
+/**
+ * Never resized: the grip and remove buttons, and REMARK, which takes whatever width the other
+ * columns leave (dragging any other column's edge moves it).
+ */
+const FIXED_COLUMNS = new Set(['grip', 'remark', 'remove']);
+/** The narrowest a dragged column gets. */
+const MIN_COLUMN_WIDTH = 40;
+/** What REMARK keeps once columns are dragged wider: the sheet scrolls sideways instead. */
+const REMARK_MIN_WIDTH = 100;
 
 const CELL =
   'h-9 border-b border-e border-border bg-background px-1.5 py-1 text-center align-middle text-xs';
@@ -265,7 +291,7 @@ function DateCell({
 }
 
 /**
- * An unsplit line's CHANGE QUANTITY / CHANGE DATE cell (UAC A4): its own base qty or date as a
+ * An unsplit line's BREAKDOWN QTY / BREAKDOWN DATE cell (UAC A4): its own base qty or date as a
  * plain value (base, also inside Confirm), a button that splits the line on click or a typed key.
  */
 const RemainButton = ({
@@ -313,9 +339,27 @@ interface IncomingRow {
   n: number;
 }
 
+/** The API's cap on one remark (`MAX_REMARK_LENGTH`). */
+const REMARK_MAX = 500;
+
 /**
- * REMARK cell: the typed remark, or the server's generated one shown muted over the empty
- * input (AC-G5). Typing replaces it; clearing brings it back.
+ * How many rows a remark box needs: one per line of its text, a long line wrapping onto more
+ * (about 32 characters to a row), at most 8. Set as `rows` so the box grows on every browser,
+ * not only where CSS field-sizing works (UAC F31: iOS Safari).
+ */
+function remarkRows(text: string): number {
+  const rows = text
+    .split('\n')
+    .reduce((total, line) => total + Math.max(1, Math.ceil(line.length / 32)), 0);
+  return Math.min(8, Math.max(1, rows));
+}
+
+/**
+ * REMARK cell (OI-SPLIT-GUIDE UAC F25, F29, F31): a wrapping text box whose VALUE is the
+ * row's remark, else its default words (`generated`: the change word, or the purchasing
+ * email's words for a saved line). Typing over it stores the new text and marks it edited;
+ * clearing it, or typing the default back, stores nothing. A box cleared while focused stays
+ * empty for fresh text, and shows the default again once left empty. At most 500 characters.
  */
 function RemarkCell({
   value,
@@ -323,44 +367,63 @@ function RemarkCell({
   label,
   onValue,
   onBlur,
+  edited: editedOverride,
 }: {
   value: string;
   generated: string;
   label: string;
   onValue: (remark: string) => void;
   onBlur: () => void;
+  /** The host's own reading of "edited" (a saved line's stored remark); else value vs default. */
+  edited?: boolean;
 }) {
-  const showGenerated = !value && Boolean(generated);
+  // What the focused box holds while the planner types (it may be empty); null otherwise.
+  const [typing, setTyping] = React.useState<string | null>(null);
+  const edited = editedOverride ?? (Boolean(value.trim()) && value !== generated);
+  const text = typing ?? (value || generated);
+  // Showing the default words (nothing stored): marked, and read muted (AC-G5).
+  const showsDefault = typing === null && !value && Boolean(generated);
   return (
-    <div className="relative">
-      <Input
+    <div className="flex flex-col items-stretch gap-0.5">
+      <Textarea
         variant="sm"
+        rows={remarkRows(text)}
+        maxLength={REMARK_MAX}
         data-nav-col="remark"
+        data-remark-generated={showsDefault ? 'true' : undefined}
         aria-label={label}
-        value={value}
-        title={value || generated || undefined}
-        onChange={(event) => onValue(event.target.value)}
-        onBlur={onBlur}
+        value={text}
+        onChange={(event) => {
+          const next = event.target.value;
+          if (event.target === document.activeElement) setTyping(next);
+          onValue(!next.trim() || next === generated ? '' : next);
+        }}
+        onBlur={() => {
+          setTyping(null);
+          onBlur();
+        }}
+        className={cn(
+          'min-h-7 resize-none px-2 py-1 text-start break-words whitespace-pre-wrap [field-sizing:content]',
+          showsDefault && 'text-muted-foreground',
+        )}
       />
-      {showGenerated ? (
-        <span
-          data-remark-generated="true"
-          aria-hidden
-          className="pointer-events-none absolute inset-y-0 start-2 end-2 flex items-center truncate text-xs text-muted-foreground"
-        >
-          {generated}
-        </span>
+      {edited ? (
+        <span className="text-start text-2xs text-muted-foreground">edited</span>
       ) : null}
     </div>
   );
 }
 
-/** A REMARK as the read-only sheet prints it: the typed remark, else the generated one muted. */
+/** A REMARK as the read-only sheet prints it, wrapping: the typed remark, else the generated
+ * one muted. */
 function RemarkText({ value, generated }: { value: string; generated: string }) {
   const text = value || generated;
   return (
     <span
-      className={cn('block truncate ps-2 text-start', !value && 'text-muted-foreground')}
+      className={cn(
+        'block ps-2 text-start break-words whitespace-normal',
+        !value && 'text-muted-foreground',
+      )}
       title={text || undefined}
     >
       {text}
@@ -372,6 +435,8 @@ interface LineBlockProps {
   line: SplitLine;
   /** OI-SPLIT-VIEW (UAC E2): values as text, no grip, Balance, + Split, remove or click-to-edit. */
   readOnly: boolean;
+  /** OI-SPLIT-CONFIRM-POLISH: rows and "N left" can be dragged (no grip column when not). */
+  canDrag: boolean;
   incomingRows: IncomingRow[];
   /** The draft changed this line's splits or the splits dropped on it: AutoCount's extra is stale. */
   extraStale: boolean;
@@ -392,6 +457,7 @@ interface LineBlockProps {
 const LineBlock = React.memo(function LineBlock({
   line,
   readOnly: sheetReadOnly,
+  canDrag,
   incomingRows,
   extraStale,
   soNumber,
@@ -411,6 +477,7 @@ const LineBlock = React.memo(function LineBlock({
   const delivered = Boolean(line.deliveredInFull);
   const added = isAddedLine(line);
   const locked = added || delivered;
+  const grip = !sheetReadOnly && canDrag;
   const remain = !locked && !open && readsRemain(line);
   const allOwn = locked ? [] : splitsOf(line);
   // Variant B (AC-G2): a split dropped on another line is drawn under that line, so this
@@ -428,19 +495,12 @@ const LineBlock = React.memo(function LineBlock({
   const rows =
     ownRows + (delivered ? 0 : incomingRows.length) + (extraQty ? 1 : 0);
   const span = rows > 1 ? rows : undefined;
-  const lineSpan = ownRows > 1 ? ownRows : undefined;
   const gap = gapOf(line);
   const top = itemTop ? 'border-t-2 border-t-muted-foreground/40' : '';
   const baseCell = cn(BASE_CELL, top, flash && 'jump-flash');
 
   const baseCells = (
     <>
-      <TableCell
-        rowSpan={lineSpan}
-        className={cn(baseCell, DESKTOP_ONLY, 'tabular-nums')}
-      >
-        {no}
-      </TableCell>
       <TableCell rowSpan={span} className={cn(baseCell, DESKTOP_ONLY)}>
         {soDate}
       </TableCell>
@@ -455,16 +515,16 @@ const LineBlock = React.memo(function LineBlock({
         className={cn(
           BASE_CELL,
           top,
-          sheetReadOnly ? READ_ONLY_ITEM_STICKY : ITEM_STICKY,
+          grip ? ITEM_STICKY : NO_GRIP_ITEM_STICKY,
           'max-md:z-[1]',
         )}
       >
         <span className="font-semibold">{line.itemCode}</span>
-        <span className="block text-2xs text-muted-foreground md:hidden">
-          {multiLocation
-            ? `${lineShort(line)} · ${line.location}`
-            : lineShort(line)}
-        </span>
+        {multiLocation ? (
+          <span className="block text-2xs text-muted-foreground md:hidden">
+            {line.location}
+          </span>
+        ) : null}
       </TableCell>
       <TableCell rowSpan={span} className={cn(baseCell, DESKTOP_ONLY)}>
         {line.location}
@@ -529,6 +589,10 @@ const LineBlock = React.memo(function LineBlock({
               0
               <Check aria-hidden className="size-3.5" />
             </span>
+          ) : gap > 0 && !grip ? (
+            <span className="inline-flex items-center whitespace-nowrap rounded-full border border-warning/40 bg-warning/10 px-2 py-px font-semibold tabular-nums text-warning">
+              {`${gap} left`}
+            </span>
           ) : gap > 0 ? (
             <DragHandle
               id={`drag-rest:${line.lineId}`}
@@ -552,14 +616,38 @@ const LineBlock = React.memo(function LineBlock({
 
   const gripCell = cn(CELL, top, GRIP_STICKY, 'max-md:z-[1] px-0');
   const changeCell = cn(CELL, top);
-  // The grip and remove columns are the edit sheet's; the read-only sheet has neither.
-  const emptyGrip = sheetReadOnly ? null : (
+  // The grip and remove columns are the edit sheet's; the read-only sheet has neither, and a
+  // sheet with no drag has no grip.
+  const emptyGrip = !grip ? null : (
     <TableCell data-pinned="" className={gripCell} />
   );
   const emptyRemove = sheetReadOnly ? null : <TableCell className={changeCell} />;
 
+  // OI-SPLIT-GUIDE (UAC F3, F18, F25): the guided Confirm's words for the line's saved
+  // decision (only the guide sets them), and the planner's own remark over them.
+  const savedRemark = line.savedRemark || null;
+  const ownRemark = line.ownRemark || '';
   let body: React.ReactNode;
-  if (delivered) {
+  if (delivered && line.remarkInDraft) {
+    // UAC F28: Confirm drops a line delivered in full, so nothing of it reaches purchasing:
+    // its remark stays read-only and the row says why.
+    body = (
+      <TableRow className="border-0 hover:bg-transparent">
+        {emptyGrip}
+        {baseCells}
+        <TableCell colSpan={2} className={cn(changeCell, 'ps-2 text-start')}>
+          <span className="text-2xs text-muted-foreground">
+            Delivered in full: nothing goes to purchasing
+          </span>
+        </TableCell>
+        <TableCell className={changeCell}>
+          <RemarkText value={ownRemark} generated={savedRemark ?? ''} />
+        </TableCell>
+        {balance}
+        {emptyRemove}
+      </TableRow>
+    );
+  } else if (delivered && !savedRemark) {
     body = (
       <TableRow className="border-0 hover:bg-transparent">
         {emptyGrip}
@@ -574,13 +662,28 @@ const LineBlock = React.memo(function LineBlock({
         {emptyRemove}
       </TableRow>
     );
-  } else if (added) {
+  } else if (added || delivered) {
     body = (
       <TableRow className="border-0 hover:bg-transparent">
         {emptyGrip}
         {baseCells}
         <TableCell colSpan={2} className={changeCell} />
-        <TableCell className={changeCell} />
+        <TableCell className={changeCell}>
+          {added && !sheetReadOnly && line.remarkInDraft && handlers.lineRemark ? (
+            // A line AutoCount added (nothing of its own to split) still takes a remark when
+            // it carries a saved decision: kept in that decision, as any saved line's is.
+            <RemarkCell
+              label={`Remark, line ${no}`}
+              value={ownRemark}
+              generated={savedRemark ?? ''}
+              edited={line.remarkEdited}
+              onValue={(remark) => handlers.lineRemark?.(line, remark)}
+              onBlur={handlers.fieldBlur}
+            />
+          ) : savedRemark || ownRemark ? (
+            <RemarkText value={ownRemark || savedRemark || ''} generated="" />
+          ) : null}
+        </TableCell>
         {balance}
         {emptyRemove}
       </TableRow>
@@ -594,7 +697,7 @@ const LineBlock = React.memo(function LineBlock({
         <TableCell className={changeCell}>{formatSplitDate(line.baseDate) || '-'}</TableCell>
         <TableCell className={changeCell}>
           <RemarkText
-            value={only?.remark ?? ''}
+            value={ownRemark || savedRemark || only?.remark || ''}
             generated={line.remarkGenerated ?? ''}
           />
         </TableCell>
@@ -604,6 +707,7 @@ const LineBlock = React.memo(function LineBlock({
     const only = splits[0];
     body = (
       <TableRow className="border-0 hover:bg-transparent">
+        {grip ? (
         <TableCell data-pinned="" className={gripCell}>
           <DragHandle
             id={`drag-line:${line.lineId}`}
@@ -617,6 +721,7 @@ const LineBlock = React.memo(function LineBlock({
             className="inline-flex h-7 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
           />
         </TableCell>
+        ) : null}
         {baseCells}
         <TableCell className={changeCell}>
           <RemainButton
@@ -635,13 +740,38 @@ const LineBlock = React.memo(function LineBlock({
           />
         </TableCell>
         <TableCell className={changeCell}>
-          <RemarkCell
-            label={`Remark, line ${no}`}
-            value={only?.remark ?? ''}
-            generated={line.remarkGenerated ?? ''}
-            onValue={(remark) => only && handlers.remark(line, only.id, remark)}
-            onBlur={handlers.fieldBlur}
-          />
+          {line.remarkInDraft && handlers.lineRemark ? (
+            // UAC F26: a saved line's remark is kept in its saved decision, never a split.
+            <RemarkCell
+              label={`Remark, line ${no}`}
+              value={ownRemark}
+              generated={savedRemark ?? line.remarkGenerated ?? ''}
+              edited={line.remarkEdited}
+              onValue={(remark) => handlers.lineRemark?.(line, remark)}
+              onBlur={handlers.fieldBlur}
+            />
+          ) : (
+            <RemarkCell
+              label={`Remark, line ${no}`}
+              // OI-SPLIT-GEAR-REMARK: a stored split remark wins, then the server's words, then
+              // the line's confirmed remark (display only, never copied into the split state).
+              value={only?.remark || (savedRemark ? '' : line.ownRemark) || ''}
+              generated={savedRemark ?? line.remarkGenerated ?? ''}
+              onValue={(remark) =>
+                only &&
+                handlers.remark(
+                  line,
+                  only.id,
+                  // Typing the confirmed remark back stores nothing (H8), unless a split remark
+                  // was stored for the line as loaded: then X replaces it (H9).
+                  line.ownRemark && !savedRemark && !line.remarkStored && remark === line.ownRemark
+                    ? ''
+                    : remark,
+                )
+              }
+              onBlur={handlers.fieldBlur}
+            />
+          )}
         </TableCell>
         {balance}
         <TableCell className={changeCell} />
@@ -661,21 +791,15 @@ const LineBlock = React.memo(function LineBlock({
     );
   } else {
     body = splits.map((split, index) =>
-      splitRow(line, split, allOwn.indexOf(split) + 1, index === 0, false),
+      splitRow(line, split, allOwn.indexOf(split) + 1, index === 0),
     );
   }
 
   /**
    * One split row. `origin` is the line the split belongs to (its labels, handlers and drag
-   * name it); `incomingRow` = drawn under the line it sits on, with its own muted LINE cell.
+   * name it); a split sitting on another line is drawn under that line.
    */
-  function splitRow(
-    origin: SplitLine,
-    split: SplitDraft,
-    n: number,
-    first: boolean,
-    incomingRow: boolean,
-  ) {
+  function splitRow(origin: SplitLine, split: SplitDraft, n: number, first: boolean) {
     const originNo = origin.lineNo ?? '';
     const cell = cn(CELL, first && top);
     const word = changeOf(split, origin);
@@ -688,13 +812,6 @@ const LineBlock = React.memo(function LineBlock({
           className="border-0 hover:bg-transparent"
         >
           {first ? baseCells : null}
-          {incomingRow ? (
-            <TableCell
-              className={cn(cell, DESKTOP_ONLY, 'tabular-nums text-muted-foreground')}
-            >
-              {originNo}
-            </TableCell>
-          ) : null}
           <TableCell className={cn(cell, 'font-semibold tabular-nums')}>
             {split.qty}
           </TableCell>
@@ -727,6 +844,7 @@ const LineBlock = React.memo(function LineBlock({
         data-origin-line-id={origin.lineId}
         className="border-0 hover:bg-transparent"
       >
+        {grip ? (
         <TableCell
           data-pinned=""
           className={cn(cell, GRIP_STICKY, 'max-md:z-[1] px-0')}
@@ -740,14 +858,8 @@ const LineBlock = React.memo(function LineBlock({
             className="inline-flex h-7 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
           />
         </TableCell>
-        {first ? baseCells : null}
-        {incomingRow ? (
-          <TableCell
-            className={cn(cell, DESKTOP_ONLY, 'tabular-nums text-muted-foreground')}
-          >
-            {originNo}
-          </TableCell>
         ) : null}
+        {first ? baseCells : null}
         <TableCell className={cell}>
           <QtyInput
             variant="sm"
@@ -813,23 +925,25 @@ const LineBlock = React.memo(function LineBlock({
       {delivered
         ? null
         : incomingRows.map(({ origin, split, n }) =>
-            splitRow(origin, split, n, false, true),
+            splitRow(origin, split, n, false),
           )}
       {extraQty ? (
         <TableRow
           data-extra-row=""
           className="border-0 hover:bg-transparent"
         >
-          {sheetReadOnly ? null : (
+          {grip ? (
             <TableCell data-pinned="" className={cn(CELL, GRIP_STICKY, 'max-md:z-[1] px-0')} />
-          )}
-          <TableCell className={cn(CELL, DESKTOP_ONLY)} />
+          ) : null}
           <TableCell className={cn(CELL, 'tabular-nums font-semibold')}>
             {extraQty}
           </TableCell>
           <TableCell className={cn(CELL, 'tabular-nums')}>{extraDate}</TableCell>
           <TableCell className={cn(CELL, 'text-start text-muted-foreground')}>
-            <span className="block truncate ps-2" title={line.extraRemark ?? undefined}>
+            <span
+              className="block ps-2 break-words whitespace-normal"
+              title={line.extraRemark ?? undefined}
+            >
               {line.extraRemark ?? ''}
             </span>
           </TableCell>
@@ -918,17 +1032,18 @@ function DropRow({
 export function focusCell(cell: Element | null): boolean {
   if (!cell) return false;
   const el = (
-    cell.matches('input, button')
+    cell.matches('input, button, textarea')
       ? cell
-      : cell.querySelector('input, button, [role="combobox"]')
+      : cell.querySelector('input, button, textarea, [role="combobox"]')
   ) as HTMLElement | null;
   if (!el) return false;
   el.focus();
-  if (el instanceof HTMLInputElement) el.select();
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.select();
   return document.activeElement === el;
 }
 
 const NO_ROWS: IncomingRow[] = [];
+const NO_LINES: SplitLine[] = [];
 
 /** Every other line's split sitting on each line, in sheet order (variant B rows, AC-G2). */
 function incomingRowsByLine(lines: SplitLine[]): Map<string, IncomingRow[]> {
@@ -957,6 +1072,7 @@ export function LineSplitSheet({
   flashLineId,
   handlers,
   readOnly = false,
+  canDrag = true,
 }: {
   /** The lines on screen (search and filter applied), in sheet order. */
   lines: SplitLine[];
@@ -977,6 +1093,11 @@ export function LineSplitSheet({
    * "+ Split", remove, click-to-edit cell or keyboard editing. The handlers are never called.
    */
   readOnly?: boolean;
+  /**
+   * OI-SPLIT-CONFIRM-POLISH (owner, 21 Oct 2026): false on the guided Confirm's page: no grip
+   * column and a plain "N left", so nothing there can be dragged. The board gear keeps it.
+   */
+  canDrag?: boolean;
 }) {
   const lineById = React.useMemo(
     () => new Map(allLines.map((line) => [line.lineId, line])),
@@ -1059,7 +1180,38 @@ export function LineSplitSheet({
     () => new Set(allLines.map((line) => line.location)).size > 1,
     [allLines],
   );
-  const columns = readOnly ? READ_ONLY_COLUMNS : COLUMNS;
+  const columns = readOnly ? READ_ONLY_COLUMNS : canDrag ? COLUMNS : NO_DRAG_COLUMNS;
+  // OI-SPLIT-CONFIRM-POLISH: columns resize by dragging a header's edge, through TanStack's
+  // column sizing and the DataGrid's own handle (`components/ui/data-grid-table.tsx`
+  // `DataGridTableHeadRowCellResize`, the pattern every list page uses). Only widths are
+  // tracked here: the body rows stay this sheet's own merged blocks.
+  const sizingColumns = React.useMemo<ColumnDef<SplitLine>[]>(
+    () =>
+      columns.map((column) => ({
+        id: column.key,
+        size: column.width ?? REMARK_MIN_WIDTH,
+        minSize: MIN_COLUMN_WIDTH,
+        enableResizing: !FIXED_COLUMNS.has(column.key),
+      })),
+    [columns],
+  );
+  const sizing = useReactTable<SplitLine>({
+    data: NO_LINES,
+    columns: sizingColumns,
+    getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
+  });
+  const headers = sizing.getHeaderGroups()[0]?.headers ?? [];
+  // Once a column is dragged the sheet is at least as wide as its columns, so a wider column
+  // never squeezes REMARK below its minimum; a phone leaves out the columns it hides.
+  const resized = Object.keys(sizing.getState().columnSizing).length > 0;
+  const total = sizing.getTotalSize();
+  const phoneTotal =
+    total -
+    headers
+      .filter((header, index) => columns[index]?.className === DESKTOP_ONLY)
+      .reduce((sum, header) => sum + header.getSize(), 0);
   const lastOfDragGroup = drag
     ? lines.reduce(
         (last, line, index) =>
@@ -1074,20 +1226,34 @@ export function LineSplitSheet({
       data-split-sheet=""
       data-read-only={readOnly ? 'true' : undefined}
       onKeyDown={readOnly ? undefined : onKeyDown}
+      style={
+        resized
+          ? ({
+              '--sheet-min': `${total}px`,
+              '--sheet-min-phone': `${phoneTotal}px`,
+            } as React.CSSProperties)
+          : undefined
+      }
       className={cn(
         'table-fixed border-separate border-spacing-0 text-xs',
-        readOnly
-          ? 'min-w-[1030px] max-md:min-w-[850px]'
-          : 'min-w-[1180px] max-md:min-w-[1000px]',
+        resized
+          ? 'min-w-(--sheet-min) max-md:min-w-(--sheet-min-phone)'
+          : readOnly
+            ? 'min-w-[1030px] max-md:min-w-[850px]'
+            : 'min-w-[1180px] max-md:min-w-[1000px]',
       )}
     >
       <TableHeader className="[&_tr]:border-0">
         <TableRow className="border-0 hover:bg-transparent">
-          {columns.map((column) => (
+          {columns.map((column, index) => {
+            const header = headers[index];
+            // REMARK has no width of its own: it takes the rest.
+            const width = column.width === undefined ? undefined : header?.getSize();
+            return (
             <TableHead
               key={column.key}
               aria-label={column.aria}
-              style={{ width: column.width }}
+              style={{ width }}
               className={cn(
                 'sticky top-0 z-[2] h-auto border-b border-e border-border px-1.5 py-2 text-center text-2xs font-semibold uppercase leading-tight tracking-wide whitespace-normal text-foreground/70',
                 column.change ? 'bg-muted' : 'bg-background',
@@ -1098,8 +1264,12 @@ export function LineSplitSheet({
               )}
             >
               {column.label}
+              {header?.column.getCanResize() ? (
+                <DataGridTableHeadRowCellResize header={header} />
+              ) : null}
             </TableHead>
-          ))}
+            );
+          })}
         </TableRow>
       </TableHeader>
       {lines.map((line, index) => {
@@ -1113,6 +1283,7 @@ export function LineSplitSheet({
             <LineBlock
               line={line}
               readOnly={readOnly}
+              canDrag={canDrag}
               incomingRows={incomingRows.get(line.lineId) ?? NO_ROWS}
               extraStale={staleExtra.has(line.lineId)}
               soNumber={soNumber}

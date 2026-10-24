@@ -129,6 +129,8 @@ def _serialise(row, owners: Optional[dict] = None) -> dict:
         # Merged view: consumers see one vocabulary, not the seed/user split.
         "synonyms": merged_synonyms(row),
         "applies_when": row.applies_when or {},
+        # A size given alone (no dimension named) can mean this key (CHAT-CLOSED-LISTS R6-1).
+        "matches_bare_size": bool(row.matches_bare_size),
         # Rules, for every key without exception (#425): the dimensions used to be read
         # out of a measurement block outside the rule list, and are rules now.
         "read_from": "rules",
@@ -245,6 +247,7 @@ class SpecKeyUpdate(BaseModel):
     # Calibration rather than vocabulary - "bowl count is not only for kitchen sinks"
     # is a merchandising call - so it is editable and no longer seed-repaired.
     applies_when: Optional[dict[str, list[str]]] = None
+    matches_bare_size: Optional[bool] = None
     # Ignore readings above this. Seeded 5000 on millimetre keys, because the catalogue
     # carries "540X440180MM" - a separator typo that parses as a 440-metre sink. Blank
     # is a real answer and means no cap, which is why it is `Optional` on a payload that
@@ -265,6 +268,7 @@ class SpecKeyCreate(BaseModel):
     allowed_values: list[str] = Field(default_factory=list)
     user_synonyms: dict[str, list[str]] = Field(default_factory=dict)
     applies_when: dict[str, list[str]] = Field(default_factory=dict)
+    matches_bare_size: bool = False
     rank_weight: float = Field(default=1.0, ge=0, le=100)
     is_active: bool = True
 
@@ -938,6 +942,7 @@ async def create_spec_key(
             synonyms={},
             user_synonyms=payload.user_synonyms,
             applies_when=payload.applies_when,
+            matches_bare_size=payload.matches_bare_size,
             rank_weight=payload.rank_weight,
             is_active=payload.is_active,
             match_tolerance=tolerance,
@@ -1207,7 +1212,7 @@ def update_spec_key(
         if "label" in fields and fields["label"] is not None and fields["label"] != row.label:
             # The owner's name from here on: the seed repair leaves it alone.
             row.label_owned = True
-        for field in ("label", "rank_weight", "is_active", "match_tolerance", "match_decay"):
+        for field in ("label", "rank_weight", "is_active", "match_tolerance", "match_decay", "matches_bare_size"):
             if field in fields and fields[field] is not None:
                 setattr(row, field, fields[field])
 

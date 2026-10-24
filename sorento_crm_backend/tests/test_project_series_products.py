@@ -40,7 +40,7 @@ def _sorento(db) -> str:
 
 
 def _uom(db) -> str:
-    row = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{_uid()[:4]}", uom_name="Piece")
+    row = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{uuid.uuid4().hex}", uom_name="Piece")
     db.add(row)
     db.flush()
     return row.id
@@ -366,7 +366,7 @@ def test_another_companys_product_is_never_matched_by_code():
             text(
                 "insert into companies (id, code, name) values (:id, :code, :name)"
             ),
-            {"id": other_id, "code": f"ZZ{_uid()[:4]}", "name": f"{MARKER} Other"},
+            {"id": other_id, "code": f"ZZ{uuid.uuid4().hex}", "name": f"{MARKER} Other"},
         )
         uom = _uom(db)
         with company_scope(db, frozenset({other_id})):

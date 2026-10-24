@@ -206,6 +206,8 @@ class SupplyLadderOption(BaseModel):
 class SupplyLine(BaseModel):
     project_line_id: str
     line_no: int
+    #: The number a person reads (`so_line_no` rule): AutoCount's own, else `line_no`.
+    so_line_no: Optional[int] = None
     #: The PLANNING UNIT this line was composed in (ladder v6): this order's lines for the
     #: same item, the same fulfilment location and the same delivery date are ONE quantity,
     #: covered whole from stock or bought whole. The unit's total, and how many lines it is.
@@ -393,6 +395,10 @@ class ConfirmLine(BaseModel):
     #: order inquiry row as "CS: ...". Its own field because `amend_reason`/`buy_reason` can
     #: hold a sentence the board's Reason box was only seeded with.
     cs_note: Optional[str] = Field(None, max_length=1000)
+    #: OI-SPLIT-GUIDE (UAC F26): the planner's own REMARK for this line in the purchasing
+    #: email and Excel, edited over the default words on the split sheet; frozen with the line.
+    #: Absent (or blank) prints the default words, as before.
+    remark: Optional[str] = Field(None, max_length=500)
     #: This Buy is an ORDER BACK (part 2 section 4b, captain 25 Aug): the quantity is owed
     #: against something already ordered or already shipped rather than being a new
     #: purchase, so the row purchasing gets carries verb `ORDER_BACK` and is the one row
@@ -479,12 +485,16 @@ class ConfirmException(BaseModel):
 class ConfirmedLine(BaseModel):
     project_line_id: str
     line_no: Optional[int] = None
+    so_line_no: Optional[int] = None
     item_code: Optional[str] = None
 
 
 class CancelledLineEcho(BaseModel):
     line_no: Optional[int] = None
+    so_line_no: Optional[int] = None
     item_code: Optional[str] = None
+    #: Why it went to Cancel SO (an AutoCount Cancel SO draft's reason names its document).
+    reason: Optional[str] = None
 
 
 class ConfirmResult(BaseModel):
@@ -507,6 +517,10 @@ class ConfirmResult(BaseModel):
     lines_withdrawn: List[ConfirmedLine] = []
     #: The lines this press transferred to Cancel SO (`ConfirmSupplyBody.cancelled_lines`).
     lines_cancelled: List[CancelledLineEcho] = []
+    #: PLAN-BATCH-HELD-CANCEL: whether this press applied a pending AutoCount change to the
+    #: order, and the lines that change retired (the book cancelled them).
+    planning_change_applied: bool = False
+    lines_retired: List[CancelledLineEcho] = []
     #: The physical movements this confirmation raised, and how many it could NOT write
     #: (`PLAN-scm-cs-planning-uat.md` section E). The transfer write is best-effort so a
     #: failure cannot fail a promise already made, but a movement nobody was told about is
@@ -620,7 +634,11 @@ class ConfirmManyBody(BaseModel):
 
 
 class PreviewInquiryRow(BaseModel):
+    #: The planning address (the mirror line's number).
     line_no: Optional[int] = None
+    #: OI-SPLIT-GUIDE (UAC C2a): the number staff know the line by: AutoCount's core line
+    #: number, the mirror's without a core (`display_line_nos`).
+    so_line_no: Optional[int] = None
     item_code: Optional[str] = None
     verb: str
     #: True when this press raised the row; False when it only settles a row an earlier
@@ -630,10 +648,14 @@ class PreviewInquiryRow(BaseModel):
     delivery_date: Optional[date] = None
     stock_location: Optional[str] = None
     note: Optional[str] = None
+    #: The row's state after the press (`INQUIRY_*`): `cancelled` on a row the press retires.
+    state: Optional[str] = None
 
 
 class PreviewTransfer(BaseModel):
     line_no: Optional[int] = None
+    #: As `PreviewInquiryRow.so_line_no`.
+    so_line_no: Optional[int] = None
     is_new: bool = True
     kind: str
     qty: Decimal
@@ -645,6 +667,7 @@ class SimulatedLineError(BaseModel):
     """One line the Simulate confirm probe found failing on its own, with the raw reason."""
 
     line_no: Optional[int] = None
+    so_line_no: Optional[int] = None
     item_code: Optional[str] = None
     project_line_id: str
     error: str
@@ -690,6 +713,9 @@ class ConfirmManyOrderResult(BaseModel):
     lines_withdrawn: Optional[List[ConfirmedLine]] = None
     #: The per-order twin of `ConfirmResult.lines_cancelled` (SO-CANCEL-LINE).
     lines_cancelled: Optional[List[CancelledLineEcho]] = None
+    #: The per-order twins of `ConfirmResult.planning_change_applied` / `lines_retired`.
+    planning_change_applied: Optional[bool] = None
+    lines_retired: Optional[List[CancelledLineEcho]] = None
     #: The movements this order's confirmation raised, and how many could NOT be written -
     #: the same pair the single-order `ConfirmResult` carries. The board's toast reads "N
     #: lines confirmed, T transfers proposed", and T comes from here.

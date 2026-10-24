@@ -114,13 +114,15 @@ def test_a1_split_plan_edited_is_false_when_the_saved_plan_is_the_applied_one():
     assert split_plan_edited(saved, _plan_of(saved)) is False
 
 
-def test_a1_split_plan_edited_ignores_a_remark():
+def test_a1_split_plan_edited_counts_a_remark():
+    """Owner hand test 4 (UAC F27) supersedes #1794's A1: a remark-only edit of an applied plan is a
+    split edit."""
     from app.services.project_line_split_service import split_plan_edited
 
     saved = [_split(14, D_480_NEW, "L"), _split(236, D_608, None)]
     applied = _plan_of(saved)
     saved[1].remark = "SITE HOLD"
-    assert split_plan_edited(saved, applied) is False
+    assert split_plan_edited(saved, applied) is True
 
 
 def test_a1_split_plan_edited_ignores_the_order_of_the_splits():
@@ -165,10 +167,10 @@ def test_a2_a_date_edit_of_167_marks_the_line(api, emails):
     assert _board_flag(s, 480) is True
 
 
-def test_a2_a_remark_only_edit_does_not_mark_the_line(api, emails):
+def test_a2_a_remark_only_edit_marks_the_line(api, emails):
     s, _po = _new_line_plan_applied(api, emails)
     _edit_480(s, [(14, D_480_NEW, "own", ""), (236, D_608, "new", "SITE HOLD"), (167, D_167, "new", "")])
-    assert _board_flag(s, 480) is False
+    assert _board_flag(s, 480) is True
 
 
 def test_a2_editing_167_back_to_its_applied_date_clears_the_mark(api, emails):

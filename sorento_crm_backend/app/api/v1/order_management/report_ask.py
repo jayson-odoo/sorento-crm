@@ -15,7 +15,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
-from sqlalchemy import false, or_, text
+from sqlalchemy import false, func, or_, text
 from sqlalchemy.orm import Session
 
 from app.api.v1.order_management._contact_scope import (
@@ -46,7 +46,8 @@ GRANT = "sales_orders.sales_report"
 _DEFAULT_RATE_LIMIT = 10
 _DEFAULT_RATE_WINDOW_MINUTES = 10
 _DEALER_MESSAGE = "That breakdown is not available for your account."
-_CHANNELS = {"dealer": "Dealer", "project": "Project team"}
+_CHANNEL_LABELS = {"dealer": "Dealer", "project": "Project team"}
+_CHANNELS = {c: _CHANNEL_LABELS[c] for c in ask.SALES_CHANNELS}
 #: The route's default basis for a direct API caller that names none. The chatbot lane never
 #: relies on it: it asks the basis and always sends one.
 DEFAULT_BASIS = "delivered"
@@ -58,7 +59,7 @@ _PARAMS = frozenset(
     {
         "date_from", "date_to", "basis", "measure", "group_by", "top_n", "sort", "product_code",
         "product_ids", "brand_ids", "category_ids", "sales_agent_ids", "customer_ids", "warehouse_codes",
-        "channel", "contact_id", "space_id", "customer_agent_ids", "dataset",
+        "channel", "contact_id", "space_id", "customer_agent_ids", "dataset", "compare_to", "mine",
     }
 )
 #: The chat dataset's own query keys (CA-3); any other is 422 `unknown_param`.
@@ -78,6 +79,8 @@ _FILTER_PARAMS = (
 )
 #: The echo's name for the "(no agent)" key in an agent filter (REPORT-DRILLDOWN).
 _NO_AGENT_NAME = "(no agent)"
+#: The echo line of a run limited to the asking salesperson's own customers.
+_BOOK_LABEL, _BOOK_VALUE = "Limited to", "your customers"
 
 
 def _agent_values(raw: Optional[list[str]], param_name: str) -> Optional[list[str]]:
@@ -165,11 +168,13 @@ def _echo(
     elif product_code:
         out.append(("product", [product_code.upper()]))
     if brands:
-        out.append(("brand", _lookup(db, Brand, Brand.brand_name, brands, grants, "Brand")))
+        # Chat fix PR-B S6 (AC-B8): each name once (a brand per company is one brand).
+        out.append(("brand", sorted(set(_lookup(db, Brand, Brand.brand_name, brands, grants, "Brand")))))
     if categories:
-        out.append(
-            ("category", _lookup(db, ProductCategory, ProductCategory.category_name, categories, grants, "Category"))
-        )
+        # Chat fix PR-B S6: a category by its readable class label ("Water Closet"), never the
+        # code its live name copies ("SRT-WC"); a category with no label keeps its name.
+        label = func.coalesce(ProductCategory.class_label, ProductCategory.category_name)
+        out.append(("category", sorted(set(_lookup(db, ProductCategory, label, categories, grants, "Category")))))
     for key, values in (("sales_agent", agents), ("customer_agent", card_agents)):
         if values:
             ids = [v for v in values if v != ask.NO_AGENT_KEY]
@@ -182,8 +187,27 @@ def _echo(
     return [{"key": key, "label": ask.FILTER_LABELS[key], "values": values} for key, values in out if values]
 
 
+#: REPORT-SMART-1021: keys a sales body carries only when counted or compared, so a body
+#: that is neither stays what every caller already reads.
+_OPTIONAL_KEYS = ("count", "prev", "change_pct", "compare_to", "compare_from", "compare_until", "code", "sales_agent_fill_rate")
+
+
+def _drop_unset(part: dict, compared: bool) -> dict:
+    for key in _OPTIONAL_KEYS:
+        # A compared body keeps `change_pct` None: the earlier figure was zero ("new").
+        if part.get(key, 0) is None and not (compared and key == "change_pct"):
+            part.pop(key)
+    return part
+
+
 def _response(data: dict) -> JSONResponse:
-    return JSONResponse(content=ReportAskResponse(**data).model_dump(mode="json"))
+    content = ReportAskResponse(**data).model_dump(mode="json")
+    compared = content.get("compare_to") is not None
+    _drop_unset(content, compared)
+    _drop_unset(content["total"], compared)
+    for row in content["rows"]:
+        _drop_unset(row, compared)
+    return JSONResponse(content=content)
 
 
 @router.get("/report-ask")
@@ -196,7 +220,10 @@ def report_ask(
         description="delivered | ordered | outstanding. All three rank sales order lines (the SO's own agent), "
         "dated by the line's required date, else the SO date.",
     ),
-    measure: str = Query("amount", description="amount | qty - what the ranking sorts by."),
+    measure: str = Query(
+        "amount",
+        description="amount | qty | customers | orders | products - what the ranking sorts by (the last three count).",
+    ),
     group_by: Optional[str] = Query(
         None,
         description="customer | product | brand | category | sales_agent | location | channel | month. Absent = one total.",
@@ -216,6 +243,10 @@ def report_ask(
     warehouse_codes: Optional[list[str]] = Query(None),
     channel: Optional[str] = Query(None, description="dealer | project"),
     dataset: str = Query("sales", description="sales (default) | chat."),
+    compare_to: Optional[str] = Query(
+        None, description="previous_period (the same number of days just before) | last_year (the same dates)."
+    ),
+    mine: bool = Query(False, description="A salesperson's own customers only."),
     subjects: Optional[list[str]] = Query(None, description="Chat only: subject (domain) codes."),
     askers: Optional[list[str]] = Query(None, description="Chat only: dealer | salesperson | staff | unclassified."),
     contact_id: Optional[str] = Query(None, description="Respond.io contact id. Required with space_id."),
@@ -262,8 +293,8 @@ def report_ask(
     if basis_norm not in ask.CATALOGUE["sales"]:
         raise _unprocessable(f"Unknown basis '{basis}'", "unknown_basis", _allowed(ask.CATALOGUE["sales"]))
     measure_norm = (measure or "").strip().lower()
-    if measure_norm not in ask.MEASURES:
-        raise _unprocessable(f"Unknown measure '{measure}'", "unknown_measure", _allowed(ask.MEASURES))
+    if measure_norm not in ask.SALES_MEASURES:
+        raise _unprocessable(f"Unknown measure '{measure}'", "unknown_measure", _allowed(ask.SALES_MEASURES))
     sort_norm = (sort or "").strip().lower()
     if sort_norm not in ("desc", "asc"):
         raise _unprocessable(f"Unknown sort '{sort}'", "unknown_sort", _allowed(("desc", "asc")))
@@ -277,6 +308,12 @@ def report_ask(
         raise _unprocessable("A ranking needs top_n", "top_n_required")
     if top_n is not None and not 1 <= top_n <= TOP_SELLING_N_CEILING:
         raise _unprocessable(f"top_n must be between 1 and {TOP_SELLING_N_CEILING}", "top_n_out_of_range")
+    compare_norm = (compare_to or "").strip().lower() or None
+    if compare_norm is not None and compare_norm not in ask.COMPARE_TO:
+        raise _unprocessable(f"Unknown compare_to '{compare_to}'", "unknown_compare_to", _allowed(ask.COMPARE_TO))
+    if compare_norm is not None and (group_by or "").strip().lower() == "month":
+        # Rows are matched by name and a month's name is its month: nothing would match.
+        raise _unprocessable("compare_to does not apply to a month breakdown", "compare_by_month", "compare_to")
     channel_norm = (channel or "").strip().lower() or None
     if channel_norm is not None and channel_norm not in _CHANNELS:
         raise _unprocessable(f"Unknown channel value '{channel}'", "invalid_channel", _allowed(_CHANNELS))
@@ -318,8 +355,16 @@ def report_ask(
 
     resolved = resolve_contact_with_null_workspace_fallback(db, contact_id=contact_id, space_id=space_id)
     keys = granted_keys(db, resolved) if resolved else []
-    if GRANT not in keys:
+    granted = GRANT in keys
+    # A salesperson is narrowed to its own book: when granted only on `mine`, when not granted
+    # always (it needs an agent link with customers; the agent axes are then refused).
+    # The one rule the chatbot seams share (`contact_asker.may_ask_sales_ranking`).
+    decision, book = contact_asker.may_ask_sales_ranking(db, str(resolved) if resolved else None, granted=granted)
+    if decision == "not_granted":
         raise AppException(403, "Sales report is not enabled for your account.", code="sales_report_not_enabled")
+    if not granted and (group_norm == "sales_agent" or agents or card_agents):
+        raise AppException(403, _DEALER_MESSAGE, code="report_dimension_not_allowed")
+    narrowed = book is not None and (mine or not granted)
 
     # Brand scope off the contact this route already resolved, whatever the key: the router
     # dependency stamps it only for the legacy shared key (security H1). Stamped before any
@@ -370,6 +415,15 @@ def report_ask(
         if outside:
             raise AppException(403, _DEALER_MESSAGE, code="report_dimension_not_allowed")
 
+    if scoped is None and resolved and not narrowed and group_norm in ("product", "category"):
+        # REPORT-SMART-L R1: an item / category ranking is refused to a contact that is neither staff, linked
+        # to a customer nor narrowed to a salesperson's own book (a granted salesperson without `mine` is not), as the top selling route refuses it (`orders.py`).
+        from app.services import contact_customer_scope as scope_mod
+
+        _scope = scope_mod.contact_customer_scope(db, str(resolved))
+        if not _scope.staff and not _scope.linked:
+            raise AppException(403, "You can only see sales for your own account.", code="customer_not_permitted")
+
     # The contact's OWN companies (the sales analysis route's read), never the session scope.
     grants = {
         str(c)
@@ -409,12 +463,21 @@ def report_ask(
             by_prefix = set(product_filter)
             product_filter = [i for i in named_products if i in by_prefix]
         product_names = sorted({by_id[i] for i in product_filter} or set(by_id.values()))
+    customers = scoped if scoped is not None else named_customers
+    if narrowed:
+        # Inside the book (and the contact's own customers when it is customer-linked too); an
+        # empty result is zero rows in `run_ask`, never "no filter".
+        customers = (
+            [c for c in scoped if c in book]
+            if scoped is not None
+            else [c for c in (named_customers or sorted(book)) if c in book]
+        )
     echo = _echo(
         db,
         grants,
         product_code=code,
         product_names=product_names,
-        customers=named_customers,
+        customers=[c for c in named_customers if c in set(customers)] if narrowed and named_customers else named_customers,
         brands=brands,
         categories=categories,
         agents=agents,
@@ -422,10 +485,11 @@ def report_ask(
         channel=channel_norm,
         card_agents=card_agents,
     )
+    if narrowed:
+        echo.append({"key": "book", "label": _BOOK_LABEL, "values": [_BOOK_VALUE]})
 
     filters: dict[str, list[str]] = {}
-    customers = scoped if scoped is not None else named_customers
-    if customers:
+    if customers or narrowed:
         filters["customer"] = customers
     if product_filter is not None:
         filters["product"] = product_filter
@@ -443,20 +507,50 @@ def report_ask(
     from app.services.stock_visibility import resolve_policy
 
     policy = resolve_policy(db, resolved, space_id) if resolved else None
-    data = ask.run_ask(
-        db,
-        basis=basis_norm,
-        measure=measure_norm,
-        group_by=group_norm,
-        date_from=date_from,
-        date_to=date_to,
-        filters=filters,
-        warehouse_codes=codes,
-        policy=policy,
-        company_grants=grants,
-        sort=sort_norm,
-        top_n=top_n,
+    run = dict(
+        basis=basis_norm, measure=measure_norm, group_by=group_norm, filters=filters, warehouse_codes=codes,
+        policy=policy, company_grants=grants, sort=sort_norm,
     )
+    data = ask.run_ask(db, date_from=date_from, date_to=date_to, top_n=top_n, **run)
+    if compare_norm is not None and data.get("status") == "ok":
+        # REPORT-SMART-1021: the earlier window, every row (matched by name), one call.
+        earlier_from, earlier_to = ask.compare_window(compare_norm, date_from, date_to)
+        earlier = ask.run_ask(db, date_from=earlier_from, date_to=earlier_to, top_n=None, **run)
+        data = ask.attach_compare(data, earlier, measure_norm)
+        common.update(
+            compare_to=compare_norm, compare_from=earlier_from.isoformat(), compare_until=earlier_to.isoformat()
+        )
+    if agents and group_norm in ("product", "category") and data.get("status") == "ok" and not (narrowed and not (customers or [])):
+        # REPORT-SMART-L R3b: the old top selling note, by its own computation (`sales_report_service.top_selling`
+        # builds `sales_agent_fill_rate` only with an agent filter): the share of the window's sales orders that
+        # carry any sales agent, over the period, customer, channel, category and brand filters (never the agent
+        # filter itself, by the rate's own definition).
+        from app.models.order import SalesOrder
+        from app.services import sales_report_service as srs
+        from app.services.contact_brand_scope import brand_predicate
+
+        try:
+            # ONE count query (`srs.sales_agent_fill_rate`), with the contact's company, brand and customer
+            # scope applied EXPLICITLY (a column query is not reached by the session listeners). It does not
+            # apply the ranking's product, location (warehouse) or customer card agent filters, so with one of
+            # those set the rate is over more sales orders than the ranking it annotates counts.
+            _extra = [SalesOrder.company_id.in_(sorted(grants)) if grants else false()]
+            if brand_scope:
+                _extra.append(brand_predicate(brand_scope, Product.brand_id, Product.company_id))
+            _fill = srs.sales_agent_fill_rate(
+                db, group="category" if group_norm == "category" else "item",
+                filters=srs._ranking_filters(
+                    bucket_expr=srs._bucket_expr(), customer_query=None,
+                    customer_ids=list(customers or []) or None, channel=channel_norm,
+                    date_from=date_from, date_to=date_to,
+                    category_ids=list(categories or []) or None, brand_ids=list(brands or []) or None,
+                ),
+                extra_filters=_extra,
+            )
+        except Exception:  # noqa: BLE001 - the note is a caveat, never a failed ranking
+            _fill = None
+        if _fill is not None:
+            data = {**data, "sales_agent_fill_rate": _fill}
     return _response({**data, **common, "filters": echo})
 
 
@@ -601,19 +695,11 @@ def _chat_report_ask(
             raise AppException(403, _DEALER_MESSAGE, code="report_dimension_not_allowed")
     customers = scoped if scoped is not None else named_customers
     scope_customers: list[str] | None = list(scoped) if scoped is not None else None
-    scoped_book = False
-    if asker == "salesperson":
-        # Narrowed to its own book only when it has an agent link; a salesperson without one sees all.
-        with company_scope(db, None):
-            agent_ids = [str(i) for (i,) in db.query(SalesAgent.id).filter(SalesAgent.contact_id == str(resolved)).all()]
-        scoped_book = bool(agent_ids)
+    # Narrowed to its own book only when it has an agent link; a salesperson without one sees all.
+    own = contact_asker.own_book(db, str(resolved)) if asker == "salesperson" else None
+    scoped_book = own is not None
     if scoped_book:
-        with company_scope(db, None):
-            own = (
-                {str(i) for (i,) in db.query(Customer.id).filter(Customer.sales_agent_id.in_(agent_ids)).all()}
-                if agent_ids else set()
-            )
-            customers = [c for c in (named_customers or own) if c in own]
+        customers = [c for c in (named_customers or own) if c in own]
         scope_customers = sorted(own)
 
     grants = {

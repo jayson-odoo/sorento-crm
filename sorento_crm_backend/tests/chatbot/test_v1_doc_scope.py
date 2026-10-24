@@ -1371,7 +1371,50 @@ class TestGrantedReportsRunNoDoProbe:
         assert probes == [], probes
         assert " - no DO" not in reply and " - has DO" not in reply, reply
 
-    def test_document_staff_keep_the_do_stamps(self, session_factory, monkeypatch) -> None:
+    @pytest.mark.parametrize("status", ["sales_report", "sales_analysis"])
+    def test_document_staff_keep_the_do_stamps(self, session_factory, monkeypatch, status) -> None:
+        """Document staff keep the picker (AC-11). Since SALES-COMPANY-PICK round 2 (crew ruling
+        (a), #1843 AC-10 / AC-12) a sales_analysis ask that names a customer IS that customer's
+        sales report, and a sales report's picker prints no has / no DO hint (AC-1657), so the
+        staff picker here is the sales report's: the same as the sales_report parse of this turn."""
+        _seed_contact(session_factory, variables={})
+        make_office_access_type(session_factory, CONTACT_ID)
+        qf = _parser_output(
+            domain_hint="order", intent_hint="check_order", order_status=status,
+            entities=[], date_filter_start="2026-10-01", date_filter_end="2026-10-31",
+        )
+
+        reply, _captured, probes, _asked = _picker_turn(
+            session_factory, monkeypatch, qf=qf, attributes=(OUTSTANDING_KEY, SALES_GRANT)
+        )
+
+        assert "Which one do you mean?" in reply, ("staff keep the picker (AC-11)", reply)
+        assert probes == [], ("the sales report's picker runs no DO probe (AC-1657)", probes)
+        assert " - has DO" not in reply and " - no DO" not in reply, reply
+
+
+    # SALES-COMPANY-PICK round 2 (#1843): a sales_analysis ask whose CURRENT message names a
+    # customer is now the sales report, whose picker never probes (AC-1657), so the cases above
+    # no longer reach the analysis picker. A word the parser tagged brand is not rerouted
+    # (`turn_runtime._report_status_means_order_domain` reads product / customer hints only) and
+    # still reaches it: the non-staff skip (AC-14) and the staff stamps are pinned there.
+
+    def test_a_granted_unlinked_contact_gets_no_do_probe_on_the_analysis_picker(self, session_factory, monkeypatch) -> None:
+        _seed_contact(session_factory, variables={})
+        qf = _parser_output(
+            domain_hint="order", intent_hint="check_order", order_status="sales_analysis",
+            entities=[], date_filter_start="2026-10-01", date_filter_end="2026-10-31",
+        )
+
+        reply, _captured, probes, _asked = _picker_turn(
+            session_factory, monkeypatch, "brand", qf=qf, attributes=(OUTSTANDING_KEY, SALES_GRANT)
+        )
+
+        assert "Which one do you mean?" in reply, reply
+        assert probes == [], probes
+        assert " - no DO" not in reply and " - has DO" not in reply, reply
+
+    def test_document_staff_keep_the_do_stamps_on_the_analysis_picker(self, session_factory, monkeypatch) -> None:
         _seed_contact(session_factory, variables={})
         make_office_access_type(session_factory, CONTACT_ID)
         qf = _parser_output(
@@ -1380,10 +1423,10 @@ class TestGrantedReportsRunNoDoProbe:
         )
 
         _reply, _captured, probes, _asked = _picker_turn(
-            session_factory, monkeypatch, qf=qf, attributes=(OUTSTANDING_KEY, SALES_GRANT)
+            session_factory, monkeypatch, "brand", qf=qf, attributes=(OUTSTANDING_KEY, SALES_GRANT)
         )
 
-        assert probes, "staff keep the picker's DO probe as today"
+        assert probes, "staff keep the analysis picker's DO probe as today"
 
 
 class TestHiddenCustomerRowsEverywhere:
@@ -1460,13 +1503,19 @@ class TestTypedNamesRosterOnAGrantedReport:
         assert " - has DO" not in reply and " - no DO" not in reply, reply
         assert "Which one do you mean?" in reply, reply
 
-    def test_document_staff_keep_the_stamps(self, session_factory, monkeypatch) -> None:
+    @pytest.mark.parametrize("status", ["sales_report", "sales_analysis"])
+    def test_document_staff_keep_the_stamps(self, session_factory, monkeypatch, status) -> None:
+        """Document staff keep the names roster (AC-11); on a sales report ask, and a
+        sales_analysis ask naming a customer is one (crew ruling (a), #1843 AC-10 / AC-12), the
+        roster carries no has / no DO stamp (AC-1657): the same as the sales_report parse."""
         from tests.chatbot.test_picker_one import _typed_names_turn
 
         reply, probes = _typed_names_turn(
-            session_factory, monkeypatch, order_status="sales_analysis", office=True,
+            session_factory, monkeypatch, order_status=status, office=True,
             attributes=[OUTSTANDING_KEY, SALES_GRANT],
         )
 
-        assert len(probes) == 1 and " - has DO" in reply, (reply, probes)
+        assert "Which one do you mean?" in reply, ("staff keep the roster (AC-11)", reply)
+        assert probes == [] and " - has DO" not in reply and " - no DO" not in reply, (reply, probes)
+
 

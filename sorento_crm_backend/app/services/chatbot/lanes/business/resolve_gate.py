@@ -158,6 +158,16 @@ def _parser_output(ctx: dict[str, Any]) -> dict[str, Any]:
     return output if isinstance(output, dict) else {}
 
 
+def held_product_uuids(ctx: dict[str, Any]) -> frozenset[str]:
+    """The products the conversation held before this message: the stored focus, read the
+    way the engine loads it (`turn_runtime.load_state`)."""
+    from app.services.chatbot import session_state
+    from app.services.chatbot.turn.state import focus_from_wire
+
+    focus = focus_from_wire(session_state.five_keys(jsc.get(ctx, "session")).get("focus"))
+    return frozenset(str(p["uuid"]) for p in focus.products or [] if isinstance(p, dict) and p.get("uuid"))
+
+
 def _prev_variables(ctx: dict[str, Any]) -> dict[str, Any]:
     """The previous turn's session variables, both shapes (`head/route._prev_variables`)."""
     session = jsc.get(ctx, "session")
@@ -506,6 +516,35 @@ def _names_a_typed_code(parse_output: dict[str, Any]) -> bool:
     return False
 
 
+def pick_near_code_first(parser: dict[str, Any], resolved: dict[str, Any]) -> None:
+    """Q1 (owner ruling (a), 23 Oct 2026): for a product whose corrected pick grounding set aside
+    (`grounding.NEAR_PICK_KEY`, the resolver's own trigram row for it), the raw token's resolution
+    offers that pick FIRST, then its other close codes: the did-you-mean (`answer.build_suggest_offer`,
+    `miss_token_candidates`, D1's cap of 3) reads the alternatives in this order. D1 lists the
+    resolution's matches before its alternatives, so the row also rides the resolution itself
+    (`NEAR_PICK_KEY`), which D1 reads first. Never into `matches`: the gate reads those as found
+    entities and D1 drops what the gate found. In place."""
+    from app.services.chatbot.head.grounding import NEAR_PICK_KEY
+    from app.services.chatbot.turn.state import token_key
+
+    resolutions = resolved.get("resolutions")
+    if not isinstance(resolutions, list):
+        return
+    for entity in parser.get("entities") or []:
+        row = entity.get(NEAR_PICK_KEY) if isinstance(entity, dict) else None
+        if not isinstance(row, dict):
+            continue
+        token, pick = _token_of(entity), token_key(str(row.get("canonical_code") or ""))
+        for res in resolutions:
+            if isinstance(res, dict) and res.get("token") == token:
+                others = [
+                    a for a in res.get("alternatives") or []
+                    if not (isinstance(a, dict) and token_key(str(a.get("canonical_code") or "")) == pick)
+                ]
+                res["alternatives"] = [row, *others]
+                res[NEAR_PICK_KEY] = row
+
+
 def _token_of(entity: Any) -> Any:
     """`String(x.canonical_code ?? '').trim() || (x.raw ?? '')`, product-folded.
 
@@ -531,6 +570,53 @@ def _token_of(entity: Any) -> Any:
 #: An `order` hint is not here on purpose: "7445" hinted order and found as a product code
 #: is the re-type AC-1527 exists for.
 HINT_LOCKED_KINDS = frozenset({"product_type", "category", "product", "brand"})
+
+
+#: The `match_field` of the rows `listed_scheme_resolutions` writes: data the engine read through
+#: the certificate link, never the resolve route's phrase guess (`turn_runtime._without_guesses`).
+LISTED_SCHEME_FIELDS = frozenset({"scheme", "scheme_parent"})
+
+
+def listed_scheme_resolutions(parser: dict[str, Any], resolved: dict[str, Any]) -> None:
+    """CHAT-CLOSED-LISTS: a listed scheme never reaches the resolver (`resolve_entity_body`).
+    When `head/scheme_index` read the products' certificates of that scheme through the
+    explicit link, those certificates are the scheme's resolution, so the fetch narrows to
+    them (`certificate_ids`) and the subject line says the scheme, never a number."""
+    for e in jsc.array(parser.get("entities")):
+        if not (isinstance(e, dict) and e.get("listed") == "cert_scheme" and e.get("certificate_uuids")):
+            continue
+        scheme = jsc.nullish_str(e.get("canonical_code")).strip()
+        matches = [
+            {
+                "entity_type": "certificate", "canonical_code": scheme, "uuid": uid,
+                "match_field": "scheme", "match_tier": "exact", "similarity": None,
+                "company_id": None, "company_name": None, "company_code": None,
+                "display": {"scheme": scheme},
+            }
+            for uid in e["certificate_uuids"]
+        ]
+        # F3-b: the scheme's parent kind rides on the scheme's own entity (`head/scheme_index`),
+        # resolved here as the attachment type the fetch narrows the files by, in its own row
+        # (the gate reads one entity type per row).
+        kind_name = jsc.nullish_str(e.get("parent_kind"))
+        kind_matches = [{
+            "entity_type": "attachment_type", "canonical_code": kind_name, "uuid": e["parent_kind_uuid"],
+            "match_field": "scheme_parent", "match_tier": "exact", "similarity": None,
+            "company_id": None, "company_name": None, "company_code": None,
+            "display": {"type_name": jsc.nullish_str(e.get("parent_kind_name")) or kind_name},
+        }] if e.get("parent_kind_uuid") else []
+        if "resolutions" in resolved:  # the OR shape: one row per token
+            resolved["resolutions"].append(
+                {"token": _token_of(e), "resolved": True, "ambiguous": False, "matches": matches, "alternatives": []}
+            )
+            if kind_matches:
+                resolved["resolutions"].append(
+                    {"token": kind_name, "resolved": True, "ambiguous": False, "matches": kind_matches, "alternatives": []}
+                )
+        else:  # the AND shape: the intersection, by entity type
+            for match in [*matches, *kind_matches]:
+                resolved.setdefault("intersection", []).append(match)
+                resolved.setdefault("by_entity_type", {}).setdefault(match["entity_type"], []).append(match)
 
 
 def hint_locked_tokens(
@@ -648,6 +734,13 @@ def resolve_entity_body(
 
     grounded = specification_entities(entities)
     entities = [e for e in entities if not any(e is g for g in grounded)]
+    if parse_output.get("closed_lists"):
+        # CHAT-CLOSED-LISTS (crew held-out class, 17 Oct 2026): a listed certificate scheme
+        # is an index into certificates, carried by the `{"certificate": {"scheme": X}}`
+        # leg (`predicate._listed_require`), never a record token. Probed as one, "SPAN"
+        # matched certificate NUMBERS ("SPAN/2025/...") and the turn asked 'Couldn't find
+        # "SPAN" (certificate). Did you mean: <numbers>'.
+        entities = [e for e in entities if not (isinstance(e, dict) and e.get("listed") == "cert_scheme")]
     if excluded_entity_ids:
         entities = [e for e in entities if id(e) not in excluded_entity_ids]
 
@@ -742,7 +835,10 @@ def resolve_entity_body(
     if brands:
         body["brand_tokens"] = brands
     grounded_specs = [
-        {"key": g.get("spec_key"), "value": g.get("spec_value"), "evidence": g.get("raw"), "grounded": True}
+        {
+            "key": g.get("spec_key"), "value": g.get("spec_value"), "evidence": g.get("raw"), "grounded": True,
+            **({"any_keys": list(g["spec_any_keys"])} if g.get("spec_any_keys") else {}),
+        }
         for g in grounded
         if g.get("spec_key") and g.get("spec_value") is not None
     ]
@@ -841,11 +937,15 @@ def resolve_entity_body(
     if require is not None:
         body["require"] = require
         body["predicate_words"] = derive_predicate_words(parse_output, require, message_text=_query_text(ctx))
-        # Fix round 9 on PR #833: the reply's list limit, so a longer set comes back with
-        # its breakdown and a zero set with its described products (read at call time).
+        # Fix round 9 on PR #833: the reply's list limit, so a zero set comes back with
+        # its described products (read at call time).
         from app.services.chatbot.lanes.business import answer as answer_mod
 
         body["set_list_max"] = int(answer_mod.SET_LIST_MAX)
+        if parse_output.get("closed_lists"):
+            body["cert_number_is_code"] = True
+            if parse_output.get("domain_hint") == "product_attachment":
+                body["no_free_remainder"] = True
         if scope_terms:
             body["scope_terms"] = scope_terms
     return body
@@ -1352,6 +1452,24 @@ def _no_such_account(
 # --------------------------------------------------------------------------- #
 
 
+def _product_set_ids(resolved: Any) -> set[str]:
+    """The uuids of every `product_set` match in a resolver payload."""
+    found: set[str] = set()
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            if node.get("entity_type") == "product_set" and node.get("uuid"):
+                found.add(str(node["uuid"]))
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(resolved)
+    return found
+
+
 def run(
     ctx: dict[str, Any],
     entry: Any,
@@ -1465,6 +1583,8 @@ def run(
         )
     )
 
+    if parser.get("closed_lists") and isinstance(resolved, dict):
+        listed_scheme_resolutions(parser, resolved)
     if hide_customers and isinstance(resolved, dict):
         _without_customer_rows(resolved)
 
@@ -1488,12 +1608,23 @@ def run(
         message=jsc.get(jsc.get(jsc.get(jsc.get(ctx, "text"), "message"), "message"), "text"),
     )
 
+    # Q1 (owner ruling (a), 23 Oct 2026): a typed code the parser corrected asks did-you-mean, the
+    # parser's pick first.
+    if isinstance(resolved, dict):
+        pick_near_code_first(parser, resolved)
+
     resolved_snapshot = _snapshot(resolved)
 
     # ── disallowed-entity-gate. Its input IS resolve-entity's item, and it MUTATES
     #    it - so the gate gets its own copy and `resolved` keeps the pre-gate snapshot,
     #    which is what `$('resolve-entity')` returns downstream.
     gate_input = _snapshot(resolved)
+    if parser.get("code_lookup") is True and services.visible_sets is not None:
+        # CHAT-CODE-LOOKUP R2: which product sets the contact may be told about, read on the
+        # scoped session; the gate expands only those (an unseen one stays today's miss).
+        gate_input["visible_set_ids"] = sorted(
+            services.visible_sets(sorted(_product_set_ids(gate_input)))
+        )
     gate_item = run_gate(
         gate_input,
         parser=parser,
@@ -1502,6 +1633,9 @@ def run(
         tier_gate=tier_gate_out,
         aggregate=aggregate,
         roster_caps=roster_caps,
+        # HELD-FAMILY runs under the CLOSED LISTS gate only (production keeps the picker
+        # PR #833 round 13 pinned until the owner moves the label).
+        held_product_uuids=held_product_uuids(ctx) if parser.get("closed_lists") else None,
     )
     gate_snapshot = _snapshot(gate_item)
 

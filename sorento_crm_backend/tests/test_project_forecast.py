@@ -91,7 +91,7 @@ def _quote(db, project, owner: str, *, unit_price: str, quantity=1, scope="House
     """A quotation with one priced line, so the version total is real."""
     from app.services import project_quotation_service as quotes
 
-    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{_uid()[:4]}", uom_name="Piece")
+    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{uuid.uuid4().hex}", uom_name="Piece")
     category = ProductCategory(
         id=_uid(), category_code=f"ZZT-{_uid()[:8]}", category_name=f"{MARKER} cat"
     )

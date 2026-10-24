@@ -45,9 +45,23 @@ describe('LineSplitSheet readOnly: same sheet, no controls (E1, E2)', () => {
     const { table } = renderSheet(ownerSavedCase(), [480, 752]);
     const heads = Array.from(table.querySelectorAll('thead th')).map((th) => (th.textContent ?? '').trim());
     expect(heads).toEqual([
-      'Line', 'SO date', 'S/O no', 'Item code', 'Location', 'Qty', 'New qty',
-      'Delivery date', 'New date', 'Change quantity', 'Change date', 'Remark',
+      'SO date', 'S/O no', 'Item code', 'Location', 'Qty', 'New qty',
+      'Delivery date', 'New date', 'Breakdown qty', 'Breakdown date', 'Remark',
     ]);
+  });
+
+  it('shows no line number: no Line column, no "line N" sub-label (owner ruling)', () => {
+    const { table } = renderSheet(ownerSavedCase(), [480, 752]);
+    expect(table.textContent).not.toMatch(/\bline \d+/i);
+    expect(Array.from(table.querySelectorAll('thead th')).map((th) => (th.textContent ?? '').trim())).not.toContain('Line');
+  });
+
+  it('F29: the Remark cell wraps, no truncating element', () => {
+    const { table } = renderSheet(ownerSavedCase(), [480, 752]);
+    const index = Array.from(table.querySelectorAll('thead th')).findIndex((th) => (th.textContent ?? '').trim() === 'Remark');
+    const cells = Array.from(table.querySelectorAll('tbody tr')).map((tr) => (tr as HTMLTableRowElement).cells[index]).filter(Boolean);
+    expect(cells.length).toBeGreaterThan(0);
+    for (const td of cells) expect(td.querySelector('.truncate'), 'remark cell must wrap').toBeNull();
   });
 
   it('draws one tbody per listed line', () => {
@@ -96,13 +110,13 @@ describe('LineSplitSheet readOnly: same sheet, no controls (E1, E2)', () => {
     for (const fn of Object.values(h)) expect(fn).not.toHaveBeenCalled();
   });
 
-  it('draws a split that moved onto another line under that line, its LINE cell naming the origin', () => {
+  it('draws a split that moved onto another line under that line, with no visible line number', () => {
     renderSheet(receivingCase(), [480, 608]);
     const under608 = screen.getByTestId('split-line-608');
     const rows = Array.from(under608.querySelectorAll('tr'));
     const moved = rows.find((r) => (r.textContent ?? '').includes('236'));
     expect(moved, under608.textContent ?? '').toBeDefined();
-    expect(Array.from((moved as HTMLTableRowElement).cells).some((td) => (td.textContent ?? '').trim() === '480')).toBe(true);
+    expect(Array.from((moved as HTMLTableRowElement).cells).some((td) => (td.textContent ?? '').trim() === '480')).toBe(false);
   });
 });
 

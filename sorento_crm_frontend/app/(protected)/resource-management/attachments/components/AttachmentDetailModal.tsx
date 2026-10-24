@@ -23,6 +23,7 @@ import {
   Unlink,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Badge, BadgeDot } from '@/components/ui/badge';
@@ -826,6 +827,7 @@ export default function AttachmentDetailModal({
     : -1;
   const queryClient = useQueryClient();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const canDeletePermanently = useHasPermission('resource.attachments.delete');
   const [previewOpen, setPreviewOpen] = useState(false);
   const [descriptionEdit, setDescriptionEdit] = useState<string | null>(null);
   const [accessLevelsEdit, setAccessLevelsEdit] = useState<string[] | null>(null);
@@ -987,10 +989,12 @@ export default function AttachmentDetailModal({
                       >
                         Restore
                       </Button>
-                      <Button variant="destructive" size="sm" onClick={() => setDeleteDialogOpen(true)}>
-                        <Trash2 className="size-4" />
-                        Permanently Delete
-                      </Button>
+                      {canDeletePermanently && (
+                        <Button variant="destructive" size="sm" onClick={() => setDeleteDialogOpen(true)}>
+                          <Trash2 className="size-4" />
+                          Permanently Delete
+                        </Button>
+                      )}
                     </>
                   ) : (
                     <Button variant="destructive" size="sm" onClick={() => setDeleteDialogOpen(true)}>

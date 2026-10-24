@@ -11,6 +11,7 @@ import type {
   BoardContribution,
 } from '../types/fulfilmentPlanning.types';
 import {
+  autocountChangeNotes,
   aheadFactorLabel,
   amendNeedsReason,
   boardAxis,
@@ -1944,7 +1945,10 @@ describe('confirmSummaryFor: changed (C4)', () => {
  * ordinary undecided line does, so it is silently left out of `toConfirm`.
  */
 describe('confirmSummaryFor: a cancelled changed line (R3, 13 Sep board-display round)', () => {
-  it('counts a cancelled line toward toConfirm, not as an ordinary untouched line', () => {
+  // PLAN-BATCH-COUNT-DISPLAY (owner ruling 21 Oct 2026 ~16:15) reverses R3 for the COUNT: the
+  // line is retired by the press and admits its order, but it is not a decision, so it is not
+  // counted; it is the AutoCount change note instead.
+  it('does not count a cancelled line toward toConfirm; it admits its order and is the AutoCount note', () => {
     const board = buildBoard(
       [line({ sales_order_id: 'so-s5', so_number: 'SO400884', line_no: 1, qty: '72' })],
       { today: TODAY },
@@ -1966,7 +1970,9 @@ describe('confirmSummaryFor: a cancelled changed line (R3, 13 Sep board-display 
     // way an amend or an approval is; it is inherent to the row itself.
     const summary = confirmSummaryFor([cancelled], {});
 
-    expect(summary.toConfirm).toBe(1);
+    expect(summary.toConfirm).toBe(0);
+    expect(summary.orderCount).toBe(1);
+    expect(autocountChangeNotes([cancelled], {})).toHaveLength(1);
   });
 });
 
@@ -3026,7 +3032,8 @@ describe('confirm scope: one population for dialog, count and body', () => {
     { name: 'stale draft', contribution: { draft: { decision: { verdict: 'approved' }, saved_by: 'x', saved_at: '2026-09-29T00:00:00Z', stale: true } }, decision: { verdict: 'approved' }, listed: false, counted: 0 },
     { name: 'no_mirror on an adopted order', contribution: { project_line_id: null }, decision: { verdict: 'approved' }, listed: false, counted: 0 },
     { name: 'no_mirror on an unadopted order', contribution: { project_line_id: null }, decision: { verdict: 'approved' }, unadopted: true, listed: true, counted: 1 },
-    { name: 'cancelled', contribution: { cancelled: true }, decision: null, listed: false, counted: 1 },
+    // PLAN-BATCH-COUNT-DISPLAY (owner ruling 21 Oct 2026): retired by the press, not a counted decision.
+    { name: 'cancelled', contribution: { cancelled: true }, decision: null, listed: false, counted: 0 },
   ];
 
   it.each(cases)('$name', (entry) => {
@@ -3048,14 +3055,19 @@ describe('confirm scope: one population for dialog, count and body', () => {
     const bodyCount = posted.length + withdrawn.length;
     expect(dialog.rows.length).toBe(entry.listed ? 1 : 0);
     if (!entry.unadopted) expect(dialog.rows.length).toBe(bodyCount);
-    expect(
-      dialog.rows.length + dialog.cancelled.length,
-    ).toBe(
+    // PLAN-BATCH-COUNT-DISPLAY (owner ruling 21 Oct 2026): the count is the decisions the dialog
+    // lists; a line the AutoCount change retires is the dialog's `cancelled` bucket and the note.
+    expect(dialog.rows.length).toBe(
       plannedLineCount([contribution], 'so-a', draft, blocked, { unadoptedSalesOrderIds: unadopted }),
     );
-    expect(dialog.rows.length + dialog.cancelled.length).toBe(entry.counted);
+    expect(dialog.rows.length).toBe(entry.counted);
+    expect(dialog.cancelled.length).toBe(
+      autocountChangeNotes([contribution], draft).reduce((total, note) => total + note.count, 0),
+    );
     // A line the press leaves out is named, never silent.
-    if (!entry.listed && !entry.counted) expect(dialog.notPosted.length).toBe(1);
+    if (!entry.listed && !entry.counted && dialog.cancelled.length === 0) {
+      expect(dialog.notPosted.length).toBe(1);
+    }
   });
 
   it('confirmSummaryFor admits an order whose only posted line is a covered approved one', () => {

@@ -56,7 +56,7 @@ import type { SuggestionRow } from '../../_shared/lib/supplyVocabulary';
 import { LADDER_VERSION } from '../../_shared/lib/supplyVocabulary';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 import { canQuickSave } from '../../_shared/lib/boardAmend';
-import { soLineLabel } from '../../_shared/lib/fulfilmentBoard';
+import { soLineLabel, soLineNoText } from '../../_shared/lib/fulfilmentBoard';
 import { BoardDecisionPill, isPreMarkOnly } from './BoardDecisionPill';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
 import { useLineSplitOpener } from './lineSplitOpener';
@@ -1017,7 +1017,7 @@ export function BoardCellBreakdownDialog({
                   size="sm"
                   className="shrink-0"
                   title="Split delivery"
-                  aria-label={`Split delivery for ${contribution.so_number} line ${contribution.line_no}`}
+                  aria-label={`Split delivery for ${contribution.so_number} line ${soLineNoText(contribution)}`}
                   onClick={(event) => {
                     event.stopPropagation();
                     splitOpener.open(contribution);

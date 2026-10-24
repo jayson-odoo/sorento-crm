@@ -88,13 +88,13 @@ describe('AC-G1 refer back status', () => {
 });
 
 describe('AC-G2 variant B: a split shows in the block of the line it sits on', () => {
-  it('236 and 167 sit in 608 with LINE 480; 37 sits in 608 with LINE 752', async () => {
+  it('236 and 167 sit in the 608 block; 37 sits in the 608 block, with no visible line number', async () => {
     await renderDialog({}, 'pso-417636');
     await sheet();
     const b608 = block(608);
     for (const [id, own] of [['s236', 480], ['s167', 480], ['s37', 752]] as const) {
       expect(b608.contains(row(id)), `${id} in block 608`).toBe(true);
-      expect(hasLineCell(row(id), own), `${id} LINE ${own}`).toBe(true);
+      expect(hasLineCell(row(id), own), `${id} shows no line number ${own}`).toBe(false);
     }
   });
 

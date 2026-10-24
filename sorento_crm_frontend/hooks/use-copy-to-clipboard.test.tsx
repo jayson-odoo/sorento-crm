@@ -35,6 +35,39 @@ describe('useCopyToClipboard (S7-05)', () => {
   afterEach(() => {
     // @ts-expect-error - test-only cleanup of the property we defined above.
     delete navigator.clipboard;
+    // @ts-expect-error - see above.
+    delete document.execCommand;
+  });
+
+  it('copies through the execCommand fallback when navigator.clipboard is undefined (http)', async () => {
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+    const execCommand = vi.fn().mockReturnValue(true);
+    Object.defineProperty(document, 'execCommand', { value: execCommand, configurable: true });
+    const { result } = renderHook(() => useCopyToClipboard());
+
+    let ok: boolean = false;
+    await act(async () => {
+      ok = await result.current.copyToClipboard('hello');
+    });
+
+    expect(ok).toBe(true);
+    expect(result.current.isCopied).toBe(true);
+    expect(execCommand).toHaveBeenCalledWith('copy');
+  });
+
+  it('copies through the execCommand fallback when writeText rejects', async () => {
+    mockClipboard(() => Promise.reject(new Error('refused')));
+    const execCommand = vi.fn().mockReturnValue(true);
+    Object.defineProperty(document, 'execCommand', { value: execCommand, configurable: true });
+    const { result } = renderHook(() => useCopyToClipboard());
+
+    let ok: boolean = false;
+    await act(async () => {
+      ok = await result.current.copyToClipboard('hello');
+    });
+
+    expect(ok).toBe(true);
+    expect(execCommand).toHaveBeenCalledWith('copy');
   });
 
   it('shows the tick and fires no toast on a successful copy', async () => {
@@ -52,8 +85,9 @@ describe('useCopyToClipboard (S7-05)', () => {
     expect(toast.success).not.toHaveBeenCalled();
   });
 
-  it('resolves false and stays uncopied when the clipboard write is refused', async () => {
+  it('resolves false and stays uncopied when the clipboard write and the fallback are both refused', async () => {
     mockClipboard(() => Promise.reject(new Error('refused')));
+    Object.defineProperty(document, 'execCommand', { value: vi.fn().mockReturnValue(false), configurable: true });
     const { result } = renderHook(() => useCopyToClipboard());
 
     let ok: boolean = true;

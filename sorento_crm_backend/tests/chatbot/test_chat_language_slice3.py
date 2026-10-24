@@ -1,5 +1,9 @@
 """CHAT-LANGUAGE slice 3 (outstanding report + top selling, finished text), AC-CL30..AC-CL35.
 
+REPORT-SMART-L R4a: the top selling lane is retired from the chatbot; its AC-CL33 / AC-CL35
+renders went with it, and the item / category ranking's own localization is pinned on the report
+engine (`test_one_ranking_r3a.py`). The catalog and the presenter literals stay pinned here.
+
 UAC: `documentation/plans/chatbot/chat-language-acceptance-criteria.md`, "Slice 3". The two
 reports arrive as FINISHED English text; the backend parses that English (offer roster, offer
 block, part markers) and only the outgoing `response` is localized, line by line, by the new
@@ -30,7 +34,6 @@ from app.services.chatbot.label_catalog import IDENTITY, Localizer
 from app.services.chatbot.lanes.business import fetch
 
 TOOL_OUTSTANDING = "crm_outstanding_report"
-TOOL_TOP = "crm_top_selling_report"
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -255,12 +258,12 @@ def test_ac_cl30_singular_ranking_titles_are_catalogued_too():
 def test_ac_cl30_the_presenter_still_writes_every_pinned_literal():
     source = (REPO_ROOT / "sorento_crm_mcp" / "sorento_crm_mcp" / "presenters.py").read_text()
     lane_source = (
-        REPO_ROOT / "sorento_crm_backend" / "app" / "services" / "chatbot" / "lanes" / "business" / "__init__.py"
+        REPO_ROOT / "sorento_crm_backend" / "app" / "services" / "chatbot" / "lanes" / "business" / "report_ask.py"
     ).read_text()
     for english in SLICE3:
         fragments = _PRESENTER_FRAGMENTS.get(english, None)
         if english in _LANE_OWNED:
-            # The ceiling note is the lane's, not the presenter's (`business/__init__.py:~493`).
+            # The ceiling note is the lane's, not the presenter's (`report_ask.CEILING_NOTE`).
             assert "I can list at most the top " in lane_source, english
             continue
         if fragments is None:
@@ -478,26 +481,6 @@ def _outstanding_report(*, so: bool = True, do: bool = True, detail: str | None 
     return report
 
 
-def _top_report(**over) -> dict:
-    report: dict = {
-        "group": "item",
-        "n": 3,
-        "rank_by": "amount",
-        "basis": "ordered",
-        "total_count": 12,
-        "date_from": "2026-09-01",
-        "date_to": "2026-09-30",
-        "filters": {"channel": "dealer"},
-        "sales_agent_fill_rate": 0.4,
-        "rows": [
-            {"rank": 1, "code": "SRTWC286", "quantity": 3, "amount": 1234.5},
-            {"rank": 2, "code": None, "quantity": 2, "amount": 5},
-        ],
-    }
-    report.update(over)
-    return report
-
-
 def _envelope(tool: str, report: dict) -> dict:
     return json.loads(_pres().present_response(tool, json.dumps(report)))
 
@@ -644,147 +627,6 @@ def test_ac_cl32_the_detail_list_header_translates_and_its_rows_keep_every_value
 
 
 # --------------------------------------------------------------------------- #
-# AC-CL33: top selling
-# --------------------------------------------------------------------------- #
-
-
-def test_ac_cl33_top_selling_zh_translates_title_metric_basis_notes_and_ask():
-    env = _envelope(TOOL_TOP, _top_report())
-    lines = _structure(TOOL_TOP, env, "zh")["response"].split("\n")
-    for expected in (
-        "*最畅销的 3 个项目*",
-        "排名依据: 金额",
-        "统计口径: 订购",
-        "有销售的项目: 12",
-        "客户: 全部",
-        "类别: 全部",
-        "品牌: 全部",
-        "销售代理: 全部",
-        "注：此期间只有 40% 的销售订单带有销售代理。",
-        "渠道: Dealer",
-        "送货日期: 01/09/2026 至 30/09/2026",
-        "回复排名数字查看该项目的客户和月份。",
-    ):
-        assert expected in lines, expected
-
-
-def test_ac_cl33_ranked_by_quantity_and_the_delivered_basis_translate():
-    env = _envelope(TOOL_TOP, _top_report(rank_by="quantity", basis="delivered"))
-    zh = _structure(TOOL_TOP, env, "zh")["response"].split("\n")
-    assert "排名依据: 数量" in zh
-    assert "统计口径: 已送货（已转 DO）" in zh
-    ms = _structure(TOOL_TOP, env, "ms")["response"].split("\n")
-    assert "Disusun mengikut: Kuantiti" in ms
-    assert "Asas: Dihantar (dipindahkan ke DO)" in ms
-
-
-def test_ac_cl33_rank_lines_and_the_result_set_are_unchanged():
-    env = _envelope(TOOL_TOP, _top_report())
-    english = _structure(TOOL_TOP, env, None)
-    for lang in ("ms", "zh"):
-        translated = _structure(TOOL_TOP, env, lang)
-        assert translated["response"] != english["response"], lang
-        lines = translated["response"].split("\n")
-        assert "1. SRTWC286: Qty 3, RM 1,234.50" in lines, lang
-        assert "2. Unassigned: Qty 2, RM 5.00" in lines, lang
-        assert _rest(translated) == _rest(english), lang
-        assert translated["outstanding_ask"]["last_result_set"] == env["result_set"], lang
-        assert _digits(translated["response"]) == _digits(english["response"]), lang
-
-
-def test_ac_cl33_category_ranking_and_bottom_titles_translate():
-    env = _envelope(TOOL_TOP, _top_report(group="category", n=None, direction="bottom", basis="delivered"))
-    ms = _structure(TOOL_TOP, env, "ms")["response"].split("\n")
-    assert "*Kategori paling kurang dijual*" in ms
-    assert "Kategori dengan jualan: 12" in ms
-    assert "Kategori tanpa jualan dalam tempoh ini tidak disenaraikan." in ms
-    assert "Balas dengan nombor kedudukan untuk melihat item teratas kategori itu." in ms
-
-
-def test_ac_cl33_a_one_row_title_keeps_its_number():
-    env = _envelope(TOOL_TOP, _top_report(n=1, rows=[{"rank": 1, "code": "SRTWC286", "quantity": 3, "amount": 5}]))
-    ms = _structure(TOOL_TOP, env, "ms")["response"].split("\n")
-    assert "*Top 1 selling item*" not in ms
-    assert ms[0].startswith("*") and "1" in ms[0] and "item" in ms[0]
-
-
-def test_ac_cl33_how_many_ask_translates_and_arms_nothing():
-    env = _envelope(TOOL_TOP, _top_report(rows=[], n=None))
-    assert env["result_type"] == "top_selling_how_many"
-    english = _structure(TOOL_TOP, env, None)
-    zh = _structure(TOOL_TOP, env, "zh")
-    assert "您想看多少个项目？请回复 1 到 12 之间的数字。" in zh["response"].split("\n")
-    assert _rest(zh) == _rest(english)
-    ms = _structure(TOOL_TOP, env, "ms")
-    assert "Berapa banyak item yang anda mahu lihat? Balas dengan nombor dari 1 hingga 12." in ms["response"].split("\n")
-
-
-def test_ac_cl33_a_miss_and_a_refusal_translate():
-    miss = _envelope(TOOL_TOP, _top_report(rows=[], total_count=0))
-    ms = _structure(TOOL_TOP, miss, "ms")
-    assert "Tiada jualan ditemui." in ms["response"].split("\n")
-    refused = _envelope(TOOL_TOP, {"code": "customer_not_permitted", "message": "x"})
-    assert refused["result_type"] == "top_selling_refused"
-    zh = _structure(TOOL_TOP, refused, "zh")
-    assert zh["response"] == "抱歉，我只能提供您本人账户的销售数据。"
-    disabled = _envelope(TOOL_TOP, {"code": "sales_report_not_enabled", "message": "x"})
-    assert _structure(TOOL_TOP, disabled, "ms")["response"] == "Laporan jualan tidak diaktifkan untuk akaun anda."
-
-
-def test_ac_cl33_the_detail_reply_translates_headings_and_keeps_rows_and_months():
-    detail = _top_report(
-        rows=[],
-        n=None,
-        detail={
-            "code": "SRTWC286",
-            "by_customer": [{"customer_name": "HANLIM TRADING", "quantity": 3, "amount": 5}],
-            "by_month": [{"month": "2026-09", "quantity": 3, "amount": 5}],
-        },
-        totals={"quantity": 3, "amount": 5},
-    )
-    env = _envelope(TOOL_TOP, detail)
-    english = _structure(TOOL_TOP, env, None)["response"]
-    ms = _structure(TOOL_TOP, env, "ms")
-    lines = ms["response"].split("\n")
-    assert "*SRTWC286: pelanggan dan bulan*" in lines
-    assert "*_Mengikut pelanggan_*" in lines
-    assert "*_Mengikut bulan_*" in lines
-    assert "Jumlah: Qty 3, RM 5.00" in lines
-    assert "1. HANLIM TRADING: Qty 3, RM 5.00" in lines
-    assert "Sep 2026: Qty 3, RM 5.00" in lines
-    assert _digits(ms["response"]) == _digits(english)
-
-
-def test_ac_cl33_a_part_split_reply_keeps_its_markers_and_still_splits():
-    from app.services.chatbot import engine
-
-    rows = [{"rank": i, "code": f"SRT{i:05d}", "quantity": i, "amount": i * 1.5} for i in range(1, 260)]
-    env = _envelope(TOOL_TOP, _top_report(n=259, total_count=259, rows=rows))
-    english = _structure(TOOL_TOP, env, None)["response"]
-    assert "(1/" in english, "the fixture must be long enough to split into marked parts"
-    for lang in ("ms", "zh"):
-        translated = _structure(TOOL_TOP, env, lang)["response"]
-        assert translated != english, lang
-        assert re.findall(r"(?m)^\(\d+/\d+\)$", translated) == re.findall(r"(?m)^\(\d+/\d+\)$", english), lang
-        en_parts = engine.split_marked_message(english)
-        tr_parts = engine.split_marked_message(translated)
-        assert len(tr_parts) == len(en_parts) > 1, lang
-        assert tr_parts[0].startswith("(1/") or "\n(1/" in tr_parts[0], lang
-
-
-def test_ac_cl33_lane_notes_above_the_ranking_are_localized_too():
-    env = _envelope(TOOL_TOP, _top_report())
-    notes = ["I can list at most the top 1,000 in one reply.", "I don't know 'zzz' as a category."]
-    english = _structure(TOOL_TOP, env, None, {"top_selling_notes": notes})
-    ms = _structure(TOOL_TOP, env, "ms", {"top_selling_notes": notes})
-    lines = ms["response"].split("\n")
-    assert "Saya boleh senaraikan paling banyak 1,000 teratas dalam satu balasan." in lines
-    # An uncatalogued note (it carries the customer's own word) stays as written.
-    assert "I don't know 'zzz' as a category." in lines
-    assert _rest(ms) == _rest(english)
-
-
-# --------------------------------------------------------------------------- #
 # AC-CL34: the stored English offer re-prints in the turn's language
 # --------------------------------------------------------------------------- #
 
@@ -897,8 +739,6 @@ def test_ac_cl34_the_reoffer_fallback_text_localizes_when_no_offer_was_stored():
         (TOOL_OUTSTANDING, lambda: _envelope(TOOL_OUTSTANDING, _outstanding_report())),
         (TOOL_OUTSTANDING, lambda: _envelope(TOOL_OUTSTANDING, _outstanding_report(do=False))),
         (TOOL_OUTSTANDING, lambda: _envelope(TOOL_OUTSTANDING, _outstanding_report(detail="both"))),
-        (TOOL_TOP, lambda: _envelope(TOOL_TOP, _top_report())),
-        (TOOL_TOP, lambda: _envelope(TOOL_TOP, _top_report(rows=[], n=None))),
     ],
 )
 def test_ac_cl35_absent_identity_and_en_localizers_leave_the_english_text_untouched(tool, build):

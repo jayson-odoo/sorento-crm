@@ -261,7 +261,7 @@ def central_exchange(item: dict | None) -> Any:
 
 
 def resolve_clarifier_config(
-    db: Session, *, override_version_id: str | None = None
+    db: Session, *, override_version_id: str | None = None, llm_choice=None
 ) -> ClarifierConfig:
     """Read the prompt, the per-key model override and the API key. Session-bound.
 
@@ -273,7 +273,6 @@ def resolve_clarifier_config(
     """
     from app.services.ai_assistant_service import AIAssistantConfigService
     from app.services.ai_prompt_registry import agent_model, render
-    from app.services.llm_provider import resolve_api_key
 
     system_prompt, prompt_version = render(
         db, PROMPT_KEY, override_version_id=override_version_id
@@ -283,9 +282,12 @@ def resolve_clarifier_config(
     config = AIAssistantConfigService(db).get()
     if config is None:
         raise ClarifierError("AI assistant configuration is not set")
-    provider = provider_override or config.provider
-    model = model_override or DEFAULT_MODEL
-    api_key = resolve_api_key(config, provider)
+    from app.services.contact_llm_choice import apply_choice
+
+    provider, model, api_key, _source = apply_choice(
+        llm_choice, config, provider_override or config.provider, model_override or DEFAULT_MODEL,
+        model_from_label=bool(model_override),
+    )
     if not api_key:
         raise ClarifierError(f"no API key configured for provider {provider!r}")
     return ClarifierConfig(

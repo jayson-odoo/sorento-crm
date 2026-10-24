@@ -240,8 +240,9 @@ def whole_buy_line_ids(
 
 def split_plan_key(splits: Sequence[Any]) -> List[str]:
     """A saved split plan as the decision snapshot records it (AC-G16): its base and each
-    split's qty, date, line it sits on and cancel, never its remark (a remark-only edit is the
-    same plan)."""
+    split's qty, date, line it sits on and cancel, and (OI-SPLIT-GUIDE UAC F27) its remark
+    when it has one: a remark-only edit is an edit the next Confirm tells. A split with no
+    remark spells as before, so a plan stamped before the remark counted still matches."""
     if not splits:
         return []
     first = splits[0]
@@ -249,6 +250,7 @@ def split_plan_key(splits: Sequence[Any]) -> List[str]:
     return [base] + sorted(
         f"{_qty_str(_dec(s.qty))}@{s.delivery_date.isoformat() if s.delivery_date else ''}"
         f"@{s.sits_on_line_id or ''}@{'cancel' if s.is_cancel else ''}"
+        + (f"@{(s.remark or '').strip()}" if (getattr(s, 'remark', None) or '').strip() else '')
         for s in splits
     )
 
@@ -556,15 +558,17 @@ def saved_line_remark(snapshot: Mapping[str, Any]) -> Tuple[str, Optional[str]]:
     * Buy: ``ORDER`` (an Order back Buy: ``ORDER BACK``, a local one ``LOCAL BUY``);
     * Use BRW (a reserve on the ``pool`` rung): ``USE <pool code>``, i.e. ``USE BRW``;
     * Use own location (any other reserve): ``USE <location>``, e.g. ``USE BRW-BB``;
-    * Borrow (any borrow but a document one): ``ORDER BACK``;
+    * Borrow (any borrow but a document one): ``ORDER BACK <donor>``, e.g. ``ORDER BACK
+      BRW-BB``, or plain ``ORDER BACK`` when the donor is the line's own location;
     * Borrow incoming (``supply_borrow``): the document number;
     * Use incoming (``timely_spo``): the SPO number(s).
 
     One part reads as its words alone; several read each with its quantity, joined by
     `` & `` in the snapshot's order (``USE BRW-BB 6 & ORDER 4``). STOCK LOCATION is always
-    the SO line's own location, as on the Excel sheet (owner, 13 Oct).
+    the SO line's own location (owner, 13 Oct); REMARK names the donor an ORDER BACK is
+    ordered back to (owner, 21 Oct 2026, OI-ORDERBACK-LOCATION).
     """
-    parts = _saved_line_parts(snapshot)
+    parts = _saved_line_parts(snapshot, name_donors=True)
     own = snapshot.get("location") or None
     if not parts:
         return "", own
@@ -574,11 +578,87 @@ def saved_line_remark(snapshot: Mapping[str, Any]) -> Tuple[str, Optional[str]]:
     return remark, parts[0][1]
 
 
+def saved_draft_remark(
+    decision: Optional[Mapping[str, Any]],
+    *,
+    location: Optional[str] = None,
+    codes: Optional[Mapping[str, str]] = None,
+    spo_numbers: Sequence[str] = (),
+    buy_origin: Optional[str] = None,
+    withdraws_raised: bool = False,
+) -> Optional[str]:
+    """OI-SPLIT-GUIDE (UAC F3, F11): what the purchasing email will say for a line whose
+    decision is SAVED but not confirmed yet, in the email's own words (`saved_line_remark`,
+    one function): the board's draft (`so_supply_decision_drafts.decision`) laid out the way
+    `ProjectSupplyService._snapshot` freezes a confirmed line's composition (reserve, incoming,
+    borrow, buy, in that order). `codes` names a reserve's or borrow's warehouse by id when the
+    draft carries no code; `spo_numbers` are the SPOs arriving in time at the line's own
+    location (`_facts_for`'s timely rule), which the email prints for incoming stock; a
+    `local` `buy_origin` reads LOCAL BUY, as the email marks it. A saved Cancel SO reads
+    CANCEL, as the email's cancelled-line line does. A saved Reject that `withdraws_raised`
+    (a confirmed line whose row the press cancels: raised, or placed / partly linked with
+    cascade-only links) is a withdrawal told with a `cancelled` handover, whose word is
+    `handover_remark("cancelled", ...)` (UAC F15, F20); any other Reject (nothing the press
+    cancels, e.g. a reserve-only line, UAC F17), or a draft with nothing composed, has no
+    words (`None`)."""
+    if not decision:
+        return None
+    verdict = decision.get("verdict")
+    if verdict == "cancelled":
+        return "CANCEL"
+    if verdict == "rejected":
+        return handover_remark("cancelled", None, None) if withdraws_raised else None
+    codes = codes or {}
+
+    def code_of(item: Mapping[str, Any], key: str) -> Optional[str]:
+        return item.get(key) or codes.get(str(item.get("warehouse_id") or "")) or None
+
+    components: List[Dict[str, Any]] = [
+        {
+            "kind": "reserve",
+            "qty": item.get("qty"),
+            "rung": item.get("rung"),
+            "source_location": code_of(item, "location"),
+        }
+        for item in decision.get("reserve") or []
+    ]
+    if _dec(decision.get("timely_spo_qty")) > _ZERO:
+        components.append({"kind": "timely_spo", "qty": decision.get("timely_spo_qty")})
+    components.extend(
+        {
+            "kind": "borrow",
+            "qty": item.get("qty"),
+            "rung": "supply_borrow" if item.get("supply_key") else None,
+            "supply_document": item.get("supply_document"),
+            "source_location": code_of(item, "warehouse_code"),
+        }
+        for item in decision.get("borrow") or []
+    )
+    if _dec(decision.get("buy_qty")) > _ZERO:
+        components.append({"kind": "buy", "qty": decision.get("buy_qty")})
+    remark, _location = saved_line_remark(
+        {
+            "components": components,
+            "order_back": bool(decision.get("order_back")),
+            "buy_origin": "local" if buy_origin == "local" else None,
+            "location": location,
+            "timely_spo_refs": [{"spo_number": number} for number in spo_numbers],
+        }
+    )
+    return remark or None
+
+
 def _saved_line_parts(
     snapshot: Mapping[str, Any],
+    *,
+    name_donors: bool = False,
 ) -> List[Tuple[str, Optional[str], Decimal, str]]:
     """`(words, location, qty, headline key)` per non-zero part of a saved line's snapshot,
-    in its own order: what `saved_line_remark` joins and what the headline names."""
+    in its own order: what `saved_line_remark` joins and what the headline names.
+
+    `name_donors`: a Borrow's words name its donor (``ORDER BACK BRW-BB``), what REMARK
+    prints. Off for every comparison (`_decision_words`, `_saved_decision_key`), so a donor
+    move stays the same KIND of decision, told as `_borrow_donors` says."""
     own = snapshot.get("location") or None
     # A ref is `{"spo_number": ...}` as `_snapshot` writes it, or the bare number some
     # frozen snapshots carry.
@@ -619,9 +699,13 @@ def _saved_line_parts(
             if rung == "supply_borrow" or document:
                 parts.append((document or "BORROW INCOMING", own, qty, "INCOMING"))
             else:
-                # Owner, 13 Oct: just ORDER BACK; STOCK LOCATION (the SO line's own) says
-                # where it is ordered back to.
-                parts.append(("ORDER BACK", own, qty, IV_ORDER_BACK))
+                # Owner, 21 Oct 2026 (OI-ORDERBACK-LOCATION): STOCK LOCATION is the SO line's
+                # own, so REMARK names where it is ordered back to, the donor, unless that is
+                # the line's own location ("ORDER BACK BRW-BB", as USE names its location).
+                words = "ORDER BACK"
+                if name_donors and location and location != own:
+                    words = f"ORDER BACK {location}"
+                parts.append((words, own, qty, IV_ORDER_BACK))
         elif kind == "timely_spo":
             parts.append((spo_numbers or "INCOMING", own, qty, "INCOMING"))
     return parts
@@ -647,7 +731,8 @@ def _decision_words(snapshot: Mapping[str, Any]) -> Tuple[str, ...]:
 
 def _saved_decision_key(snapshot: Mapping[str, Any]) -> Tuple[Any, ...]:
     """What makes two snapshots of one line the SAME decision for purchasing: the line's
-    quantity, date and product, and each part's kind, quantity, location and document. A
+    quantity, date and product, each part's kind, quantity, location and document, and the
+    planner's own REMARK (OI-SPLIT-GUIDE UAC F27: a remark-only change is still told). A
     shortfall of free stock is not in it: the email never tells one (owner, 14 Oct 2026)."""
     return (
         _dec(snapshot.get("open_qty")),
@@ -659,13 +744,21 @@ def _saved_decision_key(snapshot: Mapping[str, Any]) -> Tuple[Any, ...]:
             (words, location, qty)
             for words, location, qty, _key in _saved_line_parts(snapshot)
         ),
+        _own_remark(snapshot),
     )
 
 
+def _own_remark(snapshot: Optional[Mapping[str, Any]]) -> Optional[str]:
+    """OI-SPLIT-GUIDE (UAC F26, F27): the planner's own REMARK frozen with a saved line
+    (`ConfirmLine.remark`), else None: the email and Excel print it over the default words."""
+    return ((snapshot or {}).get("remark") or "").strip() or None
+
+
 def _borrow_donors(snapshot: Mapping[str, Any]) -> Tuple[Optional[str], ...]:
-    """Where each Borrow of a saved line draws from. Its email line reads ORDER BACK at the
-    line's own location (owner, 13 Oct 2026), so `_saved_decision_key` no longer sees the
-    donor: a Borrow moved to another donor is told apart by this."""
+    """Where each Borrow of a saved line draws from. Its email line reads at the line's own
+    location (owner, 13 Oct 2026) and only REMARK names the donor (21 Oct), so
+    `_saved_decision_key` does not see it: a Borrow moved to another donor is told apart by
+    this."""
     return tuple(
         component.get("source_location") or None
         for component in snapshot.get("components") or []
@@ -686,7 +779,12 @@ def _hole_move(item: Mapping[str, Any]) -> Tuple[Decimal, Decimal]:
 
 
 def handover_remark(
-    kind: str, row: Any, was: Optional[Dict[str, Any]], qty: Optional[Decimal] = None
+    kind: str,
+    row: Any,
+    was: Optional[Dict[str, Any]],
+    qty: Optional[Decimal] = None,
+    *,
+    donor: Optional[str] = None,
 ) -> str:
     """The REMARK cell of the handover email, table-tested (AC-H2/H3/H4/H5, PLAN 3.3).
 
@@ -714,6 +812,9 @@ def handover_remark(
 
     `qty` as `_handover_settle_diff` reads it: the line's new total for a settled line
     told off a row whose own quantity did not move.
+
+    `donor`: where a raised ORDER BACK is ordered back to, when LOCATION prints another
+    place (the SO line's own): ``ORDER BACK BRW-BB`` (owner, 21 Oct 2026).
     """
     if kind == "raised":
         label = _HANDOVER_REMARK_SPELLING.get(row.verb, row.verb or "")
@@ -729,6 +830,8 @@ def handover_remark(
             )
             if moved:
                 label = f"MOVED TO {moved.group(1)}"
+        if row.verb == IV_ORDER_BACK and donor:
+            label = f"{label} {donor}"
         if (was or {}).get("item_code"):
             # OI-PRODUCT-FOLLOW R4: a fresh row raised on the line's new product.
             label = f"{label}, {_NEW_ITEM_CODE}"
@@ -1193,10 +1296,10 @@ def _record_cancel(
             )
         order_id = ctx["order"][row.order_inquiry_id]
         if row.so_line_id and row.so_line_id not in ctx["line"]:
-            ctx["line"][row.so_line_id] = (
-                db.query(ProjectSalesOrderLine.line_no)
-                .filter(ProjectSalesOrderLine.id == row.so_line_id)
-                .scalar()
+            from app.services.project_line_split_service import display_line_nos
+
+            ctx["line"][row.so_line_id] = display_line_nos(db, [row.so_line_id]).get(
+                str(row.so_line_id)
             )
         line_no = ctx["line"].get(row.so_line_id) if row.so_line_id else None
     qty = _dec(row.qty)
@@ -1544,6 +1647,31 @@ class ProjectOrderInquiryService:
                     settled_in_place.append(str(line.id))
                 continue
             need = split_needs.get(str(line.id), _dec(entry.get("buy_qty")))
+            kept_plan = kept_splits.get(str(line.id))
+            if kept_plan is not None and self._rows_hold_plan_total(
+                line,
+                # A cancel split an earlier Confirm already told (its CANCEL BALANCE is live) is
+                # no longer asked of the rows.
+                need
+                + max(_dec(kept_plan.get("cancels")) - _dec(kept_plan.get("held_cancel")), _ZERO),
+            ):
+                # OI-SPLIT-SUPERSEDE-FIX: the line's rows are already cut to a plan and still
+                # ask for exactly the new plan's total with its cancel splits (an edit of a
+                # date, of how the qty is split, or a "Cancel this qty"). They are filed under
+                # this revision and `_keep_split_rows` moves the ones the edit changed (one
+                # DELAY for a moved date, a cut row's NEW QTY and its CANCEL BALANCE). The
+                # netting below would supersede every raised row it cannot settle as one
+                # (dev SO417636 480: CANCEL 14 / 236 / 167 and an unsplit ORDER 417). A product
+                # AutoCount swapped still follows on every row, as on the declined-settle path.
+                product_move = self._restate_product(
+                    inquiry, self._split_line_rows(str(line.id)), entry
+                )
+                if product_move:
+                    product_moves.append(product_move)
+                self._refile_rows(inquiry, line, decision)
+                if str(line.id) in settle_in_place:
+                    settled_in_place.append(str(line.id))
+                continue
             carried = bool(entry.get("carried"))
             # Is THIS line's Buy an order back (part 2 section 4b)? Only then does this
             # loop own the line's `ORDER_BACK` rows; on any other line such a row is a
@@ -2269,6 +2397,9 @@ class ProjectOrderInquiryService:
                     }
                 )
 
+        # The session does not autoflush (`app.database.SessionLocal`): a row the netting only
+        # added or cancelled is invisible to `_keep_split_rows`' query until it is written.
+        self.db.flush()
         self._keep_split_rows(inquiry, decision, kept_splits, actor_user_id=actor_user_id)
         # AC-G16: this Confirm's decision records the plan each split line now stands on, the
         # marker `_later_change_lines` reads on the next Confirm.
@@ -4375,8 +4506,8 @@ class ProjectOrderInquiryService:
         if row.verb == IV_ORDER_BACK and row.so_line_id:
             # Owner, 13 Oct 2026 (re-confirmed 14 Oct): a line telling a Borrow reads the SO
             # line's OWN location, in LOCATION and in the subject. The row keeps its donor
-            # on the worklist; only the email reads the line's. An Order back Buy row
-            # already names the line's own location.
+            # on the worklist; the email names it in REMARK (21 Oct 2026). An Order back
+            # Buy row already names the line's own location.
             so_line = self.db.get(ProjectSalesOrderLine, row.so_line_id)
             location = (
                 (so_line.stock_location if so_line is not None else None)
@@ -4395,7 +4526,19 @@ class ProjectOrderInquiryService:
             # when the row carries no stock location (`_build_handover_context`'s own
             # subject-scope reduction already treats a blank the same way).
             "location": location or "",
-            "remark": handover_remark(kind, row, was, qty),
+            "remark": handover_remark(
+                kind,
+                row,
+                was,
+                qty,
+                # OI-ORDERBACK-LOCATION (owner, 21 Oct 2026): LOCATION reads the line's,
+                # so REMARK names the donor the row keeps.
+                donor=(
+                    row.stock_location
+                    if row.stock_location and row.stock_location != location
+                    else None
+                ),
+            ),
             "was": _format_handover_was(was),
         }
         return {
@@ -4476,11 +4619,21 @@ class ProjectOrderInquiryService:
         for line, now, before in saved:
             row_lines = told.get(str(line.id), [])
             unchanged = before is not None and _saved_decision_key(before) == _saved_decision_key(now)
+            own = _own_remark(now)
+            if own is not None and not unchanged:
+                # UAC F27: the planner's own words are the line's REMARK, told once in place
+                # of whatever its rows queued (`_queue_saved_line`'s explicit remark, as a
+                # Cancel SO is told); a remark-only change is a change.
+                self._queue_saved_line(
+                    pso_id, line, now, before, actor_user_id=actor_user_id, remark=own,
+                    keys=[key for _w, _l, _q, key in _saved_line_parts(now)],
+                )
+                continue
             if unchanged and _borrow_donors(before) != _borrow_donors(now):
                 # Only a Borrow's donor moved (owner, 13 Oct 2026, re-confirmed 14 Oct): a
-                # changed decision, told as its one line at the line's own location, never
-                # as its rows' lines at the donors. The old donor's CANCEL ALL is the same
-                # order back moved, not an order taken back.
+                # changed decision, told as its one line at the line's own location (REMARK
+                # names the new donor), never as its rows' lines at the donors. The old
+                # donor's CANCEL ALL is the same order back moved, not an order taken back.
                 self._queue_saved_line(pso_id, line, now, before, actor_user_id=actor_user_id)
                 continue
             same_kind = before is not None and _decision_words(before) == _decision_words(now)
@@ -4507,9 +4660,10 @@ class ProjectOrderInquiryService:
             taken_back = _ZERO
             raised = _ZERO
             # A Borrow moved or reshuffled across donors cancels, raises and resizes holes at
-            # the donors. The email never names a donor, so ALL of the line's holes read as
-            # ONE hole settled from what they held to what they hold, exactly as the same
-            # change without the move (reviewer B1, 14 Oct 2026): never an order taken back.
+            # the donors. One line tells them (REMARK names where they are now), so ALL of the
+            # line's holes read as ONE hole settled from what they held to what they hold,
+            # exactly as the same change without the move (reviewer B1, 14 Oct 2026): never
+            # an order taken back.
             holes = [i for i in row_lines if i.get("borrow_hole")]
             if len(holes) < 2:
                 holes = []
@@ -5012,7 +5166,13 @@ class ProjectOrderInquiryService:
                 # The decision's words when the KIND of decision moved (Buy to Use BRW, a
                 # new part) or nothing above says anything; a pure date or quantity move of
                 # the same decision reads as today's settle line did ("DELAY, ORDER 3").
-                if not same_kinds or not pieces:
+                # A donor move also reads its decision words, so the new donor is named
+                # beside any date or quantity word (OI-ORDERBACK-LOCATION, owner 21 Oct 2026).
+                if (
+                    not same_kinds
+                    or not pieces
+                    or _borrow_donors(before) != _borrow_donors(now)
+                ):
                     pieces.append(remark)
                 if ("qty" not in was or raised is not None) and taken_back > _ZERO:
                     # The rows of this line told purchasing to cancel something they hold
@@ -6017,13 +6177,24 @@ class ProjectOrderInquiryService:
             # Crew ruling (a): AutoCount's growth already counts the qty the origin keeps.
             needs[target] = max(_dec(entries[target].get("buy_qty")) - min(qty, grew), _ZERO)
         # A line whose own row alone moved is told as its saved line, never its plan again.
-        acted_by_order[str(decision.project_sales_order_id)] = {
-            line_id for line_id, plan in acted.items() if not plan["own_rows"]
-        } | told
-        edited_by_order[str(decision.project_sales_order_id)] = self._applied_plan_edits(
-            decision,
-            {line_id: facts[line_id] for line_id, plan in acted.items() if not plan["own_rows"]},
+        # OI-SPLIT-GUIDE (UAC F27): a named line whose rows already are its plan but whose
+        # saved plan still differs from the applied one (a remark-only edit) moves nothing,
+        # yet its edited splits are told: purchasing reads the new remark.
+        remark_edits = self._applied_plan_edits(
+            decision, {line_id: facts[line_id] for line_id in standing if line_id in entries}
         )
+        acted_by_order[str(decision.project_sales_order_id)] = (
+            {line_id for line_id, plan in acted.items() if not plan["own_rows"]}
+            | told
+            | set(remark_edits)
+        )
+        edited_by_order[str(decision.project_sales_order_id)] = {
+            **self._applied_plan_edits(
+                decision,
+                {line_id: facts[line_id] for line_id, plan in acted.items() if not plan["own_rows"]},
+            ),
+            **remark_edits,
+        }
         return acted, needs, standing, waiting
 
     def _applied_plan_edits(self, decision: Any, facts: Mapping[str, Any]) -> Dict[str, List[str]]:
@@ -6036,7 +6207,8 @@ class ProjectOrderInquiryService:
             return {}
         from app.services.project_line_split_service import LineSplitService, split_plan_edited
 
-        recorded = LineSplitService(self.db).recorded_split_plans(
+        service = LineSplitService(self.db)
+        recorded = service.recorded_split_plans(
             [str(decision.project_sales_order_id)], before_revision=decision.revision_no
         )
         out: Dict[str, List[str]] = {}
@@ -6044,7 +6216,14 @@ class ProjectOrderInquiryService:
             applied = list((recorded.get(line_id) or {}).get("plan") or [])
             if not applied or not f.splits or f.pending:
                 continue
-            if split_plan_key(f.splits)[0] == applied[0] and split_plan_edited(f.splits, applied):
+            if split_plan_key(f.splits)[0] == applied[0] and split_plan_edited(
+                f.splits,
+                applied,
+                # COMPAT SHIM (OI-SPLIT-GUIDE UAC F30): the read of a pre-remark stamp.
+                lambda line_id=line_id: service.changed_after_stamp(
+                    line_id, (recorded.get(line_id) or {}).get("decision_id")
+                ),
+            ):
                 out[line_id] = applied
         return out
 
@@ -6203,6 +6382,21 @@ class ProjectOrderInquiryService:
             _ZERO,
         )
 
+    def _rows_hold_plan_total(self, line: Any, need: Decimal) -> bool:
+        """OI-SPLIT-SUPERSEDE-FIX: an acted split line whose rows `_keep_split_rows` can move to
+        its plan as they stand: more than one live plan row (a single row settles in place as
+        before), none refused by purchasing (a refused row is re-raised, AC-H6), and together
+        they still ask for exactly `need`."""
+        rows = self._split_line_rows(str(line.id))
+        if len(rows) < 2 or any(
+            row.ack_state == ACK_REJECTED
+            or row.rejected_by is not None
+            or row.rejected_at is not None
+            for row in rows
+        ):
+            return False
+        return self._asked_qty(str(line.id)) == need
+
     def _qty_changes(
         self, line_ids: Sequence[str], line_changes: Mapping[str, Dict[str, Any]]
     ) -> Dict[str, Tuple[Optional[Decimal], Optional[Decimal]]]:
@@ -6253,6 +6447,10 @@ class ProjectOrderInquiryService:
                     want.remove(key)
                 else:
                     left.append(row)
+            if self._cut_rows_in_place(left, want, decision):
+                # OI-SPLIT-SUPERSEDE-FIX: a reduce (a "Cancel this qty" split) cuts each row at
+                # its own date to its plan qty; the cut is the CANCEL BALANCE below.
+                left, want = [], []
             if want and left:
                 left.sort(
                     key=lambda row: (
@@ -6340,6 +6538,38 @@ class ProjectOrderInquiryService:
                         )
                     )
             self.db.flush()
+
+    def _cut_rows_in_place(
+        self,
+        rows: Sequence[OrderInquiryRow],
+        want: Sequence[Tuple[Decimal, Optional[date]]],
+        decision: Any,
+    ) -> bool:
+        """OI-SPLIT-SUPERSEDE-FIX: when each of a split line's unmatched `rows` has exactly one
+        unmatched plan row at its own date, no larger than it, each row keeps its date and is
+        cut to that qty in place (NEW QTY, purchasing's acknowledgement turned CHANGED), so
+        nothing is joined, cancelled or raised again. False, touching nothing,
+        for any other shape (a new split, a moved date, a grown row) or a linked row: the join
+        keeps a linked row's cover on the line, where a cut on its own would give it back."""
+        if not rows or len(rows) != len(want):
+            return False
+        if any(self._links_of(row.id) for row in rows):
+            return False
+        by_date = {when: (qty, when) for qty, when in want}
+        if len(by_date) != len(want) or len({row.delivery_date for row in rows}) != len(rows):
+            return False
+        pairs = [(row, by_date.get(row.delivery_date)) for row in rows]
+        if any(plan is None or plan[0] > _dec(row.qty) for row, plan in pairs):
+            return False
+        for row, (qty, _when) in pairs:
+            # No links, so the row's state (raised, or placed by hand) stands as it is.
+            row.previous_qty = row.qty
+            row.qty = qty
+            row.supply_decision_id = decision.id
+            if row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
+                row.changed_at = datetime.utcnow()
+                row.ack_state = ACK_CHANGED
+        return True
 
     def _apply_pure_splits(
         self, inquiry: OrderInquiry, decision: Any, buy_lines: Sequence[Dict[str, Any]]

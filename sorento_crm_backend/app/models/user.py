@@ -759,6 +759,24 @@ class SystemSetting(Base):
         String(16), nullable=False, server_default="off", default="off"
     )
     chatbot_direct_ingress_contacts = Column(Text, nullable=True)
+    # CLOSED-LISTS-INDEX-MODE: how a CLOSED LISTS parser version sees the closed lists.
+    # `block` (today) renders every full list into the system prompt; `index` renders each
+    # as one fixed pointer line, and the per-turn CLOSED LISTS block carries only what the
+    # message's words and the held products match (`head/closed_lists_index.py`). Read per
+    # turn, so a flip reaches the next turn with no restart.
+    chatbot_closed_lists_mode = Column(
+        String(16), nullable=False, server_default="block", default="block"
+    )
+    # CHAT-RELEASE-1021: the stored CHAT-COMPOSER gate (default off), flipped on Settings >
+    # Chatbot and read at run time by `chatbot.composers.enabled()`; `CHAT_COMPOSER_ENABLED`,
+    # when set, overrides it.
+    chatbot_composer_enabled = Column(Boolean, nullable=False, server_default="false", default=False)
+    # LEAN: the reasoning effort the parser's OpenAI call asks for: `off` (the default: none sent,
+    # as before) | `low`; anything else reads as `off` (`head/parser.reasoning_effort_setting`; widen
+    # only per the trigger at `head/parser.REASONING_EFFORTS`). Read per parse, so a flip reaches the next turn.
+    chatbot_parser_reasoning_effort = Column(
+        String(16), nullable=False, server_default="off", default="off"
+    )
 
 
 class UserQuickAccess(Base):

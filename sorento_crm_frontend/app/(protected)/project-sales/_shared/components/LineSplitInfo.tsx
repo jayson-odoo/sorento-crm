@@ -79,6 +79,26 @@ function receivingLineIds(lines: SplitLine[]): Set<string> {
   return out;
 }
 
+/**
+ * UAC E3: these lines, and the lines their own splits moved onto (so every split of them
+ * shows, under the line it sits on), in the sheet's order.
+ */
+function linesWithLanding(
+  all: SplitLine[],
+  ownIds: ReadonlySet<string>,
+): SplitLine[] {
+  const landing = new Set<string>();
+  for (const line of all) {
+    if (!ownIds.has(line.lineId)) continue;
+    for (const split of line.splits) {
+      if (!split.isCancel && split.sitsOnLineId) landing.add(split.sitsOnLineId);
+    }
+  }
+  return all.filter(
+    (line) => ownIds.has(line.lineId) || landing.has(line.lineId),
+  );
+}
+
 /** UAC E4: split-edited (A1, B3), the server's own status, the same the board flag reads. */
 function isSplitEdited(
   payload: LineSplitsPayload,
@@ -120,7 +140,8 @@ function ReadOnlySheet({
   lines,
   all,
 }: {
-  payload: LineSplitsPayload;
+  /** Only the SO number and date the sheet prints are read. */
+  payload: Pick<LineSplitsPayload, 'so_number' | 'so_date'>;
   lines: SplitLine[];
   all: SplitLine[];
 }) {
@@ -157,6 +178,18 @@ function SheetPending({
     </div>
   ) : (
     <SectionSkeleton rows={4} className="p-4" />
+  );
+}
+
+/** UAC D1: the whole-order popup's empty state, also a guided Confirm page's. */
+function NoSplitLines() {
+  return (
+    <div className="py-6 text-center">
+      <p className="text-sm font-medium">No split lines</p>
+      <p className="text-sm text-muted-foreground">
+        Every line ships as AutoCount has it.
+      </p>
+    </div>
   );
 }
 
@@ -204,24 +237,15 @@ export function LineSplitInfo({
     const all = sheetLinesOf(payload);
     const own = all.find((line) => line.lineNo === lineNo);
     if (!own) return { all, lines: [] as SplitLine[], ids: NO_LINE_IDS };
-    // UAC E3: this line, and the lines its own splits moved onto (so every split of it
-    // shows, under the line it sits on); splits moved onto it are drawn under it.
-    const landing = new Set(
-      own.splits
-        .filter((split) => !split.isCancel && split.sitsOnLineId)
-        .map((split) => split.sitsOnLineId as string),
-    );
-    const lines = all.filter(
-      (line) => line.lineId === own.lineId || landing.has(line.lineId),
-    );
-    return { all, lines, ids: new Set([own.lineId]) as ReadonlySet<string> };
+    // UAC E3: this line, and the lines its own splits moved onto; splits moved onto it
+    // are drawn under it.
+    const ids = new Set([own.lineId]) as ReadonlySet<string>;
+    return { all, lines: linesWithLanding(all, ids), ids };
   }, [open, payload, lineNo]);
   if (!view) return null;
   const count = splitCount(view);
-  const sub = [
-    soNumber,
-    oiNumber ? `${oiNumber} line ${lineNo ?? ''}`.trim() : null,
-  ]
+  // OI-SPLIT-GUIDE (UAC F29): no line number on the popup (its (i) button's label keeps it).
+  const sub = [soNumber, oiNumber || null]
     .filter(Boolean)
     .join(' · ');
   return (
@@ -254,7 +278,7 @@ export function LineSplitInfo({
         <Dialog open onOpenChange={close}>
           <DialogContent variant="fullscreen" className={SHEET_DIALOG_CLASS}>
             <DialogHeader className="mb-0 space-y-0 border-b border-border px-4 py-3 pe-12 text-start sm:text-start">
-              <DialogTitle className="truncate">{`Line ${lineNo ?? ''} ${itemCode ?? ''}: split`}</DialogTitle>
+              <DialogTitle className="truncate">{`${itemCode ?? ''}: split`}</DialogTitle>
               {sub ? (
                 <DialogDescription className="truncate text-xs">
                   {sub}
@@ -360,12 +384,7 @@ export function OrderSplitsDialog({
         {payload === undefined ? (
           <SheetPending error={loadError} onRetry={onRetry} />
         ) : !payload || !sheet || sheet.lines.length === 0 ? (
-          <div className="py-6 text-center">
-            <p className="text-sm font-medium">No split lines</p>
-            <p className="text-sm text-muted-foreground">
-              Every line ships as AutoCount has it.
-            </p>
-          </div>
+          <NoSplitLines />
         ) : (
           <>
             <SheetStatus
@@ -381,5 +400,89 @@ export function OrderSplitsDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** OI-SPLIT-GUIDE (UAC F2, F10): one line a Confirm covers, as the board states it. */
+export interface CoveredSheetLine {
+  /** The planning line id; null on an order nobody has adopted yet. */
+  lineId: string | null;
+  /** The board's own key, the identity of a line with no planning line. */
+  key: string;
+  lineNo: number | null;
+  itemCode: string;
+  location: string;
+  qty: number;
+  date: string | null;
+  /** The purchasing email's words for what Confirm sends (server `saved_remark`). */
+  savedRemark: string | null;
+}
+
+/**
+ * OI-SPLIT-GUIDE (UAC F2, F3, F10): the read-only sheet's lines for the lines one Confirm
+ * covers on an order. A covered line the split read shows split keeps its split rows, with
+ * the lines they land on (UAC E3 of #1794); every other covered line is ONE row built from
+ * the board's own statement of it, whose Remark is the email's words (`savedRemark`). So an
+ * order with no planning record yet (no split read) and a line the read never lists (the
+ * book cancelled it) still get their row, and the shared split read stays as it is.
+ */
+export function coveredSheetLines(
+  payload: LineSplitsPayload | null,
+  covered: readonly CoveredSheetLine[],
+): { all: SplitLine[]; lines: SplitLine[] } {
+  const read = payload ? sheetLinesOf(payload) : [];
+  const byId = new Map(read.map((line) => [line.lineId, line]));
+  const words = new Map(
+    covered.flatMap((line) => (line.lineId ? [[line.lineId, line.savedRemark] as const] : [])),
+  );
+  const splitIds = new Set(
+    covered.flatMap((line) =>
+      line.lineId && (byId.get(line.lineId)?.splits.length ?? 0) > 0 ? [line.lineId] : [],
+    ),
+  );
+  const fromRead = linesWithLanding(read, splitIds).map((line) =>
+    words.has(line.lineId) ? { ...line, savedRemark: words.get(line.lineId) ?? null } : line,
+  );
+  const shown = new Set(fromRead.map((line) => line.lineId));
+  const built: SplitLine[] = covered
+    .filter((line) => !(line.lineId && shown.has(line.lineId)))
+    .map((line) => ({
+      lineId: line.lineId ?? `board:${line.key}`,
+      lineNo: line.lineNo,
+      itemCode: line.itemCode,
+      location: line.location,
+      baseQty: line.qty,
+      baseDate: line.date,
+      nowQty: line.qty,
+      nowDate: line.date,
+      pendingChange: false,
+      splits: [],
+      savedRemark: line.savedRemark,
+    }));
+  const builtIds = new Set(built.map((line) => line.lineId));
+  return {
+    all: [...read.filter((line) => !builtIds.has(line.lineId)), ...built],
+    lines: sortLines([...fromRead, ...built]),
+  };
+}
+
+/** OI-SPLIT-GUIDE: `coveredSheetLines` as the read-only sheet, inside the guide's page. */
+export function SplitLinesSheet({
+  payload,
+  soNumber,
+  sheet,
+}: {
+  /** Only the SO number and date the sheet prints are read. */
+  payload: Pick<LineSplitsPayload, 'so_number' | 'so_date'> | null;
+  soNumber: string;
+  sheet: { all: SplitLine[]; lines: SplitLine[] };
+}) {
+  if (sheet.lines.length === 0) return <NoSplitLines />;
+  return (
+    <ReadOnlySheet
+      payload={payload ?? { so_number: soNumber, so_date: null }}
+      lines={sheet.lines}
+      all={sheet.all}
+    />
   );
 }

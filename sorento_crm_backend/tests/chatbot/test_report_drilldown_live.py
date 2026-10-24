@@ -27,7 +27,7 @@ from app.services.chatbot import engine as engine_mod
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests.chatbot.test_engine import CONTACT_ID
 from tests.chatbot.test_outstanding_lane import AnswerServices, FetchServices, _present_response, _seed_contact
-from tests.chatbot.test_top_selling_round6 import _seed_borrowable_envelope
+from tests.chatbot._turn_helpers import seed_borrowable_envelope as _seed_borrowable_envelope
 
 pytestmark = pytest.mark.live_external
 

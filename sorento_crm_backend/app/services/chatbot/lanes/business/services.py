@@ -111,6 +111,8 @@ class ResolveGateServices:
     access_types: AccessTypesFn
     resolve_entity: ResolveEntityFn
     probe: ProbeFn
+    #: CHAT-CODE-LOOKUP R2: which product set ids the contact may be told about (None: unread).
+    visible_sets: Callable[[list[str]], set[str]] | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -508,27 +510,37 @@ def resolve_warehouse_token(db: Session, token: str) -> list[str]:
     contact's own company than there would be for widening the product lookup, and a
     contact with no `respond_contact_companies` row already gets zero rows there too -
     a genuinely UNMAPPED contact fails closed everywhere in the turn, not selectively.
-    """
-    from sqlalchemy import func
 
+    One `warehouses` read, ordered (code, company) so an exact match across companies is the same
+    code every time; the rule itself is `warehouse_codes_for`.
+    """
     from app.models.inventory import Warehouse
 
-    word = (token or "").strip()
+    if not (token or "").strip():
+        return []
+    rows = db.query(Warehouse.warehouse_code).order_by(Warehouse.warehouse_code, Warehouse.company_id).all()
+    return warehouse_codes_for(token, [code for (code,) in rows])
+
+
+def warehouse_codes_for(token: str, codes: list[str]) -> list[str]:
+    """D5's rule over `codes` (the `warehouses` rows read): the one code equal to `token`, case
+    aside; else every code whose part after its LAST `-` equals it; else nothing."""
+    word = (token or "").strip().lower()
     if not word:
         return []
-    exact = (
-        db.query(Warehouse.warehouse_code)
-        .filter(func.lower(Warehouse.warehouse_code) == word.lower())
-        .first()
-    )
+    exact = [code for code in codes if code and code.lower() == word]
     if exact:
-        return [exact[0]]
-    suffix = word.lower()
-    return [
-        code
-        for (code,) in db.query(Warehouse.warehouse_code).all()
-        if "-" in code and code.rsplit("-", 1)[-1].lower() == suffix
-    ]
+        return exact[:1]
+    return [code for code in codes if code and "-" in code and code.rsplit("-", 1)[-1].lower() == word]
+
+
+def _visible_sets(db: Session) -> Callable[[list[str]], set[str]]:
+    def call(ids: list[str]) -> set[str]:
+        from app.services.chatbot.head.candidates import visible_set_ids
+
+        return visible_set_ids(db, ids)
+
+    return call
 
 
 def production_services(db: Session, *, space_id: str | None = None) -> ResolveGateServices:
@@ -543,6 +555,7 @@ def production_services(db: Session, *, space_id: str | None = None) -> ResolveG
         access_types=_access_types(db, default_space_id=space_id),
         resolve_entity=_resolve_entity(db),
         probe=_probe(db),
+        visible_sets=_visible_sets(db),
     )
 
 
@@ -562,40 +575,11 @@ def account_levels_reader(db: Session) -> Callable[[list[str]], dict[str, int | 
     return read
 
 
-def top_selling_dealer_ledgers(
-    db: Session, contact_respond_id: Any, space_id: str | None
-) -> list[tuple[str, str]] | None:
-    """A linked dealer contact's own customers as `(id, customer_name)`, or None when
-    the contact is staff or is linked to none (someone the route refuses on its own).
-
-    Reviewer S2 on PR #1273 (owner: a dealer sees only its own customers; ruling
-    pending owner confirmation): the lane never shows a linked dealer the customer
-    picker, which lists other customers' names before the route could refuse. The
-    rule is the route's own (`orders._top_selling_dealer_scope`): any active office
-    access type makes the contact staff whatever else it holds (fix round 3, owner
-    hand test 27 Sep 2026); otherwise any `respond_contact_customers` row makes it
-    that customer's dealer. Read on the engine's per-contact scoped session."""
-    from app.services import contact_customer_scope as scope_mod
-    from app.services.field_access import resolve_contact_with_null_workspace_fallback
-
-    if not contact_respond_id:
-        return None
-    contact_id = resolve_contact_with_null_workspace_fallback(
-        db, contact_id=str(contact_respond_id), space_id=space_id
-    )
-    if not contact_id:
-        return None
-    scope = scope_mod.contact_customer_scope(db, contact_id)
-    if scope.staff or not scope.linked:
-        return None
-    return [(cid, name) for cid, name, _code in scope.linked]
-
-
 def customer_scope(db: Session, contact_respond_id: Any, space_id: str | None) -> dict[str, Any] | None:
     """The asking contact's customer scope, read ONCE per turn
     (PLAN-chatbot-customer-scope-29sep.md D1/D3): None when nobody linked the contact to a
     customer, else `{"ids", "names", "linked": [[id, name, code]], "staff", "enforced"}`.
-    `enforced` is the top selling rule (linked and no active office access type); a
+    `enforced` is the dealer rule (linked and no active office access type); a
     linked staff contact keeps `linked` for a "my" ask only. `staff` is the document
     staff bit of `customer_scope_and_staff` (a linked staff user is enforced AND staff).
     Read through the ONE core function `contact_customer_scope` (as a module attribute:
@@ -645,23 +629,6 @@ def customer_scope_and_staff(
     }, staff
 
 
-def top_selling_dealer_customer_ids(
-    own: list[tuple[str, str]], words: list[str]
-) -> list[str] | None:
-    """The dealer's own ledgers the customer words name, or None when any word names
-    none of them (the lane then refuses). Matched the way the route matches a
-    `customer_query` (a case-insensitive substring of the name), over the dealer's own
-    ledgers only, so nothing outside them is ever looked at."""
-    matched: list[str] = []
-    for word in words:
-        needle = " ".join((word or "").split()).lower()
-        hits = [cid for cid, name in own if needle and needle in (name or "").lower()]
-        if not hits:
-            return None
-        matched.extend(h for h in hits if h not in matched)
-    return matched
-
-
 def _category_words(text: str) -> list[str]:
     """Lower-cased words, each plural folded to its singular by one trailing `s`
     ("sinks" -> "sink"), applied to both sides so a match is word for word."""
@@ -669,7 +636,7 @@ def _category_words(text: str) -> list[str]:
 
 
 def resolve_category_token(db: Session, token: str) -> list[tuple[str, str, str]]:
-    """A top selling ask's category word, as `(id, category_code, category_name)` rows
+    """A category word, as `(id, category_code, category_name)` rows
     (PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 4, AC-1954).
 
     Not the generic resolver: under `order` it re-types a category token as a customer
@@ -786,14 +753,22 @@ def resolve_brand_token(db: Session, token: str, *, exact_only: bool = False) ->
     """Brands a word names, `(id, brand_name)`, from the live `brands` table (the list
     PR #1301 reads for its `Known brands` line). An exact brand name or code wins;
     otherwise, unless `exact_only`, a brand whose name is a whole word of the message's
-    word ("sorento brand" names Sorento)."""
+    word ("sorento brand" names Sorento). A brand's short form (`brand_alias`) is an exact match."""
     from app.models.product import Brand
 
     word = _norm(token)
     if not word:
         return []
     rows = db.query(Brand.id, Brand.brand_name, Brand.brand_code).order_by(Brand.brand_name).all()
-    exact = [(str(r[0]), r[1]) for r in rows if word in (_norm(r[1]), _norm(r[2]))]
+    # A short form the owner keeps as data (lookup set `brand_alias`, value = brand code) is an exact name.
+    from app.services.chatbot_prompt_vars import _alias_words
+
+    aliases = _alias_words(db, "brand_alias")
+    exact = [
+        (str(r[0]), r[1])
+        for r in rows
+        if word in (_norm(r[1]), _norm(r[2])) or word in {_norm(a) for a in aliases.get(_norm(r[2]), [])}
+    ]
     if exact or exact_only:
         return exact
     return [(str(r[0]), r[1]) for r in rows if _whole_word_run(r[1] or "", word)]

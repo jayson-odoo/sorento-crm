@@ -41,7 +41,7 @@ def _world():
         w = _W()
         w.db = db
         w.company_id = _sorento(db)
-        uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{_uid()[:4]}", uom_name="Piece")
+        uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{uuid.uuid4().hex}", uom_name="Piece")
         cat = ProductCategory(id=_uid(), category_code=f"ZZT-{_uid()[:8]}", category_name="zzt-sfam")
         db.add_all([uom, cat])
         db.flush()

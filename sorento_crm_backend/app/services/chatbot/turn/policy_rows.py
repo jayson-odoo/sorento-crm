@@ -164,9 +164,6 @@ DEFAULT_DOMAIN_ROWS: list[dict[str, Any]] = [
             # `tools[0]` - the pick is an override in
             # `lanes/business/__init__.py::run_fetch`, beside the outstanding one.
             "crm_sales_report",
-            # PLAN-chatbot-top-x-hot-selling-24sep.md S3 (AC-1941): same rule, an
-            # allow-list member only; migration `chatbot_top_selling_tool`.
-            "crm_top_selling_report",
             # PLAN-retail-sales-reports-26sep S1: an allow-list member only, picked by
             # the `sales_analysis` override in `run_fetch`, never `tools[0]`. Migration
             # `sales_s1_reports_module` adds it to a seeded database.
@@ -331,12 +328,13 @@ DEFAULT_DOMAIN_ROWS: list[dict[str, Any]] = [
     # jumble up with order"). Paired with migration `pdyn_0001_status_words_sales`, which
     # appends the same row last (so here too) with the `order` row's narrowing copied.
     # `tools[0]` is never the pick for a sales status: `run_fetch`'s three overrides are.
-    # The `order` row keeps the three tools as well; dropping them there is out of scope.
+    # R4b: `crm_top_selling_report` is on no row any more; this row gains `crm_report_ask`.
     dict(
         name="sales",
         label="sales",
         intents=["check_sales"],
-        tools=["crm_sales_report", "crm_sales_analysis", "crm_top_selling_report"],
+        # `crm_report_ask` is an allow-list member only, never `tools[0]` (R4b; migration `or_r4b_top_selling_off`).
+        tools=["crm_sales_report", "crm_sales_analysis", "crm_report_ask"],
         escalation_team_code="customer_service",
         switch_words=["sales", "sales report", "top selling", "sales analysis", "best selling"],
         narrowing={
@@ -384,7 +382,6 @@ DATE_PARAM_TOOLS: set[str] = {
     "crm_outstanding_report",
     "crm_sales_report",
     "crm_low_stock_report",
-    "crm_top_selling_report",
     "crm_sales_analysis",
 }
 

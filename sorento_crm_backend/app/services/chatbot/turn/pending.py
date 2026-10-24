@@ -24,6 +24,11 @@ PENDING_KINDS: tuple[str, ...] = (
     "top_selling_pick",
 )
 
+#: The sales analysis's company question ("Sorento or Mocha?", chat fix PR-B S7): armed by the
+#: lane (`lanes/business/fetch._sales_analysis_company_ask`), answered by ONE pick at the engine
+#: seam (`lanes.business.sales_analysis_company_reply`); any other pick re-asks it (`apply`).
+SALES_ANALYSIS_COMPANY_KIND = "sales_analysis_company"
+
 # Stay alive, tracked by `answered_positions`, after their own pick.
 #
 # `tier_pick` (hand pass 9, D3, owner ruling 20 Sep 2026): main's fresh-typed picker
@@ -111,10 +116,10 @@ def top_selling_pick(
     asked_at_turn: int | None,
     filters: dict[str, Any],
 ) -> Pending | None:
-    """The top X ranking's printed lines as a sticky pick list (`top_selling_pick`).
+    """An item or category ranking's printed lines as a sticky pick list (`top_selling_pick`).
 
-    `result_set` is `presenters._top_selling_envelope`'s own, one `{idx, label, code,
-    entity_type}` row per printed line (no name: owner ruling 26 Sep ~07:40Z, so the
+    `result_set` is `lanes/business/fetch._report_ask_output`'s own, one `{idx, label, code,
+    entity_type, keys}` row per printed line (no name: owner ruling 26 Sep ~07:40Z, so the
     option's `name` stays None), `idx` the printed rank. The option shape is
     the roster one `turn/narrow.py::_options` builds, so every reader of a customer or
     product roster reads this one unchanged. `status` / `domain` send a pick back to the
@@ -128,7 +133,7 @@ def top_selling_pick(
             "code": row.get("code"),
             "name": row.get("name"),
             "entity_type": row.get("entity_type") or "product",
-            "payload": {},
+            "payload": ({"keys": list(row["keys"])} if row.get("keys") else {}),
         }
         for row in (result_set or [])
         if isinstance(row, dict) and isinstance(row.get("idx"), int) and row.get("label")
@@ -140,7 +145,12 @@ def top_selling_pick(
         options,
         asked_at_turn=asked_at_turn,
         # R7 (PLAN-prompt-dynamic-30sep D9): the ranking is the `sales` domain's.
-        payload={"domain": "sales", "status": "top_selling", "filters": dict(filters)},
+        payload={
+            "domain": "sales",
+            # REPORT-SMART-L R3c: a ranking run on the report engine is carried back as that ranking.
+            "status": "sales_ranking",
+            "filters": dict(filters),
+        },
     )
 
 
@@ -358,6 +368,11 @@ def from_wire(raw: Any) -> Pending | None:
         return None
     options = raw.get("options")
     payload = raw.get("payload")
+    filters = payload.get("filters") if isinstance(payload, dict) else None
+    if raw["kind"] == "top_selling_pick" and not (isinstance(filters, dict) and filters.get("ranking")):
+        # REPORT-SMART-L R4a: a list the retired top selling lane printed (no report engine
+        # `ranking` to re-run its rows on) is not read back; the next message starts fresh.
+        return None
     return Pending(
         kind=str(raw["kind"]),
         expects=raw.get("expects"),

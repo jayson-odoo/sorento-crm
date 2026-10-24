@@ -112,14 +112,14 @@ MEASURED_VERDICT_READS: dict[str, str] = {
     # Merged with #1267's two rows above: 38 + 2 -> 40.
     "open_question_answer": "app/services/chatbot/turn/apply.py",
     # 26 Sep 2026 (PLAN-chatbot-top-x-hot-selling-24sep.md S4): the top selling ask's
-    # three axes, read by `turn/apply.py::_top_selling_rules` onto `Focus.top_selling`.
-    # 38 declared keys -> 41.
-    "rank_by": "app/services/chatbot/turn/apply.py",
-    "basis": "app/services/chatbot/turn/apply.py",
-    "rank_group": "app/services/chatbot/turn/apply.py",
+    # three axes; since REPORT-SMART-L R4a read by the sales ranking (`report_ask.from_top_selling`,
+    # `metric_from`, `basis_from`). 38 declared keys -> 41.
+    "rank_by": "app/services/chatbot/lanes/business/report_ask.py",
+    "basis": "app/services/chatbot/lanes/business/report_ask.py",
+    "rank_group": "app/services/chatbot/lanes/business/report_ask.py",
     # Fix lane round 4 (owner retest, 27 Sep 2026): "cold selling", "least sold".
     # 41 declared keys -> 42.
-    "rank_direction": "app/services/chatbot/turn/apply.py",
+    "rank_direction": "app/services/chatbot/lanes/business/report_ask.py",
     # 29 Sep 2026 (PLAN-chatbot-customer-scope-29sep D2): "my" / "me" as the asker's own
     # account; the engine's `_customer_scope_gate` reads it off the verdict. 44 -> 45.
     "self_reference": "app/services/chatbot/engine.py",
@@ -138,6 +138,11 @@ MEASURED_VERDICT_READS: dict[str, str] = {
     # ("qty" | "amount" | null). 47 declared keys -> 49.
     "ranking_refine": "app/services/chatbot/engine.py",
     "measure": "app/services/chatbot/lanes/business/report_ask.py",
+    # REPORT-SMART-L v92: the compared window (`_fresh_args`, `_refine`). 59 -> 60.
+    "compare_to": "app/services/chatbot/lanes/business/report_ask.py",
+    # REPORT-SMART-L R6 (ruling A): the words naming the ranked axis; a present null means no axis typed
+    # (`report_ask.typed_group_by`). 60 -> 61.
+    "by_words": "app/services/chatbot/lanes/business/report_ask.py",
     # 4 Oct 2026 (LOWSTOCK-SEMANTIC): the low stock filters, read by
     # `lanes/business/low_stock_ask.reading`. 48 declared keys -> 49.
     "low_stock": "app/services/chatbot/lanes/business/low_stock_ask.py",
@@ -164,7 +169,7 @@ MEASURED_VERDICT_READS: dict[str, str] = {
 }
 
 
-def test_measured_read_set_matches_the_59_declared_keys():
+def test_measured_read_set_matches_the_60_declared_keys():
     """The table above is complete and has no typo - every declared key is measured read
     exactly once, and the table names nothing DECLARED_KEYS does not also carry. Catches a
     stale table before it can hide a real drift in the two tests below."""

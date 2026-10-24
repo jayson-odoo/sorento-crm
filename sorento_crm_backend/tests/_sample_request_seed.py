@@ -32,7 +32,7 @@ def second_company(db) -> str:
             "insert into companies (id, code, name, is_active) "
             "values (:i, :c, :n, true)"
         ),
-        {"i": company_id, "c": f"Z{uid()[:5]}".upper(), "n": f"{MARKER} other co"},
+        {"i": company_id, "c": f"Z{uuid.uuid4().hex}".upper(), "n": f"{MARKER} other co"},
     )
     db.flush()
     return company_id
@@ -46,16 +46,16 @@ def make_user(db, name: str) -> str:
 
 
 def make_product(db, *, code: str | None = None, name: str | None = None, active: bool = True):
-    uom = UnitOfMeasure(id=uid(), uom_code=f"ZZT{uid()[:4]}", uom_name="Piece")
+    uom = UnitOfMeasure(id=uid(), uom_code=f"ZZT{uuid.uuid4().hex}", uom_name="Piece")
     category = ProductCategory(
-        id=uid(), category_code=f"ZZT-{uid()[:8]}", category_name=f"{MARKER} cat"
+        id=uid(), category_code=f"ZZT-{uuid.uuid4().hex}", category_name=f"{MARKER} cat"
     )
-    brand = Brand(id=uid(), brand_code=f"ZZT-{uid()[:6]}", brand_name=f"{MARKER} Brand")
+    brand = Brand(id=uid(), brand_code=f"ZZT-{uuid.uuid4().hex}", brand_name=f"{MARKER} Brand")
     db.add_all([uom, category, brand])
     db.flush()
     row = Product(
         id=uid(),
-        product_code=code or f"ZZT-{uid()[:8]}",
+        product_code=code or f"ZZT-{uuid.uuid4().hex}",
         product_name=name or f"{MARKER} item {uid()[:6]}",
         category_id=category.id,
         brand_id=brand.id,
@@ -73,7 +73,7 @@ def make_customer(db, company_id: str, *, code: str | None = None):
 
     row = Customer(
         id=uid(),
-        customer_code=code or f"ZZT-C{uid()[:6]}",
+        customer_code=code or f"ZZT-C{uuid.uuid4().hex}",
         customer_name=f"{MARKER} debtor {uid()[:6]}",
         company_id=company_id,
     )

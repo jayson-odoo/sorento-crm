@@ -9,6 +9,7 @@ import {
   acknowledgeOrderInquiryRowsByFilter,
   autoPlaceOrderInquiryRows,
   exportOrderInquiryXlsx,
+  exportOrderInquiryPdf,
   getOrderInquiryHeader,
   getOrderInquiryHeaderLines,
   getOrderInquiryHeaderRelatedDocuments,
@@ -371,6 +372,22 @@ export function useExportOrderInquiryXlsx(id: string | undefined) {
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to start the order inquiry export'),
+  });
+}
+
+/** OI-DOWNLOAD: the detail page's Print / Download PDF, the Purchase Request PDF's toast. */
+export function useExportOrderInquiryPdf(id: string | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => exportOrderInquiryPdf(id as string),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: MY_DOWNLOADS_QUERY_KEY });
+      queryClient.invalidateQueries({
+        queryKey: [...ENTITY_DOWNLOADS_QUERY_KEY, 'order_inquiry', id],
+      });
+      toast.success('Preparing PDF… it will appear in My Downloads.');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to start PDF export'),
   });
 }
 

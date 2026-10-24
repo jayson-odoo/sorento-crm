@@ -1,6 +1,6 @@
 """Round 2 (code review): the fetch guard knows each tool's product keys, and does not widen.
 
-* top selling names a product as `rows[].code`; order analytics as `groups[].group_key` and
+* the report ask names a product as `rows[].name` (top selling's `rows[].code` left the chatbot in R4b); order analytics as `groups[].group_key` and
   `group_label` (group_by=product); complaint analytics lower-cases its `group_key`. Those rows
   must be dropped for an out-of-scope product.
 * a generic `code` is NOT a product on a tool where it means a customer code.
@@ -19,14 +19,14 @@ def _guard(db, tool, result, world):
     return brand_guard.guard_result(tool, result, [world.mocha.id], db)
 
 
-def test_top_selling_rows_named_by_code_are_dropped(db, world) -> None:
+def test_report_ask_rows_named_by_name_are_dropped(db, world) -> None:
     result = {"rows": [
-        {"rank": 1, "code": world.codes["sorento"], "quantity": 3},
-        {"rank": 2, "code": world.codes["mocha"], "quantity": 2},
-        {"rank": 3, "code": world.codes["null"], "quantity": 4},
+        {"rank": 1, "name": world.codes["sorento"], "qty": 3},
+        {"rank": 2, "name": world.codes["mocha"], "qty": 2},
+        {"rank": 3, "name": world.codes["null"], "qty": 4},
     ]}
-    out = _guard(db, "crm_top_selling_report", result, world)
-    assert [r["code"] for r in out["rows"]] == [world.codes["mocha"]], out
+    out = _guard(db, "crm_report_ask", result, world)
+    assert [r["name"] for r in out["rows"]] == [world.codes["mocha"]], out
 
 
 def test_order_analytics_groups_named_by_group_key_and_label_are_dropped(db, world) -> None:
@@ -55,10 +55,10 @@ def test_a_customer_code_under_the_generic_code_key_survives_on_a_customer_tool(
     assert out == result
 
 
-def test_a_non_product_code_value_on_top_selling_is_not_dropped_as_unknown(db, world) -> None:
+def test_a_non_product_name_value_on_report_ask_is_not_dropped_as_unknown(db, world) -> None:
     """Unknown codes are left alone (the guard drops only codes it can place out of scope)."""
-    result = {"rows": [{"code": "ZZT-NO-SUCH", "quantity": 1}, {"code": world.codes["mocha"], "quantity": 2}]}
-    out = _guard(db, "crm_top_selling_report", result, world)
+    result = {"rows": [{"name": "ZZT-NO-SUCH", "qty": 1}, {"name": world.codes["mocha"], "qty": 2}]}
+    out = _guard(db, "crm_report_ask", result, world)
     assert len(out["rows"]) == 2
 
 

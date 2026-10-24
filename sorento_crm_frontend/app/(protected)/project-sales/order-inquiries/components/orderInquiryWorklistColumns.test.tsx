@@ -2140,3 +2140,103 @@ describe('AC-DT-5/AC-DT-6 (PLAN-oi-decision-trail-ui.md, round 2): the decision 
     expect(DEFAULT_HIDDEN_COLUMNS).toContain('raise_event');
   });
 });
+
+describe('OI-RESERVE-PILL-QTY (CS report 21 Oct 2026): the Instruction cell reserve pill prints its qty', () => {
+  it('a requested row reads "Request to reserve 70", the open request qty the detail page already prints', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-requested',
+          reserve_state: 'requested',
+          requested_qty: '70',
+          reserved_qty: '0',
+        }),
+      ],
+      'verb',
+    );
+
+    const row = screen.getByTestId('row-row-requested');
+    expect(within(row).getByText('Request to reserve 70')).toBeInTheDocument();
+  });
+
+  it('a reserved row reads "Reserved 12"', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-reserved',
+          reserve_state: 'reserved',
+          reserved_qty: '12',
+          requested_qty: '0',
+        }),
+      ],
+      'verb',
+    );
+
+    const row = screen.getByTestId('row-row-reserved');
+    expect(within(row).getByText('Reserved 12')).toBeInTheDocument();
+  });
+});
+
+/**
+ * OI-RESERVE-PILL-QTY round 2 (owner ruling 21 Oct 2026: "we just need more visibility"):
+ * the line Qty, the requested reserve qty and the reserved qty side by side, so a 170 line
+ * with a 70 reserve request never reads as one number. ONE shared column factory
+ * (`orderInquiryReserveQtyColumns`), used here and on the OI detail Lines tab.
+ */
+describe('OI-RESERVE-PILL-QTY round 2: Reserve requested and Reserved sit beside Qty', () => {
+  it('the two columns follow Qty directly', () => {
+    let captured: ColumnDef<OrderInquiryWorklistRow>[] | null = null;
+    function Capture() {
+      captured = useOrderInquiryWorklistColumns();
+      return null;
+    }
+    render(<Capture />);
+    const ids = (captured as unknown as { id?: string; accessorKey?: string }[]).map(
+      (column) => column.id ?? column.accessorKey,
+    );
+    const qtyAt = ids.indexOf('qty');
+    expect(qtyAt).toBeGreaterThan(-1);
+    expect(ids.slice(qtyAt, qtyAt + 3)).toEqual(['qty', 'reserve_requested', 'reserved']);
+  });
+
+  it('a 170 line with an open request of 70 reads 170 / 70 / nothing reserved', () => {
+    const row = worklistRow({
+      id: 'row-cb315',
+      qty: '170',
+      reserve_state: 'requested',
+      requested_qty: '70',
+      asked_reserve_qty: '70',
+      reserved_qty: '0',
+    });
+    renderRows([row], 'reserve_requested');
+    expect(within(screen.getByTestId('row-row-cb315')).getByText('70')).toBeInTheDocument();
+  });
+
+  it('the Reserved cell prints the reserved qty', () => {
+    renderRows(
+      [worklistRow({ id: 'row-res', qty: '170', reserve_state: 'reserved', reserved_qty: '70', requested_qty: '0' })],
+      'reserved',
+    );
+    expect(within(screen.getByTestId('row-row-res')).getByText('70')).toBeInTheDocument();
+  });
+
+  it('a partial answer keeps both numbers: asked 70, reserved 50 (owner ruling 21 Oct 2026)', () => {
+    const row = worklistRow({
+      id: 'row-partial',
+      qty: '170',
+      reserve_state: 'reserved',
+      requested_qty: '0',
+      asked_reserve_qty: '70',
+      reserved_qty: '50',
+    });
+    renderRows([row], 'reserve_requested');
+    expect(within(screen.getByTestId('row-row-partial')).getByText('70')).toBeInTheDocument();
+  });
+
+  it('a zero or missing figure reads a muted dash, never "0"', () => {
+    renderRows([worklistRow({ id: 'row-none', requested_qty: '0', asked_reserve_qty: '0' })], 'reserve_requested');
+    const row = screen.getByTestId('row-row-none');
+    expect(within(row).queryByText('0')).not.toBeInTheDocument();
+    expect(within(row).getByText('-')).toBeInTheDocument();
+  });
+});

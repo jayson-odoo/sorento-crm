@@ -38,7 +38,7 @@ from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
-from app.services.media_extract import prompts, wording
+from app.services.media_extract import prompts, sniff, wording
 from app.services.media_extract.schema import (
     MediaExtraction,
     MediaExtractionParseError,
@@ -434,6 +434,13 @@ class MediaExtractService:
 
         data, content_type = fetch_media_bytes(job.media_url or "")
         mime = (job.mime_type or content_type or "image/jpeg").split(";")[0].strip()
+        kind = sniff.expected_kind(job.modality, mime)
+        sniffed = sniff.sniff_mime(data)
+        if not sniff.matches_kind(sniffed, kind):
+            raise MediaExtractionError(sniff.mismatch_reason(data, content_type, kind))
+        if kind in ("image", "visual"):
+            # The bytes, not the label, say which format the model is handed.
+            mime = sniffed
 
         helper = AIExtractService(self.db)
         parts = helper._render_files(
@@ -610,6 +617,17 @@ class MediaExtractService:
         from app.services.llm_provider import ChatResult, resolve_api_key
 
         data, content_type = fetch_media_bytes(job.media_url or "")
+        if not sniff.matches_kind(sniff.sniff_mime(data), "audio"):
+            # Refused before the transcription call, so it is a clip refusal (the
+            # contact keeps the allowance) carrying the same customer notice.
+            raise MediaClipLengthError(
+                sniff.mismatch_reason(data, content_type, "audio"),
+                notice={
+                    "kind": "unreadable",
+                    "text": wording.voice_unclear(),
+                    "append": True,
+                },
+            )
         self._enforce_clip_length(job, data, settings)
         cfg = (
             self.db.query(AIAssistantConfig)
@@ -780,7 +798,11 @@ class MediaExtractService:
 
 
 def _filename_for(mime: str) -> str:
-    """A filename with an extension, because `_render_files` sniffs both."""
+    """A filename with an extension, because `_render_files` sniffs both.
+
+    The `.jpg` fallback is what lets a gif / heic through `_render_files` as an
+    image part under its own mime; the bytes were already checked against the
+    lane's modality in `sniff`, so it no longer forwards a non-image."""
     extension = {
         "image/png": ".png",
         "image/jpeg": ".jpg",

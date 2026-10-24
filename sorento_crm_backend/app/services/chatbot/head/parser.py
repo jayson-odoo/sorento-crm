@@ -18,17 +18,19 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.services.ai_prompt_registry import agent_model, get_prompt, render, render_resolved
+from app.services.ai_prompt_registry import agent_model, agent_reasoning_effort, get_prompt, render, render_resolved
 from app.services.chatbot.contracts import ParserOutputError  # noqa: F401 - re-export
 from app.services.chatbot.turn import context as context_mod
 from app.services.chatbot.turn import question as question_mod
 from app.services.chatbot.turn import task as task_mod
 from app.services.product_compatibility_service import KINDS
+from app.services.reports.ask import COMPARE_TO, SALES_CHANNELS, SALES_MEASURES
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +69,9 @@ class ParserError(RuntimeError):
     ) -> None:
         super().__init__(*args)
         self.usage = usage or {}
+        # The provider call's wall clock, set by `parse` even when the call never returned
+        # (no usage then, so no usage row), for the failed `understood` record.
+        self.latency_ms: int | None = None
         # PR #1247 round 6, ruling 3: every attempt was refused with a 429, so the
         # dealer is told `llm_call.RATE_LIMITED_REPLY`, not the generic parser error.
         self.rate_limited = rate_limited
@@ -81,8 +86,46 @@ class ParserConfig:
     provider: str
     model: str
     api_key: str
+    # CHAT-CLOSED-LISTS: the version carries the CLOSED LISTS section, so the user turn
+    # carries the candidate block and grounding validates picks against the lists.
+    closed_lists: bool = False
+    # CHAT-CODE-LOOKUP: the version also carries the CODE LOOKUP section (near codes are
+    # listed and a product pick is checked against the block). Only with closed_lists.
+    code_lookup: bool = False
+    # CHAT-CLOSED-LISTS S4b-v2: the gated version's own strict schema (`closed_lists_schema`),
+    # None for the production one.
+    json_schema: dict[str, Any] | None = None
     # CHAT-STATE: the prompt in use asks for `state_changes` (set by `resolve_config` in S5).
     state_block: bool = False
+    # REPORT-SMART-L: the prompt in use declares `compare_to`, so the schema offers the count
+    # measures and the `compare_to` property; a version that never describes them is not forced
+    # to emit them (`without_report_fields`). True keeps the extended schema for a bare config.
+    report_fields: bool = True
+    # REPORT-SMART-L R6: the prompt in use defines `by_words`, so the schema offers it. A version that does
+    # not (production v92) would answer null on every parse, which the sales ranking reads as "no axis typed",
+    # so its schema carries no such key and `parse` drops it from the verdict (`without_by_words`).
+    by_words: bool = True
+    # REPORT-SMART-L R9: the prompt in use names the `Sales channels:` line, so the user turn prints it
+    # (owner ruling 22 Oct 23:20, PLAN-report-smart-owner-1022.md:40-45: the line pairs with the template rule
+    # that names it; production v63 names none). True keeps the line for a bare config.
+    sales_channels: bool = True
+    # PARSER-TEMPLATE F1-A: the version is the consolidated template (`head/parser_template`),
+    # whose rules decide what the engine's own re-readings of the message used to.
+    template: bool = False
+    # CLOSED-LISTS-INDEX-MODE: `chatbot_closed_lists_mode` is 'index' on a CLOSED LISTS version:
+    # the system prompt carries each full list as one fixed pointer line and the candidate
+    # block carries the index lines (`head/closed_lists_index`). Only with closed_lists.
+    closed_lists_index: bool = False
+    # LEAN: `system_settings.chatbot_parser_reasoning_effort` as read for this parse (REASONING_EFFORTS).
+    # `parse` puts it on an OpenAI request only when it is not `off` (`sent_reasoning_effort`).
+    reasoning_effort: str = "off"
+    # PARSER-GEMINI-LITE: the production label's own `reasoning_effort`, None when it sets none.
+    # When set it wins over the stored setting above, on any provider (Gemini maps it onto its
+    # thinking level), so a label pointed at another model carries the effort that model needs.
+    label_reasoning_effort: str | None = None
+    # MODEL-PER-CONTACT: where provider/model came from (contact | tag | label | global |
+    # fallback_no_key); goes on the `understood` trace.
+    model_source: str = "global"
 
 
 def _build_base_json_schema() -> dict[str, Any]:
@@ -257,7 +300,7 @@ def _build_base_json_schema() -> dict[str, Any]:
             # prompt version that never emits this key still post-processes with it
             # reading as null; the field is genuinely conditional (emitted only on a
             # sales report ask) either way.
-            "sales_channel": {"type": ["string", "null"], "enum": ["dealer", "project", None]},
+            "sales_channel": {"type": ["string", "null"], "enum": [*SALES_CHANNELS, None]},
             # PLAN-chatbot-top-x-hot-selling-24sep.md "Parser (S4)": the top selling ask's
             # three axes, each nullable and each an ENUM for the reason `group_by` gives
             # (no earlier prompt version emits them, so no working turn produces a value
@@ -297,7 +340,10 @@ def _build_base_json_schema() -> dict[str, Any]:
             # axis read as about the rows the last ranking printed ("scoped"), its own ask
             # ("global"), or either ("unsure", asked). Same exemption as `ranking_refine`.
             "ranking_drill": {"type": ["string", "null"], "enum": ["scoped", "global", "unsure", None]},
-            "measure": {"type": ["string", "null"], "enum": ["qty", "amount", None]},
+            "measure": {"type": ["string", "null"], "enum": [*SALES_MEASURES, None]},
+            # REPORT-SMART-L v92: the earlier window a ranking is compared with. Same shape and
+            # exemption as `measure`.
+            "compare_to": {"type": ["string", "null"], "enum": [*COMPARE_TO, None]},
             # PLAN-retail-sales-reports-26sep S1: the sales analysis's basis and the
             # company named. Required for strict mode and tolerated absent, exactly as
             # `sales_channel` above (no recorded emission carries them).
@@ -315,6 +361,10 @@ def _build_base_json_schema() -> dict[str, Any]:
             # PLAN-chatbot-customer-scope-29sep D2: "my" / "me" / "our" as the asker's own
             # account. Required for strict mode, tolerated absent (older prompt versions).
             "self_reference": {"type": "boolean"},
+            # REPORT-SMART-L R6 (ruling A): the verbatim words of the CURRENT message naming the ranked or
+            # grouped axis ("by salesppl", "salesppl", "item"), null when it names none. Same shape and
+            # exemption as `compare_to`; declared by the prompt version that defines it only (`without_by_words`).
+            "by_words": {"type": ["string", "null"]},
             "routing": {
                 "type": "object",
                 "additionalProperties": False,
@@ -652,12 +702,14 @@ def _build_base_json_schema() -> dict[str, Any]:
             "ranking_refine",
             "ranking_drill",
             "measure",
+            "compare_to",
             "sales_basis",
             "sales_company",
             "promotion_kind",
             "portal_form",
             "correction",
             "self_reference",
+            "by_words",
             "routing",
             "escalation",
             "document",
@@ -757,6 +809,7 @@ TOLERATED_ABSENT: frozenset[str] = frozenset(
         "ranking_refine",
         "ranking_drill",
         "measure",
+        "compare_to",
         "sales_basis",
         "sales_company",
         "promotion_kind",
@@ -764,6 +817,7 @@ TOLERATED_ABSENT: frozenset[str] = frozenset(
         "proceed_anyway",
         "open_question_answer",
         "self_reference",
+        "by_words",
         "profile_statements",
         # LOWSTOCK-SEMANTIC: no recorded emission and no prompt version before
         # `lss_0001_parser_vocab` carries it; absent reads as "nothing placed".
@@ -785,8 +839,90 @@ TOLERATED_ABSENT: frozenset[str] = frozenset(
 )
 
 
+#: What a prompt version that never declares `compare_to` is offered for `measure`.
+_OLD_MEASURES = ["qty", "amount", None]
+
+
+def without_report_fields(schema: dict[str, Any]) -> dict[str, Any]:
+    """A copy of `schema` as it was before the count measures and `compare_to`: `measure` is
+    qty | amount | null and `compare_to` is neither a property nor required."""
+    out = copy.deepcopy(schema)
+    out["properties"]["measure"]["enum"] = list(_OLD_MEASURES)
+    out["properties"].pop("compare_to", None)
+    out["required"] = [k for k in out["required"] if k != "compare_to"]
+    return out
+
+
+def without_by_words(schema: dict[str, Any]) -> dict[str, Any]:
+    """A copy of `schema` for a prompt version that does not define `by_words`: neither a property nor required."""
+    out = copy.deepcopy(schema)
+    out["properties"].pop("by_words", None)
+    out["required"] = [k for k in out["required"] if k != "by_words"]
+    return out
+
+
+def closed_lists_schema(
+    items: list[str], *, state: bool = False, report_fields: bool = True, by_words: bool = True
+) -> dict[str, Any]:
+    """The strict schema of a CLOSED LISTS version: the production one (the CHAT-STATE one
+    when the version also asks for `state_changes`), with each entity's `listed_item` held
+    to the items the lists render (a JSON enum) or null. The provider then guarantees the
+    parser picks a listed file type, certificate kind or scheme, or none; no code ever maps
+    the customer's word to one (CHAT-CLOSED-LISTS card R2/R5)."""
+    import copy
+
+    schema = copy.deepcopy(PARSE_OUTPUT_JSON_SCHEMA_WITH_STATE if state else PARSE_OUTPUT_JSON_SCHEMA)
+    entity = schema["properties"]["entities"]["items"]
+    # No item at all is a null-only key: an enum of [null] alone is refused by some providers.
+    from app.services.chatbot.head.closed_lists_prompt import NOT_LISTED
+
+    entity["properties"]["listed_item"] = (
+        {"type": ["string", "null"], "enum": [*items, NOT_LISTED, None]} if items else {"type": "null"}
+    )
+    entity["required"] = [*entity["required"], "listed_item"]
+    schema = schema if report_fields else without_report_fields(schema)
+    return schema if by_words else without_by_words(schema)
+
+
+#: The stored parser reasoning efforts; anything else (a typo, "none", an effort this list does not hold) is `off`.
+#: `off` and `low` only (LEAN review S1): minimal, medium and high are unmeasured, and medium / high can spend the
+#: whole PARSER_MAX_TOKENS ceiling on reasoning. Trigger to widen: a measured arm shows a value is needed, and
+#: PARSER_MAX_TOKENS is raised with it in the same change.
+REASONING_EFFORTS = frozenset({"off", "low"})
+
+
+def reasoning_effort_setting(db: Session) -> str:
+    """`system_settings.chatbot_parser_reasoning_effort`, read now (no cache: a flip reaches the next parse);
+    anything not in REASONING_EFFORTS, or no row, is `off`."""
+    from app.models.user import SystemSetting
+
+    row = db.query(SystemSetting.chatbot_parser_reasoning_effort).first()
+    value = row[0] if row is not None else None
+    return value if value in REASONING_EFFORTS else "off"
+
+
+#: PARSER-GEMINI-LITE: label efforts held back on OpenAI for the reason REASONING_EFFORTS gives (they can
+#: spend the whole PARSER_MAX_TOKENS ceiling on reasoning); lift with that ceiling. Gemini takes them, with
+#: answer headroom per level (`llm_provider._gemini_thinking`).
+OPENAI_CAPPED_LABEL_EFFORTS = frozenset({"medium", "high", "xhigh"})
+
+
+def sent_reasoning_effort(config: ParserConfig) -> str:
+    """The effort `parse` actually sends: the label's own when it sets one (any provider but Anthropic, which
+    takes none; on OpenAI not one in OPENAI_CAPPED_LABEL_EFFORTS), else the stored one on OpenAI, `off`
+    (none sent) otherwise. The trace records this, so it says what the provider was asked for."""
+    provider = getattr(config, "provider", None)
+    if provider == "anthropic":
+        return "off"
+    label_effort = getattr(config, "label_reasoning_effort", None)
+    if label_effort and not (provider == "openai" and label_effort in OPENAI_CAPPED_LABEL_EFFORTS):
+        return label_effort
+    effort = getattr(config, "reasoning_effort", "off")
+    return effort if effort in REASONING_EFFORTS and getattr(config, "provider", None) == "openai" else "off"
+
+
 def resolve_config(
-    db: Session, *, current_date: str, override_version_id: str | None = None
+    db: Session, *, current_date: str, override_version_id: str | None = None, llm_choice=None
 ) -> ParserConfig:
     """Read the prompt, the per-key model override and the API key. Session-bound.
 
@@ -798,35 +934,93 @@ def resolve_config(
     the way down. It exists for the Prompts screen's "Run a turn" test (AC-807), which is
     dry-run only: the engine refuses to read it off a live envelope, so a customer can
     never be answered by an unpublished prompt.
+
+    A CLOSED LISTS version also reads `system_settings.chatbot_closed_lists_mode` here, every
+    call (no cache, so a flip reaches the next turn), for the index mode below.
     """
     from app.services.ai_assistant_service import AIAssistantConfigService
-    from app.services.llm_provider import resolve_api_key
 
     # ONE registry read: the gate reads the RAW template, the prompt is that same text rendered.
+    from app.services.chatbot.head import closed_lists_index
     from app.services.chatbot.head.chat_state_prompt import HEADING
+    from app.services.chatbot.head.closed_lists_prompt import gate_on
 
     resolved = get_prompt(db, PROMPT_KEY, override_version_id=override_version_id)
     raw_template = resolved.text
-    system_prompt, prompt_version = render_resolved(db, PROMPT_KEY, resolved, current_date=current_date)
+    # The same one read as the state gate (#1747 R6): both gates and the text, one version.
+    closed_lists = gate_on(raw_template)
+    # CLOSED-LISTS-INDEX-MODE: the full lists render as fixed pointer lines, passed at render
+    # time (a value the caller passes wins over the registry's), so the template is untouched.
+    index_mode = closed_lists and closed_lists_index.read_mode(db) == closed_lists_index.MODE_INDEX
+    blanks = dict(closed_lists_index.SYSTEM_BLANKS) if index_mode else {}
+    system_prompt, prompt_version = render_resolved(db, PROMPT_KEY, resolved, current_date=current_date, **blanks)
     provider_override, model_override = agent_model(db, PROMPT_KEY)
 
     config = AIAssistantConfigService(db).get()
     if config is None:
         raise ParserError("AI assistant configuration is not set")
-    provider = provider_override or config.provider
-    model = model_override or config.model
-    api_key = resolve_api_key(config, provider)
+    from app.services.contact_llm_choice import apply_choice
+
+    provider, model, api_key, model_source = apply_choice(
+        llm_choice, config, provider_override or config.provider, model_override or config.model,
+        model_from_label=bool(model_override),
+    )
     if not api_key:
         raise ParserError(f"no API key configured for provider {provider!r}")
+    from app.services.chatbot.head import code_lookup_prompt
+    from app.services.chatbot.head.parser_template import MARKER as TEMPLATE_MARKER
+
+    # CHAT-STATE: the literal on the prompt text (never on a message) opts the turn in.
+    state_block = HEADING in (raw_template or "")
+    # REPORT-SMART-L: the schema follows the prompt, as `state_block` does.
+    report_fields = "compare_to" in (raw_template or "")
+    by_words = "by_words" in (raw_template or "")
+    sales_channels = context_mod.SALES_CHANNELS_LINE in (raw_template or "")
+    json_schema = None
+    if closed_lists:
+        from app.services.chatbot_prompt_vars import closed_list_enum
+
+        json_schema = closed_lists_schema(
+            closed_list_enum(db), state=state_block, report_fields=report_fields, by_words=by_words
+        )
     return ParserConfig(
         system_prompt=system_prompt,
         prompt_version=prompt_version,
         provider=provider,
         model=model,
         api_key=api_key,
-        # CHAT-STATE: the literal on the prompt text (never on a message) opts the turn in.
-        state_block=HEADING in (raw_template or ""),
+        closed_lists=closed_lists,
+        code_lookup=closed_lists and code_lookup_prompt.gate_on(raw_template),
+        json_schema=json_schema,
+        state_block=state_block,
+        report_fields=report_fields,
+        by_words=by_words,
+        sales_channels=sales_channels,
+        template=TEMPLATE_MARKER in (raw_template or ""),
+        closed_lists_index=index_mode,
+        reasoning_effort=reasoning_effort_setting(db),
+        label_reasoning_effort=agent_reasoning_effort(db, PROMPT_KEY),
+        model_source=model_source,
     )
+
+
+def uses_closed_lists(db: Session, *, override_version_id: str | None = None) -> bool:
+    """CHAT-CLOSED-LISTS gate: does the version this turn runs carry the CLOSED LISTS
+    section? Read off the RAW template (the same resolution `render` makes), so no
+    rendered list value can switch it on."""
+    from app.services import ai_prompt_registry
+    from app.services.chatbot.head.closed_lists_prompt import gate_on
+
+    return gate_on(ai_prompt_registry.get_prompt(db, PROMPT_KEY, override_version_id=override_version_id).text)
+
+
+def uses_code_lookup(db: Session, *, override_version_id: str | None = None) -> bool:
+    """CHAT-CODE-LOOKUP gate: does the version this turn runs carry the CODE LOOKUP section
+    beside the CLOSED LISTS one? Read off the RAW template, like `uses_closed_lists`."""
+    from app.services import ai_prompt_registry
+    from app.services.chatbot.head.code_lookup_prompt import gate_on
+
+    return gate_on(ai_prompt_registry.get_prompt(db, PROMPT_KEY, override_version_id=override_version_id).text)
 
 
 def _subject_names(rows: Any) -> list[str]:
@@ -1061,6 +1255,13 @@ def assert_emission(emission: dict) -> None:
         )
 
 
+def _base_schema(config: ParserConfig) -> dict[str, Any]:
+    """The production schema for `config`: with or without `state_changes`, with or without the report fields."""
+    schema = PARSE_OUTPUT_JSON_SCHEMA_WITH_STATE if config.state_block else PARSE_OUTPUT_JSON_SCHEMA
+    schema = schema if config.report_fields else without_report_fields(schema)
+    return schema if config.by_words else without_by_words(schema)
+
+
 def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
     """One structured-output call. Raises `ParserError`; never returns a default.
 
@@ -1078,6 +1279,9 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
         {"role": "system", "content": config.system_prompt},
         {"role": "user", "content": user_block},
     ]
+    # LEAN + PARSER-GEMINI-LITE: `off` sends none, so an unset label and setting send what they always did.
+    effort = sent_reasoning_effort(config)
+    started = time.perf_counter()
     try:
         # A rate limit is waited out inside the call (PR #1247 round 6, ruling 3).
         result = llm_call.chat(
@@ -1087,26 +1291,39 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
             messages,
             temperature=0.0,
             max_tokens=PARSER_MAX_TOKENS,
-            json_schema=PARSE_OUTPUT_JSON_SCHEMA_WITH_STATE if config.state_block else PARSE_OUTPUT_JSON_SCHEMA,
+            json_schema=config.json_schema or _base_schema(config),
             json_schema_name=PARSE_OUTPUT_SCHEMA_NAME,
             # One cache bucket per published prompt version: every parse on it shares
             # the same static prefix (OpenAI only; the others ignore it).
             prompt_cache_key=f"{PROMPT_KEY}:v{config.prompt_version or 'fallback'}",
+            **({"reasoning_effort": effort} if effort != "off" else {}),
         )
     except llm_call.RateLimited as exc:
-        raise ParserError(f"parser provider call failed: {exc}", rate_limited=True) from exc
+        failure = ParserError(f"parser provider call failed: {exc}", rate_limited=True)
+        failure.latency_ms = int((time.perf_counter() - started) * 1000)
+        raise failure from exc
     except Exception as exc:  # noqa: BLE001 - provider/transport failure is a failed stage
-        raise ParserError(f"parser provider call failed: {exc}") from exc
+        failure = ParserError(f"parser provider call failed: {exc}")
+        failure.latency_ms = int((time.perf_counter() - started) * 1000)
+        raise failure from exc
 
     usage = {
         "provider": config.provider,
         "model": config.model,
+        # The id the provider says answered (a dated snapshot of the alias asked for),
+        # the effort asked for, and the call's wall clock, retries and backoff included
+        # (PARSER-GEMINI-LITE: what a model comparison reads off the trace).
+        "model_answered": str(getattr(result, "model", "") or ""),
+        "reasoning_effort": effort,
+        "latency_ms": int((time.perf_counter() - started) * 1000),
         "prompt_tokens": int(getattr(result, "prompt_tokens", 0) or 0),
         "completion_tokens": int(getattr(result, "completion_tokens", 0) or 0),
         "total_tokens": int(getattr(result, "total_tokens", 0) or 0),
         # The prompt-cache hit (LLM-TEST-COST): how much of `prompt_tokens` was billed
         # at the cached rate.
         "cached_tokens": int(getattr(result, "cached_tokens", 0) or 0),
+        # LEAN: the part of `completion_tokens` spent reasoning, None when the provider reports none.
+        "reasoning_tokens": getattr(result, "reasoning_tokens", None),
     }
     try:
         content = (result.content or "").strip()
@@ -1121,9 +1338,12 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
         if not isinstance(parsed, dict):
             raise ParserError("parser returned a non-object")
         assert_emission(parsed)
+        if not config.by_words:
+            parsed.pop("by_words", None)  # the prompt never defined it: a null here would read as "no axis typed"
     except ParserError as exc:
         # The provider answered, so it billed. The turn fails either way; the spend is
         # still real and still has to reach `ai_assistant_usage_logs`.
         exc.usage = usage
+        exc.latency_ms = usage["latency_ms"]
         raise
     return ParsedOutput(parsed, usage)
