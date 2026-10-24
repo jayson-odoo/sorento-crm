@@ -46,6 +46,8 @@ EXPECT_KEYS = frozenset({
     "entities_none",
     # REPORT-SMART-L R5 row 13: the parse's `self_reference`, null read as false.
     "self_reference",
+    # REPORT-SMART-L R6: the parse's `axis_words` (a string compared folded, or null for "names no axis").
+    "axis_words",
 })
 #: The expect keys read straight off the verdict (null means null or absent).
 _REPORT_KEYS = ("order_status", "group_by", "measure", "basis", "compare_to", "sales_channel", "ranking_refine",
@@ -55,6 +57,7 @@ _EXPECT_TYPES: dict[str, tuple[type, ...]] = {
     "products_only": (list,),
     "entities_none": (bool,),
     "self_reference": (bool,),
+    "axis_words": (str, type(None)),
     "is_active": (bool, type(None)),
     "continues": (bool,),
     "promotion_kind": (str, type(None)),
@@ -232,6 +235,11 @@ def grade_parse(verdict: dict[str, Any], expect: dict[str, Any]) -> tuple[bool, 
             reasons.append(f"product entities outside the allowed set: {stray}")
     if "self_reference" in expect and (verdict.get("self_reference") is True) is not expect["self_reference"]:
         reasons.append(f"self_reference {verdict.get('self_reference')!r} != {expect['self_reference']!r}")
+    if "axis_words" in expect:
+        got_words = verdict.get("axis_words")
+        got_fold = _fold(got_words) if isinstance(got_words, str) else ""
+        if got_fold != _fold(expect["axis_words"]):
+            reasons.append(f"axis_words {got_words!r} != {expect['axis_words']!r}")
     if expect.get("entities_none") and entities:
         reasons.append(f"entities {[(e.get('hint'), e.get('raw')) for e in entities]} but none expected")
     answer = verdict.get("open_question_answer")
