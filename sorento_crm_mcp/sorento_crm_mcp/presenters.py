@@ -3529,13 +3529,11 @@ def _report_ask(body: dict) -> str:
         lines.append(f"and {more} more")
     lines.append(f"Total {figures}")
     text = "\n".join(lines)
-    if items:
+    offer = _REPORT_ASK_OFFERS.get(group_by)
+    if offer and (items or not body.get("compare_to")):
         # REPORT-SMART-L R3c: the top selling reply's own offer (Q2 b): a rank number opens that row.
-        text += "\n\n" + (
-            "Reply with a rank number to see that category's top items."
-            if group_by == "category"
-            else "Reply with a rank number to see that item's customers and months."
-        )
+        # R5 B (owner b2): a sales agent / customer ranking offers its row's detail too.
+        text += "\n\n" + offer
     # Length never cuts a ranking: split between rows into WhatsApp-sized parts (as top selling did).
     return "\n\n".join(whatsapp_parts(text))
 
@@ -3623,6 +3621,14 @@ def _chat_report_ask(body: dict) -> str:
         else:
             lines.append(str(coverage["line"]))
     return "\n".join(lines)
+
+
+_REPORT_ASK_OFFERS = {
+    "product": "Reply with a rank number to see that item's customers and months.",
+    "category": "Reply with a rank number to see that category's top items.",
+    "sales_agent": "Reply with a rank number to see that sales agent's customers and months.",
+    "customer": "Reply with a rank number to see that customer's products and months.",
+}
 
 
 def _report_ask_envelope(body: dict) -> dict:

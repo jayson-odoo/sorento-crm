@@ -3003,15 +3003,16 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
         frame.pop("shown", None)
         if isinstance(drill, dict) and drill.get("group_by") == frame.get("group_by") and drill.get("rows"):
             frame["shown"] = drill
-            if frame.get("group_by") in ("product", "category") and not frame.get("compare_to"):
-                # REPORT-SMART-L R3c (owner Q2 b): an item / category ranking is a pick list; a rank number opens
-                # that row's detail, on this engine (`turn/pending.top_selling_pick`, `apply._answer_top_selling_pick`).
+            if frame.get("group_by") in ("product", "category", "sales_agent", "customer") and not frame.get("compare_to"):
+                # REPORT-SMART-L R3c (owner Q2 b), R5 B (owner b2): an item / category / sales agent / customer ranking
+                # is a pick list; a rank number opens that row's detail, on this engine
+                # (`turn/pending.top_selling_pick`, `apply._answer_top_selling_pick`).
                 pick = {
                     "kind": "top_selling_pick",
                     "last_result_set": [
                         # A category is printed (and so picked) by its code.
                         {"idx": i, "label": r.get("code") or r.get("name"), "code": r.get("code") or r.get("name"),
-                         "entity_type": "category" if frame["group_by"] == "category" else "product", "keys": list(r.get("keys") or [])}
+                         "entity_type": {"category": "category", "sales_agent": "sales_agent", "customer": "customer"}.get(frame["group_by"], "product"), "keys": list(r.get("keys") or [])}
                         for i, r in enumerate(jsc.array(drill.get("rows")), start=1) if isinstance(r, dict)
                     ],
                     "filters": {"tool": "crm_report_ask", "ranking": {"group_by": frame["group_by"]}},
