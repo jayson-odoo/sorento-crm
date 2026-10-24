@@ -1,6 +1,6 @@
 # PLAN: n8n to direct ingress - migration gap map
 
-Status: research (size S, no code); one crew `--ask` filed 25 Oct 2026, waiting on owner.
+Status: research (size S, no code). Owner 25 Oct 05:35: Q1 (a) keep the thin n8n sender; Q4 no pilot, one switchover. Section "Owner's design" filed as one crew `--ask`, waiting on owner.
 Origin: owner 25 Oct 05:25 after PHOTO-ORDER-SCOUT (`documentation/plans/_archive/chatbot/PLAN-photo-order-scout.md`):
 no B2, the Redis queue peek rejected as coupling the CRM to n8n internals; map what it takes
 for the CRM to own the whole chatbot ingress, so the photo-order fix can live in the CRM's
@@ -138,3 +138,119 @@ turn is answered by n8n), so each step is reversible by editing the contact list
 4. Pilot gate: (a) own number 3 days -> 5 active dealers 1 week -> `all`, gate = zero
    `busy` / `failed` direct skips and no reply answered by n8n's copy, (b) own number then
    `all`. Recommendation: (a).
+
+## Owner's design: remove the dispatcher's queue, the CRM queues (25 Oct 05:35)
+
+Question: "can I just remove the queue from the dispatcher and let the CRM handle the
+queue?" Answer: **yes, and the CRM half is already built.** This is the turn-engine plan's S7
+(`PLAN-chatbot-turn-engine.md:231-248`, AC-714 at `:252-256`): the injectors stop handing the
+message to the dispatcher and call the spine themselves; the CRM's per-contact ticket orders
+the turns.
+
+### What already exists in the CRM
+
+- S7 switch `system_settings.chatbot_ordering_enabled` (`models/user.py:747-753`, read
+  `engine.py:9881-9897`, `app/api/v1/external/chat.py:19-22`): every `/chat/turn` takes the
+  per-contact ticket (`engine.py:2796-2803`, `dispatch.py:243`) and the CRM owns the tail
+  (`/complete` answers 410). Precondition: every lane the CRM may delegate is in
+  `chatbot_completed_lanes`, or such a turn fails (`engine.py:7751-7770`).
+- Dev copy (read-only): `chatbot_ordering_enabled = true`, 13 completed lanes, and 0
+  `delegated` turns since 1 Oct (10,431 done). So the CRM side of S7 looks ON already;
+  prod value UNVERIFIED (Settings screen shows it).
+- With the dispatcher in front, the ticket never sees two turns of one contact at once,
+  which is why it changes nothing today.
+
+### What the dispatcher does today (all of it)
+
+`sorento-dispatcher` export @ `7aa98131`, 15 nodes: a 1 s Schedule Trigger pops ONE contact
+from `ready-contacts`, takes `lock:{contact}` (INCR, TTL 120 s), calls the spine with
+`contact` and waits, deletes the lock, re-arms if `q:{contact}` still has items. Nothing
+else: no concat, no media, no send, no retry, no logging. Side effect: new turns start at
+about 1 per second machine-wide (`PLAN-chatbot-turn-engine.md:231-233`).
+
+### Exact changes
+
+n8n (owner clicks, about 10 minutes):
+
+1. `sorento-main` (`NwMOBEQ1NW7LVky5`): copy the dispatcher's `call-spine` node (Execute
+   Workflow -> `sorento-consume-main S7` `THfmMmYcGzDDXBu4`) into the producer. Set its input
+   `contact` to `{{ String($('If1').first().json.id) }}` (the same value `push-ready` pushes
+   today) and turn **Wait for sub-workflow completion OFF**. Rewire `Redis2 -> push-ready` to
+   `Redis2 -> call-spine`, delete `push-ready`. Publish.
+2. `sorento-main-INJECT` (`sk0zN90Cas4Y6Y2w`, the failover poller's injector, also the
+   Retry target): the same two edits, same minute.
+3. Leave `Redis2` (RPUSH `q:{contact}`) in place: the spine's first node already pops
+   `q:{contact}` (`spine-s7` `redis-pop-main-message-list`), so **the spine needs no change**.
+   Each message is pushed once and popped once by the spine run that was started for it.
+4. After `ready-contacts` is empty (the dispatcher drains what was queued at the switch),
+   deactivate `sorento-dispatcher` (`77SG9jTdVKhwMwvR`).
+
+Unchanged in n8n: auth-less webhook + trigger, rate limit (`Redis1`/`If`), takeover drop
+(`If1`), failover gate + poller, findcontact, the spine (media intake, `/chat/turn`, action
+Switch, send subs, 24 h template fallback, error logger, chat-history save), the thin
+`chatbot-sender`.
+
+CRM (one small lane, small fix track, ~200 lines + tests): the **pre-send look-ahead**.
+Before a turn returns its reply, run `send_order.earlier_unanswered` once more with the
+"on its way" bounds widened to NOW: a queued turn row sent earlier (as today), and a ledger
+photo whose read started AFTER this turn arrived (today `created_at <= first_seen` and job
+queued/running, `send_order.py:318-322`; widen to "before now" and also "done with no turn
+row yet"). If one is found: drop this turn's draft, answer the photo, then re-run this
+message, one response (card Q3 (a)). Nothing found = no wait. Cap: `within_bounds` (n8n's
+90 s). The ledger rule's `outcome == "accepted"` filter (`send_order.py:317`) keeps out
+photos that n8n's media reply arm answers on its own, so no double reply.
+
+### Where the photo is read
+
+Stays in the n8n spine (`sub-media-intake` before `/chat/turn`). Without the dispatcher the
+photo's spine starts the moment n8n gets the photo, and its first CRM call
+(`/external/media/process`) writes the ledger row within about a second. That row is the
+signal the look-ahead reads, so the photo is NOT late to the CRM even though its own
+`/chat/turn` arrives after its read. The engine then waits for that same read inside the
+text's turn (same ledger key; UNVERIFIED that the n8n-first, engine-second order reuses the
+job rather than reading twice; the reverse order is documented at `send_order.py:557-558`).
+The photo's own `/chat/turn` later comes back `duplicate: true` (D15) and sends nothing.
+
+25 Oct case under this design: text at n8n 02:34:32.4 -> turn runs ~4.4 s -> pre-send about
+02:34:37; photo at n8n 02:34:34.8 -> ledger row about 02:34:35.5 -> look-ahead finds it ->
+photo answered first. On the dev copy the same timing model gives 47 / 3 / 0 (section
+"Photo order once the CRM owns the queue"; CRM webhook arrival used as a proxy for n8n's).
+
+### What would break or must move
+
+| Thing | Effect | Action |
+| --- | --- | --- |
+| ~1 new turn/s cap (dispatcher tick) | gone: a burst of dealers hits `/chat/turn` at once | CRM capacity: 4 uvicorn workers (`gunicorn.conf.py:44`), in-process turns, offload off (`config.py:182-186`, measured trigger ~250 concurrent not reached); n8n concurrency limit UNVERIFIED. Watch the first busy hour |
+| One contact's long burst | ticket wait is clamped to 30 s (`config.py:174-181`); a 4th+ message of a long photo burst may run before its predecessor finishes (out of order). The dispatcher's lock held regardless | accept, or raise the n8n timeout and the clamp together |
+| Concat / batching | none today, none after | none |
+| Media intake | unchanged, in the spine | none |
+| Typing / labels | none in the exports | none |
+| Retries / error path | unchanged (spine `sub-error-logger`; no retry) | none |
+| Failover poller | posts to `sorento-main-INJECT`, flipped in step 2 | none beyond step 2 |
+| Pool-full path `chat_turns.py:143` | direct ingress only; stays off in this design | none |
+| A message left with both edges | if `push-ready` is kept AND `call-spine` added, the dispatcher's spine run pops an empty list | delete `push-ready` in steps 1-2 |
+
+### Switchover and rollback
+
+1. Deploy the CRM look-ahead (inert while the dispatcher is on). Confirm on Settings that
+   chatbot ordering (S7) is ON.
+2. Publish steps 1 and 2 in n8n together. 3. Deactivate the dispatcher once
+   `ready-contacts` is empty. 4. Owner test: photo then "check stock" within 3 s.
+
+Rollback, under a minute: in n8n, restore the previous version of `sorento-main` and
+`sorento-main-INJECT` (workflow history) and re-activate `sorento-dispatcher`. Nothing is
+lost either way: every message is RPUSHed once and popped by whichever spine run takes it.
+The CRM look-ahead can stay; it finds nothing with the dispatcher back in front.
+
+### Owner questions (filed as one `--ask`)
+
+1. Photo reading: (a) stays in the n8n spine; the look-ahead reads its ledger row,
+   (b) the CRM reads it (spine skips `sub-media-intake`, a bigger n8n edit).
+   Recommendation: (a): no spine change at all, and the ledger row reaches the CRM within
+   about a second of n8n receiving the photo.
+2. Rollback mechanism: (a) n8n workflow history restore + re-activate the dispatcher,
+   (b) build an IF toggle node in both injectors now. Recommendation: (a): no extra node to
+   build, and the previous version is exactly today's.
+3. Long single-contact bursts beyond the 30 s ticket wait: (a) accept, (b) raise n8n's
+   `chat-turn` timeout and `chatbot_queue_wait_seconds` together. Recommendation: (a): the
+   photo fix targets photo + text pairs; revisit if a burst reorders in the first week.
