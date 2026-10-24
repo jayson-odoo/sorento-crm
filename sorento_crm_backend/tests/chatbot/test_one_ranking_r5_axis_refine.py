@@ -97,9 +97,8 @@ def test_a3_2_guard_a_reply_with_the_count_is_the_answer_even_naming_an_axis(con
 def test_a3_3_guard_the_held_axis_echoed_with_nothing_else_is_unchanged(console, monkeypatch) -> None:
     _open_how_many(console, monkeypatch)
     text, log = _say_all(console, monkeypatch, _verdict(group_by="sales_agent"), "by salesppl")
-    # Today: the held axis echoed fills nothing, so nothing runs and the count is asked again
-    # (it still opens with the "I don't know ... as a number" miss line; not pinned here).
-    assert _ran(log) == [] and "How many? For example top 5." in text, (text, log)
+    # The held axis echoed fills nothing, so nothing runs and the count is asked again with no miss line.
+    assert _ran(log) == [] and "How many? For example top 5." in text and "as a number" not in text, (text, log)
 
 
 def test_a3_4_guard_an_item_ranking_with_no_basis_or_measure_gets_one_combined_question(console, monkeypatch) -> None:

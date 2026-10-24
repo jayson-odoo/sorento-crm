@@ -4771,6 +4771,11 @@ def _run_stages_body(  # noqa: PLR0915
         verdict.get("reference_positions") or stored_answer.get("picked")
     )
 
+    # A sales ranking's `status` that is a report basis ("by qty, outstanding") is its basis, not a document status.
+    from app.services.chatbot.lanes.business import report_ask as _report_ask_basis
+
+    verdict = _report_ask_basis.status_as_basis(verdict)
+
     # CHAT-STATE seam: the parser's `state_changes`, applied ONCE, before every post-parse
     # rewrite, APPLY and both of its re-entries (they all read `state_in` / `verdict`, so
     # writing the change into those two makes the re-entries idempotent). On when the

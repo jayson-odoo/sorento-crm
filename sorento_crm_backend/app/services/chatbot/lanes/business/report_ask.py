@@ -341,6 +341,21 @@ def from_top_selling(verdict: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def status_as_basis(verdict: dict[str, Any]) -> dict[str, Any]:
+    """Engine seam, before the CHAT-STATE seam (EVAL-BENCH mini 7928e3b7): a sales ranking whose `status` is one of
+    the report ask's bases ("by qty, outstanding") has that basis, not a document status to ask a document for.
+    The status and document are dropped as `from_top_selling` and `by_capability` drop them. Parser fields only."""
+    if jsc.js_string(verdict.get("order_status") or "").strip() not in (ASK_NAME, "top_selling"):
+        return verdict
+    status = jsc.js_string(verdict.get("status") or "").strip()
+    if status not in BASES:
+        return verdict
+    out = {k: v for k, v in verdict.items() if k not in ("status", "document")}
+    if basis_from(out) is None:
+        out["basis"] = status
+    return out
+
+
 def by_capability(verdict: dict[str, Any]) -> dict[str, Any]:
     """Engine seam, before grounding (REPORT-SMART-1021 step 2): a sales figure ask whose
     `group_by` its kind's tool cannot draw (`CAN_DRAW`) but the report ask can, or whose
@@ -496,7 +511,18 @@ def names_its_own_ask(
     # one filling the count, metric or basis is the answer (16 Oct: its axis is parser noise).
     if not raw_group or set(filled) - {"period"}:
         return False
+    if not filled and _swappable(verdict, parser_ops):
+        return False  # R5: the axis changing on the open ask (`settle` swaps it in), not a new ask
     return _other_axis(verdict, extras)
+
+
+def _swappable(verdict: dict[str, Any], parser_ops: Any = ()) -> bool:
+    """A reply that may change the open ask's axis: the parser did not say it is a fresh ask
+    (`ranking_refine` explicitly false, or a `new_subject` op). Callers check it fills nothing and names no entity."""
+    if verdict.get("ranking_refine") is False:
+        return False
+    changes = [*jsc.array(verdict.get("state_changes")), *jsc.array(parser_ops)]
+    return "new_subject" not in {jsc.js_string(c.get("op") or "") for c in changes if isinstance(c, dict)}
 
 
 def _other_axis(verdict: dict[str, Any], extras: dict[str, Any]) -> bool:
@@ -513,9 +539,16 @@ def _other_axis(verdict: dict[str, Any], extras: dict[str, Any]) -> bool:
     return axis != _dict(extras.get("args")).get("group_by")
 
 
+def _echoes_axis(parse_output: dict[str, Any], extras: dict[str, Any]) -> bool:
+    """Whether the verdict names exactly the axis the open ask already holds."""
+    raw_group = jsc.js_string(parse_output.get("group_by") or "").strip().lower()
+    held = _dict(extras.get("args")).get("group_by")
+    return bool(raw_group) and bool(held) and GROUP_BY.get(raw_group, raw_group) == held
+
+
 def _swap_axis(parse_output: dict[str, Any], extras: dict[str, Any]) -> dict[str, Any] | None:
     """The slot's extras with a refine's other axis swapped in (its own filter dropped), or None."""
-    if parse_output.get("ranking_refine") is not True or not _other_axis(parse_output, extras):
+    if parse_output.get("ranking_refine") is False or not _other_axis(parse_output, extras):
         return None
     axis = GROUP_BY.get(jsc.js_string(parse_output.get("group_by")).strip().lower())
     if axis is None:
@@ -939,6 +972,14 @@ def settle(
             if args.get("compare_to") and args.get("group_by") == "month":
                 return rf.Outcome(reply=COMPARE_BY_MONTH_LINE, slot=None), None
             return rf.collect(db, SALES_RANKING_ASK, slot=slot, given=held, extras={"args": args}), None
+        if int(slot.get("misses") or 0) < 1 and _echoes_axis(parse_output, extras):
+            # R5 (live, flash-lite a342e9f0): the open ask's own axis said again fills nothing and is no
+            # number: the owed fields are asked again with no miss line; it still counts as one miss, so a
+            # second echo gives up as today (default top 10).
+            again = rf.collect(db, SALES_RANKING_ASK, slot=slot, given=held)
+            if again.slot:
+                again.slot["misses"] = 1
+            return again, None
         reply_dates = {"start": parse_output.get("date_filter_start"), "end": parse_output.get("date_filter_end")}
         outcome = rf.collect(
             db,
