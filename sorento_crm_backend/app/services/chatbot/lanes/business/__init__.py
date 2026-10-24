@@ -2218,37 +2218,35 @@ def run_fetch(
         # whole table in text and the same query as an Excel (Owner ruling 26 Sep 07:16
         # Q2). An override like the two reports beside it, never `tools[0]`; the grant
         # was checked above, before anything was fetched.
-        # Crew re-verify E: the answer to the company question re-runs the FIRST message's
-        # ask, so its carried axes win over whatever the reply parse carries ("Sorento"
-        # parsed with group_by "date"); the slot is settled before the axis is checked.
+        # Crew re-verify E2: the REPLY to the company question is never axis-checked. It re-runs
+        # the FIRST message's ask (its axis was checked on the asking turn), so an unsettled
+        # reply gets the question's own line and a settled one copies every carried key, the
+        # empty ones included, over whatever the reply parse carries ("Sorento" parsed with
+        # group_by "date"). A FRESH ask checks its axis first, then asks the company question.
         slot_asked = parse_output.get("required_ask")
         answering_company = isinstance(slot_asked, dict) and slot_asked.get("ask") == sales_company_ask.ASK_NAME
-        settled = (
-            sales_company_ask.settle(db, parse_output, contact_id=contact_id, space_id=space_id)
-            if answering_company
-            else None
-        )
-        carried_run = (
-            sales_company_ask.run_input(settled) if settled is not None and settled.done else {}
-        )
-        group_by = jsc.js_string(carried_run.get("group_by") or parse_output.get("group_by") or "")
-        if group_by and group_by not in fetch_mod.SALES_ANALYSIS_GROUP_BY:
-            # Review round 2 S1: "sales by customer" is not answered with a by-channel
-            # table and no word that the ask was changed; it is said, and nothing fetched.
-            return _sales_analysis_axis_unsupported(group_by)
+        if not answering_company:
+            group_by = jsc.js_string(parse_output.get("group_by") or "")
+            if group_by and group_by not in fetch_mod.SALES_ANALYSIS_GROUP_BY:
+                # Review round 2 S1: "sales by customer" is not answered with a by-channel
+                # table and no word that the ask was changed; it is said, and nothing fetched.
+                return _sales_analysis_axis_unsupported(group_by)
         # SALES-COMPANY (CHAT-PICK-QTY-STATE item 1): a contact in two companies who names
         # neither is asked which HERE, before any fetch, as a `required_fields` slot, so the
         # reply is read against this question (the route's own "Sorento or Mocha?" came back
         # as result text and left no question open). The answer re-runs the first message's
         # analysis: its channel, basis, axis, count and window ride the slot.
-        if not answering_company:
-            settled = sales_company_ask.settle(db, parse_output, contact_id=contact_id, space_id=space_id)
+        settled = sales_company_ask.settle(db, parse_output, contact_id=contact_id, space_id=space_id)
         if settled is not None:
             if trace is not None:
                 trace.add("required_ask", {"ask": sales_company_ask.ASK_NAME, "done": settled.done,
                                            "values": settled.values})
             if not settled.done:
                 return _fixed_reply(settled.reply or "", required_ask=settled.slot)
+            if answering_company:
+                carry = jsc.get(settled.extras, "carry") or {}
+                for key in sales_company_ask.CARRIED:
+                    semantic_input[key] = carry.get(key)
             for key, value in sales_company_ask.run_input(settled).items():
                 if key == "sales_company" or answering_company or not jsc.truthy(semantic_input.get(key)):
                     semantic_input[key] = value
