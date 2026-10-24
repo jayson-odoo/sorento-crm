@@ -35,6 +35,7 @@ from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business import low_stock_ask
 from app.services.chatbot.lanes.business import chat_report
 from app.services.chatbot.lanes.business import report_ask
+from app.services.chatbot.lanes.business import sales_company_ask
 from app.services.chatbot.lanes.business import ranking_ask
 from app.services.chatbot.lanes.business import resolve_gate
 from app.services.chatbot.lanes.business import services as business_services
@@ -2142,6 +2143,21 @@ def run_fetch(
             # Review round 2 S1: "sales by customer" is not answered with a by-channel
             # table and no word that the ask was changed; it is said, and nothing fetched.
             return _sales_analysis_axis_unsupported(group_by)
+        # SALES-COMPANY (CHAT-PICK-QTY-STATE item 1): a contact in two companies who names
+        # neither is asked which HERE, before any fetch, as a `required_fields` slot, so the
+        # reply is read against this question (the route's own "Sorento or Mocha?" came back
+        # as result text and left no question open). The answer re-runs the first message's
+        # analysis: its channel, basis, axis, count and window ride the slot.
+        settled = sales_company_ask.settle(db, parse_output, contact_id=contact_id, space_id=space_id)
+        if settled is not None:
+            if trace is not None:
+                trace.add("required_ask", {"ask": sales_company_ask.ASK_NAME, "done": settled.done,
+                                           "values": settled.values})
+            if not settled.done:
+                return _fixed_reply(settled.reply or "", required_ask=settled.slot)
+            for key, value in sales_company_ask.run_input(settled).items():
+                if key == "sales_company" or not jsc.truthy(semantic_input.get(key)):
+                    semantic_input[key] = value
         tool_name = _SALES_ANALYSIS_TOOL
         tool_item = {"name": tool_name, "_tool_pick": {"source": "sales_analysis_override"}}
     elif (
