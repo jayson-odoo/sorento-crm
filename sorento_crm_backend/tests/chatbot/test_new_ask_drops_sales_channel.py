@@ -54,15 +54,13 @@ from app.services.chatbot.turn.state import Focus, Profile, State
 from tests.chatbot._turn_helpers import build_policy, entity, verdict
 from tests.chatbot.conftest import validating_resolve_entity
 from tests.chatbot.test_engine import CONTACT_ID, _parser_output
-from tests.chatbot.test_top_selling_round4 import (  # noqa: F401 - `cat` / `route` are fixtures
-    _ask as _ts_ask,
-    _answer as _ts_answer,
+from tests.chatbot.test_report_ask_lane import (  # noqa: F401 - `console` is a fixture
+    TOOL,
     _e as _ts_entity,
-    _narrow as _ts_narrow,
-    _turn as _ts_turn,
-    cat,
-    route,
+    _say_all,
+    console,
 )
+from tests.chatbot.test_report_smart_step7 import KEEP, _state_on
 
 RULE = "new_ask_drops_sales_channel"
 GRANT = "sales_orders.sales_report"
@@ -505,54 +503,52 @@ class TestTheStatePathHasNoTwin:
 
 
 # --------------------------------------------------------------------------- #
-# T1 / T2 (RED against the first cut of the fix) - a top selling narrowing keeps the channel
+# T1 / T2 - a ranking narrowing keeps the ranking's channel (one-ranking path, #1816)
 # --------------------------------------------------------------------------- #
+#
+# On main (#1816) every ranking is `sales_ranking` on `crm_report_ask`, and the ranking holds its
+# channel in its own held frame (`report_ask._refine` re-runs the held args), not in
+# `focus.sales_channel`, so the old apply-level premise (a top selling `focus.status` that the
+# new-ask drop must spare) is gone. What stays pinned is the journey: the narrowed ranking call
+# still carries the dealer channel.
+
+SEP_2026 = {"date_filter_start": "2026-09-01", "date_filter_end": "2026-09-30"}
 
 
-def _dealer_ranking_focus() -> Focus:
-    """A dealer top selling ranking on screen ("top 10 selling dealer items", by quantity)."""
-    return Focus(
-        domains=["order"], status="top_selling", sales_channel="dealer",
-        top_selling={"rank_by": "quantity", "basis": "delivered", "rank_group": "item", "top_n": 10},
+def _ranking(**over: Any) -> dict[str, Any]:
+    base: dict[str, Any] = dict(
+        domain_hint="order", intent_hint="check_order", order_status="sales_ranking", ranking_refine=False,
+        group_by="product", top_n=10, measure="qty", basis="delivered", sales_channel="dealer", entities=[],
+        domain_in_message=True, state_changes=list(KEEP), **SEP_2026,
     )
+    base.update(over)
+    return _parser_output(**base)
 
 
-#: The two narrowing shapes the round 4 owner retest pins as a continuation of the ranking:
-#: `domain_in_message` true and an entity of their own, no channel word.
+#: The two narrowing shapes the round 4 owner retest pinned, on the one-ranking verdict: a category
+#: word, and a sales agent word, no channel word. `domain_in_message` true, as the old shapes.
 NARROWINGS = [
-    pytest.param("category", "water closet", {}, "water closet only", id="t1-water-closet-only"),
-    pytest.param("sales_agent", "contactz", {"order_status": "top_selling"}, "sold by contactz", id="t2-sold-by-agent"),
+    pytest.param("category", "ZZT CATEGORY", "water closet only", id="t1-category-only"),
+    pytest.param("sales_agent", "AGENT A", "sold by agent a", id="t2-sold-by-agent"),
 ]
 
 
-class TestATopSellingNarrowingKeepsTheChannel:
-    @pytest.mark.parametrize("hint, raw, extra, _text", NARROWINGS)
-    def test_apply_keeps_the_rankings_channel(self, hint, raw, extra, _text):
-        v = verdict(
-            domain_hint="order", intent_hint="check_order", sales_channel=None,
-            entities=[entity(raw, hint=hint, canonical_code=None, current_message=True)],
-            entity_op="replace_combine", domain_in_message=True, **extra,
-        )
-        state_out, plan = _apply(State(focus=_dealer_ranking_focus(), profile=Profile(), turn_no=3), v)
-        fired = list(plan.trace.rules_fired)
-        assert state_out.focus.status == "top_selling", (state_out.focus.status, fired)
-        assert RULE not in fired, f"a narrowing of the ranking on screen is not a new ask: {fired}"
-        assert state_out.focus.sales_channel == "dealer", (
-            f"a top selling narrowing keeps the ranking's channel: {state_out.focus.sales_channel!r}, {fired}"
-        )
-
-    @pytest.mark.parametrize("hint, raw, extra, text", NARROWINGS)
-    def test_the_next_ranking_call_carries_the_dealer_channel(
-        self, session_factory, monkeypatch, cat, hint, raw, extra, text
-    ):
-        _ts_turn(session_factory, monkeypatch, _ts_ask(top_n=100, sales_channel="dealer"), "top 100 dealer hot selling item")
-        _reply, (ranked,) = _ts_turn(session_factory, monkeypatch, _ts_answer(rank_by="quantity"), "qty")
+class TestARankingNarrowingKeepsTheChannel:
+    @pytest.mark.parametrize("hint, raw, text", NARROWINGS)
+    def test_the_next_ranking_call_carries_the_dealer_channel(self, console, monkeypatch, hint, raw, text):
+        _state_on(console)
+        _t, log = _say_all(console, monkeypatch, _ranking(), "top 10 selling dealer items september 2026")
+        (ranked,) = [a for n, a in log if n == TOOL]
         assert ranked.get("channel") == "dealer", f"setup: the ranking runs for dealer: {ranked}"
-        _reply, calls = _ts_turn(
-            session_factory, monkeypatch,
-            _ts_narrow(_ts_entity(raw, hint), domain_hint="order", domain_in_message=True, **extra),
+        _t, log = _say_all(
+            console, monkeypatch,
+            _ranking(
+                ranking_refine=True, sales_channel=None, group_by=None, top_n=None, measure=None, basis=None,
+                entities=[_ts_entity(raw, hint)], state_changes=list(KEEP), date_filter_start=None,
+                date_filter_end=None,
+            ),
             text,
         )
-        (args,) = calls
-        assert args["rank_by"] == "quantity" and args["n"] == 100, f"the ranking continues: {args}"
+        (args,) = [a for n, a in log if n == TOOL]
+        assert args["group_by"] == "product" and args["top_n"] == 10, f"the ranking continues: {args}"
         assert args.get("channel") == "dealer", f"the narrowed ranking keeps the dealer channel: {args}"
