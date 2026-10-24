@@ -267,3 +267,73 @@ def test_r8_guard_unit_the_engine_key_is_listed() -> None:
     from app.services.chatbot.lanes.business import report_ask
 
     assert report_ask.HELD_KEY in required_fields.ENGINE_KEYS
+
+
+# ------------------------------------------------ review round 1
+
+KEEP = [{"op": "keep", "axis": None, "position": None}]
+SWITCH = [{"op": "switch_domain", "axis": None, "position": None}]
+
+
+def _answer_all(console, monkeypatch, group_by: str) -> None:
+    answer = _v63(top_n=5, measure="qty", rank_by="quantity", basis="delivered", open_question_answer=dict(FILL))
+    text, log = _say_all(console, monkeypatch, answer, "top 5, qty, delivered")
+    _runs_with_all_four(log, group_by)
+
+
+@pytest.mark.parametrize("ops", [KEEP, SWITCH], ids=["keep", "switch_domain"])
+def test_r8_review_q3_an_order_list_window_is_never_lent_with_the_state_block_on(console, monkeypatch, ops) -> None:
+    """Owner Q3 on the State path: the applier writes this turn's domain before the engine seam, so the gate reads
+    the domains the focus held BEFORE it."""
+    from tests.chatbot.test_report_smart_step7 import _state_on
+
+    ran = _state_on(console)
+    order_list = _v63(order_status=None, document=["DO"], entities=[_e(PRODUCT_CODE, "product")],
+                      entity_op="replace_combine", domain_in_message=True, state_changes=[], **YEAR_2026)
+    text, log = _say_all(console, monkeypatch, order_list, f"delivery orders for {PRODUCT_CODE} in 2026")
+    assert TOOL not in _names(log) and SALES_REPORT_TOOL not in _names(log), ("setup", text, log)
+    text, log = _say_all(console, monkeypatch, _row3(state_changes=list(ops)), "by salesppl")
+    assert ran, "harness: the State path never ran"
+    assert _ran(log) == [] and PERIOD_Q in text, (text, log)
+
+
+def test_r8_review_state_on_a_ranking_reply_to_the_total_still_keeps_its_period(console, monkeypatch) -> None:
+    from tests.chatbot.test_report_smart_step7 import _state_on
+
+    ran = _state_on(console)
+    _total(console, monkeypatch, state_changes=[])
+    text, log = _say_all(console, monkeypatch, _row3(state_changes=list(KEEP)), "by salesppl")
+    assert ran, "harness: the State path never ran"
+    assert _ran(log) == [] and PERIOD_Q not in text and HOW_MANY in text, (text, log)
+
+
+def test_r8_review_a_month_trend_s_count_and_empty_measure_are_never_carried(console, monkeypatch) -> None:
+    month = _v63(group_by="month", ranking_refine=False, entities=[_e(PRODUCT_CODE, "product")],
+                 entity_op="replace_combine", domain_in_message=True, **YEAR_2026)
+    text, log = _say_all(console, monkeypatch, month, f"monthly sales for {PRODUCT_CODE} in 2026")
+    assert _ran(log) == [] and BASIS_Q in text and HOW_MANY not in text, ("setup", text, log)
+    text, log = _say_all(console, monkeypatch, _row3(), "by salesppl")
+    assert _ran(log) == [] and PERIOD_Q not in text, (text, log)
+    assert HOW_MANY in text and "quantity or" in text.lower() and BASIS_Q in text, text
+    _answer_all(console, monkeypatch, "sales_agent")
+
+
+def test_r8_review_a_replaced_ask_keeps_its_product_on_a_product_axis(console, monkeypatch) -> None:
+    _total(console, monkeypatch)
+    text, log = _say_all(console, monkeypatch, _row3(), "by salesppl")
+    assert _ran(log) == [] and PERIOD_Q not in text, ("setup", text, log)
+    text, log = _say_all(console, monkeypatch, _row3(group_by="product"), "by product")
+    assert _ran(log) == [] and PERIOD_Q not in text and HOW_MANY in text, (text, log)
+    _answer_all(console, monkeypatch, "product")
+
+
+def test_r8_review_a_fresh_ranking_s_open_ask_replaced_by_a_new_axis_keeps_its_choices(console, monkeypatch) -> None:
+    fresh = _v63(group_by="customer", ranking_refine=False, entities=[_e(PRODUCT_CODE, "product")],
+                 entity_op="replace_combine", measure="qty", rank_by="quantity", basis="delivered",
+                 domain_in_message=True, **YEAR_2026)
+    text, log = _say_all(console, monkeypatch, fresh, f"top customers for {PRODUCT_CODE} in 2026, qty delivered")
+    assert _ran(log) == [] and text == HOW_MANY, ("setup", text, log)
+    text, log = _say_all(console, monkeypatch, _row3(), "by salesppl")
+    assert _ran(log) == [] and text == HOW_MANY, (text, log)
+    text, log = _say_all(console, monkeypatch, _top5(), "top 5")
+    _runs_with_all_four(log, "sales_agent")
