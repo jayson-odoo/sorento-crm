@@ -282,3 +282,40 @@ def test_engine_hands_the_choice_to_the_parser_and_the_trace_records_it(session_
     assert facts.get("model_source") == "tag", facts
     # AC-M-13: for a tag the trace names the tag(s); the key is the coder's, the value is the tag name
     assert any("ZZT trace tag" in (v if isinstance(v, list) else [v]) for v in facts.values()), facts
+
+
+# ---------------------------------------------------------------- fix round: clarifier hand-off (AC-M-11)
+
+
+def test_ac_m_11_the_engine_hands_the_tagged_contacts_choice_to_the_clarifier(
+    session_factory, seeded, stub_access, monkeypatch
+):
+    """Reviewer blocker: removing the engine's `llm_choice=` hand-off to the clarifier left every test green."""
+    from app.models.user import SystemSetting
+
+    _tag_the_contact(session_factory, {"provider": "gemini", "model": CHOICE_MODEL}, name="ZZT clarifier tag")
+    db = session_factory()
+    db.add(SystemSetting(chatbot_completed_lanes=["low_signal"]))
+    db.commit()
+
+    captured: dict = {}
+
+    def fake_resolve_clarifier_config(db, **kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(casual_mod, "resolve_for_prompt", lambda db, *, ctx: {"resolutions": []})
+    monkeypatch.setattr(casual_mod, "resolve_clarifier_config", fake_resolve_clarifier_config)
+    monkeypatch.setattr(casual_mod, "call_clarifier", lambda config, prompt: '{"response": "Noted."}')
+    monkeypatch.setattr(parser_mod, "resolve_config", lambda db, *, current_date, override_version_id=None, llm_choice=None:
+                        parser_mod.ParserConfig(system_prompt="stub", prompt_version=1, provider="gemini",
+                                                model=CHOICE_MODEL, api_key="g-ZZT", model_source="tag"))
+    monkeypatch.setattr(parser_mod, "parse", lambda config, block: _parser_output(
+        message_type="casual", domain_hint=None, intent_hint=None, user_goal="hi there", entities=[]))
+    stub_access()
+    result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+    assert result.branch_kind == "low_signal"
+    got = captured.get("llm_choice")
+    assert got is not None, captured
+    assert (got.provider, got.model, got.source) == ("gemini", CHOICE_MODEL, "tag")

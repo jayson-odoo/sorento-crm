@@ -35,6 +35,12 @@ vi.mock('../hooks/useContactChatbot', () => ({
   contactChatbotMemoryQueryKey: (id: string) => ['contact-chatbot-memory', id],
 }));
 
+const granted = new Set<string>(['system.ai_assistant_settings.edit']);
+vi.mock('@/hooks/usePermissions', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/hooks/usePermissions')>();
+  return { ...actual, useHasPermission: (slug: string) => granted.has(slug) };
+});
+
 vi.mock('@/hooks/useProviderModels', () => ({
   useProviderModels: (provider: string) => ({
     data: { provider, source: 'live', message: null, models: [{ value: 'm-zzt-1', label: 'm-zzt-1' }] },
@@ -94,6 +100,8 @@ const selectHolding = (value: string) =>
   );
 
 beforeEach(() => {
+  granted.clear();
+  granted.add('system.ai_assistant_settings.edit');
   useContactChatbotProfile.mockReset();
   mutate.mockReset();
 });
@@ -110,14 +118,57 @@ describe('ContactChatbotSection - AI model (AC-M-15)', () => {
   });
 
   it.each([
-    [{ provider: 'gemini', model: 'g', source: 'tag', tags: ['Office Staff'] }, 'From tag Office Staff'],
-    [{ provider: 'gemini', model: 'g', source: 'tag', tags: ['Office Staff', 'Sorento Dealer'] }, 'From tag Office Staff, Sorento Dealer'],
+    [{ provider: 'gemini', model: 'g', source: 'tag', tags: ['Office Staff'] }, 'From tag Office Staff: Google Gemini g'],
+    [{ provider: 'gemini', model: 'g', source: 'tag', tags: ['Office Staff', 'Sorento Dealer'] }, 'From tag Office Staff, Sorento Dealer: Google Gemini g'],
     [{ provider: null, model: null, source: 'tag_conflict', tags: ['Office Staff', 'Sorento Dealer'] }, 'Tags disagree: Office Staff, Sorento Dealer'],
     [{ provider: 'openai', model: 'gpt-4.1', source: 'contact', tags: [] }, 'Set on this contact'],
     [NONE, 'Default'],
   ])('source line for %j reads exactly %s', (llm, line) => {
     show(llm);
     expect(screen.getByText(line)).toBeInTheDocument();
+  });
+
+  it('names the model the tag runs on: provider label plus model', () => {
+    show({ provider: 'gemini', model: 'gemini-3.5-flash-lite', source: 'tag', tags: ['Office Staff'] });
+    expect(screen.getByText('From tag Office Staff: Google Gemini gemini-3.5-flash-lite')).toBeInTheDocument();
+  });
+
+  it.each([
+    [{ provider: 'gemini', model: 'gemini-3.5-flash-lite', source: 'tag', tags: ['Office Staff'] }],
+    [{ provider: null, model: null, source: 'tag_conflict', tags: ['Office Staff', 'Sorento Dealer'] }],
+    [NONE],
+  ])('F1: source %j leaves the override provider select empty, labelled "No override"', (llm) => {
+    show(llm);
+    const provider = screen.getByLabelText('No override') as HTMLSelectElement;
+    expect(provider.value).toBe('');
+    expect(screen.queryByDisplayValue('m-zzt-1')).toBeNull();
+    // no model select appears for a tag-decided or default choice
+    expect(selectHolding('m-zzt-1')).toBeUndefined();
+  });
+
+  it('F1: only source "contact" pre-fills the override provider select', () => {
+    show({ provider: 'gemini', model: 'm-zzt-1', source: 'contact', tags: [] });
+    expect((selectHolding('gemini') as HTMLSelectElement).value).toBe('gemini');
+  });
+
+  it('AC-S-4: without system.ai_assistant_settings.edit the picker is read-only and the source line stays', () => {
+    granted.clear();
+    show({ provider: 'gemini', model: 'm-zzt-1', source: 'contact', tags: [] });
+    expect(selectHolding('gemini')).toBeDisabled();
+    expect(selectHolding('m-zzt-1')).toBeDisabled();
+    expect(screen.getByText('Set on this contact')).toBeInTheDocument();
+  });
+
+  it('AC-S-4: without the permission a tag-decided contact still shows its source line, picker disabled', () => {
+    granted.clear();
+    show({ provider: 'gemini', model: 'gemini-3.5-flash-lite', source: 'tag', tags: ['Office Staff'] });
+    expect(screen.getByLabelText('No override')).toBeDisabled();
+    expect(screen.getByText('From tag Office Staff: Google Gemini gemini-3.5-flash-lite')).toBeInTheDocument();
+  });
+
+  it('AC-S-4: with the permission the picker is editable', () => {
+    show(NONE);
+    expect(screen.getByLabelText('No override')).not.toBeDisabled();
   });
 
   it('shows the source line "Default" when the profile has no chatbot_llm at all', () => {

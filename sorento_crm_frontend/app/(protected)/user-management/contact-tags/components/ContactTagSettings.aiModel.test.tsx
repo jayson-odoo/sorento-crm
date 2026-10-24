@@ -25,6 +25,12 @@ vi.mock('../services/contactTagService', () => ({
   getContactTags: vi.fn().mockResolvedValue({ data: [], pagination: { total: 0 } }),
 }));
 
+const granted = new Set<string>(['system.ai_assistant_settings.edit']);
+vi.mock('@/hooks/usePermissions', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/hooks/usePermissions')>();
+  return { ...actual, useHasPermission: (slug: string) => granted.has(slug) };
+});
+
 vi.mock('@/hooks/useProviderModels', () => ({
   useProviderModels: (provider: string) => ({
     data: { provider, source: 'live', message: null, models: [{ value: 'm-zzt-1', label: 'm-zzt-1' }] },
@@ -82,6 +88,8 @@ const savedSettings = () => updateContactTag.mock.calls.at(-1)![1].settings;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  granted.clear();
+  granted.add('system.ai_assistant_settings.edit');
   updateContactTag.mockResolvedValue(tag({}));
 });
 
@@ -120,5 +128,19 @@ describe('ContactTagSettings - AI model (AC-M-2)', () => {
   it('view mode of a tag with no model has no AI model row', () => {
     render({ chatbot: { tier: 'dealer' } }, false);
     expect(within(chatbot()).queryByText('AI model')).toBeNull();
+  });
+
+  it('AC-S-4: without system.ai_assistant_settings.edit the AI model picker is read-only but keeps its value', () => {
+    granted.clear();
+    render({ chatbot: { llm: { provider: 'gemini', model: 'm-zzt-1' } } }, true);
+    expect(within(chatbot()).getByText('AI model')).toBeInTheDocument();
+    expect(selectHolding('gemini')).toBeDisabled();
+    expect(selectHolding('gemini')!.value).toBe('gemini');
+    expect(selectHolding('m-zzt-1')).toBeDisabled();
+  });
+
+  it('AC-S-4: with the permission the AI model picker is editable', () => {
+    render({ chatbot: { llm: { provider: 'gemini', model: 'm-zzt-1' } } }, true);
+    expect(selectHolding('gemini')).not.toBeDisabled();
   });
 });
