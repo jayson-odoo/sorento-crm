@@ -1,6 +1,6 @@
 # PLAN: PHOTO-ORDER-SCOUT - a photo sent before a text arrives after it
 
-Status: blocked on a prod fact (owner ruled A 25 Oct; A is not provably effective on the dispatcher path from the repo alone, see "Prod-path verification"); no build yet
+Status: superseded 25 Oct 05:25 by owner ruling (no B2; queue peek rejected as coupling the CRM to n8n internals). Follow-up research: `PLAN-n8n-to-direct-ingress-gap.md`
 
 ## Problem (prod, 25 Oct 2026 02:34 MYT)
 
@@ -208,7 +208,7 @@ Consequence for A:
   CRM to read n8n's Redis and couples the CRM to a queue the turn-engine plan retires
   (`PLAN-chatbot-turn-engine.md:247`). Not buildable until the Redis fact is confirmed.
 
-### Owner checks prepared (25 Oct; owner runs them, crew has no prod access)
+### Owner checks prepared (25 Oct), then DROPPED (owner 05:25: will not run them; SQL file removed)
 
 1. SQL (crew state, not in the repo): `crew/state/prod-steps/prod-step-photo-order-check.sql`,
    READ ONLY + ROLLBACK, fill the contact id or the last 6+ phone digits once. Q3 prints the
