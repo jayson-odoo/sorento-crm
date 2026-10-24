@@ -37,9 +37,9 @@ def test_r7_a_fresh_refine_naming_its_axis_keeps_its_typed_period(console, monke
 
 def test_r7_b_guard_a_refine_naming_no_axis_with_nothing_held_still_asks(console, monkeypatch) -> None:
     _state_on(console)
-    qf = _refine(group_by=None, top_n=None, measure=None, basis=None)
+    qf = _refine(group_by=None, top_n=None, measure=None, basis="delivered")  # only the period can be the question
     text, log = _say_all(console, monkeypatch, qf, "2026")
-    assert [a for n, a in log if n == TOOL] == [] and "?" in text, (text, log)
+    assert [a for n, a in log if n == TOOL] == [] and "Which period?" in text, (text, log)
 
 
 def test_r13_c_guard_an_ungranted_salesperson_is_refused_items_first(console_no_grant, monkeypatch) -> None:

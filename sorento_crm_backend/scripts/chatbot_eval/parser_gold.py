@@ -42,7 +42,7 @@ EXPECT_KEYS = frozenset({
     "order_status", "group_by", "measure", "basis", "compare_to", "sales_channel", "ranking_refine",
     # REPORT-SMART-L delivery gold: the paper codes list (["DO"]), plain equality.
     "document",
-    # REPORT-SMART-L v103: true means the parse carries no entity at all (an axis phrase is no entity).
+    # REPORT-SMART-L v103: true means the parse carries no entity at all (an axis phrase is no entity); checked only when true, false is a no-op.
     "entities_none",
     # REPORT-SMART-L R5 row 13: the parse's `self_reference`, null read as false.
     "self_reference",
