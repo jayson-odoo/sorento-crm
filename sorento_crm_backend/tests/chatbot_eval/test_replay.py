@@ -36,7 +36,7 @@ TOOL_ENV = {"ok": True, "items": [{"code": "SRTWC8517", "label": "synthetic reco
 
 def _record(session_factory, stub_access, monkeypatch, *, keep_turn: bool):
 
-    def fake_resolve_config(db, *, current_date, override_version_id=None):
+    def fake_resolve_config(db, *, current_date, override_version_id=None, llm_choice=None):
         return parser_mod.ParserConfig(system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="k")
 
     monkeypatch.setattr(parser_mod, "resolve_config", fake_resolve_config)

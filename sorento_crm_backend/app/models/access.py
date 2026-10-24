@@ -304,6 +304,10 @@ class RespondContact(Base):
     # DROPS `chatbot_recall_enabled` (the recall re-parse it gated is deleted, round
     # 3): this column, and the CHECK constraint below, are its full replacement.
     chatbot_memory_level = Column(String(16), nullable=True)
+    # MODEL-PER-CONTACT: per-contact LLM override, both or neither. Beats the tag model;
+    # read live by contact_model.contact_llm_choice.
+    chatbot_llm_provider = Column(String(16), nullable=True)
+    chatbot_llm_model = Column(String(100), nullable=True)
     # S6 (owner ruling, 16 Sep 2026): whether this contact may ask for stock is a CRM
     # fact, default ON; the respond.io `is_allowed_stock` custom field is not read.
     chatbot_stock_allowed = Column(Boolean, nullable=False, server_default=text("true"), default=True)

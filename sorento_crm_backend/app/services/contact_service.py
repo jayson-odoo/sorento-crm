@@ -818,6 +818,15 @@ class ContactService:
         profile_facts.delete_fact(self.db, contact_id, key)
 
     @staticmethod
+    def _llm_choice_dict(contact: RespondContact, db: Optional[Session]) -> Optional[dict]:
+        if db is None:
+            return None
+        from app.services.chatbot.contact_model import contact_llm_choice
+
+        choice = contact_llm_choice(db, contact)
+        return {"provider": choice.provider, "model": choice.model, "source": choice.source, "tags": choice.tags}
+
+    @staticmethod
     def contact_to_response_dict(contact: RespondContact, db: Optional[Session] = None) -> dict:
         ws = getattr(contact, "workspace", None)
         access_types = list(getattr(contact, "access_types", []) or [])
@@ -871,6 +880,8 @@ class ContactService:
             # Chatbot memory lane A (contract section 5): null = follow the system
             # default. Must be listed explicitly, same rule as every field above.
             "chatbot_memory_level": getattr(contact, "chatbot_memory_level", None),
+            # MODEL-PER-CONTACT: the effective model and where it came from (detail reads only).
+            "chatbot_llm": ContactService._llm_choice_dict(contact, db),
             # S6: the stock allowance, default ON - a row without the attribute is allowed.
             "chatbot_stock_allowed": bool(getattr(contact, "chatbot_stock_allowed", True)),
             # Chatbot stock ask v2 S2 (PLAN-chatbot-stock-ask-v2-24sep.md, R7): both

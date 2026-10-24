@@ -110,7 +110,7 @@ def _rows(n: int) -> list[dict[str, Any]]:
 
 
 def _turns(session_factory, stub_access, monkeypatch, turns, *, gate: bool = True):
-    def fake_resolve_config(db, *, current_date, override_version_id=None):
+    def fake_resolve_config(db, *, current_date, override_version_id=None, llm_choice=None):
         return parser_mod.ParserConfig(
             system_prompt="stub", prompt_version=1, provider="openai", model="m", api_key="k", closed_lists=gate,
         )
@@ -334,7 +334,7 @@ def test_a_brand_scoped_contact_never_gets_an_out_of_brand_products_certificate_
 
 
 def _turns_with(session_factory, stub_access, monkeypatch, call_tool, turns):
-    def fake_resolve_config(db, *, current_date, override_version_id=None):
+    def fake_resolve_config(db, *, current_date, override_version_id=None, llm_choice=None):
         return parser_mod.ParserConfig(
             system_prompt="stub", prompt_version=1, provider="openai", model="m", api_key="k", closed_lists=True,
         )

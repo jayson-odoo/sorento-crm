@@ -103,7 +103,7 @@ def _run(
         entities=[{"raw": raw or canonical, "hint": "product", "canonical_code": cano, "current_message": True, "confident": confident}],
     )
 
-    def fake_resolve_config(db, *, current_date, override_version_id=None):
+    def fake_resolve_config(db, *, current_date, override_version_id=None, llm_choice=None):
         extra = {"code_lookup": True} if code_lookup else {}
         return parser_mod.ParserConfig(
             system_prompt="stub", prompt_version=1, provider="openai", model="m", api_key="k", closed_lists=True, **extra,

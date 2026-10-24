@@ -489,7 +489,7 @@ def _stored_focus(session_factory, stub_access, monkeypatch, turns, *, state_blo
     traces: list = []
     real = trace_mod.TurnTrace.persisted
 
-    def fake_resolve_config(db, *, current_date, override_version_id=None):
+    def fake_resolve_config(db, *, current_date, override_version_id=None, llm_choice=None):
         return parser_mod.ParserConfig(
             system_prompt="stub", prompt_version=1, provider="openai", model="m", api_key="k", closed_lists=True,
             state_block=state_block,

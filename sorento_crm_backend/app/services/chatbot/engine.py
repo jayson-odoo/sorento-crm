@@ -5074,6 +5074,7 @@ def _run_stages_body(  # noqa: PLR0915
             db,
             current_date=_current_date_directive(),
             override_version_id=_prompt_override(envelope, parser.PROMPT_KEY, dry_run=dry_run),
+            llm_choice=getattr(profile, "llm_choice", None),
         )
         # #1262 slice 9 (F1a): the live brand list for the `Known brands:` line,
         # read in the SAME session as the config above (already scoped to this
@@ -5218,6 +5219,7 @@ def _run_stages_body(  # noqa: PLR0915
                 "model": parser_config.model,
                 "prompt_sha256": _parser_prompt_sha256(parser_config),
                 "provider": getattr(parser_config, "provider", None),
+                "model_source": getattr(parser_config, "model_source", "global"),
                 # LEAN: the effort the parser call SENT ("off": none, also for a provider other than OpenAI).
                 "reasoning_effort": parser.sent_reasoning_effort(parser_config),
                 # PARSER-GEMINI-LITE: the call's wall clock, even when it never returned.
@@ -5297,6 +5299,13 @@ def _run_stages_body(  # noqa: PLR0915
             "latency_ms": parser_usage.get("latency_ms"),
             "prompt_sha256": _parser_prompt_sha256(parser_config),
             "provider": parser_usage.get("provider") or getattr(parser_config, "provider", None),
+            # MODEL-PER-CONTACT: which rung of the ladder chose the model, and for a tag, which tags.
+            "model_source": getattr(parser_config, "model_source", "global"),
+            **(
+                {"model_tags": list(profile.llm_choice.tags)}
+                if getattr(parser_config, "model_source", None) == "tag" and getattr(profile, "llm_choice", None)
+                else {}
+            ),
             # LEAN: the effort the parser call SENT ("off": none, also for a provider other than OpenAI).
             "reasoning_effort": parser_usage.get("reasoning_effort") or parser.sent_reasoning_effort(parser_config),
             "code_sha": GIT_SHA,
@@ -6948,6 +6957,7 @@ def _run_stages_body(  # noqa: PLR0915
                     override_version_id=_prompt_override(
                         envelope, casual.PROMPT_KEY, dry_run=dry_run
                     ),
+                    llm_choice=getattr(state_out.profile, "llm_choice", None),
                 )
             except Exception as exc:  # noqa: BLE001 - AC-403: the lane's own failure shape
                 logger.warning(

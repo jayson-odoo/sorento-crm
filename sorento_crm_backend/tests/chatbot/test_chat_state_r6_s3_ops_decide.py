@@ -60,7 +60,7 @@ def _turns(session_factory, stub_access, monkeypatch, turns):
     from app.services.company_scope import DEFAULT_COMPANY_ID
     from tests.chatbot.test_engine import _envelope
 
-    def fake_resolve_config(db, *, current_date, override_version_id=None):
+    def fake_resolve_config(db, *, current_date, override_version_id=None, llm_choice=None):
         return parser_mod.ParserConfig(system_prompt="stub", prompt_version=1, provider="openai", model="m",
                                        api_key="k", closed_lists=True, state_block=True)
 

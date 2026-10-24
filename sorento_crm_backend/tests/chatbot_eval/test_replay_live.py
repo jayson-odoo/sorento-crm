@@ -907,7 +907,7 @@ def test_prompt_pin_a_turn_whose_prompt_version_is_none_records_no_prompt_versio
         tmp_path, session_factory, recorded, live_env, monkeypatch):
     _seed_prompt_version(session_factory)
 
-    def no_version_config(db, *, current_date, override_version_id=None):
+    def no_version_config(db, *, current_date, override_version_id=None, llm_choice=None):
         return parser_mod.ParserConfig(system_prompt="stub", prompt_version=None, provider="openai",
                                        model="gpt-test", api_key="k")
 

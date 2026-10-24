@@ -62,7 +62,7 @@ def test_the_held_familys_key_comes_first_in_the_size_words_candidate_line(sessi
     blocks: list[str] = []
     queue = [_stock_ask(HELD), _stock_ask()]
 
-    def fake_resolve_config(db, *, current_date, override_version_id=None):
+    def fake_resolve_config(db, *, current_date, override_version_id=None, llm_choice=None):
         return parser_mod.ParserConfig(
             system_prompt="stub", prompt_version=1, provider="openai", model="m", api_key="k", closed_lists=True,
         )

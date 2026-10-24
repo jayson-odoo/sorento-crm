@@ -130,7 +130,7 @@ def _brand() -> dict:
 def _turns_with_files(session_factory, stub_access, monkeypatch, turns, ids):
     """As `_turns`, but the attachments fetch answers with one certificate file per asked product
     that holds one (the envelope shape the MCP presenter returns)."""
-    def fake_resolve_config(db, *, current_date, override_version_id=None):
+    def fake_resolve_config(db, *, current_date, override_version_id=None, llm_choice=None):
         return parser_mod.ParserConfig(
             system_prompt="stub", prompt_version=1, provider="openai", model="m", api_key="k", closed_lists=True,
         )

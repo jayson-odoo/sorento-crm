@@ -86,7 +86,7 @@ def _two_turns(session_factory, stub_access, monkeypatch, ops, *, gate: bool, cl
         ask["state_changes"] = ops
     turns = [(CODE, _stock_first() if gate else _off_first()), (f"zzpps certificate {class_word}", ask)]
 
-    def fake_resolve_config(db, *, current_date, override_version_id=None):
+    def fake_resolve_config(db, *, current_date, override_version_id=None, llm_choice=None):
         return parser_mod.ParserConfig(system_prompt="stub", prompt_version=1, provider="openai", model="m",
                                        api_key="k", closed_lists=True, state_block=gate)
 
@@ -256,7 +256,7 @@ def _lookup_turn(session_factory, stub_access, monkeypatch, *, code_lookup: bool
 
     blocks: list[str] = []
 
-    def fake_resolve_config(db, *, current_date, override_version_id=None):
+    def fake_resolve_config(db, *, current_date, override_version_id=None, llm_choice=None):
         return parser_mod.ParserConfig(system_prompt="stub", prompt_version=1, provider="openai", model="m", api_key="k",
                                        closed_lists=True, state_block=True, code_lookup=code_lookup)
 
@@ -311,7 +311,7 @@ def _first_ask(session_factory, stub_access, monkeypatch, *, state_block: bool):
     if state_block:
         ask["state_changes"] = [_op("set", "brand")]
 
-    def fake_resolve_config(db, *, current_date, override_version_id=None):
+    def fake_resolve_config(db, *, current_date, override_version_id=None, llm_choice=None):
         return parser_mod.ParserConfig(system_prompt="stub", prompt_version=1, provider="openai", model="m",
                                        api_key="k", closed_lists=True, state_block=state_block)
 

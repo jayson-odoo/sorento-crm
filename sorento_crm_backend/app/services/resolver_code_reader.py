@@ -216,14 +216,14 @@ def guard(reading: CodeReading, typed: str | None, token: str) -> CodeReading:
     return CodeReading(reading.kind, raw_value)
 
 
-def _resolve_provider(db: Session):
+def _resolve_provider(db: Session, llm_choice=None):
     """(provider, provider_name, model_name) this reader runs on; provider None when
     unconfigured. The key's own `agent_model` override first, then the parser's, then the
     global assistant config - the same ladder `product_spec_understanding._resolve_provider`
     walks, with the parser as the middle rung because this question is the parser's job."""
     from app.models.ai_assistant import AIAssistantConfig
     from app.services.ai_prompt_registry import agent_model
-    from app.services.llm_provider import get_provider, resolve_api_key, resolve_model
+    from app.services.llm_provider import get_provider, resolve_model
 
     try:
         # Under a SAVEPOINT: a failed SELECT leaves a Postgres transaction aborted, and
@@ -248,7 +248,12 @@ def _resolve_provider(db: Session):
     else:
         provider_name, model_override = (cfg.provider if cfg else "openai") or "openai", own_model or parser_model
     model_name = resolve_model(cfg, provider_name, model_override)
-    api_key = resolve_api_key(cfg, provider_name)
+    # MODEL-PER-CONTACT: the contact's choice (override or tag) sits above all three rungs.
+    from app.services.chatbot.contact_model import apply_choice
+
+    provider_name, model_name, api_key, _source = apply_choice(
+        llm_choice, cfg, provider_name, model_name, model_from_label=False
+    )
     if not api_key:
         return None, provider_name, model_name
     try:
@@ -314,6 +319,7 @@ def read_codes(
     user_id: str | None,
     dry_run: bool,
     budget_seconds: float = BUDGET_SECONDS,
+    llm_choice=None,
 ) -> dict[str, CodeReading]:
     """One provider call about `missed`; never raises. See the module docstring."""
     missed = list(missed)
@@ -324,7 +330,9 @@ def read_codes(
         return {token: CodeReading("error", None, reason=reason) for token, _typed in missed}
 
     try:
-        provider, provider_name, model_name = _resolve_provider(db)
+        provider, provider_name, model_name = (
+            _resolve_provider(db, llm_choice=llm_choice) if llm_choice is not None else _resolve_provider(db)
+        )
         if provider is None:
             return failed(REASON_NO_PROVIDER)
         from app.services.ai_prompt_registry import get_prompt
@@ -448,10 +456,14 @@ def per_request(reader: CodeReader, *, cap: int = TOKENS_PER_CALL) -> CodeReader
     return call
 
 
-def reader_for(db: Session, *, message_text: str | None, user_id: str | None, dry_run: bool) -> CodeReader:
+def reader_for(
+    db: Session, *, message_text: str | None, user_id: str | None, dry_run: bool, llm_choice=None
+) -> CodeReader:
     """The live reader for one resolve request: `read_codes` under `per_request`."""
+    # Passed only when set, so a request with no model choice calls read_codes as it always did.
+    extra = {"llm_choice": llm_choice} if llm_choice is not None else {}
     return per_request(
         lambda missed: read_codes(
-            db, missed, message_text=message_text, user_id=user_id, dry_run=dry_run
+            db, missed, message_text=message_text, user_id=user_id, dry_run=dry_run, **extra
         )
     )

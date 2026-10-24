@@ -59,7 +59,7 @@ def _eval_verdict() -> dict[str, Any]:
 def no_parser_call(monkeypatch):
     """G6 bypasses the parser; make a call to it fatal so a fall-through cannot pass."""
 
-    def fake_resolve_config(db, *, current_date, override_version_id=None):
+    def fake_resolve_config(db, *, current_date, override_version_id=None, llm_choice=None):
         return parser_mod.ParserConfig(
             system_prompt="stub",
             prompt_version=1,
