@@ -461,6 +461,7 @@ def test_q1_guard_a_sibling_variant_pick_answers_the_picked_variant(session_fact
 # code, `raw` is the whole phrase and `canonical_code` the bare code exactly as typed. The raw's own
 # token resolves nothing and the code is its trigram neighbour, yet the parser corrected nothing: the
 # code is among the raw's words. Release run 40053956497 failed four canonical-code tests on this.
+# `colour_words_after` is a class guard, green before the fix too: its raw resolves by prefix narrowing.
 
 
 @PATHS

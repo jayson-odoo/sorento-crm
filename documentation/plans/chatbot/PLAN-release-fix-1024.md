@@ -1,6 +1,6 @@
 # PLAN: four canonical-code failures blocking the 24 Oct release (RELEASE-FIX-1024)
 
-Status: fix committed, PR next (small fix track: one guard in `head/grounding.py` plus its tests, well under 300
+Status: PR #1840 open, reviewer READY (small fix track: one guard in `head/grounding.py` plus its tests, well under 300
 lines; no migration, no auth/RBAC change, no new ingest surface).
 
 Release run 40053956497 (main 2b052c4ca1, `full_suite=true`) failed shard 1 of the backend suite with
@@ -46,8 +46,15 @@ and stay unchanged.
 ## Tests
 
 1. `test(red):` a Q1 guard in `tests/chatbot/test_near_code_typo_dym.py`, both paths: a type word
-   before the code and colour words after it answer the stock line directly, no did-you-mean.
+   before the code (also with a spaced code) and colour words after it answer the stock line
+   directly, no did-you-mean. Red on main: the 4 type-word cases; `colour_words_after` is green
+   before the fix too (its raw resolves by prefix narrowing) and stays as a class guard.
 2. The four release tests above go green unchanged.
-3. Kill test: drop the guard, the new test and the four go red again.
-4. Siblings: the whole `tests/chatbot/` files that touch grounding / the resolver / the code reader
-   (`-n 2`).
+3. Kill test: drop the guard, the 4 red cases and the four release tests go red again (8 failed).
+4. Siblings: the 71 `tests/chatbot/` files that touch grounding / the resolver / the code reader
+   (`-n 2`): 1819 passed; 1 local Postgres "out of shared memory" flake, green on rerun.
+
+## Open (not in this fix)
+
+- `raw.split()` keeps punctuation stuck to a word, so "TAP SRTWT5608," still reaches Q1 (reviewer
+  nit). Trigger to act: a measured turn where a parser raw carries edge punctuation.
