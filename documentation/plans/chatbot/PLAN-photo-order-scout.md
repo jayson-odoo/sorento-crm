@@ -1,6 +1,6 @@
 # PLAN: PHOTO-ORDER-SCOUT - a photo sent before a text arrives after it
 
-Status: research done (size S scout, no product code); behaviour card filed as one crew `--ask`, waiting on owner. Build, if any, is a new lane (small fix track expected: no migration, no auth change)
+Status: blocked on a prod fact (owner ruled A 25 Oct; A is not provably effective on the dispatcher path from the repo alone, see "Prod-path verification"); no build yet
 
 ## Problem (prod, 25 Oct 2026 02:34 MYT)
 
@@ -99,10 +99,12 @@ orders tasks; the only expiry is `OFFER_TTL = 3` `turn/pending.py:313`, escalati
 So a turn-count rule would fire on none of the 8; a wall-clock idle rule would catch the
 43 min, 2.5 h and 3.4 h cases.
 
-Text reply latency vs photo lateness (photo stored after the text by / text reply went out
-after): 6 of 9 replies went out AFTER the photo was already stored (1.6/8.3, 0.0/14.1,
-1.1/5.2, 1.2/7.8, 1.1/6.1, 1.3/8.5 s; outgoing times are respond.io's clock, `ingest_at` ours).
-In those six the CRM already knew about the photo before it sent the wrong reply.
+CORRECTED 25 Oct (after the owner ruled A): an earlier draft said "6 of 9 text replies went
+out after the photo was stored". That compared the photo's store time with the bot reply's
+respond.io delivery time, which includes n8n's send step. Against the text TURN window
+(`chatbot.turns.started_at/finished_at`, read in UTC) the real split, all 50 photo-then-text
+pairs: photo stored BEFORE the text turn started 46, AFTER it finished 4, DURING it **0**
+(average text turn 4.4 s). The 46 are what #1838's slot-time check already answers.
 
 ## Behaviour card (filed as one crew `--ask`)
 
@@ -113,7 +115,8 @@ In those six the CRM already knew about the photo before it sent the wrong reply
   `_stored_only_media` check again. If an earlier-sent photo of this contact is stored now,
   drop the text's draft and answer photo first, then the text (what #1838 already does at
   slot time). No photo stored = no wait at all. Cap: the existing `within_bounds` media
-  budget. Catches 6 of 9 measured inversions.
+  budget. CORRECTED: on dev data it catches 0 of 50 pairs beyond what #1838 already
+  catches (see the correction in section 4).
 - **B1. Late photo takes the answered text as its caption.** A photo with no caption whose
   send time is before an already-answered text of the same contact, sent at most N s after
   it, and that text named no product of its own: read the photo with that text as its
@@ -130,21 +133,21 @@ In those six the CRM already knew about the photo before it sent the wrong reply
 1. Contact E, 13 Oct, dev rows 103781/103780. Photo 08:02:20, "Check stock" 08:02:21; text
    stored 1.1 s before the photo. Today: "That would search every stock we have - I need at
    least one filter...", then "I read SRTHD122, SRTSWT3001, Sensor Tap and Clinical Tap from
-   that photo. Stock summary...". A: reply 1 went out 4.1 s after the photo was stored, so
-   the photo is answered first and "Check stock" then answers the photo's codes; no filter ask. B1: same
+   that photo. Stock summary...". Photo stored 1.0 s BEFORE the text turn started, so #1838
+   (live since 24 Oct) already answers the photo first today; A adds nothing. B1: same
    two replies, the second prefixed "Re your photo:". B2: no change.
 2. Contact F, 15 Oct, rows 109304/109303. Photo 03:14:57, "10 unit" 03:15:00. Today:
    "SRTSH22613 x 10: Got stock" (a product from 43 min earlier), then "I read CB85-CR-DIY from
-   that photo. How many units of CB85-CR-DIY?" (the 10 is lost; customer retypes). A (reply 1
-   went out 5.0 s after the photo was stored): photo first ("I read CB85-CR-DIY from that
-   photo..."), then "10 unit" answers "CB85-CR-DIY x 10: No stock and no incoming."
+   that photo. How many units of CB85-CR-DIY?" (the 10 is lost; customer retypes). Photo stored 0.7 s
+   before the text turn started: #1838 already answers photo first, then "10 unit"; A adds
+   nothing.
    B1: wrong first reply stays, second becomes "Re your photo: CB85-CR-DIY x 10: No stock...".
    B2 (T=30): reply 1 becomes "Which product?" instead of the wrong SRTSH22613 answer.
 3. Contact G, 11 Oct, rows 95651/95650. Photo 06:04:24, "Got stock?" 06:04:27; photo stored
-   5.0 s after the text, reply 1 out after 3.1 s. Today: stock summary for SRTBF11833 (held
+   2.1 s after the text TURN finished. Today: stock summary for SRTBF11833 (held
    from 2.5 min earlier), then "I read SRTBF11621, SRTMCB21621, SRTWB1150, SRTWT5841-BL and
-   SRTW2600 from that photo. Stock summary...". A: misses (reply left before the photo
-   landed). B1: second reply prefixed "Re your photo:". B2: no change (2.5 min). Wrong first
+   SRTW2600 from that photo. Stock summary...". A as a DB re-check: misses (turn over
+   before the row landed); a queue peek: UNVERIFIED (n8n receipt time not in the dev copy). B1: second reply prefixed "Re your photo:". B2: no change (2.5 min). Wrong first
    reply stays under every option: the limit of a no-wait design.
 4. Contact A, 15 Oct, rows 111517/111518 (text FIRST, photo 1 s later). "Pls check stock"
    was answered with "Couldn't find SRTWC8605-RL. Did you mean..." (read from a photo 4 h
@@ -154,8 +157,8 @@ In those six the CRM already knew about the photo before it sent the wrong reply
 ### Questions
 
 1. Which option set? (a) A + B1 + B2, (b) B1 + B2 (the brief's B), (c) A + B2.
-   Recommendation: (c) A + B2. A reuses #1838's own check at a second moment and removes the
-   wrong reply in 6 of 9 measured cases with zero wait when no photo exists; B2 is one
+   Recommendation as filed: (c) A + B2 (owner ruled A 25 Oct). CORRECTED basis: the "6 of 9"
+   was mis-measured; see "Prod-path verification" for what A needs; B2 is one
    condition and also fixes text-first cases like example 4. B1 adds a third mechanism to
    relabel a reply whose content today is already right (the photo turn inherits the stock
    domain via `turn/apply.py:3308`, seen in examples 1 and 3); its only real gain is the lost quantity (example 2).
@@ -168,6 +171,42 @@ In those six the CRM already knew about the photo before it sent the wrong reply
    the earlier reply, (b) N = 20 s plus "(ignore my answer about <code> above)".
    Recommendation: (a): every measured inversion was at most 4 s apart; the pair search used
    20 s.
+
+## Prod-path verification (25 Oct, owner ruled A)
+
+Prod ingress (owner; `PLAN-chat-send-order.md:71`, S7 off, direct ingress off): respond.io ->
+n8n producer -> RPUSH `q:{contact}` + `ready-contacts` -> `sorento-dispatcher`
+(`77SG9jTdVKhwMwvR`) -> spine -> `/chat/turn`. From the repo exports only:
+
+- Producer RPUSHes every message on arrival, no lock: `concat_queue_body.js:4-5` -> Redis2
+  RPUSH `q:<contactId>` (export `live-producer-sorento-main`, branch `feat/s7-producers`).
+- Dispatcher: Schedule Trigger every 1 s, `pop-ready-contacts` -> `get-lock` / `incr-lock`
+  (`lock:{contact}`, TTL 120 s) -> `call-spine` -> `del-lock` (export `sorento-dispatcher`,
+  commit `7aa98131`). The spine pops ONE entry: `workflow.json:4463-4464`
+  (`list q:{{contact}}`, `operation pop`, export `live-spine-sorento-consume-main`).
+- So while the text turn runs, a photo that reached n8n is in Redis `q:{contact}` for certain.
+  It is in `chat_histories` only if the CRM's own respond.io webhook (a separate respond.io
+  subscription, `documentation/reference/RESPOND-WEBHOOK-SETUP.md`, writer
+  `respond_webhook.py` -> `chat_history_ingest_service.upsert_message_row`) has delivered it;
+  that delivery is independent of n8n and of the dispatcher. n8n's own incoming-row write
+  sits in the spine, after the pop (`clone-sorento-consume-main-TEST/workflow.json:6270`,
+  live export is from 6 Sep: UNVERIFIED for today).
+- Dev cases' ingress: every text turn of the 9 inverted pairs has `ingress = 'webhook'`
+  (= n8n `/chat/turn`); the dev copy has no `respond_webhook` (direct ingress) turn at all.
+  The photo rows' `ingest_at` there is the CRM direct webhook's (or n8n's, whichever wrote
+  first; both stamp it, `chat_history_ingest_service.py:142`).
+- The CRM backend never reads `q:{contact}` or `ready-contacts` (grep `app/`: 0 hits).
+  Whether CRM `REDIS_URL` and n8n's `sorento-redis` credential are the same server: NOT in
+  the repo (compose has no redis service; the export carries credential names only).
+
+Consequence for A:
+- A as a DB re-check (re-run `_stored_only_media` before the reply): buildable, but dev data
+  shows 0 of 50 photos stored during a text turn, so it would add close to nothing over
+  #1838. Whether the 25 Oct photo's row landed during the text turn is a prod read (UNVERIFIED).
+- A as a queue peek (LRANGE `q:{contact}` before the reply, earlier-sent attachment entry):
+  matches the 25 Oct shape (photo at n8n 2.4 s after the text, turns ~4.4 s), but needs the
+  CRM to read n8n's Redis and couples the CRM to a queue the turn-engine plan retires
+  (`PLAN-chatbot-turn-engine.md:247`). Not buildable until the Redis fact is confirmed.
 
 ### Not covered (seen while measuring, out of scope)
 
