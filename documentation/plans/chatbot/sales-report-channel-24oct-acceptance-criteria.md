@@ -12,7 +12,10 @@ channel = the sales order's type (`sales_orders.demand_class`: `retail` = Dealer
   filter drops it, and it still counts in the report with no channel asked (owner Q1 (a), 24 Oct: "we need to link, we
   will link"; linking the unlinked DOs is separate work, not this lane).
 - **AC-SRC-4** `[BE]` A named customer plus a channel word (Q3 (a), crew 24 Oct): the channel is always applied and the
-  Channel line printed (`channel` and `channel_shown` set), whatever the customer's segment or SO types.
+  Channel line printed (`channel` and `channel_shown` set), whatever the customer's segment or SO types. With no channel
+  asked there is no Channel line (`channel` None, `channel_shown` False) for any customer set: the AC-SR-26 rule
+  "show Channel: all when the accounts span two segment classes" retires with the segment (lead ruling, simplest
+  rule; `sales_report_delivered.py:129-132`, `:306-312`).
 - **AC-SRC-5** `[BE]` Date basis stays the DO date (`orders.order_date`) (Q2 (a), crew 24 Oct; owner Q4
   `report-engine-behaviour-card.md:18`).
 - **AC-SRC-6** `[BE]` Agreement: for a seeded case whose DO date and SO line date fall in the same period and whose DO
