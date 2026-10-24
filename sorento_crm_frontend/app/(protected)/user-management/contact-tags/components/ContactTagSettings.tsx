@@ -18,6 +18,8 @@ import { Switch } from '@/components/ui/switch';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { PROVIDER_OPTIONS } from '@/app/(protected)/system-management/ai-assistant/lib/modelOptions';
+import { ProviderModelSelect } from '@/components/common/ProviderModelSelect';
 import {
   useSaveTagSettings,
   useSettingsCatalog,
@@ -303,6 +305,9 @@ function PickOne({
   );
 }
 
+const llmText = (llm: { provider: string; model: string }) =>
+  `${PROVIDER_OPTIONS.find((o) => o.value === llm.provider)?.label ?? llm.provider} ${llm.model}`;
+
 /** Replace one key of an object value, dropping it when undefined. */
 function put(
   obj: Record<string, unknown> | undefined,
@@ -412,6 +417,18 @@ function GroupBody({
                 editing={editing}
                 placeholder="Not set"
               />
+            </Labelled>
+          ) : null}
+          {editing || c.llm !== undefined ? (
+            <Labelled label="AI model">
+              {editing ? (
+                <ProviderModelSelect
+                  value={(c.llm as { provider: string; model: string } | undefined) ?? null}
+                  onChange={(next) => upd('llm', next ?? undefined)}
+                />
+              ) : (
+                <span className="text-sm">{llmText(c.llm as { provider: string; model: string })}</span>
+              )}
             </Labelled>
           ) : null}
           {editing || c.tier !== undefined ? (

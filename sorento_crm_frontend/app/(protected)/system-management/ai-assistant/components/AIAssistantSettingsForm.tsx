@@ -44,6 +44,9 @@ export default function AIAssistantSettingsForm() {
   // the assistant itself stays on the primary provider above.
   const [geminiKeyInput, setGeminiKeyInput] = useState('');
   const [geminiKeyEdited, setGeminiKeyEdited] = useState(false);
+  // Dedicated OpenAI key - each provider resolves its own key slot.
+  const [openaiKeyInput, setOpenaiKeyInput] = useState('');
+  const [openaiKeyEdited, setOpenaiKeyEdited] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [toolSearch, setToolSearch] = useState('');
   const [enabledTools, setEnabledTools] = useState<string[]>([]);
@@ -83,6 +86,8 @@ export default function AIAssistantSettingsForm() {
     setAnthropicKeyEdited(false);
     setGeminiKeyInput(data.gemini_api_key_masked || '');
     setGeminiKeyEdited(false);
+    setOpenaiKeyInput(data.openai_api_key_masked || '');
+    setOpenaiKeyEdited(false);
   }, [data]);
 
   const filteredTools = useMemo(() => {
@@ -271,6 +276,19 @@ export default function AIAssistantSettingsForm() {
       </div>
 
       <div className="space-y-2">
+        <Label>OpenAI API key</Label>
+        <Input
+          type="text"
+          value={openaiKeyInput}
+          onChange={(e) => {
+            setOpenaiKeyInput(e.target.value);
+            setOpenaiKeyEdited(true);
+          }}
+          placeholder="sk-****"
+        />
+      </div>
+
+      <div className="space-y-2">
         <Label>Enabled tools</Label>
         {toolsQuery.isError ? (
           <p className="text-xs text-destructive">
@@ -374,6 +392,7 @@ export default function AIAssistantSettingsForm() {
                 ? anthropicKeyInput.trim() || undefined
                 : undefined,
               gemini_api_key: geminiKeyEdited ? geminiKeyInput.trim() || undefined : undefined,
+              openai_api_key: openaiKeyEdited ? openaiKeyInput.trim() || undefined : undefined,
               enabled_tools: enabledTools,
               rag_enabled: ragEnabled,
               is_enabled: isEnabled,
@@ -387,6 +406,8 @@ export default function AIAssistantSettingsForm() {
                 setAnthropicKeyEdited(false);
                 setGeminiKeyInput(saved.gemini_api_key_masked || '');
                 setGeminiKeyEdited(false);
+                setOpenaiKeyInput(saved.openai_api_key_masked || '');
+                setOpenaiKeyEdited(false);
               },
               onError: (e: Error) => toast.error(e.message),
             },
