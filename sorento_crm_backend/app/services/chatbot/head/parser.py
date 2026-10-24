@@ -975,7 +975,7 @@ def resolve_config(
     # REPORT-SMART-L: the schema follows the prompt, as `state_block` does.
     report_fields = "compare_to" in (raw_template or "")
     by_words = "by_words" in (raw_template or "")
-    sales_channels = "Sales channels" in (raw_template or "")
+    sales_channels = context_mod.SALES_CHANNELS_LINE in (raw_template or "")
     json_schema = None
     if closed_lists:
         from app.services.chatbot_prompt_vars import closed_list_enum

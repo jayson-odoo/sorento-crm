@@ -692,6 +692,10 @@ def with_held(
     ):
         return verdict
     axisless = not jsc.js_string(typed_group_by(verdict).get("group_by") or "").strip()
+    if axisless and verdict.get("top_n") is not None:
+        # AC-OR9: a typed count keeps the ranking. With no axis there is no total to hold it (a total settles no
+        # count), so neither the carry nor the reroute applies: the reply is today's.
+        return verdict
     if (
         held_offer == SALES_REPORT_OFFER
         and replaced is None

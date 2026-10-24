@@ -142,12 +142,17 @@ def promotion_kinds_line(kinds: list[dict[str, Any]] | None) -> str | None:
     return f"Promotion kinds: {'; '.join(pairs)}" if pairs else None
 
 
+#: The `Sales channels:` line's own name. `parser.resolve_config` prints the line only when the prompt in use names it
+#: (this same text), so the line and its gate cannot drift apart.
+SALES_CHANNELS_LINE = "Sales channels"
+
+
 def sales_channels_line(channels: list[str] | None) -> str | None:
-    """REPORT-SMART-L S2 (A''): the `Sales channels:` line, the channel values the code knows,
-    printed every turn in both closed-list modes so a channel word is read from it and is never
-    an entity of any kind."""
+    """REPORT-SMART-L S2 (A''), R9: the `Sales channels:` line, the channel values the code knows, so a channel
+    word is read from it and is never an entity of any kind. Printed in both closed-list modes, only when the
+    prompt in use names the line (the engine passes no channels otherwise; `ParserConfig.sales_channels`)."""
     listed = [c for c in dict.fromkeys(str(c or "").strip() for c in channels or []) if c]
-    return f"Sales channels: {', '.join(listed)}" if listed else None
+    return f"{SALES_CHANNELS_LINE}: {', '.join(listed)}" if listed else None
 
 
 def product_types_line(names: list[str] | None) -> str | None:
