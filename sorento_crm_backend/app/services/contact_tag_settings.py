@@ -15,8 +15,10 @@ from typing import Any, Callable, Iterable, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.services.contact_llm_choice import MODEL_NAME_RE
 from app.services.error_handler import AppException, handle_unprocessable
 
+AI_SETTINGS_EDIT = "system.ai_assistant_settings.edit"
 ALL = "all"  # the "every brand" sentinel, neutral in an intersection
 
 #: Top-level sections in display order (the mock's order).
@@ -64,6 +66,7 @@ CHATBOT_BOOLS: dict[str, tuple[str, str]] = {
 MEMORY_LEVELS = ("off", "conversation", "episodes", "full")
 MEMORY_LABELS = {"off": "Off", "conversation": "Conversation", "episodes": "Past conversations", "full": "Full"}
 TIERS = ("dealer", "office", "end_user")
+LLM_PROVIDERS = {"openai": "OpenAI", "gemini": "Google Gemini", "anthropic": "Anthropic"}
 TIER_LABELS = {"dealer": "Dealer", "office": "Office", "end_user": "End user"}
 REGIONS = ("west", "east")
 REGION_LABELS = {"west": "West Malaysia", "east": "East Malaysia"}
@@ -188,6 +191,8 @@ def _fmt(cat: Catalog, section: str, key: str, value: Any) -> Any:
         return sorted(value)
     if value is None:
         return None
+    if section == "chatbot" and key == "llm":
+        return f"{LLM_PROVIDERS.get(value[0], value[0])} {value[1]}"
     if section == "chatbot" and key == "tier":
         return TIER_LABELS.get(value, value)
     if section == "chatbot" and key == "memory_level":
@@ -268,6 +273,14 @@ def _v_chatbot(db, cat, section, value):
         elif k == "tier":
             if v not in TIERS:
                 raise _bad(k, "unknown tier")
+        elif k == "llm":
+            if not isinstance(v, dict):
+                raise _bad(k, "must be an object with a provider and a model")
+            if v.get("provider") not in LLM_PROVIDERS:
+                raise _bad(k, "unknown provider")
+            model = v.get("model")
+            if not isinstance(model, str) or not MODEL_NAME_RE.fullmatch(model):
+                raise _bad(k, "model must be 1 to 100 letters, digits or . _ : -")
         else:
             raise _bad(k, "unknown setting")
 
@@ -432,6 +445,15 @@ def assert_gates(old: dict, new: dict, can: Callable[[str], bool], is_superadmin
                 message=f"You may not change {SECTION_TITLES[section]} on a tag.",
                 code="FORBIDDEN",
             )
+    # The model a tag puts a contact on spends AI quota: changing it needs the AI settings right.
+    old_llm = (old.get("chatbot") or {}).get("llm")
+    new_llm = (new.get("chatbot") or {}).get("llm")
+    if old_llm != new_llm and not can(AI_SETTINGS_EDIT):
+        raise AppException(
+            status_code=403,
+            message="You may not change the AI model on a tag.",
+            code="FORBIDDEN",
+        )
 
 
 # ------------------------------------------------------------------ leaves + merge
@@ -458,6 +480,8 @@ def leaves(tag: TagRef) -> list[tuple[str, str, Any]]:
             out.append((section, section, value))
         elif section in ("chatbot", "portal_forms", "field_reveals", "agents"):
             for k, v in value.items():
+                if section == "chatbot" and k == "llm":
+                    v = (v["provider"], v["model"])  # hashable, so the eq merge can compare it
                 out.append((section, k, v))
         elif section == "agent_fields":
             for e in value:
@@ -544,7 +568,7 @@ def _merge_kind(section: str, key: str) -> str:
     if section == "chatbot":
         if key in CHATBOT_BOOLS:
             return CHATBOT_BOOLS[key][1]
-        return {"tier": "tier", "memory_level": "memory"}[key]
+        return {"tier": "tier", "memory_level": "memory", "llm": "eq"}[key]
     if section in ("portal_forms", "field_reveals", "agents", "agent_fields", "outbound_enabled"):
         return "and"
     if section == "requires_registered_project":
@@ -588,7 +612,7 @@ def _label(cat: Catalog, section: str, key: str) -> str:
     if section == "chatbot":
         if key in CHATBOT_BOOLS:
             return CHATBOT_BOOLS[key][0]
-        return "Memory level" if key == "memory_level" else "Tier"
+        return {"memory_level": "Memory level", "llm": "AI model"}.get(key, "Tier")
     if section == "portal_forms":
         return f"Portal form: {_KIND_LABELS.get(key, key.replace('_', ' ').capitalize())}"
     if section == "field_reveals":
@@ -671,6 +695,12 @@ class _Reader:
                 return bool(getattr(c, key))
             if key == "memory_level":
                 return c.chatbot_memory_level
+            if key == "llm":
+                # The override only; the tag value is read live, never copied, so evaluate
+                # treats this item as always matching (see the llm branch there).
+                if c.chatbot_llm_provider and c.chatbot_llm_model:
+                    return (c.chatbot_llm_provider, c.chatbot_llm_model)
+                return None
             return (c.chatbot_profile or {}).get("tier") or None
         if section == "portal_forms":
             if cid not in self._visible_forms:
@@ -852,6 +882,10 @@ def evaluate(
                 conflict_tags = []
                 current = reader.current(cid, section, key, cat)
                 differs = current != expected
+            if (section, key) == ("chatbot", "llm"):
+                # Read live each turn (contact_llm_choice), never applied: it cannot differ.
+                differs = False
+                current = current if current is not None else expected
             blocked = None
             if section == "portal_forms" and key in _agent_only_kinds() and differs and expected is True:
                 if not _has_sales_agent(db, cid):

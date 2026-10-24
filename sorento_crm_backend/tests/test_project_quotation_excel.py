@@ -82,7 +82,7 @@ def _user(db, name: str) -> str:
 
 
 def _uom(db, code="NO") -> str:
-    row = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{_uid()[:4]}", uom_name=code)
+    row = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{uuid.uuid4().hex}", uom_name=code)
     db.add(row)
     db.flush()
     return row.id

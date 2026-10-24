@@ -119,6 +119,9 @@ class ParserConfig:
     # When set it wins over the stored setting above, on any provider (Gemini maps it onto its
     # thinking level), so a label pointed at another model carries the effort that model needs.
     label_reasoning_effort: str | None = None
+    # MODEL-PER-CONTACT: where provider/model came from (contact | tag | label | global |
+    # fallback_no_key); goes on the `understood` trace.
+    model_source: str = "global"
 
 
 def _build_base_json_schema() -> dict[str, Any]:
@@ -915,7 +918,7 @@ def sent_reasoning_effort(config: ParserConfig) -> str:
 
 
 def resolve_config(
-    db: Session, *, current_date: str, override_version_id: str | None = None
+    db: Session, *, current_date: str, override_version_id: str | None = None, llm_choice=None
 ) -> ParserConfig:
     """Read the prompt, the per-key model override and the API key. Session-bound.
 
@@ -932,7 +935,6 @@ def resolve_config(
     call (no cache, so a flip reaches the next turn), for the index mode below.
     """
     from app.services.ai_assistant_service import AIAssistantConfigService
-    from app.services.llm_provider import resolve_api_key
 
     # ONE registry read: the gate reads the RAW template, the prompt is that same text rendered.
     from app.services.chatbot.head import closed_lists_index
@@ -953,9 +955,12 @@ def resolve_config(
     config = AIAssistantConfigService(db).get()
     if config is None:
         raise ParserError("AI assistant configuration is not set")
-    provider = provider_override or config.provider
-    model = model_override or config.model
-    api_key = resolve_api_key(config, provider)
+    from app.services.contact_llm_choice import apply_choice
+
+    provider, model, api_key, model_source = apply_choice(
+        llm_choice, config, provider_override or config.provider, model_override or config.model,
+        model_from_label=bool(model_override),
+    )
     if not api_key:
         raise ParserError(f"no API key configured for provider {provider!r}")
     from app.services.chatbot.head import code_lookup_prompt
@@ -989,6 +994,7 @@ def resolve_config(
         closed_lists_index=index_mode,
         reasoning_effort=reasoning_effort_setting(db),
         label_reasoning_effort=agent_reasoning_effort(db, PROMPT_KEY),
+        model_source=model_source,
     )
 
 

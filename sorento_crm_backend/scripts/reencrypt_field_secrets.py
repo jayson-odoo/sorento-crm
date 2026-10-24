@@ -11,7 +11,8 @@ Covers every column `app/utils/field_encryption.py` encrypts:
   respond_webhook_secret_ciphertext (runtime_settings.SECRET_FIELDS,
   app/services/runtime_settings.py)
 - ai_assistant_configs: api_key_ciphertext, anthropic_api_key_ciphertext,
-  gemini_api_key_ciphertext (EncryptedText, app/models/ai_assistant.py)
+  gemini_api_key_ciphertext, openai_api_key_ciphertext (EncryptedText,
+  app/models/ai_assistant.py)
 
 Per value:
 - token the current key opens       -> left alone ("current")
@@ -65,6 +66,7 @@ COLUMNS = (
     ("ai_assistant_configs", "api_key_ciphertext", True),
     ("ai_assistant_configs", "anthropic_api_key_ciphertext", True),
     ("ai_assistant_configs", "gemini_api_key_ciphertext", True),
+    ("ai_assistant_configs", "openai_api_key_ciphertext", True),
 )
 STATES = ("current", "old_key", "plaintext", "unreadable", "empty")
 

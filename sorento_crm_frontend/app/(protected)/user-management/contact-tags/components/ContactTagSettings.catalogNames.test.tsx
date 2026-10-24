@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render as rtlRender, screen, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
+vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => true }));
 vi.mock('next/navigation', () => ({
   usePathname: () => '/user-management/contact-tags/t1',
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),

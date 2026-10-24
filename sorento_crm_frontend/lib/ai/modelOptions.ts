@@ -48,3 +48,8 @@ export const PROVIDER_OPTIONS = [
 export function providerLabel(provider: string): string {
   return PROVIDER_OPTIONS.find((opt) => opt.value === provider)?.label ?? provider;
 }
+
+/** "Google Gemini gemini-3.5-flash-lite": a provider + model pair as a person reads it. */
+export function providerModelLabel(provider: string, model: string): string {
+  return `${providerLabel(provider)} ${model}`;
+}

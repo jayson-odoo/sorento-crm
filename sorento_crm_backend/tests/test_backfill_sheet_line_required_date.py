@@ -125,7 +125,7 @@ def _seed_line(db, company_id, so_number, code, *, source_system="scm_order_inqu
         id=_uid(), company_id=company_id, category_code=f"ZZT-{_uid()[:8]}",
         category_name=f"{MARKER} cat",
     )
-    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{_uid()[:4]}", uom_name="Piece")
+    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{uuid.uuid4().hex}", uom_name="Piece")
     db.add_all([category, uom])
     db.flush()
     product = Product(

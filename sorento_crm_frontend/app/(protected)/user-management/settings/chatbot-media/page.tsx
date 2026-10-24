@@ -24,7 +24,7 @@ import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect
 import {
   MODEL_OPTIONS,
   PROVIDER_OPTIONS,
-} from '@/app/(protected)/system-management/ai-assistant/lib/modelOptions';
+} from '@/lib/ai/modelOptions';
 import { wholeNumberRangeError } from '@/lib/whole-number-range';
 import { useProviderModels, useTestProviderModel } from '@/hooks/useProviderModels';
 

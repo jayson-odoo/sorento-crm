@@ -1,3 +1,10 @@
+export interface ChatbotLlm {
+  provider: string | null;
+  model: string | null;
+  source: 'contact' | 'tag' | 'tag_conflict' | 'none';
+  tags: string[];
+}
+
 export interface RespondContactAccessType {
   code: string;
   name: string;
@@ -61,6 +68,8 @@ export interface RespondContact {
   chatbot_allowed?: boolean;
   chatbot_skip_period_questions?: boolean;
   chatbot_files_as_links?: boolean;
+  /** MODEL-PER-CONTACT: the effective model and where it came from (detail reads only). */
+  chatbot_llm?: ChatbotLlm | null;
   /** Identity S3: the user this contact is linked to, if any (list rows). Null
    *  without `user_management.users.view`. */
   linked_user_id?: string | null;

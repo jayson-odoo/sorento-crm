@@ -23,6 +23,9 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { ProviderModelSelect } from '@/components/common/ProviderModelSelect';
+import { providerModelLabel } from '@/lib/ai/modelOptions';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { FormDialogScaffold } from '@/components/common/FormDialogScaffold';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
@@ -53,6 +56,7 @@ import {
   type ContactChatbotMemory,
   type ContactChatbotVocabularyEntry,
 } from '../services/contactChatbotService';
+import type { ChatbotLlm } from '../../types/contact.types';
 
 /**
  * Contact Details -> Chatbot (chatbot memory lane A). Round 3 mockup
@@ -133,6 +137,17 @@ function SwitchRow({
   );
 }
 
+const LLM_SOURCE_LINE: Record<string, (tags: string[], llm: ChatbotLlm | null | undefined) => string> = {
+  tag: (tags, llm) =>
+    `From tag ${tags.join(', ')}${llm?.provider && llm.model ? `: ${providerModelLabel(llm.provider, llm.model)}` : ''}`,
+  tag_conflict: (tags) => `Tags disagree: ${tags.join(', ')}`,
+  contact: () => 'Set on this contact',
+};
+
+function llmSourceLine(llm: ChatbotLlm | null | undefined): string {
+  return LLM_SOURCE_LINE[llm?.source ?? 'none']?.(llm?.tags ?? [], llm) ?? 'Default';
+}
+
 function ChatbotSettingsCard({
   contactId,
   systemDefault,
@@ -144,6 +159,7 @@ function ChatbotSettingsCard({
   const save = useSaveContactChatbotProfile(contactId);
   const saveEscalation = useSaveContactEscalation(contactId);
   const saveAiAllowed = useSaveContactChatbotAllowed(contactId);
+  const canEditAiModel = useHasPermission('system.ai_assistant_settings.edit');
 
   if (isLoading) {
     return (
@@ -213,6 +229,20 @@ function ChatbotSettingsCard({
               options={TIER_OPTIONS}
             />
           </div>
+        </div>
+        <div className="space-y-1.5">
+          <Label>AI model</Label>
+          <ProviderModelSelect
+            value={
+              profile.chatbot_llm?.source === 'contact' && profile.chatbot_llm.provider && profile.chatbot_llm.model
+                ? { provider: profile.chatbot_llm.provider, model: profile.chatbot_llm.model }
+                : null
+            }
+            onChange={(next) => save.mutate({ ...profile, llm: next })}
+            disabled={save.isPending || !canEditAiModel}
+            providerPlaceholder="No override"
+          />
+          <p className="text-xs text-muted-foreground">{llmSourceLine(profile.chatbot_llm)}</p>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <SwitchRow

@@ -109,7 +109,7 @@ def _setup(db):
     _numbering_rule(db, company_id)
     owner = _user(db, f"{MARKER} Baser Ramli")
 
-    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{_uid()[:4]}", uom_name=f"{MARKER} each")
+    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{uuid.uuid4().hex}", uom_name=f"{MARKER} each")
     category = ProductCategory(
         id=_uid(), category_code=f"ZZT-{_uid()[:8]}", category_name=f"{MARKER} Sanitary Ware"
     )
@@ -660,7 +660,7 @@ def test_a_product_this_company_cannot_see_is_off_catalog_not_an_invitation():
                 "INSERT INTO companies (id, code, name, is_active) "
                 "VALUES (:id, :code, :name, true)"
             ),
-            {"id": other_company, "code": f"ZZT{_uid()[:5]}", "name": f"{MARKER} Mocha"},
+            {"id": other_company, "code": f"ZZT{uuid.uuid4().hex}", "name": f"{MARKER} Mocha"},
         )
         their_product = _uid()
         db.execute(
