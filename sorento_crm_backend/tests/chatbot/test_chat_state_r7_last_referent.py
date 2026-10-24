@@ -380,7 +380,7 @@ def _with_state_block(monkeypatch):
 
     real = parser_mod.resolve_config
 
-    def with_state(db, *, current_date, override_version_id=None, llm_choice=None):
+    def with_state(db, *, current_date, override_version_id=None):
         return dataclasses.replace(real(db, current_date=current_date, override_version_id=override_version_id), state_block=True)
 
     monkeypatch.setattr(parser_mod, "resolve_config", with_state)

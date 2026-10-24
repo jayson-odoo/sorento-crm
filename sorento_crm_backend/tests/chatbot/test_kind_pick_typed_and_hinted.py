@@ -296,7 +296,7 @@ def test_engine_typed_text_includes_codes_read_from_the_media(
     with _patch.object(parser_mod, "parse", lambda config, user_block: qf), _patch.object(
         parser_mod,
         "resolve_config",
-        lambda db, *, current_date, override_version_id=None, llm_choice=None: parser_mod.ParserConfig(
+        lambda db, *, current_date, override_version_id=None: parser_mod.ParserConfig(
             system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test",
         ),
     ):

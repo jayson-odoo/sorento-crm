@@ -132,7 +132,7 @@ class _Seams:
         self.parse_calls: list[tuple] = []
 
     def install(self, monkeypatch) -> "_Seams":
-        def resolve_config(db, *, current_date, override_version_id=None, llm_choice=None):
+        def resolve_config(db, *, current_date, override_version_id=None):
             self.resolve_calls.append({"current_date": current_date})
             return SimpleNamespace(prompt_version=self.prompt_version)
 
@@ -272,7 +272,7 @@ def test_a_parser_error_from_parse_is_a_422_with_a_readable_code(client, monkeyp
 def test_a_parser_error_from_resolve_config_is_the_same_422(client, monkeypatch):
     _Seams([]).install(monkeypatch)
 
-    def no_key(db, *, current_date, override_version_id=None, llm_choice=None):
+    def no_key(db, *, current_date, override_version_id=None):
         raise parser_mod.ParserError("no API key configured for provider 'openai'")
 
     monkeypatch.setattr(parser_mod, "resolve_config", no_key)
@@ -377,7 +377,7 @@ def test_a_failed_try_writes_no_turn_and_no_audit_row_either(client, db, monkeyp
 def test_no_internal_text_leaks_and_the_reason_is_not_configured(client, monkeypatch):
     _Seams([]).install(monkeypatch)
 
-    def no_key(db, *, current_date, override_version_id=None, llm_choice=None):
+    def no_key(db, *, current_date, override_version_id=None):
         raise parser_mod.ParserError("no API key configured for provider 'openai' sk-secret")
 
     monkeypatch.setattr(parser_mod, "resolve_config", no_key)
@@ -461,7 +461,7 @@ def test_the_db_connection_is_released_before_the_provider_call(client, db, monk
 
     # The real resolve_config reads the prompt registry, which opens a transaction. The
     # stub must do the same, or the assert below holds whether the route releases it or not.
-    def resolve_config(db_, *, current_date, override_version_id=None, llm_choice=None):
+    def resolve_config(db_, *, current_date, override_version_id=None):
         db_.execute(text("select 1"))
         return stub_resolve(db_, current_date=current_date, override_version_id=override_version_id)
 

@@ -217,7 +217,7 @@ def _stub_casual_llm(request, monkeypatch):
 
     calls: list[dict[str, Any]] = []
 
-    def _fake_resolve_clarifier_config(db, *, override_version_id=None, llm_choice=None):
+    def _fake_resolve_clarifier_config(db, *, override_version_id=None):
         return casual_mod.ClarifierConfig(
             system_prompt="ZZT stub clarifier system prompt",
             prompt_version=None,

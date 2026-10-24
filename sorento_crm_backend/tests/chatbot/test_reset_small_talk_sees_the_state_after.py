@@ -64,7 +64,7 @@ def _seed(session_factory, session_vars: dict[str, Any]) -> None:
 
 
 def _stub_parser(monkeypatch, gate: bool, emission: dict[str, Any]) -> None:
-    def fake_resolve_config(db, *, current_date, override_version_id=None, llm_choice=None):
+    def fake_resolve_config(db, *, current_date, override_version_id=None):
         cfg = parser_mod.ParserConfig(
             system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test"
         )

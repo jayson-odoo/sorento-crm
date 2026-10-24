@@ -94,7 +94,7 @@ def test_g1_an_exact_typed_code_of_a_cross_company_set_is_todays_miss(
     calls: list = []
     monkeypatch.setattr(
         parser_mod, "resolve_config",
-        lambda db, *, current_date, override_version_id=None, llm_choice=None: parser_mod.ParserConfig(
+        lambda db, *, current_date, override_version_id=None: parser_mod.ParserConfig(
             system_prompt="stub", prompt_version=1, provider="openai", model="m", api_key="k", closed_lists=True, code_lookup=True,
         ),
     )
@@ -129,7 +129,7 @@ def _run_multi(session_factory, stub_access, monkeypatch, *, text, codes, domain
 
     monkeypatch.setattr(
         parser_mod, "resolve_config",
-        lambda db, *, current_date, override_version_id=None, llm_choice=None: parser_mod.ParserConfig(
+        lambda db, *, current_date, override_version_id=None: parser_mod.ParserConfig(
             system_prompt="stub", prompt_version=1, provider="openai", model="m", api_key="k", closed_lists=True, code_lookup=True,
         ),
     )

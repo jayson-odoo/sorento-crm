@@ -5070,11 +5070,13 @@ def _run_stages_body(  # noqa: PLR0915
     # turn returned before this line and never needed a provider configured for a
     # parser it will not call (AC-1810's "no parser call" reading extended to setup).
     with _session(session_factory) as db:
+        # A turn without a model choice makes main's exact call (AC-M-8).
+        choice_kw = {"llm_choice": profile.llm_choice} if getattr(profile, "llm_choice", None) else {}
         parser_config = parser.resolve_config(
             db,
             current_date=_current_date_directive(),
             override_version_id=_prompt_override(envelope, parser.PROMPT_KEY, dry_run=dry_run),
-            llm_choice=getattr(profile, "llm_choice", None),
+            **choice_kw,
         )
         # #1262 slice 9 (F1a): the live brand list for the `Known brands:` line,
         # read in the SAME session as the config above (already scoped to this
@@ -6952,12 +6954,17 @@ def _run_stages_body(  # noqa: PLR0915
                 clarifier_prompt = casual.construct_user_prompt(
                     _small_talk_ctx(ctx, verdict, state_out), resolved_for_prompt
                 )
+                # A turn without a model choice makes main's exact call (AC-M-8).
                 clarifier_config = casual.resolve_clarifier_config(
                     db,
                     override_version_id=_prompt_override(
                         envelope, casual.PROMPT_KEY, dry_run=dry_run
                     ),
-                    llm_choice=getattr(state_out.profile, "llm_choice", None),
+                    **(
+                        {"llm_choice": state_out.profile.llm_choice}
+                        if getattr(state_out.profile, "llm_choice", None)
+                        else {}
+                    ),
                 )
             except Exception as exc:  # noqa: BLE001 - AC-403: the lane's own failure shape
                 logger.warning(

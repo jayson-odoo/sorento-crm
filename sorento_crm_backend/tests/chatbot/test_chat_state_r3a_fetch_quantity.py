@@ -203,7 +203,7 @@ def _family_turn(session_factory, stub_access, monkeypatch, message, ids, parent
                          slots=tuple(task_mod.Slot(ids[c], c, q) for c, q in held))
     prev = {"focus": focus_to_wire(Focus(products=rows, domains=["inventory"], tasks=(task,))), "open_question": None}
 
-    def fake_resolve_config(db, *, current_date, override_version_id=None, llm_choice=None):
+    def fake_resolve_config(db, *, current_date, override_version_id=None):
         return parser_mod.ParserConfig(system_prompt="stub", prompt_version=1, provider="openai", model="m",
                                        api_key="k", closed_lists=True)
 

@@ -263,8 +263,8 @@ def test_engine_hands_the_choice_to_the_parser_and_the_trace_records_it(session_
         captured["llm_choice"] = llm_choice
         config = parser_mod.ParserConfig(
             system_prompt="stub", prompt_version=1, provider="gemini", model=CHOICE_MODEL, api_key="g-ZZT",
+            model_source=getattr(llm_choice, "source", "global"),
         )
-        config.model_source = getattr(llm_choice, "source", "global")
         return config
 
     monkeypatch.setattr(parser_mod, "resolve_config", fake_resolve_config)

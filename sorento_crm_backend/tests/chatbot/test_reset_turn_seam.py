@@ -179,7 +179,7 @@ class Turn:
         db.commit()
         gate = self.gate
 
-        def fake_resolve_config(db, *, current_date, override_version_id=None, llm_choice=None):
+        def fake_resolve_config(db, *, current_date, override_version_id=None):
             cfg = parser_mod.ParserConfig(system_prompt="stub", prompt_version=1, provider="openai",
                                           model="gpt-test", api_key="sk-test")
             return dataclasses.replace(cfg, state_block=True) if gate else cfg
@@ -478,7 +478,7 @@ class Conversation(Turn):
     def run(self, emission: dict[str, Any], words: str, message_id: str, **envelope_overrides):
         gate = self.gate
 
-        def fake_resolve_config(db, *, current_date, override_version_id=None, llm_choice=None):
+        def fake_resolve_config(db, *, current_date, override_version_id=None):
             cfg = parser_mod.ParserConfig(system_prompt="stub", prompt_version=1, provider="openai",
                                           model="gpt-test", api_key="sk-test")
             return dataclasses.replace(cfg, state_block=True) if gate else cfg

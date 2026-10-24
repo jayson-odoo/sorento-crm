@@ -100,7 +100,7 @@ def test_another_kind_of_ask_is_left_alone(session_factory):
 
 
 def _asked(session_factory, stub_access, monkeypatch, *, gate: bool):
-    def fake_resolve_config(db, *, current_date, override_version_id=None, llm_choice=None):
+    def fake_resolve_config(db, *, current_date, override_version_id=None):
         return parser_mod.ParserConfig(
             system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="k", closed_lists=gate,
         )

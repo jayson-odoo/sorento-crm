@@ -28,7 +28,7 @@ from tests.chatbot_eval.test_replay import recorded  # noqa: F401
 def _run(session_factory, stub_access, monkeypatch, **envelope) -> list[str]:
     blocks: list[str] = []
 
-    def fake_resolve_config(db, *, current_date, override_version_id=None, llm_choice=None):
+    def fake_resolve_config(db, *, current_date, override_version_id=None):
         return parser_mod.ParserConfig(
             system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="k", closed_lists=True,
         )

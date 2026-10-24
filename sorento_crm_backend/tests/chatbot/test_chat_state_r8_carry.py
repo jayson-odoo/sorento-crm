@@ -391,7 +391,7 @@ def test_r8_8_state_off_held_family_brand_only_branch_still_receives_the_held_pr
 
     c = _console(session_factory, monkeypatch, stub_access, "+60900000884")
     real_cfg = parser_mod.resolve_config
-    monkeypatch.setattr(parser_mod, "resolve_config", lambda db, *, current_date, override_version_id=None, llm_choice=None: dataclasses.replace(
+    monkeypatch.setattr(parser_mod, "resolve_config", lambda db, *, current_date, override_version_id=None: dataclasses.replace(
         real_cfg(db, current_date=current_date, override_version_id=override_version_id), closed_lists=True))
     focus = _focus_wire(c, HELD3[0])
     focus["products"] = [{"raw": k, "canonical_code": k, "uuid": c.uuid_of[k], "hint": "product"} for k in HELD3]
@@ -419,7 +419,7 @@ def test_r8_1_a_brand_over_carried_products_still_narrows_by_held_family(session
 
     c = _held_console(session_factory, monkeypatch, stub_access, "+60900000885")
     gated = parser_mod.resolve_config
-    monkeypatch.setattr(parser_mod, "resolve_config", lambda db, *, current_date, override_version_id=None, llm_choice=None: dataclasses.replace(
+    monkeypatch.setattr(parser_mod, "resolve_config", lambda db, *, current_date, override_version_id=None: dataclasses.replace(
         gated(db, current_date=current_date, override_version_id=override_version_id), closed_lists=True))
     seen = []
     real = held_family.narrow_held_family
@@ -660,7 +660,7 @@ def test_r8_c5_state_off_the_drawing_fetch_is_unchanged(session_factory, seeded,
     ids = _seed(session_factory)
     _c5_seed_drawing(session_factory, ids["product"])
     queue = [_file_ask(C5_PRODUCT, _scheme("zzspan", "ZZSPAN")), _file_ask(dict(DRAWING))]
-    monkeypatch.setattr(parser_mod, "resolve_config", lambda db, *, current_date, override_version_id=None, llm_choice=None: parser_mod.ParserConfig(
+    monkeypatch.setattr(parser_mod, "resolve_config", lambda db, *, current_date, override_version_id=None: parser_mod.ParserConfig(
         system_prompt="stub", prompt_version=1, provider="openai", model="m", api_key="k", closed_lists=True))
     monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: queue.pop(0))
     monkeypatch.setattr(engine_mod, "_contact_company_scope", lambda f, c: frozenset({DEFAULT_COMPANY_ID}))

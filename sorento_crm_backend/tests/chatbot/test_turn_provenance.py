@@ -34,7 +34,7 @@ def parser_stub(monkeypatch):
 
         monkeypatch.setattr(MCPRuntimeClient, "call_tool", lambda self, name, arguments: json.dumps({}))
 
-        def fake_resolve_config(db, *, current_date, override_version_id=None, llm_choice=None):
+        def fake_resolve_config(db, *, current_date, override_version_id=None):
             return parser_mod.ParserConfig(
                 system_prompt=PROMPT, prompt_version=7, provider="openai", model="gpt-test", api_key="sk-test"
             )

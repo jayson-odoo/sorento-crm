@@ -76,7 +76,7 @@ class ParserError(RuntimeError):
         self.rate_limited = rate_limited
 
 
-@dataclass
+@dataclass(frozen=True)
 class ParserConfig:
     """Everything the LLM call needs, resolved BEFORE the session is released."""
 

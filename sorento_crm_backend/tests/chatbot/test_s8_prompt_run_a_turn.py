@@ -118,7 +118,7 @@ class TestChatbotSemanticParserRunsATurnNotAssistantChat:
 
         captured: dict = {}
 
-        def fake_resolve_config(dbx, *, current_date, override_version_id=None, llm_choice=None):
+        def fake_resolve_config(dbx, *, current_date, override_version_id=None):
             captured["override_version_id"] = override_version_id
             resolved_number = version["version"] if override_version_id == version["id"] else 1
             return parser_mod.ParserConfig(
@@ -246,7 +246,7 @@ class TestChatbotClarifierRunsATurnNotAssistantChat:
         captured: dict = {}
         monkeypatch.setattr(casual, "resolve_for_prompt", lambda dbx, *, ctx: {"resolutions": []})
 
-        def fake_resolve_clarifier_config(dbx, *, override_version_id=None, llm_choice=None):
+        def fake_resolve_clarifier_config(dbx, *, override_version_id=None):
             captured["override_version_id"] = override_version_id
             resolved_number = version["version"] if override_version_id == version["id"] else 1
             return type(
