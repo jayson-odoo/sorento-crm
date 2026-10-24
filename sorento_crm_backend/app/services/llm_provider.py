@@ -148,8 +148,9 @@ def resolve_api_key(cfg: Any, provider_name: str) -> str:
     than "no key configured", so the generic column counts only when the
     assistant itself runs on the provider being asked for.
 
-    Order per provider: the provider-specific column, then the generic column
-    when it belongs to this provider, then the environment key. An empty string
+    Order per provider (OpenAI included, which has its own
+    ``openai_api_key_ciphertext`` slot): the provider-specific column, then the
+    generic column when it belongs to this provider, then the environment key. An empty string
     means no key is configured, which is the caller's cue to say so.
 
     Names are normalized exactly as ``get_provider`` and ``default_model_for``
@@ -181,7 +182,12 @@ def resolve_api_key(cfg: Any, provider_name: str) -> str:
             or app_settings.gemini_api_key
             or ""
         )
-    return generic or app_settings.openai_api_key or ""
+    return (
+        column("openai_api_key_ciphertext")
+        or generic
+        or app_settings.openai_api_key
+        or ""
+    )
 
 
 class LLMProvider(Protocol):
