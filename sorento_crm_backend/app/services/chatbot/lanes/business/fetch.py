@@ -2980,6 +2980,22 @@ def _forms_browse_ask(e: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any] 
 _REPORT_ASK_ERROR_TEXT = "Could not run the sales report right now."
 
 
+#: The row-pick offers the presenter appends to a ranking (`presenters._REPORT_ASK_OFFERS`), mirrored once so a
+#: reply that arms no pick (a row's detail, a comparison) can drop the one it must not promise.
+_ROW_PICK_OFFERS = (
+    "Reply with a rank number to see that item's customers and months.",
+    "Reply with a rank number to see that category's top items.",
+    "Reply with a rank number to see that sales agent's customers and months.",
+    "Reply with a rank number to see that customer's products and months.",
+)
+
+
+def _without_row_offers(text: str) -> str:
+    for offer in _ROW_PICK_OFFERS:
+        text = text.replace("\n\n" + offer, "")
+    return text
+
+
 def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     """REPORT-ENGINE slice 1b: the presenter's text (`presenters._report_ask`) is the reply,
     verbatim. It names its own scope (basis, filters, period), so the generic search-scope
@@ -3017,6 +3033,8 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
                     ],
                     "filters": {"tool": "crm_report_ask", "ranking": {"group_by": frame["group_by"]}},
                 }
+    if pick is None:
+        text = _without_row_offers(text)  # an offer for a list this reply never armed would hand the next number to an older list
     return {
         "outstanding_ask": pick,
         "sales_ranking_frame": frame,

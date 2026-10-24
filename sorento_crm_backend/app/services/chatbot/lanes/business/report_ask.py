@@ -892,7 +892,12 @@ def settle(
     slot = parse_output.get("required_ask")
     ranking_detail = parse_output.get("ranking_detail")
     shown_frame = _dict(parse_output.get("sales_ranking_frame"))
-    if isinstance(ranking_detail, dict) and ranking_detail.get("keys") and shown_frame.get("group_by") in _DETAIL_OF:
+    if (
+        isinstance(ranking_detail, dict)
+        and ranking_detail.get("keys")
+        and shown_frame.get("group_by") in _DETAIL_OF
+        and ranking_detail.get("group_by") == shown_frame.get("group_by")  # the pick is of the list on screen
+    ):
         return _detail_outcome(db, shown_frame, ranking_detail), None
     if isinstance(slot, dict) and slot.get("ask") == ASK_NAME and slot.get("asking") == "scope":
         return _scope_answer(db, parse_output, slot), None

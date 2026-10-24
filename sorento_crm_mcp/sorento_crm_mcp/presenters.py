@@ -3530,7 +3530,7 @@ def _report_ask(body: dict) -> str:
     lines.append(f"Total {figures}")
     text = "\n".join(lines)
     offer = _REPORT_ASK_OFFERS.get(group_by)
-    if offer and (items or not body.get("compare_to")):
+    if offer and not body.get("compare_to"):
         # REPORT-SMART-L R3c: the top selling reply's own offer (Q2 b): a rank number opens that row.
         # R5 B (owner b2): a sales agent / customer ranking offers its row's detail too.
         text += "\n\n" + offer
