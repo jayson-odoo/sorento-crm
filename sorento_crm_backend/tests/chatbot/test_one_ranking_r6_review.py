@@ -68,3 +68,21 @@ def test_r6b_4_by_capability_reads_the_typed_axis() -> None:
     assert report_ask.by_capability(typed)["order_status"] == "sales_ranking"  # a named axis is still the report ask's
     absent = {"order_status": "sales_analysis", "group_by": "customer", "measure": None}
     assert report_ask.by_capability(absent)["order_status"] == "sales_ranking"  # key absent: today's behaviour
+
+
+@pytest.mark.parametrize(
+    ("status", "group_by"),
+    [("pending", "month"), ("pending", "transporter"), (None, "supplier"), ("so_outstanding", "customer"), ("pending", "date")],
+)
+def test_r6b_5_by_capability_leaves_the_grouping_of_a_non_report_status_alone(status, group_by) -> None:
+    from app.services.chatbot.lanes.business import report_ask
+
+    out = report_ask.by_capability({"order_status": status, "group_by": group_by, "axis_words": None, "measure": None})
+    assert out["group_by"] == group_by, out
+
+
+def test_r6b_5_a_status_the_report_ask_can_draw_still_types_the_axis() -> None:
+    from app.services.chatbot.lanes.business import report_ask
+
+    out = report_ask.by_capability({"order_status": "sales_report", "group_by": "month", "axis_words": None, "measure": None})
+    assert out["group_by"] is None, out
