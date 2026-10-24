@@ -1,6 +1,6 @@
 # PLAN: n8n to direct ingress - migration gap map
 
-Status: research (size S, no code). Owner 25 Oct 05:35: Q1 (a) keep the thin n8n sender; Q4 no pilot, one switchover. Section "Owner's design" filed as one crew `--ask`, waiting on owner.
+Status: research (size S, no code). Owner 25 Oct: 05:35 Q1 (a) keep the thin n8n sender, no pilot, one switchover; 05:45 burst Q3 NOT accepted, the CRM must own a real queue. Section "CRM-owned queue" filed as one crew `--ask`, waiting on owner.
 Origin: owner 25 Oct 05:25 after PHOTO-ORDER-SCOUT (`documentation/plans/_archive/chatbot/PLAN-photo-order-scout.md`):
 no B2, the Redis queue peek rejected as coupling the CRM to n8n internals; map what it takes
 for the CRM to own the whole chatbot ingress, so the photo-order fix can live in the CRM's
@@ -140,6 +140,9 @@ turn is answered by n8n), so each step is reversible by editing the contact list
    `all`. Recommendation: (a).
 
 ## Owner's design: remove the dispatcher's queue, the CRM queues (25 Oct 05:35)
+
+CRM half SUPERSEDED by "CRM-owned queue" below (owner 05:45: the synchronous ticket with its
+30 s clamp is not accepted for bursts). The n8n facts and the S6 analysis here still hold.
 
 Question: "can I just remove the queue from the dispatcher and let the CRM handle the
 queue?" Answer: **yes, and the CRM half is already built.** This is the turn-engine plan's S7
@@ -282,6 +285,116 @@ The CRM look-ahead can stay; it finds nothing with the dispatcher back in front.
 2. Rollback mechanism: (a) n8n workflow history restore + re-activate the dispatcher,
    (b) build an IF toggle node in both injectors now. Recommendation: (a): no extra node to
    build, and the previous version is exactly today's.
-3. Long single-contact bursts beyond the 30 s ticket wait: (a) accept, (b) raise n8n's
+3. (Owner 05:45: NOT accepted, see "CRM-owned queue".) Long single-contact bursts beyond the 30 s ticket wait: (a) accept, (b) raise n8n's
    `chat-turn` timeout and `chatbot_queue_wait_seconds` together. Recommendation: (a): the
    photo fix targets photo + text pairs; revisit if a burst reorders in the first week.
+
+## CRM-owned queue (owner 25 Oct 05:45)
+
+Owner: "CRM side should have queueing also to handle long burst of msg; if I turn off the
+dispatcher there will be burst cases." Requirement: per-contact FIFO in respond.io send-time
+order with no clamp reordering; survives a long single-contact burst and a global burst
+across many contacts (the dispatcher's ~1 new turn/s cap is gone); never loses or
+double-answers a message; survives a CRM restart mid-burst.
+
+### Why the synchronous spine cannot meet it
+
+- n8n waits on `/chat/turn` at most 90 s (spine `chat-turn` timeout 90000; mirrored as
+  `send_order.N8N_CHAT_TURN_TIMEOUT_SECONDS`, `send_order.py:74`). A message queued behind its
+  contact's earlier turns spends that budget waiting; the 30 s clamp (`config.py:174-181`,
+  `dispatch.max_queue_wait_seconds` `dispatch.py:124`) exists only because of it. Ten photos
+  at ~10 s a turn put the tenth past 90 s whatever the clamp says.
+- On a timeout n8n takes its error arm (`chat-turn[1] -> sub-error-logger`, fixed "Sorry,
+  I couldn't process that just now..." text) while the CRM may still finish the turn, and
+  nobody sends that reply: one wrong message plus one lost answer.
+- A CRM restart (every blue/green deploy) kills every waiting request the same way; the
+  queued rows survive but their callers are gone, so nothing answers them.
+
+So FIFO without a clamp, and surviving a restart, both need the CRM to ACCEPT the message
+and answer it LATER. Direct ingress already has that shape: it accepts on the respond.io
+webhook, runs the turn on its own pool and POSTs the actions to the thin n8n sender
+(DI:13-26, DI:324, DI:358-437).
+
+### Options
+
+| | 1. Sync, bigger budget | 2. Async CRM inbox (recommended) | 3. Hybrid |
+| --- | --- | --- | --- |
+| How | as "Owner's design", plus a longer n8n `chat-turn` timeout and clamp | every copy of a message enqueues once and returns at once; a CRM drain per contact answers in send order and posts to the thin sender | sync while the contact's queue is empty, async otherwise |
+| Long one-contact burst | still bounded by the n8n timeout | yes: nobody waits on HTTP, no clamp | yes |
+| Global burst | 4 uvicorn workers hold every waiter (`gunicorn.conf.py:44`) | rows wait in Postgres; the pool bounds concurrency | yes |
+| CRM restart mid-burst | waiters lost, "Sorry" sent | rows durable, drains re-armed | yes, two paths to recover |
+| Never double-answer | D15 key | D15 key at enqueue + per-contact mutex + send log check | same, across two paths |
+| CRM size | S | L (~700 lines + tests, no migration expected) | L+ |
+| Meets the requirement | no | yes | yes, with more ways to go wrong |
+
+**Option 2 in detail (all reuse unless marked new):**
+
+- **Enqueue (new, small).** Every injector of a message (the CRM's respond.io webhook, n8n's
+  `/chat/turn`, the failover `sorento-main-INJECT`, Retry) inserts its turn row at status
+  `queued` once; the unique key (`models/chatbot_turn.py:63`) makes a second copy a no-op.
+  The webhook still answers respond.io 200 within its 5 s; `/chat/turn` answers n8n at once
+  with no actions, so the spine's action loop sends nothing and needs no edit. `is_test` and
+  console turns stay synchronous (the eval runners read replies inline).
+- **Drain (new, the core).** One drain per contact on the existing direct-turn pool (8
+  threads per API process, CT:75): take the contact's oldest `queued` row by respond.io send
+  time (`send_order.send_key_ms`, `send_order.py:105-122`; index
+  `ix_chatbot_turns_contact_status_created` `chatbot_turn.py:50`), check takeover at run time
+  (DI:264), run the turn (`run_turn(offload=False)`, DI:324), POST its actions to the sender
+  (DI:358-437), mark it done, take the next. Per-contact exclusivity is a Redis liveness key
+  with heartbeat, the pattern `dispatch.py` already uses (`ALIVE_TTL_SECONDS` `:94`), as a
+  mutex, not a ticket: no clamp, no reorder.
+- **Photo look-ahead.** Before posting a reply, the drain checks for a `queued` row of the
+  same contact with an EARLIER send time (the late photo that arrived during this turn). If
+  there is one: drop the draft, answer that row, then re-run this one (card Q3 (a)). With
+  the CRM webhook as an injector the photo's row exists from its CRM arrival, so n8n's media
+  step plays no part (dev-copy model 47 / 3 / 0, section "Photo order once the CRM owns the
+  queue").
+- **Global burst.** Rows wait durably; at most 32 drains run (8 x 4 processes); photo reads
+  stay capped at 8 waits per process (`media_intake.py:48`) and run on API threads, so the
+  RQ `media` worker never waits on itself.
+- **Restart.** A sweeper (at start-up and every few seconds) re-arms a drain for every
+  contact with `queued` rows and no live mutex. A row left `processing` by a dead process is
+  re-run only if the sender log (`integration_logs`, channel `chatbot_sender`, DI:63, DI:445)
+  shows its POST never went out; otherwise it is closed and flagged on the trace screen.
+- **Sender order.** The n8n `chatbot-sender` webhook answers `onReceived`
+  (`documentation/n8n/chatbot-sender.workflow.json`), so two back-to-back POSTs for one
+  contact could send interleaved. It must answer "When Last Node Finishes", and the CRM's
+  sender timeout (10 s, DI:62) must cover a chunked send.
+- **Principle reversed, on this ruling.** The turn-engine plan said "The CRM inbox row stays a
+  record and a trace, never a queue" (`PLAN-chatbot-turn-engine.md:248`). Option 2 makes it
+  the queue; the evidence is the owner's burst requirement plus the restart case above.
+
+Why the drain runs on the API pool and not on RQ: `chat` and `media` share the `fast` worker
+role (`worker.py:127`, `:134`), so a turn running on that worker would wait on its own
+photo read. RQ would need dedicated chat worker containers (Q2 (b)).
+
+### n8n clicks and switchover (option 2)
+
+1. Deploy the CRM build with the queue switch off (inert).
+2. n8n `chatbot-sender`: import it if it is not live yet (`documentation/n8n/chatbot-sender.md`),
+   set its Webhook to respond "When Last Node Finishes", set its credentials; paste its URL
+   and key on the CRM workspace (same doc, "CRM side").
+3. n8n spine `THfmMmYcGzDDXBu4`: S6 (steps 5 of "Owner's design"), clone smoke first, so n8n
+   stops reading photos and its media reply arm stops answering them on its own.
+4. Flip the CRM queue switch on. From then every copy enqueues and the CRM answers.
+5. Producer, dispatcher and spine need NO rewiring: their copies are deduped by message id
+   and they double as the failover injector. Deactivate them any later day.
+
+Rollback: flip the CRM switch off. `/chat/turn` answers synchronously again (S7 ticket, as
+today); rows already queued keep draining through the sender, so none is lost. n8n
+untouched (S6 stays; the sync path reads photos in-turn by design).
+
+Option 1 clicks, for comparison: "Owner's design" steps 1-5 plus a longer `chat-turn`
+timeout (and the CRM mirror) - more n8n edits, and it still fails the burst and restart cases.
+
+### Owner questions (filed as one `--ask`)
+
+1. Which option: (a) 2, async CRM inbox, reply via the thin sender, (b) 1, sync with a bigger
+   budget, (c) 3, hybrid. Recommendation: (a): the only one that meets the requirement with a
+   single delivery path, and the smallest n8n switchover (no producer or dispatcher rewiring).
+2. Where drains run: (a) the API process pool, as direct ingress does, (b) dedicated RQ `chat`
+   worker containers. Recommendation: (a): no compose change, and the sweeper covers a deploy
+   restart, which (b) needs too.
+3. A crash between a send and its done mark: (a) re-send only when the sender log proves the
+   POST never went out, otherwise flag it for staff, (b) always re-send (at-least-once, a
+   duplicate reply is possible). Recommendation: (a): never double-answer, as the owner asked.
