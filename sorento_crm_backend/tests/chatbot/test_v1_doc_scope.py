@@ -1393,6 +1393,42 @@ class TestGrantedReportsRunNoDoProbe:
         assert " - has DO" not in reply and " - no DO" not in reply, reply
 
 
+    # SALES-COMPANY-PICK round 2 (#1843): a sales_analysis ask whose CURRENT message names a
+    # customer is now the sales report, whose picker never probes (AC-1657), so the cases above
+    # no longer reach the analysis picker. A word the parser tagged brand is not rerouted
+    # (`turn_runtime._report_status_means_order_domain` reads product / customer hints only) and
+    # still reaches it: the non-staff skip (AC-14) and the staff stamps are pinned there.
+
+    def test_a_granted_unlinked_contact_gets_no_do_probe_on_the_analysis_picker(self, session_factory, monkeypatch) -> None:
+        _seed_contact(session_factory, variables={})
+        qf = _parser_output(
+            domain_hint="order", intent_hint="check_order", order_status="sales_analysis",
+            entities=[], date_filter_start="2026-10-01", date_filter_end="2026-10-31",
+        )
+
+        reply, _captured, probes, _asked = _picker_turn(
+            session_factory, monkeypatch, "brand", qf=qf, attributes=(OUTSTANDING_KEY, SALES_GRANT)
+        )
+
+        assert "Which one do you mean?" in reply, reply
+        assert probes == [], probes
+        assert " - no DO" not in reply and " - has DO" not in reply, reply
+
+    def test_document_staff_keep_the_do_stamps_on_the_analysis_picker(self, session_factory, monkeypatch) -> None:
+        _seed_contact(session_factory, variables={})
+        make_office_access_type(session_factory, CONTACT_ID)
+        qf = _parser_output(
+            domain_hint="order", intent_hint="check_order", order_status="sales_analysis",
+            entities=[], date_filter_start="2026-10-01", date_filter_end="2026-10-31",
+        )
+
+        _reply, _captured, probes, _asked = _picker_turn(
+            session_factory, monkeypatch, "brand", qf=qf, attributes=(OUTSTANDING_KEY, SALES_GRANT)
+        )
+
+        assert probes, "staff keep the analysis picker's DO probe as today"
+
+
 class TestHiddenCustomerRowsEverywhere:
     """Reviewer on 70bd1c303: `_without_customer_rows` also drops the customer rows a miss would
     offer as "did you mean" (`alternatives`), and those in `intersection` / `by_entity_type`. A
@@ -1481,4 +1517,5 @@ class TestTypedNamesRosterOnAGrantedReport:
 
         assert "Which one do you mean?" in reply, ("staff keep the roster (AC-11)", reply)
         assert probes == [] and " - has DO" not in reply and " - no DO" not in reply, (reply, probes)
+
 
