@@ -1,33 +1,60 @@
 # Behaviour card: per-SO remark in the Confirm purchasing email (FULFIL-SO-REMARK, 25 Oct 2026)
 
 v2 (owner Lavish feedback on mock v1, 25 Oct 05:29): the remark is ONE word, `Sponsorship`,
-`Purchase Request` or `Mockup`; normal SO blank; no per-line labels in the email.
+`Purchase Request` or `Mockup`; normal SO blank.
+
+**FINAL (owner rulings 25 Oct ~05:35 on card v2):** Q1 normal SO blank. Q2 source = Shipping Info
+words, not the Refer Doc No prefix. Q3 mixed SO = SO remark `Mockup` AND a `Mockup` label on each
+flagged line, on the split page and in the email. Q4 recompute the default every time the Confirm
+guide opens; no saved-remark column. Q5 both parts now: shared-service SQL preset adds ShipInfo,
+line FurtherDescription and the text-only MOCKUP heading; CRM stores them; RefDocNo not needed.
+Q6 free text prefilled with the word, editable. Size L (shared-service PR + CRM PR).
+Refined by owner mock v2 feedback (05:34): Mockup and the line labels are decided from the lines
+CHOSEN in this Confirm (rules 3-5, cases table).
 
 Plan: `documentation/plans/scm/PLAN-fulfil-so-remark-25oct.md` (Step 1 findings, query results).
 Mock: `documentation/mockups/FULFIL-SO-REMARK/index.html`.
 
-## Rules (proposed)
+## Rules (final)
 
 1. Every SO page of the Confirm guide (Review split step, `ConfirmGuideDialog.tsx:273-407`) shows a
-   **Remark** field under the SO header row: prefilled with the default, editable, clearable, up to
-   100 characters.
+   **Remark** field under the SO header row: free text, prefilled with the default, editable,
+   clearable, up to 100 characters.
 2. The remark prints in a new **REMARK** column at the end of the email's SO table
-   (S/O NO | SO DATE | CUSTOMER | PROJECT | REMARK). Blank remark, blank cell. The preview dry run and
-   a resend show the same remark (both use `build_handover_email`, `project_order_inquiry_service.py:14202`,
-   `oi_handover_resend.py:147`).
-3. Default, part 1 (data the CRM already has): the SO's AutoCount Note contains `MOCK` (MOCKUP,
-   MOCK UP, MOCK-UP, any case) -> `Mockup`; otherwise blank.
-4. Default, part 2 (after the shared service pulls Refer Doc No, Shipping Info and the line remark),
-   first match wins:
-   1. Refer Doc No `PSSF...` or Shipping Info contains `SPON` -> `Sponsorship`.
-   2. Refer Doc No `PR...` or Shipping Info contains `PURCHASE REQ` -> `Purchase Request`.
-   3. Note contains `MOCK`, or any line remark contains `MOCK` (mixed SO) -> `Mockup`.
-   4. Otherwise blank.
-   Sponsorship / Purchase Request beat Mockup because the owner marked SO421287 (Sponsorship + Note
-   mockup) `Sponsorship` and SO423072 (Purchase Request + Note mockup) `Purchase Request` on mock v1;
-   a mixed SO is `Mockup` (owner on SO419417). No line prints a mockup label.
-5. The remark is saved on the SO when Confirm sends the email. The next Confirm of the same SO
-   prefills the saved remark, not a fresh default.
+   (S/O NO | SO DATE | CUSTOMER | PROJECT | REMARK). Blank remark, blank cell. The preview dry run
+   shows the same remark as the send.
+3. Default, recomputed every time the Confirm guide opens, from the LINES CHOSEN for that SO in
+   this Confirm (an edit applies to that send only), first match wins:
+   1. Shipping Info contains `SPON` (any case) -> `Sponsorship`.
+   2. Shipping Info contains `PURCHASE REQ` (any case) -> `Purchase Request`.
+   3. At least one chosen line is a mockup line (rule 4) -> `Mockup`.
+   4. Otherwise blank (also when the SO has mockup lines but none of them is chosen this time).
+   Sponsorship / Purchase Request stay SO-level and beat Mockup: the owner marked SO421287
+   (Sponsorship + Note mockup) `Sponsorship` and SO423072 (Purchase Request + Note mockup)
+   `Purchase Request` on mock v1.
+4. A line is a **mockup line** when the SO's Note contains `MOCK` (MOCKUP, MOCK UP, MOCK-UP, any
+   case: the whole SO is mockup, so every line is), or its AutoCount line remark
+   (`SODTL.FurtherDescription`) contains `MOCK`, or it sits under a text-only heading line whose text
+   contains `MOCK` (the heading covers the item lines after it, up to the next text-only line with
+   text).
+5. Line labels (owner, mock v2 feedback 05:34): only when the chosen lines MIX mockup and actual
+   lines does each chosen mockup line get a `Mockup` badge on the split page and `Mockup` in the
+   email line REMARK cell, ahead of any text the cell already holds (`Mockup, <text>`). Chosen lines
+   all mockup, or none mockup: no line labels. The label is independent of the SO word (a Purchase
+   Request SO with mixed chosen lines still labels its mockup lines).
+
+## Cases (one example each; SO419417 = 24 lines, 3 of them line-remarked mockup: SRTWB1515, SRT2403-CR, CB2829-DIY)
+
+| Case | Example | SO remark | Line labels |
+| --- | --- | --- | --- |
+| Chosen lines mix mockup + actual | SO419417, all 24 lines chosen | `Mockup` | `Mockup` on SRTWB1515, SRT2403-CR, CB2829-DIY |
+| Chosen lines all mockup (part of a mixed SO) | SO419417, only those 3 lines chosen | `Mockup` | none |
+| Chosen lines none mockup | SO419417, only the 21 other lines chosen | blank | none |
+| Whole SO mockup by Note | SO427088 (Note `***FOR MOCKUP`), any lines | `Mockup` | none (every line is mockup) |
+| Sponsorship | SO427489 (Shipping Info SPONSORSHIP) | `Sponsorship` | none |
+| Sponsorship + whole-SO mockup | SO421287 (Note `***SPONSORSHIP (MOCKUP)***`) | `Sponsorship` | none |
+| Purchase Request | SO427488 (Shipping Info PURCHASE REQUEST) | `Purchase Request` | none |
+| Normal | SO424062 | blank | none |
 
 ## Real examples (AutoCount, last 90 days; people masked)
 
@@ -35,9 +62,9 @@ Mock: `documentation/mockups/FULFIL-SO-REMARK/index.html`.
 | --- | --- | --- | --- | --- |
 | SO427088 | PS26-1784 | OT06/2702 (customer PO) | Note `***FOR MOCKUP` | `Mockup` (staff wrote `OTM / HUAZHI CONST. (MOCKUP)`) |
 | SO427489 | PSSF26-0424 | SPONSORSHIP | no mockup | `Sponsorship` |
-| SO423741 | PR26-0375 | PR26-0375 (the PR no, not the words) | Note `Only send 2 for mock up...` | `Purchase Request` |
+| SO423741 | PR26-0375 | PR26-0375 (the PR no, not the words) | Note `Only send 2 for mock up...` | `Mockup` (Shipping Info has no words; see the Q2 note) |
 | SO421287 | PSSF26-0381 | SPONSORSHIP | Note `***SPONSORSHIP (MOCKUP)***` | `Sponsorship` |
-| SO419417 | PS26-0336 | U 2603-00010 | 3 of 24 lines: line remark `***FOR STH(100)-2 UNITS MOCK UP` (SRTWB1515, SRT2403-CR, CB2829-DIY) | `Mockup` |
+| SO419417 | PS26-0336 | U 2603-00010 | 3 of 24 lines: line remark `***FOR STH(100)-2 UNITS MOCK UP` (SRTWB1515, SRT2403-CR, CB2829-DIY) | `Mockup`; those 3 lines labelled `Mockup` |
 
 Counts (810 project SOs): PR 40, Sponsorship 77, Note mockup 25, mixed by line remark 12 SOs / 21
 lines, mockup header line 8 SOs, Note and line both 3.
@@ -46,35 +73,21 @@ lines, mockup header line 8 SOs, Note and line both 3.
 
 - Note talks about a PART of the SO in prose (SO423741, SO418716 `SUPPLIED 8 UNITS FOR MOCK UP`):
   default still says `Mockup`; staff edit the field.
-- Mockup header line (a text-only AutoCount line `MOCKUP` / `MOCK UP - BLOCK 1` above the mockup
-  items, 8 SOs): the shared service skips text-only lines (`presets.py:214`), so no auto flag; staff
-  type it.
-- Several flags on one SO: one word, first match of rule 4 (Sponsorship, then Purchase Request,
-  then Mockup).
-- Until part 2 ships, a Sponsorship / Purchase Request SO whose Note says mockup defaults to `Mockup`
-  (part 1 cannot see the type: 15 such SOs in 90 days); staff edit the field.
-- Edited, then Confirm again: the saved remark prefills (rule 5); a later AutoCount change does not
-  overwrite it.
-- Cleared field: blank cell, no default re-applied for that send.
+- Several flags on one SO: one word, first match of rule 3 (Sponsorship, then Purchase Request,
+  then Mockup). Line labels follow rule 5 whatever the SO word is.
+- Staff confirm the mockup lines first and the actual lines another time: the first send says
+  `Mockup` (no labels), the second says blank (rule 3.4).
+- Shipping Info holds a PR number instead of the words (26 of 40 PR SOs in 90 days, e.g.
+  `PR26-0375`): no Purchase Request default by the owner's Q2 ruling; crew is showing the owner this
+  count. Adding "Shipping Info starts with PR + digits" is a one-line rule change if he wants it.
+- Confirm again, or the guide reopened: the default is computed again from the current AutoCount
+  data; an earlier edit is not kept.
+- Cleared field: blank cell for that send.
 - Customer names stay as they print today (CUSTOMER / PROJECT columns); the remark carries only the
   flag.
+- Old SOs pulled before the shared-service change have no Shipping Info / line remark / heading in
+  the CRM until their next pull; their default comes from the Note only.
 
-## Questions (each with a recommendation)
+## Questions
 
-1. ANSWERED (owner, mock v1): normal SO blank.
-2. PR / Sponsorship source: (a) Refer Doc No prefix OR Shipping Info words, (b) prefix only,
-   (c) Shipping Info words only. **Recommend (a)**: of 40 PR-prefix SOs, 26 hold the PR number, not
-   the words, in Shipping Info (words alone miss them); 8 SOs say SPONSORSHIP and 1 says PURCHASE
-   REQ in Shipping Info with no PSSF / PR prefix (prefix alone misses them).
-3. ANSWERED (owner, mock v1): mixed SO = `Mockup`, no line labels. Precedence when an SO is both a
-   type and mockup: type wins (rule 4), read from the owner's notes on SO421287 / SO423072; confirm.
-4. Confirm again: (a) prefill the saved remark (one new column on the project SO), (b) recompute the
-   default every time (no column). **Recommend (a)**: a staff edit is not lost on the second
-   Confirm.
-5. Build order: (a) this PR = part 1 (field, email column, Note mockup default, saved remark; CRM
-   only, size M); part 2 = a follow-up lane (shared-service SQL pull of RefDocNo / ShipInfo / line
-   FurtherDescription + CRM columns + rule 4; size L, two repos), (b) both in one lane now.
-   **Recommend (a)**: staff get the field this week with no shared-service dependency.
-6. Field type: (a) free text input, prefilled with the one word, (b) a clearable select of the three
-   words. **Recommend (a)**: the requirement says editable, and staff wrote other words in the past
-   (e.g. a customer short name); the default still keeps to one word.
+All answered by the owner, 25 Oct (see FINAL above).
