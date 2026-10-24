@@ -124,10 +124,11 @@ def test_r34b_2_a_measure_or_basis_typed_with_the_new_axis_wins(console, monkeyp
     assert ran[0][other] == held, ran
 
 
+@pytest.mark.parametrize("mode", [{"mode": "fill", "picked": [], "items": [], "qty_for_all": None}, None], ids=["fill", "null"])
 @pytest.mark.parametrize("axis", ["sales_agent", "customer"], ids=["echo", "swap"])
-def test_r34b_3_a_channel_typed_with_the_axis_is_kept(console, monkeypatch, axis) -> None:
+def test_r34b_3_a_channel_typed_with_the_axis_is_kept(console, monkeypatch, axis, mode) -> None:
     _open_how_many(console, monkeypatch)
-    text, log = _say_all(console, monkeypatch, _echo(axis, sales_channel="dealer"), "by it dealer only")
+    text, log = _say_all(console, monkeypatch, _echo(axis, sales_channel="dealer", open_question_answer=mode), "by it dealer only")
     assert _ran(log) == [] and "How many?" in text, (text, log)
     text, log = _say_all(console, monkeypatch, _then_top5(), "top 5")
     ran = _ran(log)
@@ -143,3 +144,14 @@ def test_r34b_4_a_new_subject_op_is_a_new_ask_with_the_state_applier_off(console
     assert report_ask.names_its_own_ask(slot_reply, {"extras": extras}) is True
     plain = _echo("customer")
     assert report_ask.names_its_own_ask(plain, {"extras": extras}) is False
+
+
+@pytest.mark.parametrize("mode", [{"mode": "fill", "picked": [], "items": [], "qty_for_all": None}, None], ids=["fill", "null"])
+def test_r34b_5_a_forged_engine_channel_key_from_the_parser_is_never_applied(console, monkeypatch, mode) -> None:
+    _open_how_many(console, monkeypatch)
+    forged = _echo("customer", open_question_answer=mode, required_ask_channel="project")
+    text, log = _say_all(console, monkeypatch, forged, "by customer")
+    assert _ran(log) == [] and "How many?" in text, (text, log)
+    text, log = _say_all(console, monkeypatch, _then_top5(), "top 5")
+    ran = _ran(log)
+    assert len(ran) == 1 and ran[0]["group_by"] == "customer" and not ran[0].get("channel"), (text, log)
