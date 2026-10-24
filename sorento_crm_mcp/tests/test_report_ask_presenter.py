@@ -69,8 +69,26 @@ def test_ranking_reply_lines():
     assert "1. SA01 RM 1,200.00, 30 pcs" in lines, lines
     assert "2. SA02 RM 600.00, 15 pcs" in lines, lines
     assert "and 2 more" in lines, lines
-    assert lines[-1] == "Total RM 2,100.00, 55 pcs", lines
-    assert lines.index("and 2 more") < lines.index("Total RM 2,100.00, 55 pcs")
+    # REPORT-SMART-L R5 B: a sales agent ranking ends with its row-pick offer, after the total.
+    assert lines[-1] == "Reply with a rank number to see that sales agent's customers and months.", lines
+    assert lines.index("and 2 more") < lines.index("Total RM 2,100.00, 55 pcs") < len(lines) - 1
+
+
+@pytest.mark.parametrize(
+    ("group_by", "offer"),
+    [
+        ("sales_agent", "Reply with a rank number to see that sales agent's customers and months."),
+        ("customer", "Reply with a rank number to see that customer's products and months."),
+    ],
+)
+def test_agent_and_customer_rankings_offer_the_row_pick(group_by, offer):
+    assert _report_ask(_body(group_by=group_by)).endswith("\n\n" + offer)
+
+
+@pytest.mark.parametrize("group_by", ["month", "brand", "channel", "location"])
+def test_other_axes_and_a_comparison_offer_no_row_pick(group_by):
+    assert "rank number" not in _report_ask(_body(group_by=group_by))
+    assert "rank number" not in _report_ask(_body(compare_to="last_year"))
 
 
 def test_no_more_line_when_nothing_is_cut():

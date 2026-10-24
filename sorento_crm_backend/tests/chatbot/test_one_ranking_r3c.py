@@ -133,14 +133,15 @@ def test_r3c_5_guard_a_number_reply_with_no_ranking_on_screen_runs_no_ranking(co
     assert _ran(log) == [] and OLD_TOOL not in _names(log), (text, log)
 
 
-def test_r3c_5_guard_a_customer_ranking_row_pick_opens_nothing_new(console, monkeypatch) -> None:
+def test_r3c_5_a_customer_ranking_row_pick_opens_that_customers_products(console, monkeypatch) -> None:
     _state_on(console)
     text, log = _say_all(
         console, monkeypatch,
         _ranking("customer", order_status="sales_ranking", rank_group=None), "top 10 customers this year by qty delivered")
     assert len(_ran(log)) == 1, ("setup", text, log)
     text, log = _say_all(console, monkeypatch, _pick(1), "1")
-    assert OLD_TOOL not in _names(log) and _ran(log) == [], (text, log)
+    # REPORT-SMART-L R5 B (owner b2) supersedes the old "opens nothing" guard: a customer row opens its products.
+    assert OLD_TOOL not in _names(log) and sorted(a["group_by"] for a in _ran(log)) == ["month", "product"], (text, log)
 
 
 # ---------------------------------------------------------------- review: one reply, and the printed code picks a row
