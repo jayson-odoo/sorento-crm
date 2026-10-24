@@ -15,3 +15,11 @@ Plan: `PLAN-sales-company-pick-24oct.md`.
   ("water closet only" over a dealer ranking).
 - AC-8: The API route keeps its behaviour: same companies and order, 422 for an unknown company, 403 for a company
   the contact is not granted.
+
+Round 2 (item 3):
+- AC-9: "b2155-nl-blue dealer sales september 2026" parsed as sales_analysis with the product entity runs the sales
+  report for B2155-NL-BLUE, channel dealer, September 2026 (the same call its sales_report parse makes). No company
+  question, no company analysis, no whole-company figure.
+- AC-10: A sales_analysis parse naming a customer this message runs the sales report for that customer.
+- AC-11: A sales_analysis parse naming no product or customer this message (including one that only carries an earlier
+  turn's product) is unchanged: company question (2+ companies) or the company analysis.
