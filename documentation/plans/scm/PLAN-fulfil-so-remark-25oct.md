@@ -57,6 +57,17 @@ page per SO, section at :273-407); submit `runConfirmAll` (:1873) -> POST
 remark exists in the payload, the schema (`ConfirmManyOrderBody`, `app/schemas/project_supply.py:596`)
 or the email.
 
+Dev check: `upper(internal_note) ~ 'MOCK'` is true for SO421287, SO423072, SO418626, SO422429 and
+false for SO419417 / SO416732 (mixed SOs, flag only on the lines), so a Note-based default works on
+today's data.
+
+Shared service (`foundryx-shared-service` origin/main 5961bd3a, 22 Oct): SO is pulled from SQL, not
+hapi; no hapi SO path exists (`modules/autocount/presets.py:1617-1626`,
+`doc_lookup/registry.py:5-6`). The SO header query (`presets.py:185-203`) reads Note and Ref but not
+ShipInfo or RefDocNo; the line query (`presets.py:204-214`) reads Description but not
+FurtherDescription, and skips text-only lines (`ItemCode IS NOT NULL AND Qty IS NOT NULL`, :214). So
+slice 2 needs a shared-service query + canonical payload change plus CRM columns.
+
 ## Slices (pending owner answers)
 
 1. Remark field + email (CRM only). Default from data the CRM already holds (Note -> `MOCKUP`).
