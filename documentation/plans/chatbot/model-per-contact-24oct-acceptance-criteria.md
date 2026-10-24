@@ -38,8 +38,7 @@ Tag setting
 Contact override
 - AC-M-3: `respond_contacts` gains nullable `chatbot_llm_provider` + `chatbot_llm_model` (additive migration).
   `PUT /contacts/{id}/chatbot` with `llm: {"provider", "model"}` sets both, `llm: null` clears both, `llm` absent
-  leaves them alone; provider outside the three or a blank model is a 422. Gate unchanged
-  (`user_management.contacts.edit`).
+  leaves them alone; provider outside the three or a blank model is a 422. Gate: see AC-S-1.
 - AC-M-4: the contact read returns `chatbot_llm` = `{provider, model, source, tags}`: source `contact` (override),
   `tag` (tags names that set it), `tag_conflict` (provider/model null, `tags` = the disagreeing tag names; their
   values show in the tag panel's `conflict_tags`), `none` (provider/model null, today).
@@ -72,3 +71,15 @@ Contact page
 - AC-M-15: the contact Chatbot section shows "AI model" with the override select (clearable) and a source line:
   "From tag <names>" / "Tags disagree: <tag>, <tag>" / "Set on this contact" / "Default".
 - AC-M-16: 375px and 1280px usable, no clipping; no UUIDs shown.
+
+## Security fix round (security review 24 Oct 2026; crew ruling (a) on finding 1)
+
+- AC-S-1: a `PUT /contacts/{id}/chatbot` body that carries `llm` (set or null) also needs
+  `system.ai_assistant_settings.edit` (the gate on label and global model choices, `system/ai_assistant.py:165`);
+  without it the request is a 403 and nothing in it is written. A body without `llm` keeps today's gate.
+- AC-S-2: creating or updating a tag whose `chatbot.llm` is added, changed or removed also needs
+  `system.ai_assistant_settings.edit` (403, nothing written); an unchanged `llm` passes with today's gate.
+- AC-S-3: a model name must fully match `^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$` on the contact PUT and the tag
+  validator (no `/`, `?`, `#`, whitespace or newline); anything else is a 422 naming the field.
+- AC-S-4: without `system.ai_assistant_settings.edit` the AI model picker on the contact page and the tag form is
+  read-only (value and source line still shown). Cosmetic only: the backend enforces AC-S-1/2.
