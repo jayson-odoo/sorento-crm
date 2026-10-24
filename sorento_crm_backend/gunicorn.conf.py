@@ -49,6 +49,12 @@ _api_port = os.environ.get("API_PORT", "8000")
 bind = f"{_api_host}:{_api_port}"
 
 timeout = 120
+# CHAT-INBOX-QUEUE: on SIGTERM a worker's inbox drains finish the turn they are in, its
+# sender POST and its done mark included, before the app's shutdown handler returns. The
+# longest queued turn (photo read + parser + lane + sender POST) is well under 120 s, so
+# 150 s of grace covers it. The deploy script stops the old colour with a longer Docker
+# timeout (`docker compose stop -t 160`) so Docker never SIGKILLs inside this grace.
+graceful_timeout = 150
 # Must be LONGER than the host nginx's upstream keepalive (its
 # keepalive_timeout, default 60s / 75s). With 5s gunicorn closed idle
 # upstream connections that nginx still considered open, and the next

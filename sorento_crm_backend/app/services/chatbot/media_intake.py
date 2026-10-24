@@ -54,6 +54,11 @@ POLL_INTERVAL_SECONDS = 0.5
 _CONCURRENT_WAIT_LIMIT = 8
 _wait_slots = threading.BoundedSemaphore(_CONCURRENT_WAIT_LIMIT)
 
+# CHAT-INBOX-QUEUE (IQ-24): a turn on the inbox drain waits for its read with no
+# `media_sync_wait_seconds` cap (nobody holds a request open on it, and a worker restart
+# only delays the reply), up to this hard cap.
+DRAIN_WAIT_CAP_SECONDS = 600.0
+
 # AC-1814: the sentence when the job outlives the sync wait. Two words differ by
 # modality; everything else is the plan's own wording, verbatim.
 _TIMEOUT_SENTENCE = {
@@ -247,6 +252,25 @@ def _poll(job_id: str, timeout_seconds: float, session_factory) -> dict[str, Any
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
+def _poll_on_drain(job_id: str, session_factory) -> dict[str, Any] | None:
+    """The inbox drain's wait (IQ-24): until the job is terminal or the hard cap, with
+    a job the worker abandoned read again once. `None` only past the cap."""
+    from app.api.v1.external.media import job_abandoned, read_abandoned_job_again
+
+    deadline = time.monotonic() + DRAIN_WAIT_CAP_SECONDS
+    read_again = False
+    while True:
+        snapshot = _poll(job_id, 0, session_factory)
+        if snapshot is not None:
+            return snapshot
+        if not read_again and job_abandoned(job_id):
+            read_again = True
+            read_abandoned_job_again(job_id)
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(POLL_INTERVAL_SECONDS)
+
+
 def await_existing_job(job_id: str, *, timeout_seconds: float, session_factory) -> str | None:
     """The same bounded wait `run` takes, on a job that already exists: its terminal
     status, or None when it outlived the wait (or every wait slot is taken).
@@ -338,7 +362,12 @@ def run(
     # background one. A burst past `_CONCURRENT_WAIT_LIMIT` concurrent waits takes
     # the timeout arm immediately rather than queueing behind the ones already
     # holding a slot.
-    if _wait_slots.acquire(blocking=False):
+    from app.services.chatbot import inbox_queue
+
+    if inbox_queue.draining():
+        # The drain thread is already one of the bounded pool, so it takes no wait slot.
+        snapshot = _poll_on_drain(fast.job_id, session_factory)
+    elif _wait_slots.acquire(blocking=False):
         try:
             snapshot = _poll(fast.job_id, fast.sync_wait_seconds, session_factory)
         finally:

@@ -531,7 +531,9 @@ fi
 
 # 7. Stop and remove old color (tolerate first-deploy where OLD doesn't exist)
 echo "==> Stopping ${OLD} color"
-docker compose stop "backend_${OLD}" "frontend_${OLD}" "mcp_${OLD}" || true
+# -t 160: above gunicorn's graceful_timeout (150 s, gunicorn.conf.py), so a chatbot inbox
+# drain finishing its current turn (sender POST and done mark) is never SIGKILLed by Docker.
+docker compose stop -t 160 "backend_${OLD}" "frontend_${OLD}" "mcp_${OLD}" || true
 docker compose rm -f "backend_${OLD}" "frontend_${OLD}" "mcp_${OLD}" || true
 
 # 8. Persist new active color, clean up.

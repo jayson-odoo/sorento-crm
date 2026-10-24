@@ -58,8 +58,9 @@ RATE_LIMIT_PER_SECOND = 30
 STAFF_SENDER_SOURCES = frozenset({"user", "api", "workflow", "ai_agent", "echo", "broadcast"})
 
 SENDER_KEY_HEADER = "X-Chatbot-Sender-Key"
-# The sender answers as soon as it has accepted the actions; it does not wait on respond.io.
-SENDER_TIMEOUT_SECONDS = 10.0
+# CHAT-INBOX-QUEUE: the sender answers after its last node (respond.io included), so the
+# POST waits up to a minute for it.
+SENDER_TIMEOUT_SECONDS = 60.0
 INTEGRATION_CHANNEL = "chatbot_sender"
 MAX_LOGGED_BODY_CHARS = 20000
 
@@ -150,11 +151,14 @@ def skip_reason(
     already_existed: bool,
     hmac_signed: bool,
     now: float | None = None,
+    queue_mode: bool = False,
 ) -> str | None:
     """Why this stored message must NOT start a turn here, or None to enqueue it.
 
     `contact_id`, `traffic` and `channel` are what the webhook already mapped onto the
     `chat_histories` row, so the gate reads the message the way the thread does.
+    `queue_mode` (CHAT-INBOX-QUEUE): the message goes to the contact's inbox queue, whose
+    drain reads media inside its own turn, so the text-only skip does not apply.
     """
     from app.models.user import SystemSetting
 
@@ -185,7 +189,7 @@ def skip_reason(
     if age > STALE_AFTER_SECONDS:
         return "stale"
     inner = message.get("message") if isinstance(message.get("message"), dict) else {}
-    if str(inner.get("type") or "").strip().lower() != "text":
+    if not queue_mode and str(inner.get("type") or "").strip().lower() != "text":
         # Media stays on the n8n path for now: its intake waits up to the media budget on
         # an extraction job, which would hold one of the few direct-turn threads that long.
         return "not_text"
@@ -355,6 +359,16 @@ def _default_workspace(db: Any) -> Any:
     return RespondWorkspaceService(db).get_default()
 
 
+# What one POST attempt came to (CHAT-INBOX-QUEUE, `inbox_queue.should_resend`): `refused`
+# proves nothing left (connection refused, or no sender to send to); `timeout` and
+# `http_error` may have reached the sender.
+SEND_OK = "ok"
+SEND_REFUSED = "refused"
+SEND_TIMEOUT = "timeout"
+SEND_HTTP_ERROR = "http_error"
+REFUSED_ERROR = "The chatbot sender refused the connection; nothing was sent."
+
+
 def send(
     session_factory: Callable[[], Any],
     *,
@@ -365,6 +379,29 @@ def send(
     branch_kind: str | None,
 ) -> bool:
     """POST the finished actions to the n8n sender. True when it accepted them. Never raises."""
+    return (
+        send_outcome(
+            session_factory,
+            turn_id=turn_id,
+            contact_id=contact_id,
+            actions=actions,
+            reply=reply,
+            branch_kind=branch_kind,
+        )
+        == SEND_OK
+    )
+
+
+def send_outcome(
+    session_factory: Callable[[], Any],
+    *,
+    turn_id: str,
+    contact_id: str,
+    actions: list[dict[str, Any]],
+    reply: Any,
+    branch_kind: str | None,
+) -> str:
+    """`send`, naming what the attempt came to (`SEND_*`). Never raises."""
     import httpx
 
     from app.services.respond_workspace_service import RespondWorkspaceService
@@ -380,7 +417,7 @@ def send(
                 "No chatbot sender webhook is configured on the default workspace, so the "
                 "reply was not handed to n8n.",
             )
-            return False
+            return SEND_REFUSED
         # `/chat/turn`'s own response keys plus `contact_id`, so the sender can run the
         # spine's action executor unchanged (`documentation/n8n/chatbot-sender.md`).
         body = {
@@ -400,7 +437,7 @@ def send(
         except OutboundUrlRejected as exc:
             _log_call(db, turn_id, contact_id, url, body, None, exc.message)
             _record_failure(db, turn_id, exc.message)
-            return False
+            return SEND_TIMEOUT
 
         headers = {"Content-Type": "application/json"}
         key = RespondWorkspaceService.decrypt_chatbot_sender_key(workspace)
@@ -417,10 +454,13 @@ def send(
             )
         except Exception as exc:  # noqa: BLE001 - a transport failure is the sender refusing
             logger.warning("chatbot sender unreachable for turn %s: %s", turn_id, exc)
-            error = "The chatbot sender could not be reached."
+            # A refused connection (or one never made) proves the POST did not leave; a
+            # timeout or any other failure may have reached the sender.
+            refused = isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))
+            error = REFUSED_ERROR if refused else "The chatbot sender could not be reached."
             _log_call(db, turn_id, contact_id, url, body, None, error)
             _record_failure(db, turn_id, error)
-            return False
+            return SEND_REFUSED if refused else SEND_TIMEOUT
         if response.status_code >= 300:
             # The response body stays in the server log (see `dispatch.ReinjectFailed`).
             logger.warning(
@@ -432,12 +472,12 @@ def send(
             error = f"The chatbot sender refused the reply (HTTP {response.status_code})."
             _log_call(db, turn_id, contact_id, url, body, response.status_code, error)
             _record_failure(db, turn_id, error)
-            return False
+            return SEND_HTTP_ERROR
         _log_call(db, turn_id, contact_id, url, body, response.status_code, None)
-        return True
+        return SEND_OK
     except Exception:  # noqa: BLE001 - the turn is answered; describing the send must not raise
         logger.exception("chatbot sender: unexpected failure for turn %s", turn_id)
-        return False
+        return SEND_HTTP_ERROR
     finally:
         db.close()
 

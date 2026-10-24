@@ -123,13 +123,17 @@ def enqueue_direct_turn(
     """CHAT-SPEED: start a webhook message's turn on the direct-turn pool, when the gate
     allows it.
 
+    CHAT-INBOX-QUEUE: with the switch covering the contact, the message is put in the
+    contact's inbox queue (`inbox_queue.enqueue`) and a drain is kicked; the drain answers
+    it on the pool. Photos and voice notes are queued too.
+
     Called by the respond.io webhook AFTER the message is stored. A doorway, like the rest of
     this file: the gate lives in `app.services.chatbot.direct_ingress`. **Never raises**: the
-    webhook's answer to respond.io must not depend on this, and anything not started here is
-    answered by the n8n copy exactly as before. True when a turn was started.
+    webhook's answer to respond.io must not depend on this, and anything not queued here is
+    answered through another injector's copy. True when the message was queued.
     """
     try:
-        from app.services.chatbot import direct_ingress
+        from app.services.chatbot import direct_ingress, inbox_queue
 
         reason = direct_ingress.skip_reason(
             db,
@@ -139,9 +143,13 @@ def enqueue_direct_turn(
             channel=channel,
             already_existed=already_existed,
             hmac_signed=hmac_signed,
+            queue_mode=True,
         )
-        if reason is None and not _submit(run_direct_turn_job, payload):
-            reason = "busy"
+        if reason is None and not direct_ingress._on_default_workspace(db, contact_id):
+            reason = "non_default_workspace"
+        if reason is None:
+            inbox_queue.enqueue(db, direct_ingress.envelope_for(payload, dict(payload.get("contact") or {})))
+            inbox_queue.kick(contact_id)
         if reason is not None:
             if reason not in ("off", "contact_not_listed"):
                 logger.info("direct ingress: not started for %s (%s)", contact_id, reason)
@@ -150,6 +158,39 @@ def enqueue_direct_turn(
     except Exception:  # noqa: BLE001 - see the docstring: the n8n copy is the fallback
         logger.warning("direct ingress: could not start the turn for %s", contact_id, exc_info=True)
         return False
+
+
+# CHAT-INBOX-QUEUE grace on shutdown: under gunicorn's `graceful_timeout` (150 s).
+INBOX_SHUTDOWN_GRACE_SECONDS = 140.0
+
+
+def start_inbox_queue() -> None:
+    """App start-up: this process's inbox sweeper (a pass at once, then every 1.5 s).
+
+    Not under pytest: the sweep is global by contract, so a test process would take
+    other test workers' queued rows. Tests drive `inbox_queue.sweep()` themselves."""
+    import sys
+
+    if "pytest" in sys.modules:
+        return
+    from app.services.chatbot import inbox_queue
+
+    inbox_queue.start_sweeper()
+
+
+def stop_inbox_queue(grace_seconds: float = INBOX_SHUTDOWN_GRACE_SECONDS) -> bool:
+    """App shutdown: drains stop taking rows and finish the one they are in (its sender
+    POST and done mark included). True when they did within the grace. A process that
+    never ran the queue has nothing to stop."""
+    from app.services.chatbot import inbox_queue
+
+    if not inbox_queue.in_use():
+        return True
+    inbox_queue.begin_shutdown()
+    idle = inbox_queue.wait_idle(grace_seconds)
+    if not idle:
+        logger.error("chatbot inbox: drains still running after %.0fs of shutdown grace", grace_seconds)
+    return idle
 
 
 def run_direct_turn_job(payload: dict[str, Any]) -> dict[str, Any]:

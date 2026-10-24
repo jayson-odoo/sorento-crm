@@ -305,6 +305,52 @@ def _enqueue(
     return str(job.status), job.error
 
 
+def job_abandoned(job_id: str) -> bool:
+    """Did the worker abandon this job? (CHAT-INBOX-QUEUE, IQ-24)
+
+    A work-horse killed mid-job (a worker recreate on deploy) leaves the row `running`
+    or `queued` while RQ records the job itself as `failed` with no result. A job that
+    failed on its own writes its row first, so a non-terminal row under a failed RQ job
+    is one nobody will ever finish.
+    """
+    from rq.job import Job, JobStatus
+
+    from app.services.queue_service import redis_conn
+
+    try:
+        rq_status = Job.fetch(job_id, connection=redis_conn).get_status(refresh=True)
+    except Exception:  # noqa: BLE001 - an unreadable RQ job is not proof of anything
+        return False
+    if rq_status != JobStatus.FAILED:
+        return False
+    snapshot = _read_job_snapshot(job_id)
+    return snapshot is not None and snapshot["status"] not in TERMINAL_STATUSES
+
+
+def read_abandoned_job_again(job_id: str) -> bool:
+    """Put an abandoned job back on the queue, once per caller (IQ-24). True when it was
+    enqueued again. The task claims the row with a compare-and-set (`queued` ->
+    `running`), so the row goes back to `queued` first."""
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        job = db.query(MediaExtractionJob).filter(MediaExtractionJob.id == job_id).first()
+        if job is None or job.status in TERMINAL_STATUSES:
+            return False
+        job.status = "queued"
+        job.started_at = None
+        job.error = None
+        job.result = None
+        job.rq_job_id = None
+        db.commit()
+        logger.warning("media job %s was abandoned by its worker; reading it again", job_id)
+        status_now, _ = _enqueue(db, job, job_id)
+        return status_now != "failed"
+    finally:
+        db.close()
+
+
 async def _wait_for_worker(
     job_id: str, sync_wait_seconds: float
 ) -> Optional[dict[str, Any]]:
