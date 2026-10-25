@@ -1,6 +1,6 @@
 # PLAN: census-scroller-fix (25 Oct 2026)
 
-Status: in progress, small fix track (test-only, under 30 changed lines, no migration, no
+Status: PR #1862 open, reviewer READY, small fix track (test-only, under 30 changed lines, no migration, no
 auth/RBAC change, no product code). Lane CENSUS-SCROLLER-FIX.
 
 ## Problem
