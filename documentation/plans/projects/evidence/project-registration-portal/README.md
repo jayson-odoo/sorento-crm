@@ -220,3 +220,24 @@ Not checked this round: the portal / CRM `Possible duplicate:` line (the new pen
   (gated in `bba1e66f11`). Gate it on the same approved-or-manager rule.
 - N1 `sorento_crm_frontend/app/(protected)/project-sales/[projectId]/components/ProjectDetailClient.tsx:294`: for an approver on an unapproved project
   with no manage grant, every `DetailActionsMenu` item is excluded, so the gear opens an empty menu (r6-07). Render the menu only when it has an item.
+
+## Round 7 re-check on head 5d9ca6fc
+
+Head `5d9ca6fc03`. Fresh `sorento_browse` (`scripts.bootstrap_env`, `alembic upgrade head`, `harness/seed_browse.py`, then
+`scripts.seed_project_embeddings` drained with the hash embedding substitute). Backend through a process-local launcher that
+installs `harness/hash_embed.py` (`OPENAI_API_KEY=dummy` as a process env var; `.env.browse` unchanged); frontend `npm run dev`
+with the existing git-ignored `.env.local`. CRM as the Coordinator (`browse.approver@example.com`, sidebar clicks, Project Sales > Projects);
+two pending projects (`PROJEK UJIAN SATU R7`, `PROJEK UJIAN DUA R7`) created through the portal by the contact's slug link. Sessions `r7c`, `r7p` closed; servers stopped.
+
+| # | Check | Screenshot | Result | Observed |
+|---|---|---|---|---|
+| 1 | F1 pending project, Documents tab | r7-02-pending-documents-tab-1280.png | PASS | Tabpanel holds the `Documents` heading, `Search documents` and `No documents on this project`. No Upload or add control. |
+| 1 | F1 rejected project, Documents tab | r7-03-rejected-documents-tab-1280.png | PASS | Same project after Reject: only the search box and `No documents on this project`; no Upload. |
+| 2 | N1 gear on a pending project | r7-01-pending-header-no-gear-1280.png | PASS | Header buttons are `Previous project`, `Next project`, `Reject`, `Edit`, `Approve`. No gear is rendered, so no empty menu. |
+| 3 | Reject with a reason | r7-03 | PASS | Reason `Already registered`; header code slot `Rejected`, badge `Rejected`, `Reason for rejecting: Already registered`, no Reject / Edit / Approve. |
+| 3 | Board lane | r7-04-board-rejected-lane-1280.png | PASS | `Rejected` lane count 1 with the card (code slot `Rejected`); `Awaiting approval` 1. |
+| 3 | Grid row | r7-05-grid-rejected-row-1280.png | PASS | Code cell `Rejected`, Stage pill `Rejected`. Footer `1 - 5 of 5` (3 approved + 1 awaiting + 1 rejected). |
+| 3 | Approval filter | r7-06-approval-filter-rejected-1280.png | PASS | Options `Awaiting approval`, `Rejected`; choosing Rejected leaves one row, footer `1 - 1 of 1`. |
+| 4 | Approve after picking a developer | r7-07-approved-ppf-code-1280.png | PASS | Approve with no developer: `Pick the developer before approving.`. After Edit > Beta Holdings Sdn Bhd > Save, Approve gives code `PPF2610004`, badge `Registered`. |
+
+Console and page errors: `errors` empty, no `[error]` console lines in the CRM session.

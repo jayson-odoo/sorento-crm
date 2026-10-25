@@ -1,6 +1,6 @@
 # PLAN: Project registration from the portal (PROJECT-REG-PORTAL)
 
-Status: REWORK in progress (owner ruling 25 Oct 17:50: registrations live in projects, no registration table). Track: full (migration alters projects, new permission). Size L.
+Status: built, owner hand test passed 25 Oct ("1849 can merge"); awaiting crew merge. Rework per owner ruling 25 Oct 17:50 (registrations live in projects, no registration table). Track: full (migration alters projects, new permission). Size L.
 Card (settled): `CARD-project-registration-portal-25oct.md` v4 + owner final 13:03. UAC:
 `project-registration-portal-acceptance-criteria.md`. Mock: `mockups/project-registration-portal-v4.html`.
 Paths: BE = `sorento_crm_backend/app/`, FE = `sorento_crm_frontend/`.
