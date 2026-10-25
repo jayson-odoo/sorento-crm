@@ -1,7 +1,7 @@
 # PLAN: R5 ranking follow-ups, layer-2 contract check (lane RANK-REFINE-ROUTE)
 
-Status: IN PROGRESS (contract test pinned; waiting on arm B full parses of or5-c-02 / or5-c-04 to decide whether any code fix
-is owed), small fix track (S: tests + docs so far, no migration, no access change, no new ingest, no prompt change).
+Status: REVIEW (no code fix owed: every lost ranking row is SAME end to end or has no parser field to route on; contract
+test pinned), small fix track (S: tests + docs only, no migration, no access change, no new ingest, no prompt change).
 UAC: `rank-refine-route-1025-acceptance-criteria.md`. Seam under test: `report_ask.as_held_refine` (#1853, bb99b21c77).
 
 ## Why
@@ -21,7 +21,7 @@ route body) over the gold row's held ranking.
 ## Result (per row)
 | row | A parse | B parse (pinned fields) | end-to-end |
 |---|---|---|---|
-| or5-c-02 only project | sales_ranking, project, refine | top_selling, project, refine, no entity | SAME if B has no grain / group_by sales_agent / channel; DIFFERENT ("Across all sales agents", top 5 products, project) if B has rank_group item or group_by product. Grain not stored: B full parses requested from CHAT-SLIM-INDEX-PLAN |
+| or5-c-02 only project | sales_ranking, project, refine | top_selling, project, refine, no entity | SAME. The B full re-parses (crew `slim-index/diag/c02-c04-full-parses.jsonl`, arm B 1c2789f7 and variants v1, v2, v5) are top_selling with no grain (rank_group and group_by null), or sales_ranking with no axis or with group_by channel: all re-run the held agent ranking with Channel: Project team. (An item grain would have read "Across all sales agents", top 5 products; none was emitted) |
 | or5-c-04 channel project sahaja | as c-02 | as c-02 | as c-02 |
 | or5-c-03 dealer only | sales_ranking, dealer, refine | sales_ranking, channel null, refine | DIFFERENT: the held agent ranking re-runs with no channel. No field marks "dealer": prompt lane, no code fix |
 | or5-5-03 yang 3 tu sahaja | refine true, positions [3] | refine false, positions [3] (one run also an open-question pick [3]) | SAME: all open rank 3 (customers and months of product 3) |
@@ -33,4 +33,6 @@ row carries that shape (every failing B ranking parse kept `ranking_refine` true
 ## Tests
 `tests/chatbot/test_rank_refine_route.py` pins the SAME rows: or5-c-02 / or5-c-04 A and B (B as `top_selling` with no grain,
 the minimal parse the stored fields allow) filter the held agent ranking to Channel: Project team; or5-5-03 A, B and B pick all
-open rank 3. If the B full parses show an item grain, the c-02 / c-04 B case becomes a red test and a fix in `as_held_refine`.
+open rank 3; or5-c-04 v2 (sales_ranking with the channel as the axis) filters too. Kill notes: turning off the R2
+`bare_top_selling` refine (report_ask.py:1193) fails or5-c-02 B and or5-c-04 B; turning off the REPORT-CHANNEL-FILTER branch
+(report_ask.py:1198) fails or5-c-04 v2.

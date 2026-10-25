@@ -46,6 +46,8 @@ CHANNEL_ROWS = {
     "or5-c-02 B": ({"order_status": "top_selling", "sales_channel": "project", "ranking_refine": True}, "only project"),
     "or5-c-04 A": ({"sales_channel": "project", "ranking_refine": True}, "channel project sahaja"),
     "or5-c-04 B": ({"order_status": "top_selling", "sales_channel": "project", "ranking_refine": True}, "channel project sahaja"),
+    # The variant v2 re-parse (crew c02-c04-full-parses.jsonl): the channel as the axis, read as a filter (#1844).
+    "or5-c-04 v2": ({"sales_channel": "project", "ranking_refine": True, "group_by": "channel"}, "channel project sahaja"),
 }
 
 
