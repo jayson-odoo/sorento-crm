@@ -27,7 +27,7 @@ def _code(stem: str) -> str:
     return f"{MARKER}-{stem}-{_uid()[:8]}".upper()
 
 
-def _seed(scm_app, *, ship_info=None, note=None, lines=(None,), headings=None):
+def _seed(scm_app, *, ship_info=None, note=None, lines=(None,), headings=None, cancelled=()):
     """One SO with one line per entry of `lines` (the line_remark, or None). Returns
     (app, so, [line ids])."""
     app, db, gcu, gcuak = scm_app
@@ -55,7 +55,7 @@ def _seed(scm_app, *, ship_info=None, note=None, lines=(None,), headings=None):
         db.flush()
         line = SalesOrderLine(id=_uid(), sales_order_id=so.id, product_id=product.id,
                               warehouse_id=warehouse.id, qty_ordered=1, qty_delivered=0,
-                              line_status="open", line_no=n + 1)
+                              line_status="cancelled" if n in cancelled else "open", line_no=n + 1)
         db.add(line)
         db.flush()
         heading = headings[n] if headings else None
@@ -145,3 +145,24 @@ def test_ac16_a_non_adopted_so_still_returns_the_fields(scm_app):
     body = _detail(app, so)
     assert body["remark"] == "Sponsorship"
     assert _flags(body, "mockup_label") == {ids[0]: True, ids[1]: False}
+
+
+def test_live_1_a_cancelled_mockup_line_does_not_count(scm_app):
+    app, so, ids = _seed(scm_app, lines=(MOCK, None, None), cancelled=(0,))
+    body = _detail(app, so)
+    assert body["remark"] == ""
+    assert not any(_flags(body, "mockup_label").values())
+
+
+def test_live_2_live_lines_all_mockup_get_remark_but_no_labels(scm_app):
+    app, so, ids = _seed(scm_app, lines=(MOCK, MOCK, MOCK, None), cancelled=(3,))
+    body = _detail(app, so)
+    assert body["remark"] == "Mockup"
+    assert not any(_flags(body, "mockup_label").values())
+
+
+def test_live_3_a_cancelled_line_never_carries_the_label(scm_app):
+    app, so, ids = _seed(scm_app, lines=(MOCK, MOCK, None), cancelled=(0,))
+    body = _detail(app, so)
+    assert _flags(body, "mockup_label")[ids[0]] is False
+    assert _flags(body, "mockup_label")[ids[1]] is True
