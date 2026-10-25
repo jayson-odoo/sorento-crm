@@ -964,3 +964,63 @@ class TestOnlyAFreshExplicitYesSaves:
 
         _say(session_factory, monkeypatch, _yes(), "yes")
         assert len(seam.named(LOG_TOOL)) == 1, seam.calls
+
+
+# --------------------------------------------------------------------------- #
+# Crew audit: real customer names already carry their ledger marker
+# --------------------------------------------------------------------------- #
+
+
+def _item(n: int, name: str, label: str) -> dict[str, Any]:
+    return {"customer_id": f"0b5e0f5a-9999-4c1a-9a11-00000000010{n}", "code": f"300-Z010{n}", "name": name,
+            "label": label}
+
+
+def _read_back_for(customer_line: str) -> list[str]:
+    return [READ_BACK[0], customer_line, *READ_BACK[2:]]
+
+
+class TestCustomerLinePrintsTheAccountOnce:
+    @pytest.mark.parametrize(
+        "items,expected",
+        [
+            (
+                [_item(1, "BATH IDEA BATHROOM & KITCHEN MARKETING SDN BHD [A/C I]", "A/C I")],
+                _read_back_for("Customer: BATH IDEA BATHROOM & KITCHEN MARKETING SDN BHD [A/C I]"),
+            ),
+            (
+                [
+                    _item(1, "BKIN ELECTRICAL SDN BHD [A/C I]", "A/C I"),
+                    _item(2, "BKIN ELECTRICAL SDN BHD [A/C III]", "A/C III"),
+                    _item(3, "BKIN ELECTRICAL SDN BHD [A/C IV]", "A/C IV"),
+                ],
+                [
+                    "Which account?",
+                    "1. BKIN ELECTRICAL SDN BHD [A/C I]",
+                    "2. BKIN ELECTRICAL SDN BHD [A/C III]",
+                    "3. BKIN ELECTRICAL SDN BHD [A/C IV]",
+                ],
+            ),
+            (
+                [_item(1, "JUBIN BMS (1990) SDN BHD [A/C I]", "A/C I")],
+                _read_back_for("Customer: JUBIN BMS (1990) SDN BHD [A/C I]"),
+            ),
+            (
+                [_item(1, "BKIN ELECTRICAL SDN BHD - [CERAMIC]", "BKIN ELECTRICAL SDN BHD - [CERAMIC]")],
+                _read_back_for("Customer: BKIN ELECTRICAL SDN BHD - [CERAMIC]"),
+            ),
+            (
+                [_item(1, "ZZT TRADING", "A/C I")],
+                _read_back_for("Customer: ZZT TRADING [A/C I]"),
+            ),
+        ],
+        ids=["suffixed-name", "suffixed-pick", "parentheses-kept", "mocha-label-is-name", "unsuffixed-name"],
+    )
+    def test_customer_line_prints_the_account_once(self, session_factory, monkeypatch, items, expected) -> None:
+        _salesperson(session_factory)
+        seam = _install(monkeypatch, options={"Bath Idea": _options(*items)})
+
+        turn = _say(session_factory, monkeypatch, _all_four(), "log an opportunity: Bath Idea, ...")
+
+        assert turn.lines == expected, turn.text
+        assert seam.named(LOG_TOOL) == [], seam.calls
