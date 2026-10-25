@@ -137,3 +137,75 @@ def test_u3_guards_leave_the_verdict_untouched(verdict: dict[str, Any], kind: st
 def test_u4_no_open_question_is_untouched() -> None:
     verdict = {"group_by": "customer", "open_question_answer": _pick(1)}
     assert report_ask.without_pick_axis(verdict, None) is verdict
+
+
+# ------------------------------------------------ owner add-on: a "picker" of one customer never asks
+
+from app.services.chatbot.lanes.business.resolve_gate import name_unnamed_customers  # noqa: E402
+from app.services.chatbot.lanes.business.services import ResolveGateServices  # noqa: E402
+from tests.chatbot.conftest import validating_resolve_entity  # noqa: E402
+
+ONE_NAME = "ZZ DEMO SANITARYWARE SDN BHD"
+
+
+def _named_and_unnamed(uuid_a: str, uuid_b: str) -> ResolveGateServices:
+    """Owner console 25 Oct: one customer word, two ledgers of ONE customer, the second matched with no name."""
+
+    def _resolve(body: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "tokens": ["zz demo"],
+            "resolutions": [{"token": "zz demo", "matches": [
+                {"entity_type": "customer", "canonical_code": "300-ZZ008", "uuid": uuid_a, "company_code": "SRT",
+                 "display": {"customer_name": ONE_NAME}},
+                {"entity_type": "customer", "canonical_code": "300-ZZ009", "uuid": uuid_b, "company_code": "SRT",
+                 "display": {}},
+            ]}],
+            "unresolved_tokens": [],
+        }
+
+    return ResolveGateServices(
+        access_types=lambda **_: [{"name": "Sorento Dealer"}],
+        resolve_entity=validating_resolve_entity(_resolve),
+        probe=lambda **_: {"items": [], "has_result": False},
+    )
+
+
+def test_o1_one_customer_behind_a_named_and_an_unnamed_match_is_not_asked(chat, session_factory):
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from tests._mc_lookup_seed import customer
+
+    db = session_factory()
+    ids = [customer(db, company_id=DEFAULT_COMPANY_ID, name=ONE_NAME).id for _ in range(2)]
+    db.commit()
+    db.close()
+    result, captured = chat(_t1(), "Dealer zz demo oct total sales", "ZZT-cpr-o1-1",
+                            resolve_services=_named_and_unnamed(*ids))
+    assert "Which one do you mean" not in _reply(result), _reply(result)
+    assert (chat.session().get("open_question") or {}).get("kind") != "customer_pick", chat.session().get("open_question")
+    calls = _report_calls(captured)
+    assert len(calls) == 1 and sorted(calls[0].get("customer_ids") or []) == sorted(ids), captured
+    assert calls[0].get("channel") == "dealer", calls[0]
+    assert calls[0].get("date_from") == "2026-10-01" and calls[0].get("date_to") == "2026-10-31", calls[0]
+
+
+def test_u5_only_an_unnamed_customer_match_takes_the_crm_name() -> None:
+    resolved = {
+        "resolutions": [{"token": "zz", "matches": [
+            {"entity_type": "customer", "uuid": "a", "display": {"customer_name": "KEPT"}},
+            {"entity_type": "customer", "uuid": "b", "display": {}},
+            {"entity_type": "customer", "uuid": "c", "display": {"debtor_name": "DEBTOR"}},
+            {"entity_type": "product", "uuid": "d", "display": {}},
+        ]}],
+        "intersection": [{"entity_type": "customer", "uuid": "e"}],
+    }
+    asked: list[list[str]] = []
+
+    def names(ids: list[str]) -> dict[str, str]:
+        asked.append(ids)
+        return {i: f"CRM {i}" for i in ids}
+
+    name_unnamed_customers(resolved, names)
+    matches = resolved["resolutions"][0]["matches"]
+    assert asked == [["b", "e"]], asked
+    assert [m["display"].get("customer_name") for m in matches] == ["KEPT", "CRM b", None, None], matches
+    assert resolved["intersection"][0]["display"] == {"customer_name": "CRM e"}, resolved
