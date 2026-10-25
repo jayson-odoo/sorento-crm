@@ -6,8 +6,8 @@ DB, which converges through `create_all`, can take it in any order.
 
 - `projects.project_registrations` (D3) and `projects.sales_profile.state` / `.mukim` (D12).
 - Lookup sets `project_building_type` and `my_state`, seeded; client-editable afterwards.
-- Permission `projects.registrations.approve` (D10), granted to the admin roles and to every
-  role named "Project Sales Admin" (case-insensitive).
+- Permission `projects.registrations.approve` (D10), granted to the admin roles and to the ONE
+  role named by `APPROVER_ROLE_NAME` (case-insensitive name match).
 - Project numbering becomes `PPF{yy}{mm}`, 3 digits, monthly (D6), ONLY while the rule still
   holds the shipped default `PRJ-`; a customised rule is left alone. Existing codes are
   untouched.
@@ -32,6 +32,11 @@ PERMISSION = (
     "Review, approve or reject project registrations raised from the portal.",
 )
 _ADMIN_ROLES = ("superadmin", "admin")
+
+# The existing role that approves project registrations besides the admin roles. Crew confirms
+# the name (owner: "Project Sales Manager" or "Project Sales Coordinator"); change this one value
+# when they answer. A role of this name that does not exist grants nothing extra.
+APPROVER_ROLE_NAME = "Project Sales Manager"
 
 BUILDING_TYPES = (
     "Residential landed",
@@ -166,7 +171,7 @@ def upgrade() -> None:
             SELECT gen_random_uuid()::text, r.id, tgt.id, now()
               FROM user_roles r
              CROSS JOIN user_permissions tgt
-             WHERE (r.slug = ANY(:roles) OR lower(btrim(r.name)) = 'project sales admin')
+             WHERE (r.slug = ANY(:roles) OR lower(btrim(r.name)) = lower(btrim(:approver)))
                AND tgt.slug = :slug
                AND NOT EXISTS (
                    SELECT 1 FROM user_role_permissions existing
@@ -175,7 +180,7 @@ def upgrade() -> None:
                )
             """
         ),
-        {"slug": slug, "roles": list(_ADMIN_ROLES)},
+        {"slug": slug, "roles": list(_ADMIN_ROLES), "approver": APPROVER_ROLE_NAME},
     )
 
     # Only the shipped default is replaced; the first draw of a monthly rule restarts at
@@ -195,6 +200,18 @@ def downgrade() -> None:
     bind = op.get_bind()
     p = _schema(bind, "projects")
     slug = PERMISSION[0]
+    # Put the project rule back on the shipped default, but ONLY where it is still exactly the
+    # shape the upgrade wrote: a PPF rule someone has changed since is their choice.
+    bind.execute(
+        sa.text(
+            """
+            UPDATE document_numbering_rules
+               SET prefix_template = 'PRJ-', number_digits = 6, reset_policy = 'none'
+             WHERE doc_type = 'project' AND prefix_template = 'PPF{yy}{mm}'
+               AND number_digits = 3 AND reset_policy = 'monthly'
+            """
+        )
+    )
     bind.execute(
         sa.text(
             "DELETE FROM user_role_permissions WHERE permission_id IN "

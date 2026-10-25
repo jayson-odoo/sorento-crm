@@ -517,9 +517,15 @@ class DebtorLookupItem(BaseModel):
 def lookup_debtors(
     q: str = Query(""),
     limit: int = Query(20, ge=1, le=50),
+    kind: Optional[str] = Query(None),
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
+    if kind == "project_registration":
+        # The registration form takes only the agent's own debtors (what the save accepts).
+        from app.services import project_registration_service
+
+        return project_registration_service.portal_debtors(db, token, q, limit)
     from app.services.debtor_type import lookup_customers
 
     return lookup_customers(db, q, limit)

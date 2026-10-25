@@ -14,8 +14,8 @@ Plan: documentation/plans/projects/PLAN-project-registration-portal-25oct.md.
 from __future__ import annotations
 
 import logging
-import re
 import threading
+import time
 from collections import OrderedDict
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -33,7 +33,7 @@ from app.models.project_registration import (
     STATUS_REJECTED,
     ProjectRegistration,
 )
-from app.models.projects import Project, ProjectParty, ProjectSalesProfile, ProjectType
+from app.models.projects import Project, ProjectParty, ProjectType
 from app.services.error_handler import AppException, handle_not_found
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,6 @@ REQUIRED_ON_SUBMIT = ("title", "state", "developer_name")
 #: The title is the one free-text field that feeds a regex and an embedding, so it is bounded
 #: like the rest (finding B1); 2000 characters is far past any real project description.
 TITLE_MAX_LEN = 2000
-MAX_LOT_NUMBERS = 20
 #: The embedding call from a registration read must never hold the queue for long.
 REGISTRATION_EMBED_TIMEOUT = 3
 EMBED_CACHE_SIZE = 512
@@ -85,26 +84,6 @@ def _norm(value: Optional[str]) -> str:
 
 # ------------------------------------------------------------------ possible duplicates (D8)
 
-_LOT = re.compile(r"(?<![A-Za-z])(?:LOT|PT)\s*(?:NO\.?\s*)?(\d+)", re.IGNORECASE)
-# The name after MUKIM ends at a comma, a full stop, one of the words that open the next clause
-# of a Malaysian title, or the end.
-_MUKIM = re.compile(
-    r"\bMUKIM\s+(.+?)(?=\s*[,.]|\s+(?:DAERAH|DISTRICT|NEGERI|UNTUK|FOR|DI)\b|$)", re.IGNORECASE
-)
-
-
-def parse_lot_numbers(title: Optional[str]) -> set:
-    """Lot numbers in a title: `LOT 9001`, `Lot No. 9001`, `PT 9001`, `PT9001` all read 9001,
-    and `LOT 09001` reads the same (leading zeros are not part of the number)."""
-    return {n.lstrip("0") or "0" for n in _LOT.findall(title or "")}
-
-
-def parse_mukim(title: Optional[str]) -> Optional[str]:
-    """The mukim named in a title (text after MUKIM up to a comma or the end), normalised."""
-    match = _MUKIM.search(title or "")
-    return (_norm(match.group(1)) or None) if match else None
-
-
 def canonical_text(title: str, developer_name: Optional[str], state: Optional[str], mukim: Optional[str]) -> str:
     """What is embedded for a registration or a project: `title | developer | state, mukim`."""
     place = ", ".join(p for p in (_clean(state), _clean(mukim)) if p)
@@ -113,11 +92,17 @@ def canonical_text(title: str, developer_name: Optional[str], state: Optional[st
 
 _EMBED_CACHE: "OrderedDict[str, List[float]]" = OrderedDict()
 _EMBED_LOCK = threading.Lock()
+#: After a failed embedding call the provider is treated as down for a moment, so a page of
+#: rows pays the timeout once, not once per row.
+EMBED_BACKOFF_SECONDS = 30
+_EMBED_DOWN_UNTIL = 0.0
 
 
 def clear_embedding_cache() -> None:
+    global _EMBED_DOWN_UNTIL
     with _EMBED_LOCK:
         _EMBED_CACHE.clear()
+        _EMBED_DOWN_UNTIL = 0.0
 
 
 def embed_texts(texts: List[str], *, timeout: int = REGISTRATION_EMBED_TIMEOUT) -> List[Optional[List[float]]]:
@@ -129,9 +114,17 @@ def embed_texts(texts: List[str], *, timeout: int = REGISTRATION_EMBED_TIMEOUT) 
     with _EMBED_LOCK:
         missing = list(dict.fromkeys(t for t in texts if t not in _EMBED_CACHE))
     if missing:
+        global _EMBED_DOWN_UNTIL
         from app.services import embedding_worker
 
-        vectors = embedding_worker._embed_text_chunks(missing, timeout=timeout)
+        if time.monotonic() < _EMBED_DOWN_UNTIL:
+            raise RuntimeError("embedding provider recently failed")
+        try:
+            vectors = embedding_worker._embed_text_chunks(missing, timeout=timeout)
+        except Exception:
+            with _EMBED_LOCK:
+                _EMBED_DOWN_UNTIL = time.monotonic() + EMBED_BACKOFF_SECONDS
+            raise
         with _EMBED_LOCK:
             for text, vector in zip(missing, vectors):
                 _EMBED_CACHE[text] = vector
@@ -194,64 +187,6 @@ def prime_meaning(rows: List["ProjectRegistration"]) -> bool:
         return False
 
 
-def _profile_mukims(db: Session, project_ids: Iterable[str]) -> Dict[str, Optional[str]]:
-    ids = list(project_ids)
-    if not ids:
-        return {}
-    rows = (
-        db.query(ProjectSalesProfile.project_id, ProjectSalesProfile.mukim)
-        .filter(ProjectSalesProfile.project_id.in_(ids))
-        .all()
-    )
-    return {str(pid): _norm(m) or None for pid, m in rows}
-
-
-def _unpadded(normalised_title: str) -> str:
-    """`lot 09001` and `lot 9001` are one lot, so they must be one phase designator too."""
-    return re.sub(r"(?<![a-z0-9])0+(?=\d)", "", normalised_title)
-
-
-def lot_pattern(lots) -> str:
-    """The case-insensitive regex that finds any of `lots` (at most MAX_LOT_NUMBERS) in a title.
-    Leading zeros are optional on the stored side, as they are ignored on the typed side."""
-    wanted = sorted(lots)[:MAX_LOT_NUMBERS]
-    return (
-        r"(^|[^a-z])(lot|pt)\s*(no\.?\s*)?0*("
-        + "|".join(re.escape(n) for n in wanted)
-        + r")([^0-9]|$)"
-    )
-
-
-def _lot_matches(db: Session, *, company_id: str, title: str, mukim: Optional[str]) -> List[Project]:
-    """Projects on the same lot AND mukim. Any failure reads as "no lot match": this is one
-    signal among three and must never turn a registration read into a 500."""
-    try:
-        lots = set(sorted(parse_lot_numbers(title))[:MAX_LOT_NUMBERS])
-        wanted_mukim = _norm(mukim) or parse_mukim(title)
-        if not lots or not wanted_mukim:
-            return []
-        with db.begin_nested():
-            candidates = (
-                db.query(Project)
-                .filter(Project.company_id == company_id, Project.title.op("~*")(lot_pattern(lots)))
-                .order_by(Project.created_at, Project.id)
-                .limit(200)
-                .all()
-            )
-            profile_mukims = _profile_mukims(db, [p.id for p in candidates])
-        out = []
-        for project in candidates:
-            if not (parse_lot_numbers(project.title) & lots):
-                continue
-            project_mukim = profile_mukims.get(str(project.id)) or parse_mukim(project.title)
-            if project_mukim and project_mukim == wanted_mukim:
-                out.append(project)
-        return out
-    except Exception as exc:  # noqa: BLE001
-        logger.info("registration lot match skipped: %s", exc)
-        return []
-
-
 def find_possible_duplicates(
     db: Session,
     *,
@@ -263,69 +198,45 @@ def find_possible_duplicates(
     limit: int = DUPLICATE_LIMIT,
     use_meaning: bool = True,
 ) -> List[Dict[str, str]]:
-    """Existing projects of this company that may be the registration, strongest first:
-    same lot and mukim, then meaning, then spelling. A phase sibling is never named."""
-    from app.services.project_clash_service import (
-        are_sibling_developments,
-        find_clashes,
-        normalise_project_title,
-    )
-
+    """Existing projects of this company the registration may repeat, named by MEANING ONLY
+    (owner ruling, audit round 3): the stored project embeddings at or above
+    `REGISTRATION_SEMANTIC_THRESHOLD`, strongest first. No spelling rule, no lot rule, no
+    phase filter: the model decides, and a person reads the list. Never blocks."""
     clean_title = _clean(title)
-    if not clean_title:
+    if not clean_title or not use_meaning:
         return []
-    key = _unpadded(normalise_project_title(clean_title))
-    ordered: List[Project] = []
-    seen: set = set()
-
-    def take(project: Optional[Project]) -> None:
-        if project is None or project.id in seen or str(project.company_id) != str(company_id):
-            return
-        if are_sibling_developments(_unpadded(project.normalised_title or normalise_project_title(project.title)), key):
-            return
-        seen.add(project.id)
-        ordered.append(project)
-
-    for project in _lot_matches(db, company_id=company_id, title=clean_title, mukim=mukim):
-        take(project)
-
-    meaning = [
-        (pid, cosine)
-        for pid, cosine in (
-            semantic_matches(
+    meaning = sorted(
+        (
+            (pid, cosine)
+            for pid, cosine in semantic_matches(
                 db,
                 company_id=company_id,
                 text=canonical_text(clean_title, developer_name, state, mukim),
             )
-            if use_meaning
-            else []
-        )
-        if cosine >= REGISTRATION_SEMANTIC_THRESHOLD
-    ]
-    meaning.sort(key=lambda pair: pair[1], reverse=True)
-    if meaning:
-        by_id = {
-            p.id: p
-            for p in db.query(Project)
-            .filter(Project.company_id == company_id, Project.id.in_([pid for pid, _ in meaning]))
-            .all()
-        }
-        for pid, _cosine in meaning:
-            take(by_id.get(pid))
-
-    for candidate in find_clashes(
-        db,
-        company_id=company_id,
-        developer_party_id=None,
-        title=clean_title,
-        include_other_developers=True,
-    ):
-        take(db.get(Project, candidate.project_id))
-
-    return [
-        {"project_id": p.id, "project_code": p.project_code, "title": p.title}
-        for p in ordered[: max(1, limit)]
-    ]
+            if cosine >= REGISTRATION_SEMANTIC_THRESHOLD
+        ),
+        key=lambda pair: pair[1],
+        reverse=True,
+    )
+    if not meaning:
+        return []
+    by_id = {
+        p.id: p
+        for p in db.query(Project)
+        .filter(Project.company_id == company_id, Project.id.in_([pid for pid, _ in meaning if _is_uuid(pid)]))
+        .all()
+    }
+    out: List[Dict[str, str]] = []
+    seen: set = set()
+    for pid, _cosine in meaning:
+        project = by_id.get(pid)
+        if project is None or project.id in seen:
+            continue
+        seen.add(project.id)
+        out.append({"project_id": project.id, "project_code": project.project_code, "title": project.title})
+        if len(out) >= max(1, limit):
+            break
+    return out
 
 
 def _duplicates_for(db: Session, row: ProjectRegistration, *, use_meaning: bool = True) -> List[Dict[str, str]]:
@@ -450,17 +361,60 @@ def _check_customer(db: Session, company_id: str, contact_id: str, raw: Any) -> 
     return str(row.id)
 
 
+def _field_label(key: str) -> str:
+    return key.replace("_", " ").capitalize()
+
+
 def _check_lengths(payload: Dict[str, Any]) -> None:
-    """Refuse an over-long value before anything is written, naming the field."""
+    """Refuse a value that is not text, or is over-long, before anything is written, naming the
+    field (a number or a list used to reach the column and come back a 500)."""
+    for key in FIELD_KEYS:
+        value = payload.get(key)
+        if value is not None and not isinstance(value, str):
+            raise AppException(
+                status_code=422,
+                message=f"{_field_label(key)} must be text.",
+                detail=key,
+                code="VALIDATION_ERROR",
+            )
     for key, limit in _MAX_LEN.items():
         value = payload.get(key)
         if isinstance(value, str) and len(value.strip()) > limit:
             raise AppException(
                 status_code=422,
-                message=f"{key.replace('_', ' ').capitalize()} is too long (at most {limit} characters).",
+                message=f"{_field_label(key)} is too long (at most {limit} characters).",
                 detail=key,
                 code="VALIDATION_ERROR",
             )
+
+
+def portal_debtors(db: Session, token, q: str = "", limit: int = 20) -> List[Dict[str, Any]]:
+    """The debtors the form may pick: only the contact's own agents' (the set `_check_customer`
+    accepts), so the dropdown never offers a customer the save would refuse."""
+    from app.api.v1.public.portal_price_tag import _resolve_company
+    from app.models.order import Customer
+    from app.services.debtor_type import SALES_TYPE_FOR_DEBTOR_TYPE
+
+    agent_ids = [str(a.id) for a in _active_agents(db, token.contact_id)]
+    if not agent_ids:
+        return []
+    with company_scope(db, frozenset({_resolve_company(db, token)})):
+        query = db.query(Customer).filter(Customer.is_active.is_(True), Customer.sales_agent_id.in_(agent_ids))
+        text = (q or "").strip()
+        if text:
+            like = f"%{text}%"
+            query = query.filter(or_(Customer.customer_name.ilike(like), Customer.customer_code.ilike(like)))
+        rows = query.order_by(Customer.customer_name, Customer.customer_code).limit(limit).all()
+    return [
+        {
+            "customer_id": str(r.id),
+            "debtor_name": r.customer_name,
+            "customer_code": r.customer_code,
+            "debtor_type": r.debtor_type,
+            "sales_type": SALES_TYPE_FOR_DEBTOR_TYPE.get(r.debtor_type) if r.debtor_type else None,
+        }
+        for r in rows
+    ]
 
 
 def _apply(db: Session, row: ProjectRegistration, contact_id: str, payload: Dict[str, Any]) -> None:
@@ -583,7 +537,9 @@ def portal_save(
     db: Session, token, payload: Dict[str, Any], registration_id: Optional[str] = None
 ) -> Dict[str, Any]:
     from app.api.v1.public.portal_price_tag import _resolve_company
+    from app.services import portal_rate_limit
 
+    portal_rate_limit.project_registration_write(token.contact_id)
     if registration_id is None:
         agent = _require_agent(db, token.contact_id)
         company_id = _resolve_company(db, token)
@@ -621,6 +577,9 @@ def _linked_user_id(db: Session, contact_id: str) -> Optional[str]:
 def portal_submit(
     db: Session, token, registration_id: str, payload: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
+    from app.services import portal_rate_limit
+
+    portal_rate_limit.project_registration_write(token.contact_id)
     with _scope(db, token):
         row = _own(db, token, registration_id)
         _require_editable(row)
@@ -673,7 +632,7 @@ def _holders(db: Session, row: ProjectRegistration, exclude: Iterable[Any] = ())
 def notify(db: Session, row: ProjectRegistration, event: str) -> int:
     """Tell who must act (submitted) or who asked (approved, rejected). Call AFTER the move
     commits; a failure is logged per recipient and never undoes the move."""
-    title_text = row.title or "A project"
+    title_text = _clean(row.title) or "A project"  # one line: a title can carry newlines and tabs
     try:
         if event == "submitted":
             recipients = _holders(db, row, exclude=[row.applicant_user_id])
@@ -709,7 +668,8 @@ def notify(db: Session, row: ProjectRegistration, event: str) -> int:
                 dedup_key=f"{row.id}:{event}:{stamp.isoformat() if stamp else ''}",
                 event_type=f"project_registration_{event}",
                 send_in_app=True,
-                send_email=True,
+                # The approvers hear in-app only; the applicant is told by email as well.
+                send_email=event != "submitted",
                 send_whatsapp=False,
                 send_web_push=False,
             )
@@ -863,9 +823,9 @@ def list_rows(
         .limit(limit)
         .all()
     )
-    use_meaning = prime_meaning(rows)
+    prime_meaning(rows)  # one call for the page; a failure backs off, so rows do not retry it
     return {
-        "data": [_crm_row(db, r, use_meaning=use_meaning) for r in rows],
+        "data": [_crm_row(db, r) for r in rows],
         "pagination": {"total": total, "page": page, "limit": limit},
         "empty": total == 0,
     }
@@ -1048,6 +1008,15 @@ def approve(
             status_code=409,
             message=f"{code} already has this developer and title. Change the title, e.g. add the phase.",
             code="project_registration_exact_duplicate",
+            details={
+                "existing_project": {
+                    "project_id": str(existing.id),
+                    "project_code": existing.project_code,
+                    "title": existing.title,
+                }
+            }
+            if existing
+            else None,
         )
     row = get_or_404(db, registration_id)
     row.status = STATUS_APPROVED
