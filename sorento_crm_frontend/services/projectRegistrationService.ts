@@ -14,8 +14,27 @@ export type ProjectRegistrationListParams = DataGridApiFetchParams & {
   status?: string;
 };
 
+/** An error that may carry the project an exact-duplicate refusal names. */
+export class ProjectRegistrationError extends Error {
+  existingProject?: { project_id: string; project_code: string; title: string };
+}
+
 async function read<T>(res: Response, fallback: string): Promise<T> {
-  if (!res.ok) throw new Error(await extractApiError(res, fallback));
+  if (!res.ok) {
+    const spare = res.clone();
+    const error = new ProjectRegistrationError(await extractApiError(res, fallback));
+    try {
+      const body = (await spare.json()) as {
+        existing_project?: ProjectRegistrationError['existingProject'];
+        details?: { existing_project?: ProjectRegistrationError['existingProject'] };
+      };
+      const existing = body.existing_project ?? body.details?.existing_project;
+      if (existing && typeof existing === 'object') error.existingProject = existing;
+    } catch {
+      // not JSON: the message is all there is
+    }
+    throw error;
+  }
   return (await res.json()) as T;
 }
 

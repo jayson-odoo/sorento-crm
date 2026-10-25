@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { useQuery } from '@tanstack/react-query';
@@ -94,6 +95,12 @@ export function ProjectForm(props: ProjectFormProps) {
   const update = useUpdateProject(project?.id ?? '');
   const approve = useApproveProjectRegistration(registration?.id ?? '');
   const [rejectOpen, setRejectOpen] = React.useState(false);
+  // The project an exact-duplicate refusal names, shown as a link under the form.
+  const [existingProject, setExistingProject] = React.useState<{
+    project_id: string;
+    project_code: string;
+    title: string;
+  } | null>(null);
 
   const [title, setTitle] = React.useState(project?.title ?? registration?.title ?? '');
   const [developerId, setDeveloperId] = React.useState(
@@ -284,11 +291,15 @@ export function ProjectForm(props: ProjectFormProps) {
       // A possible duplicate never blocks the queue: no clash check, the server decides.
       const body = buildBody();
       delete body.lead_id;
+      setExistingProject(null);
       try {
         await approve.mutateAsync(body);
         router.push('/project-sales/registrations');
-      } catch {
+      } catch (error) {
         // The hook toasts the server's message; the form stays with what was typed.
+        setExistingProject(
+          (error as { existingProject?: typeof existingProject }).existingProject ?? null,
+        );
       }
       return;
     }
@@ -367,29 +378,38 @@ export function ProjectForm(props: ProjectFormProps) {
                 <TypedHint typed={registration?.developer_name} picked={developerId} />
               </div>
 
-              <div className="space-y-1.5">
-                <Label htmlFor="project-type">Project type</Label>
-                <SearchableSelect
-                  id="project-type"
-                  value={typeId}
-                  onChange={(next) => {
-                    // A new type must clear the template too, or a stale template from
-                    // the previous type is submitted and the project gets roles it should
-                    // not offer. In the handler, not an effect, so opening an edit form
-                    // never wipes the project's own template.
-                    setTypeId(next);
-                    if (next !== typeId) setTemplateId('');
-                  }}
-                  clearable
-                  loadError={types.error}
-                  onRetry={() => void types.refetch()}
-                  options={(types.data ?? []).map((type) => ({
-                    value: type.id,
-                    label: type.name,
-                  }))}
-                  placeholder="Select a type"
-                />
-              </div>
+              {isReview ? (
+                <div className="space-y-1.5">
+                  <Label>Type of building</Label>
+                  <p className="text-sm" title={registration?.type_of_building ?? undefined}>
+                    {registration?.type_of_building || '-'}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <Label htmlFor="project-type">Project type</Label>
+                  <SearchableSelect
+                    id="project-type"
+                    value={typeId}
+                    onChange={(next) => {
+                      // A new type must clear the template too, or a stale template from
+                      // the previous type is submitted and the project gets roles it should
+                      // not offer. In the handler, not an effect, so opening an edit form
+                      // never wipes the project's own template.
+                      setTypeId(next);
+                      if (next !== typeId) setTemplateId('');
+                    }}
+                    clearable
+                    loadError={types.error}
+                    onRetry={() => void types.refetch()}
+                    options={(types.data ?? []).map((type) => ({
+                      value: type.id,
+                      label: type.name,
+                    }))}
+                    placeholder="Select a type"
+                  />
+                </div>
+              )}
             </div>
 
             <div className="space-y-1.5">
@@ -442,7 +462,7 @@ export function ProjectForm(props: ProjectFormProps) {
               />
             )}
 
-            {typeId && (
+            {typeId && !isReview && (
               <div className="space-y-1.5">
                 <Label htmlFor="project-template">Template</Label>
                 <SearchableSelect
@@ -471,38 +491,41 @@ export function ProjectForm(props: ProjectFormProps) {
             open={sectionOpen.details}
             onOpenChange={(next) => toggleSection('details', next)}
           >
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="project-registered-company">Registered company / SPV</Label>
-                <Input
-                  id="project-registered-company"
-                  value={registeredCompany}
-                  onChange={(event) => setRegisteredCompany(event.target.value)}
-                  placeholder="Optional"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="project-location">Location</Label>
-                <Input
-                  id="project-location"
-                  value={location}
-                  onChange={(event) => setLocation(event.target.value)}
-                  placeholder="e.g. Setia Alam, Selangor"
-                />
-              </div>
-            </div>
+            {!isReview && (
+              <>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="project-registered-company">Registered company / SPV</Label>
+                    <Input
+                      id="project-registered-company"
+                      value={registeredCompany}
+                      onChange={(event) => setRegisteredCompany(event.target.value)}
+                      placeholder="Optional"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="project-location">Location</Label>
+                    <Input
+                      id="project-location"
+                      value={location}
+                      onChange={(event) => setLocation(event.target.value)}
+                      placeholder="e.g. Setia Alam, Selangor"
+                    />
+                  </div>
+                </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="project-address">Address</Label>
-              <Textarea
-                id="project-address"
-                value={address}
-                onChange={(event) => setAddress(event.target.value)}
-                rows={3}
-                placeholder="Optional"
-              />
-            </div>
-
+                <div className="space-y-1.5">
+                  <Label htmlFor="project-address">Address</Label>
+                  <Textarea
+                    id="project-address"
+                    value={address}
+                    onChange={(event) => setAddress(event.target.value)}
+                    rows={3}
+                    placeholder="Optional"
+                  />
+                </div>
+              </>
+            )}
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="project-state">State</Label>
@@ -536,59 +559,62 @@ export function ProjectForm(props: ProjectFormProps) {
               </div>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="project-admin-ref">Reference</Label>
-                <Input
-                  id="project-admin-ref"
-                  value={adminRef}
-                  onChange={(event) => setAdminRef(event.target.value)}
-                  maxLength={64}
-                  placeholder="e.g. PS26-0143"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="project-value">Estimated sales value (RM)</Label>
-                <NumberInput
-                  id="project-value"
-                  min="0"
-                  step="0.01"
-                  inputMode="decimal"
-                  value={estimatedValue}
-                  error={showErrors ? valueError : undefined}
-                  onChange={(event) => setEstimatedValue(event.target.value)}
-                  placeholder="0.00"
-                />
-              </div>
-            </div>
+            {!isReview && (
+              <>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="project-admin-ref">Reference</Label>
+                    <Input
+                      id="project-admin-ref"
+                      value={adminRef}
+                      onChange={(event) => setAdminRef(event.target.value)}
+                      maxLength={64}
+                      placeholder="e.g. PS26-0143"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="project-value">Estimated sales value (RM)</Label>
+                    <NumberInput
+                      id="project-value"
+                      min="0"
+                      step="0.01"
+                      inputMode="decimal"
+                      value={estimatedValue}
+                      error={showErrors ? valueError : undefined}
+                      onChange={(event) => setEstimatedValue(event.target.value)}
+                      placeholder="0.00"
+                    />
+                  </div>
+                </div>
 
-            {derivesDelivery ? (
-              <div className="space-y-1.5">
-                <Label htmlFor="project-launch">Project launch date</Label>
-                <Input
-                  id="project-launch"
-                  type="date"
-                  value={launchDate}
-                  onChange={(event) => setLaunchDate(event.target.value)}
-                />
-              </div>
-            ) : (
-              // One range, one control: two date fields let "to" land before "from"
-              // and stop reading as a single fact once they wrap apart.
-              <div className="space-y-1.5">
-                <Label htmlFor="project-delivery-range">Expected delivery</Label>
-                <DateRangePicker
-                  id="project-delivery-range"
-                  from={deliveryFrom || null}
-                  to={deliveryTo || null}
-                  onChange={({ from, to }) => {
-                    setDeliveryFrom(from ?? '');
-                    setDeliveryTo(to ?? '');
-                  }}
-                />
-              </div>
+                {derivesDelivery ? (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="project-launch">Project launch date</Label>
+                    <Input
+                      id="project-launch"
+                      type="date"
+                      value={launchDate}
+                      onChange={(event) => setLaunchDate(event.target.value)}
+                    />
+                  </div>
+                ) : (
+                  // One range, one control: two date fields let "to" land before "from"
+                  // and stop reading as a single fact once they wrap apart.
+                  <div className="space-y-1.5">
+                    <Label htmlFor="project-delivery-range">Expected delivery</Label>
+                    <DateRangePicker
+                      id="project-delivery-range"
+                      from={deliveryFrom || null}
+                      to={deliveryTo || null}
+                      onChange={({ from, to }) => {
+                        setDeliveryFrom(from ?? '');
+                        setDeliveryTo(to ?? '');
+                      }}
+                    />
+                  </div>
+                )}
+              </>
             )}
-
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="project-architect">Architect</Label>
@@ -628,25 +654,29 @@ export function ProjectForm(props: ProjectFormProps) {
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="project-brands">Brands</Label>
-              <SearchableMultiSelect
-                id="project-brands"
-                value={brandIds}
-                onChange={setBrandIds}
-                loadError={brands.error}
-                onRetry={() => void brands.refetch()}
-                options={(brands.data ?? []).map((brand) => ({
-                  value: brand.id,
-                  label: brand.brand_name,
-                }))}
-                placeholder="Select brands"
-              />
-            </div>
+            {!isReview && (
+              <>
+                <div className="space-y-1.5">
+                  <Label htmlFor="project-brands">Brands</Label>
+                  <SearchableMultiSelect
+                    id="project-brands"
+                    value={brandIds}
+                    onChange={setBrandIds}
+                    loadError={brands.error}
+                    onRetry={() => void brands.refetch()}
+                    options={(brands.data ?? []).map((brand) => ({
+                      value: brand.id,
+                      label: brand.brand_name,
+                    }))}
+                    placeholder="Select brands"
+                  />
+                </div>
+              </>
+            )}
           </FormSection>
 
           <FormSection
-            title="Salesperson and lead"
+            title={isReview ? 'Salesperson' : 'Salesperson and lead'}
             open={sectionOpen.salesLead}
             onOpenChange={(next) => toggleSection('salesLead', next)}
           >
@@ -695,6 +725,18 @@ export function ProjectForm(props: ProjectFormProps) {
             </div>
           </FormSection>
         </fieldset>
+
+        {existingProject && (
+          <p className="text-sm">
+            Already registered as{' '}
+            <Link
+              href={`/project-sales/${existingProject.project_id}`}
+              className="text-primary hover:underline"
+            >
+              {existingProject.project_code} {existingProject.title}
+            </Link>
+          </p>
+        )}
 
         {!decided && (
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">

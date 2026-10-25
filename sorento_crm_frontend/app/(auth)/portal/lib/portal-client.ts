@@ -1039,8 +1039,12 @@ export async function lookupProducts(
 export async function lookupDebtors(
   q: string,
   limit = 20,
+  /** The form asking: `project_registration` is offered only the agent's own debtors. */
+  kind?: string,
 ): Promise<DebtorLookupItem[]> {
-  const url = `/api/v1/public/portal/lookups/debtors?q=${encodeURIComponent(q)}&limit=${limit}`;
+  const url =
+    `/api/v1/public/portal/lookups/debtors?q=${encodeURIComponent(q)}&limit=${limit}` +
+    (kind ? `&kind=${encodeURIComponent(kind)}` : '');
   const res = await portalFetch(url);
   return unwrap<DebtorLookupItem[]>(res, 'Failed to load debtors.');
 }

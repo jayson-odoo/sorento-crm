@@ -190,6 +190,14 @@ interface FieldDef {
    * ineligible contact still renders its name instead of a blank / UUID.
    */
   legacyLabelField?: string;
+  /** `debtor-async` only: the form asking, so the server offers only that form's debtors. */
+  lookupKind?: string;
+  /** `debtor-async` only: a pick or nothing; typed free text is discarded. */
+  pickOnly?: boolean;
+  /** `readonly` only: how the detail value reads (`date` = DD/MM/YYYY). */
+  displayFormat?: 'date';
+  /** Render only when the loaded record satisfies this (the submitted Date needs a submission). */
+  showWhenDetail?: (detail: PortalSubmissionDetail | null) => boolean;
 }
 
 const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
@@ -230,7 +238,21 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
       widget: 'readonly',
       displayFromDetail: 'sales_agent_name',
     },
-    { name: 'customer_name', label: 'Customer name', widget: 'debtor-async' },
+    {
+      name: 'submitted_at_display',
+      label: 'Date',
+      widget: 'readonly',
+      displayFromDetail: 'submitted_at',
+      displayFormat: 'date',
+      showWhenDetail: (d) => Boolean(d?.submitted_at),
+    },
+    {
+      name: 'customer_name',
+      label: 'Customer name',
+      widget: 'debtor-async',
+      lookupKind: 'project_registration',
+      pickOnly: true,
+    },
     { name: 'customer_id', label: 'Customer', widget: 'hidden' },
     {
       name: 'type_of_building',
@@ -444,6 +466,13 @@ function formatDraftSavedAt(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+/** A stored ISO date as DD/MM/YYYY; anything else as it came. */
+function formatDisplay(value: string | undefined, format?: 'date'): string | undefined {
+  if (!value || format !== 'date') return value;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : value;
 }
 
 function fieldSpansFullWidth(f: FieldDef): boolean {
@@ -2967,6 +2996,7 @@ function PurchaseRequestFormSection({
             {fieldDefs
               .filter((f) => f.widget !== 'hidden')
               .filter((f) => (f.showWhen ? f.showWhen(fields) : true))
+              .filter((f) => (f.showWhenDetail ? f.showWhenDetail(detail) : true))
               .map((f) => (
                 <div
                   key={f.name}
@@ -2983,9 +3013,12 @@ function PurchaseRequestFormSection({
                     contactOption={resolveContactOption?.(f)}
                     displayValue={
                       f.displayFromDetail
-                        ? (((detail as Record<string, unknown> | null)?.[
-                            f.displayFromDetail
-                          ] as string | undefined) ??
+                        ? (formatDisplay(
+                            ((detail as Record<string, unknown> | null)?.[
+                              f.displayFromDetail
+                            ] as string | undefined) ?? undefined,
+                            f.displayFormat,
+                          ) ??
                           // A new form has no detail yet: the read-only agent name comes from /me.
                           (f.widget === 'readonly'
                             ? (contact?.sales_agent_name ?? undefined)
@@ -3185,7 +3218,8 @@ function FieldControl({
             onChange(v);
             onDebtorChange?.(item);
           }}
-          fetchOptions={(q) => lookupDebtors(q)}
+          fetchOptions={(q) => lookupDebtors(q, 20, field.lookupKind)}
+          allowFreeText={!field.pickOnly}
           optionValue={(o) => o.debtor_name}
           optionLabel={(o) => o.debtor_name}
           optionMeta={(o) => o.customer_code}

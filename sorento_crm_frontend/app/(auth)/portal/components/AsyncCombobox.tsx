@@ -219,6 +219,9 @@ export function AsyncCombobox<T>({
   };
 
   const handleBlur = () => {
+    // A pick-only box shows what is selected, never what was merely typed, from the moment it
+    // loses focus (an option click keeps focus: its mousedown is prevented).
+    if (!allowFreeText && text.trim()) setText(displayFor(value));
     // Defer so option clicks fire first
     setTimeout(() => {
       if (!containerRef.current) return;
