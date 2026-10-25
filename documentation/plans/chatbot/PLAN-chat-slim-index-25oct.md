@@ -18,9 +18,10 @@ Customer names are masked (public repo).
    stricter cut-off and their lines are for use only when the message names a customer. The parser picks one or none.
 2. Product codes and document numbers (DO / SO / PO): exact look-up AFTER the parser (exact, then did-you-mean), never
    in a candidate list.
-The customer step tests this list style (floor 0.5/0.5) head to head with "look up only the parser's customer words
-after the parser"; metric = wrong customers picked (esp. category-only messages such as "tiles"), then recall; list
-style is the default unless it picks wrong customers.
+Owner 19:13: "we can have noise from RAG, it is fine, but is up to parser to decide and filter the noise". The design is
+the list style; the customer step (crew a26741842, ~USD 10, last) proves the parser filters the noise: the failure
+that counts is a WRONG CUSTOMER PICKED (esp. on category-only messages such as "tiles"), then recall. Phrase-first
+(look up only the parser's customer words after the parser) runs only as the comparison arm.
 
 ## Phase 1 sequence (owner 25 Oct; crew relays a25272575 + follow-up)
 
