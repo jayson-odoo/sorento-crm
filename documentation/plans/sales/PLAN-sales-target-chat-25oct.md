@@ -214,6 +214,15 @@ multi-company contacts.
   `tier_reached` and `next_tier` null.
 - `pipeline_value`: agent lines only (`agent_progress`), else null.
 - Numbers are JSON numbers rounded to 2 decimals. No UUID anywhere. No RM incentive field.
+- Team membership is read on TODAY (`team_service._today()`), whatever window was asked.
+- `customer_ids` given: `own` and `team` are `[]`; only dealer lines counting a named customer remain.
+- `additional_rates` entries have the same shape as `rates` (`{label, rate}`). An additional tier whose
+  RM threshold matches no main rung is left out of the ladder (the importer always gives it the
+  threshold of the tier it follows, dealer_target_import.py:188-199).
+- `tier_reached` has the rung shape without `gap`.
+- `target_points`: the period target in points on every points target (null otherwise);
+  `target_value` is its RM at the ratio, null when the ratio is missing.
+- `provisional`: true on dealer lines, false on agent and team lines.
 - Order: `own` and `team` by period start then target_no; `dealers` by `next_tier.gap` ascending,
   lines with no `next_tier` last, then subject_label.
 
