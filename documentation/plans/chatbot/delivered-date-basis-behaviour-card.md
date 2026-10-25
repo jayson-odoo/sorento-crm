@@ -50,7 +50,51 @@ is. 6: Q4.
 - "Orders" count measure on delivered: counts SOs today. Q2.
 - Agent fill rate note: counts SOs on the line date. Q3.
 
-## Questions
+## Prod clone findings (crew, SQL A/B on `sorento_prod_1020`, 25 Oct; clone ends 2026-10-20; Sorento + Mocha)
+
+Pcs, before = SQL B (SO lines by SO month), after = SQL A (DO lines by DO month):
+
+| 2026 | Jan | Feb | Mar | Apr | May | Jun | Jul | Aug | Sep | Oct | YTD |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Project before | 139,188 | 87,680 | 112,729 | 111,844 | 49,203 | 35,088 | 48,526 | 37,587 | 17,931 | 13,641 | 653,417 |
+| Project after | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 27,135 | 143,992 | 120,066 | 291,193 |
+
+Retail YTD 1,543,116 -> 328,295 (Jan-Jul -> 0; Aug 124,332 -> 30,167; Sep 194,070 -> 197,802; Oct 80,732 -> 100,326).
+No channel YTD 73,180 -> 1,120,745. All channels YTD 2,269,713 -> 1,740,233.
+
+1. **No DO lines before 2026-04-06.** None in 2025 or Jan-Mar 2026. A pure DO basis reads 0 delivered for every
+   earlier period, and a Delivered Yearly comparison (2025 vs 2026) shows 2025 as 0.
+2. **Every legacy DO line resolves to no SO** (`source_book` NULL; Sorento 04-06 to 08-19, Mocha 08-06 to 08-21):
+   63,706 lines, 1,109,567 pcs. Apr-Jul and legacy Aug have channel none and agent none, so Project and Retail read 0
+   for Apr-Jul. AutoCount DO lines with no SO: Aug 127 lines / 138 pcs, Sep 693 / 421, Oct 414 / 521 (1,234 lines /
+   1,080 pcs, Sorento only). The card's "31 lines / 95 pcs" was the #1853 product figure, not the whole book.
+3. `orders.sales_order_id` is NULL on all 44,240 2026 DOs: the agent must come from the line or doc-number link.
+4. 0 DO numbers are in both legacy and AutoCount: no double count at the hand-over.
+5. 0 DO lines resolve to a consignment SO.
+6. Sep Project 143,992 = 52,087 from SOs dated before 2026 + 80,569 from earlier 2026 months + 11,336 same month;
+   largest line 4,172 pcs: a timing shift, not an outlier. Sep link path: 40,675 by line link, 103,317 by
+   `from_doc_no`, 0 by the header.
+
+## Q0 (blocks the build): which rows are "delivered" given findings 1 and 2
+
+- **(A) DO lines only** (the rule above). Every delivered figure is a DO line on its DO date. 2025 and Jan-Mar 2026
+  read 0; Apr-Aug Project and Retail read 0 (1.1M pcs with no channel, no agent). The sales report already answers
+  this way. Size M.
+- **(B) SO lines, each delivered qty dated by its DO.** An SO line's delivered qty (capped at ordered) counts on the
+  date of the DO line that delivered it (line link, or doc number + same product), in DO date order; the part no DO
+  explains (legacy and pre-April) counts on the SO line date as today; AutoCount DO lines with no SO (1,080 pcs) are
+  added on their DO date. Channel and agent always come from the SO. History is kept, totals stay today's, and every
+  delivery a DO explains moves to its DO month (Sep Project gains 52,087 + 80,569 pcs moved from earlier months). The
+  targets screen already works this way (`achievement_service.delivered_by_date`, line link only). The sales report
+  moves onto it too, so its legacy Apr-Aug figures come from the SO side. Size L.
+- **(C) Cut-over**: DO lines from 2026-04-06, SO lines before. Apr-Aug still have no channel. Not recommended: two
+  definitions in one year.
+
+**Recommend (B)**: it honours "DO date" for every delivery a DO explains, without zeroing 2025 and Jan-Mar or emptying
+the channel for Apr-Aug. Q1 and Q2 below are re-read for (B): Q1 only concerns the 1,080 AutoCount pcs with no SO;
+Q2 "orders" stays distinct SOs, plus one per no-SO DO.
+
+## Questions (written for (A); re-read under Q0)
 
 - **Q1** Channel asked, DO lines with no SO. (a) Out, silently (today's sales report rule). (b) Out, and the reply adds
   one line "N pcs delivered on DOs with no sales order are in no channel". **Recommend (a)**: same as an SO with no
