@@ -180,13 +180,13 @@ def test_a_placement_on_a_po_line_transferred_onto_an_spo_in_transit_pins_the_sp
 def test_a_placement_on_a_partly_transferred_po_line_holds_the_po_only_for_what_is_on_order(
     scm_app,
 ):
-    """100 ordered, 60 transferred onto an SPO in transit, 40 still on order. SO1's
-    placement of 50 holds the PO for the 40 it can still bring and follows the other 10 onto
-    the SPO: the PO row counts its remaining 40 and nothing more."""
+    """100 ordered, 20 transferred onto an SPO in transit, 80 still on order. SO1's
+    placement of 50 follows the goods: the 20 already moved onto the SPO first, then 30 of
+    what the PO still has on order. The PO row counts its remaining 80 and nothing more."""
     app, db = _client(scm_app)
-    marker, warehouse, product, po, po_line, due = _case(db, ordered=100, transferred=60)
+    marker, warehouse, product, po, po_line, due = _case(db, ordered=100, transferred=20)
     allocation = _transferred_onto(
-        db, product, po, po_line, warehouse, qty=60, received=0, receipt_status="pending",
+        db, product, po, po_line, warehouse, qty=20, received=0, receipt_status="pending",
         arrives=due,
     )
     from app.services.project_supply_service import ProjectSupplyService
@@ -206,11 +206,14 @@ def test_a_placement_on_a_partly_transferred_po_line_holds_the_po_only_for_what_
     assert sorted(
         (entry["kind"], entry.get("po_number") or entry["spo_number"], entry["qty"])
         for entry in so1["assigned_from"]
-    ) == sorted([("po", po.po_number, 40), ("spo", allocation.spo_number, 10)])
+    ) == sorted([("po", po.po_number, 30), ("spo", allocation.spo_number, 20)])
 
     [po_row] = _po_rows(*cells.values())
-    assert (po_row["qty"], po_row["received_qty"], po_row["outstanding_qty"]) == (100, 60, 40)
+    assert (po_row["qty"], po_row["received_qty"], po_row["outstanding_qty"]) == (100, 20, 80)
     assert po_row["po_line_id"] == str(po_line.id)
+    assert po_row["assigned_to"] == [
+        {"so_number": f"{marker}-SO1", "line_no": None, "qty": 30},
+    ]
 
 
 def test_a_placement_on_a_po_line_closed_with_nothing_transferred_pins_nothing(scm_app):
