@@ -1,15 +1,17 @@
 """Shared seeding and harness for the PROJECT-REG-PORTAL suites (Phase 2, red-first).
 
-Plan: documentation/plans/projects/PLAN-project-registration-portal-25oct.md.
-UAC:  documentation/plans/projects/project-registration-portal-acceptance-criteria.md.
+Plan: documentation/plans/projects/PLAN-project-registration-portal-25oct.md (section REWORK,
+R1-R14). UAC: documentation/plans/projects/project-registration-portal-acceptance-criteria.md
+(section RW).
+
+REWORK (owner ruling 25 Oct 17:50): a portal registration IS a `projects.projects` row
+(`approval_state` draft / pending / rejected / approved, `project_code` NULL until Approve).
+There is no registration table and no `/registrations` route: the CRM approves and rejects on
+the project itself (`APPROVE_URL` / `REJECT_URL`). The portal submission id IS the project id.
 
 Test support only: no implementation of the feature lives here. Everything is seeded
 here, nothing is borrowed from existing rows (CI's database is empty). All names are
 invented.
-
-URL note: the CRM router is mounted under `/api/v1/project-sales` (api/v1/__init__.py),
-so the PLAN's `/api/v1/projects/registrations` is `CRM` below, next to the existing
-`/api/v1/project-sales/projects/` staff routes.
 """
 from __future__ import annotations
 
@@ -28,8 +30,20 @@ KIND = "project_registration"
 PORTAL = "/api/v1/public/portal"
 SUB = f"{PORTAL}/submissions/{KIND}"
 STAFF = "/api/v1/project-sales/projects"
-CRM = f"{STAFF}/registrations"
+LIST = f"{STAFF}/"
+#: The removed queue router (R11): every path under it must now be a 404.
+OLD_CRM = f"{STAFF}/registrations"
 APPROVE = "projects.registrations.approve"
+MANAGE = "projects.projects.manage"
+
+
+def approve_url(project_id: str) -> str:
+    return f"{STAFF}/{project_id}/approve"
+
+
+def reject_url(project_id: str) -> str:
+    return f"{STAFF}/{project_id}/reject"
+
 
 # D3 / A5: the stored fields, exactly.
 FIELD_KEYS = {
@@ -203,37 +217,61 @@ def developer(db, company_id: str, name: str, party_type: str = "developer"):
     return row
 
 
+_AUTO = object()
+UNAPPROVED = ("draft", "pending", "rejected")
+
+
 def project(
     db,
     company_id: str,
     title: str,
     *,
     developer_party=None,
-    code: str | None = None,
+    code=_AUTO,
     outcome: str = "open",
     owner: str | None = None,
     mukim: str | None = None,
     state: str | None = None,
+    approval_state: str | None = None,
+    legacy: dict | None = None,
+    status_id: str | None = None,
 ):
+    """A project row straight into the database. `approval_state` None is a staff project;
+    a draft / pending / rejected one has no code unless `code` is given (R2)."""
     from app.models.projects import Project, ProjectSalesProfile
     from app.services.project_clash_service import normalise_project_title
 
+    if code is _AUTO:
+        code = None if approval_state in UNAPPROVED else f"ZZT-{uid()[:8]}"
+    extra = {"approval_state": approval_state} if approval_state is not None else {}
     row = Project(
         id=uid(),
         company_id=company_id,
-        project_code=code or f"ZZT-{uid()[:8]}",
+        project_code=code,
         title=title,
         normalised_title=normalise_project_title(title),
         developer_party_id=developer_party.id if developer_party is not None else None,
         outcome=outcome,
         owner_user_id=owner,
+        status_id=status_id,
+        **extra,
     )
     db.add(row)
     db.flush()
-    if mukim or state:
-        db.add(ProjectSalesProfile(project_id=row.id, mukim=mukim, state=state))
+    if mukim or state or legacy:
+        db.add(ProjectSalesProfile(project_id=row.id, mukim=mukim, state=state, **(legacy or {})))
         db.flush()
     return row
+
+
+def funnel(db) -> dict:
+    """The default project funnel (registered is the initial rung), keyed by status key."""
+    from app.models.status import Status
+    from app.services.project_seed_service import seed_default_funnel
+
+    seed_default_funnel(db)
+    rows = db.query(Status).filter(Status.entity_type == "project", Status.scope_id.is_(None)).all()
+    return {r.key: r for r in rows}
 
 
 def project_type(db, company_id: str, name: str):
@@ -285,7 +323,7 @@ def _install(db, perms: dict, roles: dict, state: dict):
 
     def slugs(self, user_id):
         granted = perms.get(user_id, set())
-        return set(STAFF_PERMS | {APPROVE}) if granted == ALL else set(granted)
+        return set(STAFF_PERMS | {APPROVE, MANAGE}) if granted == ALL else set(granted)
 
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_user] = actor
@@ -329,9 +367,12 @@ def _restore(originals):
 def world(monkeypatch):
     """Portal contacts + CRM users on one TestClient, one Postgres schema, one company scope.
 
-    contacts: a (granted, agent), b (granted, its own agent), noagent (granted, no agent),
-    ungranted. users: approver and applicant_user (both hold the approve grant; the latter
-    is the CRM user linked to contact a), staff (can register projects, cannot approve).
+    contacts: a (granted, agent), b (granted, its own agent), third (granted, agent, linked to the
+    CRM user `linked_staff`), noagent (granted, no agent), ungranted. users: approver and
+    applicant_user (both hold the approve grant; the latter is the CRM user linked to contact
+    a), coordinator (approve + view + edit, NO manage: the Project Sales Coordinator),
+    linked_staff (view + edit only, linked to contact c), staff (view + edit, cannot approve),
+    root (every permission, manage included).
     """
     from fastapi.testclient import TestClient
 
@@ -359,29 +400,40 @@ def world(monkeypatch):
         approver = active_user(db, f"{MARKER} approver")
         applicant_user = active_user(db, f"{MARKER} applicant")
         staff = active_user(db, f"{MARKER} staff")
+        coordinator = active_user(db, f"{MARKER} coordinator")
+        linked_staff = active_user(db, f"{MARKER} linked staff")
+        root = active_user(db, f"{MARKER} root")
         # The approver is a sales manager and the owner a salesperson of the company: the
         # approve route's owner rule (fix round 1, S9) needs both to hand a project to someone.
         grant(db, owner, "projects.projects.view", company_id)
         grant(db, approver, APPROVE, company_id)
         grant(db, applicant_user, APPROVE, company_id)
+        grant(db, linked_staff, "projects.projects.view", company_id)
 
         a = contact(db, company_id, name=f"{MARKER} contact a")
         b = contact(db, company_id, name=f"{MARKER} contact b")
+        c_contact = contact(db, company_id, name=f"{MARKER} contact c")
         noagent = contact(db, company_id, name=f"{MARKER} contact noagent")
         ungranted = contact(db, company_id, granted=False, name=f"{MARKER} contact ungranted")
         agent_a = agent(db, a, person_label="Aminah Example", description="Aminah desk")
         agent_b = agent(db, b, person_label="Bakar Example", description="Bakar desk")
+        agent_c = agent(db, c_contact, person_label="Cahaya Example", description="Cahaya desk")
         db.get(User, applicant_user).respond_contact_id = a
+        db.get(User, linked_staff).respond_contact_id = c_contact
         debtor_a = debtor(db, company_id, agent_a)
         debtor_b = debtor(db, company_id, agent_b)
+        debtor_c = debtor(db, company_id, agent_c)
         db.commit()
 
         state = {"contact": a, "user": approver}
         perms = {
             approver: {APPROVE, "projects.projects.manage", *STAFF_PERMS},
             applicant_user: {APPROVE},
+            coordinator: {APPROVE, *STAFF_PERMS},
+            linked_staff: set(STAFF_PERMS),
             staff: set(STAFF_PERMS),
             owner: set(STAFF_PERMS),
+            root: ALL,
         }
         originals = _install(db, perms, {}, state)
         try:
@@ -392,8 +444,10 @@ def world(monkeypatch):
                         semantic=semantic,
                         company_id=company_id, other_company=other_company, rule_id=rule_id,
                         owner=owner, approver=approver, applicant_user=applicant_user, staff=staff,
-                        a=a, b=b, noagent=noagent, ungranted=ungranted,
-                        agent_a=agent_a, agent_b=agent_b, debtor_a=debtor_a, debtor_b=debtor_b,
+                        coordinator=coordinator, linked_staff=linked_staff, root=root,
+                        a=a, b=b, third=c_contact, noagent=noagent, ungranted=ungranted,
+                        agent_a=agent_a, agent_b=agent_b, agent_third=agent_c,
+                        debtor_a=debtor_a, debtor_b=debtor_b, debtor_third=debtor_c,
                     )
         finally:
             _restore(originals)
@@ -419,7 +473,7 @@ def as_user(w, user_id: str):
 
 def create_draft(w, contact_id: str | None = None, **over) -> dict:
     who = contact_id or w.a
-    own = {w.a: w.debtor_a.id, w.b: w.debtor_b.id}.get(who)
+    own = {w.a: w.debtor_a.id, w.b: w.debtor_b.id, w.third: w.debtor_third.id}.get(who)
     body = fields(own, **over)
     res = as_contact(w, who).post(SUB, json={"fields": body})
     assert res.status_code == 200, res.text
@@ -439,10 +493,11 @@ def pending(w, contact_id: str | None = None, **over) -> str:
 
 
 def registration(w, rid: str):
-    from app.models.project_registration import ProjectRegistration
+    """The portal registration as stored: the `projects.projects` row with this id."""
+    from app.models.projects import Project
 
     w.db.expire_all()
-    return w.db.get(ProjectRegistration, rid)
+    return w.db.get(Project, rid)
 
 
 def approve_body(w, rid: str, **over) -> dict:
@@ -454,3 +509,26 @@ def approve_body(w, rid: str, **over) -> dict:
     }
     body.update(over)
     return {k: v for k, v in body.items() if v is not None}
+
+
+def approve(w, rid: str, user: str | None = None, **over):
+    return as_user(w, user or w.approver).post(approve_url(rid), json=approve_body(w, rid, **over))
+
+
+def reject(w, rid: str, reason: str = "not ours", user: str | None = None):
+    return as_user(w, user or w.approver).post(reject_url(rid), json={"reason": reason})
+
+
+def profile_of(w, rid: str):
+    """The `projects.sales_profile` row that carries the portal-only legacy fields (R1)."""
+    from app.models.projects import ProjectSalesProfile
+
+    w.db.expire_all()
+    return w.db.get(ProjectSalesProfile, rid)
+
+
+def project_count(w) -> int:
+    from app.models.projects import Project
+
+    w.db.expire_all()
+    return w.db.query(Project).filter(Project.company_id == w.company_id).count()

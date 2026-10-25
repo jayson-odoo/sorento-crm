@@ -1,6 +1,10 @@
-"""PROJECT-REG-PORTAL fix round 1 (reviewer + security-reviewer findings), test-first.
+"""PROJECT-REG-PORTAL fix round 1 (reviewer + security-reviewer findings), REWORKED onto projects.
 
-Each block names the finding it pins. Plan: PLAN-project-registration-portal-25oct.md.
+Each block names the finding it pins. Plan: PLAN-project-registration-portal-25oct.md. The row
+lock (S6), owner assignment (S9), cross-company ids (S10), the drafts filter (N12) and the
+ineligible applicant (round 2) moved to test_project_registration_approval.py, where approve
+and reject now live; the embedding cost (B3) is re-pointed at the reads that still embed: a
+pending project's detail and the portal's.
 """
 from __future__ import annotations
 
@@ -11,20 +15,17 @@ from app.main import app  # noqa: F401  MUST be first app import (circular impor
 
 from ._pg_fixture import blank_session
 from ._project_registration_support import (
-    CRM,
+    STAFF,
     KIND,
     PORTAL,
     SUB,
-    approve_body,
     as_contact,
     as_user,
     create_draft,
     developer,
     fields,
-    grant,
     pending,
     project,
-    project_type,
     registration,
     second_company,
     sorento,
@@ -62,7 +63,7 @@ def test_b1_submit_carrying_a_long_title_is_422_and_changes_nothing(world):
     d = create_draft(world)
     res = submit(world, d["id"], body=fields(world.debtor_a.id, title="X" * 2001))
     assert res.status_code == 422, res.text
-    assert registration(world, d["id"]).status == "draft"
+    assert registration(world, d["id"]).approval_state == "draft"
 
 
 # ------------------------------------------------------------------ B2 lead numbering seed
@@ -116,26 +117,23 @@ class SimpleCalls:
         monkeypatch.setattr(self.svc, "semantic_matches", self.real)
 
 
-def test_b3_a_list_of_pending_rows_makes_one_embed_call_at_three_seconds(world, embed_calls, monkeypatch):
-    for n in range(3):
-        pending(world, title=f"QUEUE TOWER {n}")
+def test_b3_a_pending_projects_detail_makes_one_embed_call_at_three_seconds(world, embed_calls, monkeypatch):
+    rid = pending(world, title="QUEUE TOWER 0")
     embed_calls.enable(monkeypatch)
-    res = as_user(world, world.approver).get(CRM)
+    res = as_user(world, world.approver).get(f"{STAFF}/{rid}")
     assert res.status_code == 200, res.text
-    assert len(res.json()["data"]) == 3
     assert len(embed_calls.calls) == 1
-    assert len(embed_calls.calls[0]["chunks"]) == 3
+    assert len(embed_calls.calls[0]["chunks"]) == 1
     assert embed_calls.calls[0]["timeout"] == 3
 
 
-def test_b3_a_second_read_of_the_same_rows_makes_no_embed_call(world, embed_calls, monkeypatch):
+def test_b3_a_second_read_of_the_same_project_makes_no_embed_call(world, embed_calls, monkeypatch):
     rid = pending(world, title="CACHED TOWER")
     embed_calls.enable(monkeypatch)
     c = as_user(world, world.approver)
-    assert c.get(f"{CRM}/{rid}").status_code == 200
+    assert c.get(f"{STAFF}/{rid}").status_code == 200
     assert len(embed_calls.calls) == 1
-    assert c.get(f"{CRM}/{rid}").status_code == 200
-    assert c.get(CRM).status_code == 200
+    assert c.get(f"{STAFF}/{rid}").status_code == 200
     assert len(embed_calls.calls) == 1
 
 
@@ -146,9 +144,12 @@ def test_b3_the_portal_detail_goes_through_the_same_cache(world, embed_calls, mo
     assert c.get(f"{SUB}/{rid}").status_code == 200
     assert c.get(f"{SUB}/{rid}").status_code == 200
     assert len(embed_calls.calls) == 1
+    # and the CRM read of the same text is a cache hit too
+    assert as_user(world, world.approver).get(f"{STAFF}/{rid}").status_code == 200
+    assert len(embed_calls.calls) == 1
 
 
-def test_b3_a_failing_embed_keeps_the_other_signals_and_is_not_retried_per_row(world, monkeypatch):
+def test_b3_a_failing_embed_keeps_the_detail_readable_and_is_not_retried(world, monkeypatch):
     from app.services import embedding_worker
     from app.services import project_registration_service as svc
 
@@ -161,17 +162,14 @@ def test_b3_a_failing_embed_keeps_the_other_signals_and_is_not_retried_per_row(w
 
     monkeypatch.setattr(embedding_worker, "_embed_text_chunks", boom)
     svc.clear_embedding_cache()
-    existing = project(world.db, world.company_id, "KILANG ALPHA LOT 9001 MUKIM TEBRAU", code="PRJ-ZZT-R1")
-    ids = [
-        pending(world, title=f"GUDANG {n} DI ATAS LOT 9001, MUKIM TEBRAU", mukim="Tebrau")
-        for n in range(3)
-    ]
+    ids = [pending(world, title=f"GUDANG {n} DI ATAS LOT 9001, MUKIM TEBRAU", mukim="Tebrau") for n in range(3)]
     monkeypatch.setattr(svc, "semantic_matches", real)
-    rows = as_user(world, world.approver).get(CRM).json()["data"]
-    assert {r["id"] for r in rows} == set(ids)
-    assert all(isinstance(r["possible_duplicates"], list) for r in rows)
-    assert existing.id
-    assert len(attempts) == 1
+    c = as_user(world, world.approver)
+    for rid in ids:
+        res = c.get(f"{STAFF}/{rid}")
+        assert res.status_code == 200, res.text
+        assert res.json()["possible_duplicates"] == []
+    assert len(attempts) == 1  # one try, then the 30 s back-off: not once per read
 
 
 def test_b3_ownership_checks_never_build_the_duplicates(world, monkeypatch):
@@ -211,30 +209,6 @@ def test_s5_attachments_are_refused_for_the_kind(world):
         files={"file": ("a.png", b"x", "image/png")},
     )
     assert res.status_code == 400, res.text
-
-
-# ------------------------------------------------------------------ S6 row lock
-
-
-def test_s6_approve_and_reject_read_the_registration_with_a_row_lock(world):
-    a, b = pending(world), pending(world)
-    seen: list = []
-
-    def spy(conn, cursor, statement, parameters, context, executemany):
-        if "project_registrations" in statement and statement.lstrip().upper().startswith("SELECT"):
-            seen.append(statement.upper())
-
-    engine = world.db.get_bind()
-    event.listen(engine, "before_cursor_execute", spy)
-    try:
-        c = as_user(world, world.approver)
-        assert c.post(f"{CRM}/{a}/approve", json=approve_body(world, a)).status_code == 200
-        assert any("FOR UPDATE" in s for s in seen)
-        seen.clear()
-        assert c.post(f"{CRM}/{b}/reject", json={"reason": "no"}).status_code == 200
-        assert any("FOR UPDATE" in s for s in seen)
-    finally:
-        event.remove(engine, "before_cursor_execute", spy)
 
 
 # ------------------------------------------------------------------ S8 listener churn
@@ -296,98 +270,6 @@ def test_s8_the_profile_queues_the_parent_only_when_state_or_mukim_changes():
         assert queued() == base + 1
 
 
-# ------------------------------------------------------------------ S9 owner assignment
-
-
-def _approve(world, rid, **over):
-    return as_user(world, world.approver).post(f"{CRM}/{rid}/approve", json=approve_body(world, rid, **over))
-
-
-def test_s9_the_applicant_may_own_it_without_the_manage_grant(world):
-    world.perms[world.approver].discard(MANAGE)
-    rid = pending(world)
-    res = _approve(world, rid, owner_user_id=world.applicant_user)
-    assert res.status_code == 200, res.text
-
-
-def test_s9_another_owner_needs_the_manage_grant(world):
-    world.perms[world.approver].discard(MANAGE)
-    rid = pending(world)
-    res = _approve(world, rid, owner_user_id=world.owner)
-    assert res.status_code == 403, res.text
-    assert res.json()["code"] == "project_owner_assign_forbidden"
-    assert registration(world, rid).status == "pending"
-
-
-def test_s9_a_manager_may_pick_another_active_user_of_the_company(world):
-    world.perms[world.approver].add(MANAGE)
-    grant(world.db, world.owner, "projects.projects.view", world.company_id)
-    rid = pending(world)
-    res = _approve(world, rid, owner_user_id=world.owner)
-    assert res.status_code == 200, res.text
-
-
-def test_s9_an_owner_with_no_access_to_the_company_is_422(world):
-    from app.models.company import UserCompany
-
-    world.perms[world.approver].add(MANAGE)
-    world.db.query(UserCompany).filter_by(user_id=world.owner).delete()
-    world.db.flush()
-    rid = pending(world)
-    res = _approve(world, rid, owner_user_id=world.owner)
-    assert res.status_code == 422, res.text
-    assert registration(world, rid).status == "pending"
-
-
-def test_s9_an_inactive_owner_is_422(world):
-    from app.models.user import User
-
-    world.perms[world.approver].add(MANAGE)
-    grant(world.db, world.owner, "projects.projects.view", world.company_id)
-    world.db.get(User, world.owner).status = "inactive"
-    world.db.flush()
-    rid = pending(world)
-    res = _approve(world, rid, owner_user_id=world.owner)
-    assert res.status_code == 422, res.text
-
-
-def test_s9_without_an_applicant_the_owner_defaults_to_the_approver(world):
-    from app.models.projects import Project
-
-    world.perms[world.approver].discard(MANAGE)
-    rid = pending(world, world.b)
-    body = approve_body(world, rid)
-    body.pop("owner_user_id", None)
-    res = as_user(world, world.approver).post(f"{CRM}/{rid}/approve", json=body)
-    assert res.status_code == 200, res.text
-    world.db.expire_all()
-    assert world.db.get(Project, res.json()["project_id"]).owner_user_id == world.approver
-
-
-# ------------------------------------------------------------------ S10 cross-company ids
-
-
-def test_s10_a_party_type_or_template_of_another_company_is_422(world):
-    rid = pending(world)
-    foreign_dev = developer(world.db, world.other_company, "Foreign Developer")
-    foreign_arch = developer(world.db, world.other_company, "Foreign Architect", "architect")
-    foreign_contractor = developer(world.db, world.other_company, "Foreign Builder", "main_contractor")
-    foreign_type = project_type(world.db, world.other_company, "Foreign Type")
-    c = as_user(world, world.approver)
-
-    for over in (
-        {"developer_party_id": foreign_dev.id},
-        {"architect_party_id": foreign_arch.id},
-        {"main_contractor_party_id": foreign_contractor.id},
-        {"type_id": foreign_type.id},
-        {"template_id": uid()},
-        {"brand_ids": [uid()]},
-    ):
-        res = c.post(f"{CRM}/{rid}/approve", json=approve_body(world, rid, **over))
-        assert res.status_code == 422, (over, res.status_code, res.text)
-    assert registration(world, rid).status == "pending"
-
-
 # ------------------------------------------------------------------ S11 customer company
 
 
@@ -407,42 +289,3 @@ def test_s11_the_customer_is_checked_under_the_registrations_company_only(world)
     assert res.status_code == 422, res.text
     res = c.post(SUB, json={"fields": fields(foreign_debtor.id)})
     assert res.status_code == 422, res.text
-
-
-# ------------------------------------------------------------------ N12 drafts
-
-
-def test_n12_status_all_leaves_the_contacts_unsent_drafts_out(world):
-    draft = create_draft(world)["id"]
-    sent = pending(world)
-    ids = {r["id"] for r in as_user(world, world.approver).get(CRM, params={"status": "all"}).json()["data"]}
-    assert sent in ids
-    assert draft not in ids
-
-
-# ------------------------------------------------------------------ round 2: ineligible applicant
-
-
-def test_r2_an_ineligible_applicant_falls_back_to_the_approver_without_manage(world):
-    from app.models.projects import Project
-    from app.models.user import User
-
-    world.perms[world.approver].discard(MANAGE)
-    rid = pending(world)
-    world.db.get(User, world.applicant_user).status = "inactive"
-    world.db.flush()
-    res = _approve(world, rid, owner_user_id=world.applicant_user)
-    assert res.status_code == 200, res.text
-    world.db.expire_all()
-    assert world.db.get(Project, res.json()["project_id"]).owner_user_id == world.approver
-
-
-def test_r2_another_owner_keeps_its_rules_when_the_applicant_is_ineligible(world):
-    from app.models.user import User
-
-    world.perms[world.approver].discard(MANAGE)
-    rid = pending(world)
-    world.db.get(User, world.applicant_user).status = "inactive"
-    world.db.flush()
-    res = _approve(world, rid, owner_user_id=world.owner)
-    assert res.status_code == 403, res.text

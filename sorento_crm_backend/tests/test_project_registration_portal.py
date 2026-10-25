@@ -1,9 +1,10 @@
-"""PROJECT-REG-PORTAL portal surface, red-first (UAC A1-A13, F1).
+"""PROJECT-REG-PORTAL portal surface on the REWORKED storage (UAC A1-A13, F1, RW1, RW2).
 
 The kind joins the generic `/submissions/{kind}` routes (PLAN D1), so everything goes
-through the TestClient: mounting and the kind gate are part of the contract.
-Nothing exists yet: expected red reasons are a missing model/module, `Unsupported
-submission type` (400), or a kind absent from a constant.
+through the TestClient: mounting and the kind gate are part of the contract. After the
+rework a registration is a `projects.projects` row (`approval_state`, `project_code` NULL until
+Approve) and the legacy-only fields sit on its `projects.sales_profile`; the submission id is
+the project id. Red reasons now: no `approval_state` / `project_registrations` still exists.
 """
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ from ._project_registration_support import (
     field_values,
     fields,
     pending,
+    profile_of,
     project,
     registration,
     submit,
@@ -176,9 +178,9 @@ def test_a5_unknown_keys_are_ignored_and_the_stored_fields_are_exactly_the_eleve
     assert values["developer_name"] == "Example Developer Sdn Bhd"
     assert values["customer_id"] == world.debtor_a.id
     row = registration(world, d["id"])
-    assert row.status == "draft"
+    assert row.approval_state == "draft"
     assert str(row.company_id) == str(world.company_id)
-    assert row.project_id is None
+    assert row.project_code is None
     assert row.reject_reason is None
 
 
@@ -232,7 +234,7 @@ def test_a7_another_contacts_registration_is_404_everywhere(world):
     assert c.put(f"{SUB}/{d['id']}", json={"fields": fields()}).status_code == 404
     assert c.post(f"{SUB}/{d['id']}/submit").status_code == 404
     assert c.delete(f"{SUB}/{d['id']}").status_code == 404
-    assert registration(world, d["id"]).status == "draft"
+    assert registration(world, d["id"]).approval_state == "draft"
 
 
 # ------------------------------------------------------------------ A8 / A9 submit
@@ -249,7 +251,7 @@ def test_a8_submit_lists_the_missing_fields_and_changes_nothing(world):
     missing = {x.strip() for x in str(res.json()["detail"]).split(",")}
     assert missing == {"title", "state", "developer_name"}
     row = registration(world, d["id"])
-    assert row.status == "draft"
+    assert row.approval_state == "draft"
     assert row.submitted_at is None
 
 
@@ -264,7 +266,7 @@ def test_a8_submit_can_carry_the_fields(world):
     d = create_draft(world, developer_name="")
     res = submit(world, d["id"], body=fields(world.debtor_a.id, developer_name="Late Developer Sdn Bhd"))
     assert res.status_code == 200, res.text
-    assert registration(world, d["id"]).developer_name == "Late Developer Sdn Bhd"
+    assert profile_of(world, d["id"]).developer_name == "Late Developer Sdn Bhd"
 
 
 def test_a9_submit_a_complete_draft_locks_it(world):
@@ -275,9 +277,11 @@ def test_a9_submit_a_complete_draft_locks_it(world):
     assert body["status"] == "pending"
     assert body["is_draft"] is False
     row = registration(world, d["id"])
-    assert row.status == "pending"
+    assert row.approval_state == "pending"
     assert row.submitted_at is not None
-    assert row.applicant_user_id == world.applicant_user
+    assert row.owner_user_id == world.applicant_user
+    assert row.project_code is None
+    assert row.status_id is None  # only Approve gives the first stage
     locked = as_contact(world, world.a).put(f"{SUB}/{d['id']}", json={"fields": fields(world.debtor_a.id)})
     assert locked.status_code == 422, locked.text
 
@@ -286,18 +290,16 @@ def test_a9_submit_a_complete_draft_locks_it(world):
 
 
 def test_a10_delete_a_draft_but_not_a_pending_one(world):
-    from app.models.project_registration import ProjectRegistration
-
     draft = create_draft(world)
     res = as_contact(world, world.a).delete(f"{SUB}/{draft['id']}")
     assert res.status_code == 204, res.text
-    world.db.expire_all()
-    assert world.db.get(ProjectRegistration, draft["id"]) is None
+    assert registration(world, draft["id"]) is None
+    assert profile_of(world, draft["id"]) is None
 
     rid = pending(world)
     res = as_contact(world, world.a).delete(f"{SUB}/{rid}")
     assert res.status_code == 422, res.text
-    assert registration(world, rid).status == "pending"
+    assert registration(world, rid).approval_state == "pending"
 
 
 # ------------------------------------------------------------------ A11 list
@@ -337,9 +339,8 @@ def test_a11_q_matches_title_and_developer_name(world):
 def test_a11_an_approved_row_carries_its_ppf_no(world):
     rid = pending(world)
     row = registration(world, rid)
-    made = project(world.db, world.company_id, "APPROVED SENTINEL", code="PPF2601001")
-    row.status = "approved"
-    row.project_id = made.id
+    row.approval_state = "approved"
+    row.project_code = "PPF2601001"
     world.db.flush()
     items = as_contact(world, world.a).get(f"{PORTAL}/submissions", params={"type": KIND}).json()["items"]
     mine = next(r for r in items if r["id"] == rid)
@@ -455,3 +456,185 @@ def test_the_portal_may_read_the_two_lookup_sets_the_form_uses(world, set_key):
     res = as_contact(world, world.a).get(f"{PORTAL}/lookups/sets/{set_key}")
     assert res.status_code == 200, res.text
     assert [o["value"] for o in res.json()["options"]] == ["Johor"]
+
+
+# ------------------------------------------------------------------ RW1 storage
+
+
+def test_rw1_a_saved_draft_is_a_projects_row_with_no_code_and_the_legacy_fields_on_its_profile(world):
+    from app.models.projects import Project
+
+    d = create_draft(world, mukim="Kulai", state="Johor", your_ref="REF-RW1")
+    row = registration(world, d["id"])
+    assert isinstance(row, Project)
+    assert row.approval_state == "draft"
+    assert row.project_code is None
+    assert row.title.startswith("CADANGAN BLOK PEJABAT")
+    assert row.normalised_title == "cadangan blok pejabat di atas lot 7001, mukim kulai, johor"
+    assert row.submitted_at is None and row.decided_at is None and row.decided_by is None
+    assert str(row.company_id) == str(world.company_id)
+
+    profile = profile_of(world, d["id"])
+    assert profile.contact_id == world.a
+    assert profile.sales_agent_id == world.agent_a.id
+    assert profile.distributor_name == "Example Distribution Sdn Bhd"
+    assert profile.customer_id == world.debtor_a.id
+    assert profile.customer_name  # a pick with no typed name shows the debtor's own name
+    assert profile.your_ref == "REF-RW1"
+    assert profile.type_of_building == "Office"
+    assert (profile.state, profile.mukim) == ("Johor", "Kulai")
+    assert profile.developer_name == "Example Developer Sdn Bhd"
+    assert profile.main_contractor_name == "Example Builders Sdn Bhd"
+    assert profile.architect_name == "Example Architects"
+
+
+def test_rw1_the_submission_id_is_the_project_id_and_an_update_edits_the_same_row(world):
+    d = create_draft(world)
+    as_contact(world, world.a).put(f"{SUB}/{d['id']}", json={"fields": fields(world.debtor_a.id, title="RETITLED TOWER")})
+    assert registration(world, d["id"]).title == "RETITLED TOWER"
+    assert registration(world, d["id"]).normalised_title == "retitled tower"
+
+
+def test_rw1_there_is_no_registration_table_and_no_registration_model():
+    import importlib
+
+    from app.database import Base
+
+    assert "projects.project_registrations" not in Base.metadata.tables
+    with pytest.raises(ImportError):
+        importlib.import_module("app.models.project_registration")
+
+
+def test_rw1_the_model_constants_and_the_new_columns():
+    from app.models import projects as m
+
+    assert (m.APPROVAL_DRAFT, m.APPROVAL_PENDING, m.APPROVAL_REJECTED, m.APPROVAL_APPROVED) == (
+        "draft", "pending", "rejected", "approved",
+    )
+    columns = m.Project.__table__.columns
+    for name in ("approval_state", "reject_reason", "submitted_at", "decided_at", "decided_by"):
+        assert name in columns, name
+    assert columns["project_code"].nullable is True
+    assert columns["approval_state"].nullable is True  # NULL = a staff-registered project
+    profile = m.ProjectSalesProfile.__table__.columns
+    for name in (
+        "contact_id", "sales_agent_id", "distributor_name", "customer_id", "customer_name",
+        "your_ref", "type_of_building", "developer_name", "main_contractor_name",
+        "architect_name", "state", "mukim",
+    ):
+        assert name in profile, name
+
+
+# ------------------------------------------------------------------ RW2 submit on the new storage
+
+
+def test_rw2_submit_makes_it_pending_stamps_submitted_at_and_draws_no_number(world):
+    from ._project_registration_support import rule_next_value
+
+    d = create_draft(world)
+    res = submit(world, d["id"])
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "pending"
+    row = registration(world, d["id"])
+    assert row.approval_state == "pending"
+    assert row.submitted_at is not None
+    assert row.project_code is None
+    assert rule_next_value(world.db, world.rule_id) == 5
+
+
+def test_rw2_a_contact_with_no_linked_crm_user_leaves_the_owner_empty_until_approve(world):
+    rid = pending(world, world.b)
+    assert registration(world, rid).owner_user_id is None
+
+
+def test_rw2_the_linked_crm_user_is_the_owner(world):
+    rid = pending(world, world.third)
+    assert registration(world, rid).owner_user_id == world.linked_staff
+
+
+def test_rw2_another_contacts_pending_project_is_404_on_every_portal_verb(world):
+    rid = pending(world)
+    c = as_contact(world, world.b)
+    assert c.get(f"{SUB}/{rid}").status_code == 404
+    assert c.put(f"{SUB}/{rid}", json={"fields": fields()}).status_code == 404
+    assert c.post(f"{SUB}/{rid}/submit").status_code == 404
+    assert c.delete(f"{SUB}/{rid}").status_code == 404
+    assert rid not in {r["id"] for r in c.get(f"{PORTAL}/submissions", params={"type": KIND}).json()["items"]}
+
+
+def test_rw2_a_staff_project_is_never_a_portal_submission(world):
+    """The portal reads only the contact's own registrations: a staff project (no
+    approval_state, no contact) is not theirs, even in their company, and not editable."""
+    staff_project = project(world.db, world.company_id, "STAFF ONLY TOWER")
+    c = as_contact(world, world.a)
+    assert c.get(f"{SUB}/{staff_project.id}").status_code == 404
+    assert c.put(f"{SUB}/{staff_project.id}", json={"fields": fields(world.debtor_a.id)}).status_code == 404
+    assert c.delete(f"{SUB}/{staff_project.id}").status_code == 404
+    ids = {r["id"] for r in c.get(f"{PORTAL}/submissions", params={"type": KIND}).json()["items"]}
+    assert staff_project.id not in ids
+
+
+def test_rw2_an_approved_project_is_locked_for_the_contact(world):
+    rid = pending(world)
+    row = registration(world, rid)
+    row.approval_state = "approved"
+    row.project_code = "PPF2601007"
+    world.db.flush()
+    c = as_contact(world, world.a)
+    assert c.put(f"{SUB}/{rid}", json={"fields": fields(world.debtor_a.id)}).status_code == 422
+    assert c.delete(f"{SUB}/{rid}").status_code == 422
+    assert c.post(f"{SUB}/{rid}/submit").status_code == 422
+
+
+def test_rw2_the_portal_list_carries_the_new_storages_statuses(world):
+    d = create_draft(world, title="LIST DRAFT")
+    p = pending(world, title="LIST PENDING")
+    r = pending(world, title="LIST REJECTED")
+    row = registration(world, r)
+    row.approval_state = "rejected"
+    row.reject_reason = "no"
+    world.db.flush()
+    items = {
+        i["id"]: i
+        for i in as_contact(world, world.a).get(f"{PORTAL}/submissions", params={"type": KIND}).json()["items"]
+    }
+    assert items[d["id"]]["status"] == "draft"
+    assert items[p]["status"] == "pending"
+    assert items[r]["status"] == "rejected"
+    assert items[r]["is_editable"] is True
+
+
+# ------------------------------------------------------------------ A12 on projects: approved candidates only
+
+
+def test_a12_a_pending_project_is_never_named_even_when_the_meaning_signal_offers_it(world):
+    other = pending(world, world.b, title="CADANGAN PEMBINAAN GUDANG LOT 9001")
+    world.semantic.append((other, 0.97))
+    mine = pending(world, title="CADANGAN PEMBINAAN GUDANG DI ATAS LOT 9001")
+    world.semantic.append((mine, 0.99))  # nor is the registration itself
+    got = as_contact(world, world.a).get(f"{SUB}/{mine}").json()
+    assert got["possible_duplicates"] == []
+
+
+def test_a12_rejected_and_draft_projects_are_not_named_either(world):
+    rejected = project(world.db, world.company_id, "REJECTED CANDIDATE", approval_state="rejected")
+    draft = project(world.db, world.company_id, "DRAFT CANDIDATE", approval_state="draft")
+    approved = project(world.db, world.company_id, "APPROVED CANDIDATE", approval_state="approved", code="PPF2601003")
+    staff_project = project(world.db, world.company_id, "STAFF CANDIDATE", code="PRJ-ZZT-S1")
+    world.semantic[:] = [(rejected.id, 0.99), (draft.id, 0.98), (approved.id, 0.95), (staff_project.id, 0.90)]
+    rid = pending(world)
+    got = as_contact(world, world.a).get(f"{SUB}/{rid}").json()
+    assert [d["project_code"] for d in got["possible_duplicates"]] == ["PPF2601003", "PRJ-ZZT-S1"]
+
+
+# ------------------------------------------------------------------ F1 on projects
+
+
+def test_f1_the_submit_notice_links_to_the_project_not_a_registrations_page(world):
+    rid = pending(world)
+    sent = [kw for kw in world.sent_kw if kw["type"] == "project_registration_submitted"]
+    assert sent
+    for kw in sent:
+        assert kw["data"]["link"] == f"/project-sales/{rid}"
+        assert "registrations" not in kw["data"]["link"]
+        assert "None" not in kw["title"] and "None" not in kw["body"]

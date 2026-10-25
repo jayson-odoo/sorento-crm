@@ -1,4 +1,6 @@
-"""PROJECT-REG-PORTAL audit round 3, red tests written against head 37421af5 (owner rulings of 25 Oct applied).
+"""PROJECT-REG-PORTAL audit round 3, REWORKED onto projects (a registration is a `projects.projects`
+row; approve / reject are `POST /projects/{id}/approve|reject`). Originally written against head
+37421af5 (owner rulings of 25 Oct applied).
 
 Items (coordinator list): 2 portal debtor lookup, 3 rate limits, 4 submit notifies in-app only,
 5 M1 non-string fields, 6 M2 control characters in notice titles, 12 the exact-duplicate 409
@@ -18,20 +20,19 @@ import pytest
 from app.main import app  # noqa: F401  MUST be first app import (circular import)
 
 from ._project_registration_support import (
-    CRM,
     FIELD_KEYS,
     KIND,
     PORTAL,
     SUB,
-    approve_body,
+    approve,
     as_contact,
-    as_user,
     create_draft,
     debtor,
     developer,
     fields,
     pending,
     registration,
+    reject,
     rule_next_value,
     submit,
     world,  # noqa: F401  (fixture)
@@ -133,7 +134,7 @@ def test_a_submit_over_the_limit_is_refused_and_the_draft_stays_a_draft(world, c
     res = submit(world, rid)  # 31
     assert res.status_code == 429, res.text
     assert res.json()["code"] == "RATE_LIMITED"
-    assert registration(world, rid).status == "draft"
+    assert registration(world, rid).approval_state == "draft"
 
 
 def test_reads_and_other_contacts_are_not_limited(world, clean_keys):
@@ -218,13 +219,12 @@ def test_submit_notifies_approvers_in_app_only_never_by_email(world):
 
 
 def test_approve_and_reject_still_notify_the_applicant_in_app_and_by_email(world):
-    c = as_user(world, world.approver)
     ok = pending(world)
     world.sent_kw.clear()
-    assert c.post(f"{CRM}/{ok}/approve", json=approve_body(world, ok)).status_code == 200
+    assert approve(world, ok).status_code == 200
     no = pending(world)
     world.sent_kw.clear()
-    assert c.post(f"{CRM}/{no}/reject", json={"reason": "not ours"}).status_code == 200
+    assert reject(world, no, "not ours").status_code == 200
     rejected = [kw for kw in world.sent_kw if kw["type"] == "project_registration_rejected"]
     assert [kw["user_id"] for kw in rejected] == [world.applicant_user]
     assert rejected[0]["send_in_app"] is True and rejected[0]["send_email"] is True
@@ -233,7 +233,7 @@ def test_approve_and_reject_still_notify_the_applicant_in_app_and_by_email(world
 def test_an_approve_notice_is_in_app_and_email_to_the_applicant(world):
     ok = pending(world)
     world.sent_kw.clear()
-    as_user(world, world.approver).post(f"{CRM}/{ok}/approve", json=approve_body(world, ok))
+    approve(world, ok)
     approved = [kw for kw in world.sent_kw if kw["type"] == "project_registration_approved"]
     assert [kw["user_id"] for kw in approved] == [world.applicant_user]
     assert approved[0]["send_in_app"] is True and approved[0]["send_email"] is True
@@ -252,9 +252,8 @@ def test_a_title_with_newlines_and_tabs_gives_a_one_line_notice_title(world):
 
 def test_a_decision_notice_title_is_one_line_too(world):
     rid = pending(world, title="TOWER C\nBLOCK D\tPHASE 3")
-    c = as_user(world, world.approver)
     world.sent_kw.clear()
-    assert c.post(f"{CRM}/{rid}/reject", json={"reason": "no"}).status_code == 200
+    assert reject(world, rid, "no").status_code == 200
     for kw in world.sent_kw:
         assert not any(ch in kw["title"] for ch in "\n\r\t"), repr(kw["title"])
     assert "TOWER C BLOCK D PHASE 3" in world.sent_kw[0]["title"]
@@ -277,7 +276,7 @@ def test_m1_a_non_string_value_is_422_naming_the_field_never_500(world, clean_ke
     c = as_contact(world, world.a)
     good = fields(world.debtor_a.id)
     rid = None if verb == "create" else create_draft(world)["id"]
-    before = world.db.execute(__import__("sqlalchemy").text("select count(*) from projects.project_registrations")).scalar()
+    before = world.db.execute(__import__("sqlalchemy").text("select count(*) from projects.projects")).scalar()
     failures = []
     for bad in BAD_VALUES:
         body = dict(good, **{key: bad})
@@ -291,10 +290,10 @@ def test_m1_a_non_string_value_is_422_naming_the_field_never_500(world, clean_ke
             failures.append((repr(bad), res.status_code, res.text[:120]))
     assert not failures, failures
     world.db.expire_all()
-    after = world.db.execute(__import__("sqlalchemy").text("select count(*) from projects.project_registrations")).scalar()
-    assert after == before + (0 if verb != "create" else 0)
+    after = world.db.execute(__import__("sqlalchemy").text("select count(*) from projects.projects")).scalar()
+    assert after == before  # a refused value writes no row, not even a draft
     if rid:
-        assert registration(world, rid).status == "draft"
+        assert registration(world, rid).approval_state == "draft"
 
 
 # ------------------------------------------------------------------ 12 exact duplicate carries the project
@@ -315,9 +314,7 @@ def test_the_exact_duplicate_409_carries_the_existing_project_as_data(world):
     dev = developer(world.db, world.company_id, "Setia Example Group")
     existing = project(world.db, world.company_id, "Setia Alam Phase 3B", developer_party=dev, code="PPF2609001")
     rid = pending(world, title="  SETIA ALAM   phase 3b ")
-    res = as_user(world, world.approver).post(
-        f"{CRM}/{rid}/approve", json=approve_body(world, rid, developer_party_id=dev.id)
-    )
+    res = approve(world, rid, developer_party_id=dev.id)
     assert res.status_code == 409, res.text
     body = res.json()
     assert body["code"] == "project_registration_exact_duplicate"
@@ -327,7 +324,7 @@ def test_the_exact_duplicate_409_carries_the_existing_project_as_data(world):
         "title": "Setia Alam Phase 3B",
     }
     assert "PPF2609001" in body["message"]  # the sentence still names it
-    assert registration(world, rid).status == "pending"
+    assert registration(world, rid).approval_state == "pending"
     assert rule_next_value(world.db, world.rule_id) == 5
 
 
@@ -338,7 +335,5 @@ def test_possible_duplicates_never_block_and_carry_no_existing_project(world):
     near = project(world.db, world.company_id, "Setia Alam Phase 3B", developer_party=dev)
     world.semantic.append((near.id, 0.95))
     rid = pending(world, title="Setia Alam Ph 3B")
-    res = as_user(world, world.approver).post(
-        f"{CRM}/{rid}/approve", json=approve_body(world, rid, developer_party_id=dev.id)
-    )
+    res = approve(world, rid, developer_party_id=dev.id)
     assert res.status_code == 200, res.text
