@@ -32,6 +32,7 @@ from app.services.entity_resolver import (
     FREE_TEXT_CANDIDATES,
     EntityPinMismatch,
     _canonical_entity_type,
+    _word_variants,
     _with_resolve_memo,
     fetch_product_brands,
     resolve_references,
@@ -1806,13 +1807,22 @@ def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
     the word INSIDE the code, and rows that start with it (prefix, or AND tier) when the registry
     knows the word (`vocabulary`, a set or a callable read only when such a row needs it: a code
     family such as "QAMS" or a brand word keeps its prefix rows). A token with a digit keeps them
-    all (a code fragment). Runs once, early, so every reader of the result sees the same rows."""
+    all (a code fragment). A row with SEVERAL tokens (the AND row) loses its whole-code-word keep
+    when ANY of its tokens is a registry word. Each word is checked in the form the probe matched it
+    by (as typed when the code holds it, else its `_word_variants` forms). Runs once, early, so every
+    reader of the result sees the same rows."""
     words: list[frozenset[str]] = []
 
-    def known(tokens: list[str]) -> bool:
+    def known(tokens: list[str], code: str) -> bool:
         if not words:
             words.append(vocabulary() if callable(vocabulary) else vocabulary)
-        return any(w in words[0] for t in tokens for w in re.split(r"[^a-z0-9]+", str(t or "").lower()) if w)
+        return any(
+            v in words[0]
+            for t in tokens
+            for w in re.split(r"[^a-z0-9]+", str(t or "").lower())
+            if w
+            for v in ([w] if w in code else _word_variants(w))
+        )
 
     def whole_segments(code: Any, token: Any) -> bool:
         token_words = [w for w in re.split(r"[^a-z0-9]+", str(token or "").lower()) if w]
@@ -1830,12 +1840,12 @@ def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
         code = _fold_code(match.get("canonical_code"))
         if code in {_fold_code(t) for t in tokens}:
             return True
-        segment_tokens = [t for t in tokens if whole_segments(match.get("canonical_code"), t)]
-        if segment_tokens:
-            return not known(segment_tokens)  # whole code words: a code hit unless a registry word
+        if any(whole_segments(match.get("canonical_code"), t) for t in tokens):
+            return not known(tokens, code)  # whole code words: a code hit unless a registry word in ANY token
         if tier == "substring" or not any(code.startswith(_fold_code(t)) for t in tokens):
             return False  # the word sits inside the code, not at its start
-        return not known(tokens)  # a code that STARTS with the word: a family sibling unless it is a registry word
+        # a code that STARTS with the word: a family sibling unless it is a registry word
+        return not known(tokens, code)
 
     for resolution in result.get("resolutions") or []:
         if not isinstance(resolution, dict) or _has_digit(resolution.get("token")):
