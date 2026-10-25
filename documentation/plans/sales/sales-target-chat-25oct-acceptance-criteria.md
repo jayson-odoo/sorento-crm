@@ -113,6 +113,13 @@ and no figures.
 - T2-14 [BE] (review 2) Agent lines carry `target_end_date` (the whole target's end, which the open
   pipeline is counted up to); null on team and dealer lines. `test_agent_line_target_end_date`.
 
+- T2-15 [BE] (crew audit 2) The response carries `narrowed`: true when `customer_ids` were given (then
+  `own` and `team` are `[]`), else false. `test_response_narrowed_flag`.
+- T2-16 [BE] (crew audit 3) A dealer line's `subject_label` never carries a ledger marker: when the counted
+  accounts share no customer group, it is the first account's name without its marker (the existing
+  `ledger_family` helper), e.g. "W-PLY HOMEWARE SDN BHD", not "W-PLY HOMEWARE SDN BHD [A/C I]".
+  `test_dealer_subject_label_without_marker`.
+
 ## T3. MCP tool and reply text
 
 - T3-1 [MCP] A read-only tool `crm_sales_target_progress` wraps the route, passes contact and
@@ -143,6 +150,10 @@ and no figures.
   "...: RM 55,000.00 of RM 70,000.00 (Tier 2), RM 15,000.00 to go". `test_present_dealer_row_next_threshold`.
 - T3-9 [MCP] (review 2) "Open opportunities closing by <d Mon>" prints the agent line's
   `target_end_date`. `test_present_pipeline_date_is_target_end`.
+
+- T3-10 [MCP] (crew audit 2) A `narrowed` salesperson reply prints only the dealer block: no
+  "Your sales target" line, no "No sales target is set for you" line and no team block.
+  `test_present_named_dealer_has_no_own_block`.
 
 ## T4. Chat routing
 

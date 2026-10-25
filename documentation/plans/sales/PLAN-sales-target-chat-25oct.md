@@ -217,7 +217,10 @@ multi-company contacts.
   whole target's end, the date the pipeline counts to), else null.
 - Numbers are JSON numbers rounded to 2 decimals. No UUID anywhere. No RM incentive field.
 - Team membership is read on TODAY (`team_service._today()`), whatever window was asked.
-- `customer_ids` given: `own` and `team` are `[]`; only dealer lines counting a named customer remain.
+- `customer_ids` given: `own` and `team` are `[]`; only dealer lines counting a named customer remain, and
+  the top-level `narrowed` is true (false otherwise); the presenter then prints only the dealer block.
+- Dealer `subject_label`: the customer group's name, else the first account's name WITHOUT its ledger marker
+  (`ledger_family`), so the reply's "[A/C I, A/C III]" bracket is never doubled.
 - `additional_rates` entries have the same shape as `rates` (`{label, rate}`). An additional tier whose
   RM threshold matches no main rung is left out of the ladder (the importer always gives it the
   threshold of the tier it follows, dealer_target_import.py:188-199).
