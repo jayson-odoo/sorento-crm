@@ -140,7 +140,7 @@ class _FastPathResult:
 
 
 def _decide_meter_record_and_enqueue(
-    db: Session, payload: MediaProcessRequest
+    db: Session, payload: MediaProcessRequest, *, reread_abandoned: bool = False
 ) -> _FastPathResult:
     """PLAN 3.3 steps 1-9 plus the enqueue, as ONE synchronous unit.
 
@@ -201,7 +201,7 @@ def _decide_meter_record_and_enqueue(
     # failed enqueue) is the one place it can be recovered: the retry n8n
     # already sends is the sweep.
     if decision.usage is not None and reclaim_stranded_job(
-        db, decision.job, decision.usage, settings
+        db, decision.job, decision.usage, settings, reread_abandoned=reread_abandoned
     ):
         db.commit()
         fast.job_status, fast.job_error = _enqueue(db, decision.job, fast.job_id)
@@ -369,10 +369,12 @@ def read_abandoned_job_again(job_id: str) -> bool:
     of the first read stands (accepted, security review L3)."""
     from app.database import SessionLocal
 
+    from app.services.media_access_service import claim_one_reread
+
     db = SessionLocal()
     try:
         job = db.query(MediaExtractionJob).filter(MediaExtractionJob.id == job_id).first()
-        if job is None or job.status in TERMINAL_STATUSES:
+        if job is None or job.status in TERMINAL_STATUSES or not claim_one_reread(job_id):
             return False
         job.status = "queued"
         job.started_at = None

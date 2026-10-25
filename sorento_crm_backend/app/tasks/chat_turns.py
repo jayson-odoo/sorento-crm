@@ -161,13 +161,16 @@ def enqueue_direct_turn(
 
 
 # CHAT-INBOX-QUEUE shutdown budget, inside gunicorn's `graceful_timeout` (150 s,
-# gunicorn.conf.py): SIGTERM at t = 0 stops the drains taking rows at once (signal hook
-# below); open requests and staff event streams get the worker's
-# `timeout_graceful_shutdown` (100 s, app/uvicorn_worker.py: a sync mode-off `/chat/turn`
-# has n8n's 90 s budget); then the lifespan shutdown waits up to this grace for the drains
-# to finish their current row: 100 + 40 = 140 s, 10 s under 150, and Docker's stop
-# timeout (-t 160, scripts/blue_green_deploy.sh) is above both.
+# gunicorn.conf.py), counted FROM THE SIGNAL (IQ-43): SIGTERM at t = 0 stops the drains
+# taking rows at once (signal hook below); open requests and staff event streams get the
+# worker's `timeout_graceful_shutdown` (100 s, app/uvicorn_worker.py: a sync mode-off
+# `/chat/turn` has n8n's 90 s budget); the lifespan shutdown then waits for the drains until
+# t = INBOX_SHUTDOWN_BUDGET_SECONDS (140 s = 100 + 40), at least INBOX_SHUTDOWN_GRACE_SECONDS
+# when the lifespan starts late, never past 150 s; Docker's stop timeout (-t 160,
+# scripts/blue_green_deploy.sh) is above both.
+INBOX_SHUTDOWN_BUDGET_SECONDS = 140.0
 INBOX_SHUTDOWN_GRACE_SECONDS = 40.0
+INBOX_SHUTDOWN_CEILING_SECONDS = 148.0
 INBOX_SWEEPER_SWITCH = "CHATBOT_INBOX_SWEEPER_ENABLED"
 _SHUTDOWN_SIGNALS = ("SIGTERM", "SIGINT")
 
@@ -221,14 +224,19 @@ def stop_inbox_queue(grace_seconds: float = INBOX_SHUTDOWN_GRACE_SECONDS) -> boo
     """App shutdown: drains stop taking rows and finish the one they are in (its sender
     POST and done mark included). True when they did within the grace. A process that
     never ran the queue has nothing to stop."""
+    import time
+
     from app.services.chatbot import inbox_queue
 
     if not inbox_queue.in_use():
         return True
     inbox_queue.begin_shutdown()
-    idle = inbox_queue.wait_idle(grace_seconds)
+    now = time.monotonic()
+    began = inbox_queue.shutdown_began_at() or now
+    deadline = min(max(began + INBOX_SHUTDOWN_BUDGET_SECONDS, now + grace_seconds), began + INBOX_SHUTDOWN_CEILING_SECONDS)
+    idle = inbox_queue.wait_idle(max(0.0, deadline - now))
     if not idle:
-        logger.error("chatbot inbox: drains still running after %.0fs of shutdown grace", grace_seconds)
+        logger.error("chatbot inbox: drains still running %.0fs after shutdown began", time.monotonic() - began)
     return idle
 
 

@@ -7816,7 +7816,12 @@ def _run_stages_body(  # noqa: PLR0915
                     "delegate_error": lane_error_text,
                 },
             )
-        elif delegate is not None and (s7_mode or envelope.ingress == DIRECT_INGRESS) and not dry_run:
+        elif (
+            delegate is not None
+            and (s7_mode or envelope.ingress == DIRECT_INGRESS or inbox_queue.draining())
+            and not dry_run
+        ):
+            # CHAT-INBOX-QUEUE (IQ-44): a queued turn has no n8n spine waiting on it either.
             # CHAT-SPEED: a webhook-started turn has no n8n spine behind it either, so a lane
             # that still delegates is closed the S7 way rather than left as a ghost.
             # S7 mode retires the n8n tail: a turn that still delegates has NOBODY to
@@ -9205,6 +9210,8 @@ def _remember_on_delegated_arm(
     write to `complete_turn` (casual, escalation): apply the verdict's statements and
     record the `memory` event, so a statement-only turn is remembered and traced like
     any other (reviewer pass at d89110c0, B1 and S22)."""
+    # CHAT-INBOX-QUEUE (IQ-45): on the inbox drain the turn gives way BEFORE it commits facts.
+    inbox_queue.checkpoint(turn_id)
     if verdict is None or remembered_before is None or contact_respond_id is None:
         return
     facts_saved = _apply_profile_statements(

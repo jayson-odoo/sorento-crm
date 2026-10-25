@@ -220,12 +220,13 @@ def chat_turn(
             # contact's drain answers it through the sender. The answer is the shape the
             # spine already treats as nothing to send.
             try:
-                turn_id, _created = inbox_queue.enqueue(db, payload.envelope)
-            except inbox_queue.InboxFull:
-                # IQ-33: the loop guard (logged as an error where it fired).
+                turn_id, _created = inbox_queue.enqueue(db, payload.envelope, rate_limit=True)
+            except inbox_queue.InboxRefused as refused:
+                # IQ-33 / IQ-40: the rate limit or the pile-up cap. The message has one failed,
+                # staff-visible row (logged as an error where it fired); nothing is sent.
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="This contact has too many messages waiting to be answered.",
+                    detail=f"This message was not queued ({refused.stage}).",
                 )
             inbox_queue.kick(inbox_queue.contact_of(payload.envelope))
             response_payload = TurnResponse(turn_id=turn_id, duplicate=True, actions=[])

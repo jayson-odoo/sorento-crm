@@ -328,9 +328,12 @@ def run(
         caption=caption,
         turn_id=turn_id,
     )
+    from app.services.chatbot import inbox_queue
+
     db = session_factory()
     try:
-        fast = _decide_meter_record_and_enqueue(db, request)
+        # On the inbox drain a parked row's replay re-reads an abandoned job (IQ-46).
+        fast = _decide_meter_record_and_enqueue(db, request, reread_abandoned=inbox_queue.draining())
         # Read alongside the decision, on the same still-open session: the reply
         # prefix's truncated-note (AC-1818/AC-1821) needs the CAP by number, which
         # the job's own result only reports as a bool.
@@ -370,8 +373,6 @@ def run(
     # background one. A burst past `_CONCURRENT_WAIT_LIMIT` concurrent waits takes
     # the timeout arm immediately rather than queueing behind the ones already
     # holding a slot.
-    from app.services.chatbot import inbox_queue
-
     if inbox_queue.draining():
         # The drain thread is already one of the bounded pool, so it takes no wait slot.
         snapshot = _poll_on_drain(fast.job_id, session_factory, fast.sync_wait_seconds)

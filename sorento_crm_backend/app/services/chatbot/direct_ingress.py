@@ -214,14 +214,17 @@ _RATE_SCRIPT = (
 
 
 def sender_configured(db: Any) -> bool:
-    """IQ-37: the default workspace has a chatbot sender, URL AND key. The one check both
+    """IQ-37: the default workspace has a chatbot sender, URL AND a key that decrypts. The one check both
     injectors ask before queueing (the webhook here, `/chat/turn` via `inbox_queue.accepts`):
     without it a covered contact keeps the synchronous path, so nothing queued is stranded."""
+    from app.services.respond_workspace_service import RespondWorkspaceService
+
     workspace = _default_workspace(db)
     if workspace is None:
         return False
     url = (getattr(workspace, "chatbot_sender_url", None) or "").strip()
-    return bool(url and getattr(workspace, "chatbot_sender_key_ciphertext", None))
+    # IQ-42: a key that does not decrypt is no key.
+    return bool(url and RespondWorkspaceService.decrypt_chatbot_sender_key(workspace))
 
 
 def rate_key(contact_id: str) -> str:
