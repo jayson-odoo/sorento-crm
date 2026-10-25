@@ -233,20 +233,60 @@ def test_a_photo_queued_over_60s_no_longer_holds_up_the_earlier_texts(world, med
     world.webhook(world.body(contact, t1))
     world.webhook(world.body(contact, photo, photo=True))
     assert wait_until(lambda: _queued(world, contact, t1) and _queued(world, contact, photo), timeout=5)
-    db = SessionLocal()
-    try:
-        db.execute(
-            text(
-                "UPDATE chatbot.turns SET created_at = now() - interval '61 seconds' "
-                "WHERE contact_respond_id = :c AND message_id = :m"
-            ),
-            {"c": contact, "m": str(photo)},
-        )
-        db.commit()
-    finally:
-        db.close()
+    _queued_for(contact, photo, 61)
     world.gate.set()
 
     world.wait_posts(3, contact, timeout=40)
     assert world.posted_messages(contact) == [str(t0), str(t1), str(photo)]
     assert _calls(world, t0, t1, photo) == [str(t0), str(t1), str(photo)], "a text gave way to a stale photo"
+
+
+def _queued_for(contact, mid, seconds: float) -> None:
+    """Move a row's queue time back by `seconds` (it has been queued that long)."""
+    db = SessionLocal()
+    try:
+        db.execute(
+            text(
+                "UPDATE chatbot.turns SET created_at = now() - make_interval(secs => :s) "
+                "WHERE contact_respond_id = :c AND message_id = :m"
+            ),
+            {"s": seconds, "c": contact, "m": str(mid)},
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_a_running_photo_queued_over_60s_gives_way_to_an_earlier_sent_text(world, media_worker):
+    """PF-7: a photo claimed after 60 s in the queue runs with its send-order key, so when
+    an EARLIER-sent text T arrives while it runs, the photo gives way to T, as before this
+    lane. T0 blocks the drain while P ages; T is sent between T0 and P and arrives during P."""
+    contact = world.contact(covered=True, media=True)
+    base = time.time() - 10
+    t0 = world.message(contact, base, "stale-t0")
+    t1 = world.message(contact, base + 0.1, "stale-t1")
+    photo = world.message(contact, base + PHOTO_LAG_SECONDS, "stale-photo")
+    sent = []
+
+    def text_arrives_during_the_photo(mid: str, block: str) -> None:
+        if not sent:
+            sent.append(True)
+            world.webhook(world.body(contact, t1))
+            assert wait_until(lambda: _queued(world, contact, t1), timeout=5)
+
+    world.parse_hooks[str(photo)] = text_arrives_during_the_photo
+
+    world.gate.clear()
+    world.webhook(world.body(contact, t0))
+    assert world.wait_parse_started(t0, timeout=10), "T0 never started"
+    world.webhook(world.body(contact, photo, photo=True))
+    assert wait_until(lambda: _queued(world, contact, photo), timeout=5)
+    _queued_for(contact, photo, 61)
+    world.gate.set()
+
+    world.wait_posts(3, contact, timeout=40)
+    assert sent, "T never arrived during the photo's turn"
+    assert world.posted_messages(contact) == [str(t0), str(t1), str(photo)]
+    assert _calls(world, t0, t1, photo) == [str(t0), str(photo), str(t1), str(photo)], (
+        "the stale photo must give way to the earlier-sent text"
+    )
