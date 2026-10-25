@@ -6,10 +6,10 @@ tests pin the guards the reviewer and the security reviewer asked for, against a
 coder now builds to:
 
 * `check_target(*, database_url, api, environ) -> list[str]`: the reasons to REFUSE (empty =
-  go): the database host is not loopback; the database is the shared dev DB
-  `sorento_cagent_stack` or its name contains `prod`; `DATABASE_URL` or `DIRECT_URL` is
-  already exported in the process environment; `--api` is not http(s) on localhost /
-  127.0.0.1 / [::1].
+  go): the database host is not loopback; `DATABASE_URL` or `DIRECT_URL` is already exported
+  in the process environment; `--api` is not http(s) on localhost / 127.0.0.1 / [::1]. (Round
+  6: NO rule on the database NAME; crew copies are neutralised prod clones named
+  `sorento_prod_<date>`. What makes a copy safe is `check_neutralised`, below.)
 * `detect_leftover(db, *, state_file) -> list[str]`: the reasons an earlier run was not
   cleaned up: its state file exists; the default workspace's `base_url` or sender URL points
   at a loopback host; the direct-ingress contact list holds a `zzt-replay-` id.
@@ -67,6 +67,18 @@ VALID_DB = "postgresql://sorento_crm:zzt@localhost:5432/sorento_iqr_copy"
 VALID_API = "http://localhost:8106"
 # The database this process actually connects to (the lane's throwaway copy).
 THROWAWAY_URL = str(settings.database_url)
+NEUTRAL_RESPOND = "https://api.respond.invalid"
+NEUTRAL_N8N = "https://n8n.invalid/webhook"
+
+
+def neutral_env_text(database_url: str) -> str:
+    """An env file shaped like a crew copy's: respond.io and n8n on `.invalid`, no SMTP host,
+    and egress through a dead loopback proxy (nothing listens on its port)."""
+    return (
+        f"DATABASE_URL={database_url}\nDIRECT_URL={database_url}\n"
+        f"RESPOND_BASE_URL={NEUTRAL_RESPOND}\nN8N_WEBHOOK_URL={NEUTRAL_N8N}\nSMTP_HOST=\n"
+        f"HTTPS_PROXY=http://127.0.0.1:{_free_port()}\n"
+    )
 
 
 def _tool():
@@ -104,8 +116,10 @@ def _key(n: int) -> str:
         ("postgresql://u:p@127.0.0.1:5432/sorento_iqr_copy", "http://127.0.0.1:8106", {}),
         ("postgresql://u:p@[::1]:5432/sorento_iqr_copy", "http://[::1]:8106", {}),
         (VALID_DB, "https://localhost:8443", {}),
+        ("postgresql://u:p@localhost:5432/sorento_prod_1020", VALID_API, {}),
+        ("postgresql://u:p@localhost:5432/sorento_cagent_stack", VALID_API, {}),
     ],
-    ids=["localhost", "127.0.0.1", "ipv6-loopback", "https-localhost"],
+    ids=["localhost", "127.0.0.1", "ipv6-loopback", "https-localhost", "crew-prod-clone-name", "any-local-name"],
 )
 def test_check_target_accepts_a_local_copy(tool, database_url, api, environ):
     assert tool.check_target(database_url=database_url, api=api, environ=environ) == []
@@ -116,9 +130,6 @@ def test_check_target_accepts_a_local_copy(tool, database_url, api, environ):
     [
         ("postgresql://u:p@10.0.0.5:5432/sorento_iqr_copy", VALID_API, {}),
         ("postgresql://u:p@db.example-zzt.com:5432/sorento_iqr_copy", VALID_API, {}),
-        ("postgresql://u:p@localhost:5432/sorento_cagent_stack", VALID_API, {}),
-        ("postgresql://u:p@localhost:5432/sorento_prod_copy", VALID_API, {}),
-        ("postgresql://u:p@localhost:5432/PROD_mirror", VALID_API, {}),
         (VALID_DB, VALID_API, {"DATABASE_URL": VALID_DB}),
         (VALID_DB, VALID_API, {"DIRECT_URL": VALID_DB}),
         (VALID_DB, "https://staging.example-zzt.com", {}),
@@ -127,7 +138,7 @@ def test_check_target_accepts_a_local_copy(tool, database_url, api, environ):
         (VALID_DB, "ftp://localhost:8106", {}),
     ],
     ids=[
-        "db-private-ip", "db-remote-name", "db-shared-dev", "db-prod-in-name", "db-prod-upper",
+        "db-private-ip", "db-remote-name",
         "database-url-exported", "direct-url-exported", "api-remote", "api-lan-ip",
         "api-lookalike-host", "api-not-http",
     ],
@@ -176,7 +187,7 @@ def guarded_main(tool, monkeypatch, tmp_path, iq_serial):
     ) -> dict[str, Any]:
         database_url = database_url or THROWAWAY_URL
         env_file = tmp_path / "zzt-copy.env"
-        env_file.write_text(env_text if env_text is not None else f"DATABASE_URL={database_url}\nDIRECT_URL={database_url}\n")
+        env_file.write_text(env_text if env_text is not None else neutral_env_text(database_url))
         out = tmp_path / "report.md"
         state_file = state or (tmp_path / "replay-state.json")
         argv = [
@@ -198,16 +209,12 @@ def guarded_main(tool, monkeypatch, tmp_path, iq_serial):
 
 @pytest.mark.parametrize(
     "case",
-    ["db-remote", "db-shared-dev", "db-prod", "database-url-exported", "api-remote"],
+    ["db-remote", "database-url-exported", "api-remote"],
 )
 def test_main_refuses_a_target_that_is_not_a_local_copy(guarded_main, monkeypatch, case):
     kwargs: dict[str, Any] = {}
     if case == "db-remote":
         kwargs["database_url"] = "postgresql://u:p@db.example-zzt.com:5432/sorento_iqr_copy"
-    elif case == "db-shared-dev":
-        kwargs["database_url"] = "postgresql://u:p@localhost:5432/sorento_cagent_stack"
-    elif case == "db-prod":
-        kwargs["database_url"] = "postgresql://u:p@localhost:5432/sorento_prod_copy"
     elif case == "database-url-exported":
         monkeypatch.setenv("DATABASE_URL", VALID_DB)
     else:
@@ -289,7 +296,10 @@ class CopyWorld:
     """A settings row and a default respond workspace with known originals, a Replay
     built against them, and teardown of everything a run can leave."""
 
-    def __init__(self, tool, tmp_path: Path, redis_client, *, webhook_keys: list[str], keep_rows: bool = False):
+    def __init__(
+        self, tool, tmp_path: Path, redis_client, *, webhook_keys: list[str], keep_rows: bool = False,
+        base_url: str | None = ORIGINAL_BASE_URL, sender_url: str | None = ORIGINAL_SENDER_URL,
+    ):
         from app.models.respond_workspace import RespondWorkspace
         from app.models.user import SystemSetting
 
@@ -310,8 +320,8 @@ class CopyWorld:
             self.sender_cipher = encrypt_secret(ORIGINAL_SENDER_KEY)
             workspace = RespondWorkspace(
                 space_id="zzt-replay-copy", name="ZZT replay copy", is_default=True, is_active=True,
-                api_key_ciphertext=self.api_cipher, base_url=ORIGINAL_BASE_URL,
-                chatbot_sender_url=ORIGINAL_SENDER_URL, chatbot_sender_key_ciphertext=self.sender_cipher,
+                api_key_ciphertext=self.api_cipher, base_url=base_url,
+                chatbot_sender_url=sender_url, chatbot_sender_key_ciphertext=self.sender_cipher,
             )
             db.add(workspace)
             db.commit()
@@ -322,7 +332,7 @@ class CopyWorld:
         self.args = argparse.Namespace(
             env_file=os.environ.get("SORENTO_ENV_FILE", ".env.ci-tests"), api="http://localhost:1",
             port=_free_port(), out=str(tmp_path / "report.md"), scenarios="", no_restart=True,
-            keep_rows=keep_rows, state_file=str(self.state_file), restore_from=None,
+            keep_rows=keep_rows, state_file=str(self.state_file), restore_from=None, restart_cmd=None,
         )
         self.replay = tool.Replay(self.args)
 
@@ -583,7 +593,7 @@ def test_every_existing_webhook_signing_key_stays_verifiable(copy_world, existin
 # * `check_connected(engine) -> list[str]`: what the engine ACTUALLY connects to. Refuses a
 #   `host` / `hostaddr` / `dbname` / `service` key in `engine.url.query`, and runs
 #   `SELECT current_database(), inet_server_addr()`: refuses unless the server address is
-#   NULL (unix socket) or loopback and the name passes the name rules.
+#   NULL (unix socket) or loopback (round 6: no rule on the name).
 # * `resolve_env_file(path) -> str`: the absolute file Settings reads for that value
 #   (relative to the backend directory, as `app.config._resolve_settings_env_file` does).
 # * `env_file_database_url(path) -> str`: DATABASE_URL as dotenv resolves it (the LAST
@@ -631,9 +641,10 @@ def real_main(tool, monkeypatch, tmp_path):
     monkeypatch.setenv("SORENTO_ENV_FILE", os.environ.get("SORENTO_ENV_FILE", ".env.ci-tests"))
     for var in ("DATABASE_URL", "DIRECT_URL", "database_url", "direct_url"):
         monkeypatch.delenv(var, raising=False)
-    env_file = str(BACKEND / os.environ.get("SORENTO_ENV_FILE", ".env.ci-tests"))
-
-    def _run(*, state: Path | None = None) -> dict[str, Any]:
+    def _run(*, state: Path | None = None, env_text: str | None = None) -> dict[str, Any]:
+        env_file = tmp_path / "zzt-crew-copy.env"
+        env_file.write_text(env_text if env_text is not None else neutral_env_text(THROWAWAY_URL))
+        env_file = str(env_file)
         out = tmp_path / "report.md"
         state_file = state or (tmp_path / "replay-state.json")
         argv = [
@@ -666,7 +677,10 @@ def test_main_refuses_through_preflight_and_changes_nothing(real_main, copy_worl
     """Round 5, item 1 (reviewer): the database half of the guard, reached through `main`.
     A copy an earlier run left rewired, or one already holding ten webhook keys, makes
     `main` return 2 with no state file written and nothing in the database changed."""
-    world = copy_world(webhook_keys=[_key(i) for i in range(10)] if leftover == "ten-webhook-keys" else [_key(1)])
+    world = copy_world(
+        webhook_keys=[_key(i) for i in range(10)] if leftover == "ten-webhook-keys" else [_key(1)],
+        base_url=NEUTRAL_RESPOND, sender_url=None,
+    )
     db = SessionLocal()
     try:
         if leftover == "loopback-base-url":
@@ -692,8 +706,8 @@ def test_main_refuses_through_preflight_and_changes_nothing(real_main, copy_worl
 
 
 def test_main_reaches_setup_on_a_clean_copy(real_main, copy_world):
-    """The positive control for the real-`Replay` path: a clean copy passes every guard."""
-    copy_world()
+    """The positive control for the real-`Replay` path: a clean, neutralised copy passes."""
+    copy_world(base_url=NEUTRAL_RESPOND, sender_url=None)
     run = real_main()
     assert run["rc"] == "reached", f"a clean copy was refused: {run['rc']!r}"
 
@@ -764,8 +778,10 @@ class _FakeEngine:
         ("postgresql://u:p@localhost/sorento_iqr_copy", ("sorento_iqr_copy", "127.0.0.1")),
         ("postgresql://u:p@localhost/sorento_iqr_copy", ("sorento_iqr_copy", None)),
         ("postgresql://u:p@localhost/sorento_iqr_copy", ("sorento_iqr_copy", "::1")),
+        ("postgresql://u:p@localhost/sorento_prod_1020", ("sorento_prod_1020", "127.0.0.1")),
+        ("postgresql://u:p@localhost/sorento_cagent_stack", ("sorento_cagent_stack", None)),
     ],
-    ids=["tcp-loopback", "unix-socket", "ipv6-loopback"],
+    ids=["tcp-loopback", "unix-socket", "ipv6-loopback", "crew-prod-clone", "any-local-name"],
 )
 def test_check_connected_accepts_a_local_connection(tool, url, row):
     assert tool.check_connected(_FakeEngine(url, row)) == []
@@ -779,10 +795,8 @@ def test_check_connected_accepts_a_local_connection(tool, url, row):
         ("postgresql://u:p@localhost/x?dbname=sorento_cagent_stack", ("x", None)),
         ("postgresql://u:p@localhost/x?service=prod", ("x", None)),
         ("postgresql://u:p@localhost/sorento_iqr_copy", ("sorento_iqr_copy", "10.1.2.3")),
-        ("postgresql://u:p@localhost/sorento_iqr_copy", ("sorento_cagent_stack", "127.0.0.1")),
-        ("postgresql://u:p@localhost/sorento_iqr_copy", ("sorento_prod_mirror", None)),
     ],
-    ids=["query-host", "query-hostaddr", "query-dbname", "query-service", "server-remote", "connected-shared-dev", "connected-prod"],
+    ids=["query-host", "query-hostaddr", "query-dbname", "query-service", "server-remote"],
 )
 def test_check_connected_refuses_what_the_engine_really_reaches(tool, url, row):
     assert tool.check_connected(_FakeEngine(url, row)), f"must refuse {url} connected to {row}"
@@ -852,7 +866,7 @@ def test_a_second_run_is_refused_while_the_first_holds_the_run_lock(tool, real_m
     """Round 5, item 3: run 1 holds the advisory lock for its whole run. Run 2 (its own
     state file) is refused before preflight, writes nothing, and never touches run 1's state
     file."""
-    copy_world()
+    copy_world(base_url=NEUTRAL_RESPOND, sender_url=None)
     first_state = tmp_path / "run-1-state.json"
     first_state.write_text(json.dumps({"contact": "zzt-replay-run1000000"}))
     side = db_engine.connect()
@@ -999,3 +1013,216 @@ def test_the_documented_state_file_location_is_not_under_tmp(tool):
     documented = _re.findall(r"--(?:state-file|restore-from)\s+(\S+)", tool.__doc__ or "")
     assert documented, "the docstring documents no state-file location"
     assert all(not p.startswith(("/tmp", "/private/tmp")) for p in documented), documented
+
+
+# --------------------------------------------------------------------------- #
+# Round 6 (crew re-audit). The copy is judged by NEUTRALISATION, not its database name:
+#
+# * `check_neutralised(db, env) -> list[str]`, run on the ORIGINAL values before setup (in
+#   `main` / `preflight`, never inside `setup`), `env` being the copy's env file values. A
+#   reason NAMES the value it refuses. Neutral means: the respond.io base URL (env
+#   `RESPOND_BASE_URL` and every `respond_workspaces.base_url`) is empty or a `.invalid` host;
+#   every n8n URL (env `N8N_WEBHOOK_URL`, `system_settings.n8n_*_webhook_url`,
+#   `respond_workspaces.chatbot_retry_ingress_url`) is empty or `.invalid`; the SMTP host (env
+#   `SMTP_HOST`, `system_settings.smtp_host`) is empty or `.invalid`; the workspace
+#   `chatbot_sender_url` is empty or loopback; and egress is blocked: `HTTPS_PROXY` (or
+#   `https_proxy`) points at a loopback address whose port refuses a TCP connect.
+# * `--restart-cmd "<shell command>"`: scenario 4 runs it once itself, then waits for
+#   /health down and up as before; `--no-restart` skips it.
+# --------------------------------------------------------------------------- #
+
+REAL_LOOKING = "https://automate-zzt.example.com/webhook/real"
+
+
+def _dead_proxy() -> str:
+    return f"http://127.0.0.1:{_free_port()}"
+
+
+def _crew_env(**overrides: str | None) -> dict[str, str]:
+    env = {"RESPOND_BASE_URL": NEUTRAL_RESPOND, "N8N_WEBHOOK_URL": NEUTRAL_N8N, "SMTP_HOST": "", "HTTPS_PROXY": _dead_proxy()}
+    for key, value in overrides.items():
+        if value is None:
+            env.pop(key, None)
+        else:
+            env[key] = value
+    return env
+
+
+def _neutral_db(db, **columns: Any) -> None:
+    """A blank-schema copy shaped like a crew copy: everything outbound on `.invalid` or
+    empty. `columns` override `settings.<col>` / `workspace.<col>`."""
+    from app.models.user import SystemSetting
+    from app.schemas.respond_workspace import RespondWorkspaceCreate
+    from app.services.respond_workspace_service import RespondWorkspaceService
+
+    row = SystemSetting(id=str(uuid.uuid4()), name="ZZT crew copy")
+    db.add(row)
+    workspace = RespondWorkspaceService(db).create(
+        RespondWorkspaceCreate(space_id="ZZT-crew-copy", api_key="k", is_default=True)
+    )
+    workspace.base_url = NEUTRAL_RESPOND
+    workspace.chatbot_sender_url = None
+    workspace.chatbot_retry_ingress_url = None
+    for name, value in columns.items():
+        target, column = name.split(".", 1)
+        setattr(row if target == "settings" else workspace, column, value)
+    db.commit()
+
+
+@pytest.mark.parametrize("proxy_var", ["HTTPS_PROXY", "https_proxy"])
+def test_check_neutralised_passes_a_crew_shaped_copy(tool, blank_db, proxy_var):
+    """The crew copy: DB `sorento_prod_1020` on localhost (judged by `check_target`, see
+    the accept cases), respond.io and n8n on `.invalid`, no SMTP host, a dead loopback proxy."""
+    _neutral_db(blank_db, **{"settings.n8n_attachment_webhook_url": "https://n8n.invalid/webhook/attach"})
+    env = _crew_env(HTTPS_PROXY=None)
+    env[proxy_var] = _dead_proxy()
+    assert tool.check_neutralised(blank_db, env) == []
+
+
+@pytest.mark.parametrize(
+    ("named", "env_overrides", "columns"),
+    [
+        ("RESPOND_BASE_URL", {"RESPOND_BASE_URL": "https://api.respond.io"}, {}),
+        ("base_url", {}, {"workspace.base_url": "https://api.respond.io"}),
+        ("N8N_WEBHOOK_URL", {"N8N_WEBHOOK_URL": REAL_LOOKING}, {}),
+        ("n8n_attachment_webhook_url", {}, {"settings.n8n_attachment_webhook_url": REAL_LOOKING}),
+        ("n8n_crm_chat_outbound_webhook_url", {}, {"settings.n8n_crm_chat_outbound_webhook_url": REAL_LOOKING}),
+        ("n8n_stock_inquiry_revise_webhook_url", {}, {"settings.n8n_stock_inquiry_revise_webhook_url": REAL_LOOKING}),
+        ("n8n_close_convo_webhook_url", {}, {"settings.n8n_close_convo_webhook_url": REAL_LOOKING}),
+        ("chatbot_retry_ingress_url", {}, {"workspace.chatbot_retry_ingress_url": REAL_LOOKING}),
+        ("SMTP_HOST", {"SMTP_HOST": "smtp.example-zzt.com"}, {}),
+        ("smtp_host", {}, {"settings.smtp_host": "smtp.example-zzt.com"}),
+        ("chatbot_sender_url", {}, {"workspace.chatbot_sender_url": REAL_LOOKING}),
+        ("proxy", {"HTTPS_PROXY": "http://10.255.255.1:3128"}, {}),
+        ("proxy", {"HTTPS_PROXY": None}, {}),
+    ],
+    ids=[
+        "env-respond", "workspace-respond", "env-n8n", "n8n-attachment", "n8n-chat-outbound",
+        "n8n-stock-revise", "n8n-close-convo", "retry-ingress", "env-smtp", "settings-smtp",
+        "sender-real-host", "proxy-not-loopback", "no-proxy",
+    ],
+)
+def test_check_neutralised_refuses_each_real_looking_value_and_names_it(tool, blank_db, named, env_overrides, columns):
+    _neutral_db(blank_db, **columns)
+    reasons = tool.check_neutralised(blank_db, _crew_env(**env_overrides))
+    assert reasons, f"a copy with a real-looking {named} must be refused"
+    assert any(named.lower() in r.lower() for r in reasons), f"no reason names {named}: {reasons}"
+
+
+def test_check_neutralised_refuses_a_live_proxy(tool, blank_db):
+    """A loopback proxy that ANSWERS is a real way out, not a blocked one."""
+    _neutral_db(blank_db)
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(5)
+    try:
+        port = listener.getsockname()[1]
+        reasons = tool.check_neutralised(blank_db, _crew_env(HTTPS_PROXY=f"http://127.0.0.1:{port}"))
+    finally:
+        listener.close()
+    assert reasons and any("proxy" in r.lower() for r in reasons), reasons
+
+
+@pytest.mark.parametrize("unsafe", ["env-respond", "workspace-respond"])
+def test_main_refuses_a_copy_that_is_not_neutralised(real_main, copy_world, unsafe):
+    """Through `main`, on the ORIGINAL values: refused with 2, nothing written."""
+    if unsafe == "workspace-respond":
+        world = copy_world(base_url="https://api.respond.io", sender_url=None)
+        env_text = None
+    else:
+        world = copy_world(base_url=NEUTRAL_RESPOND, sender_url=None)
+        env_text = neutral_env_text(THROWAWAY_URL).replace(NEUTRAL_RESPOND, "https://api.respond.io")
+    before = _copy_snapshot(world)
+    run = real_main(env_text=env_text)
+    assert run["rc"] == 2, f"{unsafe}: a copy that is not neutralised must be refused, got {run['rc']!r}"
+    assert not run["state"].exists()
+    assert _copy_snapshot(world) == before
+
+
+# ----------------------------------------------------------- one command for the restart
+
+
+def test_main_accepts_a_restart_command(tool):
+    args = tool._parser().parse_args(
+        ["--env-file", ".env.zzt", "--api", VALID_API, "--out", "r.md", "--restart-cmd", "zzt-restart-copy-backend"]
+    )
+    assert args.restart_cmd == "zzt-restart-copy-backend"
+
+
+class _Commands:
+    """Every way the tool could start a process, recorded instead of run."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import subprocess
+
+        self.calls: list[Any] = []
+        calls = self.calls
+
+        class _Proc:
+            returncode = 0
+            pid = 0
+
+            def __init__(self, *args, **kwargs):
+                calls.append(args[0] if args else kwargs.get("args"))
+
+            def wait(self, *a, **k):
+                return 0
+
+            def poll(self):
+                return 0
+
+            def communicate(self, *a, **k):
+                return ("", "")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def _run(*args, **kwargs):
+            calls.append(args[0] if args else kwargs.get("args"))
+            return subprocess.CompletedProcess(args[0] if args else kwargs.get("args"), 0, "", "")
+
+        def _call(*args, **kwargs):
+            calls.append(args[0] if args else kwargs.get("args"))
+            return 0
+
+        for name, fake in (("run", _run), ("Popen", _Proc), ("call", _call), ("check_call", _call), ("check_output", lambda *a, **k: _call(*a, **k) and b"" or b"")):
+            monkeypatch.setattr(subprocess, name, fake)
+        monkeypatch.setattr(os, "system", lambda cmd: calls.append(cmd) or 0)
+
+
+def _quiet_s4(world: CopyWorld, monkeypatch) -> None:
+    """Scenario 4 with no copy behind it: deliveries answer 200, /health goes down then up
+    at once, and there is nothing to collect."""
+    monkeypatch.setattr(world.replay, "burst", lambda bodies: [200] * len(bodies))
+    monkeypatch.setattr(world.replay, "_wait_health", lambda up, timeout: True)
+    monkeypatch.setattr(world.replay, "wait_for", lambda mids, deadline, settle=3.0: [])
+
+
+def test_scenario_4_runs_the_restart_command_once_itself(copy_world, monkeypatch):
+    world = copy_world()
+    world.args.restart_cmd = "zzt-restart-copy-backend --now"
+    world.args.no_restart = False
+    commands = _Commands(monkeypatch)
+    _quiet_s4(world, monkeypatch)
+
+    result = world.replay.s4(time.monotonic() + 5)
+
+    ran = [c for c in commands.calls if "zzt-restart-copy-backend" in (c if isinstance(c, str) else " ".join(map(str, c or [])))]
+    assert len(ran) == 1, f"the restart command must run exactly once, ran {commands.calls}"
+    assert ("the backend restarted mid-burst", True) in result["checks"], result["checks"]
+
+
+def test_scenario_4_with_no_restart_runs_no_command(copy_world, monkeypatch):
+    world = copy_world()
+    world.args.restart_cmd = "zzt-restart-copy-backend --now"
+    world.args.no_restart = True
+    commands = _Commands(monkeypatch)
+    _quiet_s4(world, monkeypatch)
+
+    result = world.replay.s4(time.monotonic() + 5)
+
+    assert commands.calls == [], f"--no-restart must not run the restart command: {commands.calls}"
+    assert not any(name == "the backend restarted mid-burst" for name, _ in result["checks"])
