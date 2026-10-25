@@ -75,7 +75,8 @@ Required on submit: title, developer (picked or typed), state. Everything else o
 6. **Approve** calls the existing `register_project()` (`BE/services/project_service.py:70-195`), so the project gets
    its PRJ code, first stage "Registered" (`BE/services/project_seed_service.py:53`) and template tasks exactly like a
    staff registration, and the trigram lock still refuses a hard duplicate with the existing 409. Before Approve the
-   checker must: resolve a typed developer to a party (pick or create under Parties), and confirm the owner. Owner =
+   checker must: resolve a typed developer to a party (pick or create under Parties), and confirm the owner. A typed
+   main contractor / architect that matches no party is created as a party on Approve (shown as "new" beforehand). Owner =
    the CRM user whose `respond_contact_id` is the contact (`_linked_user_id`, `BE/api/v1/public/portal_sample_request.py:50-52`); if the sales
    agent has no CRM user, the checker picks the owner (Salesperson select).
 7. **Who can submit**: portal contacts granted the new kind `project_registration` (opt-in in
