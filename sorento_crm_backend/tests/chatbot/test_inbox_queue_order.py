@@ -196,6 +196,8 @@ class World:
         self.gate.set()
         self.parse_sleep = 0.0
         self.parse_hooks: dict[str, Callable[[str, str], None]] = {}
+        # message id -> overrides for `_parser_output` (the verdict that message parses to).
+        self.verdicts: dict[str, dict[str, Any]] = {}
         self.sender_script: dict[str, deque] = defaultdict(deque)
         self.post_delay = 0.03
         self._settings_snapshot: dict[str, Any] | None = None
@@ -476,7 +478,7 @@ class World:
                 raise RuntimeError("zzt: the test gate never opened")
             if self.parse_sleep:
                 time.sleep(self.parse_sleep)
-            return _parser_output()
+            return _parser_output(**self.verdicts.get(str(mid), {}))
         finally:
             with self.lock:
                 if contact is not None:
@@ -721,6 +723,8 @@ class MediaWorker:
     * `abandon_first`: the FIRST read is abandoned the way a killed work-horse leaves it
       (the job row stays `running`, the RQ job ends `failed` with no result); every later
       read completes.
+    * `stall_first`: the FIRST read hangs: its job row is `running` with a `started_at` far
+      in the past and its RQ job is still `started` (not failed); every later read completes.
     """
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch, *, mode: str = "complete", delay: float = 0.2) -> None:
@@ -762,6 +766,8 @@ class MediaWorker:
             self._later(self.delay, self.complete, job_id)
         elif self.mode == "abandon_first":
             self._later(self.delay, self.abandon, job_id)
+        elif self.mode == "stall_first":
+            self._later(self.delay, self.stall, job_id)
         return job
 
     def _later(self, delay: float, fn: Callable[..., None], *args: Any) -> None:
@@ -829,6 +835,27 @@ class MediaWorker:
         finally:
             db.close()
 
+    def stall(self, job_id: str, minutes: int = 20) -> None:
+        """A hung read: `running` since long ago, its RQ job still `started`."""
+        from rq.job import Job, JobStatus
+
+        from app.services.queue_service import redis_conn
+
+        db = SessionLocal()
+        try:
+            db.execute(
+                text(
+                    "UPDATE media_extraction_job SET status = 'running', "
+                    "started_at = now() - make_interval(mins => :m) "
+                    "WHERE id = CAST(:i AS uuid) AND status = 'queued'"
+                ),
+                {"i": job_id, "m": minutes},
+            )
+            db.commit()
+        finally:
+            db.close()
+        Job.fetch(job_id, connection=redis_conn).set_status(JobStatus.STARTED)
+
     def job_status(self, job_id: str) -> str | None:
         db = SessionLocal()
         try:
@@ -843,6 +870,13 @@ class MediaWorker:
 
         for timer in self._timers:
             timer.cancel()
+        # A drain may still be waiting on a read this test never finished (a red run): land
+        # every unfinished read, so that drain ends and gives its pool thread back before
+        # the world's teardown, instead of polling a deleted job until its 10-minute cap.
+        for job_id in self.calls:
+            if self.job_status(job_id) not in ("completed", "failed"):
+                with contextlib.suppress(Exception):
+                    self.complete(job_id)
         for job_id in self.calls:
             with contextlib.suppress(Exception):
                 redis_conn.delete(f"rq:job:{job_id}")

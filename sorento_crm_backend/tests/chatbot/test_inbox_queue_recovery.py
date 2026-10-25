@@ -488,8 +488,9 @@ def test_retry_of_a_failed_queued_turn_answers_once_even_if_the_copy_arrives_twi
 def test_photo_read_slower_than_the_sync_wait_is_waited_for_not_timed_out(world, media_worker, monkeypatch):
     """(15) IQ-24: queue mode, the photo's read is not finished within
     `media_sync_wait_seconds` (1 s here; the worker is down). No "could not read it in time"
-    reply goes out; the drain keeps waiting with its mutex alive; when the read lands the
-    photo is answered once, and the contact's later text, queued behind it, after it."""
+    reply goes out; the row keeps waiting for the same read (on the drain, or parked, IQ-30);
+    when the read lands the photo is answered once, and the contact's later text, queued
+    behind it, after it."""
     from app.services import media_access_service
 
     monkeypatch.setattr(media_access_service, "SYNC_WAIT_MIN_SECONDS", 1)
@@ -509,12 +510,14 @@ def test_photo_read_slower_than_the_sync_wait_is_waited_for_not_timed_out(world,
     assert world.posts_for(contact) == [], (
         "nothing may be POSTed while the read is pending: no timeout reply, no overtaking text"
     )
-    assert world.row_for(contact, photo)["status"] == "processing"
+    # Waiting (`processing`) or parked to free the thread (`queued`, IQ-30); never closed.
+    assert world.row_for(contact, photo)["status"] in ("processing", "queued")
     assert world.row_for(contact, later)["status"] == "queued"
-    assert world.redis.exists(drain_key(contact)), "the drain's mutex must stay alive while it waits"
     iq().sweep()
     time.sleep(1.0)
-    assert len(media_worker.calls) == 1, "a sweep must not start a second read of a live drain's photo"
+    assert len(media_worker.calls) == 1, (
+        "a sweep (or a parked row's next run) resumes the same read; it never starts a second one"
+    )
     assert world.posts_for(contact) == []
 
     media_worker.complete(media_worker.calls[0])
