@@ -1,0 +1,200 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chatbot: slim prompt + meaning index</title>
+<style>
+:root{--ink:#1d2330;--mut:#5d6677;--line:#e3e7ee;--bg:#f7f8fb;--card:#fff;--blue:#3b6fd8;--green:#2f9e6e;--amber:#b7791f;--red:#c0392b;--violet:#8a63d2;--grey:#9aa3b5}
+*{box-sizing:border-box}body{margin:0;font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"PingFang SC","Noto Sans CJK SC",sans-serif;color:var(--ink);background:var(--bg)}
+main{max-width:1120px;margin:0 auto;padding:28px 22px 80px}
+h1{font-size:28px;margin:0 0 6px}h2{font-size:21px;margin:42px 0 10px;padding-top:12px;border-top:1px solid var(--line)}h3{font-size:16px;margin:22px 0 8px}
+p{margin:6px 0 10px}.mut{color:var(--mut)}.small{font-size:13px}
+.banner{background:#eef5ff;border:1px solid #b5c6f0;border-radius:10px;padding:14px 18px;margin:16px 0;font-size:16px}
+.tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:16px 0}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;min-width:0}
+.tile .v{font-size:24px;font-weight:700}.tile .l{font-size:13px;color:var(--mut)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:12px 0}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13.5px;background:#fff}
+th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top;overflow-wrap:anywhere}th{background:#f1f3f8;font-weight:600}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;background:#f1f3f8;padding:1px 4px;border-radius:4px;overflow-wrap:anywhere}
+.bar{display:flex;width:100%;height:34px;border-radius:6px;overflow:hidden;border:1px solid var(--line);background:#fff}
+.seg{height:100%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden}
+.lg{display:inline-block;margin:6px 16px 0 0;font-size:13px}.dot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:middle}
+.tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.03em;border-radius:5px;padding:2px 7px;vertical-align:middle}
+.tag.keep{background:#e3f5ec;color:#1d6b48;border:1px solid #9fd6bb}.tag.out{background:#f1ebfb;color:#5b3aa0;border:1px solid #cdb9ef}
+.tag.later{background:#fff4e0;color:#8a5a12;border:1px solid #f0d58a}.tag.code{background:#e8eefc;color:#2a4fa3;border:1px solid #b5c6f0}
+.tag.bad{background:#fdecea;color:#9b2c1f;border:1px solid #f0b2a8}
+.chain{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:12px 0}
+.step{background:#fff;border:1.5px solid var(--line);border-radius:10px;padding:10px 12px;font-size:13.5px;min-width:0}
+.step h4{margin:0 0 6px;font-size:14px}.step .said{background:#fdecea;border-radius:6px;padding:6px 8px;margin:6px 0;font-size:13px}
+.step .why{color:var(--mut);font-size:12.5px}.step .fix{background:#e3f5ec;border-radius:6px;padding:6px 8px;margin-top:6px;font-size:13px}
+.flow{display:flex;align-items:stretch;flex-wrap:wrap;gap:0;margin:12px 0}
+.box{flex:1;min-width:200px;background:#fff;border:1.5px solid var(--line);border-radius:10px;padding:10px 12px;font-size:13.5px}
+.box h4{margin:0 0 6px;font-size:14px}.box ul{margin:4px 0 0 16px;padding:0}
+.box.parser{border-color:#cdb9ef;background:#faf7ff}.box.code{border-color:#b5c6f0;background:#f5f8ff}.box.index{border-color:#9fd6bb;background:#f4fbf7}
+.arrow{display:flex;align-items:center;padding:0 6px;color:#8a93a6;font-size:22px}
+.phase{display:grid;grid-template-columns:110px minmax(0,1fr) 90px;gap:12px;align-items:start;border-bottom:1px solid var(--line);padding:12px 0}
+.phase .p{font-weight:700}.phase .usd{text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
+form.q{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin:12px 0}
+form.q .qt{font-weight:600;margin-bottom:6px}form.q label{display:block;margin:6px 0;padding:6px 8px;border-radius:6px;cursor:pointer}
+form.q label:hover{background:#f5f7fb}form.q .rec{color:var(--green);font-weight:700;font-size:12px;margin-left:4px}
+form.q button{margin-top:8px;padding:6px 14px;border-radius:6px;border:1px solid var(--blue);background:var(--blue);color:#fff;font-weight:600;cursor:pointer}
+form.q .state{font-size:12.5px;color:var(--mut);margin-left:10px}
+.ok{color:#1d6b48;font-weight:700}.no{color:#9b2c1f;font-weight:700}
+@media(max-width:820px){.tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.chain{grid-template-columns:minmax(0,1fr)}.arrow{transform:rotate(90deg);width:100%;justify-content:center}.phase{grid-template-columns:minmax(0,1fr)}.phase .usd{text-align:left}}
+</style></head><body><main>
+
+<h1>Chatbot: slimmer prompt + meaning index</h1>
+<p class="mut small">Lane CHAT-SLIM-INDEX-PLAN, 25 Oct 2026. Plan only, no code written. Source: <code>documentation/plans/chatbot/PLAN-chat-slim-index-25oct.md</code> (file:line evidence there). Code read on main bb99b21c77; one paid probe (USD 0.05, dev key). Customer names masked: "customer F" is the dealer in your console case.</p>
+
+<div class="banner"><b>Short answer.</b> Your console case is mostly a code bug, not a prompt bug: the current prompt (v63) already reads "water closet" as a product category, 6 of 6 times. The code then turns that word into customer and promotion searches, and the sales total has no category filter at all. So: <b>fix the code first</b> (slice 1, prompt untouched), <b>then add the meaning index</b> for typos and Malay / Chinese words, <b>then slim the prompt by cutting from v63</b>, never by rewriting it.</div>
+
+<div class="tiles">
+<div class="tile"><div class="v ok">6 / 6</div><div class="l">v63 marks "water closet" as a category in your message (x3 runs, 2 phrasings)</div></div>
+<div class="tile"><div class="v">17%</div><div class="l">of v63 is vocabulary lists; 70% is routing and follow-up rules</div></div>
+<div class="tile"><div class="v">0</div><div class="l">category lists in v63: categories appear only as examples, never in the sales report part</div></div>
+<div class="tile"><div class="v no">38 : 9</div><div class="l">TRAIN items lost : won when the lean rewrite (v103 + 3 rules, gated as v107) replaced v63</div></div>
+</div>
+
+<h2>1. What went wrong in your console case</h2>
+<p>"Dealer &lt;customer F&gt; oct total sales for water closet". The parser got the words right; each wrong reply is a code step.</p>
+<div class="chain">
+<div class="step"><h4>Parser</h4><div class="fix">customer "&lt;F&gt; sanitary", category "water closet" (6 of 6)</div><div class="why">But it labels the ask "sales_analysis" (company totals), 6 of 6.</div></div>
+<div class="step"><h4>Reply 1</h4><div class="said">10-way customer pick on "water"</div><div class="why">The category word is also searched as a customer name (order asks widen a category to customers), and the customer picker counts every word.</div><div class="fix">Slice 1: a product-kind word never feeds the customer picker.</div></div>
+<div class="step"><h4>Reply 2</h4><div class="said">"Which one do you mean? 1. &lt;F&gt;"</div><div class="why">Two rows of one company merge into one option after the "2 or more?" check.</div><div class="fix">Slice 1: one company left = no question, answer it.</div></div>
+<div class="step"><h4>Reply 3</h4><div class="said">"Couldn't pin down 'water closet' (promotion). Water Closet.pdf x2"</div><div class="why">After the pick the category falls back to a promotion search; promotion names are the flyer file names. And the sales total has no category filter to use.</div><div class="fix">Slice 1: categories resolve to categories only; the sales total takes a category filter.</div></div>
+</div>
+
+<h2>2. Target shape</h2>
+<p>One rule for every list: <b>the parser marks the words and what kind of thing they are; code decides which list value they mean</b>, and asks when it is not sure.</p>
+<div class="flow">
+<div class="box parser"><h4>Parser (slim v63)</h4><ul><li>ask kind, period, quantity, follow-ups, picks: v63 rules kept word for word</li><li>marks words as: product code, customer, product kind, property, file type, brand</li><li>copies words exactly as typed</li></ul></div>
+<div class="arrow">&rarr;</div>
+<div class="box index"><h4>Span index (new, code)</h4><ul><li>categories, classes, product types, spec values, file types, certificate kinds</li><li>exact &rarr; alias rows (tandas, 马桶, gambar) &rarr; near spelling &rarr; meaning (multilingual)</li><li>reads only the marked words, never the whole message</li></ul></div>
+<div class="arrow">&rarr;</div>
+<div class="box code"><h4>Decide (code)</h4><ul><li>one clear value: filter</li><li>two close, or meaning-only: one question, at most 3 options</li><li>none: say the word back</li><li>never falls back to promotion, customer or a file</li></ul></div>
+</div>
+<div class="card small">
+<b>Product codes stay exact.</b> Codes never go into the index or into the parser's input as candidates (that is what made v103 swap SRTWC286 for SRTWC286-SH on 11 test items). The parser copies the typed code; the resolver does exact, then "did you mean" with the parser's pick first (your 23 Oct rule). Every prompt test carries a zero-code-swap bar.<br>
+<b>Small lists stay full lines in the prompt</b> (your 22 Oct ruling): brands (12), sales channels (2), promotion kinds (5).<br>
+<b>The vocabulary the prompt carries today becomes data</b>: the Malay / Chinese words (tandas, 马桶, sinki, gambar, lukisan teknikal, sijil) move into the existing category synonyms column and alias rows, so nothing is lost when they leave the prompt.
+</div>
+
+<h2>3. The prompt today, and what leaves it</h2>
+<p class="small mut">v63: 140,897 characters. Most of it is rules a rewrite lost on; vocabulary is the smaller part.</p>
+<div class="bar">
+<div class="seg" style="width:38%;background:var(--blue)">routing 38%</div>
+<div class="seg" style="width:31.7%;background:var(--violet)">follow-up 32%</div>
+<div class="seg" style="width:17.1%;background:var(--green)">vocab 17%</div>
+<div class="seg" style="width:8.5%;background:var(--amber)">schema</div>
+<div class="seg" style="width:4.7%;background:var(--grey)"></div>
+</div>
+<div><span class="lg"><span class="dot" style="background:var(--blue)"></span>routing rules 53.5k</span><span class="lg"><span class="dot" style="background:var(--violet)"></span>follow-up / state 44.7k</span><span class="lg"><span class="dot" style="background:var(--green)"></span>vocabulary 24.2k</span><span class="lg"><span class="dot" style="background:var(--amber)"></span>output schema 12.0k</span><span class="lg"><span class="dot" style="background:var(--grey)"></span>policy header + product codes 6.6k</span></div>
+<div class="tablewrap" style="margin-top:12px"><table>
+<tr><th>v63 part</th><th class="n">chars</th><th>slim prompt</th></tr>
+<tr><td>routing, follow-up, schema, product-code reading, escalation (30 of 41 sections)</td><td class="n">~97,500</td><td><span class="tag keep">KEPT word for word</span></td></tr>
+<tr><td>spec lines in the policy block (45 keys; includes 28 seat-cover product codes)</td><td class="n">9,651</td><td><span class="tag out">OUT</span> to the index; one line keeps the spec key names</td></tr>
+<tr><td>product types list (47)</td><td class="n">596</td><td><span class="tag out">OUT</span> to the index</td></tr>
+<tr><td>file-type synonyms (gambar, lukisan, sijil ...)</td><td class="n">~1,500</td><td><span class="tag out">OUT</span> to alias rows</td></tr>
+<tr><td>low-stock category translations (tandas, 马桶, paip air ...)</td><td class="n">~1,000</td><td><span class="tag out">OUT</span> to category synonyms</td></tr>
+<tr><td>specification examples</td><td class="n">~2,000</td><td><span class="tag out">SHRINK</span> to one rule: kind words = product kind, property words = property, copy as typed</td></tr>
+<tr><td>Known brands</td><td class="n">1,212</td><td><span class="tag keep">KEPT</span> (small list)</td></tr>
+<tr><td>sales ranking / report / analysis / top selling</td><td class="n">21,737</td><td><span class="tag later">PHASE 4</span> ask kind decided in code, only if phase 3's numbers allow</td></tr>
+</table></div>
+<p class="small">Phase 3 takes v63 to about 126k (-10%). The big cut is phase 4. Money is not the reason: 96% of the prompt is cached, one parse costs about USD 0.0055 either way.</p>
+
+<h2>4. Slice 1: your console case, end to end (code only)</h2>
+<div class="card">
+<ol>
+<li>A product-kind word resolves through the category resolver the sales ranking already uses, on every report ask; it is never widened to promotion or customer.</li>
+<li>The customer picker skips product-kind words.</li>
+<li>The sales total takes a category filter (the data already supports it; one parameter through three layers, same answer format).</li>
+<li>A pick that merges to one company is no pick.</li>
+<li>A total that names a customer is that customer's total, even when the parser says "company totals".</li>
+</ol>
+<p class="small mut">Not in slice 1: typos, Malay / Chinese words, any prompt text. Starts after PR #1856 (customer pick resume) merges, since both touch the sales-ask code.</p>
+</div>
+<h3>Gate (arm A = main + prod v63 md5 0f3b48e6; arm B = slice 1 + the same v63)</h3>
+<div class="tablewrap"><table>
+<tr><th>#</th><th>what</th><th>runs</th><th>pass bar</th><th class="n">USD</th></tr>
+<tr><td>G1</td><td>parser input identical, A vs B (TRAIN 118, R5 62, console)</td><td>no LLM</td><td>100% identical: a code slice moves no parse</td><td class="n">0</td></tr>
+<tr><td>G2</td><td>your console messages + about 20 real "customer + month + total + product kind" messages</td><td>x3 per arm</td><td>B right 3 of 3 on every row; zero promotion, file or customer-pick lines</td><td class="n">~1.2</td></tr>
+<tr><td>G3</td><td>regression: dealer battery (117 conversations) + EXPLORE-1023C (23 rows)</td><td>x1 per arm, x3 on any changed row</td><td>no row worse in 2 of 3 runs</td><td class="n">~3.3</td></tr>
+<tr><td>G4</td><td>tests written first, then the fix, then a kill test</td><td>local</td><td>green</td><td class="n">0</td></tr>
+</table></div>
+<p class="small"><b>Total about USD 4.5, cap USD 5.</b></p>
+
+<h2>5. After slice 1</h2>
+<div class="card">
+<div class="phase"><div class="p">Phase 2<br><span class="tag code">prompt unchanged</span></div><div><b>Span index.</b> Categories, classes, product types, spec values, file types, certificate kinds; Malay / Chinese words as data rows; meaning only when spelling misses. <br><span class="small mut">Gate: index alone on real list asks (recall at least 0.85; zero silently decided filters on 25 non-list messages, a question is allowed); then about 60 real product-kind turns x3 per arm (typos, tandas, 马桶, WC, toilet bowl): B at least A on every slice; dealer battery regression.</span></div><div class="usd">~5</div></div>
+<div class="phase"><div class="p">Phase 3<br><span class="tag out">prompt -10%</span></div><div><b>Slim prompt step 1: vocabulary out</b> (table above). <br><span class="small mut">Gate x3 per arm: TRAIN 118, R5 62, product-kind set, console; held-out 113 x1. Bars: TRAIN at least A minus 1; zero new code swaps; Malay / Chinese at least A; product-kind set at least A; held-out at least A minus 2; and B's run-to-run wobble no bigger than A's.</span></div><div class="usd">~14</div></div>
+<div class="phase"><div class="p">Phase 4<br><span class="tag later">only if 3 says so</span></div><div><b>Slim prompt step 2:</b> the four sales sections become "a sales ask + its axes and filters", code picks total / ranking / analysis. Fixes the "company totals with a customer" mislabel at its source. <br><span class="small mut">Gate: same shape as phase 3, dealer battery x3.</span></div><div class="usd">~14</div></div>
+</div>
+<p class="small mut">Each phase is its own lane and its own budget ask. Spent so far: USD 0.05.</p>
+
+<h2>6. Risks</h2>
+<div class="tablewrap"><table>
+<tr><th>risk</th><th>what we measured</th><th>guard</th></tr>
+<tr><td>meaning hits pick a wrong value</td><td>98 wrong hits vs 37 on real messages with the large model</td><td>a meaning-only hit never decides silently: it asks</td></tr>
+<tr><td>prompt edits drift other answers</td><td>every v63 edit moved about 3 unrelated items</td><td>slice 1 and phase 2 change no prompt; later phases x3 per arm</td></tr>
+<tr><td>product-code swaps come back</td><td>v103 swapped typed codes for listed variants 11 times</td><td>codes never in the index or the parser input; zero-swap bar</td></tr>
+<tr><td>Malay data is thin</td><td>only 5 real Malay list asks in 33k messages</td><td>Malay words enter as data rows you can read, not as a recall claim</td></tr>
+<tr><td>missing class data gives a low total</td><td>110 WC bodies had no class (WC-CLASS-FIX)</td><td>that data ships with the next release; the answer names the filter it used</td></tr>
+</table></div>
+
+<h2>7. What you will hand test (slice 1, crew test copy)</h2>
+<div class="tablewrap"><table>
+<tr><th>#</th><th>you type</th><th>you should see</th></tr>
+<tr><td>1</td><td>Dealer &lt;customer F&gt; oct total sales for water closet</td><td>one reply: F's October dealer total, water closet only; no customer pick, no promotion or file line</td></tr>
+<tr><td>2</td><td>Dealer &lt;customer F&gt; oct total sales</td><td>F's October total; no "can't break sales down" line</td></tr>
+<tr><td>3</td><td>&lt;customer F&gt; sales this year for basin</td><td>this year's total, basins only</td></tr>
+<tr><td>4</td><td>&lt;a customer with WATER in its name&gt; oct total sales</td><td>that customer's total</td></tr>
+<tr><td>5</td><td>SRTWC286 oct total sales</td><td>the product's total (codes unchanged)</td></tr>
+</table></div>
+
+<h2>8. Your decisions</h2>
+<p class="small mut">Pick one per question, then "Queue answer". Recommended options are marked.</p>
+
+<form class="q" data-lavish-question="q1" onsubmit="return queueQ(event,'q1','Q1 boundary')">
+<div class="qt">Q1. Who decides which category / spec / file type a word means?</div>
+<label><input type="radio" name="q1" value="a: parser marks the words and their kind; code decides the value (spelling + meaning) and asks when unsure"> (a) The parser marks the words; code decides the value and asks when unsure <span class="rec">RECOMMENDED</span><br><span class="small mut">Showing index hits to the parser did not move it (+3 then +0 of 20); code already decides product codes this way.</span></label>
+<label><input type="radio" name="q1" value="b: keep 16 Oct D2: code shortlists, parser picks"> (b) Keep the 16 Oct split: code shortlists, the parser picks</label>
+<button type="submit">Queue answer</button><span class="state"></span></form>
+
+<form class="q" data-lavish-question="q2" onsubmit="return queueQ(event,'q2','Q2 order')">
+<div class="qt">Q2. Order of work?</div>
+<label><input type="radio" name="q2" value="a: slice 1 code-only on v63 first, then the index, then the slim prompt"> (a) Slice 1 (code only) first, then the index, then the slim prompt <span class="rec">RECOMMENDED</span><br><span class="small mut">v63 already reads the category right 6 of 6; the misses are code.</span></label>
+<label><input type="radio" name="q2" value="b: build the slim prompt first"> (b) Build the slim prompt first</label>
+<button type="submit">Queue answer</button><span class="state"></span></form>
+
+<form class="q" data-lavish-question="q3" onsubmit="return queueQ(event,'q3','Q3 unsure word')">
+<div class="qt">Q3. A product word the index is not sure about (two close classes, or a meaning-only match)?</div>
+<label><input type="radio" name="q3" value="a: ask one question with at most 3 options"> (a) Ask one question, at most 3 options <span class="rec">RECOMMENDED</span></label>
+<label><input type="radio" name="q3" value="b: take the top match and name it in the answer header"> (b) Take the top match, name it in the answer header</label>
+<button type="submit">Queue answer</button><span class="state"></span></form>
+
+<form class="q" data-lavish-question="q4" onsubmit="return queueQ(event,'q4','Q4 slim scope')">
+<div class="qt">Q4. How slim, how fast?</div>
+<label><input type="radio" name="q4" value="a: phase 3 vocabulary out only (~-10%); phase 4 decided later on its numbers"> (a) Vocabulary out first (about -10%); the big cut decided later on numbers <span class="rec">RECOMMENDED</span></label>
+<label><input type="radio" name="q4" value="b: aim for a v103-size prompt (-45%) now"> (b) Aim for a v103-size prompt (-45%) now <span class="small mut">(the v103 rewrite lost 38 : 9 on TRAIN)</span></label>
+<button type="submit">Queue answer</button><span class="state"></span></form>
+
+<form class="q" data-lavish-question="q5" onsubmit="return queueQ(event,'q5','Q5 budget')">
+<div class="qt">Q5. Budget?</div>
+<label><input type="radio" name="q5" value="a: USD 5 for the slice-1 gate now; phases 2-4 asked separately"> (a) USD 5 for the slice-1 gate now; later phases asked one by one <span class="rec">RECOMMENDED</span></label>
+<label><input type="radio" name="q5" value="b: other (write it in the note)"> (b) Other (add a note)</label>
+<button type="submit">Queue answer</button><span class="state"></span></form>
+
+</main>
+<script>
+function queueQ(ev, key, label){
+  ev.preventDefault();
+  const f = ev.currentTarget, v = new FormData(f).get(key), s = f.querySelector('.state');
+  if(!v){ s.textContent = 'pick an option first'; return false; }
+  if(window.lavish && window.lavish.queuePrompt){
+    window.lavish.queuePrompt('CHAT-SLIM-INDEX-PLAN ' + label + ': ' + v, {tag:'choice', text: label + ': ' + v.slice(0,1), element: f, queueKey: key, data:{question:key, answer:v}});
+    s.textContent = 'queued: (' + v.slice(0,1) + ')';
+  } else { s.textContent = 'selected: (' + v.slice(0,1) + ')'; }
+  return false;
+}
+</script>
+</body></html>

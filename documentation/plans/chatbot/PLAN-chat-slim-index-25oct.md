@@ -89,7 +89,7 @@ v63 = 140,897 characters, 1,848 lines (section map: crew scratch `v63-section-ma
 ### 2.3 Earlier measurements this plan builds on
 
 - PROMPT-V109 / V107 (crew/state/eval/v109, v107): every 4-30 line edit to v63 moves unrelated parses +-3 items on
-  gpt-5.4-mini; x1 gates on n=23 slices fail on one flip. v103 (lean rewrite, 76k) lost TRAIN 64 vs 93 (paired 9:38):
+  gpt-5.4-mini; x1 gates on n=23 slices fail on one flip. v107 = v103 (lean rewrite, 76k) + 3 rules lost TRAIN 64 vs 93 (paired 38:9; v103 alone loses the same way on the split items):
   code swaps, BM/ZH 100 -> 47.8, typos 100 -> 33.3, follow-ups 67.7 -> 41.5.
 - INDEX-HYBRID R1/R2 (crew/state/eval/index-hybrid): spelling + text-embedding-3-large lifts list recall on real rows
   0.63 -> 0.82, real Chinese 3 -> 11 of 23, at 2.6x the false hits (37 -> 98; 14 false hits on 25 negative messages). Showing the hits
@@ -136,7 +136,7 @@ message --> PARSER (slim)                         --> CODE
   raw != canonical (owner 23 Oct). No candidate or near-code lines are ever shown to the parser (no CLOSED LISTS / CODE
   LOOKUP marker in any slim version; a test asserts the gate at `head/parser.py:951` stays off). The 28 seat-cover
   codes leave the prompt with the spec lines. Every prompt gate carries a zero-code-swap bar.
-- **Slim prompt = subtraction from v63, never a rewrite** (v103 lost 38:9 as a rewrite). Per section:
+- **Slim prompt = subtraction from v63, never a rewrite** (the v103 rewrite lost 38:9 on TRAIN). Per section:
 
 | v63 sections | chars | in the slim prompt |
 |---|---|---|
