@@ -226,6 +226,33 @@ multi-company contacts.
 - Order: `own` and `team` by period start then target_no; `dealers` by `next_tier.gap` ascending,
   lines with no `next_tier` last, then subject_label.
 
+### Reply text (presenter rules; the card shapes A to G are the examples)
+
+- Money: "RM 85,000.00" (2 decimals, thousands commas); a quantity target prints plain numbers, no "RM".
+- Period label: calendar quarter "Q4 2026", month "Oct 2026", year "2026", else "1 Oct to 15 Nov 2026".
+- Rate: "3%"; " + additional 1%" per additional rate; " on A/C I" after a rate ONLY when the line counts
+  more than one account (card A counts one, so it reads "3%"); several account rates join with ", ".
+- Dealer block (dealer asker): header `Sales target <period> (<d Mon> to <d Mon>)`, plus `, <subject>`
+  when the reply holds more than one target; `Counts: <labels joined ", ">`; `Achieved: RM x
+  (provisional, incl. tax, to <as_of d Mon>)` (the "to <date>" only for a current period);
+  then one of: `Tier reached: Tier n, <rate>` (if any) and `Next tier: Tier n, <rate> at RM t, RM g to
+  go`; top reached: `Top tier reached: Tier n, <rate>`; closed period below tier 1:
+  `Tier 1 (<rate>) at RM t: not reached, short RM g`; a target with no tiers: `Target: RM t, RM g to
+  go` (or `Target reached: RM t`); ratio missing: `Target: <n> points` and the line
+  `Points are not converted yet, so I can't compare.`
+- Salesperson: block 1 `Your sales target <period> (...)` lines as above without "provisional" and with
+  `Open opportunities closing by <d Mon>: RM p` when p > 0; none -> `No sales target is set for you
+  right now.` (or `... for <window label>.` when a period was asked). Block 2 per team target
+  `Team <subject> target <period> (...)` lines as above. Block 3 `Your dealers, smallest gap first:` one
+  line per dealer target `<subject> [<labels>]: RM a of RM t (Tier n), RM g to go`; top reached
+  `<subject> [<labels>]: RM a, top tier reached (Tier n)`; no ratio `<subject> [<labels>]: RM a, points
+  not converted yet`; no tiers `<subject> [<labels>]: RM a of RM t, RM g to go`. Blocks with no lines
+  are left out; blocks are separated by one blank line.
+- Dealer asker with no lines: `No sales target is set for your accounts right now.` (or `... for
+  <window label>.`).
+- Route errors arrive as the MCP error envelope (`status_code`, `detail.code`); the lane words them
+  (T4-6).
+
 ### MCP (`sorento_crm_mcp`)
 
 `crm_sales_target_progress` ToolSpec (read-only GET, contact + space + dates + customer_ids,
