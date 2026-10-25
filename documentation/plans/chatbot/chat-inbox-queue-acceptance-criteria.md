@@ -157,6 +157,13 @@ re-inject all arrive here). **Sender** = the workspace's thin n8n chatbot sender
   again once, never answered with the failed-read reply because a stranded-job reclaim got
   there first.
 
+## Review round 3 (final review + security final, 25 Oct)
+
+- **IQ-47** A Redis error never refuses a message: the queue's per-contact rate limiter fails
+  open (the 200-row database cap still bounds a loop), so a Redis blip only delays answers.
+- **IQ-41 (completed)** Every recovery requeue, the `should_resend` branch included, is a
+  compare-and-set on what recovery read.
+
 ## Retry and rollback
 
 - **IQ-22** Retry on a failed queued turn answers it once, even if the Retry copy arrives twice.
