@@ -11,7 +11,6 @@
  */
 
 import { useMemo, useState, type CSSProperties } from 'react';
-import JsBarcode from 'jsbarcode';
 
 import type {
   ImpositionConfig,
@@ -43,12 +42,7 @@ import {
   roundedPolygonPath,
   scalePolygonPoints,
 } from '@/lib/dealer-kit/polygon-path';
-import {
-  barcodePlateGeometry,
-  barcodeSymbologyFor,
-  humanReadableBarcode,
-  MM_TO_PT,
-} from '@/lib/dealer-kit/barcode';
+import { barcodeSvg, svgDataUrl } from '@/lib/dealer-kit/barcode';
 import { paddedBox } from '@/lib/dealer-kit/text-reflow';
 import { cropWindowStyle, isCropped, type CropRect } from '@/lib/dealer-kit/image-crop';
 
@@ -788,43 +782,18 @@ function renderBadgeLayer(layer: TagLayer, media: TagSheetMedia) {
 }
 
 /**
- * Draws the bars onto an offscreen canvas via `jsbarcode` and returns a data
- * URL, or null if there is nothing to draw or `jsbarcode` threw.
+ * The barcode label (D18) on the print page and the request preview: the SAME
+ * SVG the Konva canvas draws (`barcodeSvg`, PRICETAG-BARCODE-MATCH), as one
+ * image filling the layer box. Empty renders NOTHING - not the editor's
+ * dashed placeholder, which exists to tell a designer what is missing and has
+ * no business on a physical tag (AC-S7-3). A value that cannot be encoded at
+ * print time renders the SAME nothing, for the same reason.
  *
- * Computed with `useMemo`, not `useEffect` + state: `jsbarcode`'s draw is
- * synchronous (a canvas fill, no network, no timer), so there is nothing to
- * wait for - the data URL is ready in the SAME render/paint as the rest of
+ * Computed with `useMemo`, not `useEffect` + state: building the SVG is
+ * synchronous, so the `<img>` is in the DOM in the SAME render as the rest of
  * the plate. An effect-based version used to add a second commit after the
- * page's own image-readiness effect had already run and counted
- * `document.images`, so the print worker could call `page.pdf()` before the
- * bars `<img>` even existed in the DOM and the plate printed bar-less.
- */
-function barcodeDataUrl(value: string, symbology: 'EAN13' | 'CODE128'): string | null {
-  const canvas = document.createElement('canvas');
-  try {
-    JsBarcode(canvas, value.trim(), {
-      format: symbology,
-      displayValue: false,
-      margin: 0,
-      height: 160,
-    });
-    return canvas.toDataURL('image/png');
-  } catch {
-    return null;
-  }
-}
-
-/**
- * The barcode's label plate (D18), on the print page. Empty renders NOTHING -
- * not the editor's dashed placeholder, which exists to tell a designer what
- * is missing and has no business on a physical tag (AC-S7-3). A value
- * `jsbarcode` cannot encode at print time renders the SAME nothing, for the
- * same reason - a bar-less plate on a physical tag is worse than no plate.
- *
- * Band heights, padding and font sizes come from `barcodePlateGeometry` (mm
- * of plate), converted to `pt` for font sizes via `MM_TO_PT` - the SAME
- * numbers the Konva editor reaches by converting to canvas px instead, so the
- * two cannot draw a differently-proportioned plate (AC-S7-4/6).
+ * page's own image-readiness effect had already counted `document.images`,
+ * so the print worker could call `page.pdf()` before the barcode existed.
  */
 function BarcodeLayer({
   layer,
@@ -841,22 +810,20 @@ function BarcodeLayer({
   const code = isBarcode
     ? resolveSlotText({ slot_binding: 'code', props }, binding)
     : null;
-  const symbology = barcodeSymbologyFor(value);
+  const showCode = props.kind === 'barcode' && props.show_code;
 
-  const barsUrl = useMemo(() => {
-    if (!value || !symbology) return null;
-    return barcodeDataUrl(value, symbology);
-  }, [value, symbology]);
+  const url = useMemo(() => {
+    const svg = barcodeSvg({
+      value,
+      code,
+      showCode,
+      widthMm: layer.width_mm,
+      heightMm: layer.height_mm,
+    });
+    return svg ? svgDataUrl(svg) : null;
+  }, [value, code, showCode, layer.width_mm, layer.height_mm]);
 
-  // Nothing on print for an unbound/empty barcode, or one `jsbarcode` could
-  // not encode - AC-S7-3. The `kind` check is unreachable in practice (the
-  // caller only renders this for a barcode layer) but is what lets TS narrow
-  // `props.show_code` below.
-  if (props.kind !== 'barcode' || !value || !symbology || !barsUrl) return null;
-
-  const h = layer.height_mm;
-  const w = layer.width_mm;
-  const geo = barcodePlateGeometry(w, h, props.show_code && !!code);
+  if (!isBarcode || !url) return null;
 
   return (
     <div
@@ -864,69 +831,13 @@ function BarcodeLayer({
         position: 'absolute',
         left: `${layer.x_mm}mm`,
         top: `${layer.y_mm}mm`,
-        width: `${w}mm`,
-        height: `${h}mm`,
+        width: `${layer.width_mm}mm`,
+        height: `${layer.height_mm}mm`,
         transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
         transformOrigin: layer.rotation_deg ? '0 0' : undefined,
-        backgroundColor: '#ffffff',
-        borderRadius: `${geo.cornerRadius_mm}mm`,
-        overflow: 'hidden',
-        display: 'flex',
-        flexDirection: 'column',
       }}
     >
-      {geo.stripHeight_mm > 0 && (
-        <div
-          style={{
-            height: `${geo.stripHeight_mm}mm`,
-            backgroundColor: '#000000',
-            color: '#ffffff',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontWeight: 700,
-            fontSize: `${geo.stripFontSize_mm * MM_TO_PT}pt`,
-            fontFamily: 'DM Sans, sans-serif',
-          }}
-        >
-          {code}
-        </div>
-      )}
-      <div
-        style={{
-          flex: 1,
-          // A flex item's automatic minimum height defaults to its CONTENT
-          // size, not 0 - so without this, the bars `<img>`'s own intrinsic
-          // aspect ratio (JsBarcode draws it wide and short) refused to
-          // shrink below that size on a small plate, and flexbox took the
-          // extra height from the human-readable row next to it instead,
-          // squeezing it to nothing. Found live: a 40x22mm plate printed with
-          // its human-readable digits entirely gone (AC-S7-4/6).
-          minHeight: 0,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <img
-          src={barsUrl}
-          alt=""
-          style={{ width: '88%', height: '100%', objectFit: 'contain' }}
-        />
-      </div>
-      <div
-        style={{
-          height: `${geo.humanHeight_mm}mm`,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontFamily: 'monospace',
-          fontSize: `${geo.humanFontSize_mm * MM_TO_PT}pt`,
-          color: '#000000',
-        }}
-      >
-        {humanReadableBarcode(value, symbology)}
-      </div>
+      <img src={url} alt="" style={{ display: 'block', width: '100%', height: '100%' }} />
     </div>
   );
 }

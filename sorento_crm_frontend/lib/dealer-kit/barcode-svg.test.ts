@@ -48,7 +48,10 @@ interface Bar {
 function parse(svg: string) {
   const doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
   const root = doc.documentElement;
-  const [, , W, H] = (root.getAttribute('viewBox') ?? '').trim().split(/\s+/).map(Number);
+  const [, , W, H] = (root.getAttribute('viewBox') ?? '')
+    .trim()
+    .split(/\s+/)
+    .map(Number);
   const rects = Array.from(root.querySelectorAll('rect')).map((r) => ({
     x: num(r, 'x'),
     y: num(r, 'y'),
@@ -56,7 +59,9 @@ function parse(svg: string) {
     h: num(r, 'height'),
     fill: (inherited(r, 'fill') ?? '').toLowerCase(),
   }));
-  const bars: Bar[] = rects.filter((r) => BLACK.has(r.fill)).sort((a, b) => a.x - b.x);
+  const bars: Bar[] = rects
+    .filter((r) => BLACK.has(r.fill))
+    .sort((a, b) => a.x - b.x);
   const texts = Array.from(root.querySelectorAll('text')).map((t) => ({
     text: t.textContent ?? '',
     x: num(t, 'x'),
@@ -81,21 +86,35 @@ function scanline(p: ReturnType<typeof parse>, pixels = 2000): BitArray {
   const row = new BitArray(pixels);
   for (let i = 0; i < pixels; i += 1) {
     const x = ((i + 0.5) / pixels) * p.W;
-    if (p.bars.some((b) => x >= b.x && x < b.x + b.w && y >= b.y && y <= b.y + b.h)) {
+    if (
+      p.bars.some(
+        (b) => x >= b.x && x < b.x + b.w && y >= b.y && y <= b.y + b.h,
+      )
+    ) {
       row.set(i);
     }
   }
   return row;
 }
 
-function decode(svg: string | null, reader: EAN13Reader | Code128Reader): string {
+function decode(
+  svg: string | null,
+  reader: EAN13Reader | Code128Reader,
+): string {
   expect(svg).not.toBeNull();
-  return reader.decodeRow(0, scanline(parse(svg as string)), new Map()).getText();
+  return reader
+    .decodeRow(0, scanline(parse(svg as string)), new Map())
+    .getText();
 }
 
 function svgFor(
   value: string,
-  opts: Partial<{ code: string | null; showCode: boolean; widthMm: number; heightMm: number }> = {},
+  opts: Partial<{
+    code: string | null;
+    showCode: boolean;
+    widthMm: number;
+    heightMm: number;
+  }> = {},
 ): string {
   const svg = barcodeSvg({
     value,
@@ -118,20 +137,31 @@ describe('barcodeSvg: the bars decode back to the value (scan check)', () => {
   });
 
   it('decodes with the code row hidden, and in a squat or a tall box', () => {
-    expect(decode(svgFor(VALID_EAN13, { showCode: false }), new EAN13Reader())).toBe(VALID_EAN13);
-    expect(decode(svgFor(VALID_EAN13, { heightMm: 10 }), new EAN13Reader())).toBe(VALID_EAN13);
-    expect(decode(svgFor(VALID_EAN13, { widthMm: 30, heightMm: 40 }), new EAN13Reader())).toBe(
-      VALID_EAN13,
-    );
+    expect(
+      decode(svgFor(VALID_EAN13, { showCode: false }), new EAN13Reader()),
+    ).toBe(VALID_EAN13);
+    expect(
+      decode(svgFor(VALID_EAN13, { heightMm: 10 }), new EAN13Reader()),
+    ).toBe(VALID_EAN13);
+    expect(
+      decode(
+        svgFor(VALID_EAN13, { widthMm: 30, heightMm: 40 }),
+        new EAN13Reader(),
+      ),
+    ).toBe(VALID_EAN13);
   });
 
   it('a non-EAN value decodes as Code128', () => {
-    expect(decode(svgFor('SKU-NOT-EAN'), new Code128Reader())).toBe('SKU-NOT-EAN');
+    expect(decode(svgFor('SKU-NOT-EAN'), new Code128Reader())).toBe(
+      'SKU-NOT-EAN',
+    );
   });
 
   it('12-digit, 8-digit and bad-checksum 13-digit values print as Code128, still scannable', () => {
     for (const value of ['400638133393', '96385074', '4006381333932']) {
-      expect(decode(svgFor(value, { widthMm: 60 }), new Code128Reader())).toBe(value);
+      expect(decode(svgFor(value, { widthMm: 60 }), new Code128Reader())).toBe(
+        value,
+      );
     }
   });
 });
@@ -150,7 +180,12 @@ describe('barcodeSvg: EAN-13 layout matches the staff barcode', () => {
     expect(p.root.getAttribute('height')).toBe('22mm');
     expect(
       p.rects.some(
-        (r) => WHITE.has(r.fill) && r.x === 0 && r.y === 0 && r.w === p.W && r.h === p.H,
+        (r) =>
+          WHITE.has(r.fill) &&
+          r.x === 0 &&
+          r.y === 0 &&
+          r.w === p.W &&
+          r.h === p.H,
       ),
     ).toBe(true);
   });
@@ -173,7 +208,7 @@ describe('barcodeSvg: EAN-13 layout matches the staff barcode', () => {
       expect(WHITE.has(r.fill) || BLACK.has(r.fill)).toBe(true);
     }
     for (const bar of p.bars) {
-      expect(bar.w).toBeLessThanOrEqual(4 * X + 1e-6);
+      expect(bar.w).toBeLessThanOrEqual(4 * X + 1e-3); // written at 0.001mm
     }
   });
 
@@ -186,17 +221,23 @@ describe('barcodeSvg: EAN-13 layout matches the staff barcode', () => {
     expect(extended).toContain(p.bars[n - 2]);
     expect(extended).toContain(p.bars[n - 1]);
     const centre = 11 * X + 47.5 * X;
-    expect(extended.filter((b) => Math.abs(b.x + b.w / 2 - centre) < 3 * X)).toHaveLength(2);
+    expect(
+      extended.filter((b) => Math.abs(b.x + b.w / 2 - centre) < 3 * X),
+    ).toHaveLength(2);
   });
 
   it('splits the digits 1 / 6 / 6 around the guards: first digit left of the start guard', () => {
-    const digits = p.texts.filter((t) => /^\d$/.test(t.text)).sort((a, b) => a.x - b.x);
+    const digits = p.texts
+      .filter((t) => /^\d$/.test(t.text))
+      .sort((a, b) => a.x - b.x);
     expect(digits.map((d) => d.text).join('')).toBe(VALID_EAN13);
 
     const n = p.bars.length;
     const startGuardLeft = p.bars[0].x;
     const startGuardRight = p.bars[1].x + p.bars[1].w;
-    const centreGuard = p.bars.filter((b) => Math.abs(b.x + b.w / 2 - (11 + 47.5) * X) < 3 * X);
+    const centreGuard = p.bars.filter(
+      (b) => Math.abs(b.x + b.w / 2 - (11 + 47.5) * X) < 3 * X,
+    );
     const centreLeft = Math.min(...centreGuard.map((b) => b.x));
     const centreRight = Math.max(...centreGuard.map((b) => b.x + b.w));
     const endGuardLeft = p.bars[n - 2].x;
@@ -220,7 +261,9 @@ describe('barcodeSvg: EAN-13 layout matches the staff barcode', () => {
       expect(d.fontSize).toBeGreaterThanOrEqual(10 * X);
       expect(BLACK.has(d.fill)).toBe(true);
       // The digit's top sits under the normal bars, its baseline inside the box.
-      expect(d.y - d.fontSize * 0.7).toBeGreaterThanOrEqual(p.normalBottom - 1e-6);
+      expect(d.y - d.fontSize * 0.7).toBeGreaterThanOrEqual(
+        p.normalBottom - 1e-6,
+      );
       expect(d.y).toBeLessThanOrEqual(p.H + 1e-6);
       // The guards end inside the digit row, not above it.
       expect(guardBottom).toBeGreaterThan(d.y - d.fontSize * 0.7);
@@ -292,9 +335,33 @@ describe('barcodeSvg: Code128 layout', () => {
 
 describe('barcodeSvg: nothing to draw', () => {
   it('is null for an empty value and for one Code128 cannot encode', () => {
-    expect(barcodeSvg({ value: '', code: CODE, showCode: true, widthMm: 40, heightMm: 22 })).toBeNull();
-    expect(barcodeSvg({ value: '   ', code: CODE, showCode: true, widthMm: 40, heightMm: 22 })).toBeNull();
-    expect(barcodeSvg({ value: 'ä€', code: CODE, showCode: true, widthMm: 40, heightMm: 22 })).toBeNull();
+    expect(
+      barcodeSvg({
+        value: '',
+        code: CODE,
+        showCode: true,
+        widthMm: 40,
+        heightMm: 22,
+      }),
+    ).toBeNull();
+    expect(
+      barcodeSvg({
+        value: '   ',
+        code: CODE,
+        showCode: true,
+        widthMm: 40,
+        heightMm: 22,
+      }),
+    ).toBeNull();
+    expect(
+      barcodeSvg({
+        value: 'ä€',
+        code: CODE,
+        showCode: true,
+        widthMm: 40,
+        heightMm: 22,
+      }),
+    ).toBeNull();
   });
 });
 
