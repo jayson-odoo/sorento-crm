@@ -370,3 +370,19 @@ def test_o5_guard_ungrouped_ledgers_stay_their_own_customer(chat, session_factor
     assert question.get("kind") == "customer_pick" and len(options) == 2, (_reply(result), options)
     assert [set(o["uuids"]) for o in options] == [{ids["ac1"], ids["project"]}, {ids["iborn"], ids["showcase"]}], options
     assert _report_calls(captured) == [], captured
+
+
+def test_o6_the_narrower_s_roster_pick_resumes_the_held_report(chat, session_factory):
+    """Crew chat pass, 25 Oct: a roster the NARROWER raises (no other customer, the group's ungrouped ledgers apart:
+    O5's shape) is answered with the prod pick parse (`order_status` sales_analysis, `group_by` customer). The pick
+    resumes the held sales report for the picked line; it never runs the company analysis ("Sorento or Mocha?")."""
+    ids = _seed_group_with_strays(session_factory, grouped=("ac1", "project"))
+    chat(_t1(), "Dealer zz demo sanitary oct total sales", "ZZT-cpr-o6-1",
+         resolve_services=_only_the_group(_group_with_strays(ids), ids))
+    assert (chat.session().get("open_question") or {}).get("kind") == "customer_pick", chat.session().get("open_question")
+    result, captured = chat(_t2(), "1", "ZZT-cpr-o6-2")
+    assert _calls(captured, ANALYSIS) == [], f"the pick never runs the company analysis: {captured}"
+    calls = _report_calls(captured)
+    assert len(calls) == 1 and set(calls[0].get("customer_ids") or []) == {ids["ac1"], ids["project"]}, captured
+    assert calls[0].get("channel") == "dealer", calls[0]
+    assert calls[0].get("date_from") == "2026-10-01" and calls[0].get("date_to") == "2026-10-31", calls[0]
