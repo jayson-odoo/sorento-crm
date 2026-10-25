@@ -94,6 +94,17 @@ No channel YTD 73,180 -> 1,120,745. All channels YTD 2,269,713 -> 1,740,233.
 the channel for Apr-Aug. Q1 and Q2 below are re-read for (B): Q1 only concerns the 1,080 AutoCount pcs with no SO;
 Q2 "orders" stays distinct SOs, plus one per no-SO DO.
 
+## Ruled and built
+
+Q0: **(b)**, owner 25 Oct ~17:00 (prod has the DOs backfilled from AutoCount; the 20 Oct clone does not, so clone
+numbers under-read). Q1 to Q5 built on the recommendations below, Q6 added; crew confirms them on the hand test. The
+final rule and switches: `PLAN-delivered-date-basis-25oct.md`.
+
+- **Q6** (new) The amount of a DO-linked delivery. (a) The DO line's own total. (b) The SO line pro-rated by the DO qty
+  (what the ranking printed). **Recommend (a)**: what the DO billed, and what the sales report has always printed.
+- **Residual date** (no question, stated): an SO line's delivered qty no DO explains stays on the SO line's own date
+  (`required_date`, else the SO's), the ranking's rule; the Yearly comparison's Ordered keeps the SO order date (G1).
+
 ## Questions (written for (A); re-read under Q0)
 
 - **Q1** Channel asked, DO lines with no SO. (a) Out, silently (today's sales report rule). (b) Out, and the reply adds
