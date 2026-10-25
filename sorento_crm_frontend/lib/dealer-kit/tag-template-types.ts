@@ -268,11 +268,12 @@ export interface PriceBadgeLayerProps {
 }
 
 /**
- * A barcode, drawn as a label plate matching the printed sample (D18): white
- * backing with rounded corners, an optional black product-code strip on top
- * (per-layer `show_code`), the bars, and the guard-split human-readable
- * digits beneath. Always bound to slot `barcode` - a tag has one product, so
- * there is nothing else for it to draw.
+ * A barcode, drawn like the barcode staff already print (D18,
+ * PRICETAG-BARCODE-MATCH): white background, the product code above the bars
+ * in black serif (per-layer `show_code`), the bars, and the digits beneath,
+ * split around the EAN-13 guards. One SVG (`barcodeSvg`) for the canvas, the
+ * preview and the PDF. Always bound to slot `barcode` - a tag has one
+ * product, so there is nothing else for it to draw.
  */
 export interface BarcodeLayerProps {
   kind: 'barcode';

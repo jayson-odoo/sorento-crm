@@ -657,8 +657,13 @@ def should_resend(outcome: str | None) -> bool:
 
 def _post(factory: Callable[[], Any], run: _RowRun, result: Any, status: str, stage: str | None) -> str:
     """POST the turn's actions to the sender, then mark the row (IQ-16). A stamp that
-    matches no row means the claim was lost: nothing is posted (IQ-29)."""
+    matches no row means the claim was lost: nothing is posted (IQ-29). The actions and
+    `ctx` go out as `/chat/turn` would send them (`TurnResult.as_dict`): a marked long
+    reply split into its parts, and the turn's ctx for `sub-send-attachments`."""
+    from app.services.chatbot import engine
+
     outcome: str | None = None
+    actions = engine.split_send_actions(list(result.actions or []))
     for attempt in range(1, MAX_SEND_ATTEMPTS + 1):
         if not _stamp_sending(factory, run.turn_id, run.claimed_at):
             logger.warning("chatbot inbox: turn %s is no longer this drain's; not posted", run.turn_id)
@@ -667,9 +672,10 @@ def _post(factory: Callable[[], Any], run: _RowRun, result: Any, status: str, st
             factory,
             turn_id=run.turn_id,
             contact_id=run.contact,
-            actions=list(result.actions or []),
+            actions=actions,
             reply=result.reply,
             branch_kind=result.branch_kind,
+            ctx=result.ctx,
         )
         if outcome == direct_ingress.SEND_OK:
             _finish(factory, run.turn_id, status, stage, run.claimed_at)

@@ -8427,7 +8427,7 @@ def _run_answer(
             written=written,
             facts_saved=facts_saved,
         )
-        lane_actions = [*actions, *_answer_actions(answer, dry_run=dry_run)]
+        lane_actions = [*actions, *_answer_actions(answer, dry_run=dry_run, reply=reply)]
         turn_trace.record(
             "sent",
             summary="Handed the reply to the caller to send.",
@@ -8750,8 +8750,9 @@ def _run_entities_only_arm(
     )
 
 
-def _answer_actions(answer: Any, *, dry_run: bool) -> list[dict[str, Any]]:
-    """What the caller executes: the message, then any files, in that order."""
+def _answer_actions(answer: Any, *, dry_run: bool, reply: dict[str, Any]) -> list[dict[str, Any]]:
+    """What the caller executes: the message, then any files, in that order. The files
+    action carries the persisted `reply`, as the tail's and the formatter's do."""
     built: list[dict[str, Any]] = []
     words = getattr(answer, "text", "") or ""
     if words.strip():
@@ -8764,7 +8765,12 @@ def _answer_actions(answer: Any, *, dry_run: bool) -> list[dict[str, Any]]:
         )
     if answer.files:
         built.append(
-            {"kind": "send_attachments", "attachments_src": answer.files, "dry_run": dry_run}
+            {
+                "kind": "send_attachments",
+                "attachments_src": answer.files,
+                "reply": dict(reply),
+                "dry_run": dry_run,
+            }
         )
     return built
 
