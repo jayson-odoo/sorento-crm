@@ -548,7 +548,8 @@ def test_a_contact_cannot_pile_up_more_than_200_queued_rows(world, caplog):
     response, _ = world.chat_turn(world.body(contact, extra), bound=10.0)
     assert response.status_code in (200, 429, 503), response.text
     refused = world.row_for(contact, extra)
-    assert refused is None or not iq().inbox_records(refused["trace"]), "the 201st copy must not be queued"
+    # Not queued; IQ-40 (round 2) makes the refusal a failed, staff-visible row.
+    assert refused is None or refused["status"] == "failed", "the 201st copy must not be queued"
     assert sum(1 for r in world.rows(contact) if r["status"] == "queued") == 200
     assert any(r.levelno >= logging.ERROR for r in caplog.records), "the refusal must be logged as an error"
 

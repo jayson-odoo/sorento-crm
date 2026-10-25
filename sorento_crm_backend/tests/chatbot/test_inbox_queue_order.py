@@ -357,6 +357,7 @@ class World:
                     "chatbot_direct_ingress_contacts": row.chatbot_direct_ingress_contacts,
                     "media_sync_wait_seconds": row.media_sync_wait_seconds,
                     "media_burst_limit": row.media_burst_limit,
+                    "media_extraction_timeout_seconds": row.media_extraction_timeout_seconds,
                 }
             row.chatbot_direct_ingress_mode = mode
             row.chatbot_direct_ingress_contacts = "\n".join(sorted(self.covered))
@@ -740,6 +741,8 @@ class MediaWorker:
         self.calls: list[str] = []
         self.lock = threading.Lock()
         self._timers: list[threading.Timer] = []
+        # How far back `stall_first` dates the hung read's `started_at` (0: running since now).
+        self.stall_minutes = 20
         monkeypatch.setattr(media_route, "enqueue_job", self._fake_enqueue)
         monkeypatch.setattr(queue_service, "enqueue_job", self._fake_enqueue)
 
@@ -771,7 +774,7 @@ class MediaWorker:
         elif self.mode == "abandon_first":
             self._later(self.delay, self.abandon, job_id)
         elif self.mode == "stall_first":
-            self._later(self.delay, self.stall, job_id)
+            self._later(self.delay, self.stall, job_id, self.stall_minutes)
         return job
 
     def _later(self, delay: float, fn: Callable[..., None], *args: Any) -> None:
