@@ -91,6 +91,7 @@ import {
   applyLandingFilters,
   landingFieldValue,
   landingFieldsFor,
+  isShownAsDraft,
   sortLandingItems,
   submissionStatusLabel,
   type LandingField,
@@ -149,7 +150,7 @@ type BadgeVariant =
 // reads as "not yet meaningful". The other states map to a unique colour so
 // users can scan a list without reading labels.
 function statusVariant(row: PortalSubmissionSummary): BadgeVariant {
-  if (row.is_draft) return 'secondary';
+  if (isShownAsDraft(row)) return 'secondary';
   const s = (row.status || '').toLowerCase();
   if (s === 'rejected' || s === 'cancelled' || s === 'lost') return 'destructive';
   if (
@@ -169,7 +170,7 @@ function statusVariant(row: PortalSubmissionSummary): BadgeVariant {
 // Tailwind classes that tint the card background + border by status. Kept
 // subtle so text stays legible.
 function statusCardClass(row: PortalSubmissionSummary): string {
-  if (row.is_draft) {
+  if (isShownAsDraft(row)) {
     return 'bg-card border-border';
   }
   const s = (row.status || '').toLowerCase();

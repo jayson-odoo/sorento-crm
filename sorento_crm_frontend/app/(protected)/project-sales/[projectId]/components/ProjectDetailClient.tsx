@@ -328,6 +328,8 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
               <Fact label="Registered company / SPV" value={project.registered_company_name} />
               <Fact label="Location" value={project.location} />
               <Fact label="Address" value={project.address} />
+              <Fact label="State" value={project.state} />
+              <Fact label="Mukim" value={project.mukim} />
               <Fact label="Project type" value={project.type_name} />
               <Fact label="Template" value={project.template_name} />
               <Fact label="Reference" value={project.admin_ref} />

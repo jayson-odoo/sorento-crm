@@ -481,6 +481,17 @@ describe('the overview, read as sections', () => {
   });
 });
 
+describe('state and mukim on the overview (PROJECT-REG-PORTAL D12)', () => {
+  it('shows State and Mukim as facts of the development', () => {
+    projectFixture = project({ state: 'Johor', mukim: 'Tebrau' } as Partial<Project>);
+    renderDetail();
+    expect(screen.getByText('State')).toBeInTheDocument();
+    expect(screen.getByText('Johor')).toBeInTheDocument();
+    expect(screen.getByText('Mukim')).toBeInTheDocument();
+    expect(screen.getByText('Tebrau')).toBeInTheDocument();
+  });
+});
+
 describe('owner hand-test, 13 Oct', () => {
   it('puts nothing under the title: no developer/location line and no placeholder sentence', () => {
     projectFixture = project({ developer_name: 'Setia Land', location: 'Setia Alam' });

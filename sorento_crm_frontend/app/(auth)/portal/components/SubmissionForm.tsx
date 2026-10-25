@@ -1652,7 +1652,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           .join(', ')}`
       : null;
 
-  const statusBadge = detail?.is_draft
+  const statusBadge = detail?.is_draft && detail.status !== 'rejected'
     ? { label: 'Draft', variant: 'warning' as const }
     : detail?.status
       ? {
@@ -2219,7 +2219,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         </div>
       ) : (
         <div className="flex flex-wrap gap-2 justify-end pt-2">
-          {submissionId && detail?.is_draft && (
+          {/* A rejected registration is editable but the server deletes drafts only. */}
+          {submissionId && detail?.is_draft && detail.status !== 'rejected' && (
             <Button
               variant="outline"
               className="text-destructive border-destructive/50 hover:bg-destructive/10 mr-auto"

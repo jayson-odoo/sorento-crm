@@ -165,3 +165,44 @@ describe('SubmissionForm - project_registration has no comments and no attachmen
     expect(dialogProps.last?.canAttach).toBe(false);
   });
 });
+
+describe('SubmissionForm - project_registration rejected (round 2, D2 and N2)', () => {
+  const rejected = () =>
+    draft({ status: 'rejected', is_draft: true, is_editable: true, reject_reason: 'Already registered' });
+
+  it('badges a rejected registration Rejected, not Draft', async () => {
+    asMock(fetchSubmission).mockResolvedValue(rejected());
+    const { container } = render(
+      <SubmissionForm kind="project_registration" submissionId="reg-1" />,
+    );
+    await waitFor(() =>
+      expect(container.querySelector('#title')).not.toBeNull(),
+    );
+
+    expect(screen.getByText('Rejected')).toBeInTheDocument();
+    expect(screen.queryByText('Draft')).toBeNull();
+  });
+
+  it('does not offer to delete a rejected registration, the server refuses it', async () => {
+    asMock(fetchSubmission).mockResolvedValue(rejected());
+    const { container } = render(
+      <SubmissionForm kind="project_registration" submissionId="reg-1" />,
+    );
+    await waitFor(() =>
+      expect(container.querySelector('#title')).not.toBeNull(),
+    );
+
+    expect(screen.queryByRole('button', { name: /delete draft/i })).toBeNull();
+  });
+
+  it('a real draft still offers Delete draft', async () => {
+    const { container } = render(
+      <SubmissionForm kind="project_registration" submissionId="reg-1" />,
+    );
+    await waitFor(() =>
+      expect(container.querySelector('#title')).not.toBeNull(),
+    );
+
+    expect(screen.getByRole('button', { name: /delete draft/i })).toBeInTheDocument();
+  });
+});
