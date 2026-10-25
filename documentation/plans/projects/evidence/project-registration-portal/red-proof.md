@@ -145,3 +145,15 @@ Nothing survived in these rounds.
 | 30-31 | FE: Date unformatted / not shown | "shows a read-only Date, the submitted date as DD/MM/YYYY" |
 | 32-34 | FE: review shows project type / company / brands again | the two review-trim tests |
 | 35-36 | FE: existing-project link removed / not parsed | "shows "Already registered as <code> <title>" ... link"; the two existingProject service tests |
+
+### Round 3b (head 6a0a9ed4; reviewer report 5: READY)
+
+| Mutation | Caught by |
+|---|---|
+| Downgrade `next_value` uses LEAST instead of GREATEST | test_downgrade_keeps_the_counter_past_every_existing_prj_code |
+| Downgrade max PRJ code without the +1 | test_downgrade_keeps_the_counter_past_every_existing_prj_code |
+| Downgrade keeps `last_reset_key` | SURVIVED (equivalent: with reset `none` the key is never compared) |
+| Downgrade `GREATEST(1, max+1)` instead of `GREATEST(next_value, max+1)` | SURVIVED (only reuses codes that no longer exist; no collision) |
+| Portal Date cut from the UTC string | "a submission at 17:30 UTC on the 24th reads 25/10/2026" |
+| Portal Date shown raw | same test + "shows a read-only Date, the submitted date as DD/MM/YYYY" |
+| portal-client drops `&kind=` (the round-3 survivor) | "lookupDebtors > asks with kind=project_registration when the form passes it" (also checked by the captain) |
