@@ -97,7 +97,7 @@ def test_render_order_ends_with_customer():
 
 
 def test_a_category_channel_location_or_brand_word_feeds_no_customer_row():
-    cust = [_row("Tiles"), _row("Dealer"), _row("ZZBRW"), _row("Zzsrt"), _row("Tilesmaster Trading")]
+    cust = [_row("Tiles"), _row("Dealer"), _row("ZZBRW"), _row("Zzsrt"), _row("Zztilesmith Supplies")]
     other = [
         ll.LookupRow("category", "c", "Tiles", ("Tiles",)),
         ll.LookupRow("sales_channel", "dealer", "dealer", ("dealer",)),
@@ -109,7 +109,7 @@ def test_a_category_channel_location_or_brand_word_feeds_no_customer_row():
         assert ll.shortlist(word, rows, None).get("customer", []) == [], word
     assert ll.shortlist("zzsrt", rows, None, brand_words=frozenset({"zzsrt"})).get("customer", []) == []
     # control: a word that is no other list's word still reaches its customer
-    assert labels(ll.shortlist("tilesmaster", rows, None), "customer") == ["Tilesmaster Trading"]
+    assert labels(ll.shortlist("zztilesmith", rows, None), "customer") == ["Zztilesmith Supplies"]
 
 
 # ------------------------------------------------------------------ load_rows
