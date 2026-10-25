@@ -59,7 +59,7 @@ form.q .state{font-size:12.5px;color:var(--mut);margin-left:10px}
 <tr><td>sales agents / promotion kinds / locations</td><td class="n">-</td><td class="n">100%</td><td class="n">-</td><td class="n">10 / 4 / 1</td><td class="n">-</td><td><span class="tag stop">NOT ENOUGH DATA</span></td></tr>
 </table></div>
 <div class="card small"><b>What it says.</b> Meaning + spelling clearly beats today's spelling-only matching on <b>customer names</b> (96% vs 57% at a usable size) and <b>categories</b> (93-96% vs 85%). On file types and brands, spelling already finds them. But in 800 random messages only <b>22 name a category and 6 name a spec</b>: the two lists you care most about are the two with the least real data, so specs cannot be judged yet and categories pass only at the edge.</div>
-<h2 style="border-top:none;margin-top:18px">How it works: one design for every list</h2>
+<h2 style="border-top:none;margin-top:18px">How it works: one general design for all entities</h2>
 <div class="card" style="padding:10px 12px">
 <svg viewBox="0 0 1040 340" width="100%" role="img" aria-label="Every list looked up before the parser; document numbers and product codes looked up exactly after it" style="font-family:inherit">
 <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8a93a6"/></marker></defs>
@@ -71,7 +71,7 @@ form.q .state{font-size:12.5px;color:var(--mut);margin-left:10px}
 <text x="264" y="44" font-size="13" font-weight="700" fill="#1d2330">1. Look-up BEFORE the parser (code)</text>
 <text x="264" y="66" font-size="12.5" fill="#1d2330">every word piece vs every list:</text>
 <text x="264" y="83" font-size="12.5" fill="#1d2330">categories, specs, file types, brands,</text>
-<text x="264" y="100" font-size="12.5" fill="#1d2330">salespeople, customers ...</text>
+<text x="264" y="100" font-size="12.5" fill="#1d2330">salespeople, locations, customers</text>
 <text x="264" y="119" font-size="12" fill="#1d6b48">meaning + spelling, any language</text>
 <text x="264" y="137" font-size="12" fill="#1d6b48">customers: stricter cut-off</text>
 <line x1="522" y1="85" x2="572" y2="85" stroke="#8a93a6" stroke-width="2" marker-end="url(#ar)"/>
@@ -165,9 +165,9 @@ form.q .state{font-size:12.5px;color:var(--mut);margin-left:10px}
 <tr><td>2</td><td>spec words (colour, finish, material ...)</td><td><span class="tag free">GO</span> 98.0%, 51</td><td>same</td><td class="n">~6</td><td><b>APPROVED</b>, after 1</td></tr>
 <tr><td>3</td><td>file types (attachment types)</td><td><span class="tag free">GO</span> 100%, 137</td><td>no worse than today (prompt diet: list text out, retrieval in)</td><td class="n">~5</td><td><b>APPROVED</b>, after 2</td></tr>
 <tr><td>4</td><td>brands</td><td><span class="tag free">GO</span> 98.6%, 72</td><td>no worse than today (prompt diet)</td><td class="n">~5</td><td><b>APPROVED</b>, after 3</td></tr>
-<tr><td>5</td><td>salespeople</td><td>third pull takes agent asks from "sales report for agent X" questions; scored when it lands</td><td>same as 1</td><td class="n">~5</td><td>after its data passes</td></tr>
-<tr><td>-</td><td>locations</td><td>few real messages (5)</td><td>-</td><td class="n">-</td><td>stays as today (your call)</td></tr>
-<tr><td>6</td><td>customer names: one more list (stricter cut-off), tested head to head with "look up only the customer words after the parser"</td><td>list style at 0.5: 87% recall in the probe; after-parser style: no wrong lines on category messages</td><td>the parser filters the noise: a WRONG CUSTOMER PICKED (esp. on category-only messages such as tiles) is the failure that counts, then recall; "after the parser" style runs only for comparison</td><td class="n">~10</td><td><b>APPROVED</b>, last</td></tr>
+<tr><td>5</td><td>salespeople</td><td>only ~25 real messages ever name one: no recall bar (your call)</td><td>no worse than today on TRAIN + ranking set; the few real rows (under 30) and written test phrases reported apart</td><td class="n">~5</td><td><b>APPROVED</b>, after brands</td></tr>
+<tr><td>6</td><td>locations (warehouses)</td><td>only ~21 real messages ever name one: no recall bar (your call)</td><td>same as salespeople</td><td class="n">~5</td><td><b>APPROVED</b>, after salespeople</td></tr>
+<tr><td>7</td><td>customer names: one more list (stricter cut-off), tested head to head with "look up only the customer words after the parser"</td><td>list style at 0.5: 87% recall in the probe; after-parser style: no wrong lines on category messages</td><td>the parser filters the noise: a WRONG CUSTOMER PICKED (esp. on category-only messages such as tiles) is the failure that counts, then recall; "after the parser" style runs only for comparison</td><td class="n">~10</td><td><b>APPROVED</b>, last (after locations)</td></tr>
 <tr><td>-</td><td>spec sizes (200mm, 1200mm)</td><td><span class="tag stop">NO-GO</span> 51.7%</td><td>-</td><td class="n">-</td><td>stay in the prompt (read by code later)</td></tr>
 </table></div>
 <p class="small mut">Each step: 3 runs on each side against today's prompt (v63), OpenAI eval key only, every run logged, early stop on a missed bar. Costs for steps 2-5 reuse step 1's baseline runs when the code has not moved; otherwise add about USD 3.5.</p>

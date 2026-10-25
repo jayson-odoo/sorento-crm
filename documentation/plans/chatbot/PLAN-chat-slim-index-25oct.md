@@ -12,8 +12,9 @@ candidates to the parser, which decides. Lavish page: `PLAN-chat-slim-index-25oc
 Slice WC (the water-closet code bugs) keeps its UAC: `chat-slim-index-25oct-acceptance-criteria.md`.
 Customer names are masked (public repo).
 
-## One design for every list (owner 25 Oct: "why cant we use the same design as list ah, can keep it for DO")
-1. Every list (categories, spec words, file types, brands, salespeople, customers): code looks the message's word
+## One general design for all entities (owner 25 Oct: "why cant we use the same design as list ah, can keep it for DO";
+## "please just move them into the same architecture so we have one unified general design for all the entities")
+1. Every list (categories, spec words, file types, brands, salespeople, locations, customers): code looks the message's word
    pieces up BEFORE the parser (meaning + spelling, any language) and shows short candidate lists; customers use a
    stricter cut-off and their lines are for use only when the message names a customer. The parser picks one or none.
 2. Product codes and document numbers (DO / SO / PO): exact look-up AFTER the parser (exact, then did-you-mean), never
@@ -31,9 +32,9 @@ that counts is a WRONG CUSTOMER PICKED (esp. on category-only messages such as "
 | 2 | spec word values | GO: 0.980, n=51 | same | ~6 | APPROVED, after 1 |
 | 3 | file types (attachment types) | GO: 1.000, n=137 | NO REGRESSION vs v63 (goal: prompt diet, list text out, retrieval in) | ~5 | APPROVED, after 2 |
 | 4 | brands | GO: 0.986, n=72 | NO REGRESSION vs v63 (prompt diet) | ~5 | APPROVED, after 3 |
-| 5 | salespeople | pull 3 sources agent asks from sales-report-for-an-agent asks; scored when it lands | GO on data first, then same gate shape | ~5 | after data passes; spend after 4 |
-| - | locations | few real messages (5) | - | - | stays as today (owner accepts) |
-| 6 | customer names: one more list, stricter floor (0.5/0.5), head to head with phrase-first after the parser | probe: list style at 0.5 recall 0.872, 0.66 wrong lines on name-nothing msgs, 5.15 on category-only; phrase-first 0 on both | fewest wrong customers PICKED by the parser, then recall; list style unless it picks wrong ones | ~10 (re-estimated, two styles) | APPROVED, last |
+| 5 | salespeople | ~25 real texts in the whole history name one (pull 3: 10): no recall bar, owner accepts | NO REGRESSION vs v63 on TRAIN + R5; the real rows (n<30) and synthetic probes from agents-mapped.json reported apart, labelled synthetic | ~5 | APPROVED, after brands |
+| 6 | locations (warehouses) | ~21 real texts name one (pull 3: 15): no recall bar, owner accepts | same as salespeople (synthetic probes from the warehouse list) | ~5 | APPROVED, after salespeople |
+| 7 | customer names: one more list, stricter floor (0.5/0.5), head to head with phrase-first after the parser | probe: list style at 0.5 recall 0.872, 0.66 wrong lines on name-nothing msgs, 5.15 on category-only; phrase-first 0 on both | fewest wrong customers PICKED by the parser, then recall; list style unless it picks wrong ones | ~10 (re-estimated, two styles) | APPROVED, last |
 | - | spec number values (sizes) | NO-GO: 0.517 | - | - | stays in the prompt; a size is read by code (separate idea) |
 
 Later-step costs assume arm A's v63 baseline runs are reused on the same main; a new main adds ~USD 3.5.
