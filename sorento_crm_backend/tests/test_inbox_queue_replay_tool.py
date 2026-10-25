@@ -1497,3 +1497,43 @@ def test_a_compound_restart_command_that_outlives_its_bound_has_its_whole_group_
         if child is not None:
             with contextlib.suppress(ProcessLookupError):
                 os.kill(child, signal.SIGKILL)
+
+
+# --------------------------------------------------------------------------- #
+# Round 9 (reviewer READY, should-fix): a refusal tells the operator what to SET.
+#
+# * The no_proxy refusals allow the copy's LLM host: the crew recipe lists it next to the
+#   local hosts, and a no_proxy without it sends every LLM call into the dead proxy.
+# * An empty or left-out RESPOND_BASE_URL is refused with its own rule ("set it to a .invalid
+#   host"), not the shared "must be empty" text, which the empty value it names already is.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"no_proxy": None, "NO_PROXY": None}, {"no_proxy": "*"}],
+    ids=["no_proxy-missing", "no_proxy-star"],
+)
+def test_a_no_proxy_refusal_allows_the_copys_llm_host(tool, blank_db, overrides):
+    _neutral_db(blank_db)
+    reasons = [r for r in tool.check_neutralised(blank_db, _crew_env(**overrides)) if "no_proxy" in r.lower()]
+    assert reasons, "the no_proxy problem was not refused"
+    assert all("LLM host" in r for r in reasons), f"the refusal must allow the copy's LLM host: {reasons}"
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["", None, "DROP"],
+    ids=["empty", "bare-line", "left-out"],
+)
+def test_an_unset_respond_base_url_is_told_to_set_a_dot_invalid_host(tool, blank_db, value):
+    _neutral_db(blank_db)
+    env = _crew_env()
+    if value == "DROP":
+        env.pop("RESPOND_BASE_URL")
+    else:
+        env["RESPOND_BASE_URL"] = value
+    reasons = [r for r in tool.check_neutralised(blank_db, env) if "respond_base_url" in r.lower()]
+    assert len(reasons) == 1, reasons
+    assert "must be empty" not in reasons[0], f"an empty value is not fixed by emptying it: {reasons[0]}"
+    assert "set" in reasons[0] and ".invalid" in reasons[0], reasons[0]
