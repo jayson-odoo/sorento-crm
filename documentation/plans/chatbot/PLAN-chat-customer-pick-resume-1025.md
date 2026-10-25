@@ -83,9 +83,12 @@ customer: two lines, option 1 carries the four, the pick reports them), O4 (only
 (the owner's edit: the group of three vs "(SHOWCASE)"; pick 1 reports the three). Kill: `UNGROUPED_JOINS_NAME_MATCHED_GROUP`
 True fails O5.
 
-## Narrower roster carries the asking status (crew chat pass, 25 Oct)
+## Narrower roster carries the asking ask (crew chat pass + review, 25 Oct)
 When the gate does not ask, the narrower raises the customer roster (`turn/apply.py` `_narrow_and_plan`), and its pending
-carried no `status` (the gate's picker does, `answer_bridge._offer_ask_payload`). The prod pick parse (`order_status`
-sales_analysis) then ran the company analysis ("Sorento or Mocha?"). Fix: after `_narrow_and_plan`, a `customer_pick` /
-`product_pick` over a `sales_report` / `sales_analysis` ask carries that status. Test O6 (red commit ef3cce4b first).
+carried neither the asking `status` nor a ranking's held fields (the gate's picker carries both). The prod pick parse
+(`order_status` sales_analysis) then ran the company analysis ("Sorento or Mocha?"), and a ranking's pick ran a plain sales
+report (reviewer). Fix: one rule, `pending.asked_report(verdict)` (status, and `ranking_ask` for sales_ranking /
+top_selling), used by the gate's picker (`answer_bridge._offer_ask_payload`) and, after `_narrow_and_plan`, by a narrower
+`customer_pick` / `product_pick` over a sales figure ask (`contracts.SALES_FIGURE_STATUSES`; outstanding asks untouched).
+Tests O6 (red ef3cce4b) and O8 (the ranking pick, red first).
 "water closet" read as a promotion is out of scope (separate lane).

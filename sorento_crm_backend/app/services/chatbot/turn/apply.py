@@ -62,6 +62,7 @@ from app.services.chatbot.turn.pending import (
     SALES_ANALYSIS_COMPANY_KIND,
     Pending,
     ask as pending_ask,
+    asked_report,
     is_roster,
     offered_companies,
     with_answered_positions,
@@ -3516,17 +3517,17 @@ def _apply(
             )
         ),
     )
-    asked_status = verdict.get("order_status")
     if (
         plan.ask is not None
         and plan.ask.kind in ("customer_pick", "product_pick")
-        and asked_status in ("sales_report", "sales_analysis")
+        and verdict.get("order_status") in contracts.SALES_FIGURE_STATUSES
         and not plan.ask.payload.get("status")
     ):
-        # CHAT-CUSTOMER-PICK-RESUME (crew chat pass, 25 Oct): the narrower's roster over a sales figure ask carries
-        # the asking turn's status, as the gate's own picker does (`answer_bridge._offer_ask_payload`), so the pick
-        # resumes THAT report. Without it a pick parsed `sales_analysis` ran the company analysis ("Sorento or Mocha?").
-        plan = replace(plan, ask=replace(plan.ask, payload={**plan.ask.payload, "status": asked_status}))
+        # CHAT-CUSTOMER-PICK-RESUME (crew chat pass + review, 25 Oct): the narrower's roster over a sales figure ask
+        # carries the asking turn's ask (its status, a ranking's held fields), by the gate picker's own rule
+        # (`pending.asked_report`), so the pick resumes THAT ask. Without it a pick parsed `sales_analysis` ran the
+        # company analysis ("Sorento or Mocha?") and a ranking's pick ran a plain sales report.
+        plan = replace(plan, ask=replace(plan.ask, payload={**plan.ask.payload, **asked_report(verdict)}))
     _exact_code_when_a_quantity_is_named(plan, verdict, trace)
 
     # ESCALATION-CONTROL: a barred contact's named-team escalation is still the escalation
