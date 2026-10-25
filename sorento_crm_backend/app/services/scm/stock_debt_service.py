@@ -31,7 +31,7 @@ from decimal import Decimal
 from io import BytesIO
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, func, or_, tuple_
 from sqlalchemy.orm import Session
 
 from app.models.base import get_company_scope
@@ -1649,6 +1649,23 @@ class StockDebtService:
         out-of-span hold is (AC-S2-1b). Neither given (a caller that only wants the holds
         listed), every converted hold is returned.
 
+        **A placement on a PO line follows the goods** (SUPPLY-SPO-LINK, owner 25 Oct 2026:
+        once a PO line is received it is on-hand quantity and is not supply; a partly
+        received line counts only what is still on order). `qty_received` on a PO line is
+        the AutoCount TRANSFER onto a shipping order (`ProjectSupplyService.
+        _po_received_by_so_line_ref`), so what the line transferred is on the SPO
+        allocations it became, matched by the OI page's own key (OI-SPO-EXACT:
+        `from_po_number`, trimmed `from_po_line_ref`, product), and the placement is held
+        there first, each allocation through the SPO rule above (incoming: an SPO hold;
+        landed: an on-hand hold at its bin). Only what is left is held on the PO itself, and
+        only for what the line still has ON ORDER (`open_po_line_clauses()`, `_po_rows`'s
+        own test). Handed on whole as a PO hold, a placement on a transferred line met
+        AC-S2-1b's stood-up branch: a phantom PO (no bin, no receipt) counted as supply
+        while the landed goods covered another line. Each allocation and each PO line is a
+        pool the placements share in the order they were made, so two placements never
+        claim the same units. Whatever is neither transferred nor on order (a short-closed
+        line) holds nothing.
+
         **An allocation hold is a promise about stock too, and walks the same rule**
         (STOCK-DEBT-STALE-PIN, owner 14 Oct 2026: SO424555's 126 pinned at BRW-IB read
         "Covered by: On hand BRW-IB", Short 0, with the bin at 0 - the pin was confirmed
@@ -1729,6 +1746,13 @@ class StockDebtService:
                 SPOAllocation.warehouse_id.label("spo_warehouse_id"),
                 Warehouse.warehouse_code.label("spo_warehouse_code"),
                 InboundShipment.actual_arrival_date.label("spo_arrived"),
+                # SUPPLY-SPO-LINK: is the placed PO line still on order, and what did it
+                # transfer? NULL for an SPO link, whose branch never reads them.
+                and_(*ProjectSupplyService.open_po_line_clauses()).label("po_open"),
+                PurchaseOrderLine.qty_ordered.label("po_ordered"),
+                PurchaseOrderLine.qty_received.label("po_received"),
+                func.btrim(PurchaseOrderLine.source_ref).label("po_line_ref"),
+                PurchaseOrderLine.product_id.label("po_product_id"),
             )
             .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
             .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
@@ -1793,6 +1817,77 @@ class StockDebtService:
                 )
             )
 
+        def spo_hold(line_key: str, qty: float, spo, row) -> Optional[Hold]:
+            """A placement's quantity on one SPO allocation (`spo`, a row carrying the
+            `spo_*` columns), named by the placement `row` it came through."""
+            allocated = _float(spo.spo_allocated)
+            received = _float(spo.spo_received)
+            if not (bool(spo.spo_incoming) and allocated > received):
+                # SPO-RECEIVED-PIN (see the docstring): the document is not supply any
+                # more, so the placement holds what it brought INTO THE BIN, and only
+                # that. An on-hand hold is a decision on stock, never a placement, so it
+                # names no order inquiry (`StockDebtAssignedFromOnHand` carries none).
+                take = min(
+                    qty,
+                    _landed_qty(
+                        allocated,
+                        received,
+                        arrived=spo.spo_arrived is not None,
+                        receipt_status=spo.spo_receipt_status,
+                    ),
+                )
+                if take <= EPSILON or not spo.spo_warehouse_id:
+                    return None
+                bin_id = str(spo.spo_warehouse_id)
+                if found_empty(str(spo.spo_product_id), bin_id):
+                    # The read looked at this bin and it holds nothing of the product:
+                    # the landed goods are gone, so the promise covers nobody (AC-3).
+                    return None
+                return Hold(
+                    line_key=line_key,
+                    supply_key=f"on_hand:{bin_id}",
+                    qty=take,
+                    kind=KIND_ON_HAND,
+                    warehouse=spo.spo_warehouse_code,
+                    # STOCK-DEBT-LENDABLE: the line's landed goods, lendable when the
+                    # line can wait (see the docstring).
+                    lendable=line_key in (lendable_lines or ()),
+                )
+            return Hold(
+                line_key=line_key,
+                supply_key=f"spo:{spo.spo_allocation_id}",
+                qty=qty,
+                kind=KIND_SPO,
+                ref=_spo_ref(spo.spo_number),
+                spo_number=spo.spo_number,
+                spo_line_number=spo.spo_line_number,
+                # R29 addendum: this hold IS a placement (an `order_inquiry_links`
+                # row), so it always names the order inquiry it came through.
+                oi_number=row.inquiry_no,
+                oi_id=str(row.order_inquiry_id),
+            )
+
+        # SUPPLY-SPO-LINK (see the docstring): the SPO allocations each placed PO line was
+        # transferred onto, and what each document still has for the placements to share.
+        po_links = [
+            row for row in links
+            if not row.spo_allocation_id and row.po_line_id and include_po
+        ]
+        transferred_to = self._transferred_allocations(po_links)
+        po_left: Dict[str, float] = {
+            str(row.po_line_id): (
+                max(_float(row.po_ordered) - _float(row.po_received), 0.0)
+                if row.po_open
+                else 0.0
+            )
+            for row in po_links
+        }
+        spo_left: Dict[str, float] = {
+            str(spo.spo_allocation_id): _float(spo.spo_allocated)
+            for spos in transferred_to.values()
+            for spo in spos
+        }
+
         for row in links:
             qty = _float(row.qty)
             if qty <= 0:
@@ -1802,11 +1897,29 @@ class StockDebtService:
                 # wants on hand and SPO only; neither path passes it since R42.
                 if not include_po or not row.po_line_id:
                     continue
+                rest = qty
+                for spo in transferred_to.get(
+                    (row.po_number, row.po_line_ref, str(row.po_product_id)), ()
+                ):
+                    take = min(rest, spo_left[str(spo.spo_allocation_id)])
+                    if take <= EPSILON:
+                        continue
+                    spo_left[str(spo.spo_allocation_id)] -= take
+                    rest -= take
+                    hold = spo_hold(str(row[0]), take, spo, row)
+                    if hold is not None:
+                        out.append(hold)
+                    if rest <= EPSILON:
+                        break
+                take = min(rest, po_left[str(row.po_line_id)])
+                if take <= EPSILON:
+                    continue
+                po_left[str(row.po_line_id)] -= take
                 out.append(
                     Hold(
                         line_key=str(row[0]),
                         supply_key=f"po:{row.po_line_id}",
-                        qty=qty,
+                        qty=take,
                         kind=KIND_PO,
                         ref=f"PO {row.po_number}" if row.po_number else "PO",
                         oi_number=row.inquiry_no,
@@ -1818,59 +1931,76 @@ class StockDebtService:
                     )
                 )
                 continue
-            allocated = _float(row.spo_allocated)
-            received = _float(row.spo_received)
-            if not (bool(row.spo_incoming) and allocated > received):
-                # SPO-RECEIVED-PIN (see the docstring): the document is not supply any
-                # more, so the placement holds what it brought INTO THE BIN, and only
-                # that. An on-hand hold is a decision on stock, never a placement, so it
-                # names no order inquiry (`StockDebtAssignedFromOnHand` carries none).
-                take = min(
-                    qty,
-                    _landed_qty(
-                        allocated,
-                        received,
-                        arrived=row.spo_arrived is not None,
-                        receipt_status=row.spo_receipt_status,
-                    ),
-                )
-                if take <= EPSILON or not row.spo_warehouse_id:
-                    continue
-                bin_id = str(row.spo_warehouse_id)
-                if found_empty(str(row.spo_product_id), bin_id):
-                    # The read looked at this bin and it holds nothing of the product:
-                    # the landed goods are gone, so the promise covers nobody (AC-3).
-                    continue
-                out.append(
-                    Hold(
-                        line_key=str(row[0]),
-                        supply_key=f"on_hand:{bin_id}",
-                        qty=take,
-                        kind=KIND_ON_HAND,
-                        warehouse=row.spo_warehouse_code,
-                        # STOCK-DEBT-LENDABLE: the line's landed goods, lendable when the
-                        # line can wait (see the docstring).
-                        lendable=str(row[0]) in (lendable_lines or ()),
-                    )
-                )
-                continue
-            supply_key = f"spo:{row.spo_allocation_id}"
-            kind, ref = KIND_SPO, _spo_ref(row.spo_number)
-            out.append(
-                Hold(
-                    line_key=str(row[0]),
-                    supply_key=supply_key,
-                    qty=qty,
-                    kind=kind,
-                    ref=ref,
-                    spo_number=row.spo_number,
-                    spo_line_number=row.spo_line_number,
-                    # R29 addendum: this hold IS a placement (an `order_inquiry_links`
-                    # row), so it always names the order inquiry it came through.
-                    oi_number=row.inquiry_no,
-                    oi_id=str(row.order_inquiry_id),
-                )
+            hold = spo_hold(str(row[0]), qty, row, row)
+            if hold is not None:
+                out.append(hold)
+        return out
+
+    def _transferred_allocations(
+        self, po_links: Sequence[Any]
+    ) -> Dict[Tuple[str, str, str], List[Any]]:
+        """SUPPLY-SPO-LINK: by `(po_number, trimmed source_ref, product_id)`, the SPO
+        allocations each placed PO line was transferred onto - OI-SPO-EXACT, the key
+        `project_order_inquiry_service._append_derived_spo_entries` resolves a PO link's
+        SPOs by - earliest arrival first. One read for every placement.
+
+        Every visible allocation, not only the open ones: a landed allocation is where the
+        goods ARE, and `_holds` turns it into an on-hand hold. A PO line with no
+        `source_ref` reaches nothing. The company predicate is stated by hand, as the OI
+        reader states it: the join is on plain text off the AutoCount feed.
+        """
+        keys = {
+            (row.po_number, row.po_line_ref, str(row.po_product_id))
+            for row in po_links
+            if row.po_number and row.po_line_ref and row.po_product_id
+        }
+        if not keys:
+            return {}
+        company_predicate = build_company_predicate(
+            SPOAllocation, get_company_scope(self.db)
+        )
+        rows = (
+            self.db.query(
+                SPOAllocation.from_po_number,
+                func.btrim(SPOAllocation.from_po_line_ref).label("from_ref"),
+                SPOAllocation.id.label("spo_allocation_id"),
+                SPOAllocation.spo_number,
+                SPOAllocation.spo_line_number,
+                and_(*spo_supply.open_incoming_clauses()).label("spo_incoming"),
+                SPOAllocation.allocated_quantity.label("spo_allocated"),
+                SPOAllocation.quantity_received.label("spo_received"),
+                SPOAllocation.receipt_status.label("spo_receipt_status"),
+                SPOAllocation.product_id.label("spo_product_id"),
+                SPOAllocation.warehouse_id.label("spo_warehouse_id"),
+                Warehouse.warehouse_code.label("spo_warehouse_code"),
+                InboundShipment.actual_arrival_date.label("spo_arrived"),
             )
+            .outerjoin(
+                InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id
+            )
+            .outerjoin(Warehouse, Warehouse.id == SPOAllocation.warehouse_id)
+            .filter(
+                tuple_(
+                    SPOAllocation.from_po_number,
+                    func.btrim(SPOAllocation.from_po_line_ref),
+                    SPOAllocation.product_id,
+                ).in_(sorted(keys)),
+                *spo_supply.visible_line_clauses(),
+                *((company_predicate,) if company_predicate is not None else ()),
+            )
+            .order_by(
+                SPOAllocation.expected_date.asc().nullslast(),
+                SPOAllocation.spo_number,
+                SPOAllocation.spo_line_number,
+                SPOAllocation.id,
+            )
+            .all()
+        )
+        out: Dict[Tuple[str, str, str], List[Any]] = {}
+        for row in rows:
+            out.setdefault(
+                (row.from_po_number, row.from_ref, str(row.spo_product_id)), []
+            ).append(row)
         return out
 
     def _stand_in_floors(
