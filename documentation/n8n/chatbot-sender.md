@@ -28,8 +28,8 @@ spine's `duplicate` arm sends nothing.
 
    | node | spine node to copy | fields on the action |
    |---|---|---|
-   | `send_message` | the sendmsg sub (`sorento-sub-respond-sendmsg-respond...`, as `send-crm-reply`) | `text`, `quick_replies` |
-   | `send_attachments` | `sub-send-attachments` (as `send-attachments`) | `attachments_src`, `reply`; plus the body's `ctx` (the sub addresses the customer by `ctx.contact.id`) |
+   | `send_message` | the sendmsg sub (`sorento-sub-respond-sendmsg-respond...`, as `send-crm-reply`) | `text`, `quick_replies`; plus `contact` = `ctx.contact` (else `{id: contact_id}`): the sub saves the contact's phone and name with the message record |
+   | `send_attachments` | `sub-send-attachments` (as `send-attachments`) | `attachments_src`, `reply`; plus the body's `ctx` (the sub addresses the customer by `ctx.contact.id`), with `ctx.text.message.message.attachment` deep-defaulted to `{}` so the link fallback does not throw on a turn with no text or attachment |
    | `update_contact_fields` | the spine's contact-field write (clears `is_human_intervened`) | `fields` (`{name: value}`) |
 
    If the spine's executor is easier to copy as a block, paste it after `action-kind`

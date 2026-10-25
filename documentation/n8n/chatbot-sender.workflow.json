@@ -192,7 +192,8 @@
           "value": {
             "contact_id": "={{ $json.contact_id }}",
             "text": "={{ $json.action.text }}",
-            "quick_replies": "={{ $json.action.quick_replies }}"
+            "quick_replies": "={{ $json.action.quick_replies }}",
+            "contact": "={{ $json.ctx?.contact ?? { id: $json.contact_id } }}"
           },
           "matchingColumns": [],
           "schema": [],
@@ -223,7 +224,7 @@
             "contact_id": "={{ $json.contact_id }}",
             "attachments_src": "={{ $json.action.attachments_src }}",
             "reply": "={{ $json.action.reply }}",
-            "ctx": "={{ $json.ctx }}"
+            "ctx": "={{ { ...($json.ctx ?? {} ), text: { ...($json.ctx?.text ?? {} ), message: { ...($json.ctx?.text?.message ?? {} ), message: { ...($json.ctx?.text?.message?.message ?? {} ), attachment: $json.ctx?.text?.message?.message?.attachment ?? {} } } }, contact: $json.ctx?.contact ?? { id: $json.contact_id } } }}"
           },
           "matchingColumns": [],
           "schema": [],
