@@ -255,6 +255,9 @@ describe('PO lightbox lines - the book\'s own S/O linkage, a third surface for s
         qty_received: '0',
         remaining: '35',
         location: 'BRW-BB',
+        // SUPPLY-SPO-LINK: a moved line, so the SPO column holds a link, not a second
+        // dash beside the S/O cell this block asserts on.
+        spo_numbers: ['SPO-2026/09-0107'],
         ...extra,
       },
     ],
@@ -368,6 +371,7 @@ describe('PO lightbox lines - the book\'s own S/O linkage, a third surface for s
           location: 'BRW-BB',
           book_so_number: null,
           book_so_unresolved: false,
+          spo_numbers: ['SPO-2026/09-0107'],
         },
       ],
       allocations: [],
@@ -1107,5 +1111,77 @@ describe('R16 (owner rulings, 25 Sep 2026): "1 button to quickly jump to the lin
     const button = screen.getByTestId('document-detail-go-to-line');
     expect(button).not.toBeDisabled();
     expect(button).toHaveTextContent('Go to suggested line');
+  });
+});
+
+describe('PO lightbox lines - the SPO each line moved onto (SUPPLY-SPO-LINK, mock v2)', () => {
+  const detail = {
+    id: 'po-1',
+    po_number: '202607-S0100',
+    supplier_name: 'ZZT SUPPLIER',
+    status: 'closed',
+    expected_date: '2026-07-29',
+    lines: [
+      {
+        id: 'line-moved',
+        sku: 'SRTSS4210',
+        product_name: 'Basin 4210',
+        qty_ordered: '490',
+        qty_received: '490',
+        remaining: '0',
+        location: 'BRW-BB',
+        book_so_number: 'SO364922',
+        book_so_unresolved: false,
+        spo_numbers: ['SPO-2026/09-0107', 'SPO-2026/10-0012'],
+      },
+      {
+        id: 'line-unmoved',
+        sku: 'SRTWT910-BL',
+        product_name: 'Basin 910',
+        qty_ordered: '205',
+        qty_received: '0',
+        remaining: '205',
+        location: 'BRW',
+        book_so_number: 'SO400750',
+        book_so_unresolved: false,
+        spo_numbers: [],
+      },
+    ],
+    allocations: [],
+  };
+
+  it('adds an SPO column whose numbers are document links, and a dash when the line never moved', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue(detail);
+    renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202607-S0100" poId="po-1" open onOpenChange={vi.fn()} />,
+    );
+
+    const moved = (await screen.findByText('SRTSS4210')).closest('tr') as HTMLElement;
+    const unmoved = screen.getByText('SRTWT910-BL').closest('tr') as HTMLElement;
+    expect(screen.getByRole('columnheader', { name: /^SPO$/ })).toBeInTheDocument();
+    expect(within(moved).getByTestId('document-detail-trigger-SPO-2026/09-0107')).toBeInTheDocument();
+    expect(within(moved).getByTestId('document-detail-trigger-SPO-2026/10-0012')).toBeInTheDocument();
+    expect(within(unmoved).getByText('-')).toBeInTheDocument();
+    expect(within(unmoved).queryByTestId(/document-detail-trigger-SPO-/)).not.toBeInTheDocument();
+  });
+
+  it('opens the SPO popup, addressed by number, from the PO popup', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue(detail);
+    getOrderInquirySpoDetail.mockResolvedValue({
+      spo_number: 'SPO-2026/09-0107',
+      supplier_name: 'ZZT SHIPPER',
+      eta: '2026-09-26',
+      lines: [],
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202607-S0100" poId="po-1" open onOpenChange={vi.fn()} />,
+    );
+
+    await screen.findByText('SRTSS4210');
+    fireEvent.click(screen.getByTestId('document-detail-trigger-SPO-2026/09-0107'));
+
+    expect(await screen.findByText('ZZT SHIPPER')).toBeInTheDocument();
+    expect(getOrderInquirySpoDetail).toHaveBeenCalledWith('SPO-2026/09-0107');
   });
 });

@@ -8,6 +8,11 @@ producer and dispatcher (plan `documentation/plans/chatbot/PLAN-chat-speed-ingre
 The hand-off is faked at `chat_turns._submit` (the API process's bounded direct-turn pool):
 these tests grade WHETHER the webhook hands a turn over and with what, never the turn itself
 (that is `tests/chatbot/test_direct_ingress.py`).
+
+CHAT-INBOX-QUEUE (`PLAN-chat-inbox-queue.md` Final rules 2-3, UAC IQ-4, IQ-6): a covered
+message is no longer run on the pool by the webhook. It becomes ONE `queued` turn row and the
+hand-off is a drain kick for its contact (`inbox_queue.kick`, faked by `kicks`); photos and
+voice notes are queued too. The queue itself is graded in `test_inbox_queue_order.py`.
 """
 from __future__ import annotations
 
@@ -79,6 +84,22 @@ def _chat_jobs(calls):
 
 
 @pytest.fixture
+def kicks(monkeypatch):
+    """Every drain kick the webhook hands over (CHAT-INBOX-QUEUE), as the contact id."""
+    from app.services.chatbot import inbox_queue
+
+    calls: list[str] = []
+    monkeypatch.setattr(inbox_queue, "kick", lambda contact_respond_id: calls.append(str(contact_respond_id)))
+    return calls
+
+
+def _turn_rows(db, contact_id: str):
+    from app.models.chatbot_turn import ChatbotTurn
+
+    return db.query(ChatbotTurn).filter(ChatbotTurn.contact_respond_id == contact_id).all()
+
+
+@pytest.fixture
 def client(db, monkeypatch):
     monkeypatch.setattr(settings, "respond_webhook_secret", SECRET)
 
@@ -100,6 +121,7 @@ def client(db, monkeypatch):
 def _mode(db, mode: str, contacts: str | None = None, *, sender: bool = True) -> None:
     from app.schemas.respond_workspace import RespondWorkspaceCreate
     from app.services.respond_workspace_service import RespondWorkspaceService
+    from app.utils.field_encryption import encrypt_secret
 
     row = db.query(SystemSetting).first()
     if row is None:
@@ -113,6 +135,8 @@ def _mode(db, mode: str, contacts: str | None = None, *, sender: bool = True) ->
             RespondWorkspaceCreate(space_id="ZZT-space-direct", api_key="k", is_default=True)
         )
         workspace.chatbot_sender_url = "https://automate-zzt.example.com/webhook/chatbot-sender"
+        # IQ-37: queue mode needs the sender's key as well as its URL (made-up test key).
+        workspace.chatbot_sender_key_ciphertext = encrypt_secret("ZZT-webhook-sender-key-0003")
         db.commit()
 
 
@@ -194,25 +218,24 @@ def test_no_settings_row_reads_as_off(client, db, enqueued):
 # --------------------------------------------------------------------------- #
 
 
-def test_all_mode_enqueues_one_job(client, db, enqueued):
+def test_all_mode_queues_one_row_and_kicks_its_drain(client, db, enqueued, kicks):
     _mode(db, "all")
     body = _event()
     r = _post(client, body)
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "created"
 
-    jobs = _chat_jobs(enqueued)
-    assert len(jobs) == 1, enqueued
-    name, args, kwargs = jobs[0]
-    assert name == "run_direct_turn_job"
-    assert kwargs == {}
-    payload = args[0]
+    rows = _turn_rows(db, CONTACT_ID)
+    assert [(row.message_id, row.status, row.stage) for row in rows] == [
+        (str(body["message"]["messageId"]), "queued", "queued")
+    ]
     # The respond.io body travels verbatim: it IS the envelope's `message`.
-    assert payload["message"]["messageId"] == body["message"]["messageId"]
-    assert payload["contact"]["id"] == CONTACT_ID
+    assert rows[0].envelope["message"]["message"]["messageId"] == body["message"]["messageId"]
+    assert kicks == [CONTACT_ID], "the hand-off is one drain kick for the contact"
+    assert _chat_jobs(enqueued) == [], "the webhook no longer runs the turn on the pool itself"
 
 
-def test_contacts_mode_only_listed(client, db, enqueued):
+def test_contacts_mode_queues_only_listed(client, db, enqueued, kicks):
     _mode(db, "contacts", f"  {CONTACT_ID}\nZZT-someone-else, ")
     listed = _event(contact_id=CONTACT_ID)
     unlisted = _event(contact_id=OTHER_CONTACT_ID, message_id=_now_message_id(2.0))
@@ -220,9 +243,11 @@ def test_contacts_mode_only_listed(client, db, enqueued):
     assert _post(client, listed).status_code == 200
     assert _post(client, unlisted).status_code == 200
 
-    jobs = _chat_jobs(enqueued)
-    assert len(jobs) == 1, enqueued
-    assert jobs[0][1][0]["contact"]["id"] == CONTACT_ID
+    assert [(row.message_id, row.status) for row in _turn_rows(db, CONTACT_ID)] == [
+        (str(listed["message"]["messageId"]), "queued")
+    ]
+    assert _turn_rows(db, OTHER_CONTACT_ID) == [], "an unlisted contact is not queued"
+    assert kicks == [CONTACT_ID]
 
 
 def test_contacts_mode_with_an_empty_list_enqueues_nothing(client, db, enqueued):
@@ -288,7 +313,7 @@ def test_fresh_message_just_inside_the_window_enqueues(client, db, enqueued):
     assert len(_chat_jobs(enqueued)) == 1
 
 
-def test_skip_shared_secret_header_delivery(client, db, enqueued, monkeypatch):
+def test_skip_shared_secret_header_delivery(client, db, enqueued, kicks, monkeypatch):
     """Security review M1: the shared-secret header mode carries the key in every request,
     so its holder can write any body, fresh clock included. Only a body HMAC starts a turn;
     the n8n copy still answers a header-mode delivery."""
@@ -302,13 +327,17 @@ def test_skip_shared_secret_header_delivery(client, db, enqueued, monkeypatch):
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "created"
     assert _chat_jobs(enqueued) == []
+    assert _turn_rows(db, CONTACT_ID) == [], "an unsigned delivery queues no turn"
+    assert kicks == []
 
 
-def test_skip_bad_signature(client, db, enqueued):
+def test_skip_bad_signature(client, db, enqueued, kicks):
     _mode(db, "all")
     r = _post(client, _event(), secret="zzt-not-the-configured-key-xx")
     assert r.status_code == 401
     assert _chat_jobs(enqueued) == []
+    assert _turn_rows(db, CONTACT_ID) == [], "a refused delivery queues no turn"
+    assert kicks == []
 
 
 def test_the_webhook_contact_block_needs_no_custom_fields(client, db, enqueued):
@@ -357,14 +386,18 @@ def test_under_the_rate_limit_counts_and_enqueues(client, db, enqueued):
         {"type": "location", "latitude": 3.1, "longitude": 101.6},
     ],
 )
-def test_skip_non_text_message(client, db, enqueued, inner):
-    """Media stays on the n8n path: its extraction job drains on the same single fast
-    worker the turn job would hold, so the turn would wait on a job that cannot start."""
+def test_non_text_message_is_queued(client, db, enqueued, kicks, inner):
+    """CHAT-INBOX-QUEUE (IQ-6): direct ingress's text-only skip does not apply in queue mode.
+    A covered photo, voice note or other non-text message is queued like a text; the drain
+    reads media inside the message's own turn."""
     _mode(db, "all")
     body = _event()
     body["message"]["message"] = inner
     assert _post(client, body).status_code == 200
-    assert _chat_jobs(enqueued) == []
+    assert [(row.message_id, row.status) for row in _turn_rows(db, CONTACT_ID)] == [
+        (str(body["message"]["messageId"]), "queued")
+    ]
+    assert kicks == [CONTACT_ID]
 
 
 def test_skip_message_from_a_staff_member(client, db, enqueued):
@@ -421,19 +454,3 @@ def test_rate_limit_counter_expires(client, db, enqueued):
         assert queue_service.redis_conn.get(key) is None
     finally:
         queue_service.redis_conn.delete(key)
-
-
-def test_a_full_pool_leaves_the_message_to_n8n(client, db, monkeypatch):
-    """The API process runs at most `DIRECT_TURN_THREADS` direct turns at once; past that the
-    n8n copy answers, so a burst degrades to today's path rather than queueing here."""
-    from app.tasks import chat_turns
-
-    _mode(db, "all")
-    ran: list[str] = []
-    monkeypatch.setattr(chat_turns, "run_direct_turn_job", lambda payload: ran.append("ran"))
-    monkeypatch.setattr(chat_turns, "_in_flight", chat_turns.DIRECT_TURN_THREADS)
-    try:
-        assert _post(client, _event()).status_code == 200
-        assert ran == []
-    finally:
-        monkeypatch.setattr(chat_turns, "_in_flight", 0)

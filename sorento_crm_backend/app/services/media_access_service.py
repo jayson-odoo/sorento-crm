@@ -789,6 +789,17 @@ def decide_and_record(
 STRANDED_GRACE_SECONDS = 120.0
 
 
+def claim_one_reread(job_id: str) -> bool:
+    """CHAT-INBOX-QUEUE (IQ-24, IQ-46): a read the worker abandoned is read again ONCE,
+    whichever path notices first. True for the first caller per job."""
+    from app.services.queue_service import redis_conn
+
+    try:
+        return bool(redis_conn.set(f"media:reread:{job_id}", 1, nx=True, ex=86400))
+    except Exception:  # noqa: BLE001 - no proof it was not read again: do not
+        return False
+
+
 def reclaim_stranded_job(
     db: Session,
     job: MediaExtractionJob,
@@ -796,6 +807,7 @@ def reclaim_stranded_job(
     settings: MediaSettings,
     *,
     now: Optional[datetime] = None,
+    reread_abandoned: bool = False,
 ) -> bool:
     """On an idempotent replay, recover a job nothing else will ever recover.
 
@@ -835,6 +847,15 @@ def reclaim_stranded_job(
         if _age(job.started_at or job.created_at) > (
             settings.extraction_timeout_seconds + STRANDED_GRACE_SECONDS
         ):
+            if reread_abandoned and claim_one_reread(str(job.id)):
+                # The inbox drain's replay (IQ-46): its one re-read wins over the failed mark.
+                job.status = "queued"
+                job.started_at = None
+                job.error = None
+                job.result = None
+                job.rq_job_id = None
+                db.flush()
+                return True
             job.status = "failed"
             job.result = None
             job.error = "Extraction did not finish; the worker running it stopped."
