@@ -121,6 +121,7 @@ def client(db, monkeypatch):
 def _mode(db, mode: str, contacts: str | None = None, *, sender: bool = True) -> None:
     from app.schemas.respond_workspace import RespondWorkspaceCreate
     from app.services.respond_workspace_service import RespondWorkspaceService
+    from app.utils.field_encryption import encrypt_secret
 
     row = db.query(SystemSetting).first()
     if row is None:
@@ -134,6 +135,8 @@ def _mode(db, mode: str, contacts: str | None = None, *, sender: bool = True) ->
             RespondWorkspaceCreate(space_id="ZZT-space-direct", api_key="k", is_default=True)
         )
         workspace.chatbot_sender_url = "https://automate-zzt.example.com/webhook/chatbot-sender"
+        # IQ-37: queue mode needs the sender's key as well as its URL (made-up test key).
+        workspace.chatbot_sender_key_ciphertext = encrypt_secret("ZZT-webhook-sender-key-0003")
         db.commit()
 
 
