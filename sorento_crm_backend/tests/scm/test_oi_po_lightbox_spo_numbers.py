@@ -43,7 +43,7 @@ def _codes(marker: str) -> list[str]:
 
 
 def _spo_line(db, *, spo_number: str, po_number: str, line_ref: str, product_id: str,
-              retired: bool = False, received: int = 0):
+              retired: bool = False, received: int = 0, warehouse_id: str | None = None):
     """An SPO allocation quoting a PO line the way the AutoCount feed writes it (the ref
     padded, as the feed sometimes sends it: the match trims)."""
     from app.models.procurement import SPOAllocation
@@ -53,7 +53,7 @@ def _spo_line(db, *, spo_number: str, po_number: str, line_ref: str, product_id:
         spo_number=spo_number,
         spo_line_number=next(_LINE_NO),
         product_id=product_id,
-        warehouse_id=_warehouse_id(db),
+        warehouse_id=warehouse_id or _warehouse_id(db),
         allocated_quantity=10,
         quantity_received=received,
         receipt_status="pending",
@@ -68,20 +68,14 @@ def _spo_line(db, *, spo_number: str, po_number: str, line_ref: str, product_id:
     return row
 
 
-_WAREHOUSE_IDS: dict = {}
-
-
 def _warehouse_id(db) -> str:
-    """The reference bin, read once under the test's own company scope (a later read under
-    another company's scope would not see it)."""
+    """The reference bin. Read under the test's own company scope: under another company's
+    scope it is invisible, so the foreign-company test reads it first and passes it in."""
     from app.models.inventory import Warehouse
 
-    key = id(db)
-    if key not in _WAREHOUSE_IDS:
-        _WAREHOUSE_IDS[key] = str(
-            db.query(Warehouse.id).filter(Warehouse.warehouse_code == _REF_WAREHOUSE_CODE).scalar()
-        )
-    return _WAREHOUSE_IDS[key]
+    return str(
+        db.query(Warehouse.id).filter(Warehouse.warehouse_code == _REF_WAREHOUSE_CODE).scalar()
+    )
 
 
 def _po_lines(db, po_id: str):
@@ -156,7 +150,7 @@ def test_an_spo_line_in_another_company_is_never_named(scm_app):
     po_id, _ids = _seed_po_distinct_lines(db, marker, _codes(marker)[:1], [None])
     po, (line,) = _po_lines(db, po_id)
 
-    _warehouse_id(db)
+    warehouse_id = _warehouse_id(db)
     other_company = str(uuid.uuid4())
     db.add(Company(
         id=other_company, name=f"{marker} other company",
@@ -165,7 +159,8 @@ def test_an_spo_line_in_another_company_is_never_named(scm_app):
     db.flush()
     set_company_scope(db, frozenset({other_company}))
     foreign = _spo_line(db, spo_number=f"{marker}-SPO-FOREIGN", po_number=po.po_number,
-                        line_ref=line.source_ref, product_id=str(line.product_id))
+                        line_ref=line.source_ref, product_id=str(line.product_id),
+                        warehouse_id=warehouse_id)
     foreign.company_id = other_company
     db.flush()
     set_company_scope(db, frozenset({SORENTO_COMPANY_ID}))
