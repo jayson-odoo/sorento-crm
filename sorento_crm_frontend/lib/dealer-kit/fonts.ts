@@ -126,7 +126,11 @@ export async function ensureFontsLoaded(fonts: TagFont[]): Promise<EnsureFontsRe
     loaded.add(key);
 
     try {
-      const face = new FontFace(font.family, `url(${JSON.stringify(font.url)})`);
+      // `swap`: in the set while it loads, a face with the default `auto`
+      // hides its text until it arrives; the fallback stays visible instead.
+      const face = new FontFace(font.family, `url(${JSON.stringify(font.url)})`, {
+        display: 'swap',
+      });
       // Into the set BEFORE loading: only a face loading inside
       // `document.fonts` fires `loadingdone`, which is what tells text layers
       // to re-break their lines in the face that just arrived

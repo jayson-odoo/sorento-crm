@@ -164,7 +164,10 @@ function paddingCss(padding: LayerPadding | undefined): string {
  * wrapping off (`white-space: pre`), in the same face and units as the canvas
  * (`textFace`: 0.35 mm per pt, 0.1 mm per letter-spacing unit). The browser
  * used to wrap the text itself at its own font size, so a title the canvas
- * showed whole broke at a hyphen here and its second line was clipped.
+ * showed whole broke at a hyphen here and its second line was clipped. No
+ * `overflow: hidden` either: the lines are already the ones that fit, the
+ * canvas does not clip them, and a clip only shaved the descenders off a box
+ * sized tightly to its lines.
  */
 function TextLayer({ layer, resolved }: { layer: TagLayer; resolved: ResolvedLineData | null }) {
   const props = layer.props;
@@ -204,7 +207,6 @@ function TextLayer({ layer, resolved }: { layer: TagLayer; resolved: ResolvedLin
         letterSpacing: face.letterSpacing_mm ? `${face.letterSpacing_mm}mm` : undefined,
         padding: paddingCss(props.padding),
         boxSizing: 'border-box',
-        overflow: 'hidden',
         whiteSpace: 'pre',
       }}
     >

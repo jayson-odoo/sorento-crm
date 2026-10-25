@@ -1,6 +1,6 @@
 # PLAN: price tag barcode renders like staff's barcode, one renderer (PRICETAG-BARCODE-MATCH)
 
-Status: Review (round 2: text layers added by owner, 25 Oct 17:07). Small fix track (S): FE only, no migration, no auth/RBAC, no new ingest. Mock v1 approved by owner in Lavish (17:07).
+Status: Review, reviewer READY at 678ffd1450 plus a nit round (font swap, print text unclipped like the canvas). Standard track: started as a small fix, the owner widened it to text layers (25 Oct 17:07), about 680 lines of product code; FE only, no migration, no auth/RBAC, no new ingest (security-reviewer not needed). Mock v1 approved by the owner in Lavish (17:07).
 
 ## Journey
 
