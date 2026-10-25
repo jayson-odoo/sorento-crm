@@ -14,6 +14,7 @@ portal's own "sales_opportunity" form visible to the contact (403 `opportunity_n
 """
 from __future__ import annotations
 
+import dataclasses
 from datetime import date
 from decimal import Decimal
 from typing import List, Optional, Tuple
@@ -69,20 +70,32 @@ def gate(db: Session, *, contact_id: Optional[str], space_id: Optional[str]) -> 
         require_form_visible(db, resolved, FORM_TYPE)
     except AppException as exc:
         raise _refused("opportunity_not_enabled") from exc
-    # An audited write in this request is the contact's (the portal's `_require_agents` stamp),
-    # keeping the integration the key resolved to.
+    # An audited write in this request is the contact's (the portal's `_require_agents` stamp). The
+    # integration actor the key stamped keeps every other field (user, integration, ip, agent, tool).
     actor = get_actor(db)
-    if actor is None or actor.contact_id != resolved:
-        stamp_actor(
-            AuditActor(
-                actor_type="contact",
-                auth_method="api_key",
-                contact_id=resolved,
-                integration_id=getattr(actor, "integration_id", None),
-            ),
-            db=db,
-        )
+    if actor is None:
+        stamp_actor(AuditActor(actor_type="contact", auth_method="api_key", contact_id=resolved), db=db)
+    elif actor.actor_type != "contact" or actor.contact_id != resolved:
+        stamp_actor(dataclasses.replace(actor, actor_type="contact", contact_id=resolved), db=db)
+    _scope_to_contact(db, resolved, agents)
     return resolved, agents
+
+
+def _scope_to_contact(db: Session, contact_id: str, agents: List[SalesAgent]) -> None:
+    """The request's company scope is the RESOLVED contact's, whatever the call carried (the
+    portal's `_require_agents`): its own companies, narrowed to the scope already set when the two
+    overlap, then to its agents' companies when every agent has one and they overlap."""
+    from app.models.base import get_company_scope, set_company_scope
+    from app.services.company_scope_resolver import portal_contact_scope
+
+    scope = portal_contact_scope(db, contact_id)
+    existing = get_company_scope(db)
+    if isinstance(existing, frozenset) and scope & existing:
+        scope = frozenset(scope & existing)
+    companies = {agent.company_id for agent in agents}
+    if None not in companies and scope & companies:
+        scope = frozenset(scope & companies)
+    set_company_scope(db, scope)
 
 
 def _customer_out(customer: Optional[Customer]) -> Optional[dict]:
@@ -141,6 +154,8 @@ def create(
     savepoint that is rolled back: nothing is inserted and no number is consumed."""
     if expected_amount is None or Decimal(expected_amount) <= 0:
         raise _unprocessable("The expected amount must be more than zero.", "amount_required")
+    if Decimal(expected_amount) > svc._MAX_AMOUNT:
+        raise _unprocessable("The expected amount is more than an opportunity can hold.", "amount_too_large")
     title = (title or "").strip()
     if not title:
         raise _unprocessable("A title is required.", "title_required")

@@ -276,5 +276,10 @@ router.include_router(
     sales_opportunities.router,
     prefix="/sales-opportunities",
     tags=["external"],
-    dependencies=[Depends(sales_opportunities.SLUG_GUARD)],
+    dependencies=[
+        Depends(sales_opportunities.SLUG_GUARD),
+        # The sales module is installable: under strict mode a tenant without `sales` gets
+        # 403 "Module not enabled: sales", as the portal's own opportunity routes do.
+        Depends(require_module_enabled_with_api_key("sales")),
+    ],
 )

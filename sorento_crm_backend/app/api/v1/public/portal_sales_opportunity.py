@@ -116,8 +116,9 @@ def _require_agents(db: Session, token: PortalToken) -> List[SalesAgent]:
     return agents
 
 
-#: Moved to `opportunity_service.resolve_company` (SALES-TARGET-CHAT slice 2): the chat's
-#: create route resolves the company by the same rule. Kept under its old name for callers.
+#: Moved to `opportunity_service.resolve_company` (SALES-TARGET-CHAT slice 2): the chat's create
+#: route resolves the company by the same rule. This module calls it directly; the old name stays
+#: importable only because `tests/test_fix_S2_portal_company_resolution.py` imports it from here.
 _resolve_company = svc.resolve_company
 
 
@@ -201,7 +202,7 @@ def portal_create_sales_opportunity(
         agent = svc.agent_owning_customer(db, agents, body.get("customer_id")) or svc.default_portal_agent(
             db, agents
         )
-        company_id = _resolve_company(db, customer_id=body.get("customer_id"), agent=agent)
+        company_id = svc.resolve_company(db, customer_id=body.get("customer_id"), agent=agent)
         with company_scope(db, frozenset({company_id})):
             opportunity = svc.create_opportunity(
                 db,

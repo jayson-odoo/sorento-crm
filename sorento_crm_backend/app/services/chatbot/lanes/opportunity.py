@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping
 
@@ -47,6 +47,10 @@ NOT_YOURS = "That customer is not one of yours."
 COULD_NOT_SAVE = "I couldn't save that. Nothing was recorded."
 NOT_SAVED = "Not saved."
 TEST_RUN = "Test run: nothing was saved."
+TIMED_OUT = "That opportunity was not saved because the confirmation timed out."
+
+#: How long a read-back stays answerable: a yes after this saves nothing (the values may be stale).
+CONFIRM_TTL = timedelta(minutes=30)
 
 #: The route codes the lane words as "not enabled" (403 on either route).
 _NOT_ENABLED_CODES = frozenset({"not_a_salesperson", "opportunity_not_enabled"})
@@ -76,6 +80,11 @@ OPPORTUNITY_ASK = rf.register(rf.AskType(
     give_up=NOT_SAVED,
     answered_by_parser=True,
 ))
+
+
+def _now() -> datetime:
+    """The lane's clock (aware UTC), read when the read-back is armed and when it is answered."""
+    return datetime.now(timezone.utc)
 
 
 def call_opportunity_tool(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -148,17 +157,14 @@ def own_pending(pending: Any) -> Any:
 
 
 def _bare_yes_no(verdict: Mapping[str, Any]) -> bool | None:
-    """The parser's yes / no to the read-back: its declared answer, else `is_affirmative` on a
-    turn that asks nothing of its own (no status, no entity)."""
+    """The parser's DECLARED answer to the read-back: yes, or no / cancel. Only an explicit yes
+    saves; an affirmative reading with no declared yes (`is_affirmative`, a pick, a fill) is no
+    answer, and the turn routes as usual (which drops the read-back)."""
     mode = _mode(verdict)
     if mode == "yes":
         return True
     if mode in ("no", "cancel"):
         return False
-    if mode is None and not _status(verdict) and not verdict.get("entities"):
-        flag = verdict.get("is_affirmative")
-        if isinstance(flag, bool):
-            return flag
     return None
 
 
@@ -255,6 +261,17 @@ def _call(tool_name: str, arguments: dict[str, Any]) -> tuple[dict[str, Any], st
 # --------------------------------------------------------------------------- #
 
 
+def _stale(asked_at: Any) -> bool:
+    """The read-back is older than `CONFIRM_TTL` (or carries no time at all)."""
+    try:
+        armed = datetime.fromisoformat(str(asked_at))
+    except (TypeError, ValueError):
+        return True
+    if armed.tzinfo is None:
+        armed = armed.replace(tzinfo=timezone.utc)
+    return _now() - armed > CONFIRM_TTL
+
+
 @dataclass
 class LaneReply:
     text: str
@@ -286,7 +303,7 @@ def _read_back(values: Mapping[str, Any], *, asked_at_turn: int | None) -> LaneR
         [{"position": 1, "label": "Yes", "code": "YES"}],
         expects="yes_no",
         asked_at_turn=asked_at_turn,
-        payload={"values": dict(values)},
+        payload={"values": dict(values), "asked_at": _now().isoformat()},
     )
     return LaneReply(text="\n".join(lines), pending=confirm)
 
@@ -342,6 +359,8 @@ def run(
     if confirm is not None and status != STATUS:
         values = dict(confirm.payload.get("values") or {})
         if _bare_yes_no(verdict) is True and len(values) == len(OPPORTUNITY_ASK.fields):
+            if _stale(confirm.payload.get("asked_at")):
+                return LaneReply(text=TIMED_OUT)
             return _save(values, contact_respond_id=contact_respond_id, space_id=space_id, dry_run=dry_run)
         return LaneReply(text=NOT_SAVED)
     if mode == "cancel" or (mode == "no" and confirm is not None):

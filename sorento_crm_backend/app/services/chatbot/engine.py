@@ -67,6 +67,10 @@ from app.services.chatbot.head.access import check_access, default_space_id
 from app.services.chatbot.head.build_ctx import build_ctx
 from app.services.chatbot.lanes import business, canned as canned_lanes, casual
 from app.services.chatbot.lanes import fallback as fallback_mod
+# SALES-TARGET-CHAT slice 2: imported here, not only at its seam, so `OPPORTUNITY_ASK` is registered in
+# `required_fields.ASKS` the moment the engine is (a fresh process's first turn answering the lane's field
+# question must not read as `required_ask_dropped`).
+from app.services.chatbot.lanes import opportunity as opportunity_lane
 from app.services.chatbot.lanes.escalation import run as run_escalation_lane, routing_line as escalation_routing_line
 from app.services.chatbot.lanes.business import resolve_gate, services as business_services
 from app.services.chatbot.analytics import facts as chat_facts
@@ -5210,8 +5214,6 @@ def _run_stages_body(  # noqa: PLR0915
         # `log_opportunity` status, a declared answer to the lane's own field question, or a
         # yes / no to its read-back is the lane's turn, answered whole before any other seam
         # reads the verdict (`lanes/opportunity.py`). Any other ask drops an open read-back.
-        from app.services.chatbot.lanes import opportunity as opportunity_lane
-
         if access.get("allowed") is True and opportunity_lane.takes_turn(verdict, open_ask, state_in.pending):
             return _run_opportunity_arm(
                 db,
@@ -8629,8 +8631,6 @@ def _run_opportunity_arm(
     routes it, carries its open field question (`focus.required_ask`) and its read-back
     (`pending`) to the next message, and hands the reply to the ONE answer tail. A dry run
     calls the lane too: the write goes with `dry_run`, so nothing is saved (LESSONS-LEARNT 101)."""
-    from app.services.chatbot.lanes import opportunity as opportunity_lane
-
     branch_kind = opportunity_lane.BRANCH_KIND
     space_id = default_space_id(db)
     salesperson = opportunity_lane.is_salesperson(db, contact_respond_id, space_id)

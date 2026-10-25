@@ -1831,6 +1831,9 @@ class AIAssistantChatService:
         # it through the assistant. No new slug, so no grant sweep - migration 411
         # already grants this to superadmin and admin.
         "crm_ideation_turn": "ideation.board.view",
+        # SALES-TARGET-CHAT slice 2: it creates a sales opportunity, so the confirming user
+        # needs the CRM's own create permission for one.
+        "crm_sales_opportunity_log": "sales.opportunities.add",
     }
     # Args that are plumbing, not user intent - never shown in a confirm summary.
     _WRITE_INTERNAL_ARGS = frozenset({
