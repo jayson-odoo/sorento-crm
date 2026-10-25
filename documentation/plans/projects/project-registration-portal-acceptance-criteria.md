@@ -123,12 +123,13 @@ Fixtures are invented (no real names); developer / title shapes follow the card'
   per-salesperson reports; not embedded; never a possible-duplicate candidate; not in the staleness sweep.
 - RW9 An approver may edit a pending project (PUT) and pick the developer party; the owner (linked user) may too;
   others get 403.
-- RW10 No message, title or label anywhere reads "None" for a missing code (helper renders "Awaiting approval").
+- RW10 No message, title or label anywhere reads "None" for a missing code (the helper renders "Awaiting approval" for a
+  pending or draft project and "Rejected" for a rejected one).
 - RW11 Migration: upgrade on a DB that has staff projects keeps them intact (approval_state NULL, codes kept); the
   partial index exists; downgrade removes code-less portal rows, restores NOT NULL, the full index and the PRJ- rule
   + counter.
 - RW12 FE board: lanes "Awaiting approval" and "Rejected" before the stages with their counts; cards show "Awaiting
-  approval" instead of a code; no drag into or out of those lanes. Grid: Stage pill and code text as above.
+  approval" (or "Rejected") instead of a code; no drag into or out of those lanes. Grid: Stage pill and code text as above.
 - RW13 FE detail: a pending project shows Approve (primary) + Reject (reason dialog) for approvers only, Edit beside
   them, the read-only legacy metadata (Date, Sales agent name, Distributor, Customer, Your ref), possible-duplicate
   links; the 409 exact duplicate shows "Already registered as <code> <title>" as a link; rejected shows the reason.
