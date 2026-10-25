@@ -951,12 +951,15 @@ export function SalesOrderDetail({
           return (
             <div className="flex min-w-0 flex-col">
               <div className="flex items-center gap-1.5">
-                <span className="font-medium">{row.original.sku}</span>
+                <span className="truncate font-medium" title={row.original.sku}>
+                  {row.original.sku}
+                </span>
                 {row.original.mockup_label ? (
                   <Badge
                     variant="warning"
                     appearance="light"
                     size="sm"
+                    className="shrink-0"
                     data-testid="so-line-mockup-badge"
                   >
                     Mockup

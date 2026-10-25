@@ -468,7 +468,12 @@ class SalesOrderService:
             )
             for ln in so.lines
         }
-        label_mockups = so_remark_rules.label_lines(mockup_by_line.values())
+        # Live lines only: a cancelled line neither makes the order a Mockup nor counts toward
+        # labelling (it is not part of the order total either).
+        live_flags = [
+            mockup_by_line[ln.id] for ln in so.lines if (ln.line_status or "open") != CANCELLED
+        ]
+        label_mockups = so_remark_rules.label_lines(live_flags)
         for ln in sorted(so.lines, key=_line_sort_key):
             qo = float(ln.qty_ordered or 0)
             qd = float(ln.qty_delivered or 0)
@@ -502,7 +507,11 @@ class SalesOrderService:
             lines.append({
                 "id": ln.id,
                 "is_mockup": mockup_by_line[ln.id],
-                "mockup_label": label_mockups and mockup_by_line[ln.id],
+                "mockup_label": (
+                    label_mockups
+                    and mockup_by_line[ln.id]
+                    and (ln.line_status or "open") != CANCELLED
+                ),
                 # AutoCount's own line number - the address the Lines tab sorts and
                 # labels by. `None` for a line AutoCount never numbered.
                 "line_no": ln.line_no,
@@ -666,7 +675,7 @@ class SalesOrderService:
             "po_ref": so.po_ref or None,
             "ship_info": so.ship_info or None,
             "remark": so_remark_rules.default_remark(
-                so_remark_rules.remark_type(so.ship_info), mockup_by_line.values()
+                so_remark_rules.remark_type(so.ship_info), live_flags
             ),
             "created_at": so.created_at.isoformat() if so.created_at else "",
         }
