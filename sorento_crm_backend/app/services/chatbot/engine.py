@@ -1182,17 +1182,39 @@ def _candidate_lines(
     return (indexed or lines), codes, picks
 
 
+def _may_see_salespeople(db: Session, contact_respond_id: str, space_id: Any) -> bool:
+    """The Salesperson block is built only for a contact the sales ranking lets ask by agent: the
+    `sales_orders.sales_report` reveal, or a live salesperson user (`contact_asker.may_ask_sales_ranking`,
+    the rule the report route shares). Fails closed."""
+    try:
+        from app.services import contact_asker, contact_field_reveal_service
+        from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+        resolved = resolve_contact_with_null_workspace_fallback(
+            db, contact_id=contact_respond_id, space_id=(str(space_id).strip() or None) if space_id else None
+        )
+        if resolved is None:
+            return False
+        granted = "sales_orders.sales_report" in contact_field_reveal_service.granted_keys(db, resolved)
+        return contact_asker.may_ask_sales_ranking(db, str(resolved), granted=granted)[0] != "not_granted"
+    except Exception:  # noqa: BLE001 - fail closed
+        logger.warning("chatbot: salesperson visibility lookup failed", exc_info=True)
+        return False
+
+
 def _lookup_lines(
-    db: Session, message: str, config: Any, hidden: frozenset[str] = frozenset()
+    db: Session, message: str, config: Any, hidden: frozenset[str] = frozenset(), include_salespeople: bool = False
 ) -> tuple[list[str], dict[str, Any]]:
     """CHAT-SLIM-INDEX: the lookup-list blocks for the message's own line, plus the trace event
     (`pieces` and `hits`). Advisory like `_candidate_lines`: a failure (loader, embedder, anything)
     leaves the blocks out, in a savepoint so the session stays usable, and the turn goes on."""
     try:
         with db.begin_nested():
-            rows = lookup_lists.load_rows(db, hidden_spec_keys=hidden)
+            rows = lookup_lists.load_rows(db, hidden_spec_keys=hidden, include_salespeople=include_salespeople)
             brand_words = lookup_lists.brand_words(db)
-            hits = lookup_lists.shortlist(message, rows, lookup_lists.embedder(db), brand_words=brand_words)
+            embed = lookup_lists.embedder(db)
+            lookup_lists.warm(rows, embed)
+            hits = lookup_lists.shortlist(message, rows, lookup_lists.usable_embedder(rows, embed), brand_words=brand_words)
             # Spec NUMBERS: every key holding the length the message says joins the spec block.
             numbers = lookup_lists.number_hits(message, db, hidden_spec_keys=hidden)
             if numbers:
@@ -4575,7 +4597,11 @@ def _run_stages_body(  # noqa: PLR0915
             else frozenset()
         )
         lookup_lines, lookup_event = (
-            _lookup_lines(db, user_turn.own_text, parser_config, hidden_spec) if parser_config.lookup_lists else (None, None)
+            _lookup_lines(
+                db, user_turn.own_text, parser_config, hidden_spec,
+                _may_see_salespeople(db, str(contact_respond_id), default_space_id(db)),
+            )
+            if parser_config.lookup_lists else (None, None)
         )
         index_matches: list[dict] = []
         index_failed: list[bool] = []

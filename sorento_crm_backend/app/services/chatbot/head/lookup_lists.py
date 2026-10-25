@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import threading
 import time
 from dataclasses import dataclass
 from functools import lru_cache
@@ -25,7 +26,11 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 MARKER = "== LOOKUP LISTS =="
-HEADER_NOUN = {"category": "Category", "spec": "Spec", "file_type": "File type", "sales_channel": "Sales channel"}
+HEADER_NOUN = {
+    "category": "Category", "spec": "Spec", "file_type": "File type", "brand": "Brand",
+    "promotion_kind": "Promotion kind", "salesperson": "Salesperson", "location": "Location",
+    "sales_channel": "Sales channel",
+}
 FLOOR_SPELLING = 0.5
 #: The base meaning floor (the measured 3-large config); `shortlist` reads `FLOOR_MEANING_BY_LIST`.
 FLOOR_MEANING = 0.5
@@ -34,8 +39,13 @@ FLOOR_MEANING_BY_LIST = {
     "category": 0.55, "sales_channel": 0.55, "brand": 0.58, "spec": 0.55, "file_type": 0.59, "customer": 0.53,
 }
 _FLOOR_MEANING_OTHER = 0.55
-TOP_K = {"category": 10, "spec": 10, "file_type": 5, "sales_channel": 2}
-DEFAULT_ORDER = ("category", "spec", "file_type", "sales_channel")
+TOP_K = {
+    "category": 10, "spec": 10, "file_type": 5, "brand": 3, "promotion_kind": 3, "salesperson": 5, "location": 5,
+    "sales_channel": 2,
+}
+DEFAULT_ORDER = (
+    "category", "spec", "file_type", "brand", "promotion_kind", "salesperson", "location", "sales_channel",
+)
 
 #: The word lists the v63 prompt carried (category translations, file type words), as row texts:
 #: list -> row label (case aside) -> extra texts matched beside the row's own.
@@ -278,7 +288,77 @@ def _file_type_rows(db: "Session") -> list[LookupRow]:
     return out
 
 
-def load_rows(db: "Session", *, hidden_spec_keys: frozenset[str] = frozenset()) -> list[LookupRow]:
+def _brand_rows(db: "Session") -> list[LookupRow]:
+    """Active brands of the session's companies, labelled exactly as the `Known brands:` line spells them."""
+    from app.services.chatbot import turn_runtime
+    from app.services.chatbot.turn.context import known_brands_line
+
+    out: list[LookupRow] = []
+    seen: set[str] = set()
+    for b in turn_runtime.active_brands(db):
+        name = str(b.get("brand_name") or "").strip()
+        line = known_brands_line([b])
+        if not name or name in seen or not line:
+            continue
+        seen.add(name)
+        texts = [name, b.get("brand_code"), *(b.get("aliases") or [])]
+        out.append(
+            LookupRow("brand", str(b.get("id") or name), line.removeprefix("Known brands: "),
+                      tuple(dict.fromkeys(str(t) for t in texts if t and _fold(str(t)))))
+        )
+    return out
+
+
+def _promotion_kind_rows(db: "Session") -> list[LookupRow]:
+    from app.services.chatbot import turn_runtime
+
+    return [
+        LookupRow("promotion_kind", r["type_code"], f"{r['type_name']} ({r['type_code']})", (r["type_name"], r["type_code"]))
+        for r in turn_runtime.promotion_kind_rows(db)
+        if r.get("type_code") and r.get("type_name")
+    ]
+
+
+def _location_rows(db: "Session") -> list[LookupRow]:
+    """Active warehouses of the session's companies: label `<name> (<code>)`."""
+    from app.models.inventory import Warehouse
+
+    out: list[LookupRow] = []
+    for w in db.query(Warehouse).filter(Warehouse.is_active.is_(True)).order_by(Warehouse.warehouse_code).all():
+        code = str(w.warehouse_code or "").strip()
+        name = str(w.warehouse_name or "").strip()
+        if code:
+            out.append(LookupRow("location", str(w.id), f"{name} ({code})" if name else code, tuple(t for t in (name, code) if t)))
+    return out
+
+
+def _salesperson_rows(db: "Session") -> list[LookupRow]:
+    """Active sales agents (the sales report's agent names, `reports/ask.py`): shared rows (no company)
+    and the session's companies'. Label is the agent code."""
+    from sqlalchemy import or_
+
+    from app.models.base import get_company_scope
+    from app.models.sales_agent import SalesAgent
+
+    query = db.query(SalesAgent).filter(SalesAgent.is_active.is_(True))
+    scope = get_company_scope(db)
+    if isinstance(scope, frozenset):
+        query = query.filter(or_(SalesAgent.company_id.is_(None), SalesAgent.company_id.in_(list(scope))))
+    elif scope is not None:
+        query = query.filter(SalesAgent.company_id.is_(None))
+    out: list[LookupRow] = []
+    for a in query.order_by(SalesAgent.sales_agent).all():
+        code = str(a.sales_agent or "").strip()
+        aliases = [x.strip() for x in str(a.aliases or "").split(",")]
+        texts = [code, a.person_label, *aliases]
+        if code:
+            out.append(LookupRow("salesperson", str(a.id), code, tuple(dict.fromkeys(str(t) for t in texts if t and _fold(str(t))))))
+    return out
+
+
+def load_rows(
+    db: "Session", *, hidden_spec_keys: frozenset[str] = frozenset(), include_salespeople: bool = True
+) -> list[LookupRow]:
     """Categories (searchable and active, company-scoped by the session), class labels, product types,
     spec word values, file types and the sales channels."""
     from app.models.product import ProductCategory
@@ -305,6 +385,11 @@ def load_rows(db: "Session", *, hidden_spec_keys: frozenset[str] = frozenset()) 
             out.append(LookupRow("category", "type:" + key, name, _with_synonyms("category", name, (name,))))
     out.extend(_spec_rows(db, hidden_spec_keys))
     out.extend(_file_type_rows(db))
+    out.extend(_brand_rows(db))
+    out.extend(_promotion_kind_rows(db))
+    out.extend(_location_rows(db))
+    if include_salespeople:
+        out.extend(_salesperson_rows(db))
     out.extend(LookupRow("sales_channel", ch, ch, (ch,)) for ch in SALES_CHANNELS)
     return out
 
@@ -420,6 +505,41 @@ def provider_embedder(api_key: str) -> Embedder:
                 _cache[_key(t)] = list(item.embedding)
         return [_cache[_key(t)] for t in texts]
 
+    embed.needs_warm = True  # type: ignore[attr-defined]
+    embed.is_cached = lambda texts: all(_key(t) in _cache for t in texts)  # type: ignore[attr-defined]
+    return embed
+
+
+_warm_lock = threading.Lock()
+
+
+def row_texts(rows: list[LookupRow]) -> list[str]:
+    return sorted({t for r in rows for t in r.texts if _fold(t)})
+
+
+def warm(rows: list[LookupRow], embed: Embedder | None) -> None:
+    """Embed every row text on a background thread so a cold cache never blocks a turn. One warm-up
+    at a time; a failure is swallowed (the next turn tries again, the turn itself is spelling only)."""
+    if embed is None or not rows or not _warm_lock.acquire(blocking=False):
+        return
+    texts = row_texts(rows)
+
+    def run() -> None:
+        try:
+            embed(texts)
+        except Exception:  # noqa: BLE001 - advisory
+            pass
+        finally:
+            _warm_lock.release()
+
+    threading.Thread(target=run, name="lookup-lists-warm", daemon=True).start()
+
+
+def usable_embedder(rows: list[LookupRow], embed: Embedder | None) -> Embedder | None:
+    """`embed` for the turn: the provider embedder only once every row text is cached (else None, spelling
+    only, while `warm` fills the cache); any other embedder as given."""
+    if embed is not None and getattr(embed, "needs_warm", False) and not embed.is_cached(row_texts(rows)):  # type: ignore[attr-defined]
+        return None
     return embed
 
 
