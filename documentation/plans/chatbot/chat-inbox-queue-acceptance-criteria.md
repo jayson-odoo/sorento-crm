@@ -130,6 +130,33 @@ re-inject all arrive here). **Sender** = the workspace's thin n8n chatbot sender
   key). Without one, a covered contact keeps the synchronous path, so switching Direct ingress
   on before the sender exists can never strand messages in the queue.
 
+## Review round 2 additions (re-review + security re-review, 25 Oct)
+
+- **IQ-38** (IQ-36 made testable) The sweeper's query plan uses the partial index
+  `ix_chatbot_turns_inbox_open` (its `is_test` filter must match the index predicate); a test
+  EXPLAINs the real sweep query and asserts the index name.
+- **IQ-39** (IQ-31 bounded) The lookup-failure backoff never overflows and never hot-loops. A
+  row whose takeover lookup keeps failing is closed as failed and flagged for staff after a
+  bounded number of attempts or an age limit; the contact's later rows continue.
+- **IQ-40** (IQ-32/33 hardened) `/chat/turn`'s queue branch applies the same per-contact rate
+  limit as the webhook. A copy refused by the rate limit or by the 200-row cap is never
+  silent: it leaves a failed, staff-visible row for that message (one per message id).
+- **IQ-41** (IQ-29 completed) Recovery's requeue is a compare-and-set on the stage and claim it
+  read: a drain that stamped `sending` meanwhile is never requeued under it. A stale drain's
+  checkpoint also requires the row to still be open, and every write that ends a claim
+  (skips included) is fenced.
+- **IQ-42** (IQ-37 hardened) A sender counts as configured only when its key decrypts.
+- **IQ-43** (IQ-28/IQ-25 completed) The drains' shutdown wait is measured from the SIGTERM, not
+  from the start of lifespan shutdown: with no open connection, a drain still gets the full
+  budget (signal + 140 s) to finish its row.
+- **IQ-44** (IQ-26 completed) A queued turn whose lane still delegates (any ingress) is closed
+  like a direct-ingress one, never left `delegated` for recovery to re-run and re-send.
+- **IQ-45** (IQ-27 completed) A turn that gives way writes no profile facts (the casual lane's
+  remembered statements included): its first checkpoint comes before them.
+- **IQ-46** (IQ-35 completed) A parked photo whose read stalls across two parked runs is read
+  again once, never answered with the failed-read reply because a stranded-job reclaim got
+  there first.
+
 ## Retry and rollback
 
 - **IQ-22** Retry on a failed queued turn answers it once, even if the Retry copy arrives twice.
