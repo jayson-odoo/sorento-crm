@@ -1,6 +1,6 @@
 # INDEX-HYBRID-R2: hybrid index verdict round 2 + CODE-SUBSTRING port (25 Oct 2026)
 
-Status: in progress (crew lane INDEX-HYBRID-R2). Track: research S; port = small fix track (port of reviewed #1755 rounds 8-9, no migration, no auth change).
+Status: in progress, review (crew lane INDEX-HYBRID-R2). Track: research S (done); port = small fix track (port of reviewed #1755 rounds 8-9, no migration, no auth change).
 
 Brief: crew/state/briefs/INDEX-HYBRID-R2.md. Owner approved the prod-clone read 25 Oct ~12:10.
 
@@ -45,3 +45,23 @@ reviewer, PR. Touched tests only locally (pytest -n 2).
 
 289 MWC products reach "wc" only by code (PR #1755 "Owner data list"). Once CODE-SUBSTRING is on main they stop
 showing for "wc" until data is filled: (a) give them class Water Closet, or (b) map product_type -> class.
+
+## Results (25 Oct 2026)
+
+A (research, crew-only REPORT r2/REPORT.md): NO BUILD. Real set zh 19 / ms 5 (prod_1020 holds no more Malay list asks
+after the held-out drop). Parser 20 real ms + zh messages, two runs, messages right: spelling 8 / 9, + large
+embedding 11 / 9 (strict), lenient 13 / 13 vs 15 / 13: the gate (>= +3 in both runs) fails. USD 0.55.
+
+B (port):
+- Red 25510c1496 (tests only): 28 failed + 1 ImportError on main code.
+- Code: 801490d5a4 CODE-SUBSTRING (bf462eb739, d52ea77e66, fcb6fb589a, 20b385e244, 0dfa72b07b), d7d945e552
+  DUP-CODE-LABEL (6b8986ed7a, c6e038a66f), ba4e40a3b9 AND-ROW-REGISTRY (83d697a768, b01b363750, 1dd6270383,
+  d9d9651e53). Applied without conflicts; ported references.py functions equal #1755 head 823d8ff7ae, the early
+  drop runs after main's `_keep_exact_variants` (#1833), gate.py keeps main's CHAT-CODE-LOOKUP hunks.
+- Sign-off amendments 41c3b466be: the strict SUBSTRING_XFAIL in test_chat_state_r6_s5b (it named this fix) is
+  retired; divergences.py rg-15123789 also strips `compatible_entities` (c6e038a66f stamps labels on it; the entry
+  failed on #1755's own head too).
+- Green: red list 161 passed, 4 skipped. Direct suites (126 files): 2846 passed; the only other failures are the 14
+  test_replay `test_full_corpus_*` cases that read the external sorento_crm_n8n corpus and fail the same on the red commit.
+- Kill proof: the five code files back at main -> the same 28 failed + 1 ImportError; restored.
+- Owner data list: products that reach "wc" only by code, options (a) / (b), filed as crew ask (REPORT r2).
