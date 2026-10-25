@@ -1182,68 +1182,70 @@ def _candidate_lines(
     return (indexed or lines), codes, picks
 
 
-def _may_see_salespeople(db: Session, contact_respond_id: str, space_id: Any) -> bool:
+def _may_see_salespeople(db: Session, resolved: str) -> bool:
     """The Salesperson block is built only for a contact the sales ranking lets ask by agent: the
     `sales_orders.sales_report` reveal, or a live salesperson user (`contact_asker.may_ask_sales_ranking`,
-    the rule the report route shares). Fails closed."""
-    try:
-        from app.services import contact_asker, contact_field_reveal_service
-        from app.services.field_access import resolve_contact_with_null_workspace_fallback
+    the rule the report route shares). Raises on a lookup error; `_lookup_lines` runs it in a savepoint
+    and a failure means no block."""
+    from app.services import contact_asker, contact_field_reveal_service
 
-        resolved = resolve_contact_with_null_workspace_fallback(
-            db, contact_id=contact_respond_id, space_id=(str(space_id).strip() or None) if space_id else None
-        )
-        if resolved is None:
-            return False
-        granted = "sales_orders.sales_report" in contact_field_reveal_service.granted_keys(db, resolved)
-        return contact_asker.may_ask_sales_ranking(db, str(resolved), granted=granted)[0] != "not_granted"
-    except Exception:  # noqa: BLE001 - fail closed
-        logger.warning("chatbot: salesperson visibility lookup failed", exc_info=True)
-        return False
+    granted = "sales_orders.sales_report" in contact_field_reveal_service.granted_keys(db, resolved)
+    return contact_asker.may_ask_sales_ranking(db, str(resolved), granted=granted)[0] != "not_granted"
 
 
-def _customer_visibility(db: Session, contact_respond_id: str, space_id: Any) -> tuple[bool, frozenset[str] | None]:
+def _customer_visibility(db: Session, resolved: str) -> tuple[bool, frozenset[str] | None]:
     """(include, ids) for the Customer block: office staff see every active customer; a dealer (linked
     customers, no office access type, `ContactCustomerScope.enforced`) only its own links; a contact with
-    neither gets no Customer block. Fails closed."""
-    try:
-        from app.services import contact_customer_scope
-        from app.services.field_access import resolve_contact_with_null_workspace_fallback
+    neither gets no Customer block. Raises on a lookup error (run in a savepoint by `_lookup_lines`)."""
+    from app.services import contact_customer_scope
 
-        resolved = resolve_contact_with_null_workspace_fallback(
-            db, contact_id=contact_respond_id, space_id=(str(space_id).strip() or None) if space_id else None
-        )
-        if resolved is None:
-            return False, None
-        scope = contact_customer_scope.contact_customer_scope(db, str(resolved))
-        if scope.staff:
-            return True, None
-        if scope.enforced:
-            return True, frozenset(scope.customer_ids)
-        return False, None
-    except Exception:  # noqa: BLE001 - fail closed
-        logger.warning("chatbot: customer visibility lookup failed", exc_info=True)
-        return False, None
+    scope = contact_customer_scope.contact_customer_scope(db, str(resolved))
+    if scope.staff:
+        return True, None
+    if scope.enforced:
+        return True, frozenset(scope.customer_ids)
+    return False, None
 
 
 def _lookup_lines(
-    db: Session, message: str, config: Any, hidden: frozenset[str] = frozenset(), include_salespeople: bool = False,
-    customers: tuple[bool, frozenset[str] | None] = (False, None),
+    db: Session, message: str, config: Any, hidden: frozenset[str], contact_respond_id: str, space_id: Any,
+    brands: list[dict[str, Any]] | None = None,
 ) -> tuple[list[str], dict[str, Any]]:
     """CHAT-SLIM-INDEX: the lookup-list blocks for the message's own line, plus the trace event
     (`pieces` and `hits`). Advisory like `_candidate_lines`: a failure (loader, embedder, anything)
-    leaves the blocks out, in a savepoint so the session stays usable, and the turn goes on."""
+    leaves the blocks out, in a savepoint so the session stays usable, and the turn goes on. The contact is
+    resolved once; the salesperson and customer visibility checks each run in their own savepoint, so a
+    database error in one drops only that block (fail closed)."""
+
+    def guarded(fn, default):
+        try:
+            with db.begin_nested():
+                return fn()
+        except Exception:  # noqa: BLE001 - fail closed
+            logger.warning("chatbot: lookup list visibility check failed", exc_info=True)
+            return default
+
     try:
+        from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+        resolved = guarded(
+            lambda: resolve_contact_with_null_workspace_fallback(
+                db, contact_id=contact_respond_id, space_id=(str(space_id).strip() or None) if space_id else None
+            ),
+            None,
+        )
+        include_salespeople = bool(resolved) and guarded(lambda: _may_see_salespeople(db, str(resolved)), False)
+        include_customers, customer_ids = guarded(lambda: _customer_visibility(db, str(resolved)), (False, None)) if resolved else (False, None)
         with db.begin_nested():
             rows = lookup_lists.load_rows(
                 db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
-                include_customers=customers[0], customer_ids=customers[1],
+                include_customers=include_customers, customer_ids=customer_ids, brands=brands,
             )
-            brand_words = lookup_lists.brand_words(db)
+            brand_words = lookup_lists.brand_words(db, brands)
             embed = lookup_lists.embedder(db)
             lookup_lists.warm(rows, embed)
             hits = lookup_lists.shortlist(message, rows, lookup_lists.usable_embedder(rows, embed), brand_words=brand_words)
-            # Spec NUMBERS: every key holding the length the message says joins the spec block.
+            # Spec NUMBERS: every key holding the quantity the message says joins the spec block.
             numbers = lookup_lists.number_hits(message, db, hidden_spec_keys=hidden)
             if numbers:
                 hits["spec"] = [*numbers, *hits.get("spec", [])][: lookup_lists.TOP_K["spec"]]
@@ -4626,9 +4628,7 @@ def _run_stages_body(  # noqa: PLR0915
         )
         lookup_lines, lookup_event = (
             _lookup_lines(
-                db, user_turn.own_text, parser_config, hidden_spec,
-                _may_see_salespeople(db, str(contact_respond_id), default_space_id(db)),
-                _customer_visibility(db, str(contact_respond_id), default_space_id(db)),
+                db, user_turn.own_text, parser_config, hidden_spec, str(contact_respond_id), default_space_id(db), brands,
             )
             if parser_config.lookup_lists else (None, None)
         )

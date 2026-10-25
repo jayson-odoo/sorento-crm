@@ -4,7 +4,7 @@ documentation/plans/chatbot/PLAN-chat-lookup-lists-25oct.md).
 The production-labelled `chatbot_semantic_parser` text with every list span removed (the category
 translations, the Specification and Product types lines, the attachment type word maps, the brand
 examples), the rule text that named a removed per-turn line renamed to its candidate block, and the
-`== LOOKUP LISTS ==` line appended (`app/services/chatbot/prompt_lookup_edits.py`). A version carrying
+`== LOOKUP LISTS ==` line appended (`app/services/chatbot/chatbot_lookup_edits.py`). A version carrying
 that line receives the lookup blocks of `head/lookup_lists.py` and loses the per-turn list lines.
 The label never moves; promoting is one label move in the Chatbot Console.
 
@@ -38,7 +38,7 @@ def publish_on_production(session: Session) -> int | None:
     """The production-labelled text, edited, as a new UNLABELLED version; its number, or None when there
     is no production label, the edit does not apply, or this text is already published."""
     from app.models.ai_prompt import AIPromptVersion
-    from app.services.chatbot import prompt_lookup_edits
+    from app.services import chatbot_lookup_edits as prompt_lookup_edits
 
     row = session.execute(
         sa.text(
@@ -88,13 +88,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop only the unlabelled versions carrying the marker line; a labelled one stays."""
-    from app.services.chatbot.prompt_lookup_edits import MARKER
-
+    """Drop only the unlabelled versions this migration published (its own commit message); a labelled one stays."""
     op.get_bind().execute(
         sa.text(
-            "DELETE FROM ai_prompt_versions WHERE name = :n AND template LIKE :m "
+            "DELETE FROM ai_prompt_versions WHERE name = :n AND commit_message = :m "
             "AND id NOT IN (SELECT version_id FROM ai_prompt_labels)"
         ),
-        {"n": PROMPT_NAME, "m": f"%\n{MARKER}\n%"},
+        {"n": PROMPT_NAME, "m": MESSAGE},
     )

@@ -5,14 +5,15 @@ Each anchor is text of the production-labelled version (v63, md5 0f3b48e6) that 
 once; any anchor missing or doubled leaves the text untouched (`apply` returns None). The lists these
 spans carried reach the parser per turn instead, as the candidate blocks of `head/lookup_lists.py`
 (row texts and `PROMPT_SYNONYMS` there hold the words that used to live here). Rule text that named a
-removed per-turn line now names its block. Pure: no database, no I/O.
+removed per-turn line now names its block. Pure and stdlib-only, outside `app/services/chatbot/` on
+purpose: a migration imports it, and the chatbot package pulls the engine (and a second DB connection).
 """
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
 
-from app.services.chatbot.head.lookup_lists import MARKER
+MARKER = "== LOOKUP LISTS =="
 
 logger = logging.getLogger("alembic.runtime.migration")
 

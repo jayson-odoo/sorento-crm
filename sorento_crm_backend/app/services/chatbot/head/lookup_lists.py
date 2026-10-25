@@ -21,11 +21,11 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Callable
 
 from app.services.chatbot.head import candidates
+from app.services.chatbot_lookup_edits import MARKER
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-MARKER = "== LOOKUP LISTS =="
 HEADER_NOUN = {
     "category": "Category", "spec": "Spec", "file_type": "File type", "brand": "Brand",
     "promotion_kind": "Promotion kind", "salesperson": "Salesperson", "location": "Location",
@@ -39,6 +39,12 @@ FLOOR_MEANING_BY_LIST = {
     "category": 0.55, "sales_channel": 0.55, "brand": 0.58, "spec": 0.55, "file_type": 0.59, "customer": 0.53,
 }
 _FLOOR_MEANING_OTHER = 0.55
+#: A message is read for its first words only (CPU bound).
+MAX_MESSAGE_WORDS = 40
+#: Distinct quantities one message may look up in the spec values.
+MAX_NUMBER_ASKS = 3
+#: A printed label is one line of at most this many characters.
+MAX_LABEL_CHARS = 120
 TOP_K = {
     "category": 10, "spec": 10, "file_type": 5, "brand": 3, "promotion_kind": 3, "salesperson": 5, "location": 5,
     "sales_channel": 2, "customer": 5,
@@ -94,6 +100,47 @@ _WORD_RE = re.compile(r"[^\W_]+")
 _CODE_WORD_RE = re.compile(r"\d{3,}|(?=[a-z0-9]*\d)(?=[a-z0-9]*[a-z])[a-z0-9]{5,}")
 
 
+#: The words the deleted v63 "Specification" yes/no lines carried per key (`Words:`), as row texts.
+SPEC_YES_WORDS: dict[str, tuple[str, ...]] = {
+    'has_chopping_board': ('chopping board', 'cutting board', 'with board'),
+    'has_dish_rack': ('dish rack', 'drying rack', 'with rack'),
+    'has_diverter': ('diverter', 'with diverter', 'divertor'),
+    'has_drainer': ('drainer', 'with drainer', 'drainer board', 'drain board'),
+    'has_filter': ('filter tap', 'filter', 'with filter', 'water filter'),
+    'has_fixing_screw': ('basin screw', 'fixing screw', 'c/w screw', 'with screw'),
+    'has_led': ('led', 'led light', 'lighted', 'illuminated', 'with light'),
+    'has_overflow': ('overflow', 'with overflow', 'c/w overflow', 'overflow hole'),
+    'has_pull_out_shower': ('pull out shower', 'pull-out shower', 'pull out spray'),
+    'has_shower_union': ('shower union', 'union', 'wall union'),
+    'has_sliding_rail': ('sliding', 'sliding bar', 'sliding rail', 'adjustable rail'),
+    'is_frameless': ('frameless', 'frame less', 'no frame', 'borderless'),
+    'is_high_basin': ('high basin', 'tall basin', 'vessel height', 'high rise'),
+    'is_honeycomb': ('honeycomb', 'honey comb', 'honeycomb structure'),
+    'is_rimless': ('rimless', 'rim less', 'no rim'),
+    'is_smart': ('intelligent toilet', 'intelligent', 'smart toilet', 'smart wc', 'auto induction'),
+    'is_soft_close': ('soft close', 'soft closing', 'slow close', 'damper'),
+    'is_thermostatic': ('thermostatic', 'temperature control', 'constant temperature'),
+    'no_overflow': ('without overflow', 'no overflow', 'w/o overflow'),
+}
+#: The deleted number lines' `Said in words:` entries: key -> stored number -> the phrases that say it.
+SPEC_NUMBER_WORDS: dict[str, dict[str, tuple[str, ...]]] = {
+    'bar_count': {
+        '1': ('single towel bar', 'single bar', 'one bar'),
+        '2': ('double towel bar', 'double bar', 'two bar', 'twin bar'),
+    },
+    'bowl_count': {
+        '1': ('single bowl', 'one bowl', '1 bowl', 'single sink'),
+        '2': ('double bowl', 'two bowl', '2 bowl', 'twin bowl', 'double sink'),
+        '3': ('triple bowl', 'three bowl', '3 bowl'),
+    },
+    'spray_functions': {
+        '1': ('single function', '1 function', 'one function'),
+        '2': ('2 function', 'two function', 'double function'),
+        '3': ('3 function', 'three function', 'triple function'),
+        '5': ('5 function', 'five function'),
+    },
+}
+
 @dataclass(frozen=True)
 class LookupRow:
     list_name: str
@@ -129,7 +176,7 @@ def _fold(text: str) -> str:
 
 def pieces(message: str, max_words: int = 4) -> list[str]:
     """Every 1..`max_words` consecutive-word piece of the folded message, in message order, once each."""
-    words = _fold(message).split()
+    words = _fold(message).split()[:MAX_MESSAGE_WORDS]
     out: list[str] = []
     seen: set[str] = set()
     for size in range(1, max_words + 1):
@@ -159,23 +206,33 @@ def _spelling(piece: str, text: str) -> float:
     return candidates.similarity(_grams(piece), _grams(folded))
 
 
-def _vectors(embed: Embedder | None, texts: list[str]):
-    """{text: unit vector} for `texts` in ONE embedder call, or {} when there is no embedder / it fails."""
-    if embed is None or not texts:
-        return {}
-    try:
-        import numpy as np
+def _unit_rows(mat):
+    import numpy as np
 
-        raw = embed(texts)
-        mat = np.asarray(raw, dtype=float)
-        if mat.ndim != 2 or mat.shape[0] != len(texts):
-            return {}
-        norms = np.linalg.norm(mat, axis=1)
-        norms[norms == 0] = 1.0
-        mat = mat / norms[:, None]
-        return {t: mat[i] for i, t in enumerate(texts)}
+    mat = np.asarray(mat, dtype=np.float32)
+    norms = np.linalg.norm(mat, axis=-1, keepdims=True)
+    norms[norms == 0] = 1.0
+    return (mat / norms).astype(np.float32)
+
+
+def _meaning(embed: Embedder | None, usable: list[str], texts: list[str]):
+    """(piece index, text index, S) with S[p, t] the cosine of piece p and row text t, or None when there
+    is no embedder or it fails (spelling only). The provider embedder hands over its cached row matrix
+    (built once per row set) and embeds only the message pieces; any other embedder is called once."""
+    if embed is None or not texts:
+        return None
+    try:
+        if hasattr(embed, "matrix"):
+            m = embed.matrix(texts)  # type: ignore[attr-defined]
+            pm = embed.pieces(usable)  # type: ignore[attr-defined]
+        else:
+            raw = _unit_rows(embed([*usable, *texts]))
+            if raw.ndim != 2 or raw.shape[0] != len(usable) + len(texts):
+                return None
+            pm, m = raw[: len(usable)], raw[len(usable) :]
+        return {p: i for i, p in enumerate(usable)}, {t: i for i, t in enumerate(texts)}, pm @ m.T
     except Exception:  # noqa: BLE001 - advisory: spelling only
-        return {}
+        return None
 
 
 def shortlist(
@@ -200,7 +257,7 @@ def shortlist(
     if "customer" in by_list:
         by_list["customer"] = [p for p in by_list["customer"] if p not in other_words]
     row_texts = sorted({t for r in rows for t in r.texts if _fold(t)})
-    vec = _vectors(embed, [*usable, *row_texts])
+    meaning = _meaning(embed, usable, row_texts)
 
     best: dict[str, dict[str, Hit]] = {}
     for row in rows:
@@ -208,13 +265,11 @@ def shortlist(
         floor_meaning = FLOOR_MEANING_BY_LIST.get(row.list_name, _FLOOR_MEANING_OTHER)
         spell_best, mean_best, piece_best, score_best = 0.0, 0.0, "", -1.0
         for piece in row_pieces:
-            pv = vec.get(piece)
             for text in row.texts:
                 s = _spelling(piece, text)
                 m = 0.0
-                tv = vec.get(text)
-                if pv is not None and tv is not None:
-                    m = max(0.0, float(pv @ tv))
+                if meaning is not None and text in meaning[1]:
+                    m = max(0.0, float(meaning[2][meaning[0][piece], meaning[1][text]]))
                 spell_best, mean_best = max(spell_best, s), max(mean_best, m)
                 score = max(s if s >= FLOOR_SPELLING else 0.0, m if m >= floor_meaning else 0.0)
                 if score > score_best:
@@ -234,8 +289,9 @@ def render(hits: dict[str, list[Hit]], order: tuple[str, ...] = DEFAULT_ORDER) -
     for name in order:
         labels: list[str] = []
         for h in hits.get(name) or []:
-            if h.row.label not in labels:
-                labels.append(h.row.label)
+            label = " ".join(str(h.row.label).split())[:MAX_LABEL_CHARS]
+            if label and label not in labels:
+                labels.append(label)
         if labels:
             lines.append(header(name))
             lines.extend(f"- {label}" for label in labels)
@@ -248,8 +304,10 @@ def _with_synonyms(list_name: str, label: str, texts: tuple[str, ...]) -> tuple[
 
 
 def _spec_rows(db: "Session", hidden: frozenset[str] = frozenset()) -> list[LookupRow]:
-    """One row per registry value of an enum key that says something other than the product's type
-    or brand (those are category rows and the brand list): label `<spec label> <value>`."""
+    """One row per value the registry knows, each line ending in the registry's own `(key: value)` so the
+    parser fills `spec_key` / `spec_value` from it: an enum value (`<label> <value>`), a yes/no key
+    (`<label> yes`, true) and a numeric key said in words (`<label> <n>`, "double bowl" = 2). Enum keys
+    that say what the product IS (class, product type) or its brand are category / brand rows."""
     from app.services.product_spec_registry import (
         active_registry,
         display_spec_value,
@@ -257,21 +315,35 @@ def _spec_rows(db: "Session", hidden: frozenset[str] = frozenset()) -> list[Look
         merged_synonyms,
     )
 
+    def texts_of(*parts) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(str(t) for p in parts for t in p if t and _fold(str(t))))
+
     out: list[LookupRow] = []
     for row in active_registry(db):
-        if (row.data_type or "").lower() != "enum" or row.spec_key in candidates.TYPE_KEYS | candidates.SKIP_KEYS or row.spec_key in hidden:
+        key, kind = row.spec_key, (row.data_type or "").lower()
+        if key in hidden or key in candidates.TYPE_KEYS | candidates.SKIP_KEYS:
             continue
         synonyms = merged_synonyms(row)
-        labels = dict(getattr(row, "value_labels", None) or {})
-        for value in merged_allowed_values(row):
-            display = display_spec_value(value, labels)
-            texts = [str(value), display, *(synonyms.get(value) or [])]
-            out.append(
-                LookupRow(
-                    "spec", f"{row.spec_key}={value}", f"{row.label} {display} ({row.spec_key}: {value})",
-                    tuple(dict.fromkeys(str(t) for t in texts if t and _fold(str(t)))),
+        if kind == "enum":
+            labels = dict(getattr(row, "value_labels", None) or {})
+            for value in merged_allowed_values(row):
+                display = display_spec_value(value, labels)
+                out.append(
+                    LookupRow("spec", f"{key}={value}", f"{row.label} {display} ({key}: {value})",
+                              texts_of([str(value), display], synonyms.get(value) or []))
                 )
+        elif kind == "boolean":
+            out.append(
+                LookupRow("spec", f"{key}=true", f"{row.label} yes ({key}: true)",
+                          texts_of(synonyms.get("true") or [], SPEC_YES_WORDS.get(key, ())))
             )
+        elif kind == "numeric":
+            said = SPEC_NUMBER_WORDS.get(key, {})
+            for value in dict.fromkeys([*(v for v in synonyms if v != "_self"), *said]):
+                out.append(
+                    LookupRow("spec", f"{key}={value}", f"{row.label} {value} ({key}: {value})",
+                              texts_of(synonyms.get(value) or [], said.get(value, ())))
+                )
     return out
 
 
@@ -293,14 +365,14 @@ def _file_type_rows(db: "Session") -> list[LookupRow]:
     return out
 
 
-def _brand_rows(db: "Session") -> list[LookupRow]:
+def _brand_rows(db: "Session", brands: list[dict] | None = None) -> list[LookupRow]:
     """Active brands of the session's companies, labelled exactly as the `Known brands:` line spells them."""
     from app.services.chatbot import turn_runtime
     from app.services.chatbot.turn.context import known_brands_line
 
     out: list[LookupRow] = []
     seen: set[str] = set()
-    for b in turn_runtime.active_brands(db):
+    for b in turn_runtime.active_brands(db) if brands is None else brands:
         name = str(b.get("brand_name") or "").strip()
         line = known_brands_line([b])
         if not name or name in seen or not line:
@@ -318,7 +390,7 @@ def _promotion_kind_rows(db: "Session") -> list[LookupRow]:
     from app.services.chatbot import turn_runtime
 
     return [
-        LookupRow("promotion_kind", r["type_code"], f"{r['type_name']} ({r['type_code']})", (r["type_name"], r["type_code"]))
+        LookupRow("promotion_kind", r["type_code"], f"{r['type_code']} ({r['type_name']})", (r["type_name"], r["type_code"]))
         for r in turn_runtime.promotion_kind_rows(db)
         if r.get("type_code") and r.get("type_name")
     ]
@@ -378,7 +450,7 @@ def _customer_rows(db: "Session", only_ids: frozenset[str] | None) -> list[Looku
 
 def load_rows(
     db: "Session", *, hidden_spec_keys: frozenset[str] = frozenset(), include_salespeople: bool = False,
-    include_customers: bool = False, customer_ids: frozenset[str] | None = None,
+    include_customers: bool = False, customer_ids: frozenset[str] | None = None, brands: list[dict] | None = None,
 ) -> list[LookupRow]:
     """Categories (searchable and active, company-scoped by the session), class labels, product types,
     spec word values, file types and the sales channels."""
@@ -406,7 +478,7 @@ def load_rows(
             out.append(LookupRow("category", "type:" + key, name, _with_synonyms("category", name, (name,))))
     out.extend(_spec_rows(db, hidden_spec_keys))
     out.extend(_file_type_rows(db))
-    out.extend(_brand_rows(db))
+    out.extend(_brand_rows(db, brands))
     out.extend(_promotion_kind_rows(db))
     out.extend(_location_rows(db))
     if include_salespeople:
@@ -422,7 +494,17 @@ def load_rows(
 #: A length in the message: not glued to a letter or digit before it (a code), a unit after it.
 _LENGTH_RE = re.compile(r"(?<![a-z0-9.])(\d+(?:\.\d+)?)\s*(mm|cm|m)(?![a-z0-9])")
 _SIZE_RE = re.compile(r"(?<![a-z0-9.])(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*(mm|cm|m)(?![a-z0-9])")
+#: Any quantity a numeric spec key stores: lengths, litres, horsepower, ounces.
+_QUANTITY_RE = re.compile(
+    r"(?<![a-z0-9.])(\d+(?:\.\d+)?)\s*(litres?|liters?|ounces?|mm|cm|hp|oz|l|m)(?![a-z0-9])"
+)
 _TO_MM = {"mm": 1.0, "cm": 10.0, "m": 1000.0}
+#: A unit word (as said or as the registry stores it) -> (unit class, factor to the class's base unit).
+_UNITS = {
+    "mm": ("len", 1.0), "cm": ("len", 10.0), "m": ("len", 1000.0),
+    "l": ("l", 1.0), "litre": ("l", 1.0), "litres": ("l", 1.0), "liter": ("l", 1.0), "liters": ("l", 1.0),
+    "hp": ("hp", 1.0), "oz": ("oz", 1.0), "ounce": ("oz", 1.0), "ounces": ("oz", 1.0),
+}
 
 
 def _mm(number: str, unit: str) -> str:
@@ -441,14 +523,20 @@ def normalise_number(text: str) -> str | None:
 
 
 def number_hits(message: str, db: "Session", *, hidden_spec_keys: frozenset[str] = frozenset()) -> list[Hit]:
-    """Every numeric spec key whose stored values hold a length the message says, as exact
-    millimetres in the key's own unit ("trap length 200mm"). No meaning score; nothing is offered
-    for a number no key holds. A code that merely contains digits is never a length."""
+    """Every numeric spec key whose stored values hold a quantity the message says (mm / cm / m, litres, hp,
+    oz), in the key's own unit, the line ending in the bare number the parser reads ("trap length 200mm
+    (trap_length: 200)"). At most `MAX_NUMBER_ASKS` distinct quantities per message. No meaning score;
+    nothing is offered for a number no key holds. A code that merely contains digits is never a quantity."""
     folded = str(message or "").casefold()
-    found: list[tuple[str, str]] = []  # (piece, millimetres)
-    for m in _LENGTH_RE.finditer(folded):
-        found.append((m.group(0), _mm(m.group(1), m.group(2))))
-    if not found:
+    asks: list[tuple[str, float, str]] = []  # (unit class, value in its base unit, piece)
+    for m in _QUANTITY_RE.finditer(folded):
+        cls, factor = _UNITS[m.group(2)]
+        ask = (cls, round(float(m.group(1)) * factor, 6), m.group(0))
+        if not any(a[:2] == ask[:2] for a in asks):
+            asks.append(ask)
+        if len(asks) >= MAX_NUMBER_ASKS:
+            break
+    if not asks:
         return []
     from sqlalchemy import case, func
 
@@ -457,18 +545,21 @@ def number_hits(message: str, db: "Session", *, hidden_spec_keys: frozenset[str]
     from app.services.product_spec_registry import active_registry
     from app.services.product_spec_search import membership_clause
 
-    keys = [r for r in active_registry(db) if (r.data_type or "").lower() == "numeric" and (r.unit or "").lower() in _TO_MM and r.spec_key not in hidden_spec_keys]
-    if not keys:
+    wanted: list[tuple[Any, str, float, str]] = []  # (registry row, shown, value in the key's unit, piece)
+    for row in active_registry(db):
+        unit = (row.unit or "").strip()
+        if (row.data_type or "").lower() != "numeric" or unit.lower() not in _UNITS or row.spec_key in hidden_spec_keys:
+            continue
+        cls, factor = _UNITS[unit.lower()]
+        for ask_cls, base, piece in asks:
+            if ask_cls == cls:
+                value = round(base / factor, 6)
+                wanted.append((row, f"{value:g}{unit}", value, piece))
+    if not wanted:
         return []
-    asks: list[tuple[Any, str, str, float]] = []  # (registry row, piece, shown, value in the key's unit)
-    for row in keys:
-        unit = row.unit.lower()
-        for piece, mm in dict.fromkeys(found):
-            value = round(float(mm) / _TO_MM[unit], 6)
-            asks.append((row, piece, f"{value:g}{unit}", value))
     columns = [
         func.coalesce(func.sum(case((membership_clause({row.spec_key: [value]}), 1), else_=0)), 0)
-        for row, _p, _s, value in asks
+        for row, _s, value, _p in wanted
     ]
     counts = (
         db.query(*columns)
@@ -478,19 +569,19 @@ def number_hits(message: str, db: "Session", *, hidden_spec_keys: frozenset[str]
         .one()
     )
     out: list[Hit] = []
-    for (row, piece, shown, value), held in zip(asks, counts):
+    for (row, shown, value, piece), held in zip(wanted, counts):
         if int(held) > 0:
             label = f"{row.label} {shown} ({row.spec_key}: {value:g})"
             out.append(Hit(LookupRow("spec", f"{row.spec_key}={shown}", label, (label,)), _fold(piece), 1.0, 0.0))
     return sorted(out, key=lambda h: h.row.label)
 
 
-def brand_words(db: "Session") -> frozenset[str]:
+def brand_words(db: "Session", brands: list[dict] | None = None) -> frozenset[str]:
     """Folded brand names, codes and aliases: the words that are a brand and never a category."""
     from app.services.chatbot import turn_runtime
 
     words: set[str] = set()
-    for b in turn_runtime.active_brands(db):
+    for b in turn_runtime.active_brands(db) if brands is None else brands:
         for w in (b.get("brand_name"), b.get("brand_code"), *(b.get("aliases") or [])):
             folded = _fold(w) if w else ""
             if folded:
@@ -500,7 +591,14 @@ def brand_words(db: "Session") -> frozenset[str]:
 
 # ---------------------------------------------------------------------------- production embedder
 
-_cache: dict[tuple[str, str], list[float]] = {}
+#: Row-text vectors, unit float32, per process; message pieces are never stored here.
+_cache: dict[tuple[str, str], Any] = {}
+#: The row matrix of a row set (rows aligned to its sorted texts), built once and kept for the last few sets.
+_matrices: dict[str, Any] = {}
+_MATRIX_SETS = 2
+#: A tiny LRU of message-piece vectors.
+_pieces: dict[str, Any] = {}
+_PIECES_CAP = 512
 
 
 def _key(text: str) -> tuple[str, str]:
@@ -508,38 +606,74 @@ def _key(text: str) -> tuple[str, str]:
 
 
 def provider_embedder(api_key: str) -> Embedder:
-    """OpenAI `text-embedding-3-small`: vectors cached per process by (model, sha1 of text), the
-    uncached texts of a call sent in chunks inside one `EMBED_TIMEOUT` budget."""
+    """OpenAI `text-embedding-3-small`: row vectors cached per process by (model, sha1 of text) as unit
+    float32, the uncached texts of a call sent in chunks inside one `EMBED_TIMEOUT` budget. `matrix` is the
+    row matrix of a row set (built once); `pieces` embeds a message's pieces without storing them as rows."""
     from app.services.llm_provider import OpenAIProvider
 
-    def embed(texts: list[str]) -> list[list[float]]:
+    def client():
+        return OpenAIProvider(api_key)._client(timeout=EMBED_TIMEOUT, max_retries=0)
+
+    def store(chunk: list[str], resp) -> None:
+        vectors = _unit_rows([item.embedding for item in resp.data])
+        for t, vec in zip(chunk, vectors):
+            _cache[_key(t)] = vec
+
+    def embed(texts: list[str]) -> list[Any]:
         deadline = time.monotonic() + EMBED_TIMEOUT
         todo = [t for t in dict.fromkeys(texts) if _key(t) not in _cache]
         if len(_cache) + len(todo) > _CACHE_CAP:
             _cache.clear()
+            _matrices.clear()
             todo = list(dict.fromkeys(texts))
-        client = OpenAIProvider(api_key)._client(timeout=EMBED_TIMEOUT, max_retries=0)
-        for i in range(0, len(todo), EMBED_CHUNK):
-            if time.monotonic() > deadline:
-                raise TimeoutError("lookup list embedding budget spent")
-            chunk = todo[i : i + EMBED_CHUNK]
-            resp = client.embeddings.create(model=EMBED_MODEL, input=chunk)
-            for t, item in zip(chunk, resp.data):
-                _cache[_key(t)] = list(item.embedding)
+        if todo:
+            api = client()
+            for i in range(0, len(todo), EMBED_CHUNK):
+                if time.monotonic() > deadline:
+                    raise TimeoutError("lookup list embedding budget spent")
+                chunk = todo[i : i + EMBED_CHUNK]
+                store(chunk, api.embeddings.create(model=EMBED_MODEL, input=chunk))
         return [_cache[_key(t)] for t in texts]
 
     def fill(texts: list[str]) -> None:
         """The background warm-up: every uncached text in chunks, each chunk under its own timeout, no
         total deadline; chunks are kept as they complete."""
         todo = [t for t in dict.fromkeys(texts) if _key(t) not in _cache]
-        client = OpenAIProvider(api_key)._client(timeout=EMBED_TIMEOUT, max_retries=0)
+        if not todo:
+            return
+        api = client()
         for i in range(0, len(todo), EMBED_CHUNK):
             chunk = todo[i : i + EMBED_CHUNK]
-            resp = client.embeddings.create(model=EMBED_MODEL, input=chunk)
-            for t, item in zip(chunk, resp.data):
-                _cache[_key(t)] = list(item.embedding)
+            store(chunk, api.embeddings.create(model=EMBED_MODEL, input=chunk))
+
+    def matrix(texts: list[str]):
+        import numpy as np
+
+        embed(texts)
+        key = hashlib.sha1("\0".join(texts).encode()).hexdigest()
+        built = _matrices.get(key)
+        if built is None:
+            built = np.stack([_cache[_key(t)] for t in texts])
+            while len(_matrices) >= _MATRIX_SETS:
+                _matrices.pop(next(iter(_matrices)))
+            _matrices[key] = built
+        return built
+
+    def pieces_matrix(texts: list[str]):
+        import numpy as np
+
+        todo = [t for t in dict.fromkeys(texts) if t not in _pieces]
+        if todo:
+            resp = client().embeddings.create(model=EMBED_MODEL, input=todo)
+            for t, vec in zip(todo, _unit_rows([item.embedding for item in resp.data])):
+                _pieces[t] = vec
+            while len(_pieces) > _PIECES_CAP:
+                _pieces.pop(next(iter(_pieces)))
+        return np.stack([_pieces[t] for t in texts])
 
     embed.fill = fill  # type: ignore[attr-defined]
+    embed.matrix = matrix  # type: ignore[attr-defined]
+    embed.pieces = pieces_matrix  # type: ignore[attr-defined]
     embed.needs_warm = True  # type: ignore[attr-defined]
     embed.is_cached = lambda texts: all(_key(t) in _cache for t in texts)  # type: ignore[attr-defined]
     return embed
