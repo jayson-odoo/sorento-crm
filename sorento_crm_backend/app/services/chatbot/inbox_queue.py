@@ -10,8 +10,9 @@ Nobody waits on a turn, so a deploy has no long request to cut.
 A drain per contact, on the API process's bounded direct-turn pool
 (`app/tasks/chat_turns.py::_submit`), answers the rows: one drain per contact across every
 process (a Redis mutex kept alive by a heartbeat, `chatbot:drain:{contact}`), oldest SEND
-time first (`send_order.send_key_ms`), the takeover check, the turn (`engine.run_turn`),
-the sender POST (`direct_ingress.send_outcome`), then the done mark. No clamp, no ticket.
+time first (`send_order.send_key_ms`; a queued photo before the rest, `_order_key`), the
+takeover check, the turn (`engine.run_turn`), the sender POST
+(`direct_ingress.send_outcome`), then the done mark. No clamp, no ticket.
 
 Row states: `queued` -> `processing` (claimed) -> stage `sending` (stamped BEFORE each
 sender POST) -> `done` or `failed`. A row this module owns carries an `inbox` fact on its
@@ -43,7 +44,7 @@ from sqlalchemy import false, func, or_, text, update
 from sqlalchemy.exc import IntegrityError
 
 from app.models.chatbot_turn import ChatbotTurn
-from app.services.chatbot import direct_ingress, send_order
+from app.services.chatbot import direct_ingress, media_intake, send_order
 from app.services.chatbot import trace as trace_mod
 
 logger = logging.getLogger(__name__)
@@ -134,11 +135,11 @@ class _RowRun:
     """The row the current drain thread is running, read by the engine's seams."""
 
     def __init__(
-        self, turn_id: str, contact: str, send_key: float | None, claimed_at: Any, factory: Callable[[], Any]
+        self, turn_id: str, contact: str, order_key: tuple[int, float], claimed_at: Any, factory: Callable[[], Any]
     ):
         self.turn_id = turn_id
         self.contact = contact
-        self.send_key = send_key
+        self.order_key = order_key
         self.claimed_at = claimed_at
         self.factory = factory
         # Set once a checkpoint found nothing earlier: from then on the turn writes and
@@ -476,12 +477,37 @@ def _send_key(envelope: Any, created_at: Any) -> float:
     return created_at.timestamp() * 1000 if created_at is not None else float("inf")
 
 
-def _queued_keys(db: Any, contact: str) -> list[tuple[float, Any, str]]:
-    """The contact's queued rows by send time, oldest first: (send key, created_at, id).
-    Reads only the two clock fields, never the envelopes (IQ-33)."""
+def _order_key(send_key: float, attachment_type: Any, mime_type: Any) -> tuple[int, float]:
+    """PHOTO-FIRST-LOOKAHEAD (owner, 25 Oct): a queued photo or voice note is answered
+    before the contact's other queued rows, whatever the send times say (WhatsApp sends a
+    photo once it has uploaded, so a text tapped right after overtakes it); send order
+    otherwise. Only rows already queued count: nothing waits for one that is not."""
+    media = media_intake.detect({"attachment": {"type": attachment_type, "mimeType": mime_type}}) is not None
+    return (0 if media else 1, send_key)
+
+
+def _row_order_key(envelope: Any, created_at: Any) -> tuple[int, float]:
+    inner = envelope.get("message") if isinstance(envelope, dict) else None
+    for step in ("message", "message", "attachment"):
+        inner = inner.get(step) if isinstance(inner, dict) else None
+    attachment = inner if isinstance(inner, dict) else {}
+    return _order_key(_send_key(envelope, created_at), attachment.get("type"), attachment.get("mimeType"))
+
+
+def _queued_keys(db: Any, contact: str) -> list[tuple[tuple[int, float], Any, str]]:
+    """The contact's queued rows in answer order, first first: (order key, created_at, id).
+    Reads only the two clock fields and the attachment's kind, never the envelopes (IQ-33)."""
     stamp = ChatbotTurn.envelope["message"]["message"]["timestamp"].astext
+    attachment = ChatbotTurn.envelope["message"]["message"]["message"]["attachment"]
     rows = (
-        db.query(ChatbotTurn.id, ChatbotTurn.message_id, stamp, ChatbotTurn.created_at)
+        db.query(
+            ChatbotTurn.id,
+            ChatbotTurn.message_id,
+            stamp,
+            ChatbotTurn.created_at,
+            attachment["type"].astext,
+            attachment["mimeType"].astext,
+        )
         .filter(
             ChatbotTurn.contact_respond_id == contact,
             ChatbotTurn.status == QUEUED,
@@ -490,14 +516,18 @@ def _queued_keys(db: Any, contact: str) -> list[tuple[float, Any, str]]:
         .all()
     )
     keys = [
-        (_send_key({"message": {"message": {"messageId": mid, "timestamp": ts}}}, created), created, str(rid))
-        for rid, mid, ts, created in rows
+        (
+            _order_key(_send_key({"message": {"message": {"messageId": mid, "timestamp": ts}}}, created), kind, mime),
+            created,
+            str(rid),
+        )
+        for rid, mid, ts, created, kind, mime in rows
     ]
     return sorted(keys, key=lambda k: (k[0], k[1]))
 
 
 def _claim_next(contact: str, factory: Callable[[], Any]) -> tuple[str, Any] | None:
-    """Take the contact's oldest-sent queued row (`queued` -> `processing`). The claim
+    """Take the contact's first queued row (`_order_key`; `queued` -> `processing`). The claim
     stamps `started_at` with the database clock: the fence every later write of this run
     matches on (IQ-29)."""
     db = factory()
@@ -531,8 +561,9 @@ def _still_mine(db: Any, run: _RowRun) -> bool:
 def checkpoint(turn_id: str | None = None) -> None:
     """The look-ahead (rule 4), called by the engine right before the turn writes
     conversation state, runs a lane side effect it cannot undo, or closes. On the inbox
-    drain: a lost claim stops the turn (`ClaimLost`), and an earlier-sent queued row of the
-    same contact makes it yield; once a look-ahead passes, the turn is committed."""
+    drain: a lost claim stops the turn (`ClaimLost`), and a queued row of the same contact
+    that goes before it (`_order_key`: a photo, or an earlier-sent row) makes it yield; once
+    a look-ahead passes, the turn is committed."""
     run = current_run(turn_id)
     if run is None:
         return
@@ -542,7 +573,7 @@ def checkpoint(turn_id: str | None = None) -> None:
             raise ClaimLost(run.turn_id)
         if run.committed:
             return
-        earlier = [k for k in _queued_keys(db, run.contact) if k[0] < run.send_key] if run.send_key is not None else []
+        earlier = [k for k in _queued_keys(db, run.contact) if k[0] < run.order_key]
     finally:
         db.close()
     if earlier:
@@ -752,7 +783,7 @@ def _run_row(turn_id: str, claimed_at: Any, contact: str, factory: Callable[[], 
         if row is None:
             return "missing"
         stored = dict(row.envelope or {})
-        send_key = _send_key(stored, row.created_at)
+        order_key = _row_order_key(stored, row.created_at)
         row_age = (engine._now() - row.created_at).total_seconds() if row.created_at is not None else 0.0
         # The takeover flag is read when the row comes up, as the direct-ingress job did.
         record = direct_ingress._lookup_contact(db, contact)
@@ -792,7 +823,7 @@ def _run_row(turn_id: str, claimed_at: Any, contact: str, factory: Callable[[], 
         _close_skipped(factory, turn_id, "human_intervened", claimed_at)
         return "skipped"
 
-    run = _RowRun(turn_id, contact, send_key, claimed_at, factory)
+    run = _RowRun(turn_id, contact, order_key, claimed_at, factory)
     _local.run = run
     try:
         envelope = Envelope(**{**stored, "contact": block})
