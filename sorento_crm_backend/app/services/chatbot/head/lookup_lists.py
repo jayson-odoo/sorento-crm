@@ -17,7 +17,6 @@ import re
 import threading
 import time
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Callable
 
 from app.services.chatbot.head import candidates
@@ -100,47 +99,6 @@ _WORD_RE = re.compile(r"[^\W_]+")
 _CODE_WORD_RE = re.compile(r"\d{3,}|(?=[a-z0-9]*\d)(?=[a-z0-9]*[a-z])[a-z0-9]{5,}")
 
 
-#: The words the deleted v63 "Specification" yes/no lines carried per key (`Words:`), as row texts.
-SPEC_YES_WORDS: dict[str, tuple[str, ...]] = {
-    'has_chopping_board': ('chopping board', 'cutting board', 'with board'),
-    'has_dish_rack': ('dish rack', 'drying rack', 'with rack'),
-    'has_diverter': ('diverter', 'with diverter', 'divertor'),
-    'has_drainer': ('drainer', 'with drainer', 'drainer board', 'drain board'),
-    'has_filter': ('filter tap', 'filter', 'with filter', 'water filter'),
-    'has_fixing_screw': ('basin screw', 'fixing screw', 'c/w screw', 'with screw'),
-    'has_led': ('led', 'led light', 'lighted', 'illuminated', 'with light'),
-    'has_overflow': ('overflow', 'with overflow', 'c/w overflow', 'overflow hole'),
-    'has_pull_out_shower': ('pull out shower', 'pull-out shower', 'pull out spray'),
-    'has_shower_union': ('shower union', 'union', 'wall union'),
-    'has_sliding_rail': ('sliding', 'sliding bar', 'sliding rail', 'adjustable rail'),
-    'is_frameless': ('frameless', 'frame less', 'no frame', 'borderless'),
-    'is_high_basin': ('high basin', 'tall basin', 'vessel height', 'high rise'),
-    'is_honeycomb': ('honeycomb', 'honey comb', 'honeycomb structure'),
-    'is_rimless': ('rimless', 'rim less', 'no rim'),
-    'is_smart': ('intelligent toilet', 'intelligent', 'smart toilet', 'smart wc', 'auto induction'),
-    'is_soft_close': ('soft close', 'soft closing', 'slow close', 'damper'),
-    'is_thermostatic': ('thermostatic', 'temperature control', 'constant temperature'),
-    'no_overflow': ('without overflow', 'no overflow', 'w/o overflow'),
-}
-#: The deleted number lines' `Said in words:` entries: key -> stored number -> the phrases that say it.
-SPEC_NUMBER_WORDS: dict[str, dict[str, tuple[str, ...]]] = {
-    'bar_count': {
-        '1': ('single towel bar', 'single bar', 'one bar'),
-        '2': ('double towel bar', 'double bar', 'two bar', 'twin bar'),
-    },
-    'bowl_count': {
-        '1': ('single bowl', 'one bowl', '1 bowl', 'single sink'),
-        '2': ('double bowl', 'two bowl', '2 bowl', 'twin bowl', 'double sink'),
-        '3': ('triple bowl', 'three bowl', '3 bowl'),
-    },
-    'spray_functions': {
-        '1': ('single function', '1 function', 'one function'),
-        '2': ('2 function', 'two function', 'double function'),
-        '3': ('3 function', 'three function', 'triple function'),
-        '5': ('5 function', 'five function'),
-    },
-}
-
 @dataclass(frozen=True)
 class LookupRow:
     list_name: str
@@ -192,18 +150,39 @@ def _code_like(piece: str) -> bool:
     return any(_CODE_WORD_RE.fullmatch(w) for w in piece.split())
 
 
-@lru_cache(maxsize=8192)
-def _grams(text: str) -> frozenset[str]:
-    return candidates.trigrams(text)
-
-
-def _spelling(piece: str, text: str) -> float:
-    folded = _fold(text)
+def _spelling(piece: str, piece_grams: frozenset[str], folded: str, grams: frozenset[str], same_words: bool = False) -> float:
     if not folded:
         return 0.0
     if piece == folded:
         return 1.0
-    return candidates.similarity(_grams(piece), _grams(folded))
+    # Spec words: a near spelling is the same number of words spelt differently, so "bowl" is never "near"
+    # the number word "3 bowl" (as the candidate lines read near spellings).
+    if same_words and piece.count(" ") != folded.count(" "):
+        return 0.0
+    return candidates.similarity(piece_grams, grams)
+
+
+#: Folded text and trigrams of each row text, built once per row set (the last few sets), so a turn folds
+#: and trigrams only its own pieces.
+_prepared: dict[str, dict[str, tuple[str, frozenset[str]]]] = {}
+_PREPARED_SETS = 2
+#: Guards `_prepared`, `_cache`, `_matrices` and `_pieces`: turns run on several threads.
+_store_lock = threading.RLock()
+
+
+def _prepare(texts: list[str]) -> dict[str, tuple[str, frozenset[str]]]:
+    key = hashlib.sha1("\0".join(texts).encode()).hexdigest()
+    with _store_lock:
+        built = _prepared.get(key)
+        if built is None:
+            built = {}
+            for t in texts:
+                folded = _fold(t)
+                built[t] = (folded, candidates.trigrams(folded) if folded else frozenset())
+            while len(_prepared) >= _PREPARED_SETS:
+                _prepared.pop(next(iter(_prepared)))
+            _prepared[key] = built
+        return built
 
 
 def _unit_rows(mat):
@@ -256,8 +235,10 @@ def shortlist(
     other_words = {_fold(t) for r in rows if r.list_name in _CUSTOMER_BLOCKERS for t in r.texts} | set(brand_words)
     if "customer" in by_list:
         by_list["customer"] = [p for p in by_list["customer"] if p not in other_words]
-    row_texts = sorted({t for r in rows for t in r.texts if _fold(t)})
+    prepared = _prepare(sorted({t for r in rows for t in r.texts}))
+    row_texts = [t for t, (folded, _g) in prepared.items() if folded]
     meaning = _meaning(embed, usable, row_texts)
+    piece_grams = {p: candidates.trigrams(p) for p in usable}
 
     best: dict[str, dict[str, Hit]] = {}
     for row in rows:
@@ -266,7 +247,8 @@ def shortlist(
         spell_best, mean_best, piece_best, score_best = 0.0, 0.0, "", -1.0
         for piece in row_pieces:
             for text in row.texts:
-                s = _spelling(piece, text)
+                folded, grams = prepared[text]
+                s = _spelling(piece, piece_grams[piece], folded, grams, row.list_name == "spec")
                 m = 0.0
                 if meaning is not None and text in meaning[1]:
                     m = max(0.0, float(meaning[2][meaning[0][piece], meaning[1][text]]))
@@ -283,13 +265,25 @@ def shortlist(
     return out
 
 
+def _one_line(label: str) -> str:
+    """One line of at most `MAX_LABEL_CHARS`; a closing `(key: value)` bracket is kept whole, the text before it shrinks."""
+    text = " ".join(str(label).split())
+    if len(text) <= MAX_LABEL_CHARS:
+        return text
+    at = text.rfind(" (")
+    if at > 0 and text.endswith(")") and len(text) - at <= MAX_LABEL_CHARS // 2:
+        tail = text[at:]
+        return text[: MAX_LABEL_CHARS - len(tail)].rstrip() + tail
+    return text[:MAX_LABEL_CHARS]
+
+
 def render(hits: dict[str, list[Hit]], order: tuple[str, ...] = DEFAULT_ORDER) -> list[str]:
     """One block per list with hits: the header, then `- <label>` once per label."""
     lines: list[str] = []
     for name in order:
         labels: list[str] = []
         for h in hits.get(name) or []:
-            label = " ".join(str(h.row.label).split())[:MAX_LABEL_CHARS]
+            label = _one_line(h.row.label)
             if label and label not in labels:
                 labels.append(label)
         if labels:
@@ -335,14 +329,13 @@ def _spec_rows(db: "Session", hidden: frozenset[str] = frozenset()) -> list[Look
         elif kind == "boolean":
             out.append(
                 LookupRow("spec", f"{key}=true", f"{row.label} yes ({key}: true)",
-                          texts_of(synonyms.get("true") or [], SPEC_YES_WORDS.get(key, ())))
+                          texts_of(synonyms.get("true") or []))
             )
         elif kind == "numeric":
-            said = SPEC_NUMBER_WORDS.get(key, {})
-            for value in dict.fromkeys([*(v for v in synonyms if v != "_self"), *said]):
+            for value in (v for v in synonyms if v != "_self"):
                 out.append(
                     LookupRow("spec", f"{key}={value}", f"{row.label} {value} ({key}: {value})",
-                              texts_of(synonyms.get(value) or [], said.get(value, ())))
+                              texts_of(synonyms.get(value) or []))
                 )
     return out
 
@@ -616,16 +609,18 @@ def provider_embedder(api_key: str) -> Embedder:
 
     def store(chunk: list[str], resp) -> None:
         vectors = _unit_rows([item.embedding for item in resp.data])
-        for t, vec in zip(chunk, vectors):
-            _cache[_key(t)] = vec
+        with _store_lock:
+            for t, vec in zip(chunk, vectors):
+                _cache[_key(t)] = vec
 
     def embed(texts: list[str]) -> list[Any]:
         deadline = time.monotonic() + EMBED_TIMEOUT
-        todo = [t for t in dict.fromkeys(texts) if _key(t) not in _cache]
-        if len(_cache) + len(todo) > _CACHE_CAP:
-            _cache.clear()
-            _matrices.clear()
-            todo = list(dict.fromkeys(texts))
+        with _store_lock:
+            todo = [t for t in dict.fromkeys(texts) if _key(t) not in _cache]
+            if len(_cache) + len(todo) > _CACHE_CAP:
+                _cache.clear()
+                _matrices.clear()
+                todo = list(dict.fromkeys(texts))
         if todo:
             api = client()
             for i in range(0, len(todo), EMBED_CHUNK):
@@ -633,12 +628,14 @@ def provider_embedder(api_key: str) -> Embedder:
                     raise TimeoutError("lookup list embedding budget spent")
                 chunk = todo[i : i + EMBED_CHUNK]
                 store(chunk, api.embeddings.create(model=EMBED_MODEL, input=chunk))
-        return [_cache[_key(t)] for t in texts]
+        with _store_lock:
+            return [_cache[_key(t)] for t in texts]
 
     def fill(texts: list[str]) -> None:
         """The background warm-up: every uncached text in chunks, each chunk under its own timeout, no
         total deadline; chunks are kept as they complete."""
-        todo = [t for t in dict.fromkeys(texts) if _key(t) not in _cache]
+        with _store_lock:
+            todo = [t for t in dict.fromkeys(texts) if _key(t) not in _cache]
         if not todo:
             return
         api = client()
@@ -651,31 +648,36 @@ def provider_embedder(api_key: str) -> Embedder:
 
         embed(texts)
         key = hashlib.sha1("\0".join(texts).encode()).hexdigest()
-        built = _matrices.get(key)
-        if built is None:
-            built = np.stack([_cache[_key(t)] for t in texts])
-            while len(_matrices) >= _MATRIX_SETS:
-                _matrices.pop(next(iter(_matrices)))
-            _matrices[key] = built
-        return built
+        with _store_lock:
+            built = _matrices.get(key)
+            if built is None:
+                built = np.stack([_cache[_key(t)] for t in texts])
+                while len(_matrices) >= _MATRIX_SETS:
+                    _matrices.pop(next(iter(_matrices)))
+                _matrices[key] = built
+            return built
 
     def pieces_matrix(texts: list[str]):
         import numpy as np
 
-        todo = [t for t in dict.fromkeys(texts) if t not in _pieces]
+        with _store_lock:
+            todo = [t for t in dict.fromkeys(texts) if t not in _pieces]
         if todo:
             resp = client().embeddings.create(model=EMBED_MODEL, input=todo)
-            for t, vec in zip(todo, _unit_rows([item.embedding for item in resp.data])):
-                _pieces[t] = vec
-            while len(_pieces) > _PIECES_CAP:
-                _pieces.pop(next(iter(_pieces)))
-        return np.stack([_pieces[t] for t in texts])
+            vectors = _unit_rows([item.embedding for item in resp.data])
+            with _store_lock:
+                for t, vec in zip(todo, vectors):
+                    _pieces[t] = vec
+                while len(_pieces) > _PIECES_CAP:
+                    _pieces.pop(next(iter(_pieces)))
+        with _store_lock:
+            return np.stack([_pieces[t] for t in texts])
 
     embed.fill = fill  # type: ignore[attr-defined]
     embed.matrix = matrix  # type: ignore[attr-defined]
     embed.pieces = pieces_matrix  # type: ignore[attr-defined]
     embed.needs_warm = True  # type: ignore[attr-defined]
-    embed.is_cached = lambda texts: all(_key(t) in _cache for t in texts)  # type: ignore[attr-defined]
+    embed.is_cached = lambda texts: all(_key(t) in _cache for t in list(texts))  # type: ignore[attr-defined]
     return embed
 
 
