@@ -11,8 +11,8 @@ are the card's real dev-copy figures; tests seed their own chain (CI has no data
 ## Journey
 
 **Dealer.** A dealer's contact (linked by staff to the dealer's customer accounts, and granted
-"Sales target" in its contact access) writes on WhatsApp "how is my target this quarter?" (or in
-Malay / Chinese). The system already knows who they are, which accounts are theirs, today's date and
+"Sales target" in its contact access) writes on WhatsApp "how is my target this quarter?" (or asks in
+Malay / Chinese; the reply text is English, as the sales report reply is today). The system already knows who they are, which accounts are theirs, today's date and
 their language. The bot answers, one fact per line, for every live dealer target that counts only
 their own accounts: the period, which accounts count, what has been achieved (provisional, incl. tax,
 up to the latest order date), the tier reached with its rate, and the next tier with its rate and the
@@ -49,15 +49,18 @@ and no figures.
 - T1-6 [BE] Naming a customer narrows the answer to targets counting that customer, inside the
   rules above; a customer outside them answers 403 `customer_not_permitted` (same code as the sales
   report). `test_named_customer_narrows_and_foreign_customer_403`.
-- T1-7 [BE] A contact that is staff (not salesperson, not dealer) or unclassified gets no targets
-  and the not-allowed outcome. `test_staff_and_unclassified_get_no_targets`.
-- T1-8 [BE] Without the per-contact "Sales target" grant the route answers 403 and returns no
-  figure; the grant is off by default for every contact. `test_route_requires_sales_target_grant`.
+- T1-7 [BE] A contact that is staff (not salesperson, not dealer) or unclassified gets 403
+  `sales_target_not_available` and no figure. `test_staff_and_unclassified_get_no_targets`.
+- T1-8 [BE] Without the per-contact "Sales target" grant (`sales.sales_target`) the route answers 403
+  `sales_target_not_enabled` and returns no figure; the grant is off by default for every contact
+  (`FIELD_REVEAL_KEYS` carries `("sales.sales_target", "Sales target")`).
+  `test_route_requires_sales_target_grant`.
 - T1-9 [BE] Targets of another company are never returned, whatever the links.
   `test_other_company_targets_never_returned`.
-- T1-10 [BE] The route takes `contact_id` and `space_id` together (one without the other is a 422,
-  as the sales report does) and is callable with the integration API key.
-  `test_route_contact_and_space_required`.
+- T1-10 [BE] `GET /api/v1/sales/target-progress` requires both `contact_id` and `space_id` (either
+  missing is a 422 `contact_identity_required`) and is callable with the integration API key whose
+  act-as user holds `sales.reports.view`; without that permission it is a 403.
+  `test_route_contact_and_space_required`, `test_route_needs_sales_reports_view`.
 
 ## T2. What each target line holds
 
@@ -99,6 +102,10 @@ and no figures.
 
 - T3-1 [MCP] A read-only tool `crm_sales_target_progress` wraps the route, passes contact and
   space, restricted by the "Sales target" reveal key. `test_sales_target_tool_spec`.
+- T3-1b [MCP] Period label: a calendar quarter reads "Q4 2026", a calendar month "Oct 2026", a
+  calendar year "2026", any other span "1 Oct to 15 Nov 2026"; the header adds the dates
+  "(1 Oct to 31 Dec)". When a reply holds more than one dealer target, each block's header ends with
+  the dealer's name. A quantity target shows plain numbers, no "RM". `test_present_period_labels`.
 - T3-2 [MCP] Dealer reply shape (card A):
   `Sales target Q4 2026 (1 Oct to 31 Dec)` / `Counts: A/C I` /
   `Achieved: RM 17,414.05 (provisional, incl. tax, to 23 Oct)` /
@@ -111,7 +118,10 @@ and no figures.
   team block when present, dealer block one line per dealer smallest gap first:
   `BKIN ELECTRICAL SDN BHD [A/C I]: RM 5,275.80 of RM 50,000.00 (Tier 1), RM 44,724.20 to go`.
   `test_present_salesperson_blocks`.
-- T3-6 [MCP] Additional rates read "6% + additional 1%". `test_present_additional_rate`.
+- T3-6 [MCP] Additional rates read "6% + additional 1%"; per-account rates read "3% on A/C I";
+  top tier reached reads "Top tier reached: Tier 3, 5%". `test_present_rates_and_top_tier`.
+- T3-7 [MCP] A non-2xx route answer goes through the existing error envelope (no text,
+  `has_result` false). `test_sales_target_error_envelope`.
 
 ## T4. Chat routing
 
@@ -126,6 +136,13 @@ and no figures.
   contract tests stay green). `test_brand_scope_contract` (existing), `test_target_tool_allowed`.
 - T4-5 [CB] A dealer naming another dealer gets today's "only your own accounts" refusal.
   `test_dealer_other_dealer_refused`.
+- T4-6 [CB] The tool's 403 `customer_not_permitted` (a salesperson naming a dealer they do not own)
+  replies "I can only share targets for your own accounts."; 403 `sales_target_not_enabled` or
+  `sales_target_not_available` replies "Sales target is not enabled for your account."
+  `test_target_route_refusals_worded`.
+- T4-7 [CB] The status is NOT one of `SALES_FIGURE_STATUSES`: a contact holding only "Sales target"
+  (not "Sales report") gets the target answer, and one holding only "Sales report" gets the
+  not-enabled line for a target ask. `test_target_grant_independent_of_sales_report`.
 
 ## T5. Parser gate
 

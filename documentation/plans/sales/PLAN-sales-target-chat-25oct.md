@@ -1,7 +1,8 @@
 # PLAN: sales target achievement and sales opportunities over the chat (SALES-TARGET-CHAT)
 
-Status: **scout done, waiting on the owner (25 Oct 2026).** Behaviour card v1 filed as one `crew report --ask`;
-no product code until the owner answers. Size L, full track. Lane branch
+Status: **slice 1 (read-only) building, 25 Oct 2026.** Owner answered card v1. Size L, full track (lead
+pattern: tester red tests, coder, reviewer + security-reviewer, parser gate). Slice 2 after the slice 1
+hand test. UAC: `sales-target-chat-25oct-acceptance-criteria.md`. Lane branch
 `crew/sales-target-chat`, base origin/main b2f15efb32.
 
 ## Owner ask (25 Oct ~19:17 MYT, verbatim)
@@ -80,10 +81,122 @@ SIZE AND SLICES: L (contact-scoped route + MCP tool + presenter; new intents on 
 - Not in this lane: the WhatsApp achievement broadcast (plan S5, not built).
 ```
 
-## Owner rulings
+## Owner rulings (25 Oct, relayed by crew, verbatim "salesperson see c yes, 2 dealer rebate money ok b, 3 a")
 
-None yet.
+- Q1 (c): a salesperson sees their own target, their team's target and the targets of the dealers they
+  own, smallest gap first.
+- Q2 (b): tier reached + rate + gap; NO RM rebate / incentive amount until the invoiced basis lands.
+- Q3 (a): only salespeople create opportunities in chat (slice 2); dealers later, own slice.
+- Q4 (a) crew default: a per-contact "Sales target" grant, default off. Q5 (a) crew default: read back +
+  "Reply YES to save" (slice 2). The owner may overrule either.
 
 ## Slices
 
-Proposed in the card; fixed here after the owner answers.
+- Slice 1 (this build): read-only target progress in chat, card answers A to G. UAC T1 to T5.
+- Slice 2 (after the slice 1 hand test): log an opportunity in chat, salespeople only, card H.
+- Not in this lane: the WhatsApp achievement broadcast, dealer-created opportunities, RM incentive.
+
+## Slice 1 design
+
+### Architecture
+
+Layer: the chat read path, unchanged in shape: parser value -> business lane picks the tool in code ->
+MCP tool -> contact-scoped backend route -> the existing target engine. Nothing new is decided by the
+model beyond one parser value.
+
+Shared mechanisms reused, not copied:
+- Target engine: `achievement_service` (achieved by period and account), `commission_service`
+  (`threshold_in_rm`, `Tier`, `payout_for`), `target_service` (`_periods`, `_tiers`, `_tier_rates`,
+  `_engine_tiers`, `_achieved_by_account`, `point_ratios`, `ratio_on`, `account_label`,
+  `agent_progress`). The achieved figure is the engine's own (T2-3); no second achievement query.
+- Contact identity: `contact_asker.classify` (contact_asker.py:163; first match wins, :66-97),
+  `portal_agent.agents_for_contact` (portal_agent.py:24), `contact_customer_scope`
+  (contact_customer_scope.py:86-115), `field_access.resolve_contact_with_null_workspace_fallback`
+  (field_access.py:278).
+- Per-contact grant: `contact_field_reveal_service.FIELD_REVEAL_KEYS` (:72 pattern); the CRM contact
+  access screen renders the registry list (ContactFieldRevealsSection.tsx:29), so no FE change.
+- Route gate: `require_permission_with_api_key("sales.reports.view")`, the sibling chat-facing sales
+  route's gate (api/v1/sales/analysis.py:67). Measured on the dev copy: the `n8n` integration's
+  act-as role holds sales.reports.view and order_management.orders.view; NO integration role holds
+  sales.targets.view, so gating on it would need a role grant migration. The sales router's module
+  guard already accepts the API key (api/v1/__init__.py:115-120).
+- MCP: a `ToolSpec` + presenter exactly like `crm_sales_report` (catalog.py:805-840,
+  presenters.py:1950, :2976-3000). English text, like the sales report presenter.
+- Parser: one new `order_status` value `sales_target` (the field is a free string, parser.py:261; no
+  schema change), added to the template text (parser_template.py:358 and an R-P3-12 bullet at
+  :312-322). NOT a `chatbot_status_words` row and NOT a new `chatbot_domains` row: both render into
+  the live prompt (`{{status_values}}`, `{{domains}}`, chatbot_prompt_vars.py:55-66, 264-271), which
+  would change production parsing at deploy. The template change ships as a new UNLABELLED version
+  (`scripts.publish_parser_template`); the owner moves the production label.
+- Lane: `turn_runtime` maps `sales_target` to the `sales` domain (turn_runtime.py:1983-1997 seam,
+  NOT added to `SALES_FIGURE_STATUSES`, contracts.py:517, whose gates require the sales report
+  grant). The domain grant gate (lanes/business/__init__.py:1873-1908) takes the grant of the status
+  when the status has one (`sales_target` -> `sales.sales_target`), else the domain's
+  (`DOMAIN_GRANT_REQUIRED`, answer.py:1237). The tool override (the :2255-2316 pattern) picks
+  `crm_sales_target_progress` for that status. The tool joins `UNDOMAINED_CHATBOT_TOOLS`
+  (contracts.py:56-77, "a lane reaches for by name"), so no `chatbot_domains` migration.
+- No migration, no new table, no crew SQL.
+
+Classes fixed (not one shape): every asker (dealer, salesperson, staff, unclassified); every subject
+(agent, team, dealer); every threshold unit (pct, amount, points with and without a ratio); main,
+additional and per-account tier rates; per-period tiers (`tiers_per_period`, TS:1372-1376); single and
+multi-company contacts.
+
+### Backend
+
+1. `app/services/sales/target_service.py`, new public functions beside `agent_progress`:
+   - `tier_ladder(tiers, tier_starts, period, target, ratios)` -> the period's main rungs sorted by RM
+     threshold (CS:131-134 ordering), each with tier number (1-based, as `tier_reached` CS:136),
+     RM threshold (`threshold_in_rm`), points threshold for points targets, rates (per account label
+     from `account_rates`, else the tier rate) and additional rates attached to the rung with the same
+     RM threshold (an additional with no matching rung is its own rung).
+   - `period_progress(db, targets, *, date_from, date_to)` -> one line per (target, period overlapping
+     the window): achieved (engine), reached rung, next rung + gap, ratio_missing, provisional (dealer),
+     accounts (code + label), subject label, period dates. No RM incentive field (T2-6), no ids (T2-11).
+2. `app/services/sales/target_chat_scope.py` (new): who sees which target, per UAC T1. Salesperson:
+   agents = `agents_for_contact`; own agent targets; team targets via dated membership on `on`
+   (`_covering_on` pattern, TS:1245-1255); dealer targets whose EVERY counted account has
+   `sales_agent_id` in agents. Dealer: dealer targets whose EVERY counted account is a linked customer.
+   Named customers narrow the dealer lines; outside scope -> AppException 403 `customer_not_permitted`.
+   Staff / unclassified -> 403 `sales_target_not_available`. Reads targets through the session's
+   company scope (the API-key + contact request scope, company_scope_resolver.py:244-252); never
+   `list_targets` / `acting_company_id` (raises on a multi-company scope).
+   `as_of` = latest `sales_orders.order_date` (not after today) in the companies of the lines.
+3. `app/api/v1/sales/target_progress.py` (new), mounted on the sales router:
+   `GET /api/v1/sales/target-progress?contact_id&space_id&date_from&date_to&customer_ids`, both ids
+   required (422 `contact_identity_required`), grant `sales.sales_target` (403
+   `sales_target_not_enabled`), then the scope service. Response: `{asker, as_of, own[], team[],
+   dealers[]}`; dealers sorted by gap, none last.
+4. `FIELD_REVEAL_KEYS`: `("sales.sales_target", "Sales target")`, default off.
+
+### MCP (`sorento_crm_mcp`)
+
+`crm_sales_target_progress` ToolSpec (read-only GET, contact + space + dates + customer_ids,
+`restricted_fields=(("sales.sales_target","Sales target"),)`, escalation_team "sales"), presenter
+`_sales_target_envelope` per UAC T3, `PRESENTER_TOOLS`, `_LANE_GATED_KEYS` in
+tests/test_field_reveal_keys_declared.py.
+
+### Chatbot
+
+`contracts`: `SALES_TARGET_STATUS`, `UNDOMAINED_CHATBOT_TOOLS`, `BRAND_SCOPE_TREATMENT`
+(`no_products`); `mcp_tool_domains.CHATBOT_TOOL_DOMAINS` -> "sales"; fetch.py date table (:464),
+`CUSTOMER_SCOPED_TOOLS` (:1566), arg builder (customer ids not carried on `self_reference`, the
+:1085-1110 rule), output passthrough; status lists that must know it (order_list.py:33,
+resolve_gate.py:91, `run_until_exit` bypass :967-970) as the tests require; refusal lines:
+"Sales target is not enabled for your account." and, on the route's 403 `customer_not_permitted`,
+"I can only share targets for your own accounts."
+
+### Parser gate (T5)
+
+Gold file `scripts/chatbot_eval/gold/sales_target.jsonl`: at least 8 target asks (en / ms / zh, dealer
+and salesperson words, a named period, a named dealer) expecting `order_status = sales_target`, plus at
+least 4 near misses that must stay `sales_report` / `sales_ranking` ("my sales this quarter", "top 5
+dealers"). Run `scripts.chatbot_eval.parser_gold live` on the published unlabelled version, OpenAI eval
+key only (`--require-key-last4`), `--max-usd 0.25`, `--repeats 3`, plus the existing sales gold rows for
+regression; stop on any 429 or 2 busy replies. Per-PR gate only; no full hidden run without the owner's
+OK; never the Gemini org key. Numbers go in the PR.
+
+### Test DB
+
+`sorento_stc_throwaway` (bootstrapped to head oihr_0010), `sorento_crm_backend/.env.ci-tests`
+(gitignored); run with `SORENTO_ENV_FILE=.env.ci-tests`. Drop both after merge.
