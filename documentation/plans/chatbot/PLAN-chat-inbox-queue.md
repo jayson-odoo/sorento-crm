@@ -1,6 +1,6 @@
 # PLAN: CHAT-INBOX-QUEUE - the CRM owns each contact's message queue
 
-Status: Plan (size L, feature track: new ingest behaviour, security-reviewer required). Ships
+Status: Built, review READY (reviewer + security-reviewer, 3 rounds), PR #1848, waiting on owner hand test (size L, feature track: new ingest behaviour). Ships
 switched OFF (`chatbot_direct_ingress_mode = off`, today's default).
 UAC: `chat-inbox-queue-acceptance-criteria.md`.
 Behaviour card: `PLAN-n8n-to-direct-ingress-gap.md` sections "Owner's design" and "CRM-owned
