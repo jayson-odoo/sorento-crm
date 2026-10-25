@@ -177,6 +177,8 @@ def guarded_main(tool, monkeypatch, tmp_path, iq_serial):
             raise _ReachedTheRun()
 
     monkeypatch.setattr(tool, "healthy", lambda api: True)
+    # The connected-DB check has its own fake-engine tests; CI's Postgres is not on loopback.
+    monkeypatch.setattr(tool, "check_connected", lambda engine: [])
     monkeypatch.setattr(tool, "Replay", _Sentinel)
     monkeypatch.setenv("SORENTO_ENV_FILE", os.environ.get("SORENTO_ENV_FILE", ".env.ci-tests"))
     monkeypatch.delenv("DATABASE_URL", raising=False)
@@ -634,6 +636,8 @@ def real_main(tool, monkeypatch, tmp_path):
     means every guard let the run through. Run on a thread with a bound, so a refusal path
     that hangs is a failure, not a stuck suite."""
     monkeypatch.setattr(tool, "healthy", lambda api: True)
+    # The connected-DB check has its own fake-engine tests; CI's Postgres is not on loopback.
+    monkeypatch.setattr(tool, "check_connected", lambda engine: [])
     monkeypatch.setattr(tool.Replay, "setup", lambda self: (_ for _ in ()).throw(_ReachedSetup()))
     # `main` runs on a worker thread here, where `signal.signal` is not allowed; the
     # handlers have their own test.
@@ -715,8 +719,23 @@ def test_main_reaches_setup_on_a_clean_copy(real_main, copy_world):
 # ----------------------------------------------------------- the connected database
 
 
-def test_check_connected_passes_the_throwaway_copy(tool, iq_serial):
-    assert tool.check_connected(db_engine) == []
+def test_check_connected_judges_the_real_test_database_by_its_server_address(tool, iq_serial):
+    """One real-DB call. A loopback or unix-socket server (a laptop's local Postgres) passes;
+    a server elsewhere (CI's service container answers from its bridge IP) is refused for
+    exactly that reason. The fake-engine tests below pin every case deterministically."""
+    import ipaddress
+
+    with db_engine.connect() as conn:
+        addr = conn.execute(text("SELECT inet_server_addr()")).scalar()
+    reasons = tool.check_connected(db_engine)
+    local = addr is None or ipaddress.ip_address(str(addr).split("/", 1)[0]).is_loopback
+    if local:
+        assert reasons == [], f"a local test database ({addr}) was refused: {reasons}"
+    else:
+        assert reasons, f"a test database served from {addr} must be refused"
+        assert any("server" in r.lower() or "machine" in r.lower() for r in reasons), (
+            f"the refusal must say the server is not on this machine: {reasons}"
+        )
 
 
 class _FakeRow(tuple):
