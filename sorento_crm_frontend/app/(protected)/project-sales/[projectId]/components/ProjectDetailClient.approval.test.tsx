@@ -432,12 +432,12 @@ describe('final review round on the detail page', () => {
     });
   }
 
-  it('an approver without manage gets no Delete project on a pending project (2)', async () => {
+  it('an approver without manage gets no Delete project on a pending project (2)', () => {
     granted = new Set([APPROVE]);
     renderDetail();
-    openGear();
-    expect(await screen.findByRole('menu')).toBeInTheDocument();
-    expect(screen.queryByRole('menuitem', { name: /Delete project/ })).toBeNull();
+    // Delete was that user's only gear item, so since the smoke fix (N1) there is no gear.
+    expect(within(header()).queryByRole('button', { name: 'Project actions' })).toBeNull();
+    expect(screen.queryByText('Delete project')).toBeNull();
   });
 
   it('a manager still gets Delete project on it (the control)', async () => {
@@ -477,6 +477,24 @@ describe('final review round on the detail page', () => {
     projectFixture = { ...projectFixture, ...change } as Project;
     rerender(tree());
     await waitFor(() => expect(screen.queryByText(/Already registered as/)).toBeNull());
+  });
+});
+
+describe('browser smoke: the gear on an unapproved project', () => {
+  it('an approver without manage gets no gear at all on a pending project, never an empty menu', () => {
+    granted = new Set([APPROVE]);
+    renderDetail();
+    expect(within(header()).queryByRole('button', { name: 'Project actions' })).toBeNull();
+    // Approve, Reject and Edit are all still in the header.
+    for (const name of ['Approve', 'Reject', 'Edit']) {
+      expect(within(header()).getByRole('button', { name })).toBeInTheDocument();
+    }
+  });
+
+  it('a manager keeps the gear on the same project (it holds Reassign and Delete)', () => {
+    granted = new Set([APPROVE, 'projects.projects.manage']);
+    renderDetail();
+    expect(within(header()).getByRole('button', { name: 'Project actions' })).toBeInTheDocument();
   });
 });
 

@@ -72,6 +72,7 @@ vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => (
 }));
 
 import { DeliverySchedulesPanel } from './DeliverySchedulesPanel';
+import { ProjectDocumentsPanel } from './ProjectDocumentsPanel';
 import { PurchaseOrdersPanel } from './PurchaseOrdersPanel';
 import { SalesOrdersPanel } from './SalesOrdersPanel';
 import { SamplesPanel } from './SamplesPanel';
@@ -102,6 +103,7 @@ const PANELS: [string, (p: Project) => React.ReactElement, RegExp][] = [
   ['DeliverySchedulesPanel', (p) => <DeliverySchedulesPanel project={p} />, /Upload a schedule/],
   ['PurchaseOrdersPanel', (p) => <PurchaseOrdersPanel project={p} />, /Upload a PO document/],
   ['SalesOrdersPanel', (p) => <SalesOrdersPanel project={p} />, /Build drafts/],
+  ['ProjectDocumentsPanel', (p) => <ProjectDocumentsPanel project={p} />, /Upload documents/],
 ];
 
 function renderPanel(element: React.ReactElement) {

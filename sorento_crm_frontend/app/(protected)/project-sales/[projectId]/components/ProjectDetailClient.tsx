@@ -189,6 +189,13 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   const moves =
     project.can_edit && !waiting ? availableStatusMoves(graph.data, project.status_id) : [];
   const { secondary: secondaryMoves } = splitStatusMoves(moves);
+  // The gear's items, each with its own rule; the gear itself shows only when one applies,
+  // so an approver deciding a registration (Edit in the header, no Reassign, no Delete,
+  // no stage moves) never opens an empty menu.
+  const showEditItem = !canDecide;
+  const showDeleteItem = isProjectApproved(project) || isManager;
+  const hasGearItems =
+    showEditItem || isManager || secondaryMoves.length > 0 || showDeleteItem;
 
   /**
    * Spec In is where quoting starts, so making it opens the new quotation page (owner,
@@ -290,13 +297,13 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                 </Button>
               </>
             )}
-            {project.can_edit && (
+            {project.can_edit && hasGearItems && (
               <DetailActionsMenu ariaLabel="Project actions">
                 {/* First item, never a second primary (AC-PF005, D9): the form is the
                     one place every field on this page is edited, so it leads the menu
                     rather than sitting after the status moves. */}
                 {/* An approver deciding a registration has Edit beside Approve already. */}
-                {!canDecide && (
+                {showEditItem && (
                   <DropdownMenuItem
                     onSelect={() => router.push(`/project-sales/${project.id}/edit`)}
                   >
@@ -323,7 +330,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                 ))}
                 {/* An unapproved registration is Rejected, not deleted, unless a manager
                     removes it (security S2): the server refuses anyone else with 403. */}
-                {(isProjectApproved(project) || isManager) && (
+                {showDeleteItem && (
                   <DropdownMenuItem
                     variant="destructive"
                     onSelect={() => setConfirmDelete(true)}
