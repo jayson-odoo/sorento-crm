@@ -30,6 +30,8 @@ vi.mock('react-konva', () => {
           data-font-style={String(props.fontStyle ?? '')}
           data-font-family={String(props.fontFamily ?? '')}
           data-letter-spacing={String(props.letterSpacing ?? '')}
+          data-source-text={String(props.sourceText ?? '')}
+          data-height={String(props.height ?? '')}
         >
           {props.children}
         </div>
@@ -48,7 +50,7 @@ vi.mock('react-konva', () => {
 
 import TagSheetRenderer from '@/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer';
 import type { TagLayer, TagSheetDoc, TextLayerProps } from '@/lib/dealer-kit/tag-template-types';
-import { textFace, textLayerLines } from '@/lib/dealer-kit/text-layout';
+import { canvasTextHeight, textFace, textLayerLines } from '@/lib/dealer-kit/text-layout';
 import { KonvaTagLayer } from './KonvaTagLayer';
 
 // Synthetic code with the owner's shape: letters, digits and hyphens.
@@ -151,6 +153,15 @@ describe('text layer: canvas and print draw the same lines', () => {
         const node = canvasText(layer, scale);
         expect(node.getAttribute('data-text')).toBe(expected);
         expect(node.getAttribute('data-wrap')).toBe('none');
+        // The unbroken text rides on the node, for a live resize to re-break.
+        expect(node.getAttribute('data-source-text')).toBe(TITLE);
+        // Konva's own height cut never undoes the helper's line count.
+        if (!layer.props.kind || !('padding' in layer.props) || !layer.props.padding) {
+          expect(parseFloat(node.getAttribute('data-height')!)).toBeCloseTo(
+            canvasTextHeight(layer.height_mm * scale),
+            9,
+          );
+        }
       }
 
       // The print page: same lines, the browser's own wrap off.

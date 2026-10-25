@@ -119,6 +119,14 @@ describe('wrapTextLines: the word-wrap rule', () => {
     expect(wrapTextLines(text, { ...box, maxHeight: 5 }, mono(10))).toEqual(['aaaa bbbb']);
   });
 
+  it('keeps the last line when the box is an exact multiple of the line height', () => {
+    // 0.1 + 0.1 + 0.1 is 0.30000000000000004 in floating point: a strict
+    // compare dropped the third line of a box exactly three lines tall.
+    expect(
+      wrapTextLines('a\nb\nc', { maxWidth: 10, maxHeight: 0.3, lineHeight: 0.1, letterSpacing: 0 }, mono(1)),
+    ).toEqual(['a', 'b', 'c']);
+  });
+
   it('leaves headroom when asked, so a line never sits on the very edge', () => {
     expect(wrapTextLines('aaaaaaaaaa', { ...box, headroom: 0.005 }, mono(10))).toEqual([
       'aaaaaaaaa',
