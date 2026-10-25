@@ -73,6 +73,16 @@ def _by_gap(lines: List[dict]) -> List[dict]:
     return sorted(lines, key=key)
 
 
+def _user_revoked(db: Session, contact_id: str) -> bool:
+    """The contact is linked to a CRM user and none of them is live (ACTIVE, not trashed): the
+    revoke rule of the chat report (V1-CHATREPORT-REVOKE). A contact with no user (an agent-only
+    salesperson, a dealer) is not revoked."""
+    from app.models.user import User
+
+    users = db.query(User.status, User.is_trashed).filter(User.respond_contact_id == str(contact_id)).all()
+    return bool(users) and not any(status == "ACTIVE" and not trashed for status, trashed in users)
+
+
 def contact_company_ids(db: Session, contact_id: str) -> Set[str]:
     from app.models.base import company_scope
 
@@ -101,6 +111,8 @@ def target_progress(
     date_from = date_from or date_to or today
     date_to = date_to or date_from
     asker = classify(db, contact_id)
+    if _user_revoked(db, contact_id):
+        asker = "revoked"
     if asker not in ("dealer", "salesperson"):
         raise _forbidden("Sales targets are not available for this contact.", "sales_target_not_available")
 

@@ -45,6 +45,8 @@ def get_target_progress(
 
     if not request.headers.get("X-API-Key"):
         raise AppException(status_code=403, message="This route is for the chatbot only", code="api_key_required")
+    contact_id = (contact_id or "").strip()
+    space_id = (space_id or "").strip()
     if not contact_id or not space_id:
         raise AppException(
             status_code=422, message="contact_id and space_id are required", code="contact_identity_required"

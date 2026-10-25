@@ -2090,7 +2090,7 @@ def agent_progress(db: Session, agent_id: str, *, on: Optional[date] = None) -> 
 
 
 def _r2(value) -> Optional[float]:
-    return None if value is None else float(Decimal(str(value)).quantize(Decimal("0.01")))
+    return None if value is None else float(commission_service._round(Decimal(str(value))))
 
 
 def _rate_entries(rates: Dict[Optional[str], Decimal], labels: List[Tuple[str, str]]) -> List[dict]:
@@ -2133,6 +2133,7 @@ def tier_ladder(
     return [
         {
             "tier": index,
+            "from_pct": tier.from_pct,
             "threshold_rm": at(tier),
             "threshold_points": _r2(tier.threshold) if unit == "points" else None,
             "rates": entries(tier),
@@ -2157,7 +2158,8 @@ def _rung_out(rung: dict, gap: Optional[Decimal] = None) -> dict:
 
 def _reached(rung: dict, achieved: Decimal, target: SalesTarget, period: SalesTargetPeriod) -> bool:
     if (target.threshold_unit or "pct") == "pct" and Decimal(period.target_value) <= 0:
-        return True
+        # The engine's own rule (commission_service.payout_for `reached`).
+        return Decimal(rung["from_pct"]) <= Decimal("100")
     return achieved >= rung["threshold_rm"]
 
 
@@ -2255,6 +2257,7 @@ def period_progress(
                 "next_tier": (
                     _rung_out(upcoming[0], upcoming[0]["threshold_rm"] - value) if upcoming else None
                 ),
+                "target_end_date": target.end_date if target.subject_kind == "agent" else None,
                 "pipeline_value": (
                     _r2(pipeline.get(target.id, Decimal("0")))
                     if target.subject_kind == "agent" and is_current
