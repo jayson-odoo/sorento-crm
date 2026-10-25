@@ -27,9 +27,10 @@ the AI assistant (which still reads raw) is not affected until it migrates.
 """
 from __future__ import annotations
 
+import calendar
 import json
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
@@ -59,6 +60,7 @@ PRESENTER_TOOLS: frozenset[str] = frozenset(
         "crm_sales_report",
         "crm_top_selling_report",
         "crm_sales_analysis",
+        "crm_sales_target_progress",
         "crm_report_ask",
         "crm_find",
     }
@@ -1950,6 +1952,11 @@ def present_response(tool_name: str, raw: str) -> str:
     if tool_name == "crm_sales_report":
         return json.dumps(_sales_report_envelope(data))
 
+    # SALES-TARGET-CHAT: the same minimal envelope. The text is the answer, built from the
+    # route's own lines; a refusal arrives through the generic HTTP error envelope above.
+    if tool_name == "crm_sales_target_progress":
+        return json.dumps(_sales_target_envelope(data))
+
     # PLAN-chatbot-top-x-hot-selling-24sep.md S4: the SAME bypass, for the same
     # reason - a ranking plus a header, a count-only how-many question, or one
     # code's detail, none of which the generic item/field envelope could build.
@@ -3679,4 +3686,178 @@ def _sales_analysis_envelope(payload: dict) -> dict:
         **envelope,
         "response": text,
         "attachments": attachments if isinstance(attachments, list) else [],
+    }
+
+
+# --------------------------------------------------------------------------
+# sales target progress (PLAN-sales-target-chat-25oct.md "Reply text"). English text,
+# like the sales report. Body: `asker`, `as_of`, `window`, `own[]`, `team[]`, `dealers[]`.
+# --------------------------------------------------------------------------
+
+_TARGET_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def _target_date(iso: Any) -> date | None:
+    try:
+        return date.fromisoformat(str(iso)[:10])
+    except ValueError:
+        return None
+
+
+def _target_dmon(d: date) -> str:
+    return f"{d.day} {_TARGET_MONTHS[d.month - 1]}"
+
+
+def _target_money(v: Any, unit: str = "amount") -> str:
+    n = float(v or 0)
+    if unit == "quantity":
+        return f"{n:,.0f}" if n == int(n) else f"{n:,.2f}"
+    return f"RM {n:,.2f}"
+
+
+def _target_period_label(start: date, end: date) -> str:
+    if start.year == end.year:
+        if (start.month, start.day) == (1, 1) and (end.month, end.day) == (12, 31):
+            return str(start.year)
+        if start.day == 1 and start.month == end.month and end.day == calendar.monthrange(end.year, end.month)[1]:
+            return f"{_TARGET_MONTHS[start.month - 1]} {start.year}"
+        if (
+            start.day == 1
+            and start.month % 3 == 1
+            and end.month == start.month + 2
+            and end.day == calendar.monthrange(end.year, end.month)[1]
+        ):
+            return f"Q{(start.month - 1) // 3 + 1} {start.year}"
+    return f"{_target_dmon(start)} to {_target_dmon(end)} {end.year}"
+
+
+def _target_rate(r: Any) -> str:
+    return f"{float(r):g}%"
+
+
+def _target_rates(rung: dict, multi: bool) -> str:
+    parts = []
+    for rate in rung.get("rates") or []:
+        label = rate.get("label")
+        parts.append(_target_rate(rate.get("rate")) + (f" on {label}" if multi and label else ""))
+    text = ", ".join(parts)
+    for rate in rung.get("additional_rates") or []:
+        label = rate.get("label")
+        text += f" + additional {_target_rate(rate.get('rate'))}" + (f" on {label}" if multi and label else "")
+    return text
+
+
+def _target_header(prefix: str, line: dict, subject: str | None) -> str:
+    start, end = _target_date(line.get("period_start")), _target_date(line.get("period_end"))
+    text = f"{prefix} {_target_period_label(start, end)} ({_target_dmon(start)} to {_target_dmon(end)})"
+    return f"{text}, {subject}" if subject else text
+
+
+def _target_line_lines(line: dict, as_of: date | None) -> list[str]:
+    """The lines under a header: Counts, Achieved, and the tier / target outcome."""
+    unit = "quantity" if line.get("threshold_unit") == "quantity" else "amount"
+    accounts = line.get("accounts") or []
+    multi = len(accounts) > 1
+    out: list[str] = []
+    if accounts:
+        out.append("Counts: " + ", ".join(a.get("label") or a.get("code") or "" for a in accounts))
+    if line.get("ratio_missing"):
+        out.append(f"Target: {float(line.get('target_points') or 0):,.0f} points")
+    achieved = _target_money(line.get("achieved_value"), unit)
+    notes = ["provisional", "incl. tax"] if line.get("provisional") else []
+    if line.get("is_current") and as_of is not None:
+        notes.append(f"to {_target_dmon(as_of)}")
+    out.append(f"Achieved: {achieved}" + (f" ({', '.join(notes)})" if notes else ""))
+    if line.get("ratio_missing"):
+        out.append("Points are not converted yet, so I can't compare.")
+        return out
+    reached, nxt = line.get("tier_reached"), line.get("next_tier")
+    if reached:
+        out.append(f"Tier reached: Tier {reached['tier']}, {_target_rates(reached, multi)}")
+    if nxt:
+        short = _target_money(nxt.get("gap"), unit)
+        threshold = _target_money(nxt.get("threshold"), unit)
+        if line.get("is_current"):
+            out.append(f"Next tier: Tier {nxt['tier']}, {_target_rates(nxt, multi)} at {threshold}, {short} to go")
+        else:
+            out.append(
+                f"Tier {nxt['tier']} ({_target_rates(nxt, multi)}) at {threshold}: not reached, short {short}"
+            )
+    elif reached:
+        out[-1] = f"Top tier reached: Tier {reached['tier']}, {_target_rates(reached, multi)}"
+    else:
+        target = float(line.get("target_value") or 0)
+        gap = target - float(line.get("achieved_value") or 0)
+        if gap <= 0:
+            out.append(f"Target reached: {_target_money(target, unit)}")
+        else:
+            out.append(f"Target: {_target_money(target, unit)}, {_target_money(gap, unit)} to go")
+    return out
+
+
+def _target_block(prefix: str, lines: list[dict], as_of: date | None, *, team: bool = False) -> str:
+    blocks = []
+    for line in lines:
+        subject = line.get("subject_label")
+        if team:
+            start, end = _target_date(line["period_start"]), _target_date(line["period_end"])
+            head = (
+                f"Team {subject} target {_target_period_label(start, end)} "
+                f"({_target_dmon(start)} to {_target_dmon(end)})"
+            )
+        else:
+            head = _target_header(prefix, line, subject if len(lines) > 1 else None)
+        body = [head, *_target_line_lines(line, as_of)]
+        pipeline = line.get("pipeline_value")
+        if pipeline and float(pipeline) > 0:
+            body.append(f"Open opportunities closing by {_target_dmon(_target_date(line['period_end']))}: {_target_money(pipeline)}")
+        blocks.append("\n".join(body))
+    return "\n\n".join(blocks)
+
+
+def _target_dealer_row(line: dict) -> str:
+    unit = "quantity" if line.get("threshold_unit") == "quantity" else "amount"
+    labels = ", ".join(a.get("label") or a.get("code") or "" for a in line.get("accounts") or [])
+    head = f"{line.get('subject_label')} [{labels}]: {_target_money(line.get('achieved_value'), unit)}"
+    reached, nxt = line.get("tier_reached"), line.get("next_tier")
+    if line.get("ratio_missing"):
+        return f"{head}, points not converted yet"
+    if nxt:
+        return (
+            f"{head} of {_target_money(line.get('target_value'), unit)} (Tier {nxt['tier']}), "
+            f"{_target_money(nxt.get('gap'), unit)} to go"
+        )
+    if reached:
+        return f"{head}, top tier reached (Tier {reached['tier']})"
+    target = float(line.get("target_value") or 0)
+    gap = target - float(line.get("achieved_value") or 0)
+    tail = f"{_target_money(gap, unit)} to go" if gap > 0 else "target reached"
+    return f"{head} of {_target_money(target, unit)}, {tail}"
+
+
+def _sales_target(report: dict) -> str:
+    as_of = _target_date(report.get("as_of"))
+    own, team, dealers = report.get("own") or [], report.get("team") or [], report.get("dealers") or []
+    window = report.get("window") or {}
+    start, end = _target_date(window.get("date_from")), _target_date(window.get("date_to"))
+    when = ""
+    if start and end and start != end:
+        when = f" for {_target_period_label(start, end)}"
+    if report.get("asker") == "dealer":
+        if not dealers:
+            return f"No sales target is set for your accounts{when or ' right now'}."
+        return _target_block("Sales target", dealers, as_of)
+    blocks = [_target_block("Your sales target", own, as_of) if own else f"No sales target is set for you{when or ' right now'}."]
+    if team:
+        blocks.append(_target_block("", team, as_of, team=True))
+    if dealers:
+        blocks.append("\n".join(["Your dealers, smallest gap first:", *(_target_dealer_row(d) for d in dealers)]))
+    return "\n\n".join(blocks)
+
+
+def _sales_target_envelope(report: dict) -> dict:
+    return {
+        "result_type": "sales_target",
+        "response": _sales_target(report),
+        "has_result": True,
     }
