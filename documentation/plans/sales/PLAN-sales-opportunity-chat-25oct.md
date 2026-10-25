@@ -160,6 +160,21 @@ the open question's yes answer, never a new ask.
 
 ```
 
+### Lead decisions from the red tests (25 Oct)
+
+- Seam: `lanes.opportunity.call_opportunity_tool(tool_name, arguments) -> dict` (module global, calls
+  `MCPRuntimeClient.call_tool` directly, returns decoded JSON), the ideate shape.
+- The two tools are NOT presenter tools: a refused route reaches the lane as the raw HTTP error body (top-level
+  `code`, `status_code`); amounts arrive as decimal strings ("40000.00") and the lane formats them.
+- A bare YES / NO / cancel turn reaches the lane through the yes_no pending (`message_type` casual, `order_status`
+  null), not through the status. Cancel (`open_question_answer` mode cancel) is a reset upstream (`apply.is_reset`),
+  so the lane handles it explicitly and replies "Not saved." before the reset clears the question.
+- `crm_sales_opportunity_log` joins the in-app assistant's `_WRITE_TOOL_NAMES` (`_is_write_tool` true);
+  `crm_sales_opportunity_customer_options` joins `UNDOMAINED_CHATBOT_TOOLS` and `BRAND_SCOPE_TREATMENT`.
+- The numbered pick reads "Which account?" then "N. <name> [<label>]".
+- O3-7 asserts the model constraint; the migration is checked by `alembic upgrade head` on the throwaway DB and the
+  single-head gate.
+
 ### Test DB
 
 `sorento_stc_throwaway` (at head oihr_0010), `.env.ci-tests`; serial pytest runs (a `-n 2` run hung in slice 1).
