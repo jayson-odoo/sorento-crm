@@ -1,6 +1,6 @@
 # PLAN: photo-first look-ahead (PHOTO-FIRST-LOOKAHEAD)
 
-Status: in progress, small fix track (backend only, no migration, no auth change).
+Status: PR #1860 open, reviewer READY, awaiting hand test; small fix track (backend only, no migration, no auth change).
 
 ## Problem
 
@@ -23,6 +23,11 @@ the look-ahead (`checkpoint`): media rows first (send order among them), then ev
 row in send order. Same key on both sides, so a text that gave way to a photo is not
 re-claimed ahead of it, and a photo never gives way back to the text it overtook.
 
+Two consequences, both by the rule: a photo whose read is still pending is parked and
+re-claimed ahead of the texts, so a text (earlier-sent too) waits behind that read, up to
+the existing `media_intake.DRAIN_WAIT_CAP_SECONDS` cap. The n8n `/chat/turn` sync path
+(`send_order`) is not the drain and keeps pure send order.
+
 Read from one more JSON path on the row (the attachment's type and mime), never the whole
 envelope (IQ-33).
 
@@ -33,6 +38,7 @@ envelope (IQ-33).
 3. Two texts and one photo queued behind the running first text: photo, text 1, text 2.
 4. No photo: unchanged, posts at once.
 5. A photo of another contact: ignored.
+6. `_order_key` alone: image, voice, an `image/*` file first; text, document, sticker in send order.
 
 ## UAC
 

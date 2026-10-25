@@ -154,3 +154,14 @@ def test_a_photo_of_another_contact_is_ignored(world, media_worker):
     world.wait_posts(1, b, timeout=30)
     assert world.posted_messages(a) == [str(text_mid)]
     assert _calls(world, text_mid) == [str(text_mid)], "A's text gave way to another contact's photo"
+
+
+def test_order_key_puts_photo_and_voice_first_and_keeps_send_order_otherwise():
+    """The key itself, no database: image, voice (every kind) and an `image/*` file go first;
+    a document, a sticker and a text keep their send order."""
+    key = iq()._order_key
+    for kind, mime in [("image", None), ("audio", None), ("voice", None), ("ptt", None), ("file", "image/png")]:
+        assert key(5.0, kind, mime) == (0, 5.0), (kind, mime)
+    for kind, mime in [(None, None), ("file", "application/pdf"), ("sticker", "image/webp")]:
+        assert key(5.0, kind, mime) == (1, 5.0), (kind, mime)
+    assert key(9.0, "image", None) < key(1.0, None, None), "a later photo goes before an earlier text"

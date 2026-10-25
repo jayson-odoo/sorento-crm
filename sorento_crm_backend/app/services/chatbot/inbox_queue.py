@@ -21,9 +21,10 @@ first trace record, which is how recovery tells it from a sync-path turn in flig
 Three rules that make it safe:
 
 * **Look-ahead** (rule 4). Right before the turn writes conversation state, or closes, the
-  engine calls `checkpoint`: when an EARLIER-sent message of the contact is queued, the turn
-  yields (`TurnYielded`) with nothing written, its row goes back to `queued`, and the drain
-  takes the earlier one first.
+  engine calls `checkpoint`: when a message of the contact that goes before it is queued (a
+  photo or voice note, or an EARLIER-sent message, `_order_key`), the turn yields
+  (`TurnYielded`) with nothing written, its row goes back to `queued`, and the drain takes
+  that one first.
 * **Never lose** (rule 5). Rows live in Postgres. `sweep` (every API process, at start-up
   and every `SWEEP_INTERVAL_SECONDS`) kicks a drain for every contact with queued rows and
   no live mutex; a drain that takes the mutex first recovers the rows a dead process left
@@ -95,8 +96,8 @@ _RELEASE_LUA = (
 
 
 class TurnYielded(BaseException):
-    """The running turn gives way, with nothing written: to an earlier-sent queued message
-    (look-ahead), or because its photo read is still pending or shutdown began (parked).
+    """The running turn gives way, with nothing written: to a queued message that goes
+    before it (look-ahead, `_order_key`), or because its photo read is still pending or shutdown began (parked).
 
     A BaseException on purpose: every `except Exception` in the engine and its lanes turns
     a failure into an error reply and a closed row, and a yield must pass all of them."""
@@ -928,9 +929,9 @@ def _has_queued(contact: str, factory: Callable[[], Any]) -> bool:
 
 
 def _step(contact: str, factory: Callable[[], Any]) -> tuple[str, int] | None:
-    """One hold of the contact's mutex: recover its dead rows, then run its oldest-sent
-    queued row. Returns (what happened, rows finished), or None when another drain holds
-    the contact."""
+    """One hold of the contact's mutex: recover its dead rows, then run its first queued
+    row (`_order_key`). Returns (what happened, rows finished), or None when another drain
+    holds the contact."""
     global _active
     if _shutting_down.is_set() or _backing_off(contact):
         return None
@@ -965,7 +966,7 @@ def _step(contact: str, factory: Callable[[], Any]) -> tuple[str, int] | None:
 
 
 def drain(contact_respond_id: str, *, session_factory: Callable[[], Any] | None = None) -> int:
-    """Run this contact's queued rows in send order until none is left or shutdown began.
+    """Run this contact's queued rows in order (`_order_key`) until none is left or shutdown began.
     Returns the rows finished; 0 at once when another drain holds the contact. (The pool
     runs `_drain_job`, one row per step; this is the same steps back to back.)"""
     contact = str(contact_respond_id or "")
