@@ -62,6 +62,13 @@ and no figures.
   act-as user holds `sales.reports.view`; without that permission it is a 403.
   `test_route_contact_and_space_required`, `test_route_needs_sales_reports_view`.
 
+- T1-11 [BE] (security S1) A contact whose linked CRM user is no longer ACTIVE, or is trashed, is
+  refused with 403 `sales_target_not_available`, the revoke rule the chat report already follows
+  (`chat_report.asker_of`, V1-CHATREPORT-REVOKE); a salesperson linked only through
+  `sales_agents.contact_id` (no user) still gets through. `test_revoked_user_contact_refused`.
+- T1-12 [BE] (security S2) `contact_id` / `space_id` are stripped before the both-required check: a
+  blank or whitespace-only id is a 422 `contact_identity_required`. `test_blank_contact_ids_422`.
+
 ## T2. What each target line holds
 
 - T2-1 [BE] Default period = the period of each live target that contains the as-of date (today);
@@ -98,6 +105,14 @@ and no figures.
 - T2-11 [BE] The response carries no UUID: subjects by name / code, accounts by code and label.
   `test_response_has_no_ids`.
 
+- T2-12 [BE] (review 3) A pct tier on a period whose target is 0 is reached only when its `from_pct` is
+  100 or less, the engine's own rule (commission_service.py:124-128): tiers 100% / 120% on a 0 target
+  give tier reached 1, not 2. `test_pct_tiers_on_zero_target_follow_engine`.
+- T2-13 [BE] (review 5) Figures round half-up to 2 decimals like the engine (`ROUND_HALF_UP`).
+  `test_rounding_half_up`.
+- T2-14 [BE] (review 2) Agent lines carry `target_end_date` (the whole target's end, which the open
+  pipeline is counted up to); null on team and dealer lines. `test_agent_line_target_end_date`.
+
 ## T3. MCP tool and reply text
 
 - T3-1 [MCP] A read-only tool `crm_sales_target_progress` wraps the route, passes contact and
@@ -123,6 +138,12 @@ and no figures.
 - T3-7 [MCP] A non-2xx route answer goes through the existing error envelope (no text,
   `has_result` false). `test_sales_target_error_envelope`.
 
+- T3-8 [MCP] (review 1, blocker) A dealer line's "of RM t (Tier n)" is the NEXT tier's threshold, not
+  the period target: reached Tier 1 at 50,000 with next Tier 2 at 70,000 and RM 55,000.00 achieved reads
+  "...: RM 55,000.00 of RM 70,000.00 (Tier 2), RM 15,000.00 to go". `test_present_dealer_row_next_threshold`.
+- T3-9 [MCP] (review 2) "Open opportunities closing by <d Mon>" prints the agent line's
+  `target_end_date`. `test_present_pipeline_date_is_target_end`.
+
 ## T4. Chat routing
 
 - T4-1 [CB] A target question from a granted dealer or salesperson routes to
@@ -143,6 +164,11 @@ and no figures.
 - T4-7 [CB] The status is NOT one of `SALES_FIGURE_STATUSES`: a contact holding only "Sales target"
   (not "Sales report") gets the target answer, and one holding only "Sales report" gets the
   not-enabled line for a target ask. `test_target_grant_independent_of_sales_report`.
+
+- T4-8 [CB] (review 4) A salesperson contact (no customer links, no staff user) holding the
+  "Sales target" grant who names a dealer reaches `crm_sales_target_progress` with that customer, instead
+  of today's "isn't under your account" refusal; ownership is decided by the route (T1-6, T4-6).
+  Without the grant the existing refusal stays. `test_salesperson_named_dealer_reaches_target_tool`.
 
 ## T5. Parser gate (MOVED OUT of this PR, crew decision a30290657)
 

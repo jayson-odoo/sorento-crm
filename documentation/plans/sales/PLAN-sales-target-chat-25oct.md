@@ -214,7 +214,8 @@ multi-company contacts.
   rate; `additional_rates` the additional tiers at the same RM threshold. `next_tier` adds `gap`.
 - Points target with no ratio: `ratio_missing: true`, `target_value` null, `target_points` set,
   `tier_reached` and `next_tier` null.
-- `pipeline_value`: agent lines only (`agent_progress`), else null.
+- `pipeline_value`: agent lines only (`agent_progress`), else null. `target_end_date`: agent lines only (the
+  whole target's end, the date the pipeline counts to), else null.
 - Numbers are JSON numbers rounded to 2 decimals. No UUID anywhere. No RM incentive field.
 - Team membership is read on TODAY (`team_service._today()`), whatever window was asked.
 - `customer_ids` given: `own` and `team` are `[]`; only dealer lines counting a named customer remain.
