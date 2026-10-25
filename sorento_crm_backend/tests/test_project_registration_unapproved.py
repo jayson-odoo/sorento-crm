@@ -197,7 +197,7 @@ def stubbed_storage(monkeypatch):
 
 
 @pytest.mark.parametrize("surface", sorted(SURFACES))
-@pytest.mark.parametrize("state", UNAPPROVED)
+@pytest.mark.parametrize("state", ("pending", "rejected"))
 def test_rw8_a_write_on_an_unapproved_project_is_409_project_not_approved(world, stubbed_storage, surface, state):
     p = project(world.db, world.company_id, f"Guarded {state} {surface}", approval_state=state, owner=world.root)
     ctx = _seed_children(world, p)
@@ -205,6 +205,17 @@ def test_rw8_a_write_on_an_unapproved_project_is_409_project_not_approved(world,
     assert res.status_code == 409, (surface, state, res.status_code, res.text)
     assert res.json()["code"] == "project_not_approved"
     assert "None" not in res.json()["message"]
+
+
+@pytest.mark.parametrize("surface", sorted(SURFACES))
+def test_rw8_a_write_on_a_draft_is_404_project_not_found(world, stubbed_storage, surface):
+    """A contact's unsent draft is not found on any staff route (security re-check), so a
+    write on it is a 404 before any approval rule is reached."""
+    p = project(world.db, world.company_id, f"Guarded draft {surface}", approval_state="draft", owner=world.root)
+    ctx = _seed_children(world, p)
+    res = SURFACES[surface](as_user(world, world.root), ctx)
+    assert res.status_code == 404, (surface, res.status_code, res.text)
+    assert res.json()["code"] == "project_not_found"
 
 
 @pytest.mark.parametrize("surface", sorted(SURFACES))
