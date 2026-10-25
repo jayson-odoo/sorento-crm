@@ -603,3 +603,18 @@ def test_create_refuses_prospect_that_is_another_agents_customer(client, db):
     ok = client.post(CREATE, json=_body(contact, prospect_name="ZZT NOBODY TRADING"))
     assert ok.status_code == 201, ok.text
     assert _count(db) == 1
+
+
+def test_unassigned_customer_is_not_yours_in_chat(client, db):
+    """O2-4: a company customer with no sales agent is not the salesperson's: blocked, never a prospect."""
+    contact, _agent_row = _salesperson(db)
+    _customer(db, "ZZT UNASSIGNED HARDWARE SDN BHD", 1)
+    for q in ("ZZT UNASSIGNED HARDWARE SDN BHD", "ZZT UNASSIGNED HARDWARE"):
+        resp = client.get(OPTIONS, params={**_me(contact), "q": q})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["items"] == []
+        assert resp.json()["blocked"] is True and resp.json()["prospect"] is False, (q, resp.text)
+    refused = client.post(CREATE, json=_body(contact, prospect_name="ZZT UNASSIGNED HARDWARE"))
+    assert refused.status_code == 422, refused.text
+    assert _code(refused) == "CUSTOMER_NOT_YOURS", refused.text
+    assert _count(db) == 0
