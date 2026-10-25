@@ -17,7 +17,7 @@ from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
-from app.services.reports.datasets import chat_asks, chat_report_ask, sales_order_lines_ask
+from app.services.reports.datasets import chat_asks, chat_report_ask, delivery_order_lines, sales_order_lines_ask
 from app.services.sales_report_delivered import _CHANNEL_CLASS, resolve_locations
 from app.services.sales_report_service import _money_edge, _qty
 
@@ -39,12 +39,14 @@ CHAT_MEASURES = ("asks", "failed", "failure_rate", "contacts")
 #: The dimensions that are a run of time: a trend lists every bucket, oldest first.
 CHAT_TRENDS = frozenset({"week", "month", "day"})
 
-#: Dataset -> basis -> entry. Sales: one entry per basis, every one over sales order lines.
-#: Chat: `asks` counts every ask, `turns` each message once.
+#: Dataset -> basis -> entry. Sales: ordered and outstanding over sales order lines, delivered
+#: over the delivered events, filed by the DO that delivered them (DELIVERED-DATE-BASIS, owner
+#: ruling 25 Oct 2026). Chat: `asks` counts every ask, `turns` each message once.
+_SALES_DEFINITIONS = {**sales_order_lines_ask.DEFINITIONS, "delivered": delivery_order_lines.DEFINITION}
 CATALOGUE: dict[str, dict[str, dict[str, Any]]] = {
     "sales": {
         basis: {
-            "definition": sales_order_lines_ask.DEFINITIONS[basis],
+            "definition": _SALES_DEFINITIONS[basis],
             "label": label,
             "dimensions": DIMENSIONS,
             "filters": FILTERS,

@@ -350,17 +350,22 @@ def resolve(
     grants = _grants(db, company_grants) if definition.dataset.scope == "company" else None
     _bind_company(db, definition, values, params, grants)
 
-    return QueryContext(
+    expr = dataset.basis(basis_key).expr
+    ctx = QueryContext(
         db=db,
         definition=definition,
         date_basis_key=basis_key,
         # Malaysia wall clock, once: the period predicate, the month bucket, the ordering
         # and the printed date all read this one expression, so they cannot disagree.
-        date_basis=reg.to_malaysia(dataset.basis(basis_key).expr),
+        date_basis=None if callable(expr) else reg.to_malaysia(expr),
         period=period,
         values=values,
         company_grants=grants,
     )
+    if callable(expr):
+        # A date basis over a row set built per run (the delivered events read the period).
+        ctx.date_basis = reg.to_malaysia(expr(ctx))
+    return ctx
 
 
 def _predicates(ctx: QueryContext) -> List[ColumnElement]:

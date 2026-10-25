@@ -131,7 +131,8 @@ class DateBasis:
 
     key: str
     label: str
-    expr: ColumnElement
+    #: A column, or a function of the run's context returning one (a per-run row set).
+    expr: Any
 
 
 @dataclass(frozen=True)

@@ -13,6 +13,8 @@ Excel and the chatbot share one query.
 - Channel is the sales order's dealer or project class (G4); with both ticked the file
   writes the DEALER block, then the PROJECT TEAM block, on one sheet (Q1 (b), AC-R4-7).
 - Basis is Delivered by default, Ordered on request, printed on every header (G1).
+  Delivered reads the delivered events, filed by the DO that delivered them
+  (DELIVERED-DATE-BASIS, owner ruling 25 Oct 2026; `datasets/delivery_order_lines.py`).
   Invoiced (finance S1, #1309) reads AutoCount's billing documents instead of the order
   lines: a second dataset, the same blocks by the sales order type (ruling Q14).
 """
@@ -22,6 +24,7 @@ from datetime import date
 
 from app.services.reports import registry as reg
 from app.services.reports.datasets import billing_documents as bd
+from app.services.reports.datasets import delivery_order_lines as dl
 from app.services.reports.datasets import sales_order_lines as ds
 
 KEY = "sales_yearly"
@@ -50,10 +53,14 @@ def _of(ctx):
 
 
 def _channel_condition(ctx, values):
+    if ctx.dataset is dl.YEARLY_DATASET:
+        return dl.yearly_channel_condition(ctx, values)
     return _of(ctx).channel_condition(ctx, values)
 
 
 def _order_by(ctx):
+    if ctx.dataset is dl.YEARLY_DATASET:
+        return dl.yearly_order_by(ctx)
     return _of(ctx).order_by(ctx)
 
 
@@ -101,7 +108,10 @@ REPORT = reg.register(
             reg.PeriodParam(key="period", label="Period", default=as_at_period),
         ),
         detail=reg.DetailLayout(
-            title=lambda ctx: "Billing documents" if _of(ctx) is bd else "Sales order lines",
+            title=lambda ctx: (
+                "Billing documents" if _of(ctx) is bd
+                else "Delivered lines" if ctx.dataset is dl.YEARLY_DATASET else "Sales order lines"
+            ),
             order_by=_order_by,
             cap="truncate",
         ),
@@ -126,7 +136,7 @@ REPORT = reg.register(
         },
         note=ds.note,
         opens_on="summary",
-        datasets_by=("basis", {"invoiced": bd.DATASET}),
+        datasets_by=("basis", {"invoiced": bd.DATASET, "delivered": dl.YEARLY_DATASET}),
         workbook=reg.WorkbookSpec(
             # Empty: the company is the one the run READ (the Company filter).
             company_name="",

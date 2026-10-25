@@ -1,33 +1,32 @@
-"""The rows behind the chatbot's sales report: every delivered DO line (lane SALES-REPORT,
-PR #1401; `documentation/plans/chatbot/PLAN-chatbot-selfref-scope-30sep.md`, "Design note:
-one dimension/measure model"; UAC AC-SR-20 to AC-SR-22).
+"""Delivered sales: the ONE definition every delivered measure reads (lane DELIVERED-DATE-BASIS,
+owner ruling 25 Oct 2026, Q0 (b); `documentation/plans/chatbot/PLAN-delivered-date-basis-25oct.md`).
 
-One row per `order_lines` row of a delivery order (`orders`) that is not cancelled, not
-deleted, dated, and not a replacement DO (number `REP...`). Filed by the DO's own date
-(`orders.order_date`).
+A delivered quantity is filed by the delivery order (DO) that delivered it. One row per
+delivery event, built per run in `_events`:
 
-**The amount is computed once, per line, in a base subquery**, so every grouping (customer,
-product, period, DO, sales agent) sums to the same Total to the sen:
+* **linked**: a live DO line (not cancelled, not deleted, dated, not a replacement `REP...`)
+  that resolves to a sales order line, on the DO's own date. The SO line is the line's own
+  link (`order_lines.sales_order_line_id`), else the DO header's SO (`orders.sales_order_id`)
+  and else the SO the line names (`from_doc_type` SO, `from_doc_no`, same company), each of the
+  last two narrowed to that SO's line of the same product (the first by `line_no`, so a line is
+  never fanned out). Quantity: the DO line's own, never capped at the ordered quantity.
+* **residual**: the part of a live SO line's delivered quantity (`least(qty_delivered,
+  qty_ordered)`, the sales report's confirmed qty) that no linked DO line explains, on the SO
+  line's own date (`required_date`, else the SO's `order_date`). Old-system DOs carry no SO link,
+  so a delivery made before the DO history counts here, as it did before this lane.
+* **unlinked**: an AutoCount DO line (`source_book` set) that resolves to no sales order, on the
+  DO's date. It is in no channel and has no agent. An old-system DO line (`source_book` NULL)
+  that resolves to no SO is left out: its SO's own delivered quantity is the residual above.
 
-* an AutoCount DO (`source_book` set, `db1`) carries its own line totals: a line's amount is
-  its own `total`;
-* a legacy import (`source_book` NULL) repeats the DOC total on every line: the DO counts it
-  ONCE, split across its lines by weight qty x unit price x (1 - discount), in equal shares
-  when every weight is 0. The split is rounded by cumulative rounding (each line takes the
-  rounded running total minus the rounded running total before it), so the shares sum to
-  the DOC total exactly, the last sen included;
-* a legacy DO whose lines carry MORE THAN ONE distinct total is not a repeated DOC total
-  (owner ruling, PR #1401 fix round 1; rule a2, fix round 2): each line is the LESSER of its
-  own qty x unit price x (1 - discount), rounded to the sen, and its stored total (none
-  stored = the line math). The discount is normalised first (`discount_fraction`).
+A consignment SO is not a sale (AC-CONSIGN-CRM): neither its DO lines nor its residual count.
 
-The DO-level filters a run names (its customers, its window, its company grant) are pushed
-into that subquery as well: a share is a fraction of its whole DO, so only a filter that
-keeps or drops a WHOLE DO may go there. Product, location and channel filters (per line) stay outside.
+The amount of an SO event is the sales report's own per-line rule, `round(line_total x qty /
+qty_ordered, 2)` (0 when nothing was ordered); an unlinked DO line's is its own total, to the sen.
+Channel and sales agent always come from the SO, so a DO with no header link still has both.
 
-Not registered on the Reports screen (`reg.register`): the chatbot's sales report runs this
-definition directly (`sales_report_service.delivered_sales_report`). Trigger for the screen:
-the owner wants it there.
+Used by the chatbot's sales report (`sales_report_delivered`), the report ask's delivered basis
+(`reports/ask.py`) and the Yearly comparison's Delivered basis (`YEARLY_DATASET`). Not registered
+on the Reports screen on its own.
 """
 from __future__ import annotations
 
@@ -36,7 +35,7 @@ from typing import Any, List, Optional
 import sqlalchemy as sa
 
 from app.models.inventory import Warehouse
-from app.models.order import Customer, Order, OrderLine, SalesOrder, SalesOrderLine
+from app.models.order import DOC_TYPE_CONSIGNMENT, Customer, Order, OrderLine, SalesOrder, SalesOrderLine
 from app.models.product import Brand, Product, ProductCategory
 from app.models.sales_agent import SalesAgent
 from app.services.reports import registry as reg
@@ -47,34 +46,38 @@ NO_AGENT = "(no agent)"
 #: The two channel values the `channel` dimension and filter speak (sales order `demand_class`).
 CHANNELS = ("project", "retail")
 
-_LINE_SO = sa.orm.aliased(SalesOrder)
-_LINE_SOL = sa.orm.aliased(SalesOrderLine)
-_DOC_SO = sa.orm.aliased(SalesOrder)
+#: Q2 (owner via crew, 25 Oct 2026, recommendation (a)): the "orders" count on delivered counts
+#: delivery orders; a residual (no DO behind it) counts its sales order instead.
+ORDERS_COUNT_DELIVERY_ORDERS = True
 
-#: The line's sales order class, by the line link (sales order line -> sales order).
-_BY_LINE_LINK = (
-    sa.select(_LINE_SO.demand_class)
-    .select_from(_LINE_SOL)
-    .join(_LINE_SO, _LINE_SO.id == _LINE_SOL.sales_order_id)
-    .where(_LINE_SOL.id == OrderLine.sales_order_line_id)
-    .scalar_subquery()
-)
+_SOL = sa.orm.aliased(SalesOrderLine)
+_SO = sa.orm.aliased(SalesOrder)
 
-#: The same, by the doc number the line says it came from (unique per company and number,
-#: so at most one sales order matches and the line is never fanned out).
-_BY_DOC_NUMBER = (
-    sa.select(_DOC_SO.demand_class)
-    .where(
-        OrderLine.from_doc_type == "SO",
-        _DOC_SO.so_number == OrderLine.from_doc_no,
-        _DOC_SO.company_id == OrderLine.company_id,
+
+def _first_line_of(so_match: Any) -> Any:
+    """The id of the first line (by `line_no`) of the SO `so_match` names, of the DO line's product."""
+    return (
+        sa.select(_SOL.id)
+        .join(_SO, _SO.id == _SOL.sales_order_id)
+        .where(so_match, _SOL.product_id == OrderLine.product_id)
+        .order_by(_SOL.line_no.asc().nullslast(), _SOL.id.asc())
+        .limit(1)
+        .scalar_subquery()
     )
-    .scalar_subquery()
-)
 
-#: A DO line's channel is its sales order's `demand_class` (line link, then the DO header's
-#: link, then the doc number), `project` / `retail`, or NULL when no sales order is found.
-CHANNEL_EXPR = sa.func.coalesce(_BY_LINE_LINK, SalesOrder.demand_class, _BY_DOC_NUMBER)
+
+#: The SO line a DO line delivered: line link, then the header's SO, then the doc number.
+RESOLVED_SO_LINE = sa.func.coalesce(
+    OrderLine.sales_order_line_id,
+    _first_line_of(_SO.id == Order.sales_order_id),
+    _first_line_of(
+        sa.and_(
+            OrderLine.from_doc_type == "SO",
+            _SO.so_number == OrderLine.from_doc_no,
+            _SO.company_id == OrderLine.company_id,
+        )
+    ),
+)
 
 
 def _fixed_filters() -> List[Any]:
@@ -87,130 +90,170 @@ def _fixed_filters() -> List[Any]:
     ]
 
 
-def _do_level_filters(ctx: Any) -> List[Any]:
-    """The run's filters that keep or drop a WHOLE DO, safe to apply before the split."""
-    preds: List[Any] = [
-        Order.order_date >= ctx.period.start,
-        Order.order_date < ctx.period.end_exclusive,
-    ]
-    customers = ctx.values.get("customer") or []
-    if customers:
-        preds.append(Order.customer_id.in_(customers))
+def _grant_filter(column: Any, ctx: Any) -> List[Any]:
     grants = ctx.company_grants
     if grants is None:
-        pass
-    elif isinstance(grants, frozenset) and grants:
-        preds.append(Order.company_id.in_(sorted(grants)))
-    else:
-        preds.append(sa.false())
-    return preds
+        return []
+    if isinstance(grants, frozenset) and grants:
+        return [column.in_(sorted(grants))]
+    return [sa.false()]
 
 
-def discount_fraction() -> Any:
-    """A line's discount as a fraction 0..1. The column is mostly a fraction, but some rows
-    store a percent (real data: three lines carry 100.0000), so a value above 1 is read as a
-    percent (100 -> 1.0, 37 -> 0.37), then clamped to 0..1."""
-    raw = sa.func.coalesce(OrderLine.discount, 0)
-    fraction = sa.case((raw > 1, raw / 100), else_=raw)
-    return sa.func.least(sa.func.greatest(fraction, 0), 1)
+def _prorated(qty: Any) -> Any:
+    return sa.func.coalesce(
+        sa.func.round(
+            sa.func.coalesce(SalesOrderLine.line_total, 0) * qty / sa.func.nullif(SalesOrderLine.qty_ordered, 0), 2
+        ),
+        0,
+    )
 
 
-def _line_amounts(ctx: Any) -> Any:
-    """Each DO line's amount, as a subquery keyed by the line id. Built once per run (the
-    base and the `amount` measure must read the SAME subquery object)."""
-    cached = ctx.__dict__.get("_delivery_order_line_amounts")
+def _events(ctx: Any) -> Any:
+    """Every delivery event of the run's period, as one subquery. Built once per run (the base,
+    the measures and the date basis must read the SAME subquery object)."""
+    cached = ctx.__dict__.get("_delivered_events")
     if cached is not None:
         return cached
 
-    partition = (OrderLine.order_id,)
-    weight = (
-        sa.func.coalesce(OrderLine.quantity, 0)
-        * sa.func.coalesce(OrderLine.unit_price, 0)
-        * (1 - discount_fraction())
-    )
-    lines = (
+    start, end = ctx.period.start, ctx.period.end_exclusive
+    # Every live DO line of the granted companies, resolved once. Not cut to the period: a
+    # residual needs every DO line of its SO line, whatever its date.
+    do_lines = (
         sa.select(
-            OrderLine.id.label("line_id"),
-            OrderLine.order_id.label("order_id"),
-            OrderLine.line_sequence.label("line_sequence"),
+            OrderLine.id.label("do_line_id"),
+            Order.id.label("do_id"),
+            Order.order_date.label("do_date"),
+            Order.customer_id.label("do_customer_id"),
+            Order.debtor_name.label("debtor_name"),
             Order.source_book.label("source_book"),
-            sa.func.coalesce(OrderLine.total, 0).label("line_total"),
-            OrderLine.total.label("stored_total"),
-            weight.label("weight"),
-            sa.func.coalesce(sa.func.max(OrderLine.total).over(partition_by=partition), 0).label("doc_total"),
-            # Postgres has no COUNT(DISTINCT) window: min <> max is "more than one total".
-            (
-                sa.func.min(OrderLine.total).over(partition_by=partition)
-                != sa.func.max(OrderLine.total).over(partition_by=partition)
-            ).label("mixed_totals"),
-            sa.func.sum(weight).over(partition_by=partition).label("weight_sum"),
-            sa.func.count().over(partition_by=partition).label("line_count"),
+            Order.company_id.label("company_id"),
+            OrderLine.product_id.label("product_id"),
+            OrderLine.warehouse_id.label("warehouse_id"),
+            sa.func.coalesce(OrderLine.quantity, 0).label("qty"),
+            sa.func.round(sa.func.coalesce(OrderLine.total, 0), 2).label("total"),
+            RESOLVED_SO_LINE.label("sol_id"),
         )
         .select_from(OrderLine)
         .join(Order, Order.id == OrderLine.order_id)
-        .where(sa.and_(*_fixed_filters(), *_do_level_filters(ctx)))
-        .subquery("do_lines")
+        .where(*_fixed_filters(), *_grant_filter(Order.company_id, ctx))
+        .cte("delivered_do_lines")
     )
-    share = sa.case(
-        (lines.c.weight_sum > 0, lines.c.doc_total * lines.c.weight / lines.c.weight_sum),
-        else_=lines.c.doc_total / lines.c.line_count,
+    live_so = sa.and_(SalesOrder.doc_type != DOC_TYPE_CONSIGNMENT)
+    linked = (
+        sa.select(
+            do_lines.c.do_date.label("event_date"),
+            do_lines.c.qty.label("qty"),
+            _prorated(do_lines.c.qty).label("amount"),
+            SalesOrderLine.id.label("sol_id"),
+            SalesOrder.id.label("so_id"),
+            do_lines.c.do_id.label("do_id"),
+            SalesOrder.customer_id.label("customer_id"),
+            sa.cast(sa.null(), sa.String).label("debtor_name"),
+            do_lines.c.product_id.label("product_id"),
+            sa.func.coalesce(do_lines.c.warehouse_id, SalesOrderLine.warehouse_id).label("warehouse_id"),
+            do_lines.c.company_id.label("company_id"),
+        )
+        .select_from(do_lines)
+        .join(SalesOrderLine, SalesOrderLine.id == do_lines.c.sol_id)
+        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+        .where(live_so, do_lines.c.do_date >= start, do_lines.c.do_date < end)
     )
-    running = sa.func.sum(share).over(
-        partition_by=lines.c.order_id,
-        order_by=(lines.c.line_sequence, lines.c.line_id),
-        rows=(None, 0),
+    explained = (
+        sa.select(do_lines.c.sol_id, sa.func.sum(do_lines.c.qty).label("qty"))
+        .where(do_lines.c.sol_id.isnot(None))
+        .group_by(do_lines.c.sol_id)
+        .subquery("delivered_explained")
     )
-    amount = sa.case(
-        (lines.c.source_book.isnot(None), sa.func.round(lines.c.line_total, 2)),
-        # A legacy DO whose lines carry more than one distinct total is not one repeated DOC
-        # total (owner ruling, fix round 1 S1; rule a2, fix round 2): each line is the lesser
-        # of its own qty x price x (1 - discount), rounded to the sen, and its stored total
-        # (none stored = the line math). Nothing is split.
-        (
-            lines.c.mixed_totals.is_(True),
-            sa.func.least(
-                sa.func.round(lines.c.weight, 2),
-                sa.func.coalesce(sa.func.round(lines.c.stored_total, 2), sa.func.round(lines.c.weight, 2)),
-            ),
-        ),
-        else_=sa.func.round(running, 2) - sa.func.round(running - share, 2),
+    line_date = sa.func.coalesce(SalesOrderLine.required_date, SalesOrder.order_date)
+    left = sa.func.greatest(
+        sa.func.least(SalesOrderLine.qty_delivered, SalesOrderLine.qty_ordered) - sa.func.coalesce(explained.c.qty, 0),
+        0,
     )
-    subquery = sa.select(lines.c.line_id, amount.label("amount")).subquery("do_line_amounts")
-    ctx.__dict__["_delivery_order_line_amounts"] = subquery
-    return subquery
+    residual = (
+        sa.select(
+            line_date.label("event_date"),
+            left.label("qty"),
+            _prorated(left).label("amount"),
+            SalesOrderLine.id.label("sol_id"),
+            SalesOrder.id.label("so_id"),
+            sa.cast(sa.null(), SalesOrder.id.type).label("do_id"),
+            SalesOrder.customer_id.label("customer_id"),
+            sa.cast(sa.null(), sa.String).label("debtor_name"),
+            SalesOrderLine.product_id.label("product_id"),
+            SalesOrderLine.warehouse_id.label("warehouse_id"),
+            SalesOrder.company_id.label("company_id"),
+        )
+        .select_from(SalesOrderLine)
+        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+        .outerjoin(explained, explained.c.sol_id == SalesOrderLine.id)
+        .where(
+            live_so,
+            SalesOrder.status != "cancelled",
+            SalesOrderLine.line_status != "cancelled",
+            line_date >= start,
+            line_date < end,
+            left > 0,
+            *_grant_filter(SalesOrder.company_id, ctx),
+        )
+    )
+    unlinked = (
+        sa.select(
+            do_lines.c.do_date.label("event_date"),
+            do_lines.c.qty.label("qty"),
+            do_lines.c.total.label("amount"),
+            sa.cast(sa.null(), SalesOrderLine.id.type).label("sol_id"),
+            sa.cast(sa.null(), SalesOrder.id.type).label("so_id"),
+            do_lines.c.do_id.label("do_id"),
+            do_lines.c.do_customer_id.label("customer_id"),
+            do_lines.c.debtor_name.label("debtor_name"),
+            do_lines.c.product_id.label("product_id"),
+            do_lines.c.warehouse_id.label("warehouse_id"),
+            do_lines.c.company_id.label("company_id"),
+        )
+        .where(
+            do_lines.c.sol_id.is_(None),
+            do_lines.c.source_book.isnot(None),
+            do_lines.c.do_date >= start,
+            do_lines.c.do_date < end,
+        )
+    )
+    events = sa.union_all(linked, residual, unlinked).subquery("delivered_events")
+    ctx.__dict__["_delivered_events"] = events
+    return events
 
 
 def _base(ctx: Any) -> sa.Select:
-    amounts = _line_amounts(ctx)
+    ev = _events(ctx)
     return (
         sa.select()
-        .select_from(OrderLine)
-        .join(Order, Order.id == OrderLine.order_id)
-        .join(amounts, amounts.c.line_id == OrderLine.id)
-        .outerjoin(Customer, Customer.id == Order.customer_id)
-        .outerjoin(Product, Product.id == OrderLine.product_id)
+        .select_from(ev)
+        .outerjoin(SalesOrder, SalesOrder.id == ev.c.so_id)
+        .outerjoin(Order, Order.id == ev.c.do_id)
+        .outerjoin(Customer, Customer.id == ev.c.customer_id)
+        .outerjoin(Product, Product.id == ev.c.product_id)
         .outerjoin(Brand, Brand.id == Product.brand_id)
         .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
-        .outerjoin(Warehouse, Warehouse.id == OrderLine.warehouse_id)
-        .outerjoin(SalesOrder, SalesOrder.id == Order.sales_order_id)
+        .outerjoin(Warehouse, Warehouse.id == ev.c.warehouse_id)
         .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
-        .where(sa.and_(*_fixed_filters()))
     )
+
+
+def event_date(ctx: Any) -> Any:
+    return _events(ctx).c.event_date
 
 
 # ------------------------------------------------------------------------ filters
 
 
 def customer_condition(ctx: Any, values: List[str]) -> Optional[Any]:
-    return Order.customer_id.in_(values)
+    return _events(ctx).c.customer_id.in_(values)
 
 
 def product_condition(ctx: Any, values: List[str]) -> Optional[Any]:
-    return OrderLine.product_id.in_(values)
+    return _events(ctx).c.product_id.in_(values)
 
 
 def brand_condition(ctx: Any, values: List[str]) -> Optional[Any]:
-    """Per line (the product's brand), so it stays out of `_do_level_filters`."""
     return Product.brand_id.in_(values)
 
 
@@ -219,16 +262,25 @@ def category_condition(ctx: Any, values: List[str]) -> Optional[Any]:
 
 
 def sales_agent_condition(ctx: Any, values: List[str]) -> Optional[Any]:
-    return SalesOrder.sales_agent_id.in_(values)
+    from app.services.reports.datasets.sales_order_lines_ask import _agent_in
+
+    return _agent_in(SalesOrder.sales_agent_id, values)
+
+
+def customer_agent_condition(ctx: Any, values: List[str]) -> Optional[Any]:
+    """The customer CARD link (REPORT-DRILLDOWN): events of customers assigned to the agents."""
+    from app.services.reports.datasets.sales_order_lines_ask import _agent_in
+
+    return _agent_in(Customer.sales_agent_id, values, owner=Customer.id)
 
 
 def location_condition(ctx: Any, values: List[str]) -> Optional[Any]:
-    return OrderLine.warehouse_id.in_(values)
+    return _events(ctx).c.warehouse_id.in_(values)
 
 
 def channel_condition(ctx: Any, values: List[str]) -> Optional[Any]:
-    """Per line (its sales order's class); a line with no sales order is in no channel."""
-    return CHANNEL_EXPR.in_(values)
+    """Values are demand classes. An event with no sales order is in no channel (Q1 (a))."""
+    return SalesOrder.demand_class.in_(values)
 
 
 # ------------------------------------------------------------------------ catalog
@@ -238,8 +290,39 @@ def _text_date(expr: Any) -> Any:
     return sa.func.to_char(expr, "YYYY-MM-DD")
 
 
+def _qty(c: Any) -> Any:
+    return _events(c).c.qty
+
+
+def _amount(c: Any) -> Any:
+    return _events(c).c.amount
+
+
+def _order_key(c: Any) -> Any:
+    ev = _events(c)
+    if ORDERS_COUNT_DELIVERY_ORDERS:
+        return sa.func.coalesce(ev.c.do_id, ev.c.so_id)
+    return sa.func.coalesce(ev.c.so_id, ev.c.do_id)
+
+
+#: The count measures (REPORT-SMART-1021): key, label, the id counted.
+COUNT_COLUMNS = (
+    ("customers", "Customers", lambda c: _events(c).c.customer_id),
+    ("orders", "Orders", _order_key),
+    ("products", "Products", lambda c: _events(c).c.product_id),
+)
+
+
+def _counted(column: Any) -> Any:
+    return lambda c: sa.case((sa.or_(_qty(c) != 0, _amount(c) != 0), column(c)))
+
+
+def _customer_name(c: Any) -> Any:
+    return sa.func.coalesce(Customer.customer_name, sa.func.nullif(sa.func.btrim(_events(c).c.debtor_name), ""))
+
+
 COLUMNS = (
-    reg.Column("customer", "Customer", "text", "dimension", lambda c: sa.func.coalesce(Customer.customer_name, sa.func.nullif(sa.func.btrim(Order.debtor_name), "")), size=220),
+    reg.Column("customer", "Customer", "text", "dimension", _customer_name, size=220),
     reg.Column("product", "Product", "text", "dimension", lambda c: Product.product_code, size=160),
     reg.Column("brand", "Brand", "text", "dimension", lambda c: Brand.brand_name, size=160),
     reg.Column("category", "Category", "text", "dimension", lambda c: ProductCategory.category_name, size=160),
@@ -252,33 +335,32 @@ COLUMNS = (
         size=140,
     ),
     reg.Column("location", "Location", "text", "dimension", lambda c: Warehouse.warehouse_code, size=120),
-    reg.Column("channel", "Channel", "text", "dimension", lambda c: CHANNEL_EXPR, size=120),
-    reg.Column("day", "Day", "text", "dimension", lambda c: _text_date(Order.order_date), size=110),
+    reg.Column("channel", "Channel", "text", "dimension", lambda c: SalesOrder.demand_class, size=120),
+    reg.Column("day", "Day", "text", "dimension", lambda c: _text_date(c.date_basis), size=110),
     reg.Column(
-        "week",
-        "Week",
-        "text",
-        "dimension",
-        lambda c: _text_date(sa.func.date_trunc("week", Order.order_date)),
-        size=110,
+        "week", "Week", "text", "dimension", lambda c: _text_date(sa.func.date_trunc("week", c.date_basis)), size=110
     ),
-    reg.Column("month", "Month", "text", "dimension", lambda c: sa.func.to_char(Order.order_date, "YYYY-MM"), size=110),
+    reg.Column("month", "Month", "text", "dimension", lambda c: sa.func.to_char(c.date_basis, "YYYY-MM"), size=110),
     reg.Column("delivery_order", "Delivery order", "text", "dimension", lambda c: Order.order_number, size=140),
     # The one-column side of a one-dimension view. An expression, not a bare constant:
     # Postgres refuses a constant in GROUP BY.
     reg.Column("all", "All", "text", "dimension", lambda c: sa.cast(sa.literal("all"), sa.Text), size=80),
-    reg.Column("amount", "RM", "money", "measure", lambda c: _line_amounts(c).c.amount, size=130),
-    reg.Column("qty", "Qty", "integer", "measure", lambda c: OrderLine.quantity, size=100),
+    reg.Column("amount", "RM", "money", "measure", _amount, size=130),
+    reg.Column("qty", "Qty", "integer", "measure", _qty, size=100),
+    *(
+        reg.Column(key, label, "integer", "measure", _counted(column), size=110, agg="count_distinct")
+        for key, label, column in COUNT_COLUMNS
+    ),
 )
 
 DATASET = reg.Dataset(
     key="delivery_order_lines",
     scope="company",
     columns=COLUMNS,
-    date_bases=(reg.DateBasis("order_date", "DO date", Order.order_date),),
+    date_bases=(reg.DateBasis("order_date", "Delivered date", event_date),),
     base=_base,
-    company_column=Order.company_id,
-    product_id_column=OrderLine.product_id,
+    company_column=sa.literal_column("delivered_events.company_id"),
+    product_id_column=sa.literal_column("delivered_events.product_id"),
 )
 
 
@@ -286,7 +368,8 @@ def _no_options(db: Any) -> List[Any]:
     return []
 
 
-#: The definition the chatbot's sales report runs (never registered on the Reports screen).
+#: The definition the chatbot's sales report and the report ask's delivered basis run (never
+#: registered on the Reports screen).
 DEFINITION = reg.ReportDefinition(
     key="delivery_order_lines",
     title="Delivered sales",
@@ -300,12 +383,13 @@ DEFINITION = reg.ReportDefinition(
         reg.SelectParam("brand", "Brand", True, (), _no_options, brand_condition),
         reg.SelectParam("category", "Category", True, (), _no_options, category_condition),
         reg.SelectParam("sales_agent", "Sales agent", True, (), _no_options, sales_agent_condition),
+        reg.SelectParam("customer_agent", "Customers assigned to", True, (), _no_options, customer_agent_condition),
         reg.SelectParam("location", "Location", True, (), _no_options, location_condition),
         reg.SelectParam("channel", "Channel", True, (), _no_options, channel_condition),
     ),
     detail=reg.DetailLayout(
-        title="Delivery order lines",
-        order_by=lambda c: [Order.order_date.desc(), Order.order_number.desc(), OrderLine.line_sequence.asc()],
+        title="Delivered lines",
+        order_by=lambda c: [c.date_basis.desc(), Order.order_number.desc().nullslast()],
     ),
     pivot=reg.PivotLayout(title="Delivered sales"),
     default_view={
@@ -318,3 +402,69 @@ DEFINITION = reg.ReportDefinition(
 )
 
 reg.validate(DEFINITION)
+
+
+# ------------------------------------------------------------------------ the Yearly comparison
+
+
+def _yearly_columns() -> tuple:
+    """The order dataset's keys where the meaning is the same (`datasets/sales_order_lines.py`),
+    so the Yearly comparison's default and saved views run on Delivered too."""
+    from app.services.reports.datasets.sales_order_lines import MONTH_OF_YEAR, channel_label
+    from app.services.reports.engine import month_label
+
+    return (
+        reg.Column("so_number", "SO no", "text", "text", lambda c: SalesOrder.so_number, size=130),
+        reg.Column("document_no", "DO no", "text", "text", lambda c: Order.order_number, size=130),
+        reg.Column("order_date", "Delivered date", "date", "date", lambda c: c.date_basis, size=120),
+        reg.Column("customer", "Customer", "text", "text", _customer_name, size=220),
+        reg.Column("agent_code", "Sales agent code", "text", "text", lambda c: SalesAgent.sales_agent, size=140),
+        reg.Column("product_code", "Product", "text", "text", lambda c: Product.product_code, size=160),
+        reg.Column("channel", "Channel", "text", "dimension", lambda c: channel_label(SalesOrder.demand_class), size=120),
+        reg.Column(
+            "year", "Year", "text", "dimension",
+            lambda c: sa.cast(sa.cast(sa.extract("year", c.date_basis), sa.Integer), sa.Text),
+            size=80, period_years=True,
+        ),
+        reg.Column(
+            "month_of_year", "Month", "text", "dimension", lambda c: sa.func.to_char(c.date_basis, "MM"),
+            size=80, fixed_values=MONTH_OF_YEAR,
+        ),
+        reg.Column(
+            "year_month", "Month of the period", "text", "dimension",
+            lambda c: sa.func.to_char(sa.func.date_trunc("month", c.date_basis), "YYYY-MM"),
+            size=110, period_months=True, value_label=month_label,
+        ),
+        reg.Column("sales_value", "RM", "money", "measure", _amount, size=130),
+        reg.Column("delivered_value", "Delivered RM", "money", "measure", _amount, size=130),
+    )
+
+
+def _yearly_years(db: Any) -> List[int]:
+    from app.services.reports.datasets.sales_order_lines import years
+
+    return years(db)
+
+
+YEARLY_DATASET = reg.Dataset(
+    key="delivered_events_yearly",
+    scope="company",
+    columns=_yearly_columns(),
+    date_bases=(reg.DateBasis("order_date", "Delivered date", event_date),),
+    base=_base,
+    company_column=sa.literal_column("delivered_events.company_id"),
+    company_param="company",
+    years=_yearly_years,
+    product_id_column=sa.literal_column("delivered_events.product_id"),
+)
+
+
+def yearly_channel_condition(ctx: Any, values: List[str]) -> Optional[Any]:
+    from app.services.reports.datasets.sales_order_lines import channel_filter
+
+    return channel_filter(SalesOrder.demand_class, values)
+
+
+def yearly_order_by(ctx: Any) -> List[Any]:
+    """Latest delivery first, as the order detail is newest order first."""
+    return [ctx.date_basis.desc(), Order.order_number.desc().nullslast(), SalesOrder.so_number.asc()]

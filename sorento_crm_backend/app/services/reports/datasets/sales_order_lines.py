@@ -162,6 +162,9 @@ def note(ctx) -> str:
     basis = _basis(ctx)
     if basis == "invoiced":
         return f"Basis: {BASIS_WORDS[basis]}, by document date, grouped by the sales order type."
+    if basis == "delivered":
+        # DELIVERED-DATE-BASIS (owner ruling 25 Oct 2026): filed by the delivery order.
+        return f"Basis: {BASIS_WORDS[basis]}, by delivery order date. Sales orders, not invoices."
     return f"Basis: {BASIS_WORDS[basis]}, by sales order date. Sales orders, not invoices."
 
 
