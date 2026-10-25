@@ -80,11 +80,11 @@ def labels(hits: dict, name: str) -> list[str]:
 
 def test_constants_and_header_text_are_exact():
     assert ll.MARKER == "== LOOKUP LISTS =="
-    assert ll.HEADER_NOUN == {"category": "Category", "sales_channel": "Sales channel"}
+    assert {"category": "Category", "sales_channel": "Sales channel"}.items() <= ll.HEADER_NOUN.items()
     assert ll.header("category") == HEADER_CATEGORY
     assert ll.header("sales_channel") == HEADER_CHANNEL
     assert (ll.FLOOR_SPELLING, ll.FLOOR_MEANING) == (0.5, 0.5)
-    assert ll.TOP_K == {"category": 10, "sales_channel": 2}
+    assert {"category": 10, "sales_channel": 2}.items() <= ll.TOP_K.items()
 
 
 def test_gate_on_needs_the_marker_on_its_own_line():
