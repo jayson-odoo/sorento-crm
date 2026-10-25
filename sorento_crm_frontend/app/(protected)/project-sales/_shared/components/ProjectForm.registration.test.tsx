@@ -336,6 +336,37 @@ describe('a pending or rejected project never blocks on a clash (review round 3)
   });
 });
 
+describe('Check, then Save, on a pending project (final review round)', () => {
+  const BLOCKING = {
+    project_id: 'p-old',
+    project_code: 'PPF2509012',
+    title: 'CADANGAN BLOK PEJABAT DI ATAS LOT 7001, MUKIM KULAI',
+    outcome: 'open',
+    owner_name: 'Ali',
+    similarity: 0.98,
+    blocks: true,
+    brands: [],
+  };
+
+  it('pressing Check shows the match as information, and Save still calls updateProject', async () => {
+    previewClashes.mockResolvedValue({ candidates: [BLOCKING], would_block: true });
+    updateProject.mockResolvedValue(pendingProject());
+    renderEdit(pendingProject());
+    await waitFor(() => expect(within_options(select(/^Developer/))).toContain('d1'));
+    fireEvent.change(select(/^Developer/), { target: { value: 'd1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Check' }));
+    await waitFor(() => expect(previewClashes).toHaveBeenCalled());
+    await screen.findByText(/PPF2509012/);
+    // Join and Dispute belong to a project's lock; a registration waiting for approval has none.
+    expect(screen.queryByRole('button', { name: /ask to join/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /dispute/i })).toBeNull();
+    const save = screen.getByRole('button', { name: 'Save changes' });
+    expect(save).not.toBeDisabled();
+    fireEvent.click(save);
+    await waitFor(() => expect(updateProject).toHaveBeenCalledTimes(1));
+  });
+});
+
 function within_options(el: HTMLSelectElement): string[] {
   return Array.from(el.options).map((o) => o.value);
 }

@@ -423,3 +423,60 @@ describe('review round 3 on the detail page', () => {
     expect(screen.queryByRole('menuitem', { name: /Edit project/ })).toBeNull();
   });
 });
+
+describe('final review round on the detail page', () => {
+  function openGear() {
+    fireEvent.pointerDown(within(header()).getByRole('button', { name: 'Project actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+  }
+
+  it('an approver without manage gets no Delete project on a pending project (2)', async () => {
+    granted = new Set([APPROVE]);
+    renderDetail();
+    openGear();
+    expect(await screen.findByRole('menu')).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /Delete project/ })).toBeNull();
+  });
+
+  it('a manager still gets Delete project on it (the control)', async () => {
+    granted = new Set([APPROVE, 'projects.projects.manage']);
+    renderDetail();
+    openGear();
+    expect(await screen.findByRole('menuitem', { name: /Delete project/ })).toBeInTheDocument();
+  });
+
+  it('a staff project keeps Delete project for an editor without manage', async () => {
+    granted = new Set();
+    projectFixture = pendingProject({ approval_state: null, project_code: 'PRJ-000142', registration: null } as never);
+    renderDetail();
+    openGear();
+    expect(await screen.findByRole('menuitem', { name: /Delete project/ })).toBeInTheDocument();
+  });
+
+  it.each([
+    ['updated_at', { updated_at: '2026-10-25T10:00:00' }],
+    ['approval_state', { approval_state: 'rejected', reject_reason: 'dup' }],
+  ])('the "Already registered as" link clears when %s changes (4)', async (_field, change) => {
+    approve.mockRejectedValue(
+      Object.assign(new Error('dup'), {
+        existingProject: { project_id: 'proj-77', project_code: 'PPF2509012', title: 'KILANG ALPHA' },
+      }),
+    );
+    projectFixture = pendingProject({ updated_at: '2026-10-25T09:00:00' } as never);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = () => (
+      <QueryClientProvider client={client}>
+        <ProjectDetailClient projectId="p1" />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(tree());
+    fireEvent.click(within(header()).getByRole('button', { name: 'Approve' }));
+    await screen.findByText(/Already registered as/);
+    projectFixture = { ...projectFixture, ...change } as Project;
+    rerender(tree());
+    await waitFor(() => expect(screen.queryByText(/Already registered as/)).toBeNull());
+  });
+});
+

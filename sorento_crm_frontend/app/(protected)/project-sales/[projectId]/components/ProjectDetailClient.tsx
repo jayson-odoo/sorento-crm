@@ -54,6 +54,7 @@ import {
   useRejectProject,
 } from '../../_shared/hooks/useProjects';
 import { projectCodeLabel } from '../../_shared/lib/projectCode';
+import { isProjectApproved } from '../../_shared/lib/projectApproval';
 import {
   ApprovalStatePill,
   isAwaitingDecision,
@@ -130,7 +131,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [reassigning, setReassigning] = React.useState(false);
   // Moving an owner is a manager act server-side too (project_service.update_project).
-  const canReassign = useHasPermission('projects.projects.manage');
+  const isManager = useHasPermission('projects.projects.manage');
   // PROJECT-REG-PORTAL R7: a pending portal registration is approved or rejected here.
   const mayApprove = useHasPermission('projects.registrations.approve');
   const [rejecting, setRejecting] = React.useState(false);
@@ -303,7 +304,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                     Edit project
                   </DropdownMenuItem>
                 )}
-                {canReassign && (
+                {isManager && (
                   <DropdownMenuItem onSelect={() => setReassigning(true)}>
                     <UserCog className="size-4" aria-hidden />
                     Reassign
@@ -320,13 +321,17 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                     {option.label}
                   </DropdownMenuItem>
                 ))}
-                <DropdownMenuItem
-                  variant="destructive"
-                  onSelect={() => setConfirmDelete(true)}
-                >
-                  <Trash2 className="size-4" aria-hidden />
-                  Delete project
-                </DropdownMenuItem>
+                {/* An unapproved registration is Rejected, not deleted, unless a manager
+                    removes it (security S2): the server refuses anyone else with 403. */}
+                {(isProjectApproved(project) || isManager) && (
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onSelect={() => setConfirmDelete(true)}
+                  >
+                    <Trash2 className="size-4" aria-hidden />
+                    Delete project
+                  </DropdownMenuItem>
+                )}
               </DetailActionsMenu>
             )}
             </>
