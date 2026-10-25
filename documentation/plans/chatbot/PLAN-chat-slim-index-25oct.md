@@ -24,6 +24,14 @@ the list style; the customer step (crew a26741842, ~USD 10, last) proves the par
 that counts is a WRONG CUSTOMER PICKED (esp. on category-only messages such as "tiles"), then recall. Phrase-first
 (look up only the parser's customer words after the parser) runs only as the comparison arm.
 
+## Shipping rule (crew, 25 Oct): anchored edits on the label-time text
+Each phase-1 step ships as an ANCHORED EDIT list (delete / replace / insert at exact anchor text, each anchor found exactly
+once, no line numbers), applied to whatever text holds the production label at that time, never a full-text replacement.
+Lane SALES-TARGET-CHAT adds one sales_target value to v63's order_status list + one routing bullet as an anchored insert;
+no phase-1 anchor sits in the order_status list or the sales sections, and a coexistence test applies all steps on v63 +
+a simulated sales_target insert. Gates run on v63 md5 0f3b48e6 as approved; if the label-time text differs, the shipped
+step is re-checked on it before the label moves (cost asked then).
+
 ## Phase 1 sequence (owner 25 Oct; crew relays a25272575 + follow-up)
 
 | step | list | data status (phase 0) | bar | gate USD | status |
