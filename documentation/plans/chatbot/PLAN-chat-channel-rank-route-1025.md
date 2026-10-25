@@ -35,3 +35,10 @@ CR6 no channel, CR7 a stale frame, CR8 a held total (no ranking), CR9 a held mon
 (outstanding); CR5 a plain refine ("top 3") unchanged; CR11 a dealer contact gets the refusal.
 Kill notes: dropping each of the six conditions fails exactly one named test (channel CR6, count CR3, axis CR4, frame axis CR8,
 stale CR7, status CR10, population CR9, the whole rule CR1+CR1b+CR11).
+
+## Live check (crew, 25 Oct, @61c7dbee5, prod prompt md5 0f3b48e6, prod clone data)
+0 of 4 live runs hit the new branch: t3 parsed as sales_ranking each time and the #1844 path answered ("Top 4 sales agents,
+Product: SRT102-RG, Channel: Project, Total 6 pcs, RM 943.12"). The target parse is intermittent (1 of 2 in the v107 runs), so
+this fix is the safety net for it. "No sales found" was not true on this data: the ranking path (line date) has 4 lines, 6 pcs;
+the sales report path (DO date, channel from the SO) has 1 line, 1 pc, and 31 DO lines (95 pcs) have no SO and so no channel.
+That date-basis difference is the owner's call and is not changed here.
