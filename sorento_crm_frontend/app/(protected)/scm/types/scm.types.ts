@@ -946,6 +946,11 @@ export interface SoLineDeliveryRow {
   qty: number;
 }
 
+/** A DO line naming the SO whose product is on no line of it: it names its own SKU. */
+export interface SoOtherDeliveryRow extends SoLineDeliveryRow {
+  sku: string | null;
+}
+
 /** One Cancel SO line placed under a sales-order line; `qty` is null for `group_whole`. */
 export interface SoLineCancelRow {
   doc_no: string;
@@ -972,4 +977,6 @@ export interface SoProductGroupHistory {
 export interface SalesOrderDeliveries {
   lines: SoLineHistory[];
   groups: SoProductGroupHistory[];
+  /** DO lines naming this SO whose product is on no line of it (DO-SO-LINK-SURFACE). */
+  others?: SoOtherDeliveryRow[];
 }

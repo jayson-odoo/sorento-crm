@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.models.autocount_cancel import KIND_CANCEL_SO, MATCH_MATCHED, AutocountCancelDoc, AutocountCancelLine
 from app.models.inventory import Warehouse
 from app.models.order import Order, OrderLine, OrderStatus
+from app.models.product import Product
 from app.services.autocount_cancel_ingest_service import _live_doc, _names_any
 from app.services.autocount_cancel_matching import REASON_GROUP_WHOLE, REASON_UNDETERMINED
 
@@ -35,12 +36,18 @@ def so_line_history(db: Session, so) -> dict:
         for pid, ids in lines_by_product.items() if len(ids) > 1
     }
     group_by_sku = {g["sku"]: g for g in groups.values()}
+    # DO-SO-LINK-SURFACE: a DO line naming this SO whose product is on no line of it (a 0-qty
+    # PP marker, a substitute). Under no line or group, but listed on the Delivery tab, so the
+    # tab shows every DO line the DO page shows under this SO.
+    others: list[dict] = []
 
     # -- deliveries
     if line_ids:
         rows = (
-            db.query(OrderLine, Order, OrderStatus.status_name, Warehouse.warehouse_code)
+            db.query(OrderLine, Order, OrderStatus.status_name, Warehouse.warehouse_code,
+                     Product.product_code)
             .join(Order, Order.id == OrderLine.order_id)
+            .outerjoin(Product, Product.id == OrderLine.product_id)
             .outerjoin(OrderStatus, OrderStatus.id == Order.order_status_id)
             .outerjoin(Warehouse, Warehouse.id == OrderLine.warehouse_id)
             .filter(
@@ -58,7 +65,7 @@ def so_line_history(db: Session, so) -> dict:
             .order_by(Order.order_date, Order.order_number, OrderLine.line_sequence)
             .all()
         )
-        for ol, order, status_name, location in rows:
+        for ol, order, status_name, location, product_code in rows:
             row = {
                 "order_id": str(order.id), "do_number": order.order_number,
                 "do_date": order.order_date, "location": location, "status": status_name,
@@ -70,6 +77,7 @@ def so_line_history(db: Session, so) -> dict:
                 continue
             ids = lines_by_product.get(str(ol.product_id))
             if not ids:
+                others.append({**row, "sku": product_code or ol.item_code})
                 continue
             if len(ids) == 1:
                 per_line[ids[0]]["deliveries"].append(row)
@@ -112,4 +120,4 @@ def so_line_history(db: Session, so) -> dict:
                 if group is not None:
                     group["cancels"].append(row(_qty(cl.qty)))
 
-    return {"lines": list(per_line.values()), "groups": list(groups.values())}
+    return {"lines": list(per_line.values()), "groups": list(groups.values()), "others": others}

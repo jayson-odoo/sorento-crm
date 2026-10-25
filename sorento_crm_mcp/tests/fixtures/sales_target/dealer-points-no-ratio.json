@@ -1,0 +1,38 @@
+{
+  "asker": "dealer",
+  "as_of": "2026-10-23",
+  "window": {
+    "date_from": "2026-10-25",
+    "date_to": "2026-10-25"
+  },
+  "own": [],
+  "team": [],
+  "dealers": [
+    {
+      "target_no": "TGT-000030",
+      "name": "MOCHA BKIN",
+      "subject_kind": "dealer",
+      "subject_label": "BKIN ELECTRICAL SDN BHD",
+      "company_code": "MCH",
+      "period_start": "2026-07-01",
+      "period_end": "2026-09-30",
+      "is_current": false,
+      "metric": "points",
+      "threshold_unit": "points",
+      "provisional": true,
+      "accounts": [
+        {
+          "code": "300-B073",
+          "label": "A/C I"
+        }
+      ],
+      "target_value": null,
+      "target_points": 25000.0,
+      "achieved_value": 22140.48,
+      "ratio_missing": true,
+      "tier_reached": null,
+      "next_tier": null,
+      "pipeline_value": null
+    }
+  ]
+}

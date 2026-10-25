@@ -335,6 +335,7 @@ def send(
     actions: list[dict[str, Any]],
     reply: Any,
     branch_kind: str | None,
+    ctx: dict[str, Any] | None = None,
 ) -> bool:
     """POST the finished actions to the n8n sender. True when it accepted them. Never raises."""
     return (
@@ -345,6 +346,7 @@ def send(
             actions=actions,
             reply=reply,
             branch_kind=branch_kind,
+            ctx=ctx,
         )
         == SEND_OK
     )
@@ -358,6 +360,7 @@ def send_outcome(
     actions: list[dict[str, Any]],
     reply: Any,
     branch_kind: str | None,
+    ctx: dict[str, Any] | None = None,
 ) -> str:
     """`send`, naming what the attempt came to (`SEND_*`). Never raises."""
     import httpx
@@ -378,6 +381,7 @@ def send_outcome(
             return SEND_REFUSED
         # `/chat/turn`'s own response keys plus `contact_id`, so the sender can run the
         # spine's action executor unchanged (`documentation/n8n/chatbot-sender.md`).
+        # `ctx` too: `sub-send-attachments` addresses the customer by `ctx.contact.id`.
         body = {
             "turn_id": turn_id,
             "contact_id": contact_id,
@@ -387,6 +391,7 @@ def send_outcome(
             "branch_kind": branch_kind,
             "actions": actions,
             "reply": reply,
+            "ctx": ctx,
         }
         try:
             # Re-checked at USE time, as the retry ingress is: a DNS answer or a directly

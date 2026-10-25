@@ -5038,6 +5038,8 @@ def _run_stages_body(  # noqa: PLR0915
     # so grounding never splits one ("ZZT SINK" into the class SINK plus a spec word).
     from app.services.chatbot.lanes.business import report_ask as _report_ask
 
+    # CHAT-CUSTOMER-PICK-RESUME: a pick's axis naming the roster's own kind is the pick, not a breakdown.
+    verdict = _report_ask.without_pick_axis(verdict, state_in.pending)
     # REPORT-SMART-1021: an axis the named report kind's tool cannot draw is the report ask's.
     verdict = _report_ask.by_capability(verdict)
     verdict, _ranking_words = _report_ask.hold_words(verdict)
@@ -5663,6 +5665,11 @@ def _run_stages_body(  # noqa: PLR0915
         ) or (
             jsc.js_string(parsed_output.get("order_status") or "").strip() in SALES_FIGURE_STATUSES
             and _SALES_REPORT_GRANT in _granted
+        ) or (
+            # SALES-TARGET-CHAT: the target ask is exempt under its own grant; whose customer
+            # it may name is the route's call (403 customer_not_permitted).
+            jsc.js_string(parsed_output.get("order_status") or "").strip() == "sales_target"
+            and "sales.sales_target" in _granted
         )
         # The grant opens the report's customers, never their delivery orders: the picker's DO
         # probe stays off for any unlinked contact that is not document staff.
@@ -8427,7 +8434,7 @@ def _run_answer(
             written=written,
             facts_saved=facts_saved,
         )
-        lane_actions = [*actions, *_answer_actions(answer, dry_run=dry_run)]
+        lane_actions = [*actions, *_answer_actions(answer, dry_run=dry_run, reply=reply)]
         turn_trace.record(
             "sent",
             summary="Handed the reply to the caller to send.",
@@ -8750,8 +8757,9 @@ def _run_entities_only_arm(
     )
 
 
-def _answer_actions(answer: Any, *, dry_run: bool) -> list[dict[str, Any]]:
-    """What the caller executes: the message, then any files, in that order."""
+def _answer_actions(answer: Any, *, dry_run: bool, reply: dict[str, Any]) -> list[dict[str, Any]]:
+    """What the caller executes: the message, then any files, in that order. The files
+    action carries the persisted `reply`, as the tail's and the formatter's do."""
     built: list[dict[str, Any]] = []
     words = getattr(answer, "text", "") or ""
     if words.strip():
@@ -8764,7 +8772,12 @@ def _answer_actions(answer: Any, *, dry_run: bool) -> list[dict[str, Any]]:
         )
     if answer.files:
         built.append(
-            {"kind": "send_attachments", "attachments_src": answer.files, "dry_run": dry_run}
+            {
+                "kind": "send_attachments",
+                "attachments_src": answer.files,
+                "reply": dict(reply),
+                "dry_run": dry_run,
+            }
         )
     return built
 

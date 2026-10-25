@@ -870,6 +870,11 @@ class SoLineDeliveryRow(BaseModel):
     qty: float
 
 
+class SoOtherDeliveryRow(SoLineDeliveryRow):
+    """A DO line naming the SO whose product is on no line of it: it names its own SKU."""
+    sku: Optional[str] = None
+
+
 class SoLineCancelRow(BaseModel):
     doc_no: str
     doc_date: Optional[date] = None
@@ -894,3 +899,5 @@ class SoProductGroupHistory(BaseModel):
 class SalesOrderDeliveries(BaseModel):
     lines: List[SoLineHistory]
     groups: List[SoProductGroupHistory]
+    # DO lines naming this SO whose product is on no line of it (DO-SO-LINK-SURFACE).
+    others: List[SoOtherDeliveryRow] = []
