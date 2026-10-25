@@ -15,14 +15,14 @@ DB, which converges through `create_all`, can take it in any order.
 Plan: documentation/plans/projects/PLAN-project-registration-portal-25oct.md.
 
 Revision ID: prreg_0001_project_registrations
-Revises: or_r4b_top_selling_off
+Revises: iq_0001_turns_inbox_idx
 """
 import sqlalchemy as sa
 from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "prreg_0001_project_registrations"
-down_revision = "or_r4b_top_selling_off"
+down_revision = "iq_0001_turns_inbox_idx"
 branch_labels = None
 depends_on = None
 
