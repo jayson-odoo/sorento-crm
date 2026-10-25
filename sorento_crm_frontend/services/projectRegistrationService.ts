@@ -7,7 +7,7 @@ import type {
   ProjectRegistrationPage,
 } from '@/types/projectRegistration';
 
-const BASE = '/api/v1/projects/registrations';
+const BASE = '/api/v1/project-sales/projects/registrations';
 
 export type ProjectRegistrationListParams = DataGridApiFetchParams & {
   /** A status key or `all`; empty means the server default (pending). */
