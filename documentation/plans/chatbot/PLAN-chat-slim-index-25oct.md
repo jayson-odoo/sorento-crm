@@ -11,18 +11,18 @@ candidates to the parser, which decides. Lavish page: `PLAN-chat-slim-index-25oc
 Slice WC (the water-closet code bugs) keeps its UAC: `chat-slim-index-25oct-acceptance-criteria.md`.
 Customer names are masked (public repo).
 
-## Phase 1 sequence (owner 25 Oct: "how about attachment type, salesperson, location, all those")
+## Phase 1 sequence (owner 25 Oct; crew relays a25272575 + follow-up)
 
-| step | list | data status (phase 0) | gate USD | status |
-|---|---|---|---|---|
-| 1 | categories / classes | GO: 0.961, n=180 | ~9 (incl. v63 baseline x3) | APPROVED, running |
-| 2 | spec word values | GO: 0.980, n=51 | ~6 | APPROVED, after step 1 |
-| 3 | file types (attachment types) | GO: 1.000, n=137 (spelling alone 0.993) | ~5 | needs owner OK |
-| 4 | salespeople | n=10 unbiased: not enough; pull 3 (text-found slice) pending | ~5 | data first, then owner OK |
-| 5 | locations (warehouses) | n=5 unbiased: not enough; pull 3 pending | ~5 | data first, then owner OK |
-| 6 | brands | GO: 0.986, n=72 (spelling alone the same) | ~5 | needs owner OK |
-| 7 | customer names (candidates added, no prompt text to remove) | GO: 0.960, n=75, ~6 lines per message | ~6 | needs owner OK |
-| - | spec number values (sizes) | NO-GO: 0.517; a size is read by code, not retrieved | - | stays in the prompt; separate idea |
+| step | list | data status (phase 0) | bar | gate USD | status |
+|---|---|---|---|---|---|
+| 1 | categories / classes | GO: 0.961, n=180 | B beats v63 on category rows, no regression elsewhere | ~9 (incl. v63 baseline x3) | APPROVED, running |
+| 2 | spec word values | GO: 0.980, n=51 | same | ~6 | APPROVED, after 1 |
+| 3 | file types (attachment types) | GO: 1.000, n=137 | NO REGRESSION vs v63 (goal: prompt diet, list text out, retrieval in) | ~5 | APPROVED, after 2 |
+| 4 | brands | GO: 0.986, n=72 | NO REGRESSION vs v63 (prompt diet) | ~5 | APPROVED, after 3 |
+| 5 | salespeople | pull 3 sources agent asks from sales-report-for-an-agent asks; scored when it lands | GO on data first, then same gate shape | ~5 | after data passes; spend after 4 |
+| - | locations | few real messages (5) | - | - | stays as today (owner accepts) |
+| - | customer names | GO: 0.960, n=75, ~6 lines per message | - | ~6 | NOT approved yet; crew asks at that step |
+| - | spec number values (sizes) | NO-GO: 0.517 | - | - | stays in the prompt; a size is read by code (separate idea) |
 
 Later-step costs assume arm A's v63 baseline runs are reused on the same main; a new main adds ~USD 3.5.
 

@@ -120,19 +120,19 @@ form.q .state{font-size:12.5px;color:var(--mut);margin-left:10px}
 </table></div>
 <p class="small mut">Starts after PR #1856 (customer pick resume) merges. Hand test: "Dealer &lt;customer F&gt; oct total sales for water closet" gives one reply, F's October total, water closet only, no pick, no promotion file.</p>
 
-<h2>Phase 1 order (your OK on 1 and 2; the rest each need your OK)</h2>
+<h2>Phase 1 order</h2>
 <div class="tablewrap"><table>
-<tr><th>#</th><th>list</th><th>retrieval test</th><th class="n">USD</th><th>status</th></tr>
-<tr><td>1</td><td>categories / classes</td><td><span class="tag free">GO</span> 96.1%, 180 mentions</td><td class="n">~9</td><td><b>APPROVED</b>, running</td></tr>
-<tr><td>2</td><td>spec words (colour, finish, material ...)</td><td><span class="tag free">GO</span> 98.0%, 51</td><td class="n">~6</td><td><b>APPROVED</b>, after 1</td></tr>
-<tr><td>3</td><td>file types (attachment types)</td><td><span class="tag free">GO</span> 100%, 137</td><td class="n">~5</td><td>needs your OK</td></tr>
-<tr><td>4</td><td>salespeople</td><td><span class="tag stop">NOT ENOUGH DATA</span> 10; third pull running</td><td class="n">~5</td><td>data first, then your OK</td></tr>
-<tr><td>5</td><td>locations (warehouses)</td><td><span class="tag stop">NOT ENOUGH DATA</span> 5; third pull running</td><td class="n">~5</td><td>data first, then your OK</td></tr>
-<tr><td>6</td><td>brands</td><td><span class="tag free">GO</span> 98.6%, 72</td><td class="n">~5</td><td>needs your OK</td></tr>
-<tr><td>7</td><td>customer names (candidates only)</td><td><span class="tag free">GO</span> 96.0%, 75; ~6 lines per message</td><td class="n">~6</td><td>needs your OK</td></tr>
-<tr><td>-</td><td>spec sizes (200mm, 1200mm)</td><td><span class="tag stop">NO-GO</span> 51.7%</td><td class="n">-</td><td>stay in the prompt (read by code later)</td></tr>
+<tr><th>#</th><th>list</th><th>retrieval test</th><th>pass bar</th><th class="n">USD</th><th>status</th></tr>
+<tr><td>1</td><td>categories / classes</td><td><span class="tag free">GO</span> 96.1%, 180 mentions</td><td>better than today on category messages, no worse elsewhere</td><td class="n">~9</td><td><b>APPROVED</b>, running</td></tr>
+<tr><td>2</td><td>spec words (colour, finish, material ...)</td><td><span class="tag free">GO</span> 98.0%, 51</td><td>same</td><td class="n">~6</td><td><b>APPROVED</b>, after 1</td></tr>
+<tr><td>3</td><td>file types (attachment types)</td><td><span class="tag free">GO</span> 100%, 137</td><td>no worse than today (prompt diet: list text out, retrieval in)</td><td class="n">~5</td><td><b>APPROVED</b>, after 2</td></tr>
+<tr><td>4</td><td>brands</td><td><span class="tag free">GO</span> 98.6%, 72</td><td>no worse than today (prompt diet)</td><td class="n">~5</td><td><b>APPROVED</b>, after 3</td></tr>
+<tr><td>5</td><td>salespeople</td><td>third pull takes agent asks from "sales report for agent X" questions; scored when it lands</td><td>same as 1</td><td class="n">~5</td><td>after its data passes</td></tr>
+<tr><td>-</td><td>locations</td><td>few real messages (5)</td><td>-</td><td class="n">-</td><td>stays as today (your call)</td></tr>
+<tr><td>-</td><td>customer names</td><td><span class="tag free">GO</span> 96.0%, 75; ~6 lines per message</td><td>-</td><td class="n">~6</td><td>not approved yet; asked at that step</td></tr>
+<tr><td>-</td><td>spec sizes (200mm, 1200mm)</td><td><span class="tag stop">NO-GO</span> 51.7%</td><td>-</td><td class="n">-</td><td>stay in the prompt (read by code later)</td></tr>
 </table></div>
-<p class="small mut">Costs for steps 3-7 reuse the today's-prompt baseline runs from step 1 when the code has not moved; otherwise add about USD 3.5.</p>
+<p class="small mut">Each step: 3 runs on each side against today's prompt (v63), OpenAI eval key only, every run logged, early stop on a missed bar. Costs for steps 2-5 reuse step 1's baseline runs when the code has not moved; otherwise add about USD 3.5.</p>
 </main>
 <script>
 function queueQ(ev, key, label){
