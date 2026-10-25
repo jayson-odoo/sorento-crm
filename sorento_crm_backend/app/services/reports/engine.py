@@ -1010,6 +1010,9 @@ def _blocks(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> Optional[Li
             values={**ctx.values, key: [value]},
             company_grants=ctx.company_grants,
         )
+        # A per-run row set the shared date basis reads (`_delivered_events`) is the parent's:
+        # it follows the period and the grant, never a select value.
+        one.__dict__.update({k: v for k, v in ctx.__dict__.items() if k.startswith("_")})
         title = f"{company} - {label.upper()}" if company else label.upper()
         blocks.append(ReportBlock(key=value, title=title, summary=_pivot(one, view, cap)))
     return blocks

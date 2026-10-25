@@ -35,6 +35,7 @@ MODULE_KEY = "sales"
 # so Delivered opens on the order columns and Invoiced on the document ones.
 DEFAULT_DETAIL_COLUMNS = [
     "so_number",
+    "do_number",
     "document_no",
     "order_date",
     "document_date",

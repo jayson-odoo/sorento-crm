@@ -205,7 +205,7 @@ def test_s1_5_the_basis_line(db, definition):
 
 def test_s1_5_the_order_bases_keep_their_own_line(db, definition):
     assert _run(db, definition, basis=["delivered"]).note == (
-        "Basis: Delivered (transferred to DO), by sales order date. Sales orders, not invoices."
+        "Basis: Delivered (transferred to DO), by delivery order date. Sales orders, not invoices."
     )
 
 
@@ -367,7 +367,9 @@ def test_the_invoiced_detail_opens_with_the_documents_own_columns(db, definition
 
 def test_the_detail_tab_is_named_for_what_it_lists(db, definition):
     assert _run(db, definition).layouts.detail.title == "Billing documents"
-    assert _run(db, definition, basis=["delivered"]).layouts.detail.title == "Sales order lines"
+    # DELIVERED-DATE-BASIS (owner ruling 25 Oct 2026): Delivered lists the delivered lines.
+    assert _run(db, definition, basis=["delivered"]).layouts.detail.title == "Delivered lines"
+    assert _run(db, definition, basis=["ordered"]).layouts.detail.title == "Sales order lines"
 
 
 def test_the_export_checks_the_view_on_the_basis_the_job_will_run():

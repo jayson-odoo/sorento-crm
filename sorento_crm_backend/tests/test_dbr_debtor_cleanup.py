@@ -238,22 +238,27 @@ class TestOutstandingReportDo:
 
 # ===================================================== AC-8 DO lines report dataset
 def test_ac8_dataset_customer_column_falls_back_to_debtor_name(db):
-    from app.services.reports.datasets.delivery_order_lines import DATASET
+    """The delivered definition's customer: the customer's name, else the DO's debtor name (an
+    AutoCount DO with no SO and no customer, DELIVERED-DATE-BASIS)."""
+    from datetime import date
 
-    loose = _do(db, debtor_name="SAMPLE")
+    from app.schemas.report import ReportViewConfig
+    from app.services.reports import engine
+    from app.services.reports.datasets.delivery_order_lines import DEFINITION
+
+    prod = product(db, company_id=SORENTO)
+    wh = warehouse(db, company_id=SORENTO)
     real = seed_customer(db, company_id=SORENTO, name="REAL NAME")
-    linked = _do(db, debtor_name="OTHER TEXT", customer_id=real.id)
+    for debtor, customer_id, qty in (("SAMPLE", None, 1), ("OTHER TEXT", real.id, 2)):
+        o = _do(db, debtor_name=debtor, customer_id=customer_id, source_book="db1", order_date=date(2026, 9, 1))
+        order_line(db, company_id=SORENTO, order_id=o.id, product_id=prod.id, warehouse_id=wh.id, quantity=qty)
     db.flush()
-    col = next(c for c in DATASET.columns if c.key == "customer")
-    stmt = (
-        sa.select(Order.id, col.expr(None).label("customer"))
-        .select_from(Order)
-        .outerjoin(Customer, Customer.id == Order.customer_id)
-        .where(Order.id.in_([loose.id, linked.id]))
-    )
-    got = {str(r.id): r.customer for r in db.execute(stmt)}
-    assert got[str(loose.id)] == "SAMPLE"
-    assert got[str(linked.id)] == "REAL NAME"
+    params = {"date_basis": "order_date", "period": {"kind": "custom", "from": "2026-09-01", "to": "2026-09-01"},
+              "product": [prod.id]}
+    view = ReportViewConfig.model_validate({"params": params, "detail": {"columns": [], "order": []},
+                                            "pivot": {"rows": "customer", "cols": "all", "measures": ["qty"]}})
+    pivot = engine.run_summary(db, DEFINITION, params, view, company_grants=frozenset({SORENTO}))
+    assert {k: v.get("qty") for k, v in pivot.row_totals.items()} == {"SAMPLE": "1", "REAL NAME": "2"}
 
 
 # ===================================================== AC-9 export quick search

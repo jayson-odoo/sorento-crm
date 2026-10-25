@@ -415,7 +415,7 @@ def _yearly_columns() -> tuple:
 
     return (
         reg.Column("so_number", "SO no", "text", "text", lambda c: SalesOrder.so_number, size=130),
-        reg.Column("document_no", "DO no", "text", "text", lambda c: Order.order_number, size=130),
+        reg.Column("do_number", "DO no", "text", "text", lambda c: Order.order_number, size=130),
         reg.Column("order_date", "Delivered date", "date", "date", lambda c: c.date_basis, size=120),
         reg.Column("customer", "Customer", "text", "text", _customer_name, size=220),
         reg.Column("agent_code", "Sales agent code", "text", "text", lambda c: SalesAgent.sales_agent, size=140),

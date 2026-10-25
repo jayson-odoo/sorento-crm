@@ -158,11 +158,17 @@ def test_ac_s1_2_cancelled_order_and_cancelled_line_are_nowhere(db, definition):
 
 
 def test_ac_s1_3_a_march_line_on_a_february_order_counts_in_february(db, definition):
+    """Ordered keeps G1 (the order's own date). Delivered is filed by the DO that delivered the
+    line (DELIVERED-DATE-BASIS, owner ruling 25 Oct 2026); with no DO behind it, by the line's
+    own date, the one rule every delivered measure shares (`datasets/delivery_order_lines.py`)."""
     _line(db, order_date=date(2026, 2, 20), ordered=1, delivered=1, line_total=Decimal("30.00"),
           required_date=date(2026, 3, 15))
-    summary = _run(db, definition).layouts.summary
-    assert summary.cells["2026"]["02"]["sales_value"] == "30.00"
-    assert "03" not in summary.cells["2026"]
+    ordered = _run(db, definition, basis=["ordered"]).layouts.summary
+    assert ordered.cells["2026"]["02"]["sales_value"] == "30.00"
+    assert "03" not in ordered.cells["2026"]
+    delivered = _run(db, definition).layouts.summary
+    assert delivered.cells["2026"]["03"]["sales_value"] == "30.00"
+    assert "02" not in delivered.cells["2026"]
 
 
 def test_ac_s1_4_a_null_demand_class_is_a_blank_row_last_and_in_the_total(db, definition):
@@ -315,7 +321,7 @@ def test_ac_r3_3_basis_is_required_single_and_defaults_to_delivered(db, definiti
 def test_the_basis_line_is_on_the_result(db, definition):
     delivered = _run(db, definition)
     assert delivered.note == (
-        "Basis: Delivered (transferred to DO), by sales order date. Sales orders, not invoices."
+        "Basis: Delivered (transferred to DO), by delivery order date. Sales orders, not invoices."
     )
     ordered = _run(db, definition, basis=["ordered"])
     assert ordered.note.startswith("Basis: Ordered,")

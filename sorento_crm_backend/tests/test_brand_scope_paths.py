@@ -197,14 +197,16 @@ def test_top_selling_rows_and_totals_are_in_scope_only(api, world) -> None:
 
 
 def test_sales_report_total_is_computed_from_in_scope_lines(api, world) -> None:
-    """AC-13: the report reads delivery-order lines. Scoped: the MOCHA DO line only (2 x,
-    100.00); unscoped: every DO line (14), with a larger amount."""
+    """AC-13: the report reads the delivered events (DELIVERED-DATE-BASIS, owner ruling 25 Oct
+    2026): the world's AutoCount DOs link to no SO, so they count on their own, beside the
+    delivered SOs' residual. Scoped: the MOCHA DO line (2 x, 100.00) and the MOCHA line of the
+    delivered mixed SO (2 x, 100.00); unscoped: every DO line (14) and every delivered SO line (9)."""
     params = {"customer_query": "ZZT BRAND", **Y}
     scoped = api.get(f"{BASE}/order-management/sales-report", world.scoped, **params).json()
-    assert scoped["total"]["qty"] == 2, scoped
-    assert Decimal(str(scoped["total"]["amount"])) == Decimal("100.00")
+    assert scoped["total"]["qty"] == 4, scoped
+    assert Decimal(str(scoped["total"]["amount"])) == Decimal("200.00")
     plain = api.get(f"{BASE}/order-management/sales-report", world.unscoped, **params).json()
-    assert plain["total"]["qty"] == 14, plain
+    assert plain["total"]["qty"] == 23, plain
     assert Decimal(str(plain["total"]["amount"])) > Decimal(str(scoped["total"]["amount"]))
 
 

@@ -65,12 +65,16 @@ def test_the_basis_labels():
         "delivered": "delivered sales", "ordered": "ordered sales", "outstanding": "outstanding orders"}
 
 
-def test_no_basis_reads_the_delivery_order_dataset():
-    from app.services.reports.datasets.delivery_order_lines import DEFINITION as delivery_orders
+def test_delivered_reads_the_delivered_events_and_the_other_bases_do_not():
+    """DELIVERED-DATE-BASIS (owner ruling 25 Oct 2026, superseding the 4 Oct direction for
+    delivered only): the delivered basis reads the one delivered definition the sales report
+    reads; ordered and outstanding keep sales order lines."""
+    from app.services.reports.datasets.delivery_order_lines import DEFINITION as delivered
 
-    for basis, definition in _definitions().items():
-        assert definition is not delivery_orders, basis
-        assert definition.dataset.key != delivery_orders.dataset.key, basis
+    definitions = _definitions()
+    assert definitions["delivered"] is delivered
+    for basis in ("ordered", "outstanding"):
+        assert definitions[basis].dataset.key != delivered.dataset.key, basis
 
 
 @pytest.mark.parametrize("basis", BASES)
