@@ -62,6 +62,6 @@ ask on its own family count (`gate._cust_base`), and the printed roster is rebui
 Tests: O2 (case 1, the two prod shapes, red commit first), O1 (case 2), U5 (the name fill, unit). Kill: `_cust_base` back to
 the stripped lookup fails O2; dropping the `customer_names` argument fails O1.
 
-Owner note (no change): option 1 of the prod case is the whole customer group of 300-F004 across SRT and MCH (9 accounts), and
-that includes the ungrouped 300-F033 ledger (joined by the name rule) and the inactive 305-F001.
+Owner ruling 25 Oct 17:35 (no change, keep today's grouping): option 1 of the prod case is the whole customer group of 300-F004 across SRT and MCH (9 accounts), and
+that includes the ungrouped 300-F033 ledger (joined by the name rule) and the inactive 305-F001; both SHOULD count in that group.
 "water closet" read as a promotion is out of scope (separate lane).
