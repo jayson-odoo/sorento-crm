@@ -1,6 +1,6 @@
 # PLAN: Project registration from the portal (PROJECT-REG-PORTAL)
 
-Status: building (Phase 1 FE + Phase 2 BE). Track: full (one additive migration, new permission). Size L.
+Status: built, reviewer READY, security findings fixed, browser pass done; awaiting owner hand test (PR #1849). Track: full (one additive migration, new permission). Size L.
 Card (settled): `CARD-project-registration-portal-25oct.md` v4 + owner final 13:03. UAC:
 `project-registration-portal-acceptance-criteria.md`. Mock: `mockups/project-registration-portal-v4.html`.
 Paths: BE = `sorento_crm_backend/app/`, FE = `sorento_crm_frontend/`.
