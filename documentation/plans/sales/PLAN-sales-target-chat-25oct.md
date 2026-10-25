@@ -169,6 +169,52 @@ multi-company contacts.
    dealers[]}`; dealers sorted by gap, none last.
 4. `FIELD_REVEAL_KEYS`: `("sales.sales_target", "Sales target")`, default off.
 
+### Contract (route response; the tester and coder both build to this)
+
+`GET /api/v1/sales/target-progress?contact_id=&space_id=&date_from=&date_to=&customer_ids=`
+(`customer_ids` repeatable). Errors: 422 `contact_identity_required`; 403 `sales_target_not_enabled`,
+`sales_target_not_available`, `customer_not_permitted`; 403 from the permission gate.
+
+```json
+{
+  "asker": "dealer",
+  "as_of": "2026-10-23",
+  "window": {"date_from": "2026-10-25", "date_to": "2026-10-25"},
+  "own": [],
+  "team": [],
+  "dealers": [
+    {
+      "target_no": "TGT-000012", "name": "BATH IDEA 2026", "subject_kind": "dealer",
+      "subject_label": "BATH IDEA BATHROOM & KITCHEN MARKETING SDN BHD", "company_code": "SRT",
+      "period_start": "2026-10-01", "period_end": "2026-12-31", "is_current": true,
+      "metric": "amount", "threshold_unit": "amount", "provisional": true,
+      "accounts": [{"code": "300-B129", "label": "A/C I"}],
+      "target_value": 85000.0, "target_points": null,
+      "achieved_value": 17414.05, "ratio_missing": false,
+      "tier_reached": null,
+      "next_tier": {"tier": 1, "threshold": 85000.0, "threshold_points": null,
+                    "rates": [{"label": "A/C I", "rate": 3.0}], "additional_rates": [],
+                    "gap": 67585.95},
+      "pipeline_value": null
+    }
+  ]
+}
+```
+
+- `asker`: `dealer` or `salesperson`. A dealer's `own` and `team` are always `[]`.
+- `window`: the dates the periods were picked by; with no dates given, both are today
+  (`team_service._today()`, which tests monkeypatch).
+- A rung (`tier_reached`, `next_tier`): `tier` 1-based among main tiers sorted by RM threshold;
+  `threshold` RM (units on a quantity target); `threshold_points` only on a points target; `rates`
+  one entry per account rate (`label` = `account_label`) or one entry with `label: null` for a tier
+  rate; `additional_rates` the additional tiers at the same RM threshold. `next_tier` adds `gap`.
+- Points target with no ratio: `ratio_missing: true`, `target_value` null, `target_points` set,
+  `tier_reached` and `next_tier` null.
+- `pipeline_value`: agent lines only (`agent_progress`), else null.
+- Numbers are JSON numbers rounded to 2 decimals. No UUID anywhere. No RM incentive field.
+- Order: `own` and `team` by period start then target_no; `dealers` by `next_tier.gap` ascending,
+  lines with no `next_tier` last, then subject_label.
+
 ### MCP (`sorento_crm_mcp`)
 
 `crm_sales_target_progress` ToolSpec (read-only GET, contact + space + dates + customer_ids,
