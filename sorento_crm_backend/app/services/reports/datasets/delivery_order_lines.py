@@ -316,12 +316,19 @@ def _order_key(c: Any) -> Any:
     return sa.func.coalesce(ev.c.so_id, ev.c.do_id)
 
 
+def _order_with_agent(c: Any) -> Any:
+    """An order (as `_order_key`) whose sales order carries an agent: the fill rate's numerator."""
+    return sa.case((SalesOrder.sales_agent_id.isnot(None), _order_key(c)))
+
+
 #: The count measures (REPORT-SMART-1021): key, label, the id counted.
 COUNT_COLUMNS = (
     ("customers", "Customers", lambda c: _events(c).c.customer_id),
     ("orders", "Orders", _order_key),
     ("products", "Products", lambda c: _events(c).c.product_id),
 )
+#: Q3 (a): the agent fill rate note's numerator, never a measure a caller names.
+FILL_COLUMNS = (("orders_with_agent", "Orders with an agent", _order_with_agent),)
 
 
 def _counted(column: Any) -> Any:
@@ -360,7 +367,7 @@ COLUMNS = (
     reg.Column("qty", "Qty", "integer", "measure", _qty, size=100),
     *(
         reg.Column(key, label, "integer", "measure", _counted(column), size=110, agg="count_distinct")
-        for key, label, column in COUNT_COLUMNS
+        for key, label, column in COUNT_COLUMNS + FILL_COLUMNS
     ),
 )
 

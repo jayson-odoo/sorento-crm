@@ -208,3 +208,27 @@ def test_the_yearly_note_says_do_date_on_delivered():
 
     assert "delivery order date" in ds.note(SimpleNamespace(values={"basis": ["delivered"]})), ds.note
     assert "sales order date" in ds.note(SimpleNamespace(values={"basis": ["ordered"]}))
+
+
+# ------------------------------------------------------------------ Q3: the agent fill rate note
+
+
+def test_the_fill_rate_note_counts_the_orders_the_delivered_ranking_counted(client, db):
+    """Q3 (a): the share of the window's delivered orders carrying an agent, on the DO date. SO 1
+    (agent, 20 Aug) is delivered on 5 Sep; SO 2 (no agent, 10 Sep) on 12 Sep: 1 of 2 in Sep. The
+    SO-date count would read 0 of 1."""
+    from tests.test_one_ranking_r3b_fill_rate import _staff
+
+    w = _world(db)
+    kw = dict(cust=w.cust, prod=w.prod, wh=w.wh)
+    other = _prod(db, unique_code("ZZTDDF").upper())
+    _so1, sol1 = _so_line(db, qty=1, total="10.00", agent=w.ag1, order_date=date(2026, 8, 20), **kw)
+    _do(db, qty=1, total="10.00", day=date(2026, 9, 5), sol=sol1, **kw)
+    _so2, sol2 = _so_line(db, cust=w.cust, prod=other, wh=w.wh, qty=1, total="10.00", order_date=date(2026, 9, 10))
+    _do(db, cust=w.cust, prod=other, wh=w.wh, qty=1, total="10.00", day=date(2026, 9, 12), sol=sol2)
+    db.commit()
+    body = _ok(client, _staff(db), group_by="product", top_n=5, sales_agent_ids=[w.ag1.id],
+               customer_ids=[w.cust.id], date_from="2026-09-01", date_to="2026-09-30")
+    # The world's own Sep orders count too: B's SO (agent 2), C's SO (agent 1), the no-SO DO.
+    # Sep orders: B, C, no-SO DO, SO 1's DO, SO 2's DO = 5; with an agent: B, C, SO 1 = 3.
+    assert body.get("sales_agent_fill_rate") == 0.6, body

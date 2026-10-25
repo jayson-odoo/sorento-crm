@@ -332,6 +332,51 @@ def run_ask(
     return body
 
 
+def delivered_fill_rate(
+    db: Session,
+    *,
+    date_from: date,
+    date_to: date,
+    filters: dict[str, list[str]],
+    warehouse_codes: list[str],
+    policy: Any,
+    company_grants: Any = None,
+) -> Optional[float]:
+    """Q3 (a), DELIVERED-DATE-BASIS: the agent fill rate over the delivered rows a delivered ranking
+    counts: the share of the window's delivered orders (`delivery_order_lines._order_key`) whose
+    sales order carries an agent. `filters` is the ranking's own, minus the agent filter (the
+    rate's own definition). None when the window has no order."""
+    from app.schemas.report import ReportViewConfig
+    from app.services.reports import engine
+
+    params: dict[str, Any] = {
+        "date_basis": "order_date",
+        "period": {"kind": "custom", "from": date_from.isoformat(), "to": date_to.isoformat()},
+    }
+    for word, values in filters.items():
+        if word == "sales_agent":
+            continue
+        if not values:
+            return None
+        params[word] = [_CHANNEL_CLASS[v] for v in values] if word == "channel" else list(values)
+    location_ids, refusal, nothing = resolve_locations(db, warehouse_codes, policy)
+    if refusal is not None or nothing:
+        return None
+    if location_ids is not None:
+        params["location"] = location_ids
+    view = ReportViewConfig.model_validate({
+        "params": params,
+        "detail": {"columns": [], "order": []},
+        "pivot": {"rows": "month", "cols": "all", "measures": ["orders", "orders_with_agent"]},
+    })
+    grand = engine.run_summary(
+        db, delivery_order_lines.DEFINITION, params, view,
+        company_grants=frozenset(str(c) for c in company_grants or ()),
+    ).grand_total or {}
+    total = int(Decimal(grand.get("orders") or 0))
+    return round(int(Decimal(grand.get("orders_with_agent") or 0)) / total, 4) if total else None
+
+
 # ----------------------------------------------------------------------- compare (REPORT-SMART-1021)
 
 #: What a sales ask may be compared with: the same number of days just before the period, or
