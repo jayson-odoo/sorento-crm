@@ -617,6 +617,11 @@ def restates_the_ask(verdict: dict[str, Any]) -> bool:
     return "new_subject" in ops
 
 
+#: The report kinds with no count of their own (`CAN_DRAW`: a total, or by month / year). A sales analysis naming a
+#: product or customer reads as a sales report before this seam (`turn_runtime`, SALES-COMPANY-PICK round 2).
+_COUNTLESS_REPORTS = frozenset({"sales_analysis", "sales_report"})
+
+
 def as_held_refine(verdict: dict[str, Any], frame: Any) -> dict[str, Any]:
     """Engine seam, chat fix PR-B S3: with a report held (`Focus.sales_ranking_frame`: a ranking or
     a total that ran, from a single ask or a multi-ask), the parser's refine (`ranking_refine`)
@@ -624,6 +629,18 @@ def as_held_refine(verdict: dict[str, Any], frame: Any) -> dict[str, Any]:
     document status is dropped (it never turns the refine into an order list). The lane applies
     only the keys the parser changed (`_refine`)."""
     status = jsc.js_string(verdict.get("order_status") or "").strip()
+    if (
+        status in _COUNTLESS_REPORTS
+        and verdict.get("top_n") is not None
+        and verdict.get("sales_channel") in ("dealer", "project")
+        and not jsc.js_string(verdict.get("group_by") or "").strip()
+        and isinstance(frame, dict) and _drill_source(frame) and not frame.get("stale")
+    ):
+        # CHAT-CHANNEL-RANK-ROUTE (PLAN-chat-channel-rank-route-1025.md, ruling AC-CF2): neither report has a count of
+        # its own, so a count and one channel with no axis, over a held ranking, is that ranking filtered to the channel
+        # ("Project sales top 10 <code>"): a refine, which applies the channel, product and count (`_refine`). Only a
+        # population on screen (agents, customers, ...): a month list or a channel ranking keeps today's report.
+        verdict = {**verdict, "ranking_refine": True}
     if verdict.get("ranking_refine") is not True or not isinstance(frame, dict) or not frame or status == ASK_NAME:
         return verdict
     if restates_the_ask(verdict):
