@@ -135,6 +135,33 @@ def test_no_photo_queued_changes_nothing_and_nothing_waits(world):
     assert posts[0]["t_start"] - t1_end < 1.5, "something waited between T1's parse and its POST"
 
 
+def test_a_voice_note_queued_behind_the_running_text_does_not_go_first(world, media_worker):
+    """PF-6 (owner, 25 Oct: "Photo only"): text T at t0 is mid-turn when voice note V
+    (t0 + 201 ms) is queued. T does not give way: T, then V, and T runs once."""
+    contact = world.contact(covered=True, media=True)
+    base = time.time() - 10
+    text_mid = world.message(contact, base, "voice-text")
+    voice = world.message(contact, base + PHOTO_LAG_SECONDS, "voice-note")
+    voice_body = world.body(contact, voice, photo=True)
+    voice_body["message"]["message"]["attachment"] = {
+        "type": "audio",
+        "url": "https://media.example.invalid/iq/voice.ogg",
+        "mimeType": "audio/ogg",
+        "size": 2048,
+    }
+
+    world.gate.clear()
+    world.webhook(world.body(contact, text_mid, text_value="check stock (voice-text)"))
+    assert world.wait_parse_started(text_mid, timeout=10), "T never started"
+    world.webhook(voice_body)
+    assert wait_until(lambda: _queued(world, contact, voice), timeout=5), "V must be queued while T runs"
+    world.gate.set()
+
+    world.wait_posts(2, contact, timeout=30)
+    assert world.posted_messages(contact) == [str(text_mid), str(voice)], "a voice note jumped ahead of the text"
+    assert _calls(world, text_mid) == [str(text_mid)], "T gave way to the voice note"
+
+
 def test_a_photo_of_another_contact_is_ignored(world, media_worker):
     """PF-5: contact A's running text does not give way to contact B's queued photo."""
     a = world.contact(covered=True, media=True)
@@ -156,12 +183,21 @@ def test_a_photo_of_another_contact_is_ignored(world, media_worker):
     assert _calls(world, text_mid) == [str(text_mid)], "A's text gave way to another contact's photo"
 
 
-def test_order_key_puts_photo_and_voice_first_and_keeps_send_order_otherwise():
-    """The key itself, no database: image, voice (every kind) and an `image/*` file go first;
-    a document, a sticker and a text keep their send order."""
+def test_order_key_puts_only_a_photo_first_and_keeps_send_order_otherwise():
+    """The key itself, no database (owner, 25 Oct: "Photo only"): an image and an `image/*`
+    file go first; a voice note (every kind), a document, a sticker and a text keep their
+    send order."""
     key = iq()._order_key
-    for kind, mime in [("image", None), ("audio", None), ("voice", None), ("ptt", None), ("file", "image/png")]:
+    for kind, mime in [("image", None), ("image", "image/jpeg"), ("file", "image/png")]:
         assert key(5.0, kind, mime) == (0, 5.0), (kind, mime)
-    for kind, mime in [(None, None), ("file", "application/pdf"), ("sticker", "image/webp")]:
+    for kind, mime in [
+        (None, None),
+        ("audio", "audio/ogg"),
+        ("voice", None),
+        ("ptt", None),
+        ("file", "audio/mpeg"),
+        ("file", "application/pdf"),
+        ("sticker", "image/webp"),
+    ]:
         assert key(5.0, kind, mime) == (1, 5.0), (kind, mime)
     assert key(9.0, "image", None) < key(1.0, None, None), "a later photo goes before an earlier text"
