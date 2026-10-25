@@ -44,7 +44,8 @@ Mock: `documentation/mockups/FULFIL-SO-REMARK/index.html`.
    Request SO with mixed chosen lines still labels its mockup lines).
 
 6. **Sales Order page** (owner 25 Oct ~13:05): Project Sales Admin > Sales Orders > SO detail.
-   The General tab shows two read-only fields: `Remark` = rule 3 computed over ALL lines of the SO
+   The General tab shows two read-only fields: `Remark` = rule 3 computed over ALL live lines of the SO (cancelled lines skipped, like the order
+   total; crew ruling 25 Oct, owner may override)
    (not a Confirm choice; nothing is stored) and `Shipping Info` as stored from AutoCount. The Lines
    tab shows a `Mockup` label on each mockup line only when the SO's lines mix mockup and actual
    (rule 5 over all lines). Same rules function as the guide and the email.

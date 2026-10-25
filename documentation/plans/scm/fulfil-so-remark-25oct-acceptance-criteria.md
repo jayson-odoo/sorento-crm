@@ -68,9 +68,9 @@ MOCK-UP).
 ## CRM: Sales Order page (owner add-on, 25 Oct ~13:05)
 
 - **AC-16** The SO detail API used by Project Sales Admin > Sales Orders returns `remark` (the AC-5
-  default computed over ALL the SO's lines: `Sponsorship` / `Purchase Request` / `Mockup` / "") and
+  default computed over ALL the SO's live lines, cancelled lines skipped: `Sponsorship` / `Purchase Request` / `Mockup` / "") and
   `ship_info` (as stored), and per line `is_mockup` and `mockup_label` (true only when AC-6 holds over
-  all the SO's lines and that line is a mockup line). Computed with the same rules module.
+  the SO's live lines and that line is a live mockup line). Computed with the same rules module.
 - **AC-17** The General tab shows read-only `Remark` and `Shipping Info` fields with the page's
   existing read-only field component; an empty value shows the page's usual empty marker.
 - **AC-18** The Lines tab shows the `Mockup` badge (same Badge as the Confirm guide) on lines whose
