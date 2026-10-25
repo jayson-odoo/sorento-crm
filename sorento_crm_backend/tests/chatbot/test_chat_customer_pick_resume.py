@@ -421,3 +421,28 @@ def test_o7_the_owner_s_edit_leaves_the_ungrouped_showcase_ledger_its_own_custom
     result, captured = chat(_t2(), "1", "ZZT-cpr-o7-2")
     calls = _report_calls(captured)
     assert len(calls) == 1 and set(calls[0].get("customer_ids") or []) == {ids[k] for k in OWNER_EDIT}, captured
+
+
+def test_o8_a_ranking_pick_on_the_narrower_s_roster_resumes_the_ranking(chat, session_factory):
+    """Reviewer, 25 Oct: O5's shape (the gate does not ask, the narrower raises the roster) under a SALES RANKING. The
+    pick resumes the ranking for the picked line (axis, count, measure, period), as a pick on the gate's own roster
+    does (`answer_bridge._offer_ask_payload`'s `ranking_ask`), never a plain sales report."""
+    ids = _seed_group_with_strays(session_factory, grouped=("ac1", "project"))
+    t1 = _parser_output(
+        message_type="business_query", domain_hint="sales", intent_hint="check_order", order_status="sales_ranking",
+        group_by="product", top_n=5, measure="amount", rank_by="amount", basis="delivered", domain_in_message=True,
+        entity_op="replace_combine", sales_channel="dealer",
+        entities=[{"raw": "zz demo", "hint": "customer", "canonical_code": None, "current_message": True,
+                   "confident": True}],
+        **OCT_2026,
+    )
+    chat(t1, "top 5 products for zz demo sanitary oct by amount", "ZZT-cpr-o8-1",
+         resolve_services=_only_the_group(_group_with_strays(ids), ids))
+    assert (chat.session().get("open_question") or {}).get("kind") == "customer_pick", chat.session().get("open_question")
+    result, captured = chat(_t2(group_by=None, order_status=None), "1", "ZZT-cpr-o8-2")
+    assert _report_calls(captured) == [], f"a ranking pick never becomes a plain sales report: {captured}"
+    ran = [args for name, args in captured if name == "crm_report_ask"]
+    assert len(ran) == 1, (_reply(result), captured)
+    assert set(ran[0].get("customer_ids") or []) == {ids["ac1"], ids["project"]}, ran
+    assert ran[0]["group_by"] == "product" and ran[0]["top_n"] == 5 and ran[0]["measure"] == "amount", ran
+    assert ran[0]["date_from"] == "2026-10-01" and ran[0]["date_to"] == "2026-10-31", ran
