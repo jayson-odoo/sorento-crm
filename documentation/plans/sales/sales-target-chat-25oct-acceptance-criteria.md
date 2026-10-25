@@ -151,6 +151,16 @@ and no figures.
   existing rows do not regress. Evidence: gate output in the PR, OpenAI eval key only, per-PR gate
   only (no full hidden run without the owner's OK), never the Gemini org key.
 
+- T5-2 [BE] `prompt_inserts.insert_sales_target(text)`: the anchor line
+  `== SALES TARGET...` section lands immediately before
+  `== SALES REPORT: order_status "sales_report", domain_hint "order" ==`, everything else unchanged
+  byte for byte; returns None when the anchor is missing or occurs twice, or the section is already
+  there. `test_insert_sales_target_anchor`.
+- T5-3 [BE] Migration `stc_0001_parser_sales_target` (its pinned base md5 is a module constant):
+  publishes the inserted text as the next `chatbot_semantic_parser` version with NO label; a second
+  run inserts nothing; no base row with the pinned md5, or no anchor, inserts nothing and moves no
+  label. `test_stc_migration_publishes_unlabelled`.
+
 ## Out of slice 1
 
 Creating an opportunity in chat (slice 2, salespeople only, read-back + "Reply YES to save"); the
