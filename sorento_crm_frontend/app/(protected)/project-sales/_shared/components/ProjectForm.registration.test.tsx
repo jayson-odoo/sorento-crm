@@ -238,8 +238,25 @@ describe('editing a pending project: the typed name hint (RW14)', () => {
     await waitFor(() => expect(screen.queryByText('Typed: Example Developer Sdn Bhd')).toBeNull());
   });
 
-  it('no hint when the project already has the party', async () => {
+  it('no Developer hint when the project already has the party; the unpicked ones keep theirs', async () => {
     renderEdit(pendingProject({ developer_party_id: 'd1', developer_name: 'Example Developer Sdn Bhd' }));
+    await waitFor(() => expect(select(/^Developer/).value).toBe('d1'));
+    expect(screen.queryByText('Typed: Example Developer Sdn Bhd')).toBeNull();
+    expect(screen.getByText('Typed: Example Architects')).toBeInTheDocument();
+    expect(screen.getByText('Typed: Unmatched Builders')).toBeInTheDocument();
+  });
+
+  it('no hint at all once every party is picked', async () => {
+    renderEdit(
+      pendingProject({
+        developer_party_id: 'd1',
+        developer_name: 'Example Developer Sdn Bhd',
+        architect_party_id: 'a1',
+        architect_name: 'Example Architects',
+        main_contractor_party_id: 'c1',
+        main_contractor_name: 'Unmatched Builders',
+      }),
+    );
     await waitFor(() => expect(select(/^Developer/).value).toBe('d1'));
     expect(screen.queryByText(/^Typed:/)).toBeNull();
   });

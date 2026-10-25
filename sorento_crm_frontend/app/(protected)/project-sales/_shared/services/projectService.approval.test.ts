@@ -31,7 +31,10 @@ const EXISTING = {
 
 beforeEach(() => {
   apiFetch.mockReset();
-  apiFetch.mockResolvedValue(ok({ data: [], pagination: { total: 0, page: 1, limit: 50 }, empty: true }));
+  // A fresh Response per call: a body can be read once, and a test may make two calls.
+  apiFetch.mockImplementation(() =>
+    Promise.resolve(ok({ data: [], pagination: { total: 0, page: 1, limit: 50 }, empty: true })),
+  );
 });
 
 describe('approve and reject', () => {

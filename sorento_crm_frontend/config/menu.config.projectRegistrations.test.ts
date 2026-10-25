@@ -29,6 +29,13 @@ describe.each([
     expect(walk(menu).filter((i) => i.permission === 'projects.registrations.approve')).toEqual([]);
   });
 
+});
+
+describe.each([
+  ['MENU_SIDEBAR', MENU_SIDEBAR],
+  ['MENU_SIDEBAR_COMPACT', MENU_SIDEBAR_COMPACT],
+] as const)('%s', (_name, menu) => {
+  // The mega menu never carried the pipeline entry; the sidebars do.
   it('keeps the Projects and Pipeline entries', () => {
     const paths = walk(menu).map((i) => i.path);
     expect(paths).toContain('/project-sales/pipeline');

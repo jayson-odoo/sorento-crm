@@ -336,7 +336,7 @@ def test_rw11_upgrade_keeps_staff_projects_intact(conn):
     }
     _upgrade(conn)
     rows = conn.execute(
-        text("select id, project_code, approval_state from projects.projects where id = any(:ids)"),
+        text("select id, project_code, approval_state from projects.projects where id::text = any(:ids)"),
         {"ids": list(kept)},
     ).all()
     assert {str(r[0]): r[1] for r in rows} == kept
@@ -524,14 +524,14 @@ def test_rw11_downgrade_deletes_the_code_less_portal_rows_and_keeps_everything_w
     left = {
         str(r[0])
         for r in conn.execute(
-            text("select id from projects.projects where id = any(:ids)"), {"ids": [staff, approved, *gone]}
+            text("select id from projects.projects where id::text = any(:ids)"), {"ids": [staff, approved, *gone]}
         )
     }
     assert left == {staff, approved}
     profiles = {
         str(r[0])
         for r in conn.execute(
-            text("select project_id from projects.sales_profile where project_id = any(:ids)"),
+            text("select project_id from projects.sales_profile where project_id::text = any(:ids)"),
             {"ids": [approved, *gone]},
         )
     }
