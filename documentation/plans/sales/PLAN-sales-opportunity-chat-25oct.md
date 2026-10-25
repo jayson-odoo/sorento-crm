@@ -186,6 +186,13 @@ the open question's yes answer, never a new ask.
 - O3-7 asserts the model constraint; the migration is checked by `alembic upgrade head` on the throwaway DB and the
   single-head gate.
 
+### Review round 1 (25 Oct): reviewer NOT READY, security FINDINGS -> UAC O1-5..O1-8, O3-9, O4-3, O6-12, O6-13
+
+Lane registered at engine import; company scope from the resolved contact (portal narrowing); sales module guard
+on the mount; grant to admin + integration_sorento_mcp + integration_n8n only (not the AutoCount ESB); audit actor
+keeps the integration fields; amount upper bound; in-app assistant write permission; explicit, fresh (30 min) yes.
+Nit: the portal's `_resolve_company` alias is dropped (call `opportunity_service.resolve_company`).
+
 ### Test DB
 
 `sorento_stc_throwaway` (at head oihr_0010), `.env.ci-tests`; serial pytest runs (a `-n 2` run hung in slice 1).

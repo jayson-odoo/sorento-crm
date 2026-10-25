@@ -25,6 +25,20 @@ saved without YES. Dealers, staff and unlinked contacts are refused.
   lacks the slug gets 403; a Bearer staff token is refused. `test_opp_routes_need_the_integration_slug`,
   `test_external_permission_coverage` (existing, green).
 
+- O1-5 [BE] (security 2) With the `sales` module off under strict mode both routes answer like the portal
+  (MODULE_NOT_ENABLED); the mount carries `require_module_enabled_with_api_key("sales")`.
+  `test_opp_routes_need_the_sales_module`.
+- O1-6 [BE] (review 2, security 1) The gate sets the company scope from the RESOLVED contact (the portal's
+  `_require_agents` narrowing: the contact's companies, intersected with any scope already set, then the agents'),
+  whatever the request carried: a prospect logged by a contact whose only company is B is saved in company B,
+  options and customer checks read company B only. Tested WITHOUT overriding `apply_company_scope`, two companies.
+  `test_opp_company_scope_is_the_contacts`.
+- O1-7 [BE] (security 3) The grant migration gives `integration.sales_opportunity.log` only to `admin`,
+  `integration_sorento_mcp` and `integration_n8n` (the chatbot's keys); `integration_foundryx_esb` and any other
+  integration role do not get it. `test_opp_slug_granted_to_chatbot_roles_only`.
+- O1-8 [BE] (security 4) The contact audit actor keeps the integration actor's user_id, ip_address, user_agent and
+  tool_name (`dataclasses.replace`). `test_opp_audit_actor_keeps_integration_fields`.
+
 ## O2. Customer options route
 
 - O2-1 [BE] `q` matches only the salesperson's OWN customers (customers.sales_agent_id in their agents), with code,
@@ -54,6 +68,9 @@ saved without YES. Dealers, staff and unlinked contacts are refused.
 - O3-8 [BE] No UUID other than the internal `customer_id` of the options route appears in any response.
   `test_opp_responses_carry_no_other_ids`.
 
+- O3-9 [BE] (review nit) An amount above the column's largest value (numeric(15,2), the portal's `_MAX_AMOUNT`)
+  is a 422 `amount_too_large`, never a 500. `test_create_refuses_too_large_amount`.
+
 ## O4. MCP
 
 - O4-1 [MCP] `crm_sales_opportunity_customer_options` (GET, read-only) and `crm_sales_opportunity_log` (POST, not
@@ -61,6 +78,10 @@ saved without YES. Dealers, staff and unlinked contacts are refused.
 - O4-2 [CB] Neither tool is reachable through the read-only allow-list path except the options read; the write
   tool is called only from the opportunity lane's seam. `test_tool_pool_is_read_only` (existing, stays green),
   `test_log_tool_not_in_read_only_pool`.
+
+- O4-3 [BE] (review 3) The in-app assistant's `_WRITE_TOOL_PERMISSIONS` maps `crm_sales_opportunity_log` to
+  `sales.opportunities.add` (as ideation maps its tool): a staff user without that permission cannot confirm the
+  write. `test_assistant_log_tool_needs_opportunities_add`.
 
 ## O5. Parser flag
 
@@ -96,6 +117,14 @@ saved without YES. Dealers, staff and unlinked contacts are refused.
   "Test run: nothing was saved.". `test_dry_run_turn_saves_nothing`.
 - O6-11 [CB] Any turn whose order_status is not "log_opportunity" (sales_target, sales_report, ...) behaves exactly
   as before (existing lane suites stay green). `test_other_statuses_untouched`.
+
+- O6-12 [CB] (review 1, blocker) The opportunity ask type is registered as soon as the engine is imported (a fresh
+  process that imports only the engine has "opportunity" in `required_fields.ASKS`), so a field answer stays in the
+  lane on the first turn after a deploy or in an RQ fork. Subprocess test.
+  `test_opportunity_ask_registered_on_engine_import`.
+- O6-13 [CB] (security 5) Only an explicit yes (`open_question_answer.mode == "yes"`) saves; a read-back older than
+  30 minutes is not saved on yes: "That opportunity was not saved because the confirmation timed out." and the flow
+  restarts on the next ask. `test_only_a_fresh_explicit_yes_saves`.
 
 ## O7. UI
 
