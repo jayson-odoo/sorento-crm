@@ -910,7 +910,7 @@ describe('T-FE6 (F18 F19 F21): the guide page is the editable split sheet', () =
     const page = await screen.findByTestId('confirm-guide-split-page');
     await within(page).findByTestId('split-line-3');
     expect(within(page).queryByRole('button', { name: /^Split line \d+ quantity$/ })).not.toBeInTheDocument();
-    expect(page.querySelectorAll('input')).toHaveLength(0);
+    expect(page.querySelectorAll('input:not([data-testid="confirm-guide-so-remark"])')).toHaveLength(0);
   });
 
   it('F18: every line of an order not yet adopted is a read-only row', async () => {
@@ -924,7 +924,7 @@ describe('T-FE6 (F18 F19 F21): the guide page is the editable split sheet', () =
     const page = await screen.findByTestId('confirm-guide-split-page');
     await within(page).findByTestId('split-line-1');
     expect(within(page).queryByRole('button', { name: /^Split line \d+ quantity$/ })).not.toBeInTheDocument();
-    expect(page.querySelectorAll('input')).toHaveLength(0);
+    expect(page.querySelectorAll('input:not([data-testid="confirm-guide-so-remark"])')).toHaveLength(0);
   });
 
   it('F19: with an unsaved edit Next is off and "Save or undo your split changes first" shows; after Save Next is on', async () => {
@@ -1800,5 +1800,127 @@ describe('OI-SPLIT-CONFIRM-POLISH: the Review split page', () => {
     const named = ths.filter((th) => th.textContent?.trim() && th.textContent.trim().toLowerCase() !== 'remark');
     expect(named.length).toBeGreaterThan(8);
     for (const th of named) expect(th.querySelector('.cursor-col-resize')).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FULFIL-SO-REMARK (AC-8, AC-9, AC-10): the Remark field and Mockup badges on each SO page
+// ---------------------------------------------------------------------------
+
+describe('FULFIL-SO-REMARK: the Remark field and Mockup badge on each SO page', () => {
+  /** `is_mockup` on the named lines; every other contribution is not a mockup line. */
+  function withMockup(board: Board, lineIds: string[]) {
+    return mapContributions(board, (entry) => ({
+      ...entry,
+      is_mockup: lineIds.includes(String(entry.project_line_id)),
+    }));
+  }
+
+  /** `remark_type` on the named orders' standings (by sales_order_id). */
+  function withRemarkType(board: Board, types: Record<string, string | null>) {
+    return {
+      ...board,
+      orders: board.orders.map((o) =>
+        o.sales_order_id in types ? { ...o, remark_type: types[o.sales_order_id] } : o,
+      ),
+    } as unknown as Board;
+  }
+
+  const remarkInput = (so: string) =>
+    within(pageOf(so)).getByTestId('confirm-guide-so-remark') as HTMLInputElement;
+
+  // SO000001: line 1 split-edited + line 3 saved draft are covered, line 2 is not.
+  const base = () =>
+    withDraft(withSplitEdited(boardOf([SO1_L1, SO1_L2, SO1_L3, SO2_L1]), ['pl-1-1']), ['pl-1-3', 'pl-2-1']);
+
+  async function openAt(board: Board) {
+    await mountWith(board);
+    await openConfirmGuide();
+    await screen.findAllByTestId('confirm-guide-split-page');
+  }
+
+  it('AC-8: prefills Mockup under the SO header when a chosen line is a mockup line', async () => {
+    await openAt(withMockup(base(), ['pl-1-1']));
+    const input = remarkInput('SO000001');
+    expect(input).toHaveValue('Mockup');
+    expect(input).toHaveAttribute('maxLength', '100');
+    expect(within(pageOf('SO000001')).getByLabelText('Remark')).toBe(input);
+  });
+
+  it('AC-8: Sponsorship beats Mockup and Purchase Request fills for its own order', async () => {
+    await openAt(withRemarkType(withMockup(base(), ['pl-1-1']), { 'so-1': 'Sponsorship', 'so-2': 'Purchase Request' }));
+    expect(remarkInput('SO000001')).toHaveValue('Sponsorship');
+    click('confirm-guide-next');
+    expect(remarkInput('SO000002')).toHaveValue('Purchase Request');
+  });
+
+  it('AC-8: blank when no chosen line is a mockup line, even if an unchosen line is', async () => {
+    await openAt(withMockup(base(), ['pl-1-2']));
+    expect(remarkInput('SO000001')).toHaveValue('');
+  });
+
+  it('review 6: the Clear remark control is the shared Button inside the shared InputWrapper', async () => {
+    await openAt(withMockup(base(), ['pl-1-1']));
+    const clear = within(pageOf('SO000001')).getByRole('button', { name: 'Clear remark' });
+    expect(clear.tagName).toBe('BUTTON');
+    expect(clear).toHaveAttribute('data-slot', 'button');
+    const wrapper = clear.closest('[data-slot="input-wrapper"]');
+    expect(wrapper).not.toBeNull();
+    expect(wrapper).toContainElement(remarkInput('SO000001'));
+  });
+
+  it('AC-8: the clear button empties the field and the field is editable', async () => {
+    await openAt(withMockup(base(), ['pl-1-1']));
+    fireEvent.change(remarkInput('SO000001'), { target: { value: 'Sample for client' } });
+    expect(remarkInput('SO000001')).toHaveValue('Sample for client');
+    fireEvent.click(within(pageOf('SO000001')).getByRole('button', { name: 'Clear remark' }));
+    expect(remarkInput('SO000001')).toHaveValue('');
+  });
+
+  it('AC-8: closing and reopening the guide recomputes the default; an edit is not kept', async () => {
+    await openAt(withMockup(base(), ['pl-1-1']));
+    fireEvent.change(remarkInput('SO000001'), { target: { value: 'edited' } });
+    click('confirm-guide-cancel');
+    await waitFor(() => expect(screen.queryByTestId('confirm-guide')).not.toBeInTheDocument());
+    await openConfirmGuide();
+    await screen.findAllByTestId('confirm-guide-split-page');
+    expect(remarkInput('SO000001')).toHaveValue('Mockup');
+  });
+
+  it('AC-9: mixed chosen lines badge only the mockup line', async () => {
+    await openAt(withMockup(base(), ['pl-1-1']));
+    const page = pageOf('SO000001');
+    const badges = within(page).getAllByTestId('confirm-guide-mockup-badge');
+    expect(badges).toHaveLength(1);
+    expect(badges[0]).toHaveTextContent('Mockup');
+    expect(within(within(page).getByTestId('split-line-1')).getByTestId('confirm-guide-mockup-badge')).toBeInTheDocument();
+    expect(within(within(page).getByTestId('split-line-3')).queryByTestId('confirm-guide-mockup-badge')).toBeNull();
+  });
+
+  it('AC-9: when every chosen line is a mockup line, or none is, no line shows the badge', async () => {
+    await openAt(withMockup(base(), ['pl-1-1', 'pl-1-3']));
+    expect(within(pageOf('SO000001')).queryAllByTestId('confirm-guide-mockup-badge')).toHaveLength(0);
+  });
+
+  it('AC-10: Confirm sends so_remark for every order: the field value, "" when cleared', async () => {
+    await openAt(withMockup(base(), ['pl-1-1']));
+    fireEvent.change(remarkInput('SO000001'), { target: { value: 'Sample for client' } });
+    click('confirm-guide-next');
+    fireEvent.change(remarkInput('SO000002'), { target: { value: 'Temp' } });
+    fireEvent.click(within(pageOf('SO000002')).getByRole('button', { name: 'Clear remark' }));
+    await walkConfirmGuide();
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0];
+    const byPso = Object.fromEntries(body.orders.map((o: { pso_id: string; so_remark?: string }) => [o.pso_id, o.so_remark]));
+    expect(byPso).toEqual({ 'pso-so-1': 'Sample for client', 'pso-so-2': '' });
+  });
+
+  it('AC-10: an untouched default is posted as typed, not left out', async () => {
+    await openAt(withMockup(base(), ['pl-1-1']));
+    await walkConfirmGuide();
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0];
+    expect(body.orders.find((o: { pso_id: string }) => o.pso_id === 'pso-so-1').so_remark).toBe('Mockup');
+    expect(body.orders.find((o: { pso_id: string }) => o.pso_id === 'pso-so-2').so_remark).toBe('');
   });
 });

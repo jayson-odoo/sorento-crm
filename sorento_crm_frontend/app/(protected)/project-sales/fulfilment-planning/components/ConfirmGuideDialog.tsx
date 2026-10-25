@@ -3,6 +3,9 @@
 import * as React from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input, InputWrapper } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { X } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -19,6 +22,8 @@ import {
 import { useLineSplitsReads } from '../../_shared/hooks/useLineSplits';
 import { LineSplitEditor, type LineSplitEditorHandle } from './LineSplitEditor';
 import { formatSplitDate } from '../lib/lineSplitModel';
+import { defaultSoRemark, shouldLabelMockupLines } from '../../_shared/lib/soRemark';
+import { MockupLinesContext } from './LineSplitSheet';
 
 /** One line this Confirm covers, as the board states it, with its editable remark (UAC F25). */
 export type ConfirmGuideLine = CoveredSheetLine & {
@@ -26,6 +31,8 @@ export type ConfirmGuideLine = CoveredSheetLine & {
   ownRemark: string | null;
   /** The line's remark can be kept in a saved decision (an Approve or Amend draft). */
   remarkEditable: boolean;
+  /** FULFIL-SO-REMARK: the board says this line reads as a mockup line. */
+  isMockup?: boolean;
 };
 
 /** One page of the guide (UAC F2): an order this Confirm covers, and the lines it covers. */
@@ -37,6 +44,8 @@ export interface ConfirmGuidePage {
   soNumber: string;
   /** The board's SO date for the order (`YYYY-MM-DD`); null when the board has none. */
   soDate?: string | null;
+  /** FULFIL-SO-REMARK: `Sponsorship` / `Purchase Request` from the order's Shipping Info. */
+  remarkType?: string | null;
   /** The lines this Confirm covers on the order, as the board states them (UAC F2, F10). */
   covered: ConfirmGuideLine[];
 }
@@ -46,6 +55,22 @@ const readOnlyWords = (line: ConfirmGuideLine): CoveredSheetLine => ({
   ...line,
   savedRemark: line.ownRemark || line.savedRemark,
 });
+
+const SO_REMARK_MAX = 100;
+const NO_MOCKUP_LINES: ReadonlySet<string> = new Set();
+
+/** The line ids that carry a Mockup badge, and the order's default remark (FULFIL-SO-REMARK). */
+const mockupFactsOf = (page: ConfirmGuidePage) => {
+  const flags = page.covered.map((line) => Boolean(line.isMockup));
+  return {
+    defaultRemark: defaultSoRemark(page.remarkType, flags),
+    labelled: shouldLabelMockupLines(flags)
+      ? new Set(
+          page.covered.filter((line) => line.isMockup).map((line) => line.lineId ?? `board:${line.key}`),
+        )
+      : new Set<string>(),
+  };
+};
 
 /** UAC F1: the two steps. */
 const STEPS: readonly WizardStep[] = [
@@ -93,7 +118,7 @@ export function ConfirmGuideDialog({
    */
   autocountNote?: string[];
   applyLabel?: string;
-  runConfirm: () => Promise<boolean>;
+  runConfirm: (soRemarks: ReadonlyMap<string, string>) => Promise<boolean>;
   /**
    * UAC F26: keeps saved lines' remarks in their saved decisions (board line key -> remark,
    * '' = the default words); rejects when one could not be saved.
@@ -113,6 +138,11 @@ export function ConfirmGuideDialog({
     pages.length > 0 ? { kind: 'review', index: 0 } : { kind: 'confirm' },
   );
   const [posting, setPosting] = React.useState(false);
+  /**
+   * FULFIL-SO-REMARK (AC-8): remarks typed this session, by core sales order id. An order with
+   * no entry reads its default; the guide mounts fresh on every open, so an edit is not kept.
+   */
+  const [remarkEdits, setRemarkEdits] = React.useState<ReadonlyMap<string, string>>(new Map());
   /** UAC F19: the page's editor holds unsaved split edits. */
   const [dirty, setDirty] = React.useState(false);
   /** UAC F23: the page's editor, asked whether Escape or a click outside may close. */
@@ -204,6 +234,12 @@ export function ConfirmGuideDialog({
     close();
   };
 
+  const remarkOf = (entry: ConfirmGuidePage) =>
+    remarkEdits.get(entry.salesOrderId) ?? mockupFactsOf(entry).defaultRemark;
+  const setRemark = (salesOrderId: string, value: string) =>
+    setRemarkEdits((current) => new Map(current).set(salesOrderId, value));
+  const pageFacts = React.useMemo(() => (page ? mockupFactsOf(page) : null), [page]);
+
   const next = () => {
     if (step.kind !== 'review') return;
     setStep(
@@ -220,7 +256,7 @@ export function ConfirmGuideDialog({
   const pressConfirm = async () => {
     if (posting) return;
     setPosting(true);
-    if (await runConfirm()) {
+    if (await runConfirm(new Map(pages.map((entry) => [entry.salesOrderId, remarkOf(entry)])))) {
       onClose();
       return;
     }
@@ -270,6 +306,7 @@ export function ConfirmGuideDialog({
 
         <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-5 py-4">
           {page ? (
+            <MockupLinesContext.Provider value={pageFacts?.labelled ?? NO_MOCKUP_LINES}>
             <section
               data-testid="confirm-guide-split-page"
               data-so={page.soNumber}
@@ -293,6 +330,35 @@ export function ConfirmGuideDialog({
                 <span className="text-xs text-muted-foreground">
                   {plural(sheet ? sheet.lines.length : page.covered.length, 'line')}
                 </span>
+              </div>
+              {/* FULFIL-SO-REMARK (AC-8): the REMARK the purchasing email prints beside this SO. */}
+              <div className="max-w-md">
+                <Label htmlFor={`confirm-guide-remark-${page.salesOrderId}`} className="mb-1 block text-xs">
+                  Remark
+                </Label>
+                <InputWrapper>
+                  <Input
+                    id={`confirm-guide-remark-${page.salesOrderId}`}
+                    data-testid="confirm-guide-so-remark"
+                    value={remarkOf(page)}
+                    maxLength={SO_REMARK_MAX}
+                    onChange={(event) => setRemark(page.salesOrderId, event.target.value)}
+                  />
+                  {remarkOf(page) ? (
+                    <Button
+                      type="button"
+                      variant="dim"
+                      mode="icon"
+                      size="sm"
+                      className="-me-2 size-6"
+                      aria-label="Clear remark"
+                      title="Clear remark"
+                      onClick={() => setRemark(page.salesOrderId, '')}
+                    >
+                      <X aria-hidden />
+                    </Button>
+                  ) : null}
+                </InputWrapper>
               </div>
               {prepareFailed ? (
                 <div
@@ -405,6 +471,7 @@ export function ConfirmGuideDialog({
                 <SectionSkeleton rows={4} />
               )}
             </section>
+            </MockupLinesContext.Provider>
           ) : null}
 
           {step.kind === 'confirm' ? (

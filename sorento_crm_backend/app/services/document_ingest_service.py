@@ -1051,6 +1051,9 @@ class DocumentIngestService(MasterRefResolver):
             po_ref = (payload.po_ref or "").strip() or None
             values["po_ref"] = po_ref
             values["po_ref_key"] = po_ref_key(po_ref)
+        # `ship_info` (FULFIL-SO-REMARK): same shape rule as `po_ref`, own column.
+        if "ship_info" in getattr(payload, "model_fields_set", ()) and hasattr(payload, "ship_info"):
+            values["ship_info"] = (payload.ship_info or "").strip() or None
         # PO currency default (D1): only a spec that carries a `currency`
         # header column reaches this, which today is `purchase_orders` alone -
         # so the fill is shape-driven rather than a hardcoded entity check.
@@ -1390,6 +1393,11 @@ class DocumentIngestService(MasterRefResolver):
         # re-push must never clear what an earlier push recorded - proven
         # by an explicit `null`, which DOES clear (S1 review fix), since
         # `model_fields_set` is presence, not truthiness.
+        # FULFIL-SO-REMARK: sales-order lines only; absent leaves the stored value alone.
+        if spec.entity_type == "sales_orders":
+            for column in ("line_remark", "section_heading"):
+                if column in line.model_fields_set:
+                    values[column] = (getattr(line, column) or "").strip() or None
         if "from_so_line_ref" in line.model_fields_set:
             values["from_so_line_ref"] = line.from_so_line_ref
         if "from_po_line_ref" in line.model_fields_set:

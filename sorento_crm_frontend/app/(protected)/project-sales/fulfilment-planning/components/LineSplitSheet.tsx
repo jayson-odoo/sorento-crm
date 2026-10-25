@@ -56,6 +56,12 @@ export const DROP_NEW = 'drop:new';
 export const DROP_CANCEL = 'drop:cancel';
 export const lineDropId = (lineId: string) => `line:${lineId}`;
 
+/**
+ * FULFIL-SO-REMARK (AC-9): the line ids a `Mockup` badge sits on, provided by the Confirm guide
+ * only when the chosen lines of the order mix mockup and actual lines. Empty everywhere else.
+ */
+export const MockupLinesContext = React.createContext<ReadonlySet<string>>(new Set());
+
 /** The id the focus helpers find a split's date input by. */
 export const dateInputId = (splitId: string) => `split-date-${splitId}`;
 
@@ -473,6 +479,7 @@ const LineBlock = React.memo(function LineBlock({
   handlers,
 }: LineBlockProps) {
   const no = line.lineNo ?? '';
+  const mockup = React.useContext(MockupLinesContext).has(line.lineId);
   // Read-only rows: a line AutoCount added (it only receives) or delivered in full (UAC A3).
   const delivered = Boolean(line.deliveredInFull);
   const added = isAddedLine(line);
@@ -520,6 +527,17 @@ const LineBlock = React.memo(function LineBlock({
         )}
       >
         <span className="font-semibold">{line.itemCode}</span>
+        {mockup ? (
+          <Badge
+            variant="warning"
+            appearance="light"
+            size="sm"
+            className="ms-1.5"
+            data-testid="confirm-guide-mockup-badge"
+          >
+            Mockup
+          </Badge>
+        ) : null}
         {multiLocation ? (
           <span className="block text-2xs text-muted-foreground md:hidden">
             {line.location}
