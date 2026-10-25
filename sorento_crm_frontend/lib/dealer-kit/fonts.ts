@@ -81,8 +81,12 @@ export async function ensureSeedFontsLoaded(): Promise<void> {
       // the moment this resolves. Waiting only for the regular weight left
       // Chromium free to print a bold price badge before its 700 face had
       // arrived, in the very fallback this call exists to avoid.
+      // 500 and 600 as well: the stylesheet serves them and text layers use
+      // them, and a weight measured before it arrives breaks on the fallback.
       SEED_FONT_FAMILIES.flatMap((family) => [
         document.fonts.load(`16px "${family}"`),
+        document.fonts.load(`500 16px "${family}"`),
+        document.fonts.load(`600 16px "${family}"`),
         document.fonts.load(`700 16px "${family}"`),
       ]),
     );
@@ -123,18 +127,20 @@ export async function ensureFontsLoaded(fonts: TagFont[]): Promise<EnsureFontsRe
 
     try {
       const face = new FontFace(font.family, `url(${JSON.stringify(font.url)})`);
+      // Into the set BEFORE loading: only a face loading inside
+      // `document.fonts` fires `loadingdone`, which is what tells text layers
+      // to re-break their lines in the face that just arrived
+      // (`useFontsEpoch`). Loaded first and added after, it fired nothing, and
+      // lines broken on the fallback printed clipped in the wider brand face.
+      document.fonts.add(face);
       pending.push(
-        face
-          .load()
-          .then((result) => {
-            document.fonts.add(result);
-          })
-          .catch(() => {
-            // A font that will not load leaves the layer in its fallback, and
-            // is eligible to try again on the next call.
-            loaded.delete(key);
-            failed.push(font.family);
-          }),
+        face.load().catch(() => {
+          // A font that will not load leaves the layer in its fallback, and
+          // is eligible to try again on the next call.
+          document.fonts.delete(face);
+          loaded.delete(key);
+          failed.push(font.family);
+        }),
       );
     } catch {
       loaded.delete(key);

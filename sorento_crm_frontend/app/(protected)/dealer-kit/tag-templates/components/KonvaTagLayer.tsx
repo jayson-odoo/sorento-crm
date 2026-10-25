@@ -36,7 +36,7 @@ import {
   scalePolygonPoints,
 } from '@/lib/dealer-kit/polygon-path';
 import { paddedBox } from '@/lib/dealer-kit/text-reflow';
-import { textFace, textLayerLines } from '@/lib/dealer-kit/text-layout';
+import { canvasTextHeight, textFace, textLayerLines } from '@/lib/dealer-kit/text-layout';
 import { useFontsEpoch } from '@/lib/dealer-kit/use-fonts-epoch';
 import { cropPixels, fittedCropDraw, type CropRect } from '@/lib/dealer-kit/image-crop';
 import { useHtmlImage } from './useHtmlImage';
@@ -595,7 +595,7 @@ function TextContent({
       x={inset.x}
       y={inset.y}
       width={inset.width}
-      height={inset.height}
+      height={canvasTextHeight(inset.height)}
       text={lines.join('\n')}
       sourceText={text}
       fontFamily={face.fontFamily}

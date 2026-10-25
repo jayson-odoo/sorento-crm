@@ -31,6 +31,19 @@ export const LAYOUT_PX_PER_MM = 96 / 25.4;
  * another zoom, or the browser setting a line, never finds it a hair too
  * wide and cuts it again. */
 const FIT_HEADROOM = 0.005;
+/** A line whose bottom lands within this share of the box's bottom still
+ * fits: summed in floating point, three lines of 0.1 make 0.30000000000000004,
+ * and a strict compare dropped the last line of a box exactly that tall. */
+const HEIGHT_TOLERANCE = 1e-9;
+/** Slack on the height the canvas hands Konva, far above `HEIGHT_TOLERANCE`
+ * and far below a pixel, so Konva's own height cut (summed in canvas px at the
+ * current zoom) never drops a line `wrapTextLines` kept. */
+const CANVAS_HEIGHT_SLACK = 1e-6;
+
+/** The height to give the canvas's Konva Text for a box `heightPx` tall. */
+export function canvasTextHeight(heightPx: number): number {
+  return heightPx * (1 + CANVAS_HEIGHT_SLACK);
+}
 
 type TextFaceProps = Pick<
   TextLayerProps,
@@ -118,6 +131,7 @@ export interface WrapBox {
 export function wrapTextLines(text: string, box: WrapBox, measure: MeasureText): string[] {
   const width = (s: string) => measure(s) + box.letterSpacing * s.length;
   const maxWidth = box.maxWidth * (1 - (box.headroom ?? 0));
+  const maxHeight = box.maxHeight * (1 + HEIGHT_TOLERANCE);
   const lines: string[] = [];
   let height = 0;
 
@@ -156,7 +170,7 @@ export function wrapTextLines(text: string, box: WrapBox, measure: MeasureText):
         }
         lines.push(match.trimEnd());
         height += box.lineHeight;
-        if (height + box.lineHeight > box.maxHeight) return lines;
+        if (height + box.lineHeight > maxHeight) return lines;
 
         line = chars.slice(low).join('').trimStart();
         if (line.length > 0 && width(line) <= maxWidth) {
@@ -169,7 +183,7 @@ export function wrapTextLines(text: string, box: WrapBox, measure: MeasureText):
       lines.push(line);
       height += box.lineHeight;
     }
-    if (height + box.lineHeight > box.maxHeight) break;
+    if (height + box.lineHeight > maxHeight) break;
   }
   return lines;
 }

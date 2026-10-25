@@ -90,6 +90,17 @@ re-measure when a font face finishes loading (`useFontsEpoch`).
 No shrink-to-fit exists on either surface; a title longer than its box shows the lines that
 fit on both, at the same break. Making the box taller (or the type smaller) shows it whole.
 
+Owner ruling (25 Oct 17:35): "if it is shrinked in the designer, then the preview should tally
+also, the designer and preview should tally". The designer canvas is the source of truth; the
+preview and print do exactly what it does, from `textLayerLines()`. Today the designer cuts a
+too-long title (no shrink exists), so preview and print cut it at the same line. If the designer
+ever changes its rule, it changes in `textLayerLines()` only:
+- stay cut: today's rule, nothing to do;
+- shrink to fit: step the font down until `wrapTextLines` returns every line, and return the
+  chosen size with the lines so `TextContent` and `TextLayer` both draw at it;
+- show every line: stop dropping lines past the height (both surfaces then overflow the box
+  the same way).
+
 ## Out of scope / reported
 
 - Price badge typography still converts its own way on each surface (its own shared helper,
