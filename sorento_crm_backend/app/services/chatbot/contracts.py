@@ -77,6 +77,7 @@ UNDOMAINED_CHATBOT_TOOLS: tuple[str, ...] = (
     "crm_sla_conversation_event_logs_list",
     "crm_sla_conversation_tracking_dashboard",
     "crm_sla_conversation_tracking_list",
+    "crm_sales_target_progress",
     "crm_system_tool_capabilities_summary",
     "user_guides_read",
 )
@@ -153,6 +154,7 @@ BRAND_SCOPE_TREATMENT: dict[str, BrandScopeTreatment] = {
     "crm_resource_attachments_list": "filtered",
     "crm_sales_analysis": "filtered",
     "crm_sales_report": "filtered",
+    "crm_sales_target_progress": "no_products",
     "crm_sla_conversation_event_logs_list": "no_products",
     "crm_sla_conversation_tracking_dashboard": "no_products",
     "crm_sla_conversation_tracking_list": "no_products",
@@ -514,6 +516,10 @@ SALES_REPORT_GROUP_BYS: tuple[str, ...] = ("customer", "product", "delivery_orde
 # check reads this one tuple, so the asks cannot be gated differently. `sales_analysis`
 # (PLAN-retail-sales-reports-26sep S1, #1269) is gated by the same key, and so is
 # `sales_ranking` (REPORT-ENGINE slice 1b, `crm_report_ask`).
+# SALES-TARGET-CHAT: a target ask is the `sales` domain too, but it is NOT a sales figure
+# status: its gates take the `sales.sales_target` grant, not the sales report's.
+SALES_TARGET_STATUS = "sales_target"
+
 SALES_FIGURE_STATUSES: tuple[str, ...] = ("sales_report", "top_selling", "sales_analysis", "sales_ranking")
 
 # PLAN-prompt-dynamic-30sep D9 (owner, 30 Sep 2026: "better own sales domain otherwise
