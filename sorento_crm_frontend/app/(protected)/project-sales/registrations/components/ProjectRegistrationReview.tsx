@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { PageHeader } from '@/components/common/PageHeader';
 import BackToList from '@/components/common/BackToList';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -16,12 +17,26 @@ const CRUMBS = [
   { title: 'Register project' },
 ];
 
-function Meta({ label, value }: { label: string; value: string | null | undefined }) {
+function Meta({
+  label,
+  value,
+  href,
+}: {
+  label: string;
+  value: string | null | undefined;
+  href?: string;
+}) {
   return (
     <span className="min-w-0">
       <span className="text-muted-foreground">{label} </span>
       <span className="font-medium" title={value || undefined}>
-        {value || '-'}
+        {value && href ? (
+          <Link href={href} className="text-primary hover:underline">
+            {value}
+          </Link>
+        ) : (
+          value || '-'
+        )}
       </span>
     </span>
   );
@@ -75,7 +90,13 @@ export default function ProjectRegistrationReview({ id }: { id: string }) {
           <Meta label="Distributor" value={data.distributor_name} />
           <Meta label="Customer" value={data.customer_name} />
           <Meta label="Your ref" value={data.your_ref} />
-          {data.project_code && <Meta label="Project" value={data.project_code} />}
+          {data.project_code && (
+            <Meta
+              label="Project"
+              value={data.project_code}
+              href={data.project_id ? `/project-sales/${data.project_id}` : undefined}
+            />
+          )}
         </div>
         {data.status === 'rejected' && data.reject_reason && (
           <p className="text-destructive">Rejected: {data.reject_reason}</p>

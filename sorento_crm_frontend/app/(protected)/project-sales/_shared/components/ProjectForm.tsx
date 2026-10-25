@@ -94,7 +94,6 @@ export function ProjectForm(props: ProjectFormProps) {
   const update = useUpdateProject(project?.id ?? '');
   const approve = useApproveProjectRegistration(registration?.id ?? '');
   const [rejectOpen, setRejectOpen] = React.useState(false);
-  const [serverError, setServerError] = React.useState<string | null>(null);
 
   const [title, setTitle] = React.useState(project?.title ?? registration?.title ?? '');
   const [developerId, setDeveloperId] = React.useState(
@@ -285,13 +284,11 @@ export function ProjectForm(props: ProjectFormProps) {
       // A possible duplicate never blocks the queue: no clash check, the server decides.
       const body = buildBody();
       delete body.lead_id;
-      setServerError(null);
       try {
         await approve.mutateAsync(body);
         router.push('/project-sales/registrations');
-      } catch (error) {
-        // The hook toasts it; the form keeps it in view with what was typed.
-        setServerError(error instanceof Error ? error.message : 'Failed to approve');
+      } catch {
+        // The hook toasts the server's message; the form stays with what was typed.
       }
       return;
     }
@@ -660,7 +657,7 @@ export function ProjectForm(props: ProjectFormProps) {
                   id="project-owner"
                   value={ownerUserId}
                   onChange={setOwnerUserId}
-                  disabled={!canManageOwner && !isReview}
+                  disabled={!canManageOwner}
                   loadError={users.error}
                   onRetry={() => void users.refetch()}
                   options={(users.data ?? []).map((user) => ({
@@ -698,12 +695,6 @@ export function ProjectForm(props: ProjectFormProps) {
             </div>
           </FormSection>
         </fieldset>
-
-        {serverError && (
-          <p role="alert" className="text-sm text-destructive">
-            {serverError}
-          </p>
-        )}
 
         {!decided && (
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">

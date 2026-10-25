@@ -64,14 +64,13 @@ vi.mock('@/hooks/useLookupSetOptions', () => ({
   }),
 }));
 
-vi.mock('@/lib/toast', () => ({
-  toast: {
-    success: vi.fn(),
-    error: vi.fn(),
-    warning: vi.fn(),
-    custom: vi.fn(),
-  },
+const toast = vi.hoisted(() => ({
+  success: vi.fn(),
+  error: vi.fn(),
+  warning: vi.fn(),
+  custom: vi.fn(),
 }));
+vi.mock('@/lib/toast', () => ({ toast }));
 
 const listParties = vi.fn();
 const listProjectTypes = vi.fn();
@@ -444,10 +443,13 @@ describe('ProjectForm review mode: Approve (B5, B8)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
 
-    const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(
-      'PPF2509012 already has this developer and title',
+    // Fix round 1 (N13): the hook's toast is the one surface for the server's message.
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringContaining('PPF2509012 already has this developer and title'),
+      ),
     );
+    expect(screen.queryByRole('alert')).toBeNull();
     expect(push).not.toHaveBeenCalled();
   });
 });

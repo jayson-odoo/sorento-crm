@@ -528,7 +528,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   // The id to save/flush against: the route param when one exists, else
   // whatever a create call in THIS session already answered with (#482).
   const effectiveId = submissionId ?? createdSubmissionId ?? undefined;
-  const commentsTabbed = Boolean(effectiveId && detail && !detail.is_draft);
+  // A project registration is exactly its legacy fields: no comments thread, no attachments.
+  const takesExtras = kind !== 'project_registration';
+  const commentsTabbed = Boolean(takesExtras && effectiveId && detail && !detail.is_draft);
   const commentsThread = usePortalSubmissionComments(
     kind,
     effectiveId ?? '',
@@ -1378,7 +1380,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       if ('customer_name' in aiValues && 'customer_id' in next) next.customer_id = '';
       return next;
     });
-    if (payload.alsoAttach && payload.files.length > 0) {
+    if (takesExtras && payload.alsoAttach && payload.files.length > 0) {
       setPendingFiles((prev) => [...prev, ...payload.files]);
     }
 
@@ -2133,6 +2135,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         </Card>
       )}
 
+      {takesExtras && (
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Attachments</CardTitle>
@@ -2150,6 +2153,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           />
         </CardContent>
       </Card>
+      )}
 
       {reviseMode && (
         <Card>
@@ -2462,6 +2466,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         open={aiExtractOpen}
         onOpenChange={setAiExtractOpen}
         kind={kind}
+        canAttach={takesExtras}
         fieldDefs={fieldDefs.filter((f) => f.widget !== 'hidden' && f.widget !== 'readonly')}
         onApply={handleAIExtractApply}
       />
