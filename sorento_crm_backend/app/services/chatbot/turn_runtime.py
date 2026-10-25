@@ -1980,21 +1980,24 @@ def _report_status_means_order_domain(out: dict[str, Any]) -> None:
         # `-lsr-002`, `handbuilt-rp-003`: `pending options ['stock'] -> ['orders']`).
         # Same precedence, stated at both seams.
         return
-    report_statuses = OUTSTANDING_ORDER_STATUS | set(contracts.SALES_FIGURE_STATUSES)
+    # SALES-TARGET-CHAT: `sales_target` is the sales domain's too, yet not a sales figure
+    # status (its grant is its own), so it joins the domain mapping here and nowhere else.
+    sales_statuses = set(contracts.SALES_FIGURE_STATUSES) | {contracts.SALES_TARGET_STATUS}
+    report_statuses = OUTSTANDING_ORDER_STATUS | sales_statuses
     status = jsc.js_string(out.get("status") or "").strip()
     # PROMPT-DYNAMIC reviewer pass 2: the parser can now name `sales` off the switch word
     # ("sales orders for hanlim") with no sales status. Only the three sales statuses are
     # the sales domain; anything else under `sales` is the order ask it was before R7.
     if out.get("domain_hint") == contracts.SALES_DOMAIN:
         either = {status, jsc.js_string(out.get("order_status") or "").strip()}
-        if not either & set(contracts.SALES_FIGURE_STATUSES):
+        if not either & sales_statuses:
             out["domain_hint"] = "order"
             out["domain_corrected"] = "sales->order (no sales status)"
     if status not in report_statuses:
         status = jsc.js_string(out.get("order_status") or "").strip()
     if status not in report_statuses:
         return
-    target = contracts.SALES_DOMAIN if status in contracts.SALES_FIGURE_STATUSES else "order"
+    target = contracts.SALES_DOMAIN if status in sales_statuses else "order"
     prior = out.get("domain_hint")
     if prior == target:
         return

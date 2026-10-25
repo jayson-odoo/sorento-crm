@@ -67,6 +67,10 @@ _LANE_GATED_KEYS = {
     # `lanes/business/answer.py::DOMAIN_GRANT_REQUIRED` (the domain grant gate) and the
     # report_ask route's chat branch (403 chat_analytics_not_enabled).
     "chatbot.analytics": "app/services/chatbot/lanes/business/answer.py",
+    # SALES-TARGET-CHAT slice 1: the whole TOOL is per contact. The domain grant gate in
+    # `lanes/business/__init__.py` takes this key for the `sales_target` status and refuses
+    # before any fetch; the route re-reads it and 403s `sales_target_not_enabled`.
+    "sales.sales_target": "app/services/chatbot/lanes/business/__init__.py",
 }
 
 

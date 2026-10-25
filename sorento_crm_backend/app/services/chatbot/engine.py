@@ -5665,6 +5665,11 @@ def _run_stages_body(  # noqa: PLR0915
         ) or (
             jsc.js_string(parsed_output.get("order_status") or "").strip() in SALES_FIGURE_STATUSES
             and _SALES_REPORT_GRANT in _granted
+        ) or (
+            # SALES-TARGET-CHAT: the target ask is exempt under its own grant; whose customer
+            # it may name is the route's call (403 customer_not_permitted).
+            jsc.js_string(parsed_output.get("order_status") or "").strip() == "sales_target"
+            and "sales.sales_target" in _granted
         )
         # The grant opens the report's customers, never their delivery orders: the picker's DO
         # probe stays off for any unlinked contact that is not document staff.
