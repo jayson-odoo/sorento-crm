@@ -141,6 +141,9 @@ export interface Project {
   registered_company_name?: string | null;
   location?: string | null;
   address?: string | null;
+  /** Malaysian state (lookup set my_state) and mukim; both optional (PROJECT-REG-PORTAL D12). */
+  state?: string | null;
+  mukim?: string | null;
   architect_party_id?: string | null;
   architect_name?: string | null;
   main_contractor_party_id?: string | null;
@@ -202,6 +205,8 @@ export interface ProjectRegisterBody {
   registered_company_name?: string | null;
   location?: string | null;
   address?: string | null;
+  state?: string | null;
+  mukim?: string | null;
   /** Filing reference, e.g. PS26-0143 (D7). Settable on create too, not edit-only. */
   admin_ref?: string | null;
   architect_party_id?: string | null;

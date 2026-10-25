@@ -1213,6 +1213,7 @@ export const AI_EXTRACT_FORM_KEYS: Record<PortalLandingKind, string> = {
   stock_inquiry: 'portal.stock_inquiry',
   purchase_request: 'portal.purchase_request',
   sponsorship_form: 'portal.sponsorship_form',
+  project_registration: 'portal.project_registration',
   // D7: registered in the backend's FORM_SCHEMAS with the same `portal.`
   // prefix as every other portal form key (Phase 1 briefly had this as a
   // bare `price_tag_request` - wrong; fixed to match convention).

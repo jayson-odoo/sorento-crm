@@ -25,6 +25,7 @@ import { FormSection } from '@/components/common/FormSection';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useLookupSetOptions } from '@/hooks/useLookupSetOptions';
 import { getUserLookup } from '@/services/userSelectService';
 import { useBrandSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query';
 import {
@@ -45,12 +46,20 @@ import type {
   ProjectRegisterBody,
   ProjectUpdateBody,
 } from '../types/project.types';
+import type { ProjectRegistrationDetail } from '@/types/projectRegistration';
+import {
+  useApproveProjectRegistration,
+  useRejectProjectRegistration,
+} from '../../registrations/hooks/useProjectRegistrations';
 import { ClashWarningPanel } from '../../pipeline/components/ClashWarningPanel';
 import { LeadWizardDialog } from '../../leads/components/LeadWizardDialog';
 
 type LeadOption = { value: string; label: string; description?: string };
 
-type ProjectFormProps = { mode: 'create' } | { mode: 'edit'; project: Project };
+type ProjectFormProps =
+  | { mode: 'create' }
+  | { mode: 'edit'; project: Project }
+  | { mode: 'review'; registration: ProjectRegistrationDetail };
 
 const OWNER_MANAGE_PERMISSION = 'projects.projects.manage';
 
@@ -64,32 +73,50 @@ const OWNER_MANAGE_PERMISSION = 'projects.projects.manage';
  * dialog:
  *
  * - A third section, "Salesperson and lead", open from the start.
+ * - Review mode (PROJECT-REG-PORTAL D5) is the form a Project Sales Admin approves a portal
+ *   registration with: prefilled from it, no clash panel (a possible duplicate never blocks),
+ *   Approve and Reject at the foot, read-only once decided.
  * - Edit mode starts every section open, never wipes the project's own template on
  *   first render, and excludes the project itself from its own clash check.
  */
 export function ProjectForm(props: ProjectFormProps) {
   const { mode } = props;
   const project = mode === 'edit' ? props.project : undefined;
+  const registration = mode === 'review' ? props.registration : undefined;
+  const isReview = mode === 'review';
+  // An approved or rejected registration is shown, not edited.
+  const decided = Boolean(registration && registration.status !== 'pending');
   const router = useRouter();
   const { data: session } = useSession();
   const canManageOwner = useHasPermission(OWNER_MANAGE_PERMISSION);
 
   const register = useRegisterProject();
   const update = useUpdateProject(project?.id ?? '');
+  const approve = useApproveProjectRegistration(registration?.id ?? '');
+  const [rejectOpen, setRejectOpen] = React.useState(false);
+  const [serverError, setServerError] = React.useState<string | null>(null);
 
-  const [title, setTitle] = React.useState(project?.title ?? '');
-  const [developerId, setDeveloperId] = React.useState(project?.developer_party_id ?? '');
-  const [typeId, setTypeId] = React.useState(project?.type_id ?? '');
+  const [title, setTitle] = React.useState(project?.title ?? registration?.title ?? '');
+  const [developerId, setDeveloperId] = React.useState(
+    project?.developer_party_id ?? registration?.prefill.developer_party_id ?? '',
+  );
+  const [typeId, setTypeId] = React.useState(
+    project?.type_id ?? registration?.prefill.type_id ?? '',
+  );
   const [templateId, setTemplateId] = React.useState(project?.template_id ?? '');
   const [registeredCompany, setRegisteredCompany] = React.useState(
     project?.registered_company_name ?? '',
   );
   const [location, setLocation] = React.useState(project?.location ?? '');
+  const [state, setState] = React.useState(project?.state ?? registration?.state ?? '');
+  const [mukim, setMukim] = React.useState(project?.mukim ?? registration?.mukim ?? '');
   const [address, setAddress] = React.useState(project?.address ?? '');
   const [adminRef, setAdminRef] = React.useState(project?.admin_ref ?? '');
-  const [architectId, setArchitectId] = React.useState(project?.architect_party_id ?? '');
+  const [architectId, setArchitectId] = React.useState(
+    project?.architect_party_id ?? registration?.prefill.architect_party_id ?? '',
+  );
   const [mainContractorId, setMainContractorId] = React.useState(
-    project?.main_contractor_party_id ?? '',
+    project?.main_contractor_party_id ?? registration?.prefill.main_contractor_party_id ?? '',
   );
   const [estimatedValue, setEstimatedValue] = React.useState(project?.estimated_sales_value ?? '');
   const [launchDate, setLaunchDate] = React.useState(project?.launch_date ?? '');
@@ -97,7 +124,11 @@ export function ProjectForm(props: ProjectFormProps) {
   const [deliveryTo, setDeliveryTo] = React.useState(project?.expected_delivery_to ?? '');
   const [brandIds, setBrandIds] = React.useState<string[]>(project?.brand_ids ?? []);
   const [ownerUserId, setOwnerUserId] = React.useState(
-    mode === 'create' ? (session?.user?.id ?? '') : (project?.owner_user_id ?? ''),
+    mode === 'create'
+      ? (session?.user?.id ?? '')
+      : mode === 'review'
+        ? (registration?.applicant_user_id ?? '')
+        : (project?.owner_user_id ?? ''),
   );
   // The session can resolve after the first render; the default salesperson follows it
   // until somebody picks one.
@@ -122,10 +153,14 @@ export function ProjectForm(props: ProjectFormProps) {
 
   const developers = useProjectParties({ party_type: 'developer', limit: 200 });
   const architects = useProjectParties({ party_type: 'architect', limit: 200 });
-  const contractors = useProjectParties({ party_type: 'main_contractor', limit: 200 });
+  const contractors = useProjectParties({
+    party_type: 'main_contractor',
+    limit: 200,
+  });
   const types = useProjectTypes();
   const templates = useProjectTemplates(typeId || undefined);
   const brands = useBrandSelectQuery();
+  const states = useLookupSetOptions('my_state');
   const fetchLeadOptions = useFetchLeadOptions();
   const users = useQuery({
     queryKey: ['user-lookup', 'project-owner'],
@@ -137,18 +172,18 @@ export function ProjectForm(props: ProjectFormProps) {
   const [checkedTitle, setCheckedTitle] = React.useState('');
   // The title counts as filled once the user leaves the field or checks it, so Details
   // does not open under them after the first letter.
-  const [titleSettled, setTitleSettled] = React.useState(mode === 'edit');
+  const [titleSettled, setTitleSettled] = React.useState(mode !== 'create');
   const clash = useClashPreview(checkedTitle, developerId || null);
   const fetchClash = useFetchClashPreview();
 
   const [sectionOpen, setSectionOpen] = React.useState({
     who: true,
-    details: mode === 'edit',
+    details: mode !== 'create',
     salesLead: true,
   });
   // Edit mode never runs the auto-open below: every field already has a value, so
   // there is nothing "complete" to react to.
-  const detailsSettledRef = React.useRef(mode === 'edit');
+  const detailsSettledRef = React.useRef(mode !== 'create');
 
   const selectedType = types.data?.find((type) => type.id === typeId);
   // A property development infers its delivery window from the launch date plus a
@@ -196,9 +231,12 @@ export function ProjectForm(props: ProjectFormProps) {
     mode === 'edit' ? rawCandidates.filter((c) => c.project_id !== project!.id) : rawCandidates;
   const wouldBlock =
     identityChanged && hasChecked && candidates.some((candidate) => candidate.blocks);
-  const pending = register.isPending || update.isPending;
+  const pending = register.isPending || update.isPending || approve.isPending;
   const [showErrors, setShowErrors] = React.useState(false);
-  const valueError = numberFieldError(estimatedValue, { min: 0, optional: true });
+  const valueError = numberFieldError(estimatedValue, {
+    min: 0,
+    optional: true,
+  });
   // A new project comes from a lead (owner, 13 Oct): the picker offers to create one when
   // none matches. Edit leaves it optional, so a project registered before the rule saves.
   const leadMissing = mode === 'create' && !leadId;
@@ -221,6 +259,8 @@ export function ProjectForm(props: ProjectFormProps) {
       owner_user_id: ownerUserId || null,
       registered_company_name: registeredCompany.trim() || null,
       location: location.trim() || null,
+      state: state || null,
+      mukim: mukim.trim() || null,
       address: address.trim() || null,
       admin_ref: adminRef.trim() || null,
       architect_party_id: architectId || null,
@@ -237,8 +277,22 @@ export function ProjectForm(props: ProjectFormProps) {
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (!canSubmit) return;
-    if (valueError) {
+    if (valueError || (isReview && !developerId)) {
       setShowErrors(true);
+      return;
+    }
+    if (registration) {
+      // A possible duplicate never blocks the queue: no clash check, the server decides.
+      const body = buildBody();
+      delete body.lead_id;
+      setServerError(null);
+      try {
+        await approve.mutateAsync(body);
+        router.push('/project-sales/registrations');
+      } catch (error) {
+        // The hook toasts it; the form keeps it in view with what was typed.
+        setServerError(error instanceof Error ? error.message : 'Failed to approve');
+      }
       return;
     }
     // The one duplicate check on submit: the guard, whether or not Check was pressed.
@@ -272,341 +326,422 @@ export function ProjectForm(props: ProjectFormProps) {
   }
 
   function handleCancel() {
+    if (isReview) {
+      router.push('/project-sales/registrations');
+      return;
+    }
     router.push(mode === 'create' ? '/project-sales/pipeline' : `/project-sales/${project!.id}`);
   }
 
   return (
     <>
       <form onSubmit={handleSubmit} className="space-y-4">
-        <FormSection
-          title="Who and what"
-          summary={title.trim() || null}
-          open={sectionOpen.who}
-          onOpenChange={(next) => toggleSection('who', next)}
-        >
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="project-developer">Developer</Label>
-              <SearchableSelect
-                id="project-developer"
-                value={developerId}
-                onChange={setDeveloperId}
-                clearable
-                loadError={developers.error}
-                onRetry={() => void developers.refetch()}
-                options={(developers.data?.data ?? []).map((party) => ({
-                  value: party.id,
-                  label: party.name,
-                  description: party.registration_no ?? undefined,
-                }))}
-                placeholder="Search developers"
-                emptyMessage="No developers yet. Add one under Parties"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="project-type">Project type</Label>
-              <SearchableSelect
-                id="project-type"
-                value={typeId}
-                onChange={(next) => {
-                  // A new type must clear the template too, or a stale template from
-                  // the previous type is submitted and the project gets roles it should
-                  // not offer. In the handler, not an effect, so opening an edit form
-                  // never wipes the project's own template.
-                  setTypeId(next);
-                  if (next !== typeId) setTemplateId('');
-                }}
-                clearable
-                loadError={types.error}
-                onRetry={() => void types.refetch()}
-                options={(types.data ?? []).map((type) => ({
-                  value: type.id,
-                  label: type.name,
-                }))}
-                placeholder="Select a type"
-              />
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="project-title">
-              Project title <span className="text-destructive">*</span>
-            </Label>
-            <div className="flex gap-2">
-              <Input
-                id="project-title"
-                value={title}
-                onChange={(event) => {
-                  setTitle(event.target.value);
-                  setCheckedTitle('');
-                  if (!event.target.value.trim()) setTitleSettled(false);
-                }}
-                onBlur={() => setTitleSettled(title.trim().length > 0)}
-                placeholder="e.g. Setia Alam Phase 3B"
-                autoComplete="off"
-                required
-              />
-              <Button
-                type="button"
-                variant="outline"
-                className="shrink-0"
-                disabled={!checkable || clash.isFetching}
-                onClick={() => void handleCheck()}
-              >
-                {clash.isFetching && hasChecked && (
-                  <Loader2 className="size-4 animate-spin" aria-hidden />
+        <fieldset disabled={decided} className="m-0 min-w-0 space-y-4 border-0 p-0">
+          <FormSection
+            title="Who and what"
+            summary={title.trim() || null}
+            open={sectionOpen.who}
+            onOpenChange={(next) => toggleSection('who', next)}
+          >
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="project-developer">
+                  Developer
+                  {isReview && <span className="text-destructive"> *</span>}
+                </Label>
+                <SearchableSelect
+                  id="project-developer"
+                  value={developerId}
+                  onChange={setDeveloperId}
+                  clearable
+                  loadError={developers.error}
+                  onRetry={() => void developers.refetch()}
+                  options={(developers.data?.data ?? []).map((party) => ({
+                    value: party.id,
+                    label: party.name,
+                    description: party.registration_no ?? undefined,
+                  }))}
+                  placeholder="Search developers"
+                  emptyMessage="No developers yet. Add one under Parties"
+                />
+                {isReview && showErrors && !developerId && (
+                  <p className="text-xs text-destructive">Developer is required.</p>
                 )}
-                Check
-              </Button>
+                <TypedHint typed={registration?.developer_name} picked={developerId} />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="project-type">Project type</Label>
+                <SearchableSelect
+                  id="project-type"
+                  value={typeId}
+                  onChange={(next) => {
+                    // A new type must clear the template too, or a stale template from
+                    // the previous type is submitted and the project gets roles it should
+                    // not offer. In the handler, not an effect, so opening an edit form
+                    // never wipes the project's own template.
+                    setTypeId(next);
+                    if (next !== typeId) setTemplateId('');
+                  }}
+                  clearable
+                  loadError={types.error}
+                  onRetry={() => void types.refetch()}
+                  options={(types.data ?? []).map((type) => ({
+                    value: type.id,
+                    label: type.name,
+                  }))}
+                  placeholder="Select a type"
+                />
+              </div>
             </div>
-            {hasChecked && clash.isSuccess && !clash.isFetching && candidates.length === 0 && (
-              <p className="text-xs text-muted-foreground" aria-live="polite">
-                No existing project matches this title.
-              </p>
-            )}
-          </div>
 
-          {hasChecked && (
-            <ClashWarningPanel
-              candidates={candidates}
-              isLoading={clash.isFetching}
-              developerChosen={Boolean(developerId)}
-              onRequestJoin={(candidate) => setJoinTarget({ candidate, kind: 'join' })}
-              onDispute={(candidate) => setJoinTarget({ candidate, kind: 'dispute' })}
-            />
-          )}
-
-          {typeId && (
             <div className="space-y-1.5">
-              <Label htmlFor="project-template">Template</Label>
-              <SearchableSelect
-                id="project-template"
-                value={templateId}
-                onChange={setTemplateId}
-                clearable
-                loadError={templates.error}
-                onRetry={() => void templates.refetch()}
-                options={(templates.data ?? []).map((template) => ({
-                  value: template.id,
-                  label: template.name,
-                  description: template.has_forked_status_graph
-                    ? 'Has its own stage flow'
-                    : undefined,
-                }))}
-                placeholder="Select a template"
-                emptyMessage="No templates for this type"
+              <Label htmlFor="project-title">
+                Project title <span className="text-destructive">*</span>
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  id="project-title"
+                  value={title}
+                  onChange={(event) => {
+                    setTitle(event.target.value);
+                    setCheckedTitle('');
+                    if (!event.target.value.trim()) setTitleSettled(false);
+                  }}
+                  onBlur={() => setTitleSettled(title.trim().length > 0)}
+                  placeholder="e.g. Setia Alam Phase 3B"
+                  autoComplete="off"
+                  required
+                />
+                {!isReview && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="shrink-0"
+                    disabled={!checkable || clash.isFetching}
+                    onClick={() => void handleCheck()}
+                  >
+                    {clash.isFetching && hasChecked && (
+                      <Loader2 className="size-4 animate-spin" aria-hidden />
+                    )}
+                    Check
+                  </Button>
+                )}
+              </div>
+              {hasChecked && clash.isSuccess && !clash.isFetching && candidates.length === 0 && (
+                <p className="text-xs text-muted-foreground" aria-live="polite">
+                  No existing project matches this title.
+                </p>
+              )}
+            </div>
+
+            {hasChecked && !isReview && (
+              <ClashWarningPanel
+                candidates={candidates}
+                isLoading={clash.isFetching}
+                developerChosen={Boolean(developerId)}
+                onRequestJoin={(candidate) => setJoinTarget({ candidate, kind: 'join' })}
+                onDispute={(candidate) => setJoinTarget({ candidate, kind: 'dispute' })}
               />
+            )}
+
+            {typeId && (
+              <div className="space-y-1.5">
+                <Label htmlFor="project-template">Template</Label>
+                <SearchableSelect
+                  id="project-template"
+                  value={templateId}
+                  onChange={setTemplateId}
+                  clearable
+                  loadError={templates.error}
+                  onRetry={() => void templates.refetch()}
+                  options={(templates.data ?? []).map((template) => ({
+                    value: template.id,
+                    label: template.name,
+                    description: template.has_forked_status_graph
+                      ? 'Has its own stage flow'
+                      : undefined,
+                  }))}
+                  placeholder="Select a template"
+                  emptyMessage="No templates for this type"
+                />
+              </div>
+            )}
+          </FormSection>
+
+          <FormSection
+            title="Details"
+            open={sectionOpen.details}
+            onOpenChange={(next) => toggleSection('details', next)}
+          >
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="project-registered-company">Registered company / SPV</Label>
+                <Input
+                  id="project-registered-company"
+                  value={registeredCompany}
+                  onChange={(event) => setRegisteredCompany(event.target.value)}
+                  placeholder="Optional"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="project-location">Location</Label>
+                <Input
+                  id="project-location"
+                  value={location}
+                  onChange={(event) => setLocation(event.target.value)}
+                  placeholder="e.g. Setia Alam, Selangor"
+                />
+              </div>
             </div>
-          )}
 
-        </FormSection>
-
-        <FormSection
-          title="Details"
-          open={sectionOpen.details}
-          onOpenChange={(next) => toggleSection('details', next)}
-        >
-          <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label htmlFor="project-registered-company">Registered company / SPV</Label>
-              <Input
-                id="project-registered-company"
-                value={registeredCompany}
-                onChange={(event) => setRegisteredCompany(event.target.value)}
+              <Label htmlFor="project-address">Address</Label>
+              <Textarea
+                id="project-address"
+                value={address}
+                onChange={(event) => setAddress(event.target.value)}
+                rows={3}
                 placeholder="Optional"
               />
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="project-location">Location</Label>
-              <Input
-                id="project-location"
-                value={location}
-                onChange={(event) => setLocation(event.target.value)}
-                placeholder="e.g. Setia Alam, Selangor"
-              />
-            </div>
-          </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="project-address">Address</Label>
-            <Textarea
-              id="project-address"
-              value={address}
-              onChange={(event) => setAddress(event.target.value)}
-              rows={3}
-              placeholder="Optional"
-            />
-          </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="project-state">State</Label>
+                <SearchableSelect
+                  id="project-state"
+                  value={state}
+                  onChange={setState}
+                  clearable
+                  loadError={states.error}
+                  onRetry={() => void states.refetch()}
+                  options={[
+                    ...(state && !(states.data ?? []).some((o) => o.value === state)
+                      ? [{ value: state, label: state }]
+                      : []),
+                    ...(states.data ?? []).map((option) => ({
+                      value: option.value,
+                      label: option.label,
+                    })),
+                  ]}
+                  placeholder="Select a state"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="project-mukim">Mukim</Label>
+                <Input
+                  id="project-mukim"
+                  value={mukim}
+                  onChange={(event) => setMukim(event.target.value)}
+                  placeholder="Optional"
+                />
+              </div>
+            </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="project-admin-ref">Reference</Label>
-              <Input
-                id="project-admin-ref"
-                value={adminRef}
-                onChange={(event) => setAdminRef(event.target.value)}
-                maxLength={64}
-                placeholder="e.g. PS26-0143"
-              />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="project-admin-ref">Reference</Label>
+                <Input
+                  id="project-admin-ref"
+                  value={adminRef}
+                  onChange={(event) => setAdminRef(event.target.value)}
+                  maxLength={64}
+                  placeholder="e.g. PS26-0143"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="project-value">Estimated sales value (RM)</Label>
+                <NumberInput
+                  id="project-value"
+                  min="0"
+                  step="0.01"
+                  inputMode="decimal"
+                  value={estimatedValue}
+                  error={showErrors ? valueError : undefined}
+                  onChange={(event) => setEstimatedValue(event.target.value)}
+                  placeholder="0.00"
+                />
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="project-value">Estimated sales value (RM)</Label>
-              <NumberInput
-                id="project-value"
-                min="0"
-                step="0.01"
-                inputMode="decimal"
-                value={estimatedValue}
-                error={showErrors ? valueError : undefined}
-                onChange={(event) => setEstimatedValue(event.target.value)}
-                placeholder="0.00"
-              />
-            </div>
-          </div>
 
-          {derivesDelivery ? (
-            <div className="space-y-1.5">
-              <Label htmlFor="project-launch">Project launch date</Label>
-              <Input
-                id="project-launch"
-                type="date"
-                value={launchDate}
-                onChange={(event) => setLaunchDate(event.target.value)}
-              />
-            </div>
-          ) : (
-            // One range, one control: two date fields let "to" land before "from"
-            // and stop reading as a single fact once they wrap apart.
-            <div className="space-y-1.5">
-              <Label htmlFor="project-delivery-range">Expected delivery</Label>
-              <DateRangePicker
-                id="project-delivery-range"
-                from={deliveryFrom || null}
-                to={deliveryTo || null}
-                onChange={({ from, to }) => {
-                  setDeliveryFrom(from ?? '');
-                  setDeliveryTo(to ?? '');
-                }}
-              />
-            </div>
-          )}
+            {derivesDelivery ? (
+              <div className="space-y-1.5">
+                <Label htmlFor="project-launch">Project launch date</Label>
+                <Input
+                  id="project-launch"
+                  type="date"
+                  value={launchDate}
+                  onChange={(event) => setLaunchDate(event.target.value)}
+                />
+              </div>
+            ) : (
+              // One range, one control: two date fields let "to" land before "from"
+              // and stop reading as a single fact once they wrap apart.
+              <div className="space-y-1.5">
+                <Label htmlFor="project-delivery-range">Expected delivery</Label>
+                <DateRangePicker
+                  id="project-delivery-range"
+                  from={deliveryFrom || null}
+                  to={deliveryTo || null}
+                  onChange={({ from, to }) => {
+                    setDeliveryFrom(from ?? '');
+                    setDeliveryTo(to ?? '');
+                  }}
+                />
+              </div>
+            )}
 
-          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="project-architect">Architect</Label>
+                <SearchableSelect
+                  id="project-architect"
+                  value={architectId}
+                  onChange={setArchitectId}
+                  clearable
+                  loadError={architects.error}
+                  onRetry={() => void architects.refetch()}
+                  options={(architects.data?.data ?? []).map((party) => ({
+                    value: party.id,
+                    label: party.name,
+                  }))}
+                  placeholder="Search architects"
+                  emptyMessage="No architects yet. Add one under Parties"
+                />
+                <TypedHint typed={registration?.architect_name} picked={architectId} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="project-contractor">Main contractor</Label>
+                <SearchableSelect
+                  id="project-contractor"
+                  value={mainContractorId}
+                  onChange={setMainContractorId}
+                  clearable
+                  loadError={contractors.error}
+                  onRetry={() => void contractors.refetch()}
+                  options={(contractors.data?.data ?? []).map((party) => ({
+                    value: party.id,
+                    label: party.name,
+                  }))}
+                  placeholder="Search main contractors"
+                  emptyMessage="No main contractors yet. Add one under Parties"
+                />
+                <TypedHint typed={registration?.main_contractor_name} picked={mainContractorId} />
+              </div>
+            </div>
+
             <div className="space-y-1.5">
-              <Label htmlFor="project-architect">Architect</Label>
-              <SearchableSelect
-                id="project-architect"
-                value={architectId}
-                onChange={setArchitectId}
-                clearable
-                loadError={architects.error}
-                onRetry={() => void architects.refetch()}
-                options={(architects.data?.data ?? []).map((party) => ({
-                  value: party.id,
-                  label: party.name,
+              <Label htmlFor="project-brands">Brands</Label>
+              <SearchableMultiSelect
+                id="project-brands"
+                value={brandIds}
+                onChange={setBrandIds}
+                loadError={brands.error}
+                onRetry={() => void brands.refetch()}
+                options={(brands.data ?? []).map((brand) => ({
+                  value: brand.id,
+                  label: brand.brand_name,
                 }))}
-                placeholder="Search architects"
-                emptyMessage="No architects yet. Add one under Parties"
+                placeholder="Select brands"
               />
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="project-contractor">Main contractor</Label>
-              <SearchableSelect
-                id="project-contractor"
-                value={mainContractorId}
-                onChange={setMainContractorId}
-                clearable
-                loadError={contractors.error}
-                onRetry={() => void contractors.refetch()}
-                options={(contractors.data?.data ?? []).map((party) => ({
-                  value: party.id,
-                  label: party.name,
-                }))}
-                placeholder="Search main contractors"
-                emptyMessage="No main contractors yet. Add one under Parties"
-              />
-            </div>
-          </div>
+          </FormSection>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="project-brands">Brands</Label>
-            <SearchableMultiSelect
-              id="project-brands"
-              value={brandIds}
-              onChange={setBrandIds}
-              loadError={brands.error}
-              onRetry={() => void brands.refetch()}
-              options={(brands.data ?? []).map((brand) => ({
-                value: brand.id,
-                label: brand.brand_name,
-              }))}
-              placeholder="Select brands"
-            />
-          </div>
-        </FormSection>
-
-        <FormSection
-          title="Salesperson and lead"
-          open={sectionOpen.salesLead}
-          onOpenChange={(next) => toggleSection('salesLead', next)}
-        >
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="project-owner">Salesperson</Label>
-              <SearchableSelect
-                id="project-owner"
-                value={ownerUserId}
-                onChange={setOwnerUserId}
-                disabled={!canManageOwner}
-                loadError={users.error}
-                onRetry={() => void users.refetch()}
-                options={(users.data ?? []).map((user) => ({
-                  value: user.id,
-                  label: user.name || 'Unnamed user',
-                }))}
-                placeholder="Select a salesperson"
-              />
+          <FormSection
+            title="Salesperson and lead"
+            open={sectionOpen.salesLead}
+            onOpenChange={(next) => toggleSection('salesLead', next)}
+          >
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="project-owner">Salesperson</Label>
+                <SearchableSelect
+                  id="project-owner"
+                  value={ownerUserId}
+                  onChange={setOwnerUserId}
+                  disabled={!canManageOwner && !isReview}
+                  loadError={users.error}
+                  onRetry={() => void users.refetch()}
+                  options={(users.data ?? []).map((user) => ({
+                    value: user.id,
+                    label: user.name || 'Unnamed user',
+                  }))}
+                  placeholder="Select a salesperson"
+                />
+              </div>
+              {!isReview && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="project-lead">
+                    Lead
+                    {mode === 'create' && <span className="text-destructive"> *</span>}
+                  </Label>
+                  <SearchableSelect
+                    id="project-lead"
+                    value={leadId}
+                    onChange={setLeadId}
+                    onOptionChange={setLeadOption}
+                    fetchOptions={fetchLeadOptions}
+                    selectedOption={leadOption ?? undefined}
+                    clearable
+                    placeholder="Search leads by title or code"
+                    emptyMessage="No open leads match"
+                    // Ungated, like the Leads page's own Create lead: the server decides who may
+                    // create one (projects.projects.edit, the grant that registers a project).
+                    createOption={{
+                      label: (query) => <span>Create lead &ldquo;{query}&rdquo;</span>,
+                      onCreate: setCreatingLeadTitle,
+                    }}
+                  />
+                </div>
+              )}
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="project-lead">
-                Lead{mode === 'create' && <span className="text-destructive"> *</span>}
-              </Label>
-              <SearchableSelect
-                id="project-lead"
-                value={leadId}
-                onChange={setLeadId}
-                onOptionChange={setLeadOption}
-                fetchOptions={fetchLeadOptions}
-                selectedOption={leadOption ?? undefined}
-                clearable
-                placeholder="Search leads by title or code"
-                emptyMessage="No open leads match"
-                // Ungated, like the Leads page's own Create lead: the server decides who may
-                // create one (projects.projects.edit, the grant that registers a project).
-                createOption={{
-                  label: (query) => <span>Create lead &ldquo;{query}&rdquo;</span>,
-                  onCreate: setCreatingLeadTitle,
-                }}
-              />
-            </div>
-          </div>
-        </FormSection>
+          </FormSection>
+        </fieldset>
 
-        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button type="button" variant="outline" onClick={handleCancel}>
-            Cancel
-          </Button>
-          <Button type="submit" disabled={!canSubmit}>
-            {pending && <Loader2 className="size-4 animate-spin" aria-hidden />}
-            {wouldBlock
-              ? 'Blocked by an existing project'
-              : mode === 'create'
-                ? 'Register project'
-                : 'Save changes'}
-          </Button>
-        </div>
+        {serverError && (
+          <p role="alert" className="text-sm text-destructive">
+            {serverError}
+          </p>
+        )}
+
+        {!decided && (
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            {isReview ? (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={pending}
+                onClick={() => setRejectOpen(true)}
+              >
+                Reject
+              </Button>
+            ) : (
+              <Button type="button" variant="outline" onClick={handleCancel}>
+                Cancel
+              </Button>
+            )}
+            <Button type="submit" disabled={!canSubmit}>
+              {pending && <Loader2 className="size-4 animate-spin" aria-hidden />}
+              {wouldBlock
+                ? 'Blocked by an existing project'
+                : mode === 'create'
+                  ? 'Register project'
+                  : isReview
+                    ? 'Approve'
+                    : 'Save changes'}
+            </Button>
+          </div>
+        )}
       </form>
+
+      {registration && rejectOpen && (
+        <RejectRegistrationDialog
+          registrationId={registration.id}
+          onDone={() => setRejectOpen(false)}
+          onRejected={() => router.push('/project-sales/registrations')}
+        />
+      )}
 
       {creatingLeadTitle !== null && (
         <LeadWizardDialog
@@ -632,6 +767,73 @@ export function ProjectForm(props: ProjectFormProps) {
         />
       )}
     </>
+  );
+}
+
+/** The name the contact typed, shown under a party select the server could not match. */
+function TypedHint({ typed, picked }: { typed?: string | null; picked: string }) {
+  if (picked || !typed?.trim()) return null;
+  return <p className="text-xs text-muted-foreground">Typed: {typed.trim()}</p>;
+}
+
+/** Reject needs a reason: the contact reads it on their registration. */
+function RejectRegistrationDialog({
+  registrationId,
+  onDone,
+  onRejected,
+}: {
+  registrationId: string;
+  onDone: () => void;
+  onRejected: () => void;
+}) {
+  const [reason, setReason] = React.useState('');
+  const reject = useRejectProjectRegistration(registrationId);
+
+  return (
+    <Dialog open onOpenChange={(next) => !next && onDone()}>
+      <DialogContent className="max-h-[92dvh] w-full max-w-lg overflow-hidden">
+        <DialogHeader>
+          <DialogTitle>Reject registration</DialogTitle>
+          <DialogDescription className="sr-only">Give the reason for rejecting.</DialogDescription>
+        </DialogHeader>
+        <form
+          onSubmit={async (event) => {
+            event.preventDefault();
+            if (!reason.trim()) return;
+            try {
+              await reject.mutateAsync(reason.trim());
+              onRejected();
+            } catch {
+              // toasted by the hook; the dialog stays open with the reason typed
+            }
+          }}
+        >
+          <DialogBody className="max-h-[60dvh] space-y-3 overflow-y-auto">
+            <div className="space-y-1.5">
+              <Label htmlFor="registration-reject-reason">
+                Reason <span className="text-destructive">*</span>
+              </Label>
+              <Textarea
+                id="registration-reject-reason"
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+                rows={4}
+                required
+              />
+            </div>
+          </DialogBody>
+          <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button type="button" variant="outline" onClick={onDone}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!reason.trim() || reject.isPending}>
+              {reject.isPending && <Loader2 className="size-4 animate-spin" aria-hidden />}
+              Reject
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

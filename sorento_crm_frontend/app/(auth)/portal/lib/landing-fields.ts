@@ -43,6 +43,11 @@ const KIND_FIELDS: Record<PortalLandingKind, LandingField[]> = {
     { key: 'customer_name', label: 'Customer', type: 'text' },
     { key: 'purpose', label: 'Purpose', type: 'text' },
   ],
+  project_registration: [
+    { key: 'title', label: 'Project', type: 'text' },
+    { key: 'developer_name', label: 'Developer', type: 'text' },
+    { key: 'state', label: 'State', type: 'text' },
+  ],
   complaint: [
     { key: 'product_code', label: 'Product', type: 'text' },
     { key: 'project_title', label: 'Project', type: 'text' },

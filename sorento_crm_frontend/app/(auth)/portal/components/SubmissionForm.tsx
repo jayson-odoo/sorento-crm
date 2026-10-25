@@ -146,6 +146,8 @@ type WidgetKind =
   | 'pill-text'
   | 'product-quantities'
   | 'contact-select'
+  /** A value the server owns (the sales agent's name): shown disabled from `displayFromDetail`, never saved. */
+  | 'readonly'
   /** Carries a value in the saved payload (the picked customer's id) but draws no control. */
   | 'hidden';
 
@@ -216,6 +218,38 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
       label: 'Additional remark',
       widget: 'textarea',
     },
+  ],
+  // Legacy paper form order (PROJECT-REG-PORTAL D3). The sales agent is the contact's own
+  // agent, set by the server on create; required on submit: title, state, developer.
+  project_registration: [
+    { name: 'title', label: 'Project title', widget: 'textarea', required: true },
+    { name: 'distributor_name', label: 'Distributor name' },
+    {
+      name: 'sales_agent_name',
+      label: 'Sales agent',
+      widget: 'readonly',
+      displayFromDetail: 'sales_agent_name',
+    },
+    { name: 'customer_name', label: 'Customer name', widget: 'debtor-async' },
+    { name: 'customer_id', label: 'Customer', widget: 'hidden' },
+    {
+      name: 'type_of_building',
+      label: 'Type of building',
+      widget: 'lookup-select',
+      setKey: 'project_building_type',
+    },
+    {
+      name: 'state',
+      label: 'State',
+      widget: 'lookup-select',
+      setKey: 'my_state',
+      required: true,
+    },
+    { name: 'mukim', label: 'Mukim' },
+    { name: 'your_ref', label: 'Your ref' },
+    { name: 'developer_name', label: 'Developer', required: true },
+    { name: 'main_contractor_name', label: 'Main contractor' },
+    { name: 'architect_name', label: 'Architect' },
   ],
   complaint: [
     {
@@ -391,6 +425,7 @@ const FROZEN_ON_REVISE: Record<PortalSubmissionKind, readonly string[]> = {
   stock_inquiry: ['salesperson_contact_id', 'salesperson'],
   purchase_request: ['requested_by_contact_id', 'requested_by'],
   sponsorship_form: ['requested_by_contact_id', 'requested_by'],
+  project_registration: [],
   complaint: [],
 };
 
@@ -847,6 +882,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   const cleanedFields = useMemo(() => {
     const out: Record<string, unknown> = {};
     for (const f of fieldDefs) {
+      if (f.widget === 'readonly') continue;
       const raw = fields[f.name];
       if (f.widget === 'do-multi-filter') {
         const arr = Array.isArray(raw) ? raw : [];
@@ -1602,6 +1638,18 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   // to "Draft", because the list row shows the same real status and the two
   // must never disagree. The "nothing sent yet" message lives in the
   // revising banner below, not in the pill.
+  // Project registration only: the server names existing projects that look the same (no links
+  // in the portal, and no ids).
+  const possibleDuplicates = Array.isArray(detail?.possible_duplicates)
+    ? (detail.possible_duplicates as { project_code: string; title: string }[])
+    : [];
+  const duplicateLine =
+    possibleDuplicates.length > 0
+      ? `Possible duplicate: ${possibleDuplicates
+          .map((d) => `${d.project_code} ${d.title}`)
+          .join(', ')}`
+      : null;
+
   const statusBadge = detail?.is_draft
     ? { label: 'Draft', variant: 'warning' as const }
     : detail?.status
@@ -1728,11 +1776,14 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           </AlertContent>
         </Alert>
       )}
-      {detail?.rejection_reason && (
+      {(detail?.rejection_reason || detail?.reject_reason) && (
         <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
           <p className="font-medium">Rejection reason</p>
-          <p>{detail.rejection_reason}</p>
+          <p>{detail.rejection_reason ?? String(detail.reject_reason)}</p>
         </div>
+      )}
+      {duplicateLine && (
+        <p className="text-sm text-muted-foreground">{duplicateLine}</p>
       )}
 
       {responseInfo && (
@@ -2411,7 +2462,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         open={aiExtractOpen}
         onOpenChange={setAiExtractOpen}
         kind={kind}
-        fieldDefs={fieldDefs.filter((f) => f.widget !== 'hidden')}
+        fieldDefs={fieldDefs.filter((f) => f.widget !== 'hidden' && f.widget !== 'readonly')}
         onApply={handleAIExtractApply}
       />
 
@@ -2888,7 +2939,9 @@ function PurchaseRequestFormSection({
   const heading =
     kind === 'sponsorship_form'
       ? 'Project Sales Sponsorship Form'
-      : 'Purchase Request';
+      : kind === 'project_registration'
+        ? 'Project Registration'
+        : 'Purchase Request';
   return (
     <div className="w-full">
       <Card className="border-2 shadow-sm">
@@ -3048,6 +3101,8 @@ function FieldControl({
   const arrayValue = Array.isArray(value) ? value : [];
 
   switch (widget) {
+    case 'readonly':
+      return <Input id={field.name} value={displayValue ?? ''} disabled readOnly />;
     case 'textarea':
       return (
         <Textarea
