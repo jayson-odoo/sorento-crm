@@ -929,6 +929,11 @@ def _resolve_owner(
     """Who owns the project (finding S9). The applicant or the approver need no extra grant;
     anyone else is the staff rule: only a sales manager registers a project for someone else."""
     applicant = row.applicant_user_id
+    # The review form sends the applicant; one who cannot own a project of this company
+    # (inactive, no access) must not leave a non-manager unable to approve: same fallback as
+    # sending no owner at all.
+    if requested and requested == applicant and not _owner_can_own(db, applicant, row.company_id):
+        requested = None
     if requested:
         if requested not in (applicant, actor_user_id) and MANAGE_PERMISSION not in actor_slugs:
             raise AppException(

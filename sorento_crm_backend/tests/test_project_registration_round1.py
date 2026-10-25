@@ -492,3 +492,31 @@ def test_n12_status_all_leaves_the_contacts_unsent_drafts_out(world):
     ids = {r["id"] for r in as_user(world, world.approver).get(CRM, params={"status": "all"}).json()["data"]}
     assert sent in ids
     assert draft not in ids
+
+
+# ------------------------------------------------------------------ round 2: ineligible applicant
+
+
+def test_r2_an_ineligible_applicant_falls_back_to_the_approver_without_manage(world):
+    from app.models.projects import Project
+    from app.models.user import User
+
+    world.perms[world.approver].discard(MANAGE)
+    rid = pending(world)
+    world.db.get(User, world.applicant_user).status = "inactive"
+    world.db.flush()
+    res = _approve(world, rid, owner_user_id=world.applicant_user)
+    assert res.status_code == 200, res.text
+    world.db.expire_all()
+    assert world.db.get(Project, res.json()["project_id"]).owner_user_id == world.approver
+
+
+def test_r2_another_owner_keeps_its_rules_when_the_applicant_is_ineligible(world):
+    from app.models.user import User
+
+    world.perms[world.approver].discard(MANAGE)
+    rid = pending(world)
+    world.db.get(User, world.applicant_user).status = "inactive"
+    world.db.flush()
+    res = _approve(world, rid, owner_user_id=world.owner)
+    assert res.status_code == 403, res.text
