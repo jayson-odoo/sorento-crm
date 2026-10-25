@@ -175,6 +175,7 @@ describe('text layer: canvas and print draw the same lines', () => {
     expect(printed.style.letterSpacing).toBe(`${face.letterSpacing_mm}mm`);
     expect(printed.style.fontWeight).toBe('500');
     expect(printed.style.fontStyle).toBe('italic');
-    expect(printed.style.fontFamily).toBe('DM Sans, sans-serif');
+    // jsdom quotes a family name with a space.
+    expect(printed.style.fontFamily.replace(/"/g, '')).toBe('DM Sans, sans-serif');
   });
 });

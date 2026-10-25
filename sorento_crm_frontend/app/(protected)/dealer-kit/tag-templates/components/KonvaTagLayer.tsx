@@ -16,7 +16,12 @@
 import { useMemo } from 'react';
 import { Ellipse, Group, Image as KonvaImage, Line, Path, Rect, Text } from 'react-konva';
 import type Konva from 'konva';
-import type { LayerPadding, TagLayer, TagLayerProps } from '@/lib/dealer-kit/tag-template-types';
+import type {
+  LayerPadding,
+  TagLayer,
+  TagLayerProps,
+  TextLayerProps,
+} from '@/lib/dealer-kit/tag-template-types';
 import type { PriceBadgeInput, PriceBadgeTypography } from '@/lib/dealer-kit/price-badge';
 import { priceBadgeInsets, priceBadgeParts, priceBadgeTypography } from '@/lib/dealer-kit/price-badge';
 import type { TagLayerDisplay } from '@/lib/dealer-kit/product-block';
@@ -31,6 +36,8 @@ import {
   scalePolygonPoints,
 } from '@/lib/dealer-kit/polygon-path';
 import { paddedBox } from '@/lib/dealer-kit/text-reflow';
+import { textFace, textLayerLines } from '@/lib/dealer-kit/text-layout';
+import { useFontsEpoch } from '@/lib/dealer-kit/use-fonts-epoch';
 import { cropPixels, fittedCropDraw, type CropRect } from '@/lib/dealer-kit/image-crop';
 import { useHtmlImage } from './useHtmlImage';
 
@@ -177,7 +184,15 @@ export function KonvaTagLayer({
       onMouseEnter={() => onHoverChange?.(reportId, true)}
       onMouseLeave={() => onHoverChange?.(reportId, false)}
     >
-      <LayerContent props={layer.props} w={w} h={h} scale={scale} display={display} />
+      <LayerContent
+        props={layer.props}
+        w={w}
+        h={h}
+        widthMm={layer.width_mm}
+        heightMm={layer.height_mm}
+        scale={scale}
+        display={display}
+      />
     </Group>
   );
 }
@@ -190,48 +205,33 @@ function LayerContent({
   props,
   w,
   h,
+  widthMm,
+  heightMm,
   scale,
   display,
 }: {
   props: TagLayerProps;
   w: number;
   h: number;
+  /** The layer box in mm, as stored: what the print page lays out from too. */
+  widthMm: number;
+  heightMm: number;
   scale: number;
   display?: TagLayerDisplay;
 }) {
   switch (props.kind) {
-    case 'text': {
-      // Padding insets the box the text wraps inside (S3): x/y move the Text
-      // node in from the layer's own top-left, width/height shrink to match,
-      // clamped at zero rather than going negative (AC-S3-4).
-      const inset = paddedBox(w, h, props.padding, scale);
+    case 'text':
       return (
-        <Text
-          x={inset.x}
-          y={inset.y}
-          width={inset.width}
-          height={inset.height}
+        <TextContent
+          props={props}
+          w={w}
+          h={h}
+          widthMm={widthMm}
+          heightMm={heightMm}
+          scale={scale}
           text={display?.text ?? props.text}
-          fontFamily={props.fontFamily}
-          fontSize={props.fontSize * scale * 0.35}
-          fontStyle={
-            [props.italic && 'italic', props.fontWeight >= 600 && 'bold']
-              .filter(Boolean)
-              .join(' ') || 'normal'
-          }
-          textDecoration={
-            [props.underline && 'underline', props.strikethrough && 'line-through']
-              .filter(Boolean)
-              .join(' ')
-          }
-          fill={props.color}
-          align={props.align}
-          lineHeight={props.lineHeight}
-          letterSpacing={props.letterSpacing * scale * 0.1}
-          wrap="word"
         />
       );
-    }
 
     case 'shape':
       return <ShapeContent shape={props.shape} w={w} h={h} scale={scale} props={props} />;
@@ -352,8 +352,8 @@ function LayerContent({
         <BarcodeContent
           w={w}
           h={h}
-          widthMm={px2mm(w, scale)}
-          heightMm={px2mm(h, scale)}
+          widthMm={widthMm}
+          heightMm={heightMm}
           showCode={props.show_code}
           value={display?.text ?? null}
           code={display?.code ?? null}
@@ -549,6 +549,70 @@ function ImageContent({
   }
 
   return body;
+}
+
+// ---------------------------------------------------------------------------
+// Text (PRICETAG-BARCODE-MATCH)
+// ---------------------------------------------------------------------------
+
+/**
+ * A text layer draws the lines `textLayerLines` breaks it into - the SAME
+ * lines the print page prints - with Konva's own wrapping off, in the same
+ * face and units (`textFace`). Padding insets the box (S3): x/y move the Text
+ * node in from the layer's top-left, width/height shrink to match, clamped at
+ * zero (AC-S3-4). The node keeps its full box as its size, so the whole box
+ * stays clickable, and carries the unbroken text for a live resize to
+ * re-break (`TagCanvasEditor`'s transform handler).
+ */
+function TextContent({
+  props,
+  w,
+  h,
+  widthMm,
+  heightMm,
+  scale,
+  text,
+}: {
+  props: TextLayerProps;
+  w: number;
+  h: number;
+  widthMm: number;
+  heightMm: number;
+  scale: number;
+  text: string;
+}) {
+  const epoch = useFontsEpoch();
+  const lines = useMemo(() => {
+    void epoch; // re-measure once a face has loaded
+    return textLayerLines(props, text, widthMm, heightMm);
+  }, [props, text, widthMm, heightMm, epoch]);
+  const face = textFace(props);
+  const inset = paddedBox(w, h, props.padding, scale);
+
+  return (
+    <Text
+      key={epoch}
+      x={inset.x}
+      y={inset.y}
+      width={inset.width}
+      height={inset.height}
+      text={lines.join('\n')}
+      sourceText={text}
+      fontFamily={face.fontFamily}
+      fontSize={mm2px(face.fontSize_mm, scale)}
+      fontStyle={face.fontStyle}
+      textDecoration={
+        [props.underline && 'underline', props.strikethrough && 'line-through']
+          .filter(Boolean)
+          .join(' ')
+      }
+      fill={props.color}
+      align={props.align}
+      lineHeight={props.lineHeight}
+      letterSpacing={mm2px(face.letterSpacing_mm, scale)}
+      wrap="none"
+    />
+  );
 }
 
 // ---------------------------------------------------------------------------

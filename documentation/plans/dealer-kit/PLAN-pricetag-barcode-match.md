@@ -1,6 +1,6 @@
 # PLAN: price tag barcode renders like staff's barcode, one renderer (PRICETAG-BARCODE-MATCH)
 
-Status: Build. Small fix track (S): FE only, no migration, no auth/RBAC, no new ingest.
+Status: Review (round 2: text layers added by owner, 25 Oct 17:07). Small fix track (S): FE only, no migration, no auth/RBAC, no new ingest. Mock v1 approved by owner in Lavish (17:07).
 
 ## Journey
 
@@ -63,7 +63,34 @@ Geometry (module X = box width / total modules):
 - Canvas and print draw the SAME data URL for the same layer
   (`KonvaTagLayer.barcode.test.tsx`, `TagSheetRenderer.test.tsx`).
 
+## Text layers (round 2, owner 25 Oct: "100% canvas = preview = print")
+
+A product title showed cut to `SRTWT914SS-GM-` in the preview. Cause: two wrap engines and
+two sets of units for the same text layer.
+
+| | Canvas (`KonvaTagLayer.tsx` text case) | Preview / print (`TagSheetRenderer.tsx` `renderTextLayer`) |
+| --- | --- | --- |
+| Wrap | Konva `wrap="word"` | browser `pre-wrap` + `break-word`, fixed height, `overflow: hidden` |
+| Font size | `pt * 0.35` mm | `pt` (0.3528 mm) |
+| Letter spacing | `0.1` mm per unit | `1px` (0.2646 mm) per unit |
+| No face named | Konva default (`fontFamily` empty) | DM Sans |
+| Weight | bold only at 600+ | exact weight |
+
+So the same title broke at different places, and the print box clipped its second line.
+
+Fix: `lib/dealer-kit/text-layout.ts`. `textLayerLines()` breaks a layer's text ONCE, from its mm
+box, inside its padding, at a fixed scale (CSS px per mm), with Konva's own word-wrap rule
+(ported as `wrapTextLines`, pinned against real Konva in `text-layout.test.ts`). The canvas
+draws those lines with Konva wrap off; the print page prints them with `white-space: pre`.
+`textFace()` gives both the same units, the canvas's own (0.35 mm per pt, 0.1 mm per
+letter-spacing unit), DM Sans as the fallback face and the exact weight. A live resize
+re-breaks with the same function (`TagCanvasEditor.tsx` transform handler), and both surfaces
+re-measure when a font face finishes loading (`useFontsEpoch`).
+
+No shrink-to-fit exists on either surface; a title longer than its box shows the lines that
+fit on both, at the same break. Making the box taller (or the type smaller) shows it whole.
+
 ## Out of scope / reported
 
-- Second tag's product title cut to `SRTWT914SS-GM-` in the preview: a text layer, not the
-  barcode renderer. Reported in the PR, not fixed here unless it shares the cause.
+- Price badge typography still converts its own way on each surface (its own shared helper,
+  `priceBadgeTypography`); not reported as differing, not touched.

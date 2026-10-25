@@ -113,18 +113,23 @@ function encodeModules(value: string, symbology: BarcodeSymbology): string | nul
   return /^[01]+$/.test(modules) ? modules : null;
 }
 
+/** Times advance widths, in em, of the letters far off the average. */
+const SERIF_WIDE: Record<string, number> = { W: 0.94, M: 0.89, m: 0.78, w: 0.72 };
+
 /** Rough advance widths of a Times-like face, in em, to tell when a code is
  * too long for the box. Only decides whether to compress it - never where it
- * sits. */
+ * sits - so it errs wide: a capital is taken as 0.72em (most are), not the
+ * average, or a code of Ws and Ms slipped under and was clipped. */
 function serifWidthEm(text: string): number {
   let em = 0;
   for (const ch of text) {
-    if (/[0-9]/.test(ch)) em += 0.5;
-    else if (/[A-Z]/.test(ch)) em += 0.68;
-    else if (/[a-z]/.test(ch)) em += 0.46;
+    if (SERIF_WIDE[ch] != null) em += SERIF_WIDE[ch];
+    else if (/[0-9]/.test(ch)) em += 0.5;
+    else if (/[A-Z]/.test(ch)) em += 0.72;
+    else if (/[a-z]/.test(ch)) em += 0.5;
     else if (ch === ' ') em += 0.25;
     else if (ch === '-' || ch === '.') em += 0.33;
-    else em += 0.55;
+    else em += 0.6;
   }
   return em;
 }
@@ -133,8 +138,12 @@ function n(value: number): string {
   return String(Number(value.toFixed(3)));
 }
 
+/** XML-safe text. Control characters (a GS1 separator in a Code128 value)
+ * are not allowed in XML at all and would make the whole SVG fail to load,
+ * so they are dropped from the printed text; the bars still encode them. */
 function xml(text: string): string {
   return text
+    .replace(/[\u0000-\u001f\u007f]/g, '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')

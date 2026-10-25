@@ -43,6 +43,8 @@ import {
   scalePolygonPoints,
 } from '@/lib/dealer-kit/polygon-path';
 import { barcodeSvg, svgDataUrl } from '@/lib/dealer-kit/barcode';
+import { textFace, textLayerLines } from '@/lib/dealer-kit/text-layout';
+import { useFontsEpoch } from '@/lib/dealer-kit/use-fonts-epoch';
 import { paddedBox } from '@/lib/dealer-kit/text-reflow';
 import { cropWindowStyle, isCropped, type CropRect } from '@/lib/dealer-kit/image-crop';
 
@@ -156,11 +158,27 @@ function paddingCss(padding: LayerPadding | undefined): string {
   return `${p.top}mm ${p.right}mm ${p.bottom}mm ${p.left}mm`;
 }
 
-function renderTextLayer(layer: TagLayer, resolved: ResolvedLineData | null) {
+/**
+ * A text layer prints the lines `textLayerLines` breaks it into - the SAME
+ * lines the canvas draws (PRICETAG-BARCODE-MATCH) - with the browser's own
+ * wrapping off (`white-space: pre`), in the same face and units as the canvas
+ * (`textFace`: 0.35 mm per pt, 0.1 mm per letter-spacing unit). The browser
+ * used to wrap the text itself at its own font size, so a title the canvas
+ * showed whole broke at a hyphen here and its second line was clipped.
+ */
+function TextLayer({ layer, resolved }: { layer: TagLayer; resolved: ResolvedLineData | null }) {
   const props = layer.props;
-  if (props.kind !== 'text') return null;
+  const epoch = useFontsEpoch();
+  const text = props.kind === 'text' ? layerText(layer, bindingOf(resolved), 'print') : '';
+  const lines = useMemo(() => {
+    void epoch; // re-measure once a face has loaded
+    return props.kind === 'text'
+      ? textLayerLines(props, text, layer.width_mm, layer.height_mm)
+      : [];
+  }, [props, text, layer.width_mm, layer.height_mm, epoch]);
 
-  const text = layerText(layer, bindingOf(resolved), 'print');
+  if (props.kind !== 'text') return null;
+  const face = textFace(props);
 
   return (
     <div
@@ -172,8 +190,8 @@ function renderTextLayer(layer: TagLayer, resolved: ResolvedLineData | null) {
         height: `${layer.height_mm}mm`,
         transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
         transformOrigin: layer.rotation_deg ? '0 0' : undefined,
-        fontFamily: props.fontFamily || 'DM Sans, sans-serif',
-        fontSize: `${props.fontSize}pt`,
+        fontFamily: face.fontFamily,
+        fontSize: `${face.fontSize_mm}mm`,
         fontWeight: props.fontWeight,
         fontStyle: props.italic ? 'italic' : 'normal',
         textDecoration:
@@ -183,15 +201,14 @@ function renderTextLayer(layer: TagLayer, resolved: ResolvedLineData | null) {
         color: props.color,
         textAlign: props.align,
         lineHeight: props.lineHeight,
-        letterSpacing: props.letterSpacing ? `${props.letterSpacing}px` : undefined,
+        letterSpacing: face.letterSpacing_mm ? `${face.letterSpacing_mm}mm` : undefined,
         padding: paddingCss(props.padding),
         boxSizing: 'border-box',
         overflow: 'hidden',
-        whiteSpace: 'pre-wrap',
-        wordBreak: 'break-word',
+        whiteSpace: 'pre',
       }}
     >
-      {text}
+      {lines.join('\n')}
     </div>
   );
 }
@@ -887,7 +904,7 @@ function TagRenderer({
     >
       {sortedLayers.map((layer) => (
         <div key={layer.id}>
-          {layer.type === 'text' && renderTextLayer(layer, resolved)}
+          {layer.type === 'text' && <TextLayer layer={layer} resolved={resolved} />}
           {layer.type === 'shape' && renderShapeLayer(layer)}
           {layer.type === 'image' && renderImageLayer(layer, media, resolved)}
           {layer.type === 'product_slot' &&
