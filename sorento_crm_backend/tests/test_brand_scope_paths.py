@@ -187,13 +187,15 @@ def test_outstanding_report_for_an_out_of_scope_product_reads_as_unknown(api, wo
 
 
 def test_top_selling_rows_and_totals_are_in_scope_only(api, world) -> None:
+    """Delivered reads the delivered events (DELIVERED-DATE-BASIS): the world's AutoCount DOs link to
+    no SO, so they count beside the delivered SOs (the sales report test above)."""
     body = api.get(f"{BASE}/order-management/top-selling", world.scoped, rank_by="quantity", **Y).json()
     assert [r["code"] for r in body["rows"]] == [world.codes["mocha"]], body
     assert body["total_count"] == 1
-    assert body["totals"]["quantity"] == 2
-    assert Decimal(str(body["totals"]["amount"])) == Decimal("100.00")
+    assert body["totals"]["quantity"] == 4
+    assert Decimal(str(body["totals"]["amount"])) == Decimal("200.00")
     plain = api.get(f"{BASE}/order-management/top-selling", world.unscoped, rank_by="quantity", **Y).json()
-    assert plain["total_count"] == 3 and plain["totals"]["quantity"] == 9
+    assert plain["total_count"] == 3 and plain["totals"]["quantity"] == 23
 
 
 def test_sales_report_total_is_computed_from_in_scope_lines(api, world) -> None:
