@@ -163,6 +163,7 @@ def target_progress(
         "asker": asker,
         "as_of": _as_of(db, shown, today) if shown else None,
         "window": {"date_from": date_from, "date_to": date_to},
+        "narrowed": bool(named),
         "own": _sorted(lines["own"]),
         "team": _sorted(lines["team"]),
         "dealers": _by_gap(lines["dealers"]),

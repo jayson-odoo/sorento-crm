@@ -2220,7 +2220,11 @@ def period_progress(
         engine = _engine_tiers(tiers_by[target.id], all_rates)
         starts = [x.period_start for x in tiers_by[target.id]]
         if target.subject_kind == "dealer":
-            subject = dealer_label(db, dealer_accounts)
+            # A chat line never carries a ledger marker ("[A/C I]"): the group name stays, a
+            # single account's name loses its marker.
+            from app.services.ledger_family import ledger_family_label
+
+            subject = ledger_family_label(dealer_label(db, dealer_accounts))
         elif target.subject_kind == "agent":
             agent = agents.get(target.sales_agent_id)
             subject = agent_label(agent) if agent else ""

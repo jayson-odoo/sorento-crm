@@ -3847,11 +3847,16 @@ def _sales_target(report: dict) -> str:
         if not dealers:
             return f"No sales target is set for your accounts{when or ' right now'}."
         return _target_block("Sales target", dealers, as_of)
-    blocks = [_target_block("Your sales target", own, as_of) if own else f"No sales target is set for you{when or ' right now'}."]
+    # A named dealer narrows the answer to that dealer: no own or team block, not even "no target".
+    blocks = [] if report.get("narrowed") else [
+        _target_block("Your sales target", own, as_of) if own else f"No sales target is set for you{when or ' right now'}."
+    ]
     if team:
         blocks.append(_target_block("", team, as_of, team=True))
     if dealers:
         blocks.append("\n".join(["Your dealers, smallest gap first:", *(_target_dealer_row(d) for d in dealers)]))
+    if not blocks:
+        return f"No sales target is set for that dealer{when or ' right now'}."
     return "\n\n".join(blocks)
 
 
