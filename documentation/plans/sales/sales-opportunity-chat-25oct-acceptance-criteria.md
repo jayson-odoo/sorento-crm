@@ -51,6 +51,10 @@ saved without YES. Dealers, staff and unlinked contacts are refused.
   `prospect` is true only when `q` matches no customer at all. The portal's `customer_options` is unchanged.
   `test_options_blocked_and_prospect`, `test_options_partial_name_of_other_agents_customer_is_blocked`.
 
+- O2-4 [BE] (reviewer re-check of 73573432d2) A customer of the company with NO sales agent counts as not the
+  salesperson's own too: typed exactly or in part, options return `blocked` true (never prospect); the create
+  refuses it as a prospect with 422 `CUSTOMER_NOT_YOURS`. `test_unassigned_customer_is_not_yours_in_chat`.
+
 ## O3. Create route
 
 - O3-1 [BE] A valid body creates one opportunity: source "chat", stage New (initial status), outcome open,
