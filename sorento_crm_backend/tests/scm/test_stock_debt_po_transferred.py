@@ -24,6 +24,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.services.scm.supply_assignment import month_key
@@ -288,11 +289,19 @@ def test_the_board_assignment_stands_no_po_up_for_a_transferred_line(scm_app):
 # ------------------------------------------------------------------ review round 1
 
 
-def test_the_book_s_o_may_still_pin_what_the_placement_left_on_the_po(scm_app):
+@pytest.mark.parametrize("spo_names_the_order", [False, True])
+def test_the_book_s_o_may_still_pin_what_the_placement_left_on_the_po(
+    scm_app, spo_names_the_order,
+):
     """100 ordered, 20 transferred onto an SPO in transit, 80 on order; the PO line's own
     S/O names SO-B. SO-A's placement of 50 sits 20 on the SPO and 30 on the PO, so the
     S/O may still pin 80 - 30 = 50 of the PO to SO-B. Netting the whole placement (50)
-    would leave SO-B short 20 beside 20 free on the PO."""
+    would leave SO-B short 20 beside 20 free on the PO.
+
+    `spo_names_the_order` (R45: "most SPO should have linkage already"): the SPO line
+    carries the same S/O. The 20 that followed SO-A's placement onto it are spoken for,
+    so the SPO's own S/O pins nothing to SO-B; counted as free there, that pin would eat
+    20 of SO-B's need on paper and leave the PO's S/O pinning 30."""
     app, db = _client(scm_app)
     marker = f"ZZTSPL{_u()[:6]}".upper()
     warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
@@ -313,6 +322,8 @@ def test_the_book_s_o_may_still_pin_what_the_placement_left_on_the_po(scm_app):
         db, product, po, po_line, warehouse, qty=20, received=0, receipt_status="pending",
         arrives=due,
     )
+    if spo_names_the_order:
+        allocation.from_so_line_ref = f"ZZTBOOK:{marker}:1"
     _order_back_link_on_po(db, project_order, project_line, po_line=po_line, qty=50)
     db.flush()
 
