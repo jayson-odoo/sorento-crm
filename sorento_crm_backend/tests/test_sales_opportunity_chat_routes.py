@@ -577,3 +577,29 @@ def test_assistant_log_tool_needs_opportunities_add(db, monkeypatch):
     )
     assert calls == []
     assert msg.metadata_json["pending_confirmation"]["status"] == "denied"
+
+
+def test_options_partial_name_of_other_agents_customer_is_blocked(client, db):
+    """O2-3 (crew a43805183): a partial name of another agent's customer is blocked, not a prospect."""
+    contact, _agent_row = _salesperson(db)
+    _customer(db, "4 SMART PLUS SDN BHD", 1, agent=_agent(db, "RIVAL"))
+    part = client.get(OPTIONS, params={**_me(contact), "q": "4 SMART PLUS"})
+    assert part.status_code == 200, part.text
+    assert part.json()["items"] == []
+    assert part.json()["blocked"] is True and part.json()["prospect"] is False
+    none = client.get(OPTIONS, params={**_me(contact), "q": "ZZT NOBODY TRADING"})
+    assert none.status_code == 200, none.text
+    assert none.json()["prospect"] is True and none.json()["blocked"] is False
+
+
+def test_create_refuses_prospect_that_is_another_agents_customer(client, db):
+    """O3-10 (crew a43805183): the route refuses a prospect name matching another agent's customer."""
+    contact, _agent_row = _salesperson(db)
+    _customer(db, "4 SMART PLUS SDN BHD", 1, agent=_agent(db, "RIVAL"))
+    refused = client.post(CREATE, json=_body(contact, prospect_name="4 SMART PLUS"))
+    assert refused.status_code == 422, refused.text
+    assert _code(refused) == "CUSTOMER_NOT_YOURS", refused.text
+    assert _count(db) == 0
+    ok = client.post(CREATE, json=_body(contact, prospect_name="ZZT NOBODY TRADING"))
+    assert ok.status_code == 201, ok.text
+    assert _count(db) == 1
