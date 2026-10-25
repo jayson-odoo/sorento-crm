@@ -117,7 +117,9 @@ def test_non_so_source_is_not_resolved_as_an_so(db):
     d = seed_do(db, DEFAULT_COMPANY_ID)
     seed_do_line(db, d, p, wh, from_doc_no=so.so_number, from_doc_type="QT")
 
-    assert _line(_read(db, d), 1)["sales_order"] is None
+    line = _line(_read(db, d), 1)
+    assert line["sales_order"] is None
+    assert line["from_doc_type"] == "QT"  # the SO column reads it to show "-", not a QT number
 
 
 def test_one_do_over_two_sos_names_each_on_its_own_line(db):

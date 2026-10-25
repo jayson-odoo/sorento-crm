@@ -84,7 +84,12 @@ import { getSalesOrderUoms, type SalesOrderPlanningChangeBatch } from '../../../
 import { PlanRowDialog } from '../../../components/PlanRowDialog';
 import { PlanNumberButton } from '../../../components/PlanNumberButton';
 import { SoLineLinksBody } from './SoLineLinksBody';
-import { DeliveriesTable, SoLineHistoryBody, soDeliveryRows } from './SoLineHistoryBody';
+import {
+  DeliveriesLoadError,
+  DeliveriesTable,
+  SoLineHistoryBody,
+  soDeliveryRows,
+} from './SoLineHistoryBody';
 import { fmtDate, fmtInt } from '../../../lib/format';
 import { demandClassBadge } from '../../../lib/demandClass';
 import { ConsignmentBadge } from '../../../lib/docType';
@@ -2319,6 +2324,11 @@ export function SalesOrderDetail({
             </div>
             {/* DO-SO-LINK-SURFACE R3: every DO line under this SO, the truck lightbox's own
                 rows and columns plus SKU. Nothing (not an empty table) when there is none. */}
+            {deliveries.isError && !deliveries.data ? (
+              <div className="border-t border-border p-4">
+                <DeliveriesLoadError onRetry={() => void deliveries.refetch()} />
+              </div>
+            ) : null}
             {deliveryRows.length > 0 ? (
               <section aria-label="Delivery orders" className="border-t border-border">
                 <DeliveriesTable

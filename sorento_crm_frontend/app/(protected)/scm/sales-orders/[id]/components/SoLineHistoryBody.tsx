@@ -62,9 +62,45 @@ export type SoDeliveryListRow = SoLineDeliveryRow & { sku?: string };
 const SKU_COLUMN: ColumnDef<SoDeliveryListRow> = {
   id: 'sku',
   header: 'SKU',
-  cell: ({ row }) => textCell(row.original.sku),
+  cell: ({ row }) =>
+    row.original.sku ? (
+      <span className="block truncate" title={row.original.sku}>
+        {row.original.sku}
+      </span>
+    ) : (
+      dash
+    ),
   size: 160,
 };
+
+const LOCATION_COLUMN: ColumnDef<SoDeliveryListRow> = {
+  id: 'location',
+  header: 'Location',
+  cell: ({ row }) => textCell(row.original.location),
+  size: 110,
+};
+
+const STATUS_COLUMN: ColumnDef<SoDeliveryListRow> = {
+  id: 'status',
+  header: 'Status',
+  cell: ({ row }) =>
+    row.original.status ? <Badge status={row.original.status}>{row.original.status}</Badge> : dash,
+  size: 210,
+};
+
+/** The deliveries read failed: say so, with a retry (R7). The lightbox and the Delivery tab. */
+export function DeliveriesLoadError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <Alert variant="destructive">
+      <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+        <span>Could not load deliveries.</span>
+        <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+          Try again
+        </Button>
+      </AlertDescription>
+    </Alert>
+  );
+}
 
 export function DeliveriesTable({
   rows,
@@ -103,15 +139,9 @@ export function DeliveriesTable({
         size: 150,
       },
       { id: 'do_date', header: 'DO date', cell: ({ row }) => fmtDate(row.original.do_date), size: 130 },
-      ...(withSku ? [SKU_COLUMN] : []),
-      { id: 'location', header: 'Location', cell: ({ row }) => textCell(row.original.location), size: 110 },
-      {
-        id: 'status',
-        header: 'Status',
-        cell: ({ row }) =>
-          row.original.status ? <Badge status={row.original.status}>{row.original.status}</Badge> : dash,
-        size: 210,
-      },
+      // The lightbox reads Location, Status; the Delivery tab's list (mock v2 Panel D) reads
+      // Status, SKU, Location.
+      ...(withSku ? [STATUS_COLUMN, SKU_COLUMN, LOCATION_COLUMN] : [LOCATION_COLUMN, STATUS_COLUMN]),
       {
         id: 'actual_delivery_date',
         header: 'Actual delivery',
@@ -236,14 +266,7 @@ export function SoLineHistoryBody({
     return (
       <div className="space-y-4">
         {strip}
-        <Alert variant="destructive">
-          <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
-            <span>Could not load deliveries.</span>
-            <Button type="button" variant="outline" size="sm" onClick={onRetry}>
-              Try again
-            </Button>
-          </AlertDescription>
-        </Alert>
+        <DeliveriesLoadError onRetry={onRetry} />
       </div>
     );
   }

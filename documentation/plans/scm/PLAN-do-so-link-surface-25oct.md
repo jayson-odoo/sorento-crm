@@ -1,6 +1,6 @@
 # PLAN: DO <-> SO line links on the DO page and the SO Delivery tab (DO-SO-LINK-SURFACE)
 
-Status: Build (backend green; mock posted for owner, UI paused). Track: small fix (no
+Status: Review (mock v2 approved 17:22; UI built, reviewer READY, review fixes folded in; browser pass next). Track: small fix (no
 migration, no auth/RBAC change, no new ingest surface; expected diff under ~300 lines).
 
 Owner ask (25 Oct): backfilling DOs from AutoCount, the DO page does not say which SO a DO
@@ -83,7 +83,8 @@ So R1 links 47,636 lines (97%), text 5, dash 1,321.
 
 ## Tests (red first)
 
-- BE: `GET /order-management/orders/{id}` lines carry `from_doc_no` and `sales_order` ref
+- BE: `GET /order-management/orders/{id}` lines carry `from_doc_no`, `from_doc_type` and `sales_order` ref
   (stored link; SO by number; SO not in CRM; direct DO; other company's SO not resolved).
-- FE: OrderLinesCard SO column three states; header strip several SOs; SO Delivery tab table
+- FE: OrderLinesCard SO column (exact line, SO only, not in CRM, direct DO, non-SO source,
+  no SO permission); SO Delivery tab table rows + column order + total + empty + load error.
   rows + total + empty state.

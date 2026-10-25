@@ -86,6 +86,8 @@ export interface OrderLine {
   warehouse?: { id: string; warehouse_code?: string; warehouse_name?: string };
   /** AutoCount's own source document number, as sent (DO-SO-LINK-SURFACE). */
   from_doc_no?: string | null;
+  /** AutoCount's source document type; only NULL or `SO` is a sales order. */
+  from_doc_type?: string | null;
   /** That number resolved to a CRM sales order; `line_no` only when AutoCount named the line. */
   sales_order?: SalesOrderLinkRef | null;
 }

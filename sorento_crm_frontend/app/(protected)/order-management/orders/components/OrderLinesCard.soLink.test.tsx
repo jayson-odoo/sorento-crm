@@ -49,13 +49,14 @@ const LINES: OrderLine[] = [
   }),
   line('l-3', 'BT012-CR', { from_doc_no: 'SO400001', sales_order: null }),
   line('l-4', 'SRTWB1515', { from_doc_no: null, sales_order: null }),
+  line('l-5', 'BT013-CR', { from_doc_no: 'QT100200', from_doc_type: 'QT', sales_order: null }),
 ];
 
-function renderCard() {
+function renderCard(canOpenSo = true) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <OrderLinesCard orderId="o-1" lines={LINES} readOnly />
+      <OrderLinesCard orderId="o-1" lines={LINES} readOnly canOpenSo={canOpenSo} />
     </QueryClientProvider>,
   );
 }
@@ -101,6 +102,19 @@ describe('OrderLinesCard - SO column (DO-SO-LINK-SURFACE R1)', () => {
     renderCard();
     const cell = soCell('SRTWB1515');
     expect((cell.textContent ?? '').trim()).toBe('-');
+    expect(within(cell).queryByRole('link')).toBeNull();
+  });
+
+  it('shows "-" for a line whose source is not an SO (e.g. a quotation)', () => {
+    renderCard();
+    const cell = soCell('BT013-CR');
+    expect((cell.textContent ?? '').trim()).toBe('-');
+  });
+
+  it('shows the SO as plain text, with its line, to a user who cannot open sales orders', () => {
+    renderCard(false);
+    const cell = soCell('WESERP10B');
+    expect((cell.textContent ?? '').trim()).toBe('SO419866 · line 3');
     expect(within(cell).queryByRole('link')).toBeNull();
   });
 });

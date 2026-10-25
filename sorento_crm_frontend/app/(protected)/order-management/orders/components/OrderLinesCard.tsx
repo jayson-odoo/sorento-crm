@@ -34,6 +34,8 @@ interface OrderLinesCardProps {
   lines: OrderLine[];
   /** AutoCount-owned DO: its lines come only from AutoCount, so no add / delete. */
   readOnly?: boolean;
+  /** Whether the SO column's numbers open the sales order (its page needs SCM view). */
+  canOpenSo?: boolean;
 }
 
 /** An optional money figure: blank is "not given", but a typed one must be a readable number of 0 or more. */
@@ -41,7 +43,21 @@ function optionalFigureError(raw: string): string | undefined {
   return numberFieldError(raw, { min: 0, optional: true });
 }
 
-export default function OrderLinesCard({ orderId, lines, readOnly = false }: OrderLinesCardProps) {
+/** The SO column's words: the SO (and line, when AutoCount named it), AutoCount's own number
+ *  when the CRM has no such SO, '' for a direct DO or a non-SO source. */
+function soColumnText(line: OrderLine): string {
+  const so = line.sales_order;
+  if (so) return so.line_no != null ? `${so.so_number} · line ${so.line_no}` : so.so_number;
+  const isSo = line.from_doc_type == null || line.from_doc_type === 'SO';
+  return isSo && line.from_doc_no ? line.from_doc_no : '';
+}
+
+export default function OrderLinesCard({
+  orderId,
+  lines,
+  readOnly = false,
+  canOpenSo = false,
+}: OrderLinesCardProps) {
   const queryClient = useQueryClient();
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
@@ -200,31 +216,31 @@ export default function OrderLinesCard({ orderId, lines, readOnly = false }: Ord
         // DO-SO-LINK-SURFACE R1: the SO this line delivers, the SPO page's own PO column
         // grammar (SPODocumentDetail.tsx `po`). A link when the CRM has the SO AutoCount
         // named (with the line no. only when it named the line), its number as plain text
-        // when it does not, "-" for a direct DO.
+        // when it does not or the user cannot open sales orders, "-" for a direct DO or a
+        // source that is not an SO.
         id: 'sales_order',
-        accessorFn: (row) => row.sales_order?.so_number ?? row.from_doc_no ?? '',
+        accessorFn: (row) => soColumnText(row),
         header: ({ column }) => <DataGridColumnHeader title="SO" column={column} />,
         cell: ({ row }) => {
           const so = row.original.sales_order;
-          if (!so) {
-            const text = row.original.from_doc_no;
-            if (!text) return <span className="text-muted-foreground">-</span>;
+          const text = soColumnText(row.original);
+          if (!text) return <span className="text-muted-foreground">-</span>;
+          if (!so || !canOpenSo) {
             return (
               <span className="block truncate" title={text}>
                 {text}
               </span>
             );
           }
-          const label = so.line_no != null ? `${so.so_number} · line ${so.line_no}` : so.so_number;
           return (
             <Link
               href={`/scm/sales-orders/${so.id}`}
               className="flex items-center gap-1 text-primary hover:underline"
-              title={label}
+              title={text}
               onClick={(e) => e.stopPropagation()}
             >
               <LinkIcon className="size-3 shrink-0" />
-              <span className="truncate">{label}</span>
+              <span className="truncate">{text}</span>
             </Link>
           );
         },
@@ -321,7 +337,7 @@ export default function OrderLinesCard({ orderId, lines, readOnly = false }: Ord
         meta: { headerTitle: 'Actions' },
       } satisfies ColumnDef<OrderLine>]),
     ],
-    [readOnly],
+    [readOnly, canOpenSo],
   );
 
   return (

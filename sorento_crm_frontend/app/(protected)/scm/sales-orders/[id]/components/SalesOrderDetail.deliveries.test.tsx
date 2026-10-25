@@ -351,6 +351,16 @@ describe('SalesOrderDetail - Delivery tab DO list (DO-SO-LINK-SURFACE R3)', () =
     expect(texts[2]).toContain('202609-1978');
     expect(texts[2]).toContain('CFH14');
     expect(texts[3]).toMatch(/Total.*17/);
+    // mock v2 Panel D column order
+    expect(within(table).getAllByRole('columnheader').map((h) => (h.textContent ?? '').trim())).toEqual([
+      'DO no.',
+      'DO date',
+      'Status',
+      'SKU',
+      'Location',
+      'Actual delivery',
+      'Qty',
+    ]);
     expect(within(table).getByRole('link', { name: '202609-1082' })).toHaveAttribute(
       'href',
       '/order-management/orders/77aa0001-0000-4000-8000-000000000001',
@@ -372,5 +382,14 @@ describe('SalesOrderDetail - Delivery tab DO list (DO-SO-LINK-SURFACE R3)', () =
 
     await waitFor(() => expect(getSalesOrderDeliveries).toHaveBeenCalled());
     expect(screen.queryByRole('region', { name: 'Delivery orders' })).toBeNull();
+  });
+
+  it('says the read failed, with a retry, instead of showing nothing', async () => {
+    getSalesOrderDeliveries.mockRejectedValue(new Error('boom'));
+    renderDetail();
+    openDelivery();
+
+    expect(await screen.findByText('Could not load deliveries.', {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 });

@@ -389,6 +389,7 @@ class OrderLineResponse(OrderLineBase):
     # AutoCount's own source document number, as sent; ``sales_order`` is it resolved to a
     # CRM sales order (only on the single-DO read, stamped by OrderService.get_order).
     from_doc_no: Optional[str] = None
+    from_doc_type: Optional[str] = None
     sales_order: Optional[SalesOrderLinkRef] = None
 
     class Config:
