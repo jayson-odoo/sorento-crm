@@ -65,6 +65,8 @@ ORIGINAL_BASE_URL = "https://api.respond.io"
 ORIGINAL_SENDER_URL = "https://automate-zzt.example.com/webhook/orig-sender"
 VALID_DB = "postgresql://sorento_crm:zzt@localhost:5432/sorento_iqr_copy"
 VALID_API = "http://localhost:8106"
+# The database this process actually connects to (the lane's throwaway copy).
+THROWAWAY_URL = str(settings.database_url)
 
 
 def _tool():
@@ -169,9 +171,12 @@ def guarded_main(tool, monkeypatch, tmp_path, iq_serial):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("DIRECT_URL", raising=False)
 
-    def _run(*, database_url: str = VALID_DB, api: str = VALID_API, state: Path | None = None) -> dict[str, Any]:
+    def _run(
+        *, database_url: str | None = None, api: str = VALID_API, state: Path | None = None, env_text: str | None = None
+    ) -> dict[str, Any]:
+        database_url = database_url or THROWAWAY_URL
         env_file = tmp_path / "zzt-copy.env"
-        env_file.write_text(f"DATABASE_URL={database_url}\nDIRECT_URL={database_url}\n")
+        env_file.write_text(env_text if env_text is not None else f"DATABASE_URL={database_url}\nDIRECT_URL={database_url}\n")
         out = tmp_path / "report.md"
         state_file = state or (tmp_path / "replay-state.json")
         argv = [
@@ -524,9 +529,10 @@ def test_restore_from_the_state_file_after_a_crash(tool, copy_world):
 
 
 @pytest.mark.parametrize("signame", ["SIGTERM", "SIGHUP"])
-def test_sigterm_and_sighup_take_the_same_restore_path(tool, copy_world, signame):
-    """Item 4: the installed handler restores, then exits non-zero (called directly; no real
-    signal reaches pytest)."""
+def test_sigterm_and_sighup_only_exit_and_leave_the_restore_to_mains_finally(tool, copy_world, signame):
+    """Item 4, as tightened in round 5 (security LOW): the installed handler does NO database
+    work; it only raises a non-zero `SystemExit`, and `main`'s `finally` runs the restore
+    (called directly; no real signal reaches pytest)."""
     world = copy_world()
     calls: list[int] = []
     world.replay.restore = lambda: calls.append(1)  # type: ignore[method-assign]
@@ -541,7 +547,7 @@ def test_sigterm_and_sighup_take_the_same_restore_path(tool, copy_world, signame
         with pytest.raises(SystemExit) as exited:
             handler(signum, None)
         assert exited.value.code not in (0, None), f"{signame} must exit non-zero"
-        assert calls == [1], f"{signame} must run the restore once"
+        assert calls == [], f"the {signame} handler must not restore itself (main's finally does)"
     finally:
         for sig, old in previous.items():
             signal.signal(sig, old)
@@ -569,3 +575,427 @@ def test_every_existing_webhook_signing_key_stays_verifiable(copy_world, existin
         assert missing == [], f"{len(missing)} of respond.io's own keys stopped verifying: the tool truncated them"
     finally:
         world.replay.restore()
+
+
+# --------------------------------------------------------------------------- #
+# Round 5. Contract additions (the coder builds to these names):
+#
+# * `check_connected(engine) -> list[str]`: what the engine ACTUALLY connects to. Refuses a
+#   `host` / `hostaddr` / `dbname` / `service` key in `engine.url.query`, and runs
+#   `SELECT current_database(), inet_server_addr()`: refuses unless the server address is
+#   NULL (unix socket) or loopback and the name passes the name rules.
+# * `resolve_env_file(path) -> str`: the absolute file Settings reads for that value
+#   (relative to the backend directory, as `app.config._resolve_settings_env_file` does).
+# * `env_file_database_url(path) -> str`: DATABASE_URL as dotenv resolves it (the LAST
+#   assignment wins, an `export ` prefix included), read from `resolve_env_file(path)`.
+# * `check_target` also refuses a `host=`-style query key and a lowercase `database_url` /
+#   `direct_url` in the process environment.
+# * `RUN_LOCK_KEY` (int) and `take_run_lock(engine)`: a Postgres advisory lock held for the
+#   whole run, taken before preflight; falsy when another session holds it.
+# * The state file records `database` (current_database()) and `server_addr`;
+#   `restore_from_file` refuses a file recorded against another database.
+# * `Replay.restore()` repeats close-then-wait until a pass closes nothing and the drain mutex
+#   is gone; on a timeout (`DRAIN_LET_GO_SECONDS`) it keeps the state file, prints the exact
+#   `--restore-from` command, does NOT restore the workspace, and signals failure (a non-zero
+#   `SystemExit`, or a False return). An interrupt (a second Ctrl-C) during restore prints
+#   the same hint.
+# --------------------------------------------------------------------------- #
+
+
+class _ReachedSetup(Exception):
+    pass
+
+
+def _copy_snapshot(world: CopyWorld) -> tuple:
+    db = SessionLocal()
+    try:
+        replay_contacts = db.execute(
+            text("SELECT count(*) FROM respond_contacts WHERE respond_io_id LIKE 'zzt-replay-%'")
+        ).scalar()
+    finally:
+        db.close()
+    return (tuple(sorted(world.setting().items())), tuple(sorted(world.workspace().items())), replay_contacts)
+
+
+@pytest.fixture()
+def real_main(tool, monkeypatch, tmp_path):
+    """`main` with the REAL `Replay` (so its `preflight` runs) against the throwaway copy,
+    the copy reported healthy, and `Replay.setup` replaced by a sentinel: reaching setup
+    means every guard let the run through. Run on a thread with a bound, so a refusal path
+    that hangs is a failure, not a stuck suite."""
+    monkeypatch.setattr(tool, "healthy", lambda api: True)
+    monkeypatch.setattr(tool.Replay, "setup", lambda self: (_ for _ in ()).throw(_ReachedSetup()))
+    # `main` runs on a worker thread here, where `signal.signal` is not allowed; the
+    # handlers have their own test.
+    monkeypatch.setattr(tool, "install_signal_handlers", lambda replay: None)
+    monkeypatch.setenv("SORENTO_ENV_FILE", os.environ.get("SORENTO_ENV_FILE", ".env.ci-tests"))
+    for var in ("DATABASE_URL", "DIRECT_URL", "database_url", "direct_url"):
+        monkeypatch.delenv(var, raising=False)
+    env_file = str(BACKEND / os.environ.get("SORENTO_ENV_FILE", ".env.ci-tests"))
+
+    def _run(*, state: Path | None = None) -> dict[str, Any]:
+        out = tmp_path / "report.md"
+        state_file = state or (tmp_path / "replay-state.json")
+        argv = [
+            "--env-file", env_file, "--api", VALID_API, "--port", str(_free_port()),
+            "--out", str(out), "--state-file", str(state_file), "--no-restart",
+        ]
+        box: dict[str, Any] = {}
+
+        def _call() -> None:
+            try:
+                box["rc"] = tool.main(argv)
+            except _ReachedSetup:
+                box["rc"] = "reached"
+            except SystemExit as exc:
+                box["rc"] = f"exit {exc.code}"
+            except BaseException as exc:  # noqa: BLE001
+                box["rc"] = f"raised {type(exc).__name__}: {exc}"
+
+        thread = threading.Thread(target=_call, daemon=True)
+        thread.start()
+        thread.join(60)
+        assert "rc" in box, "main hung (a refusal path that never returns: an unstarted server's shutdown?)"
+        return {"rc": box["rc"], "out": out.exists(), "state": state_file}
+
+    return _run
+
+
+@pytest.mark.parametrize("leftover", ["loopback-base-url", "replay-contact-listed", "ten-webhook-keys"])
+def test_main_refuses_through_preflight_and_changes_nothing(real_main, copy_world, leftover):
+    """Round 5, item 1 (reviewer): the database half of the guard, reached through `main`.
+    A copy an earlier run left rewired, or one already holding ten webhook keys, makes
+    `main` return 2 with no state file written and nothing in the database changed."""
+    world = copy_world(webhook_keys=[_key(i) for i in range(10)] if leftover == "ten-webhook-keys" else [_key(1)])
+    db = SessionLocal()
+    try:
+        if leftover == "loopback-base-url":
+            db.execute(
+                text("UPDATE respond_workspaces SET base_url = 'http://127.0.0.1:8399' WHERE id = CAST(:i AS uuid)"),
+                {"i": world.workspace_id},
+            )
+        elif leftover == "replay-contact-listed":
+            db.execute(
+                text("UPDATE system_settings SET chatbot_direct_ingress_contacts = 'zzt-replay-1a2b3c4d5e' WHERE id = :i"),
+                {"i": world.settings_id},
+            )
+        db.commit()
+    finally:
+        db.close()
+    before = _copy_snapshot(world)
+
+    run = real_main()
+
+    assert run["rc"] == 2, f"{leftover}: main must refuse with 2, got {run['rc']!r}"
+    assert not run["state"].exists(), f"{leftover}: a refused run wrote a state file"
+    assert _copy_snapshot(world) == before, f"{leftover}: a refused run changed the copy"
+
+
+def test_main_reaches_setup_on_a_clean_copy(real_main, copy_world):
+    """The positive control for the real-`Replay` path: a clean copy passes every guard."""
+    copy_world()
+    run = real_main()
+    assert run["rc"] == "reached", f"a clean copy was refused: {run['rc']!r}"
+
+
+# ----------------------------------------------------------- the connected database
+
+
+def test_check_connected_passes_the_throwaway_copy(tool, iq_serial):
+    assert tool.check_connected(db_engine) == []
+
+
+class _FakeRow(tuple):
+    @property
+    def current_database(self):
+        return self[0]
+
+    @property
+    def inet_server_addr(self):
+        return self[1]
+
+
+class _FakeResult:
+    def __init__(self, row):
+        self._row = _FakeRow(row)
+
+    def first(self):
+        return self._row
+
+    one = fetchone = first
+
+    def __iter__(self):
+        return iter([self._row])
+
+
+class _FakeConnection:
+    def __init__(self, row):
+        self.row = row
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, *args, **kwargs):
+        return _FakeResult(self.row)
+
+    exec_driver_sql = execute
+
+    def close(self):
+        pass
+
+
+class _FakeEngine:
+    def __init__(self, url: str, row: tuple):
+        from sqlalchemy.engine import make_url
+
+        self.url = make_url(url)
+        self.row = row
+
+    def connect(self):
+        return _FakeConnection(self.row)
+
+
+@pytest.mark.parametrize(
+    ("url", "row"),
+    [
+        ("postgresql://u:p@localhost/sorento_iqr_copy", ("sorento_iqr_copy", "127.0.0.1")),
+        ("postgresql://u:p@localhost/sorento_iqr_copy", ("sorento_iqr_copy", None)),
+        ("postgresql://u:p@localhost/sorento_iqr_copy", ("sorento_iqr_copy", "::1")),
+    ],
+    ids=["tcp-loopback", "unix-socket", "ipv6-loopback"],
+)
+def test_check_connected_accepts_a_local_connection(tool, url, row):
+    assert tool.check_connected(_FakeEngine(url, row)) == []
+
+
+@pytest.mark.parametrize(
+    ("url", "row"),
+    [
+        ("postgresql://u:p@localhost/x?host=db.remote.example.com", ("x", None)),
+        ("postgresql://u:p@localhost/x?hostaddr=10.1.2.3", ("x", None)),
+        ("postgresql://u:p@localhost/x?dbname=sorento_cagent_stack", ("x", None)),
+        ("postgresql://u:p@localhost/x?service=prod", ("x", None)),
+        ("postgresql://u:p@localhost/sorento_iqr_copy", ("sorento_iqr_copy", "10.1.2.3")),
+        ("postgresql://u:p@localhost/sorento_iqr_copy", ("sorento_cagent_stack", "127.0.0.1")),
+        ("postgresql://u:p@localhost/sorento_iqr_copy", ("sorento_prod_mirror", None)),
+    ],
+    ids=["query-host", "query-hostaddr", "query-dbname", "query-service", "server-remote", "connected-shared-dev", "connected-prod"],
+)
+def test_check_connected_refuses_what_the_engine_really_reaches(tool, url, row):
+    assert tool.check_connected(_FakeEngine(url, row)), f"must refuse {url} connected to {row}"
+
+
+def test_check_target_refuses_a_host_hidden_in_the_query_string(tool):
+    reasons = tool.check_target(
+        database_url="postgresql://u:p@localhost/x?host=db.remote.example.com", api=VALID_API, environ={}
+    )
+    assert reasons, "a `host=` query key overrides the URL's host; the text check must refuse it"
+
+
+@pytest.mark.parametrize("var", ["database_url", "direct_url"])
+def test_check_target_refuses_a_lowercase_url_in_the_environment(tool, var):
+    assert tool.check_target(database_url=VALID_DB, api=VALID_API, environ={var: VALID_DB}), var
+
+
+def test_the_env_files_last_assignment_wins(tool, tmp_path):
+    env = tmp_path / "zzt-copy.env"
+    env.write_text(
+        f"DATABASE_URL={VALID_DB}\n"
+        "# later, someone pointed it elsewhere\n"
+        "export DATABASE_URL=postgresql://u:p@db.remote.example.com:5432/sorento_iqr_copy\n"
+    )
+    assert tool.env_file_database_url(str(env)) == "postgresql://u:p@db.remote.example.com:5432/sorento_iqr_copy"
+
+
+def test_main_refuses_an_env_file_whose_last_database_url_is_remote(guarded_main):
+    run = guarded_main(
+        env_text=(
+            f"DATABASE_URL={THROWAWAY_URL}\n"
+            "export DATABASE_URL=postgresql://u:p@db.remote.example.com:5432/sorento_iqr_copy\n"
+        )
+    )
+    assert run["rc"] != "reached" and run["built"] == [], "main read the first DATABASE_URL, not the one dotenv uses"
+    assert isinstance(run["rc"], int) and run["rc"] != 0
+    assert not run["state"].exists() and not run["db_changed"]
+
+
+def test_main_refuses_a_lowercase_database_url_in_the_shell(guarded_main, monkeypatch):
+    monkeypatch.setenv("database_url", VALID_DB)
+    run = guarded_main()
+    assert run["rc"] != "reached" and run["built"] == [], "a lowercase database_url in the shell was ignored"
+    assert isinstance(run["rc"], int) and run["rc"] != 0
+
+
+def test_a_relative_env_file_resolves_the_way_settings_resolves_it(tool, tmp_path, monkeypatch):
+    """Settings reads a relative SORENTO_ENV_FILE against the backend directory, not the
+    cwd; the tool must judge that same file (a decoy in the cwd must not be read)."""
+    name = "zzt-replay-relative.env"
+    real = BACKEND / name
+    real.write_text(f"DATABASE_URL={VALID_DB}\n")
+    try:
+        (tmp_path / name).write_text("DATABASE_URL=postgresql://u:p@db.remote.example.com/decoy\n")
+        monkeypatch.chdir(tmp_path)
+        assert tool.resolve_env_file(name) == str(real)
+        assert tool.resolve_env_file(str(real)) == str(real)
+        assert tool.env_file_database_url(name) == VALID_DB
+    finally:
+        real.unlink()
+
+
+# ----------------------------------------------------------- one run at a time
+
+
+def test_a_second_run_is_refused_while_the_first_holds_the_run_lock(tool, real_main, copy_world, tmp_path):
+    """Round 5, item 3: run 1 holds the advisory lock for its whole run. Run 2 (its own
+    state file) is refused before preflight, writes nothing, and never touches run 1's state
+    file."""
+    copy_world()
+    first_state = tmp_path / "run-1-state.json"
+    first_state.write_text(json.dumps({"contact": "zzt-replay-run1000000"}))
+    side = db_engine.connect()
+    try:
+        side.exec_driver_sql("SELECT pg_advisory_lock(%(k)s)", {"k": int(tool.RUN_LOCK_KEY)})
+        assert not tool.take_run_lock(db_engine), "the lock is held by run 1; run 2 must not get it"
+        run = real_main(state=tmp_path / "run-2-state.json")
+    finally:
+        with contextlib.suppress(Exception):
+            side.exec_driver_sql("SELECT pg_advisory_unlock_all()")
+        side.close()
+    assert run["rc"] == 2, f"run 2 must be refused while run 1 holds the lock, got {run['rc']!r}"
+    assert not run["state"].exists()
+    assert first_state.read_text() == json.dumps({"contact": "zzt-replay-run1000000"}), "run 1's state file was touched"
+
+
+# ----------------------------------------------------------- restore until quiet
+
+
+def test_restore_closes_a_row_a_drain_reopened_during_the_wait(copy_world):
+    """Round 5, item 4: a drain re-queues one of the contact's rows while restore waits for
+    its mutex. Restore repeats close-then-wait until a pass closes nothing, so no row is
+    left open (keep-rows run, so the rows can be read afterwards)."""
+    world = copy_world(keep_rows=True)
+    world.replay.setup()
+    world.open_rows()
+    drain = f"chatbot:drain:{world.replay.contact}"
+    world.redis.set(drain, "zzt-a-drain-still-running", px=2500)
+
+    def reopen() -> None:
+        time.sleep(0.8)
+        db = SessionLocal()
+        try:
+            db.execute(
+                text(
+                    "UPDATE chatbot.turns SET status = 'queued', stage = 'queued' "
+                    "WHERE contact_respond_id = :c AND message_id = 'zzt-replay-msg-1'"
+                ),
+                {"c": world.replay.contact},
+            )
+            db.commit()
+        finally:
+            db.close()
+
+    reopener = threading.Thread(target=reopen, daemon=True)
+    reopener.start()
+    world.replay.restore()
+    reopener.join(5)
+    assert world.statuses() and all(s == "failed" for s in world.statuses()), (
+        f"a row a drain re-opened during the wait was left open: {world.statuses()}"
+    )
+
+
+def test_restore_that_times_out_keeps_the_state_file_and_does_not_restore_the_workspace(tool, copy_world, monkeypatch, capsys):
+    """Round 5, item 4: the drain mutex never goes. Restore gives up after its bound, keeps
+    the state file, prints the exact `--restore-from` command, signals failure, and does NOT
+    write the workspace back under a drain that may still be running."""
+    monkeypatch.setattr(tool, "DRAIN_LET_GO_SECONDS", 1.0)
+    world = copy_world()
+    world.replay.setup()
+    world.redis.set(f"chatbot:drain:{world.replay.contact}", "zzt-a-drain-that-never-ends", ex=120)
+    rewired = world.workspace()
+
+    code: Any = "returned"
+    try:
+        result = world.replay.restore()
+        code = result
+    except SystemExit as exc:
+        code = exc.code
+    output = capsys.readouterr().out
+
+    assert code is False or code not in (0, None, True, "returned"), f"a timed-out restore must signal failure: {code!r}"
+    assert world.state_file.exists(), "a timed-out restore must keep the state file"
+    assert f"--restore-from {world.state_file}" in output, f"no exact --restore-from hint in: {output!r}"
+    assert world.workspace() == rewired, "the workspace was written back while the drain still held its mutex"
+    world.redis.delete(f"chatbot:drain:{world.replay.contact}")
+    tool.restore_from_file(str(world.state_file))
+
+
+def test_an_interrupt_during_restore_prints_the_restore_from_hint(tool, copy_world, monkeypatch, capsys):
+    """Round 5, item 6: a second Ctrl-C lands while restore runs. The state file stays and
+    the operator is told the exact command to finish the job."""
+    world = copy_world()
+    world.replay.setup()
+    real_restore_saved = tool.restore_saved
+
+    def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(tool, "restore_saved", interrupted)
+    with contextlib.suppress(KeyboardInterrupt, SystemExit):
+        world.replay.restore()
+    output = capsys.readouterr().out
+    monkeypatch.setattr(tool, "restore_saved", real_restore_saved)
+    try:
+        assert world.state_file.exists(), "an interrupted restore must keep the state file"
+        assert f"--restore-from {world.state_file}" in output, f"no exact --restore-from hint in: {output!r}"
+    finally:
+        tool.restore_from_file(str(world.state_file))
+
+
+# ----------------------------------------------------------- the state file names its database
+
+
+def test_the_state_file_records_the_database_and_server_it_was_written_against(copy_world):
+    world = copy_world()
+    world.replay.setup()
+    try:
+        saved = json.loads(world.state_file.read_text())
+        db = SessionLocal()
+        try:
+            current = db.execute(text("SELECT current_database()")).scalar()
+        finally:
+            db.close()
+        assert saved.get("database") == current, f"state file database {saved.get('database')!r} != {current!r}"
+        assert "server_addr" in saved, f"the state file must record the server address: {sorted(saved)}"
+    finally:
+        world.replay.restore()
+
+
+def test_restore_from_a_state_file_of_another_database_is_refused(tool, copy_world):
+    world = copy_world()
+    world.replay.setup()
+    saved = json.loads(world.state_file.read_text())
+    rewired = world.workspace()
+    foreign = world.state_file.with_name("other-copy-state.json")
+    foreign.write_text(json.dumps({**saved, "database": "sorento_some_other_copy"}))
+    try:
+        with contextlib.suppress(Exception, SystemExit):
+            tool.restore_from_file(str(foreign))
+        assert world.workspace() == rewired, "a state file from another database was restored into this one"
+        assert foreign.exists(), "a refused state file must be kept"
+    finally:
+        tool.restore_from_file(str(world.state_file))
+
+
+def test_the_documented_state_file_location_is_not_under_tmp(tool):
+    """Round 5, item 6: /tmp is world-readable on many machines and cleaned at reboot; the
+    crash-safety file (and its example) belongs in the user's own space."""
+    import re as _re
+
+    default = tool._parser().get_default("state_file") or ""
+    assert not str(default).startswith(("/tmp", "/private/tmp")), default
+    documented = _re.findall(r"--(?:state-file|restore-from)\s+(\S+)", tool.__doc__ or "")
+    assert documented, "the docstring documents no state-file location"
+    assert all(not p.startswith(("/tmp", "/private/tmp")) for p in documented), documented
