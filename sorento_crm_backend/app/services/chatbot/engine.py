@@ -1202,15 +1202,43 @@ def _may_see_salespeople(db: Session, contact_respond_id: str, space_id: Any) ->
         return False
 
 
+def _customer_visibility(db: Session, contact_respond_id: str, space_id: Any) -> tuple[bool, frozenset[str] | None]:
+    """(include, ids) for the Customer block: office staff see every active customer; a dealer (linked
+    customers, no office access type, `ContactCustomerScope.enforced`) only its own links; a contact with
+    neither gets no Customer block. Fails closed."""
+    try:
+        from app.services import contact_customer_scope
+        from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+        resolved = resolve_contact_with_null_workspace_fallback(
+            db, contact_id=contact_respond_id, space_id=(str(space_id).strip() or None) if space_id else None
+        )
+        if resolved is None:
+            return False, None
+        scope = contact_customer_scope.contact_customer_scope(db, str(resolved))
+        if scope.staff:
+            return True, None
+        if scope.enforced:
+            return True, frozenset(scope.customer_ids)
+        return False, None
+    except Exception:  # noqa: BLE001 - fail closed
+        logger.warning("chatbot: customer visibility lookup failed", exc_info=True)
+        return False, None
+
+
 def _lookup_lines(
-    db: Session, message: str, config: Any, hidden: frozenset[str] = frozenset(), include_salespeople: bool = False
+    db: Session, message: str, config: Any, hidden: frozenset[str] = frozenset(), include_salespeople: bool = False,
+    customers: tuple[bool, frozenset[str] | None] = (False, None),
 ) -> tuple[list[str], dict[str, Any]]:
     """CHAT-SLIM-INDEX: the lookup-list blocks for the message's own line, plus the trace event
     (`pieces` and `hits`). Advisory like `_candidate_lines`: a failure (loader, embedder, anything)
     leaves the blocks out, in a savepoint so the session stays usable, and the turn goes on."""
     try:
         with db.begin_nested():
-            rows = lookup_lists.load_rows(db, hidden_spec_keys=hidden, include_salespeople=include_salespeople)
+            rows = lookup_lists.load_rows(
+                db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
+                include_customers=customers[0], customer_ids=customers[1],
+            )
             brand_words = lookup_lists.brand_words(db)
             embed = lookup_lists.embedder(db)
             lookup_lists.warm(rows, embed)
@@ -4600,6 +4628,7 @@ def _run_stages_body(  # noqa: PLR0915
             _lookup_lines(
                 db, user_turn.own_text, parser_config, hidden_spec,
                 _may_see_salespeople(db, str(contact_respond_id), default_space_id(db)),
+                _customer_visibility(db, str(contact_respond_id), default_space_id(db)),
             )
             if parser_config.lookup_lists else (None, None)
         )

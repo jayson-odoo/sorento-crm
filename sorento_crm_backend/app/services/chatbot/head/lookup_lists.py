@@ -29,7 +29,7 @@ MARKER = "== LOOKUP LISTS =="
 HEADER_NOUN = {
     "category": "Category", "spec": "Spec", "file_type": "File type", "brand": "Brand",
     "promotion_kind": "Promotion kind", "salesperson": "Salesperson", "location": "Location",
-    "sales_channel": "Sales channel",
+    "sales_channel": "Sales channel", "customer": "Customer",
 }
 FLOOR_SPELLING = 0.5
 #: The base meaning floor (the measured 3-large config); `shortlist` reads `FLOOR_MEANING_BY_LIST`.
@@ -41,10 +41,10 @@ FLOOR_MEANING_BY_LIST = {
 _FLOOR_MEANING_OTHER = 0.55
 TOP_K = {
     "category": 10, "spec": 10, "file_type": 5, "brand": 3, "promotion_kind": 3, "salesperson": 5, "location": 5,
-    "sales_channel": 2,
+    "sales_channel": 2, "customer": 5,
 }
 DEFAULT_ORDER = (
-    "category", "spec", "file_type", "brand", "promotion_kind", "salesperson", "location", "sales_channel",
+    "category", "spec", "file_type", "brand", "promotion_kind", "salesperson", "location", "sales_channel", "customer",
 )
 
 #: The word lists the v63 prompt carried (category translations, file type words), as row texts:
@@ -89,6 +89,7 @@ USE_PROVIDER = _UseProvider()
 EMBED: Any = USE_PROVIDER
 
 _LINE_RE = re.compile(r"^[ \t]*" + re.escape(MARKER) + r"[ \t]*$", re.MULTILINE)
+_CUSTOMER_BLOCKERS = frozenset({"category", "brand", "sales_channel", "location"})
 _WORD_RE = re.compile(r"[^\W_]+")
 _CODE_WORD_RE = re.compile(r"\d{3,}|(?=[a-z0-9]*\d)(?=[a-z0-9]*[a-z])[a-z0-9]{5,}")
 
@@ -194,6 +195,10 @@ def shortlist(
         by_list[name] = [
             p for p in usable if not (name == "category" and any(f" {b} " in f" {p} " for b in brand_words))
         ]
+    # A piece that is exactly another list's word (category, brand, channel, location) feeds no customer row.
+    other_words = {_fold(t) for r in rows if r.list_name in _CUSTOMER_BLOCKERS for t in r.texts} | set(brand_words)
+    if "customer" in by_list:
+        by_list["customer"] = [p for p in by_list["customer"] if p not in other_words]
     row_texts = sorted({t for r in rows for t in r.texts if _fold(t)})
     vec = _vectors(embed, [*usable, *row_texts])
 
@@ -356,8 +361,24 @@ def _salesperson_rows(db: "Session") -> list[LookupRow]:
     return out
 
 
+def _customer_rows(db: "Session", only_ids: frozenset[str] | None) -> list[LookupRow]:
+    """Active customers of the session's companies, labelled as the customer picker shows them
+    (`customer_name`); `only_ids` narrows to a dealer contact's own linked customers."""
+    from app.models.order import Customer
+
+    query = db.query(Customer.id, Customer.customer_name).filter(Customer.is_active.is_(True))
+    if only_ids is not None:
+        query = query.filter(Customer.id.in_(list(only_ids)))
+    return [
+        LookupRow("customer", str(cid), name.strip(), (name.strip(),))
+        for cid, name in query.order_by(Customer.customer_code).all()
+        if name and name.strip() and _fold(name)
+    ]
+
+
 def load_rows(
-    db: "Session", *, hidden_spec_keys: frozenset[str] = frozenset(), include_salespeople: bool = True
+    db: "Session", *, hidden_spec_keys: frozenset[str] = frozenset(), include_salespeople: bool = False,
+    include_customers: bool = False, customer_ids: frozenset[str] | None = None,
 ) -> list[LookupRow]:
     """Categories (searchable and active, company-scoped by the session), class labels, product types,
     spec word values, file types and the sales channels."""
@@ -390,6 +411,8 @@ def load_rows(
     out.extend(_location_rows(db))
     if include_salespeople:
         out.extend(_salesperson_rows(db))
+    if include_customers:
+        out.extend(_customer_rows(db, customer_ids))
     out.extend(LookupRow("sales_channel", ch, ch, (ch,)) for ch in SALES_CHANNELS)
     return out
 
@@ -505,6 +528,18 @@ def provider_embedder(api_key: str) -> Embedder:
                 _cache[_key(t)] = list(item.embedding)
         return [_cache[_key(t)] for t in texts]
 
+    def fill(texts: list[str]) -> None:
+        """The background warm-up: every uncached text in chunks, each chunk under its own timeout, no
+        total deadline; chunks are kept as they complete."""
+        todo = [t for t in dict.fromkeys(texts) if _key(t) not in _cache]
+        client = OpenAIProvider(api_key)._client(timeout=EMBED_TIMEOUT, max_retries=0)
+        for i in range(0, len(todo), EMBED_CHUNK):
+            chunk = todo[i : i + EMBED_CHUNK]
+            resp = client.embeddings.create(model=EMBED_MODEL, input=chunk)
+            for t, item in zip(chunk, resp.data):
+                _cache[_key(t)] = list(item.embedding)
+
+    embed.fill = fill  # type: ignore[attr-defined]
     embed.needs_warm = True  # type: ignore[attr-defined]
     embed.is_cached = lambda texts: all(_key(t) in _cache for t in texts)  # type: ignore[attr-defined]
     return embed
@@ -526,7 +561,7 @@ def warm(rows: list[LookupRow], embed: Embedder | None) -> None:
 
     def run() -> None:
         try:
-            embed(texts)
+            getattr(embed, "fill", embed)(texts)
         except Exception:  # noqa: BLE001 - advisory
             pass
         finally:
