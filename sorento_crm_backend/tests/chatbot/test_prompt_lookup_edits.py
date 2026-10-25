@@ -225,3 +225,40 @@ def test_the_warehouse_code_list_under_the_short_token_rule_is_removed():
     out = ple.apply(fixture())
     for e in edits:
         assert e.anchor not in out or e.payload.startswith(e.anchor)
+
+
+# ------------------------------------------------------------------ crew audit leftovers: warehouse code examples
+#
+# Certificate bodies: NO test. The v63 text names CIDB / SPAN / SIRIM only in the shipment-versus-document rule
+# (v63 line 175), and the ENTITY OPERATIONS attachment_type line names only the generic kind "certificate". Certificate
+# schemes are not lookup values today: `lookup_lists._file_type_rows` (lookup_lists.py:343-356) offers attachment types
+# and certificate KINDS only, while schemes live in `chatbot_prompt_vars._cert_schemes` (:409) and
+# `closed_lists_index._file_matches` (closed_lists_index.py:248-276). A body list would have no block to point to.
+#
+# Warehouse codes ARE lookup values (location rows, "<name> (<code>)"). The examples naming real codes in the LOCATION
+# rule ("IN AN ORDER OR OUTSTANDING ASK, A SHORT TOKEN IS A LOCATION", v63 lines 902-914) and in the DOCUMENT rule
+# lines (v63 lines 99, 710-713, 843-848) become the "<warehouse code>" placeholder.
+
+WAREHOUSE_EXAMPLE_SPANS = (
+    '"BRW", "MWH", "RSW", "DC1", "WH3"',           # LOCATION rule, shape (a) list (v63 :908)
+    '"BRW-IB", "MWH-IB", "BRW-ACTS"',               # LOCATION rule, shape (b) list (v63 :909)
+    '"outstanding in BRW-IB"',                      # LOCATION rule examples (v63 :913)
+    '"BRW", "BRW-IB", "MWH", "BB" are warehouse',   # LOCATION rule examples (v63 :914)
+    '"at BRW"',                                     # DOCUMENT rule (v63 :99)
+    "outstanding how many at BRW?",                 # DOCUMENT rule (v63 :710, :843)
+    "both at BRW-IB",                               # DOCUMENT rule (v63 :712, :847)
+    "outstanding for SRTWT7445 at BRW",             # DOCUMENT rule (v63 :713, :848)
+)
+
+
+def test_every_warehouse_code_example_span_is_covered_by_an_edit():
+    for span in WAREHOUSE_EXAMPLE_SPANS:
+        assert [e for e in TEXT_EDITS if span in e.anchor], f"no edit covers the warehouse code example {span!r}"
+
+
+def test_replacements_use_the_warehouse_code_placeholder_and_name_no_real_code():
+    import re
+
+    assert any("<warehouse code>" in e.payload for e in TEXT_EDITS), "no replacement uses the <warehouse code> placeholder"
+    for e in TEXT_EDITS:
+        assert not re.search(r"\b(BRW|MWH|RSW|DC1|WH3)\b", e.payload), e.payload[:80]
