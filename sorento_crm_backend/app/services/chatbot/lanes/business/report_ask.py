@@ -357,6 +357,27 @@ def status_as_basis(verdict: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+#: The roster picks whose rows are one kind of subject, and the `group_by` that names that kind.
+_PICK_AXIS = {"customer_pick": "customer", "product_pick": "product"}
+
+
+def without_pick_axis(verdict: dict[str, Any], pending: Any) -> dict[str, Any]:
+    """Engine seam, before `by_capability` (CHAT-CUSTOMER-PICK-RESUME, prod v63 25 Oct): a pick of a
+    position on an open customer / product roster whose `group_by` names the roster's own kind ("1" over
+    "Which one do you mean?", parsed with `group_by` customer) is the pick, not a breakdown: the axis is
+    dropped, so the held ask resumes with the picked row instead of becoming a ranking by that kind (and
+    a sales total refused as "I can't break sales down by customer"). Any other axis, an "all" answer
+    and every other open question are untouched. Parser fields only."""
+    axis = _PICK_AXIS.get(getattr(pending, "kind", None) or "")
+    if axis is None or jsc.js_string(verdict.get("group_by") or "").strip().lower() != axis:
+        return verdict
+    answer = verdict.get("open_question_answer") if isinstance(verdict.get("open_question_answer"), dict) else {}
+    picked = answer.get("mode") == "pick" and bool(jsc.array(answer.get("picked")))
+    if not (picked or jsc.array(verdict.get("reference_positions"))):
+        return verdict
+    return {**verdict, "group_by": None}
+
+
 def by_capability(verdict: dict[str, Any]) -> dict[str, Any]:
     """Engine seam, before grounding (REPORT-SMART-1021 step 2): a sales figure ask whose
     `group_by` its kind's tool cannot draw (`CAN_DRAW`) but the report ask can, or whose

@@ -5038,6 +5038,8 @@ def _run_stages_body(  # noqa: PLR0915
     # so grounding never splits one ("ZZT SINK" into the class SINK plus a spec word).
     from app.services.chatbot.lanes.business import report_ask as _report_ask
 
+    # CHAT-CUSTOMER-PICK-RESUME: a pick's axis naming the roster's own kind is the pick, not a breakdown.
+    verdict = _report_ask.without_pick_axis(verdict, state_in.pending)
     # REPORT-SMART-1021: an axis the named report kind's tool cannot draw is the report ask's.
     verdict = _report_ask.by_capability(verdict)
     verdict, _ranking_words = _report_ask.hold_words(verdict)

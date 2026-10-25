@@ -45,14 +45,15 @@ def _t2(**over: Any) -> dict[str, Any]:
     return _parser_output(**{**base, **over})
 
 
-def _ask_then_pick(chat, tag: str, t1: dict[str, Any] | None = None, t2: dict[str, Any] | None = None):
+def _ask_then_pick(chat, tag: str, t1: dict[str, Any] | None = None, t2: dict[str, Any] | None = None,
+                   text: str = "1"):
     _r1, captured1 = chat(t1 or _t1(), "Dealer zz demo oct total sales", f"ZZT-cpr-{tag}-1",
                           resolve_services=_ambiguous_customer_services())
     assert _report_calls(captured1) == [], captured1
     assert (chat.session().get("open_question") or {}).get("kind") == "customer_pick", (
         "setup: the customer picker must be armed", chat.session().get("open_question"),
     )
-    return chat(t2 or _t2(), "1", f"ZZT-cpr-{tag}-2")
+    return chat(t2 or _t2(), text, f"ZZT-cpr-{tag}-2")
 
 
 def _assert_resumed(result: Any, captured: list[tuple[str, dict[str, Any]]], uuid: str = CUSTOMER_UUID_1) -> None:
@@ -84,7 +85,7 @@ def test_p3_a_pick_with_another_axis_month_is_still_the_held_total(chat):
 
 
 def test_p4_the_second_option_picks_the_second_account(chat):
-    result, captured = _ask_then_pick(chat, "p4", t2=_t2(open_question_answer=_pick(2)))
+    result, captured = _ask_then_pick(chat, "p4", t2=_t2(open_question_answer=_pick(2)), text="2")
     _assert_resumed(result, captured, CUSTOMER_UUID_2)
 
 
@@ -92,3 +93,5 @@ def test_g1_guard_the_plain_pick_parse_still_resumes(chat):
     """The pick parse with no axis (today's green path) is unchanged."""
     result, captured = _ask_then_pick(chat, "g1", t2=_t2(group_by=None, order_status=None))
     _assert_resumed(result, captured)
+
+
