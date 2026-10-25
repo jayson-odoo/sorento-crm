@@ -1,6 +1,6 @@
 # PLAN: chatbot lookup lists before the parser + list-free prompt version (CHAT-SLIM-INDEX build, 25 Oct 2026)
 
-Status: PLAN (build), track L (prompt-version migration). Lane CHAT-SLIM-INDEX-PLAN, branch crew/chat-slim-index-plan.
+Status: BUILT, reviewer READY, security CLEAN, final paid check done (R5 19->22 end-to-end, TRAIN 90->95, owner hard rows 3/3); waiting on the owner hand test. Track L (prompt-version migration). Lane CHAT-SLIM-INDEX-PLAN, branch crew/chat-slim-index-plan.
 UAC: `chat-lookup-lists-25oct-acceptance-criteria.md`. Eval history and gates: `PLAN-chat-slim-index-25oct.md`.
 
 ## Owner rulings this plan executes (25 Oct, verbatim via crew)
