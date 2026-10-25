@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDateInMalaysia } from '@/lib/helpers';
 import {
   useEffect,
   useLayoutEffect,
@@ -468,11 +469,10 @@ function formatDraftSavedAt(iso: string): string {
   }
 }
 
-/** A stored ISO date as DD/MM/YYYY; anything else as it came. */
+/** A stored (naive UTC) timestamp as DD/MM/YYYY in Malaysia time; anything else as it came. */
 function formatDisplay(value: string | undefined, format?: 'date'): string | undefined {
   if (!value || format !== 'date') return value;
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : value;
+  return formatDateInMalaysia(value) || value;
 }
 
 function fieldSpansFullWidth(f: FieldDef): boolean {

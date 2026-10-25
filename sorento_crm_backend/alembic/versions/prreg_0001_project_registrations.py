@@ -205,12 +205,24 @@ def downgrade() -> None:
     slug = PERMISSION[0]
     # Put the project rule back on the shipped default, but ONLY where it is still exactly the
     # shape the upgrade wrote: a PPF rule someone has changed since is their choice.
+    # The counter moves with it: the PPF draws reset it, and the next PRJ code must land
+    # past every PRJ code that already exists, or the rollback hands out a duplicate.
     bind.execute(
         sa.text(
-            """
+            f"""
             UPDATE document_numbering_rules
-               SET prefix_template = 'PRJ-', number_digits = 6, reset_policy = 'none'
-             WHERE doc_type = 'project' AND prefix_template = 'PPF{yy}{mm}'
+               SET prefix_template = 'PRJ-', number_digits = 6, reset_policy = 'none',
+                   last_reset_key = NULL,
+                   next_value = GREATEST(
+                       next_value,
+                       COALESCE(
+                           (SELECT MAX(substring(project_code from '^PRJ-([0-9]+)$')::int)
+                              FROM "{p}".projects
+                             WHERE project_code ~ '^PRJ-[0-9]+$'),
+                           0
+                       ) + 1
+                   )
+             WHERE doc_type = 'project' AND prefix_template = 'PPF{{yy}}{{mm}}'
                AND number_digits = 3 AND reset_policy = 'monthly'
             """
         )

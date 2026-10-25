@@ -206,3 +206,22 @@ describe('SubmissionForm - project_registration rejected (round 2, D2 and N2)', 
     expect(screen.getByRole('button', { name: /delete draft/i })).toBeInTheDocument();
   });
 });
+
+describe('SubmissionForm - project_registration Date is Malaysia time (round 3b)', () => {
+  it('a submission at 17:30 UTC on the 24th reads 25/10/2026 (01:30 in Malaysia)', async () => {
+    asMock(fetchSubmission).mockResolvedValue(
+      draft({
+        status: 'pending',
+        is_editable: false,
+        is_draft: false,
+        submitted_at: '2026-10-24T17:30:00',
+      }),
+    );
+    const { container } = render(
+      <SubmissionForm kind="project_registration" submissionId="reg-1" />,
+    );
+    const label = await screen.findByText('Date', { selector: 'label' });
+    const input = container.querySelector(`#${label.getAttribute('for')}`) as HTMLInputElement;
+    expect(input.value).toBe('25/10/2026');
+  });
+});

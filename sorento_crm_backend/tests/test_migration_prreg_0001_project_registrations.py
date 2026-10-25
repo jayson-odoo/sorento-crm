@@ -373,3 +373,39 @@ def test_downgrade_removes_the_permission_and_the_table(conn):
     _downgrade(conn)
     assert conn.execute(text("select count(*) from user_permissions where slug = :s"), {"s": PERMISSION}).scalar() == 0
     assert conn.execute(text("select to_regclass('projects.project_registrations')")).scalar() is None
+
+
+def test_downgrade_keeps_the_counter_past_every_existing_prj_code(conn):
+    """Rolling back must not hand out a PRJ code that already exists (the counter went
+    PPF-side while the upgrade ran): 248 after a PRJ-000247, drawn through an upgrade and a
+    rollback, still reads PRJ-000248."""
+    from datetime import date
+
+    from sqlalchemy.orm import Session
+
+    from app.services.numbering_service import NumberingService
+
+    rule_id = _set_project_rule(conn, next_value=248)
+    company_id = conn.execute(text("select id from companies order by code limit 1")).scalar()
+    if company_id is None:
+        company_id = str(uuid.uuid4())
+        conn.execute(
+            text("insert into companies (id, code, name, is_active) values (:i, 'ZZTMIG', 'zzt mig', true)"),
+            {"i": company_id},
+        )
+    conn.execute(
+        text(
+            "insert into projects.projects (id, company_id, project_code, title, normalised_title, outcome) "
+            "values (:i, :c, 'PRJ-000247', 'ZZT MIG TOWER', 'zzt mig tower', 'open')"
+        ),
+        {"i": str(uuid.uuid4()), "c": company_id},
+    )
+    _upgrade(conn)
+    session = Session(bind=conn)
+    code = NumberingService(session).get_next_number("project", reference_date=date(2026, 10, 5), commit_rule=False)
+    assert code == "PPF2610001"
+    session.flush()
+    _downgrade(conn)
+    assert _rule(conn, rule_id)[:3] == ("PRJ-", 6, "none")
+    session.expire_all()
+    assert NumberingService(session).get_next_number("project", commit_rule=False) == "PRJ-000248"
