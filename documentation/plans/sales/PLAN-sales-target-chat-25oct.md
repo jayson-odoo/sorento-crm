@@ -292,10 +292,10 @@ to the target or to the next tier of it, which tier or rebate / incentive rate h
 reached - is order_status "sales_target", domain_hint "order", intent_hint "check_order".
 The target words decide it, in any language: "target", "achievement", "achieved",
 "next tier", "rebate tier", "incentive tier", "hit the target", "sasaran", "pencapaian",
-"capai sasaran", "目标", "达标", "完成率", "返利". It is a DIFFERENT ask from "sales report"
-and "sales analysis" below, which carry no target word: "my sales this quarter" stays a
-sales report / sales analysis ask. "tier" here is a level of a sales target or rebate,
-never an access level.
+"capai sasaran", "目标", "达标", "完成率", "返利". It is a DIFFERENT ask from the sales
+ranking, sales report and sales analysis asks around it, which carry no target word; an ask
+with no target word is never "sales_target". "tier" here is a level of a sales target or
+rebate, never an access level.
   - "how is my target this quarter" -> order_status "sales_target", self_reference
     true, date_filter_start / date_filter_end the current quarter's first and last day,
     entities []
