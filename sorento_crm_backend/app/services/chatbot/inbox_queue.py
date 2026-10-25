@@ -79,6 +79,10 @@ LOOKUP_BACKOFF_MAX_SECONDS = 60.0
 LOOKUP_MAX_FAILURES = 10
 LOOKUP_MAX_ROW_AGE_SECONDS = 3600.0
 LOOKUP_FAILED_STAGE = "lookup_failed"
+# PHOTO-FIRST-LOOKAHEAD (owner, 25 Oct, "1a ok"): a queued photo goes before the contact's
+# other rows for this long after it was queued; past it (a read that will not finish), it
+# takes its send-order place, so the texts behind it are answered anyway.
+PHOTO_FIRST_MAX_WAIT_SECONDS = 60.0
 # IQ-40: a copy refused at enqueue leaves one failed row with one of these stages.
 REFUSED_RATE_LIMIT_STAGE = "refused_rate_limit"
 REFUSED_INBOX_FULL_STAGE = "refused_inbox_full"
@@ -479,23 +483,34 @@ def _send_key(envelope: Any, created_at: Any) -> float:
     return created_at.timestamp() * 1000 if created_at is not None else float("inf")
 
 
-def _order_key(send_key: float, attachment_type: Any, mime_type: Any) -> tuple[int, float]:
+def _order_key(
+    send_key: float, attachment_type: Any, mime_type: Any, waited_seconds: float = 0.0
+) -> tuple[int, float]:
     """PHOTO-FIRST-LOOKAHEAD (owner, 25 Oct): a queued photo is answered before the
     contact's other queued rows, whatever the send times say (WhatsApp sends a photo once it
-    has uploaded, so a text tapped right after overtakes it); send order otherwise, a voice
-    note included ("Photo only"). Only rows already queued count: nothing waits for one that
-    is not."""
+    has uploaded, so a text tapped right after overtakes it), for its first
+    `PHOTO_FIRST_MAX_WAIT_SECONDS` in the queue; send order otherwise, a voice note included
+    ("Photo only"). Only rows already queued count: nothing waits for one that is not."""
     detected = media_intake.detect({"attachment": {"type": attachment_type, "mimeType": mime_type}})
-    photo = detected is not None and detected[0] == "image"
+    photo = detected is not None and detected[0] == "image" and waited_seconds < PHOTO_FIRST_MAX_WAIT_SECONDS
     return (0 if photo else 1, send_key)
 
 
-def _row_order_key(envelope: Any, created_at: Any) -> tuple[int, float]:
+def _waited_seconds(created_at: Any, now: Any) -> float:
+    return (now - created_at).total_seconds() if created_at is not None else 0.0
+
+
+def _row_order_key(envelope: Any, created_at: Any, now: Any) -> tuple[int, float]:
     inner = envelope.get("message") if isinstance(envelope, dict) else None
     for step in ("message", "message", "attachment"):
         inner = inner.get(step) if isinstance(inner, dict) else None
     attachment = inner if isinstance(inner, dict) else {}
-    return _order_key(_send_key(envelope, created_at), attachment.get("type"), attachment.get("mimeType"))
+    return _order_key(
+        _send_key(envelope, created_at),
+        attachment.get("type"),
+        attachment.get("mimeType"),
+        _waited_seconds(created_at, now),
+    )
 
 
 def _queued_keys(db: Any, contact: str) -> list[tuple[tuple[int, float], Any, str]]:
@@ -519,9 +534,17 @@ def _queued_keys(db: Any, contact: str) -> list[tuple[tuple[int, float], Any, st
         )
         .all()
     )
+    from app.services.chatbot import engine
+
+    now = engine._now()
     keys = [
         (
-            _order_key(_send_key({"message": {"message": {"messageId": mid, "timestamp": ts}}}, created), kind, mime),
+            _order_key(
+                _send_key({"message": {"message": {"messageId": mid, "timestamp": ts}}}, created),
+                kind,
+                mime,
+                _waited_seconds(created, now),
+            ),
             created,
             str(rid),
         )
@@ -787,7 +810,7 @@ def _run_row(turn_id: str, claimed_at: Any, contact: str, factory: Callable[[], 
         if row is None:
             return "missing"
         stored = dict(row.envelope or {})
-        order_key = _row_order_key(stored, row.created_at)
+        order_key = _row_order_key(stored, row.created_at, engine._now())
         row_age = (engine._now() - row.created_at).total_seconds() if row.created_at is not None else 0.0
         # The takeover flag is read when the row comes up, as the direct-ingress job did.
         record = direct_ingress._lookup_contact(db, contact)
