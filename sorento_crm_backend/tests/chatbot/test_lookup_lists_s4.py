@@ -153,6 +153,8 @@ def _turn(session_factory, stub_access, monkeypatch, *, role: str) -> list[str]:
     _seed_customers(session_factory)
     if role == "dealer":
         _link_customers(session_factory, QUARTZ)
+    elif role == "unlinked":
+        pass  # no linked customer, no office access type
     else:
         _give_access_type(session_factory, "Sorento Office")
     monkeypatch.setattr(ll, "EMBED", None, raising=False)
@@ -182,6 +184,12 @@ def test_dealer_contact_is_offered_only_its_own_customer(session_factory, seeded
     lines = _turn(session_factory, stub_access, monkeypatch, role="dealer")
     assert HDR in lines and f"- {QUARTZ}" in lines, lines
     assert f"- {MARBLE}" not in lines and not any(MARBLE in ln for ln in lines if ln.startswith("- ")), lines
+
+
+def test_contact_with_no_link_and_no_office_access_gets_no_customer_block(session_factory, seeded, stub_access, monkeypatch):
+    lines = _turn(session_factory, stub_access, monkeypatch, role="unlinked")
+    assert HDR not in lines, lines
+    assert not any(ln.startswith("- ") and (QUARTZ in ln or MARBLE in ln) for ln in lines), lines
 
 
 # ------------------------------------------------------------------ long warm-up
