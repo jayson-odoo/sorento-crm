@@ -279,6 +279,14 @@ describe('A grid inside a Dialog/Sheet body opts out of the bounded scroller (B2
     );
   });
 
+  it('counts a conditional site that opts out only in its dialog branch', () => {
+    // DO-SO-LINK-SURFACE (#1855): DeliveriesTable keeps the bounded default on the SO page
+    // and opts out inside the lightbox, so its one site reads `onPage ? undefined : false`.
+    const count = (src: string) => src.match(SCROLLER_MAX_HEIGHT_FALSE)?.length ?? 0;
+    expect(count('scrollerMaxHeight={onPage ? undefined : false}')).toBe(1);
+    expect(count("scrollerMaxHeight={onPage ? undefined : '24rem'}")).toBe(0);
+  });
+
   it('every enumerated file still exists', () => {
     const missing = [...SCROLLER_MAX_HEIGHT_FALSE_SITES.keys()].filter(
       (file) => !fs.existsSync(file),
