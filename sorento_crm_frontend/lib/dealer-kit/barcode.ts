@@ -72,8 +72,9 @@ const EAN_GUARDS: ReadonlyArray<readonly [number, number]> = [
 ];
 const CODE128_QUIET = 10;
 
-/** A monospace digit is about 0.6em wide, so 11X fills its 7X cell. */
-const DIGIT_FONT_MODULES = 11;
+/** A monospace digit is about 0.6em wide, so 10.5X fills its 7X cell with a
+ * hair of white either side (11X touched the guard bars). */
+const DIGIT_FONT_MODULES = 10.5;
 /** The font gives way to the height in a squat box so the bars stay tall. */
 const MAX_FONT_SHARE_OF_HEIGHT = 0.22;
 const MONO_ADVANCE_EM = 0.6;

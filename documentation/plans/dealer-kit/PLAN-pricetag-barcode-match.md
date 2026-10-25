@@ -45,7 +45,7 @@ function of the box only (no absolute mm floors), so a zoomed or resized box sca
 
 Geometry (module X = box width / total modules):
 - EAN-13: 11X left quiet zone (holds the first digit), 95X symbol, 7X right quiet zone = 113X.
-- Digit font 11X (a monospace digit is about 0.6em, so it fills its 7X cell), capped at 22% of the
+- Digit font 10.5X (a monospace digit is about 0.6em, so it fills its 7X cell), capped at 22% of the
   box height for a squat box. Code text uses the same size, serif; a code too long for the width
   is compressed with `textLength` rather than clipped.
 - Guard bars run 0.45 x digit font below the normal bars.
