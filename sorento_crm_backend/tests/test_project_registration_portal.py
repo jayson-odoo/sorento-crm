@@ -345,6 +345,8 @@ def test_a11_an_approved_row_carries_its_ppf_no(world):
     mine = next(r for r in items if r["id"] == rid)
     assert mine["status"] == "approved"
     assert mine["ppf_no"] == "PPF2601001"
+    # The landing board card heads with `document_number`, so the PPF is the card's number too.
+    assert mine["document_number"] == "PPF2601001"
     detail = as_contact(world, world.a).get(f"{SUB}/{rid}").json()
     assert detail["reference"] == "PPF2601001"
     assert detail["is_draft"] is False

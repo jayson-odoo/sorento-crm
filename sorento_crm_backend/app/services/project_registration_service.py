@@ -455,7 +455,7 @@ def _portal_summary(db: Session, row: ProjectRegistration) -> Dict[str, Any]:
         "kind": KIND,
         "title": row.title or "Project registration",
         "reference": ppf,
-        "document_number": None,
+        "document_number": ppf,
         "status": row.status,
         "approval_status": None,
         "rejection_reason": row.reject_reason,
