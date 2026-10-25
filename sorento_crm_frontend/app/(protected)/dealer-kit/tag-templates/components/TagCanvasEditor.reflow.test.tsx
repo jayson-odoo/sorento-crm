@@ -43,6 +43,16 @@ const hoisted = vi.hoisted(() => {
     const textChild = {
       width: (v?: number) => (v === undefined ? state.textWidth : (state.textWidth = v)),
       height: (v?: number) => (v === undefined ? state.textHeight : (state.textHeight = v)),
+      // The unbroken text `KonvaTagLayer` stashes on the node, and the lines
+      // it draws (PRICETAG-BARCODE-MATCH: Konva's own wrap is off).
+      attrs: {} as { sourceText?: string },
+      lines: '',
+      getAttr(name: 'sourceText') {
+        return this.attrs[name];
+      },
+      text(v?: string) {
+        return v === undefined ? this.lines : (this.lines = v);
+      },
     };
     return {
       id: () => id,
@@ -169,6 +179,7 @@ vi.mock('../../services/tagDataService', () => ({
   }),
 }));
 
+import { textLayerLines } from '@/lib/dealer-kit/text-layout';
 import { TagCanvasEditor } from './TagCanvasEditor';
 
 function textLayerDoc(overrides: Partial<TextLayerProps> = {}): TagTemplateDoc {
@@ -302,5 +313,34 @@ describe('TagCanvasEditor live text reflow (AC-S6-2)', () => {
     const padPx = 1 * CANVAS_PX_PER_MM;
     expect(node.textChild.width()).toBeCloseTo(node.width() - padPx * 2);
     expect(node.textChild.height()).toBeCloseTo(node.height() - padPx * 2);
+  });
+
+  it('re-breaks the text into lines live, the way the print page will (PRICETAG-BARCODE-MATCH)', () => {
+    const doc = textLayerDoc();
+    render(<TagCanvasEditor doc={doc} onChange={vi.fn()} />);
+
+    act(() => {
+      fireEvent.click(document.querySelector('[data-testid="layer-text-1"]')!);
+    });
+
+    const node = hoisted.nodesById.get('text-1')!;
+    const source = 'aaaa bbbb cccc dddd eeee ffff';
+    node.textChild.attrs.sourceText = source;
+    node.scaleX(0.6);
+    node.scaleY(2);
+
+    act(() => {
+      hoisted.handlers.onTransform?.();
+    });
+
+    expect(node.textChild.text()).toBe(
+      textLayerLines(
+        doc.layers[0].props as TextLayerProps,
+        source,
+        node.width() / CANVAS_PX_PER_MM,
+        node.height() / CANVAS_PX_PER_MM,
+      ).join('\n'),
+    );
+    expect(node.textChild.text()).toContain('\n');
   });
 });
