@@ -1,7 +1,7 @@
 # PLAN: PROMPT-V109, v63 feature edits one at a time
 
-Status: gated, no candidate passed (25 Oct 2026); waiting on owner/crew decision. Track: prompt-only lane, no repo code change; eval gates on a crew copy.
-Result (crew/state/eval/v109/SUMMARY.md): F1 target unmoved; F2 count/compare 48/56 on gold but drift (G125) and the single-count class unfixed; F3 ranking_drill flaky; F4 regresses R5 and BM/ZH. Spend USD 6.07 of 11.
+Status: closed, no candidate passed (25 Oct 2026). Track: prompt-only lane, no repo code change; eval gates on a crew copy.
+Result (crew/state/eval/v109/SUMMARY.md): F1 target unmoved; F2/F2c count/compare win on gold (48/56) but the single count stays unstable (1, 9, 0 of 16) after G125 was fixed; F3 ranking_drill flaky; F4 regresses R5 and BM/ZH. Production stays v63 0f3b48e6. Spend USD 6.64 of 11.
 Owner OK 25 Oct ~15:20: dev-key budget about USD 11 (key ..bG4A), stop and report at USD 9.
 
 ## Goal
