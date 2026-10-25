@@ -153,3 +153,47 @@ or a 5+ char letter-digit word) never feed the meaning / spelling lists (AC-12).
   "sales_channel": 0.55, "brand": 0.58, "spec": 0.55, "file_type": 0.59, "customer": 0.53}`, any other list 0.55;
   `FLOOR_MEANING = 0.5` stays as the documented base only if a test needs it. Spelling floor 0.5 everywhere. Cost:
   spec words 49 of 51 and file types 136 of 137 mentions at top 10 (one each lost vs 0.5); customers 63 of 75.
+
+## S3 code contract (brands, salespeople, locations, promotion kinds)
+- Lists + header nouns + TOP_K: "brand" "Brand" 3; "salesperson" "Salesperson" 5; "location" "Location" 5;
+  "promotion_kind" "Promotion kind" 3. Render order: category, spec, file_type, brand, promotion_kind, salesperson,
+  location, sales_channel (customer last, S4).
+- Rows: brands = active_brands (turn_runtime.py:543-581) texts name + code + brand_alias words (chatbot_prompt_vars.py
+  :341), label exactly as the Known brands line spells it ("SORENTO (SRT)", context.py:100); salespeople = the same
+  source the sales report uses for agent names (find it; cite file:line), label the name; locations = active
+  warehouses, texts name + code, label "<name> (<code>)"; promotion kinds = promotion_kind_rows (turn_runtime.py:814),
+  label "<name> (<type_code>)" so the parser can still answer promotion_kind with the code.
+- The marked version already drops the Known brands / Promotion kinds / Sales channels lines (S1); these blocks replace
+  them.
+
+## S4 code contract (customers)
+- List "customer", header noun "Customer", TOP_K 5, meaning floor 0.53, spelling floor 0.5; rows = active customers of
+  the company scope (the customer picker's source; cite it), label as the picker shows the name.
+- One-span-one-list: a piece whose folded text EQUALS a row text of category, brand, sales_channel or location (or a
+  brand word) feeds no customer rows.
+- 6,850 rows: vectors warmed in a background thread on the first marked turn (never blocks a turn); until warm,
+  customer rows are spelling only. No customer vector is persisted.
+
+## S5 contract (unlabelled list-free version)
+- `app/services/chatbot/prompt_lookup_edits.py` (pure): `EDITS: tuple[Edit, ...]` with Edit(op "replace" | "delete",
+  anchor: exact text, payload: str); `apply(text) -> str | None` (None when any anchor is missing or found more than
+  once; the reason in a returned/logged message); appends the marker line `== LOOKUP LISTS ==` at the end.
+- Spans (v63 line numbers for orientation only; anchors are exact text): Product types line (L1846, delete); category
+  examples + translations inside the low_stock categories rule (L1018-1023: keep the rule clauses, drop the lists);
+  every "Specification ..." line (L1796-1845, word AND number, delete); the attachment-type word maps (L335-341, L391);
+  example brand / kind / channel name lists. Rule text naming a removed per-turn line is RENAMED to its block
+  ("Known brands:" line -> "Brand candidates" block, "Promotion kinds:" line -> "Promotion kind candidates", the
+  "Sales channels" line -> "Sales channel candidates"), never left pointing at a line the turn no longer has.
+- Per-version switches read from the template (parser.py:976-978: "compare_to", "by_words", "Sales channels"; :993
+  code_lookup) must keep their current value on the new version unless the switch is about a removed list (then say
+  which and why). No anchor inside the order_status list or the SALES sections; the SALES TARGET section is inserted
+  before `== SALES REPORT: order_status "sales_report", domain_hint "order" ==` (fc2943a9b7 prompt_inserts.py:9) and
+  must survive.
+- Migration `lkp_0001` (revision id <= 32 chars, down_revision = main's head at push time; `./scripts/alembic-reparent.sh`):
+  maskp_0001 pattern (production-labelled text read in SQL), publishes one UNLABELLED version when apply() succeeds,
+  skips when an identical template exists, logs and publishes nothing otherwise; downgrade deletes only unlabelled
+  versions carrying the marker.
+- Tests: synthetic fixture text holding every anchor once + the SALES REPORT header + a simulated SALES TARGET insert:
+  apply() removes every span, renames, appends the marker, keeps the insert byte for byte; a missing / doubled anchor
+  -> None; the migration on Postgres publishes once, unlabelled, idempotent. Lead proves the edits on the real v63 text
+  (crew-only) and records chars before / after.
