@@ -259,13 +259,13 @@ def test_o2_two_ledgers_of_one_customer_group_are_one_customer_not_a_picker(chat
 
 
 def _group_with_strays(ids: dict[str, str]) -> ResolveGateServices:
-    """Prod clone (crew, 25 Oct, "Dealer <customer> oct total sales"): the grouped "[A/C I]" ledger as a debtor-name hit,
-    its grouped "(PROJECT)" sibling, two ledgers of the same name with NO group ("- [IBORN]" and an inactive
-    "*... (SHOWCASE)"), and a different customer "(PROJECT)"."""
+    """Prod clone (crew, 25 Oct, "Dealer <customer> oct total sales"): the "[A/C I]" ledger as a debtor-name hit, its
+    "(PROJECT)" sibling and an inactive "*... (SHOWCASE)" ledger (SRT), the "- [IBORN]" ledger (MCH), and a different
+    customer "(PROJECT)" (SRT). Which of them sit in a customer group is `_seed_group_with_strays`'s `grouped`."""
 
     def hit(key: str, name: str, **display: Any) -> dict[str, Any]:
-        return {"entity_type": "customer", "canonical_code": name, "uuid": ids[key], "company_code": "SRT",
-                "display": {"customer_name": name, **display}}
+        return {"entity_type": "customer", "canonical_code": name, "uuid": ids[key],
+                "company_code": "MCH" if key in MCH_KEYS else "SRT", "display": {"customer_name": name, **display}}
 
     def _resolve(body: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -291,25 +291,44 @@ OTHER_NAME = "ZZ DEMO BATH CONCEPT SDN BHD (PROJECT)"
 
 
 GROUP_KEYS = ("ac1", "project", "iborn", "showcase")
+#: The ledgers in Mocha (MCH); the rest are Sorento (SRT). Customer groups are per company.
+MCH_KEYS = ("iborn",)
+#: The owner's prod edit (25 Oct, "i added F033 in mocha fullshun group"): "- [IBORN]" joins the MCH group of the
+#: same name, "(SHOWCASE)" stays ungrouped.
+OWNER_EDIT = ("ac1", "project", "iborn")
 
 
 def _seed_group_with_strays(session_factory, grouped: tuple[str, ...] = GROUP_KEYS) -> dict[str, str]:
-    """The five ledgers of `_group_with_strays`; `grouped` are the ones in the customer group. The prod data after the
-    owner's data fix (ruling 25 Oct 18:4x, option (a)) has all four "<NAME>" ledgers in it; before it, only "[A/C I]"
-    and "(PROJECT)" (and the rest of the group's ledgers, not modelled)."""
+    """The five ledgers of `_group_with_strays`, each in its company, the harness contact seeing both companies;
+    `grouped` are the ones in their company's customer group "<NAME>" (one per company, the same name, as on the
+    clone). Before the owner's edit only "[A/C I]" and "(PROJECT)" were grouped (and the group's other ledgers, not
+    modelled); `OWNER_EDIT` is the edit made; `GROUP_KEYS` all four."""
+    from sqlalchemy import text as sql_text
+
     from app.models.order import CustomerGroup
     from app.services.company_scope import DEFAULT_COMPANY_ID
-    from tests._mc_lookup_seed import customer
+    from tests._mc_lookup_seed import MOCHA_ID, customer, seed_mocha
+    from tests.chatbot.test_engine import CONTACT_ID
 
     db = session_factory()
-    group = CustomerGroup(name=ONE_NAME, company_id=DEFAULT_COMPANY_ID)
-    db.add(group)
+    seed_mocha(db)
+    db.execute(
+        sql_text("INSERT INTO respond_contact_companies (id, respond_contact_id, company_id) "
+                 "SELECT gen_random_uuid(), id, :company FROM respond_contacts WHERE respond_io_id = :cid"),
+        {"cid": str(CONTACT_ID), "company": MOCHA_ID},
+    )
+    groups = {}
+    for company in (DEFAULT_COMPANY_ID, MOCHA_ID):
+        groups[company] = CustomerGroup(name=ONE_NAME, company_id=company)
+        db.add(groups[company])
     db.flush()
     names = {"ac1": f"{ONE_NAME} [A/C I]", "project": f"{ONE_NAME} (PROJECT)", "iborn": f"{ONE_NAME} - [IBORN]",
              "showcase": f"*{ONE_NAME} (SHOWCASE)", "other": OTHER_NAME}
-    rows = {key: customer(db, company_id=DEFAULT_COMPANY_ID, name=name) for key, name in names.items()}
+    company_of = {key: MOCHA_ID if key in MCH_KEYS else DEFAULT_COMPANY_ID for key in names}
+    rows = {key: customer(db, company_id=company_of[key], name=name) for key, name in names.items()}
+    rows["showcase"].is_active = False
     for key in grouped:
-        rows[key].customer_group_id = group.id
+        rows[key].customer_group_id = groups[company_of[key]].id
     ids = {key: row.id for key, row in rows.items()}
     db.commit()
     db.close()
@@ -332,8 +351,9 @@ def _only_the_group(services: ResolveGateServices, ids: dict[str, str]) -> Resol
 
 
 def test_o3_the_group_and_another_customer_print_two_lines_option_1_carries_the_whole_group(chat, session_factory):
-    """Crew live check @1ae7b94d (a) after the data fix: the group is one line carrying all four ledgers, the other
-    customer the second; the pick reports the whole group. Red against c05682bf (3 lines)."""
+    """Crew live check @1ae7b94d (a) with all four ledgers grouped: the group (across SRT and MCH) is one line carrying
+    all four, the other customer the second; the pick reports the whole group. (Red against c05682bf only on the
+    ungrouped data of 4d6c73ae.)"""
     ids = _seed_group_with_strays(session_factory)
     result, captured = chat(_t1(), "Dealer zz demo oct total sales", "ZZT-cpr-o3-1",
                             resolve_services=_group_with_strays(ids))
@@ -349,8 +369,8 @@ def test_o3_the_group_and_another_customer_print_two_lines_option_1_carries_the_
 
 
 def test_o4_only_the_group_s_ledgers_match_one_customer_no_question(chat, session_factory):
-    """Crew live check @1ae7b94d (b), "Dealer <customer> sanitary oct total sales", after the data fix: only the
-    group's ledgers match, so there is one customer: no question, one report over all four ledgers."""
+    """Crew live check @1ae7b94d (b), "Dealer <customer> sanitary oct total sales", with all four ledgers grouped: only
+    the group's ledgers match, so there is one customer: no question, one report over all four ledgers."""
     ids = _seed_group_with_strays(session_factory)
     result, captured = chat(_t1(), "Dealer zz demo sanitary oct total sales", "ZZT-cpr-o4-1",
                             resolve_services=_only_the_group(_group_with_strays(ids), ids))
@@ -361,7 +381,8 @@ def test_o4_only_the_group_s_ledgers_match_one_customer_no_question(chat, sessio
 
 def test_o5_guard_ungrouped_ledgers_stay_their_own_customer(chat, session_factory):
     """Owner ruling (b), 2 Oct, kept (25 Oct 18:4x): a ledger with no customer group is never joined to a group by the
-    name rule. Before the data fix the "- [IBORN]" and "(SHOWCASE)" ledgers are a customer of their own: two lines."""
+    name rule. Before the data fix the "- [IBORN]" and "(SHOWCASE)" ledgers are a customer of their own: two lines
+    (the narrower's roster: the gate's families print one line and it does not ask)."""
     ids = _seed_group_with_strays(session_factory, grouped=("ac1", "project"))
     result, captured = chat(_t1(), "Dealer zz demo sanitary oct total sales", "ZZT-cpr-o5-1",
                             resolve_services=_only_the_group(_group_with_strays(ids), ids))
@@ -386,3 +407,17 @@ def test_o6_the_narrower_s_roster_pick_resumes_the_held_report(chat, session_fac
     assert len(calls) == 1 and set(calls[0].get("customer_ids") or []) == {ids["ac1"], ids["project"]}, captured
     assert calls[0].get("channel") == "dealer", calls[0]
     assert calls[0].get("date_from") == "2026-10-01" and calls[0].get("date_to") == "2026-10-31", calls[0]
+
+
+def test_o7_the_owner_s_edit_leaves_the_ungrouped_showcase_ledger_its_own_customer(chat, session_factory):
+    """The owner's actual prod edit (25 Oct): "- [IBORN]" in the MCH group, the inactive "(SHOWCASE)" left ungrouped.
+    "Dealer <customer> sanitary ..." asks between the group (SRT and MCH, three ledgers) and "(SHOWCASE)", by ruling (b);
+    picking 1 reports the group's three."""
+    ids = _seed_group_with_strays(session_factory, grouped=OWNER_EDIT)
+    result, captured = chat(_t1(), "Dealer zz demo sanitary oct total sales", "ZZT-cpr-o7-1",
+                            resolve_services=_only_the_group(_group_with_strays(ids), ids))
+    options = (chat.session().get("open_question") or {}).get("options") or []
+    assert [set(o["uuids"]) for o in options] == [{ids[k] for k in OWNER_EDIT}, {ids["showcase"]}], (_reply(result), options)
+    result, captured = chat(_t2(), "1", "ZZT-cpr-o7-2")
+    calls = _report_calls(captured)
+    assert len(calls) == 1 and set(calls[0].get("customer_ids") or []) == {ids[k] for k in OWNER_EDIT}, captured

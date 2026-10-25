@@ -1,6 +1,6 @@
 # PLAN: a customer pick answer resumes the held sales ask (lane CHAT-CUSTOMER-PICK-RESUME)
 
-Status: IN REVIEW (Opus reviewer READY at 1ae7b94d; owner data fix for the group ruled 25 Oct), small fix track (S: `report_ask.py`,
+Status: IN REVIEW (Opus reviewer READY at 7513b8ac; narrower status carry added after it; owner data edit made 25 Oct), small fix track (S: `report_ask.py`,
 `gate._cust_base`, the resolve gate's name fill; no migration, no access change, no new ingest, no prompt change).
 
 ## Why
@@ -71,8 +71,21 @@ family, reviewer). Crew live check @1ae7b94d (b): "Dealer <customer> sanitary oc
 matches, asked between the group and "- [IBORN]". 18:4x, option (a) DATA: the office adds both ledgers to the group;
 ruling (b) stays, no code rule.
 
-Tests: O3 (the group, all four of its ledgers grouped, plus another customer: two lines, option 1 carries the four, the
-pick reports them; red against c05682bf), O4 (only the group's ledgers match: no question, one report over the four; red at 26c2aec1 on the
-ungrouped data, before the data fix was ruled), O5 (guard, ruling (b): with the two ledgers ungrouped
-they stay their own line). Kill: `UNGROUPED_JOINS_NAME_MATCHED_GROUP` True fails exactly O5.
+Owner's prod edit, 25 Oct: MCH 300-F033 ("- [IBORN]") added to the MCH group of the same name (groups are per company:
+SRT holds 300-F004/F010/F017/F026/F029, MCH 300-F031/F032 and now F033). 305-F001 (inactive "(SHOWCASE)") and 300-F059
+stay ungrouped. So "Dealer <customer> sanitary oct total sales" still asks between the group and "(SHOWCASE)" (ruling (b));
+on the plain "Dealer <customer> oct total sales" the inactive ledger rides option 1 only by resolver order. Owner's call
+whether 305-F001 joins the SRT group.
+
+Tests (per-company seed: SRT and MCH groups of one name, the contact sees both): O3 (all four grouped plus another
+customer: two lines, option 1 carries the four, the pick reports them), O4 (only the group matches: no question; red at
+26c2aec1 on the ungrouped data), O5 (guard, ruling (b): "- [IBORN]" and "(SHOWCASE)" ungrouped stay their own line), O7
+(the owner's edit: the group of three vs "(SHOWCASE)"; pick 1 reports the three). Kill: `UNGROUPED_JOINS_NAME_MATCHED_GROUP`
+True fails O5.
+
+## Narrower roster carries the asking status (crew chat pass, 25 Oct)
+When the gate does not ask, the narrower raises the customer roster (`turn/apply.py` `_narrow_and_plan`), and its pending
+carried no `status` (the gate's picker does, `answer_bridge._offer_ask_payload`). The prod pick parse (`order_status`
+sales_analysis) then ran the company analysis ("Sorento or Mocha?"). Fix: after `_narrow_and_plan`, a `customer_pick` /
+`product_pick` over a `sales_report` / `sales_analysis` ask carries that status. Test O6 (red commit ef3cce4b first).
 "water closet" read as a promotion is out of scope (separate lane).
