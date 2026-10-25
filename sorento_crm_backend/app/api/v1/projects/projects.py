@@ -51,6 +51,10 @@ DELETE = "projects.projects.delete"
 MANAGE = "projects.projects.manage"
 APPROVE = svc.APPROVE_REGISTRATIONS_PERMISSION
 _APPROVAL_FILTERS = ("pending", "rejected", "approved", "draft")
+#: The AI read tools (MCP over X-API-Key, the analytics connector) see approved projects only
+#: (PROJECT-REG-PORTAL R4): a registration waiting for approval is not a project to answer
+#: about. The staff board and list, on a session, keep showing them (R6).
+_MACHINE_AUTH_METHODS = frozenset({"api_key", "integration_api_key", "connector"})
 
 _PROFILE_KEYS = (
     "registered_company_name",
@@ -206,7 +210,8 @@ async def list_projects(
             brand_ids=brand_id,
             only_critical=only_critical,
             approval_states=states or None,
-            approved_only=approved_only,
+            approved_only=approved_only
+            or current_user.get("auth_method") in _MACHINE_AUTH_METHODS,
             page=page,
             limit=limit,
             sort=sort,
