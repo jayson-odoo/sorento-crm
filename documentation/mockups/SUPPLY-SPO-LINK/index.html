@@ -3,43 +3,45 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SUPPLY-SPO-LINK mockup v1</title>
+<title>SUPPLY-SPO-LINK mockup v2</title>
 <style>
   :root {
     --bg: #6b6b6b; --card: #fff; --border: #e5e7eb; --muted: #6b7280; --fg: #111827;
-    --primary: #1b84ff; --head: #f9fafb; --new: #fff7d6; --newb: #f5c518;
+    --primary: #1b84ff; --head: #f9fafb; --new: #fff7d6; --newb: #f5c518; --pill: #eef0f3;
   }
   * { box-sizing: border-box; }
   body { margin: 0; font: 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--fg); background: #f3f4f6; }
   .wrap { max-width: 1280px; margin: 0 auto; padding: 24px 16px 64px; }
   h1 { font-size: 18px; margin: 0 0 4px; }
-  .lead { color: var(--muted); margin: 0 0 20px; max-width: 900px; }
+  .lead { color: var(--muted); margin: 0 0 20px; max-width: 920px; }
   .opt { margin: 28px 0 8px; font-weight: 600; }
   .opt small { font-weight: 400; color: var(--muted); }
   .backdrop { background: var(--bg); padding: 24px; border-radius: 12px; }
-  .dialog { background: var(--card); border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.25); overflow: hidden; }
-  .dh { padding: 20px 24px 14px; border-bottom: 1px solid var(--border); position: relative; }
-  .dh .t { font-size: 18px; font-weight: 600; }
-  .dh .t span { font-size: 12px; font-weight: 400; color: var(--muted); margin-left: 8px; }
-  .dh .x { position: absolute; right: 20px; top: 18px; color: var(--muted); font-size: 18px; }
-  .db { padding: 16px 24px 24px; }
-  .tabs { display: flex; gap: 28px; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
-  .tabs div { padding: 10px 0; color: var(--muted); }
-  .tabs .on { color: var(--primary); border-bottom: 2px solid var(--primary); }
+  .dialog { background: var(--card); border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.25); overflow: hidden; max-width: 1100px; margin: 0 auto; }
+  .dh { padding: 22px 24px 8px; position: relative; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  .dh .t { font-size: 20px; font-weight: 600; }
+  .dh .s { color: var(--muted); }
+  .btn { border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; background: #fff; white-space: nowrap; }
+  .x { position: absolute; right: 14px; top: 8px; color: var(--muted); font-size: 18px; }
+  .meta { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; padding: 8px 24px 16px; }
+  .meta .k { color: var(--muted); font-size: 12px; }
+  .pill { display: inline-block; background: var(--pill); border-radius: 6px; padding: 1px 8px; font-size: 12px; }
+  .db { padding: 0 24px 24px; }
   .panel { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
-  .panel .ph { padding: 14px 16px; font-weight: 600; border-bottom: 1px solid var(--border); }
-  .scroll { overflow-x: auto; }
-  table { border-collapse: collapse; table-layout: fixed; min-width: 1240px; width: 100%; }
+  .panel .ph { padding: 12px 16px; font-weight: 600; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .search { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; color: var(--muted); font-weight: 400; min-width: 0; width: 280px; }
+  .scroll { overflow-x: auto; max-height: 520px; overflow-y: auto; }
+  table { border-collapse: collapse; table-layout: fixed; min-width: 1020px; width: 100%; }
   th, td { padding: 11px 14px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  th { background: var(--head); font-weight: 500; color: #374151; }
+  th { background: var(--head); font-weight: 500; color: #374151; position: sticky; top: 0; }
   td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
   .muted { color: var(--muted); }
-  a, .lk { color: var(--primary); font-weight: 500; text-decoration: none; cursor: pointer; }
+  a { color: var(--primary); font-weight: 500; text-decoration: none; cursor: pointer; }
   a:hover { text-decoration: underline; }
   th.new, td.new { background: var(--new); }
   th.new { box-shadow: inset 0 3px 0 var(--newb); }
-  tfoot td { font-weight: 600; background: #fff; }
-  .pager { display: flex; justify-content: space-between; padding: 12px 16px; color: var(--muted); }
+  tr.hl td { background: #eef5ff; }
+  tr.hl td.new { background: #fff1b8; }
   .map { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 16px 20px; margin-top: 28px; }
   .map h2 { font-size: 15px; margin: 0 0 8px; }
   .map li { margin: 4px 0; }
@@ -47,83 +49,102 @@
   .q { background: #fff; border-left: 4px solid var(--newb); padding: 12px 16px; border-radius: 8px; margin-top: 20px; }
   @media (max-width: 640px) {
     .backdrop { padding: 8px; }
-    .dh, .db { padding-left: 12px; padding-right: 12px; }
+    .dh, .db, .meta { padding-left: 12px; padding-right: 12px; }
+    .meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .search { width: 100%; }
+    .panel .ph { flex-wrap: wrap; }
   }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Supply tab: which SPO a PO line moved onto (v1)</h1>
+  <h1>Purchase order popup: the SPO each line moved onto (v2)</h1>
   <p class="lead">
-    Stock Debt product popup (<code>/project-sales/stock-debt</code>, press a month cell, Supply tab).
-    One new column, highlighted yellow here only. Real dev rows, after the double-count fix.
-    Each SPO number opens the same SPO popup the Document column already opens.
+    v2 after the owner's note on v1 ("it is the popup after I open the Document which is the PO").
+    The Purchase order popup opened from any PO document link (Stock Debt Supply tab and Covered by,
+    order inquiry screens) gains one column, <b>SPO</b>, highlighted yellow here only. Each SPO number
+    is a document link that opens the SPO popup, the same link an SPO number already is elsewhere.
+    The Stock Debt Supply tab itself is unchanged. Real dev rows; supplier name masked.
   </p>
 
-  <div class="opt">Option (a), as briefed: a PO row lists the SPO(s) its line moved onto
-    <small>(Oct 26 cell of SRTWT910-BL on the dev copy)</small></div>
+  <div class="opt">The reported PO, 202607-S0100 <small>(dev copy; opened from a Covered by / Supply link, the clicked line highlighted)</small></div>
   <div class="backdrop"><div class="dialog">
-    <div class="dh"><div class="t">Product · SRTWT910-BL<span>Oct 26</span></div><div class="x">×</div></div>
+    <div class="x">×</div>
+    <div class="dh">
+      <div><div class="t">202607-S0100</div><div class="s">Purchase order</div></div>
+      <div class="btn">Go to linked line</div>
+    </div>
+    <div class="meta">
+      <div><div class="k">Supplier</div><div>••••••••</div></div>
+      <div><div class="k">Status</div><div><span class="pill">Closed</span></div></div>
+      <div><div class="k">Expected</div><div>29/07/2026</div></div>
+      <div style="text-align:right"><a>Open document ↗</a></div>
+    </div>
     <div class="db">
-      <div class="tabs"><div>Demand (45)</div><div class="on">Supply (281)</div></div>
       <div class="panel">
-        <div class="ph">Supply</div>
+        <div class="ph"><span>Lines</span><span class="search">Search product or location...</span></div>
         <div class="scroll"><table>
-          <colgroup><col style="width:90px"><col style="width:210px"><col style="width:170px"><col style="width:110px"><col style="width:120px"><col style="width:90px"><col style="width:100px"><col style="width:110px"><col style="width:220px"><col style="width:120px"></colgroup>
-          <thead><tr><th>Kind</th><th>Document</th><th class="new">SPO</th><th>Bin</th><th>Arrival</th><th class="n">Qty</th><th class="n">Received</th><th class="n">Outstanding</th><th>Assigned to</th><th>Note</th></tr></thead>
+          <colgroup><col style="width:180px"><col style="width:90px"><col style="width:90px"><col style="width:100px"><col style="width:95px"><col style="width:110px"><col style="width:120px"><col style="width:170px"></colgroup>
+          <thead><tr><th>SKU</th><th class="n">Ordered</th><th class="n">Received</th><th class="n">Remaining</th><th class="n">Allocated</th><th>Location</th><th>S/O</th><th class="new">SPO</th></tr></thead>
           <tbody>
-            <tr><td>On hand</td><td>-</td><td class="new">-</td><td>BRW</td><td>25/10/2026</td><td class="n">51</td><td class="n"></td><td class="n"></td><td class="muted" title="SO417537 line 16 (1), SO417825 line 80 (4), ...">SO417537 line 16 (1), SO417825 line 80 (4), ...</td><td class="muted">-</td></tr>
-            <tr><td>PO</td><td><a>202603-S0122</a> <span class="muted">line 2</span></td><td class="new"><a>SPO-2026/06-0061</a></td><td>BRW</td><td>25/10/2026</td><td class="n">300</td><td class="n">275</td><td class="n">25</td><td class="muted">Free</td><td class="muted">-</td></tr>
-            <tr><td>PO</td><td><a>202607-S0002</a> <span class="muted">line 1</span></td><td class="new">-</td><td>BRW</td><td>25/10/2026</td><td class="n">205</td><td class="n">0</td><td class="n">205</td><td class="muted">Free</td><td class="muted">-</td></tr>
+            <tr><td>SRTSS3170</td><td class="n">167</td><td class="n">167</td><td class="n">0</td><td class="n">0</td><td>BRW</td><td class="muted">-</td><td class="new"><a>SPO-2026/09-0107</a></td></tr>
+            <tr><td>SRTSS4210</td><td class="n">486</td><td class="n">486</td><td class="n">0</td><td class="n">486</td><td>BRW-BB</td><td>SO364824</td><td class="new"><a>SPO-2026/09-0107</a></td></tr>
+            <tr class="hl"><td>SRTSS4210</td><td class="n">490</td><td class="n">490</td><td class="n">0</td><td class="n">490</td><td>BRW-BB</td><td>SO364922</td><td class="new"><a>SPO-2026/09-0107</a></td></tr>
+            <tr><td>SRTSS4210</td><td class="n">32</td><td class="n">32</td><td class="n">0</td><td class="n">0</td><td>BRW</td><td class="muted">-</td><td class="new"><a>SPO-2026/09-0107</a></td></tr>
+            <tr><td>SRTSS3170</td><td class="n">116</td><td class="n">116</td><td class="n">0</td><td class="n">116</td><td>BRW-BB</td><td>SO394876</td><td class="new"><a>SPO-2026/09-0107</a></td></tr>
+            <tr><td>SRTSS3170</td><td class="n">30</td><td class="n">30</td><td class="n">0</td><td class="n">30</td><td>BRW-BB</td><td>SO387741</td><td class="new"><a>SPO-2026/09-0107</a></td></tr>
+            <tr><td>SRTSS3170</td><td class="n">30</td><td class="n">30</td><td class="n">0</td><td class="n">30</td><td>BRW-BB</td><td>SO387741</td><td class="new"><a>SPO-2026/09-0107</a></td></tr>
+            <tr><td>SRTSS3170</td><td class="n">11</td><td class="n">11</td><td class="n">0</td><td class="n">11</td><td>BRW-BB</td><td>SO394880</td><td class="new"><a>SPO-2026/09-0107</a></td></tr>
+            <tr><td>SRTSS3170</td><td class="n">300</td><td class="n">300</td><td class="n">0</td><td class="n">300</td><td>BRW-BB</td><td>SO396349</td><td class="new"><a>SPO-2026/09-0107</a></td></tr>
+            <tr><td>SRTSS3170</td><td class="n">354</td><td class="n">354</td><td class="n">0</td><td class="n">294</td><td>BRW-BB</td><td>SO396349</td><td class="new"><a>SPO-2026/09-0107</a></td></tr>
           </tbody>
-          <tfoot><tr><td>Total</td><td></td><td class="new"></td><td></td><td></td><td class="n">556</td><td class="n">275</td><td class="n">230</td><td></td><td>Free 236</td></tr></tfoot>
         </table></div>
-        <div class="pager"><span>Rows per page 10</span><span>1 - 3 of 3</span></div>
       </div>
     </div>
   </div></div>
 
-  <div class="opt">Option (b), recommended: same column, also filled on an SPO row with the PO it came from
-    <small>(Nov 26 cell of SRTWT07SP on the dev copy; header reads "Linked")</small></div>
+  <div class="opt">A PO line only partly moved onto an SPO, and one not moved at all <small>(dev copy, SRTWT910-BL on two POs)</small></div>
   <div class="backdrop"><div class="dialog">
-    <div class="dh"><div class="t">Product · SRTWT07SP<span>Nov 26</span></div><div class="x">×</div></div>
+    <div class="x">×</div>
+    <div class="dh">
+      <div><div class="t">202603-S0122</div><div class="s">Purchase order</div></div>
+      <div class="btn">Go to linked line</div>
+    </div>
+    <div class="meta">
+      <div><div class="k">Supplier</div><div>••••••••</div></div>
+      <div><div class="k">Status</div><div><span class="pill">Active</span></div></div>
+      <div><div class="k">Expected</div><div>31/03/2026</div></div>
+      <div style="text-align:right"><a>Open document ↗</a></div>
+    </div>
     <div class="db">
-      <div class="tabs"><div>Demand (233)</div><div class="on">Supply (34)</div></div>
       <div class="panel">
-        <div class="ph">Supply</div>
+        <div class="ph"><span>Lines</span><span class="search" style="color:#111">SRTWT910</span></div>
         <div class="scroll"><table>
-          <colgroup><col style="width:90px"><col style="width:210px"><col style="width:170px"><col style="width:110px"><col style="width:120px"><col style="width:90px"><col style="width:100px"><col style="width:110px"><col style="width:220px"><col style="width:120px"></colgroup>
-          <thead><tr><th>Kind</th><th>Document</th><th class="new">Linked</th><th>Bin</th><th>Arrival</th><th class="n">Qty</th><th class="n">Received</th><th class="n">Outstanding</th><th>Assigned to</th><th>Note</th></tr></thead>
+          <colgroup><col style="width:180px"><col style="width:90px"><col style="width:90px"><col style="width:100px"><col style="width:95px"><col style="width:110px"><col style="width:120px"><col style="width:170px"></colgroup>
+          <thead><tr><th>SKU</th><th class="n">Ordered</th><th class="n">Received</th><th class="n">Remaining</th><th class="n">Allocated</th><th>Location</th><th>S/O</th><th class="new">SPO</th></tr></thead>
           <tbody>
-            <tr><td>SPO</td><td><a>SPO-2026/10-0012</a></td><td class="new"><a>202609-S0042</a></td><td>BRW-BB</td><td>25/10/2026</td><td class="n">34</td><td class="n">0</td><td class="n">34</td><td class="muted">SO424924 line 8 (34)</td><td class="muted">-</td></tr>
+            <tr class="hl"><td>SRTWT910-BL</td><td class="n">300</td><td class="n">275</td><td class="n">25</td><td class="n">0</td><td>BRW</td><td class="muted">-</td><td class="new"><a>SPO-2026/06-0061</a></td></tr>
           </tbody>
-          <tfoot><tr><td>Total</td><td></td><td class="new"></td><td></td><td></td><td class="n">34</td><td class="n">0</td><td class="n">34</td><td></td><td>Free 0</td></tr></tfoot>
         </table></div>
-        <div class="pager"><span>Rows per page 10</span><span>1 - 1 of 1</span></div>
       </div>
+      <p class="muted" style="margin:10px 2px 0">A line never moved onto an SPO (for example 202607-S0002 line 1, 205 ordered, 0 received) shows <span style="color:#111">-</span> in the SPO column. A line split over two shipments lists both numbers, comma separated.</p>
     </div>
   </div></div>
 
   <div class="q">
-    <b>Why option (b):</b> after the fix, a PO line that already moved onto an SPO leaves the Supply tab
-    (its SPO row, or the bin's on hand once landed, shows instead). On the dev copy only 2 open PO lines
-    are part-moved onto an SPO, so in option (a) the column reads "-" on almost every row. Option (b) also
-    links each SPO row back to its PO, the way the SPO document's own Lines tab shows "PO (book)".
-    <br><br>
-    <b>The reported product after the fix (dev copy, SRTSS4210, Oct 26 cell):</b> Supply (1,008) = On hand BRW 32 +
-    On hand BRW-BB 976, and BRW-BB is assigned to SO364824 line 880 (486) and SO364922 line 464 (490), the lines
-    the two placements were made for. The two "PO 202607-S0100" rows are gone. The Dec 26 lines (1040 and 624,
-    976 in all) now read short, because those units were already promised.
+    <b>The double count itself (separate from this column, already fixed on the branch):</b> on the dev copy the
+    reported product's Oct 26 cell now lists Supply (1,008) = On hand BRW 32 + On hand BRW-BB 976, with BRW-BB assigned to
+    SO364824 line 880 (486) and SO364922 line 464 (490), the lines the two placements were made for. The two
+    "PO 202607-S0100" supply rows are gone, and the Dec 26 lines (1040 and 624) read short.
   </div>
 
   <div class="map">
     <h2>What each element reuses (no new component)</h2>
     <ul>
-      <li>Popup shell, tabs, Supply grid, Total footer: <code>app/(protected)/project-sales/stock-debt/components/StockDebtCellDialog.tsx</code> (<code>PanelDataGrid</code>, <code>components/common/PanelDataGrid</code>).</li>
-      <li>SPO number link and its popup: <code>OrderInquiryDocumentLink kind="spo"</code> (<code>app/(protected)/project-sales/order-inquiries/components/OrderInquiryDocumentDialog.tsx</code>), the link the Document cell already uses for an SPO row.</li>
-      <li>PO number link in option (b): <code>OrderInquiryDocumentLink kind="po"</code>, the link the Document cell already uses for a PO row (via <code>PoLineLink</code>, <code>lib/stockDebtDemandColumns.tsx</code>).</li>
-      <li>Column sizing and truncation: fixed table layout, explicit <code>size</code>, <code>truncate</code> + <code>title</code>, same as the neighbouring columns.</li>
-      <li>Data: SPO lines matched to the PO line by the order inquiry page's own key (PO number + PO line ref + product), one read per popup.</li>
+      <li>Popup, header, Lines grid, search, Go to linked line: <code>PoBody</code> / <code>PO_LINE_COLUMNS</code> in <code>app/(protected)/project-sales/order-inquiries/components/OrderInquiryDocumentDialog.tsx</code> (<code>PanelDataGrid</code>). One component, so every PO document link in the app gets the column.</li>
+      <li>SPO number link and the SPO popup it opens: <code>OrderInquiryDocumentLink kind="spo"</code> in the same file, the link the Stock Debt Document cell already uses for an SPO row.</li>
+      <li>Column header and sizing: <code>DataGridColumnHeader</code>, explicit <code>size</code>, <code>truncate</code> + <code>title</code>, like the S/O column beside it.</li>
+      <li>Data: the SPO lines each PO line became, matched by the order inquiry page's own key (PO number + PO line ref + product), read once with the popup's existing PO detail request.</li>
     </ul>
   </div>
 </div>
