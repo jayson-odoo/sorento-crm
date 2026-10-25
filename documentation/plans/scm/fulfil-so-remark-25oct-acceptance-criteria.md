@@ -65,6 +65,20 @@ MOCK-UP).
   idempotent; downgrade restores `oihr_0009`'s layout.
 - **AC-15** Unchanged: the OI Excel attachment, the preview dry run, every other email cell.
 
+## CRM: Sales Order page (owner add-on, 25 Oct ~13:05)
+
+- **AC-16** The SO detail API used by Project Sales Admin > Sales Orders returns `remark` (the AC-5
+  default computed over ALL the SO's lines: `Sponsorship` / `Purchase Request` / `Mockup` / "") and
+  `ship_info` (as stored), and per line `is_mockup` and `mockup_label` (true only when AC-6 holds over
+  all the SO's lines and that line is a mockup line). Computed with the same rules module.
+- **AC-17** The General tab shows read-only `Remark` and `Shipping Info` fields with the page's
+  existing read-only field component; an empty value shows the page's usual empty marker.
+- **AC-18** The Lines tab shows the `Mockup` badge (same Badge as the Confirm guide) on lines whose
+  `mockup_label` is true; none otherwise. Usable at 375px and 1280px.
+- Cases: SO427488 -> Remark `Purchase Request`, Shipping Info `PURCHASE REQUEST`; SO427563 ->
+  `Sponsorship` + badge on MSK11A only; SO427088 -> `Mockup`, no badges; SO419417 -> `Mockup` +
+  badges on CB2829-DIY, SRT2403-CR, SRTWB1515; SO427174 -> blank, no badges.
+
 ## Card cases (must each have a test)
 
 SO419417 shape (3 of 24 lines line-remarked MOCK): all chosen -> `Mockup` + 3 labels; only the 3

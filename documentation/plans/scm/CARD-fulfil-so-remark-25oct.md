@@ -43,6 +43,12 @@ Mock: `documentation/mockups/FULFIL-SO-REMARK/index.html`.
    all mockup, or none mockup: no line labels. The label is independent of the SO word (a Purchase
    Request SO with mixed chosen lines still labels its mockup lines).
 
+6. **Sales Order page** (owner 25 Oct ~13:05): Project Sales Admin > Sales Orders > SO detail.
+   The General tab shows two read-only fields: `Remark` = rule 3 computed over ALL lines of the SO
+   (not a Confirm choice; nothing is stored) and `Shipping Info` as stored from AutoCount. The Lines
+   tab shows a `Mockup` label on each mockup line only when the SO's lines mix mockup and actual
+   (rule 5 over all lines). Same rules function as the guide and the email.
+
 ## Cases (one example each; SO419417 = 24 lines, 3 of them line-remarked mockup: SRTWB1515, SRT2403-CR, CB2829-DIY)
 
 | Case | Example | SO remark | Line labels |
