@@ -787,3 +787,101 @@ def test_response_has_no_ids(client, db):
     text = json.dumps(body)
     assert UUID_RE.findall(text) == []
     assert not [k for k, _ in _walk(body) if k == "id" or k.endswith("_id")]
+
+
+# ===================================================================================== fix round
+
+
+def _linked_user(db, contact, *, status="ACTIVE", trashed=False) -> User:
+    user = User(
+        id=_uid(), email=f"{unique_code('U')}@zzt.test", name="ZZT Linked", status=status,
+        is_trashed=trashed, respond_contact_id=contact.id,
+    )
+    db.add(user)
+    db.flush()
+    return user
+
+
+def test_revoked_user_contact_refused(client, db):
+    """T1-11: a contact whose linked user is not ACTIVE, or is trashed, is 403
+    sales_target_not_available; a salesperson linked only through the agent still gets through."""
+    acct = _customer(db, "ZZT REVOKE DEALER", 1)
+    target = _dealer_target(db, [acct])
+    for status, trashed in (("INACTIVE", False), ("ACTIVE", True)):
+        agent_contact, _agent_row = _salesperson_contact(db)
+        _linked_user(db, agent_contact, status=status, trashed=trashed)
+        dealer_contact = _dealer_contact(db, acct)
+        _linked_user(db, dealer_contact, status=status, trashed=trashed)
+        for contact in (agent_contact, dealer_contact):
+            resp = _get(client, contact)
+            assert resp.status_code == 403, (status, trashed, resp.text)
+            assert _code(resp) == "sales_target_not_available", resp.text
+            assert target.target_no not in resp.text
+
+    agent_only, _row = _salesperson_contact(db)
+    ok = _get(client, agent_only)
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["asker"] == "salesperson"
+
+
+@pytest.mark.parametrize("blank", ["", "  "])
+@pytest.mark.parametrize("field", ["contact_id", "space_id"])
+def test_blank_contact_ids_422(client, db, field, blank):
+    """T1-12: a blank or whitespace-only id is 422 contact_identity_required."""
+    acct = _customer(db, "ZZT BLANK DEALER", 1)
+    _dealer_target(db, [acct])
+    params = {**_me(_dealer_contact(db, acct)), field: blank}
+    resp = client.get(ROUTE, params=params)
+    assert resp.status_code == 422, resp.text
+    assert _code(resp) == "contact_identity_required", resp.text
+
+
+def test_pct_tiers_on_zero_target_follow_engine(client, db):
+    """T2-12: pct tiers 100% / 120% on a 0 target: only the 100% tier counts as reached."""
+    acct = _customer(db, "ZZT ZERO DEALER", 1)
+    _dealer_target(
+        db, [acct], start=date(2026, 7, 1), end=date(2026, 9, 30), unit="pct", value=0,
+        tiers=[{"pct": 100, "rate": 3}, {"pct": 120, "rate": 4}],
+    )
+    resp = _get(client, _dealer_contact(db, acct), **Q3)
+    assert resp.status_code == 200, resp.text
+    (line,) = resp.json()["dealers"]
+    assert line["tier_reached"]["tier"] == 1
+    assert line["next_tier"]["tier"] == 2
+
+
+def test_rounding_half_up(client, db):
+    """T2-13: a figure ending in exactly .xx5 rounds up (0.125 -> 0.13). Order lines are stored
+    at 2 decimals, so the tie comes from a pct tier: 50% of a 0.25 target is exactly 0.125."""
+    acct = _customer(db, "ZZT ROUND DEALER", 1)
+    _dealer_target(
+        db, [acct], start=date(2026, 7, 1), end=date(2026, 9, 30), unit="pct", value="0.25",
+        tiers=[{"pct": 50, "rate": 3}],
+    )
+    resp = _get(client, _dealer_contact(db, acct), **Q3)
+    assert resp.status_code == 200, resp.text
+    (line,) = resp.json()["dealers"]
+    assert line["next_tier"]["threshold"] == 0.13
+    assert line["next_tier"]["gap"] == 0.13
+
+
+def test_agent_line_target_end_date(client, db):
+    """T2-14: agent lines carry the whole target's end as `target_end_date`; team and dealer null."""
+    contact, agent = _salesperson_contact(db)
+    team = _team(db, "ZZT End Team", agent, valid_from=date(2026, 1, 1))
+    acct = _customer(db, "ZZT END DEALER", 1, agent=agent)
+    months = [
+        (date(2026, 10, 1), date(2026, 10, 31), 1000), (date(2026, 11, 1), date(2026, 11, 30), 1000),
+        (date(2026, 12, 1), date(2026, 12, 31), 1000),
+    ]
+    _target(db, "agent", agent=agent, periods=months)
+    _target(db, "team", team=team, periods=months)
+    _dealer_target(db, [acct], periods=months)
+
+    resp = _get(client, contact, date_from="2026-10-01", date_to="2026-12-31")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body["own"]) == 3
+    assert {l["target_end_date"] for l in body["own"]} == {"2026-12-31"}
+    assert body["team"] and all(l["target_end_date"] is None for l in body["team"])
+    assert body["dealers"] and all(l["target_end_date"] is None for l in body["dealers"])

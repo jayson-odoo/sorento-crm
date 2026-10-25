@@ -241,3 +241,44 @@ class TestTargetGrantIndependentOfSalesReport:
         _seed_contact(session_factory, variables={})
         _turn(session_factory, monkeypatch, attributes=[])
         assert not (_session_of(session_factory).get("open_question") or {})
+
+
+# --------------------------------------------------------------------------- #
+# T4-8 - a salesperson contact (no links, no staff user) names a dealer
+# --------------------------------------------------------------------------- #
+
+
+class TestSalespersonNamedDealerReachesTargetTool:
+    """Drives the real engine gate (`engine.py` granted_report_turn / unlinked_held), parser
+    and MCP faked. The contact has no `respond_contact_customers` link and no staff user, so
+    today the typed dealer word is refused as "isn't under your account" before any tool."""
+
+    def _named(self, session_factory):
+        from tests.chatbot.test_customer_scope_lane import _other_customer
+
+        _seed_contact(session_factory, variables={})
+        code = "ZZTD-001"
+        dealer_id = _other_customer(session_factory, "ZZT DEALER SDN BHD", code=code)
+        entity = {"raw": code, "hint": "customer", "canonical_code": None, "current_message": True, "confident": True}
+        match = {code: {"uuid": dealer_id, "entity_type": "customer", "canonical_code": code}}
+        return dealer_id, entity, match
+
+    def test_salesperson_named_dealer_reaches_target_tool(self, session_factory, monkeypatch) -> None:
+        dealer_id, entity, match = self._named(session_factory)
+        result, captured = _turn(
+            session_factory, monkeypatch, attributes=[GRANT], body="ZZTD-001 target this quarter?",
+            qf=_target_qf(entities=[entity], self_reference=False), matches=match, mcp_response=TARGET_ANSWER,
+        )
+        assert [c[0] for c in captured] == [TOOL], (captured, _reply(result))
+        assert dealer_id in (captured[0][1].get("customer_ids") or []), captured
+        assert "isn't under your account" not in _reply(result), _reply(result)
+
+    def test_without_the_grant_the_refusal_stays(self, session_factory, monkeypatch) -> None:
+        _dealer_id, entity, match = self._named(session_factory)
+        result, captured = _turn(
+            session_factory, monkeypatch, attributes=[], body="ZZTD-001 target this quarter?",
+            qf=_target_qf(entities=[entity], self_reference=False), matches=match, mcp_response=TARGET_ANSWER,
+        )
+        assert captured == [], captured
+        reply = _reply(result)
+        assert "isn't under your account" in reply or reply == DENIAL, reply

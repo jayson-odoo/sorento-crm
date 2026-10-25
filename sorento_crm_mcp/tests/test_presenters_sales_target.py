@@ -202,3 +202,26 @@ def test_sales_target_error_envelope() -> None:
     assert env["status_code"] == 403, env
     assert env["response"] == "" and env["answers"] == [], env
     assert env["detail"]["code"] == "sales_target_not_enabled", env
+
+
+# ------------------------------------------------------------------ T3-8, T3-9
+
+def test_present_dealer_row_next_threshold() -> None:
+    body = _body("dealer-two-tiers")
+    row = _body("dealer-two-tiers")["dealers"][0]
+    salesperson = _body("salesperson-no-own")
+    salesperson["dealers"] = [row]
+    text = _text(salesperson)
+    assert (
+        "TWO TIER DEALER SDN BHD [A/C I]: RM 55,000.00 of RM 70,000.00 (Tier 2), RM 15,000.00 to go"
+        in text.split("\n")
+    ), text
+    assert "RM 50,000.00 (Tier" not in text, body
+
+
+def test_present_pipeline_date_is_target_end() -> None:
+    body = _body("salesperson")
+    body["own"][0].update(period_end="2026-10-31", target_end_date="2026-12-31", pipeline_value=40000.0)
+    text = _text(body)
+    assert "Open opportunities closing by 31 Dec: RM 40,000.00" in text.split("\n"), text
+    assert "closing by 31 Oct" not in text, text
