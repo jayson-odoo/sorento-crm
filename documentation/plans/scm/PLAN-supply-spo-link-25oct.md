@@ -1,6 +1,6 @@
 # PLAN: Supply tab double counts a transferred PO line; show the SPO a PO line moved onto
 
-Status: Build (small fix track, S: backend fix in one service + one Supply column; no migration, no RBAC).
+Status: Review / hand test (small fix track, S; no migration, no RBAC). Fix + PO popup SPO column built (mock v2 owner-approved 25 Oct 12:24), reviewer rounds 1-2 addressed, PR #1850.
 Lane: SUPPLY-SPO-LINK, branch `crew/supply-spo-link`. Owner prod report 25 Oct 2026.
 
 ## 1. The report
