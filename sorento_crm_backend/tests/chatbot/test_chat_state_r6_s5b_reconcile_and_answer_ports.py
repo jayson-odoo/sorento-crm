@@ -63,20 +63,11 @@ def _decoys(db, world):
 SUBSTRING_WORDS = [("en", "any mixer in stock?", "mixer"), ("bm", "ada basin?", "basin"), ("zh", "basin有货吗", "basin")]
 
 
-SUBSTRING_XFAIL = pytest.mark.xfail(
-    strict=True,
-    reason="resolver spec_search matches a code SUBSTRING on the whole-message phrase token "
-    "(app/api/v1/system/references.py _emit_spec_matches / product_predicate_service); shared fix owned by "
-    "CHAT-CLOSED-LISTS-L (crew a43940036)",
-)
-
-
 def _substring_params():
     out = []
     for lang, message, word in SUBSTRING_WORDS:
         for state_on in (True, False):
-            marks = [SUBSTRING_XFAIL] if lang in ("bm", "zh") else []
-            out.append(pytest.param(state_on, message, word, marks=marks, id=f"{lang}-{'state-on' if state_on else 'state-off'}"))
+            out.append(pytest.param(state_on, message, word, id=f"{lang}-{'state-on' if state_on else 'state-off'}"))
     return out
 
 

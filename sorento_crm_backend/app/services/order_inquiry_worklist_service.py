@@ -2635,6 +2635,7 @@ class OrderInquiryWorklistService:
             .all()
         )
         line_ids = [str(line[0]) for line in lines]
+        spo_numbers_by_line = self._spo_numbers_by_po_line(po)
         # ONE query for the whole document (AC-A5's rule, on this THIRD surface), never one
         # per line - the same reader the SCM purchase-order detail's Lines tab already
         # calls, so the book's linkage reads identically wherever a line is shown.
@@ -2693,6 +2694,7 @@ class OrderInquiryWorklistService:
                     # (`order_link_service.book_so_fields`, review of PR #764, F5) rather
                     # than a second copy of the derivation.
                     **order_link_service.book_so_fields(from_so_line_ref, book_so_by_ref),
+                    "spo_numbers": spo_numbers_by_line.get(str(line_id), []),
                 }
                 for (
                     line_id,
@@ -2710,6 +2712,47 @@ class OrderInquiryWorklistService:
             # only - a suggestion never appears here (AC-LT-34).
             "allocations": self._allocations_on(po_line_ids=line_ids),
         }
+
+    def _spo_numbers_by_po_line(self, po: PurchaseOrder) -> Dict[str, List[str]]:
+        """SUPPLY-SPO-LINK: by PO line id, every SPO the line was transferred onto, sorted
+        and each once - one read for the whole document.
+
+        OI-SPO-EXACT, the key `_derived_spo_query` resolves a PO link's SPOs by:
+        `from_po_number = po_number AND trim(from_po_line_ref) = trim(source_ref) AND
+        product_id = line.product_id`. Every VISIBLE allocation (`visible_line_clauses()`),
+        not only the open ones: the popup states where the line's goods went, landed or
+        not. A line with no `source_ref` reaches nothing. The company predicate is stated
+        by hand for the same reason `_derived_spo_query` states it: the join is on plain
+        text off the AutoCount feed.
+        """
+        company_predicate = build_company_predicate(
+            SPOAllocation, get_company_scope(self.db)
+        )
+        rows = (
+            self.db.query(PurchaseOrderLine.id, SPOAllocation.spo_number)
+            .join(
+                SPOAllocation,
+                and_(
+                    SPOAllocation.from_po_number == po.po_number,
+                    func.btrim(SPOAllocation.from_po_line_ref)
+                    == func.btrim(PurchaseOrderLine.source_ref),
+                    SPOAllocation.product_id == PurchaseOrderLine.product_id,
+                ),
+            )
+            .filter(
+                PurchaseOrderLine.purchase_order_id == po.id,
+                func.coalesce(func.btrim(PurchaseOrderLine.source_ref), "") != "",
+                *spo_supply.visible_line_clauses(),
+                *((company_predicate,) if company_predicate is not None else ()),
+            )
+            .distinct()
+            .all()
+        )
+        out: Dict[str, List[str]] = {}
+        for line_id, spo_number in sorted(rows, key=lambda row: (str(row[0]), row[1] or "")):
+            if spo_number:
+                out.setdefault(str(line_id), []).append(spo_number)
+        return out
 
     # -------------------------------------------------------------- spo detail
 

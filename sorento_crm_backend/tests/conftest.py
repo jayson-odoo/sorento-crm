@@ -10,6 +10,11 @@ import os
 
 import pytest
 
+# CHAT-INBOX-QUEUE: no inbox sweeper in a test process. The sweep is global by contract, so
+# an app start-up here (a lifespan TestClient, or a real server a test spawns) would take
+# other xdist workers' queued rows; the inbox tests drive `inbox_queue.sweep()` themselves.
+os.environ["CHATBOT_INBOX_SWEEPER_ENABLED"] = "0"
+
 
 # Holds the session-long advisory lock. Kept on a module global because the lock lives on the
 # CONNECTION: closing it would release the lock and let a concurrent run start sweeping.

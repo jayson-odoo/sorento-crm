@@ -1,4 +1,5 @@
 """FastAPI application entry point."""
+import asyncio
 import os
 # Load .env with override=True so file values beat any stale shell env
 # (e.g. a STORAGE_DEFAULT_PROVIDER exported earlier in the session).
@@ -401,6 +402,14 @@ async def startup_event():
     except Exception as e:
         logging.error(f"Failed to register task handlers: {str(e)}", exc_info=True)
 
+    # CHAT-INBOX-QUEUE: every API process sweeps the chatbot inbox (gated off under pytest).
+    try:
+        from app.tasks import chat_turns as _chat_turns
+
+        _chat_turns.start_inbox_queue()
+    except Exception as e:
+        logging.error(f"Failed to start the chatbot inbox sweeper: {str(e)}", exc_info=True)
+
     # Scheduler is gated so only the dedicated `worker` container runs it.
     # Blue/green API containers must NOT fire cron ticks (would double-process).
     if os.getenv("ENABLE_SCHEDULER", "false").lower() == "true":
@@ -576,8 +585,16 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Shutdown event: stop scheduler."""
+    """Shutdown event: let the chatbot inbox drains finish their current row, stop scheduler."""
     global scheduler
+    # CHAT-INBOX-QUEUE (IQ-25): returns only once every running drain has finished its row,
+    # sender POST and done mark included, so a deploy never exits mid-turn.
+    try:
+        from app.tasks import chat_turns as _chat_turns
+
+        await asyncio.to_thread(_chat_turns.stop_inbox_queue)
+    except Exception as e:
+        logging.error(f"Error stopping the chatbot inbox: {str(e)}", exc_info=True)
     if scheduler:
         try:
             scheduler.shutdown()

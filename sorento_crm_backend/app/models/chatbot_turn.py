@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import func
 
@@ -66,6 +66,13 @@ class ChatbotTurn(Base):
             "attempt",
             "is_test",
             name="uq_chatbot_turns_contact_message_attempt",
+        ),
+        # CHAT-INBOX-QUEUE (IQ-36): the inbox sweeper reads only the open live rows
+        # (migration iq_0001_turns_inbox_idx).
+        Index(
+            "ix_chatbot_turns_inbox_open",
+            "contact_respond_id",
+            postgresql_where=text("status IN ('queued', 'processing', 'delegated') AND is_test = false"),
         ),
         {"schema": "chatbot"},
     )

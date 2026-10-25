@@ -1281,6 +1281,9 @@ class OrderInquiryPoDetailLine(BaseModel):
     #: `order_link_service.BOOK_SO_NOT_RESOLVED` - the fourth, "not computed" state that
     #: `Optional[bool]` exists to carry on the PO route never arises on this one.
     book_so_unresolved: bool = False
+    #: SUPPLY-SPO-LINK: every SPO this line was transferred onto (OI-SPO-EXACT), sorted,
+    #: each once. Empty when the line never moved onto a shipping order.
+    spo_numbers: List[str] = []
 
 
 class OrderInquiryDocumentAllocation(BaseModel):
