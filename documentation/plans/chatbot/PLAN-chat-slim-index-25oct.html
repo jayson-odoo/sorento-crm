@@ -31,11 +31,24 @@ form.q .state{font-size:12.5px;color:var(--mut);margin-left:10px}
 @media(max-width:820px){.arrow{transform:rotate(90deg);width:100%;justify-content:center}}
 </style></head><body><main>
 
-<h1>Chatbot: retrieval before the parser (plan v2)</h1>
+<h1>Chatbot: retrieval before the parser (plan v2 + phase 0 result)</h1>
 <p class="mut small">Lane CHAT-SLIM-INDEX-PLAN, 25 Oct 2026, revised after your 17:26 note. Plan only, no code. Detail and file:line evidence: <code>documentation/plans/chatbot/PLAN-chat-slim-index-25oct.md</code>. Customer names masked.</p>
 
 <div class="banner"><b>Yes to your idea.</b> A retrieval step runs before the parser. It looks up every list (categories, classes, brands, specs, sales channels, promotion kinds, file types, locations, sales agents, customer names) by meaning AND spelling, in any language. It hands the parser a short candidates list, and the parser decides. Product codes stay exact and never go into it. <b>We prove the retrieval first, for cents, with no parser money:</b> if it cannot find the right value 95% of the time for a list, that list is not moved.</div>
 
+<h2 style="border-top:none;margin-top:18px">Phase 0 result (25 Oct 18:20): retrieval only, USD 0.02, no parser call</h2>
+<p class="small">1,318 real prod messages (masked) + your 3 console cases, labelled blind. 874 of them name no list value at all. Recall = the right value is among the top 10 candidates. Bar: 95% on at least 30 real mentions.</p>
+<div class="tablewrap"><table>
+<tr><th>list</th><th class="n">spelling only (today)</th><th class="n">meaning + spelling</th><th class="n">+ v63's Malay / Chinese words as data</th><th class="n">real mentions</th><th class="n">lines per message</th><th>verdict</th></tr>
+<tr><td>file types</td><td class="n">99.3%</td><td class="n">100%</td><td class="n">100%</td><td class="n">137</td><td class="n">0.8</td><td><span class="tag free">GO</span></td></tr>
+<tr><td>brands</td><td class="n">98.6%</td><td class="n">98.6%</td><td class="n">98.6%</td><td class="n">72</td><td class="n">0.1</td><td><span class="tag free">GO</span></td></tr>
+<tr><td>customer names</td><td class="n">57% (92% with no cutoff)</td><td class="n">96.0%</td><td class="n">96.0%</td><td class="n">75</td><td class="n">6.0</td><td><span class="tag free">GO</span> <span class="small mut">but wrong customer lines on 73% of messages that name nothing</span></td></tr>
+<tr><td>categories / classes</td><td class="n">84.7%</td><td class="n">93.1%</td><td class="n">95.8%</td><td class="n">72</td><td class="n">1.1</td><td><span class="tag paid">EDGE</span> <span class="small mut">3 misses; 93.5% without the sales-word rows; Chinese 10 of 12</span></td></tr>
+<tr><td>specs</td><td class="n">80%</td><td class="n">-</td><td class="n">93.3%</td><td class="n">15</td><td class="n">1.6</td><td><span class="tag stop">NOT ENOUGH DATA</span></td></tr>
+<tr><td>sales channels</td><td class="n">-</td><td class="n">96% on unbiased rows</td><td class="n">-</td><td class="n">25 unbiased</td><td class="n">0.2</td><td><span class="tag stop">NOT ENOUGH DATA</span></td></tr>
+<tr><td>sales agents / promotion kinds / locations</td><td class="n">-</td><td class="n">100%</td><td class="n">-</td><td class="n">10 / 4 / 1</td><td class="n">-</td><td><span class="tag stop">NOT ENOUGH DATA</span></td></tr>
+</table></div>
+<div class="card small"><b>What it says.</b> Meaning + spelling clearly beats today's spelling-only matching on <b>customer names</b> (96% vs 57% at a usable size) and <b>categories</b> (93-96% vs 85%). On file types and brands, spelling already finds them. But in 800 random messages only <b>22 name a category and 6 name a spec</b>: the two lists you care most about are the two with the least real data, so specs cannot be judged yet and categories pass only at the edge.</div>
 <div class="flow">
 <div class="box msg"><h4>Message</h4>"Dealer &lt;customer F&gt; oct total sales for water closet"</div>
 <div class="arrow">&rarr;</div>
@@ -97,20 +110,13 @@ form.q .state{font-size:12.5px;color:var(--mut);margin-left:10px}
 </table></div>
 <p class="small mut">Starts after PR #1856 (customer pick resume) merges. Hand test: "Dealer &lt;customer F&gt; oct total sales for water closet" gives one reply, F's October total, water closet only, no pick, no promotion file.</p>
 
-<h2>Your go</h2>
-<form class="q" data-lavish-question="p0" onsubmit="return queueQ(event,'p0','Phase 0')">
-<div class="qt">Phase 0: retrieval test on real messages, USD 0.25 cap, no parser calls?</div>
-<label><input type="radio" name="p0" value="a: go, incl. crew's read-only masked pull of real prod messages"> (a) Go, including crew's read-only, masked pull of real prod messages <span class="rec">RECOMMENDED</span></label>
-<label><input type="radio" name="p0" value="b: go, but only on messages crew already holds (R2 set + test sets), no new pull"> (b) Go, but only on messages crew already holds <span class="small mut">(fewer real rows: some lists will be "not enough data")</span></label>
-<label><input type="radio" name="p0" value="c: not now"> (c) Not now</label>
+<h2>Your call on phase 1</h2>
+<form class="q" data-lavish-question="p1" onsubmit="return queueQ(event,'p1','Phase 1')">
+<div class="qt">What next?</div>
+<label><input type="radio" name="p1" value="a: second targeted pull first: category / spec / agent / location asks chosen by the bot's reply kind, ~500 rows, retrieval only, ~USD 0.01, ~0.5 day; then decide phase 1 with categories and specs judged"> (a) More data first: a second pull of category / spec / agent / location asks (picked by the bot's reply, not by words), retrieval only, about USD 0.01, half a day; then phase 1 with categories and specs judged <span class="rec">RECOMMENDED</span></label>
+<label><input type="radio" name="p1" value="b: start phase 1 now with file types (clean GO, ~USD 8.5 incl. baseline), categories next as an edge case, customers last as add-only"> (b) Start phase 1 now: file types first (about USD 8.5), categories next, customers last</label>
+<label><input type="radio" name="p1" value="c: stop phase 1; keep v63; only slice WC"> (c) Stop here: keep today's prompt, do only the water-closet fixes</label>
 <button type="submit">Queue answer</button><span class="state"></span></form>
-
-<form class="q" data-lavish-question="wc" onsubmit="return queueQ(event,'wc','Slice WC')">
-<div class="qt">Slice WC: fix the 4 water-closet bugs now, about USD 2, after #1856 merges?</div>
-<label><input type="radio" name="wc" value="a: go"> (a) Go <span class="rec">RECOMMENDED</span></label>
-<label><input type="radio" name="wc" value="b: wait for phase 0"> (b) Wait for phase 0</label>
-<button type="submit">Queue answer</button><span class="state"></span></form>
-
 </main>
 <script>
 function queueQ(ev, key, label){

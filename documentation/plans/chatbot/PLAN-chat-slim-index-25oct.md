@@ -1,14 +1,33 @@
 # PLAN v2: retrieval (RAG) before the parser, every list (CHAT-SLIM-INDEX-PLAN, 25 Oct 2026)
 
-Status: PLAN v2 APPROVED (owner Lavish 25 Oct 17:34: phase 0 go incl. crew's read-only masked prod pull; slice WC go
-after #1856, proposed to crew as lane CHAT-WC-CATEGORY-TOTAL). Phase 0 IN PROGRESS: pull spec filed with crew,
-retrieval harness being built (crew/state/eval/slim-index/, crew-only). Phase 1 not started.
+Status: PLAN v2 APPROVED (owner Lavish 25 Oct 17:34). Phase 0 DONE 18:20 (result below): GO file types, brands,
+customers; EDGE GO categories; not enough data for specs, agents, promotion kinds, locations, channels. Phase 1
+waits for the owner's call on the result. Slice WC proposed to crew as lane CHAT-WC-CATEGORY-TOTAL (after #1856).
 v1 (code-first + subtractive slim) is replaced by this after the owner's note of 25 Oct 17:26 (verbatim in
 crew/state/inbox/slim-index-owner-1726.md): past slimming was long, costly and never better; the index should never
 have been spelling-only; index matching must cover ALL list data; a retrieval step BEFORE the parser passes
 candidates to the parser, which decides. Lavish page: `PLAN-chat-slim-index-25oct.html` beside this file.
 Slice WC (the water-closet code bugs) keeps its UAC: `chat-slim-index-25oct-acceptance-criteria.md`.
 Customer names are masked (public repo).
+
+## Phase 0 result (25 Oct ~18:20, retrieval only, USD 0.02, no parser call)
+
+Set: 1,318 real prod messages (crew pull, masked) + 3 console cases, labelled blind; 874 name no list value.
+Recall@10 at each list's best score floor (GO = >= 0.95 on >= 30 real mentions):
+
+| list | spelling only (today) | hybrid | hybrid + v63 translations as data | real mentions | lines / msg | verdict |
+|---|---|---|---|---|---|---|
+| file types | 0.993 | 1.000 | 1.000 | 137 | 0.8 | GO |
+| brands | 0.986 | 0.986 | 0.986 | 72 | 0.1 | GO |
+| customers | 0.920 unfloored, 0.573 at a usable floor | 0.960 | 0.960 | 75 | 6.0 | GO, but wrong lines on 73% of messages that name nothing |
+| categories | 0.847 | 0.931 | 0.958 | 72 | 1.1 | EDGE GO (0.935 without the sales-word rows; Chinese 10/12) |
+| specs | 0.800 | - | 0.933 | 15 | 1.6 | not enough data |
+| sales channels | - | 0.960 on unbiased rows | - | 25 unbiased | 0.2 | not enough unbiased data |
+| sales agents / promotion kinds / locations | - | 1.000 | - | 10 / 4 / 1 | - | not enough data |
+
+In 800 random messages: file types 64 mentions, customers 41, categories 22, brands 18, specs 6, locations 0.
+The two lists the owner named (categories, specs) are the two with the least real data. Details: crew-only
+crew/state/eval/slim-index/REPORT.md.
 
 ## 0. Cost, time and stop rules (up front)
 
