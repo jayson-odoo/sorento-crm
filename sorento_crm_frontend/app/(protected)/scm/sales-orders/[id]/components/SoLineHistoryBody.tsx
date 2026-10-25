@@ -56,17 +56,69 @@ function Figure({ label, value }: { label: string; value: string }) {
   );
 }
 
-function DeliveriesTable({
+/** A DO row with the SKU it delivered - only the Delivery tab's all-lines list reads `sku`. */
+export type SoDeliveryListRow = SoLineDeliveryRow & { sku?: string };
+
+const SKU_COLUMN: ColumnDef<SoDeliveryListRow> = {
+  id: 'sku',
+  header: 'SKU',
+  cell: ({ row }) =>
+    row.original.sku ? (
+      <span className="block truncate" title={row.original.sku}>
+        {row.original.sku}
+      </span>
+    ) : (
+      dash
+    ),
+  size: 150,
+};
+
+const LOCATION_COLUMN: ColumnDef<SoDeliveryListRow> = {
+  id: 'location',
+  header: 'Location',
+  cell: ({ row }) => textCell(row.original.location),
+  size: 110,
+};
+
+const STATUS_COLUMN: ColumnDef<SoDeliveryListRow> = {
+  id: 'status',
+  header: 'Status',
+  cell: ({ row }) =>
+    row.original.status ? <Badge status={row.original.status}>{row.original.status}</Badge> : dash,
+  size: 210,
+};
+
+/** The deliveries read failed: say so, with a retry (R7). The lightbox and the Delivery tab. */
+export function DeliveriesLoadError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <Alert variant="destructive">
+      <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+        <span>Could not load deliveries.</span>
+        <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+          Try again
+        </Button>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+export function DeliveriesTable({
   rows,
   canOpenDo,
   emptyMessage,
+  withSku = false,
+  onPage = false,
 }: {
-  rows: SoLineDeliveryRow[];
+  rows: SoDeliveryListRow[];
   canOpenDo: boolean;
   emptyMessage: string;
+  /** DO-SO-LINK-SURFACE R3: the Delivery tab lists every line's DOs, so it names the SKU. */
+  withSku?: boolean;
+  /** On a page rather than inside a lightbox: the grid keeps its own bounded scroller. */
+  onPage?: boolean;
 }) {
   const total = rows.reduce((sum, r) => sum + Number(r.qty ?? 0), 0);
-  const columns = useMemo<ColumnDef<SoLineDeliveryRow>[]>(
+  const columns = useMemo<ColumnDef<SoDeliveryListRow>[]>(
     () => [
       {
         id: 'do_number',
@@ -87,14 +139,11 @@ function DeliveriesTable({
         size: 150,
       },
       { id: 'do_date', header: 'DO date', cell: ({ row }) => fmtDate(row.original.do_date), size: 130 },
-      { id: 'location', header: 'Location', cell: ({ row }) => textCell(row.original.location), size: 110 },
-      {
-        id: 'status',
-        header: 'Status',
-        cell: ({ row }) =>
-          row.original.status ? <Badge status={row.original.status}>{row.original.status}</Badge> : dash,
-        size: 210,
-      },
+      // The lightbox reads Location, Status; the Delivery tab's list (mock v2 Panel D) reads
+      // Status, SKU, Location, with Status narrowed so Qty is not clipped at 1280.
+      ...(withSku
+        ? [{ ...STATUS_COLUMN, size: 170 }, SKU_COLUMN, LOCATION_COLUMN]
+        : [LOCATION_COLUMN, STATUS_COLUMN]),
       {
         id: 'actual_delivery_date',
         header: 'Actual delivery',
@@ -110,7 +159,7 @@ function DeliveriesTable({
         meta: RIGHT,
       },
     ],
-    [canOpenDo, total],
+    [canOpenDo, total, withSku],
   );
   if (rows.length === 0) return <p className="text-sm text-muted-foreground">{emptyMessage}</p>;
   return (
@@ -119,7 +168,7 @@ function DeliveriesTable({
       rows={rows}
       getRowId={(r, i) => `${r.do_number}-${i}`}
       emptyMessage={emptyMessage}
-      scrollerMaxHeight={false}
+      scrollerMaxHeight={onPage ? undefined : false}
     />
   );
 }
@@ -161,6 +210,27 @@ function CancelsTable({ rows, emptyMessage }: { rows: SoLineCancelRow[]; emptyMe
   );
 }
 
+/**
+ * DO-SO-LINK-SURFACE R3: every DO row under the SO - each line's own, each "not tied to one
+ * line" group's and each naming the SO for a product on no line of it - with its SKU, oldest first (DO date, then DO no.), for the Delivery tab.
+ */
+export function soDeliveryRows(
+  lines: Pick<SalesOrderLine, 'id' | 'sku'>[],
+  data: SalesOrderDeliveries | undefined,
+): SoDeliveryListRow[] {
+  if (!data) return [];
+  const skuOf = new Map(lines.map((l) => [l.id, l.sku]));
+  const rows: SoDeliveryListRow[] = [
+    ...data.lines.flatMap((l) => l.deliveries.map((d) => ({ ...d, sku: skuOf.get(l.line_id) }))),
+    ...data.groups.flatMap((g) => g.deliveries.map((d) => ({ ...d, sku: g.sku }))),
+    ...(data.others ?? []).map((d) => ({ ...d, sku: d.sku ?? undefined })),
+  ];
+  return rows.sort(
+    (a, b) =>
+      (a.do_date ?? '9999').localeCompare(b.do_date ?? '9999') || a.do_number.localeCompare(b.do_number),
+  );
+}
+
 export function SoLineHistoryBody({
   line,
   data,
@@ -199,14 +269,7 @@ export function SoLineHistoryBody({
     return (
       <div className="space-y-4">
         {strip}
-        <Alert variant="destructive">
-          <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
-            <span>Could not load deliveries.</span>
-            <Button type="button" variant="outline" size="sm" onClick={onRetry}>
-              Try again
-            </Button>
-          </AlertDescription>
-        </Alert>
+        <DeliveriesLoadError onRetry={onRetry} />
       </div>
     );
   }

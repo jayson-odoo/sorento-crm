@@ -20,13 +20,19 @@ import {
 
 class FakeFontFace {
   static behaviour: 'resolve' | 'reject' = 'resolve';
+  static inSet: (face: FakeFontFace) => boolean = () => false;
   family: string;
   source: string;
-  constructor(family: string, source: string) {
+  descriptors: { display?: string } | undefined;
+  constructor(family: string, source: string, descriptors?: { display?: string }) {
     this.family = family;
     this.source = source;
+    this.descriptors = descriptors;
   }
+  /** Whether `document.fonts` already held this face when `load()` ran. */
+  inSetAtLoad = false;
   load(): Promise<FakeFontFace> {
+    this.inSetAtLoad = FakeFontFace.inSet(this);
     return FakeFontFace.behaviour === 'resolve'
       ? Promise.resolve(this)
       : Promise.reject(new Error('font load failed'));
@@ -46,10 +52,19 @@ describe('ensureFontsLoaded', () => {
     added.length = 0;
     FakeFontFace.behaviour = 'resolve';
     (globalThis as { FontFace?: unknown }).FontFace = FakeFontFace;
-    (document as unknown as { fonts: { add: (f: unknown) => void; ready: Promise<void> } }).fonts = {
+    (
+      document as unknown as {
+        fonts: { add: (f: unknown) => void; delete: (f: unknown) => void; ready: Promise<void> };
+      }
+    ).fonts = {
       add: (f: unknown) => added.push(f),
+      delete: (f: unknown) => {
+        const i = added.indexOf(f);
+        if (i >= 0) added.splice(i, 1);
+      },
       ready: Promise.resolve(),
     };
+    FakeFontFace.inSet = (face) => added.includes(face);
   });
 
   afterEach(() => {
@@ -63,6 +78,34 @@ describe('ensureFontsLoaded', () => {
     const result = await ensureFontsLoaded([font({ family: 'ZZT Broken' })]);
 
     expect(result.failed).toEqual(['ZZT Broken']);
+    expect(added).toHaveLength(0);
+  });
+
+  // PRICETAG-BARCODE-MATCH review round 2: a face loaded OUTSIDE the set fires
+  // no `loadingdone`, so text broken into lines on the fallback face was never
+  // re-measured once the brand face arrived (`useFontsEpoch`), and the preview
+  // printed fallback-width lines in the wider brand face, clipped.
+  it('registers the face with document.fonts BEFORE loading it, so its load fires loadingdone', async () => {
+    await ensureFontsLoaded([font()]);
+
+    expect(added).toHaveLength(1);
+    expect((added[0] as FakeFontFace).inSetAtLoad).toBe(true);
+  });
+
+  // Registered before it loads, a face with the default `font-display: auto`
+  // HIDES its text while loading: previews showed nothing for seconds where
+  // they used to show the fallback (review round 3).
+  it('swaps: the fallback stays visible while the face loads', async () => {
+    await ensureFontsLoaded([font()]);
+
+    expect((added[0] as FakeFontFace).descriptors?.display).toBe('swap');
+  });
+
+  it('takes a face that failed to load back out of document.fonts', async () => {
+    FakeFontFace.behaviour = 'reject';
+
+    await ensureFontsLoaded([font({ family: 'ZZT Broken' })]);
+
     expect(added).toHaveLength(0);
   });
 
@@ -154,6 +197,15 @@ describe('ensureSeedFontsLoaded', () => {
     for (const family of SEED_FONT_FAMILIES) {
       expect(requested).toContain(`16px "${family}"`);
       expect(requested).toContain(`700 16px "${family}"`);
+    }
+  });
+
+  it('waits for the 500 and 600 weights the stylesheet serves too (text layers use them)', async () => {
+    await ensureSeedFontsLoaded();
+
+    for (const family of SEED_FONT_FAMILIES) {
+      expect(requested).toContain(`500 16px "${family}"`);
+      expect(requested).toContain(`600 16px "${family}"`);
     }
   });
 });
