@@ -59,7 +59,8 @@ So R1 links 47,636 lines (97%), text 5, dash 1,321.
 
 - Q1 a: one `SO` column (link, else AutoCount text).
 - Q2 a: SO + product only: link to the SO, no line.
-- Q3 a: header strip `SO <no>` on the DO page.
+- Q3 a: header strip `SO <no>` on the DO page. **Reversed** by the owner on mock v1 (Lavish
+  note 17:14, "don't need to show here"): no strip; the per-line SO column is the DO-side surface.
 - Q4 a: SO Delivery tab, one row per DO line with SKU, total row.
 - Q5 b: MOCK FIRST (`documentation/mockups/DO-SO-LINK-SURFACE/index.html`). UI build paused
   until the mock is approved; backend + tests continue.
@@ -71,7 +72,7 @@ So R1 links 47,636 lines (97%), text 5, dash 1,321.
   `from_doc_no` in the DO's company: that number is AutoCount's explicit link, not a match).
   Plain text `from_doc_no` when the SO is not in the CRM. `-` for a line with no `FromDocNo`
   (direct DO, or a non-SO source). No line label when only the SO + product is known.
-- **R2 DO page header strip** (the SPO strip's grammar): `SO <n>` links for each distinct SO the
+- ~~R2~~ (dropped, owner 17:14 on mock v1) **DO page header strip** (the SPO strip's grammar): `SO <n>` links for each distinct SO the
   DO's lines name, oldest first. One DO covering several SOs shows each.
 - **R3 SO Delivery tab:** the existing summary sentence, then one table of every DO line under
   this SO (the rows `/deliveries` already returns, lines + groups): DO no. (link), DO date,

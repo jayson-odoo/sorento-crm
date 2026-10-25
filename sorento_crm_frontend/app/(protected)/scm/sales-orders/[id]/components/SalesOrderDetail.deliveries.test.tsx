@@ -56,8 +56,10 @@ vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));
+// Off by default; the Delivery tab tests (DO-SO-LINK-SURFACE) turn on DO view.
+let grantedPermissions = new Set<string>();
 vi.mock('@/hooks/usePermissions', () => ({
-  useHasPermission: () => false,
+  useHasPermission: (slug: string) => grantedPermissions.has(slug),
   usePermissions: () => ({ permissions: [], permissionSet: new Set(), isLoading: false }),
 }));
 vi.mock(
@@ -209,6 +211,7 @@ beforeEach(() => {
   useSalesOrder.mockReset().mockReturnValue({ data: order(), isLoading: false, isError: false });
   getSalesOrderDeliveries.mockReset().mockResolvedValue(DELIVERIES);
   searchParams = new URLSearchParams();
+  grantedPermissions = new Set();
 });
 
 describe('SalesOrderDetail - the truck button (AC-SD20)', () => {
@@ -298,5 +301,76 @@ describe('SalesOrderDetail - one fetch (AC-SD21)', () => {
     expect(await screen.findByText('Deliveries · WESERP10B')).toBeInTheDocument();
 
     expect(getSalesOrderDeliveries).toHaveBeenCalledTimes(1);
+  });
+});
+
+// DO-SO-LINK-SURFACE R3 (documentation/plans/scm/PLAN-do-so-link-surface-25oct.md, mock Panel
+// D): the Delivery tab lists every DO line under this SO, one row each, oldest first, with SKU
+// and a total row - the same rows the truck lightbox reads, all lines together.
+describe('SalesOrderDetail - Delivery tab DO list (DO-SO-LINK-SURFACE R3)', () => {
+  function openDelivery() {
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Delivery' }), { button: 0, ctrlKey: false });
+  }
+
+  const row = (order_id: string, do_number: string, do_date: string, qty: number) => ({
+    order_id,
+    do_number,
+    do_date,
+    location: 'BRW',
+    status: 'Delivered',
+    actual_delivery_date: null,
+    qty,
+  });
+
+  it('lists every DO line, oldest first, with its SKU, a DO link and a total row', async () => {
+    grantedPermissions = new Set(['order_management.orders.view']);
+    getSalesOrderDeliveries.mockResolvedValue({
+      lines: [
+        { line_id: LINE_A, deliveries: [row('77aa0001-0000-4000-8000-000000000002', '202609-1101', '2026-09-09', 3)], cancels: [] },
+        { line_id: LINE_B, deliveries: [row('77aa0001-0000-4000-8000-000000000001', '202609-1082', '2026-09-07', 8)], cancels: [] },
+      ],
+      groups: [
+        {
+          sku: 'CFH14',
+          line_ids: [],
+          deliveries: [row('77aa0001-0000-4000-8000-000000000003', '202609-1978', '2026-09-12', 6)],
+          cancels: [],
+        },
+      ],
+    });
+    renderDetail();
+    openDelivery();
+
+    const table = await screen.findByRole('region', { name: 'Delivery orders' });
+    const bodyRows = within(table).getAllByRole('row').slice(1);
+    const texts = bodyRows.map((r) => r.textContent ?? '');
+    expect(texts[0]).toContain('202609-1082');
+    expect(texts[0]).toContain('SRTWC8518-SH-200');
+    expect(texts[1]).toContain('202609-1101');
+    expect(texts[1]).toContain('WESERP10B');
+    expect(texts[2]).toContain('202609-1978');
+    expect(texts[2]).toContain('CFH14');
+    expect(texts[3]).toMatch(/Total.*17/);
+    expect(within(table).getByRole('link', { name: '202609-1082' })).toHaveAttribute(
+      'href',
+      '/order-management/orders/77aa0001-0000-4000-8000-000000000001',
+    );
+    // today's sentence stays on top
+    expect(screen.getByText(/delivered/)).toBeInTheDocument();
+  });
+
+  it('shows no table when the SO has no DO line', async () => {
+    getSalesOrderDeliveries.mockResolvedValue({
+      lines: [
+        { line_id: LINE_A, deliveries: [], cancels: [] },
+        { line_id: LINE_B, deliveries: [], cancels: [] },
+      ],
+      groups: [],
+    });
+    renderDetail();
+    openDelivery();
+
+    await waitFor(() => expect(getSalesOrderDeliveries).toHaveBeenCalled());
+    expect(screen.queryByRole('region', { name: 'Delivery orders' })).toBeNull();
   });
 });
