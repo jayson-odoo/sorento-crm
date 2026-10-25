@@ -123,3 +123,28 @@ Wiring:
   product_details, known brands, promotion kinds and sales_channels lines.
 - engine: `_lookup_lines(db, message, config)` in a savepoint like `_candidate_lines` (engine.py:1131-1182); any
   error -> [] and the turn continues; trace key "lookup_lists" with pieces + hits (label, piece, spelling, meaning).
+
+## S1 as built (8c906e32c1, kill-proof on PR #1865)
+`EMBED` sentinel `USE_PROVIDER` (None = spelling only), `embedder(db)` resolves the key in the engine session; own
+Unicode fold (`_fold`, keeps CJK); a category piece CONTAINING a brand word is skipped; code-like pieces (3+ digit run
+or a 5+ char letter-digit word) never feed the meaning / spelling lists (AC-12).
+
+## S2 code contract (spec words, spec numbers, file types, prompt translations as data)
+- Lists "spec" (header noun "Spec", TOP_K 10) and "file_type" (header noun "File type", TOP_K 5).
+- Spec WORD rows: every spec registry value of a WORD key (colour, finish, material, bowl count, trap type, ...; the
+  keys the 33 removed v63 "Specification ..." word lines describe), label `<spec label> <value label>`, texts = value,
+  label, synonyms.
+- Spec NUMBER values: `number_hits(message, db_or_rows) -> list[Hit]` (list "spec"): exact match of a normalised
+  number+unit against stored spec values: `normalise_number("200 mm") == normalise_number("200mm") ==
+  normalise_number("20 cm") == "200mm"`; units mm, cm, m (and inch if stored); "600x400" / "600 x 400 mm" sizes and
+  ranges compared as stored after the same normalisation; every spec key holding the value is offered, label
+  `<spec label> <stored value>` ("trap length 200mm"); a number no spec holds offers nothing. No meaning score.
+- File type rows: attachment types + certificate kinds (the sources closed_lists_index `_file_matches` reads,
+  closed_lists_index.py:248-276), label as the attachment type / certificate kind name.
+- Prompt translations become row texts (data), moved verbatim from the v63 spans this lane removes, as one constant
+  `PROMPT_SYNONYMS: dict[str, dict[str, tuple[str, ...]]]` (list -> row label -> extra texts), e.g. category "water
+  closet": ("tandas", "mangkuk tandas", "马桶"), "water tap": ("paip air", "kepala paip", "水龙头"), "kitchen sink":
+  ("sinki dapur", "厨房水槽"), file type "photo": ("gambar", "foto"), "drawing": ("lukisan",), certificate: ("sijil",).
+  It applies to S1's category rows too (the measured config was "+ v63 translations as data").
+- Block order: category, spec, file_type, sales_channel (later: brand, salesperson, location, promotion_kind,
+  customer).
