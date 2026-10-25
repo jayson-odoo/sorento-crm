@@ -70,7 +70,7 @@ const SKU_COLUMN: ColumnDef<SoDeliveryListRow> = {
     ) : (
       dash
     ),
-  size: 160,
+  size: 150,
 };
 
 const LOCATION_COLUMN: ColumnDef<SoDeliveryListRow> = {
@@ -140,8 +140,10 @@ export function DeliveriesTable({
       },
       { id: 'do_date', header: 'DO date', cell: ({ row }) => fmtDate(row.original.do_date), size: 130 },
       // The lightbox reads Location, Status; the Delivery tab's list (mock v2 Panel D) reads
-      // Status, SKU, Location.
-      ...(withSku ? [STATUS_COLUMN, SKU_COLUMN, LOCATION_COLUMN] : [LOCATION_COLUMN, STATUS_COLUMN]),
+      // Status, SKU, Location, with Status narrowed so Qty is not clipped at 1280.
+      ...(withSku
+        ? [{ ...STATUS_COLUMN, size: 170 }, SKU_COLUMN, LOCATION_COLUMN]
+        : [LOCATION_COLUMN, STATUS_COLUMN]),
       {
         id: 'actual_delivery_date',
         header: 'Actual delivery',
