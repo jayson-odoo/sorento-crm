@@ -268,7 +268,7 @@ const SCROLLER_MAX_HEIGHT_FALSE_SITES = new Map<string, number>([
 
 // `scrollerMaxHeight={cond ? x : false}` counts too: it opts out in its dialog branch.
 const SCROLLER_MAX_HEIGHT_FALSE =
-  /scrollerMaxHeight:\s*false|scrollerMaxHeight=\{(?:[^{}?:]+\?[^{}:]+:\s*)?false\}/g;
+  /scrollerMaxHeight:\s*false|scrollerMaxHeight=\{(?:[^{}?:]+\?[^{}:]+:\s*)?false\s*\}/g;
 
 describe('A grid inside a Dialog/Sheet body opts out of the bounded scroller (B2, M5 review run 1)', () => {
   it('every scrollerMaxHeight: false site is enumerated with a reason', () => {
@@ -300,7 +300,7 @@ describe('A grid inside a Dialog/Sheet body opts out of the bounded scroller (B2
     expect(missing).toEqual([]);
   });
 
-  it('PoPlanCard keeps the bounded default - the one plain-page caller of DrillTable', () => {
+  it('PoPlanCard keeps the bounded default - it renders DrillTable on a plain page card', () => {
     const src = fs.readFileSync(
       'app/(protected)/scm/purchase-orders/[id]/components/PoPlanCard.tsx',
       'utf8',
