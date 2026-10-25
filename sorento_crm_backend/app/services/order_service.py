@@ -1446,6 +1446,7 @@ class OrderService:
         if not order:
             raise handle_not_found("Order", order_id)
         self._attach_remarks_cs_locked(order)
+        self._attach_sales_order_links(order)
         order.autocount_owned_fields = (
             sorted(AUTOCOUNT_OWNED_ORDER_COLUMNS) if is_autocount_owned(order) else []
         )
@@ -1467,6 +1468,45 @@ class OrderService:
             ).is_remarks_cs_locked(order)
         except Exception:
             order.remarks_cs_locked = False
+
+    def _attach_sales_order_links(self, order) -> None:
+        """Stamp the transient ``sales_order`` ref each DO line exposes (DO-SO-LINK-SURFACE).
+
+        Explicit AutoCount links only: the stored ``sales_order_line_id`` (its SO and line no),
+        else the SO numbered ``from_doc_no`` in the DO's own company, with no line. Never a
+        product or qty match. Two reads for the whole DO.
+        """
+        from app.models.order import SalesOrder, SalesOrderLine
+
+        lines = list(order.lines or [])
+        linked_ids = {str(ln.sales_order_line_id) for ln in lines if ln.sales_order_line_id}
+        by_line = {}
+        if linked_ids:
+            rows = (
+                self.db.query(SalesOrderLine.id, SalesOrderLine.line_no, SalesOrder.id, SalesOrder.so_number)
+                .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+                .filter(SalesOrderLine.id.in_(linked_ids), SalesOrder.company_id == order.company_id)
+                .all()
+            )
+            by_line = {str(lid): {"id": str(sid), "so_number": no, "line_no": line_no}
+                       for lid, line_no, sid, no in rows}
+        numbers = {
+            ln.from_doc_no for ln in lines
+            if ln.from_doc_no and str(ln.sales_order_line_id or "") not in by_line
+        }
+        by_number = {}
+        if numbers:
+            rows = (
+                self.db.query(SalesOrder.id, SalesOrder.so_number)
+                .filter(SalesOrder.so_number.in_(numbers), SalesOrder.company_id == order.company_id)
+                .all()
+            )
+            by_number = {no: {"id": str(sid), "so_number": no, "line_no": None} for sid, no in rows}
+        for line in lines:
+            ref = by_line.get(str(line.sales_order_line_id or ""))
+            if ref is None and line.from_doc_type in (None, "SO"):
+                ref = by_number.get(line.from_doc_no)
+            line.sales_order = ref
 
     # ------------------------------------------------------------------ #
     # Aggregation / analytics
