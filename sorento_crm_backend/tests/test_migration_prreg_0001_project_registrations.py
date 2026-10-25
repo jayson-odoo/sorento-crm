@@ -294,42 +294,42 @@ def _holders(conn) -> set:
     }
 
 
-def test_the_approver_role_is_one_named_constant_of_the_migration():
-    module = _module()
-    assert isinstance(module.APPROVER_ROLE_NAME, str) and module.APPROVER_ROLE_NAME.strip()
+def test_the_approver_roles_are_both_named_in_one_constant_of_the_migration():
+    """Owner ruling 25 Oct 16:35: Project Sales Manager AND Project Sales Coordinator."""
+    names = {n.strip().casefold() for n in _module().APPROVER_ROLE_NAMES}
+    assert names == {"project sales manager", "project sales coordinator"}
 
 
-def test_the_permission_goes_to_the_admin_roles_and_the_one_named_approver_role(conn):
+def test_the_permission_goes_to_the_admin_roles_and_every_named_approver_role(conn):
     from sqlalchemy.orm import Session
 
-    name = _module().APPROVER_ROLE_NAME  # read from the migration, never hard-coded here
+    names = _module().APPROVER_ROLE_NAMES  # read from the migration, never hard-coded here
     session = Session(bind=conn)
     existing = {r[0] for r in conn.execute(text("select slug from user_roles"))}
     for slug in ("superadmin", "admin"):
         if slug not in existing:
             _role(session, slug, slug)
-    named = _role(session, "zzt-approver-named", name)
+    named = [_role(session, f"zzt-approver-{i}", n.upper()) for i, n in enumerate(names)]
     other = _role(session, "zzt-other-role", "Sales Executive")
     old_match = _role(session, "zzt-old-psa", "Project Sales Admin")
     _clear_grants(conn)
     _upgrade(conn)
     holders = _holders(conn)
-    assert {"superadmin", "admin", named.slug} <= holders
+    assert {"superadmin", "admin", *(r.slug for r in named)} <= holders
     assert other.slug not in holders
     # the old "project sales admin" name match is gone: that name is no longer special
-    if name.strip().casefold() != "project sales admin":
-        assert old_match.slug not in holders
+    assert old_match.slug not in holders
     assert conn.execute(text("select count(*) from user_permissions where slug = :s"), {"s": PERMISSION}).scalar() == 1
 
 
-def test_with_no_role_of_that_name_only_the_admin_roles_hold_the_permission(conn):
+def test_with_no_role_of_those_names_only_the_admin_roles_hold_the_permission(conn):
     from sqlalchemy.orm import Session
 
-    name = _module().APPROVER_ROLE_NAME
     session = Session(bind=conn)
-    conn.execute(text("delete from user_role_permissions where role_id in (select id from user_roles where name = :n)"), {"n": name})
-    conn.execute(text("delete from user_role_assignments where role_id in (select id from user_roles where name = :n)"), {"n": name})
-    conn.execute(text("delete from user_roles where name = :n"), {"n": name})
+    for name in _module().APPROVER_ROLE_NAMES:
+        conn.execute(text("delete from user_role_permissions where role_id in (select id from user_roles where lower(name) = lower(:n))"), {"n": name})
+        conn.execute(text("delete from user_role_assignments where role_id in (select id from user_roles where lower(name) = lower(:n))"), {"n": name})
+        conn.execute(text("delete from user_roles where lower(name) = lower(:n)"), {"n": name})
     existing = {r[0] for r in conn.execute(text("select slug from user_roles"))}
     for slug in ("superadmin", "admin"):
         if slug not in existing:
