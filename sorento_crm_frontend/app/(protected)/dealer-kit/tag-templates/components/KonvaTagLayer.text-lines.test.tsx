@@ -168,6 +168,9 @@ describe('text layer: canvas and print draw the same lines', () => {
       const printed = printText(layer);
       expect(printed.textContent).toBe(expected);
       expect(printed.style.whiteSpace).toBe('pre');
+      // No clip the canvas does not have: the lines are already the ones that
+      // fit, and a clip only shaved descenders off a tightly sized box.
+      expect(printed.style.overflow).not.toBe('hidden');
     });
   }
 

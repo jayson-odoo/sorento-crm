@@ -179,7 +179,7 @@ vi.mock('../../services/tagDataService', () => ({
   }),
 }));
 
-import { textLayerLines } from '@/lib/dealer-kit/text-layout';
+import { canvasTextHeight, textLayerLines } from '@/lib/dealer-kit/text-layout';
 import { TagCanvasEditor } from './TagCanvasEditor';
 
 function textLayerDoc(overrides: Partial<TextLayerProps> = {}): TagTemplateDoc {
@@ -342,5 +342,8 @@ describe('TagCanvasEditor live text reflow (AC-S6-2)', () => {
       ).join('\n'),
     );
     expect(node.textChild.text()).toContain('\n');
+    // Same slack as the committed render, so Konva's own height cut never
+    // drops the last line mid-drag (review round 3).
+    expect(node.textChild.height()).toBe(canvasTextHeight(node.height()));
   });
 });

@@ -23,9 +23,11 @@ class FakeFontFace {
   static inSet: (face: FakeFontFace) => boolean = () => false;
   family: string;
   source: string;
-  constructor(family: string, source: string) {
+  descriptors: { display?: string } | undefined;
+  constructor(family: string, source: string, descriptors?: { display?: string }) {
     this.family = family;
     this.source = source;
+    this.descriptors = descriptors;
   }
   /** Whether `document.fonts` already held this face when `load()` ran. */
   inSetAtLoad = false;
@@ -88,6 +90,15 @@ describe('ensureFontsLoaded', () => {
 
     expect(added).toHaveLength(1);
     expect((added[0] as FakeFontFace).inSetAtLoad).toBe(true);
+  });
+
+  // Registered before it loads, a face with the default `font-display: auto`
+  // HIDES its text while loading: previews showed nothing for seconds where
+  // they used to show the fallback (review round 3).
+  it('swaps: the fallback stays visible while the face loads', async () => {
+    await ensureFontsLoaded([font()]);
+
+    expect((added[0] as FakeFontFace).descriptors?.display).toBe('swap');
   });
 
   it('takes a face that failed to load back out of document.fonts', async () => {
