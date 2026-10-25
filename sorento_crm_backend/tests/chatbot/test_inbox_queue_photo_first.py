@@ -15,6 +15,9 @@ from __future__ import annotations
 
 import time
 
+from sqlalchemy import text
+
+from app.database import SessionLocal
 from tests.chatbot.test_inbox_queue_order import (  # noqa: F401 - fixtures used by name
     iq,
     iq_serial,
@@ -202,3 +205,48 @@ def test_order_key_puts_only_a_photo_first_and_keeps_send_order_otherwise():
     ]:
         assert key(5.0, kind, mime) == (1, 5.0), (kind, mime)
     assert key(9.0, "image", None) < key(1.0, None, None), "a later photo goes before an earlier text"
+
+
+def test_order_key_gives_a_photo_its_place_back_after_60s_queued():
+    """PF-7, the key alone (owner, 25 Oct: "1a ok"): a photo goes first for its first 60 s in
+    the queue; after that it takes its send-order place, so an earlier text is answered."""
+    key = iq()._order_key
+    assert key(9.0, "image", None, waited_seconds=59.0) == (0, 9.0)
+    assert key(9.0, "image", None, waited_seconds=61.0) == (1, 9.0)
+    assert key(1.0, None, None, waited_seconds=61.0) < key(9.0, "image", None, waited_seconds=61.0)
+
+
+def test_a_photo_queued_over_60s_no_longer_holds_up_the_earlier_texts(world, media_worker):
+    """PF-7 (owner, 25 Oct: "1a ok"): T0 runs while T (t0 + 0.1 s) and P (t0 + 201 ms) are
+    queued, and P has been in the queue for over 60 s (a read that would not finish). T0
+    does not give way to P, and T goes before it: T0, T, P."""
+    contact = world.contact(covered=True, media=True)
+    # Sent 10 s ago (the webhook refuses a stale body); only P's queue time is moved back.
+    base = time.time() - 10
+    t0 = world.message(contact, base, "cap-t0")
+    t1 = world.message(contact, base + 0.1, "cap-t1")
+    photo = world.message(contact, base + PHOTO_LAG_SECONDS, "cap-photo")
+
+    world.gate.clear()
+    world.webhook(world.body(contact, t0))
+    assert world.wait_parse_started(t0, timeout=10), "T0 never started"
+    world.webhook(world.body(contact, t1))
+    world.webhook(world.body(contact, photo, photo=True))
+    assert wait_until(lambda: _queued(world, contact, t1) and _queued(world, contact, photo), timeout=5)
+    db = SessionLocal()
+    try:
+        db.execute(
+            text(
+                "UPDATE chatbot.turns SET created_at = now() - interval '61 seconds' "
+                "WHERE contact_respond_id = :c AND message_id = :m"
+            ),
+            {"c": contact, "m": str(photo)},
+        )
+        db.commit()
+    finally:
+        db.close()
+    world.gate.set()
+
+    world.wait_posts(3, contact, timeout=40)
+    assert world.posted_messages(contact) == [str(t0), str(t1), str(photo)]
+    assert _calls(world, t0, t1, photo) == [str(t0), str(t1), str(photo)], "a text gave way to a stale photo"
