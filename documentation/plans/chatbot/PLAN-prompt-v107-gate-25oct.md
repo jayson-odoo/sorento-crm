@@ -1,7 +1,7 @@
 # PLAN: parser prompt v107 and its publish gate (PROMPT-V107)
 
-Status: gate FAIL at part 1, early stop, owner decision pending (small fix track: prompt text + eval gate, no product
-code, no migration). Production stays on v63.
+Status: done, not published: v107 FAIL at part 1; v108 (crew go (a)) FAIL at part 4 and fixes no target row (small fix
+track: prompt text + eval gate, no product code, no migration). Production stays on v63.
 Owner approval: 25 Oct 2026 ~12:30, budget about USD 9-10 on the OpenAI DEV key.
 UAC: `prompt-v107-gate-25oct-acceptance-criteria.md` (alongside).
 
@@ -67,9 +67,28 @@ Spend: USD 3.28 of the approved ~9-10 (ledger crew/state/eval/v107/LEDGER.md).
 
 The three rules as written (appended to v103's candidate-pick line and its `sales_channel` line): crew/state/eval/v107/v107_vs_v103.diff.
 
+## Round 2: v108 = production v63 text + the same 3 rules (crew go (a), cap USD 10.00)
+
+v108 = md5 f0318489 (copy id 9ec5af65, version 111 on sorento_explore1020, unlabelled). Rules 1 and 2 sit in v63's
+SALES RANKING section, rule 3 beside the FIND block (a first draft with rule 3 in the attachment_type section sent fit
+asks to the file domain and was replaced). Arm A and config as above. Numbers only.
+
+| gate part | A | B (v108) | verdict |
+|---|---|---|---|
+| 1 TRAIN 118 | 93 | 94 composite (draft-1 full run plus final re-run of the 15 fit/split items), paired 1:2 | PASS |
+| 1 held-out 113 | 83 | 85, paired 3:5, no language slice down | PASS |
+| 1 R5 ranking 62 | 17 | 22: 3 of v107's 28 gains recovered (11%) | small gain |
+| 4 EXPLORE-1023C, run twice per arm | - | worse in both runs on 3 rows, better in both on 1 | FAIL |
+| 3 dealer battery 117 conversations | 92 | 93 | PASS |
+| 2 R3 + 10 of 30 R4 contacts, x1 (REDUCED for the cap) | 42 | 44 turn passes, no row worse | PASS (reduced) |
+
+None of the three rules changed the parse of its own target row (same parse as v63 in the engine and in R5). Likely
+cause, not verified: v63's own SALES_CHANNEL section, which reads "dealer" / "project" in a sales ask as the channel,
+outweighs the new lines. Spend for the lane: USD 9.80.
+
 ## Publish (owner only, never this lane)
 
-Not recommended for v107. If a later candidate passes, the steps are:
+Not recommended for v107 or v108. If a later candidate passes, the steps are:
 
 Prompts page: save the v107 text as a new version of `chatbot_semantic_parser`, move its
 `production` label to it. Rollback: move the label back to v63.
