@@ -122,3 +122,11 @@ def test_rule_text_naming_a_removed_per_turn_line_is_renamed_to_its_block():
     assert any("Brand candidates" in e.payload for e in renamed)
     out = ple.apply(fixture())
     assert "Known brands:" not in out and "Brand candidates" in out
+
+
+def test_the_text_says_spec_key_and_value_come_from_the_spec_candidates_bracket():
+    """The removed Specification lines were the vocabulary of spec_key / spec_value (head/parser.py:222-227)."""
+    assert any("Spec candidates" in e.payload and "spec_key" in e.payload for e in ple.EDITS), \
+        "no replacement tells the parser where spec_key / spec_value come from"
+    out = ple.apply(fixture())
+    assert "Spec candidates" in out and "spec_key" in out

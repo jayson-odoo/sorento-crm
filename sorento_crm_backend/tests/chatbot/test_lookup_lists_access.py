@@ -31,7 +31,7 @@ def _spec_labels(rows) -> set[str]:
 def test_load_rows_drops_the_spec_rows_of_a_hidden_key(session_factory):
     seed_world(session_factory)
     db = scoped(session_factory)
-    assert "zz finish gunmetal" in _spec_labels(ll.load_rows(db))
+    assert "zz finish gunmetal (zz_finish: gunmetal)" in _spec_labels(ll.load_rows(db))
     hidden = ll.load_rows(db, hidden_spec_keys=frozenset({"zz_finish"}))
     assert not any("zz finish" in s for s in _spec_labels(hidden)), _spec_labels(hidden)
     assert ll.load_rows(db, hidden_spec_keys=frozenset()) == ll.load_rows(db)
@@ -47,7 +47,7 @@ def test_number_hits_skip_a_hidden_key_and_keep_the_others(session_factory):
     seed_world(session_factory)
     db = scoped(session_factory)
     got = ll.number_hits(MESSAGE, db, hidden_spec_keys=frozenset({"zz_trap_len"}))
-    assert sorted(h.row.label.casefold() for h in got) == ["zz width 200mm"], got
+    assert sorted(h.row.label.casefold() for h in got) == ["zz width 200mm (zz_width: 200)"], got
     assert ll.number_hits(MESSAGE, db, hidden_spec_keys=frozenset({"zz_trap_len", "zz_width"})) == []
 
 
@@ -77,17 +77,17 @@ def _turn(session_factory, stub_access, monkeypatch, *, hide: tuple[str, ...]) -
 def test_contact_that_may_see_everything_gets_the_word_and_number_lines(session_factory, seeded, stub_access, monkeypatch):
     lines = _turn(session_factory, stub_access, monkeypatch, hide=())
     assert HDR_SPEC.casefold() in lines
-    for want in ("- zz finish gunmetal", "- zz trap length 200mm", "- zz width 200mm"):
+    for want in ("- zz finish gunmetal (zz_finish: gunmetal)", "- zz trap length 200mm (zz_trap_len: 200)", "- zz width 200mm (zz_width: 200)"):
         assert want in lines, (want, lines)
 
 
 def test_contact_whose_access_hides_a_word_key_gets_no_line_for_it(session_factory, seeded, stub_access, monkeypatch):
     lines = _turn(session_factory, stub_access, monkeypatch, hide=("zz_finish",))
     assert not any("zz finish" in ln or "gunmetal" in ln for ln in lines if ln.startswith("- ")), lines
-    assert "- zz trap length 200mm" in lines, lines
+    assert "- zz trap length 200mm (zz_trap_len: 200)" in lines, lines
 
 
 def test_contact_whose_access_hides_a_number_key_gets_no_line_for_it(session_factory, seeded, stub_access, monkeypatch):
     lines = _turn(session_factory, stub_access, monkeypatch, hide=("zz_trap_len",))
     assert not any("trap length" in ln for ln in lines if ln.startswith("- ")), lines
-    assert "- zz width 200mm" in lines and "- zz finish gunmetal" in lines, lines
+    assert "- zz width 200mm (zz_width: 200)" in lines and "- zz finish gunmetal (zz_finish: gunmetal)" in lines, lines

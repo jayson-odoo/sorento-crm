@@ -140,7 +140,7 @@ def test_number_hits_offer_every_spec_holding_the_value(session_factory):
     for message in ("any basin with 200mm trap", "200 mm", "20 cm trap"):
         got = ll.number_hits(message, db)
         assert all(h.row.list_name == "spec" for h in got), got
-        assert sorted(h.row.label.casefold() for h in got) == ["zz trap length 200mm", "zz width 200mm"], (message, got)
+        assert sorted(h.row.label.casefold() for h in got) == ["zz trap length 200mm (zz_trap_len: 200)", "zz width 200mm (zz_width: 200)"], (message, got)
 
 
 def test_a_number_no_spec_holds_offers_nothing(session_factory):
@@ -163,7 +163,7 @@ def test_load_rows_carries_spec_and_file_type_rows(session_factory):
     seed_world(session_factory)
     rows = ll.load_rows(scoped(session_factory))
     spec = {r.label.casefold() for r in rows if r.list_name == "spec"}
-    assert "zz finish gunmetal" in spec and "zz finish matt black" in spec, spec
+    assert "zz finish gunmetal (zz_finish: gunmetal)" in spec and "zz finish matt black (zz_finish: matt black)" in spec, spec
     assert not any("trap length" in s for s in spec), "number keys are not word rows"
     files = {r.label.casefold() for r in rows if r.list_name == "file_type"}
     assert {"photo", "drawing", "certificate"} <= files, files
@@ -173,14 +173,14 @@ def test_spec_word_by_spelling_synonym_and_typo(session_factory):
     seed_world(session_factory)
     rows = ll.load_rows(scoped(session_factory))
     for word in ("gunmetal", "gun metal", "gunmetl"):
-        assert "zz finish gunmetal" in labels(ll.shortlist(f"any {word} basin", rows, None), "spec"), word
+        assert "zz finish gunmetal (zz_finish: gunmetal)" in labels(ll.shortlist(f"any {word} basin", rows, None), "spec"), word
 
 
 def test_spec_word_through_stubbed_meaning(session_factory):
     seed_world(session_factory)
     rows = ll.load_rows(scoped(session_factory))
     embed = meaning_embed({"anthracite", "gunmetal", "gun metal"})
-    assert "zz finish gunmetal" in labels(ll.shortlist("anthracite basin", rows, embed), "spec")
+    assert "zz finish gunmetal (zz_finish: gunmetal)" in labels(ll.shortlist("anthracite basin", rows, embed), "spec")
     assert labels(ll.shortlist("anthracite basin", rows, None), "spec") == []
 
 

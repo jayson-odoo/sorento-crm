@@ -47,7 +47,7 @@ def test_marked_version_lists_the_finish_and_every_200mm_spec(session_factory, s
     lines = _turn(session_factory, stub_access, monkeypatch, marker=True)
     assert HDR_SPEC in lines, lines
     folded = [ln.casefold() for ln in lines]
-    for want in ("- zz finish gunmetal", "- zz trap length 200mm", "- zz width 200mm"):
+    for want in ("- zz finish gunmetal (zz_finish: gunmetal)", "- zz trap length 200mm (zz_trap_len: 200)", "- zz width 200mm (zz_width: 200)"):
         assert want in folded, (want, lines)
     assert "- zz depth 350mm" not in folded and not any("depth" in ln for ln in folded), lines
 
@@ -55,3 +55,12 @@ def test_marked_version_lists_the_finish_and_every_200mm_spec(session_factory, s
 def test_unmarked_version_has_no_spec_block(session_factory, seeded, stub_access, monkeypatch):
     lines = _turn(session_factory, stub_access, monkeypatch, marker=False)
     assert HDR_SPEC not in lines and not any("candidates (pick one only" in ln for ln in lines), lines
+
+
+def test_spec_lines_end_with_the_registry_key_and_stored_value(session_factory, seeded, stub_access, monkeypatch):
+    """The parser fills spec_key / spec_value from the bracket (grounding.py:698-722 reads a word value as the stored
+    code and a number as the bare leading number, `float(str(value).split()[0])`)."""
+    lines = [ln for ln in _turn(session_factory, stub_access, monkeypatch, marker=True) if ln.startswith("- ")]
+    assert any(ln.endswith("(zz_finish: gunmetal)") for ln in lines), lines
+    assert any(ln.endswith("(zz_trap_len: 200)") for ln in lines), lines
+    assert any(ln.endswith("(zz_width: 200)") for ln in lines), lines
