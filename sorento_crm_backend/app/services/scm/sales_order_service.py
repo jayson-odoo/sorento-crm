@@ -39,6 +39,7 @@ from app.models.project_so import (
 from app.models.sales_agent import SalesAgent
 from app.models.scm import OrderLinkClaim
 from app.services.document_ingest_service import CANCELLED
+from app.services import so_remark_rules
 from app.services.scm.po_ref import po_ref_key
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
@@ -459,6 +460,15 @@ class SalesOrderService:
         # money are summed from them), so a `min`/`max` over them costs nothing and cannot
         # disagree with the figures beside it.
         required_dates = []
+        # FULFIL-SO-REMARK (AC-16): the Remark and the Mockup labels read ALL the order's lines
+        # (the lines are already loaded above for the sums, so no extra read per list row).
+        mockup_by_line = {
+            ln.id: so_remark_rules.is_mockup_line(
+                so.internal_note, ln.line_remark, ln.section_heading
+            )
+            for ln in so.lines
+        }
+        label_mockups = so_remark_rules.label_lines(mockup_by_line.values())
         for ln in sorted(so.lines, key=_line_sort_key):
             qo = float(ln.qty_ordered or 0)
             qd = float(ln.qty_delivered or 0)
@@ -491,6 +501,8 @@ class SalesOrderService:
                 required_dates.append(ln.required_date)
             lines.append({
                 "id": ln.id,
+                "is_mockup": mockup_by_line[ln.id],
+                "mockup_label": label_mockups and mockup_by_line[ln.id],
                 # AutoCount's own line number - the address the Lines tab sorts and
                 # labels by. `None` for a line AutoCount never numbered.
                 "line_no": ln.line_no,
@@ -652,6 +664,10 @@ class SalesOrderService:
             # AutoCount's Transferable flag; None when the source never stated it.
             "is_transferable": so.is_transferable,
             "po_ref": so.po_ref or None,
+            "ship_info": so.ship_info or None,
+            "remark": so_remark_rules.default_remark(
+                so_remark_rules.remark_type(so.ship_info), mockup_by_line.values()
+            ),
             "created_at": so.created_at.isoformat() if so.created_at else "",
         }
 
