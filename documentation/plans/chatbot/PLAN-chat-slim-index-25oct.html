@@ -59,6 +59,45 @@ form.q .state{font-size:12.5px;color:var(--mut);margin-left:10px}
 <tr><td>sales agents / promotion kinds / locations</td><td class="n">-</td><td class="n">100%</td><td class="n">-</td><td class="n">10 / 4 / 1</td><td class="n">-</td><td><span class="tag stop">NOT ENOUGH DATA</span></td></tr>
 </table></div>
 <div class="card small"><b>What it says.</b> Meaning + spelling clearly beats today's spelling-only matching on <b>customer names</b> (96% vs 57% at a usable size) and <b>categories</b> (93-96% vs 85%). On file types and brands, spelling already finds them. But in 800 random messages only <b>22 name a category and 6 name a spec</b>: the two lists you care most about are the two with the least real data, so specs cannot be judged yet and categories pass only at the edge.</div>
+<h2 style="border-top:none;margin-top:18px">How it works: two shapes</h2>
+<div class="card" style="padding:10px 12px">
+<svg viewBox="0 0 1040 330" width="100%" role="img" aria-label="Two flows: lists looked up before the parser; customers looked up after the parser" style="font-family:inherit">
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8a93a6"/></marker></defs>
+<text x="10" y="22" font-size="15" font-weight="700" fill="#1d2330">1. Lists (categories, spec words, file types, brands): look up BEFORE the parser</text>
+<rect x="10" y="36" width="190" height="96" rx="10" fill="#fff" stroke="#d6dbe5" stroke-width="1.5"/>
+<text x="22" y="60" font-size="13" font-weight="700" fill="#1d2330">Message</text>
+<text x="22" y="82" font-size="12.5" fill="#5d6677">"Dealer &lt;F&gt; oct total</text><text x="22" y="99" font-size="12.5" fill="#5d6677">sales for water closet"</text>
+<line x1="200" y1="84" x2="250" y2="84" stroke="#8a93a6" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="252" y="36" width="250" height="96" rx="10" fill="#f4fbf7" stroke="#9fd6bb" stroke-width="1.5"/>
+<text x="264" y="60" font-size="13" font-weight="700" fill="#1d2330">Look-up (code)</text>
+<text x="264" y="82" font-size="12.5" fill="#1d2330">every word piece vs each list,</text><text x="264" y="99" font-size="12.5" fill="#1d2330">by meaning + spelling, any language</text><text x="264" y="118" font-size="12" fill="#1d6b48">never product codes</text>
+<line x1="502" y1="84" x2="552" y2="84" stroke="#8a93a6" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="554" y="36" width="230" height="96" rx="10" fill="#faf7ff" stroke="#cdb9ef" stroke-width="1.5"/>
+<text x="566" y="60" font-size="13" font-weight="700" fill="#1d2330">Parser decides</text>
+<text x="566" y="82" font-size="12.5" fill="#1d2330">reads "Category candidates:</text><text x="566" y="99" font-size="12.5" fill="#1d2330">SRT-WC: Water Closet ..."</text><text x="566" y="118" font-size="12" fill="#5b3aa0">picks one, or none</text>
+<line x1="784" y1="84" x2="834" y2="84" stroke="#8a93a6" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="836" y="36" width="194" height="96" rx="10" fill="#f5f8ff" stroke="#b5c6f0" stroke-width="1.5"/>
+<text x="848" y="60" font-size="13" font-weight="700" fill="#1d2330">Code answers</text>
+<text x="848" y="82" font-size="12.5" fill="#1d2330">filter = the picked</text><text x="848" y="99" font-size="12.5" fill="#1d2330">category</text>
+<text x="10" y="178" font-size="15" font-weight="700" fill="#1d2330">2. Customers: look up AFTER the parser, only the words it marked</text>
+<rect x="10" y="192" width="190" height="110" rx="10" fill="#fff" stroke="#d6dbe5" stroke-width="1.5"/>
+<text x="22" y="216" font-size="13" font-weight="700" fill="#1d2330">Message</text>
+<text x="22" y="238" font-size="12.5" fill="#5d6677">same message</text>
+<line x1="200" y1="246" x2="250" y2="246" stroke="#8a93a6" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="252" y="192" width="250" height="110" rx="10" fill="#faf7ff" stroke="#cdb9ef" stroke-width="1.5"/>
+<text x="264" y="216" font-size="13" font-weight="700" fill="#1d2330">Parser marks words</text>
+<text x="264" y="238" font-size="12.5" fill="#1d2330">customer = "&lt;F&gt; sanitary"</text><text x="264" y="256" font-size="12.5" fill="#1d2330">category = "water closet"</text><text x="264" y="276" font-size="12" fill="#5b3aa0">(as today's prompt already does)</text>
+<line x1="502" y1="246" x2="552" y2="246" stroke="#8a93a6" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="554" y="192" width="230" height="110" rx="10" fill="#f4fbf7" stroke="#9fd6bb" stroke-width="1.5"/>
+<text x="566" y="216" font-size="13" font-weight="700" fill="#1d2330">Look-up (code)</text>
+<text x="566" y="238" font-size="12.5" fill="#1d2330">ONLY "&lt;F&gt; sanitary" vs the</text><text x="566" y="256" font-size="12.5" fill="#1d2330">customer list, meaning + spelling</text><text x="566" y="276" font-size="12" fill="#1d6b48">"water closet" never searched</text><text x="566" y="293" font-size="12" fill="#1d6b48">as a customer</text>
+<line x1="784" y1="246" x2="834" y2="246" stroke="#8a93a6" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="836" y="192" width="194" height="110" rx="10" fill="#f5f8ff" stroke="#b5c6f0" stroke-width="1.5"/>
+<text x="848" y="216" font-size="13" font-weight="700" fill="#1d2330">Code picks</text>
+<text x="848" y="238" font-size="12.5" fill="#1d2330">one company: answer</text><text x="848" y="256" font-size="12.5" fill="#1d2330">several: one question</text><text x="848" y="276" font-size="12" fill="#5d6677">phrase finds nothing:</text><text x="848" y="293" font-size="12" fill="#5d6677">try the whole message</text>
+</svg>
+<p class="small mut" style="margin:4px 0 0">Why two shapes: a list of 10-1,000 values can be shown to the parser as a short candidate list. Customers are 7,000 names; looking them up on every word pulled sanitary-ware shops for "water closet" (measured), so they are looked up only on the words the parser marks as a customer.</p>
+</div>
 <div class="flow">
 <div class="box msg"><h4>Message</h4>"Dealer &lt;customer F&gt; oct total sales for water closet"</div>
 <div class="arrow">&rarr;</div>
@@ -123,13 +162,13 @@ form.q .state{font-size:12.5px;color:var(--mut);margin-left:10px}
 <h2>Phase 1 order</h2>
 <div class="tablewrap"><table>
 <tr><th>#</th><th>list</th><th>retrieval test</th><th>pass bar</th><th class="n">USD</th><th>status</th></tr>
-<tr><td>1</td><td>categories / classes</td><td><span class="tag free">GO</span> 96.1%, 180 mentions</td><td>better than today on category messages, no worse elsewhere</td><td class="n">~9</td><td><b>APPROVED</b>, running</td></tr>
+<tr><td>1</td><td>categories / classes</td><td><span class="tag free">GO</span> 96.1%, 180 mentions</td><td>better than today on category messages, no worse elsewhere</td><td class="n">~13.5 (x3 everywhere)</td><td><b>APPROVED</b>, running</td></tr>
 <tr><td>2</td><td>spec words (colour, finish, material ...)</td><td><span class="tag free">GO</span> 98.0%, 51</td><td>same</td><td class="n">~6</td><td><b>APPROVED</b>, after 1</td></tr>
 <tr><td>3</td><td>file types (attachment types)</td><td><span class="tag free">GO</span> 100%, 137</td><td>no worse than today (prompt diet: list text out, retrieval in)</td><td class="n">~5</td><td><b>APPROVED</b>, after 2</td></tr>
 <tr><td>4</td><td>brands</td><td><span class="tag free">GO</span> 98.6%, 72</td><td>no worse than today (prompt diet)</td><td class="n">~5</td><td><b>APPROVED</b>, after 3</td></tr>
 <tr><td>5</td><td>salespeople</td><td>third pull takes agent asks from "sales report for agent X" questions; scored when it lands</td><td>same as 1</td><td class="n">~5</td><td>after its data passes</td></tr>
 <tr><td>-</td><td>locations</td><td>few real messages (5)</td><td>-</td><td class="n">-</td><td>stays as today (your call)</td></tr>
-<tr><td>-</td><td>customer names</td><td><span class="tag free">GO</span> 96.0%, 75; ~6 lines per message</td><td>-</td><td class="n">~6</td><td>not approved yet; asked at that step</td></tr>
+<tr><td>6</td><td>customer names (shape 2: after the parser)</td><td>phrase look-up: no wrong lines on category messages; recall 71-87% on 31 rows (small)</td><td>better than today's spelling look-up, no worse elsewhere</td><td class="n">~6</td><td><b>APPROVED</b>, after brands</td></tr>
 <tr><td>-</td><td>spec sizes (200mm, 1200mm)</td><td><span class="tag stop">NO-GO</span> 51.7%</td><td>-</td><td class="n">-</td><td>stay in the prompt (read by code later)</td></tr>
 </table></div>
 <p class="small mut">Each step: 3 runs on each side against today's prompt (v63), OpenAI eval key only, every run logged, early stop on a missed bar. Costs for steps 2-5 reuse step 1's baseline runs when the code has not moved; otherwise add about USD 3.5.</p>

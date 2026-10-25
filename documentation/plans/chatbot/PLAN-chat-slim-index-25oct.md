@@ -3,7 +3,8 @@
 Status: PLAN v2 APPROVED (owner Lavish 25 Oct 17:34). Phase 0 DONE incl. pull 2 (18:55, result below): GO categories,
 spec WORD values, file types, brands, customers; NO-GO spec NUMBER values (sizes); not enough data for sales agents,
 promotion kinds, locations, channels. Phase 1 (a) APPROVED by the owner (crew a25272575): categories (~USD 9) then spec word values (~USD 6), OpenAI eval
-key ..bG4A only, x3, early stop, spend.log. Next lists below need their own OK. Slice WC proposed to crew as lane CHAT-WC-CATEGORY-TOTAL (after #1856).
+key ..bG4A only, x3, early stop, spend.log. Owner later approved file types, brands (no-regression bar), customers (shape 2, ~USD 6) and categories at x3
+everywhere (~USD 13.5). Slice WC proposed to crew as lane CHAT-WC-CATEGORY-TOTAL (after #1856).
 v1 (code-first + subtractive slim) is replaced by this after the owner's note of 25 Oct 17:26 (verbatim in
 crew/state/inbox/slim-index-owner-1726.md): past slimming was long, costly and never better; the index should never
 have been spelling-only; index matching must cover ALL list data; a retrieval step BEFORE the parser passes
@@ -11,17 +12,25 @@ candidates to the parser, which decides. Lavish page: `PLAN-chat-slim-index-25oc
 Slice WC (the water-closet code bugs) keeps its UAC: `chat-slim-index-25oct-acceptance-criteria.md`.
 Customer names are masked (public repo).
 
+## Two shapes (owner asked "after parser we have another rag step?")
+1. Lists (categories, spec words, file types, brands): code looks the message's word pieces up in each list BEFORE the
+   parser (meaning + spelling, never product codes) and shows a short candidate list; the parser picks one or none.
+2. Customers (7,000 names): the parser marks the customer words first (as v63 does today); code then looks up ONLY that
+   phrase in the customer list (meaning + spelling) and picks: one company = answer, several = one question, nothing
+   found = the whole message as a fallback. Measured reason: looking customers up on every word pulled sanitary-ware
+   shops for "water closet" (crew/state/eval/slim-index/customer-probe.md, crew-only).
+
 ## Phase 1 sequence (owner 25 Oct; crew relays a25272575 + follow-up)
 
 | step | list | data status (phase 0) | bar | gate USD | status |
 |---|---|---|---|---|---|
-| 1 | categories / classes | GO: 0.961, n=180 | B beats v63 on category rows, no regression elsewhere | ~9 (incl. v63 baseline x3) | APPROVED, running |
+| 1 | categories / classes | GO: 0.961, n=180 | B beats v63 on category rows, no regression elsewhere | ~13.5 (x3 everywhere; owner OK) | APPROVED, running |
 | 2 | spec word values | GO: 0.980, n=51 | same | ~6 | APPROVED, after 1 |
 | 3 | file types (attachment types) | GO: 1.000, n=137 | NO REGRESSION vs v63 (goal: prompt diet, list text out, retrieval in) | ~5 | APPROVED, after 2 |
 | 4 | brands | GO: 0.986, n=72 | NO REGRESSION vs v63 (prompt diet) | ~5 | APPROVED, after 3 |
 | 5 | salespeople | pull 3 sources agent asks from sales-report-for-an-agent asks; scored when it lands | GO on data first, then same gate shape | ~5 | after data passes; spend after 4 |
 | - | locations | few real messages (5) | - | - | stays as today (owner accepts) |
-| - | customer names | GO: 0.960, n=75, ~6 lines per message | - | ~6 | NOT approved yet; crew asks at that step |
+| 6 | customer names, shape 2 (after the parser) | customer probe: always-on block puts sanitary-ware shops on "water closet"; phrase look-up after the parser: 0 wrong lines on category messages, recall 0.71-0.87 on 31 rows | B beats today's spelling resolver, no regression elsewhere | ~6 | APPROVED (owner 25 Oct), after brands |
 | - | spec number values (sizes) | NO-GO: 0.517 | - | - | stays in the prompt; a size is read by code (separate idea) |
 
 Later-step costs assume arm A's v63 baseline runs are reused on the same main; a new main adds ~USD 3.5.
