@@ -161,7 +161,7 @@ def test_an_inactive_warehouse_is_never_offered(session_factory):
 
 def test_salesperson_by_code_person_alias_and_typo_and_never_an_inactive_one(session_factory):
     seed_world3(session_factory)
-    rows = ll.load_rows(scoped(session_factory))
+    rows = ll.load_rows(scoped(session_factory), include_salespeople=True)
     for message in ("zz sean i", "zz sean", "seany", "zz seen i"):
         assert labels(ll.shortlist(message, rows, None), "salesperson") == ["ZZ SEAN I"], message
     assert labels(ll.shortlist("zz retired", rows, None), "salesperson") == []
@@ -208,3 +208,8 @@ def test_warm_swallows_an_embedder_failure():
 
     ll.warm([ll.LookupRow("brand", "b", "Brand", ("brand",))], boom)
     time.sleep(0.2)
+
+
+def test_load_rows_default_returns_no_salesperson_rows(session_factory):
+    seed_world3(session_factory)
+    assert not [r for r in ll.load_rows(scoped(session_factory)) if r.list_name == "salesperson"]
