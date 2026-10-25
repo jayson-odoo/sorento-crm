@@ -134,13 +134,13 @@ EDITS: tuple[Edit, ...] = (
     Edit(
         'replace',
         'a key from the Specification lines of the policy block, or null',
-        'a key named by the Spec candidates block of the user message, or null',
+        'the key in the "(key: value)" bracket of a Spec candidates line of the user message, or null',
     ),
     # spec_value source.
     Edit(
         'replace',
         'one of that key\'s choices (the value after "="), a number for a',
-        "one of that key's choices (as the Spec candidates line names it), a number for a",
+        'the value in that same bracket of the Spec candidates line, a number for a',
     ),
     # The attachment type word maps (now PROMPT_SYNONYMS data and the File type candidates block).
     Edit(
@@ -167,7 +167,7 @@ EDITS: tuple[Edit, ...] = (
     Edit(
         'replace',
         'ONLY a key\n      that has a "Specification <key>" line in the policy block below; the choices and\n      the words listed on that line are the whole vocabulary, in any language.',
-        'ONLY a key named by the Spec candidates block of the user message; the choices and words it lists are the whole vocabulary, in any language.',
+        'ONLY a key that a Spec candidates line of the user message names in its "(key: value)" bracket (spec_key and spec_value come from that bracket); the lines of that block are the whole vocabulary, in any language.',
     ),
 )
 

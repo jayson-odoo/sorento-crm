@@ -268,7 +268,7 @@ def _spec_rows(db: "Session", hidden: frozenset[str] = frozenset()) -> list[Look
             texts = [str(value), display, *(synonyms.get(value) or [])]
             out.append(
                 LookupRow(
-                    "spec", f"{row.spec_key}={value}", f"{row.label} {display}",
+                    "spec", f"{row.spec_key}={value}", f"{row.label} {display} ({row.spec_key}: {value})",
                     tuple(dict.fromkeys(str(t) for t in texts if t and _fold(str(t)))),
                 )
             )
@@ -478,9 +478,9 @@ def number_hits(message: str, db: "Session", *, hidden_spec_keys: frozenset[str]
         .one()
     )
     out: list[Hit] = []
-    for (row, piece, shown, _v), held in zip(asks, counts):
+    for (row, piece, shown, value), held in zip(asks, counts):
         if int(held) > 0:
-            label = f"{row.label} {shown}"
+            label = f"{row.label} {shown} ({row.spec_key}: {value:g})"
             out.append(Hit(LookupRow("spec", f"{row.spec_key}={shown}", label, (label,)), _fold(piece), 1.0, 0.0))
     return sorted(out, key=lambda h: h.row.label)
 
