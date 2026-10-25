@@ -172,6 +172,24 @@ def _landed_qty(
     return 0.0
 
 
+def _follow_capacity(spo: Any) -> float:
+    """SUPPLY-SPO-LINK: what an SPO allocation a PO line was transferred onto can hold of
+    the placements that follow that line (`StockDebtService._holds`): the whole allocation
+    while it is still incoming, only what it landed once it is not. A line closed with
+    nothing landed holds nothing, so the placement falls through to the PO's own on-order
+    quantity instead of vanishing."""
+    allocated = _float(spo.spo_allocated)
+    received = _float(spo.spo_received)
+    if bool(spo.spo_incoming) and allocated > received:
+        return allocated
+    return _landed_qty(
+        allocated,
+        received,
+        arrived=spo.spo_arrived is not None,
+        receipt_status=spo.spo_receipt_status,
+    )
+
+
 def book_so_pins(
     po_lines: Sequence[Tuple[str, SupplyEvent, str, float]],
     demand: Dict[str, Sequence[DemandLine]],
@@ -1883,7 +1901,7 @@ class StockDebtService:
             for row in po_links
         }
         spo_left: Dict[str, float] = {
-            str(spo.spo_allocation_id): _float(spo.spo_allocated)
+            str(spo.spo_allocation_id): _follow_capacity(spo)
             for spos in transferred_to.values()
             for spo in spos
         }
@@ -2002,6 +2020,32 @@ class StockDebtService:
                 (row.from_po_number, row.from_ref, str(row.spo_product_id)), []
             ).append(row)
         return out
+
+    def _transferred_capacity(self, po_line_ids: Sequence[str]) -> Dict[str, float]:
+        """SUPPLY-SPO-LINK: by PO line id, what the SPO allocations the line was
+        transferred onto can hold of its placements (`_follow_capacity`, summed) - the part
+        of those placements `_holds` never puts on the PO itself."""
+        lines = (
+            self.db.query(
+                PurchaseOrderLine.id.label("po_line_id"),
+                PurchaseOrder.po_number,
+                func.btrim(PurchaseOrderLine.source_ref).label("po_line_ref"),
+                PurchaseOrderLine.product_id.label("po_product_id"),
+            )
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .filter(PurchaseOrderLine.id.in_(list(po_line_ids)))
+            .all()
+        )
+        transferred_to = self._transferred_allocations(lines)
+        return {
+            str(line.po_line_id): sum(
+                _follow_capacity(spo)
+                for spo in transferred_to.get(
+                    (line.po_number, line.po_line_ref, str(line.po_product_id)), ()
+                )
+            )
+            for line in lines
+        }
 
     def _stand_in_floors(
         self,
@@ -2588,9 +2632,15 @@ class StockDebtService:
         named_spo_ids = [parse_supply_key(key)[1] for key in named if key.startswith("spo:")]
         placed: Dict[str, float] = {}
         if named_po_ids:
+            # SUPPLY-SPO-LINK: a placement sits on the PO only for what its line's
+            # transferred SPO allocations cannot hold (`_holds` takes those first), so only
+            # that part is netted from what the S/O may pin.
+            transferred = self._transferred_capacity(named_po_ids)
             placed.update(
                 {
-                    f"po:{line_id}": _float(qty)
+                    f"po:{line_id}": max(
+                        _float(qty) - transferred.get(str(line_id), 0.0), 0.0
+                    )
                     for line_id, qty in self.db.query(
                         OrderInquiryLink.po_line_id, func.sum(OrderInquiryLink.qty)
                     )
