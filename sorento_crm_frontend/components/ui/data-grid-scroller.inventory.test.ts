@@ -288,6 +288,8 @@ describe('A grid inside a Dialog/Sheet body opts out of the bounded scroller (B2
     // and opts out inside the lightbox, so its one site reads `onPage ? undefined : false`.
     const count = (src: string) => src.match(SCROLLER_MAX_HEIGHT_FALSE)?.length ?? 0;
     expect(count('scrollerMaxHeight={onPage ? undefined : false}')).toBe(1);
+    // Prettier's wrapped form of the same site.
+    expect(count('scrollerMaxHeight={\n  onPage ? undefined : false\n}')).toBe(1);
     expect(count("scrollerMaxHeight={onPage ? undefined : '24rem'}")).toBe(0);
   });
 
