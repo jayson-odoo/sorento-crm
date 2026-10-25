@@ -21,7 +21,7 @@ SPO-RECEIVED-PIN).
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from fastapi.testclient import TestClient
@@ -281,3 +281,135 @@ def test_the_board_assignment_stands_no_po_up_for_a_transferred_line(scm_app):
     assert [(item.event.kind, item.event.key) for item in so1.assigned] == [
         ("on_hand", f"on_hand:{warehouse.id}")
     ]
+    # Held by its placement, not handed the bin by the walk's tie-break.
+    assert all(item.pinned for item in so1.assigned)
+
+
+# ------------------------------------------------------------------ review round 1
+
+
+def test_the_book_s_o_may_still_pin_what_the_placement_left_on_the_po(scm_app):
+    """100 ordered, 20 transferred onto an SPO in transit, 80 on order; the PO line's own
+    S/O names SO-B. SO-A's placement of 50 sits 20 on the SPO and 30 on the PO, so the
+    S/O may still pin 80 - 30 = 50 of the PO to SO-B. Netting the whole placement (50)
+    would leave SO-B short 20 beside 20 free on the PO."""
+    app, db = _client(scm_app)
+    marker = f"ZZTSPL{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    due = _months_ahead(1)
+    _order_a, line_a = _demand(
+        db, product, warehouse, qty=50, required_date=due, so_number=f"{marker}-SOA",
+    )
+    order_b, line_b = _demand(
+        db, product, warehouse, qty=50, required_date=due, so_number=f"{marker}-SOB",
+    )
+    order_b.source_ref = f"ZZTBOOK:{marker}"
+    line_b.source_ref = f"ZZTBOOK:{marker}:1"
+    project_order, project_line = _project_line_for(db, line_a)
+    po, po_line = _po_line(db, product, warehouse, ordered=100, transferred=20)
+    po_line.from_so_line_ref = f"ZZTBOOK:{marker}:1"
+    allocation = _transferred_onto(
+        db, product, po, po_line, warehouse, qty=20, received=0, receipt_status="pending",
+        arrives=due,
+    )
+    _order_back_link_on_po(db, project_order, project_line, po_line=po_line, qty=50)
+    db.flush()
+
+    with TestClient(app) as c:
+        cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+    by_so = {line["so_number"]: line for line in cell["demand"]}
+    so_a, so_b = by_so[f"{marker}-SOA"], by_so[f"{marker}-SOB"]
+    assert sorted(
+        (entry["kind"], entry.get("po_number") or entry["spo_number"], entry["qty"])
+        for entry in so_a["assigned_from"]
+    ) == sorted([("po", po.po_number, 30), ("spo", allocation.spo_number, 20)])
+    assert so_b["status"] == "pinned"
+    assert so_b["assigned_qty"] == 50
+    assert so_b["short_qty"] == 0
+
+
+def test_an_spo_line_closed_with_nothing_landed_lets_the_placement_fall_to_the_po(scm_app):
+    """50 of the line's 100 went onto an SPO line that was then closed with nothing
+    received and nothing landed; AutoCount reopened the quantity on the PO (50 on order).
+    That dead SPO line brought no goods anywhere, so it holds none of the placement: the
+    placement's 50 sit on the PO's own 50 on order and SO1 reads pinned."""
+    app, db = _client(scm_app)
+    marker, warehouse, product, po, po_line, due = _case(db, ordered=100, transferred=50)
+    dead = _transferred_onto(
+        db, product, po, po_line, warehouse, qty=50, received=0, receipt_status="pending",
+        arrives=due,
+    )
+    dead.line_status = "closed"
+    db.flush()
+    with TestClient(app) as c:
+        cells = _cells(c, product, month_key(TODAY), month_key(due))
+    so1 = {
+        line["so_number"]: line for line in cells[month_key(due)]["demand"]
+    }[f"{marker}-SO1"]
+    assert so1["status"] == "pinned"
+    assert [(entry["kind"], entry["qty"]) for entry in so1["assigned_from"]] == [("po", 50)]
+
+
+def test_a_po_line_outside_the_span_is_held_only_for_what_it_still_has_on_order(scm_app):
+    """The PO line's bin is outside the read span (not in fulfilment planning), so the
+    placement is honoured off a stand-in event, which nothing but the hold itself caps.
+    100 ordered, 70 already moved off the line, 30 on order: SO1's placement of 50 holds
+    30, and SO1 reads 20 short, never 50 covered off a PO that can bring 30."""
+    app, db = _client(scm_app)
+    marker = f"ZZTSPL{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    outside = _warehouse(db, f"ZZTOUT{_u()[:4]}", planning=False)
+    product = _product(db, f"{marker}-A")
+    due = _months_ahead(1)
+    _order, core_line = _demand(
+        db, product, warehouse, qty=50, required_date=due, so_number=f"{marker}-SO1",
+    )
+    project_order, project_line = _project_line_for(db, core_line)
+    _po, po_line = _po_line(db, product, outside, ordered=100, transferred=70)
+    _order_back_link_on_po(db, project_order, project_line, po_line=po_line, qty=50)
+    db.flush()
+    with TestClient(app) as c:
+        cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+    [so1] = cell["demand"]
+    assert so1["assigned_qty"] == 30
+    assert so1["short_qty"] == 20
+    assert [(entry["kind"], entry["qty"]) for entry in so1["assigned_from"]] == [("po", 30)]
+
+
+def test_two_placements_share_what_the_transferred_spo_landed_not_the_whole_bin(scm_app):
+    """50 ordered, all 50 transferred onto an SPO that landed 50 into a bin that holds 100
+    (50 more from elsewhere). SO1 and SO2 each hold a placement of 50 on the PO line: the
+    line's goods are 50, so only the first placement (SO1) is held on the bin; SO2's
+    placement finds nothing left of what the line brought and is not pinned."""
+    app, db = _client(scm_app)
+    marker = f"ZZTSPL{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    due = _months_ahead(1)
+    _o1, line1 = _demand(
+        db, product, warehouse, qty=50, required_date=due, so_number=f"{marker}-SO1",
+    )
+    _o2, line2 = _demand(
+        db, product, warehouse, qty=50, required_date=due, so_number=f"{marker}-SO2",
+    )
+    po, po_line = _po_line(db, product, warehouse, ordered=50, transferred=50)
+    _transferred_onto(
+        db, product, po, po_line, warehouse, qty=50, received=50,
+        receipt_status="fully_received", arrives=TODAY - timedelta(days=10),
+    )
+    _stock(db, product, warehouse, 100)
+    for minute, line in enumerate((line1, line2)):
+        project_order, project_line = _project_line_for(db, line)
+        _row, link = _order_back_link_on_po(
+            db, project_order, project_line, po_line=po_line, qty=50,
+        )
+        # The placement made first is kept first (`linked_at`); `now()` is one instant
+        # inside the test's transaction, so state the order outright.
+        link.linked_at = datetime(2026, 10, 1, 9, minute)
+    db.flush()
+    with TestClient(app) as c:
+        cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+    by_so = {line["so_number"]: line for line in cell["demand"]}
+    assert by_so[f"{marker}-SO1"]["status"] == "pinned"
+    assert by_so[f"{marker}-SO2"]["status"] != "pinned"
