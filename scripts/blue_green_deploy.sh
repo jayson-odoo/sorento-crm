@@ -423,7 +423,7 @@ for svc in backend frontend mcp; do
     # running (and committing) after the release has already been reported failed. OLD keeps
     # serving; nginx was never swapped.
     echo "==> Stopping ${NEW} color after the failed health check"
-    docker compose stop "backend_${NEW}" "frontend_${NEW}" "mcp_${NEW}" || true
+    docker compose stop -t 160 "backend_${NEW}" "frontend_${NEW}" "mcp_${NEW}" || true
     exit 1
   fi
 done
@@ -431,7 +431,7 @@ done
 # 3b. Never swap traffic onto a colour that came up while Postgres went down.
 if ! postgres_survived; then
   echo "==> Stopping ${NEW} color: Postgres went down during startup; ${OLD} keeps serving"
-  docker compose stop "backend_${NEW}" "frontend_${NEW}" "mcp_${NEW}" || true
+  docker compose stop -t 160 "backend_${NEW}" "frontend_${NEW}" "mcp_${NEW}" || true
   exit 1
 fi
 
