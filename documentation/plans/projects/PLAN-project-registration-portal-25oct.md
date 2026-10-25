@@ -46,26 +46,29 @@ Paths: BE = `sorento_crm_backend/app/`, FE = `sorento_crm_frontend/`.
   `uq_projects_company_developer_title` (`models/projects.py:312-319`) still refuses an EXACT same developer + same
   normalised title: Approve maps that IntegrityError to 409 `project_registration_exact_duplicate` naming the project
   ("Change the title, e.g. add the phase"). Flagged in the PR.
-- **D8 Possible duplicates** = `find_possible_duplicates(db, *, company_id, title, developer_name, state, mukim,
-  limit=5) -> list[{project_id, project_code, title}]`, ordered strongest first, union of:
-  1. lot/PT + mukim: lot numbers parsed from both titles (`LOT|PT` + optional `NO.` + digits) and the same mukim
-     (registration mukim or parsed `MUKIM <name>`; project `sales_profile.mukim` or parsed);
-  2. spelling: `find_clashes(..., include_other_developers=True)` surface candidates;
-  3. meaning: cosine >= `REGISTRATION_SEMANTIC_THRESHOLD` (0.80, calibrated in Phase 2) between the embedding of
-     `title | developer | state, mukim` and stored project embeddings (`source_type="project"` on the existing
-     pgvector pipeline). Any embedding failure (no key, timeout) drops this signal silently, never errors.
-
-  A candidate whose phase designators differ (`are_sibling_developments`) is dropped. Projects of the registration's
-  company only. Computed at read time (list and detail), never stored.
+- **D8 Possible duplicates (audit round 3: SEMANTIC ONLY, no hard-coded or fuzzy matching)** =
+  `find_possible_duplicates(db, *, company_id, title, developer_name, state, mukim, limit=5) -> list[{project_id,
+  project_code, title}]`: the projects whose stored embedding has cosine >= `REGISTRATION_SEMANTIC_THRESHOLD` (0.80,
+  to be calibrated on the live titles, crew-data-request) against the embedding of `title | developer | state, mukim`,
+  same company only, strongest first. No lot/PT regex, no trigram spelling match, no phase-sibling filter. Any
+  embedding failure (no key, timeout) drops the signal silently (30 s back-off), never errors. Query vectors are cached
+  by text; the CRM list embeds its page in one call with a 3 s timeout. Shown to everyone, portal included (owner ruling
+  2, 25 Oct 16:00: code + title in the portal, links in the CRM); never blocks Approve.
 - **D9 Embeddings**: add source type `project` to the embedding worker (`_canonical_for_source`,
   `BE/services/embedding_worker.py:94`) and the change listener (`embedding_change_listener.py:186-208`) with canonical
   text `title | developer name | state, mukim`; a backfill command for existing projects. The in-request query embedding
   uses `_embed_text_chunks` (`:616`).
-- **D10 Permission** `projects.registrations.approve` (registry + migration grants it to every role whose name is
-  "Project Sales Admin" case-insensitively, plus the superadmin/admin roles, following `sr_0001`'s grant pattern).
-  Gates the menu item, list, detail, approve, reject.
+- **D10 Permission** `projects.registrations.approve` (registry + migration grants it to the superadmin/admin roles
+  plus the existing roles named in the migration constant `APPROVER_ROLE_NAMES` = Project Sales Manager and Project
+  Sales Coordinator, owner ruling 25 Oct 16:35). Gates the menu item, list, detail, approve, reject.
 - **D11 Notifications** (NPA pattern, `new_product_application_service.py:1007-1072`): submit -> approve holders,
-  in-app + email; approved / rejected -> the contact's linked CRM user if any.
+  IN-APP ONLY (audit round 3: no email per submit); approved / rejected -> the contact's linked CRM user, in-app + email.
+- **D15 Audit round 3 (crew, 25 Oct)**: portal customer lookup scoped server-side to the agent's own debtors
+  (`/lookups/debtors?kind=project_registration`) and pick-only; rate limits per contact (create / update / submit 30
+  per hour, AI extract 10 per 10 minutes, 429 `RATE_LIMITED`, fail open); non-string field values 422; notification
+  titles one line; review mode shows only the legacy fields; portal shows Date; the exact-duplicate 409 carries
+  `details.existing_project` and the review links to it (owner ruling 1); downgrade restores the PRJ- rule and its
+  counter.
 - **D12 Project fields**: `projects.sales_profile` gains `state` + `mukim` (nullable); exposed on
   ProjectRegisterRequest / ProjectUpdateRequest / ProjectResponse and in `ProjectForm` "Details" for create / edit / review.
 - **D13 AI**: `FORM_SCHEMAS["portal.project_registration"]` with the D3 fields; SubmissionForm's existing AI Extract

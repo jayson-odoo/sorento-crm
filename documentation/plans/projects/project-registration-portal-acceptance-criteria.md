@@ -20,8 +20,9 @@ Fixtures are invented (no real names); developer / title shapes follow the card'
 - A10 Delete a draft -> 204; delete a pending one -> 422.
 - A11 The list (`GET /submissions?type=project_registration`) returns only the contact's own rows, newest first, `q`
   matching title / developer_name; each row carries status and, when approved, `ppf_no`.
-- A12 Detail of a pending registration whose title shares lot + mukim with an existing project shows
-  `possible_duplicates: [{project_code, title}]` (no project id, no holder).
+- A12 Detail of a pending registration with a meaning match (cosine >= 0.80) to an existing project shows
+  `possible_duplicates: [{project_code, title}]` (no project id, no holder); a lot + mukim match WITHOUT a meaning
+  match names nothing (audit round 3).
 - A13 AI extract: `FORM_SCHEMAS["portal.project_registration"]` exists and lists the A5 fields minus customer_id;
   `/ai-extract` with that form key is refused (403) for a contact without the grant.
 
@@ -43,7 +44,9 @@ Fixtures are invented (no real names); developer / title shapes follow the card'
 - B6 Approve while a BLOCKING spelling clash exists (same developer, open project, title score >= 0.70) still succeeds
   (no 409): duplicates never block from the queue.
 - B7 Approve when an open project already has EXACTLY the same developer and normalised title -> 409
-  `project_registration_exact_duplicate` naming that project's code; nothing is created; the registration stays pending.
+  `project_registration_exact_duplicate` naming that project's code and carrying `details.existing_project`
+  {project_id, project_code, title}; the review shows "Already registered as <code> <title>" linking to it (owner
+  ruling 1); nothing is created; the registration stays pending.
 - B8 Approve without developer_party_id -> 422. Approve or reject a non-pending registration -> 409
   `project_registration_not_pending`.
 - B9 Reject with a blank reason -> 422; with a reason -> status `rejected`, reason stored; the contact's portal detail
@@ -61,16 +64,16 @@ Fixtures are invented (no real names); developer / title shapes follow the card'
 - C3 A fresh seed (`seed_numbering_rule`) creates the PPF rule.
 - C4 A rejected or still-pending registration draws no number (the rule's next_value is unchanged).
 
-## D. Possible duplicates
+## D. Possible duplicates (semantic only, audit round 3)
 
-- D1 Same lot + mukim: registration title "... DI ATAS LOT 9001, MUKIM TEBRAU ..." vs project title
-  "KILANG ALPHA LOT 9001 MUKIM TEBRAU" -> named. "PT 9001" and "Lot No. 9001" read as 9001.
-- D2 Same lot, different mukim -> not named by the lot signal.
-- D3 Phase siblings: "TAMAN DELTA FASA 5" vs an existing "TAMAN DELTA FASA 4" on the same lot -> not named.
-- D4 Spelling: "Setia Alam Ph 3B" vs existing "Setia Alam Phase 3B" -> named.
-- D5 Meaning: with the embedding call stubbed to return vectors of cosine >= 0.80 for a project -> named; < 0.80 ->
-  not named; the embedding call raising -> no error, other signals still apply.
-- D6 Another company's project is never named. At most 5, strongest first (lot, then meaning, then spelling), no repeats.
+- D1 Only a meaning match names a project: lot + mukim, spelling-near or identical titles without a meaning match
+  name nothing; `parse_lot_numbers`, `parse_mukim`, `lot_pattern` and the spelling matcher are not used.
+- D2 A phase sibling WITH a meaning match is named (no hard-coded phase filter).
+- D3 (merged into D1)
+- D4 (merged into D1)
+- D5 Meaning: with the embedding call stubbed to return cosine >= 0.80 for a project -> named; < 0.80 -> not named;
+  the embedding call raising -> no error, nothing named, not retried per row.
+- D6 Another company's project is never named. At most 5, strongest first, no repeats.
 
 ## E. Project fields
 
