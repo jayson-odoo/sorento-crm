@@ -22,8 +22,9 @@ delivery event, built per run in `_events`:
 
 A consignment SO is not a sale (AC-CONSIGN-CRM): neither its DO lines nor its residual count.
 
-The amount of an SO event is the sales report's own per-line rule, `round(line_total x qty /
-qty_ordered, 2)` (0 when nothing was ordered); an unlinked DO line's is its own total, to the sen.
+A DO line's amount is its own total, to the sen (`LINKED_AMOUNT_FROM_DO`, Q6); a residual's is
+the sales report's per-line rule, `round(line_total x qty / qty_ordered, 2)` (0 when nothing was
+ordered).
 Channel and sales agent always come from the SO, so a DO with no header link still has both.
 
 Used by the chatbot's sales report (`sales_report_delivered`), the report ask's delivered basis
@@ -47,6 +48,10 @@ NO_AGENT = "(no agent)"
 
 #: The two channel values the `channel` dimension and filter speak (sales order `demand_class`).
 CHANNELS = ("project", "retail")
+
+#: Q6 (recommendation (a), to confirm on the hand test): a DO-linked delivery is worth the DO
+#: line's own total, as the sales report has always printed it; False prorates the SO line instead.
+LINKED_AMOUNT_FROM_DO = True
 
 #: Q2 (owner via crew, 25 Oct 2026, recommendation (a)): the "orders" count on delivered counts
 #: delivery orders; a residual (no DO behind it) counts its sales order instead.
@@ -164,7 +169,7 @@ def _events(ctx: Any) -> Any:
         sa.select(
             do_lines.c.do_date.label("event_date"),
             do_lines.c.qty.label("qty"),
-            _prorated(do_lines.c.qty).label("amount"),
+            (do_lines.c.total if LINKED_AMOUNT_FROM_DO else _prorated(do_lines.c.qty)).label("amount"),
             SalesOrderLine.id.label("sol_id"),
             SalesOrder.id.label("so_id"),
             do_lines.c.do_id.label("do_id"),

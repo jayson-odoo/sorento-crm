@@ -284,3 +284,19 @@ def test_top_selling_delivered_detail_lists_customers_and_do_months(client, db):
     assert detail["code"] == w.prod.product_code, detail
     assert [(m["month"], m["quantity"]) for m in detail["by_month"]] == [("2026-09", 9), ("2026-10", 1)], detail
     assert [(c["customer_name"], c["quantity"]) for c in detail["by_customer"]] == [(w.cust.customer_name, 10)], detail
+
+
+# ------------------------------------------------------------------ Q6: the amount of a DO-linked line
+
+
+def test_a_do_linked_delivery_is_worth_the_do_lines_own_total(client, db):
+    """Q6 (a): the DO line's own total (what the sales report has always printed), never the SO
+    line pro-rated; the residual no DO explains stays pro-rated (RM 100 a piece here)."""
+    w = _world(db)
+    kw = dict(cust=w.cust, prod=w.prod, wh=w.wh)
+    _so, sol = _so_line(db, qty=10, total="1000.00", delivered=10, demand_class="retail", order_date=date(2026, 9, 1), **kw)
+    _do(db, qty=4, total="380.00", day=date(2026, 9, 20), sol=sol, **kw)
+    db.commit()
+    body = _ok(client, _full(db), product_code=w.prod.product_code, channel="dealer", **SEP)
+    # C (3 pcs, RM 90) + the DO's 4 pcs at RM 380 + the 6 pcs no DO explains at RM 600.
+    assert _total(body) == (13, D("1070.00")), body["total"]
