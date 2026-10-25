@@ -345,6 +345,9 @@ class ProjectSalesProfile(Base):
     registered_company_name = Column(Text, nullable=True)
     location = Column(Text, nullable=True)
     address = Column(Text, nullable=True)
+    # Malaysian state (lookup set my_state) and mukim; both free text, optional (D12).
+    state = Column(String(100), nullable=True)
+    mukim = Column(String(255), nullable=True)
     architect_party_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="SET NULL"), nullable=True
     )

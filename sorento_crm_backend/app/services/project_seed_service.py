@@ -276,9 +276,10 @@ DEFAULT_TYPES = (
 
 PROJECT_NUMBERING = {
     "doc_type": "project",
-    "prefix_template": "PRJ-",
-    "number_digits": 6,
+    "prefix_template": "PPF{yy}{mm}",
+    "number_digits": 3,
     "start_value": 1,
+    "reset_policy": "monthly",
 }
 
 
@@ -287,7 +288,8 @@ def _uid() -> str:
 
 
 def seed_numbering_rule(db: Session) -> bool:
-    """``PRJ-000001`` upward. Prefix, padding and any date segment stay editable.
+    """``PPF<yy><mm>001`` upward, restarting each month (PROJECT-REG-PORTAL D6). Prefix,
+    padding and any date segment stay editable. Installs that predate it keep ``PRJ-``.
 
     ``doc_type`` is unique with no company column, so the sequence is shared across
     companies and codes are globally unique -- Mocha's first project may be PRJ-000247
@@ -309,7 +311,7 @@ def seed_numbering_rule(db: Session) -> bool:
             number_digits=PROJECT_NUMBERING["number_digits"],
             next_value=PROJECT_NUMBERING["start_value"],
             start_value=PROJECT_NUMBERING["start_value"],
-            reset_policy="none",
+            reset_policy=PROJECT_NUMBERING["reset_policy"],
         )
     )
     db.flush()
@@ -689,7 +691,7 @@ def seed_lead_numbering_rule(db: Session) -> bool:
             number_digits=LEAD_NUMBERING["number_digits"],
             next_value=LEAD_NUMBERING["start_value"],
             start_value=LEAD_NUMBERING["start_value"],
-            reset_policy="none",
+            reset_policy=PROJECT_NUMBERING["reset_policy"],
         )
     )
     db.flush()
