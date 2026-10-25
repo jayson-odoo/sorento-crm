@@ -78,9 +78,9 @@ def test_p2_a_pick_with_status_sales_report_and_group_by_customer_too(chat):
     _assert_resumed(result, captured)
 
 
-def test_p3_a_pick_with_another_axis_month_is_still_the_held_total(chat):
-    """The held ask was a total, and a pure pick names no axis of its own: month is dropped too."""
-    result, captured = _ask_then_pick(chat, "p3", t2=_t2(group_by="month"))
+def test_g2_guard_a_pick_with_another_axis_month_is_today_s_report(chat):
+    """Not this rule (month is no roster kind, `without_pick_axis` leaves it): green before the fix too."""
+    result, captured = _ask_then_pick(chat, "g2", t2=_t2(group_by="month"))
     _assert_resumed(result, captured)
 
 
@@ -95,3 +95,45 @@ def test_g1_guard_the_plain_pick_parse_still_resumes(chat):
     _assert_resumed(result, captured)
 
 
+
+
+# ------------------------------------------------ the seam, unit level (`report_ask.without_pick_axis`)
+
+import pytest  # noqa: E402
+
+from app.services.chatbot.lanes.business import report_ask  # noqa: E402
+from app.services.chatbot.turn.pending import ask as pending_ask  # noqa: E402
+
+
+def _open(kind: str):
+    return pending_ask(kind, [{"position": 1, "label": "A"}, {"position": 2, "label": "B"}], team=None, asked_at_turn=1)
+
+
+@pytest.mark.parametrize(("kind", "axis"), [("customer_pick", "customer"), ("product_pick", "product")])
+def test_u1_a_pick_whose_axis_is_the_roster_kind_drops_it(kind: str, axis: str) -> None:
+    out = report_ask.without_pick_axis({"group_by": axis, "open_question_answer": _pick(1)}, _open(kind))
+    assert out["group_by"] is None, out
+
+
+def test_u2_a_bare_position_pick_drops_it_too() -> None:
+    out = report_ask.without_pick_axis({"group_by": "Customer", "reference_positions": [2]}, _open("customer_pick"))
+    assert out["group_by"] is None, out
+
+
+@pytest.mark.parametrize(
+    ("verdict", "kind"),
+    [
+        ({"group_by": "month", "open_question_answer": _pick(1)}, "customer_pick"),  # another axis is the message's own
+        ({"group_by": "customer", "open_question_answer": {"mode": "all", "picked": []}}, "customer_pick"),  # "all"
+        ({"group_by": "customer", "open_question_answer": {"mode": None, "picked": []}}, "customer_pick"),  # no pick
+        ({"group_by": "customer", "open_question_answer": _pick(1)}, "tier_pick"),  # another roster
+        ({"group_by": "product", "open_question_answer": _pick(1)}, "customer_pick"),  # not the roster's kind
+    ],
+)
+def test_u3_guards_leave_the_verdict_untouched(verdict: dict[str, Any], kind: str) -> None:
+    assert report_ask.without_pick_axis(verdict, _open(kind)) is verdict
+
+
+def test_u4_no_open_question_is_untouched() -> None:
+    verdict = {"group_by": "customer", "open_question_answer": _pick(1)}
+    assert report_ask.without_pick_axis(verdict, None) is verdict
