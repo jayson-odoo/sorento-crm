@@ -1132,10 +1132,20 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
             )
         if cust_pinned:
             cust_pin_kept = True
-        if not pick_applied and not cust_pinned and len(bases) > 1:
-            # `legacy_default=10`: a widening from the old hard-coded eight-item slice,
-            # per `test_a_missing_customer_key_means_50_and_none_means_10`.
-            reps = list(bases.values())[: _roster_cap(roster_caps, "customer", legacy_default=10)]
+        # `legacy_default=10`: a widening from the old hard-coded eight-item slice,
+        # per `test_a_missing_customer_key_means_50_and_none_means_10`.
+        reps = list(bases.values())[: _roster_cap(roster_caps, "customer", legacy_default=10)]
+        # CHAT-CUSTOMER-PICK-RESUME (owner console, 25 Oct): the question is asked only when the roster
+        # PRINTS two or more lines. It is printed one line per `ledger_family_key` of each representative's
+        # name (`answer_bridge._customer_offer_options` -> `narrow.customer_options`), a key that can join
+        # two of these families (a "[A/C I]" ledger and its grouped "(PROJECT)" sibling), so the family
+        # count alone asked "Which one do you mean? 1. <one line>". These families stay as they are: they
+        # decide which ledgers each printed line carries (the owner's ruling, the same day, keeps a group's
+        # ungrouped "- [IBORN]" ledger in its line).
+        printed_lines = {
+            ledger_family_key(_display_name(m) or jsc.js_string(jsc.get(m, "canonical_code") or "")) for m in reps
+        }
+        if not pick_applied and not cust_pinned and len(bases) > 1 and len(printed_lines) > 1:
             # FORWARD PROBE INPUT: keep a merged list - the candidates PLUS everything
             # else that resolved - so the probe can ask "does this customer have a
             # matching delivery?" under the SAME filters. Send the WHOLE ACCOUNT FAMILY,

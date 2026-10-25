@@ -1,0 +1,50 @@
+{
+  "asker": "dealer",
+  "as_of": "2026-10-23",
+  "window": {
+    "date_from": "2026-10-25",
+    "date_to": "2026-10-25"
+  },
+  "own": [],
+  "team": [],
+  "dealers": [
+    {
+      "target_no": "TGT-000020",
+      "name": "BKIN Q3",
+      "subject_kind": "dealer",
+      "subject_label": "BKIN ELECTRICAL SDN BHD",
+      "company_code": "SRT",
+      "period_start": "2026-07-01",
+      "period_end": "2026-09-30",
+      "is_current": false,
+      "metric": "amount",
+      "threshold_unit": "amount",
+      "provisional": true,
+      "accounts": [
+        {
+          "code": "300-B111",
+          "label": "A/C I"
+        }
+      ],
+      "target_value": 50000.0,
+      "target_points": null,
+      "achieved_value": 47407.44,
+      "ratio_missing": false,
+      "tier_reached": null,
+      "next_tier": {
+        "tier": 1,
+        "threshold": 50000.0,
+        "threshold_points": null,
+        "rates": [
+          {
+            "label": "A/C I",
+            "rate": 3.0
+          }
+        ],
+        "additional_rates": [],
+        "gap": 2592.56
+      },
+      "pipeline_value": null
+    }
+  ]
+}

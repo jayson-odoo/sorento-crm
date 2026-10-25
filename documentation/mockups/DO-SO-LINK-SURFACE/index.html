@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DO-SO-LINK-SURFACE mock v2</title>
+<style>
+/* Tokens copied from sorento_crm_frontend/css/config.reui.css (light theme), same set as documentation/mockups/FULFIL-SO-REMARK */
+:root{--foreground:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#e4e4e7;--input:#e4e4e7;--primary:#3b82f6;--success:#15803d;--success-soft:#f0fdf4;--success-line:#bbf7d0;--info:#1d4ed8;--info-soft:#eff6ff;--info-line:#bfdbfe;--warning:#a16207;--warning-soft:#fefce8;--warning-line:#fde68a;--page:#f7f7f8}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--foreground);font:14px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
+h1{font-size:22px;margin:0 0 4px}
+.doc{max-width:1360px;margin:0 auto;padding:16px}
+.intro,.why{color:var(--muted-fg);font-size:13px;margin:0 0 12px;max-width:1040px}
+section{margin:0 0 32px}
+section>h2{font-size:15px;margin:0 0 6px}
+.mut{color:var(--muted-fg)}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+.flag{background:var(--warning-soft);border:1px solid var(--warning-line);color:var(--warning);border-radius:8px;padding:8px 12px;font-size:12.5px;max-width:1040px;margin:0 0 14px}
+.newtag{font-size:10px;font-weight:700;color:var(--info);background:var(--info-soft);border:1px solid var(--info-line);border-radius:4px;padding:0 5px;margin-left:4px;vertical-align:middle}
+.newc{background:#fff7d6}
+.screen{width:1280px;max-width:100%;background:#fff;border:1px solid var(--border);border-radius:12px;padding:20px 24px;overflow:hidden}
+/* components/layouts/PageHeader */
+.ph{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 14px}
+.ph b{font-size:20px}
+.ph .r{margin-left:auto;display:flex;gap:8px}
+.btn{display:inline-flex;align-items:center;gap:5px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--input);background:#fff;font:500 13px Inter,ui-sans-serif,system-ui,sans-serif;color:var(--foreground)}
+a{color:var(--primary);text-decoration:none}
+a:hover{text-decoration:underline}
+.lk{display:inline-flex;align-items:center;gap:4px}
+.lk svg{width:12px;height:12px;flex-shrink:0}
+/* components/ui/tabs.tsx variant line */
+.tabs{display:flex;max-width:100%;gap:22px;border-bottom:1px solid var(--border);margin:0 0 14px;font-size:13.5px;overflow-x:auto}
+.tabs span{padding:8px 0;color:var(--muted-fg);white-space:nowrap}
+.tabs .on{color:var(--foreground);border-bottom:2px solid var(--primary);font-weight:500}
+/* components/ui/card + DataGrid table */
+.card{border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.card .hd{padding:12px 16px;border-bottom:1px solid var(--border);font-weight:600;font-size:14px}
+.card .bd{padding:12px 16px;font-size:13.5px}
+.tw{overflow-x:auto}
+table.g{border-collapse:collapse;width:100%;font-size:13px;table-layout:fixed;min-width:760px}
+
+table.g th{font-weight:500;color:var(--muted-fg);font-size:12.5px;text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);background:#fafafa}
+table.g td{padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+table.g th.num{text-align:right}
+table.g tr.tot td{font-weight:600;background:#fafafa}
+/* components/ui/badge.tsx status pill */
+.badge{display:inline-flex;align-items:center;border-radius:6px;padding:0 7px;font-size:11.5px;line-height:20px;font-weight:500;border:1px solid transparent;white-space:nowrap}
+.badge.ok{background:var(--success-soft);color:var(--success);border-color:var(--success-line)}
+.badge.info{background:var(--info-soft);color:var(--info);border-color:var(--info-line)}
+.map{font-size:12.5px;border-collapse:collapse;width:100%;max-width:1100px;background:#fff}
+.map td,.map th{border:1px solid var(--border);padding:6px 10px;text-align:left;vertical-align:top}
+.map code{font-size:11.5px}
+.phone{width:375px;max-width:100%;background:#fff;border:1px solid var(--border);border-radius:16px;padding:16px;overflow:hidden}
+.phone .ph b{font-size:17px}
+.row{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start}
+@media(max-width:900px){.screen{padding:16px}.tabs{max-width:100%}table.map{display:block;overflow-x:auto;max-width:100%}.map code{word-break:break-all}}
+</style></head><body><div class="doc">
+<svg width="0" height="0" style="position:absolute"><symbol id="li" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol></svg>
+
+<h1>DO-SO-LINK-SURFACE mock v2: which SO a DO delivers, and which DOs an SO has</h1>
+<p class="intro">Owner rulings 25 Oct (1a 2a 4a; v2: no SO strip under the DO header, owner Lavish note 17:14). DO page: an <b>SO</b> column on the Lines grid, the SPO page's own PO-column look. SO page: the Delivery tab lists every DO line under the SO. Links are AutoCount's own (stored SO line, else the SO numbered in FromDocNo); never a product or qty match. Yellow cells and NEW tags mark what is new; everything else is today's screen.</p>
+<div class="flag"><b>v2:</b> the SO strip under the DO header is gone (owner: not needed there); everything else as v1. <b>Sample numbers.</b> The four cases match the prod-clone counts (line-exact 64%, SO-only 29%, direct DO 1,321 lines, 418 DOs over 2+ SOs), but the DO/SO numbers and item codes below are placeholders until crew sends one real example per case from sorento_prod_1020. Panel D uses the owner's own SO273125 from the screenshot; its rows are placeholders too.</div>
+
+<section><h2>Panel A: DO with one exact SO line, and one DO covering 2 SOs (desktop 1280)</h2>
+<p class="why">Case 1 + case 4 in one DO. Line 1: AutoCount named the SO line (stored link), so the cell says the line no. Line 2: product sits on several lines of that SO, so the SO only (Q2 a). Line 3: a second SO.</p>
+<div class="screen">
+<div class="ph"><b>Delivery Order 202609-1082</b><span class="badge ok">Delivered</span><span class="r"><span class="btn">Edit</span></span></div>
+<div class="tabs"><span class="on">Delivery order information</span><span>Financial summary</span><span>Delivery &amp; tracking</span></div>
+<div class="card"><div class="hd">Lines</div><div class="tw"><table class="g">
+<colgroup><col style="width:220px"><col style="width:160px"><col style="width:90px"><col style="width:170px"><col style="width:110px"><col style="width:110px"><col style="width:110px"></colgroup>
+<thead><tr><th>Product</th><th>Warehouse</th><th class="num">Qty</th><th class="newc">SO <span class="newtag">NEW</span></th><th class="num">Unit price</th><th class="num">Discount</th><th class="num">Total</th></tr></thead>
+<tbody>
+<tr><td><a href="#">WESERP10B</a></td><td>BRW - Bandar Baru</td><td class="num">8</td><td class="newc"><a class="lk" href="#" title="SO419866 line 3"><svg><use href="#li"/></svg>SO419866 &middot; line 3</a></td><td class="num">120.00</td><td class="num">0.00</td><td class="num">960.00</td></tr>
+<tr><td><a href="#">C-FH14</a></td><td>BRW - Bandar Baru</td><td class="num">4</td><td class="newc"><a class="lk" href="#" title="SO419866"><svg><use href="#li"/></svg>SO419866</a></td><td class="num">85.00</td><td class="num">0.00</td><td class="num">340.00</td></tr>
+<tr><td><a href="#">CWC7601-S-ECO</a></td><td>MWH - Main WH</td><td class="num">2</td><td class="newc"><a class="lk" href="#" title="SO420117 line 1"><svg><use href="#li"/></svg>SO420117 &middot; line 1</a></td><td class="num">410.00</td><td class="num">0.00</td><td class="num">820.00</td></tr>
+</tbody></table></div></div>
+</div></section>
+
+<section><h2>Panel B: SO not in the CRM, and a direct DO (desktop)</h2>
+<p class="why">Left: AutoCount names SO400001 but no such SO is in the CRM (5 lines in prod): its number as plain text, no link, no icon. Right: a direct DO (no FromDocNo, 1,321 lines in prod, and every old-system DO): the cell is "-".</p>
+<div class="row">
+<div class="screen" style="width:620px">
+<div class="ph"><b>Delivery Order 202609-2210</b><span class="badge info">In Transit</span></div>
+<div class="card"><div class="hd">Lines</div><div class="tw"><table class="g" style="min-width:520px">
+<colgroup><col style="width:170px"><col style="width:70px"><col style="width:150px"></colgroup>
+<thead><tr><th>Product</th><th class="num">Qty</th><th class="newc">SO</th></tr></thead>
+<tbody><tr><td><a href="#">BT012-CR</a></td><td class="num">12</td><td class="newc"><span title="SO400001">SO400001</span></td></tr></tbody></table></div></div>
+</div>
+<div class="screen" style="width:620px">
+<div class="ph"><b>Delivery Order 202508-2241</b><span class="badge ok">Delivered</span></div>
+<div class="card"><div class="hd">Lines</div><div class="tw"><table class="g" style="min-width:520px">
+<colgroup><col style="width:170px"><col style="width:70px"><col style="width:150px"></colgroup>
+<thead><tr><th>Product</th><th class="num">Qty</th><th class="newc">SO</th></tr></thead>
+<tbody><tr><td><a href="#">SRTWB1515</a></td><td class="num">6</td><td class="newc"><span class="mut">-</span></td></tr></tbody></table></div></div>
+</div>
+</div></section>
+
+<section><h2>Panel C: same DO at 375px</h2>
+<p class="why">The grid scrolls sideways inside its card (DataGrid's own behaviour), the SO column keeps its 170px.</p>
+<div class="phone">
+<div class="ph"><b>Delivery Order 202609-1082</b><span class="badge ok">Delivered</span></div>
+<div class="tabs"><span class="on">Delivery order information</span><span>Financial summary</span><span>Delivery &amp; tracking</span></div>
+<div class="card"><div class="hd">Lines</div><div class="tw"><table class="g" style="min-width:560px">
+<colgroup><col style="width:150px"><col style="width:60px"><col style="width:170px"><col style="width:100px"></colgroup>
+<thead><tr><th>Product</th><th class="num">Qty</th><th class="newc">SO</th><th class="num">Total</th></tr></thead>
+<tbody>
+<tr><td><a href="#">WESERP10B</a></td><td class="num">8</td><td class="newc"><a class="lk" href="#"><svg><use href="#li"/></svg>SO419866 &middot; line 3</a></td><td class="num">960.00</td></tr>
+<tr><td><a href="#">C-FH14</a></td><td class="num">4</td><td class="newc"><a class="lk" href="#"><svg><use href="#li"/></svg>SO419866</a></td><td class="num">340.00</td></tr>
+</tbody></table></div></div>
+</div></section>
+
+<section><h2>Panel D: SO page, Delivery tab (desktop)</h2>
+<p class="why">Today's sentence stays on top. Under it, one row per DO line delivered against this SO (Q4 a), oldest first, with a total row: the rows the line's truck lightbox already shows (<code>SoLineHistoryBody</code>), all lines together, plus SKU. Voided and deleted DOs are left out, as in the lightbox. Empty: today's sentence only, no table.</p>
+<div class="screen">
+<div class="ph"><b>SO273125</b><span class="badge ok">Delivered</span></div>
+<div class="tabs" style="margin-top:12px"><span>General</span><span>Lines</span><span class="on">Delivery</span><span>Transfers</span></div>
+<div class="card"><div class="hd">Delivery</div>
+<div class="bd"><span style="font-weight:500">8</span> <span class="mut">delivered in full</span></div>
+<div class="tw newc" style="border-top:1px solid var(--border)"><table class="g" style="background:#fff">
+<colgroup><col style="width:150px"><col style="width:110px"><col style="width:140px"><col style="width:160px"><col style="width:110px"><col style="width:130px"><col style="width:80px"></colgroup>
+<thead><tr><th>DO no. <span class="newtag">NEW</span></th><th>DO date</th><th>Status</th><th>SKU</th><th>Location</th><th>Actual delivery</th><th class="num">Qty</th></tr></thead>
+<tbody>
+<tr><td><a href="#">202508-2241</a></td><td>13/08/2025</td><td><span class="badge ok">Delivered</span></td><td>SRTWB1515</td><td>BRW</td><td>13/08/2025</td><td class="num">5</td></tr>
+<tr><td><a href="#">202508-2241</a></td><td>13/08/2025</td><td><span class="badge ok">Delivered</span></td><td>SRTWB7109</td><td>BRW</td><td>13/08/2025</td><td class="num">1</td></tr>
+<tr><td><a href="#">202508-2390</a></td><td>15/08/2025</td><td><span class="badge ok">Delivered</span></td><td>SRTWB1515</td><td>MWH</td><td class="mut">-</td><td class="num">2</td></tr>
+<tr class="tot"><td>Total</td><td></td><td></td><td></td><td></td><td></td><td class="num">8</td></tr>
+</tbody></table></div></div>
+</div></section>
+
+<section><h2>Element to existing component</h2>
+<table class="map"><thead><tr><th>Element</th><th>Existing component / precedent (repo path)</th><th>Change</th></tr></thead><tbody>
+<tr><td>DO Lines SO column</td><td>SPO <code>PO</code> column, <code>SPODocumentDetail.tsx:783-805</code></td><td>New column in <code>order-management/orders/components/OrderLinesCard.tsx</code>, size 170, truncate + title</td></tr>
+<tr><td>SO link target</td><td><code>/scm/sales-orders/{id}</code> (SO detail)</td><td>none</td></tr>
+<tr><td>Status pill</td><td><code>components/ui/badge.tsx</code> (<code>Badge status</code>)</td><td>none</td></tr>
+<tr><td>SO Delivery tab table</td><td><code>DrillTable</code> in <code>scm/components/PlanRowDialog.tsx</code>, rows as <code>scm/sales-orders/[id]/components/SoLineHistoryBody.tsx</code></td><td>Delivery tab in <code>SalesOrderDetail.tsx:2284-2314</code> renders the table under today's sentence; adds SKU</td></tr>
+<tr><td>Data, DO side</td><td><code>GET /api/v1/order-management/orders/{id}</code></td><td>Lines gain <code>from_doc_no</code> + <code>sales_order {id, so_number, line_no}</code> (<code>sorento_crm_backend/app/services/order_service.py</code> <code>_attach_sales_order_links</code>)</td></tr>
+<tr><td>Data, SO side</td><td><code>GET /api/v1/scm/sales-orders/{id}/deliveries</code> (<code>app/services/scm/so_line_history.py</code>)</td><td>none: the tab reads the same rows the lightbox does</td></tr>
+</tbody></table>
+</section>
+</div></body></html>

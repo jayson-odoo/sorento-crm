@@ -1240,6 +1240,9 @@ DOMAIN_GRANT_REQUIRED: dict[str, str] = {
     # CA-3: what customers ask the bot, read under the Chat analytics reveal (Q4 a: nobody holds it).
     "chat_analytics": "chatbot.analytics",
 }
+#: SALES-TARGET-CHAT: an `order_status` with a grant of its own is gated on that one (the
+#: `sales` domain's key is the sales report's, which a target ask must not need).
+STATUS_GRANT_REQUIRED: dict[str, str] = {"sales_target": "sales.sales_target"}
 #: What the refusal CALLS the domain it just refused, for the one registered
 #: `access_denied` template (`canned.field_grant_denied_text`). A plain-language FEATURE
 #: name, not the domain's own label ("last purchase cost") and not the parser's agent

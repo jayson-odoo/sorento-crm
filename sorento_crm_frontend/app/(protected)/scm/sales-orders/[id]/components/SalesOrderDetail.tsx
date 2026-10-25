@@ -84,7 +84,12 @@ import { getSalesOrderUoms, type SalesOrderPlanningChangeBatch } from '../../../
 import { PlanRowDialog } from '../../../components/PlanRowDialog';
 import { PlanNumberButton } from '../../../components/PlanNumberButton';
 import { SoLineLinksBody } from './SoLineLinksBody';
-import { SoLineHistoryBody } from './SoLineHistoryBody';
+import {
+  DeliveriesLoadError,
+  DeliveriesTable,
+  SoLineHistoryBody,
+  soDeliveryRows,
+} from './SoLineHistoryBody';
 import { fmtDate, fmtInt } from '../../../lib/format';
 import { demandClassBadge } from '../../../lib/demandClass';
 import { ConsignmentBadge } from '../../../lib/docType';
@@ -500,7 +505,6 @@ export function SalesOrderDetail({
   const canPlan = useHasPermission(PLAN_PERMISSION);
   const canOpenDo = useHasPermission('order_management.orders.view');
   const canSeeInvoices = useHasPermission(BILLING_VIEW_SLUG);
-  const deliveries = useSalesOrderDeliveries(id, deliveriesRequested);
   const searchParams = useSearchParams();
   // A consignment opened by a sales-orders link lands on its own page.
   const isConsignmentOnSalesOrderRoute = !docType && data?.doc_type === 'consignment';
@@ -669,6 +673,13 @@ export function SalesOrderDetail({
   // `?line=<id>` deep link always lands on Lines, whatever `tab` says - the only tab that
   // line could ever be found on.
   const tab = searchParams.get('line') ? 'lines' : searchParams.get('tab') || 'general';
+  // The truck lightbox and the Delivery tab's DO list (DO-SO-LINK-SURFACE R3) read the same
+  // rows: fetched on the first of the two, then shared.
+  const deliveries = useSalesOrderDeliveries(id, deliveriesRequested || tab === 'delivery');
+  const deliveryRows = useMemo(
+    () => soDeliveryRows(data?.lines ?? [], deliveries.data),
+    [data, deliveries.data],
+  );
   const handleTabChange = useCallback(
     (next: string) => {
       const params = new URLSearchParams(searchParams.toString());
@@ -2311,6 +2322,24 @@ export function SalesOrderDetail({
                 </p>
               )}
             </div>
+            {/* DO-SO-LINK-SURFACE R3: every DO line under this SO, the truck lightbox's own
+                rows and columns plus SKU. Nothing (not an empty table) when there is none. */}
+            {deliveries.isError && !deliveries.data ? (
+              <div className="border-t border-border p-4">
+                <DeliveriesLoadError onRetry={() => void deliveries.refetch()} />
+              </div>
+            ) : null}
+            {deliveryRows.length > 0 ? (
+              <section aria-label="Delivery orders" className="border-t border-border">
+                <DeliveriesTable
+                  rows={deliveryRows}
+                  canOpenDo={canOpenDo}
+                  emptyMessage="No DO in the CRM for this order."
+                  withSku
+                  onPage
+                />
+              </section>
+            ) : null}
           </Card>
         </TabsContent>
 

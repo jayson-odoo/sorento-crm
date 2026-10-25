@@ -467,6 +467,7 @@ DATE_PARAMS: dict[str, tuple[str, str]] = {
     "crm_low_stock_report": ("date_from", "date_to"),
     # PLAN-retail-sales-reports-26sep S1: the period of the sales analysis, by order date.
     "crm_sales_analysis": ("date_from", "date_to"),
+    "crm_sales_target_progress": ("date_from", "date_to"),
 }
 
 def _current_myt_year() -> int:
@@ -1243,6 +1244,12 @@ def entity_ids_transformer(
             space_id if space_id is not None else jsc.get(semantic_input, "space_id")
         )
 
+    # SALES-TARGET-CHAT: the target tool names a period and, at most, customers; never a
+    # product, a warehouse or a row limit.
+    if tool_name == "crm_sales_target_progress":
+        for key in ("product_ids", "warehouse_ids", "limit", "group_by", "top_n"):
+            out.pop(key, None)
+
     # REPORT-ENGINE slice 1b: `crm_report_ask`'s params are settled whole by the lane
     # (`report_ask.route_args`, put on `semantic_input` by `run_fetch`, which hands no
     # entities of its own); nothing else the generic steps above built travels with them
@@ -1479,7 +1486,8 @@ def entity_ids_transformer(
         # REPORT-ENGINE 1b code review N3: `crm_report_ask`'s route forces the dealer's own
         # links itself (`enforce_customer_scope`), so the lane sends only what was named
         # (no 50-id cap hit, no header listing every account); the check above stays.
-        if requested or tool_name != "crm_report_ask":
+        # SALES-TARGET-CHAT: the target route scopes the contact itself the same way.
+        if requested or tool_name not in ("crm_report_ask", "crm_sales_target_progress"):
             out["customer_ids"] = requested or list(scope_ids)
         out.pop("customer_query", None)
 
@@ -1564,6 +1572,7 @@ CUSTOMER_SCOPED_TOOLS: frozenset[str] = frozenset(
         "crm_order_management_orders_by_product_list",
         "crm_outstanding_report",
         "crm_sales_report",
+        "crm_sales_target_progress",
         "crm_report_ask",
         "crm_order_analytics",
         "crm_master_customers_list",
@@ -2837,6 +2846,56 @@ def _sales_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+#: SALES-TARGET-CHAT: the lane's own words for the target route's refusals (T4-2, T4-6). The
+#: route's `sales_target_not_available` (staff, unclassified) reads as not enabled.
+SALES_TARGET_NOT_ENABLED_MESSAGE = "Sales target is not enabled for your account."
+SALES_TARGET_OWN_ACCOUNTS_MESSAGE = "I can only share targets for your own accounts."
+_SALES_TARGET_ERROR_TEXT = "I could not fetch the sales target just now, please try again."
+_SALES_TARGET_REFUSALS = {
+    "customer_not_permitted": SALES_TARGET_OWN_ACCOUNTS_MESSAGE,
+    "sales_target_not_enabled": SALES_TARGET_NOT_ENABLED_MESSAGE,
+    "sales_target_not_available": SALES_TARGET_NOT_ENABLED_MESSAGE,
+}
+
+
+def sales_target_refusal(envelope: Any) -> str | None:
+    """The lane's line for a target route refusal (an MCP error envelope with a 403), else None."""
+    if not isinstance(envelope, dict) or envelope.get("status_code") != 403:
+        return None
+    detail = envelope.get("detail") if isinstance(envelope.get("detail"), dict) else {}
+    return _SALES_TARGET_REFUSALS.get(jsc.js_string(detail.get("code") or ""))
+
+
+def _sales_target_output(result: Any) -> dict[str, Any]:
+    """`crm_sales_target_progress` never goes through the generic envelope: the presenter's
+    text is the reply, a route refusal arrives as the MCP error envelope (`detail.code`) and
+    is worded here, and a result or a refusal is a final answer (no escalate offer)."""
+    envelope = result if isinstance(result, dict) else {}
+    refusal = sales_target_refusal(envelope)
+    if refusal:
+        text, has_result = refusal, True
+    elif envelope.get("has_result") is True and jsc.truthy(envelope.get("response")):
+        text, has_result = jsc.js_string(envelope.get("response")), True
+    else:
+        text, has_result = _SALES_TARGET_ERROR_TEXT, False
+    return {
+        "response": text,
+        "response_intro": None,
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": has_result,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+        "outstanding_ask": None,
+        "outstanding_report": True,
+    }
+
+
 #: The heading the presenter prints above the drill-down options (`_sales_report`).
 _SALES_REPORT_DRILL_HEADING = "*Drill down:*"
 
@@ -3195,6 +3254,8 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         return _outstanding_report_output(result, ctx)
     if jsc.js_string(ctx.get("tool") or "") == "crm_sales_report":
         return _sales_report_output(result, ctx)
+    if jsc.js_string(ctx.get("tool") or "") == "crm_sales_target_progress":
+        return _sales_target_output(result)
     if jsc.js_string(ctx.get("tool") or "") == "crm_low_stock_report":
         return _low_stock_report_output(result)
     if jsc.js_string(ctx.get("tool") or "") == "crm_report_ask":

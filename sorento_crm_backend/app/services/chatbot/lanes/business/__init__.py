@@ -75,6 +75,10 @@ _OUTSTANDING_SO_GRANT = "sales_orders.outstanding"
 # here - the report has nothing partial to answer with, so its absence refuses the
 # WHOLE ask before any fetch, with one line and nothing else.
 _SALES_REPORT_GRANT = "sales_orders.sales_report"
+#: SALES-TARGET-CHAT: the whole target tool is per contact. `answer.STATUS_GRANT_REQUIRED` maps
+#: the `sales_target` status to it, so the domain grant gate asks for this key, not the report's.
+_SALES_TARGET_GRANT = "sales.sales_target"
+_SALES_TARGET_TOOL = "crm_sales_target_progress"
 #: The one sentence a contact without that key sees, verbatim (AC-1651) - the sibling
 #: of `fetch.SO_NOT_ENABLED_MESSAGE` / `LOW_STOCK_NOT_ENABLED_MESSAGE` above, a
 #: literal for the same reason: one wording, in one place.
@@ -1878,7 +1882,10 @@ def run_fetch(
     # read differently on the trace an operator sees.
     from app.services.chatbot.lanes.business import answer as answer_mod
 
-    need = answer_mod.DOMAIN_GRANT_REQUIRED.get(jsc.js_string(domain) if domain else "")
+    # SALES-TARGET-CHAT: a status with a grant of its own takes that one, else the domain's.
+    need = answer_mod.STATUS_GRANT_REQUIRED.get(order_status_raw) or answer_mod.DOMAIN_GRANT_REQUIRED.get(
+        jsc.js_string(domain) if domain else ""
+    )
     if need:
         access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
         granted_raw = access_ctx.get("attributes")
@@ -1902,6 +1909,8 @@ def run_fetch(
                 # CA-3: a contact without the Chat analytics reveal is turned away in one line
                 # before any call (the route refuses again, `chat_analytics_not_enabled`).
                 return _fixed_reply(chat_report.NOT_ENABLED, refused=True)
+            if need == _SALES_TARGET_GRANT:
+                return _fixed_reply(fetch_mod.SALES_TARGET_NOT_ENABLED_MESSAGE, refused=True)
             if need == _SALES_REPORT_GRANT:
                 # R7 (PLAN-prompt-dynamic-30sep D9): the `sales` domain is refused in the
                 # words every sales figure ask was refused in under `order`.
@@ -2201,6 +2210,13 @@ def run_fetch(
             so_refused = order_status_raw != "outstanding"
         semantic_input["outstanding_scope"] = scope
         semantic_input["outstanding_so_refused"] = so_refused
+    elif order_status_raw == contracts.SALES_TARGET_STATUS and domain in contracts.ORDER_OR_SALES_DOMAINS:
+        # SALES-TARGET-CHAT: the target ask has its own tool; the route scopes the contact
+        # (its links or its agents) and the grant was checked above, before any pick.
+        tool_name = _SALES_TARGET_TOOL
+        # The injected scope links are not a named customer: only one the person named goes.
+        entities = [e for e in entities if not (isinstance(e, dict) and e.get("scope"))]
+        tool_item = {"name": tool_name, "_tool_pick": {"source": "sales_target_override"}}
     elif (order_status_raw == "sales_analysis" and not has_own_accounts) or (
         # Chat fix PR-B S10 (AC-B16, R03/R23): a staff sales report naming no product, no
         # customer and no brand has no subject for `crm_sales_report` (422
@@ -2643,6 +2659,8 @@ def run_fetch(
         # REPORT-ENGINE slice 1b: the route's own refusal (the audience check is the
         # route's) is said as its message, a 404 as one line.
         refusal = report_ask.error_line(envelope) if tool_name == report_ask.TOOL else None
+        if tool_name == _SALES_TARGET_TOOL:
+            refusal = fetch_mod.sales_target_refusal(envelope)
         if refusal:
             if trace is not None:
                 trace.add("report_ask", {"refused": envelope.get("status_code")})

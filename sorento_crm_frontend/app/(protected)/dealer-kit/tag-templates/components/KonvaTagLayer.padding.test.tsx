@@ -57,6 +57,7 @@ import type {
   TextLayerProps,
 } from '@/lib/dealer-kit/tag-template-types';
 import { defaultPriceBadgeProps, defaultTextProps } from '@/lib/dealer-kit/tag-template-types';
+import { canvasTextHeight } from '@/lib/dealer-kit/text-layout';
 import { KonvaTagLayer } from './KonvaTagLayer';
 
 function textLayer(props: Partial<TextLayerProps> = {}): TagLayer {
@@ -112,7 +113,8 @@ describe('KonvaTagLayer text padding (S3, AC-S3-1/3/4)', () => {
     expect(text.getAttribute('data-x')).toBe('0');
     expect(text.getAttribute('data-y')).toBe('0');
     expect(text.getAttribute('data-w')).toBe('120');
-    expect(text.getAttribute('data-h')).toBe('60');
+    // Plus the sliver of slack that stops Konva re-cutting the line count.
+    expect(text.getAttribute('data-h')).toBe(String(canvasTextHeight(60)));
   });
 
   it('insets the Text node by the padding, converted mm to px (AC-S3-1)', () => {
@@ -127,7 +129,7 @@ describe('KonvaTagLayer text padding (S3, AC-S3-1/3/4)', () => {
     expect(text.getAttribute('data-x')).toBe('24');
     expect(text.getAttribute('data-y')).toBe('6');
     expect(text.getAttribute('data-w')).toBe(String(120 - 24 - 12));
-    expect(text.getAttribute('data-h')).toBe(String(60 - 6 - 18));
+    expect(text.getAttribute('data-h')).toBe(String(canvasTextHeight(60 - 6 - 18)));
   });
 
   it('clamps to a zero text area rather than a negative one (AC-S3-4)', () => {
