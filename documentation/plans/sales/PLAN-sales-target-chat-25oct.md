@@ -1,6 +1,8 @@
 # PLAN: sales target achievement and sales opportunities over the chat (SALES-TARGET-CHAT)
 
-Status: **slice 1 (read-only) building, 25 Oct 2026.** Owner answered card v1. Size L, full track (lead
+Status: **slice 1 (read-only) building, ships DARK without the parser change (crew decision a30290657, 25 Oct
+2026: parser gate B3 failed the re-measure rule; candidate text handed to the next prompt lane, see "Parser gate
+record").** Owner answered card v1. Size L, full track (lead
 pattern: tester red tests, coder, reviewer + security-reviewer, parser gate). Slice 2 after the slice 1
 hand test. UAC: `sales-target-chat-25oct-acceptance-criteria.md`. Lane branch
 `crew/sales-target-chat`, base origin/main b2f15efb32.
@@ -324,7 +326,58 @@ A SALES TARGET ask leaves sales_channel and group_by null and requested_attribut
   sales_target gold x3 per arm; gpt-5.4-mini, dev eval key ..bG4A; cap USD 2.5; stop on any 429 or 2
   busy replies; every run logged in the crew eval spend ledger.
 
-### Parser gate (T5)
+### Parser gate record (25 Oct; ledger crew/state/eval/stc/LEDGER.md, USD 3.97 of a 4.1 cap, dev key ..bG4A)
+
+| Arm | Text | sales_target gold (12 target asks) | near misses | TRAIN 118 x1 |
+|---|---|---|---|---|
+| A | v63 (0f3b48e6) | 0/12 | reference | 91 |
+| B | + section v1 | 36/36 | "my sales this quarter" -> sales_report 3/3 (A: sales_analysis) | 92 |
+| B2 | + section v2 (no near-miss example) | 36/36 | "my sales this quarter" -> sales_target 2/3 | not run |
+| B3 | + section v3 (contrast line) | 36/36 | all held (= A, or inside A's own unstable answers) | 88 (paired 4/1/113, p=0.375) |
+
+Re-measure of the 12 TRAIN items whose routing moved (x3 per arm, crew rule a30290657): G028 (A 3/3, B3 1/3) and
+G125 (A 2/3, B3 1/3) are majority-wrong on B3 while majority-right on A, so B3 does not ship. No arm ever emitted
+sales_target on a TRAIN item. Copy DB `sorento_stc_eval` keeps the unlabelled versions 93 / 94 / 95 (B / B2 / B3)
+for the next prompt lane; eval_base untouched.
+
+Hand-off to the next prompt lane (e.g. CHAT-SLIM-INDEX-PLAN): the best candidate is section v3 below, inserted
+immediately before the anchor `== SALES REPORT: order_status "sales_report", domain_hint "order" ==`; gold rows
+`sorento_crm_backend/scripts/chatbot_eval/gold/sales_target.jsonl` (16 rows, plus the 4 extra near misses in
+crew/state/eval/stc/cand/gold_nearmiss_new.jsonl). The lane code already acts on `order_status = sales_target`, so
+the feature turns on with a published prompt that emits it plus the per-contact grant.
+
+```text
+== SALES TARGET: order_status "sales_target", domain_hint "order" ==
+A question about a SALES TARGET - what has been achieved against a target, how far it is
+to the target or to the next tier of it, which tier or rebate / incentive rate has been
+reached - is order_status "sales_target", domain_hint "order", intent_hint "check_order".
+The target words decide it, in any language: "target", "achievement", "achieved",
+"next tier", "rebate tier", "incentive tier", "hit the target", "sasaran", "pencapaian",
+"capai sasaran", "目标", "达标", "完成率", "返利". It is a DIFFERENT ask from the sales
+ranking, sales report and sales analysis asks around it, which carry no target word; an ask
+with no target word is never "sales_target". "tier" here is a level of a sales target or
+rebate, never an access level.
+  - "how is my target this quarter" -> order_status "sales_target", self_reference
+    true, date_filter_start / date_filter_end the current quarter's first and last day,
+    entities []
+  - "did we hit the Q3 target?" -> order_status "sales_target", self_reference true,
+    date_filter_start / date_filter_end the first and last day of Q3 of the current year
+  - "how far to the next rebate tier" -> order_status "sales_target", entities []
+  - "BKIN ELECTRICAL target achievement" -> order_status "sales_target", entities
+    [BKIN ELECTRICAL as customer]
+  - "my dealers' targets" -> order_status "sales_target", self_reference true,
+    entities []
+  - "sasaran jualan saya bulan ini" -> order_status "sales_target", self_reference
+    true, date_filter_start / date_filter_end the current month
+  - "我这个季度的销售目标完成了多少" -> order_status "sales_target", self_reference true,
+    date_filter_start / date_filter_end the current quarter
+  - "my sales this quarter" has no target word -> order_status "sales_analysis", as SALES
+    ANALYSIS below says, never "sales_target"
+A SALES TARGET ask leaves sales_channel and group_by null and requested_attributes [].
+
+```
+
+### Parser gate (T5, superseded by the record above)
 
 Gold file `scripts/chatbot_eval/gold/sales_target.jsonl`: at least 8 target asks (en / ms / zh, dealer
 and salesperson words, a named period, a named dealer) expecting `order_status = sales_target`, plus at

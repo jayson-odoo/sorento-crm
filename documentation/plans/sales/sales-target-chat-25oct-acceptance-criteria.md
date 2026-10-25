@@ -144,7 +144,11 @@ and no figures.
   (not "Sales report") gets the target answer, and one holding only "Sales report" gets the
   not-enabled line for a target ask. `test_target_grant_independent_of_sales_report`.
 
-## T5. Parser gate
+## T5. Parser gate (MOVED OUT of this PR, crew decision a30290657)
+
+The v63-based candidate did not pass the re-measure rule (PLAN "Parser gate record"); slice 1 ships dark and the
+candidate, the gold rows and the gate tooling go to the next prompt lane. T5-1 to T5-3 below are kept for that
+lane; their tests and the insert / migration code are removed from this PR.
 
 - T5-1 The parser recognises target questions (en / ms / zh, "target", "sasaran", "目标",
   "tier", "rebate") as the new status in the `sales` domain on the per-PR parser gate, and the gate's
