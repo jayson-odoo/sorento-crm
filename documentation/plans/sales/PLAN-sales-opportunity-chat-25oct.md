@@ -1,11 +1,9 @@
 # PLAN: log a sales opportunity over the chat (SALES-TARGET-CHAT slice 2)
 
-Status: **planning, 25 Oct 2026.** Slice 1 (#1861, read-only target progress) owner PASS. Size L, full track (lead
-pattern: tester red tests, coder, reviewer + security-reviewer). Ships DARK like slice 1: the routing value and the
-parser key exist only in the test-copy prompt B4; prod v63 never routes here. UAC:
-`sales-opportunity-chat-25oct-acceptance-criteria.md`. Slice 1 plan:
-`documentation/plans/_archive/sales/PLAN-sales-target-chat-25oct.md` (card v1 answer H, rulings). Branch
-`crew/sales-target-chat-s2` from main 3d59b5e716.
+Status: **slice 2 built, PR #1864 ready, ships DARK; waiting on the owner hand test (laneboard/scripts/1864.md)
+and the ci label.** Reviewer READY, security-reviewer CLEAN (b6c4bb2463); crew a43805183 added at 73573432d2. Size L,
+full track. B4b probe (USD 0.27): 7/8 opportunity asks, sales_target rows 16/16; the hand test runs on B4b, the
+prompt texts go to CHAT-SLIM-INDEX-PLAN.
 
 ## Rulings
 
