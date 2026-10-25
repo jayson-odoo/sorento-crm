@@ -27,8 +27,12 @@ re-claimed ahead of it, and a photo never gives way back to the text it overtook
 A photo whose read is still pending is parked and re-claimed ahead of the texts, so a text
 (earlier-sent too) can wait behind that read. Owner, 25 Oct ("1a ok"): that wait is capped
 at `PHOTO_FIRST_MAX_WAIT_SECONDS` (60 s) from when the photo was queued. Past it the photo
-takes its send-order place and the texts behind it are answered. The cap is on an existing
-wait, not a new one: no row is held back to wait for anything.
+takes its send-order place, so a text sent EARLIER than it is answered. A photo claimed just
+inside the 60 s still finishes its current read poll (`media_sync_wait_seconds`, 30 s by
+default) before it parks, so the real bound is about 60 to 90 s. A text sent AFTER the photo
+waits behind it in send order, up to the existing `media_intake.DRAIN_WAIT_CAP_SECONDS`, as
+before this lane. The cap is on an existing wait, not a new one: no row is held back to wait
+for anything.
 
 The photo and the text go out as two messages back to back, photo first, not one merged
 send (owner, 25 Oct: "2b two msg is ok"). The n8n `/chat/turn` sync path (`send_order`) is

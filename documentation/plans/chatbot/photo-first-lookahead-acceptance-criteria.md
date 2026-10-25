@@ -12,6 +12,8 @@
 - PF-6: A voice note is not a photo: queued behind a running text, it is answered after it
   (owner, 25 Oct: "Photo only").
 - PF-7: A photo goes first only for its first 60 s in the queue. Past that (a read that
-  will not finish), the texts behind it are answered in send order (owner, 25 Oct: "1a ok").
+  will not finish), it takes its send-order place: a text sent EARLIER than the photo is
+  answered (about 60 to 90 s after the photo was queued: 60 s plus one photo-read poll); a
+  text sent after it still waits in send order, as before this lane (owner, 25 Oct: "1a ok").
 - PF-8: The photo's reply and the text's reply are two messages, photo first (owner,
   25 Oct: "2b two msg is ok").
