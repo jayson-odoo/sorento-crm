@@ -123,11 +123,13 @@ Shared mechanisms reused, not copied:
 - MCP: a `ToolSpec` + presenter exactly like `crm_sales_report` (catalog.py:805-840,
   presenters.py:1950, :2976-3000). English text, like the sales report presenter.
 - Parser: one new `order_status` value `sales_target` (the field is a free string, parser.py:261; no
-  schema change), added to the template text (parser_template.py:358 and an R-P3-12 bullet at
-  :312-322). NOT a `chatbot_status_words` row and NOT a new `chatbot_domains` row: both render into
-  the live prompt (`{{status_values}}`, `{{domains}}`, chatbot_prompt_vars.py:55-66, 264-271), which
-  would change production parsing at deploy. The template change ships as a new UNLABELLED version
-  (`scripts.publish_parser_template`); the owner moves the production label.
+  schema change). Production runs v63 (md5 0f3b48e6, 140,897 chars; production label on the crew dev
+  copy sorento_prod_1020 is v63 id 45ea3f69), NOT either repo prompt text (SEMANTIC_PARSER_PROMPT
+  md5 1b6ba9ac, parser_template.py md5 ca6e7e47). Crew decision a28595152 (25 Oct): option (a), a
+  v63-based ANCHORED INSERT (see "Parser candidate" below), shipped by a migration that inserts it
+  UNLABELLED; the owner moves the production label after the hand test. No `chatbot_status_words` row
+  and no new `chatbot_domains` row (both render into the live prompt, chatbot_prompt_vars.py:55-66,
+  264-271).
 - Lane: `turn_runtime` maps `sales_target` to the `sales` domain (turn_runtime.py:1983-1997 seam,
   NOT added to `SALES_FIGURE_STATUSES`, contracts.py:517, whose gates require the sales report
   grant). The domain grant gate (lanes/business/__init__.py:1873-1908) takes the grant of the status
@@ -231,6 +233,28 @@ tests/test_field_reveal_keys_declared.py.
 resolve_gate.py:91, `run_until_exit` bypass :967-970) as the tests require; refusal lines:
 "Sales target is not enabled for your account." and, on the route's 403 `customer_not_permitted`,
 "I can only share targets for your own accounts."
+
+### Parser candidate (crew decision a28595152)
+
+- Anchor (must occur exactly once in the base text): the line
+  `== SALES REPORT: order_status "sales_report", domain_hint "order" ==` (v63 line 1141).
+- Insert: a `== SALES TARGET: order_status "sales_target", domain_hint "order" ==` section placed
+  immediately BEFORE the anchor (target words en / ms / zh decide it; "tier" of a target or rebate is
+  not an access-level tier; asks with no target word stay sales report / analysis / ranking; a named
+  period fills `date_filter_start` / `date_filter_end`; "my" sets `self_reference`; a named dealer is a
+  customer entity). The section text lives once, in app code
+  (`app/services/chatbot/prompt_inserts.py`: `SALES_TARGET_ANCHOR`, `SALES_TARGET_SECTION`,
+  `insert_sales_target(text) -> str | None`, None when the anchor is not there exactly once or the
+  section is already present), so crew can re-apply it to whatever text the label moves to.
+- Migration `stc_0001_parser_sales_target`: base = the `chatbot_semantic_parser` version whose
+  md5(template) is 0f3b48e6 (the production-labelled one first); none, or anchor not found exactly once
+  -> skip + log; result already published -> skip (idempotent); else insert the next version number,
+  UNLABELLED. Never replaces a full text. CHAT-SLIM-INDEX-PLAN also builds v63-based variants: a
+  crew-note on the PR names this anchor so that lane can check it survives its edits.
+- Gate on a private TEMPLATE copy of sorento_eval_base (sorento_stc_eval; eval_base untouched): arm A =
+  v63 (pinned by md5 0f3b48e6), arm B = insert applied to it; TRAIN 118 x1 per arm + the 14-row
+  sales_target gold x3 per arm; gpt-5.4-mini, dev eval key ..bG4A; cap USD 2.5; stop on any 429 or 2
+  busy replies; every run logged in the crew eval spend ledger.
 
 ### Parser gate (T5)
 
