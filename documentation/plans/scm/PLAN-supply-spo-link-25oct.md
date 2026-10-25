@@ -69,12 +69,15 @@ The order inquiry PO candidates (`project_order_inquiry_service.py:10382-10388`)
 
 ## 4. UI: the SPO a PO line moved onto
 
-Supply grid of `StockDebtCellDialog` (the only consumer of this grid; `/project-sales/stock-debt`)
-gains an `SPO` column after Document: for a PO row, every SPO number its line was transferred onto
-(OI-SPO-EXACT, live allocations), each an `OrderInquiryDocumentLink kind="spo"` (the link the
-Document cell already uses for an SPO row); `-` otherwise. Backend: `spo_numbers: string[]` on each
-supply row (`app/schemas/stock_debt.py` supply event), one batched read per drill.
-Mockup first: `documentation/mockups/SUPPLY-SPO-LINK/index.html` (crew contract).
+Mock v1 (a column in the Stock Debt Supply grid) was rejected by the owner (25 Oct, 12:18: "it is
+the popup after I open the Document which is the PO"). Mock v2 (same path,
+`documentation/mockups/SUPPLY-SPO-LINK/index.html`): the PURCHASE ORDER popup's Lines grid
+(`PO_LINE_COLUMNS`, `OrderInquiryDocumentDialog.tsx`, the one component behind every PO document
+link: Stock Debt Supply and Covered by, order inquiry screens) gains an `SPO` column after S/O:
+every SPO number the line was transferred onto (OI-SPO-EXACT, visible allocations), each an
+`OrderInquiryDocumentLink kind="spo"`; `-` when none. Backend: `spo_numbers: List[str]` on each
+line of `OrderInquiryWorklistService.get_po_detail` (schema `OrderInquiryPoDetailLine`), one read
+per popup, company predicate by hand. Build only after the owner approves v2.
 
 ## 5. Tests (red first, `tests/scm/`)
 
@@ -84,8 +87,9 @@ Mockup first: `documentation/mockups/SUPPLY-SPO-LINK/index.html` (crew contract)
 - R3 partly transferred, open: PO row Outstanding = ordered - received, the line pinned on the PO
   for at most that, the rest on the derived SPO.
 - R4 short-closed, nothing transferred: placement pins nothing, no PO row.
-- R5 the supply row of a PO line carries `spo_numbers` (derived allocations), `[]` for on hand.
-- FE: the SPO column renders a link per number and `-` when empty.
+- R5 (UI slice) each line of the PO detail carries `spo_numbers` (OI-SPO-EXACT), `[]` when none,
+  another company's allocation naming the same strings never counted.
+- FE: the PO popup's SPO column renders a link per number and `-` when empty.
 
 ## 6. Out of scope
 
