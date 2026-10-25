@@ -23,7 +23,10 @@ case) must not be exported in the shell, and `--api` must be http(s) on localhos
 `check_connected` then asks the server it actually reached (`inet_server_addr()`). No rule on
 the database name (crew copies are prod clones): `check_neutralised` reads the ORIGINAL values
 before setup and refuses unless respond.io, every n8n URL and SMTP are empty or on `.invalid`,
-the workspace sender URL is empty, and the env file's HTTPS_PROXY is a dead loopback proxy. It also refuses when an earlier run was not cleaned up
+the workspace sender URL is empty, every proxy variable in the env file is a dead loopback
+proxy (at least HTTPS_PROXY or https_proxy), and NO_PROXY / no_proxy is set without `*`. A
+checked value the env file leaves out is judged by its Settings default (RESPOND_BASE_URL
+falls back to https://api.respond.io, so it must be set). It also refuses when an earlier run was not cleaned up
 (`detect_leftover`) or when the copy already holds the maximum number of webhook keys (the
 tool could not add one that verifies without dropping one of respond.io's).
 
@@ -59,7 +62,9 @@ text but delivered after it (its read is attempted by the copy's RQ worker and f
 the photo URL is a closed local port: what s2 shows is the photo answered first); s3 one
 message delivered twice through the webhook and once through `/chat/turn`; s4 a 6-message
 burst, then a backend restart: `--restart-cmd "<shell command>"` runs it once itself (else the
-tool asks a person to restart and waits); `--no-restart` skips it. Stdlib plus the repo's own
+tool asks a person to restart and waits); `--no-restart` skips it. The restart command must
+RETURN (exit 0 once the restart is under way or done): a non-zero exit fails s4 at once with
+its code in the report, and one still running after RESTART_CMD_SECONDS is killed. Stdlib plus the repo's own
 modules; never imports `app.services.chatbot`.
 """
 from __future__ import annotations
@@ -93,6 +98,8 @@ LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 # `app.api.v1.public.respond_webhook.MAX_KEYS`: the webhook verifies against the first ten.
 MAX_WEBHOOK_KEYS = 10
 CONTACT_PREFIX = "zzt-replay-"
+# The shared dev DB other lanes' stacks run on: refused by its exact name.
+SHARED_DEV_DATABASE = "sorento_cagent_stack"
 # One run at a time per copy: a session-level advisory lock held for the whole run.
 RUN_LOCK_KEY = 727327105
 BACKEND = Path(__file__).resolve().parent.parent
@@ -168,8 +175,9 @@ def env_file_database_url(path: str) -> str:
 
 def check_connected(engine: Any) -> list[str]:
     """What the engine ACTUALLY reaches: no host / database override in its URL query, and
-    the server it connects to is local (unix socket or loopback). No rule on the database
-    NAME: crew copies are neutralised prod clones (`check_neutralised` judges them)."""
+    the server it connects to is local (unix socket or loopback). One exact-name refusal
+    (`sorento_cagent_stack`, the shared dev DB); every other name is judged by
+    `check_neutralised` (crew copies are neutralised prod clones)."""
     from sqlalchemy import text
 
     reasons: list[str] = []
@@ -178,7 +186,9 @@ def check_connected(engine: Any) -> list[str]:
         reasons.append("the database URL overrides its host or database in the query string")
     with engine.connect() as conn:
         row = conn.execute(text("SELECT current_database(), inet_server_addr()")).first()
-    addr = row[1] if row is not None else "unknown"
+    name, addr = (row[0], row[1]) if row is not None else ("", "unknown")
+    if str(name or "") == SHARED_DEV_DATABASE:
+        reasons.append(f"the connected database is {SHARED_DEV_DATABASE}, the shared dev DB other lanes' stacks run on")
     if addr is not None:
         try:
             loopback = ipaddress.ip_address(str(addr).split("/", 1)[0]).is_loopback
@@ -204,6 +214,18 @@ def _neutral(value: Any) -> bool:
         return True
     host = _host(text_value) if "://" in text_value else text_value.split(":", 1)[0].lower()
     return host.rstrip(".").endswith(".invalid") or host == "invalid"
+
+
+PROXY_VARS = ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy")
+
+
+def _settings_default(key: str) -> str:
+    """The Settings default a key left out of the env file falls back to (empty if none)."""
+    from app.config import settings
+
+    field = type(settings).model_fields.get(key.lower())
+    default = getattr(field, "default", None) if field is not None else None
+    return "" if default is None or not isinstance(default, str) else default
 
 
 def _dead_loopback_proxy(proxy: str) -> bool:
@@ -237,9 +259,12 @@ def check_neutralised(db: Any, env: Any) -> list[str]:
         if not _neutral(value):
             reasons.append(f"{label} = {value!r} {rule}")
 
-    need("env RESPOND_BASE_URL", env.get("RESPOND_BASE_URL"))
-    need("env N8N_WEBHOOK_URL", env.get("N8N_WEBHOOK_URL"))
-    need("env SMTP_HOST", env.get("SMTP_HOST"))
+    for key in ("RESPOND_BASE_URL", "N8N_WEBHOOK_URL", "SMTP_HOST"):
+        if key in env:
+            need(f"env {key}", env.get(key))
+        else:
+            # Left out of the env file, the value falls back to its Settings default.
+            need(f"env {key} (absent, Settings default)", _settings_default(key))
     row = db.query(SystemSetting).first()
     if row is not None:
         for column in N8N_SETTING_COLUMNS:
@@ -252,11 +277,19 @@ def check_neutralised(db: Any, env: Any) -> list[str]:
         sender = (workspace.chatbot_sender_url or "").strip()
         if sender and _host(sender) not in LOOPBACK_HOSTS:
             reasons.append(f"respond_workspaces[{space}].chatbot_sender_url = {sender!r} must be empty")
-    proxy = env.get("HTTPS_PROXY") or env.get("https_proxy") or ""
-    if not proxy:
+    # Egress: EVERY proxy variable present is probed (httpx and urllib prefer the lowercase).
+    present = [var for var in PROXY_VARS if env.get(var)]
+    if not any(var.lower() == "https_proxy" for var in present):
         reasons.append("env HTTPS_PROXY / https_proxy is not set: egress must go through a dead loopback proxy")
-    elif not _dead_loopback_proxy(proxy):
-        reasons.append(f"env HTTPS_PROXY = {proxy!r} must be a loopback proxy whose port refuses connections")
+    for var in present:
+        if not _dead_loopback_proxy(env[var]):
+            reasons.append(f"env {var} = {env[var]!r} must be a loopback proxy whose port refuses connections")
+    no_proxy = [var for var in ("NO_PROXY", "no_proxy") if var in env]
+    if not no_proxy:
+        reasons.append("env NO_PROXY / no_proxy is not set: it must list the local hosts only (never '*')")
+    for var in no_proxy:
+        if "*" in str(env.get(var) or ""):
+            reasons.append(f"env {var} = {env.get(var)!r} lets every host past the proxy; list the local hosts only")
     return reasons
 
 
@@ -996,22 +1029,16 @@ class Replay:
         restarted = None
         if not self.args.no_restart:
             command = getattr(self.args, "restart_cmd", None)
-            process = None
             if command:
-                import subprocess
-
-                print(f"\n>>> restarting the copy backend: {command}")
-                process = subprocess.Popen(command, shell=True)
+                restarted, failure = self._run_restart(command)
+                if failure:
+                    self.notes.append(failure)
+                    return {"title": "s4: 6-message burst, backend restart mid-burst", "codes": codes, "got": [],
+                            "checks": [(failure, False)], "delivered": [self.labels[str(m)] for m in order]}
             else:
                 print("\n>>> RESTART THE COPY BACKEND NOW (stop it and start it again). Waiting for /health to go down...")
-            went_down = self._wait_health(False, 180)
-            came_back = went_down and self._wait_health(True, 240)
-            if process is not None:
-                try:
-                    process.wait(timeout=RESTART_CMD_SECONDS)
-                except Exception:  # noqa: BLE001 - bounded: a hung restart command is stopped
-                    process.kill()
-            restarted = bool(went_down and came_back)
+                went_down = self._wait_health(False, 180)
+                restarted = bool(went_down and self._wait_health(True, 240))
             print(">>> backend is back; collecting" if restarted else ">>> no restart seen; collecting anyway")
             deadline = max(deadline, time.monotonic() + 120)
         got = self.wait_for(mids, deadline)
@@ -1025,6 +1052,52 @@ class Replay:
         return {"title": "s4: 6-message burst, backend restart mid-burst"
                 + (" (restart skipped: --no-restart)" if self.args.no_restart else ""),
                 "codes": codes, "got": got, "checks": checks, "delivered": [self.labels[str(m)] for m in order]}
+
+    def _run_restart(self, command: str) -> tuple[bool, str | None]:
+        """Run `--restart-cmd` once (shell) while watching /health go down and come back.
+        A non-zero exit fails at once (its code in the notes); a command still running after
+        RESTART_CMD_SECONDS is killed and reaped. Returns (restarted, failure)."""
+        import subprocess
+
+        print(f"\n>>> restarting the copy backend: {command}")
+        process = subprocess.Popen(command, shell=True)
+        started = time.monotonic()
+
+        def stop() -> None:
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+
+        def failed() -> str | None:
+            code = process.poll()
+            if code not in (None, 0):
+                return f"the restart command exited {code}"
+            if code is None and time.monotonic() - started > RESTART_CMD_SECONDS:
+                stop()
+                return f"the restart command did not return within {RESTART_CMD_SECONDS:.0f}s (killed)"
+            return None
+
+        went_down = came_back = False
+        end = started + 180
+        while time.monotonic() < end and not went_down:
+            failure = failed()
+            if failure:
+                return False, failure
+            went_down = self._wait_health(False, 0.5)
+        end = time.monotonic() + 240
+        while went_down and time.monotonic() < end and not came_back:
+            failure = failed()
+            if failure:
+                return False, failure
+            came_back = self._wait_health(True, 0.5)
+        try:
+            process.wait(timeout=max(0.0, RESTART_CMD_SECONDS - (time.monotonic() - started)))
+        except subprocess.TimeoutExpired:
+            stop()
+            return False, f"the restart command did not return within {RESTART_CMD_SECONDS:.0f}s (killed)"
+        if process.returncode not in (0, None):
+            return False, f"the restart command exited {process.returncode}"
+        return bool(went_down and came_back), None
 
     def _wait_health(self, up: bool, timeout: float) -> bool:
         end = time.monotonic() + timeout
