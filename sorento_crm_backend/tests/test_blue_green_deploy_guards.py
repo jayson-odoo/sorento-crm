@@ -354,7 +354,11 @@ def test_db_container_restart_while_the_new_colour_starts_aborts_before_the_swap
     assert "restarted during the deploy" in r.stdout, r.stdout
     calls = _calls(box)
     assert not _swapped(calls), "traffic must stay on the old colour"
-    assert _index(calls, "stop backend_") != -1, "the new colour is stopped"
+    # The stub records `compose stop -t 160 backend_<new> ...` (the stop waits past gunicorn's
+    # graceful_timeout, tests/test_deploy_stop_grace.py).
+    assert _index(calls, "compose stop -t 160 backend_") != -1, (
+        "the new colour is stopped:\n" + "\n".join(calls)
+    )
 
 
 def test_postgres_crash_recovery_without_a_container_restart_is_caught(box):

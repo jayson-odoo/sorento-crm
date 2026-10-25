@@ -64,6 +64,10 @@ def test_defaults_match_start_sh(monkeypatch):
     --bind "${API_HOST:-0.0.0.0}:${API_PORT:-8000}", --timeout 120,
     --keep-alive "${GUNICORN_KEEP_ALIVE:-75}", --access-logfile -, --error-logfile -,
     --log-level info.
+
+    Except the worker class: since CHAT-INBOX-QUEUE (#1848) it is
+    app.uvicorn_worker.InboxUvicornWorker, a UvicornWorker subclass that sets
+    timeout_graceful_shutdown (app/uvicorn_worker.py).
     """
     # workers: default 4
     monkeypatch.delenv("WORKERS", raising=False)
@@ -77,7 +81,7 @@ def test_defaults_match_start_sh(monkeypatch):
     monkeypatch.delenv("WORKERS", raising=False)
 
     module = _load_conf_module()
-    assert module.worker_class == "uvicorn.workers.UvicornWorker"
+    assert module.worker_class == "app.uvicorn_worker.InboxUvicornWorker"
     assert module.timeout == 120
 
     # keepalive: default 75
