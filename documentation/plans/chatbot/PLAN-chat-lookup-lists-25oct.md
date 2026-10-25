@@ -85,3 +85,41 @@ UAC: `chat-lookup-lists-25oct-acceptance-criteria.md`. Eval history and gates: `
 - Dropping the per-turn Product types line cost ~4 of 36 follow-ups in the diagnosis.
 - Recall was measured with text-embedding-3-large; the app default is 3-small (behaviour card Q1).
 - Prompt after removals ~130k of 141k chars: list text is 7.5% of v63; the rest is rules.
+
+## Behaviour card answers (crew a43817015, 25 Oct): defaults
+Q1 text-embedding-3-small (OpenAIProvider.embed, llm_provider.py:555), row vectors cached per process, ONE batch per
+turn, failure -> spelling only; a ~USD 0.01 retrieval-only recall re-check vs the measured 3-large is approved.
+Q2 rule text naming a removed per-turn line is renamed to its block. Q3 customers top 5 + one-span-one-list.
+Q4 promotion kinds move to a block ("srt a3 flyer" stays a hard row in the final check). Q5 template marker gate.
+
+## S1 code contract (tests are written against this; names are binding)
+Module `app/services/chatbot/head/lookup_lists.py` (no session held across the parse; pure functions + one db loader):
+- `MARKER = "== LOOKUP LISTS =="`; `gate_on(template: str) -> bool` (marker present as its own line).
+- `HEADER_NOUN = {"category": "Category", "sales_channel": "Sales channel"}` (later slices add "spec", "file_type",
+  "brand", "salesperson", "location", "promotion_kind", "customer"); `header(list_name) ->
+  f"{HEADER_NOUN[list_name]} candidates (pick one only if the message means it):"`.
+- `FLOOR_SPELLING = 0.5`, `FLOOR_MEANING = 0.5`, `TOP_K = {"category": 10, "sales_channel": 2}`.
+- `@dataclass(frozen=True) LookupRow(list_name: str, key: str, label: str, texts: tuple[str, ...])`: `texts` are
+  the strings matched (name, code, synonyms, class label); `label` is what the block prints.
+- `@dataclass(frozen=True) Hit(row: LookupRow, piece: str, spelling: float, meaning: float)`.
+- `pieces(message: str, max_words: int = 4) -> list[str]`: every 1..4 consecutive-word piece of the folded message
+  (folding as candidates.py `_phrase`), in message order, de-duplicated.
+- `Embedder = Callable[[list[str]], list[list[float]]]`; `None` or an exception -> meaning 0.0 for every row.
+- `shortlist(message, rows: list[LookupRow], embed: Embedder | None, *, brand_words: frozenset[str] = frozenset())
+  -> dict[str, list[Hit]]`: spelling = best `candidates.similarity(trigrams(piece), trigrams(text))` (exact folded
+  equality = 1.0); meaning = best cosine(piece vector, text vector); keep a row when spelling >= FLOOR_SPELLING or
+  meaning >= FLOOR_MEANING; best hit per row; sorted by max(spelling, meaning) desc then label; cut to TOP_K[list].
+  One-span-one-list: a piece in `brand_words` (folded) produces no "category" hit.
+- `render(hits: dict[str, list[Hit]], order=("category", "sales_channel")) -> list[str]`: per list with hits, the
+  header line then `- <label>` per hit (label de-duplicated); nothing for an empty list.
+- `load_rows(db) -> list[LookupRow]`: categories = searchable + active product_categories (label category_name; texts
+  name, code, class_label, search_synonyms) + class labels + product types (spec registry product_type values); sales
+  channels from `SALES_CHANNELS` (reports/ask.py:340). `brand_words(db) -> frozenset[str]` from active_brands + the
+  brand_alias lookup set.
+Wiring:
+- `ParserConfig.lookup_lists: bool = gate_on(raw_template)` (parser.resolve_config, beside closed_lists :951).
+- `ContextLayers.lookup_lines: list[str] | None = None`, printed right after candidate_lines in both assemble paths
+  (context.py :505 and :574). When the config has lookup_lists, the engine passes None for product_types,
+  product_details, known brands, promotion kinds and sales_channels lines.
+- engine: `_lookup_lines(db, message, config)` in a savepoint like `_candidate_lines` (engine.py:1131-1182); any
+  error -> [] and the turn continues; trace key "lookup_lists" with pieces + hits (label, piece, spelling, meaning).
