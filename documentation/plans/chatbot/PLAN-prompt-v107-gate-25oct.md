@@ -62,7 +62,7 @@ sorento_explore1020; drafts 107 and 108 were rule-3 wording probes). Numbers onl
 
 Attribution: on the 47 split TRAIN items v103 (no new rules) scores 16/47 and v107 in Index mode 17/47 (A 38/47), so
 the loss belongs to the v103 lineage (CODE LOOKUP swaps a typed code for a listed variant or another code; intent
-drift), not to the three rules, and Index mode does not rescue it. The ranking rules do what they should (R5).
+drift), not to the three rules, and Index mode does not rescue it. The lineage parses rankings far better (R5).
 Spend: USD 3.28 of the approved ~9-10 (ledger crew/state/eval/v107/LEDGER.md).
 
 The three rules as written (appended to v103's candidate-pick line and its `sales_channel` line): crew/state/eval/v107/v107_vs_v103.diff.
